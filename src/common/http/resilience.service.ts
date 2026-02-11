@@ -2,13 +2,17 @@ import { Injectable, Logger } from '@nestjs/common';
 import { retry, handleAll, circuitBreaker, wrap, ExponentialBackoff, ConsecutiveBreaker, IPolicy, IDefaultPolicyContext, timeout, TimeoutStrategy, noop } from 'cockatiel';
 import { RESILIENCE_POLICIES, ResilienceOptions, ResilienceServiceType } from './resilience.definitions';
 import { ClsService } from 'nestjs-cls';
+import { ResilienceMetricsService } from './resilience-metrics.service';
 
 @Injectable()
 export class ResilienceService {
     private readonly logger = new Logger(ResilienceService.name);
     private readonly policies = new Map<string, IPolicy<IDefaultPolicyContext>>();
 
-    constructor(private readonly cls: ClsService) {
+    constructor(
+        private readonly cls: ClsService,
+        private readonly metricsService: ResilienceMetricsService,
+    ) {
         // Initialize default policy
         this.getPolicy('default');
     }
@@ -68,6 +72,10 @@ export class ResilienceService {
         retryPolicy.onRetry((reason) => {
             const error = 'error' in reason ? reason.error : undefined;
             this.logger.warn(`${getContext()} [Retry] Attempt ${reason.attempt}. Error: ${error?.message}`);
+
+            // Track retries in CLS
+            const currentRetries = this.cls.get<number>('resilienceRetries') || 0;
+            this.cls.set('resilienceRetries', currentRetries + 1);
         });
 
         circuitBreakerPolicy.onBreak((reason) => {
@@ -92,7 +100,24 @@ export class ResilienceService {
         // Standard user request: "Timeout Policy: If API hangs, retry is useless." -> This implies timeout per attempt.
         // So: Wrap(Retry, CircuitBreaker, Timeout) -> means Retry calls CircuitBreaker calls Timeout calls Function.
 
+        // --- Composition ---
+
         const policy = wrap(retryPolicy, circuitBreakerPolicy, timeoutPolicy);
+
+        policy.onSuccess(() => {
+            if (this.metricsService) {
+                this.metricsService.recordSuccess(serviceName);
+            }
+        });
+
+        policy.onFailure((reason) => {
+            const potentialError = reason as any;
+            const message = potentialError?.message || potentialError?.error?.message || String(reason);
+            if (this.metricsService) {
+                this.metricsService.recordFailure(serviceName, message);
+            }
+        });
+
         this.policies.set(serviceName, policy);
 
         return policy;
