@@ -9,12 +9,17 @@ export type <%= name %>SchemaDocument = HydratedDocument<<%= name %>SchemaClass>
 
 @Schema({
   timestamps: true,
+  optimisticConcurrency: true,
+  versionKey: '__v',
   toJSON: {
     virtuals: true,
     getters: true,
   },
 })
 export class <%= name %>SchemaClass extends EntityDocumentHelper {
+  @Prop({ type: Number })
+  __v: number;
+
   @Prop({ default: now })
   createdAt: Date;
 

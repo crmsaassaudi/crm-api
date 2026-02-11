@@ -9,6 +9,9 @@ export class <%= name %> {
   })
   id: string;
 
+  @ApiProperty({ type: Number })
+  version: number;
+
   @ApiProperty()
   createdAt: Date;
 
