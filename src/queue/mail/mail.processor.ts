@@ -18,6 +18,11 @@ export class MailProcessor extends BaseConsumer {
     }
 
     private async sendWelcomeEmail(job: Job) {
+        // Idempotency check: Ensure email hasn't been sent already
+        // In a real scenario, check a 'SentEmails' collection or Redis key
+        // const isSent = await this.checkIfEmailSent(job.id);
+        // if (isSent) return;
+
         this.logger.log(`Sending welcome email to ${job.data.email}...`);
         // Simulate email sending delay
         await new Promise((resolve) => setTimeout(resolve, 1000));

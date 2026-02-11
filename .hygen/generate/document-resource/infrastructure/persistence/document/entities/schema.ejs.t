@@ -10,15 +10,13 @@ export type <%= name %>SchemaDocument = HydratedDocument<<%= name %>SchemaClass>
 @Schema({
   timestamps: true,
   optimisticConcurrency: true,
-  versionKey: 'version',
+  versionKey: '__v',
   toJSON: {
     virtuals: true,
     getters: true,
   },
 })
 export class <%= name %>SchemaClass extends EntityDocumentHelper {
-  @Prop({ type: Number })
-  version: number;
 }
 
 export const <%= name %>Schema = SchemaFactory.createForClass(<%= name %>SchemaClass);

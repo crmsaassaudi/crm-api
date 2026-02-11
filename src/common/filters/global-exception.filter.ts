@@ -16,7 +16,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
     private readonly cls: ClsService,
-  ) {}
+  ) { }
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const { httpAdapter } = this.httpAdapterHost;
@@ -55,15 +55,18 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       correlationId,
     };
 
-    // Log the error with correlation ID
+    // Log the error with correlation ID and User ID
+    const userId = request.user?.id || 'anonymous';
+    const isProduction = process.env.NODE_ENV === 'production';
+
     if (httpStatus >= 500) {
       this.logger.error(
-        `[${correlationId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)}`,
-        exception instanceof Error ? exception.stack : String(exception),
+        `[${correlationId}] [User:${userId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)}`,
+        isProduction ? (exception instanceof Error ? exception.message : String(exception)) : (exception instanceof Error ? exception.stack : String(exception)),
       );
     } else {
       this.logger.warn(
-        `[${correlationId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)} - ${message}`,
+        `[${correlationId}] [User:${userId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)} - ${message}`,
       );
     }
 

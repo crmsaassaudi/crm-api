@@ -71,4 +71,7 @@ export class User {
 
   @ApiProperty()
   deletedAt: Date;
+
+  @ApiProperty()
+  version?: number;
 }

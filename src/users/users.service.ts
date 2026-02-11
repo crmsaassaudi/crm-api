@@ -24,7 +24,7 @@ export class UsersService {
   constructor(
     private readonly usersRepository: UserRepository,
     private readonly filesService: FilesService,
-  ) {}
+  ) { }
 
   async create(createUserDto: CreateUserDto): Promise<User> {
     // Do not remove comment below.
@@ -279,7 +279,7 @@ export class UsersService {
       status,
       provider: updateUserDto.provider,
       socialId: updateUserDto.socialId,
-    });
+    }, updateUserDto.version);
   }
 
   async remove(id: User['id']): Promise<void> {

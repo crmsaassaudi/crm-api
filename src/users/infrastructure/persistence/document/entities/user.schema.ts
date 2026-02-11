@@ -12,6 +12,8 @@ export type UserSchemaDocument = HydratedDocument<UserSchemaClass>;
 
 @Schema({
   timestamps: true,
+  optimisticConcurrency: true,
+  versionKey: '__v', // Map to 'version' property
   toJSON: {
     virtuals: true,
     getters: true,

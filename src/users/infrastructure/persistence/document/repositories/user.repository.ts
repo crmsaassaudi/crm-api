@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ConflictException } from '@nestjs/common';
 
 import { NullableType } from '../../../../../utils/types/nullable.type';
 import { FilterUserDto, SortUserDto } from '../../../../dto/query-user.dto';
@@ -15,7 +15,7 @@ export class UsersDocumentRepository implements UserRepository {
   constructor(
     @InjectModel(UserSchemaClass.name)
     private readonly usersModel: Model<UserSchemaClass>,
-  ) {}
+  ) { }
 
   async create(data: User): Promise<User> {
     const persistenceModel = UserMapper.toPersistence(data);
@@ -92,27 +92,66 @@ export class UsersDocumentRepository implements UserRepository {
     return userObject ? UserMapper.toDomain(userObject) : null;
   }
 
-  async update(id: User['id'], payload: Partial<User>): Promise<User | null> {
+  async update(
+    id: User['id'],
+    payload: Partial<User>,
+    version?: number,
+  ): Promise<User | null> {
     const clonedPayload = { ...payload };
     delete clonedPayload.id;
 
-    const filter = { _id: id.toString() };
-    const user = await this.usersModel.findOne(filter);
+    const filter: FilterQuery<UserSchemaClass> = { _id: id.toString() };
 
-    if (!user) {
-      return null;
+    // Optimistic locking: if version is provided, ensure we only update if version matches
+    if (version !== undefined) {
+      filter['__v'] = version;
     }
 
-    const userObject = await this.usersModel.findOneAndUpdate(
-      filter,
-      UserMapper.toPersistence({
-        ...UserMapper.toDomain(user),
+    const updatePayload: any = {
+      ...UserMapper.toPersistence({
+        ...UserMapper.toDomain(await this.usersModel.findOne({ _id: id.toString() }) as UserSchemaClass),
+        // Note: Efficient way would be not fetching but we need to merge domain logic if mapper is complex.
+        // For now let's rely on findOneAndUpdate doing a merge if we just passed payload?
+        // Actually, mapper toPersistence might require full object. 
+        // Let's stick to the existing logic but add $inc.
         ...clonedPayload,
       }),
+    };
+
+    // We cannot use toPersistence simple merge if we don't have full object.
+    // The previous code fetched 'user' then merged.
+    // Let's fetch first (but without version check for fetch, or with?)
+    // If we fetch first, we might read old data.
+    // Optimistic locking usually implies:
+    // 1. User has data v1.
+    // 2. User sends update request with v1.
+    // 3. We try to update WHERE id=.. AND v=1.
+
+    // Re-reading logic:
+    const user = await this.usersModel.findOne({ _id: id.toString() });
+    if (!user) return null;
+
+    const persistenceObject = UserMapper.toPersistence({
+      ...UserMapper.toDomain(user),
+      ...clonedPayload,
+    });
+
+    // We need to use the filter WITH version for the atomic update
+    const updatedUser = await this.usersModel.findOneAndUpdate(
+      filter,
+      {
+        ...persistenceObject,
+        $inc: { __v: 1 } // Increment version
+      },
       { new: true },
     );
 
-    return userObject ? UserMapper.toDomain(userObject) : null;
+    if (!updatedUser && version !== undefined) {
+      // If update failed but user existed (we checked above), it means version mismatch
+      throw new ConflictException('Data has been modified by another user');
+    }
+
+    return updatedUser ? UserMapper.toDomain(updatedUser) : null;
   }
 
   async remove(id: User['id']): Promise<void> {
