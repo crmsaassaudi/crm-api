@@ -33,7 +33,7 @@ async function bootstrap() {
   app.setGlobalPrefix(
     configService.getOrThrow('app.apiPrefix', { infer: true }),
     {
-      exclude: ['/'],
+      exclude: ['/', '/queues'],
     },
   );
   app.enableVersioning({

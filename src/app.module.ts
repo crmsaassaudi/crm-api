@@ -10,9 +10,12 @@ import fileConfig from './files/config/file.config';
 import facebookConfig from './auth-facebook/config/facebook.config';
 import googleConfig from './auth-google/config/google.config';
 import appleConfig from './auth-apple/config/apple.config';
+import queueConfig from './queue/config/queue.config';
 import redisConfig from './redis/config/redis.config';
 import path from 'path';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { BullBoardModule } from '@bull-board/nestjs';
+import { ExpressAdapter } from '@bull-board/express';
 import { AuthAppleModule } from './auth-apple/auth-apple.module';
 import { AuthFacebookModule } from './auth-facebook/auth-facebook.module';
 import { AuthGoogleModule } from './auth-google/auth-google.module';
@@ -25,6 +28,8 @@ import { MailerModule } from './mailer/mailer.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MongooseConfigService } from './database/mongoose-config.service';
 import { RedisModule } from './redis/redis.module';
+import { QueueModule } from './queue/queue.module';
+import { MailQueueModule } from './queue/mail/mail-queue.module';
 
 const infrastructureDatabaseModule = MongooseModule.forRootAsync({
   useClass: MongooseConfigService,
@@ -52,11 +57,16 @@ import { Request } from 'express';
         facebookConfig,
         googleConfig,
         appleConfig,
+        queueConfig,
         redisConfig,
       ],
       envFilePath: ['.env'],
     }),
     infrastructureDatabaseModule,
+    BullBoardModule.forRoot({
+      route: '/queues',
+      adapter: ExpressAdapter,
+    }),
     ClsModule.forRoot({
       global: true,
       middleware: {
@@ -130,6 +140,8 @@ import { Request } from 'express';
     MailerModule,
     HomeModule,
     RedisModule,
+    QueueModule,
+    MailQueueModule,
   ],
 })
-export class AppModule {}
+export class AppModule { }
