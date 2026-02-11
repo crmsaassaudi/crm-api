@@ -15,4 +15,9 @@ export class EntityDocumentHelper {
     },
   )
   public _id: string;
+
+  // Giúp Mapper trích xuất version an toàn hơn
+  public __v: number;
+  public createdAt: Date;
+  public updatedAt: Date;
 }

@@ -8,10 +8,9 @@ export class <%= name %>Mapper {
   public static toDomain(raw: <%= name %>SchemaClass): <%= name %> {
     const domainEntity = new <%= name %>();
     domainEntity.id = raw._id.toString();
-
-    domainEntity.version = (raw as any).__v;
-    domainEntity.createdAt = (raw as any).createdAt;
-    domainEntity.updatedAt = (raw as any).updatedAt;
+    domainEntity.version = raw.__v;
+    domainEntity.createdAt = raw.createdAt;
+    domainEntity.updatedAt = raw.updatedAt;
 
     return domainEntity;
   }
@@ -22,6 +21,8 @@ export class <%= name %>Mapper {
       persistenceSchema._id = domainEntity.id;
     }
 
+    persistenceSchema.__v = domainEntity.version;
+    
     return persistenceSchema;
   }
 }
