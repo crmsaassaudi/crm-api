@@ -9,10 +9,9 @@ export class <%= name %>Mapper {
     const domainEntity = new <%= name %>();
     domainEntity.id = raw._id.toString();
 
-    domainEntity.version = raw.__v;
-
-    domainEntity.createdAt = raw.createdAt;
-    domainEntity.updatedAt = raw.updatedAt;
+    domainEntity.version = raw.version;
+    domainEntity.createdAt = (raw as any).createdAt;
+    domainEntity.updatedAt = (raw as any).updatedAt;
 
     return domainEntity;
   }
@@ -23,10 +22,7 @@ export class <%= name %>Mapper {
       persistenceSchema._id = domainEntity.id;
     }
 
-    persistenceSchema.__v = domainEntity.version;
-    
-    persistenceSchema.createdAt = domainEntity.createdAt;
-    persistenceSchema.updatedAt = domainEntity.updatedAt;
+    persistenceSchema.version = domainEntity.version;
 
     return persistenceSchema;
   }

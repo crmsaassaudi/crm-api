@@ -4,7 +4,7 @@ to: src/<%= h.inflection.transform(name, ['pluralize', 'underscore', 'dasherize'
 import { Injectable } from '@nestjs/common';
 import { NullableType } from '../../../../../utils/types/nullable.type';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, ClientSession } from 'mongoose';
 import { <%= name %>SchemaClass } from '../entities/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>.schema';
 import { <%= name %>Repository } from '../../<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>.repository';
 import { <%= name %> } from '../../../../domain/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>';
@@ -18,10 +18,13 @@ export class <%= name %>DocumentRepository implements <%= name %>Repository {
     private readonly <%= h.inflection.camelize(name, true) %>Model: Model<<%= name %>SchemaClass>,
   ) {}
 
-  async create(data: <%= name %>): Promise<<%= name %>> {
+  async create(
+    data: <%= name %>,
+    options?: { session?: ClientSession },
+  ): Promise<<%= name %>> {
     const persistenceModel = <%= name %>Mapper.toPersistence(data);
     const createdEntity = new this.<%= h.inflection.camelize(name, true) %>Model(persistenceModel);
-    const entityObject = await createdEntity.save();
+    const entityObject = await createdEntity.save({ session: options?.session });
     return <%= name %>Mapper.toDomain(entityObject);
   }
 
@@ -29,9 +32,10 @@ export class <%= name %>DocumentRepository implements <%= name %>Repository {
     paginationOptions,
   }: {
     paginationOptions: IPaginationOptions;
-  }): Promise<<%= name %>[]> {
+  }, options?: { session?: ClientSession }): Promise<<%= name %>[]> {
     const entityObjects = await this.<%= h.inflection.camelize(name, true) %>Model
       .find()
+      .session(options?.session || null)
       .skip((paginationOptions.page - 1) * paginationOptions.limit)
       .limit(paginationOptions.limit);
 
@@ -40,13 +44,23 @@ export class <%= name %>DocumentRepository implements <%= name %>Repository {
     );
   }
 
-  async findById(id: <%= name %>['id']): Promise<NullableType<<%= name %>>> {
-    const entityObject = await this.<%= h.inflection.camelize(name, true) %>Model.findById(id);
+  async findById(
+    id: <%= name %>['id'],
+    options?: { session?: ClientSession },
+  ): Promise<NullableType<<%= name %>>> {
+    const entityObject = await this.<%= h.inflection.camelize(name, true) %>Model
+      .findById(id)
+      .session(options?.session || null);
     return entityObject ? <%= name %>Mapper.toDomain(entityObject) : null;
   }
 
-  async findByIds(ids: <%= name %>['id'][]): Promise<<%= name %>[]> {
-    const entityObjects = await this.<%= h.inflection.camelize(name, true) %>Model.find({ _id: { $in: ids } });
+  async findByIds(
+    ids: <%= name %>['id'][],
+    options?: { session?: ClientSession },
+  ): Promise<<%= name %>[]> {
+    const entityObjects = await this.<%= h.inflection.camelize(name, true) %>Model
+      .find({ _id: { $in: ids } })
+      .session(options?.session || null);
     return entityObjects.map((entityObject) =>
       <%= name %>Mapper.toDomain(entityObject),
     );
@@ -55,12 +69,17 @@ export class <%= name %>DocumentRepository implements <%= name %>Repository {
   async update(
     id: <%= name %>['id'],
     payload: Partial<<%= name %>>,
+    options?: { session?: ClientSession },
   ): Promise<NullableType<<%= name %>>> {
     const clonedPayload = { ...payload };
     delete clonedPayload.id;
 
-    const filter = { _id: id.toString() };
-    const entity = await this.<%= h.inflection.camelize(name, true) %>Model.findOne(filter);
+    const filter = { _id: id };
+    
+    // Tìm bản ghi hiện tại với session
+    const entity = await this.<%= h.inflection.camelize(name, true) %>Model
+      .findOne(filter)
+      .session(options?.session || null);
 
     if (!entity) {
       throw new Error('Record not found');
@@ -72,13 +91,21 @@ export class <%= name %>DocumentRepository implements <%= name %>Repository {
         ...<%= name %>Mapper.toDomain(entity),
         ...clonedPayload,
       }),
-      { new: true },
+      { 
+        new: true,
+        session: options?.session // Quan trọng cho ACID
+      },
     );
 
     return entityObject ? <%= name %>Mapper.toDomain(entityObject) : null;
   }
 
-  async remove(id: <%= name %>['id']): Promise<void> {
-    await this.<%= h.inflection.camelize(name, true) %>Model.deleteOne({ _id: id });
+  async remove(
+    id: <%= name %>['id'],
+    options?: { session?: ClientSession },
+  ): Promise<void> {
+    await this.<%= h.inflection.camelize(name, true) %>Model
+      .deleteOne({ _id: id })
+      .session(options?.session || null);
   }
 }
