@@ -16,6 +16,7 @@ import path from 'path';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AuthAppleModule } from './auth-apple/auth-apple.module';
 import { AuthFacebookModule } from './auth-facebook/auth-facebook.module';
 import { AuthGoogleModule } from './auth-google/auth-google.module';
@@ -30,6 +31,7 @@ import { MongooseConfigService } from './database/mongoose-config.service';
 import { RedisModule } from './redis/redis.module';
 import { QueueModule } from './queue/queue.module';
 import { MailQueueModule } from './queue/mail/mail-queue.module';
+import { ActivityLogModule } from './activity-log/activity-log.module';
 
 const infrastructureDatabaseModule = MongooseModule.forRootAsync({
   useClass: MongooseConfigService,
@@ -67,6 +69,7 @@ import { Request } from 'express';
       route: '/queues',
       adapter: ExpressAdapter,
     }),
+    EventEmitterModule.forRoot(),
     ClsModule.forRoot({
       global: true,
       middleware: {
@@ -142,6 +145,7 @@ import { Request } from 'express';
     RedisModule,
     QueueModule,
     MailQueueModule,
+    ActivityLogModule,
   ],
 })
 export class AppModule { }
