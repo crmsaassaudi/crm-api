@@ -11,7 +11,11 @@ import {
   HttpStatus,
   HttpCode,
   SerializeOptions,
+  UseInterceptors,
 } from '@nestjs/common';
+import { CacheTTL } from '@nestjs/cache-manager';
+import { HttpCacheInterceptor } from '../common/cache/interceptors/http-cache.interceptor';
+import { CacheEntity } from '../common/cache/decorators/cache-entity.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import {
@@ -44,8 +48,10 @@ import { infinityPagination } from '../utils/infinity-pagination';
   path: 'users',
   version: '1',
 })
+@UseInterceptors(HttpCacheInterceptor)
+@CacheEntity('User')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) { }
 
   @ApiCreatedResponse({
     type: User,
@@ -67,6 +73,7 @@ export class UsersController {
   })
   @Get()
   @HttpCode(HttpStatus.OK)
+  @CacheTTL(60)
   async findAll(
     @Query() query: QueryUserDto,
   ): Promise<InfinityPaginationResponseDto<User>> {
@@ -102,6 +109,7 @@ export class UsersController {
     type: String,
     required: true,
   })
+  @CacheTTL(60)
   findOne(@Param('id') id: User['id']): Promise<NullableType<User>> {
     return this.usersService.findById(id);
   }
