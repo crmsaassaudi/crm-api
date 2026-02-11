@@ -29,6 +29,12 @@ const infrastructureDatabaseModule = MongooseModule.forRootAsync({
 });
 
 import { DatabaseModule } from './database/database.module';
+import { ClsModule, ClsService } from 'nestjs-cls';
+import { WinstonModule } from 'nest-winston';
+import * as winston from 'winston';
+import { utilities as nestWinstonUtilities } from 'nest-winston';
+import { v4 as uuidv4 } from 'uuid';
+import { Request } from 'express';
 
 @Module({
   imports: [
@@ -48,6 +54,45 @@ import { DatabaseModule } from './database/database.module';
       envFilePath: ['.env'],
     }),
     infrastructureDatabaseModule,
+    ClsModule.forRoot({
+      global: true,
+      middleware: {
+        mount: true,
+        generateId: true,
+        idGenerator: (req: Request) => {
+          const correlationId = req.headers['x-correlation-id'];
+          if (Array.isArray(correlationId)) {
+            return correlationId[0];
+          }
+          return correlationId ?? uuidv4();
+        },
+      },
+    }),
+    WinstonModule.forRootAsync({
+      useFactory: (clsService: ClsService) => {
+        return {
+          transports: [
+            new winston.transports.Console({
+              format: winston.format.combine(
+                winston.format.timestamp(),
+                winston.format.ms(),
+                nestWinstonUtilities.format.nestLike('MyApp', {
+                  colors: true,
+                  prettyPrint: true,
+                }),
+                winston.format.printf(
+                  ({ context, level, timestamp, message, ms }) => {
+                    const correlationId = clsService.getId() || 'N/A';
+                    return `[${timestamp}] [${correlationId}] ${level} [${context}] : ${message} ${ms}`;
+                  },
+                ),
+              ),
+            }),
+          ],
+        };
+      },
+      inject: [ClsService],
+    }),
     I18nModule.forRootAsync({
       useFactory: (configService: ConfigService<AllConfigType>) => ({
         fallbackLanguage: configService.getOrThrow('app.fallbackLanguage', {
@@ -83,4 +128,4 @@ import { DatabaseModule } from './database/database.module';
     HomeModule,
   ],
 })
-export class AppModule {}
+export class AppModule { }
