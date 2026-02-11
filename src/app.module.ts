@@ -32,6 +32,7 @@ import { RedisModule } from './redis/redis.module';
 import { QueueModule } from './queue/queue.module';
 import { MailQueueModule } from './queue/mail/mail-queue.module';
 import { ActivityLogModule } from './activity-log/activity-log.module';
+import { HttpResilienceModule } from './common/http/http-resilience.module';
 
 const infrastructureDatabaseModule = MongooseModule.forRootAsync({
   useClass: MongooseConfigService,
@@ -146,6 +147,7 @@ import { Request } from 'express';
     QueueModule,
     MailQueueModule,
     ActivityLogModule,
+    HttpResilienceModule,
   ],
 })
 export class AppModule { }
