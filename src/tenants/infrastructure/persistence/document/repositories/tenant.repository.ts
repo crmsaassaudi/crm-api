@@ -28,4 +28,13 @@ export class TenantsRepository {
         const tenantObject = await this.tenantsModel.findById(id);
         return tenantObject ? TenantMapper.toDomain(tenantObject) : null;
     }
+
+    async update(id: string, payload: Partial<Tenant>): Promise<Tenant | null> {
+        const updatedTenant = await this.tenantsModel.findByIdAndUpdate(
+            id,
+            payload,
+            { new: true }
+        );
+        return updatedTenant ? TenantMapper.toDomain(updatedTenant) : null;
+    }
 }

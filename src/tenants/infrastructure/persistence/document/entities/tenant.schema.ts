@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { now, HydratedDocument } from 'mongoose';
+import { now, HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 
 export type TenantSchemaDocument = HydratedDocument<TenantSchemaClass>;
@@ -22,6 +22,9 @@ export class TenantSchemaClass extends EntityDocumentHelper {
 
     @Prop({ required: true, unique: true })
     domain: string;
+
+    @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass', required: true, index: true })
+    owner: string;
 
     @Prop({ default: now })
     createdAt: Date;

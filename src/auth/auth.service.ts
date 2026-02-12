@@ -70,6 +70,11 @@ export class AuthService {
     const keycloakId = keycloakPayload.sub;
     const email = keycloakPayload.email;
 
+    // Extract tenant IDs from Keycloak token
+    // Expected format: keycloakPayload.tenants = ['tenant1_id', 'tenant2_id']
+    // or keycloakPayload.tenant_ids = ['tenant1_id', 'tenant2_id']
+    const keycloakTenantIds: string[] = keycloakPayload.tenants || keycloakPayload.tenant_ids || [];
+
     let user = await this.usersService.findByKeycloakIdAndProvider({
       keycloakId,
       provider: AuthProvidersEnum.email, // Or logic to determine provider based on token
@@ -81,6 +86,22 @@ export class AuthService {
       if (user) {
         // Link existing user
         user.keycloakId = keycloakId;
+
+        // Sync tenants from Keycloak
+        const existingTenantIds = user.tenants.map(t => t.tenant);
+        const newTenantIds = keycloakTenantIds.filter(tid => !existingTenantIds.includes(tid));
+
+        if (newTenantIds.length > 0) {
+          user.tenants = [
+            ...user.tenants,
+            ...newTenantIds.map(tid => ({
+              tenant: tid,
+              roles: [],
+              joinedAt: new Date(),
+            })),
+          ];
+        }
+
         await this.usersService.update(user.id, user);
       }
     }
@@ -98,7 +119,29 @@ export class AuthService {
         provider: AuthProvidersEnum.email,
         role,
         status,
+        tenants: keycloakTenantIds.map(tid => ({
+          tenant: tid,
+          roles: [],
+          joinedAt: new Date(),
+        })),
       });
+    } else {
+      // User exists - sync tenants from Keycloak (JIT sync)
+      const existingTenantIds = user.tenants.map(t => t.tenant);
+      const newTenantIds = keycloakTenantIds.filter(tid => !existingTenantIds.includes(tid));
+
+      if (newTenantIds.length > 0) {
+        user.tenants = [
+          ...user.tenants,
+          ...newTenantIds.map(tid => ({
+            tenant: tid,
+            roles: [],
+            joinedAt: new Date(),
+          })),
+        ];
+
+        await this.usersService.update(user.id, user);
+      }
     }
 
     return user;

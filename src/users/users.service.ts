@@ -124,7 +124,7 @@ export class UsersService {
     return this.usersRepository.create({
       // Do not remove comment below.
       // <creating-property-payload />
-      tenant: tenantId,
+      tenants: tenantId ? [{ tenant: tenantId, roles: [], joinedAt: new Date() }] : [],
       firstName: createUserDto.firstName,
       lastName: createUserDto.lastName,
       email: email,
@@ -348,7 +348,7 @@ export class UsersService {
       keycloakId: keycloakUser.id,
       role: inviteUserDto.role ? { id: inviteUserDto.role.id } : { id: RoleEnum.user },
       status: { id: StatusEnum.active },
-      tenant: tenantId,
+      tenants: [{ tenant: tenantId, roles: [], joinedAt: new Date() }],
     });
   }
 

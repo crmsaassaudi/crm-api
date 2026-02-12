@@ -15,6 +15,9 @@ export class Tenant {
     domain: string;
 
     @ApiProperty()
+    owner: string;
+
+    @ApiProperty()
     createdAt: Date;
 
     @ApiProperty()

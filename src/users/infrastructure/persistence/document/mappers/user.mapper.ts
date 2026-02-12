@@ -12,7 +12,13 @@ export class UserMapper {
     const domainEntity = new User();
     domainEntity.id = raw._id.toString();
     domainEntity.version = raw.__v;
-    domainEntity.tenant = raw.tenant; // Map tenant
+    domainEntity.tenants = raw.tenants
+      ? raw.tenants.map(t => ({
+        tenant: t.tenant.toString(),
+        roles: t.roles,
+        joinedAt: t.joinedAt,
+      }))
+      : [];
     domainEntity.email = raw.email;
     domainEntity.password = raw.password;
     domainEntity.provider = raw.provider;
@@ -70,7 +76,13 @@ export class UserMapper {
       persistenceSchema._id = domainEntity.id;
     }
 
-    persistenceSchema.tenant = domainEntity.tenant; // Map tenant
+    persistenceSchema.tenants = domainEntity.tenants
+      ? domainEntity.tenants.map(t => ({
+        tenant: t.tenant,
+        roles: t.roles,
+        joinedAt: t.joinedAt,
+      }))
+      : [];
     if (domainEntity.version !== undefined) {
       persistenceSchema.__v = domainEntity.version; // Map version for optimistic lock checks
     }

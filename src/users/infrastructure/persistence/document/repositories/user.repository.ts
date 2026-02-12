@@ -73,10 +73,17 @@ export class UsersDocumentRepository
     return userObject ? UserMapper.toDomain(userObject) : null;
   }
 
-  async create(data: Omit<User, 'id' | 'createdAt' | 'deletedAt' | 'updatedAt' | 'tenant'> & { tenant?: string }): Promise<User> {
+  async create(data: Omit<User, 'id' | 'createdAt' | 'deletedAt' | 'updatedAt'>): Promise<User> {
     const domainEntity = new User();
     Object.assign(domainEntity, data);
-    domainEntity.tenant = data.tenant || this.cls.get('tenantId');
+
+    // Ensure tenants are set, defaulting to current tenant if not provided in tenants array
+    if (!domainEntity.tenants || domainEntity.tenants.length === 0) {
+      const tenantId = this.cls.get('tenantId');
+      if (tenantId) {
+        domainEntity.tenants = [{ tenant: tenantId, roles: [], joinedAt: new Date() }];
+      }
+    }
 
     // Default values if needed, otherwise handled by schema defaults or mapper
 

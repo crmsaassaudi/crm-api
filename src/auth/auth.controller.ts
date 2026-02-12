@@ -67,8 +67,16 @@ export class AuthController {
       // Sync user (JIT)
       await this.service.me(decoded);
 
+      // Set HttpOnly cookie for security
+      res.cookie('access_token', accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production', // Only HTTPS in production
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      });
+
       const frontendDomain = this.configService.getOrThrow('app.frontendDomain', { infer: true }) || 'http://localhost:3000';
-      return res.redirect(`${frontendDomain}/auth-redirect?token=${accessToken}`);
+      return res.redirect(`${frontendDomain}/dashboard`);
     } catch (e) {
       console.error('Callback error', e);
       const frontendDomain = this.configService.getOrThrow('app.frontendDomain', { infer: true }) || 'http://localhost:3000';

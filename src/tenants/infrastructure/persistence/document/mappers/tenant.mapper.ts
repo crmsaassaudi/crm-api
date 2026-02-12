@@ -7,6 +7,7 @@ export class TenantMapper {
         tenant.id = raw._id.toString();
         tenant.name = raw.name;
         tenant.domain = raw.domain;
+        tenant.owner = raw.owner;
         tenant.createdAt = raw.createdAt;
         tenant.updatedAt = raw.updatedAt;
         tenant.deletedAt = raw.deletedAt;
@@ -20,6 +21,7 @@ export class TenantMapper {
         }
         tenantSchema.name = domainEntity.name;
         tenantSchema.domain = domainEntity.domain;
+        tenantSchema.owner = domainEntity.owner;
         tenantSchema.createdAt = domainEntity.createdAt;
         tenantSchema.updatedAt = domainEntity.updatedAt;
         tenantSchema.deletedAt = domainEntity.deletedAt;

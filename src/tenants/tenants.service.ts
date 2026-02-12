@@ -67,14 +67,24 @@ export class TenantsService {
 
         try {
             // 4. DB: Create Shadow User
-            await this.usersService.create({
+            const shadowUser = await this.usersService.create({
                 email: createTenantDto.adminEmail,
                 provider: AuthProvidersEnum.email,
                 keycloakId: keycloakUser.id,
                 firstName: null,
                 lastName: null,
                 role: { id: RoleEnum.admin } as any,
-            }, tenantId);
+                tenants: [{ tenant: tenantId, roles: ['admin'], joinedAt: new Date() }],
+            });
+
+            // 5. Update Tenant with Owner
+            try {
+                newTenant.owner = shadowUser.id.toString();
+                await this.tenantsRepository.update(tenantId, { owner: shadowUser.id.toString() });
+            } catch (error) {
+                console.error('Failed to assign owner to tenant', error);
+                // Non-critical, we can continue
+            }
 
         } catch (error) {
             // Rollback: Delete Keycloak User AND Tenant
@@ -87,5 +97,9 @@ export class TenantsService {
         }
 
         return newTenant;
+    }
+
+    async findById(id: string): Promise<Tenant | null> {
+        return this.tenantsRepository.findById(id);
     }
 }

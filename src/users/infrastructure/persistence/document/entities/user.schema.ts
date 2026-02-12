@@ -25,8 +25,21 @@ export type UserSchemaDocument = HydratedDocument<UserSchemaClass>;
   },
 })
 export class UserSchemaClass extends EntityDocumentHelper {
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TenantSchemaClass', required: true, index: true })
-  tenant: string;
+  @Prop({
+    type: [
+      {
+        tenant: { type: MongooseSchema.Types.ObjectId, ref: 'TenantSchemaClass' },
+        roles: [String],
+        joinedAt: { type: Date, default: now },
+      },
+    ],
+    default: [],
+  })
+  tenants: {
+    tenant: string;
+    roles: string[];
+    joinedAt: Date;
+  }[];
 
   @Prop({
     type: String,

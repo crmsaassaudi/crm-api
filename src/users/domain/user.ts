@@ -12,8 +12,14 @@ export class User {
   })
   id: number | string;
 
-  @ApiProperty()
-  tenant: string;
+  @ApiProperty({
+    type: [Object],
+  })
+  tenants: {
+    tenant: string;
+    roles: string[];
+    joinedAt: Date;
+  }[];
 
   @ApiProperty({
     type: String,

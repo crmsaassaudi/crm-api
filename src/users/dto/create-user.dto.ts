@@ -52,4 +52,12 @@ export class CreateUserDto {
   @IsOptional()
   @Type(() => StatusDto)
   status?: StatusDto;
+
+  @ApiPropertyOptional({ type: [Object] })
+  @IsOptional()
+  tenants?: {
+    tenant: string;
+    roles: string[];
+    joinedAt: Date;
+  }[];
 }
