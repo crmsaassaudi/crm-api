@@ -6,4 +6,4 @@ import { TransactionManager } from './transaction-manager.service';
   providers: [TransactionManager],
   exports: [TransactionManager],
 })
-export class DatabaseModule {}
+export class DatabaseModule { }

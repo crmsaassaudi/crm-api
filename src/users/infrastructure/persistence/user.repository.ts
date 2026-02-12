@@ -36,5 +36,12 @@ export abstract class UserRepository {
     payload: DeepPartial<User>,
   ): Promise<User | null>;
 
+  abstract upsertWithTenants(
+    keycloakId: string,
+    email: string,
+    userData: Partial<User>,
+    newTenants: { tenant: string; roles: string[]; joinedAt: Date }[],
+  ): Promise<User>;
+
   abstract remove(id: User['id']): Promise<void>;
 }

@@ -184,4 +184,54 @@ export class UsersDocumentRepository
     const filter = this.applyTenantFilter({ _id: id.toString() });
     await this.model.deleteOne(filter);
   }
+
+  /**
+   * Upsert user with idempotency guarantee
+   * Creates user if not exists, updates tenants if exists using $addToSet
+   */
+  async upsertWithTenants(
+    keycloakId: string,
+    email: string,
+    userData: Partial<User>,
+    newTenants: { tenant: string; roles: string[]; joinedAt: Date }[],
+  ): Promise<User> {
+    const persistenceData: any = {
+      email,
+      keycloakId,
+      provider: userData.provider,
+      firstName: userData.firstName,
+      lastName: userData.lastName,
+      role: userData.role,
+      status: userData.status,
+    };
+
+    // Use findOneAndUpdate with upsert for idempotency
+    const updatedUser = await this.model.findOneAndUpdate(
+      {
+        $or: [{ keycloakId }, { email }],
+      },
+      {
+        $setOnInsert: {
+          // Only set these fields on insert (first time creation)
+          ...persistenceData,
+          createdAt: new Date(),
+        },
+        $set: {
+          // Always update these fields
+          updatedAt: new Date(),
+        },
+        $addToSet: {
+          // Add tenants only if they don't exist (prevents duplicates)
+          tenants: { $each: newTenants },
+        },
+      },
+      {
+        upsert: true, // Create if doesn't exist
+        new: true, // Return updated document
+        setDefaultsOnInsert: true, // Apply schema defaults on insert
+      },
+    );
+
+    return UserMapper.toDomain(updatedUser);
+  }
 }

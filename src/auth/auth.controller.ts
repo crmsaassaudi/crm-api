@@ -71,7 +71,7 @@ export class AuthController {
       res.cookie('access_token', accessToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production', // Only HTTPS in production
-        sameSite: 'lax',
+        sameSite: 'strict', // Enhanced CSRF protection
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
       });
 

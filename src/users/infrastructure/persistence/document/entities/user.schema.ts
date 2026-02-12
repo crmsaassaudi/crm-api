@@ -6,6 +6,7 @@ import { FileSchemaClass } from '../../../../../files/infrastructure/persistence
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { StatusSchema } from '../../../../../statuses/infrastructure/persistence/document/entities/status.schema';
 import { RoleSchema } from '../../../../../roles/infrastructure/persistence/document/entities/role.schema';
+import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
 export type UserSchemaDocument = HydratedDocument<UserSchemaClass>;
 
@@ -97,6 +98,8 @@ export class UserSchemaClass extends EntityDocumentHelper {
 }
 
 export const UserSchema = SchemaFactory.createForClass(UserSchemaClass);
+
+UserSchema.plugin(tenantFilterPlugin, { field: 'tenants.tenant' });
 
 UserSchema.index({ 'role._id': 1 });
 UserSchema.index({ email: 1, tenant: 1 }, { unique: true });

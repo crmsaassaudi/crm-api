@@ -37,7 +37,7 @@ import {
   ResourceGuard,
   RoleGuard,
 } from 'nest-keycloak-connect';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
 const infrastructureDatabaseModule = MongooseModule.forRootAsync({
   useClass: MongooseConfigService,
@@ -53,6 +53,8 @@ import { Request } from 'express';
 import { jwtDecode } from 'jwt-decode';
 
 
+
+import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 
 @Module({
   imports: [
@@ -219,6 +221,11 @@ import { jwtDecode } from 'jwt-decode';
       provide: APP_GUARD,
       useClass: RoleGuard,
     },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: TenantInterceptor,
+    },
   ],
 })
 export class AppModule { }
+
