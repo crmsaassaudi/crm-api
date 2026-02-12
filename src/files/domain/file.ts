@@ -17,6 +17,18 @@ export class FileType {
   @Allow()
   id: string;
 
+  @ApiProperty()
+  tenantId: string;
+
+  @ApiProperty()
+  version?: number;
+
+  @ApiProperty()
+  createdAt: Date;
+
+  @ApiProperty()
+  updatedAt: Date;
+
   @ApiProperty({
     type: String,
     example: 'https://example.com/path/to/file.jpg',

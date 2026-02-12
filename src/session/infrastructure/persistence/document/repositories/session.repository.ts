@@ -8,21 +8,42 @@ import { InjectModel } from '@nestjs/mongoose';
 import { SessionMapper } from '../mappers/session.mapper';
 import { User } from '../../../../../users/domain/user';
 
+import { ClsService } from 'nestjs-cls';
+import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
+import { SessionSchemaDocument } from '../entities/session.schema';
+
 @Injectable()
-export class SessionDocumentRepository implements SessionRepository {
+export class SessionDocumentRepository
+  extends BaseDocumentRepository<SessionSchemaDocument, Session>
+  implements SessionRepository {
   constructor(
     @InjectModel(SessionSchemaClass.name)
-    private sessionModel: Model<SessionSchemaClass>,
-  ) {}
+    sessionModel: Model<SessionSchemaDocument>,
+    cls: ClsService,
+  ) {
+    super(sessionModel, cls);
+  }
+
+  protected mapToDomain(doc: SessionSchemaClass): Session {
+    return SessionMapper.toDomain(doc);
+  }
+
+  protected toPersistence(domain: Session): SessionSchemaClass {
+    return SessionMapper.toPersistence(domain);
+  }
 
   async findById(id: Session['id']): Promise<NullableType<Session>> {
-    const sessionObject = await this.sessionModel.findById(id);
+    const sessionObject = await this.model.findById(id);
     return sessionObject ? SessionMapper.toDomain(sessionObject) : null;
   }
 
-  async create(data: Session): Promise<Session> {
-    const persistenceModel = SessionMapper.toPersistence(data);
-    const createdSession = new this.sessionModel(persistenceModel);
+  async create(data: Omit<Session, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'tenantId'>): Promise<Session> {
+    const domainEntity = new Session();
+    Object.assign(domainEntity, data);
+    domainEntity.tenantId = this.cls.get('tenantId');
+
+    const persistenceModel = SessionMapper.toPersistence(domainEntity);
+    const createdSession = new this.model(persistenceModel);
     const sessionObject = await createdSession.save();
     return SessionMapper.toDomain(sessionObject);
   }
@@ -37,14 +58,17 @@ export class SessionDocumentRepository implements SessionRepository {
     delete clonedPayload.updatedAt;
     delete clonedPayload.deletedAt;
 
+    // We override update to handle full-entity persistence requirement of mapper
+    // and implicit tenantId filter if needed (though session ID is usually sufficient).
+
     const filter = { _id: id.toString() };
-    const session = await this.sessionModel.findOne(filter);
+    const session = await this.model.findOne(filter); // Use this.model
 
     if (!session) {
       return null;
     }
 
-    const sessionObject = await this.sessionModel.findOneAndUpdate(
+    const sessionObject = await this.model.findOneAndUpdate(
       filter,
       SessionMapper.toPersistence({
         ...SessionMapper.toDomain(session),
@@ -57,11 +81,11 @@ export class SessionDocumentRepository implements SessionRepository {
   }
 
   async deleteById(id: Session['id']): Promise<void> {
-    await this.sessionModel.deleteOne({ _id: id.toString() });
+    await this.model.deleteOne({ _id: id.toString() });
   }
 
   async deleteByUserId({ userId }: { userId: User['id'] }): Promise<void> {
-    await this.sessionModel.deleteMany({ user: userId.toString() });
+    await this.model.deleteMany({ user: userId.toString() });
   }
 
   async deleteByUserIdWithExclude({
@@ -75,6 +99,6 @@ export class SessionDocumentRepository implements SessionRepository {
       user: userId.toString(),
       _id: { $not: { $eq: excludeSessionId.toString() } },
     };
-    await this.sessionModel.deleteMany(transformedCriteria);
+    await this.model.deleteMany(transformedCriteria);
   }
 }

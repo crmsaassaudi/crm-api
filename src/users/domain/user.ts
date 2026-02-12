@@ -12,6 +12,9 @@ export class User {
   })
   id: number | string;
 
+  @ApiProperty()
+  tenantId: string;
+
   @ApiProperty({
     type: String,
     example: 'john.doe@example.com',

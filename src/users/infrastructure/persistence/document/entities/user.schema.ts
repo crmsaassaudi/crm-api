@@ -12,13 +12,22 @@ export type UserSchemaDocument = HydratedDocument<UserSchemaClass>;
 @Schema({
   timestamps: true,
   optimisticConcurrency: true,
-  versionKey: '__v', // Map to 'version' property
+  versionKey: '__v',
+  collection: 'users',
   toJSON: {
     virtuals: true,
     getters: true,
+    transform: (doc, ret: any) => {
+      ret.version = ret.__v;
+      delete ret.__v;
+      return ret;
+    },
   },
 })
 export class UserSchemaClass extends EntityDocumentHelper {
+  @Prop({ required: true, index: true })
+  tenantId: string;
+
   @Prop({
     type: String,
     unique: true,

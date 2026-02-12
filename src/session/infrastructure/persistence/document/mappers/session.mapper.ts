@@ -12,6 +12,9 @@ export class SessionMapper {
       domainEntity.user = UserMapper.toDomain(raw.user);
     }
 
+    domainEntity.tenantId = raw.tenantId;
+    domainEntity.version = raw.__v;
+
     domainEntity.hash = raw.hash;
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
@@ -27,6 +30,10 @@ export class SessionMapper {
     }
     sessionEntity.user = persistenceSchema;
     sessionEntity.hash = domainEntity.hash;
+    sessionEntity.tenantId = domainEntity.tenantId;
+    if (domainEntity.version !== undefined) {
+      sessionEntity.__v = domainEntity.version;
+    }
     sessionEntity.createdAt = domainEntity.createdAt;
     sessionEntity.updatedAt = domainEntity.updatedAt;
     sessionEntity.deletedAt = domainEntity.deletedAt;

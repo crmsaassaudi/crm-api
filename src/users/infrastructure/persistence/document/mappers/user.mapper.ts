@@ -11,7 +11,8 @@ export class UserMapper {
   static toDomain(raw: UserSchemaClass): User {
     const domainEntity = new User();
     domainEntity.id = raw._id.toString();
-    domainEntity.version = (raw as any).__v;
+    domainEntity.version = raw.__v;
+    domainEntity.tenantId = raw.tenantId; // Map tenantId
     domainEntity.email = raw.email;
     domainEntity.password = raw.password;
     domainEntity.provider = raw.provider;
@@ -68,8 +69,12 @@ export class UserMapper {
     if (domainEntity.id && typeof domainEntity.id === 'string') {
       persistenceSchema._id = domainEntity.id;
     }
-    // Persistence version is handled by Mongoose
-    // persistenceSchema.__v = domainEntity.version;
+
+    persistenceSchema.tenantId = domainEntity.tenantId; // Map tenantId
+    if (domainEntity.version !== undefined) {
+      persistenceSchema.__v = domainEntity.version; // Map version for optimistic lock checks
+    }
+
     persistenceSchema.email = domainEntity.email;
     persistenceSchema.password = domainEntity.password;
     persistenceSchema.provider = domainEntity.provider;

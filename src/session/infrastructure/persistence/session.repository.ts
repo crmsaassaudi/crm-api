@@ -6,7 +6,7 @@ export abstract class SessionRepository {
   abstract findById(id: Session['id']): Promise<NullableType<Session>>;
 
   abstract create(
-    data: Omit<Session, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt'>,
+    data: Omit<Session, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'tenantId'>,
   ): Promise<Session>;
 
   abstract update(

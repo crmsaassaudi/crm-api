@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { FileRepository } from '../../file.repository';
-import { FileSchemaClass } from '../entities/file.schema';
+import { FileSchemaClass, FileSchemaDocument } from '../entities/file.schema';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { FileType } from '../../../../domain/file';
@@ -9,26 +9,45 @@ import { FileType } from '../../../../domain/file';
 import { FileMapper } from '../mappers/file.mapper';
 import { NullableType } from '../../../../../utils/types/nullable.type';
 
+import { ClsService } from 'nestjs-cls';
+import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
+
 @Injectable()
-export class FileDocumentRepository implements FileRepository {
+export class FileDocumentRepository extends BaseDocumentRepository<FileSchemaDocument, FileType> implements FileRepository {
   constructor(
     @InjectModel(FileSchemaClass.name)
-    private fileModel: Model<FileSchemaClass>,
-  ) {}
+    fileModel: Model<FileSchemaDocument>,
+    cls: ClsService,
+  ) {
+    super(fileModel, cls);
+  }
 
-  async create(data: Omit<FileType, 'id'>): Promise<FileType> {
-    const createdFile = new this.fileModel(data);
+  protected mapToDomain(doc: FileSchemaClass): FileType {
+    return FileMapper.toDomain(doc);
+  }
+
+  protected toPersistence(domain: FileType): FileSchemaClass {
+    return FileMapper.toPersistence(domain);
+  }
+
+  async create(data: Omit<FileType, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'tenantId'>): Promise<FileType> {
+    const domainEntity = new FileType();
+    Object.assign(domainEntity, data);
+    domainEntity.tenantId = this.cls.get('tenantId');
+
+    const persistenceModel = FileMapper.toPersistence(domainEntity);
+    const createdFile = new this.model(persistenceModel);
     const fileObject = await createdFile.save();
     return FileMapper.toDomain(fileObject);
   }
 
   async findById(id: FileType['id']): Promise<NullableType<FileType>> {
-    const fileObject = await this.fileModel.findById(id);
+    const fileObject = await this.model.findById(id);
     return fileObject ? FileMapper.toDomain(fileObject) : null;
   }
 
   async findByIds(ids: FileType['id'][]): Promise<FileType[]> {
-    const fileObjects = await this.fileModel.find({ _id: { $in: ids } });
+    const fileObjects = await this.model.find({ _id: { $in: ids } });
     return fileObjects.map((fileObject) => FileMapper.toDomain(fileObject));
   }
 }

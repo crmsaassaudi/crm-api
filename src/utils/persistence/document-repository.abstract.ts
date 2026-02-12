@@ -12,10 +12,10 @@ export abstract class BaseDocumentRepository<
   TSchema extends Document,
   TDomain,
 > {
-  @Inject(ClsService)
-  protected readonly cls: ClsService;
-
-  constructor(protected readonly model: Model<TSchema>) {}
+  constructor(
+    protected readonly model: Model<TSchema>,
+    protected readonly cls: ClsService,
+  ) { }
 
   async create(
     data: Partial<TDomain>,
