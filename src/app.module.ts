@@ -88,6 +88,16 @@ import { Request } from 'express';
           }
           return correlationId ?? uuidv4();
         },
+        setup: (cls, req: Request) => {
+          const tenantId = req.headers['x-tenant-id'];
+          // Default to '00000000-0000-0000-0000-000000000000' if not provided
+          cls.set(
+            'tenantId',
+            Array.isArray(tenantId)
+              ? tenantId[0]
+              : tenantId ?? '00000000-0000-0000-0000-000000000000',
+          );
+        },
       },
     }),
     WinstonModule.forRootAsync({

@@ -11,7 +11,7 @@ export class UserSeedService {
   constructor(
     @InjectModel(UserSchemaClass.name)
     private readonly model: Model<UserSchemaClass>,
-  ) {}
+  ) { }
 
   async run() {
     const admin = await this.model.findOne({
@@ -33,6 +33,7 @@ export class UserSeedService {
         status: {
           _id: StatusEnum.active.toString(),
         },
+        tenantId: '00000000-0000-0000-0000-000000000000',
       });
       await data.save();
     }
@@ -56,6 +57,7 @@ export class UserSeedService {
         status: {
           _id: StatusEnum.active.toString(),
         },
+        tenantId: '00000000-0000-0000-0000-000000000000',
       });
 
       await data.save();
