@@ -5,11 +5,8 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export class <%= name %> {
   id: string;
-
-  // Domain chỉ nói chuyện bằng ngôn ngữ "version"
   version: number;
-
+  tenantId: string;
   createdAt: Date;
   updatedAt: Date;
-  tenantId: string;
 }

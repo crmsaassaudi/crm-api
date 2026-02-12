@@ -11,7 +11,7 @@ import { RedisService } from '../../redis/redis.service';
 
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
-  constructor(private readonly redisService: RedisService) { }
+  constructor(private readonly redisService: RedisService) {}
 
   async intercept(
     context: ExecutionContext,

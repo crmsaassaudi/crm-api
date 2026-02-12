@@ -6,16 +6,16 @@ import { MailProducer } from './mail.producer';
 import { MailProcessor } from './mail.processor';
 
 @Module({
-    imports: [
-        BullModule.registerQueue({
-            name: 'mail',
-        }),
-        BullBoardModule.forFeature({
-            name: 'mail',
-            adapter: BullMQAdapter,
-        }),
-    ],
-    providers: [MailProducer, MailProcessor],
-    exports: [MailProducer],
+  imports: [
+    BullModule.registerQueue({
+      name: 'mail',
+    }),
+    BullBoardModule.forFeature({
+      name: 'mail',
+      adapter: BullMQAdapter,
+    }),
+  ],
+  providers: [MailProducer, MailProcessor],
+  exports: [MailProducer],
 })
-export class MailQueueModule { }
+export class MailQueueModule {}

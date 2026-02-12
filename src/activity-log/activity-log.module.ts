@@ -4,7 +4,7 @@ import { ActivityLogListener } from './listeners/activity-log.listener';
 import { TestEventController } from './test-event.controller';
 
 @Module({
-    controllers: [TestEventController],
-    providers: [ActivityLogListener],
+  controllers: [TestEventController],
+  providers: [ActivityLogListener],
 })
-export class ActivityLogModule { }
+export class ActivityLogModule {}

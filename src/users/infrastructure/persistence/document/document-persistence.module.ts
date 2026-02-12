@@ -8,7 +8,6 @@ import { UsersDocumentRepository } from './repositories/user.repository';
 
 @Module({
   imports: [
-
     MongooseModule.forFeatureAsync([
       {
         name: UserSchemaClass.name,
@@ -32,4 +31,4 @@ import { UsersDocumentRepository } from './repositories/user.repository';
   ],
   exports: [UserRepository],
 })
-export class DocumentUserPersistenceModule { }
+export class DocumentUserPersistenceModule {}

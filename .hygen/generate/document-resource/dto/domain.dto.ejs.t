@@ -9,4 +9,16 @@ export class <%= name %>Dto {
   @IsString()
   @IsNotEmpty()
   id: string;
+
+  @ApiProperty()
+  version: number;
+
+  @ApiProperty()
+  tenantId: string;
+
+  @ApiProperty()
+  createdAt: Date;
+
+  @ApiProperty()
+  updatedAt: Date;
 }

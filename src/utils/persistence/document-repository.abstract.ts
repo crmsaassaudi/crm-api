@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  ConflictException,
-  Inject,
-} from '@nestjs/common';
+import { Injectable, ConflictException, Inject } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import {
   ClientSession,
@@ -19,9 +15,8 @@ export abstract class BaseDocumentRepository<
   @Inject(ClsService)
   protected readonly cls: ClsService;
 
-  constructor(protected readonly model: Model<TSchema>) { }
+  constructor(protected readonly model: Model<TSchema>) {}
 
-  // Luôn cho phép nhận session ở tham số cuối cùng
   async create(
     data: Partial<TDomain>,
     session?: ClientSession,
@@ -46,35 +41,47 @@ export abstract class BaseDocumentRepository<
   ): Promise<TDomain | null> {
     const tenantId = this.cls.get('tenantId');
 
+    // 1. Convert Domain Entity to Persistence
     const persistenceData: any = this.toPersistence(payload as TDomain);
 
+    // 2. Extract version for Optimistic Lock
     const version = persistenceData.__v;
-    delete persistenceData.__v;
+    delete persistenceData.__v; // Remove from payload to avoid overwriting
 
     const filter: any = { _id: id };
     if (tenantId) {
       filter.tenantId = tenantId;
     }
 
+    // 3. If version is present, add to query filter
     if (version !== undefined) {
       filter.__v = version;
     }
 
-    const updated = await this.model
-      .findOneAndUpdate(
-        filter,
-        {
-          ...persistenceData,
-          $inc: { __v: 1 },
-        },
-        { new: true, session },
-      ) as TSchema;
+    const updated = (await this.model.findOneAndUpdate(
+      filter,
+      {
+        ...persistenceData,
+        $inc: { __v: 1 }, // Auto-increment version
+      },
+      { new: true, session: session || null },
+    )) as TSchema;
 
+    // 4. Check result: If update failed but version was provided -> CONFLICT
     if (!updated && version !== undefined) {
-      throw new ConflictException('Data has been modified. Please reload.');
+      const exists = await this.model.exists({ _id: id });
+      if (exists) {
+        throw new ConflictException(
+          'Dữ liệu đã bị thay đổi bởi người dùng khác. Vui lòng tải lại.',
+        );
+      }
     }
 
     return updated ? this.mapToDomain(updated) : null;
+  }
+
+  async remove(id: string): Promise<void> {
+    await this.model.deleteOne({ _id: id });
   }
 
   protected abstract mapToDomain(doc: TSchema): TDomain;

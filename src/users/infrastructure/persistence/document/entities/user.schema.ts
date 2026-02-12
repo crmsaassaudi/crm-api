@@ -7,7 +7,6 @@ import { EntityDocumentHelper } from '../../../../../utils/document-entity-helpe
 import { StatusSchema } from '../../../../../statuses/infrastructure/persistence/document/entities/status.schema';
 import { RoleSchema } from '../../../../../roles/infrastructure/persistence/document/entities/role.schema';
 
-
 export type UserSchemaDocument = HydratedDocument<UserSchemaClass>;
 
 @Schema({
@@ -78,5 +77,3 @@ export class UserSchemaClass extends EntityDocumentHelper {
 export const UserSchema = SchemaFactory.createForClass(UserSchemaClass);
 
 UserSchema.index({ 'role._id': 1 });
-
-

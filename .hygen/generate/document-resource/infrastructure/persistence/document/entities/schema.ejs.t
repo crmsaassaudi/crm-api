@@ -9,17 +9,24 @@ export type <%= name %>SchemaDocument = HydratedDocument<<%= name %>SchemaClass>
 
 @Schema({
   timestamps: true,
-  optimisticConcurrency: true, // BẮT BUỘC: Bật cơ chế check version
-  versionKey: '__v',           // BẮT BUỘC: Giữ nguyên key gốc
+  optimisticConcurrency: true,
+  versionKey: '__v', // Giữ nguyên key gốc
   collection: '<%= h.inflection.transform(name, ["pluralize", "underscore"]) %>',
+  toJSON: {
+    virtuals: true,
+    getters: true,
+    transform: (doc, ret: any) => {
+      ret.version = ret.__v; // Map __v -> version
+      delete ret.__v; // Ẩn __v
+      return ret;
+    },
+  },
 })
 export class <%= name %>SchemaClass extends EntityDocumentHelper {
-  // KHÔNG khai báo @Prop() version: number ở đây!
-  // Để Mongoose tự động quản lý __v ngầm.
-  
-  // Các trường khác...
-  @Prop({ required: true })
+  @Prop({ required: true, index: true })
   tenantId: string;
+
+  // Không khai báo @Prop version ở đây
 }
 
 export const <%= name %>Schema = SchemaFactory.createForClass(<%= name %>SchemaClass);

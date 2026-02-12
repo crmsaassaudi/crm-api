@@ -16,7 +16,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
     private readonly cls: ClsService,
-  ) { }
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const { httpAdapter } = this.httpAdapterHost;
@@ -62,7 +62,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (httpStatus >= 500) {
       this.logger.error(
         `[${correlationId}] [User:${userId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)}`,
-        isProduction ? (exception instanceof Error ? exception.message : String(exception)) : (exception instanceof Error ? exception.stack : String(exception)),
+        isProduction
+          ? exception instanceof Error
+            ? exception.message
+            : String(exception)
+          : exception instanceof Error
+            ? exception.stack
+            : String(exception),
       );
     } else {
       this.logger.warn(

@@ -51,7 +51,7 @@ import { infinityPagination } from '../utils/infinity-pagination';
 @UseInterceptors(HttpCacheInterceptor)
 @CacheEntity('User')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) { }
+  constructor(private readonly usersService: UsersService) {}
 
   @ApiCreatedResponse({
     type: User,

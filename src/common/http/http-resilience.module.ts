@@ -13,12 +13,29 @@ import { IntegrationLogController } from './integration-log.controller';
 
 @Global()
 @Module({
-    imports: [
-        HttpModule,
-        MongooseModule.forFeature([{ name: IntegrationLog.name, schema: IntegrationLogSchema }]),
-    ],
-    controllers: [TestHttpController, ResilienceMetricsController, IntegrationLogController],
-    providers: [ResilienceService, ResilienceHttpService, ResilienceMetricsService, IntegrationLogService],
-    exports: [HttpModule, ResilienceService, ResilienceHttpService, ResilienceMetricsService, IntegrationLogService],
+  imports: [
+    HttpModule,
+    MongooseModule.forFeature([
+      { name: IntegrationLog.name, schema: IntegrationLogSchema },
+    ]),
+  ],
+  controllers: [
+    TestHttpController,
+    ResilienceMetricsController,
+    IntegrationLogController,
+  ],
+  providers: [
+    ResilienceService,
+    ResilienceHttpService,
+    ResilienceMetricsService,
+    IntegrationLogService,
+  ],
+  exports: [
+    HttpModule,
+    ResilienceService,
+    ResilienceHttpService,
+    ResilienceMetricsService,
+    IntegrationLogService,
+  ],
 })
-export class HttpResilienceModule { }
+export class HttpResilienceModule {}

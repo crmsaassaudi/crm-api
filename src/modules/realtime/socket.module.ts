@@ -5,11 +5,8 @@ import { SalesGateway } from './gateways/sales.gateway';
 import { LeadNotificationListener } from './listeners/lead-notification.listener';
 
 @Module({
-    imports: [
-        JwtModule,
-        ConfigModule,
-    ],
-    providers: [SalesGateway, LeadNotificationListener],
-    exports: [SalesGateway],
+  imports: [JwtModule, ConfigModule],
+  providers: [SalesGateway, LeadNotificationListener],
+  exports: [SalesGateway],
 })
-export class SocketModule { }
+export class SocketModule {}

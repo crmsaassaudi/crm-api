@@ -24,7 +24,7 @@ export class UsersService {
   constructor(
     private readonly usersRepository: UserRepository,
     private readonly filesService: FilesService,
-  ) { }
+  ) {}
 
   async create(createUserDto: CreateUserDto): Promise<User> {
     // Do not remove comment below.
@@ -267,19 +267,23 @@ export class UsersService {
       };
     }
 
-    return this.usersRepository.update(id, {
-      // Do not remove comment below.
-      // <updating-property-payload />
-      firstName: updateUserDto.firstName,
-      lastName: updateUserDto.lastName,
-      email,
-      password,
-      photo,
-      role,
-      status,
-      provider: updateUserDto.provider,
-      socialId: updateUserDto.socialId,
-    }, updateUserDto.version);
+    return this.usersRepository.update(
+      id,
+      {
+        // Do not remove comment below.
+        // <updating-property-payload />
+        firstName: updateUserDto.firstName,
+        lastName: updateUserDto.lastName,
+        email,
+        password,
+        photo,
+        role,
+        status,
+        provider: updateUserDto.provider,
+        socialId: updateUserDto.socialId,
+      },
+      updateUserDto.version,
+    );
   }
 
   async remove(id: User['id']): Promise<void> {

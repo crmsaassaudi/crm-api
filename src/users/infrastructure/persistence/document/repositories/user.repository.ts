@@ -15,7 +15,7 @@ export class UsersDocumentRepository implements UserRepository {
   constructor(
     @InjectModel(UserSchemaClass.name)
     private readonly usersModel: Model<UserSchemaClass>,
-  ) { }
+  ) {}
 
   async create(data: User): Promise<User> {
     const persistenceModel = UserMapper.toPersistence(data);
@@ -109,10 +109,14 @@ export class UsersDocumentRepository implements UserRepository {
 
     const updatePayload: any = {
       ...UserMapper.toPersistence({
-        ...UserMapper.toDomain(await this.usersModel.findOne({ _id: id.toString() }) as UserSchemaClass),
+        ...UserMapper.toDomain(
+          (await this.usersModel.findOne({
+            _id: id.toString(),
+          })) as UserSchemaClass,
+        ),
         // Note: Efficient way would be not fetching but we need to merge domain logic if mapper is complex.
         // For now let's rely on findOneAndUpdate doing a merge if we just passed payload?
-        // Actually, mapper toPersistence might require full object. 
+        // Actually, mapper toPersistence might require full object.
         // Let's stick to the existing logic but add $inc.
         ...clonedPayload,
       }),
@@ -141,7 +145,7 @@ export class UsersDocumentRepository implements UserRepository {
       filter,
       {
         ...persistenceObject,
-        $inc: { __v: 1 } // Increment version
+        $inc: { __v: 1 }, // Increment version
       },
       { new: true },
     );

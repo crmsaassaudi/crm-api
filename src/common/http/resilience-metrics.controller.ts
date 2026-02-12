@@ -5,15 +5,15 @@ import { ApiTags } from '@nestjs/swagger';
 @ApiTags('Resilience')
 @Controller('resilience')
 export class ResilienceMetricsController {
-    constructor(private readonly metricsService: ResilienceMetricsService) { }
+  constructor(private readonly metricsService: ResilienceMetricsService) {}
 
-    @Get('metrics')
-    getMetrics() {
-        return this.metricsService.getMetrics();
-    }
+  @Get('metrics')
+  getMetrics() {
+    return this.metricsService.getMetrics();
+  }
 
-    @Get('logs')
-    getLogs() {
-        return this.metricsService.getLogs();
-    }
+  @Get('logs')
+  getLogs() {
+    return this.metricsService.getLogs();
+  }
 }
