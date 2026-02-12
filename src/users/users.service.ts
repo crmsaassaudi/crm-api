@@ -1,6 +1,8 @@
 import {
   HttpStatus,
   Injectable,
+  Inject,
+  forwardRef,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -18,15 +20,21 @@ import { FileType } from '../files/domain/file';
 import { Role } from '../roles/domain/role';
 import { Status } from '../statuses/domain/status';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { ClsService } from 'nestjs-cls';
+import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
+import { InviteUserDto } from './dto/invite-user.dto';
 
 @Injectable()
 export class UsersService {
   constructor(
     private readonly usersRepository: UserRepository,
     private readonly filesService: FilesService,
+    private readonly cls: ClsService,
+    @Inject(forwardRef(() => KeycloakAdminService))
+    private readonly keycloakAdminService: KeycloakAdminService,
   ) { }
 
-  async create(createUserDto: CreateUserDto): Promise<User> {
+  async create(createUserDto: CreateUserDto, tenantId?: string): Promise<User> {
     // Do not remove comment below.
     // <creating-property />
 
@@ -116,6 +124,7 @@ export class UsersService {
     return this.usersRepository.create({
       // Do not remove comment below.
       // <creating-property-payload />
+      tenant: tenantId,
       firstName: createUserDto.firstName,
       lastName: createUserDto.lastName,
       email: email,
@@ -124,7 +133,7 @@ export class UsersService {
       role: role,
       status: status,
       provider: createUserDto.provider ?? AuthProvidersEnum.email,
-      socialId: createUserDto.socialId,
+      keycloakId: createUserDto.keycloakId,
     });
   }
 
@@ -156,15 +165,15 @@ export class UsersService {
     return this.usersRepository.findByEmail(email);
   }
 
-  findBySocialIdAndProvider({
-    socialId,
+  findByKeycloakIdAndProvider({
+    keycloakId,
     provider,
   }: {
-    socialId: User['socialId'];
+    keycloakId: User['keycloakId'];
     provider: User['provider'];
   }): Promise<NullableType<User>> {
-    return this.usersRepository.findBySocialIdAndProvider({
-      socialId,
+    return this.usersRepository.findByKeycloakIdAndProvider({
+      keycloakId,
       provider,
     });
   }
@@ -280,7 +289,7 @@ export class UsersService {
         role,
         status,
         provider: updateUserDto.provider,
-        socialId: updateUserDto.socialId,
+        keycloakId: updateUserDto.keycloakId,
         version: updateUserDto.version,
       },
     );
@@ -288,5 +297,115 @@ export class UsersService {
 
   async remove(id: User['id']): Promise<void> {
     await this.usersRepository.remove(id);
+  }
+
+  async invite(inviteUserDto: InviteUserDto): Promise<User> {
+    const tenantId = this.cls.get('tenantId');
+    if (!tenantId) {
+      throw new UnprocessableEntityException('Tenant context missing');
+    }
+
+    const existingUser = await this.usersRepository.findByEmail(inviteUserDto.email);
+    if (existingUser) {
+      throw new UnprocessableEntityException({
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        errors: {
+          email: 'emailAlreadyExists',
+        },
+      });
+    }
+
+    let roleName = 'user';
+    // simplistic mapping, should be improved with Role Service
+    if (inviteUserDto.role?.id === RoleEnum.admin) {
+      roleName = 'admin';
+    } else if (inviteUserDto.role?.id === RoleEnum.user) {
+      roleName = 'user';
+    }
+
+    let keycloakUser;
+    try {
+      keycloakUser = await this.keycloakAdminService.createUser(
+        inviteUserDto.email,
+        tenantId,
+        roleName
+      );
+    } catch (e) {
+      throw new UnprocessableEntityException('Failed to create user in Keycloak: ' + (e as Error).message);
+    }
+
+    try {
+      await this.keycloakAdminService.resetPassword(keycloakUser.id);
+    } catch (e) {
+      console.warn('Failed to send invite email', (e as Error).message);
+    }
+
+    return this.usersRepository.create({
+      firstName: null,
+      lastName: null,
+      email: inviteUserDto.email,
+      provider: AuthProvidersEnum.email,
+      keycloakId: keycloakUser.id,
+      role: inviteUserDto.role ? { id: inviteUserDto.role.id } : { id: RoleEnum.user },
+      status: { id: StatusEnum.active },
+      tenant: tenantId,
+    });
+  }
+
+  async resetPassword(id: User['id']): Promise<void> {
+    const user = await this.usersRepository.findById(id);
+    if (!user) {
+      throw new UnprocessableEntityException({
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        errors: {
+          user: 'userNotFound',
+        },
+      });
+    }
+
+    if (user.provider === AuthProvidersEnum.email && user.keycloakId) {
+      try {
+        await this.keycloakAdminService.resetPassword(user.keycloakId);
+      } catch (error) {
+        throw new UnprocessableEntityException(
+          'Failed to trigger reset password in Keycloak',
+        );
+      }
+    } else {
+      throw new UnprocessableEntityException(
+        'User is not managed by Keycloak or missing Keycloak ID',
+      );
+    }
+  }
+
+  async updateStatus(id: User['id'], status: Status): Promise<User | null> {
+    const user = await this.usersRepository.findById(id);
+    if (!user) {
+      throw new UnprocessableEntityException({
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        errors: {
+          user: 'userNotFound',
+        },
+      });
+    }
+
+    // 1. Update Keycloak if applicable
+    if (user.provider === AuthProvidersEnum.email && user.keycloakId) {
+      try {
+        const enabled = status.id === StatusEnum.active;
+        await this.keycloakAdminService.updateUserStatus(
+          user.keycloakId,
+          enabled,
+        );
+      } catch (error) {
+        console.error('Failed to update Keycloak status', error);
+        throw new UnprocessableEntityException(
+          'Failed to update status in Keycloak',
+        );
+      }
+    }
+
+    // 2. Update Local DB
+    return this.usersRepository.update(id, { status });
   }
 }

@@ -47,8 +47,10 @@ export class UsersDocumentRepository
       };
     }
 
+    const scopedWhere = this.applyTenantFilter(where);
+
     const userObjects = await this.model
-      .find(where)
+      .find(scopedWhere)
       .sort(
         sortOptions?.reduce(
           (accumulator, sort) => ({
@@ -66,14 +68,15 @@ export class UsersDocumentRepository
   }
 
   async findById(id: User['id']): Promise<NullableType<User>> {
-    const userObject = await this.model.findById(id);
+    const filter = this.applyTenantFilter({ _id: id.toString() });
+    const userObject = await this.model.findOne(filter);
     return userObject ? UserMapper.toDomain(userObject) : null;
   }
 
-  async create(data: Omit<User, 'id' | 'createdAt' | 'deletedAt' | 'updatedAt' | 'tenantId'>): Promise<User> {
+  async create(data: Omit<User, 'id' | 'createdAt' | 'deletedAt' | 'updatedAt' | 'tenant'> & { tenant?: string }): Promise<User> {
     const domainEntity = new User();
     Object.assign(domainEntity, data);
-    domainEntity.tenantId = this.cls.get('tenantId');
+    domainEntity.tenant = data.tenant || this.cls.get('tenantId');
 
     // Default values if needed, otherwise handled by schema defaults or mapper
 
@@ -84,30 +87,34 @@ export class UsersDocumentRepository
   }
 
   async findByIds(ids: User['id'][]): Promise<User[]> {
-    const userObjects = await this.model.find({ _id: { $in: ids } });
+    const filter = this.applyTenantFilter({ _id: { $in: ids } });
+    const userObjects = await this.model.find(filter);
     return userObjects.map((userObject) => UserMapper.toDomain(userObject));
   }
 
   async findByEmail(email: User['email']): Promise<NullableType<User>> {
     if (!email) return null;
 
-    const userObject = await this.model.findOne({ email });
+    const filter = this.applyTenantFilter({ email });
+    const userObject = await this.model.findOne(filter);
     return userObject ? UserMapper.toDomain(userObject) : null;
   }
 
-  async findBySocialIdAndProvider({
-    socialId,
+  async findByKeycloakIdAndProvider({
+    keycloakId,
     provider,
   }: {
-    socialId: User['socialId'];
+    keycloakId: User['keycloakId'];
     provider: User['provider'];
   }): Promise<NullableType<User>> {
-    if (!socialId || !provider) return null;
+    if (!keycloakId || !provider) return null;
 
-    const userObject = await this.model.findOne({
-      socialId,
+    const filter = this.applyTenantFilter({
+      keycloakId,
       provider,
     });
+
+    const userObject = await this.model.findOne(filter);
 
     return userObject ? UserMapper.toDomain(userObject) : null;
   }
@@ -125,10 +132,11 @@ export class UsersDocumentRepository
     // Base implementation extracts and deletes. Here we manually extracting.
 
     const filter: FilterQuery<UserSchemaDocument> = { _id: id.toString() };
+    const scopedFilter = this.applyTenantFilter(filter);
 
     // Optimistic locking: if version is provided, ensure we only update if version matches
     if (version !== undefined) {
-      filter['__v'] = version;
+      scopedFilter['__v'] = version;
     }
 
     // Use persistence mapper only for fields present in payload?
@@ -136,7 +144,7 @@ export class UsersDocumentRepository
     // For safer update, we should fetch, merge, then persist.
     // Re-using existing logic here but adapted for 'model' property.
 
-    const user = await this.model.findOne({ _id: id.toString() });
+    const user = await this.model.findOne(this.applyTenantFilter({ _id: id.toString() }));
     if (!user) return null;
 
     const persistenceObject = UserMapper.toPersistence({
@@ -144,8 +152,13 @@ export class UsersDocumentRepository
       ...clonedPayload,
     });
 
+    // Remove version from persistence object to avoid manually setting it, 
+    // let $inc handle it or mongoose handle it.
+    // However, mapper might include it.
+    delete (persistenceObject as any).__v;
+
     const updatedUser = await this.model.findOneAndUpdate(
-      filter,
+      scopedFilter,
       {
         ...persistenceObject,
         $inc: { __v: 1 }, // Increment version
@@ -161,8 +174,7 @@ export class UsersDocumentRepository
   }
 
   async remove(id: User['id']): Promise<void> {
-    await this.model.deleteOne({
-      _id: id.toString(),
-    });
+    const filter = this.applyTenantFilter({ _id: id.toString() });
+    await this.model.deleteOne(filter);
   }
 }

@@ -7,7 +7,9 @@ import { FilterUserDto, SortUserDto } from '../../dto/query-user.dto';
 
 export abstract class UserRepository {
   abstract create(
-    data: Omit<User, 'id' | 'createdAt' | 'deletedAt' | 'updatedAt' | 'tenantId'>,
+    data: Omit<User, 'id' | 'createdAt' | 'deletedAt' | 'updatedAt' | 'tenant'> & {
+      tenant?: string;
+    },
   ): Promise<User>;
 
   abstract findManyWithPagination({
@@ -23,11 +25,11 @@ export abstract class UserRepository {
   abstract findById(id: User['id']): Promise<NullableType<User>>;
   abstract findByIds(ids: User['id'][]): Promise<User[]>;
   abstract findByEmail(email: User['email']): Promise<NullableType<User>>;
-  abstract findBySocialIdAndProvider({
-    socialId,
+  abstract findByKeycloakIdAndProvider({
+    keycloakId,
     provider,
   }: {
-    socialId: User['socialId'];
+    keycloakId: User['keycloakId'];
     provider: User['provider'];
   }): Promise<NullableType<User>>;
 

@@ -13,7 +13,7 @@ export class User {
   id: number | string;
 
   @ApiProperty()
-  tenantId: string;
+  tenant: string;
 
   @ApiProperty({
     type: String,
@@ -37,7 +37,7 @@ export class User {
     example: '1234567890',
   })
   @Expose({ groups: ['me', 'admin'] })
-  socialId?: string | null;
+  keycloakId?: string | null;
 
   @ApiProperty({
     type: String,

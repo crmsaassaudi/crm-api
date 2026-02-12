@@ -12,11 +12,11 @@ export class UserMapper {
     const domainEntity = new User();
     domainEntity.id = raw._id.toString();
     domainEntity.version = raw.__v;
-    domainEntity.tenantId = raw.tenantId; // Map tenantId
+    domainEntity.tenant = raw.tenant; // Map tenant
     domainEntity.email = raw.email;
     domainEntity.password = raw.password;
     domainEntity.provider = raw.provider;
-    domainEntity.socialId = raw.socialId;
+    domainEntity.keycloakId = raw.keycloakId;
     domainEntity.firstName = raw.firstName;
     domainEntity.lastName = raw.lastName;
     if (raw.photo) {
@@ -70,7 +70,7 @@ export class UserMapper {
       persistenceSchema._id = domainEntity.id;
     }
 
-    persistenceSchema.tenantId = domainEntity.tenantId; // Map tenantId
+    persistenceSchema.tenant = domainEntity.tenant; // Map tenant
     if (domainEntity.version !== undefined) {
       persistenceSchema.__v = domainEntity.version; // Map version for optimistic lock checks
     }
@@ -78,7 +78,7 @@ export class UserMapper {
     persistenceSchema.email = domainEntity.email;
     persistenceSchema.password = domainEntity.password;
     persistenceSchema.provider = domainEntity.provider;
-    persistenceSchema.socialId = domainEntity.socialId;
+    persistenceSchema.keycloakId = domainEntity.keycloakId;
     persistenceSchema.firstName = domainEntity.firstName;
     persistenceSchema.lastName = domainEntity.lastName;
     persistenceSchema.photo = photo;

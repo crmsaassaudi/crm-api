@@ -1,11 +1,17 @@
 import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 
+import { UsersService } from '../users/users.service';
+import { AuthProvidersEnum } from '../auth/auth-providers.enum';
+
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  constructor(
+    private reflector: Reflector,
+    private usersService: UsersService,
+  ) { }
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const roles = this.reflector.getAllAndOverride<(number | string)[]>(
       'roles',
       [context.getClass(), context.getHandler()],
@@ -14,7 +20,21 @@ export class RolesGuard implements CanActivate {
       return true;
     }
     const request = context.switchToHttp().getRequest();
+    const payload = request.user;
 
-    return roles.map(String).includes(String(request.user?.role?.id));
+    if (!payload || !payload.sub) {
+      return false;
+    }
+
+    const user = await this.usersService.findByKeycloakIdAndProvider({
+      keycloakId: payload.sub,
+      provider: AuthProvidersEnum.email,
+    });
+
+    if (!user) {
+      return false;
+    }
+
+    return roles.map(String).includes(String(user.role?.id));
   }
 }

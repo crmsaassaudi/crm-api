@@ -29,7 +29,7 @@ export class CreateUserDto {
 
   provider?: string;
 
-  socialId?: string | null;
+  keycloakId?: string | null;
 
   @ApiProperty({ example: 'John', type: String })
   @IsNotEmpty()

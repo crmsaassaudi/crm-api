@@ -26,12 +26,41 @@ export abstract class BaseDocumentRepository<
     return this.mapToDomain(saved);
   }
 
+  protected applyTenantFilter(filter: FilterQuery<TSchema> = {}): FilterQuery<TSchema> {
+    const tenantId = this.cls.get('tenantId');
+    if (tenantId) {
+      return { ...filter, tenant: tenantId };
+    }
+    return filter;
+  }
+
+  async find(
+    filter: FilterQuery<TSchema>,
+    options?: any,
+  ): Promise<TDomain[]> {
+    const scopedFilter = this.applyTenantFilter(filter);
+    const docs = await this.model.find(scopedFilter, null, options);
+    return docs.map((doc) => this.mapToDomain(doc as any));
+  }
+
   async findOne(
     filter: FilterQuery<TSchema>,
     session?: ClientSession,
   ): Promise<TDomain | null> {
-    const doc = await this.model.findOne(filter).session(session || null);
+    const scopedFilter = this.applyTenantFilter(filter);
+    const doc = await this.model.findOne(scopedFilter).session(session || null);
     return doc ? this.mapToDomain(doc) : null;
+  }
+
+  async count(filter: FilterQuery<TSchema> = {}): Promise<number> {
+    const scopedFilter = this.applyTenantFilter(filter);
+    return this.model.countDocuments(scopedFilter);
+  }
+
+  async exists(filter: FilterQuery<TSchema>): Promise<boolean> {
+    const scopedFilter = this.applyTenantFilter(filter);
+    const result = await this.model.exists(scopedFilter);
+    return !!result;
   }
 
   async update(
@@ -39,35 +68,33 @@ export abstract class BaseDocumentRepository<
     payload: Partial<TDomain>,
     session?: ClientSession,
   ): Promise<TDomain | null> {
-    const tenantId = this.cls.get('tenantId');
+    const clonedPayload = { ...payload };
+    // @ts-ignore
+    delete clonedPayload.id;
 
-    // 1. Convert Domain Entity to Persistence
-    const persistenceData: any = this.toPersistence(payload as TDomain);
+    const persistenceData: any = this.toPersistence(clonedPayload as TDomain);
 
-    // 2. Extract version for Optimistic Lock
     const version = persistenceData.__v;
-    delete persistenceData.__v; // Remove from payload to avoid overwriting
+    delete persistenceData.__v;
 
     const filter: any = { _id: id };
-    if (tenantId) {
-      filter.tenantId = tenantId;
-    }
 
-    // 3. If version is present, add to query filter
+    // Apply tenant filter
+    const scopedFilter: any = this.applyTenantFilter(filter);
+
     if (version !== undefined) {
-      filter.__v = version;
+      scopedFilter.__v = version;
     }
 
     const updated = (await this.model.findOneAndUpdate(
-      filter,
+      scopedFilter,
       {
         ...persistenceData,
-        $inc: { __v: 1 }, // Auto-increment version
+        $inc: { __v: 1 },
       },
       { new: true, session: session || null },
     )) as TSchema;
 
-    // 4. Check result: If update failed but version was provided -> CONFLICT
     if (!updated && version !== undefined) {
       const exists = await this.model.exists({ _id: id });
       if (exists) {
@@ -81,7 +108,8 @@ export abstract class BaseDocumentRepository<
   }
 
   async remove(id: string): Promise<void> {
-    await this.model.deleteOne({ _id: id });
+    const filter = this.applyTenantFilter({ _id: id } as FilterQuery<TSchema>);
+    await this.model.deleteOne(filter);
   }
 
   protected abstract mapToDomain(doc: TSchema): TDomain;

@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { now, HydratedDocument } from 'mongoose';
+import { now, HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 
 import { AuthProvidersEnum } from '../../../../../auth/auth-providers.enum';
 import { FileSchemaClass } from '../../../../../files/infrastructure/persistence/document/entities/file.schema';
@@ -25,12 +25,12 @@ export type UserSchemaDocument = HydratedDocument<UserSchemaClass>;
   },
 })
 export class UserSchemaClass extends EntityDocumentHelper {
-  @Prop({ required: true, index: true })
-  tenantId: string;
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TenantSchemaClass', required: true, index: true })
+  tenant: string;
 
   @Prop({
     type: String,
-    unique: true,
+    unique: false,
   })
   email: string | null;
 
@@ -46,7 +46,7 @@ export class UserSchemaClass extends EntityDocumentHelper {
     type: String,
     default: null,
   })
-  socialId?: string | null;
+  keycloakId?: string | null;
 
   @Prop({
     type: String,
@@ -86,3 +86,4 @@ export class UserSchemaClass extends EntityDocumentHelper {
 export const UserSchema = SchemaFactory.createForClass(UserSchemaClass);
 
 UserSchema.index({ 'role._id': 1 });
+UserSchema.index({ email: 1, tenant: 1 }, { unique: true });

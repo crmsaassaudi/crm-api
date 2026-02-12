@@ -17,6 +17,7 @@ import { CacheTTL } from '@nestjs/cache-manager';
 import { HttpCacheInterceptor } from '../common/cache/interceptors/http-cache.interceptor';
 import { CacheEntity } from '../common/cache/decorators/cache-entity.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
+import { InviteUserDto } from './dto/invite-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import {
   ApiBearerAuth,
@@ -27,7 +28,6 @@ import {
 } from '@nestjs/swagger';
 import { Roles } from '../roles/roles.decorator';
 import { RoleEnum } from '../roles/roles.enum';
-import { AuthGuard } from '@nestjs/passport';
 
 import {
   InfinityPaginationResponse,
@@ -42,7 +42,7 @@ import { infinityPagination } from '../utils/infinity-pagination';
 
 @ApiBearerAuth()
 @Roles(RoleEnum.admin)
-@UseGuards(AuthGuard('jwt'), RolesGuard)
+@UseGuards(RolesGuard)
 @ApiTags('Users')
 @Controller({
   path: 'users',
@@ -51,7 +51,7 @@ import { infinityPagination } from '../utils/infinity-pagination';
 @UseInterceptors(HttpCacheInterceptor)
 @CacheEntity('User')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) { }
 
   @ApiCreatedResponse({
     type: User,
@@ -63,6 +63,18 @@ export class UsersController {
   @HttpCode(HttpStatus.CREATED)
   create(@Body() createProfileDto: CreateUserDto): Promise<User> {
     return this.usersService.create(createProfileDto);
+  }
+
+  @ApiCreatedResponse({
+    type: User,
+  })
+  @SerializeOptions({
+    groups: ['admin'],
+  })
+  @Post('invite')
+  @HttpCode(HttpStatus.CREATED)
+  invite(@Body() inviteUserDto: InviteUserDto): Promise<User> {
+    return this.usersService.invite(inviteUserDto);
   }
 
   @ApiOkResponse({

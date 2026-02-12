@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { UsersModule } from './users/users.module';
+import { TenantsModule } from './tenants/tenants.module';
 import { FilesModule } from './files/files.module';
 import { AuthModule } from './auth/auth.module';
 import databaseConfig from './database/config/database.config';
@@ -7,24 +8,18 @@ import authConfig from './auth/config/auth.config';
 import appConfig from './config/app.config';
 import mailConfig from './mail/config/mail.config';
 import fileConfig from './files/config/file.config';
-import facebookConfig from './auth-facebook/config/facebook.config';
-import googleConfig from './auth-google/config/google.config';
-import appleConfig from './auth-apple/config/apple.config';
 import queueConfig from './queue/config/queue.config';
 import redisConfig from './redis/config/redis.config';
+import keycloakConfig from './auth/config/keycloak.config';
 import path from 'path';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { AuthAppleModule } from './auth-apple/auth-apple.module';
-import { AuthFacebookModule } from './auth-facebook/auth-facebook.module';
-import { AuthGoogleModule } from './auth-google/auth-google.module';
 import { HeaderResolver, I18nModule } from 'nestjs-i18n';
 import { MailModule } from './mail/mail.module';
 import { HomeModule } from './home/home.module';
 import { AllConfigType } from './config/config.type';
-import { SessionModule } from './session/session.module';
 import { MailerModule } from './mailer/mailer.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MongooseConfigService } from './database/mongoose-config.service';
@@ -35,6 +30,14 @@ import { ActivityLogModule } from './activity-log/activity-log.module';
 import { HttpResilienceModule } from './common/http/http-resilience.module';
 import { CommonCacheModule } from './common/cache/common-cache.module';
 import { SocketModule } from './modules/realtime/socket.module';
+
+import {
+  AuthGuard,
+  KeycloakConnectModule,
+  ResourceGuard,
+  RoleGuard,
+} from 'nest-keycloak-connect';
+import { APP_GUARD } from '@nestjs/core';
 
 const infrastructureDatabaseModule = MongooseModule.forRootAsync({
   useClass: MongooseConfigService,
@@ -47,6 +50,7 @@ import * as winston from 'winston';
 import { utilities as nestWinstonUtilities } from 'nest-winston';
 import { v4 as uuidv4 } from 'uuid';
 import { Request } from 'express';
+import { jwtDecode } from 'jwt-decode';
 
 
 
@@ -62,13 +66,28 @@ import { Request } from 'express';
         appConfig,
         mailConfig,
         fileConfig,
-        facebookConfig,
-        googleConfig,
-        appleConfig,
         queueConfig,
         redisConfig,
+        keycloakConfig,
       ],
       envFilePath: ['.env'],
+    }),
+    KeycloakConnectModule.registerAsync({
+      useFactory: (configService: ConfigService<AllConfigType>) => {
+        return {
+          authServerUrl: configService.getOrThrow('keycloak.authServerUrl', {
+            infer: true,
+          }),
+          realm: configService.getOrThrow('keycloak.realm', { infer: true }),
+          clientId: configService.getOrThrow('keycloak.clientId', {
+            infer: true,
+          }),
+          secret: configService.getOrThrow('keycloak.clientSecret', {
+            infer: true,
+          }),
+        };
+      },
+      inject: [ConfigService],
     }),
     infrastructureDatabaseModule,
     BullBoardModule.forRoot({
@@ -89,14 +108,38 @@ import { Request } from 'express';
           return correlationId ?? uuidv4();
         },
         setup: (cls, req: Request) => {
-          const tenantId = req.headers['x-tenant-id'];
+          // 1. Prioritize Header (For Internal Calls / Dev / Test)
+          const headerTenantId = req.headers['x-tenant-id'];
+          let tenantId = Array.isArray(headerTenantId)
+            ? headerTenantId[0]
+            : headerTenantId;
+
+          let userId;
+          let email;
+
+          // 2. Extract from JWT (For End Users)
+          const authHeader = req.headers.authorization;
+          if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.split(' ')[1];
+            try {
+              const decoded: any = jwtDecode(token);
+              if (!tenantId) {
+                tenantId = decoded.tenantId;
+              }
+              userId = decoded.sub;
+              email = decoded.email;
+            } catch (error) {
+              console.error('Error decoding token:', error);
+            }
+          }
+
           // Default to '00000000-0000-0000-0000-000000000000' if not provided
           cls.set(
             'tenantId',
-            Array.isArray(tenantId)
-              ? tenantId[0]
-              : tenantId ?? '00000000-0000-0000-0000-000000000000',
+            tenantId ?? '00000000-0000-0000-0000-000000000000',
           );
+          cls.set('userId', userId);
+          cls.set('email', email);
         },
       },
     }),
@@ -150,11 +193,8 @@ import { Request } from 'express';
     }),
     UsersModule,
     FilesModule,
+    TenantsModule,
     AuthModule,
-    AuthFacebookModule,
-    AuthGoogleModule,
-    AuthAppleModule,
-    SessionModule,
     MailModule,
     MailerModule,
     HomeModule,
@@ -165,6 +205,20 @@ import { Request } from 'express';
     HttpResilienceModule,
     CommonCacheModule,
     SocketModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: AuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ResourceGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RoleGuard,
+    },
   ],
 })
 export class AppModule { }

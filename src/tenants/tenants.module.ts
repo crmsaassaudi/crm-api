@@ -1,0 +1,18 @@
+import { Module, forwardRef } from '@nestjs/common';
+import { TenantsService } from './tenants.service';
+import { DocumentTenantPersistenceModule } from './infrastructure/persistence/document/document-persistence.module';
+import { AuthModule } from '../auth/auth.module';
+import { UsersModule } from '../users/users.module';
+import { TenantsAuthController } from './tenants.controller';
+
+@Module({
+    imports: [
+        DocumentTenantPersistenceModule,
+        AuthModule,
+        forwardRef(() => UsersModule),
+    ],
+    providers: [TenantsService],
+    controllers: [TenantsAuthController],
+    exports: [TenantsService, DocumentTenantPersistenceModule],
+})
+export class TenantsModule { }
