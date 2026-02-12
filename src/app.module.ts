@@ -34,6 +34,7 @@ import { MailQueueModule } from './queue/mail/mail-queue.module';
 import { ActivityLogModule } from './activity-log/activity-log.module';
 import { HttpResilienceModule } from './common/http/http-resilience.module';
 import { CommonCacheModule } from './common/cache/common-cache.module';
+import { SocketModule } from './modules/realtime/socket.module';
 
 const infrastructureDatabaseModule = MongooseModule.forRootAsync({
   useClass: MongooseConfigService,
@@ -150,6 +151,7 @@ import { Request } from 'express';
     ActivityLogModule,
     HttpResilienceModule,
     CommonCacheModule,
+    SocketModule,
   ],
 })
 export class AppModule { }
