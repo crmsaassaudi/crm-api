@@ -1,4 +1,10 @@
 import {
+  Injectable,
+  ConflictException,
+  Inject,
+} from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
+import {
   ClientSession,
   Model,
   Document,
@@ -10,6 +16,9 @@ export abstract class BaseDocumentRepository<
   TSchema extends Document,
   TDomain,
 > {
+  @Inject(ClsService)
+  protected readonly cls: ClsService;
+
   constructor(protected readonly model: Model<TSchema>) { }
 
   // Luôn cho phép nhận session ở tham số cuối cùng
@@ -32,39 +41,43 @@ export abstract class BaseDocumentRepository<
 
   async update(
     id: string,
-    payload: UpdateQuery<TSchema>,
+    payload: Partial<TDomain>,
     session?: ClientSession,
   ): Promise<TDomain | null> {
-    const filter = { _id: id };
-    // Note: We might want to pass 'version' here if we want to enforce it via query
-    // But BaseRepository signature changes might strict.
-    // If payload contains version checks, findOneAndUpdate handles it.
+    const tenantId = this.cls.get('tenantId');
 
-    // However, to support generic version error handling with 'save()':
-    // 1. Fetch document
-    // 2. Update properties
-    // 3. Save (Mongoose checks __v)
+    const persistenceData: any = this.toPersistence(payload as TDomain);
 
-    // But 'payload' here is UpdateQuery (like $set), which works with findOneAndUpdate.
-    // Transitioning to 'save()' requires payload to be Partial<TSchema> or similar, not Update Operators.
-    // Given the Senior Lead said: "Sửa lại hàm update ... để bắt lỗi VersionError ... throw ra ConflictException"
-    // And also: "Update `UserRepository` update method to accept `version`" (which we did in specific repo).
+    const version = persistenceData.__v;
+    delete persistenceData.__v;
 
-    // Let's implement the generic handle via findOneAndUpdate for now as it supports atomic operators better,
-    // OR we change this to save() but that breaks $inc, $push usage.
+    const filter: any = { _id: id };
+    if (tenantId) {
+      filter.tenantId = tenantId;
+    }
 
-    // If we want to support VersionError from Mongoose, we usually use save().
-    // If we use findOneAndUpdate, we must manually check result as we did in UserRepo.
+    if (version !== undefined) {
+      filter.__v = version;
+    }
 
     const updated = await this.model
-      .findByIdAndUpdate(id, payload, { new: true })
-      .session(session || null);
+      .findOneAndUpdate(
+        filter,
+        {
+          ...persistenceData,
+          $inc: { __v: 1 },
+        },
+        { new: true, session },
+      ) as TSchema;
 
-    // If we want to enforce version check here genericly, we need 'version' passed in.
-    // But the signature is fixed in the abstract class unless we change it.
+    if (!updated && version !== undefined) {
+      throw new ConflictException('Data has been modified. Please reload.');
+    }
 
     return updated ? this.mapToDomain(updated) : null;
   }
 
   protected abstract mapToDomain(doc: TSchema): TDomain;
+
+  protected abstract toPersistence(domain: TDomain): any;
 }

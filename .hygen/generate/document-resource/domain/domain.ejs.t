@@ -3,12 +3,13 @@ to: src/<%= h.inflection.transform(name, ['pluralize', 'underscore', 'dasherize'
 ---
 import { ApiProperty } from '@nestjs/swagger';
 
-export class BaseDomain {
+export class <%= name %> {
   id: string;
+
+  // Domain chỉ nói chuyện bằng ngôn ngữ "version"
   version: number;
+
   createdAt: Date;
   updatedAt: Date;
-}
-
-export class <%= name %> extends BaseDomain {
+  tenantId: string;
 }
