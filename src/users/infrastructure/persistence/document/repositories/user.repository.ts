@@ -73,7 +73,10 @@ export class UsersDocumentRepository
     return userObject ? UserMapper.toDomain(userObject) : null;
   }
 
-  async create(data: Omit<User, 'id' | 'createdAt' | 'deletedAt' | 'updatedAt'>): Promise<User> {
+  async create(
+    data: Omit<User, 'id' | 'createdAt' | 'deletedAt' | 'updatedAt'>,
+    session?: any,
+  ): Promise<User> {
     const domainEntity = new User();
     Object.assign(domainEntity, data);
 
@@ -89,7 +92,7 @@ export class UsersDocumentRepository
 
     const persistenceModel = UserMapper.toPersistence(domainEntity);
     const createdUser = new this.model(persistenceModel);
-    const userObject = await createdUser.save();
+    const userObject = await createdUser.save({ session });
     return UserMapper.toDomain(userObject);
   }
 

@@ -1,6 +1,6 @@
 import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { TenantsService } from './tenants.service';
-import { CreateTenantDto } from './dto/create-tenant.dto';
+import { TenantOnboardingDto } from './dto/tenant-onboarding.dto';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Public } from '../auth/decorators/public.decorator';
 
@@ -17,7 +17,7 @@ export class TenantsAuthController {
         status: HttpStatus.CREATED,
         description: 'Tenant registered successfully',
     })
-    async registerTenant(@Body() createTenantDto: CreateTenantDto) {
-        return this.tenantsService.createTenant_Saga(createTenantDto);
+    async registerTenant(@Body() createTenantDto: TenantOnboardingDto) {
+        return this.tenantsService.onboardTenant(createTenantDto);
     }
 }

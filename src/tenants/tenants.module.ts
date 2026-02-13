@@ -5,13 +5,15 @@ import { AuthModule } from '../auth/auth.module';
 import { UsersModule } from '../users/users.module';
 import { TenantsAuthController } from './tenants.controller';
 
+import { TenantCreatedListener } from './listeners/tenant-created.listener';
+
 @Module({
     imports: [
         DocumentTenantPersistenceModule,
         AuthModule,
         forwardRef(() => UsersModule),
     ],
-    providers: [TenantsService],
+    providers: [TenantsService, TenantCreatedListener],
     controllers: [TenantsAuthController],
     exports: [TenantsService, DocumentTenantPersistenceModule],
 })

@@ -35,7 +35,7 @@ export class UsersService {
     private readonly keycloakAdminService: KeycloakAdminService,
   ) { }
 
-  async create(createUserDto: CreateUserDto, tenantId?: string): Promise<User> {
+  async create(createUserDto: CreateUserDto, tenantId?: string, session?: any): Promise<User> {
     // Do not remove comment below.
     // <creating-property />
 
@@ -135,7 +135,7 @@ export class UsersService {
       status: status,
       provider: createUserDto.provider ?? AuthProvidersEnum.email,
       keycloakId: createUserDto.keycloakId,
-    });
+    }, session);
   }
 
   findManyWithPagination({
@@ -312,7 +312,7 @@ export class UsersService {
     // If currentUser is not available (e.g. system call), we might skip or fail.
     // For Invite, it's usually an admin action.
     if (currentUser) {
-      const hasAccess = currentUser.tenants?.some(t => t.tenant === tenantId);
+      const hasAccess = currentUser.tenants?.some((t: { tenant: any; }) => t.tenant === tenantId);
       // Ideally check for Admin role within that tenant too, but schema might vary.
       // Based on prompt: "Xác thực rằng Admin hiện tại thực sự có quyền trên tenantId đó"
       // We'll check if tenant is in their list.

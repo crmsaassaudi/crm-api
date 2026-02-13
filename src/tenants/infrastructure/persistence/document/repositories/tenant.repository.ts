@@ -12,10 +12,10 @@ export class TenantsRepository {
         private readonly tenantsModel: Model<TenantSchemaDocument>,
     ) { }
 
-    async create(data: Tenant): Promise<Tenant> {
+    async create(data: Tenant, session?: any): Promise<Tenant> {
         const persistenceModel = TenantMapper.toPersistence(data);
         const createdTenant = new this.tenantsModel(persistenceModel);
-        const tenantObject = await createdTenant.save();
+        const tenantObject = await createdTenant.save({ session });
         return TenantMapper.toDomain(tenantObject);
     }
 
@@ -29,11 +29,11 @@ export class TenantsRepository {
         return tenantObject ? TenantMapper.toDomain(tenantObject) : null;
     }
 
-    async update(id: string, payload: Partial<Tenant>): Promise<Tenant | null> {
+    async update(id: string, payload: Partial<Tenant>, session?: any): Promise<Tenant | null> {
         const updatedTenant = await this.tenantsModel.findByIdAndUpdate(
             id,
             payload,
-            { new: true }
+            { new: true, session }
         );
         return updatedTenant ? TenantMapper.toDomain(updatedTenant) : null;
     }

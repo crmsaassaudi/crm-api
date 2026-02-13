@@ -139,4 +139,39 @@ export class KeycloakAdminService {
     async updateUserStatus(userId: string, enabled: boolean) {
         await this.request('PUT', `/users/${userId}`, { enabled });
     }
+
+    async updateUser(userId: string, data: any) {
+        await this.request('PUT', `/users/${userId}`, data);
+    }
+
+    // --- Group Management ---
+
+    async createGroup(name: string, attributes?: Record<string, any>) {
+        const groupPayload = {
+            name,
+            attributes,
+        };
+        await this.request('POST', '/groups', groupPayload);
+
+        // Fetch to get ID
+        const group = await this.findGroupByName(name);
+        if (!group) {
+            throw new Error(`Failed to retrieve created group ${name}`);
+        }
+        return group;
+    }
+
+    async deleteGroup(groupId: string) {
+        await this.request('DELETE', `/groups/${groupId}`);
+    }
+
+    async addUserToGroup(userId: string, groupId: string) {
+        await this.request('PUT', `/users/${userId}/groups/${groupId}`);
+    }
+
+    async findGroupByName(name: string) {
+        const groups = await this.request('GET', `/groups?search=${encodeURIComponent(name)}`);
+        // Filter exact match because search is fuzzy
+        return groups ? groups.find((g: any) => g.name === name) : null;
+    }
 }
