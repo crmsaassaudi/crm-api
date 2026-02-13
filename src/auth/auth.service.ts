@@ -19,6 +19,8 @@ import { AuthProvidersEnum } from './auth-providers.enum';
 import { RoleEnum } from '../roles/roles.enum';
 import { StatusEnum } from '../statuses/statuses.enum';
 
+import { RedisService } from '../redis/redis.service';
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -26,6 +28,7 @@ export class AuthService {
     private usersService: UsersService,
     private configService: ConfigService<AllConfigType>,
     private httpService: HttpService,
+    private redisService: RedisService,
   ) { }
 
   getLoginUrl(): string {
@@ -69,27 +72,87 @@ export class AuthService {
   async me(keycloakPayload: any): Promise<NullableType<User>> {
     const keycloakId = keycloakPayload.sub;
     const email = keycloakPayload.email;
+    const lockKey = `lock:auth:sync:${keycloakId}`;
+    const redisClient = this.redisService.getClient();
 
-    // Extract tenant IDs from Keycloak token
-    // Expected format: keycloakPayload.tenants = ['tenant1_id', 'tenant2_id']
-    // or keycloakPayload.tenant_ids = ['tenant1_id', 'tenant2_id']
-    const keycloakTenantIds: string[] = keycloakPayload.tenants || keycloakPayload.tenant_ids || [];
+    // Try to acquire lock
+    const acquired = await redisClient.set(lockKey, 'locked', 'PX', 5000, 'NX');
 
-    let user = await this.usersService.findByKeycloakIdAndProvider({
-      keycloakId,
-      provider: AuthProvidersEnum.email, // Or logic to determine provider based on token
-    });
+    try {
+      if (!acquired) {
+        // If locked, we try to return existing user without sync
+        const existingUser = await this.usersService.findByKeycloakIdAndProvider({
+          keycloakId,
+          provider: AuthProvidersEnum.email,
+        });
+        if (existingUser) return existingUser;
 
-    if (!user && email) {
-      // Try to find by email if not found by keycloakId (migration scenario)
-      user = await this.usersService.findByEmail(email);
-      if (user) {
-        // Link existing user
-        user.keycloakId = keycloakId;
+        // If user doesn't exist and locked, user might be created in another process.
+        // Wait a bit and try to fetch again, or throw.
+        // For simplicity and "avoid race condition", throwing 429 or handling gracefully.
+        // Let's wait 1s and try fetching one last time.
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return this.usersService.findByKeycloakIdAndProvider({
+          keycloakId,
+          provider: AuthProvidersEnum.email,
+        });
+      }
 
-        // Sync tenants from Keycloak
+      // Extract tenant IDs from Keycloak token
+      // Expected format: keycloakPayload.tenants = ['tenant1_id', 'tenant2_id']
+      // or keycloakPayload.tenant_ids = ['tenant1_id', 'tenant2_id']
+      const keycloakTenantIds: string[] = keycloakPayload.tenants || keycloakPayload.tenant_ids || [];
+
+      let user = await this.usersService.findByKeycloakIdAndProvider({
+        keycloakId,
+        provider: AuthProvidersEnum.email, // Or logic to determine provider based on token
+      });
+
+      if (!user && email) {
+        // Try to find by email if not found by keycloakId (migration scenario)
+        user = await this.usersService.findByEmail(email);
+        if (user) {
+          // Link existing user
+          user.keycloakId = keycloakId;
+        }
+      }
+
+      if (!user) {
+        // JIT Provisioning
+        const role = { id: RoleEnum.user };
+        const status = { id: StatusEnum.active };
+
+        user = await this.usersService.create({
+          email: email,
+          firstName: keycloakPayload.given_name,
+          lastName: keycloakPayload.family_name,
+          keycloakId: keycloakId,
+          provider: AuthProvidersEnum.email,
+          role,
+          status,
+          tenants: keycloakTenantIds.map(tid => ({
+            tenant: tid,
+            roles: [],
+            joinedAt: new Date(),
+          })),
+        });
+      } else {
+        // User exists - sync tenants from Keycloak (JIT sync)
         const existingTenantIds = user.tenants.map(t => t.tenant);
+
+        // 1. Identify tenants to ADD
         const newTenantIds = keycloakTenantIds.filter(tid => !existingTenantIds.includes(tid));
+
+        // 2. Identify tenants to REMOVE
+        // Logic: Remove local tenants that are NOT in Keycloak token
+        const tenantsToRemove = existingTenantIds.filter(tid => !keycloakTenantIds.includes(tid));
+
+        let hasChanges = false;
+
+        if (tenantsToRemove.length > 0) {
+          user.tenants = user.tenants.filter(t => !tenantsToRemove.includes(t.tenant));
+          hasChanges = true;
+        }
 
         if (newTenantIds.length > 0) {
           user.tenants = [
@@ -100,51 +163,22 @@ export class AuthService {
               joinedAt: new Date(),
             })),
           ];
+          hasChanges = true;
         }
 
-        await this.usersService.update(user.id, user);
+        if (hasChanges || user.keycloakId !== keycloakId) {
+          user.keycloakId = keycloakId; // Ensure keycloakId is set if we found by email
+          await this.usersService.update(user.id, user);
+        }
+      }
+
+      return user;
+
+    } finally {
+      if (acquired) {
+        await redisClient.del(lockKey);
       }
     }
-
-    if (!user) {
-      // JIT Provisioning
-      const role = { id: RoleEnum.user };
-      const status = { id: StatusEnum.active };
-
-      user = await this.usersService.create({
-        email: email,
-        firstName: keycloakPayload.given_name,
-        lastName: keycloakPayload.family_name,
-        keycloakId: keycloakId,
-        provider: AuthProvidersEnum.email,
-        role,
-        status,
-        tenants: keycloakTenantIds.map(tid => ({
-          tenant: tid,
-          roles: [],
-          joinedAt: new Date(),
-        })),
-      });
-    } else {
-      // User exists - sync tenants from Keycloak (JIT sync)
-      const existingTenantIds = user.tenants.map(t => t.tenant);
-      const newTenantIds = keycloakTenantIds.filter(tid => !existingTenantIds.includes(tid));
-
-      if (newTenantIds.length > 0) {
-        user.tenants = [
-          ...user.tenants,
-          ...newTenantIds.map(tid => ({
-            tenant: tid,
-            roles: [],
-            joinedAt: new Date(),
-          })),
-        ];
-
-        await this.usersService.update(user.id, user);
-      }
-    }
-
-    return user;
   }
 
   async update(

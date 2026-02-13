@@ -26,11 +26,15 @@ export class TenantInterceptor implements NestInterceptor {
         }
 
         // 2. If not in header, try to extract from JWT token
+        const user = (request as any).user;
         if (!tenantId) {
-            const user = (request as any).user;
             if (user && user.tenantId) {
                 tenantId = user.tenantId;
             }
+        }
+
+        if (user) {
+            this.cls.set('user', user);
         }
 
         // 3. Store in CLS for use in repositories

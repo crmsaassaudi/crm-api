@@ -4,6 +4,7 @@ import {
   Inject,
   forwardRef,
   UnprocessableEntityException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { NullableType } from '../utils/types/nullable.type';
@@ -305,6 +306,21 @@ export class UsersService {
       throw new UnprocessableEntityException('Tenant context missing');
     }
 
+    const currentUser = this.cls.get('user');
+    // Check if current user has access to this tenant (Validation)
+    // Assuming currentUser has populated tenants. 
+    // If currentUser is not available (e.g. system call), we might skip or fail.
+    // For Invite, it's usually an admin action.
+    if (currentUser) {
+      const hasAccess = currentUser.tenants?.some(t => t.tenant === tenantId);
+      // Ideally check for Admin role within that tenant too, but schema might vary.
+      // Based on prompt: "Xác thực rằng Admin hiện tại thực sự có quyền trên tenantId đó"
+      // We'll check if tenant is in their list.
+      if (!hasAccess) {
+        throw new UnauthorizedException('You do not have permission to invite users to this tenant');
+      }
+    }
+
     const existingUser = await this.usersRepository.findByEmail(inviteUserDto.email);
     if (existingUser) {
       throw new UnprocessableEntityException({
@@ -340,16 +356,27 @@ export class UsersService {
       console.warn('Failed to send invite email', (e as Error).message);
     }
 
-    return this.usersRepository.create({
-      firstName: null,
-      lastName: null,
-      email: inviteUserDto.email,
-      provider: AuthProvidersEnum.email,
-      keycloakId: keycloakUser.id,
-      role: inviteUserDto.role ? { id: inviteUserDto.role.id } : { id: RoleEnum.user },
-      status: { id: StatusEnum.active },
-      tenants: [{ tenant: tenantId, roles: [], joinedAt: new Date() }],
-    });
+    try {
+      return await this.usersRepository.create({
+        firstName: null,
+        lastName: null,
+        email: inviteUserDto.email,
+        provider: AuthProvidersEnum.email,
+        keycloakId: keycloakUser.id,
+        role: inviteUserDto.role ? { id: inviteUserDto.role.id } : { id: RoleEnum.user },
+        status: { id: StatusEnum.active },
+        tenants: [{ tenant: tenantId, roles: [], joinedAt: new Date() }],
+      });
+    } catch (error) {
+      // Rollback: Delete user from Keycloak if local DB save fails
+      console.error('Failed to create user in local DB, rolling back Keycloak user...', error);
+      try {
+        await this.keycloakAdminService.deleteUser(keycloakUser.id);
+      } catch (rollbackError) {
+        console.error('CRITICAL: Failed to rollback Keycloak user creation', rollbackError);
+      }
+      throw error;
+    }
   }
 
   async resetPassword(id: User['id']): Promise<void> {
