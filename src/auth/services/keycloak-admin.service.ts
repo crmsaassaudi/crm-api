@@ -70,7 +70,14 @@ export class KeycloakAdminService {
                     Authorization: `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
+                timeout: 3000,
             }));
+
+            if (method === 'POST' && response.headers.location) {
+                // Return location header for POST requests if available (to extract ID)
+                return { ...response.data, location: response.headers.location };
+            }
+
             return response.data;
         } catch (error: any) {
             if (error.response?.status === 404) {
@@ -81,11 +88,13 @@ export class KeycloakAdminService {
         }
     }
 
-    async createUser(email: string, tenantId: string, roleName?: string) {
+    async createUser(email: string, tenantId: string, firstName: string, lastName: string, roleName?: string) {
         // 1. Create User
-        await this.request('POST', '/users', {
+        const response = await this.request('POST', '/users', {
             email,
             username: email,
+            firstName,
+            lastName,
             enabled: true,
             emailVerified: true,
             attributes: {
@@ -93,11 +102,18 @@ export class KeycloakAdminService {
             },
         });
 
-        // 2. Fetch created user to get ID
-        const user = await this.findUserByEmail(email);
-        if (!user) {
-            throw new Error(`Failed to retrieve created user ${email}`);
+        // 2. Extract ID from Location header or fetch
+        let userId = '';
+        if (response?.location) {
+            const parts = response.location.split('/');
+            userId = parts[parts.length - 1];
+        } else {
+            const user = await this.findUserByEmail(email);
+            if (!user) throw new Error(`Failed to retrieve created user ${email}`);
+            userId = user.id;
         }
+
+        const user = { id: userId, email, firstName, lastName };
 
         // 3. Assign Role (if provided)
         if (roleName) {
@@ -151,14 +167,20 @@ export class KeycloakAdminService {
             name,
             attributes,
         };
-        await this.request('POST', '/groups', groupPayload);
+        const response = await this.request('POST', '/groups', groupPayload);
 
         // Fetch to get ID
-        const group = await this.findGroupByName(name);
-        if (!group) {
-            throw new Error(`Failed to retrieve created group ${name}`);
+        let groupId = '';
+        if (response?.location) {
+            const parts = response.location.split('/');
+            groupId = parts[parts.length - 1];
+        } else {
+            const group = await this.findGroupByName(name);
+            if (!group) throw new Error(`Failed to retrieve created group ${name}`);
+            groupId = group.id;
         }
-        return group;
+
+        return { id: groupId, name, attributes };
     }
 
     async deleteGroup(groupId: string) {

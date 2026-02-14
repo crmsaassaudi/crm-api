@@ -3,6 +3,7 @@ import { Module, Global } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CacheModule } from '@nestjs/cache-manager';
 import { RedisService } from './redis.service';
+import { RedisLockService } from './redis-lock.service';
 import type { RedisOptions } from 'ioredis';
 import * as redisStore from 'cache-manager-ioredis';
 
@@ -22,7 +23,7 @@ import * as redisStore from 'cache-manager-ioredis';
       }),
     }),
   ],
-  providers: [RedisService],
-  exports: [RedisService, CacheModule],
+  providers: [RedisService, RedisLockService],
+  exports: [RedisService, RedisLockService, CacheModule],
 })
-export class RedisModule {}
+export class RedisModule { }

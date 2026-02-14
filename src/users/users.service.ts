@@ -344,6 +344,8 @@ export class UsersService {
       keycloakUser = await this.keycloakAdminService.createUser(
         inviteUserDto.email,
         tenantId,
+        '', // firstName
+        '', // lastName
         roleName
       );
     } catch (e) {
