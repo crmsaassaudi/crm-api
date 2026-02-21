@@ -6,7 +6,7 @@ import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
 import { UsersService } from '../users/users.service';
 import { getConnectionToken } from '@nestjs/mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { TenantOnboardingDto, TenantPlan } from './dto/tenant-onboarding.dto';
+import { RegisterTenantDto } from './dto/register-tenant.dto';
 import { ConflictException, ServiceUnavailableException, InternalServerErrorException } from '@nestjs/common';
 import { PlatformRoleEnum } from '../roles/platform-role.enum';
 import { AuthProvidersEnum } from '../auth/auth-providers.enum';
@@ -17,6 +17,8 @@ describe('TenantsService', () => {
     let tenantsRepository: TenantsRepository;
     let keycloakAdminService: KeycloakAdminService;
     let usersService: UsersService;
+    let aliasReservationRepository: any;
+    let userRepository: any;
     let eventEmitter: EventEmitter2;
     let connection: any;
     let session: any;
@@ -39,9 +41,10 @@ describe('TenantsService', () => {
                 {
                     provide: TenantsRepository,
                     useValue: {
-                        findByDomain: jest.fn(),
+                        findByAlias: jest.fn(),
                         create: jest.fn(),
-                        update: jest.fn(),
+                        updateById: jest.fn(),
+                        updateOwner: jest.fn(),
                         findById: jest.fn(),
                     },
                 },
@@ -66,6 +69,20 @@ describe('TenantsService', () => {
                     },
                 },
                 {
+                    provide: 'TenantAliasReservationRepository',
+                    useValue: {
+                        reserve: jest.fn(),
+                        confirm: jest.fn(),
+                        delete: jest.fn(),
+                    },
+                },
+                {
+                    provide: 'UserRepository',
+                    useValue: {
+                        upsertWithTenants: jest.fn(),
+                    },
+                },
+                {
                     provide: getConnectionToken(),
                     useValue: connection,
                 },
@@ -82,6 +99,8 @@ describe('TenantsService', () => {
         tenantsRepository = module.get<TenantsRepository>(TenantsRepository);
         keycloakAdminService = module.get<KeycloakAdminService>(KeycloakAdminService);
         usersService = module.get<UsersService>(UsersService);
+        aliasReservationRepository = module.get('TenantAliasReservationRepository');
+        userRepository = module.get('UserRepository');
         eventEmitter = module.get<EventEmitter2>(EventEmitter2);
     });
 
@@ -89,14 +108,13 @@ describe('TenantsService', () => {
         expect(service).toBeDefined();
     });
 
-    describe('onboardTenant', () => {
-        const dto: TenantOnboardingDto = {
-            companyName: 'Test Company',
-            subdomain: 'test-company',
-            adminEmail: 'admin@test.com',
-            adminFirstName: 'John',
-            adminLastName: 'Doe',
-            plan: TenantPlan.PRO,
+    describe('register', () => {
+        const dto: RegisterTenantDto = {
+            organizationName: 'Test Company',
+            organizationAlias: 'test-company',
+            email: 'admin@test.com',
+            fullName: 'John Doe',
+            password: 'testPassword123!',
         };
 
         it('should successfully onboard a tenant', async () => {
@@ -107,29 +125,31 @@ describe('TenantsService', () => {
             const shadowUserId = 'shadow-user-id';
 
             // Mocks
-            (tenantsRepository.findByDomain as jest.Mock).mockResolvedValue(null);
-            (keycloakAdminService.findUserByEmail as jest.Mock).mockResolvedValue(null);
-            (usersService.findByEmail as jest.Mock).mockResolvedValue(null);
+            (tenantsRepository.findByAlias as jest.Mock) = jest.fn().mockResolvedValue(null);
+            (keycloakAdminService.findUserByEmail as jest.Mock) = jest.fn().mockResolvedValue(null);
+            (usersService.findByEmail as jest.Mock) = jest.fn().mockResolvedValue(null);
 
-            (tenantsRepository.create as jest.Mock).mockResolvedValue({ id: localTenantId });
-            (keycloakAdminService.createGroup as jest.Mock).mockResolvedValue({ id: keycloakGroupId });
-            (keycloakAdminService.createUser as jest.Mock).mockResolvedValue({ id: keycloakUserId });
-            (usersService.create as jest.Mock).mockResolvedValue({ id: shadowUserId });
+            (tenantsRepository.create as jest.Mock) = jest.fn().mockResolvedValue({ id: localTenantId });
+            (keycloakAdminService.createOrganization as jest.Mock) = jest.fn().mockResolvedValue({ id: keycloakGroupId });
+            (keycloakAdminService.createUser as jest.Mock) = jest.fn().mockResolvedValue({ id: keycloakUserId });
+            (usersService.create as jest.Mock) = jest.fn().mockResolvedValue({ id: shadowUserId });
 
             // Execution
-            const result = await service.onboardTenant(dto);
+            const result = await service.register(dto);
 
             // Assertions
             expect(result).toEqual({
-                id: localTenantId,
-                companyName: dto.companyName,
-                status: 'ACTIVE',
+                tenantId: localTenantId,
+                organizationName: dto.organizationName,
+                alias: dto.organizationAlias,
+                keycloakOrgId: keycloakGroupId,
+                loginUrl: expect.any(String),
             });
 
             // 1. Validation
-            expect(tenantsRepository.findByDomain).toHaveBeenCalledWith(dto.subdomain);
-            expect(keycloakAdminService.findUserByEmail).toHaveBeenCalledWith(dto.adminEmail);
-            expect(usersService.findByEmail).toHaveBeenCalledWith(dto.adminEmail);
+            expect(tenantsRepository.findByAlias).toHaveBeenCalledWith(dto.organizationAlias);
+            expect(aliasReservationRepository.reserve).toHaveBeenCalledWith(dto.organizationAlias);
+            expect(keycloakAdminService.findUserByEmail).toHaveBeenCalledWith(dto.email);
 
             // 2. Transaction
             expect(connection.startSession).toHaveBeenCalled();
@@ -137,73 +157,70 @@ describe('TenantsService', () => {
 
             // 3. Local Tenant Creation
             expect(tenantsRepository.create).toHaveBeenCalledWith(expect.objectContaining({
-                name: dto.companyName,
-                domain: dto.subdomain,
+                name: dto.organizationName,
+                alias: dto.organizationAlias,
             }), session);
 
             // 4. Keycloak Group
-            expect(keycloakAdminService.createGroup).toHaveBeenCalledWith(localTenantId, {
-                displayName: dto.companyName,
-                subdomain: dto.subdomain,
-                plan: dto.plan,
-            });
+            expect(keycloakAdminService.createOrganization).toHaveBeenCalledWith(
+                dto.organizationName,
+                dto.organizationAlias,
+            );
 
             // 5. Keycloak User
-            expect(keycloakAdminService.createUser).toHaveBeenCalledWith(dto.adminEmail, localTenantId);
+            expect(keycloakAdminService.createUser).toHaveBeenCalledWith(dto.email, dto.password, dto.fullName);
             expect(keycloakAdminService.updateUser).toHaveBeenCalledWith(keycloakUserId, {
-                firstName: dto.adminFirstName,
-                lastName: dto.adminLastName,
+                firstName: dto.fullName.split(' ')[0],
+                lastName: dto.fullName.split(' ')[1],
             });
 
             // 6. Config
-            expect(keycloakAdminService.addUserToGroup).toHaveBeenCalledWith(keycloakUserId, keycloakGroupId);
+            expect(keycloakAdminService.addUserToOrganization).toHaveBeenCalledWith(keycloakGroupId, keycloakUserId);
             expect(keycloakAdminService.resetPassword).toHaveBeenCalledWith(keycloakUserId);
 
             // 7. Local User & Tenant Update
-            expect(usersService.create).toHaveBeenCalledWith(expect.objectContaining({
-                email: dto.adminEmail,
-                firstName: dto.adminFirstName,
-                lastName: dto.adminLastName,
-                provider: AuthProvidersEnum.email,
-                keycloakId: keycloakUserId,
-                platformRole: { id: PlatformRoleEnum.USER },
-                status: { id: StatusEnum.active }
-            }), localTenantId, session);
+            expect(userRepository.upsertWithTenants).toHaveBeenCalledWith(
+                keycloakUserId,
+                dto.email,
+                expect.objectContaining({
+                    firstName: 'John',
+                    lastName: 'Doe',
+                    keycloakId: keycloakUserId,
+                }),
+                expect.any(Array)
+            );
 
-            expect(tenantsRepository.update).toHaveBeenCalledWith(localTenantId, expect.objectContaining({
-                owner: shadowUserId,
-                // status: 'ACTIVE' // check implementation
-            }), session);
+            expect(tenantsRepository.updateOwner).toHaveBeenCalledWith(localTenantId, shadowUserId);
+            expect(aliasReservationRepository.confirm).toHaveBeenCalledWith(dto.organizationAlias);
 
             // 8. Commit & Event
             expect(session.commitTransaction).toHaveBeenCalled();
             expect(eventEmitter.emit).toHaveBeenCalledWith('tenant.created', expect.anything());
         });
 
-        it('should throw ConflictException if subdomain exists', async () => {
-            (tenantsRepository.findByDomain as jest.Mock).mockResolvedValue({ id: 'existing' });
+        it('should throw ConflictException if alias exists', async () => {
+            (tenantsRepository.findByAlias as jest.Mock) = jest.fn().mockResolvedValue({ id: 'existing' });
 
-            await expect(service.onboardTenant(dto)).rejects.toThrow(ConflictException);
-            expect(session.startTransaction).not.toHaveBeenCalled();
+            await expect(service.register(dto)).rejects.toThrow(ConflictException);
         });
 
         it('should rollback and delete group if Keycloak user creation fails', async () => {
             const localTenantId = 'local-tenant-id';
             const keycloakGroupId = 'keycloak-group-id';
 
-            (tenantsRepository.findByDomain as jest.Mock).mockResolvedValue(null);
-            (keycloakAdminService.findUserByEmail as jest.Mock).mockResolvedValue(null);
-            (usersService.findByEmail as jest.Mock).mockResolvedValue(null);
-            (tenantsRepository.create as jest.Mock).mockResolvedValue({ id: localTenantId });
-            (keycloakAdminService.createGroup as jest.Mock).mockResolvedValue({ id: keycloakGroupId });
+            (tenantsRepository.findByAlias as jest.Mock) = jest.fn().mockResolvedValue(null);
+            (keycloakAdminService.findUserByEmail as jest.Mock) = jest.fn().mockResolvedValue(null);
+            (usersService.findByEmail as jest.Mock) = jest.fn().mockResolvedValue(null);
+            (tenantsRepository.create as jest.Mock) = jest.fn().mockResolvedValue({ id: localTenantId });
+            (keycloakAdminService.createOrganization as jest.Mock) = jest.fn().mockResolvedValue({ id: keycloakGroupId });
 
             // Fail here
-            (keycloakAdminService.createUser as jest.Mock).mockRejectedValue(new Error('Keycloak Error'));
+            (keycloakAdminService.createUser as jest.Mock) = jest.fn().mockRejectedValue(new Error('Keycloak Error'));
 
-            await expect(service.onboardTenant(dto)).rejects.toThrow(ServiceUnavailableException);
+            await expect(service.register(dto)).rejects.toThrow(InternalServerErrorException);
 
-            expect(keycloakAdminService.deleteGroup).toHaveBeenCalledWith(keycloakGroupId);
-            expect(session.abortTransaction).toHaveBeenCalled();
+            expect(keycloakAdminService.deleteOrganization).toHaveBeenCalledWith(keycloakGroupId);
+            expect(aliasReservationRepository.delete).toHaveBeenCalledWith(dto.organizationAlias);
         });
 
         it('should rollback and delete user/group if local user creation fails', async () => {
@@ -211,21 +228,20 @@ describe('TenantsService', () => {
             const keycloakGroupId = 'keycloak-group-id';
             const keycloakUserId = 'keycloak-user-id';
 
-            (tenantsRepository.findByDomain as jest.Mock).mockResolvedValue(null);
-            (keycloakAdminService.findUserByEmail as jest.Mock).mockResolvedValue(null);
-            (usersService.findByEmail as jest.Mock).mockResolvedValue(null);
-            (tenantsRepository.create as jest.Mock).mockResolvedValue({ id: localTenantId });
-            (keycloakAdminService.createGroup as jest.Mock).mockResolvedValue({ id: keycloakGroupId });
-            (keycloakAdminService.createUser as jest.Mock).mockResolvedValue({ id: keycloakUserId });
+            (tenantsRepository.findByAlias as jest.Mock) = jest.fn().mockResolvedValue(null);
+            (keycloakAdminService.findUserByEmail as jest.Mock) = jest.fn().mockResolvedValue(null);
+            (usersService.findByEmail as jest.Mock) = jest.fn().mockResolvedValue(null);
+            (tenantsRepository.create as jest.Mock) = jest.fn().mockResolvedValue({ id: localTenantId });
+            (keycloakAdminService.createOrganization as jest.Mock) = jest.fn().mockResolvedValue({ id: keycloakGroupId });
+            (keycloakAdminService.createUser as jest.Mock) = jest.fn().mockResolvedValue({ id: keycloakUserId });
 
             // Fail here
-            (usersService.create as jest.Mock).mockRejectedValue(new Error('DB Error'));
+            (usersService.create as jest.Mock) = jest.fn().mockRejectedValue(new Error('DB Error'));
 
-            await expect(service.onboardTenant(dto)).rejects.toThrow(InternalServerErrorException);
+            await expect(service.register(dto)).rejects.toThrow(InternalServerErrorException);
 
             expect(keycloakAdminService.deleteUser).toHaveBeenCalledWith(keycloakUserId);
-            expect(keycloakAdminService.deleteGroup).toHaveBeenCalledWith(keycloakGroupId);
-            expect(session.abortTransaction).toHaveBeenCalled();
+            expect(keycloakAdminService.deleteOrganization).toHaveBeenCalledWith(keycloakGroupId);
         });
     });
 });
