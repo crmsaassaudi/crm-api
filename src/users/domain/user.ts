@@ -64,8 +64,9 @@ export class User {
 
   @ApiProperty({
     type: () => Role,
+    description: 'Platform-level role (SUPER_ADMIN or USER)',
   })
-  role?: Role | null;
+  platformRole?: Role | null;
 
   @ApiProperty({
     type: () => Status,

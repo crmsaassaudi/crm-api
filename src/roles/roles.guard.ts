@@ -1,6 +1,6 @@
 import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-
+import { PlatformRoleEnum } from './platform-role.enum';
 import { UsersService } from '../users/users.service';
 import { AuthProvidersEnum } from '../auth/auth-providers.enum';
 
@@ -12,11 +12,11 @@ export class RolesGuard implements CanActivate {
   ) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const roles = this.reflector.getAllAndOverride<(number | string)[]>(
+    const roles = this.reflector.getAllAndOverride<PlatformRoleEnum[]>(
       'roles',
       [context.getClass(), context.getHandler()],
     );
-    if (!roles.length) {
+    if (!roles || !roles.length) {
       return true;
     }
     const request = context.switchToHttp().getRequest();
@@ -35,6 +35,7 @@ export class RolesGuard implements CanActivate {
       return false;
     }
 
-    return roles.map(String).includes(String(user.role?.id));
+    // Check user.platformRole.id against required platform roles
+    return user.platformRole?.id ? roles.includes(user.platformRole.id) : false;
   }
 }

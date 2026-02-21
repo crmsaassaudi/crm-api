@@ -4,8 +4,8 @@ import { FileSchemaClass } from '../../../../../files/infrastructure/persistence
 import { FileMapper } from '../../../../../files/infrastructure/persistence/document/mappers/file.mapper';
 import { Role } from '../../../../../roles/domain/role';
 import { Status } from '../../../../../statuses/domain/status';
-import { RoleSchema } from '../../../../../roles/infrastructure/persistence/document/entities/role.schema';
-import { StatusSchema } from '../../../../../statuses/infrastructure/persistence/document/entities/status.schema';
+import { PlatformRoleEnum } from '../../../../../roles/platform-role.enum';
+import { StatusEnum } from '../../../../../statuses/statuses.enum';
 
 export class UserMapper {
   static toDomain(raw: UserSchemaClass): User {
@@ -25,20 +25,25 @@ export class UserMapper {
     domainEntity.keycloakId = raw.keycloakId;
     domainEntity.firstName = raw.firstName;
     domainEntity.lastName = raw.lastName;
+
     if (raw.photo) {
       domainEntity.photo = FileMapper.toDomain(raw.photo);
     } else if (raw.photo === null) {
       domainEntity.photo = null;
     }
 
-    if (raw.role) {
-      domainEntity.role = new Role();
-      domainEntity.role.id = raw.role._id;
+    // platformRole is a flat string (PlatformRoleEnum value)
+    if (raw.platformRole) {
+      domainEntity.platformRole = new Role();
+      domainEntity.platformRole.id = raw.platformRole as PlatformRoleEnum;
+      domainEntity.platformRole.name = raw.platformRole;
     }
 
+    // status is a flat string (StatusEnum value)
     if (raw.status) {
       domainEntity.status = new Status();
-      domainEntity.status.id = raw.status._id;
+      domainEntity.status.id = raw.status as StatusEnum;
+      domainEntity.status.name = raw.status;
     }
 
     domainEntity.createdAt = raw.createdAt;
@@ -49,26 +54,12 @@ export class UserMapper {
   }
 
   static toPersistence(domainEntity: User): UserSchemaClass {
-    let role: RoleSchema | undefined = undefined;
-
-    if (domainEntity.role) {
-      role = new RoleSchema();
-      role._id = domainEntity.role.id.toString();
-    }
-
     let photo: FileSchemaClass | undefined = undefined;
 
     if (domainEntity.photo) {
       photo = new FileSchemaClass();
       photo._id = domainEntity.photo.id;
       photo.path = domainEntity.photo.path;
-    }
-
-    let status: StatusSchema | undefined = undefined;
-
-    if (domainEntity.status) {
-      status = new StatusSchema();
-      status._id = domainEntity.status.id.toString();
     }
 
     const persistenceSchema = new UserSchemaClass();
@@ -83,8 +74,9 @@ export class UserMapper {
         joinedAt: t.joinedAt,
       }))
       : [];
+
     if (domainEntity.version !== undefined) {
-      persistenceSchema.__v = domainEntity.version; // Map version for optimistic lock checks
+      persistenceSchema.__v = domainEntity.version;
     }
 
     persistenceSchema.email = domainEntity.email;
@@ -94,11 +86,15 @@ export class UserMapper {
     persistenceSchema.firstName = domainEntity.firstName;
     persistenceSchema.lastName = domainEntity.lastName;
     persistenceSchema.photo = photo;
-    persistenceSchema.role = role;
-    persistenceSchema.status = status;
+
+    // platformRole and status are flat strings
+    persistenceSchema.platformRole = domainEntity.platformRole?.id ?? null;
+    persistenceSchema.status = domainEntity.status?.id ?? null;
+
     persistenceSchema.createdAt = domainEntity.createdAt;
     persistenceSchema.updatedAt = domainEntity.updatedAt;
     persistenceSchema.deletedAt = domainEntity.deletedAt;
+
     return persistenceSchema;
   }
 }

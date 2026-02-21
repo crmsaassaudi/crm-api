@@ -42,8 +42,8 @@ export class UsersDocumentRepository
   }): Promise<User[]> {
     const where: FilterQuery<UserSchemaClass> = {};
     if (filterOptions?.roles?.length) {
-      where['role._id'] = {
-        $in: filterOptions.roles.map((role) => role.id.toString()),
+      where['role'] = {
+        $in: filterOptions.roles.map((role) => role.id),
       };
     }
 
@@ -204,8 +204,9 @@ export class UsersDocumentRepository
       provider: userData.provider,
       firstName: userData.firstName,
       lastName: userData.lastName,
-      role: userData.role,
-      status: userData.status,
+      // role and status are flat strings in the new schema
+      platformRole: userData.platformRole?.id ?? null,
+      status: userData.status?.id ?? null,
     };
 
     // Use findOneAndUpdate with upsert for idempotency

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { UsersModule } from './users/users.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { FilesModule } from './files/files.module';
@@ -55,6 +55,7 @@ import { jwtDecode } from 'jwt-decode';
 
 
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
+import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.middleware';
 
 @Module({
   imports: [
@@ -115,6 +116,12 @@ import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
           let tenantId = Array.isArray(headerTenantId)
             ? headerTenantId[0]
             : headerTenantId;
+
+          // 2a. Extract from subdomain (populated by TenantResolverMiddleware)
+          if (!tenantId && (req as any).tenantAlias) {
+            // tenantAlias is the alias string; the subdomain itself is the tenant identifier
+            tenantId = (req as any).tenantAlias;
+          }
 
           let userId;
           let email;
@@ -227,5 +234,9 @@ import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
     },
   ],
 })
-export class AppModule { }
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(TenantResolverMiddleware).forRoutes('*');
+  }
+}
 

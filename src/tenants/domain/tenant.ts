@@ -1,28 +1,41 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-const idType = String;
+export enum SubscriptionPlan {
+    FREE = 'FREE',
+    PRO = 'PRO',
+    ENTERPRISE = 'ENTERPRISE',
+}
+
+export enum TenantStatus {
+    ACTIVE = 'ACTIVE',
+    SUSPENDED = 'SUSPENDED',
+}
 
 export class Tenant {
-    @ApiProperty({
-        type: idType,
-    })
+    @ApiProperty({ type: String })
     id: string;
+
+    @ApiProperty()
+    keycloakOrgId: string;
+
+    @ApiProperty()
+    alias: string;
 
     @ApiProperty()
     name: string;
 
     @ApiProperty()
-    domain: string;
-
-    @ApiProperty()
     owner: string;
+
+    @ApiProperty({ enum: SubscriptionPlan })
+    subscriptionPlan: SubscriptionPlan;
+
+    @ApiProperty({ enum: TenantStatus })
+    status: TenantStatus;
 
     @ApiProperty()
     createdAt: Date;
 
     @ApiProperty()
     updatedAt: Date;
-
-    @ApiProperty()
-    deletedAt: Date;
 }

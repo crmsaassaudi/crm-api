@@ -1,21 +1,28 @@
-import { Injectable, ConflictException, Inject, forwardRef, ServiceUnavailableException, InternalServerErrorException, Logger } from '@nestjs/common';
-import { InjectConnection } from '@nestjs/mongoose';
-import { Connection } from 'mongoose';
+import {
+    Injectable,
+    ConflictException,
+    InternalServerErrorException,
+    Logger,
+} from '@nestjs/common';
 import { TenantsRepository } from './infrastructure/persistence/document/repositories/tenant.repository';
-import { TenantOnboardingDto } from './dto/tenant-onboarding.dto';
-import { Tenant } from './domain/tenant';
+import { TenantAliasReservationRepository } from './infrastructure/persistence/document/repositories/tenant-alias-reservation.repository';
+import { RegisterTenantDto } from './dto/register-tenant.dto';
+import { Tenant, SubscriptionPlan, TenantStatus } from './domain/tenant';
 import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
-import { UsersService } from '../users/users.service';
-import { RoleEnum } from '../roles/roles.enum';
+import { PlatformRoleEnum } from '../roles/platform-role.enum';
 import { AuthProvidersEnum } from '../auth/auth-providers.enum';
 import { StatusEnum } from '../statuses/statuses.enum';
-import { CreateTenantDto } from './dto/create-tenant.dto';
-
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { TenantCreatedEvent } from './events/tenant-created.event';
+import { UserRepository } from '../users/infrastructure/persistence/user.repository';
 
-import { TransactionManager } from '../database/transaction-manager.service';
-import { RedisLockService } from '../redis/redis-lock.service';
+export interface RegisterTenantResult {
+    tenantId: string;
+    alias: string;
+    organizationName: string;
+    keycloakOrgId: string;
+    loginUrl: string;
+}
 
 @Injectable()
 export class TenantsService {
@@ -23,129 +30,202 @@ export class TenantsService {
 
     constructor(
         private readonly tenantsRepository: TenantsRepository,
+        private readonly aliasReservationRepository: TenantAliasReservationRepository,
         private readonly keycloakAdminService: KeycloakAdminService,
-        @Inject(forwardRef(() => UsersService))
-        private readonly usersService: UsersService,
-        @InjectConnection() private readonly connection: Connection,
+        private readonly userRepository: UserRepository,
         private readonly eventEmitter: EventEmitter2,
-        private readonly txManager: TransactionManager,
-        private readonly redisLock: RedisLockService,
     ) { }
 
-    async onboardTenant(dto: TenantOnboardingDto) {
-        const lockKey = `onboard:tenant:${dto.subdomain}`;
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Saga: POST /api/auth/register
+    // ─────────────────────────────────────────────────────────────────────────────
 
-        // 1. Race Condition Prevention (Idempotency) using Redis Lock
-        return await this.redisLock.acquire(lockKey, 10000, async () => {
-            // 2. Pre-flight Validation
-            const existingTenant = await this.tenantsRepository.findByDomain(dto.subdomain);
-            if (existingTenant) {
-                throw new ConflictException('Subdomain already exists');
-            }
+    async register(dto: RegisterTenantDto): Promise<RegisterTenantResult> {
+        const { email, password, fullName, organizationName, organizationAlias: alias } = dto;
 
-            const existingKeycloakUser = await this.keycloakAdminService.findUserByEmail(dto.adminEmail);
-            if (existingKeycloakUser) {
-                throw new ConflictException('Admin email already exists in Keycloak');
-            }
+        // ── Saga compensation trackers ─────────────────────────────────────────────
+        let aliasReserved = false;
+        let keycloakOrgId: string | null = null;
+        let keycloakUserCreatedByThisSaga = false;
+        let keycloakUserId: string | null = null;
 
-            const existingLocalUser = await this.usersService.findByEmail(dto.adminEmail);
-            if (existingLocalUser) {
-                throw new ConflictException('Admin email already exists in system');
-            }
+        const stepLog = (step: number, msg: string) =>
+            this.logger.log(`[Saga][Step ${step}] ${msg}`);
+        const stepErr = (step: number, err: unknown) =>
+            this.logger.error(
+                `[Saga][Step ${step} FAILED] ${err instanceof Error ? err.message : String(err)}`,
+                err instanceof Error ? err.stack : undefined,
+            );
 
-            let keycloakGroupId: string | null = null;
-            let keycloakUserId: string | null = null;
-
+        try {
+            // ── Step 1: Atomic alias reservation ──────────────────────────────────────
             try {
-                // 3. External System Interactions (Keycloak) BEFORE DB Transaction
-                // This prevents holding DB locks while waiting for external services
-                const group = await this.keycloakAdminService.createGroup(dto.subdomain, { // Using subdomain as name for uniqueness
-                    displayName: dto.companyName,
-                    subdomain: dto.subdomain,
-                    plan: dto.plan
-                });
-                keycloakGroupId = group.id;
+                await this.aliasReservationRepository.reserve(alias);
+                aliasReserved = true;
+                stepLog(1, `Alias "${alias}" reserved`);
+            } catch (e) { stepErr(1, e); throw e; }
 
-                const user = await this.keycloakAdminService.createUser(
-                    dto.adminEmail,
-                    dto.subdomain,
-                    dto.adminFirstName,
-                    dto.adminLastName,
-                    // We will assign roles/groups in next steps or via default logic if any
-                );
-                keycloakUserId = user.id;
+            // ── Step 2: Create Keycloak Organization ──────────────────────────────────
+            try {
+                const kcOrg = await this.keycloakAdminService.createOrganization(organizationName, alias);
+                keycloakOrgId = kcOrg.id;
+                stepLog(2, `KC org created: ${keycloakOrgId}`);
+            } catch (e) { stepErr(2, e); throw e; }
 
-                // Add user to the tenant group
-                await this.keycloakAdminService.addUserToGroup(keycloakUserId, keycloakGroupId);
+            // ── Step 3: Find or create the Keycloak User ──────────────────────────────
+            try {
+                let kcUser = await this.keycloakAdminService.findUserByEmail(email);
+                if (kcUser) {
+                    keycloakUserId = kcUser.id;
+                    stepLog(3, `Reusing existing KC user ${keycloakUserId} for ${email}`);
+                } else {
+                    kcUser = await this.keycloakAdminService.createUser(email, password, fullName);
+                    keycloakUserId = kcUser.id;
+                    keycloakUserCreatedByThisSaga = true;
+                    stepLog(3, `KC user created: ${keycloakUserId}`);
+                }
+            } catch (e) { stepErr(3, e); throw e; }
 
-                // Trigger password reset email
-                await this.keycloakAdminService.resetPassword(keycloakUserId);
+            // ── Step 4: Add user to the organization ──────────────────────────────────
+            try {
+                await this.keycloakAdminService.addUserToOrganization(keycloakOrgId!, keycloakUserId!);
+                stepLog(4, `User ${keycloakUserId} added to org ${keycloakOrgId}`);
+            } catch (e) { stepErr(4, e); throw e; }
 
-                // 4. Local DB Transaction
-                const result = await this.txManager.runInTransaction(async (session) => {
-                    const tenant = new Tenant();
-                    tenant.name = dto.companyName;
-                    tenant.domain = dto.subdomain;
-                    // tenant.plan = dto.plan; 
-                    // tenant.status = 'ACTIVE'; 
+            // ── Step 5: Assign org-admin role ─────────────────────────────────────────
+            // try {
+            //     await this.keycloakAdminService.assignOrgAdminRole(keycloakOrgId!, keycloakUserId!);
+            //     stepLog(5, `org-admin role assigned to ${keycloakUserId}`);
+            // } catch (e) { stepErr(5, e); throw e; }
 
-                    const newTenant = await this.tenantsRepository.create(tenant, session);
+            // ── Step 6: Create Tenant record in MongoDB ───────────────────────────────
+            let tenant: Tenant;
+            try {
+                const tenantData: Partial<Tenant> = {
+                    keycloakOrgId: keycloakOrgId!,
+                    alias,
+                    name: organizationName,
+                    owner: null as any,
+                    subscriptionPlan: SubscriptionPlan.FREE,
+                    status: TenantStatus.ACTIVE,
+                };
+                tenant = await this.tenantsRepository.create(tenantData);
+                stepLog(6, `Tenant created in MongoDB: ${tenant.id}`);
+            } catch (e) { stepErr(6, e); throw e; }
 
-                    // Create Shadow User
-                    const shadowUser = await this.usersService.create({
-                        email: dto.adminEmail,
-                        firstName: dto.adminFirstName,
-                        lastName: dto.adminLastName,
+            // ── Step 7: Upsert User in MongoDB & add OWNER membership ─────────────────
+            let localUser: any;
+            try {
+                const spaceIdx = fullName.indexOf(' ');
+                const firstName = spaceIdx > -1 ? fullName.slice(0, spaceIdx) : fullName;
+                const lastName = spaceIdx > -1 ? fullName.slice(spaceIdx + 1) : '';
+                localUser = await this.userRepository.upsertWithTenants(
+                    keycloakUserId!,
+                    email,
+                    {
+                        firstName,
+                        lastName,
                         provider: AuthProvidersEnum.email,
-                        keycloakId: keycloakUserId,
-                        role: { id: RoleEnum.admin } as any,
+                        platformRole: { id: PlatformRoleEnum.USER } as any,
                         status: { id: StatusEnum.active } as any,
-                    }, newTenant.id.toString(), session);
-
-                    // Update Tenant Owner
-                    await this.tenantsRepository.update(newTenant.id.toString(), {
-                        owner: shadowUser.id.toString()
-                    }, session);
-
-                    return {
-                        id: newTenant.id.toString(),
-                        companyName: dto.companyName,
-                        status: 'ACTIVE'
-                    };
-                });
-
-                // 5. Fire event (Out of transaction, when DB is committed)
-                this.eventEmitter.emit(
-                    'tenant.created',
-                    new TenantCreatedEvent(result.id, dto.companyName, dto.adminEmail),
+                        keycloakId: keycloakUserId!,
+                    },
+                    [{ tenant: tenant!.id, roles: ['OWNER'], joinedAt: new Date() }],
                 );
+                stepLog(7, `User upserted in MongoDB: ${localUser.id}`);
+            } catch (e) { stepErr(7, e); throw e; }
 
-                return result;
+            // ── Step 8: Set owner on the Tenant ──────────────────────────────────────
+            try {
+                await this.tenantsRepository.updateOwner(tenant!.id, localUser.id as string);
+                stepLog(8, `Tenant owner set to ${localUser.id}`);
+            } catch (e) { stepErr(8, e); throw e; }
 
-            } catch (error) {
-                this.logger.error('Onboarding failed, rolling back Keycloak resources', error);
+            // ── Step 9: Confirm alias reservation ────────────────────────────────────
+            try {
+                await this.aliasReservationRepository.confirm(alias);
+                stepLog(9, `Alias "${alias}" confirmed`);
+            } catch (e) { stepErr(9, e); throw e; }
 
-                // 6. Saga Compensation
-                if (keycloakUserId) {
-                    await this.keycloakAdminService.deleteUser(keycloakUserId).catch(e =>
-                        this.logger.error('Failed to cleanup user during rollback', e)
+            // ── Emit event ────────────────────────────────────────────────────────────
+            this.eventEmitter.emit(
+                'tenant.created',
+                new TenantCreatedEvent(tenant!.id, organizationName, email),
+            );
+
+            return {
+                tenantId: tenant!.id,
+                alias,
+                organizationName,
+                keycloakOrgId: keycloakOrgId!,
+                loginUrl: `https://${alias}.crm.com/login`,
+            };
+
+
+        } catch (error: unknown) {
+            // ── Saga Rollback (compensating transactions) ──────────────────────────────
+            this.logger.error(
+                '[Saga] Onboarding failed — rolling back compensating actions',
+                error instanceof Error ? error.stack : String(error),
+            );
+
+            // Rollback Keycloak Org
+            if (keycloakOrgId) {
+                await this.keycloakAdminService
+                    .deleteOrganization(keycloakOrgId)
+                    .catch((e: unknown) =>
+                        this.logger.error(
+                            `[Saga][Rollback] Cannot delete Keycloak org ${keycloakOrgId}`,
+                            e instanceof Error ? e.message : e,
+                        ),
                     );
-                }
-                if (keycloakGroupId) {
-                    await this.keycloakAdminService.deleteGroup(keycloakGroupId).catch(e =>
-                        this.logger.error('Failed to cleanup group during rollback', e)
-                    );
-                }
-
-                if (error instanceof ConflictException || error instanceof ServiceUnavailableException) {
-                    throw error;
-                }
-                throw new InternalServerErrorException('Onboarding process failed');
             }
-        });
+
+            // Rollback Keycloak User ONLY if we created it in this saga run.
+            // Never delete a pre-existing user that merely joined a new org.
+            if (keycloakUserCreatedByThisSaga && keycloakUserId) {
+                await this.keycloakAdminService
+                    .deleteUser(keycloakUserId)
+                    .catch((e: unknown) =>
+                        this.logger.error(
+                            `[Saga][Rollback] Cannot delete Keycloak user ${keycloakUserId}`,
+                            e instanceof Error ? e.message : e,
+                        ),
+                    );
+            }
+
+            // Rollback alias reservation so the alias can be retried
+            if (aliasReserved) {
+                await this.aliasReservationRepository
+                    .delete(alias)
+                    .catch((e: unknown) =>
+                        this.logger.error(
+                            `[Saga][Rollback] Cannot delete alias reservation for "${alias}"`,
+                            e instanceof Error ? e.message : e,
+                        ),
+                    );
+            }
+
+            // Re-raise ConflictException as-is; wrap everything else
+            if (error instanceof ConflictException) {
+                throw error;
+            }
+
+            throw new InternalServerErrorException(
+                'Tenant registration failed. All partial changes have been rolled back.',
+            );
+        }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Read operations
+    // ─────────────────────────────────────────────────────────────────────────────
 
     async findById(id: string): Promise<Tenant | null> {
         return this.tenantsRepository.findById(id);
+    }
+
+    async findByAlias(alias: string): Promise<Tenant | null> {
+        return this.tenantsRepository.findByAlias(alias);
     }
 }

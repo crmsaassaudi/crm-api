@@ -1,8 +1,27 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+    Injectable,
+    Logger,
+    UnauthorizedException,
+    InternalServerErrorException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { AllConfigType } from '../../config/config.type';
 import { firstValueFrom } from 'rxjs';
+
+interface KeycloakUser {
+    id: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    username?: string;
+}
+
+interface KeycloakOrganization {
+    id: string;
+    name: string;
+    alias: string;
+}
 
 @Injectable()
 export class KeycloakAdminService {
@@ -14,6 +33,10 @@ export class KeycloakAdminService {
         private readonly configService: ConfigService<AllConfigType>,
         private readonly httpService: HttpService,
     ) { }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Config helpers
+    // ─────────────────────────────────────────────────────────────────────────────
 
     private get baseUrl(): string {
         return this.configService.getOrThrow('keycloak.authServerUrl', { infer: true });
@@ -31,6 +54,10 @@ export class KeycloakAdminService {
         return this.configService.getOrThrow('keycloak.clientSecret', { infer: true });
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Admin token management (cached, client_credentials flow)
+    // ─────────────────────────────────────────────────────────────────────────────
+
     private async getAdminAccessToken(): Promise<string> {
         if (this.accessToken && Date.now() < this.tokenExpiresAt) {
             return this.accessToken;
@@ -43,157 +70,329 @@ export class KeycloakAdminService {
         params.append('client_secret', this.clientSecret);
 
         try {
-            const response = await firstValueFrom(this.httpService.post(tokenUrl, params.toString(), {
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            }));
+            const response = await firstValueFrom(
+                this.httpService.post(tokenUrl, params.toString(), {
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                }),
+            );
 
-            this.accessToken = response.data.access_token;
-            // Set expiry slightly before actual expiry (e.g., 60s buffer)
+            this.accessToken = response.data.access_token as string;
+            // Expire 60 s before actual TTL to avoid stale-token races
             this.tokenExpiresAt = Date.now() + (response.data.expires_in - 60) * 1000;
             return this.accessToken!;
         } catch (error) {
-            this.logger.error('Failed to authenticate with Keycloak', error);
+            this.logger.error('Failed to obtain Keycloak admin token', error);
             throw new UnauthorizedException('Failed to authenticate with Keycloak Admin API');
         }
     }
 
-    private async request(method: 'GET' | 'POST' | 'PUT' | 'DELETE', endpoint: string, data?: any): Promise<any> {
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Generic HTTP helper
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    private async request<T = any>(
+        method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+        endpoint: string,
+        data?: unknown,
+        _retry = false,
+    ): Promise<{ data: T; location?: string }> {
         const token = await this.getAdminAccessToken();
         const url = `${this.baseUrl}/admin/realms/${this.realm}${endpoint}`;
 
         try {
-            const response = await firstValueFrom(this.httpService.request({
-                method,
-                url,
-                data,
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                },
-                timeout: 3000,
-            }));
+            const response = await firstValueFrom(
+                this.httpService.request<T>({
+                    method,
+                    url,
+                    data,
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    timeout: 10000,
+                }),
+            );
 
-            if (method === 'POST' && response.headers.location) {
-                // Return location header for POST requests if available (to extract ID)
-                return { ...response.data, location: response.headers.location };
-            }
-
-            return response.data;
+            const location = response.headers?.location as string | undefined;
+            return { data: response.data, location };
         } catch (error: any) {
-            if (error.response?.status === 404) {
-                return null; // Handle 404 gracefully for find operations
+            const status = error?.response?.status;
+
+            // 404 → return null (resource not found is not an error)
+            if (status === 404) {
+                return { data: null as unknown as T };
             }
-            this.logger.error(`Failed request ${method} ${url}`, error.response?.data || error.message);
+
+            // 401 / 403 on first attempt → token may be stale, bust cache and retry once
+            if ((status === 401 || status === 403) && !_retry) {
+                this.logger.warn(
+                    `[KC] HTTP ${status} on ${method} ${endpoint} — busting token cache and retrying`,
+                );
+                this.accessToken = null;
+                this.tokenExpiresAt = 0;
+                return this.request<T>(method, endpoint, data, true);
+            }
+
+            this.logger.error(
+                `Keycloak request failed: ${method} ${url}`,
+                error?.response?.data ?? error?.message,
+            );
             throw error;
         }
     }
 
-    async createUser(email: string, tenantId: string, firstName: string, lastName: string, roleName?: string) {
-        // 1. Create User
-        const response = await this.request('POST', '/users', {
+    /**
+     * Extract the resource ID from a Keycloak Location header.
+     * Location format: .../admin/realms/{realm}/resource/{uuid}
+     */
+    private extractIdFromLocation(location: string): string {
+        const parts = location.split('/');
+        return parts[parts.length - 1];
+    }
+
+    /**
+     * Generic helper for endpoints that require text/plain body (e.g. KC Organizations members).
+     */
+    private async requestText(
+        method: 'POST' | 'PUT',
+        endpoint: string,
+        body: string,
+    ): Promise<void> {
+        const token = await this.getAdminAccessToken();
+        const url = `${this.baseUrl}/admin/realms/${this.realm}${endpoint}`;
+        try {
+            await firstValueFrom(
+                this.httpService.request({
+                    method,
+                    url,
+                    data: body,
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'text/plain',
+                    },
+                    timeout: 10000,
+                }),
+            );
+        } catch (error: any) {
+            this.logger.error(
+                `Keycloak text/plain request failed: ${method} ${url}`,
+                error?.response?.data ?? error?.message,
+            );
+            throw error;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Organization management (Keycloak Organizations API — KC 26+)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Creates a Keycloak Organization with the given name and alias.
+     * The alias is used as the canonical subdomain identifier.
+     *
+     * @returns The created organization's ID.
+     */
+    async createOrganization(
+        name: string,
+        alias: string,
+    ): Promise<KeycloakOrganization> {
+        const { location } = await this.request('POST', '/organizations', {
+            name,
+            alias,
+            enabled: true,
+            domains: [{ name: alias, verified: false }],
+        });
+
+        if (!location) {
+            throw new InternalServerErrorException(
+                'Keycloak did not return a Location header after creating organization',
+            );
+        }
+
+        const id = this.extractIdFromLocation(location);
+        return { id, name, alias };
+    }
+
+    /**
+     * Deletes a Keycloak Organization. Used during Saga rollback.
+     */
+    async deleteOrganization(orgId: string): Promise<void> {
+        await this.request('DELETE', `/organizations/${orgId}`);
+        this.logger.log(`Deleted Keycloak organization: ${orgId}`);
+    }
+
+    /**
+     * Adds a user to a Keycloak Organization as a member.
+     * KC 26 Organizations API: POST /organizations/{id}/members
+     * Body: plain text userId (Content-Type: text/plain)
+     */
+    async addUserToOrganization(orgId: string, userId: string): Promise<void> {
+        await this.request('POST', `/organizations/${orgId}/members`, userId);
+    }
+
+    /**
+     * Assigns the built-in 'org-admin' role to a user within an organization.
+     *
+     * Keycloak Organizations have a built-in "org-admin" role. We fetch the role
+     * representation from the org and then assign it to the member.
+     */
+    async assignOrgAdminRole(orgId: string, userId: string): Promise<void> {
+        const { data: roles } = await this.request<any[]>(
+            'GET',
+            `/organizations/${orgId}/roles`,
+        );
+
+        console.log('roles', roles);
+
+        const orgAdminRole = roles?.find((r: any) => r.name === 'org-admin');
+        if (!orgAdminRole) {
+            throw new InternalServerErrorException(
+                `Could not find 'org-admin' role in Keycloak organization ${orgId}`,
+            );
+        }
+
+        await this.request(
+            'POST',
+            `/organizations/${orgId}/members/${userId}/roles`,
+            [{ id: orgAdminRole.id, name: orgAdminRole.name }],
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // User management
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Finds a user by email in the Keycloak realm.
+     * Returns null if not found.
+     */
+    async findUserByEmail(email: string): Promise<KeycloakUser | null> {
+        const { data } = await this.request<KeycloakUser[]>(
+            'GET',
+            `/users?email=${encodeURIComponent(email)}&exact=true`,
+        );
+        return data && data.length > 0 ? data[0] : null;
+    }
+
+    /**
+     * Creates a user with a permanent password credential (no email verification needed for onboarding).
+     * fullName is split on the first space: "Đại Toàn" → firstName="Đại" lastName="Toàn".
+     *
+     * @returns The new user's Keycloak ID.
+     */
+    async createUser(
+        email: string,
+        password: string,
+        fullName: string,
+    ): Promise<KeycloakUser> {
+        const spaceIdx = fullName.indexOf(' ');
+        const firstName = spaceIdx > -1 ? fullName.slice(0, spaceIdx) : fullName;
+        const lastName = spaceIdx > -1 ? fullName.slice(spaceIdx + 1) : '';
+
+        const { location } = await this.request('POST', '/users', {
             email,
             username: email,
             firstName,
             lastName,
             enabled: true,
             emailVerified: true,
-            attributes: {
-                tenantId: [tenantId],
-            },
+            credentials: [
+                {
+                    type: 'password',
+                    value: password,
+                    temporary: false,
+                },
+            ],
         });
 
-        // 2. Extract ID from Location header or fetch
-        let userId = '';
-        if (response?.location) {
-            const parts = response.location.split('/');
-            userId = parts[parts.length - 1];
+        let userId: string;
+
+        if (location) {
+            userId = this.extractIdFromLocation(location);
         } else {
-            const user = await this.findUserByEmail(email);
-            if (!user) throw new Error(`Failed to retrieve created user ${email}`);
-            userId = user.id;
-        }
-
-        const user = { id: userId, email, firstName, lastName };
-
-        // 3. Assign Role (if provided)
-        if (roleName) {
-            const role = await this.findRoleByName(roleName);
-            if (role) {
-                await this.request('POST', `/users/${user.id}/role-mappings/realm`, [
-                    {
-                        id: role.id,
-                        name: role.name,
-                    },
-                ]);
-            } else {
-                this.logger.warn(`Role ${roleName} not found, skipping assignment.`);
+            // Fallback: query by email (some KC versions omit Location on user create)
+            const existingUser = await this.findUserByEmail(email);
+            if (!existingUser) {
+                throw new InternalServerErrorException(
+                    `Failed to retrieve newly created Keycloak user for email: ${email}`,
+                );
             }
+            userId = existingUser.id;
         }
 
-        return user;
+        return { id: userId, email, firstName, lastName };
     }
 
-    async findUserByEmail(email: string) {
-        const users = await this.request('GET', `/users?email=${encodeURIComponent(email)}&exact=true`);
-        return users && users.length > 0 ? users[0] : null;
-    }
-
-    async findRoleByName(roleName: string) {
-        // Keycloak uses the role name as ID for some endpoints, but let's look it up properly
-        const role = await this.request('GET', `/roles/${encodeURIComponent(roleName)}`);
-        return role;
-    }
-
-    async resetPassword(userId: string) {
-        await this.request('PUT', `/users/${userId}/execute-actions-email`, ['UPDATE_PASSWORD']);
-    }
-
-    async deleteUser(userId: string) {
+    /**
+     * Deletes a user from Keycloak. Used during Saga rollback.
+     */
+    async deleteUser(userId: string): Promise<void> {
         await this.request('DELETE', `/users/${userId}`);
+        this.logger.log(`Deleted Keycloak user: ${userId}`);
     }
 
-    async updateUserStatus(userId: string, enabled: boolean) {
+    async updateUserStatus(userId: string, enabled: boolean): Promise<void> {
         await this.request('PUT', `/users/${userId}`, { enabled });
     }
 
-    async updateUser(userId: string, data: any) {
+    async updateUser(userId: string, data: Record<string, unknown>): Promise<void> {
         await this.request('PUT', `/users/${userId}`, data);
     }
 
-    // --- Group Management ---
+    async resetPassword(userId: string): Promise<void> {
+        await this.request('PUT', `/users/${userId}/execute-actions-email`, [
+            'UPDATE_PASSWORD',
+        ]);
+    }
 
-    async createGroup(name: string, attributes?: Record<string, any>) {
-        const groupPayload = {
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Group management — kept for backward compatibility with existing auth flows
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    async createGroup(
+        name: string,
+        attributes?: Record<string, unknown>,
+    ): Promise<{ id: string; name: string }> {
+        const { location } = await this.request('POST', '/groups', {
             name,
             attributes,
-        };
-        const response = await this.request('POST', '/groups', groupPayload);
+        });
 
-        // Fetch to get ID
-        let groupId = '';
-        if (response?.location) {
-            const parts = response.location.split('/');
-            groupId = parts[parts.length - 1];
+        let groupId: string;
+        if (location) {
+            groupId = this.extractIdFromLocation(location);
         } else {
             const group = await this.findGroupByName(name);
-            if (!group) throw new Error(`Failed to retrieve created group ${name}`);
+            if (!group) {
+                throw new InternalServerErrorException(
+                    `Failed to retrieve created group: ${name}`,
+                );
+            }
             groupId = group.id;
         }
 
-        return { id: groupId, name, attributes };
+        return { id: groupId, name };
     }
 
-    async deleteGroup(groupId: string) {
+    async deleteGroup(groupId: string): Promise<void> {
         await this.request('DELETE', `/groups/${groupId}`);
     }
 
-    async addUserToGroup(userId: string, groupId: string) {
+    async addUserToGroup(userId: string, groupId: string): Promise<void> {
         await this.request('PUT', `/users/${userId}/groups/${groupId}`);
     }
 
-    async findGroupByName(name: string) {
-        const groups = await this.request('GET', `/groups?search=${encodeURIComponent(name)}`);
-        // Filter exact match because search is fuzzy
-        return groups ? groups.find((g: any) => g.name === name) : null;
+    async findGroupByName(name: string): Promise<{ id: string; name: string } | null> {
+        const { data } = await this.request<any[]>(
+            'GET',
+            `/groups?search=${encodeURIComponent(name)}`,
+        );
+        if (!data) return null;
+        return data.find((g: any) => g.name === name) ?? null;
+    }
+
+    async findRoleByName(roleName: string): Promise<any> {
+        const { data } = await this.request('GET', `/roles/${encodeURIComponent(roleName)}`);
+        return data;
     }
 }

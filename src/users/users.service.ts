@@ -14,7 +14,7 @@ import { User } from './domain/user';
 import bcrypt from 'bcryptjs';
 import { AuthProvidersEnum } from '../auth/auth-providers.enum';
 import { FilesService } from '../files/files.service';
-import { RoleEnum } from '../roles/roles.enum';
+import { PlatformRoleEnum } from '../roles/platform-role.enum';
 import { StatusEnum } from '../statuses/statuses.enum';
 import { IPaginationOptions } from '../utils/types/pagination-options';
 import { FileType } from '../files/domain/file';
@@ -82,44 +82,16 @@ export class UsersService {
       photo = null;
     }
 
-    let role: Role | undefined = undefined;
+    let platformRole: Role | undefined = undefined;
 
-    if (createUserDto.role?.id) {
-      const roleObject = Object.values(RoleEnum)
-        .map(String)
-        .includes(String(createUserDto.role.id));
-      if (!roleObject) {
-        throw new UnprocessableEntityException({
-          status: HttpStatus.UNPROCESSABLE_ENTITY,
-          errors: {
-            role: 'roleNotExists',
-          },
-        });
-      }
-
-      role = {
-        id: createUserDto.role.id,
-      };
+    if (createUserDto.platformRole?.id) {
+      platformRole = { id: createUserDto.platformRole.id as PlatformRoleEnum };
     }
 
     let status: Status | undefined = undefined;
 
     if (createUserDto.status?.id) {
-      const statusObject = Object.values(StatusEnum)
-        .map(String)
-        .includes(String(createUserDto.status.id));
-      if (!statusObject) {
-        throw new UnprocessableEntityException({
-          status: HttpStatus.UNPROCESSABLE_ENTITY,
-          errors: {
-            status: 'statusNotExists',
-          },
-        });
-      }
-
-      status = {
-        id: createUserDto.status.id,
-      };
+      status = { id: createUserDto.status.id as StatusEnum };
     }
 
     return this.usersRepository.create({
@@ -131,7 +103,7 @@ export class UsersService {
       email: email,
       password: password,
       photo: photo,
-      role: role,
+      platformRole: platformRole,
       status: status,
       provider: createUserDto.provider ?? AuthProvidersEnum.email,
       keycloakId: createUserDto.keycloakId,
@@ -237,44 +209,16 @@ export class UsersService {
       photo = null;
     }
 
-    let role: Role | undefined = undefined;
+    let platformRole: Role | undefined = undefined;
 
-    if (updateUserDto.role?.id) {
-      const roleObject = Object.values(RoleEnum)
-        .map(String)
-        .includes(String(updateUserDto.role.id));
-      if (!roleObject) {
-        throw new UnprocessableEntityException({
-          status: HttpStatus.UNPROCESSABLE_ENTITY,
-          errors: {
-            role: 'roleNotExists',
-          },
-        });
-      }
-
-      role = {
-        id: updateUserDto.role.id,
-      };
+    if (updateUserDto.platformRole?.id) {
+      platformRole = { id: updateUserDto.platformRole.id as PlatformRoleEnum };
     }
 
     let status: Status | undefined = undefined;
 
     if (updateUserDto.status?.id) {
-      const statusObject = Object.values(StatusEnum)
-        .map(String)
-        .includes(String(updateUserDto.status.id));
-      if (!statusObject) {
-        throw new UnprocessableEntityException({
-          status: HttpStatus.UNPROCESSABLE_ENTITY,
-          errors: {
-            status: 'statusNotExists',
-          },
-        });
-      }
-
-      status = {
-        id: updateUserDto.status.id,
-      };
+      status = { id: updateUserDto.status.id as StatusEnum };
     }
 
     return this.usersRepository.update(
@@ -287,7 +231,7 @@ export class UsersService {
         email,
         password,
         photo,
-        role,
+        platformRole,
         status,
         provider: updateUserDto.provider,
         keycloakId: updateUserDto.keycloakId,
@@ -331,22 +275,16 @@ export class UsersService {
       });
     }
 
-    let roleName = 'user';
-    // simplistic mapping, should be improved with Role Service
-    if (inviteUserDto.role?.id === RoleEnum.admin) {
-      roleName = 'admin';
-    } else if (inviteUserDto.role?.id === RoleEnum.user) {
-      roleName = 'user';
-    }
+    const platformRoleId: PlatformRoleEnum = PlatformRoleEnum.USER;
 
     let keycloakUser;
     try {
+      // For invites we use an unpredictable placeholder password.
+      // The real credential is set via the password-reset email (called below).
       keycloakUser = await this.keycloakAdminService.createUser(
         inviteUserDto.email,
-        tenantId,
-        '', // firstName
-        '', // lastName
-        roleName
+        `Tmp!${Date.now()}KC`,   // temporary, immediately superseded by reset-password
+        inviteUserDto.email,     // fullName placeholder until the user fills their profile
       );
     } catch (e) {
       throw new UnprocessableEntityException('Failed to create user in Keycloak: ' + (e as Error).message);
@@ -365,7 +303,7 @@ export class UsersService {
         email: inviteUserDto.email,
         provider: AuthProvidersEnum.email,
         keycloakId: keycloakUser.id,
-        role: inviteUserDto.role ? { id: inviteUserDto.role.id } : { id: RoleEnum.user },
+        platformRole: { id: platformRoleId },
         status: { id: StatusEnum.active },
         tenants: [{ tenant: tenantId, roles: [], joinedAt: new Date() }],
       });
@@ -421,7 +359,7 @@ export class UsersService {
     // 1. Update Keycloak if applicable
     if (user.provider === AuthProvidersEnum.email && user.keycloakId) {
       try {
-        const enabled = status.id === StatusEnum.active;
+        const enabled = status.id === StatusEnum.active; // 'active' === 'active'
         await this.keycloakAdminService.updateUserStatus(
           user.keycloakId,
           enabled,

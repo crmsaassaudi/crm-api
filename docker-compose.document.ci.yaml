@@ -21,6 +21,7 @@ services:
   #   image: redis:7-alpine
   #   expose:
   #     - 6379
+  #   command: ["redis-server", "--maxmemory-policy", "noeviction"]
 
   api:
     build:

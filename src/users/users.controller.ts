@@ -27,7 +27,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Roles } from '../roles/roles.decorator';
-import { RoleEnum } from '../roles/roles.enum';
+import { PlatformRoleEnum } from '../roles/platform-role.enum';
 
 import {
   InfinityPaginationResponse,
@@ -41,7 +41,7 @@ import { RolesGuard } from '../roles/roles.guard';
 import { infinityPagination } from '../utils/infinity-pagination';
 
 @ApiBearerAuth()
-@Roles(RoleEnum.admin)
+@Roles(PlatformRoleEnum.SUPER_ADMIN)
 @UseGuards(RolesGuard)
 @ApiTags('Users')
 @Controller({

@@ -1,5 +1,5 @@
-export class StatusSchema {
-  _id: string;
+import { StatusEnum } from '../../../../../statuses/statuses.enum';
 
-  name?: string;
+export class StatusSchema {
+  name: StatusEnum;
 }

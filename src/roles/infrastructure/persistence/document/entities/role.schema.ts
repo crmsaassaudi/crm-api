@@ -1,5 +1,5 @@
-export class RoleSchema {
-  _id: string;
+import { PlatformRoleEnum } from '../../../../../roles/platform-role.enum';
 
-  name?: string;
+export class RoleSchema {
+  name: PlatformRoleEnum;
 }

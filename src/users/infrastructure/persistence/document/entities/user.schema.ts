@@ -4,8 +4,8 @@ import { now, HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { AuthProvidersEnum } from '../../../../../auth/auth-providers.enum';
 import { FileSchemaClass } from '../../../../../files/infrastructure/persistence/document/entities/file.schema';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
-import { StatusSchema } from '../../../../../statuses/infrastructure/persistence/document/entities/status.schema';
-import { RoleSchema } from '../../../../../roles/infrastructure/persistence/document/entities/role.schema';
+import { PlatformRoleEnum } from '../../../../../roles/platform-role.enum';
+import { StatusEnum } from '../../../../../statuses/statuses.enum';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
 export type UserSchemaDocument = HydratedDocument<UserSchemaClass>;
@@ -78,14 +78,18 @@ export class UserSchemaClass extends EntityDocumentHelper {
   photo?: FileSchemaClass | null;
 
   @Prop({
-    type: RoleSchema,
+    type: String,
+    enum: Object.values(PlatformRoleEnum),
+    default: PlatformRoleEnum.USER,
   })
-  role?: RoleSchema | null;
+  platformRole?: string | null;
 
   @Prop({
-    type: StatusSchema,
+    type: String,
+    enum: Object.values(StatusEnum),
+    default: null,
   })
-  status?: StatusSchema;
+  status?: string | null;
 
   @Prop({ default: now })
   createdAt: Date;
@@ -101,5 +105,5 @@ export const UserSchema = SchemaFactory.createForClass(UserSchemaClass);
 
 UserSchema.plugin(tenantFilterPlugin, { field: 'tenants.tenant' });
 
-UserSchema.index({ 'role._id': 1 });
+UserSchema.index({ platformRole: 1 });
 UserSchema.index({ email: 1, tenant: 1 }, { unique: true });

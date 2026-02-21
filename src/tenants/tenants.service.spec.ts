@@ -166,7 +166,7 @@ describe('TenantsService', () => {
                 lastName: dto.adminLastName,
                 provider: AuthProvidersEnum.email,
                 keycloakId: keycloakUserId,
-                role: { id: RoleEnum.admin },
+                role: { id: RoleEnum.owner },
                 status: { id: StatusEnum.active }
             }), localTenantId, session);
 

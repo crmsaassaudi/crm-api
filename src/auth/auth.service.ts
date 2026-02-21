@@ -16,7 +16,7 @@ import { UsersService } from '../users/users.service';
 import { AllConfigType } from '../config/config.type';
 import { User } from '../users/domain/user';
 import { AuthProvidersEnum } from './auth-providers.enum';
-import { RoleEnum } from '../roles/roles.enum';
+import { PlatformRoleEnum } from '../roles/platform-role.enum';
 import { StatusEnum } from '../statuses/statuses.enum';
 
 import { RedisService } from '../redis/redis.service';
@@ -119,7 +119,7 @@ export class AuthService {
 
       if (!user) {
         // JIT Provisioning
-        const role = { id: RoleEnum.user };
+        const platformRole = { id: PlatformRoleEnum.USER };
         const status = { id: StatusEnum.active };
 
         user = await this.usersService.create({
@@ -128,7 +128,7 @@ export class AuthService {
           lastName: keycloakPayload.family_name,
           keycloakId: keycloakId,
           provider: AuthProvidersEnum.email,
-          role,
+          platformRole,
           status,
           tenants: keycloakTenantIds.map(tid => ({
             tenant: tid,
