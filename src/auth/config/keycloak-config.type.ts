@@ -4,4 +4,5 @@ export type KeycloakConfig = {
     clientId: string;
     clientSecret: string;
     callbackUrl: string;
+    frontendUrl: string;
 };

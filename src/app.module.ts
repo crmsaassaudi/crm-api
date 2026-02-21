@@ -111,24 +111,31 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
           return correlationId ?? uuidv4();
         },
         setup: (cls, req: Request) => {
-          // 1. Prioritize Header (For Internal Calls / Dev / Test)
+          // ── Tenant ID resolution (header → subdomain) ──
+          // Priority 1: Explicit header (internal calls / dev / test)
           const headerTenantId = req.headers['x-tenant-id'];
           let tenantId = Array.isArray(headerTenantId)
             ? headerTenantId[0]
             : headerTenantId;
 
-          // 2a. Extract from subdomain (populated by TenantResolverMiddleware)
+          // Priority 2: Subdomain alias (populated by TenantResolverMiddleware)
           if (!tenantId && (req as any).tenantAlias) {
-            // tenantAlias is the alias string; the subdomain itself is the tenant identifier
             tenantId = (req as any).tenantAlias;
           }
 
-          let userId;
-          let email;
+          // ── Identity resolution (BFF cookie → Bearer JWT) ──
+          // BFF flow: store sid for lazy session resolution in TenantInterceptor
+          const sid = (req as any).cookies?.['sid'];
+          if (sid) {
+            cls.set('sid', sid);
+          }
 
-          // 2. Extract from JWT (For End Users)
+          let userId: string | undefined;
+          let email: string | undefined;
+
+          // Bearer JWT (for API clients / nest-keycloak-connect)
           const authHeader = req.headers.authorization;
-          if (authHeader && authHeader.startsWith('Bearer ')) {
+          if (authHeader?.startsWith('Bearer ')) {
             const token = authHeader.split(' ')[1];
             try {
               const decoded: any = jwtDecode(token);
@@ -137,16 +144,13 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
               }
               userId = decoded.sub;
               email = decoded.email;
-            } catch (error) {
-              console.error('Error decoding token:', error);
+            } catch {
+              // Malformed token — silently skip; auth guard will reject if needed
             }
           }
 
-          // Default to '00000000-0000-0000-0000-000000000000' if not provided
-          cls.set(
-            'tenantId',
-            tenantId ?? '00000000-0000-0000-0000-000000000000',
-          );
+          // null = no tenant context (platform-level / anonymous request)
+          cls.set('tenantId', tenantId ?? null);
           cls.set('userId', userId);
           cls.set('email', email);
         },

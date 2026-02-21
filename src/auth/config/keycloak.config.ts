@@ -18,6 +18,9 @@ class EnvironmentVariablesValidator {
 
     @IsString()
     KEYCLOAK_CALLBACK_URL: string;
+
+    @IsUrl({ require_tld: false })
+    KEYCLOAK_FRONTEND_URL: string;
 }
 
 export default registerAs<KeycloakConfig>('keycloak', () => {
@@ -29,5 +32,6 @@ export default registerAs<KeycloakConfig>('keycloak', () => {
         clientId: process.env.KEYCLOAK_CLIENT_ID ?? '',
         clientSecret: process.env.KEYCLOAK_CLIENT_SECRET ?? '',
         callbackUrl: process.env.KEYCLOAK_CALLBACK_URL ?? '',
+        frontendUrl: process.env.KEYCLOAK_FRONTEND_URL ?? 'http://localhost:4200',
     };
 });

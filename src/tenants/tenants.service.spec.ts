@@ -8,7 +8,7 @@ import { getConnectionToken } from '@nestjs/mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { TenantOnboardingDto, TenantPlan } from './dto/tenant-onboarding.dto';
 import { ConflictException, ServiceUnavailableException, InternalServerErrorException } from '@nestjs/common';
-import { RoleEnum } from '../roles/roles.enum';
+import { PlatformRoleEnum } from '../roles/platform-role.enum';
 import { AuthProvidersEnum } from '../auth/auth-providers.enum';
 import { StatusEnum } from '../statuses/statuses.enum';
 
@@ -166,7 +166,7 @@ describe('TenantsService', () => {
                 lastName: dto.adminLastName,
                 provider: AuthProvidersEnum.email,
                 keycloakId: keycloakUserId,
-                role: { id: RoleEnum.owner },
+                platformRole: { id: PlatformRoleEnum.USER },
                 status: { id: StatusEnum.active }
             }), localTenantId, session);
 

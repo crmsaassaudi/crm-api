@@ -56,3 +56,4 @@ KEYCLOAK_REALM=myrealm
 KEYCLOAK_CLIENT_ID=myclient
 KEYCLOAK_CLIENT_SECRET=change-me
 KEYCLOAK_CALLBACK_URL=http://localhost:3000/api/v1/auth/callback
+KEYCLOAK_FRONTEND_URL=http://localhost:4200

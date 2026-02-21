@@ -11,7 +11,7 @@ import { RedisService } from '../../redis/redis.service';
 
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
-  constructor(private readonly redisService: RedisService) {}
+  constructor(private readonly redisService: RedisService) { }
 
   async intercept(
     context: ExecutionContext,
@@ -30,7 +30,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
     // 1. Try to acquire lock
     // SET key value NX EX seconds
-    const acquired = await client.set(lockKey, 'processing', 'NX', 'EX', 60);
+    const acquired = await client.set(lockKey, 'processing', 'EX', 60, 'NX');
 
     if (!acquired) {
       // 2. If lock exists, check if result is already cached

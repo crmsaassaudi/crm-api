@@ -1,6 +1,6 @@
 import { APP_URL, ADMIN_EMAIL, ADMIN_PASSWORD } from '../utils/constants';
 import request from 'supertest';
-import { RoleEnum } from '../../src/roles/roles.enum';
+import { PlatformRoleEnum } from '../../src/roles/platform-role.enum';
 import { StatusEnum } from '../../src/statuses/statuses.enum';
 
 describe('Users Module', () => {
@@ -98,8 +98,8 @@ describe('Users Module', () => {
             password: newUserByAdminPassword,
             firstName: `UserByAdmin${Date.now()}`,
             lastName: 'E2E',
-            role: {
-              id: RoleEnum.user,
+            platformRole: {
+              id: PlatformRoleEnum.USER,
             },
             status: {
               id: StatusEnum.active,

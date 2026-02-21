@@ -1,78 +1,70 @@
 import { Schema } from 'mongoose';
-import { ClsService } from 'nestjs-cls';
+import { ClsServiceManager } from 'nestjs-cls';
 
 /**
- * Global Mongoose Plugin for automatic tenant filtering
- * Automatically adds tenant filter to queries on schemas with 'tenants' field
+ * Global Mongoose Plugin — Automatic Tenant Filtering
+ *
+ * Attaches to every query and automatically filters by the active tenantId
+ * stored in CLS (set by TenantInterceptor or CLS middleware).
+ *
+ * Bypass:
+ *   query.setOptions({ skipTenantFilter: true })
+ *   — or —
+ *   Model.find().setOptions({ skipTenantFilter: true })
  */
 export function tenantFilterPlugin(schema: Schema, options?: { field?: string }) {
     const tenantField = options?.field || 'tenants.tenant';
 
-    // Add pre-find hooks to automatically filter by tenant
-    schema.pre('find', function () {
-        applyTenantFilter(this, tenantField);
-    });
+    const hooks = [
+        'find',
+        'findOne',
+        'findOneAndUpdate',
+        'updateMany',
+        'deleteMany',
+        'countDocuments',
+    ] as const;
 
-    schema.pre('findOne', function () {
-        applyTenantFilter(this, tenantField);
-    });
-
-    schema.pre('findOneAndUpdate', function () {
-        applyTenantFilter(this, tenantField);
-    });
-
-    schema.pre('updateMany', function () {
-        applyTenantFilter(this, tenantField);
-    });
-
-    schema.pre('deleteMany', function () {
-        applyTenantFilter(this, tenantField);
-    });
-
-    schema.pre('countDocuments', function () {
-        applyTenantFilter(this, tenantField);
-    });
+    for (const hook of hooks) {
+        schema.pre(hook, function () {
+            applyTenantFilter(this, tenantField);
+        });
+    }
 }
 
 /**
- * Apply tenant filter to query if activeTenantId exists in CLS
+ * Apply tenant filter to query if activeTenantId exists in CLS.
+ * Skips when:
+ *  - CLS is unavailable (startup, seeder)
+ *  - No tenantId in CLS (platform-level / anonymous request)
+ *  - Query already has explicit tenant filter
+ *  - skipTenantFilter option is true (admin / cross-tenant queries)
  */
 function applyTenantFilter(query: any, tenantField: string) {
-    // Access CLS from global context (set by middleware)
-    const cls = (global as any).__cls_service as ClsService;
+    // nestjs-cls official API for accessing CLS outside DI context
+    let cls;
+    try {
+        cls = ClsServiceManager.getClsService();
+    } catch {
+        return; // CLS not yet initialized (e.g., during app bootstrap / seeds)
+    }
 
-    if (!cls) {
-        return; // CLS not available, skip filtering
+    // Check for bypass flag
+    const opts = query.getOptions?.() ?? {};
+    if (opts.skipTenantFilter) {
+        return;
     }
 
     const activeTenantId = cls.get('activeTenantId') || cls.get('tenantId');
 
-    if (activeTenantId && activeTenantId !== '00000000-0000-0000-0000-000000000000') {
-        const currentFilter = query.getFilter();
-
-        // Only add filter if not already present
-        if (!currentFilter[tenantField]) {
-            query.where(tenantField).equals(activeTenantId);
-        }
+    // null / undefined = no tenant context → skip (platform-level query)
+    if (!activeTenantId) {
+        return;
     }
-}
 
-/**
- * Alternative: Schema-specific tenant filter
- * Use this for schemas that need custom tenant filtering logic
- */
-export function createTenantFilter(cls: ClsService, field: string = 'tenants.tenant') {
-    return function (schema: Schema) {
-        schema.pre(['find', 'findOne', 'findOneAndUpdate', 'updateMany', 'deleteMany', 'countDocuments'], function () {
-            const activeTenantId = cls.get('activeTenantId') || cls.get('tenantId');
+    const currentFilter = query.getFilter();
 
-            if (activeTenantId && activeTenantId !== '00000000-0000-0000-0000-000000000000') {
-                const currentFilter = this.getFilter();
-
-                if (!currentFilter[field]) {
-                    this.where(field).equals(activeTenantId);
-                }
-            }
-        });
-    };
+    // Don't overwrite if caller already set an explicit tenant filter
+    if (!currentFilter[tenantField]) {
+        query.where(tenantField).equals(activeTenantId);
+    }
 }
