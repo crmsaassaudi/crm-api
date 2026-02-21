@@ -1,6 +1,7 @@
 import { CacheInterceptor } from '@nestjs/cache-manager';
 import { ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { ClsServiceManager } from 'nestjs-cls';
 import { CACHE_ENTITY_KEY } from '../decorators/cache-entity.decorator';
 
 @Injectable()
@@ -23,14 +24,18 @@ export class HttpCacheInterceptor extends CacheInterceptor {
       const request = context.switchToHttp().getRequest();
       const id = request.params.id;
 
+      let tenantId = 'global';
+      try {
+        const cls = ClsServiceManager.getClsService();
+        tenantId = cls.get('activeTenantId') || cls.get('tenantId') || 'global';
+      } catch { }
+
       if (id) {
-        return `${entityName}:${id}`;
+        return `tenant:${tenantId}:${entityName}:${id}`;
       }
 
       // For list/queries, using the URL allows unique caching for different filters/pages
-      // But we prefix it with EntityName to allow pattern matching?
-      // If we use 'User:/users?page=1', then 'User:*' matches it.
-      return `${entityName}:${request.url}`;
+      return `tenant:${tenantId}:${entityName}:${request.url}`;
     }
 
     return super.trackBy(context);

@@ -75,14 +75,11 @@ export class ResilienceService {
     const timeoutPolicy = timeout(timeoutMs, TimeoutStrategy.Aggressive);
 
     // 2. Retry Policy (with Jitter)
-    // full jitter: delay = random(0, base * 2^attempt)
+    // Cockatiel's ExponentialBackoff uses decorrelated jitter by default to prevent thundering herd.
     const backoff = new ExponentialBackoff({
       initialDelay: 200,
       maxDelay: 30000,
       exponent: 2,
-      // Cockatiel default is decorrelated jitter, which is good.
-      // To match user request "delay = base * 2^attempt + random(0, 300)" roughly, standard exponential is fine.
-      // We will stick to the default strict exponential backoff for now as it's robust.
     });
 
     const retryPolicy = retry(handleAll, { maxAttempts: retries, backoff });

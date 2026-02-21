@@ -111,20 +111,6 @@ export class KeycloakAdminService implements OnModuleInit {
         });
     }
 
-    async assignOrgAdminRole(orgId: string, userId: string): Promise<void> {
-        // The organizations API in @keycloak/keycloak-admin-client might not directly expose 'roles' yet,
-        // or it might be mapped differently. 
-        // For now, if natively unsupported by the SDK, we log a warning or use an alternative mapping.
-        this.logger.warn('assignOrgAdminRole using @keycloak/keycloak-admin-client might require manual HTTP if the new API is missing from the SDK typings.');
-
-        // In Keycloak 26, org roles are typically just Realm / Client roles scoped, 
-        // but if we were using custom HTTP before, we might still need a custom call if the SDK doesn't support org member roles yet.
-        // Let's attempt standard realm role mapping as a fallback or throw a descriptive error if strict SDK usage is needed.
-
-        // Assuming we can map regular realm roles to the user, or we use HttpService just for this *one* call if the SDK misses it.
-        // Since the goal is 100% SDK, we will use the standard group/role mapping if possible.
-        throw new InternalServerErrorException('assignOrgAdminRole needs to be adapted to SDK capabilities or mapped via standard roles');
-    }
 
     // ─────────────────────────────────────────────────────────────────────────────
     // User management

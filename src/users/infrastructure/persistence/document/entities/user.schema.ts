@@ -106,4 +106,4 @@ export const UserSchema = SchemaFactory.createForClass(UserSchemaClass);
 UserSchema.plugin(tenantFilterPlugin, { field: 'tenants.tenant' });
 
 UserSchema.index({ platformRole: 1 });
-UserSchema.index({ email: 1, tenant: 1 }, { unique: true });
+UserSchema.index({ tenant: 1, email: 1 }, { unique: true });

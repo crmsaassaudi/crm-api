@@ -1,13 +1,13 @@
 export class CacheKeyHelper {
-  static getListKey(entityName: string): string {
-    return `${entityName}:list`;
+  static getListKey(tenantId: string, entityName: string): string {
+    return `tenant:${tenantId}:${entityName}:list`;
   }
 
-  static getDetailKey(entityName: string, id: string): string {
-    return `${entityName}:${id}`;
+  static getDetailKey(tenantId: string, entityName: string, id: string): string {
+    return `tenant:${tenantId}:${entityName}:${id}`;
   }
 
-  static getPattern(entityName: string): string {
-    return `${entityName}:*`;
+  static getPattern(tenantId: string, entityName: string): string {
+    return `tenant:${tenantId}:${entityName}:*`;
   }
 }

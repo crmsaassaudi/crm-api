@@ -9,25 +9,25 @@ export class CacheInvalidationListener {
 
   constructor(
     private readonly cacheInvalidationService: CacheInvalidationService,
-  ) {}
+  ) { }
 
   @OnEvent('entity.created')
-  async handleEntityCreated(payload: { entity: string; id: string }) {
-    await this.invalidateEntityCache(payload.entity);
+  async handleEntityCreated(payload: { entity: string; id: string; tenantId?: string }) {
+    await this.invalidateEntityCache(payload.tenantId || 'global', payload.entity);
   }
 
   @OnEvent('entity.updated')
-  async handleEntityUpdated(payload: { entity: string; id: string }) {
-    await this.invalidateEntityCache(payload.entity);
+  async handleEntityUpdated(payload: { entity: string; id: string; tenantId?: string }) {
+    await this.invalidateEntityCache(payload.tenantId || 'global', payload.entity);
   }
 
   @OnEvent('entity.deleted')
-  async handleEntityDeleted(payload: { entity: string; id: string }) {
-    await this.invalidateEntityCache(payload.entity);
+  async handleEntityDeleted(payload: { entity: string; id: string; tenantId?: string }) {
+    await this.invalidateEntityCache(payload.tenantId || 'global', payload.entity);
   }
 
-  private async invalidateEntityCache(entityName: string) {
-    const pattern = CacheKeyHelper.getPattern(entityName);
+  private async invalidateEntityCache(tenantId: string, entityName: string) {
+    const pattern = CacheKeyHelper.getPattern(tenantId, entityName);
     this.logger.log(`Invalidating cache for pattern: ${pattern}`);
     await this.cacheInvalidationService.clearCacheByPattern(pattern);
   }

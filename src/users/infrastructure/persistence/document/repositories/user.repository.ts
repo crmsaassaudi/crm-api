@@ -154,7 +154,7 @@ export class UsersDocumentRepository
     // For safer update, we should fetch, merge, then persist.
     // Re-using existing logic here but adapted for 'model' property.
 
-    const user = await this.model.findOne(this.applyTenantFilter({ _id: id.toString() }));
+    const user = await this.model.findOne(this.applyTenantFilter({ _id: id.toString() })).session(session || null);
     if (!user) return null;
 
     const persistenceObject = UserMapper.toPersistence({
@@ -163,17 +163,15 @@ export class UsersDocumentRepository
     });
 
     // Remove version from persistence object to avoid manually setting it, 
-    // let $inc handle it or mongoose handle it.
-    // However, mapper might include it.
+    // let mongoose plugin handle it.
     delete (persistenceObject as any).__v;
 
     const updatedUser = await this.model.findOneAndUpdate(
       scopedFilter,
       {
         ...persistenceObject,
-        $inc: { __v: 1 }, // Increment version
       },
-      { new: true },
+      { new: true, session: session || null },
     );
 
     if (!updatedUser && version !== undefined) {
@@ -197,6 +195,7 @@ export class UsersDocumentRepository
     email: string,
     userData: Partial<User>,
     newTenants: { tenant: string; roles: string[]; joinedAt: Date }[],
+    session?: any,
   ): Promise<User> {
     const persistenceData: any = {
       email,
@@ -233,6 +232,7 @@ export class UsersDocumentRepository
         upsert: true, // Create if doesn't exist
         new: true, // Return updated document
         setDefaultsOnInsert: true, // Apply schema defaults on insert
+        session: session || null, // Ensure transaction flows
       },
     );
 

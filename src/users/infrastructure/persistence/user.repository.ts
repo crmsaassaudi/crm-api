@@ -42,6 +42,7 @@ export abstract class UserRepository {
     email: string,
     userData: Partial<User>,
     newTenants: { tenant: string; roles: string[]; joinedAt: Date }[],
+    session?: any,
   ): Promise<User>;
 
   abstract remove(id: User['id']): Promise<void>;

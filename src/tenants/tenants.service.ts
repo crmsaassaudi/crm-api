@@ -92,11 +92,6 @@ export class TenantsService {
                 stepLog(4, `User ${keycloakUserId} added to org ${keycloakOrgId}`);
             } catch (e) { stepErr(4, e); throw e; }
 
-            // ── Step 5: Assign org-admin role ─────────────────────────────────────────
-            // try {
-            //     await this.keycloakAdminService.assignOrgAdminRole(keycloakOrgId!, keycloakUserId!);
-            //     stepLog(5, `org-admin role assigned to ${keycloakUserId}`);
-            // } catch (e) { stepErr(5, e); throw e; }
 
             // ── Step 6: Create Tenant record in MongoDB ───────────────────────────────
             let tenant: Tenant;
