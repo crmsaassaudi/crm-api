@@ -38,23 +38,39 @@ export class AuthService {
     private httpService: HttpService,
     private redisService: RedisService,
     private sessionService: SessionService,
-  ) { }
+  ) {}
 
   // ─── Step 1: Build login URL with CSRF state ──────────────────────────────
 
   async buildLoginUrl(): Promise<{ url: string; state: string }> {
-    const authServerUrl = this.configService.getOrThrow('keycloak.authServerUrl', { infer: true });
-    const realm = this.configService.getOrThrow('keycloak.realm', { infer: true });
-    const clientId = this.configService.getOrThrow('keycloak.clientId', { infer: true });
-    const callbackUrl = this.configService.getOrThrow('keycloak.callbackUrl', { infer: true });
+    const authServerUrl = this.configService.getOrThrow(
+      'keycloak.authServerUrl',
+      { infer: true },
+    );
+    const realm = this.configService.getOrThrow('keycloak.realm', {
+      infer: true,
+    });
+    const clientId = this.configService.getOrThrow('keycloak.clientId', {
+      infer: true,
+    });
+    const callbackUrl = this.configService.getOrThrow('keycloak.callbackUrl', {
+      infer: true,
+    });
 
     const state = uuidv4();
     const nonce = uuidv4();
 
     // Use raw ioredis client (not cache-manager) to avoid key-prefix/TTL interference
     const redisClient = this.redisService.getClient();
-    await redisClient.set(`${STATE_PREFIX}${state}`, nonce, 'EX', STATE_TTL_SECONDS);
-    this.logger.log(`[buildLoginUrl] State saved to Redis: oauth:state:${state} (TTL=${STATE_TTL_SECONDS}s)`);
+    await redisClient.set(
+      `${STATE_PREFIX}${state}`,
+      nonce,
+      'EX',
+      STATE_TTL_SECONDS,
+    );
+    this.logger.log(
+      `[buildLoginUrl] State saved to Redis: oauth:state:${state} (TTL=${STATE_TTL_SECONDS}s)`,
+    );
 
     const params = new URLSearchParams({
       client_id: clientId,
@@ -71,31 +87,52 @@ export class AuthService {
 
   // ─── Step 2: Validate state and exchange code ─────────────────────────────
 
-  private async validateStateAndExchange(code: string, state: string): Promise<any> {
+  private async validateStateAndExchange(
+    code: string,
+    state: string,
+  ): Promise<any> {
     const redisKey = `${STATE_PREFIX}${state}`;
     this.logger.log(`[validateState] Checking Redis key: ${redisKey}`);
 
     // Use raw ioredis client — same as buildLoginUrl
     const redisClient = this.redisService.getClient();
     const stored = await redisClient.get(redisKey);
-    this.logger.log(`[validateState] Redis result: ${stored ? 'FOUND' : 'NOT FOUND'}`);
+    this.logger.log(
+      `[validateState] Redis result: ${stored ? 'FOUND' : 'NOT FOUND'}`,
+    );
 
     if (!stored) {
-      throw new UnauthorizedException('Invalid or expired state — possible CSRF attack');
+      throw new UnauthorizedException(
+        'Invalid or expired state — possible CSRF attack',
+      );
     }
     // One-time use: delete immediately after validation
     await redisClient.del(redisKey);
-    this.logger.log('[validateState] State validated and deleted from Redis. Proceeding to code exchange.');
+    this.logger.log(
+      '[validateState] State validated and deleted from Redis. Proceeding to code exchange.',
+    );
 
     return this.exchangeCode(code);
   }
 
   private async exchangeCode(code: string): Promise<any> {
-    const authServerUrl = this.configService.getOrThrow('keycloak.authServerUrl', { infer: true });
-    const realm = this.configService.getOrThrow('keycloak.realm', { infer: true });
-    const clientId = this.configService.getOrThrow('keycloak.clientId', { infer: true });
-    const clientSecret = this.configService.getOrThrow('keycloak.clientSecret', { infer: true });
-    const callbackUrl = this.configService.getOrThrow('keycloak.callbackUrl', { infer: true });
+    const authServerUrl = this.configService.getOrThrow(
+      'keycloak.authServerUrl',
+      { infer: true },
+    );
+    const realm = this.configService.getOrThrow('keycloak.realm', {
+      infer: true,
+    });
+    const clientId = this.configService.getOrThrow('keycloak.clientId', {
+      infer: true,
+    });
+    const clientSecret = this.configService.getOrThrow(
+      'keycloak.clientSecret',
+      { infer: true },
+    );
+    const callbackUrl = this.configService.getOrThrow('keycloak.callbackUrl', {
+      infer: true,
+    });
 
     const tokenUrl = `${authServerUrl}/realms/${realm}/protocol/openid-connect/token`;
     const params = new URLSearchParams({
@@ -121,16 +158,25 @@ export class AuthService {
 
   // ─── Step 3: Full callback orchestration ─────────────────────────────────
 
-  async handleCallback(code: string, state: string): Promise<{ sid: string; redirectUrl: string }> {
-    this.logger.log(`[handleCallback] Step 1: Received code=<present> state=<present>`);
+  async handleCallback(
+    code: string,
+    state: string,
+  ): Promise<{ sid: string; redirectUrl: string }> {
+    this.logger.log(
+      `[handleCallback] Step 1: Received code=<present> state=<present>`,
+    );
 
     // 1. Validate CSRF state + exchange code
     let tokens: any;
     try {
       tokens = await this.validateStateAndExchange(code, state);
-      this.logger.log(`[handleCallback] Step 2: Tokens received. expires_in=${tokens?.expires_in}`);
+      this.logger.log(
+        `[handleCallback] Step 2: Tokens received. expires_in=${tokens?.expires_in}`,
+      );
     } catch (e) {
-      this.logger.error(`[handleCallback] Step 2 FAILED (state/exchange): ${(e as Error).message}`);
+      this.logger.error(
+        `[handleCallback] Step 2 FAILED (state/exchange): ${(e as Error).message}`,
+      );
       throw e;
     }
 
@@ -138,9 +184,13 @@ export class AuthService {
     let idTokenPayload: any;
     try {
       idTokenPayload = this.decodeJwt(tokens.id_token);
-      this.logger.log(`[handleCallback] Step 3: id_token decoded. sub=${idTokenPayload?.sub} email=${idTokenPayload?.email}`);
+      this.logger.log(
+        `[handleCallback] Step 3: id_token decoded. sub=${idTokenPayload?.sub} email=${idTokenPayload?.email}`,
+      );
     } catch (e) {
-      this.logger.error(`[handleCallback] Step 3 FAILED (decode id_token): ${(e as Error).message}`);
+      this.logger.error(
+        `[handleCallback] Step 3 FAILED (decode id_token): ${(e as Error).message}`,
+      );
       throw e;
     }
 
@@ -148,9 +198,14 @@ export class AuthService {
     let user: any;
     try {
       user = await this.jitProvision(idTokenPayload);
-      this.logger.log(`[handleCallback] Step 4: JIT provisioning done. userId=${user?.id} tenants=${user?.tenants?.length}`);
+      this.logger.log(
+        `[handleCallback] Step 4: JIT provisioning done. userId=${user?.id} tenants=${user?.tenants?.length}`,
+      );
     } catch (e) {
-      this.logger.error(`[handleCallback] Step 4 FAILED (JIT provisioning): ${(e as Error).message}`, (e as Error).stack);
+      this.logger.error(
+        `[handleCallback] Step 4 FAILED (JIT provisioning): ${(e as Error).message}`,
+        (e as Error).stack,
+      );
       throw e;
     }
 
@@ -164,13 +219,17 @@ export class AuthService {
       sid = await this.sessionService.createSession(tokens, user.id as string);
       this.logger.log(`[handleCallback] Step 5: Session created. sid=${sid}`);
     } catch (e) {
-      this.logger.error(`[handleCallback] Step 5 FAILED (create session): ${(e as Error).message}`);
+      this.logger.error(
+        `[handleCallback] Step 5 FAILED (create session): ${(e as Error).message}`,
+      );
       throw e;
     }
 
     // 5. Tenant routing
     const redirectUrl = this.resolveTenantRedirect(user);
-    this.logger.log(`[handleCallback] Step 6: Redirect URL resolved: ${redirectUrl}`);
+    this.logger.log(
+      `[handleCallback] Step 6: Redirect URL resolved: ${redirectUrl}`,
+    );
 
     return { sid, redirectUrl };
   }
@@ -183,10 +242,20 @@ export class AuthService {
       throw new UnauthorizedException('Session not found');
     }
 
-    const authServerUrl = this.configService.getOrThrow('keycloak.authServerUrl', { infer: true });
-    const realm = this.configService.getOrThrow('keycloak.realm', { infer: true });
-    const clientId = this.configService.getOrThrow('keycloak.clientId', { infer: true });
-    const clientSecret = this.configService.getOrThrow('keycloak.clientSecret', { infer: true });
+    const authServerUrl = this.configService.getOrThrow(
+      'keycloak.authServerUrl',
+      { infer: true },
+    );
+    const realm = this.configService.getOrThrow('keycloak.realm', {
+      infer: true,
+    });
+    const clientId = this.configService.getOrThrow('keycloak.clientId', {
+      infer: true,
+    });
+    const clientSecret = this.configService.getOrThrow(
+      'keycloak.clientSecret',
+      { infer: true },
+    );
 
     const tokenUrl = `${authServerUrl}/realms/${realm}/protocol/openid-connect/token`;
     const params = new URLSearchParams({
@@ -213,9 +282,12 @@ export class AuthService {
         expiresAt: newExpiresAt,
       };
 
-      await this.sessionService.updateSession(sid, updatedSession, newTokens.expires_in + 60);
+      await this.sessionService.updateSession(
+        sid,
+        updatedSession,
+        newTokens.expires_in + 60,
+      );
       return updatedSession;
-
     } catch (error: any) {
       // refresh_token expired or revoked → force re-login
       const errorCode = error?.response?.data?.error;
@@ -233,21 +305,33 @@ export class AuthService {
 
     if (session?.idToken) {
       // Federated logout from Keycloak IdP
-      const authServerUrl = this.configService.getOrThrow('keycloak.authServerUrl', { infer: true });
-      const realm = this.configService.getOrThrow('keycloak.realm', { infer: true });
+      const authServerUrl = this.configService.getOrThrow(
+        'keycloak.authServerUrl',
+        { infer: true },
+      );
+      const realm = this.configService.getOrThrow('keycloak.realm', {
+        infer: true,
+      });
       const logoutUrl = `${authServerUrl}/realms/${realm}/protocol/openid-connect/logout`;
 
       try {
         await firstValueFrom(
-          this.httpService.post(logoutUrl, new URLSearchParams({
-            id_token_hint: session.idToken,
-          }).toString(), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          }),
+          this.httpService.post(
+            logoutUrl,
+            new URLSearchParams({
+              id_token_hint: session.idToken,
+            }).toString(),
+            {
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            },
+          ),
         );
       } catch (e) {
         // Non-fatal: session is already deleted locally
-        this.logger.warn('Keycloak federated logout failed (non-fatal)', (e as Error).message);
+        this.logger.warn(
+          'Keycloak federated logout failed (non-fatal)',
+          (e as Error).message,
+        );
       }
     }
   }
@@ -261,7 +345,9 @@ export class AuthService {
   }
 
   private resolveTenantRedirect(user: User): string {
-    const frontend = this.configService.getOrThrow('keycloak.frontendUrl', { infer: true });
+    const frontend = this.configService.getOrThrow('keycloak.frontendUrl', {
+      infer: true,
+    });
     const tenants = user.tenants ?? [];
 
     if (tenants.length === 0) {
@@ -285,7 +371,7 @@ export class AuthService {
 
     try {
       if (!acquired) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         return this.usersService.findByKeycloakIdAndProvider({
           keycloakId,
           provider: AuthProvidersEnum.email,
@@ -295,7 +381,8 @@ export class AuthService {
       // Keycloak may send tenant-related claims (e.g. group IDs or realm roles) as UUIDs.
       // These are NOT MongoDB ObjectIds and must be validated before referencing tenant documents.
       // Tenant membership in this system is established through the onboarding flow, not raw JWT claims.
-      const rawKeycloakTenantIds: string[] = keycloakPayload.tenants || keycloakPayload.tenant_ids || [];
+      const rawKeycloakTenantIds: string[] =
+        keycloakPayload.tenants || keycloakPayload.tenant_ids || [];
       const keycloakTenantIds: string[] = rawKeycloakTenantIds.filter((tid) => {
         const valid = isValidObjectId(tid);
         if (!valid) {
@@ -329,28 +416,39 @@ export class AuthService {
           status: { id: StatusEnum.active },
           // Only add tenants we can actually reference by valid ObjectId.
           // A fresh user will have an empty array and go through onboarding.
-          tenants: keycloakTenantIds.map(tid => ({
+          tenants: keycloakTenantIds.map((tid) => ({
             tenant: tid,
             roles: [],
             joinedAt: new Date(),
           })),
         });
       } else {
-        const existingTenantIds = user.tenants.map(t => t.tenant);
-        const newTenantIds = keycloakTenantIds.filter(tid => !existingTenantIds.includes(tid));
-        const tenantsToRemove = keycloakTenantIds.length > 0
-          ? existingTenantIds.filter(tid => !keycloakTenantIds.includes(tid))
-          : []; // if Keycloak sends no valid tenant claims, don't remove existing memberships
+        const existingTenantIds = user.tenants.map((t) => t.tenant);
+        const newTenantIds = keycloakTenantIds.filter(
+          (tid) => !existingTenantIds.includes(tid),
+        );
+        const tenantsToRemove =
+          keycloakTenantIds.length > 0
+            ? existingTenantIds.filter(
+                (tid) => !keycloakTenantIds.includes(tid),
+              )
+            : []; // if Keycloak sends no valid tenant claims, don't remove existing memberships
         let hasChanges = false;
 
         if (tenantsToRemove.length > 0) {
-          user.tenants = user.tenants.filter(t => !tenantsToRemove.includes(t.tenant));
+          user.tenants = user.tenants.filter(
+            (t) => !tenantsToRemove.includes(t.tenant),
+          );
           hasChanges = true;
         }
         if (newTenantIds.length > 0) {
           user.tenants = [
             ...user.tenants,
-            ...newTenantIds.map(tid => ({ tenant: tid, roles: [], joinedAt: new Date() })),
+            ...newTenantIds.map((tid) => ({
+              tenant: tid,
+              roles: [],
+              joinedAt: new Date(),
+            })),
           ];
           hasChanges = true;
         }

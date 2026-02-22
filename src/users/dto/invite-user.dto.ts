@@ -5,14 +5,14 @@ import { Transform, Type } from 'class-transformer';
 import { lowerCaseTransformer } from '../../utils/transformers/lower-case.transformer';
 
 export class InviteUserDto {
-    @ApiProperty({ example: 'test1@example.com' })
-    @Transform(lowerCaseTransformer)
-    @IsNotEmpty()
-    @IsEmail()
-    email: string;
+  @ApiProperty({ example: 'test1@example.com' })
+  @Transform(lowerCaseTransformer)
+  @IsNotEmpty()
+  @IsEmail()
+  email: string;
 
-    @ApiPropertyOptional({ type: RoleDto })
-    @IsOptional()
-    @Type(() => RoleDto)
-    role?: RoleDto | null;
+  @ApiPropertyOptional({ type: RoleDto })
+  @IsOptional()
+  @Type(() => RoleDto)
+  role?: RoleDto | null;
 }

@@ -9,7 +9,7 @@ export class RolesGuard implements CanActivate {
   constructor(
     private reflector: Reflector,
     private usersService: UsersService,
-  ) { }
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const roles = this.reflector.getAllAndOverride<PlatformRoleEnum[]>(

@@ -10,6 +10,13 @@ import { <%= name %>Repository } from '../../<%= h.inflection.transform(name, ['
 import { <%= name %> } from '../../../../domain/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>';
 import { <%= name %>Mapper } from '../mappers/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>.mapper';
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
+<% if (pagination === 'infinity') { -%>
+import { InfinityPaginationResponseDto } from '../../../../../utils/dto/infinity-pagination-response.dto';
+import { infinityPagination } from '../../../../../utils/infinity-pagination';
+<% } else { -%>
+import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
+import { pagination } from '../../../../../utils/pagination';
+<% } -%>
 
 @Injectable()
 export class <%= name %>DocumentRepository implements <%= name %>Repository {
@@ -32,17 +39,39 @@ export class <%= name %>DocumentRepository implements <%= name %>Repository {
     paginationOptions,
   }: {
     paginationOptions: IPaginationOptions;
-  }, options?: { session?: ClientSession }): Promise<<%= name %>[]> {
+<% if (pagination === 'infinity') { -%>
+  }, options?: { session?: ClientSession }): Promise<InfinityPaginationResponseDto<<%= name %>>> {
     const entityObjects = await this.<%= h.inflection.camelize(name, true) %>Model
       .find()
       .session(options?.session || null)
       .skip((paginationOptions.page - 1) * paginationOptions.limit)
       .limit(paginationOptions.limit);
 
-    return entityObjects.map((entityObject) =>
+    const domainEntities = entityObjects.map((entityObject) =>
       <%= name %>Mapper.toDomain(entityObject),
     );
+    
+    return infinityPagination(domainEntities, paginationOptions);
   }
+<% } else { -%>
+  }, options?: { session?: ClientSession }): Promise<PaginationResponseDto<<%= name %>>> {
+    const [entityObjects, totalItems] = await Promise.all([
+      this.<%= h.inflection.camelize(name, true) %>Model
+        .find()
+        .session(options?.session || null)
+        .skip((paginationOptions.page - 1) * paginationOptions.limit)
+        .limit(paginationOptions.limit)
+        .exec(),
+      this.<%= h.inflection.camelize(name, true) %>Model.countDocuments().session(options?.session || null).exec()
+    ]);
+
+    const domainEntities = entityObjects.map((entityObject) =>
+      <%= name %>Mapper.toDomain(entityObject),
+    );
+    
+    return pagination(domainEntities, totalItems, paginationOptions);
+  }
+<% } -%>
 
   async findById(
     id: <%= name %>['id'],

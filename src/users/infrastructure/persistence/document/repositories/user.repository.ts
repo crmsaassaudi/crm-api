@@ -10,11 +10,14 @@ import { FilterQuery, Model } from 'mongoose';
 import { UserMapper } from '../mappers/user.mapper';
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
+import { PaginationResponseDto } from 'src/utils/dto/pagination-response.dto';
+import { pagination } from 'src/utils/pagination';
 
 @Injectable()
 export class UsersDocumentRepository
   extends BaseDocumentRepository<UserSchemaDocument, User>
-  implements UserRepository {
+  implements UserRepository
+{
   constructor(
     @InjectModel(UserSchemaClass.name)
     userModel: Model<UserSchemaDocument>,
@@ -39,7 +42,7 @@ export class UsersDocumentRepository
     filterOptions?: FilterUserDto | null;
     sortOptions?: SortUserDto[] | null;
     paginationOptions: IPaginationOptions;
-  }): Promise<User[]> {
+  }): Promise<PaginationResponseDto<User>> {
     const where: FilterQuery<UserSchemaClass> = {};
     if (filterOptions?.roles?.length) {
       where['role'] = {
@@ -49,22 +52,32 @@ export class UsersDocumentRepository
 
     const scopedWhere = this.applyTenantFilter(where);
 
-    const userObjects = await this.model
-      .find(scopedWhere)
-      .sort(
-        sortOptions?.reduce(
-          (accumulator, sort) => ({
-            ...accumulator,
-            [sort.orderBy === 'id' ? '_id' : sort.orderBy]:
-              sort.order.toUpperCase() === 'ASC' ? 1 : -1,
-          }),
-          {},
-        ),
-      )
-      .skip((paginationOptions.page - 1) * paginationOptions.limit)
-      .limit(paginationOptions.limit);
+    const sortParam =
+      sortOptions?.reduce(
+        (accumulator, sort) => ({
+          ...accumulator,
+          [sort.orderBy === 'id' ? '_id' : sort.orderBy]:
+            sort.order.toUpperCase() === 'ASC' ? 1 : -1,
+        }),
+        {},
+      ) || {};
 
-    return userObjects.map((userObject) => UserMapper.toDomain(userObject));
+    const [userObjects, totalItems] = await Promise.all([
+      this.model
+        .find(scopedWhere)
+        .sort(sortParam)
+        .skip((paginationOptions.page - 1) * paginationOptions.limit)
+        .limit(paginationOptions.limit)
+        .exec(), // Thêm .exec() để trả về Promise thực thụ
+
+      this.model.countDocuments(scopedWhere).exec(),
+    ]);
+
+    const domainUsers = userObjects.map((userObject) =>
+      UserMapper.toDomain(userObject),
+    );
+
+    return pagination(domainUsers, totalItems, paginationOptions);
   }
 
   async findById(id: User['id']): Promise<NullableType<User>> {
@@ -84,7 +97,9 @@ export class UsersDocumentRepository
     if (!domainEntity.tenants || domainEntity.tenants.length === 0) {
       const tenantId = this.cls.get('tenantId');
       if (tenantId) {
-        domainEntity.tenants = [{ tenant: tenantId, roles: [], joinedAt: new Date() }];
+        domainEntity.tenants = [
+          { tenant: tenantId, roles: [], joinedAt: new Date() },
+        ];
       }
     }
 
@@ -154,7 +169,9 @@ export class UsersDocumentRepository
     // For safer update, we should fetch, merge, then persist.
     // Re-using existing logic here but adapted for 'model' property.
 
-    const user = await this.model.findOne(this.applyTenantFilter({ _id: id.toString() })).session(session || null);
+    const user = await this.model
+      .findOne(this.applyTenantFilter({ _id: id.toString() }))
+      .session(session || null);
     if (!user) return null;
 
     const persistenceObject = UserMapper.toPersistence({
@@ -162,7 +179,7 @@ export class UsersDocumentRepository
       ...clonedPayload,
     });
 
-    // Remove version from persistence object to avoid manually setting it, 
+    // Remove version from persistence object to avoid manually setting it,
     // let mongoose plugin handle it.
     delete (persistenceObject as any).__v;
 

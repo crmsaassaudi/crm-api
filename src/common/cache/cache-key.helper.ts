@@ -3,7 +3,11 @@ export class CacheKeyHelper {
     return `tenant:${tenantId}:${entityName}:list`;
   }
 
-  static getDetailKey(tenantId: string, entityName: string, id: string): string {
+  static getDetailKey(
+    tenantId: string,
+    entityName: string,
+    id: string,
+  ): string {
     return `tenant:${tenantId}:${entityName}:${id}`;
   }
 

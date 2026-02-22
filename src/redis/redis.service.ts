@@ -9,7 +9,7 @@ export class RedisService {
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     @Inject(IOREDIS_CLIENT) private readonly ioredis: Redis,
-  ) { }
+  ) {}
 
   async get<T>(key: string): Promise<T | undefined> {
     return this.cacheManager.get<T>(key);

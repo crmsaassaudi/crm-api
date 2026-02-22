@@ -7,12 +7,9 @@ import { KeycloakAdminService } from './services/keycloak-admin.service';
 import { SessionService } from './services/session.service';
 
 @Module({
-  imports: [
-    forwardRef(() => UsersModule),
-    HttpModule,
-  ],
+  imports: [forwardRef(() => UsersModule), HttpModule],
   controllers: [AuthController],
   providers: [AuthService, KeycloakAdminService, SessionService],
   exports: [AuthService, KeycloakAdminService, SessionService],
 })
-export class AuthModule { }
+export class AuthModule {}

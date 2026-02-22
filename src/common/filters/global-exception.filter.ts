@@ -16,7 +16,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
     private readonly cls: ClsService,
-  ) { }
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const { httpAdapter } = this.httpAdapterHost;
@@ -42,9 +42,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       errorCode = response.error || HttpStatus[httpStatus];
       errors = response.errors || null;
     } else if (exception instanceof Error) {
-      message = process.env.NODE_ENV === 'production'
-        ? 'Internal server error'
-        : exception.message;
+      message =
+        process.env.NODE_ENV === 'production'
+          ? 'Internal server error'
+          : exception.message;
     }
 
     const responseBody = {

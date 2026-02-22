@@ -18,19 +18,35 @@ export const MongooseCachePlugin = (
   };
 
   schema.post('save', function (doc) {
-    eventEmitter.emit('entity.created', { entity: entityName, id: doc._id, tenantId: getTenantId() });
-    eventEmitter.emit('entity.updated', { entity: entityName, id: doc._id, tenantId: getTenantId() });
+    eventEmitter.emit('entity.created', {
+      entity: entityName,
+      id: doc._id,
+      tenantId: getTenantId(),
+    });
+    eventEmitter.emit('entity.updated', {
+      entity: entityName,
+      id: doc._id,
+      tenantId: getTenantId(),
+    });
   });
 
   schema.post('findOneAndUpdate', function (doc) {
     if (doc) {
-      eventEmitter.emit('entity.updated', { entity: entityName, id: doc._id, tenantId: getTenantId() });
+      eventEmitter.emit('entity.updated', {
+        entity: entityName,
+        id: doc._id,
+        tenantId: getTenantId(),
+      });
     }
   });
 
   schema.post('findOneAndDelete', function (doc) {
     if (doc) {
-      eventEmitter.emit('entity.deleted', { entity: entityName, id: doc._id, tenantId: getTenantId() });
+      eventEmitter.emit('entity.deleted', {
+        entity: entityName,
+        id: doc._id,
+        tenantId: getTenantId(),
+      });
     }
   });
 };

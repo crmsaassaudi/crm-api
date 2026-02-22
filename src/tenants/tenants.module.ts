@@ -7,15 +7,15 @@ import { TenantsAuthController } from './tenants.controller';
 import { TenantCreatedListener } from './listeners/tenant-created.listener';
 
 @Module({
-    imports: [
-        DocumentTenantPersistenceModule,
-        // AuthModule provides KeycloakAdminService
-        AuthModule,
-        // UsersModule provides UserRepository (for upsertWithTenants)
-        forwardRef(() => UsersModule),
-    ],
-    providers: [TenantsService, TenantCreatedListener],
-    controllers: [TenantsAuthController],
-    exports: [TenantsService, DocumentTenantPersistenceModule],
+  imports: [
+    DocumentTenantPersistenceModule,
+    // AuthModule provides KeycloakAdminService
+    AuthModule,
+    // UsersModule provides UserRepository (for upsertWithTenants)
+    forwardRef(() => UsersModule),
+  ],
+  providers: [TenantsService, TenantCreatedListener],
+  controllers: [TenantsAuthController],
+  exports: [TenantsService, DocumentTenantPersistenceModule],
 })
-export class TenantsModule { }
+export class TenantsModule {}

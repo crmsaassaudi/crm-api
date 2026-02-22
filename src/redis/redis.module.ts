@@ -43,4 +43,4 @@ import { IOREDIS_CLIENT } from './redis.tokens';
   ],
   exports: [RedisService, RedisLockService, CacheModule, IOREDIS_CLIENT],
 })
-export class RedisModule { }
+export class RedisModule {}

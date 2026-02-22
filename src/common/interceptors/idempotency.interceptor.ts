@@ -12,7 +12,7 @@ import { RedisService } from '../../redis/redis.service';
 
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
-  constructor(private readonly redisService: RedisService) { }
+  constructor(private readonly redisService: RedisService) {}
 
   async intercept(
     context: ExecutionContext,
@@ -33,7 +33,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
       const cls = ClsServiceManager.getClsService();
       const tid = cls.get('tenantId');
       if (tid) tenantPrefix = `t:${tid}:`;
-    } catch { /* CLS unavailable */ }
+    } catch {
+      /* CLS unavailable */
+    }
     const namespacedKey = `${tenantPrefix}idmp:${key}`;
     const lockKey = `lock:${namespacedKey}`;
 

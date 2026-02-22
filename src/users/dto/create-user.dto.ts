@@ -43,7 +43,10 @@ export class CreateUserDto {
   @IsOptional()
   photo?: FileDto | null;
 
-  @ApiPropertyOptional({ type: RoleDto, description: 'Platform-level role (SUPER_ADMIN or USER)' })
+  @ApiPropertyOptional({
+    type: RoleDto,
+    description: 'Platform-level role (SUPER_ADMIN or USER)',
+  })
   @IsOptional()
   @Type(() => RoleDto)
   platformRole?: RoleDto | null;

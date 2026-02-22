@@ -11,7 +11,7 @@ export class UserSeedService {
   constructor(
     @InjectModel(UserSchemaClass.name)
     private readonly model: Model<UserSchemaClass>,
-  ) { }
+  ) {}
 
   async run() {
     const admin = await this.model.findOne({
@@ -47,7 +47,7 @@ export class UserSeedService {
         password: password,
         firstName: 'John',
         lastName: 'Doe',
-        platformRole: PlatformRoleEnum.USER,        // seed john.doe is a regular user
+        platformRole: PlatformRoleEnum.USER, // seed john.doe is a regular user
         status: StatusEnum.active, // flat string, not embedded object
         tenants: [],
       });

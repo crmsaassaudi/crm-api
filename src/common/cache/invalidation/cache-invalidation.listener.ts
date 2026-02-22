@@ -9,21 +9,42 @@ export class CacheInvalidationListener {
 
   constructor(
     private readonly cacheInvalidationService: CacheInvalidationService,
-  ) { }
+  ) {}
 
   @OnEvent('entity.created')
-  async handleEntityCreated(payload: { entity: string; id: string; tenantId?: string }) {
-    await this.invalidateEntityCache(payload.tenantId || 'global', payload.entity);
+  async handleEntityCreated(payload: {
+    entity: string;
+    id: string;
+    tenantId?: string;
+  }) {
+    await this.invalidateEntityCache(
+      payload.tenantId || 'global',
+      payload.entity,
+    );
   }
 
   @OnEvent('entity.updated')
-  async handleEntityUpdated(payload: { entity: string; id: string; tenantId?: string }) {
-    await this.invalidateEntityCache(payload.tenantId || 'global', payload.entity);
+  async handleEntityUpdated(payload: {
+    entity: string;
+    id: string;
+    tenantId?: string;
+  }) {
+    await this.invalidateEntityCache(
+      payload.tenantId || 'global',
+      payload.entity,
+    );
   }
 
   @OnEvent('entity.deleted')
-  async handleEntityDeleted(payload: { entity: string; id: string; tenantId?: string }) {
-    await this.invalidateEntityCache(payload.tenantId || 'global', payload.entity);
+  async handleEntityDeleted(payload: {
+    entity: string;
+    id: string;
+    tenantId?: string;
+  }) {
+    await this.invalidateEntityCache(
+      payload.tenantId || 'global',
+      payload.entity,
+    );
   }
 
   private async invalidateEntityCache(tenantId: string, entityName: string) {

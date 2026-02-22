@@ -32,7 +32,6 @@ import { CommonCacheModule } from './common/cache/common-cache.module';
 import { SocketModule } from './modules/realtime/socket.module';
 
 import {
-  AuthGuard,
   KeycloakConnectModule,
   ResourceGuard,
   RoleGuard,
@@ -53,14 +52,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { Request } from 'express';
 import { jwtDecode } from 'jwt-decode';
 
-
-
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.middleware';
 
 @Module({
   imports: [
-
     DatabaseModule,
     ConfigModule.forRoot({
       isGlobal: true,
@@ -244,4 +240,3 @@ export class AppModule implements NestModule {
     consumer.apply(TenantResolverMiddleware).forRoutes('*');
   }
 }
-

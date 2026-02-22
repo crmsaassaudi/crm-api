@@ -24,11 +24,18 @@ import {
 } from '@nestjs/swagger';
 import { <%= name %> } from './domain/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>';
 import { AuthGuard } from '@nestjs/passport';
+<% if (pagination === 'infinity') { -%>
 import {
   InfinityPaginationResponse,
   InfinityPaginationResponseDto,
 } from '../utils/dto/infinity-pagination-response.dto';
 import { infinityPagination } from '../utils/infinity-pagination';
+<% } else { -%>
+import {
+  PaginationResponse,
+  PaginationResponseDto,
+} from '../utils/dto/pagination-response.dto';
+<% } -%>
 import { FindAll<%= h.inflection.transform(name, ['pluralize']) %>Dto } from './dto/find-all-<%= h.inflection.transform(name, ['pluralize', 'underscore', 'dasherize']) %>.dto';
 
 @ApiTags('<%= h.inflection.transform(name, ['pluralize', 'humanize']) %>')
@@ -49,6 +56,7 @@ export class <%= h.inflection.transform(name, ['pluralize']) %>Controller {
     return this.<%= h.inflection.camelize(h.inflection.pluralize(name), true) %>Service.create(create<%= name %>Dto);
   }
 
+<% if (pagination === 'infinity') { -%>
   @Get()
   @ApiOkResponse({
     type: InfinityPaginationResponse(<%= name %>),
@@ -72,6 +80,28 @@ export class <%= h.inflection.transform(name, ['pluralize']) %>Controller {
       { page, limit },
     );
   }
+<% } else { -%>
+  @Get()
+  @ApiOkResponse({
+    type: PaginationResponse(<%= name %>),
+  })
+  async findAll(
+    @Query() query: FindAll<%= h.inflection.transform(name, ['pluralize']) %>Dto,
+  ): Promise<PaginationResponseDto<<%= name %>>> {
+    const page = query?.page ?? 1;
+    let limit = query?.limit ?? 10;
+    if (limit > 50) {
+      limit = 50;
+    }
+
+    return await this.<%= h.inflection.camelize(h.inflection.pluralize(name), true) %>Service.findAllWithPagination({
+      paginationOptions: {
+        page,
+        limit,
+      },
+    });
+  }
+<% } -%>
 
   @Get(':id')
   @ApiParam({

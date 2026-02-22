@@ -25,7 +25,9 @@ async function bootstrap() {
   useContainer(app.select(AppModule), { fallbackOnErrors: true });
   const configService = app.get(ConfigService<AllConfigType>);
 
-  const frontendDomain = configService.get('app.frontendDomain', { infer: true });
+  const frontendDomain = configService.get('app.frontendDomain', {
+    infer: true,
+  });
   app.enableCors({
     origin: frontendDomain ? frontendDomain.split(',') : true,
     credentials: true,

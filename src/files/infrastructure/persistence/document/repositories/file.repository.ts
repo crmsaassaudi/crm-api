@@ -13,7 +13,10 @@ import { ClsService } from 'nestjs-cls';
 import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
 
 @Injectable()
-export class FileDocumentRepository extends BaseDocumentRepository<FileSchemaDocument, FileType> implements FileRepository {
+export class FileDocumentRepository
+  extends BaseDocumentRepository<FileSchemaDocument, FileType>
+  implements FileRepository
+{
   constructor(
     @InjectModel(FileSchemaClass.name)
     fileModel: Model<FileSchemaDocument>,
@@ -30,7 +33,12 @@ export class FileDocumentRepository extends BaseDocumentRepository<FileSchemaDoc
     return FileMapper.toPersistence(domain);
   }
 
-  async create(data: Omit<FileType, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'tenantId'>): Promise<FileType> {
+  async create(
+    data: Omit<
+      FileType,
+      'id' | 'createdAt' | 'updatedAt' | 'version' | 'tenantId'
+    >,
+  ): Promise<FileType> {
     const domainEntity = new FileType();
     Object.assign(domainEntity, data);
     domainEntity.tenantId = this.cls.get('tenantId');

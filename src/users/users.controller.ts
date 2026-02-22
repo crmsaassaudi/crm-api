@@ -29,16 +29,15 @@ import {
 import { Roles } from '../roles/roles.decorator';
 import { PlatformRoleEnum } from '../roles/platform-role.enum';
 
-import {
-  InfinityPaginationResponse,
-  InfinityPaginationResponseDto,
-} from '../utils/dto/infinity-pagination-response.dto';
 import { NullableType } from '../utils/types/nullable.type';
 import { QueryUserDto } from './dto/query-user.dto';
 import { User } from './domain/user';
 import { UsersService } from './users.service';
 import { RolesGuard } from '../roles/roles.guard';
-import { infinityPagination } from '../utils/infinity-pagination';
+import {
+  PaginationResponse,
+  PaginationResponseDto,
+} from 'src/utils/dto/pagination-response.dto';
 
 @ApiBearerAuth()
 @Roles(PlatformRoleEnum.SUPER_ADMIN)
@@ -51,7 +50,7 @@ import { infinityPagination } from '../utils/infinity-pagination';
 @UseInterceptors(HttpCacheInterceptor)
 @CacheEntity('User')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) { }
+  constructor(private readonly usersService: UsersService) {}
 
   @ApiCreatedResponse({
     type: User,
@@ -78,7 +77,7 @@ export class UsersController {
   }
 
   @ApiOkResponse({
-    type: InfinityPaginationResponse(User),
+    type: PaginationResponse(User),
   })
   @SerializeOptions({
     groups: ['admin'],
@@ -88,24 +87,21 @@ export class UsersController {
   @CacheTTL(60)
   async findAll(
     @Query() query: QueryUserDto,
-  ): Promise<InfinityPaginationResponseDto<User>> {
+  ): Promise<PaginationResponseDto<User>> {
     const page = query?.page ?? 1;
     let limit = query?.limit ?? 10;
     if (limit > 50) {
       limit = 50;
     }
 
-    return infinityPagination(
-      await this.usersService.findManyWithPagination({
-        filterOptions: query?.filters,
-        sortOptions: query?.sort,
-        paginationOptions: {
-          page,
-          limit,
-        },
-      }),
-      { page, limit },
-    );
+    return await this.usersService.findManyWithPagination({
+      filterOptions: query?.filters,
+      sortOptions: query?.sort,
+      paginationOptions: {
+        page,
+        limit,
+      },
+    });
   }
 
   @ApiOkResponse({

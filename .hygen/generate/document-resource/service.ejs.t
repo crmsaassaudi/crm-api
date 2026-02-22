@@ -10,6 +10,11 @@ import { Update<%= name %>Dto } from './dto/update-<%= h.inflection.transform(na
 import { <%= name %>Repository } from './infrastructure/persistence/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>.repository';
 import { IPaginationOptions } from '../utils/types/pagination-options';
 import { <%= name %> } from './domain/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>';
+<% if (pagination === 'infinity') { -%>
+import { InfinityPaginationResponseDto } from '../utils/dto/infinity-pagination-response.dto';
+<% } else { -%>
+import { PaginationResponseDto } from '../utils/dto/pagination-response.dto';
+<% } -%>
 
 @Injectable()
 export class <%= h.inflection.transform(name, ['pluralize']) %>Service {
@@ -35,7 +40,11 @@ export class <%= h.inflection.transform(name, ['pluralize']) %>Service {
     paginationOptions,
   }: {
     paginationOptions: IPaginationOptions;
-  }) {
+<% if (pagination === 'infinity') { -%>
+  }): Promise<InfinityPaginationResponseDto<<%= name %>>> {
+<% } else { -%>
+  }): Promise<PaginationResponseDto<<%= name %>>> {
+<% } -%>
     return this.<%= h.inflection.camelize(name, true) %>Repository.findAllWithPagination({
       paginationOptions: {
         page: paginationOptions.page,

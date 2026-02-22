@@ -29,7 +29,10 @@ export class UserSchemaClass extends EntityDocumentHelper {
   @Prop({
     type: [
       {
-        tenant: { type: MongooseSchema.Types.ObjectId, ref: 'TenantSchemaClass' },
+        tenant: {
+          type: MongooseSchema.Types.ObjectId,
+          ref: 'TenantSchemaClass',
+        },
         roles: [String],
         joinedAt: { type: Date, default: now },
       },

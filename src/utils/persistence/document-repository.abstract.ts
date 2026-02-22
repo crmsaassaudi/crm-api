@@ -1,12 +1,6 @@
-import { Injectable, ConflictException, Inject } from '@nestjs/common';
+import { ConflictException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import {
-  ClientSession,
-  Model,
-  Document,
-  FilterQuery,
-  UpdateQuery,
-} from 'mongoose';
+import { ClientSession, Model, Document, FilterQuery } from 'mongoose';
 
 export abstract class BaseDocumentRepository<
   TSchema extends Document,
@@ -15,7 +9,7 @@ export abstract class BaseDocumentRepository<
   constructor(
     protected readonly model: Model<TSchema>,
     protected readonly cls: ClsService,
-  ) { }
+  ) {}
 
   async create(
     data: Partial<TDomain>,
@@ -26,7 +20,9 @@ export abstract class BaseDocumentRepository<
     return this.mapToDomain(saved);
   }
 
-  protected applyTenantFilter(filter: FilterQuery<TSchema> = {}): FilterQuery<TSchema> {
+  protected applyTenantFilter(
+    filter: FilterQuery<TSchema> = {},
+  ): FilterQuery<TSchema> {
     const tenantId = this.cls.get('tenantId');
     if (tenantId) {
       return { ...filter, tenant: tenantId };
@@ -34,10 +30,7 @@ export abstract class BaseDocumentRepository<
     return filter;
   }
 
-  async find(
-    filter: FilterQuery<TSchema>,
-    options?: any,
-  ): Promise<TDomain[]> {
+  async find(filter: FilterQuery<TSchema>, options?: any): Promise<TDomain[]> {
     const scopedFilter = this.applyTenantFilter(filter);
     const docs = await this.model.find(scopedFilter, null, options);
     return docs.map((doc) => this.mapToDomain(doc as any));

@@ -18,12 +18,16 @@ import { Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AllConfigType } from '../config/config.type';
 import { AuthService } from './auth.service';
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Unprotected } from 'nest-keycloak-connect';
 import { AuthUpdateDto } from './dto/auth-update.dto';
 import { NullableType } from '../utils/types/nullable.type';
 import { User } from '../users/domain/user';
-import { SessionService } from './services/session.service';
 
 const SID_COOKIE = 'sid';
 const COOKIE_OPTIONS = {
@@ -42,7 +46,7 @@ export class AuthController {
   constructor(
     private readonly service: AuthService,
     private readonly configService: ConfigService<AllConfigType>,
-  ) { }
+  ) {}
 
   // ─── GET /auth/login ──────────────────────────────────────────────────────
 
@@ -66,14 +70,19 @@ export class AuthController {
     @Query('state') state: string,
     @Res() res: Response,
   ) {
-    const frontendUrl = this.configService.getOrThrow('keycloak.frontendUrl', { infer: true });
+    const frontendUrl = this.configService.getOrThrow('keycloak.frontendUrl', {
+      infer: true,
+    });
 
     if (!code || !state) {
       return res.redirect(`${frontendUrl}/login?error=missing_params`);
     }
 
     try {
-      const { sid, redirectUrl } = await this.service.handleCallback(code, state);
+      const { sid, redirectUrl } = await this.service.handleCallback(
+        code,
+        state,
+      );
 
       // Set HttpOnly session cookie — token NEVER reaches the browser
       res.cookie(SID_COOKIE, sid, COOKIE_OPTIONS);
@@ -112,7 +121,9 @@ export class AuthController {
   @Post('logout')
   @Unprotected()
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Logout: clear session, cookie, and Keycloak IdP session' })
+  @ApiOperation({
+    summary: 'Logout: clear session, cookie, and Keycloak IdP session',
+  })
   async logout(@Request() req, @Res({ passthrough: true }) res: Response) {
     const sid = req.cookies?.[SID_COOKIE];
     if (sid) {

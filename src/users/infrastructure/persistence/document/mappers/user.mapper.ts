@@ -13,11 +13,11 @@ export class UserMapper {
     domainEntity.id = raw._id.toString();
     domainEntity.version = raw.__v;
     domainEntity.tenants = raw.tenants
-      ? raw.tenants.map(t => ({
-        tenant: t.tenant.toString(),
-        roles: t.roles,
-        joinedAt: t.joinedAt,
-      }))
+      ? raw.tenants.map((t) => ({
+          tenant: t.tenant.toString(),
+          roles: t.roles,
+          joinedAt: t.joinedAt,
+        }))
       : [];
     domainEntity.email = raw.email;
     domainEntity.password = raw.password;
@@ -68,11 +68,11 @@ export class UserMapper {
     }
 
     persistenceSchema.tenants = domainEntity.tenants
-      ? domainEntity.tenants.map(t => ({
-        tenant: t.tenant,
-        roles: t.roles,
-        joinedAt: t.joinedAt,
-      }))
+      ? domainEntity.tenants.map((t) => ({
+          tenant: t.tenant,
+          roles: t.roles,
+          joinedAt: t.joinedAt,
+        }))
       : [];
 
     if (domainEntity.version !== undefined) {

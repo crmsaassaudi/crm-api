@@ -12,23 +12,26 @@ import { ClsServiceManager } from 'nestjs-cls';
  *   — or —
  *   Model.find().setOptions({ skipTenantFilter: true })
  */
-export function tenantFilterPlugin(schema: Schema, options?: { field?: string }) {
-    const tenantField = options?.field || 'tenants.tenant';
+export function tenantFilterPlugin(
+  schema: Schema,
+  options?: { field?: string },
+) {
+  const tenantField = options?.field || 'tenants.tenant';
 
-    const hooks = [
-        'find',
-        'findOne',
-        'findOneAndUpdate',
-        'updateMany',
-        'deleteMany',
-        'countDocuments',
-    ] as const;
+  const hooks = [
+    'find',
+    'findOne',
+    'findOneAndUpdate',
+    'updateMany',
+    'deleteMany',
+    'countDocuments',
+  ] as const;
 
-    for (const hook of hooks) {
-        schema.pre(hook, function () {
-            applyTenantFilter(this, tenantField);
-        });
-    }
+  for (const hook of hooks) {
+    schema.pre(hook, function () {
+      applyTenantFilter(this, tenantField);
+    });
+  }
 }
 
 /**
@@ -40,39 +43,36 @@ export function tenantFilterPlugin(schema: Schema, options?: { field?: string })
  *  - skipTenantFilter option is true (admin / cross-tenant queries)
  */
 function applyTenantFilter(query: any, tenantField: string) {
-    // nestjs-cls official API for accessing CLS outside DI context
-    let cls;
-    try {
-        cls = ClsServiceManager.getClsService();
-    } catch {
-        return; // CLS not yet initialized (e.g., during app bootstrap / seeds)
-    }
+  // nestjs-cls official API for accessing CLS outside DI context
+  let cls;
+  try {
+    cls = ClsServiceManager.getClsService();
+  } catch {
+    return; // CLS not yet initialized (e.g., during app bootstrap / seeds)
+  }
 
-    // Check for bypass flag
-    const opts = query.getOptions?.() ?? {};
-    if (opts.skipTenantFilter) {
-        return;
-    }
+  // Check for bypass flag
+  const opts = query.getOptions?.() ?? {};
+  if (opts.skipTenantFilter) {
+    return;
+  }
 
-    const activeTenantId = cls.get('activeTenantId') || cls.get('tenantId');
+  const activeTenantId = cls.get('activeTenantId') || cls.get('tenantId');
 
-    // null / undefined = no tenant context → skip (platform-level query)
-    if (!activeTenantId) {
-        return;
-    }
+  // null / undefined = no tenant context → skip (platform-level query)
+  if (!activeTenantId) {
+    return;
+  }
 
-    const currentFilter = query.getFilter();
+  const currentFilter = query.getFilter();
 
-    // SECURITY: Always force the tenant filter using $and.
-    // Never trust the existing filter — it may contain attacker-injected values.
-    // Remove any user-supplied tenant field to prevent bypass.
-    const sanitizedFilter = { ...currentFilter };
-    delete sanitizedFilter[tenantField];
+  // SECURITY: Always force the tenant filter using $and.
+  // Never trust the existing filter — it may contain attacker-injected values.
+  // Remove any user-supplied tenant field to prevent bypass.
+  const sanitizedFilter = { ...currentFilter };
+  delete sanitizedFilter[tenantField];
 
-    query.setQuery({
-        $and: [
-            sanitizedFilter,
-            { [tenantField]: activeTenantId },
-        ],
-    });
+  query.setQuery({
+    $and: [sanitizedFilter, { [tenantField]: activeTenantId }],
+  });
 }

@@ -25,6 +25,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { ClsService } from 'nestjs-cls';
 import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
 import { InviteUserDto } from './dto/invite-user.dto';
+import { PaginationResponseDto } from 'src/utils/dto/pagination-response.dto';
 
 @Injectable()
 export class UsersService {
@@ -36,9 +37,13 @@ export class UsersService {
     private readonly cls: ClsService,
     @Inject(forwardRef(() => KeycloakAdminService))
     private readonly keycloakAdminService: KeycloakAdminService,
-  ) { }
+  ) {}
 
-  async create(createUserDto: CreateUserDto, tenantId?: string, session?: any): Promise<User> {
+  async create(
+    createUserDto: CreateUserDto,
+    tenantId?: string,
+    session?: any,
+  ): Promise<User> {
     // Do not remove comment below.
     // <creating-property />
 
@@ -97,20 +102,25 @@ export class UsersService {
       status = { id: createUserDto.status.id as StatusEnum };
     }
 
-    return this.usersRepository.create({
-      // Do not remove comment below.
-      // <creating-property-payload />
-      tenants: tenantId ? [{ tenant: tenantId, roles: [], joinedAt: new Date() }] : [],
-      firstName: createUserDto.firstName,
-      lastName: createUserDto.lastName,
-      email: email,
-      password: password,
-      photo: photo,
-      platformRole: platformRole,
-      status: status,
-      provider: createUserDto.provider ?? AuthProvidersEnum.email,
-      keycloakId: createUserDto.keycloakId,
-    }, session);
+    return this.usersRepository.create(
+      {
+        // Do not remove comment below.
+        // <creating-property-payload />
+        tenants: tenantId
+          ? [{ tenant: tenantId, roles: [], joinedAt: new Date() }]
+          : [],
+        firstName: createUserDto.firstName,
+        lastName: createUserDto.lastName,
+        email: email,
+        password: password,
+        photo: photo,
+        platformRole: platformRole,
+        status: status,
+        provider: createUserDto.provider ?? AuthProvidersEnum.email,
+        keycloakId: createUserDto.keycloakId,
+      },
+      session,
+    );
   }
 
   findManyWithPagination({
@@ -121,7 +131,7 @@ export class UsersService {
     filterOptions?: FilterUserDto | null;
     sortOptions?: SortUserDto[] | null;
     paginationOptions: IPaginationOptions;
-  }): Promise<User[]> {
+  }): Promise<PaginationResponseDto<User>> {
     return this.usersRepository.findManyWithPagination({
       filterOptions,
       sortOptions,
@@ -224,23 +234,20 @@ export class UsersService {
       status = { id: updateUserDto.status.id as StatusEnum };
     }
 
-    return this.usersRepository.update(
-      id,
-      {
-        // Do not remove comment below.
-        // <updating-property-payload />
-        firstName: updateUserDto.firstName,
-        lastName: updateUserDto.lastName,
-        email,
-        password,
-        photo,
-        platformRole,
-        status,
-        provider: updateUserDto.provider,
-        keycloakId: updateUserDto.keycloakId,
-        version: updateUserDto.version,
-      },
-    );
+    return this.usersRepository.update(id, {
+      // Do not remove comment below.
+      // <updating-property-payload />
+      firstName: updateUserDto.firstName,
+      lastName: updateUserDto.lastName,
+      email,
+      password,
+      photo,
+      platformRole,
+      status,
+      provider: updateUserDto.provider,
+      keycloakId: updateUserDto.keycloakId,
+      version: updateUserDto.version,
+    });
   }
 
   async remove(id: User['id']): Promise<void> {
@@ -255,20 +262,26 @@ export class UsersService {
 
     const currentUser = this.cls.get('user');
     // Check if current user has access to this tenant (Validation)
-    // Assuming currentUser has populated tenants. 
+    // Assuming currentUser has populated tenants.
     // If currentUser is not available (e.g. system call), we might skip or fail.
     // For Invite, it's usually an admin action.
     if (currentUser) {
-      const hasAccess = currentUser.tenants?.some((t: { tenant: any; }) => t.tenant === tenantId);
+      const hasAccess = currentUser.tenants?.some(
+        (t: { tenant: any }) => t.tenant === tenantId,
+      );
       // Ideally check for Admin role within that tenant too, but schema might vary.
       // Based on prompt: "Xác thực rằng Admin hiện tại thực sự có quyền trên tenantId đó"
       // We'll check if tenant is in their list.
       if (!hasAccess) {
-        throw new UnauthorizedException('You do not have permission to invite users to this tenant');
+        throw new UnauthorizedException(
+          'You do not have permission to invite users to this tenant',
+        );
       }
     }
 
-    const existingUser = await this.usersRepository.findByEmail(inviteUserDto.email);
+    const existingUser = await this.usersRepository.findByEmail(
+      inviteUserDto.email,
+    );
     if (existingUser) {
       throw new UnprocessableEntityException({
         status: HttpStatus.UNPROCESSABLE_ENTITY,
@@ -286,11 +299,13 @@ export class UsersService {
       // The real credential is set via the password-reset email (called below).
       keycloakUser = await this.keycloakAdminService.createUser(
         inviteUserDto.email,
-        `Tmp!${Date.now()}KC`,   // temporary, immediately superseded by reset-password
-        inviteUserDto.email,     // fullName placeholder until the user fills their profile
+        `Tmp!${Date.now()}KC`, // temporary, immediately superseded by reset-password
+        inviteUserDto.email, // fullName placeholder until the user fills their profile
       );
     } catch (e) {
-      throw new UnprocessableEntityException('Failed to create user in Keycloak: ' + (e as Error).message);
+      throw new UnprocessableEntityException(
+        'Failed to create user in Keycloak: ' + (e as Error).message,
+      );
     }
 
     try {
@@ -312,11 +327,17 @@ export class UsersService {
       });
     } catch (error) {
       // Rollback: Delete user from Keycloak if local DB save fails
-      this.logger.error('Failed to create user in local DB, rolling back Keycloak user...', error);
+      this.logger.error(
+        'Failed to create user in local DB, rolling back Keycloak user...',
+        error,
+      );
       try {
         await this.keycloakAdminService.deleteUser(keycloakUser.id);
       } catch (rollbackError) {
-        this.logger.error('CRITICAL: Failed to rollback Keycloak user creation', rollbackError);
+        this.logger.error(
+          'CRITICAL: Failed to rollback Keycloak user creation',
+          rollbackError,
+        );
       }
       throw error;
     }

@@ -28,7 +28,7 @@ export class HttpCacheInterceptor extends CacheInterceptor {
       try {
         const cls = ClsServiceManager.getClsService();
         tenantId = cls.get('activeTenantId') || cls.get('tenantId') || 'global';
-      } catch { }
+      } catch {}
 
       if (id) {
         return `tenant:${tenantId}:${entityName}:${id}`;
