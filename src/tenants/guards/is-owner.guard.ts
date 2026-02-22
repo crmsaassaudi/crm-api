@@ -13,8 +13,8 @@ export class IsOwnerGuard implements CanActivate {
             throw new ForbiddenException('User not authenticated');
         }
 
-        // Extract tenant ID from request params or body
-        const tenantId = request.params.id || request.params.tenantId || request.body.tenantId;
+        // Extract tenant ID from request params
+        const tenantId = request.params.id || request.params.tenantId;
 
         if (!tenantId) {
             throw new ForbiddenException('Tenant ID not provided');

@@ -63,8 +63,16 @@ function applyTenantFilter(query: any, tenantField: string) {
 
     const currentFilter = query.getFilter();
 
-    // Don't overwrite if caller already set an explicit tenant filter
-    if (!currentFilter[tenantField]) {
-        query.where(tenantField).equals(activeTenantId);
-    }
+    // SECURITY: Always force the tenant filter using $and.
+    // Never trust the existing filter — it may contain attacker-injected values.
+    // Remove any user-supplied tenant field to prevent bypass.
+    const sanitizedFilter = { ...currentFilter };
+    delete sanitizedFilter[tenantField];
+
+    query.setQuery({
+        $and: [
+            sanitizedFilter,
+            { [tenantField]: activeTenantId },
+        ],
+    });
 }

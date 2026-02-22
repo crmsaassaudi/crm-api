@@ -37,6 +37,7 @@ import {
   ResourceGuard,
   RoleGuard,
 } from 'nest-keycloak-connect';
+import { HybridAuthGuard } from './auth/guards/hybrid-auth.guard';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
 const infrastructureDatabaseModule = MongooseModule.forRootAsync({
@@ -222,7 +223,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
   providers: [
     {
       provide: APP_GUARD,
-      useClass: AuthGuard,
+      useClass: HybridAuthGuard,
     },
     {
       provide: APP_GUARD,

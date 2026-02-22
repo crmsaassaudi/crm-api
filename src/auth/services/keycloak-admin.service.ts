@@ -55,7 +55,6 @@ export class KeycloakAdminService implements OnModuleInit {
             this.logger.log('Successfully authenticated Keycloak Admin Client');
         } catch (error) {
             this.logger.error('Failed to authenticate Keycloak Admin Client', error);
-            console.log("error", error);
             throw new UnauthorizedException('Failed to authenticate with Keycloak Admin API');
         }
     }

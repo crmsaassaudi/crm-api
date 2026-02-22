@@ -16,11 +16,20 @@ import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { ClsService } from 'nestjs-cls';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import cookieParser from 'cookie-parser';
+import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { cors: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.set('trust proxy', 1);
+
   useContainer(app.select(AppModule), { fallbackOnErrors: true });
   const configService = app.get(ConfigService<AllConfigType>);
+
+  const frontendDomain = configService.get('app.frontendDomain', { infer: true });
+  app.enableCors({
+    origin: frontendDomain ? frontendDomain.split(',') : true,
+    credentials: true,
+  });
 
   // Enable cookie parsing for HttpOnly session cookies (BFF pattern)
   app.use(cookieParser());

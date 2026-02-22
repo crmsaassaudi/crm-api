@@ -5,6 +5,7 @@ import {
   forwardRef,
   UnprocessableEntityException,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { NullableType } from '../utils/types/nullable.type';
@@ -27,6 +28,8 @@ import { InviteUserDto } from './dto/invite-user.dto';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     private readonly usersRepository: UserRepository,
     private readonly filesService: FilesService,
@@ -293,7 +296,7 @@ export class UsersService {
     try {
       await this.keycloakAdminService.resetPassword(keycloakUser.id);
     } catch (e) {
-      console.warn('Failed to send invite email', (e as Error).message);
+      this.logger.warn(`Failed to send invite email: ${(e as Error).message}`);
     }
 
     try {
@@ -309,11 +312,11 @@ export class UsersService {
       });
     } catch (error) {
       // Rollback: Delete user from Keycloak if local DB save fails
-      console.error('Failed to create user in local DB, rolling back Keycloak user...', error);
+      this.logger.error('Failed to create user in local DB, rolling back Keycloak user...', error);
       try {
         await this.keycloakAdminService.deleteUser(keycloakUser.id);
       } catch (rollbackError) {
-        console.error('CRITICAL: Failed to rollback Keycloak user creation', rollbackError);
+        this.logger.error('CRITICAL: Failed to rollback Keycloak user creation', rollbackError);
       }
       throw error;
     }
@@ -365,7 +368,7 @@ export class UsersService {
           enabled,
         );
       } catch (error) {
-        console.error('Failed to update Keycloak status', error);
+        this.logger.error('Failed to update Keycloak status', error);
         throw new UnprocessableEntityException(
           'Failed to update status in Keycloak',
         );

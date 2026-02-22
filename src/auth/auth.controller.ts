@@ -41,7 +41,6 @@ export class AuthController {
 
   constructor(
     private readonly service: AuthService,
-    private readonly sessionService: SessionService,
     private readonly configService: ConfigService<AllConfigType>,
   ) { }
 
@@ -131,14 +130,6 @@ export class AuthController {
   @ApiOkResponse({ type: User })
   @HttpCode(HttpStatus.OK)
   public async me(@Request() req): Promise<NullableType<User>> {
-    // Support both: session cookie (BFF) and Bearer JWT (API clients)
-    const sid = req.cookies?.[SID_COOKIE];
-    if (sid) {
-      const session = await this.sessionService.getSession(sid);
-      if (!session) throw new UnauthorizedException('Session invalid or expired');
-      return this.service.me(this.decodeJwt(session.idToken));
-    }
-    // Fallback: Keycloak JWT bearer token (set by nest-keycloak-connect)
     return this.service.me(req.user);
   }
 
@@ -166,9 +157,4 @@ export class AuthController {
   }
 
   // ─── Helper ──────────────────────────────────────────────────────────────
-
-  private decodeJwt(token: string): any {
-    const base64 = token.split('.')[1];
-    return JSON.parse(Buffer.from(base64, 'base64url').toString('utf-8'));
-  }
 }

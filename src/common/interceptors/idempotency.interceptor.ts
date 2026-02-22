@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   CallHandler,
 } from '@nestjs/common';
+import { ClsServiceManager } from 'nestjs-cls';
 import { ConflictException } from '@nestjs/common';
 import { Observable, of } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
@@ -26,7 +27,15 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
     const client = this.redisService.getClient(); // Get ioredis client
     const key = idempotencyKey as string;
-    const lockKey = `lock:${key}`;
+
+    let tenantPrefix = '';
+    try {
+      const cls = ClsServiceManager.getClsService();
+      const tid = cls.get('tenantId');
+      if (tid) tenantPrefix = `t:${tid}:`;
+    } catch { /* CLS unavailable */ }
+    const namespacedKey = `${tenantPrefix}idmp:${key}`;
+    const lockKey = `lock:${namespacedKey}`;
 
     // 1. Try to acquire lock
     // SET key value NX EX seconds
@@ -34,7 +43,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
     if (!acquired) {
       // 2. If lock exists, check if result is already cached
-      const cachedResponse = await this.redisService.get(key);
+      const cachedResponse = await this.redisService.get(namespacedKey);
       if (cachedResponse) {
         return of(cachedResponse);
       }
@@ -43,7 +52,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
 
     // 3. If lock acquired, check cache one last time (double-check optimization)
-    const cachedResponse = await this.redisService.get(key);
+    const cachedResponse = await this.redisService.get(namespacedKey);
     if (cachedResponse) {
       await client.del(lockKey); // Release lock if we somehow got here
       return of(cachedResponse);
@@ -52,7 +61,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap(async (response) => {
         // Cache the response with a TTL of 24 hours (86400 seconds)
-        await this.redisService.set(key, response, 86400);
+        await this.redisService.set(namespacedKey, response, 86400);
         // Release lock
         await client.del(lockKey);
       }),

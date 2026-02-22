@@ -30,8 +30,11 @@ export class TenantInterceptor implements NestInterceptor {
     async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
         const request = context.switchToHttp().getRequest<Request>();
 
-        // ── 1. Explicit header (highest priority: internal / dev / test) ──
-        let tenantId = this.extractHeader(request, 'x-tenant-id');
+        // ── 1. Explicit header — DEV/TEST ONLY ──
+        let tenantId: string | undefined;
+        if (process.env.NODE_ENV !== 'production') {
+            tenantId = this.extractHeader(request, 'x-tenant-id');
+        }
 
         // ── 2. BFF session cookie ──
         const sid = (request as any).cookies?.['sid'];
@@ -57,7 +60,7 @@ export class TenantInterceptor implements NestInterceptor {
         // ── 3. Bearer JWT (populated by nest-keycloak-connect AuthGuard) ──
         const user = (request as any).user;
 
-        console.log("user", user);
+
         if (user) {
             if (!tenantId && user.tenantId) {
                 tenantId = user.tenantId;

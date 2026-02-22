@@ -122,7 +122,7 @@ export class AuthService {
   // ─── Step 3: Full callback orchestration ─────────────────────────────────
 
   async handleCallback(code: string, state: string): Promise<{ sid: string; redirectUrl: string }> {
-    this.logger.log(`[handleCallback] Step 1: Received code=${code?.substring(0, 10)}... state=${state}`);
+    this.logger.log(`[handleCallback] Step 1: Received code=<present> state=<present>`);
 
     // 1. Validate CSRF state + exchange code
     let tokens: any;
