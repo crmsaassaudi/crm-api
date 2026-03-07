@@ -25,13 +25,23 @@ export class HybridAuthGuard extends AuthGuard {
     @Inject(KEYCLOAK_CONNECT_OPTIONS) keycloakOpts: KeycloakConnectConfig,
     @Inject(KEYCLOAK_LOGGER) logger: Logger,
     multiTenant: KeycloakMultiTenantService,
-    reflector: Reflector,
+    private readonly _reflector: Reflector,
     private readonly sessionService: SessionService,
   ) {
-    super(singleTenant, keycloakOpts, logger, multiTenant, reflector);
+    super(singleTenant, keycloakOpts, logger, multiTenant, _reflector);
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    // 0. Check for @Unprotected() metadata
+    const isUnprotected = this._reflector.getAllAndOverride<boolean>('unprotected', [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    if (isUnprotected) {
+      return true;
+    }
+
     const request = context.switchToHttp().getRequest<Request>();
 
     // 1. Prioritize BFF Session Cookie

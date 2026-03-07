@@ -15,8 +15,7 @@ import { BaseDocumentRepository } from '../../../../../utils/persistence/documen
 @Injectable()
 export class FileDocumentRepository
   extends BaseDocumentRepository<FileSchemaDocument, FileType>
-  implements FileRepository
-{
+  implements FileRepository {
   constructor(
     @InjectModel(FileSchemaClass.name)
     fileModel: Model<FileSchemaDocument>,
@@ -36,12 +35,12 @@ export class FileDocumentRepository
   async create(
     data: Omit<
       FileType,
-      'id' | 'createdAt' | 'updatedAt' | 'version' | 'tenantId'
+      'id' | 'createdAt' | 'updatedAt' | 'version' | 'tenant'
     >,
   ): Promise<FileType> {
     const domainEntity = new FileType();
     Object.assign(domainEntity, data);
-    domainEntity.tenantId = this.cls.get('tenantId');
+    domainEntity.tenant = this.cls.get('tenantId');
 
     const persistenceModel = FileMapper.toPersistence(domainEntity);
     const createdFile = new this.model(persistenceModel);

@@ -40,7 +40,6 @@ import {
 } from 'src/utils/dto/pagination-response.dto';
 
 @ApiBearerAuth()
-@Roles(PlatformRoleEnum.SUPER_ADMIN)
 @UseGuards(RolesGuard)
 @ApiTags('Users')
 @Controller({
@@ -50,7 +49,7 @@ import {
 @UseInterceptors(HttpCacheInterceptor)
 @CacheEntity('User')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) { }
 
   @ApiCreatedResponse({
     type: User,
@@ -58,6 +57,7 @@ export class UsersController {
   @SerializeOptions({
     groups: ['admin'],
   })
+  @Roles(PlatformRoleEnum.SUPER_ADMIN)
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(@Body() createProfileDto: CreateUserDto): Promise<User> {
@@ -70,6 +70,7 @@ export class UsersController {
   @SerializeOptions({
     groups: ['admin'],
   })
+  @Roles(PlatformRoleEnum.SUPER_ADMIN)
   @Post('invite')
   @HttpCode(HttpStatus.CREATED)
   invite(@Body() inviteUserDto: InviteUserDto): Promise<User> {
@@ -92,6 +93,34 @@ export class UsersController {
     let limit = query?.limit ?? 10;
     if (limit > 50) {
       limit = 50;
+    }
+
+    const tenantId = this.usersService.getTenantId();
+    const search = (query as any).search; // Handle search if provided
+
+    // If tenantId is present and user is NOT a super admin, filter by tenant
+    // For now, if tenantId is present, we prioritize the tenant-based list for users
+    if (tenantId) {
+      const users = await this.usersService.findManyByTenant(tenantId);
+      // Basic search filtering if needed (or we can update service to handle search)
+      let filteredUsers = users;
+      if (search) {
+        const lowerSearch = search.toLowerCase();
+        filteredUsers = users.filter(u =>
+          u.firstName?.toLowerCase().includes(lowerSearch) ||
+          u.lastName?.toLowerCase().includes(lowerSearch) ||
+          u.email?.toLowerCase().includes(lowerSearch)
+        );
+      }
+
+      return {
+        data: filteredUsers.slice((page - 1) * limit, page * limit),
+        totalItems: filteredUsers.length,
+        totalPages: Math.ceil(filteredUsers.length / limit),
+        currentPage: page,
+        hasNextPage: page * limit < filteredUsers.length,
+        hasPreviousPage: page > 1,
+      };
     }
 
     return await this.usersService.findManyWithPagination({

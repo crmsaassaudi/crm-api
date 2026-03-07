@@ -30,12 +30,28 @@ import { NullableType } from '../utils/types/nullable.type';
 import { User } from '../users/domain/user';
 
 const SID_COOKIE = 'sid';
-const COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax' as const,
-  // Domain should be set to .yourcrm.com in production via env
-  // domain: process.env.COOKIE_DOMAIN,
+
+const getCookieOptions = (hostname: string, isProduction: boolean) => {
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+  let domain: string | undefined = undefined;
+
+  if (!isLocalhost) {
+    const parts = hostname.split('.');
+    if (parts.length > 2) {
+      // e.g. daitoan.crm.com → .crm.com (share cookie across all subdomains)
+      domain = `.${parts.slice(-2).join('.')}`;
+    } else if (parts.length === 2) {
+      // e.g. crm.com → .crm.com
+      domain = `.${hostname}`;
+    }
+  }
+
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: 'lax' as const,
+    domain, // Always set domain for subdomain cookie sharing (dev & prod)
+  };
 };
 
 @ApiTags('Auth')
@@ -66,6 +82,7 @@ export class AuthController {
   @HttpCode(HttpStatus.FOUND)
   @ApiOperation({ summary: 'Handle Keycloak OAuth callback' })
   async callback(
+    @Request() req,
     @Query('code') code: string,
     @Query('state') state: string,
     @Res() res: Response,
@@ -85,7 +102,9 @@ export class AuthController {
       );
 
       // Set HttpOnly session cookie — token NEVER reaches the browser
-      res.cookie(SID_COOKIE, sid, COOKIE_OPTIONS);
+      const isProd =
+        this.configService.get('app.nodeEnv', { infer: true }) === 'production';
+      res.cookie(SID_COOKIE, sid, getCookieOptions(req.hostname, isProd));
 
       return res.redirect(redirectUrl);
     } catch (e: any) {
@@ -111,7 +130,9 @@ export class AuthController {
       return { message: 'Token refreshed successfully' };
     } catch (e) {
       // Refresh token expired → clear cookie and force re-login
-      res.clearCookie(SID_COOKIE, COOKIE_OPTIONS);
+      const isProd =
+        this.configService.get('app.nodeEnv', { infer: true }) === 'production';
+      res.clearCookie(SID_COOKIE, getCookieOptions(req.hostname, isProd));
       throw new UnauthorizedException('Session expired — please log in again');
     }
   }
@@ -130,7 +151,9 @@ export class AuthController {
       await this.service.logout(sid);
     }
     // Clear cookie regardless (Max-Age=0 equivalent)
-    res.clearCookie(SID_COOKIE, COOKIE_OPTIONS);
+    const isProd =
+      this.configService.get('app.nodeEnv', { infer: true }) === 'production';
+    res.clearCookie(SID_COOKIE, getCookieOptions(req.hostname, isProd));
   }
 
   // ─── GET /auth/me ─────────────────────────────────────────────────────────

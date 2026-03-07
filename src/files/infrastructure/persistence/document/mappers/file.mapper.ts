@@ -6,7 +6,7 @@ export class FileMapper {
     const domainEntity = new FileType();
     domainEntity.id = raw._id.toString();
     domainEntity.path = raw.path;
-    domainEntity.tenantId = raw.tenantId;
+    domainEntity.tenant = raw.tenant;
     domainEntity.version = raw.__v;
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
@@ -18,7 +18,7 @@ export class FileMapper {
       persistenceSchema._id = domainEntity.id;
     }
     persistenceSchema.path = domainEntity.path;
-    persistenceSchema.tenantId = domainEntity.tenantId;
+    persistenceSchema.tenant = domainEntity.tenant;
     if (domainEntity.version !== undefined) {
       persistenceSchema.__v = domainEntity.version;
     }

@@ -30,6 +30,10 @@ import { ActivityLogModule } from './activity-log/activity-log.module';
 import { HttpResilienceModule } from './common/http/http-resilience.module';
 import { CommonCacheModule } from './common/cache/common-cache.module';
 import { SocketModule } from './modules/realtime/socket.module';
+import { CrmSettingsModule } from './crm-settings/crm-settings.module';
+import { AccountsModule } from './accounts/accounts.module';
+import { DealsModule } from './deals/deals.module';
+import { ContactsModule } from './contacts/contacts.module';
 
 import {
   KeycloakConnectModule,
@@ -50,7 +54,6 @@ import * as winston from 'winston';
 import { utilities as nestWinstonUtilities } from 'nest-winston';
 import { v4 as uuidv4 } from 'uuid';
 import { Request } from 'express';
-import { jwtDecode } from 'jwt-decode';
 
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.middleware';
@@ -108,48 +111,24 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
           return correlationId ?? uuidv4();
         },
         setup: (cls, req: Request) => {
-          // ── Tenant ID resolution (header → subdomain) ──
-          // Priority 1: Explicit header (internal calls / dev / test)
-          const headerTenantId = req.headers['x-tenant-id'];
-          let tenantId = Array.isArray(headerTenantId)
-            ? headerTenantId[0]
-            : headerTenantId;
+          // CLS middleware only sets initial values from synchronous sources.
+          // Async resolution (DB lookups, session reads) is handled by TenantInterceptor.
 
-          // Priority 2: Subdomain alias (populated by TenantResolverMiddleware)
-          if (!tenantId && (req as any).tenantAlias) {
-            tenantId = (req as any).tenantAlias;
+          // Store subdomain alias for TenantInterceptor to resolve
+          if ((req as any).tenantAlias) {
+            cls.set('tenantAlias', (req as any).tenantAlias);
           }
 
-          // ── Identity resolution (BFF cookie → Bearer JWT) ──
-          // BFF flow: store sid for lazy session resolution in TenantInterceptor
+          // Store sid cookie for TenantInterceptor to resolve session
           const sid = (req as any).cookies?.['sid'];
           if (sid) {
             cls.set('sid', sid);
           }
 
-          let userId: string | undefined;
-          let email: string | undefined;
-
-          // Bearer JWT (for API clients / nest-keycloak-connect)
-          const authHeader = req.headers.authorization;
-          if (authHeader?.startsWith('Bearer ')) {
-            const token = authHeader.split(' ')[1];
-            try {
-              const decoded: any = jwtDecode(token);
-              if (!tenantId) {
-                tenantId = decoded.tenantId;
-              }
-              userId = decoded.sub;
-              email = decoded.email;
-            } catch {
-              // Malformed token — silently skip; auth guard will reject if needed
-            }
-          }
-
-          // null = no tenant context (platform-level / anonymous request)
-          cls.set('tenantId', tenantId ?? null);
-          cls.set('userId', userId);
-          cls.set('email', email);
+          // Initialize empty — TenantInterceptor will populate these
+          cls.set('tenantId', null);
+          cls.set('userId', undefined);
+          cls.set('email', undefined);
         },
       },
     }),
@@ -215,6 +194,10 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     HttpResilienceModule,
     CommonCacheModule,
     SocketModule,
+    CrmSettingsModule,
+    AccountsModule,
+    DealsModule,
+    ContactsModule,
   ],
   providers: [
     {

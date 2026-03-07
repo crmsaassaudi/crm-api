@@ -28,7 +28,7 @@ class EnvironmentVariablesValidator {
   @IsOptional()
   APP_PORT: number;
 
-  @IsUrl({ require_tld: false })
+  @IsString()
   @IsOptional()
   FRONTEND_DOMAIN: string;
 

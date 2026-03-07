@@ -29,6 +29,8 @@ export class TenantResolverMiddleware implements NestMiddleware {
       configService.get('app.rootDomain', { infer: true }) ?? 'crm.com';
   }
 
+  private readonly SYSTEM_SUBDOMAINS = ['api', 'admin', 'auth', 'www', 'mail'];
+
   use(req: Request, _res: Response, next: NextFunction): void {
     const host = req.hostname; // e.g. "toancorp.crm.com" (strips port)
 
@@ -37,8 +39,12 @@ export class TenantResolverMiddleware implements NestMiddleware {
       const subdomain = host.slice(0, host.length - this.rootDomain.length - 1);
 
       // Only treat single-level subdomains as tenant aliases.
-      // "app.toancorp.crm.com" would have subdomain = "app.toancorp" — skip those.
-      if (subdomain && !subdomain.includes('.')) {
+      // Exclude known system subdomains.
+      if (
+        subdomain &&
+        !subdomain.includes('.') &&
+        !this.SYSTEM_SUBDOMAINS.includes(subdomain.toLowerCase())
+      ) {
         (req as any).tenantAlias = subdomain;
       }
     }

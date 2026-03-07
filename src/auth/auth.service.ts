@@ -12,6 +12,7 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { v4 as uuidv4 } from 'uuid';
 import { isValidObjectId } from 'mongoose';
+import { TenantsService } from '../tenants/tenants.service';
 import { AuthUpdateDto } from './dto/auth-update.dto';
 import { NullableType } from '../utils/types/nullable.type';
 import { ConfigService } from '@nestjs/config';
@@ -34,11 +35,13 @@ export class AuthService {
   constructor(
     @Inject(forwardRef(() => UsersService))
     private usersService: UsersService,
+    @Inject(forwardRef(() => TenantsService))
+    private tenantsService: TenantsService,
     private configService: ConfigService<AllConfigType>,
     private httpService: HttpService,
     private redisService: RedisService,
     private sessionService: SessionService,
-  ) {}
+  ) { }
 
   // ─── Step 1: Build login URL with CSRF state ──────────────────────────────
 
@@ -226,7 +229,7 @@ export class AuthService {
     }
 
     // 5. Tenant routing
-    const redirectUrl = this.resolveTenantRedirect(user);
+    const redirectUrl = await this.resolveTenantRedirect(user);
     this.logger.log(
       `[handleCallback] Step 6: Redirect URL resolved: ${redirectUrl}`,
     );
@@ -344,7 +347,7 @@ export class AuthService {
     return JSON.parse(json);
   }
 
-  private resolveTenantRedirect(user: User): string {
+  private async resolveTenantRedirect(user: User): Promise<string> {
     const frontend = this.configService.getOrThrow('keycloak.frontendUrl', {
       infer: true,
     });
@@ -353,7 +356,24 @@ export class AuthService {
     if (tenants.length === 0) {
       return `${frontend}/onboarding`;
     } else if (tenants.length === 1) {
-      return `${frontend}/dashboard?tenantId=${tenants[0].tenant}`;
+      const tenantId = tenants[0].tenant as string;
+      try {
+        const tenant = await this.tenantsService.findById(tenantId);
+        if (tenant && tenant.alias) {
+          const rootDomain = this.configService.get('app.rootDomain', { infer: true }) || 'crm.com';
+          const url = new URL(frontend);
+
+          if (process.env.NODE_ENV === 'development') {
+            url.hostname = `${tenant.alias}.${rootDomain}`;
+            return `${url.origin}/`;
+          } else {
+            return `https://${tenant.alias}.${rootDomain}/`;
+          }
+        }
+      } catch (e) {
+        this.logger.error(`Failed to resolve tenant alias for redirect`, e);
+      }
+      return `${frontend}`;
     } else {
       return `${frontend}/select-tenant`;
     }
@@ -430,8 +450,8 @@ export class AuthService {
         const tenantsToRemove =
           keycloakTenantIds.length > 0
             ? existingTenantIds.filter(
-                (tid) => !keycloakTenantIds.includes(tid),
-              )
+              (tid) => !keycloakTenantIds.includes(tid),
+            )
             : []; // if Keycloak sends no valid tenant claims, don't remove existing memberships
         let hasChanges = false;
 

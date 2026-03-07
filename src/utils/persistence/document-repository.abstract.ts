@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { ClientSession, Model, Document, FilterQuery } from 'mongoose';
 
@@ -6,16 +6,27 @@ export abstract class BaseDocumentRepository<
   TSchema extends Document,
   TDomain,
 > {
+  protected readonly logger = new Logger(this.constructor.name);
+
   constructor(
     protected readonly model: Model<TSchema>,
     protected readonly cls: ClsService,
   ) {}
 
+  /**
+   * Auto-enriches data with multitenant context from CLS:
+   *   - tenant    → cls.tenantId   (MongoDB ObjectId)
+   *   - createdBy → cls.userId     (MongoDB ObjectId)
+   *   - updatedBy → cls.userId     (MongoDB ObjectId)
+   *
+   * Existing values in data are NOT overwritten.
+   */
   async create(
     data: Partial<TDomain>,
     session?: ClientSession,
   ): Promise<TDomain> {
-    const created = new this.model(data);
+    const enriched = this.enrichWithContext(data, true);
+    const created = new this.model(enriched);
     const saved = await created.save({ session });
     return this.mapToDomain(saved);
   }
@@ -56,16 +67,19 @@ export abstract class BaseDocumentRepository<
     return !!result;
   }
 
+  /**
+   * Auto-enriches payload with updatedBy from CLS if not already set.
+   */
   async update(
     id: string,
     payload: Partial<TDomain>,
     session?: ClientSession,
   ): Promise<TDomain | null> {
-    const clonedPayload = { ...payload };
+    const enriched = this.enrichWithContext(payload, false);
     // @ts-ignore
-    delete clonedPayload.id;
+    delete enriched.id;
 
-    const persistenceData: any = this.toPersistence(clonedPayload as TDomain);
+    const persistenceData: any = this.toPersistence(enriched as TDomain);
 
     const version = persistenceData.__v;
     delete persistenceData.__v;
@@ -103,6 +117,35 @@ export abstract class BaseDocumentRepository<
   async remove(id: string): Promise<void> {
     const filter = this.applyTenantFilter({ _id: id } as FilterQuery<TSchema>);
     await this.model.deleteOne(filter);
+  }
+
+  /**
+   * Enriches data with multitenant context from CLS.
+   * @param data   - The raw data object
+   * @param isCreate - true: set tenant + createdBy + updatedBy; false: only updatedBy
+   */
+  private enrichWithContext(
+    data: Partial<TDomain>,
+    isCreate: boolean,
+  ): Partial<TDomain> {
+    const enriched: any = { ...data };
+    const tenantId = this.cls.get('tenantId');
+    const userId = this.cls.get('userId');
+
+    if (isCreate) {
+      if (tenantId && !enriched.tenant) {
+        enriched.tenant = tenantId;
+      }
+      if (userId && !enriched.createdBy) {
+        enriched.createdBy = userId;
+      }
+    }
+
+    if (userId && !enriched.updatedBy) {
+      enriched.updatedBy = userId;
+    }
+
+    return enriched;
   }
 
   protected abstract mapToDomain(doc: TSchema): TDomain;

@@ -5,7 +5,7 @@ export abstract class FileRepository {
   abstract create(
     data: Omit<
       FileType,
-      'id' | 'createdAt' | 'updatedAt' | 'version' | 'tenantId'
+      'id' | 'createdAt' | 'updatedAt' | 'version' | 'tenant'
     >,
   ): Promise<FileType>;
 

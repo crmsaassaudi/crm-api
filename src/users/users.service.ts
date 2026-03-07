@@ -37,7 +37,7 @@ export class UsersService {
     private readonly cls: ClsService,
     @Inject(forwardRef(() => KeycloakAdminService))
     private readonly keycloakAdminService: KeycloakAdminService,
-  ) {}
+  ) { }
 
   async create(
     createUserDto: CreateUserDto,
@@ -121,6 +121,14 @@ export class UsersService {
       },
       session,
     );
+  }
+
+  getTenantId() {
+    return this.cls.get('tenantId');
+  }
+
+  async findManyByTenant(tenantId: string): Promise<User[]> {
+    return this.usersRepository.findManyByTenant(tenantId);
   }
 
   findManyWithPagination({

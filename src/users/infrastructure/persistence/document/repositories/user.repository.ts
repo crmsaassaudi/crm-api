@@ -16,8 +16,7 @@ import { pagination } from 'src/utils/pagination';
 @Injectable()
 export class UsersDocumentRepository
   extends BaseDocumentRepository<UserSchemaDocument, User>
-  implements UserRepository
-{
+  implements UserRepository {
   constructor(
     @InjectModel(UserSchemaClass.name)
     userModel: Model<UserSchemaDocument>,
@@ -117,11 +116,19 @@ export class UsersDocumentRepository
     return userObjects.map((userObject) => UserMapper.toDomain(userObject));
   }
 
+  async findManyByTenant(tenantId: string): Promise<User[]> {
+    const filter = { 'tenants.tenant': tenantId };
+    const userObjects = await this.model.find(filter);
+    return userObjects.map((userObject) => UserMapper.toDomain(userObject));
+  }
+
   async findByEmail(email: User['email']): Promise<NullableType<User>> {
     if (!email) return null;
 
-    const filter = this.applyTenantFilter({ email });
-    const userObject = await this.model.findOne(filter);
+    // Skip tenant filter for global email lookup (authentication/JIT)
+    const userObject = await this.model
+      .findOne({ email })
+      .setOptions({ skipTenantFilter: true });
     return userObject ? UserMapper.toDomain(userObject) : null;
   }
 
@@ -134,12 +141,10 @@ export class UsersDocumentRepository
   }): Promise<NullableType<User>> {
     if (!keycloakId || !provider) return null;
 
-    const filter = this.applyTenantFilter({
-      keycloakId,
-      provider,
-    });
-
-    const userObject = await this.model.findOne(filter);
+    // Skip tenant filter for global keycloak ID lookup (authentication/JIT)
+    const userObject = await this.model
+      .findOne({ keycloakId, provider })
+      .setOptions({ skipTenantFilter: true });
 
     return userObject ? UserMapper.toDomain(userObject) : null;
   }

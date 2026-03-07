@@ -7,7 +7,9 @@ import {
 import { TenantsRepository } from './infrastructure/persistence/document/repositories/tenant.repository';
 import { TenantAliasReservationRepository } from './infrastructure/persistence/document/repositories/tenant-alias-reservation.repository';
 import { RegisterTenantDto } from './dto/register-tenant.dto';
+import { OnboardExistingUserDto } from './dto/onboard-existing-user.dto';
 import { Tenant, SubscriptionPlan, TenantStatus } from './domain/tenant';
+import { User } from '../users/domain/user';
 import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
 import { PlatformRoleEnum } from '../roles/platform-role.enum';
 import { AuthProvidersEnum } from '../auth/auth-providers.enum';
@@ -34,7 +36,7 @@ export class TenantsService {
     private readonly keycloakAdminService: KeycloakAdminService,
     private readonly userRepository: UserRepository,
     private readonly eventEmitter: EventEmitter2,
-  ) {}
+  ) { }
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Saga: POST /api/auth/register
@@ -249,6 +251,192 @@ export class TenantsService {
 
       throw new InternalServerErrorException(
         'Tenant registration failed. All partial changes have been rolled back.',
+      );
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Saga: POST /api/auth/onboard-existing-user
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async onboardExistingUser(
+    user: User,
+    dto: OnboardExistingUserDto,
+  ): Promise<RegisterTenantResult> {
+    const { organizationName, organizationAlias: alias } = dto;
+    const { email, keycloakId: keycloakUserId, firstName, lastName } = user;
+
+    if (!keycloakUserId) {
+      throw new InternalServerErrorException('User is missing Keycloak ID');
+    }
+
+    // ── Saga compensation trackers ─────────────────────────────────────────────
+    let aliasReserved = false;
+    let keycloakOrgId: string | null = null;
+
+    const stepLog = (step: number, msg: string) =>
+      this.logger.log(`[Saga-Onboard][Step ${step}] ${msg}`);
+    const stepErr = (step: number, err: unknown) =>
+      this.logger.error(
+        `[Saga-Onboard][Step ${step} FAILED] ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+
+    try {
+      // ── Step 1: Atomic alias reservation ──────────────────────────────────────
+      try {
+        await this.aliasReservationRepository.reserve(alias);
+        aliasReserved = true;
+        stepLog(1, `Alias "${alias}" reserved`);
+      } catch (e) {
+        stepErr(1, e);
+        throw e;
+      }
+
+      // ── Step 2: Create Keycloak Organization ──────────────────────────────────
+      try {
+        const kcOrg = await this.keycloakAdminService.createOrganization(
+          organizationName,
+          alias,
+        );
+        keycloakOrgId = kcOrg.id;
+        stepLog(2, `KC org created: ${keycloakOrgId}`);
+      } catch (e) {
+        stepErr(2, e);
+        throw e;
+      }
+
+      // ── Step 3: Add user to the organization ──────────────────────────────────
+      try {
+        await this.keycloakAdminService.addUserToOrganization(
+          keycloakOrgId!,
+          keycloakUserId as string,
+        );
+        stepLog(3, `User ${keycloakUserId} added to org ${keycloakOrgId}`);
+      } catch (e) {
+        stepErr(3, e);
+        throw e;
+      }
+
+      // ── Step 4: Create Tenant record in MongoDB ───────────────────────────────
+      let tenant: Tenant;
+      try {
+        const tenantData: Partial<Tenant> = {
+          keycloakOrgId: keycloakOrgId!,
+          alias,
+          name: organizationName,
+          owner: null as any,
+          subscriptionPlan: SubscriptionPlan.FREE,
+          status: TenantStatus.ACTIVE,
+        };
+        tenant = await this.tenantsRepository.create(tenantData);
+        stepLog(4, `Tenant created in MongoDB: ${tenant.id}`);
+      } catch (e) {
+        stepErr(4, e);
+        throw e;
+      }
+
+      // ── Step 5: Upsert User in MongoDB & add OWNER membership ─────────────────
+      let localUser: any;
+      try {
+        localUser = await this.userRepository.upsertWithTenants(
+          keycloakUserId as string,
+          email || '',
+          {
+            firstName,
+            lastName,
+            provider: user.provider || AuthProvidersEnum.email,
+            platformRole: user.platformRole as any,
+            status: user.status as any,
+            keycloakId: keycloakUserId as string,
+          },
+          [
+            {
+              tenant: tenant!.id as string,
+              roles: ['OWNER'],
+              joinedAt: new Date(),
+            },
+          ],
+        );
+        stepLog(5, `User upserted in MongoDB: ${localUser.id}`);
+      } catch (e) {
+        stepErr(5, e);
+        throw e;
+      }
+
+      // ── Step 6: Set owner on the Tenant ──────────────────────────────────────
+      try {
+        await this.tenantsRepository.updateOwner(
+          tenant!.id as string,
+          localUser.id as string,
+        );
+        stepLog(6, `Tenant owner set to ${localUser.id}`);
+      } catch (e) {
+        stepErr(6, e);
+        throw e;
+      }
+
+      // ── Step 7: Confirm alias reservation ────────────────────────────────────
+      try {
+        await this.aliasReservationRepository.confirm(alias);
+        stepLog(7, `Alias "${alias}" confirmed`);
+      } catch (e) {
+        stepErr(7, e);
+        throw e;
+      }
+
+      // ── Emit event ────────────────────────────────────────────────────────────
+      this.eventEmitter.emit(
+        'tenant.created',
+        new TenantCreatedEvent(
+          tenant!.id as string,
+          organizationName,
+          email || '',
+        ),
+      );
+
+      return {
+        tenantId: tenant!.id as string,
+        alias,
+        organizationName,
+        keycloakOrgId: keycloakOrgId!,
+        loginUrl: `https://${alias}.crm.com/login`,
+      };
+    } catch (error: unknown) {
+      // ── Saga Rollback (compensating transactions) ──────────────────────────────
+      this.logger.error(
+        '[Saga-Onboard] Onboarding failed — rolling back compensating actions',
+        error instanceof Error ? error.stack : String(error),
+      );
+
+      if (keycloakOrgId) {
+        await this.keycloakAdminService
+          .deleteOrganization(keycloakOrgId)
+          .catch((e: unknown) =>
+            this.logger.error(
+              `[Saga-Onboard][Rollback] Cannot delete Keycloak org ${keycloakOrgId}`,
+              e instanceof Error ? e.message : e,
+            ),
+          );
+      }
+
+      if (aliasReserved) {
+        await this.aliasReservationRepository
+          .delete(alias)
+          .catch((e: unknown) =>
+            this.logger.error(
+              `[Saga-Onboard][Rollback] Cannot delete alias reservation for "${alias}"`,
+              e instanceof Error ? e.message : e,
+            ),
+          );
+      }
+
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+
+      throw new InternalServerErrorException(
+        'Tenant onboarding failed. All partial changes have been rolled back.',
       );
     }
   }

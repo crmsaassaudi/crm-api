@@ -2,13 +2,13 @@
 to: src/<%= h.inflection.transform(name, ['pluralize', 'underscore', 'dasherize']) %>/infrastructure/persistence/document/repositories/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>.repository.ts
 ---
 import { Injectable } from '@nestjs/common';
-import { NullableType } from '../../../../../utils/types/nullable.type';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, ClientSession } from 'mongoose';
-import { <%= name %>SchemaClass } from '../entities/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>.schema';
-import { <%= name %>Repository } from '../../<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>.repository';
+import { Model, FilterQuery } from 'mongoose';
+import { ClsService } from 'nestjs-cls';
+import { <%= name %>SchemaClass, <%= name %>SchemaDocument } from '../entities/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>.schema';
 import { <%= name %> } from '../../../../domain/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>';
 import { <%= name %>Mapper } from '../mappers/<%= h.inflection.transform(name, ['underscore', 'dasherize']) %>.mapper';
+import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 <% if (pagination === 'infinity') { -%>
 import { InfinityPaginationResponseDto } from '../../../../../utils/dto/infinity-pagination-response.dto';
@@ -18,21 +18,27 @@ import { PaginationResponseDto } from '../../../../../utils/dto/pagination-respo
 import { pagination } from '../../../../../utils/pagination';
 <% } -%>
 
+/**
+ * Multitenant repository — extends BaseDocumentRepository which provides:
+ *   - Automatic tenant filtering on all queries (via CLS tenantId)
+ *   - Auto-injection of tenant, createdBy, updatedBy on create/update
+ */
 @Injectable()
-export class <%= name %>DocumentRepository implements <%= name %>Repository {
+export class <%= name %>DocumentRepository extends BaseDocumentRepository<<%= name %>SchemaDocument, <%= name %>> {
   constructor(
     @InjectModel(<%= name %>SchemaClass.name)
-    private readonly <%= h.inflection.camelize(name, true) %>Model: Model<<%= name %>SchemaClass>,
-  ) {}
+    <%= h.inflection.camelize(name, true) %>Model: Model<<%= name %>SchemaDocument>,
+    cls: ClsService,
+  ) {
+    super(<%= h.inflection.camelize(name, true) %>Model, cls);
+  }
 
-  async create(
-    data: <%= name %>,
-    options?: { session?: ClientSession },
-  ): Promise<<%= name %>> {
-    const persistenceModel = <%= name %>Mapper.toPersistence(data);
-    const createdEntity = new this.<%= h.inflection.camelize(name, true) %>Model(persistenceModel);
-    const entityObject = await createdEntity.save({ session: options?.session });
-    return <%= name %>Mapper.toDomain(entityObject);
+  protected mapToDomain(doc: <%= name %>SchemaClass): <%= name %> {
+    return <%= name %>Mapper.toDomain(doc);
+  }
+
+  protected toPersistence(domain: <%= name %>): <%= name %>SchemaClass {
+    return <%= name %>Mapper.toPersistence(domain);
   }
 
   async findAllWithPagination({
@@ -40,101 +46,47 @@ export class <%= name %>DocumentRepository implements <%= name %>Repository {
   }: {
     paginationOptions: IPaginationOptions;
 <% if (pagination === 'infinity') { -%>
-  }, options?: { session?: ClientSession }): Promise<InfinityPaginationResponseDto<<%= name %>>> {
-    const entityObjects = await this.<%= h.inflection.camelize(name, true) %>Model
-      .find()
-      .session(options?.session || null)
+  }): Promise<InfinityPaginationResponseDto<<%= name %>>> {
+    const scopedFilter = this.applyTenantFilter({});
+    const entityObjects = await this.model
+      .find(scopedFilter)
+      .sort({ createdAt: -1 })
       .skip((paginationOptions.page - 1) * paginationOptions.limit)
-      .limit(paginationOptions.limit);
+      .limit(paginationOptions.limit)
+      .populate('createdBy')
+      .populate('updatedBy')
+      .exec();
 
-    const domainEntities = entityObjects.map((entityObject) =>
-      <%= name %>Mapper.toDomain(entityObject),
-    );
-    
+    const domainEntities = entityObjects.map((doc) => this.mapToDomain(doc));
     return infinityPagination(domainEntities, paginationOptions);
   }
 <% } else { -%>
-  }, options?: { session?: ClientSession }): Promise<PaginationResponseDto<<%= name %>>> {
+  }): Promise<PaginationResponseDto<<%= name %>>> {
+    const scopedFilter = this.applyTenantFilter({});
     const [entityObjects, totalItems] = await Promise.all([
-      this.<%= h.inflection.camelize(name, true) %>Model
-        .find()
-        .session(options?.session || null)
+      this.model
+        .find(scopedFilter)
+        .sort({ createdAt: -1 })
         .skip((paginationOptions.page - 1) * paginationOptions.limit)
         .limit(paginationOptions.limit)
+        .populate('createdBy')
+        .populate('updatedBy')
         .exec(),
-      this.<%= h.inflection.camelize(name, true) %>Model.countDocuments().session(options?.session || null).exec()
+      this.model.countDocuments(scopedFilter).exec(),
     ]);
 
-    const domainEntities = entityObjects.map((entityObject) =>
-      <%= name %>Mapper.toDomain(entityObject),
-    );
-    
+    const domainEntities = entityObjects.map((doc) => this.mapToDomain(doc));
     return pagination(domainEntities, totalItems, paginationOptions);
   }
 <% } -%>
 
-  async findById(
-    id: <%= name %>['id'],
-    options?: { session?: ClientSession },
-  ): Promise<NullableType<<%= name %>>> {
-    const entityObject = await this.<%= h.inflection.camelize(name, true) %>Model
-      .findById(id)
-      .session(options?.session || null);
-    return entityObject ? <%= name %>Mapper.toDomain(entityObject) : null;
-  }
-
-  async findByIds(
-    ids: <%= name %>['id'][],
-    options?: { session?: ClientSession },
-  ): Promise<<%= name %>[]> {
-    const entityObjects = await this.<%= h.inflection.camelize(name, true) %>Model
-      .find({ _id: { $in: ids } })
-      .session(options?.session || null);
-    return entityObjects.map((entityObject) =>
-      <%= name %>Mapper.toDomain(entityObject),
-    );
-  }
-
-  async update(
-    id: <%= name %>['id'],
-    payload: Partial<<%= name %>>,
-    options?: { session?: ClientSession },
-  ): Promise<NullableType<<%= name %>>> {
-    const clonedPayload = { ...payload };
-    delete clonedPayload.id;
-
-    const filter = { _id: id };
-    
-    // Tìm bản ghi hiện tại với session
-    const entity = await this.<%= h.inflection.camelize(name, true) %>Model
-      .findOne(filter)
-      .session(options?.session || null);
-
-    if (!entity) {
-      throw new Error('Record not found');
-    }
-
-    const entityObject = await this.<%= h.inflection.camelize(name, true) %>Model.findOneAndUpdate(
-      filter,
-      <%= name %>Mapper.toPersistence({
-        ...<%= name %>Mapper.toDomain(entity),
-        ...clonedPayload,
-      }),
-      { 
-        new: true,
-        session: options?.session // Quan trọng cho ACID
-      },
-    );
-
-    return entityObject ? <%= name %>Mapper.toDomain(entityObject) : null;
-  }
-
-  async remove(
-    id: <%= name %>['id'],
-    options?: { session?: ClientSession },
-  ): Promise<void> {
-    await this.<%= h.inflection.camelize(name, true) %>Model
-      .deleteOne({ _id: id })
-      .session(options?.session || null);
+  async findOne(filter: FilterQuery<<%= name %>SchemaClass>): Promise<<%= name %> | null> {
+    const scopedFilter = this.applyTenantFilter(filter);
+    const doc = await this.model
+      .findOne(scopedFilter)
+      .populate('createdBy')
+      .populate('updatedBy')
+      .exec();
+    return doc ? this.mapToDomain(doc) : null;
   }
 }

@@ -29,7 +29,10 @@ async function bootstrap() {
     infer: true,
   });
   app.enableCors({
-    origin: frontendDomain ? frontendDomain.split(',') : true,
+    // In local development, allow any origin to support dynamic tenant subdomains (e.g., daitoan.crm.com:4200)
+    origin: process.env.NODE_ENV === 'development'
+      ? true
+      : (frontendDomain ? frontendDomain.split(',') : true),
     credentials: true,
   });
 
