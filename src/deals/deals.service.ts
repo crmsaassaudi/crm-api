@@ -7,18 +7,22 @@ export class DealsService {
   constructor(private readonly repository: DealRepository) {}
 
   async create(data: Partial<Deal>): Promise<Deal> {
-    // Sanitize owner: empty string is not a valid ObjectId
     const owner = data.owner === '' ? undefined : data.owner;
-
-    // tenant, createdBy, updatedBy are auto-injected by BaseDocumentRepository from CLS
     return this.repository.create({
       ...data,
+      name: data.title || data.name,
       owner,
     } as any);
   }
 
-  async findAll(): Promise<Deal[]> {
-    return this.repository.find({});
+  async findAll(filter: any): Promise<any> {
+    return this.repository.findManyWithPagination({
+      filterOptions: filter,
+      paginationOptions: {
+        page: Number(filter.page) || 1,
+        limit: Number(filter.limit) || 10,
+      },
+    });
   }
 
   async findOne(id: string): Promise<Deal | null> {
@@ -26,12 +30,10 @@ export class DealsService {
   }
 
   async update(id: string, data: Partial<Deal>): Promise<Deal | null> {
-    // Sanitize owner: empty string is not a valid ObjectId
     const owner = data.owner === '' ? undefined : data.owner;
-
-    // updatedBy is auto-injected by BaseDocumentRepository from CLS
     return this.repository.update(id, {
       ...data,
+      name: data.title || data.name,
       owner,
     } as any);
   }

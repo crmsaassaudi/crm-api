@@ -3,79 +3,59 @@ import { HydratedDocument, Schema as MongooseSchema, now } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
-export type DealSchemaDocument = HydratedDocument<DealSchemaClass>;
+export type TaskSchemaDocument = HydratedDocument<TaskSchemaClass>;
 
 @Schema({
   timestamps: true,
-  collection: 'deals',
+  collection: 'tasks',
   toJSON: {
     virtuals: true,
     getters: true,
   },
 })
-export class DealSchemaClass extends EntityDocumentHelper {
+export class TaskSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
   tenant: string;
 
   @Prop({ required: true, index: true })
   title: string;
 
-  @Prop({ required: true, index: true })
-  name: string;
-
-  @Prop({ required: true })
-  pipeline: string;
-
-  @Prop({ required: true, index: true })
-  stage: string;
-
-  @Prop({ type: Number })
-  probability?: number;
-
-  @Prop({ default: 0 })
-  value: number;
-
-  @Prop({ default: 'USD' })
-  currency: string;
-
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'AccountSchemaClass' })
-  accountId?: string;
-
-  @Prop()
-  accountName?: string;
-
-  @Prop({
-    type: [{ type: MongooseSchema.Types.ObjectId, ref: 'ContactSchemaClass' }],
-    default: [],
-  })
-  contactIds?: string[];
-
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
-  owner?: string;
-
   @Prop()
   description?: string;
 
-  @Prop()
-  source?: string;
+  @Prop({ required: true })
+  dueDate: Date;
 
-  @Prop()
-  lostReason?: string;
+  @Prop({ required: true, default: 'not_started', index: true })
+  status: string;
+
+  @Prop({ required: true, default: 'MEDIUM', index: true })
+  priority: string;
+
+  @Prop({ default: 'todo' })
+  category: string;
+
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
+  assignedTo?: string;
+
+  @Prop({ type: MongooseSchema.Types.Mixed })
+  relatedTo?: {
+    type: string;
+    _id: string;
+    name: string;
+  };
 
   @Prop({ type: [String], default: [] })
   tags?: string[];
 
-  @Prop({ type: MongooseSchema.Types.Mixed })
-  customFields?: Record<string, any>;
+  @Prop()
+  reminderAt?: Date;
 
   @Prop()
-  closeDate?: Date;
+  completedAt?: Date;
 
   @Prop()
-  wonAt?: Date;
-
-  @Prop()
-  lostAt?: Date;
+  source?: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -101,6 +81,8 @@ export class DealSchemaClass extends EntityDocumentHelper {
   deletedAt?: Date;
 }
 
-export const DealSchema = SchemaFactory.createForClass(DealSchemaClass);
+export const TaskSchema = SchemaFactory.createForClass(TaskSchemaClass);
 
-DealSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
+TaskSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
+TaskSchema.index({ tenant: 1, status: 1 });
+TaskSchema.index({ tenant: 1, dueDate: 1 });

@@ -12,6 +12,7 @@ export interface SessionData {
 }
 
 const SESSION_PREFIX = 'session:';
+const SESSION_TTL_SECONDS = 86_400; // 24 hours — long-lived to allow many refresh cycles
 const LRU_TTL_MS = 60_000; // 1-minute in-memory cache per entry
 
 interface LruEntry {
@@ -47,12 +48,12 @@ export class SessionService {
     };
 
     // Use raw ioredis SET EX (seconds) — avoids cache-manager v7 ms TTL issues
-    const ttlSeconds = tokens.expires_in + 60; // +60s buffer for refresh window
+    // Session lives 24h; the guard auto-refreshes the access_token when it expires
     await this.ioredis.set(
       `${SESSION_PREFIX}${sid}`,
       JSON.stringify(session),
       'EX',
-      ttlSeconds,
+      SESSION_TTL_SECONDS,
     );
 
     this.setLru(sid, session);

@@ -34,6 +34,8 @@ import { CrmSettingsModule } from './crm-settings/crm-settings.module';
 import { AccountsModule } from './accounts/accounts.module';
 import { DealsModule } from './deals/deals.module';
 import { ContactsModule } from './contacts/contacts.module';
+import { TicketsModule } from './tickets/tickets.module';
+import { TasksModule } from './tasks/tasks.module';
 
 import {
   KeycloakConnectModule,
@@ -198,6 +200,8 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     AccountsModule,
     DealsModule,
     ContactsModule,
+    TicketsModule,
+    TasksModule,
   ],
   providers: [
     {

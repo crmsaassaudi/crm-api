@@ -8,21 +8,21 @@ import {
   Delete,
   Query,
 } from '@nestjs/common';
-import { AccountsService } from './accounts.service';
-import { Account } from './domain/account';
+import { TasksService } from './tasks.service';
+import { Task } from './domain/task';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
-@ApiTags('Accounts')
+@ApiTags('Tasks')
 @ApiBearerAuth()
 @Controller({
-  path: 'accounts',
+  path: 'tasks',
   version: '1',
 })
-export class AccountsController {
-  constructor(private readonly service: AccountsService) {}
+export class TasksController {
+  constructor(private readonly service: TasksService) {}
 
   @Post()
-  create(@Body() data: Partial<Account>) {
+  create(@Body() data: Partial<Task>) {
     return this.service.create(data);
   }
 
@@ -37,7 +37,7 @@ export class AccountsController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() data: Partial<Account>) {
+  update(@Param('id') id: string, @Body() data: Partial<Task>) {
     return this.service.update(id, data);
   }
 

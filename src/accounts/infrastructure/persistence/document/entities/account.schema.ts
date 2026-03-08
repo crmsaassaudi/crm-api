@@ -6,46 +6,84 @@ import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.
 export type AccountSchemaDocument = HydratedDocument<AccountSchemaClass>;
 
 @Schema({
-    timestamps: true,
-    collection: 'accounts',
-    toJSON: {
-        virtuals: true,
-        getters: true,
-    },
+  timestamps: true,
+  collection: 'accounts',
+  toJSON: {
+    virtuals: true,
+    getters: true,
+  },
 })
 export class AccountSchemaClass extends EntityDocumentHelper {
-    @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
-    tenant: string;
+  @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
+  tenant: string;
 
-    @Prop({ required: true, index: true })
-    name: string;
+  @Prop({ required: true, index: true })
+  name: string;
 
-    @Prop()
-    website?: string;
+  @Prop()
+  website?: string;
 
-    @Prop()
-    industry?: string;
+  @Prop({ index: true })
+  industry?: string;
 
-    @Prop()
-    type?: string;
+  @Prop()
+  type?: string;
 
-    @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
-    owner?: string;
+  @Prop()
+  phone?: string;
 
-    @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass', required: true })
-    createdBy: string;
+  @Prop()
+  taxId?: string;
 
-    @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass', required: true })
-    updatedBy: string;
+  @Prop({ type: Number })
+  annualRevenue?: number;
 
-    @Prop({ default: now })
-    createdAt: Date;
+  @Prop({ type: Number })
+  numberOfEmployees?: number;
 
-    @Prop({ default: now })
-    updatedAt: Date;
+  @Prop()
+  billingAddress?: string;
 
-    @Prop()
-    deletedAt?: Date;
+  @Prop()
+  shippingAddress?: string;
+
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
+  owner?: string;
+
+  @Prop({ default: 'active', index: true })
+  status?: string;
+
+  @Prop({ default: false })
+  isArchived?: boolean;
+
+  @Prop({ type: MongooseSchema.Types.Mixed })
+  customFields?: Record<string, any>;
+
+  @Prop({ type: [String], default: [] })
+  tags?: string[];
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+    required: true,
+  })
+  createdBy: string;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+    required: true,
+  })
+  updatedBy: string;
+
+  @Prop({ default: now })
+  createdAt: Date;
+
+  @Prop({ default: now })
+  updatedAt: Date;
+
+  @Prop()
+  deletedAt?: Date;
 }
 
 export const AccountSchema = SchemaFactory.createForClass(AccountSchemaClass);

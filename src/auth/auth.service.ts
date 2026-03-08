@@ -41,7 +41,7 @@ export class AuthService {
     private httpService: HttpService,
     private redisService: RedisService,
     private sessionService: SessionService,
-  ) { }
+  ) {}
 
   // ─── Step 1: Build login URL with CSRF state ──────────────────────────────
 
@@ -288,7 +288,7 @@ export class AuthService {
       await this.sessionService.updateSession(
         sid,
         updatedSession,
-        newTokens.expires_in + 60,
+        86_400, // 24h — session stays alive for many refresh cycles
       );
       return updatedSession;
     } catch (error: any) {
@@ -360,7 +360,9 @@ export class AuthService {
       try {
         const tenant = await this.tenantsService.findById(tenantId);
         if (tenant && tenant.alias) {
-          const rootDomain = this.configService.get('app.rootDomain', { infer: true }) || 'crm.com';
+          const rootDomain =
+            this.configService.get('app.rootDomain', { infer: true }) ||
+            'crm.com';
           const url = new URL(frontend);
 
           if (process.env.NODE_ENV === 'development') {
@@ -450,8 +452,8 @@ export class AuthService {
         const tenantsToRemove =
           keycloakTenantIds.length > 0
             ? existingTenantIds.filter(
-              (tid) => !keycloakTenantIds.includes(tid),
-            )
+                (tid) => !keycloakTenantIds.includes(tid),
+              )
             : []; // if Keycloak sends no valid tenant claims, don't remove existing memberships
         let hasChanges = false;
 
