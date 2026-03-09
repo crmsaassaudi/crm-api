@@ -36,6 +36,7 @@ import { DealsModule } from './deals/deals.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { TasksModule } from './tasks/tasks.module';
+import { CustomFieldsModule } from './custom-fields/custom-fields.module';
 
 import {
   KeycloakConnectModule,
@@ -202,6 +203,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     ContactsModule,
     TicketsModule,
     TasksModule,
+    CustomFieldsModule,
   ],
   providers: [
     {
