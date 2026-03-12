@@ -452,4 +452,8 @@ export class TenantsService {
   async findByAlias(alias: string): Promise<Tenant | null> {
     return this.tenantsRepository.findByAlias(alias);
   }
+
+  async findByIds(ids: string[]): Promise<Tenant[]> {
+    return this.tenantsRepository.findByIds(ids);
+  }
 }

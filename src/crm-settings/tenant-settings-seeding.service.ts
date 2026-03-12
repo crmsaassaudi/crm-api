@@ -65,6 +65,15 @@ export class TenantSettingsSeedingService {
 
       // ── Business Hours ─────────────────────────────────────────────────────
       this.seed(tenantId, 'business_hours', DEFAULT_BUSINESS_HOURS),
+
+      // ── General Settings ───────────────────────────────────────────────────
+      this.seed(tenantId, 'general_profile', DEFAULT_GENERAL_PROFILE),
+      this.seed(tenantId, 'general_localization', DEFAULT_GENERAL_LOCALIZATION),
+      this.seed(
+        tenantId,
+        'general_notifications',
+        DEFAULT_GENERAL_NOTIFICATIONS,
+      ),
     ]);
 
     this.logger.log(`[Seeding] Completed for tenant ${tenantId}`);
@@ -657,6 +666,22 @@ const DEFAULT_BUSINESS_HOURS = {
   },
 };
 
+const DEFAULT_GENERAL_PROFILE = {
+  tenantName: 'My Organization',
+  logoUrl: '',
+};
+
+const DEFAULT_GENERAL_LOCALIZATION = {
+  language: 'en',
+  timezone: 'UTC',
+  currency: 'USD',
+};
+
+const DEFAULT_GENERAL_NOTIFICATIONS = {
+  emailNotifications: true,
+  marketingEmails: false,
+};
+
 /** Lookup map used by lazySeed() and getDefault(). Add new keys here when a new module ships. */
 export const DEFAULTS_MAP: Record<string, unknown> = {
   contact_identity: DEFAULT_CONTACT_IDENTITY,
@@ -679,4 +704,7 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   layout_settings: DEFAULT_LAYOUT_SETTINGS,
   validation_rules: DEFAULT_VALIDATION_RULES,
   business_hours: DEFAULT_BUSINESS_HOURS,
+  general_profile: DEFAULT_GENERAL_PROFILE,
+  general_localization: DEFAULT_GENERAL_LOCALIZATION,
+  general_notifications: DEFAULT_GENERAL_NOTIFICATIONS,
 };

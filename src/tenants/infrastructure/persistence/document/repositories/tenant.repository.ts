@@ -38,6 +38,15 @@ export class TenantsRepository {
     return doc ? TenantMapper.toDomain(doc) : null;
   }
 
+  async findByIds(ids: string[]): Promise<Tenant[]> {
+    if (!ids.length) {
+      return [];
+    }
+
+    const docs = await this.tenantsModel.find({ _id: { $in: ids } }).exec();
+    return docs.map((doc) => TenantMapper.toDomain(doc));
+  }
+
   async updateOwner(
     tenantId: string,
     ownerId: string,

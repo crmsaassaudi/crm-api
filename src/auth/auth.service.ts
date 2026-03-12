@@ -24,6 +24,7 @@ import { PlatformRoleEnum } from '../roles/platform-role.enum';
 import { StatusEnum } from '../statuses/statuses.enum';
 import { RedisService } from '../redis/redis.service';
 import { SessionService, SessionData } from './services/session.service';
+import { Tenant } from '../tenants/domain/tenant';
 
 const STATE_PREFIX = 'oauth:state:';
 const STATE_TTL_SECONDS = 300; // 5 minutes
@@ -520,5 +521,18 @@ export class AuthService {
     if (user) {
       await this.usersService.remove(user.id);
     }
+  }
+
+  async myTenants(keycloakPayload: any): Promise<Tenant[]> {
+    const user = await this.me(keycloakPayload);
+    if (!user?.tenants?.length) {
+      return [];
+    }
+
+    const tenantIds = Array.from(
+      new Set(user.tenants.map((membership) => membership.tenant?.toString())),
+    ).filter(Boolean) as string[];
+
+    return this.tenantsService.findByIds(tenantIds);
   }
 }

@@ -28,6 +28,7 @@ import { Unprotected } from 'nest-keycloak-connect';
 import { AuthUpdateDto } from './dto/auth-update.dto';
 import { NullableType } from '../utils/types/nullable.type';
 import { User } from '../users/domain/user';
+import { Tenant } from '../tenants/domain/tenant';
 
 const SID_COOKIE = 'sid';
 
@@ -165,6 +166,14 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   public async me(@Request() req): Promise<NullableType<User>> {
     return this.service.me(req.user);
+  }
+
+  @ApiBearerAuth()
+  @Get('tenants')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: Tenant, isArray: true })
+  public async myTenants(@Request() req): Promise<Tenant[]> {
+    return this.service.myTenants(req.user);
   }
 
   // ─── PATCH /auth/me ───────────────────────────────────────────────────────
