@@ -16,7 +16,8 @@ import { pagination } from 'src/utils/pagination';
 @Injectable()
 export class UsersDocumentRepository
   extends BaseDocumentRepository<UserSchemaDocument, User>
-  implements UserRepository {
+  implements UserRepository
+{
   constructor(
     @InjectModel(UserSchemaClass.name)
     userModel: Model<UserSchemaDocument>,

@@ -1,4 +1,11 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, Request } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  HttpStatus,
+  Request,
+} from '@nestjs/common';
 import { TenantsService, RegisterTenantResult } from './tenants.service';
 import { RegisterTenantDto } from './dto/register-tenant.dto';
 import { OnboardExistingUserDto } from './dto/onboard-existing-user.dto';
@@ -19,7 +26,7 @@ import { User } from '../users/domain/user';
   version: '1',
 })
 export class TenantsAuthController {
-  constructor(private readonly tenantsService: TenantsService) { }
+  constructor(private readonly tenantsService: TenantsService) {}
 
   /**
    * POST /api/v1/auth/register
@@ -65,7 +72,8 @@ export class TenantsAuthController {
   @Post('onboard-existing-user')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Onboard an existing authenticated user by creating a new tenant for them',
+    summary:
+      'Onboard an existing authenticated user by creating a new tenant for them',
   })
   @ApiCreatedResponse({ description: 'Tenant registered successfully' })
   @ApiBadRequestResponse({ description: 'Invalid payload' })

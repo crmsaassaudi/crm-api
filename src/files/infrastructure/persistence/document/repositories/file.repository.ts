@@ -15,7 +15,8 @@ import { BaseDocumentRepository } from '../../../../../utils/persistence/documen
 @Injectable()
 export class FileDocumentRepository
   extends BaseDocumentRepository<FileSchemaDocument, FileType>
-  implements FileRepository {
+  implements FileRepository
+{
   constructor(
     @InjectModel(FileSchemaClass.name)
     fileModel: Model<FileSchemaDocument>,

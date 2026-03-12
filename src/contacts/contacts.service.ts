@@ -17,10 +17,14 @@ export class ContactsService {
   async create(data: CreateContactDto): Promise<Contact> {
     // Sanitize owner: empty string is not a valid ObjectId
     const owner = data.owner === '' ? undefined : data.owner;
+    const emails = data.emails ?? [];
+    const phones = data.phones ?? [];
 
     // tenant, createdBy, updatedBy are auto-injected by BaseDocumentRepository from CLS
     return this.repository.create({
       ...data,
+      emails,
+      phones,
       owner,
     } as any);
   }
@@ -42,10 +46,14 @@ export class ContactsService {
   async update(id: string, data: UpdateContactDto): Promise<Contact | null> {
     // Sanitize owner: empty string is not a valid ObjectId
     const owner = data.owner === '' ? undefined : data.owner;
+    const emails = data.emails;
+    const phones = data.phones;
 
     // updatedBy is auto-injected by BaseDocumentRepository from CLS
     return this.repository.update(id, {
       ...data,
+      ...(emails !== undefined ? { emails } : {}),
+      ...(phones !== undefined ? { phones } : {}),
       owner,
     } as any);
   }
@@ -65,8 +73,8 @@ export class ContactsService {
       duplicates: duplicates.map((d) => ({
         id: d.id,
         name: `${d.firstName} ${d.lastName}`,
-        email: d.email[0],
-        phone: d.phone[0],
+        email: d.emails?.[0],
+        phone: d.phones?.[0],
         type: d.isConverted ? 'Contact' : 'Lead',
       })),
     };

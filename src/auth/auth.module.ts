@@ -17,4 +17,4 @@ import { SessionService } from './services/session.service';
   providers: [AuthService, KeycloakAdminService, SessionService],
   exports: [AuthService, KeycloakAdminService, SessionService],
 })
-export class AuthModule { }
+export class AuthModule {}

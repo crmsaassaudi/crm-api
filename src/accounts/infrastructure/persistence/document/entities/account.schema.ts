@@ -29,8 +29,11 @@ export class AccountSchemaClass extends EntityDocumentHelper {
   @Prop()
   type?: string;
 
-  @Prop()
-  phone?: string;
+  @Prop({ type: [String], default: [] })
+  emails?: string[];
+
+  @Prop({ type: [String], default: [] })
+  phones?: string[];
 
   @Prop()
   taxId?: string;

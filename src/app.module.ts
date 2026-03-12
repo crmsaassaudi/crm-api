@@ -37,6 +37,13 @@ import { ContactsModule } from './contacts/contacts.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { TasksModule } from './tasks/tasks.module';
 import { CustomFieldsModule } from './custom-fields/custom-fields.module';
+import { TagsModule } from './tags/tags.module';
+import { CannedResponsesModule } from './canned-responses/canned-responses.module';
+import { ChannelsModule } from './channels/channels.module';
+import { SlaPoliciesModule } from './sla-policies/sla-policies.module';
+import { EscalationPoliciesModule } from './escalation-policies/escalation-policies.module';
+import { RoutingRulesModule } from './routing-rules/routing-rules.module';
+import { AutomationRulesModule } from './automation-rules/automation-rules.module';
 
 import {
   KeycloakConnectModule,
@@ -204,6 +211,13 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     TicketsModule,
     TasksModule,
     CustomFieldsModule,
+    TagsModule,
+    CannedResponsesModule,
+    ChannelsModule,
+    SlaPoliciesModule,
+    EscalationPoliciesModule,
+    RoutingRulesModule,
+    AutomationRulesModule,
   ],
   providers: [
     {

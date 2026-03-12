@@ -48,7 +48,8 @@ export class AccountRepository extends BaseDocumentRepository<
       where.$or = [
         { name: searchExpr },
         { industry: searchExpr },
-        { phone: searchExpr },
+        { phones: searchExpr },
+        { emails: searchExpr },
       ];
     }
 

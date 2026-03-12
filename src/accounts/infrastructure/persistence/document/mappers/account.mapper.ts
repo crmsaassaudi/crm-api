@@ -11,14 +11,18 @@ export class AccountMapper {
     domainEntity.website = raw.website;
     domainEntity.industry = raw.industry;
     domainEntity.type = raw.type;
-    domainEntity.phone = raw.phone;
+    domainEntity.emails = raw.emails ?? [];
+    domainEntity.phones = raw.phones ?? [];
     domainEntity.taxId = raw.taxId;
     domainEntity.annualRevenue = raw.annualRevenue;
     domainEntity.numberOfEmployees = raw.numberOfEmployees;
     domainEntity.billingAddress = raw.billingAddress;
     domainEntity.shippingAddress = raw.shippingAddress;
     if (raw.owner) {
-      domainEntity.owner = typeof raw.owner === 'string' ? raw.owner : UserMapper.toDomain(raw.owner as any);
+      domainEntity.owner =
+        typeof raw.owner === 'string'
+          ? raw.owner
+          : UserMapper.toDomain(raw.owner as any);
     }
     domainEntity.status = raw.status;
     domainEntity.isArchived = raw.isArchived;
@@ -40,13 +44,18 @@ export class AccountMapper {
     persistenceEntity.website = domainEntity.website;
     persistenceEntity.industry = domainEntity.industry;
     persistenceEntity.type = domainEntity.type;
-    persistenceEntity.phone = domainEntity.phone;
+    persistenceEntity.emails = domainEntity.emails ?? [];
+    persistenceEntity.phones = domainEntity.phones ?? [];
     persistenceEntity.taxId = domainEntity.taxId;
     persistenceEntity.annualRevenue = domainEntity.annualRevenue;
     persistenceEntity.numberOfEmployees = domainEntity.numberOfEmployees;
     persistenceEntity.billingAddress = domainEntity.billingAddress;
     persistenceEntity.shippingAddress = domainEntity.shippingAddress;
-    persistenceEntity.owner = (typeof domainEntity.owner === 'object' ? (domainEntity.owner as any).id : domainEntity.owner) as string | undefined;
+    persistenceEntity.owner = (
+      typeof domainEntity.owner === 'object'
+        ? (domainEntity.owner as any).id
+        : domainEntity.owner
+    ) as string | undefined;
     persistenceEntity.status = domainEntity.status;
     persistenceEntity.isArchived = domainEntity.isArchived;
     persistenceEntity.customFields = domainEntity.customFields;

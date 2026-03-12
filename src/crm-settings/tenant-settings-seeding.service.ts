@@ -45,6 +45,26 @@ export class TenantSettingsSeedingService {
       this.seed(tenantId, 'deal_pipeline', DEFAULT_DEAL_PIPELINE),
       this.seed(tenantId, 'deal_forecasting', DEFAULT_DEAL_FORECASTING),
       this.seed(tenantId, 'deal_sales_goals', DEFAULT_DEAL_SALES_GOALS),
+
+      // ── Account ────────────────────────────────────────────────────────────
+      this.seed(tenantId, 'account_structure', DEFAULT_ACCOUNT_STRUCTURE),
+      this.seed(
+        tenantId,
+        'account_classification',
+        DEFAULT_ACCOUNT_CLASSIFICATION,
+      ),
+      this.seed(tenantId, 'account_territory', DEFAULT_ACCOUNT_TERRITORY),
+      this.seed(tenantId, 'account_financial', DEFAULT_ACCOUNT_FINANCIAL),
+
+      // ── Task ───────────────────────────────────────────────────────────────
+      this.seed(tenantId, 'task_advanced', DEFAULT_TASK_ADVANCED),
+
+      // ── Layout & Validation ────────────────────────────────────────────────
+      this.seed(tenantId, 'layout_settings', DEFAULT_LAYOUT_SETTINGS),
+      this.seed(tenantId, 'validation_rules', DEFAULT_VALIDATION_RULES),
+
+      // ── Business Hours ─────────────────────────────────────────────────────
+      this.seed(tenantId, 'business_hours', DEFAULT_BUSINESS_HOURS),
     ]);
 
     this.logger.log(`[Seeding] Completed for tenant ${tenantId}`);
@@ -495,6 +515,148 @@ const DEFAULT_DEAL_SALES_GOALS = {
   goalPeriod: 'quarterly',
 };
 
+// ─── Account defaults ────────────────────────────────────────────────────────
+
+const DEFAULT_ACCOUNT_STRUCTURE = {
+  enableParentChildHierarchy: true,
+  maxHierarchyDepth: 5,
+};
+
+const DEFAULT_ACCOUNT_CLASSIFICATION = {
+  accountTypes: [
+    { id: '1', name: 'Customer' },
+    { id: '2', name: 'Partner' },
+    { id: '3', name: 'Reseller' },
+  ],
+  industries: ['Technology', 'Finance', 'Healthcare', 'Retail', 'Logistics'],
+};
+
+const DEFAULT_ACCOUNT_TERRITORY = {
+  autoOwnerAssignment: true,
+};
+
+const DEFAULT_ACCOUNT_FINANCIAL = {
+  multiCurrency: true,
+};
+
+// ─── Task defaults ───────────────────────────────────────────────────────────
+
+const DEFAULT_TASK_ADVANCED = {
+  categories: [
+    {
+      id: '1',
+      name: 'Call',
+      apiName: 'call',
+      icon: 'Phone',
+      color: '#3b82f6',
+    },
+    {
+      id: '2',
+      name: 'Email',
+      apiName: 'email',
+      icon: 'Mail',
+      color: '#6366f1',
+    },
+    {
+      id: '3',
+      name: 'Meeting',
+      apiName: 'meeting',
+      icon: 'Users',
+      color: '#8b5cf6',
+    },
+    {
+      id: '4',
+      name: 'To-do',
+      apiName: 'todo',
+      icon: 'CheckSquare',
+      color: '#64748b',
+    },
+  ],
+  defaultReminderMinutes: 15,
+  enableAutoCompletionRules: true,
+};
+
+// ─── Layout & Validation defaults ────────────────────────────────────────────
+
+const DEFAULT_LAYOUT_SETTINGS = {
+  groupLayouts: {
+    default: {
+      Lead: [],
+      Contact: [],
+      Account: [],
+      Deal: [],
+      Ticket: [],
+      Task: [],
+    },
+  },
+};
+
+const DEFAULT_VALIDATION_RULES = {
+  rules: {
+    Contact: [
+      {
+        id: '1',
+        name: 'Email Format Check',
+        field: 'email',
+        operator: 'regex',
+        value: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$',
+        errorMessage: 'Please enter a valid email address.',
+        isActive: true,
+      },
+    ],
+  },
+};
+
+// ─── Business Hours default ──────────────────────────────────────────────────
+
+const DEFAULT_BUSINESS_HOURS = {
+  timezone: 'ict',
+  weekStartDay: 'monday',
+  workingDays: [
+    {
+      day: 'Monday',
+      enabled: true,
+      slots: [{ start: '08:00', end: '17:00' }],
+    },
+    {
+      day: 'Tuesday',
+      enabled: true,
+      slots: [{ start: '08:00', end: '17:00' }],
+    },
+    {
+      day: 'Wednesday',
+      enabled: true,
+      slots: [{ start: '08:00', end: '17:00' }],
+    },
+    {
+      day: 'Thursday',
+      enabled: true,
+      slots: [{ start: '08:00', end: '17:00' }],
+    },
+    {
+      day: 'Friday',
+      enabled: true,
+      slots: [{ start: '08:00', end: '17:00' }],
+    },
+    {
+      day: 'Saturday',
+      enabled: false,
+      slots: [{ start: '08:00', end: '17:00' }],
+    },
+    {
+      day: 'Sunday',
+      enabled: false,
+      slots: [{ start: '08:00', end: '17:00' }],
+    },
+  ],
+  holidays: [],
+  oooConfig: {
+    enableAutoReply: true,
+    templateId: 'default-ooo',
+    queueMessages: true,
+  },
+};
+
 /** Lookup map used by lazySeed() and getDefault(). Add new keys here when a new module ships. */
 export const DEFAULTS_MAP: Record<string, unknown> = {
   contact_identity: DEFAULT_CONTACT_IDENTITY,
@@ -509,4 +671,12 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   deal_pipeline: DEFAULT_DEAL_PIPELINE,
   deal_forecasting: DEFAULT_DEAL_FORECASTING,
   deal_sales_goals: DEFAULT_DEAL_SALES_GOALS,
+  account_structure: DEFAULT_ACCOUNT_STRUCTURE,
+  account_classification: DEFAULT_ACCOUNT_CLASSIFICATION,
+  account_territory: DEFAULT_ACCOUNT_TERRITORY,
+  account_financial: DEFAULT_ACCOUNT_FINANCIAL,
+  task_advanced: DEFAULT_TASK_ADVANCED,
+  layout_settings: DEFAULT_LAYOUT_SETTINGS,
+  validation_rules: DEFAULT_VALIDATION_RULES,
+  business_hours: DEFAULT_BUSINESS_HOURS,
 };

@@ -49,7 +49,7 @@ import {
 @UseInterceptors(HttpCacheInterceptor)
 @CacheEntity('User')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) { }
+  constructor(private readonly usersService: UsersService) {}
 
   @ApiCreatedResponse({
     type: User,
@@ -106,10 +106,11 @@ export class UsersController {
       let filteredUsers = users;
       if (search) {
         const lowerSearch = search.toLowerCase();
-        filteredUsers = users.filter(u =>
-          u.firstName?.toLowerCase().includes(lowerSearch) ||
-          u.lastName?.toLowerCase().includes(lowerSearch) ||
-          u.email?.toLowerCase().includes(lowerSearch)
+        filteredUsers = users.filter(
+          (u) =>
+            u.firstName?.toLowerCase().includes(lowerSearch) ||
+            u.lastName?.toLowerCase().includes(lowerSearch) ||
+            u.email?.toLowerCase().includes(lowerSearch),
         );
       }
 

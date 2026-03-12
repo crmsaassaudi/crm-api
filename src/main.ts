@@ -30,9 +30,12 @@ async function bootstrap() {
   });
   app.enableCors({
     // In local development, allow any origin to support dynamic tenant subdomains (e.g., daitoan.crm.com:4200)
-    origin: process.env.NODE_ENV === 'development'
-      ? true
-      : (frontendDomain ? frontendDomain.split(',') : true),
+    origin:
+      process.env.NODE_ENV === 'development'
+        ? true
+        : frontendDomain
+          ? frontendDomain.split(',')
+          : true,
     credentials: true,
   });
 

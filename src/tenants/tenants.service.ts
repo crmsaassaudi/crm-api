@@ -36,7 +36,7 @@ export class TenantsService {
     private readonly keycloakAdminService: KeycloakAdminService,
     private readonly userRepository: UserRepository,
     private readonly eventEmitter: EventEmitter2,
-  ) { }
+  ) {}
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Saga: POST /api/auth/register

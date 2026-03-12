@@ -8,8 +8,12 @@ export class AccountsService {
 
   async create(data: Partial<Account>): Promise<Account> {
     const owner = data.owner === '' ? undefined : data.owner;
+    const phones = data.phones ?? [];
+    const emails = data.emails ?? [];
     return this.repository.create({
       ...data,
+      phones,
+      emails,
       owner,
     } as any);
   }
@@ -30,8 +34,12 @@ export class AccountsService {
 
   async update(id: string, data: Partial<Account>): Promise<Account | null> {
     const owner = data.owner === '' ? undefined : data.owner;
+    const phones = data.phones;
+    const emails = data.emails;
     return this.repository.update(id, {
       ...data,
+      ...(phones !== undefined ? { phones } : {}),
+      ...(emails !== undefined ? { emails } : {}),
       owner,
     } as any);
   }

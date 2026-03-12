@@ -20,8 +20,11 @@ export class Account {
   @ApiProperty({ example: 'Customer' })
   type?: string;
 
-  @ApiProperty({ example: '+1 800 555 0000' })
-  phone?: string;
+  @ApiProperty({ example: ['info@acme.com'] })
+  emails?: string[];
+
+  @ApiProperty({ example: ['+1 800 555 0000'] })
+  phones?: string[];
 
   @ApiProperty({ example: 'TAX-123456' })
   taxId?: string;

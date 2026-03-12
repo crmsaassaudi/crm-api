@@ -37,7 +37,7 @@ export class UsersService {
     private readonly cls: ClsService,
     @Inject(forwardRef(() => KeycloakAdminService))
     private readonly keycloakAdminService: KeycloakAdminService,
-  ) { }
+  ) {}
 
   async create(
     createUserDto: CreateUserDto,
