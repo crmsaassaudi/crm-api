@@ -18,6 +18,8 @@ import { HttpCacheInterceptor } from '../common/cache/interceptors/http-cache.in
 import { CacheEntity } from '../common/cache/decorators/cache-entity.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { InviteUserDto } from './dto/invite-user.dto';
+import { CreateUserForTenantDto } from './dto/create-user-for-tenant.dto';
+import { CheckEmailDto } from './dto/check-email.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import {
   ApiBearerAuth,
@@ -25,6 +27,7 @@ import {
   ApiOkResponse,
   ApiParam,
   ApiTags,
+  ApiOperation,
 } from '@nestjs/swagger';
 import { Roles } from '../roles/roles.decorator';
 import { PlatformRoleEnum } from '../roles/platform-role.enum';
@@ -64,17 +67,47 @@ export class UsersController {
     return this.usersService.create(createProfileDto);
   }
 
+  @ApiOkResponse({
+    description: 'Check if an email already exists in the system',
+  })
+  @ApiOperation({ summary: 'Check if a user with this email exists' })
+  @Post('check-email')
+  @HttpCode(HttpStatus.OK)
+  checkEmail(@Body() checkEmailDto: CheckEmailDto): Promise<{
+    exists: boolean;
+    user?: { firstName: string | null; lastName: string | null };
+  }> {
+    return this.usersService.checkEmail(checkEmailDto.email);
+  }
+
   @ApiCreatedResponse({
     type: User,
   })
+  @ApiOperation({ summary: 'Invite an existing user to the current tenant' })
   @SerializeOptions({
     groups: ['admin'],
   })
-  @Roles(PlatformRoleEnum.SUPER_ADMIN)
   @Post('invite')
   @HttpCode(HttpStatus.CREATED)
   invite(@Body() inviteUserDto: InviteUserDto): Promise<User> {
     return this.usersService.invite(inviteUserDto);
+  }
+
+  @ApiCreatedResponse({
+    type: User,
+  })
+  @ApiOperation({
+    summary: 'Create a new user and add them to the current tenant',
+  })
+  @SerializeOptions({
+    groups: ['admin'],
+  })
+  @Post('create-for-tenant')
+  @HttpCode(HttpStatus.CREATED)
+  createForTenant(
+    @Body() createUserForTenantDto: CreateUserForTenantDto,
+  ): Promise<User> {
+    return this.usersService.createForTenant(createUserForTenantDto);
   }
 
   @ApiOkResponse({
@@ -152,6 +185,15 @@ export class UsersController {
     return this.usersService.findById(id);
   }
 
+  @ApiOkResponse({ description: 'Groups the user belongs to in this tenant' })
+  @ApiOperation({ summary: 'Get all groups a user belongs to in the tenant' })
+  @Get(':id/groups')
+  @HttpCode(HttpStatus.OK)
+  @ApiParam({ name: 'id', type: String, required: true })
+  getUserGroups(@Param('id') id: string) {
+    return this.usersService.getUserGroups(id);
+  }
+
   @ApiOkResponse({
     type: User,
   })
@@ -170,6 +212,14 @@ export class UsersController {
     @Body() updateProfileDto: UpdateUserDto,
   ): Promise<User | null> {
     return this.usersService.update(id, updateProfileDto);
+  }
+
+  @ApiOperation({ summary: 'Remove a user from the current tenant' })
+  @Delete(':id/tenant')
+  @ApiParam({ name: 'id', type: String, required: true })
+  @HttpCode(HttpStatus.OK)
+  removeFromTenant(@Param('id') id: string): Promise<User> {
+    return this.usersService.removeFromTenant(id);
   }
 
   @Delete(':id')

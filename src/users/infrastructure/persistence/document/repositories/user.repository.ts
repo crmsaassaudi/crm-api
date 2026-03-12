@@ -261,4 +261,21 @@ export class UsersDocumentRepository
 
     return UserMapper.toDomain(updatedUser);
   }
+
+  async removeTenantMembership(
+    userId: string,
+    tenantId: string,
+  ): Promise<User> {
+    const updatedUser = await this.model.findOneAndUpdate(
+      { _id: userId },
+      { $pull: { tenants: { tenant: tenantId } } },
+      { new: true },
+    );
+
+    if (!updatedUser) {
+      throw new ConflictException('User not found');
+    }
+
+    return UserMapper.toDomain(updatedUser);
+  }
 }

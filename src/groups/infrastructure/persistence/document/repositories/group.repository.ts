@@ -102,4 +102,12 @@ export class GroupRepository {
       .exec();
     return doc ? GroupMapper.toDomain(doc) : null;
   }
+
+  async findGroupsByMember(tenant: string, userId: string): Promise<Group[]> {
+    const docs = await this.model
+      .find({ tenant, members: userId })
+      .sort({ name: 1 })
+      .exec();
+    return docs.map(GroupMapper.toDomain);
+  }
 }

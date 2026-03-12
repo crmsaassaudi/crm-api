@@ -4,7 +4,7 @@ import {
   Inject,
   forwardRef,
   UnprocessableEntityException,
-  UnauthorizedException,
+  NotFoundException,
   Logger,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -26,6 +26,8 @@ import { ClsService } from 'nestjs-cls';
 import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
 import { InviteUserDto } from './dto/invite-user.dto';
 import { PaginationResponseDto } from 'src/utils/dto/pagination-response.dto';
+import { TenantsRepository } from '../tenants/infrastructure/persistence/document/repositories/tenant.repository';
+import { GroupRepository } from '../groups/infrastructure/persistence/document/repositories/group.repository';
 
 @Injectable()
 export class UsersService {
@@ -37,6 +39,8 @@ export class UsersService {
     private readonly cls: ClsService,
     @Inject(forwardRef(() => KeycloakAdminService))
     private readonly keycloakAdminService: KeycloakAdminService,
+    private readonly tenantsRepository: TenantsRepository,
+    private readonly groupRepository: GroupRepository,
   ) {}
 
   async create(
@@ -268,58 +272,106 @@ export class UsersService {
       throw new UnprocessableEntityException('Tenant context missing');
     }
 
-    const currentUser = this.cls.get('user');
-    // Check if current user has access to this tenant (Validation)
-    // Assuming currentUser has populated tenants.
-    // If currentUser is not available (e.g. system call), we might skip or fail.
-    // For Invite, it's usually an admin action.
-    if (currentUser) {
-      const hasAccess = currentUser.tenants?.some(
-        (t: { tenant: any }) => t.tenant === tenantId,
-      );
-      // Ideally check for Admin role within that tenant too, but schema might vary.
-      // Based on prompt: "Xác thực rằng Admin hiện tại thực sự có quyền trên tenantId đó"
-      // We'll check if tenant is in their list.
-      if (!hasAccess) {
-        throw new UnauthorizedException(
-          'You do not have permission to invite users to this tenant',
-        );
-      }
+    // Validate tenant exists
+    const tenant = await this.tenantsRepository.findById(tenantId);
+    if (!tenant) {
+      throw new UnprocessableEntityException('Tenant not found');
     }
 
+    const tenantRole = inviteUserDto.tenantRole || 'MEMBER';
+
+    // ── Case 1: User already exists in the system ───────────────────────────
     const existingUser = await this.usersRepository.findByEmail(
       inviteUserDto.email,
     );
+
     if (existingUser) {
-      throw new UnprocessableEntityException({
-        status: HttpStatus.UNPROCESSABLE_ENTITY,
-        errors: {
-          email: 'emailAlreadyExists',
-        },
-      });
+      // Check if user already belongs to this tenant
+      const alreadyInTenant = existingUser.tenants?.some(
+        (t) => t.tenant?.toString() === tenantId.toString(),
+      );
+      if (alreadyInTenant) {
+        throw new UnprocessableEntityException({
+          status: HttpStatus.UNPROCESSABLE_ENTITY,
+          errors: {
+            email: 'userAlreadyInTenant',
+          },
+        });
+      }
+
+      // Add user to Keycloak organization (if they have a keycloakId)
+      if (existingUser.keycloakId && tenant.keycloakOrgId) {
+        try {
+          await this.keycloakAdminService.addUserToOrganization(
+            tenant.keycloakOrgId,
+            existingUser.keycloakId,
+          );
+        } catch (e) {
+          this.logger.warn(
+            `Failed to add existing user to KC org: ${(e as Error).message}`,
+          );
+        }
+      }
+
+      // Add tenant membership via upsertWithTenants
+      return this.usersRepository.upsertWithTenants(
+        existingUser.keycloakId || '',
+        inviteUserDto.email,
+        {},
+        [{ tenant: tenantId, roles: [tenantRole], joinedAt: new Date() }],
+      );
     }
 
-    const platformRoleId: PlatformRoleEnum = PlatformRoleEnum.USER;
+    // ── Case 2: User does NOT exist — create in Keycloak + DB ───────────────
+    let keycloakUserCreated = false;
+    let keycloakUser: { id: string; email: string };
 
-    let keycloakUser;
     try {
-      // For invites we use an unpredictable placeholder password.
-      // The real credential is set via the password-reset email (called below).
-      keycloakUser = await this.keycloakAdminService.createUser(
+      // Check if user already exists in Keycloak (may exist from another system)
+      const existingKcUser = await this.keycloakAdminService.findUserByEmail(
         inviteUserDto.email,
-        `Tmp!${Date.now()}KC`, // temporary, immediately superseded by reset-password
-        inviteUserDto.email, // fullName placeholder until the user fills their profile
       );
+
+      if (existingKcUser) {
+        keycloakUser = existingKcUser;
+      } else {
+        // Create new Keycloak user with temporary password
+        keycloakUser = await this.keycloakAdminService.createUser(
+          inviteUserDto.email,
+          `Tmp!${Date.now()}KC`,
+          inviteUserDto.email,
+        );
+        keycloakUserCreated = true;
+      }
     } catch (e) {
       throw new UnprocessableEntityException(
         'Failed to create user in Keycloak: ' + (e as Error).message,
       );
     }
 
-    try {
-      await this.keycloakAdminService.resetPassword(keycloakUser.id);
-    } catch (e) {
-      this.logger.warn(`Failed to send invite email: ${(e as Error).message}`);
+    // Add user to Keycloak organization
+    if (tenant.keycloakOrgId) {
+      try {
+        await this.keycloakAdminService.addUserToOrganization(
+          tenant.keycloakOrgId,
+          keycloakUser.id,
+        );
+      } catch (e) {
+        this.logger.warn(
+          `Failed to add user to KC org: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    // Send password reset email for new users
+    if (keycloakUserCreated) {
+      try {
+        await this.keycloakAdminService.resetPassword(keycloakUser.id);
+      } catch (e) {
+        this.logger.warn(
+          `Failed to send invite email: ${(e as Error).message}`,
+        );
+      }
     }
 
     try {
@@ -329,26 +381,94 @@ export class UsersService {
         email: inviteUserDto.email,
         provider: AuthProvidersEnum.email,
         keycloakId: keycloakUser.id,
-        platformRole: { id: platformRoleId },
+        platformRole: { id: PlatformRoleEnum.USER },
         status: { id: StatusEnum.active },
-        tenants: [{ tenant: tenantId, roles: [], joinedAt: new Date() }],
+        tenants: [
+          { tenant: tenantId, roles: [tenantRole], joinedAt: new Date() },
+        ],
       });
     } catch (error) {
-      // Rollback: Delete user from Keycloak if local DB save fails
       this.logger.error(
-        'Failed to create user in local DB, rolling back Keycloak user...',
+        'Failed to create user in local DB, rolling back...',
         error,
       );
-      try {
-        await this.keycloakAdminService.deleteUser(keycloakUser.id);
-      } catch (rollbackError) {
-        this.logger.error(
-          'CRITICAL: Failed to rollback Keycloak user creation',
-          rollbackError,
-        );
+      if (keycloakUserCreated) {
+        try {
+          await this.keycloakAdminService.deleteUser(keycloakUser.id);
+        } catch (rollbackError) {
+          this.logger.error(
+            'CRITICAL: Failed to rollback Keycloak user creation',
+            rollbackError,
+          );
+        }
       }
       throw error;
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Remove user from tenant
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async removeFromTenant(userId: string): Promise<User> {
+    const tenantId = this.cls.get('tenantId');
+    if (!tenantId) {
+      throw new UnprocessableEntityException('Tenant context missing');
+    }
+
+    const user = await this.usersRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const tenant = await this.tenantsRepository.findById(tenantId);
+
+    // Prevent removing tenant owner
+    if (tenant && tenant.owner?.toString() === userId.toString()) {
+      throw new UnprocessableEntityException(
+        'Cannot remove the tenant owner from the tenant',
+      );
+    }
+
+    // Remove user from all groups in this tenant
+    const groups = await this.groupRepository.findGroupsByMember(
+      tenantId,
+      userId,
+    );
+    for (const group of groups) {
+      await this.groupRepository.removeMember(tenantId, group.id, userId);
+    }
+
+    // Remove tenant membership
+    return this.usersRepository.removeTenantMembership(userId, tenantId);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Get all groups a user belongs to within the current tenant
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async getUserGroups(userId: string) {
+    const tenantId = this.cls.get('tenantId');
+    if (!tenantId) {
+      throw new UnprocessableEntityException('Tenant context missing');
+    }
+
+    // Verify user belongs to tenant
+    const user = await this.usersRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const belongsToTenant = user.tenants?.some(
+      (t) => t.tenant?.toString() === tenantId.toString(),
+    );
+    if (!belongsToTenant) {
+      throw new UnprocessableEntityException(
+        'User does not belong to this tenant',
+      );
+    }
+
+    return this.groupRepository.findGroupsByMember(tenantId, userId);
   }
 
   async resetPassword(id: User['id']): Promise<void> {
@@ -374,6 +494,137 @@ export class UsersService {
       throw new UnprocessableEntityException(
         'User is not managed by Keycloak or missing Keycloak ID',
       );
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Check if email exists in system (global lookup)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async checkEmail(email: string): Promise<{
+    exists: boolean;
+    user?: { firstName: string | null; lastName: string | null };
+  }> {
+    const user = await this.usersRepository.findByEmail(email);
+    if (user) {
+      return {
+        exists: true,
+        user: { firstName: user.firstName, lastName: user.lastName },
+      };
+    }
+    return { exists: false };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Create a new user within the current tenant context
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async createForTenant(dto: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    tenantRole?: string;
+  }): Promise<User> {
+    const tenantId = this.cls.get('tenantId');
+    if (!tenantId) {
+      throw new UnprocessableEntityException('Tenant context missing');
+    }
+
+    const tenant = await this.tenantsRepository.findById(tenantId);
+    if (!tenant) {
+      throw new UnprocessableEntityException('Tenant not found');
+    }
+
+    // Reject if user already exists in the system
+    const existingUser = await this.usersRepository.findByEmail(dto.email);
+    if (existingUser) {
+      throw new UnprocessableEntityException({
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        errors: {
+          email: 'emailAlreadyExists',
+        },
+      });
+    }
+
+    const tenantRole = dto.tenantRole || 'MEMBER';
+    let keycloakUserCreated = false;
+    let keycloakUser: { id: string; email: string };
+
+    try {
+      const existingKcUser = await this.keycloakAdminService.findUserByEmail(
+        dto.email,
+      );
+
+      if (existingKcUser) {
+        keycloakUser = existingKcUser;
+      } else {
+        keycloakUser = await this.keycloakAdminService.createUser(
+          dto.email,
+          `Tmp!${Date.now()}KC`,
+          dto.email,
+        );
+        keycloakUserCreated = true;
+      }
+    } catch (e) {
+      throw new UnprocessableEntityException(
+        'Failed to create user in Keycloak: ' + (e as Error).message,
+      );
+    }
+
+    // Add to Keycloak organization
+    if (tenant.keycloakOrgId) {
+      try {
+        await this.keycloakAdminService.addUserToOrganization(
+          tenant.keycloakOrgId,
+          keycloakUser.id,
+        );
+      } catch (e) {
+        this.logger.warn(
+          `Failed to add user to KC org: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    // Send password reset email
+    if (keycloakUserCreated) {
+      try {
+        await this.keycloakAdminService.resetPassword(keycloakUser.id);
+      } catch (e) {
+        this.logger.warn(
+          `Failed to send password reset email: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    try {
+      return await this.usersRepository.create({
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        email: dto.email,
+        provider: AuthProvidersEnum.email,
+        keycloakId: keycloakUser.id,
+        platformRole: { id: PlatformRoleEnum.USER },
+        status: { id: StatusEnum.active },
+        tenants: [
+          { tenant: tenantId, roles: [tenantRole], joinedAt: new Date() },
+        ],
+      });
+    } catch (error) {
+      this.logger.error(
+        'Failed to create user in local DB, rolling back...',
+        error,
+      );
+      if (keycloakUserCreated) {
+        try {
+          await this.keycloakAdminService.deleteUser(keycloakUser.id);
+        } catch (rollbackError) {
+          this.logger.error(
+            'CRITICAL: Failed to rollback Keycloak user creation',
+            rollbackError,
+          );
+        }
+      }
+      throw error;
     }
   }
 

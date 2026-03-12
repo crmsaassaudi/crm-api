@@ -46,5 +46,10 @@ export abstract class UserRepository {
     session?: any,
   ): Promise<User>;
 
+  abstract removeTenantMembership(
+    userId: string,
+    tenantId: string,
+  ): Promise<User>;
+
   abstract remove(id: User['id']): Promise<void>;
 }

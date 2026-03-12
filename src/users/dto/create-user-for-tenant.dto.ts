@@ -1,20 +1,24 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
-import { RoleDto } from '../../roles/dto/role.dto';
-import { Transform, Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import { lowerCaseTransformer } from '../../utils/transformers/lower-case.transformer';
 
-export class InviteUserDto {
+export class CreateUserForTenantDto {
   @ApiProperty({ example: 'test1@example.com' })
   @Transform(lowerCaseTransformer)
   @IsNotEmpty()
   @IsEmail()
   email: string;
 
-  @ApiPropertyOptional({ type: RoleDto })
-  @IsOptional()
-  @Type(() => RoleDto)
-  role?: RoleDto | null;
+  @ApiProperty({ example: 'John' })
+  @IsNotEmpty()
+  @IsString()
+  firstName: string;
+
+  @ApiProperty({ example: 'Doe' })
+  @IsNotEmpty()
+  @IsString()
+  lastName: string;
 
   @ApiPropertyOptional({
     example: 'MEMBER',
