@@ -44,6 +44,7 @@ import { SlaPoliciesModule } from './sla-policies/sla-policies.module';
 import { EscalationPoliciesModule } from './escalation-policies/escalation-policies.module';
 import { RoutingRulesModule } from './routing-rules/routing-rules.module';
 import { AutomationRulesModule } from './automation-rules/automation-rules.module';
+import { GroupsModule } from './groups/groups.module';
 
 import {
   KeycloakConnectModule,
@@ -218,6 +219,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     EscalationPoliciesModule,
     RoutingRulesModule,
     AutomationRulesModule,
+    GroupsModule,
   ],
   providers: [
     {
