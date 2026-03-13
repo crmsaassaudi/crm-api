@@ -128,21 +128,23 @@ export class TenantSettingsSeedingService {
 // ─── Default values ──────────────────────────────────────────────────────────
 
 const DEFAULT_CONTACT_IDENTITY = {
-  duplicateDetectionEnabled: true,
-  duplicateFields: ['email', 'phone'],
-  mergeStrategy: 'manual',
+  uniqueEmail: true,
+  uniquePhone: true,
+  multipleEmailsAllowed: false,
+  multiplePhonesAllowed: false,
+  mergePolicy: 'manual_review',
 };
 
 const DEFAULT_CONTACT_RELATIONSHIP = {
-  enableHousehold: false,
-  enableCompanyLink: true,
-  maxRelationships: 20,
+  relationshipModel: 'one_to_many',
+  contactHierarchyEnabled: true,
 };
 
 const DEFAULT_CONTACT_COMMUNICATION = {
-  defaultChannel: 'email',
-  unsubscribeEnabled: true,
-  gdprConsentRequired: false,
+  emailOptInTracking: true,
+  smsOptInTracking: false,
+  doNotCallFlag: false,
+  gdprConsentTracking: true,
 };
 
 const DEFAULT_CONTACT_ROLES = {
@@ -394,14 +396,14 @@ const DEFAULT_CONTACT_LIFECYCLE = {
 };
 
 const DEFAULT_ACCOUNT_LIFECYCLE = {
-  pipelineEnabled: true,
+  pipelineEnabled: false,
   stages: [
     {
-      id: 'prospect',
-      name: 'Prospect',
-      apiName: 'prospect',
+      id: 'account_status',
+      name: 'Account Status',
+      apiName: 'account_status',
       sortOrder: 1,
-      color: '#64748b',
+      color: '#3b82f6',
       statuses: [
         {
           id: 'new',
@@ -418,29 +420,18 @@ const DEFAULT_ACCOUNT_LIFECYCLE = {
           sortOrder: 2,
           color: '#eab308',
         },
-      ],
-    },
-    {
-      id: 'customer',
-      name: 'Customer',
-      apiName: 'customer',
-      sortOrder: 2,
-      color: '#10b981',
-      isConverted: true,
-      statuses: [
         {
           id: 'active',
           label: 'Active',
           apiName: 'active',
-          sortOrder: 1,
+          sortOrder: 3,
           color: '#10b981',
-          isDefault: true,
         },
         {
           id: 'churned',
           label: 'Churned',
           apiName: 'churned',
-          sortOrder: 2,
+          sortOrder: 4,
           color: '#64748b',
           isTerminal: true,
         },
@@ -682,6 +673,79 @@ const DEFAULT_GENERAL_NOTIFICATIONS = {
   marketingEmails: false,
 };
 
+const DEFAULT_ACCOUNT_SOURCE = {
+  sources: [
+    { id: '1', name: 'Web Search' },
+    { id: '2', name: 'Referral' },
+    { id: '3', name: 'Sales Outbound' },
+    { id: '4', name: 'Partner' },
+  ],
+};
+
+const DEFAULT_DEAL_SOURCE = {
+  sources: [
+    { id: '1', name: 'Existing Customer' },
+    { id: '2', name: 'Inbound Inquiry' },
+    { id: '3', name: 'Event/Tradeshow' },
+    { id: '4', name: 'Referral' },
+  ],
+};
+
+const DEFAULT_TICKET_SOURCE = {
+  sources: [
+    { id: '1', name: 'Email' },
+    { id: '2', name: 'Phone' },
+    { id: '3', name: 'Client Portal' },
+    { id: '4', name: 'Chat' },
+    { id: '5', name: 'Social Media' },
+  ],
+};
+
+const DEFAULT_TASK_SOURCE = {
+  sources: [
+    { id: '1', name: 'System Generated' },
+    { id: '2', name: 'Manual' },
+    { id: '3', name: 'Workflow' },
+  ],
+};
+
+const DEFAULT_TICKET_LIFECYCLE = {
+  stages: [
+    {
+      id: 'support_pipeline',
+      name: 'Ticket Support',
+      apiName: 'support',
+      sortOrder: 1,
+      color: '#3b82f6',
+      statuses: [
+        { id: 'new', label: 'New', apiName: 'new', sortOrder: 1, color: '#3b82f6', isDefault: true },
+        { id: 'open', label: 'In Progress', apiName: 'open', sortOrder: 2, color: '#eab308' },
+        { id: 'on_hold', label: 'On Hold', apiName: 'on_hold', sortOrder: 3, color: '#f59e0b' },
+        { id: 'resolved', label: 'Resolved', apiName: 'resolved', sortOrder: 4, color: '#10b981', isTerminal: true },
+        { id: 'closed', label: 'Closed', apiName: 'closed', sortOrder: 5, color: '#64748b', isTerminal: true },
+      ],
+    },
+  ],
+};
+
+const DEFAULT_TASK_LIFECYCLE = {
+  stages: [
+    {
+      id: 'default_task_stage',
+      name: 'Task Management',
+      apiName: 'default',
+      sortOrder: 1,
+      color: '#64748b',
+      statuses: [
+        { id: 'todo', label: 'To Do', apiName: 'todo', sortOrder: 1, color: '#64748b', isDefault: true },
+        { id: 'in_progress', label: 'In Progress', apiName: 'in_progress', sortOrder: 2, color: '#3b82f6' },
+        { id: 'completed', label: 'Completed', apiName: 'completed', sortOrder: 3, color: '#10b981', isTerminal: true },
+        { id: 'cancelled', label: 'Cancelled', apiName: 'cancelled', sortOrder: 4, color: '#ef4444', isTerminal: true },
+      ],
+    },
+  ],
+};
+
 /** Lookup map used by lazySeed() and getDefault(). Add new keys here when a new module ships. */
 export const DEFAULTS_MAP: Record<string, unknown> = {
   contact_identity: DEFAULT_CONTACT_IDENTITY,
@@ -691,8 +755,14 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   contact_assignment: DEFAULT_CONTACT_ASSIGNMENT,
   contact_conversion: DEFAULT_CONTACT_CONVERSION,
   contact_source: DEFAULT_CONTACT_SOURCE,
+  account_source: DEFAULT_ACCOUNT_SOURCE,
+  deal_source: DEFAULT_DEAL_SOURCE,
+  ticket_source: DEFAULT_TICKET_SOURCE,
+  task_source: DEFAULT_TASK_SOURCE,
   contact_lifecycle: DEFAULT_CONTACT_LIFECYCLE,
   account_lifecycle: DEFAULT_ACCOUNT_LIFECYCLE,
+  ticket_lifecycle: DEFAULT_TICKET_LIFECYCLE,
+  task_lifecycle: DEFAULT_TASK_LIFECYCLE,
   deal_pipeline: DEFAULT_DEAL_PIPELINE,
   deal_forecasting: DEFAULT_DEAL_FORECASTING,
   deal_sales_goals: DEFAULT_DEAL_SALES_GOALS,
