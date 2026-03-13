@@ -86,6 +86,7 @@ export class IntegrationLogService {
       .find()
       .sort({ createdAt: -1 })
       .limit(limit)
+      .lean()
       .exec();
   }
 }
