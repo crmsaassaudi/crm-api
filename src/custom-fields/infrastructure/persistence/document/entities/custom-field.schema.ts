@@ -45,6 +45,9 @@ export class CustomFieldSchemaClass extends EntityDocumentHelper {
   @Prop()
   objectView?: string;
 
+  @Prop()
+  placeholder?: string;
+
   @Prop({ type: [MongooseSchema.Types.Mixed] })
   options?: { label: string; value: string }[];
 }

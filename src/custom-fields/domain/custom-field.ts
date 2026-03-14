@@ -38,6 +38,9 @@ export class CustomField {
   objectView?: string;
 
   @ApiProperty({ required: false })
+  placeholder?: string;
+
+  @ApiProperty({ required: false })
   options?: { label: string; value: string }[];
 
   @ApiProperty()

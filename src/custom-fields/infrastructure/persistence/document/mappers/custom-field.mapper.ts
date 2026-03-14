@@ -16,6 +16,7 @@ export class CustomFieldMapper {
     domain.validation = raw.validation;
     domain.governance = raw.governance;
     domain.objectView = raw.objectView;
+    domain.placeholder = raw.placeholder;
     domain.options = raw.options;
     domain.createdAt = raw.createdAt;
     domain.updatedAt = raw.updatedAt;
