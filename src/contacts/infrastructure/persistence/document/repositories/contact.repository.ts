@@ -107,16 +107,16 @@ export class ContactRepository extends BaseDocumentRepository<
   }
 
   async checkDuplicate(params: {
-    email?: string;
-    phone?: string;
+    emails?: string;
+    phones?: string;
     excludeId?: string;
   }): Promise<Contact[]> {
-    const { email, phone, excludeId } = params;
+    const { emails, phones, excludeId } = params;
     const where: FilterQuery<ContactSchemaClass> = {};
 
     const conditions: FilterQuery<ContactSchemaClass>[] = [];
-    if (email) conditions.push({ emails: { $in: [email] } });
-    if (phone) conditions.push({ phones: { $in: [phone] } });
+    if (emails) conditions.push({ emails: { $in: [emails] } });
+    if (phones) conditions.push({ phones: { $in: [phones] } });
 
     if (conditions.length === 0) return [];
 

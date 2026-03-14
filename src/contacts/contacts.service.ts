@@ -63,8 +63,8 @@ export class ContactsService {
   }
 
   async checkDuplicate(params: {
-    email?: string;
-    phone?: string;
+    emails?: string;
+    phones?: string;
     excludeId?: string;
   }): Promise<any> {
     const duplicates = await this.repository.checkDuplicate(params);

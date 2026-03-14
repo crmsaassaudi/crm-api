@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, Global } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { CrmSettingsController } from './crm-settings.controller';
 import { CrmSettingsService } from './crm-settings.service';
@@ -9,6 +9,7 @@ import {
   CrmSettingSchemaClass,
 } from './infrastructure/persistence/document/entities/crm-setting.schema';
 
+@Global()
 @Module({
   imports: [
     MongooseModule.forFeature([

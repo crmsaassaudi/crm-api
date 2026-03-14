@@ -581,9 +581,18 @@ const DEFAULT_TASK_ADVANCED = {
 const DEFAULT_LAYOUT_SETTINGS = {
   groupLayouts: {
     default: {
-      Lead: [],
-      Contact: [],
-      Account: [],
+      Lead: [
+        { key: 'emails', isVisible: true, isRequired: true, isDisabled: false, masking: 'mask_all', accessLevel: 'read_write' },
+        { key: 'phones', isVisible: true, isRequired: true, isDisabled: false, masking: 'last_4', accessLevel: 'read_write' }
+      ],
+      Contact: [
+        { key: 'emails', isVisible: true, isRequired: true, isDisabled: false, masking: 'mask_all', accessLevel: 'read_write' },
+        { key: 'phones', isVisible: true, isRequired: true, isDisabled: false, masking: 'last_4', accessLevel: 'read_write' }
+      ],
+      Account: [
+        { key: 'emails', isVisible: true, isRequired: false, isDisabled: false, masking: 'none', accessLevel: 'read_write' },
+        { key: 'phones', isVisible: true, isRequired: false, isDisabled: false, masking: 'none', accessLevel: 'read_write' }
+      ],
       Deal: [],
       Ticket: [],
       Task: [],
@@ -597,7 +606,7 @@ const DEFAULT_VALIDATION_RULES = {
       {
         id: '1',
         name: 'Email Format Check',
-        field: 'email',
+        field: 'emails',
         operator: 'regex',
         value: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$',
         errorMessage: 'Please enter a valid email address.',
