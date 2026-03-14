@@ -53,6 +53,27 @@ export class AccountRepository extends BaseDocumentRepository<
       ];
     }
 
+    if (filterOptions?.filters) {
+      try {
+        const parsedFilters = typeof filterOptions.filters === 'string' 
+          ? JSON.parse(filterOptions.filters) 
+          : filterOptions.filters;
+        if (Array.isArray(parsedFilters)) {
+          parsedFilters.forEach((f: any) => {
+            if (f.id && f.value) {
+              if (['industry', 'status'].includes(f.id)) {
+                where[f.id] = f.value;
+              } else {
+                where[f.id] = { $regex: f.value, $options: 'i' };
+              }
+            }
+          });
+        }
+      } catch (e) {
+        // ignore parse errors
+      }
+    }
+
     const scopedWhere = this.applyTenantFilter(where);
 
     const [docs, totalItems] = await Promise.all([

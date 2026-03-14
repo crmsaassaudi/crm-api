@@ -53,6 +53,30 @@ export class DealRepository extends BaseDocumentRepository<
       where.stage = filterOptions.stage;
     }
 
+    if (filterOptions?.filters) {
+      try {
+        const parsedFilters = typeof filterOptions.filters === 'string' 
+          ? JSON.parse(filterOptions.filters) 
+          : filterOptions.filters;
+        if (Array.isArray(parsedFilters)) {
+          parsedFilters.forEach((f: any) => {
+            if (f.id && f.value) {
+              if (['stage'].includes(f.id)) {
+                where[f.id] = f.value;
+              } else if (f.id === 'value') {
+                const val = Number(f.value);
+                if (!isNaN(val)) where[f.id] = val;
+              } else {
+                where[f.id] = { $regex: f.value, $options: 'i' };
+              }
+            }
+          });
+        }
+      } catch (e) {
+        // ignore parse errors
+      }
+    }
+
     const scopedWhere = this.applyTenantFilter(where);
 
     const [docs, totalItems] = await Promise.all([
