@@ -11,6 +11,9 @@ export class ChannelMapper {
     entity.account = raw.account;
     entity.status = raw.status;
     entity.config = raw.config;
+    if (raw.credentials) {
+      entity.credentials = raw.credentials;
+    }
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;
     return entity;

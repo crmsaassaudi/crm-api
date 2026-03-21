@@ -3,6 +3,7 @@ import { ClsService } from 'nestjs-cls';
 import { ChannelRepository } from './infrastructure/persistence/document/repositories/channel.repository';
 import { Channel } from './domain/channel';
 import { CreateChannelDto, UpdateChannelDto } from './dto/channel.dto';
+import axios from 'axios';
 
 @Injectable()
 export class ChannelsService {
@@ -23,13 +24,41 @@ export class ChannelsService {
     return channel;
   }
 
+  async findByAccount(type: string, account: string): Promise<Channel> {
+    const channel = await this.repository.findByAccount(type, account);
+    if (!channel) throw new NotFoundException('Channel not found');
+    return channel;
+  }
+
   async create(dto: CreateChannelDto): Promise<Channel> {
     const tenant = this.cls.get('tenantId');
-    return this.repository.create({
+    const channel = await this.repository.create({
       ...dto,
       tenant,
-      status: 'Pending',
+      status: 'Pending', // Initially pending
     });
+
+    if ((dto.type === 'Facebook' || dto.type === 'Instagram') && dto.credentials?.accessToken) {
+      try {
+        await axios.post(
+          `https://graph.facebook.com/v19.0/${dto.account}/subscribed_apps`,
+          {
+            subscribed_fields: ['messages', 'messaging_postbacks'],
+          },
+          {
+            params: { access_token: dto.credentials.accessToken },
+          }
+        );
+        // If success, update to Connected
+        channel.status = 'Connected';
+        await this.repository.update(tenant, channel.id, { status: 'Connected' });
+      } catch (error) {
+        console.error('Failed to subscribe Meta webhook:', error?.response?.data || error.message);
+        // Stay as Pending or Error based on your logic
+      }
+    }
+
+    return channel;
   }
 
   async update(id: string, dto: UpdateChannelDto): Promise<Channel> {

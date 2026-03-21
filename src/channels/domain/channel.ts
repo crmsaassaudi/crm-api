@@ -33,6 +33,8 @@ export class Channel {
   @ApiProperty()
   config: Record<string, any>;
 
+  credentials?: Record<string, any>;
+
   @ApiProperty()
   createdAt: Date;
 

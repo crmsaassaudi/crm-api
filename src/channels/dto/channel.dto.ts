@@ -37,6 +37,11 @@ export class CreateChannelDto {
   @IsObject()
   @IsOptional()
   config?: Record<string, any>;
+
+  @ApiPropertyOptional()
+  @IsObject()
+  @IsOptional()
+  credentials?: Record<string, any>;
 }
 
 export class UpdateChannelDto {

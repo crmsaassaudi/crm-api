@@ -16,6 +16,6 @@ import {
   ],
   controllers: [ChannelsController],
   providers: [ChannelsService, ChannelRepository],
-  exports: [ChannelsService],
+  exports: [ChannelsService, ChannelRepository],
 })
 export class ChannelsModule {}

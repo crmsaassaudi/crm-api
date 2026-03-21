@@ -45,6 +45,7 @@ import { EscalationPoliciesModule } from './escalation-policies/escalation-polic
 import { RoutingRulesModule } from './routing-rules/routing-rules.module';
 import { AutomationRulesModule } from './automation-rules/automation-rules.module';
 import { GroupsModule } from './groups/groups.module';
+import { OmniInboundModule } from './omni-inbound/omni-inbound.module';
 
 import {
   KeycloakConnectModule,
@@ -220,6 +221,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     RoutingRulesModule,
     AutomationRulesModule,
     GroupsModule,
+    OmniInboundModule,
   ],
   providers: [
     {
