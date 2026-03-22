@@ -43,6 +43,7 @@ export class ZaloAdapter implements ChannelAdapter {
     return {
       tenantId,
       channelId,
+      channelAccount: rawPayload.recipient?.id,
       channelType: this.channelType,
       senderId: rawPayload.sender.id,
       senderType: 'customer',

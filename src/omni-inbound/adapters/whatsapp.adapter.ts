@@ -51,6 +51,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     return {
       tenantId,
       channelId,
+      channelAccount: rawPayload.metadata?.phone_number_id,
       channelType: this.channelType,
       senderId: msg.from,
       senderType: 'customer',

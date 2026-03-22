@@ -5,7 +5,10 @@ import {
   OmniMessageSchemaClass,
   OmniMessageDocument,
 } from '../infrastructure/persistence/document/entities/omni-message.schema';
-import { PaginatedResult } from './conversation.repository';
+import { OmniMessage } from '../domain/omni-message';
+import { OmniMessageMapper } from '../infrastructure/persistence/document/mappers/omni-message.mapper';
+import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
+import { pagination } from '../../utils/pagination';
 
 @Injectable()
 export class MessageRepository {
@@ -16,8 +19,9 @@ export class MessageRepository {
 
   async create(
     data: Partial<OmniMessageSchemaClass>,
-  ): Promise<OmniMessageDocument> {
-    return this.model.create(data);
+  ): Promise<OmniMessage> {
+    const doc = await this.model.create(data);
+    return OmniMessageMapper.toDomain(doc);
   }
 
   /**
@@ -27,27 +31,28 @@ export class MessageRepository {
     conversationId: string,
     page: number,
     limit: number,
-  ): Promise<PaginatedResult<OmniMessageDocument>> {
+  ): Promise<PaginationResponseDto<OmniMessage>> {
     const filter = { conversation: conversationId };
     const sort: Record<string, SortOrder> = { createdAt: -1 };
+
+    const safePage = Math.max(1, page);
+    const skip = (safePage - 1) * limit;
 
     const [items, total] = await Promise.all([
       this.model
         .find(filter)
         .sort(sort)
-        .skip(page * limit)
+        .skip(skip)
         .limit(limit)
         .exec(),
       this.model.countDocuments(filter).exec(),
     ]);
 
-    return {
-      items: items.reverse(), // reverse so oldest first for display
-      total,
-      page,
-      limit,
-      hasMore: (page + 1) * limit < total,
-    };
+    // Reverse so oldest first for display
+    const reversed = items.reverse();
+    const mappedItems = reversed.map(doc => OmniMessageMapper.toDomain(doc));
+
+    return pagination(mappedItems, total, { page: safePage, limit });
   }
 
   /**
@@ -65,7 +70,11 @@ export class MessageRepository {
     return !!doc;
   }
 
-  async updateStatus(id: string, status: string): Promise<void> {
-    await this.model.findByIdAndUpdate(id, { status }).exec();
+  async updateStatus(id: string, status: string, externalId?: string): Promise<void> {
+    const update: any = { status };
+    if (externalId) {
+      update.externalMessageId = externalId;
+    }
+    await this.model.findByIdAndUpdate(id, { $set: update }).exec();
   }
 }

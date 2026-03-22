@@ -12,6 +12,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
 import { OutboundService } from '../services/outbound.service';
@@ -28,7 +29,7 @@ import { OutboundService } from '../services/outbound.service';
  *   PATCH /omni/conversations/:id/claim    — claim / assign agent
  *   PATCH /omni/conversations/:id/read     — mark as read (reset unread count)
  */
-@Controller('omni')
+@Controller({ path: 'omni', version: '1' })
 export class OmniController {
   private readonly logger = new Logger(OmniController.name);
 
@@ -36,6 +37,7 @@ export class OmniController {
     private readonly conversationRepo: ConversationRepository,
     private readonly messageRepo: MessageRepository,
     private readonly outboundService: OutboundService,
+    private readonly cls: ClsService,
   ) {}
 
   // ─── Conversations ────────────────────────────────────────────
@@ -46,15 +48,17 @@ export class OmniController {
    */
   @Get('conversations')
   async listConversations(
-    @Query('page') page = '0',
+    @Query('page') page = '1',
     @Query('limit') limit = '20',
     @Query('status') status?: string,
     @Query('channelType') channelType?: string,
     @Query('assignedAgent') assignedAgent?: string,
     @Query('search') search?: string,
   ) {
-    // TODO: extract tenantId from authenticated user context
-    const tenantId = 'default-tenant';
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
 
     const statusFilter = status
       ? status.split(',')
@@ -94,7 +98,7 @@ export class OmniController {
   @Get('conversations/:id/messages')
   async getMessages(
     @Param('id') conversationId: string,
-    @Query('page') page = '0',
+    @Query('page') page = '1',
     @Query('limit') limit = '50',
   ) {
     // Verify conversation exists
@@ -121,9 +125,12 @@ export class OmniController {
       throw new BadRequestException('Content is required');
     }
 
-    // TODO: get tenantId and agentId from authenticated user
-    const tenantId = 'default-tenant';
-    const agentId = 'default-agent';
+    const tenantId = this.cls.get<string>('tenantId');
+    const agentId = this.cls.get<string>('userId');
+
+    if (!tenantId || !agentId) {
+      throw new BadRequestException('User or Tenant context not found');
+    }
 
     try {
       return await this.outboundService.sendAgentMessage({

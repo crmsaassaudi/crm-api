@@ -47,9 +47,20 @@ export class OutboundService {
       throw new Error(`Conversation ${conversationId} not found`);
     }
 
-    const channel = await this.channelRepo.findByIdWithCredentials(tenantId, conversation.channel.toString());
+    let channel = await this.channelRepo.findByIdWithCredentials(tenantId, conversation.channelId.toString());
+    
+    // Fallback: If channel record was deleted/re-created, try finding by account
+    if (!channel && (conversation as any).channelAccount) {
+      this.logger.log(`Channel ${conversation.channelId} not found, searching by account ${(conversation as any).channelAccount}`);
+      channel = await this.channelRepo.findByAccountWithCredentials(
+        tenantId, 
+        conversation.channelType, 
+        (conversation as any).channelAccount
+      );
+    }
+    
     if (!channel) {
-      throw new Error(`Channel ${conversation.channel.toString()} not found`);
+      throw new Error(`Channel for conversation ${conversationId} not found or disconnected`);
     }
 
     this.logger.log(
@@ -76,18 +87,20 @@ export class OutboundService {
 
     // 4. Send to Provider API via Adapter
     try {
+      let adapterResponse: any = null;
       const adapter = this.adapters.get(conversation.channelType.toLowerCase() as ChannelType);
       if (adapter) {
-        await adapter.send(
-          conversation.externalId,
+        adapterResponse = await adapter.send(
+          conversation.customer.externalId,
           content,
           messageType,
-          { credentials: channel.credentials },
+          { credentials: channel.credentials, account: channel.account },
         );
       }
 
-      // Update status to sent
-      await this.messageRepo.updateStatus(message._id.toString(), 'sent');
+      // Update status to sent and save external ID
+      const externalId = (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
+      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
 
       this.eventEmitter.emit('omni.message.sent', {
         tenantId,
@@ -96,16 +109,17 @@ export class OutboundService {
         senderType: 'agent',
         messageType,
         content,
-        messageId: message._id.toString(),
+        messageId: message.id,
+        externalMessageId: externalId,
         status: 'sent',
         timestamp: new Date().toISOString(),
         source,
       });
 
-      return { ok: true, messageId: message._id.toString() };
+      return { ok: true, messageId: message.id, externalMessageId: externalId };
     } catch (error) {
       this.logger.error(`Failed to send message via provider: ${error.message}`);
-      await this.messageRepo.updateStatus(message._id.toString(), 'failed');
+      await this.messageRepo.updateStatus(message.id, 'failed');
       throw error;
     }
   }

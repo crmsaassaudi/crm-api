@@ -78,7 +78,7 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   metadata: Record<string, any>;
 
   /** The provider's message ID for deduplication */
-  @Prop({ index: true })
+  @Prop()
   externalMessageId: string;
 }
 
@@ -95,7 +95,13 @@ OmniMessageSchema.index(
 );
 
 // Deduplication: prevent processing the same webhook message twice
+// Use partialFilterExpression to only include documents where externalMessageId is a non-null string.
+// This allows outbound messages (which start with no external ID) to coexist without conflict.
 OmniMessageSchema.index(
   { tenant: 1, externalMessageId: 1 },
-  { unique: true, sparse: true, name: 'dedup_external_message' },
+  { 
+    unique: true, 
+    name: 'dedup_external_message',
+    partialFilterExpression: { externalMessageId: { $type: 'string' } },
+  },
 );

@@ -13,6 +13,7 @@ export interface OmniConversation {
   /** The channel this conversation belongs to */
   channelId: string;
   channelType: ChannelType;
+  channelAccount: string;
 
   /** External thread / conversation ID from the provider */
   externalConversationId: string;
@@ -37,7 +38,7 @@ export interface OmniConversation {
 
   /** Snippet of the last message for the chat list */
   lastMessage: string;
-  lastMessageAt: Date;
+  lastMessageAt: Date | null;
 
   unreadCount: number;
 

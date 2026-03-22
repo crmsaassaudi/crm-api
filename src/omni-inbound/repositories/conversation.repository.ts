@@ -5,6 +5,10 @@ import {
   OmniConversationSchemaClass,
   OmniConversationDocument,
 } from '../infrastructure/persistence/document/entities/omni-conversation.schema';
+import { OmniConversation } from '../domain/omni-conversation';
+import { OmniConversationMapper } from '../infrastructure/persistence/document/mappers/omni-conversation.mapper';
+import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
+import { pagination } from '../../utils/pagination';
 
 export interface ConversationQuery {
   tenant: string;
@@ -14,14 +18,6 @@ export interface ConversationQuery {
   search?: string;
 }
 
-export interface PaginatedResult<T> {
-  items: T[];
-  total: number;
-  page: number;
-  limit: number;
-  hasMore: boolean;
-}
-
 @Injectable()
 export class ConversationRepository {
   constructor(
@@ -29,8 +25,9 @@ export class ConversationRepository {
     private readonly model: Model<OmniConversationDocument>,
   ) {}
 
-  async findById(id: string): Promise<OmniConversationDocument | null> {
-    return this.model.findById(id).exec();
+  async findById(id: string): Promise<OmniConversation | null> {
+    const doc = await this.model.findById(id).exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
   /**
@@ -40,24 +37,28 @@ export class ConversationRepository {
    */
   async findActiveByExternalId(
     tenant: string,
-    channel: string,
+    channelType: string,
+    channelAccount: string,
     externalId: string,
-  ): Promise<OmniConversationDocument | null> {
-    return this.model
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
       .findOne({
         tenant,
-        channel,
+        channelType,
+        channelAccount,
         externalId,
         status: { $in: ['open', 'pending'] },
       })
       .sort({ createdAt: -1 }) // latest active session
       .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
   async create(
     data: Partial<OmniConversationSchemaClass>,
-  ): Promise<OmniConversationDocument> {
-    return this.model.create(data);
+  ): Promise<OmniConversation> {
+    const doc = await this.model.create(data);
+    return OmniConversationMapper.toDomain(doc);
   }
 
   /**
@@ -67,7 +68,7 @@ export class ConversationRepository {
     query: ConversationQuery,
     page: number,
     limit: number,
-  ): Promise<PaginatedResult<OmniConversationDocument>> {
+  ): Promise<PaginationResponseDto<OmniConversation>> {
     const filter: FilterQuery<OmniConversationDocument> = {
       tenant: query.tenant,
     };
@@ -91,30 +92,31 @@ export class ConversationRepository {
     }
 
     const sort: Record<string, SortOrder> = { lastMessageAt: -1 };
+    
+    // Convert 1-indexed to 0-indexed for Mongoose skip
+    const safePage = Math.max(1, page);
+    const skip = (safePage - 1) * limit;
 
     const [items, total] = await Promise.all([
       this.model
         .find(filter)
         .sort(sort)
-        .skip(page * limit)
+        .skip(skip)
         .limit(limit)
         .exec(),
       this.model.countDocuments(filter).exec(),
     ]);
 
-    return {
-      items,
-      total,
-      page,
-      limit,
-      hasMore: (page + 1) * limit < total,
-    };
+    const mappedItems = items.map(doc => OmniConversationMapper.toDomain(doc));
+
+    return pagination(mappedItems, total, { page: safePage, limit });
   }
 
-  async updateStatus(id: string, status: string): Promise<OmniConversationDocument | null> {
-    return this.model
+  async updateStatus(id: string, status: string): Promise<OmniConversation | null> {
+    const doc = await this.model
       .findByIdAndUpdate(id, { status }, { new: true })
       .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
   async updateLastMessage(
@@ -131,21 +133,22 @@ export class ConversationRepository {
       .exec();
   }
 
-  async addTag(id: string, tag: string): Promise<OmniConversationDocument | null> {
-    return this.model
+  async addTag(id: string, tag: string): Promise<OmniConversation | null> {
+    const doc = await this.model
       .findByIdAndUpdate(
         id,
         { $addToSet: { tags: tag } },
         { new: true },
       )
       .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
   async claimConversation(
     id: string,
     agentId: string,
-  ): Promise<OmniConversationDocument | null> {
-    return this.model
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
       .findByIdAndUpdate(
         id,
         {
@@ -156,6 +159,7 @@ export class ConversationRepository {
         { new: true },
       )
       .exec();
+      return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
   async resetUnreadCount(id: string): Promise<void> {

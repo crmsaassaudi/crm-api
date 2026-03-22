@@ -21,6 +21,9 @@ export interface OmniPayload {
   /** Reference to the Channel document in our DB */
   channelId: string;
 
+  /** Stable provider identifier (e.g. Page ID, OA ID) */
+  channelAccount: string;
+
   /** Provider type enum */
   channelType: ChannelType;
 

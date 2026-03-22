@@ -44,4 +44,10 @@ export class ChannelsController {
   delete(@Param('id') id: string) {
     return this.service.delete(id);
   }
+
+  @Post(':id/disconnect')
+  @HttpCode(HttpStatus.OK)
+  disconnect(@Param('id') id: string) {
+    return this.service.disconnect(id);
+  }
 }

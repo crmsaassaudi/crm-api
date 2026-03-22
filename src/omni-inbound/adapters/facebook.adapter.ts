@@ -43,6 +43,9 @@ export class FacebookAdapter implements ChannelAdapter {
     // FB batches events — we normalise the first messaging entry.
     // The controller should iterate `entry[].messaging[]` and call this once per event.
     const messaging = rawPayload;
+    const isEcho = !!messaging.message?.is_echo;
+    const pageId = isEcho ? messaging.sender.id : messaging.recipient.id;
+    const consumerId = isEcho ? messaging.recipient.id : messaging.sender.id;
 
     const messageType = this.resolveMessageType(messaging.message);
     const mediaUrl = this.extractMediaUrl(messaging.message);
@@ -50,9 +53,10 @@ export class FacebookAdapter implements ChannelAdapter {
     return {
       tenantId,
       channelId,
+      channelAccount: pageId,
       channelType: this.channelType,
       senderId: messaging.sender.id,
-      senderType: 'customer',
+      senderType: isEcho ? 'agent' : 'customer',
       messageType,
       content: messaging.message?.text ?? '',
       mediaUrl: mediaUrl ?? undefined,
@@ -60,9 +64,10 @@ export class FacebookAdapter implements ChannelAdapter {
         mid: messaging.message?.mid,
         quickReply: messaging.message?.quick_reply,
         replyTo: messaging.message?.reply_to,
+        isEcho,
       },
       externalMessageId: messaging.message?.mid ?? '',
-      externalConversationId: `${messaging.sender.id}_${messaging.recipient.id}`,
+      externalConversationId: `${consumerId}_${pageId}`,
       timestamp: new Date(messaging.timestamp),
     };
   }
@@ -118,6 +123,8 @@ export class FacebookAdapter implements ChannelAdapter {
       throw new Error('Facebook adapter lacks access token to send message');
     }
 
+    const pageId = channelConfig?.account || 'me';
+
     const payload: any = {
       recipient: { id: recipientId },
       messaging_type: 'RESPONSE',
@@ -126,7 +133,7 @@ export class FacebookAdapter implements ChannelAdapter {
 
     try {
       const response = await axios.post(
-        'https://graph.facebook.com/v19.0/me/messages',
+        `https://graph.facebook.com/v19.0/${pageId}/messages`,
         payload,
         { params: { access_token: accessToken } }
       );

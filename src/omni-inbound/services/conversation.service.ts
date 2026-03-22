@@ -44,7 +44,8 @@ export class ConversationService {
       // ── Step 2: Find or create conversation (session management) ──
       let conversation = await this.conversationRepo.findActiveByExternalId(
         payload.tenantId,
-        payload.channelId,
+        this.toSchemaChannelType(payload.channelType),
+        payload.channelAccount,
         payload.externalConversationId,
       );
 
@@ -53,6 +54,7 @@ export class ConversationService {
         conversation = await this.conversationRepo.create({
           tenant: payload.tenantId,
           channel: payload.channelId,
+          channelAccount: payload.channelAccount,
           channelType: this.toSchemaChannelType(payload.channelType),
           externalId: payload.externalConversationId,
           customer: {
@@ -67,7 +69,7 @@ export class ConversationService {
         });
 
         this.logger.log(
-          `Created new conversation ${conversation._id} ` +
+          `Created new conversation ${conversation.id} ` +
             `for customer ${payload.senderId} on ${payload.channelType}`,
         );
       }
@@ -86,7 +88,7 @@ export class ConversationService {
       // ── Step 4: Save the message ───────────────────────────────
       await this.messageRepo.create({
         tenant: payload.tenantId,
-        conversation: conversation._id.toString(),
+        conversation: conversation.id,
         senderId: payload.senderId,
         senderType: payload.senderType,
         messageType: payload.messageType,
@@ -104,14 +106,14 @@ export class ConversationService {
         `[${payload.messageType}]`;
 
       await this.conversationRepo.updateLastMessage(
-        conversation._id.toString(),
+        conversation.id,
         messagePreview.substring(0, 200),
         payload.timestamp,
       );
 
       this.logger.log(
         `Saved message ${payload.externalMessageId} ` +
-          `to conversation ${conversation._id}`,
+          `to conversation ${conversation.id}`,
       );
     } catch (error) {
       // If it's a duplicate key error (race condition), just log and skip

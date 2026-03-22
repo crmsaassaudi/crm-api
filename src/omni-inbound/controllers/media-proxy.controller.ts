@@ -19,7 +19,7 @@ import { MediaProxyService } from '../services/media-proxy.service';
  * This gives agents a stable URL to view images and files
  * even after the provider's original URL has expired (Zalo).
  */
-@Controller('omni/media')
+@Controller({ path: 'omni/media', version: '1' })
 export class MediaProxyController {
   private readonly logger = new Logger(MediaProxyController.name);
 

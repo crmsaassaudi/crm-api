@@ -30,7 +30,7 @@ import { WebhookJobData } from '../queue/webhook-processor';
  * this controller pushes each event to the BullMQ `omni-webhooks` queue
  * and immediately returns 200 OK to the provider.
  */
-@Controller('omni/webhook')
+@Controller({ path: 'omni/webhook', version: '1' })
 @Public() // Webhooks are unauthenticated — validated via HMAC signatures
 export class InboundController {
   private readonly logger = new Logger(InboundController.name);
@@ -172,7 +172,7 @@ export class InboundController {
 
     const dbType = channelType.charAt(0).toUpperCase() + channelType.slice(1);
     try {
-      const channel = await this.channelsService.findByAccount(dbType, accountId);
+      const channel = await this.channelsService.findAnyByAccount(dbType, accountId);
       return { tenantId: channel.tenant, channelId: channel.id };
     } catch (err) {
       this.logger.error(`Channel not found for account ${accountId} (type: ${dbType})`);

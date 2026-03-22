@@ -37,6 +37,9 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   })
   channel: string;
 
+  @Prop({ required: true, index: true })
+  channelAccount: string;
+
   @Prop({ required: true, enum: CHANNEL_TYPES })
   channelType: string;
 
@@ -106,7 +109,7 @@ OmniConversationSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
 
 // Partial unique index: ensure only ONE active (open or pending) session exists per customer thread identifiers.
 OmniConversationSchema.index(
-  { tenant: 1, channel: 1, externalId: 1 },
+  { tenant: 1, channelType: 1, channelAccount: 1, externalId: 1 },
   { 
     unique: true, 
     name: 'unique_active_session',

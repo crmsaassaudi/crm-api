@@ -25,8 +25,21 @@ export class ChannelRepository {
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
-  async findByAccount(type: string, account: string): Promise<Channel | null> {
+  async findByAccount(tenant: string, type: string, account: string): Promise<Channel | null> {
+    const doc = await this.model.findOne({ tenant, type, account }).exec();
+    return doc ? ChannelMapper.toDomain(doc) : null;
+  }
+
+  async findAnyByAccount(type: string, account: string): Promise<Channel | null> {
     const doc = await this.model.findOne({ type, account }).exec();
+    return doc ? ChannelMapper.toDomain(doc) : null;
+  }
+
+  async findByAccountWithCredentials(tenant: string, type: string, account: string): Promise<Channel | null> {
+    const doc = await this.model
+      .findOne({ tenant, type, account, status: 'Connected' })
+      .select('+credentials')
+      .exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
