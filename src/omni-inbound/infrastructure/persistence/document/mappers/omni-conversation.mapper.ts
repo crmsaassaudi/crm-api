@@ -45,6 +45,8 @@ export class OmniConversationMapper {
       closedByAgentId: (raw as any).closedByAgentId ?? null,
       closedAt: (raw as any).closedAt ?? null,
       closeReason: (raw as any).closeReason ?? null,
+      resolveNote: (raw as any).resolveNote ?? null,
+      resolveSource: (raw as any).resolveSource ?? null,
       createdAt: (raw as any).createdAt,
       updatedAt: (raw as any).updatedAt,
     };
@@ -76,6 +78,8 @@ export class OmniConversationMapper {
     (raw as any).closedByAgentId = domain.closedByAgentId;
     (raw as any).closedAt = domain.closedAt;
     (raw as any).closeReason = domain.closeReason;
+    (raw as any).resolveNote = domain.resolveNote;
+    (raw as any).resolveSource = domain.resolveSource;
     
     // Default system fields handled by mongoose logic generally
     return raw;

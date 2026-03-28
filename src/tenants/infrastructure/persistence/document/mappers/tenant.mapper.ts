@@ -16,6 +16,12 @@ export class TenantMapper {
     tenant.owner = raw.owner ? raw.owner.toString() : null!;
     tenant.subscriptionPlan = raw.subscriptionPlan;
     tenant.status = raw.status;
+
+    // Extract plain object to avoid Mongoose subdocument serialization issues
+    tenant.omniSettings = raw.omniSettings
+      ? { resolveNoteMode: raw.omniSettings.resolveNoteMode }
+      : { resolveNoteMode: 'optional' };
+
     tenant.createdAt = raw.createdAt;
     tenant.updatedAt = raw.updatedAt;
     return tenant;

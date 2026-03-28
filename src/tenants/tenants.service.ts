@@ -456,4 +456,11 @@ export class TenantsService {
   async findByIds(ids: string[]): Promise<Tenant[]> {
     return this.tenantsRepository.findByIds(ids);
   }
+
+  async updateOmniSettings(
+    tenantId: string,
+    omniSettings: { resolveNoteMode: 'disabled' | 'optional' | 'required' },
+  ): Promise<Tenant | null> {
+    return this.tenantsRepository.updateOmniSettings(tenantId, omniSettings);
+  }
 }

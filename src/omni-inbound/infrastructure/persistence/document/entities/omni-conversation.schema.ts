@@ -123,10 +123,28 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
 
   @Prop({
     type: String,
-    enum: ['resolved_by_agent', 'auto_resolved', 'customer_left', 'other', null],
+    enum: ['resolved_by_agent', 'auto_resolved', 'customer_left', 'bot_resolved', 'system_resolved', 'other', null],
     default: null,
   })
   closeReason: string | null;
+
+  /** Optional note written by the agent when resolving the conversation */
+  @Prop({ type: String, default: null })
+  resolveNote: string | null;
+
+  /**
+   * Who or what triggered the resolution:
+   * - 'agent'  — manually resolved by a human agent
+   * - 'auto'   — auto-resolved by inactivity timer
+   * - 'bot'    — resolved by a chatbot/automation
+   * - 'system' — resolved by a system process (import, migration, etc.)
+   */
+  @Prop({
+    type: String,
+    enum: ['agent', 'auto', 'bot', 'system', null],
+    default: null,
+  })
+  resolveSource: string | null;
 }
 
 export const OmniConversationSchema = SchemaFactory.createForClass(

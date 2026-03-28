@@ -159,6 +159,11 @@ export class UsersService {
     return this.usersRepository.findByIds(ids);
   }
 
+  /** Resolve user names across tenant boundary (e.g. agent names in conversation sessions) */
+  findByIdsGlobal(ids: User['id'][]): Promise<User[]> {
+    return this.usersRepository.findByIdsGlobal(ids);
+  }
+
   findByEmail(email: User['email']): Promise<NullableType<User>> {
     return this.usersRepository.findByEmail(email);
   }

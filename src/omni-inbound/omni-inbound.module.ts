@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 
@@ -62,6 +62,9 @@ import {
 import { ChannelsModule } from '../channels/channels.module';
 import { RedisModule } from '../redis/redis.module';
 import { ContactsModule } from '../contacts/contacts.module';
+import { UsersModule } from '../users/users.module';
+import { TenantsModule } from '../tenants/tenants.module';
+import { AuthModule } from '../auth/auth.module';
 
 /**
  * OmniInboundModule — the complete omni-channel backend.
@@ -82,6 +85,9 @@ import { ContactsModule } from '../contacts/contacts.module';
     ChannelsModule,
     RedisModule,
     ContactsModule,
+    UsersModule,
+    TenantsModule,
+    forwardRef(() => AuthModule),
     OmniQueueModule,
     MongooseModule.forFeature([
       { name: OmniConversationSchemaClass.name, schema: OmniConversationSchema },

@@ -34,6 +34,11 @@ export class Tenant {
   status: TenantStatus;
 
   @ApiProperty()
+  omniSettings: {
+    resolveNoteMode: 'disabled' | 'optional' | 'required';
+  };
+
+  @ApiProperty()
   createdAt: Date;
 
   @ApiProperty()

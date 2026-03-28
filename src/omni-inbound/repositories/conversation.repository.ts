@@ -128,12 +128,16 @@ export class ConversationRepository {
     status: 'resolved' | 'closed',
     agentId: string,
     reason?: string,
+    note?: string,
+    resolveSource?: string,
   ): Promise<OmniConversation | null> {
     const update: Record<string, any> = { status };
 
     if (status === 'resolved') {
       update.resolvedByAgentId = agentId;
       update.resolvedAt = new Date();
+      update.resolveSource = resolveSource ?? 'agent';
+      if (note) update.resolveNote = note;
     } else if (status === 'closed') {
       update.closedByAgentId = agentId;
       update.closedAt = new Date();

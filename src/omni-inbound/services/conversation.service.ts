@@ -171,7 +171,25 @@ export class ConversationService {
         reopenCount = (previousConv.reopenCount ?? 0) + 1;
       }
 
-      // No active session → create a new one
+      // ── Step 3b: Eagerly fetch Facebook profile before creating conversation ──
+      // This ensures the conversation is created with the real name/avatar from the start.
+      let enrichedProfile: { name?: string; avatarUrl?: string; phone?: string } = {};
+      if (payload.channelType === 'facebook' && payload.metadata?.accessToken) {
+        try {
+          const profile = await this.facebookAdapter.enrichProfile(
+            payload.senderId,
+            payload.metadata.accessToken,
+          );
+          if (profile.name && profile.name !== payload.senderId) {
+            enrichedProfile = profile;
+            this.logger.log(`Pre-enriched profile for ${payload.senderId}: ${profile.name}`);
+          }
+        } catch (err) {
+          this.logger.warn(`Profile pre-enrichment skipped: ${err.message}`);
+        }
+      }
+
+      // No active session → create a new one (with enriched profile)
       const conversation = await this.conversationRepo.create({
         tenant: payload.tenantId,
         channel: payload.channelId,
@@ -181,9 +199,9 @@ export class ConversationService {
         customer: {
           externalId: payload.senderId,
           contactId: contactId ?? undefined,
-          name: payload.metadata.contactName ?? payload.senderId,
-          avatarUrl: payload.metadata.avatarUrl ?? undefined,
-          phone: payload.metadata.phone ?? undefined,
+          name: enrichedProfile.name ?? payload.metadata.contactName ?? payload.senderId,
+          avatarUrl: enrichedProfile.avatarUrl ?? payload.metadata.avatarUrl ?? undefined,
+          phone: enrichedProfile.phone ?? payload.metadata.phone ?? undefined,
         },
         status: 'open',
         lastMessage: payload.content,
@@ -201,12 +219,13 @@ export class ConversationService {
             `for customer ${payload.senderId} on ${payload.channelType}`,
         );
 
-        // Emit reopen event for activity log
+        // Emit reopen event for activity log + realtime
         this.eventEmitter.emit('omni.conversation.reopened', {
           tenantId: payload.tenantId,
           conversationId,
           previousConversationId,
           reopenCount,
+          conversation, // Full object for frontend rendering
         });
       } else {
         this.logger.log(
@@ -215,12 +234,13 @@ export class ConversationService {
         );
       }
 
-      // Emit created event
+      // Emit created event with full conversation for realtime broadcast
       this.eventEmitter.emit('omni.conversation.created', {
         tenantId: payload.tenantId,
         conversationId,
         channelType: payload.channelType,
         senderId: payload.senderId,
+        conversation, // Full object for frontend rendering
       });
 
       // ── Step 6a: Update identity cache with new mapping ─────
@@ -231,24 +251,9 @@ export class ConversationService {
         { contactId: contactId ?? payload.senderId, conversationId },
       );
 
-      // ── Step 6b: Async profile enrichment (Facebook) ──────────
-      // Fire-and-forget: does not block message processing
-      if (payload.channelType === 'facebook' && payload.metadata?.accessToken) {
-        this.facebookAdapter
-          .enrichProfile(payload.senderId, payload.metadata.accessToken)
-          .then((profile) => {
-            if (profile.name !== payload.senderId) {
-              this.conversationRepo
-                .updateCustomerProfile(conversationId!, profile)
-                .catch((err) =>
-                  this.logger.error(`Profile update failed: ${err.message}`),
-                );
-            }
-          })
-          .catch((err) =>
-            this.logger.warn(`Profile enrichment skipped: ${err.message}`),
-          );
-      }
+      // Profile enrichment already done eagerly before conversation creation (Step 3b above).
+      // The omni.conversation.customer_updated event/gateway path remains as a fallback
+      // for cases where enrichment fails initially and retries later.
     }
 
     // ── Step 5a: Cache media if present ───────────────────────
@@ -296,6 +301,13 @@ export class ConversationService {
       `Saved message ${payload.externalMessageId} ` +
         `to conversation ${conversationId}`,
     );
+
+    // Emit persisted event with internal IDs for realtime broadcast
+    this.eventEmitter.emit('omni.message.persisted', {
+      ...payload,
+      conversationId,
+      messageId: payload.externalMessageId,
+    });
   }
 
   // ────────────────────────────────────────────────────────────────

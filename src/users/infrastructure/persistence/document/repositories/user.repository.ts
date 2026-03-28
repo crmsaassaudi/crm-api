@@ -117,6 +117,19 @@ export class UsersDocumentRepository
     return userObjects.map((userObject) => UserMapper.toDomain(userObject));
   }
 
+  /**
+   * Find users by IDs without applying tenant filter.
+   * Used for cross-context lookups like resolving agent names in conversation history
+   * where the CLS tenant context may not match the agents' tenant membership.
+   */
+  async findByIdsGlobal(ids: User['id'][]): Promise<User[]> {
+    const userObjects = await this.model
+      .find({ _id: { $in: ids.map(String) } })
+      .setOptions({ skipTenantFilter: true })
+      .select('firstName lastName email');
+    return userObjects.map((userObject) => UserMapper.toDomain(userObject));
+  }
+
   async findManyByTenant(tenantId: string): Promise<User[]> {
     const filter = { 'tenants.tenant': tenantId };
     const userObjects = await this.model.find(filter);

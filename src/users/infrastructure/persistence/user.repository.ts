@@ -23,6 +23,8 @@ export abstract class UserRepository {
 
   abstract findById(id: User['id']): Promise<NullableType<User>>;
   abstract findByIds(ids: User['id'][]): Promise<User[]>;
+  /** Find by IDs without tenant scoping — use when resolving cross-tenant references (e.g. agent names in history) */
+  abstract findByIdsGlobal(ids: User['id'][]): Promise<User[]>;
   abstract findManyByTenant(tenantId: string): Promise<User[]>;
   abstract findByEmail(email: User['email']): Promise<NullableType<User>>;
   abstract findByKeycloakIdAndProvider({

@@ -59,6 +59,8 @@ export interface OmniConversation {
   closedByAgentId: string | null;
   closedAt: Date | null;
   closeReason: string | null;
+  resolveNote: string | null;
+  resolveSource: 'agent' | 'auto' | 'bot' | 'system' | null;
 
   createdAt: Date;
   updatedAt: Date;

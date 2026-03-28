@@ -69,4 +69,14 @@ export class TenantsRepository {
       .exec();
     return updated ? TenantMapper.toDomain(updated) : null;
   }
+
+  async updateOmniSettings(
+    tenantId: string,
+    omniSettings: { resolveNoteMode: 'disabled' | 'optional' | 'required' },
+  ): Promise<Tenant | null> {
+    const updated = await this.tenantsModel
+      .findByIdAndUpdate(tenantId, { $set: { omniSettings } }, { new: true })
+      .exec();
+    return updated ? TenantMapper.toDomain(updated) : null;
+  }
 }

@@ -21,6 +21,8 @@ import { MessageRepository } from '../repositories/message.repository';
 import { OutboundService } from '../services/outbound.service';
 import { NoteService } from '../services/note.service';
 import { ActivityService } from '../services/activity.service';
+import { UsersService } from '../../users/users.service';
+import { TenantsService } from '../../tenants/tenants.service';
 
 /**
  * REST API for omni-channel conversations and messages.
@@ -48,6 +50,8 @@ export class OmniController {
     private readonly activityService: ActivityService,
     private readonly cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly usersService: UsersService,
+    private readonly tenantsService: TenantsService,
   ) {}
 
 
@@ -132,10 +136,17 @@ export class OmniController {
    * the same customer thread (same externalId), oldest-first.
    * This gives agents full context regardless of how many sessions
    * were opened and closed.
+   *
+   * @param convPage  Which batch of past conversations to load (default: 1 = most recent past batch)
+   * @param convLimit How many past conversations per batch (default 5 — a reasonable scroll chunk)
+   * @param msgPage   Pagination within the selected conversation batch
+   * @param limit     Messages per page
    */
   @Get('conversations/:id/history')
   async getConversationHistory(
     @Param('id') conversationId: string,
+    @Query('convPage') convPage = '1',
+    @Query('convLimit') convLimit = '5',
     @Query('page') page = '1',
     @Query('limit') limit = '50',
   ) {
@@ -145,7 +156,7 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
 
-    // Find ALL sessions (any status) for this customer thread
+    // ── Step 1: Get the total count of past sessions for this customer ──────
     const allConversations = await this.conversationRepo.findAllByExternalId(
       tenantId,
       conversation.channelType,
@@ -153,28 +164,70 @@ export class OmniController {
       conversation.externalConversationId,
     );
 
-    const conversationIds = allConversations.map((c) => c.id);
+    // Exclude the current (active) conversation — it's loaded separately
+    const pastConversations = allConversations.filter((c) => c.id !== conversationId);
+    const totalConversations = pastConversations.length;
 
-    // Return their messages combined, oldest-first, with pagination
-    const messages = await this.messageRepo.findByConversationIds(
-      conversationIds,
-      parseInt(page, 10),
-      Math.min(parseInt(limit, 10), 100),
+    // ── Step 2: Paginate the conversation set (newest-first batches) ─────────
+    const cp = Math.max(1, parseInt(convPage, 10));
+    const cl = Math.min(parseInt(convLimit, 10), 20);
+    const start = (cp - 1) * cl; // newest past first → slice from the end
+    const pagedConversations = pastConversations.slice(
+      Math.max(0, totalConversations - start - cl),
+      Math.max(0, totalConversations - start),
     );
 
-    // Include session metadata so the UI can draw separators
+    const conversationIds = pagedConversations.map((c) => c.id);
+
+    // ── Step 3: Fetch messages for this slice only ───────────────────────────
+    const messages = conversationIds.length > 0
+      ? await this.messageRepo.findByConversationIds(
+          conversationIds,
+          parseInt(page, 10),
+          Math.min(parseInt(limit, 10), 100),
+        )
+      : { data: [], total: 0, page: 1, limit: 50 };
+
+    // ── Step 4: Build session metadata ──────────────────────────────────────
+    const sessions = pagedConversations.map((c) => ({
+      id: c.id,
+      status: c.status,
+      createdAt: c.createdAt,
+      resolvedAt: c.resolvedAt,
+      closedAt: c.closedAt,
+      resolvedByAgentId: c.resolvedByAgentId,
+      closedByAgentId: c.closedByAgentId,
+      closeReason: c.closeReason,
+      resolveNote: c.resolveNote,
+      resolveSource: c.resolveSource,
+      lastMessage: c.lastMessage,
+    }));
+
+    // ── Step 5: Batch-resolve unique agent IDs → names (skip tenant filter) ──
+    const agentIds = [...new Set(
+      sessions.flatMap((s) =>
+        [s.resolvedByAgentId, s.closedByAgentId].filter(Boolean) as string[],
+      ),
+    )];
+    const agentMap = new Map<string, string>();
+    if (agentIds.length > 0) {
+      const users = await this.usersService.findByIdsGlobal(agentIds);
+      for (const u of users) {
+        const fullName = [u.firstName, u.lastName].filter(Boolean).join(' ');
+        agentMap.set(String(u.id), fullName || String(u.id));
+      }
+    }
+
     return {
       ...messages,
-      sessions: allConversations.map((c) => ({
-        id: c.id,
-        status: c.status,
-        createdAt: c.createdAt,
-        resolvedAt: c.resolvedAt,
-        closedAt: c.closedAt,
-        resolvedByAgentId: c.resolvedByAgentId,
-        closedByAgentId: c.closedByAgentId,
-        closeReason: c.closeReason,
-        lastMessage: c.lastMessage,
+      totalConversations,
+      convPage: cp,
+      convLimit: cl,
+      hasMoreHistory: start + cl < totalConversations,
+      sessions: sessions.map((s) => ({
+        ...s,
+        resolvedByAgentName: s.resolvedByAgentId ? (agentMap.get(s.resolvedByAgentId) ?? s.resolvedByAgentId) : null,
+        closedByAgentName: s.closedByAgentId ? (agentMap.get(s.closedByAgentId) ?? s.closedByAgentId) : null,
       })),
     };
   }
@@ -227,6 +280,8 @@ export class OmniController {
     @Param('id') id: string,
     @Body('status') status: string,
     @Body('reason') reason?: string,
+    @Body('note') note?: string,
+    @Body('resolveSource') resolveSource?: string,
   ) {
     const validStatuses = ['open', 'pending', 'resolved', 'closed'];
     if (!validStatuses.includes(status)) {
@@ -252,6 +307,8 @@ export class OmniController {
         status,
         agentId,
         reason,
+        note,
+        resolveSource ?? 'agent',
       );
     } else {
       updated = await this.conversationRepo.updateStatus(id, status);
@@ -265,12 +322,14 @@ export class OmniController {
       oldStatus,
       agentId,
       reason,
+      note,
+      resolveSource: resolveSource ?? 'agent',
       channelType: conversation.channelType,
       channelAccount: conversation.channelAccount,
       externalConversationId: conversation.externalConversationId,
     });
 
-    this.logger.log(`Conversation ${id} status → ${status} (by agent ${agentId})`);
+    this.logger.log(`Conversation ${id} status → ${status} (by ${resolveSource ?? 'agent'} ${agentId})`);
     return updated;
   }
 
@@ -469,5 +528,39 @@ export class OmniController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async markAsRead(@Param('id') id: string) {
     await this.conversationRepo.resetUnreadCount(id);
+  }
+
+  // ─── Settings ─────────────────────────────────────────────────
+
+  /**
+   * GET /omni/settings
+   * Returns current omni-channel settings for the tenant.
+   */
+  @Get('settings')
+  async getSettings() {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) throw new BadRequestException('Tenant context not found');
+    const tenant = await this.tenantsService.findById(tenantId);
+    return tenant?.omniSettings ?? { resolveNoteMode: 'optional' };
+  }
+
+  /**
+   * PATCH /omni/settings
+   * Updates omni-channel settings.
+   */
+  @Patch('settings')
+  async updateSettings(@Body('resolveNoteMode') resolveNoteMode: string) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) throw new BadRequestException('Tenant context not found');
+    
+    const validModes = ['disabled', 'optional', 'required'];
+    if (!validModes.includes(resolveNoteMode)) {
+      throw new BadRequestException(`resolveNoteMode must be one of: ${validModes.join(', ')}`);
+    }
+
+    await this.tenantsService.updateOmniSettings(tenantId, {
+      resolveNoteMode: resolveNoteMode as 'disabled' | 'optional' | 'required',
+    });
+    return { resolveNoteMode };
   }
 }

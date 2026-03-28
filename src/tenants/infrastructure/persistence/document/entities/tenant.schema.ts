@@ -51,6 +51,20 @@ export class TenantSchemaClass extends EntityDocumentHelper {
   })
   status: TenantStatus;
 
+  @Prop({
+    type: {
+      resolveNoteMode: {
+        type: String,
+        enum: ['disabled', 'optional', 'required'],
+        default: 'optional',
+      },
+    },
+    default: () => ({ resolveNoteMode: 'optional' }),
+  })
+  omniSettings: {
+    resolveNoteMode: 'disabled' | 'optional' | 'required';
+  };
+
   @Prop()
   createdAt: Date;
 
