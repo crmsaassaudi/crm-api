@@ -38,6 +38,13 @@ export class OmniConversationMapper {
       linkedContactId: undefined, // Add if needed
       linkedLeadId: undefined,    // Add if needed
       tags: raw.tags || [],
+      reopenCount: (raw as any).reopenCount ?? 0,
+      previousConversationId: (raw as any).previousConversationId ?? null,
+      resolvedByAgentId: (raw as any).resolvedByAgentId ?? null,
+      resolvedAt: (raw as any).resolvedAt ?? null,
+      closedByAgentId: (raw as any).closedByAgentId ?? null,
+      closedAt: (raw as any).closedAt ?? null,
+      closeReason: (raw as any).closeReason ?? null,
       createdAt: (raw as any).createdAt,
       updatedAt: (raw as any).updatedAt,
     };
@@ -62,6 +69,13 @@ export class OmniConversationMapper {
     raw.lastMessageAt = domain.lastMessageAt;
     raw.unreadCount = domain.unreadCount;
     raw.tags = domain.tags;
+    (raw as any).reopenCount = domain.reopenCount;
+    (raw as any).previousConversationId = domain.previousConversationId;
+    (raw as any).resolvedByAgentId = domain.resolvedByAgentId;
+    (raw as any).resolvedAt = domain.resolvedAt;
+    (raw as any).closedByAgentId = domain.closedByAgentId;
+    (raw as any).closedAt = domain.closedAt;
+    (raw as any).closeReason = domain.closeReason;
     
     // Default system fields handled by mongoose logic generally
     return raw;

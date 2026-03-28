@@ -35,13 +35,22 @@ export class InboundProcessorService {
     rawPayload: any,
     tenantId: string,
     channelId: string,
-  ): Promise<OmniPayload> {
+    channelConfig?: any,
+  ): Promise<OmniPayload | null> {
     const adapter = this.adapters.get(channelType);
     if (!adapter) {
       throw new Error(`No adapter registered for channel type: ${channelType}`);
     }
 
-    const normalized = adapter.normalize(rawPayload, tenantId, channelId);
+    const normalized = adapter.normalize(rawPayload, tenantId, channelId, channelConfig);
+
+    // Adapter returns null for non-message events (delivery receipts, read receipts, etc.)
+    if (normalized === null) {
+      this.logger.debug(
+        `Skipping non-message ${channelType} event (delivery/read/reaction/referral)`,
+      );
+      return null;
+    }
 
     this.logger.log(
       `Processed ${channelType} message: ${normalized.externalMessageId} ` +

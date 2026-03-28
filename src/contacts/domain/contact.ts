@@ -60,4 +60,10 @@ export class Contact {
 
   @ApiProperty()
   deletedAt?: Date;
+
+  @ApiProperty({ example: 'psid_123456' })
+  omniSenderId?: string;
+
+  @ApiProperty({ example: true })
+  isShadow?: boolean;
 }

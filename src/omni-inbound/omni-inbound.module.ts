@@ -25,6 +25,10 @@ import { AgentPresenceGateway } from './services/agent-presence.gateway';
 import { OmniGateway } from './services/omni.gateway';
 import { ConversationService } from './services/conversation.service';
 import { OutboundService } from './services/outbound.service';
+import { IdentityService } from './services/identity.service';
+import { NoteService } from './services/note.service';
+import { AssignmentService } from './services/assignment.service';
+import { ActivityService } from './services/activity.service';
 
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
@@ -33,6 +37,8 @@ import { WebhookProcessor } from './queue/webhook-processor';
 // Repositories
 import { ConversationRepository } from './repositories/conversation.repository';
 import { MessageRepository } from './repositories/message.repository';
+import { NoteRepository } from './repositories/note.repository';
+import { ActivityRepository } from './repositories/activity.repository';
 
 // Schemas
 import {
@@ -43,10 +49,19 @@ import {
   OmniMessageSchemaClass,
   OmniMessageSchema,
 } from './infrastructure/persistence/document/entities/omni-message.schema';
+import {
+  OmniNoteSchemaClass,
+  OmniNoteSchema,
+} from './infrastructure/persistence/document/entities/omni-note.schema';
+import {
+  ConversationActivitySchemaClass,
+  ConversationActivitySchema,
+} from './infrastructure/persistence/document/entities/conversation-activity.schema';
 
 // External modules
 import { ChannelsModule } from '../channels/channels.module';
 import { RedisModule } from '../redis/redis.module';
+import { ContactsModule } from '../contacts/contacts.module';
 
 /**
  * OmniInboundModule — the complete omni-channel backend.
@@ -58,15 +73,21 @@ import { RedisModule } from '../redis/redis.module';
  * 4. Webhook Queue        — BullMQ for async webhook processing
  * 5. Persistence          — Mongoose schemas, repositories, ConversationService
  * 6. REST API             — OmniController for frontend integration
+ * 7. Notes                — NoteService, NoteRepository
+ * 8. Assignment Engine    — AssignmentService (round-robin, least-busy)
+ * 9. Audit Trail          — ActivityService, ActivityRepository
  */
 @Module({
   imports: [
     ChannelsModule,
     RedisModule,
+    ContactsModule,
     OmniQueueModule,
     MongooseModule.forFeature([
       { name: OmniConversationSchemaClass.name, schema: OmniConversationSchema },
       { name: OmniMessageSchemaClass.name, schema: OmniMessageSchema },
+      { name: OmniNoteSchemaClass.name, schema: OmniNoteSchema },
+      { name: ConversationActivitySchemaClass.name, schema: ConversationActivitySchema },
     ]),
   ],
   controllers: [InboundController, MediaProxyController, OmniController],
@@ -108,6 +129,18 @@ import { RedisModule } from '../redis/redis.module';
     MessageRepository,
     ConversationService,
     OutboundService,
+    IdentityService,
+
+    // ── Pillar 7: Notes ───────────────────────────────────────────
+    NoteRepository,
+    NoteService,
+
+    // ── Pillar 8: Assignment Engine ───────────────────────────────
+    AssignmentService,
+
+    // ── Pillar 9: Audit Trail ─────────────────────────────────────
+    ActivityRepository,
+    ActivityService,
   ],
   exports: [
     InboundProcessorService,
@@ -117,6 +150,10 @@ import { RedisModule } from '../redis/redis.module';
     MessageRepository,
     ConversationService,
     OutboundService,
+    IdentityService,
+    NoteService,
+    AssignmentService,
+    ActivityService,
   ],
 })
 export class OmniInboundModule {}

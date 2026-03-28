@@ -49,9 +49,24 @@ export class ContactsService {
     const emails = data.emails;
     const phones = data.phones;
 
+    // ── Phase 5.4: Lead Promotion (Shadow Contact) ──
+    const existingContact = await this.repository.findOne({ _id: id });
+    let additionalData: any = {};
+    if (existingContact && existingContact.isShadow) {
+      const hasNewEmail = emails && emails.length > 0;
+      const hasNewPhone = phones && phones.length > 0;
+      if (hasNewEmail || hasNewPhone) {
+        additionalData = {
+          isShadow: false,
+          lifecycleStage: 'marketing_qualified_lead', // Promoted from 'lead'
+        };
+      }
+    }
+
     // updatedBy is auto-injected by BaseDocumentRepository from CLS
     return this.repository.update(id, {
       ...data,
+      ...additionalData,
       ...(emails !== undefined ? { emails } : {}),
       ...(phones !== undefined ? { phones } : {}),
       owner,

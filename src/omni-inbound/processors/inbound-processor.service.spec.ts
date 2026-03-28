@@ -33,8 +33,8 @@ describe('InboundProcessorService', () => {
 
     const result = await service.process('facebook', raw, 'tenant_1', 'ch_1');
 
-    expect(result.channelType).toBe('facebook');
-    expect(result.content).toBe('Hello FB!');
+    expect(result!.channelType).toBe('facebook');
+    expect(result!.content).toBe('Hello FB!');
     expect(eventEmitter.emit).toHaveBeenCalledWith(
       'omni.message.received',
       expect.objectContaining({ channelType: 'facebook' }),
@@ -53,8 +53,8 @@ describe('InboundProcessorService', () => {
 
     const result = await service.process('zalo', raw, 'tenant_1', 'ch_2');
 
-    expect(result.channelType).toBe('zalo');
-    expect(result.content).toBe('Hello Zalo!');
+    expect(result!.channelType).toBe('zalo');
+    expect(result!.content).toBe('Hello Zalo!');
     expect(eventEmitter.emit).toHaveBeenCalledWith(
       'omni.message.received',
       expect.objectContaining({ channelType: 'zalo' }),
@@ -79,8 +79,8 @@ describe('InboundProcessorService', () => {
 
     const result = await service.process('whatsapp', raw, 'tenant_1', 'ch_3');
 
-    expect(result.channelType).toBe('whatsapp');
-    expect(result.content).toBe('Hello WA!');
+    expect(result!.channelType).toBe('whatsapp');
+    expect(result!.content).toBe('Hello WA!');
     expect(eventEmitter.emit).toHaveBeenCalledWith(
       'omni.message.received',
       expect.objectContaining({ channelType: 'whatsapp' }),

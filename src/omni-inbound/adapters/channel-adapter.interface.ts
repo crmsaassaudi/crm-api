@@ -14,9 +14,11 @@ export interface ChannelAdapter {
 
   /**
    * Transform a raw provider webhook body into a normalised `OmniPayload`.
+   * Returns `null` for non-message events (delivery receipts, read receipts,
+   * reactions, etc.) that should be silently skipped.
    * Throws if the payload is malformed or unsupported.
    */
-  normalize(rawPayload: any, tenantId: string, channelId: string): OmniPayload;
+  normalize(rawPayload: any, tenantId: string, channelId: string, channelConfig?: any): OmniPayload | null;
 
   /**
    * Validate the authenticity of an incoming webhook request

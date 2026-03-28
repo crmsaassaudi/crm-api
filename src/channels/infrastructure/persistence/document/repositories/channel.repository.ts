@@ -31,7 +31,10 @@ export class ChannelRepository {
   }
 
   async findAnyByAccount(type: string, account: string): Promise<Channel | null> {
-    const doc = await this.model.findOne({ type, account }).exec();
+    const doc = await this.model
+      .findOne({ type, account })
+      .select('+credentials')  // Include credentials so adapters can use the access token
+      .exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 

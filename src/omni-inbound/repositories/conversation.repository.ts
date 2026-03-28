@@ -119,6 +119,57 @@ export class ConversationRepository {
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
+  /**
+   * Update status with metadata — captures who resolved/closed and when.
+   * Also invalidates identity cache by emitting an event.
+   */
+  async updateStatusWithMetadata(
+    id: string,
+    status: 'resolved' | 'closed',
+    agentId: string,
+    reason?: string,
+  ): Promise<OmniConversation | null> {
+    const update: Record<string, any> = { status };
+
+    if (status === 'resolved') {
+      update.resolvedByAgentId = agentId;
+      update.resolvedAt = new Date();
+    } else if (status === 'closed') {
+      update.closedByAgentId = agentId;
+      update.closedAt = new Date();
+    }
+    if (reason) {
+      update.closeReason = reason;
+    }
+
+    const doc = await this.model
+      .findByIdAndUpdate(id, update, { new: true })
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Find the most recent conversation by external ID, regardless of status.
+   * Used when creating a new session to link back to the previous one.
+   */
+  async findLastByExternalId(
+    tenant: string,
+    channelType: string,
+    channelAccount: string,
+    externalId: string,
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findOne({
+        tenant,
+        channelType,
+        channelAccount,
+        externalId,
+      })
+      .sort({ createdAt: -1 })
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
   async updateLastMessage(
     id: string,
     lastMessage: string,
@@ -164,5 +215,68 @@ export class ConversationRepository {
 
   async resetUnreadCount(id: string): Promise<void> {
     await this.model.findByIdAndUpdate(id, { unreadCount: 0 }).exec();
+  }
+
+  /**
+   * Update the assigned agent for a conversation.
+   */
+  async updateAssignment(
+    id: string,
+    agentId: string | null,
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findByIdAndUpdate(
+        id,
+        { assignedAgent: agentId },
+        { new: true },
+      )
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Update the cached customer profile (name, avatarUrl) fetched from the platform.
+   * Used after creating a new conversation to enrich the display information.
+   */
+  async updateCustomerProfile(
+    id: string,
+    profile: { name?: string; avatarUrl?: string },
+  ): Promise<void> {
+    const update: Record<string, any> = {};
+    if (profile.name) update['customer.name'] = profile.name;
+    if (profile.avatarUrl) update['customer.avatarUrl'] = profile.avatarUrl;
+    if (Object.keys(update).length === 0) return;
+    await this.model.findByIdAndUpdate(id, { $set: update }).exec();
+  }
+
+  /**
+   * Find ALL conversations for a given customer thread (any status), sorted oldest-first.
+   * Used for cross-conversation message history.
+   */
+  async findAllByExternalId(
+    tenant: string,
+    channelType: string,
+    channelAccount: string,
+    externalId: string,
+  ): Promise<OmniConversation[]> {
+    const docs = await this.model
+      .find({ tenant, channelType, channelAccount, externalId })
+      .sort({ createdAt: 1 })
+      .exec();
+    return docs.map((doc) => OmniConversationMapper.toDomain(doc));
+  }
+
+  /**
+   * Count open/pending conversations assigned to a specific agent.
+   * Used by the least-busy assignment strategy.
+   */
+  async countOpenByAgent(tenant: string, agentId: string): Promise<number> {
+    return this.model
+      .countDocuments({
+        tenant,
+        assignedAgent: agentId,
+        status: { $in: ['open', 'pending'] },
+      })
+      .exec();
   }
 }

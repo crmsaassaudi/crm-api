@@ -14,6 +14,28 @@ describe('FacebookAdapter', () => {
   });
 
   describe('normalize', () => {
+    it('should return null for delivery events', () => {
+      const raw = {
+        sender: { id: 'psid_123' },
+        recipient: { id: 'page_456' },
+        timestamp: 1700000000000,
+        delivery: { mids: ['mid.xyz'], watermark: 1700000000000 },
+      };
+      const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
+      expect(result).toBeNull();
+    });
+
+    it('should return null for read events', () => {
+      const raw = {
+        sender: { id: 'psid_123' },
+        recipient: { id: 'page_456' },
+        timestamp: 1700000000000,
+        read: { watermark: 1700000000000 },
+      };
+      const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
+      expect(result).toBeNull();
+    });
+
     it('should normalize a text message', () => {
       const raw = {
         sender: { id: 'psid_123' },
@@ -25,7 +47,7 @@ describe('FacebookAdapter', () => {
         },
       };
 
-      const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
+      const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
       expect(result.tenantId).toBe('tenant_1');
       expect(result.channelId).toBe('channel_1');
@@ -56,7 +78,7 @@ describe('FacebookAdapter', () => {
         },
       };
 
-      const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
+      const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
       expect(result.messageType).toBe('image');
       expect(result.mediaUrl).toBe('https://cdn.fb.com/image.jpg');
@@ -79,7 +101,7 @@ describe('FacebookAdapter', () => {
         },
       };
 
-      const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
+      const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
       expect(result.messageType).toBe('video');
       expect(result.mediaUrl).toBe('https://cdn.fb.com/video.mp4');
@@ -98,7 +120,7 @@ describe('FacebookAdapter', () => {
         },
       };
 
-      const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
+      const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
       expect(result.metadata.mid).toBe('mid.abc123');
       expect(result.metadata.quickReply).toEqual({ payload: 'YES' });

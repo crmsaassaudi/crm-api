@@ -112,6 +112,7 @@ export class OmniGateway {
         tempId: data.tempId,
         messageId: result.messageId,
         timestamp: new Date().toISOString(),
+        createdAt: new Date(),
       };
 
       // Broadcast the message to other agents watching this conversation
@@ -123,6 +124,7 @@ export class OmniGateway {
         content: data.content,
         messageId: ack.messageId,
         timestamp: ack.timestamp,
+        createdAt: ack.createdAt,
       });
 
       return ack;
@@ -168,6 +170,7 @@ export class OmniGateway {
           content: payload.content,
           messageId: payload.messageId,
           timestamp: payload.timestamp,
+          createdAt: payload.createdAt || payload.timestamp || new Date(),
         });
     }
   }
@@ -270,5 +273,83 @@ export class OmniGateway {
 
     this.logger.log(`Agent ${userId} claimed conversation ${conversationId}`);
     return { ok: true };
+  }
+
+  // ─── Event listeners: status & assignment broadcasts ────────────
+
+  /**
+   * Broadcast status changes (resolve, close, reopen) to all agents.
+   */
+  @OnEvent('omni.conversation.status_changed')
+  handleStatusChanged(event: {
+    tenantId: string;
+    conversationId: string;
+    status: string;
+    oldStatus: string;
+    agentId: string;
+    reason?: string;
+  }) {
+    this.logger.log(
+      `Broadcasting status change: ${event.conversationId} → ${event.status}`,
+    );
+
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:conversation:status_changed', {
+        conversationId: event.conversationId,
+        status: event.status,
+        oldStatus: event.oldStatus,
+        changedBy: event.agentId,
+        reason: event.reason,
+        timestamp: new Date().toISOString(),
+      });
+  }
+
+  /**
+   * Broadcast agent assignment changes to all agents.
+   */
+  @OnEvent('omni.conversation.assigned')
+  handleAssignmentChanged(event: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string | null;
+    oldAgentId: string | null;
+  }) {
+    this.logger.log(
+      `Broadcasting assignment: ${event.conversationId} → ${event.agentId ?? 'unassigned'}`,
+    );
+
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:conversation:assigned', {
+        conversationId: event.conversationId,
+        agentId: event.agentId,
+        oldAgentId: event.oldAgentId,
+        timestamp: new Date().toISOString(),
+      });
+  }
+
+  /**
+   * Broadcast new note creation to agents watching the conversation.
+   */
+  @OnEvent('omni.conversation.note_added')
+  handleNoteAdded(event: {
+    tenantId: string;
+    conversationId: string;
+    noteId: string;
+    authorId: string;
+    isPrivate: boolean;
+    content: string;
+  }) {
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:conversation:note_added', {
+        conversationId: event.conversationId,
+        noteId: event.noteId,
+        authorId: event.authorId,
+        isPrivate: event.isPrivate,
+        content: event.content,
+        timestamp: new Date().toISOString(),
+      });
   }
 }

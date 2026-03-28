@@ -21,6 +21,7 @@ export interface OmniConversation {
   /** Customer information (resolved from provider or linked contact) */
   customer: {
     externalId: string;
+    contactId?: string;
     name: string;
     avatarUrl?: string;
     email?: string;
@@ -47,6 +48,17 @@ export interface OmniConversation {
   linkedLeadId?: string;
 
   tags: string[];
+
+  // ── Reopen tracking ────────────────────────────────────────────
+  reopenCount: number;
+  previousConversationId: string | null;
+
+  // ── Close / Resolve metadata ───────────────────────────────────
+  resolvedByAgentId: string | null;
+  resolvedAt: Date | null;
+  closedByAgentId: string | null;
+  closedAt: Date | null;
+  closeReason: string | null;
 
   createdAt: Date;
   updatedAt: Date;

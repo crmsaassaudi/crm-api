@@ -80,6 +80,15 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   /** The provider's message ID for deduplication */
   @Prop()
   externalMessageId: string;
+
+  /**
+   * Canonical platform message ID used as the primary deduplication key.
+   * This is the unique ID assigned by the provider (FB mid, Zalo msgId, etc.).
+   * A compound unique index on (tenant, platformMessageId) is the final
+   * safeguard against duplicate writes.
+   */
+  @Prop({ type: String, sparse: true })
+  platformMessageId: string;
 }
 
 export const OmniMessageSchema = SchemaFactory.createForClass(
@@ -103,5 +112,16 @@ OmniMessageSchema.index(
     unique: true, 
     name: 'dedup_external_message',
     partialFilterExpression: { externalMessageId: { $type: 'string' } },
+  },
+);
+
+// Primary deduplication index — compound unique on (tenant, platformMessageId).
+// This is the DB-level safeguard ensuring the same platform message is never stored twice.
+OmniMessageSchema.index(
+  { tenant: 1, platformMessageId: 1 },
+  {
+    unique: true,
+    name: 'dedup_platform_message',
+    partialFilterExpression: { platformMessageId: { $type: 'string' } },
   },
 );

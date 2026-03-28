@@ -88,7 +88,7 @@ export class InboundController {
     }
 
     // Resolve context
-    const { tenantId, channelId } = await this.resolveChannelData(channelType, body);
+    const { tenantId, channelId, channelConfig } = await this.resolveChannelData(channelType, body);
 
     // Unwrap batch wrappers per-provider
     const events = this.unwrapEvents(channelType, body);
@@ -101,6 +101,7 @@ export class InboundController {
         event,
         tenantId,
         channelId,
+        channelConfig,
       } as WebhookJobData,
       opts: {
         jobId: `${channelType}-${Date.now()}-${index}`,
@@ -147,7 +148,7 @@ export class InboundController {
   private async resolveChannelData(
     channelType: ChannelType,
     body: any,
-  ): Promise<{ tenantId: string; channelId: string }> {
+  ): Promise<{ tenantId: string; channelId: string; channelConfig: any }> {
     let accountId = '';
     
     switch (channelType) {
@@ -173,7 +174,7 @@ export class InboundController {
     const dbType = channelType.charAt(0).toUpperCase() + channelType.slice(1);
     try {
       const channel = await this.channelsService.findAnyByAccount(dbType, accountId);
-      return { tenantId: channel.tenant, channelId: channel.id };
+      return { tenantId: channel.tenant, channelId: channel.id, channelConfig: channel };
     } catch (err) {
       this.logger.error(`Channel not found for account ${accountId} (type: ${dbType})`);
       throw new BadRequestException('Channel not found');

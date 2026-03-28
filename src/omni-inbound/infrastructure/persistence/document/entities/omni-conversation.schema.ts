@@ -55,6 +55,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   customer: {
     externalId: string;
+    contactId?: string; // ObjectId reference to ContactSchemaClass
     name: string;
     avatarUrl?: string;
     phone?: string;
@@ -99,6 +100,33 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
 
   @Prop({ default: 0 })
   messageCount: number;
+
+  // ── Reopen tracking ────────────────────────────────────────────
+  @Prop({ default: 0 })
+  reopenCount: number;
+
+  @Prop({ type: String, ref: 'OmniConversationSchemaClass', default: null })
+  previousConversationId: string | null;
+
+  // ── Close / Resolve metadata ───────────────────────────────────
+  @Prop({ type: String, ref: 'UserSchemaClass', default: null })
+  resolvedByAgentId: string | null;
+
+  @Prop({ type: Date, default: null })
+  resolvedAt: Date | null;
+
+  @Prop({ type: String, ref: 'UserSchemaClass', default: null })
+  closedByAgentId: string | null;
+
+  @Prop({ type: Date, default: null })
+  closedAt: Date | null;
+
+  @Prop({
+    type: String,
+    enum: ['resolved_by_agent', 'auto_resolved', 'customer_left', 'other', null],
+    default: null,
+  })
+  closeReason: string | null;
 }
 
 export const OmniConversationSchema = SchemaFactory.createForClass(

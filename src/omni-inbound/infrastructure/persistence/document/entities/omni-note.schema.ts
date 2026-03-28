@@ -1,0 +1,61 @@
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
+import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
+import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+
+export type OmniNoteDocument = HydratedDocument<OmniNoteSchemaClass>;
+
+/**
+ * Schema for private/public agent notes on conversations.
+ * Notes are NOT messages — they are internal annotations visible only to agents.
+ */
+@Schema({
+  timestamps: true,
+  collection: 'omni_notes',
+  toJSON: { virtuals: true, getters: true },
+})
+export class OmniNoteSchemaClass extends EntityDocumentHelper {
+  @Prop({
+    type: String,
+    ref: 'TenantSchemaClass',
+    required: true,
+    index: true,
+  })
+  tenant: string;
+
+  @Prop({
+    type: String,
+    ref: 'OmniConversationSchemaClass',
+    required: true,
+    index: true,
+  })
+  conversationId: string;
+
+  @Prop({ required: true })
+  content: string;
+
+  @Prop({
+    type: String,
+    ref: 'UserSchemaClass',
+    required: true,
+  })
+  authorId: string;
+
+  /** User IDs of agents @mentioned in the note */
+  @Prop({ type: [String], default: [] })
+  mentions: string[];
+
+  /** If true, note is only visible to agents (not synced to platform) */
+  @Prop({ default: true })
+  isPrivate: boolean;
+}
+
+export const OmniNoteSchema = SchemaFactory.createForClass(OmniNoteSchemaClass);
+
+OmniNoteSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
+
+// Index for fetching notes by conversation
+OmniNoteSchema.index(
+  { tenant: 1, conversationId: 1, createdAt: -1 },
+  { name: 'notes_by_conversation' },
+);

@@ -64,4 +64,14 @@ export class CreateContactDto {
   @IsOptional()
   @IsBoolean()
   isConverted?: boolean;
+
+  @ApiProperty({ example: 'psid_123456' })
+  @IsOptional()
+  @IsString()
+  omniSenderId?: string;
+
+  @ApiProperty({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  isShadow?: boolean;
 }

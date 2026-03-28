@@ -83,6 +83,16 @@ export class ContactSchemaClass extends EntityDocumentHelper {
 
   @Prop()
   deletedAt?: Date;
+
+  // ────────────────── OMNI-CHANNEL / SHADOW CONTACT ──────────────────
+  
+  /** External sender ID from Omni platforms (e.g. Facebook PSID, Zalo User ID) */
+  @Prop({ sparse: true, index: true })
+  omniSenderId?: string;
+
+  /** Flag to indicate this is a temporary/anonymous contact created from a chat */
+  @Prop({ default: false })
+  isShadow: boolean;
 }
 
 export const ContactSchema = SchemaFactory.createForClass(ContactSchemaClass);

@@ -179,6 +179,15 @@ export class AgentPresenceService {
   }
 
   /**
+   * Get user IDs of online agents who are available and not at capacity.
+   * Used by AssignmentService for auto-assignment.
+   */
+  async getOnlineAgents(tenantId: string): Promise<string[]> {
+    const available = await this.getAvailableAgents(tenantId);
+    return available.map((a) => a.userId);
+  }
+
+  /**
    * Remove an agent's presence entirely (e.g. on explicit logout / disconnect).
    */
   async removePresence(tenantId: string, userId: string): Promise<void> {

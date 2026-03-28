@@ -77,4 +77,31 @@ export class MessageRepository {
     }
     await this.model.findByIdAndUpdate(id, { $set: update }).exec();
   }
+
+  /**
+   * Fetch messages from multiple conversations combined, sorted oldest-first.
+   * Used for cross-conversation customer history.
+   */
+  async findByConversationIds(
+    conversationIds: string[],
+    page: number,
+    limit: number,
+  ): Promise<PaginationResponseDto<OmniMessage>> {
+    const filter = { conversation: { $in: conversationIds } };
+    const sort: Record<string, SortOrder> = { createdAt: 1 };
+
+    const safePage = Math.max(1, page);
+    const skip = (safePage - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      this.model.find(filter).sort(sort).skip(skip).limit(limit).exec(),
+      this.model.countDocuments(filter).exec(),
+    ]);
+
+    return pagination(
+      items.map((doc) => OmniMessageMapper.toDomain(doc)),
+      total,
+      { page: safePage, limit },
+    );
+  }
 }
