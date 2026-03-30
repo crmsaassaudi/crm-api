@@ -163,7 +163,9 @@ export class IdentityService {
     const keys = await this.redis.keys(`omni:identity:${pattern}`);
     if (keys.length > 0) {
       await this.redis.del(...keys);
-      this.logger.log(`Invalidated ${keys.length} identity cache keys matching ${pattern}`);
+      this.logger.log(
+        `Invalidated ${keys.length} identity cache keys matching ${pattern}`,
+      );
     }
   }
 
@@ -173,7 +175,10 @@ export class IdentityService {
     return `omni:identity:${platform}:${pageId}:${senderId}`;
   }
 
-  private async setCache(key: string, identity: ResolvedIdentity): Promise<void> {
+  private async setCache(
+    key: string,
+    identity: ResolvedIdentity,
+  ): Promise<void> {
     await this.redis.set(key, JSON.stringify(identity), 'EX', this.CACHE_TTL);
   }
 

@@ -8,10 +8,10 @@ import { BullModule } from '@nestjs/bullmq';
     BullModule.forRootAsync({
       useFactory: (configService: ConfigService) => ({
         connection: {
-          host: configService.get('queue.host'),
-          port: configService.get('queue.port'),
-          password: configService.get('queue.password'),
-          db: configService.get('queue.db'),
+          host: configService.get('queue.host', { infer: true }),
+          port: configService.get('queue.port', { infer: true }),
+          password: configService.get('queue.password', { infer: true }),
+          db: configService.get('queue.db', { infer: true }),
         },
       }),
       inject: [ConfigService],

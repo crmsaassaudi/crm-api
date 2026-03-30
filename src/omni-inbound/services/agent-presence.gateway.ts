@@ -90,7 +90,12 @@ export class AgentPresenceGateway {
     userId: string,
     socketId: string,
   ): Promise<void> {
-    await this.presenceService.updateStatus(tenantId, userId, 'available', socketId);
+    await this.presenceService.updateStatus(
+      tenantId,
+      userId,
+      'available',
+      socketId,
+    );
     this.server.to(`tenant:${tenantId}`).emit('agent:status:changed', {
       userId,
       status: 'available',
@@ -100,10 +105,7 @@ export class AgentPresenceGateway {
   /**
    * Called when a socket disconnects — mark the agent offline.
    */
-  async onAgentDisconnected(
-    tenantId: string,
-    userId: string,
-  ): Promise<void> {
+  async onAgentDisconnected(tenantId: string, userId: string): Promise<void> {
     await this.presenceService.removePresence(tenantId, userId);
     this.server.to(`tenant:${tenantId}`).emit('agent:status:changed', {
       userId,

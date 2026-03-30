@@ -1,4 +1,9 @@
-export type ChannelType = 'facebook' | 'instagram' | 'zalo' | 'whatsapp' | 'livechat';
+export type ChannelType =
+  | 'facebook'
+  | 'instagram'
+  | 'zalo'
+  | 'whatsapp'
+  | 'livechat';
 export type SenderType = 'customer' | 'agent' | 'system';
 export type MessageType =
   | 'text'

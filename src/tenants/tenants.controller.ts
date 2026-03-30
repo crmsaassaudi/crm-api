@@ -1,13 +1,10 @@
 import {
   Controller,
   Post,
-  Patch,
-  Get,
   Body,
   HttpCode,
   HttpStatus,
   Request,
-  BadRequestException,
 } from '@nestjs/common';
 import { TenantsService, RegisterTenantResult } from './tenants.service';
 import { RegisterTenantDto } from './dto/register-tenant.dto';
@@ -92,5 +89,4 @@ export class TenantsAuthController {
     const user = request.user as User;
     return this.tenantsService.onboardExistingUser(user, dto);
   }
-
 }

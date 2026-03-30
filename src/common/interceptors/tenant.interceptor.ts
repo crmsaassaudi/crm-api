@@ -49,7 +49,7 @@ export class TenantInterceptor implements NestInterceptor {
     private readonly cls: ClsService,
     private readonly sessionService: SessionService,
     private readonly moduleRef: ModuleRef,
-  ) { }
+  ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest<Request>();

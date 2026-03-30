@@ -3,7 +3,8 @@ import { HydratedDocument } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
-export type ConversationActivityDocument = HydratedDocument<ConversationActivitySchemaClass>;
+export type ConversationActivityDocument =
+  HydratedDocument<ConversationActivitySchemaClass>;
 
 const ACTIVITY_ACTIONS = [
   'conversation_created',

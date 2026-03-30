@@ -1,5 +1,4 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Allow } from 'class-validator';
 
 export class CrmSetting {
   @ApiProperty({ example: 'tenant_1' })

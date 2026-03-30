@@ -36,7 +36,13 @@ export class WebhookProcessor extends BaseConsumer {
     );
 
     try {
-      await this.processor.process(channelType, event, tenantId, channelId, channelConfig);
+      await this.processor.process(
+        channelType,
+        event,
+        tenantId,
+        channelId,
+        channelConfig,
+      );
     } catch (error: any) {
       // E11000 = MongoDB Duplicate Key — message was already persisted.
       // Acknowledge the job as completed to avoid BullMQ retries and log spam.

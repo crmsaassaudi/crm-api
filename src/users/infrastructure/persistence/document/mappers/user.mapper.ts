@@ -14,7 +14,10 @@ export class UserMapper {
     domainEntity.version = raw.__v;
     domainEntity.tenants = raw.tenants
       ? raw.tenants.map((t) => ({
-          tenantId: (t as any).tenantId?.toString() || (t as any).tenant?.toString() || '',
+          tenantId:
+            (t as any).tenantId?.toString() ||
+            (t as any).tenant?.toString() ||
+            '',
           roles: t.roles,
           joinedAt: t.joinedAt,
         }))

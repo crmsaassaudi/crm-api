@@ -22,7 +22,11 @@ export class CrmSettingRepository {
 
   async update(tenant: string, key: string, value: any): Promise<CrmSetting> {
     const doc = await this.model
-      .findOneAndUpdate({ tenantId: tenant, key }, { value }, { upsert: true, new: true })
+      .findOneAndUpdate(
+        { tenantId: tenant, key },
+        { value },
+        { upsert: true, new: true },
+      )
       .exec();
     return CrmSettingMapper.toDomain(doc);
   }

@@ -16,7 +16,10 @@ export class ChannelRepository {
   ) {}
 
   async findAll(tenant: string): Promise<Channel[]> {
-    const docs = await this.model.find({ tenantId: tenant }).sort({ name: 1 }).exec();
+    const docs = await this.model
+      .find({ tenantId: tenant })
+      .sort({ name: 1 })
+      .exec();
     return docs.map(ChannelMapper.toDomain);
   }
 
@@ -25,20 +28,33 @@ export class ChannelRepository {
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
-  async findByAccount(tenant: string, type: string, account: string): Promise<Channel | null> {
-    const doc = await this.model.findOne({ tenantId: tenant, type, account }).exec();
-    return doc ? ChannelMapper.toDomain(doc) : null;
-  }
-
-  async findAnyByAccount(type: string, account: string): Promise<Channel | null> {
+  async findByAccount(
+    tenant: string,
+    type: string,
+    account: string,
+  ): Promise<Channel | null> {
     const doc = await this.model
-      .findOne({ type, account })
-      .select('+credentials')  // Include credentials so adapters can use the access token
+      .findOne({ tenantId: tenant, type, account })
       .exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
-  async findByAccountWithCredentials(tenant: string, type: string, account: string): Promise<Channel | null> {
+  async findAnyByAccount(
+    type: string,
+    account: string,
+  ): Promise<Channel | null> {
+    const doc = await this.model
+      .findOne({ type, account })
+      .select('+credentials') // Include credentials so adapters can use the access token
+      .exec();
+    return doc ? ChannelMapper.toDomain(doc) : null;
+  }
+
+  async findByAccountWithCredentials(
+    tenant: string,
+    type: string,
+    account: string,
+  ): Promise<Channel | null> {
     const doc = await this.model
       .findOne({ tenantId: tenant, type, account, status: 'Connected' })
       .select('+credentials')
@@ -46,8 +62,14 @@ export class ChannelRepository {
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
-  async findByIdWithCredentials(tenant: string, id: string): Promise<Channel | null> {
-    const doc = await this.model.findOne({ _id: id, tenantId: tenant }).select('+credentials').exec();
+  async findByIdWithCredentials(
+    tenant: string,
+    id: string,
+  ): Promise<Channel | null> {
+    const doc = await this.model
+      .findOne({ _id: id, tenantId: tenant })
+      .select('+credentials')
+      .exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
@@ -62,13 +84,19 @@ export class ChannelRepository {
     data: Partial<Channel>,
   ): Promise<Channel | null> {
     const doc = await this.model
-      .findOneAndUpdate({ _id: id, tenantId: tenant }, { $set: data }, { new: true })
+      .findOneAndUpdate(
+        { _id: id, tenantId: tenant },
+        { $set: data },
+        { new: true },
+      )
       .exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
   async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model.deleteOne({ _id: id, tenantId: tenant }).exec();
+    const result = await this.model
+      .deleteOne({ _id: id, tenantId: tenant })
+      .exec();
     return result.deletedCount > 0;
   }
 }

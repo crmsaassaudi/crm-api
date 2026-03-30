@@ -85,7 +85,7 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   deletedAt?: Date;
 
   // ────────────────── OMNI-CHANNEL / SHADOW CONTACT ──────────────────
-  
+
   /** External sender ID from Omni platforms (e.g. Facebook PSID, Zalo User ID) */
   @Prop({ sparse: true, index: true })
   omniSenderId?: string;

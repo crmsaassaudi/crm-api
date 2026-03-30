@@ -1,10 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ChannelAdapter } from './channel-adapter.interface';
-import {
-  OmniPayload,
-  ChannelType,
-  MessageType,
-} from '../domain/omni-payload';
+import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 
 /**
  * WhatsApp Cloud API webhook → OmniPayload adapter.
@@ -35,11 +31,7 @@ import {
 export class WhatsAppAdapter implements ChannelAdapter {
   readonly channelType: ChannelType = 'whatsapp';
 
-  normalize(
-    rawPayload: any,
-    tenantId: string,
-    channelId: string,
-  ): OmniPayload {
+  normalize(rawPayload: any, tenantId: string, channelId: string): OmniPayload {
     const msg = rawPayload.messages?.[0];
     if (!msg) {
       throw new Error('WhatsApp webhook has no messages');
@@ -73,10 +65,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
     };
   }
 
-  validateWebhook(
-    headers: Record<string, string>,
-    body: any,
-  ): boolean {
+  validateWebhook(headers: Record<string, string>, body: any): boolean {
+    void body;
     // WhatsApp Cloud API uses the same X-Hub-Signature-256 as Facebook.
     const signature = headers['x-hub-signature-256'];
     if (!signature) return false;
@@ -119,14 +109,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
     return msg[msg.type]?.mime_type ?? null;
   }
 
-  async send(
+  send(
     recipientId: string,
     content: string,
     messageType: string,
     channelConfig: any,
   ): Promise<any> {
+    void channelConfig;
     // TODO: implement WA Cloud API call
-    console.log(`[WhatsApp] Sending ${messageType} to ${recipientId}: ${content}`);
-    return { message_id: `wa_out_${Date.now()}` };
+    console.log(
+      `[WhatsApp] Sending ${messageType} to ${recipientId}: ${content}`,
+    );
+    return Promise.resolve({ message_id: `wa_out_${Date.now()}` });
   }
 }

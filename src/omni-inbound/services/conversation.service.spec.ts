@@ -29,7 +29,9 @@ describe('ConversationService Concurrency', () => {
 
     // Mock RedisLockService: execute callback immediately
     lockServiceMock = {
-      acquire: jest.fn().mockImplementation(async (key, ttl, cb) => {
+      acquire: jest.fn().mockImplementation((key, ttl, cb) => {
+        void key;
+        void ttl;
         return cb();
       }),
     };
@@ -47,6 +49,8 @@ describe('ConversationService Concurrency', () => {
     conversationRepoMock = {
       create: jest.fn().mockResolvedValue({ id: 'conv_123' }),
       updateLastMessage: jest.fn().mockResolvedValue(undefined),
+      findLastByExternalId: jest.fn().mockResolvedValue(null),
+      findById: jest.fn().mockResolvedValue(null),
     };
 
     messageRepoMock = {
@@ -66,7 +70,12 @@ describe('ConversationService Concurrency', () => {
         { provide: IdentityService, useValue: identityServiceMock },
         { provide: RedisLockService, useValue: lockServiceMock },
         { provide: ContactsService, useValue: contactsServiceMock },
-        { provide: FacebookAdapter, useValue: { enrichProfile: jest.fn().mockResolvedValue({ name: 'Test User' }) } },
+        {
+          provide: FacebookAdapter,
+          useValue: {
+            enrichProfile: jest.fn().mockResolvedValue({ name: 'Test User' }),
+          },
+        },
         { provide: IOREDIS_CLIENT, useValue: redisMock },
         { provide: EventEmitter2, useValue: {} },
       ],
@@ -95,7 +104,9 @@ describe('ConversationService Concurrency', () => {
 
     await service.handleInboundMessage(payload);
 
-    expect(redisMock.get).toHaveBeenCalledWith('omni:processed:tenant_1:msg_001');
+    expect(redisMock.get).toHaveBeenCalledWith(
+      'omni:processed:tenant_1:msg_001',
+    );
     expect(lockServiceMock.acquire).toHaveBeenCalledWith(
       'lock:omni:sender:user_1',
       10000,
@@ -124,7 +135,9 @@ describe('ConversationService Concurrency', () => {
     const payload = createPayload('msg_001');
     await service.handleInboundMessage(payload);
 
-    expect(redisMock.get).toHaveBeenCalledWith('omni:processed:tenant_1:msg_001');
+    expect(redisMock.get).toHaveBeenCalledWith(
+      'omni:processed:tenant_1:msg_001',
+    );
     expect(lockServiceMock.acquire).not.toHaveBeenCalled();
     expect(conversationRepoMock.create).not.toHaveBeenCalled();
     expect(messageRepoMock.create).not.toHaveBeenCalled();
@@ -132,7 +145,10 @@ describe('ConversationService Concurrency', () => {
 
   it('should skip processing if E11000 is thrown during save', async () => {
     // Simulate race condition where the lock was slow and another worker saved it
-    lockServiceMock.acquire.mockImplementationOnce(async (key, ttl, cb) => {
+    lockServiceMock.acquire.mockImplementationOnce((key, ttl, cb) => {
+      void key;
+      void ttl;
+      void cb;
       const err = new Error('Duplicate key');
       (err as any).code = 11000;
       throw err;

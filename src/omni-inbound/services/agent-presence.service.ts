@@ -40,7 +40,8 @@ export class AgentPresenceService {
       tenantId,
       status,
       activeConversations: existing?.activeConversations ?? 0,
-      maxCapacity: existing?.maxCapacity ?? AgentPresenceService.DEFAULT_MAX_CAPACITY,
+      maxCapacity:
+        existing?.maxCapacity ?? AgentPresenceService.DEFAULT_MAX_CAPACITY,
       lastHeartbeat: new Date(),
       socketId: socketId ?? existing?.socketId,
     };
@@ -67,7 +68,11 @@ export class AgentPresenceService {
       if (raw) {
         const presence: AgentPresence = JSON.parse(raw);
         presence.lastHeartbeat = new Date();
-        await client.setex(key, HEARTBEAT_TTL_SECONDS, JSON.stringify(presence));
+        await client.setex(
+          key,
+          HEARTBEAT_TTL_SECONDS,
+          JSON.stringify(presence),
+        );
       }
     } else {
       // Key expired → agent went offline, re-register as available
@@ -94,9 +99,7 @@ export class AgentPresenceService {
   async getAvailableAgents(tenantId: string): Promise<AgentPresence[]> {
     const allAgents = await this.getAllAgents(tenantId);
     return allAgents.filter(
-      (a) =>
-        a.status === 'available' &&
-        a.activeConversations < a.maxCapacity,
+      (a) => a.status === 'available' && a.activeConversations < a.maxCapacity,
     );
   }
 
@@ -129,10 +132,7 @@ export class AgentPresenceService {
    * Increment the active conversation count for an agent.
    * Returns false if the agent is at capacity.
    */
-  async assignConversation(
-    tenantId: string,
-    userId: string,
-  ): Promise<boolean> {
+  async assignConversation(tenantId: string, userId: string): Promise<boolean> {
     const presence = await this.getPresence(tenantId, userId);
     if (!presence) return false;
     if (presence.activeConversations >= presence.maxCapacity) return false;
@@ -159,17 +159,20 @@ export class AgentPresenceService {
    * Decrement the active conversation count for an agent
    * (when a conversation is resolved/closed).
    */
-  async releaseConversation(
-    tenantId: string,
-    userId: string,
-  ): Promise<void> {
+  async releaseConversation(tenantId: string, userId: string): Promise<void> {
     const presence = await this.getPresence(tenantId, userId);
     if (!presence) return;
 
-    presence.activeConversations = Math.max(0, presence.activeConversations - 1);
+    presence.activeConversations = Math.max(
+      0,
+      presence.activeConversations - 1,
+    );
 
     // If was busy due to capacity, let them go back to available
-    if (presence.status === 'busy' && presence.activeConversations < presence.maxCapacity) {
+    if (
+      presence.status === 'busy' &&
+      presence.activeConversations < presence.maxCapacity
+    ) {
       presence.status = 'available';
     }
 

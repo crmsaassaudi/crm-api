@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { ActivityRepository, ConversationActivity } from '../repositories/activity.repository';
+import {
+  ActivityRepository,
+  ConversationActivity,
+} from '../repositories/activity.repository';
 import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
 
 /**
@@ -68,7 +71,10 @@ export class ActivityService {
       'conversation_reopened',
       event.previousConversationId,
       event.conversationId,
-      { previousConversationId: event.previousConversationId, reopenCount: event.reopenCount },
+      {
+        previousConversationId: event.previousConversationId,
+        reopenCount: event.reopenCount,
+      },
     );
   }
 

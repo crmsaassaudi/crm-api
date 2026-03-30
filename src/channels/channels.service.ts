@@ -45,14 +45,23 @@ export class ChannelsService {
       status: 'Pending',
     });
 
-    if ((dto.type === 'Facebook' || dto.type === 'Instagram') && dto.credentials?.accessToken) {
+    if (
+      (dto.type === 'Facebook' || dto.type === 'Instagram') &&
+      dto.credentials?.accessToken
+    ) {
       try {
         const userToken = dto.credentials.accessToken;
 
         // 1. Fetch all pages managed by this user to get the specific Page Access Token and Page Name
-        const pagesResponse = await axios.get('https://graph.facebook.com/v19.0/me/accounts', {
-          params: { access_token: userToken, fields: 'id,name,access_token,picture{url}' },
-        });
+        const pagesResponse = await axios.get(
+          'https://graph.facebook.com/v19.0/me/accounts',
+          {
+            params: {
+              access_token: userToken,
+              fields: 'id,name,access_token,picture{url}',
+            },
+          },
+        );
 
         const pages = pagesResponse.data.data ?? [];
         const matchedPage = pages.find((p: any) => p.id === dto.account);
@@ -70,7 +79,13 @@ export class ChannelsService {
         // 2. Subscribe the app to webhooks for this page (requires Page Access Token)
         await axios.post(
           `https://graph.facebook.com/v19.0/${dto.account}/subscribed_apps`,
-          { subscribed_fields: ['messages', 'messaging_postbacks', 'messaging_optins'] },
+          {
+            subscribed_fields: [
+              'messages',
+              'messaging_postbacks',
+              'messaging_optins',
+            ],
+          },
           { params: { access_token: finalAccessToken } },
         );
 
@@ -87,7 +102,10 @@ export class ChannelsService {
         channel.name = finalPageName;
         channel.config = { ...dto.config, avatarUrl };
       } catch (error) {
-        console.error('Failed to automated Fanpage setup:', error?.response?.data || error.message);
+        console.error(
+          'Failed to automated Fanpage setup:',
+          error?.response?.data || error.message,
+        );
         await this.repository.update(tenant, channel.id, { status: 'Error' });
         channel.status = 'Error';
       }
@@ -108,17 +126,28 @@ export class ChannelsService {
     const channel = await this.repository.findByIdWithCredentials(tenant, id);
     if (!channel) throw new NotFoundException('Channel not found');
 
-    if ((channel.type === 'Facebook' || channel.type === 'Instagram') && channel.credentials?.accessToken) {
+    if (
+      (channel.type === 'Facebook' || channel.type === 'Instagram') &&
+      channel.credentials?.accessToken
+    ) {
       try {
-        await axios.delete(`https://graph.facebook.com/v19.0/${channel.account}/subscribed_apps`, {
-          params: { access_token: channel.credentials.accessToken },
-        });
+        await axios.delete(
+          `https://graph.facebook.com/v19.0/${channel.account}/subscribed_apps`,
+          {
+            params: { access_token: channel.credentials.accessToken },
+          },
+        );
       } catch (error) {
-        console.error('Failed to unsubscribe Meta webhook during disconnect:', error?.response?.data || error.message);
+        console.error(
+          'Failed to unsubscribe Meta webhook during disconnect:',
+          error?.response?.data || error.message,
+        );
       }
     }
 
-    const updated = await this.repository.update(tenant, id, { status: 'Disconnected' });
+    const updated = await this.repository.update(tenant, id, {
+      status: 'Disconnected',
+    });
     return updated!;
   }
 

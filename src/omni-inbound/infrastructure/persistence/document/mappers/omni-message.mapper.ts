@@ -37,7 +37,7 @@ export class OmniMessageMapper {
     raw.status = domain.status;
     raw.metadata = domain.metadata as Record<string, any>;
     raw.externalMessageId = domain.externalMessageId as string;
-    
+
     return raw;
   }
 }

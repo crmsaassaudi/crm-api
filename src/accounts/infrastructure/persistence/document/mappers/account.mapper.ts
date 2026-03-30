@@ -19,9 +19,10 @@ export class AccountMapper {
     domainEntity.billingAddress = raw.billingAddress;
     domainEntity.shippingAddress = raw.shippingAddress;
     if (raw.ownerId) {
-      domainEntity.ownerId = typeof raw.ownerId === 'string'
-        ? raw.ownerId
-        : (raw.ownerId as any)._id?.toString();
+      domainEntity.ownerId =
+        typeof raw.ownerId === 'string'
+          ? raw.ownerId
+          : (raw.ownerId as any)._id?.toString();
     }
     // Handle explicitly populated 'owner' virtual/aggregation field
     if ((raw as any).owner) {

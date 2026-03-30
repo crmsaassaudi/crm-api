@@ -52,13 +52,19 @@ export class CannedResponseRepository {
     data: Partial<CannedResponse>,
   ): Promise<CannedResponse | null> {
     const doc = await this.model
-      .findOneAndUpdate({ _id: id, tenantId: tenant }, { $set: data }, { new: true })
+      .findOneAndUpdate(
+        { _id: id, tenantId: tenant },
+        { $set: data },
+        { new: true },
+      )
       .exec();
     return doc ? CannedResponseMapper.toDomain(doc) : null;
   }
 
   async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model.deleteOne({ _id: id, tenantId: tenant }).exec();
+    const result = await this.model
+      .deleteOne({ _id: id, tenantId: tenant })
+      .exec();
     return result.deletedCount > 0;
   }
 }

@@ -44,7 +44,10 @@ export class ContactsController {
   @Get()
   @MaskedResource('Lead') // Default for findAll as it often serves Leads first in current UI context or mixed
   findAll(@Query() query: any) {
-    if (query?.isConverted === 'true' || query?.filters?.includes('isConverted":true')) {
+    if (
+      query?.isConverted === 'true' ||
+      query?.filters?.includes('isConverted":true')
+    ) {
       // Dynamic tagging would be better, but interceptor can check query too.
       // For now we use the resource logic.
     }

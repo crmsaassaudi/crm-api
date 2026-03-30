@@ -64,10 +64,10 @@ export class MediaProxyService {
   /**
    * Retrieve a cached media file by its stored path.
    */
-  async getMedia(mediaPath: string): Promise<Buffer | null> {
+  getMedia(mediaPath: string): Promise<Buffer | null> {
     // TODO: implement actual retrieval from storage
     this.logger.log(`Retrieving media: ${mediaPath}`);
-    return null;
+    return Promise.resolve(null);
   }
 
   /**
@@ -114,12 +114,10 @@ export class MediaProxyService {
   /**
    * Store a media buffer and return a storage key.
    */
-  private async store(mediaId: string, buffer: Buffer): Promise<string> {
+  private store(mediaId: string, buffer: Buffer): Promise<string> {
     // TODO: implement actual file storage (local disk / S3)
     // For now, log the action and return a placeholder path
-    this.logger.log(
-      `Storing media ${mediaId} (${buffer.length} bytes)`,
-    );
-    return mediaId;
+    this.logger.log(`Storing media ${mediaId} (${buffer.length} bytes)`);
+    return Promise.resolve(mediaId);
   }
 }

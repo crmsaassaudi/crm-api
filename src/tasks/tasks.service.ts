@@ -7,7 +7,8 @@ export class TasksService {
   constructor(private readonly repository: TaskRepository) {}
 
   async create(data: Partial<Task>): Promise<Task> {
-    const assignedToId = data.assignedToId === '' ? undefined : data.assignedToId;
+    const assignedToId =
+      data.assignedToId === '' ? undefined : data.assignedToId;
 
     return this.repository.create({
       ...data,
@@ -32,7 +33,8 @@ export class TasksService {
   }
 
   async update(id: string, data: Partial<Task>): Promise<Task | null> {
-    const assignedToId = data.assignedToId === '' ? undefined : data.assignedToId;
+    const assignedToId =
+      data.assignedToId === '' ? undefined : data.assignedToId;
 
     const updateData: any = { ...data, assignedToId };
 

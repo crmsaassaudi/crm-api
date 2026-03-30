@@ -76,7 +76,7 @@ export abstract class BaseDocumentRepository<
     session?: ClientSession,
   ): Promise<TDomain | null> {
     const enriched = this.enrichWithContext(payload, false);
-    // @ts-ignore
+    // @ts-expect-error `id` is only present on some domain shapes and is intentionally removed.
     delete enriched.id;
 
     const persistenceData: any = this.toPersistence(enriched as TDomain);
@@ -152,4 +152,3 @@ export abstract class BaseDocumentRepository<
 
   protected abstract toPersistence(domain: TDomain): any;
 }
-

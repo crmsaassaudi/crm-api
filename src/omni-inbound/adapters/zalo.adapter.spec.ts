@@ -62,7 +62,9 @@ describe('ZaloAdapter', () => {
       const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
 
       expect(result.messageType).toBe('image');
-      expect(result.mediaUrl).toBe('https://zalo-cdn.com/image.jpg?token=expires_soon');
+      expect(result.mediaUrl).toBe(
+        'https://zalo-cdn.com/image.jpg?token=expires_soon',
+      );
       expect(result.content).toBe('');
     });
 

@@ -1,10 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ChannelAdapter } from './channel-adapter.interface';
-import {
-  OmniPayload,
-  ChannelType,
-  MessageType,
-} from '../domain/omni-payload';
+import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 import axios from 'axios';
 
 export interface FacebookProfile {
@@ -70,14 +66,19 @@ export class FacebookAdapter implements ChannelAdapter {
         psid;
 
       // The `picture` field is an object: { data: { url: '...' } }
-      const avatarUrl: string | undefined = data.picture?.data?.url || undefined;
+      const avatarUrl: string | undefined =
+        data.picture?.data?.url || undefined;
 
-      this.logger.log(`Enriched profile for PSID ${psid}: name=${name}, avatar=${avatarUrl ? '✓' : '✗'}`);
+      this.logger.log(
+        `Enriched profile for PSID ${psid}: name=${name}, avatar=${avatarUrl ? '✓' : '✗'}`,
+      );
 
       return { name, avatarUrl };
     } catch (err: any) {
       const errorData = err.response?.data || err.message;
-      this.logger.warn(`Failed to enrich Facebook profile for PSID ${psid}: ${JSON.stringify(errorData)}`);
+      this.logger.warn(
+        `Failed to enrich Facebook profile for PSID ${psid}: ${JSON.stringify(errorData)}`,
+      );
       return { name: psid };
     }
   }
@@ -135,10 +136,8 @@ export class FacebookAdapter implements ChannelAdapter {
     };
   }
 
-  validateWebhook(
-    headers: Record<string, string>,
-    body: any,
-  ): boolean {
+  validateWebhook(headers: Record<string, string>, body: any): boolean {
+    void body;
     // In production, verify X-Hub-Signature-256 header with app secret.
     // Stub: always true for now — implement HMAC verification when app secret is configured.
     const signature = headers['x-hub-signature-256'];
@@ -198,13 +197,15 @@ export class FacebookAdapter implements ChannelAdapter {
       const response = await axios.post(
         `https://graph.facebook.com/v19.0/${pageId}/messages`,
         payload,
-        { params: { access_token: accessToken } }
+        { params: { access_token: accessToken } },
       );
       return { message_id: response.data.message_id };
     } catch (err: any) {
       const errorData = err?.response?.data || err.message;
       console.error('[Facebook Adapter Error]', errorData);
-      throw new Error(`Failed to send message via Facebook: ${JSON.stringify(errorData)}`);
+      throw new Error(
+        `Failed to send message via Facebook: ${JSON.stringify(errorData)}`,
+      );
     }
   }
 }

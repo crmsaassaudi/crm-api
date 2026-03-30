@@ -21,9 +21,7 @@ describe('WhatsAppAdapter', () => {
           phone_number_id: 'phone_123',
           display_phone_number: '+1234567890',
         },
-        contacts: [
-          { profile: { name: 'John' }, wa_id: 'wa_001' },
-        ],
+        contacts: [{ profile: { name: 'John' }, wa_id: 'wa_001' }],
         messages: [
           {
             from: 'wa_001',

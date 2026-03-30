@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { BaseConsumer } from '../base.consumer';
 import { Logger } from '@nestjs/common';

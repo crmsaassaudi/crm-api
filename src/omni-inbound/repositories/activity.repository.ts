@@ -43,7 +43,9 @@ export class ActivityRepository {
     };
   }
 
-  async create(data: Partial<ConversationActivitySchemaClass>): Promise<ConversationActivity> {
+  async create(
+    data: Partial<ConversationActivitySchemaClass>,
+  ): Promise<ConversationActivity> {
     const doc = await this.model.create(data);
     return this.toDomain(doc);
   }

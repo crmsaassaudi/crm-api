@@ -59,9 +59,10 @@ export class ContactRepository extends BaseDocumentRepository<
 
     if (filterOptions?.filters) {
       try {
-        const parsedFilters = typeof filterOptions.filters === 'string' 
-          ? JSON.parse(filterOptions.filters) 
-          : filterOptions.filters;
+        const parsedFilters =
+          typeof filterOptions.filters === 'string'
+            ? JSON.parse(filterOptions.filters)
+            : filterOptions.filters;
         if (Array.isArray(parsedFilters)) {
           parsedFilters.forEach((f: any) => {
             if (f.id && f.value) {
@@ -73,7 +74,7 @@ export class ContactRepository extends BaseDocumentRepository<
             }
           });
         }
-      } catch (e) {
+      } catch {
         // ignore parse errors
       }
     }

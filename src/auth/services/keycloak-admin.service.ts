@@ -2,12 +2,10 @@ import {
   Injectable,
   Logger,
   UnauthorizedException,
-  InternalServerErrorException,
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AllConfigType } from '../../config/config.type';
-import KcAdminClient from '@keycloak/keycloak-admin-client';
 
 interface KeycloakUser {
   id: string;
@@ -32,9 +30,24 @@ interface IdentityProviderLink {
 @Injectable()
 export class KeycloakAdminService implements OnModuleInit {
   private readonly logger = new Logger(KeycloakAdminService.name);
-  private kcAdminClient: KcAdminClient;
+  private kcAdminClient: any;
 
-  constructor(private readonly configService: ConfigService<AllConfigType>) {
+  constructor(private readonly configService: ConfigService<AllConfigType>) {}
+
+  async onModuleInit() {
+    await this.getClient();
+    await this.authenticate();
+  }
+
+  private async getClient() {
+    if (this.kcAdminClient) {
+      return this.kcAdminClient;
+    }
+
+    const { default: KcAdminClient } = await import(
+      '@keycloak/keycloak-admin-client'
+    );
+
     this.kcAdminClient = new KcAdminClient({
       baseUrl: this.configService.getOrThrow('keycloak.authServerUrl', {
         infer: true,
@@ -43,15 +56,14 @@ export class KeycloakAdminService implements OnModuleInit {
         infer: true,
       }),
     });
-  }
 
-  async onModuleInit() {
-    await this.authenticate();
+    return this.kcAdminClient;
   }
 
   private async authenticate() {
+    const client = await this.getClient();
     try {
-      await this.kcAdminClient.auth({
+      await client.auth({
         grantType: 'client_credentials',
         clientId: this.configService.getOrThrow('keycloak.clientId', {
           infer: true,
@@ -72,6 +84,7 @@ export class KeycloakAdminService implements OnModuleInit {
   // Helper to ensure token is valid before calls. The library handles token refresh automatically
   // internally when using client_credentials, but we wrap calls to standardise error handling if needed.
   private async ensureClient<T>(operation: () => Promise<T>): Promise<T> {
+    await this.getClient();
     try {
       return await operation();
     } catch (error: any) {

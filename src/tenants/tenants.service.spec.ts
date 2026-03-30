@@ -8,12 +8,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { RegisterTenantDto } from './dto/register-tenant.dto';
 import {
   ConflictException,
-  ServiceUnavailableException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { PlatformRoleEnum } from '../roles/platform-role.enum';
-import { AuthProvidersEnum } from '../auth/auth-providers.enum';
-import { StatusEnum } from '../statuses/statuses.enum';
 
 describe('TenantsService', () => {
   let service: TenantsService;

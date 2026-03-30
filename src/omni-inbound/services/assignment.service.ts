@@ -60,7 +60,10 @@ export class AssignmentService {
     }
 
     if (selectedAgent) {
-      await this.conversationRepo.updateAssignment(conversationId, selectedAgent);
+      await this.conversationRepo.updateAssignment(
+        conversationId,
+        selectedAgent,
+      );
       this.logger.log(
         `Auto-assigned conversation ${conversationId} to agent ${selectedAgent} (${strategy})`,
       );
@@ -89,10 +92,7 @@ export class AssignmentService {
   /**
    * Least-busy: pick the agent with the fewest open/pending conversations.
    */
-  private async leastBusy(
-    tenantId: string,
-    agents: string[],
-  ): Promise<string> {
+  private async leastBusy(tenantId: string, agents: string[]): Promise<string> {
     const counts = await Promise.all(
       agents.map(async (agentId) => ({
         agentId,

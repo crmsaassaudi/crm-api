@@ -1,10 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ChannelAdapter } from './channel-adapter.interface';
-import {
-  OmniPayload,
-  ChannelType,
-  MessageType,
-} from '../domain/omni-payload';
+import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 
 /**
  * Zalo OA webhook → OmniPayload adapter.
@@ -32,12 +28,11 @@ import {
 export class ZaloAdapter implements ChannelAdapter {
   readonly channelType: ChannelType = 'zalo';
 
-  normalize(
-    rawPayload: any,
-    tenantId: string,
-    channelId: string,
-  ): OmniPayload {
-    const messageType = this.resolveMessageType(rawPayload.event_name, rawPayload.message);
+  normalize(rawPayload: any, tenantId: string, channelId: string): OmniPayload {
+    const messageType = this.resolveMessageType(
+      rawPayload.event_name,
+      rawPayload.message,
+    );
     const mediaUrl = this.extractMediaUrl(rawPayload.message);
 
     return {
@@ -63,10 +58,7 @@ export class ZaloAdapter implements ChannelAdapter {
     };
   }
 
-  validateWebhook(
-    headers: Record<string, string>,
-    body: any,
-  ): boolean {
+  validateWebhook(headers: Record<string, string>, body: any): boolean {
     // Zalo uses OA secret key + MAC to verify.
     // Stub: validate `mac` field against computed HMAC.
     const mac = body?.mac;
@@ -115,14 +107,15 @@ export class ZaloAdapter implements ChannelAdapter {
     return attachment?.payload?.url ?? attachment?.payload?.thumbnail ?? null;
   }
 
-  async send(
+  send(
     recipientId: string,
     content: string,
     messageType: string,
     channelConfig: any,
   ): Promise<any> {
+    void channelConfig;
     // TODO: implement Zalo OA API call
     console.log(`[Zalo] Sending ${messageType} to ${recipientId}: ${content}`);
-    return { message_id: `zalo_out_${Date.now()}` };
+    return Promise.resolve({ message_id: `zalo_out_${Date.now()}` });
   }
 }

@@ -1,6 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { EventEmitterModule } from '@nestjs/event-emitter';
 
 // Adapters
 import { FacebookAdapter } from './adapters/facebook.adapter';
@@ -90,10 +89,16 @@ import { AuthModule } from '../auth/auth.module';
     forwardRef(() => AuthModule),
     OmniQueueModule,
     MongooseModule.forFeature([
-      { name: OmniConversationSchemaClass.name, schema: OmniConversationSchema },
+      {
+        name: OmniConversationSchemaClass.name,
+        schema: OmniConversationSchema,
+      },
       { name: OmniMessageSchemaClass.name, schema: OmniMessageSchema },
       { name: OmniNoteSchemaClass.name, schema: OmniNoteSchema },
-      { name: ConversationActivitySchemaClass.name, schema: ConversationActivitySchema },
+      {
+        name: ConversationActivitySchemaClass.name,
+        schema: ConversationActivitySchema,
+      },
     ]),
   ],
   controllers: [InboundController, MediaProxyController, OmniController],

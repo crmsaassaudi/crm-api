@@ -490,7 +490,7 @@ export class UsersService {
     if (user.provider === AuthProvidersEnum.email && user.keycloakId) {
       try {
         await this.keycloakAdminService.resetPassword(user.keycloakId);
-      } catch (error) {
+      } catch {
         throw new UnprocessableEntityException(
           'Failed to trigger reset password in Keycloak',
         );

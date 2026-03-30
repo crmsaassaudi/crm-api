@@ -129,7 +129,7 @@ export class AuthController {
     try {
       await this.service.refreshTokens(sid);
       return { message: 'Token refreshed successfully' };
-    } catch (e) {
+    } catch {
       // Refresh token expired → clear cookie and force re-login
       const isProd =
         this.configService.get('app.nodeEnv', { infer: true }) === 'production';

@@ -23,22 +23,35 @@ export class ContactMapper {
     domainEntity.isShadow = raw.isShadow;
 
     if (raw.ownerId) {
-      domainEntity.ownerId = typeof raw.ownerId === 'string' ? raw.ownerId : (raw.ownerId as any)._id?.toString();
+      domainEntity.ownerId =
+        typeof raw.ownerId === 'string'
+          ? raw.ownerId
+          : (raw.ownerId as any)._id?.toString();
     }
     if ((raw as any).owner) {
       domainEntity.owner = UserMapper.toDomain((raw as any).owner as any);
     }
     if (raw.createdById) {
-      domainEntity.createdById = typeof raw.createdById === 'string' ? raw.createdById : (raw.createdById as any)._id?.toString();
+      domainEntity.createdById =
+        typeof raw.createdById === 'string'
+          ? raw.createdById
+          : (raw.createdById as any)._id?.toString();
     }
     if ((raw as any).createdBy) {
-      domainEntity.createdBy = UserMapper.toDomain((raw as any).createdBy as any);
+      domainEntity.createdBy = UserMapper.toDomain(
+        (raw as any).createdBy as any,
+      );
     }
     if (raw.updatedById) {
-      domainEntity.updatedById = typeof raw.updatedById === 'string' ? raw.updatedById : (raw.updatedById as any)._id?.toString();
+      domainEntity.updatedById =
+        typeof raw.updatedById === 'string'
+          ? raw.updatedById
+          : (raw.updatedById as any)._id?.toString();
     }
     if ((raw as any).updatedBy) {
-      domainEntity.updatedBy = UserMapper.toDomain((raw as any).updatedBy as any);
+      domainEntity.updatedBy = UserMapper.toDomain(
+        (raw as any).updatedBy as any,
+      );
     }
 
     domainEntity.createdAt = raw.createdAt;

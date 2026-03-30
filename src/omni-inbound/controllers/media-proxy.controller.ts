@@ -27,10 +27,7 @@ export class MediaProxyController {
 
   @Get(':mediaId')
   @Public() // Media endpoint — can be secured via signed URLs later
-  async getMedia(
-    @Param('mediaId') mediaId: string,
-    @Res() res: Response,
-  ) {
+  async getMedia(@Param('mediaId') mediaId: string, @Res() res: Response) {
     this.logger.log(`Serving media: ${mediaId}`);
 
     const buffer = await this.mediaProxyService.getMedia(mediaId);
@@ -39,7 +36,8 @@ export class MediaProxyController {
     }
 
     // TODO: set proper content-type based on stored metadata
-    res.status(HttpStatus.OK)
+    res
+      .status(HttpStatus.OK)
       .header('Content-Type', 'application/octet-stream')
       .header('Cache-Control', 'public, max-age=86400')
       .send(buffer);

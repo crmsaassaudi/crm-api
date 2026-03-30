@@ -1,6 +1,9 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { ChannelAdapter, CHANNEL_ADAPTERS } from '../adapters/channel-adapter.interface';
+import {
+  ChannelAdapter,
+  CHANNEL_ADAPTERS,
+} from '../adapters/channel-adapter.interface';
 import { OmniPayload, ChannelType } from '../domain/omni-payload';
 
 /**
@@ -42,7 +45,12 @@ export class InboundProcessorService {
       throw new Error(`No adapter registered for channel type: ${channelType}`);
     }
 
-    const normalized = adapter.normalize(rawPayload, tenantId, channelId, channelConfig);
+    const normalized = adapter.normalize(
+      rawPayload,
+      tenantId,
+      channelId,
+      channelConfig,
+    );
 
     // Adapter returns null for non-message events (delivery receipts, read receipts, etc.)
     if (normalized === null) {
@@ -58,7 +66,9 @@ export class InboundProcessorService {
     );
 
     // Fire-and-forget domain event — listeners handle persistence & realtime
-    this.eventEmitter.emit('omni.message.received', normalized);
+    await Promise.resolve(
+      this.eventEmitter.emit('omni.message.received', normalized),
+    );
 
     return normalized;
   }

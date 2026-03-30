@@ -23,13 +23,9 @@ export class DataMaskingInterceptor implements NestInterceptor {
     context: ExecutionContext,
     next: CallHandler,
   ): Promise<Observable<any>> {
-    const resourceName = this.reflector.get<string>(
-      MASKED_RESOURCE_KEY,
-      context.getHandler(),
-    ) || this.reflector.get<string>(
-      MASKED_RESOURCE_KEY,
-      context.getClass(),
-    );
+    const resourceName =
+      this.reflector.get<string>(MASKED_RESOURCE_KEY, context.getHandler()) ||
+      this.reflector.get<string>(MASKED_RESOURCE_KEY, context.getClass());
 
     if (!resourceName) {
       return next.handle();
@@ -37,33 +33,40 @@ export class DataMaskingInterceptor implements NestInterceptor {
 
     const groupId = this.cls.get('userGroupId') || 'default';
 
-    const layoutSettings = await this.settingsService.getSetting('layout_settings');
-    const layoutConfig = layoutSettings?.groupLayouts?.[groupId] || layoutSettings?.groupLayouts?.['default'];
-    
+    const layoutSettings =
+      await this.settingsService.getSetting('layout_settings');
+    const layoutConfig =
+      layoutSettings?.groupLayouts?.[groupId] ||
+      layoutSettings?.groupLayouts?.['default'];
+
     if (!layoutConfig) {
       return next.handle();
     }
 
     // BASE resource for request sanitization
     const baseMaskedFields = this.getMaskedFields(layoutConfig, resourceName);
-    
+
     const request = context.switchToHttp().getRequest();
-    if (['POST', 'PATCH', 'PUT'].includes(request.method) && request.body && baseMaskedFields.size > 0) {
-      for (const [field, maskingType] of baseMaskedFields.entries()) {
+    if (
+      ['POST', 'PATCH', 'PUT'].includes(request.method) &&
+      request.body &&
+      baseMaskedFields.size > 0
+    ) {
+      for (const [field] of baseMaskedFields.entries()) {
         const value = request.body[field];
         if (typeof value === 'string' && value.includes('***')) {
           delete request.body[field];
         } else if (Array.isArray(value)) {
-          if (value.some(v => typeof v === 'string' && v.includes('***'))) {
+          if (value.some((v) => typeof v === 'string' && v.includes('***'))) {
             delete request.body[field];
           }
         }
       }
     }
 
-    return next.handle().pipe(
-      map(data => this.maskData(data, layoutConfig, resourceName)),
-    );
+    return next
+      .handle()
+      .pipe(map((data) => this.maskData(data, layoutConfig, resourceName)));
   }
 
   private maskData(data: any, layoutConfig: any, baseResource: string): any {
@@ -73,12 +76,16 @@ export class DataMaskingInterceptor implements NestInterceptor {
     if (data.data && Array.isArray(data.data)) {
       return {
         ...data,
-        data: data.data.map((item: any) => this.maskItem(item, layoutConfig, baseResource))
+        data: data.data.map((item: any) =>
+          this.maskItem(item, layoutConfig, baseResource),
+        ),
       };
     }
 
     if (Array.isArray(data)) {
-      return data.map(item => this.maskItem(item, layoutConfig, baseResource));
+      return data.map((item) =>
+        this.maskItem(item, layoutConfig, baseResource),
+      );
     }
 
     return this.maskItem(data, layoutConfig, baseResource);
@@ -114,14 +121,19 @@ export class DataMaskingInterceptor implements NestInterceptor {
       if (typeof value === 'string') {
         target[field] = this.applyMask(value, maskingType);
       } else if (Array.isArray(value)) {
-        target[field] = value.map(v => typeof v === 'string' ? this.applyMask(v, maskingType) : v);
+        target[field] = value.map((v) =>
+          typeof v === 'string' ? this.applyMask(v, maskingType) : v,
+        );
       }
     }
 
     return target;
   }
 
-  private getMaskedFields(layoutConfig: any, resource: string): Map<string, string> {
+  private getMaskedFields(
+    layoutConfig: any,
+    resource: string,
+  ): Map<string, string> {
     const fields = new Map<string, string>();
     const configs = layoutConfig?.[resource];
     if (!configs || !Array.isArray(configs)) return fields;

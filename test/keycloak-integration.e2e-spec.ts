@@ -24,7 +24,7 @@ describe('Keycloak Integration (e2e)', () => {
   });
 
   describe('Tenant Onboarding', () => {
-    it('/auth/register-tenant (POST) should create tenant and admin user', async () => {
+    it('should create tenant and admin user via /auth/register-tenant (POST)', async () => {
       const tenantDto = {
         name: 'E2E Test Tenant',
         domain: 'e2e-test',
@@ -57,7 +57,7 @@ describe('Keycloak Integration (e2e)', () => {
   });
 
   describe('User Invite', () => {
-    it('/users/invite (POST) should invite user to current tenant', async () => {
+    it('should invite user to current tenant via /users/invite (POST)', () => {
       // This test requires a valid JWT for an admin.
       // Mocking AuthGuard or getting a real token is complex here without configured Keycloak.
       // We will skip actual execution if no token available, or mock the Guard.

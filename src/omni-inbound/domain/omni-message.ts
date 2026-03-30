@@ -1,6 +1,19 @@
 export type SenderType = 'customer' | 'agent' | 'system';
-export type MessageType = 'text' | 'image' | 'file' | 'audio' | 'video' | 'location' | 'sticker' | 'template';
-export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+export type MessageType =
+  | 'text'
+  | 'image'
+  | 'file'
+  | 'audio'
+  | 'video'
+  | 'location'
+  | 'sticker'
+  | 'template';
+export type MessageStatus =
+  | 'sending'
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'failed';
 
 export interface OmniMessage {
   id: string;

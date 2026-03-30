@@ -16,17 +16,26 @@ export class DealMapper {
     domainEntity.accountId = raw.accountId?.toString();
     domainEntity.accountName = raw.accountName;
     domainEntity.contactIds = raw.contactIds?.map((c) => c.toString());
-    
+
     if (raw.ownerId) {
-      domainEntity.ownerId = typeof raw.ownerId === 'string' ? raw.ownerId : (raw.ownerId as any)._id?.toString();
+      domainEntity.ownerId =
+        typeof raw.ownerId === 'string'
+          ? raw.ownerId
+          : (raw.ownerId as any)._id?.toString();
     }
     if (raw.createdById) {
-      domainEntity.createdById = typeof raw.createdById === 'string' ? raw.createdById : (raw.createdById as any)._id?.toString();
+      domainEntity.createdById =
+        typeof raw.createdById === 'string'
+          ? raw.createdById
+          : (raw.createdById as any)._id?.toString();
     }
     if (raw.updatedById) {
-      domainEntity.updatedById = typeof raw.updatedById === 'string' ? raw.updatedById : (raw.updatedById as any)._id?.toString();
+      domainEntity.updatedById =
+        typeof raw.updatedById === 'string'
+          ? raw.updatedById
+          : (raw.updatedById as any)._id?.toString();
     }
-    
+
     domainEntity.description = raw.description;
     domainEntity.source = raw.source;
     domainEntity.lostReason = raw.lostReason;
@@ -66,8 +75,10 @@ export class DealMapper {
     persistenceEntity.closeDate = domainEntity.closeDate;
     persistenceEntity.wonAt = domainEntity.wonAt;
     persistenceEntity.lostAt = domainEntity.lostAt;
-    if (domainEntity.createdById) persistenceEntity.createdById = domainEntity.createdById;
-    if (domainEntity.updatedById) persistenceEntity.updatedById = domainEntity.updatedById;
+    if (domainEntity.createdById)
+      persistenceEntity.createdById = domainEntity.createdById;
+    if (domainEntity.updatedById)
+      persistenceEntity.updatedById = domainEntity.updatedById;
     return persistenceEntity;
   }
 }

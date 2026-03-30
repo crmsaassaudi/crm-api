@@ -18,7 +18,12 @@ export interface ChannelAdapter {
    * reactions, etc.) that should be silently skipped.
    * Throws if the payload is malformed or unsupported.
    */
-  normalize(rawPayload: any, tenantId: string, channelId: string, channelConfig?: any): OmniPayload | null;
+  normalize(
+    rawPayload: any,
+    tenantId: string,
+    channelId: string,
+    channelConfig?: any,
+  ): OmniPayload | null;
 
   /**
    * Validate the authenticity of an incoming webhook request

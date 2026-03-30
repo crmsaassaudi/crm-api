@@ -27,9 +27,9 @@ export class IntegrationLogService {
     private readonly integrationLogModel: Model<IntegrationLogDocument>,
   ) {}
 
-  async logRequest(data: IntegrationLogDto) {
+  logRequest(data: IntegrationLogDto): void {
     // Log asynchronously without blocking
-    this.integrationLogModel.create(data).catch((err) => {
+    void this.integrationLogModel.create(data).catch((err) => {
       this.logger.error(
         `Failed to log integration request: ${err.message}`,
         err.stack,

@@ -4,7 +4,6 @@ import {
   Inject,
   forwardRef,
   Logger,
-  NotFoundException,
   UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -530,7 +529,9 @@ export class AuthService {
     }
 
     const tenantIds = Array.from(
-      new Set(user.tenants.map((membership) => membership.tenantId?.toString())),
+      new Set(
+        user.tenants.map((membership) => membership.tenantId?.toString()),
+      ),
     ).filter(Boolean) as string[];
 
     return this.tenantsService.findByIds(tenantIds);

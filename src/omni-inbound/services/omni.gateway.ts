@@ -10,7 +10,6 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { OmniPayload } from '../domain/omni-payload';
 import { AgentPresenceService } from './agent-presence.service';
 import { AgentPresenceGateway } from './agent-presence.gateway';
 import { OutboundService } from './outbound.service';
@@ -35,7 +34,10 @@ import * as cookie from 'cookie';
  * │ omni:collision                   │ S → C      │ Two agents claim the same conv.    │
  * └──────────────────────────────────┴────────────┴────────────────────────────────────┘
  */
-@WebSocketGateway({ namespace: '/omni', cors: { origin: '*', credentials: true } })
+@WebSocketGateway({
+  namespace: '/omni',
+  cors: { origin: '*', credentials: true },
+})
 export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
@@ -107,7 +109,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
           const tenant = await this.tenantsService.findByAlias(subdomain);
           if (tenant) {
             tenantId = tenant.id;
-            this.logger.log(`Resolved tenant alias "${subdomain}" → ${tenantId}`);
+            this.logger.log(
+              `Resolved tenant alias "${subdomain}" → ${tenantId}`,
+            );
           } else {
             this.logger.warn(`Tenant alias "${subdomain}" not found in DB`);
           }
@@ -116,17 +120,21 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.debug(
         `JWT decoded for ${client.id}: tenantId=${tenantId}, userId=${userId}, ` +
-        `host=${host}, fields=${Object.keys(decoded).join(',')}`,
+          `host=${host}, fields=${Object.keys(decoded).join(',')}`,
       );
 
       // Join tenant room for broadcast events
       await client.join(`tenant:${tenantId}`);
-      this.logger.log(`Agent ${userId} connected to /omni, joined room tenant:${tenantId}`);
+      this.logger.log(
+        `Agent ${userId} connected to /omni, joined room tenant:${tenantId}`,
+      );
 
       // Register agent presence
       await this.presenceGateway.onAgentConnected(tenantId, userId, client.id);
     } catch (error) {
-      this.logger.error(`Connection error for client ${client.id}: ${error.message}`);
+      this.logger.error(
+        `Connection error for client ${client.id}: ${error.message}`,
+      );
       client.disconnect();
     }
   }
@@ -185,16 +193,18 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       };
 
       // Broadcast the message to other agents watching this conversation
-      client.to(`conversation:${data.conversationId}`).emit('omni:message:new', {
-        conversationId: data.conversationId,
-        senderId: userId,
-        senderType: 'agent',
-        messageType: data.messageType ?? 'text',
-        content: data.content,
-        messageId: ack.messageId,
-        timestamp: ack.timestamp,
-        createdAt: ack.createdAt,
-      });
+      client
+        .to(`conversation:${data.conversationId}`)
+        .emit('omni:message:new', {
+          conversationId: data.conversationId,
+          senderId: userId,
+          senderType: 'agent',
+          messageType: data.messageType ?? 'text',
+          content: data.content,
+          messageId: ack.messageId,
+          timestamp: ack.timestamp,
+          createdAt: ack.createdAt,
+        });
 
       return ack;
     } catch (error) {
@@ -214,18 +224,14 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const room = `tenant:${payload.tenantId}`;
     this.logger.log(
       `Broadcasting persisted ${payload.channelType} message to room=${room}, ` +
-      `conversationId=${payload.conversationId}, senderId=${payload.senderId}`,
+        `conversationId=${payload.conversationId}, senderId=${payload.senderId}`,
     );
 
     // Debug: check how many sockets are in this room
     const roomSockets = (this.server?.adapter as any)?.rooms?.get(room);
-    this.logger.debug(
-      `Room ${room} has ${roomSockets?.size ?? 0} socket(s)`,
-    );
+    this.logger.debug(`Room ${room} has ${roomSockets?.size ?? 0} socket(s)`);
 
-    this.server
-      .to(room)
-      .emit('omni:message:new', payload);
+    this.server.to(room).emit('omni:message:new', payload);
   }
 
   /**
@@ -258,9 +264,15 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * Broadcasts the real customer name/avatar to the tenant room.
    */
   @OnEvent('omni.conversation.customer_updated')
-  handleCustomerUpdated(event: { tenantId: string; conversationId: string; customer: any }) {
+  handleCustomerUpdated(event: {
+    tenantId: string;
+    conversationId: string;
+    customer: any;
+  }) {
     const room = `tenant:${event.tenantId}`;
-    this.logger.log(`Broadcasting customer profile update for conversation ${event.conversationId}`);
+    this.logger.log(
+      `Broadcasting customer profile update for conversation ${event.conversationId}`,
+    );
     this.server.to(room).emit('omni:conversation:customer_updated', {
       conversationId: event.conversationId,
       customer: event.customer,
@@ -275,7 +287,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @OnEvent('omni.message.sent')
   handleOutboundMessage(payload: any) {
     if (payload.source === 'http') {
-      this.logger.log(`Broadcasting HTTP-sent message to conversation ${payload.conversationId}`);
+      this.logger.log(
+        `Broadcasting HTTP-sent message to conversation ${payload.conversationId}`,
+      );
       this.server
         .to(`conversation:${payload.conversationId}`)
         .emit('omni:message:new', {
@@ -340,8 +354,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const existingClaim = this.claimLocks.get(conversationId);
     if (existingClaim && existingClaim.userId !== userId) {
       // Collision! Another agent already claimed this conversation
-      const timeSinceClaim =
-        Date.now() - existingClaim.at.getTime();
+      const timeSinceClaim = Date.now() - existingClaim.at.getTime();
       const STALE_CLAIM_MS = 5 * 60 * 1000; // 5 minutes
 
       if (timeSinceClaim < STALE_CLAIM_MS) {
@@ -358,7 +371,11 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
             `${conversationId} already claimed by ${existingClaim.userId}`,
         );
 
-        return { ok: false, error: 'Already claimed', claimedBy: existingClaim.userId };
+        return {
+          ok: false,
+          error: 'Already claimed',
+          claimedBy: existingClaim.userId,
+        };
       }
       // Stale claim → allow override
     }

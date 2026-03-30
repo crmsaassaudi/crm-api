@@ -24,6 +24,7 @@ export class BaseGateway
   ) {}
 
   afterInit(server: Server) {
+    void server;
     this.logger.log('WebSocket Gateway Initialized');
   }
 

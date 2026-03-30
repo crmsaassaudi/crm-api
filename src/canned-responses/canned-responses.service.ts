@@ -27,7 +27,11 @@ export class CannedResponsesService {
   async create(dto: CreateCannedResponseDto): Promise<CannedResponse> {
     const tenant = this.cls.get('tenantId');
     const userId = this.cls.get('userId');
-    return this.repository.create({ ...dto, tenantId: tenant, createdById: userId } as any);
+    return this.repository.create({
+      ...dto,
+      tenantId: tenant,
+      createdById: userId,
+    } as any);
   }
 
   async update(

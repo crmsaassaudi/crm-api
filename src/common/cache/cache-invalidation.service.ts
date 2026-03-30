@@ -7,7 +7,7 @@ export class CacheInvalidationService {
 
   constructor(private readonly redisService: RedisService) {}
 
-  async clearCacheByPattern(pattern: string): Promise<void> {
+  clearCacheByPattern(pattern: string): Promise<void> {
     const client = this.redisService.getClient();
     const stream = client.scanStream({
       match: pattern,
@@ -20,20 +20,37 @@ export class CacheInvalidationService {
       keysToDelete.push(...keys);
     });
 
-    stream.on('end', async () => {
-      if (keysToDelete.length > 0) {
-        await client.del(keysToDelete);
-        this.logger.log(
-          `Cleared ${keysToDelete.length} keys matching pattern: ${pattern}`,
-        );
-      }
-    });
+    return new Promise<void>((resolve, reject) => {
+      stream.on('end', () => {
+        if (keysToDelete.length === 0) {
+          resolve();
+          return;
+        }
 
-    stream.on('error', (err) => {
-      this.logger.error(
-        `Error scanning keys for pattern ${pattern}: ${err.message}`,
-        err.stack,
-      );
+        client
+          .del(keysToDelete)
+          .then(() => {
+            this.logger.log(
+              `Cleared ${keysToDelete.length} keys matching pattern: ${pattern}`,
+            );
+            resolve();
+          })
+          .catch((err) => {
+            this.logger.error(
+              `Error deleting keys for pattern ${pattern}: ${err.message}`,
+              err.stack,
+            );
+            reject(err);
+          });
+      });
+
+      stream.on('error', (err) => {
+        this.logger.error(
+          `Error scanning keys for pattern ${pattern}: ${err.message}`,
+          err.stack,
+        );
+        reject(err);
+      });
     });
   }
 }

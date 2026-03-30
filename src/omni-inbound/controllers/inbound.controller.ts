@@ -54,14 +54,18 @@ export class InboundController {
     @Query('hub.verify_token') verifyToken: string,
     @Query('hub.challenge') challenge: string,
   ) {
-    const expectedToken = this.configService.get('OMNI_VERIFY_TOKEN') || 'crm_omni_24';
-    
+    const expectedToken =
+      this.configService.get('OMNI_VERIFY_TOKEN', { infer: true }) ||
+      'crm_omni_24';
+
     if (mode === 'subscribe' && verifyToken === expectedToken) {
       this.logger.log(`Webhook verification for ${channelType}: SUCCESS`);
       return challenge;
     }
-    
-    this.logger.warn(`Webhook verification for ${channelType}: FAILED (token mismatch)`);
+
+    this.logger.warn(
+      `Webhook verification for ${channelType}: FAILED (token mismatch)`,
+    );
     return 'forbidden';
   }
 
@@ -88,7 +92,8 @@ export class InboundController {
     }
 
     // Resolve context
-    const { tenantId, channelId, channelConfig } = await this.resolveChannelData(channelType, body);
+    const { tenantId, channelId, channelConfig } =
+      await this.resolveChannelData(channelType, body);
 
     // Unwrap batch wrappers per-provider
     const events = this.unwrapEvents(channelType, body);
@@ -128,9 +133,8 @@ export class InboundController {
 
       case 'whatsapp':
         // WA Cloud API: entry[].changes[].value (which contains messages[])
-        return (body.entry ?? []).flatMap(
-          (entry: any) =>
-            (entry.changes ?? []).map((change: any) => change.value),
+        return (body.entry ?? []).flatMap((entry: any) =>
+          (entry.changes ?? []).map((change: any) => change.value),
         );
 
       case 'zalo':
@@ -150,14 +154,15 @@ export class InboundController {
     body: any,
   ): Promise<{ tenantId: string; channelId: string; channelConfig: any }> {
     let accountId = '';
-    
+
     switch (channelType) {
       case 'facebook':
       case 'instagram':
         accountId = body.entry?.[0]?.id; // Usually the page ID
         break;
       case 'whatsapp':
-        accountId = body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+        accountId =
+          body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
         break;
       case 'zalo':
         accountId = body.sender?.id; // Or whatever oa_id is
@@ -167,16 +172,29 @@ export class InboundController {
     }
 
     if (!accountId) {
-      this.logger.warn(`Could not determine channel account ID from webhook body for type ${channelType}`);
-      throw new BadRequestException('Could not determine channel account ID from webhook');
+      this.logger.warn(
+        `Could not determine channel account ID from webhook body for type ${channelType}`,
+      );
+      throw new BadRequestException(
+        'Could not determine channel account ID from webhook',
+      );
     }
 
     const dbType = channelType.charAt(0).toUpperCase() + channelType.slice(1);
     try {
-      const channel = await this.channelsService.findAnyByAccount(dbType, accountId);
-      return { tenantId: channel.tenantId, channelId: channel.id, channelConfig: channel };
-    } catch (err) {
-      this.logger.error(`Channel not found for account ${accountId} (type: ${dbType})`);
+      const channel = await this.channelsService.findAnyByAccount(
+        dbType,
+        accountId,
+      );
+      return {
+        tenantId: channel.tenantId,
+        channelId: channel.id,
+        channelConfig: channel,
+      };
+    } catch {
+      this.logger.error(
+        `Channel not found for account ${accountId} (type: ${dbType})`,
+      );
       throw new BadRequestException('Channel not found');
     }
   }

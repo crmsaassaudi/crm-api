@@ -73,7 +73,10 @@ export class NoteRepository {
     return doc ? this.toDomain(doc) : null;
   }
 
-  async update(id: string, data: Partial<OmniNoteSchemaClass>): Promise<OmniNote | null> {
+  async update(
+    id: string,
+    data: Partial<OmniNoteSchemaClass>,
+  ): Promise<OmniNote | null> {
     const doc = await this.model
       .findByIdAndUpdate(id, data, { new: true })
       .exec();

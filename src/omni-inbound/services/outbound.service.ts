@@ -2,7 +2,10 @@ import { Injectable, Logger, Inject } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { MessageRepository } from '../repositories/message.repository';
 import { ConversationRepository } from '../repositories/conversation.repository';
-import { ChannelAdapter, CHANNEL_ADAPTERS } from '../adapters/channel-adapter.interface';
+import {
+  ChannelAdapter,
+  CHANNEL_ADAPTERS,
+} from '../adapters/channel-adapter.interface';
 import { ChannelType } from '../domain/omni-payload';
 
 import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
@@ -39,7 +42,14 @@ export class OutboundService {
     messageType?: string;
     source?: 'http' | 'socket';
   }): Promise<any> {
-    const { tenantId, conversationId, agentId, content, messageType = 'text', source = 'http' } = params;
+    const {
+      tenantId,
+      conversationId,
+      agentId,
+      content,
+      messageType = 'text',
+      source = 'http',
+    } = params;
 
     // 1. Fetch conversation to get channel details and external ID
     const conversation = await this.conversationRepo.findById(conversationId);
@@ -47,20 +57,27 @@ export class OutboundService {
       throw new Error(`Conversation ${conversationId} not found`);
     }
 
-    let channel = await this.channelRepo.findByIdWithCredentials(tenantId, conversation.channelId.toString());
-    
+    let channel = await this.channelRepo.findByIdWithCredentials(
+      tenantId,
+      conversation.channelId.toString(),
+    );
+
     // Fallback: If channel record was deleted/re-created, try finding by account
     if (!channel && (conversation as any).channelAccount) {
-      this.logger.log(`Channel ${conversation.channelId} not found, searching by account ${(conversation as any).channelAccount}`);
+      this.logger.log(
+        `Channel ${conversation.channelId} not found, searching by account ${(conversation as any).channelAccount}`,
+      );
       channel = await this.channelRepo.findByAccountWithCredentials(
-        tenantId, 
-        conversation.channelType, 
-        (conversation as any).channelAccount
+        tenantId,
+        conversation.channelType,
+        (conversation as any).channelAccount,
       );
     }
-    
+
     if (!channel) {
-      throw new Error(`Channel for conversation ${conversationId} not found or disconnected`);
+      throw new Error(
+        `Channel for conversation ${conversationId} not found or disconnected`,
+      );
     }
 
     this.logger.log(
@@ -88,7 +105,9 @@ export class OutboundService {
     // 4. Send to Provider API via Adapter
     try {
       let adapterResponse: any = null;
-      const adapter = this.adapters.get(conversation.channelType.toLowerCase() as ChannelType);
+      const adapter = this.adapters.get(
+        conversation.channelType.toLowerCase() as ChannelType,
+      );
       if (adapter) {
         adapterResponse = await adapter.send(
           conversation.customer.externalId,
@@ -99,7 +118,8 @@ export class OutboundService {
       }
 
       // Update status to sent and save external ID
-      const externalId = (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
+      const externalId =
+        (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
       await this.messageRepo.updateStatus(message.id, 'sent', externalId);
 
       this.eventEmitter.emit('omni.message.sent', {
@@ -118,7 +138,9 @@ export class OutboundService {
 
       return { ok: true, messageId: message.id, externalMessageId: externalId };
     } catch (error) {
-      this.logger.error(`Failed to send message via provider: ${error.message}`);
+      this.logger.error(
+        `Failed to send message via provider: ${error.message}`,
+      );
       await this.messageRepo.updateStatus(message.id, 'failed');
       throw error;
     }

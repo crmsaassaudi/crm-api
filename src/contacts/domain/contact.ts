@@ -57,7 +57,7 @@ export class Contact {
 
   @ApiProperty({ type: 'string' })
   updatedById: string;
-  
+
   @ApiProperty()
   updatedBy?: User;
 
