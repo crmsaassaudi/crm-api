@@ -5,7 +5,7 @@ export class SlaPolicy {
   id: string;
 
   @ApiProperty()
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'Standard Response SLA' })
   name: string;

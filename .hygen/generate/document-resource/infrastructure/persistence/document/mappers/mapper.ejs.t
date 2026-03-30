@@ -14,22 +14,22 @@ export class <%= name %>Mapper {
   public static toDomain(raw: <%= name %>SchemaClass): <%= name %> {
     const domainEntity = new <%= name %>();
     domainEntity.id = raw._id.toString();
-    domainEntity.tenant = raw.tenant;
+    domainEntity.tenantId = raw.tenantId;
     domainEntity.version = raw.__v;
 
     // Do not remove comment below.
     // <mapper-to-domain />
 
     // Populate-safe ref mapping
-    if (raw.createdBy) {
-      domainEntity.createdBy = typeof raw.createdBy === 'string'
-        ? raw.createdBy
-        : UserMapper.toDomain(raw.createdBy as any);
+    if (raw.createdById) {
+      domainEntity.createdBy = typeof raw.createdById === 'string'
+        ? raw.createdById
+        : UserMapper.toDomain(raw.createdById as any);
     }
-    if (raw.updatedBy) {
-      domainEntity.updatedBy = typeof raw.updatedBy === 'string'
-        ? raw.updatedBy
-        : UserMapper.toDomain(raw.updatedBy as any);
+    if (raw.updatedById) {
+      domainEntity.updatedBy = typeof raw.updatedById === 'string'
+        ? raw.updatedById
+        : UserMapper.toDomain(raw.updatedById as any);
     }
 
     domainEntity.createdAt = raw.createdAt;
@@ -47,15 +47,15 @@ export class <%= name %>Mapper {
     if (domainEntity.id) {
       persistenceSchema._id = domainEntity.id;
     }
-    persistenceSchema.tenant = domainEntity.tenant;
+    persistenceSchema.tenantId = domainEntity.tenantId;
 
     // Do not remove comment below.
     // <mapper-to-persistence />
 
-    persistenceSchema.createdBy = typeof domainEntity.createdBy === 'string'
+    persistenceSchema.createdById = typeof domainEntity.createdBy === 'string'
       ? domainEntity.createdBy
       : (domainEntity.createdBy as any)?.id;
-    persistenceSchema.updatedBy = typeof domainEntity.updatedBy === 'string'
+    persistenceSchema.updatedById = typeof domainEntity.updatedBy === 'string'
       ? domainEntity.updatedBy
       : (domainEntity.updatedBy as any)?.id;
 

@@ -5,7 +5,7 @@ export class Tag {
   id: string;
 
   @ApiProperty({ example: 'tenant_1' })
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'VIP' })
   name: string;

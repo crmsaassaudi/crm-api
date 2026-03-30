@@ -61,6 +61,7 @@ function applyTenantFilter(query: any, tenantField: string) {
 
   // null / undefined = no tenant context → skip (platform-level query)
   if (!activeTenantId) {
+    console.log(`[TenantPlugin][${tenantField}] ⚠️  No activeTenantId in CLS — skipping filter`);
     return;
   }
 
@@ -72,7 +73,11 @@ function applyTenantFilter(query: any, tenantField: string) {
   const sanitizedFilter = { ...currentFilter };
   delete sanitizedFilter[tenantField];
 
-  query.setQuery({
+  const finalQuery = {
     $and: [sanitizedFilter, { [tenantField]: activeTenantId }],
-  });
+  };
+
+  console.log(`[TenantPlugin][${tenantField}] activeTenantId=${activeTenantId} | filter=${JSON.stringify(finalQuery)}`);
+
+  query.setQuery(finalQuery);
 }

@@ -16,14 +16,14 @@ export class GroupRepository {
   ) {}
 
   async findAll(
-    tenant: string,
+    tenantId: string,
     query?: {
       search?: string;
       isActive?: boolean;
-      parentGroup?: string;
+      parentGroupId?: string;
     },
   ): Promise<Group[]> {
-    const filter: FilterQuery<GroupSchemaClass> = { tenant };
+    const filter: FilterQuery<GroupSchemaClass> = { tenantId };
 
     if (query?.search) {
       filter.$or = [
@@ -34,17 +34,17 @@ export class GroupRepository {
     if (query?.isActive !== undefined) {
       filter.isActive = query.isActive;
     }
-    if (query?.parentGroup !== undefined) {
-      filter.parentGroup =
-        query.parentGroup === 'null' ? null : query.parentGroup;
+    if (query?.parentGroupId !== undefined) {
+      filter.parentGroupId =
+        query.parentGroupId === 'null' ? null : query.parentGroupId;
     }
 
     const docs = await this.model.find(filter).sort({ name: 1 }).exec();
     return docs.map(GroupMapper.toDomain);
   }
 
-  async findById(tenant: string, id: string): Promise<Group | null> {
-    const doc = await this.model.findOne({ _id: id, tenant }).exec();
+  async findById(tenantId: string, id: string): Promise<Group | null> {
+    const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? GroupMapper.toDomain(doc) : null;
   }
 
@@ -54,13 +54,13 @@ export class GroupRepository {
   }
 
   async update(
-    tenant: string,
+    tenantId: string,
     id: string,
     data: Partial<Group>,
   ): Promise<Group | null> {
     const doc = await this.model
       .findOneAndUpdate(
-        { _id: id, tenant },
+        { _id: id, tenantId },
         { $set: GroupMapper.toPersistence(data) },
         { new: true },
       )
@@ -68,20 +68,20 @@ export class GroupRepository {
     return doc ? GroupMapper.toDomain(doc) : null;
   }
 
-  async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model.deleteOne({ _id: id, tenant }).exec();
+  async delete(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;
   }
 
   async addMember(
-    tenant: string,
+    tenantId: string,
     groupId: string,
     userId: string,
   ): Promise<Group | null> {
     const doc = await this.model
       .findOneAndUpdate(
-        { _id: groupId, tenant },
-        { $addToSet: { members: userId } },
+        { _id: groupId, tenantId },
+        { $addToSet: { memberIds: userId } },
         { new: true },
       )
       .exec();
@@ -89,23 +89,23 @@ export class GroupRepository {
   }
 
   async removeMember(
-    tenant: string,
+    tenantId: string,
     groupId: string,
     userId: string,
   ): Promise<Group | null> {
     const doc = await this.model
       .findOneAndUpdate(
-        { _id: groupId, tenant },
-        { $pull: { members: userId } },
+        { _id: groupId, tenantId },
+        { $pull: { memberIds: userId } },
         { new: true },
       )
       .exec();
     return doc ? GroupMapper.toDomain(doc) : null;
   }
 
-  async findGroupsByMember(tenant: string, userId: string): Promise<Group[]> {
+  async findGroupsByMember(tenantId: string, userId: string): Promise<Group[]> {
     const docs = await this.model
-      .find({ tenant, members: userId })
+      .find({ tenantId, memberIds: userId })
       .sort({ name: 1 })
       .exec();
     return docs.map(GroupMapper.toDomain);

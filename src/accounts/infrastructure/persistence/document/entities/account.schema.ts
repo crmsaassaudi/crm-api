@@ -15,7 +15,7 @@ export type AccountSchemaDocument = HydratedDocument<AccountSchemaClass>;
 })
 export class AccountSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true, index: true })
   name: string;
@@ -51,7 +51,7 @@ export class AccountSchemaClass extends EntityDocumentHelper {
   shippingAddress?: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
-  owner?: string;
+  ownerId?: string;
 
   @Prop({ default: 'active', index: true })
   status?: string;
@@ -70,14 +70,14 @@ export class AccountSchemaClass extends EntityDocumentHelper {
     ref: 'UserSchemaClass',
     required: true,
   })
-  createdBy: string;
+  createdById: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     required: true,
   })
-  updatedBy: string;
+  updatedById: string;
 
   @Prop({ default: now })
   createdAt: Date;
@@ -91,4 +91,11 @@ export class AccountSchemaClass extends EntityDocumentHelper {
 
 export const AccountSchema = SchemaFactory.createForClass(AccountSchemaClass);
 
-AccountSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
+AccountSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+
+AccountSchema.virtual('owner', {
+  ref: 'UserSchemaClass',
+  localField: 'ownerId',
+  foreignField: '_id',
+  justOne: true,
+});

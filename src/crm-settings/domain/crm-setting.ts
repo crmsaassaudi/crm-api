@@ -3,7 +3,7 @@ import { Allow } from 'class-validator';
 
 export class CrmSetting {
   @ApiProperty({ example: 'tenant_1' })
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'contact_lifecycle' })
   key: string;

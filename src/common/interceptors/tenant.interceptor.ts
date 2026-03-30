@@ -49,7 +49,7 @@ export class TenantInterceptor implements NestInterceptor {
     private readonly cls: ClsService,
     private readonly sessionService: SessionService,
     private readonly moduleRef: ModuleRef,
-  ) {}
+  ) { }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -191,7 +191,7 @@ export class TenantInterceptor implements NestInterceptor {
 
           // Also collect tenant from user if available
           if (dbUser.tenants?.length > 0) {
-            raw.tenantHints.push(dbUser.tenants[0].tenant);
+            raw.tenantHints.push(dbUser.tenants[0].tenantId);
           }
         }
       } catch (e) {
@@ -265,7 +265,7 @@ export class TenantInterceptor implements NestInterceptor {
       }
 
       if (dbUser?.tenants?.length) {
-        const tenantId = dbUser.tenants[0].tenant.toString();
+        const tenantId = dbUser.tenants[0].tenantId.toString();
         this.cls.set('tenantId', tenantId);
         this.logger.debug(`Tenant fallback from user membership: ${tenantId}`);
       } else {

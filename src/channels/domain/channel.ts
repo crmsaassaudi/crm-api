@@ -5,7 +5,7 @@ export class Channel {
   id: string;
 
   @ApiProperty()
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({
     enum: [

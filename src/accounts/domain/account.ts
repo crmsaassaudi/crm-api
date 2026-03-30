@@ -6,7 +6,7 @@ export class Account {
   id: string;
 
   @ApiProperty({ example: 'tenant_1' })
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'Acme Corp' })
   name: string;
@@ -42,7 +42,10 @@ export class Account {
   shippingAddress?: string;
 
   @ApiProperty({ type: 'string' })
-  owner?: User | string;
+  ownerId?: string;
+
+  @ApiProperty({ type: () => User })
+  owner?: User;
 
   @ApiProperty({ example: 'active' })
   status?: string;
@@ -55,6 +58,12 @@ export class Account {
 
   @ApiProperty({ example: ['VIP'] })
   tags?: string[];
+
+  @ApiProperty()
+  createdById?: string;
+
+  @ApiProperty()
+  updatedById?: string;
 
   @ApiProperty()
   createdAt: Date;

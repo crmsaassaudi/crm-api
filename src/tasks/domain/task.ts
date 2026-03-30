@@ -5,7 +5,7 @@ export class Task {
   id: string;
 
   @ApiProperty({ example: 'tenant_1' })
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'Follow up with new lead' })
   title: string;
@@ -26,7 +26,7 @@ export class Task {
   category: string;
 
   @ApiProperty({ example: '60d0fe4f5311236168a109cb' })
-  assignedTo?: string;
+  assignedToId?: string;
 
   @ApiProperty()
   relatedTo?: {

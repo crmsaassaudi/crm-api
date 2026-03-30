@@ -31,7 +31,7 @@ export class ActivityRepository {
   private toDomain(doc: ConversationActivitySchemaClass): ConversationActivity {
     return {
       id: doc._id.toString(),
-      tenantId: doc.tenant?.toString(),
+      tenantId: doc.tenantId?.toString(),
       conversationId: doc.conversationId?.toString(),
       actorType: doc.actorType,
       actorId: doc.actorId?.toString() ?? null,

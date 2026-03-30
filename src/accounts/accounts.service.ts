@@ -7,14 +7,14 @@ export class AccountsService {
   constructor(private readonly repository: AccountRepository) {}
 
   async create(data: Partial<Account>): Promise<Account> {
-    const owner = data.owner === '' ? undefined : data.owner;
+    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const phones = data.phones ?? [];
     const emails = data.emails ?? [];
     return this.repository.create({
       ...data,
       phones,
       emails,
-      owner,
+      ownerId,
     } as any);
   }
 
@@ -33,14 +33,14 @@ export class AccountsService {
   }
 
   async update(id: string, data: Partial<Account>): Promise<Account | null> {
-    const owner = data.owner === '' ? undefined : data.owner;
+    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const phones = data.phones;
     const emails = data.emails;
     return this.repository.update(id, {
       ...data,
       ...(phones !== undefined ? { phones } : {}),
       ...(emails !== undefined ? { emails } : {}),
-      owner,
+      ownerId,
     } as any);
   }
 

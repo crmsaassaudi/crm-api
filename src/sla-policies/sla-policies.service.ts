@@ -24,8 +24,8 @@ export class SlaPoliciesService {
   }
 
   async create(dto: CreateSlaPolicyDto): Promise<SlaPolicy> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.create({ ...dto, tenant });
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.create({ ...dto, tenantId });
   }
 
   async update(id: string, dto: UpdateSlaPolicyDto): Promise<SlaPolicy> {

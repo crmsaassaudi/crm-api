@@ -29,18 +29,18 @@ export class CreateGroupDto {
   })
   @IsMongoId()
   @IsOptional()
-  parentGroup?: string | null;
+  parentGroupId?: string | null;
 
   @ApiPropertyOptional({ example: '507f1f77bcf86cd799439011' })
   @IsMongoId()
   @IsOptional()
-  manager?: string;
+  managerId?: string;
 
   @ApiPropertyOptional({ type: [String] })
   @IsArray()
   @IsMongoId({ each: true })
   @IsOptional()
-  members?: string[];
+  memberIds?: string[];
 
   @ApiPropertyOptional({
     type: [String],
@@ -79,18 +79,18 @@ export class UpdateGroupDto {
   @ApiPropertyOptional({ nullable: true })
   @IsMongoId()
   @IsOptional()
-  parentGroup?: string | null;
+  parentGroupId?: string | null;
 
   @ApiPropertyOptional()
   @IsMongoId()
   @IsOptional()
-  manager?: string | null;
+  managerId?: string | null;
 
   @ApiPropertyOptional({ type: [String] })
   @IsArray()
   @IsMongoId({ each: true })
   @IsOptional()
-  members?: string[];
+  memberIds?: string[];
 
   @ApiPropertyOptional({ type: [String] })
   @IsArray()
@@ -129,5 +129,5 @@ export class QueryGroupDto {
     description: 'Filter by parent group id. Pass "null" for root groups.',
   })
   @IsOptional()
-  parentGroup?: string;
+  parentGroupId?: string;
 }

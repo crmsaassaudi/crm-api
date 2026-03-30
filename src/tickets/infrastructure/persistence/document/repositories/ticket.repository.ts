@@ -96,7 +96,7 @@ export class TicketRepository extends BaseDocumentRepository<
   async generateTicketNumber(): Promise<string> {
     const tenantId = this.cls.get('tenantId');
     const count = await this.model
-      .countDocuments(tenantId ? { tenant: tenantId } : {})
+      .countDocuments(tenantId ? { tenantId: tenantId } : {})
       .exec();
     return `TKT-${(count + 1).toString().padStart(5, '0')}`;
   }

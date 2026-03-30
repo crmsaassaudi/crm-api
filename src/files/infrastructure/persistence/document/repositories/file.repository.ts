@@ -36,12 +36,12 @@ export class FileDocumentRepository
   async create(
     data: Omit<
       FileType,
-      'id' | 'createdAt' | 'updatedAt' | 'version' | 'tenant'
+      'id' | 'createdAt' | 'updatedAt' | 'version' | 'tenantId'
     >,
   ): Promise<FileType> {
     const domainEntity = new FileType();
     Object.assign(domainEntity, data);
-    domainEntity.tenant = this.cls.get('tenantId');
+    domainEntity.tenantId = this.cls.get('tenantId');
 
     const persistenceModel = FileMapper.toPersistence(domainEntity);
     const createdFile = new this.model(persistenceModel);

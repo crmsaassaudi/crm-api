@@ -69,8 +69,8 @@ export class OutboundService {
 
     // 2. Persist to MessageRepository
     const message = await this.messageRepo.create({
-      tenant: tenantId,
-      conversation: conversationId,
+      tenantId: tenantId,
+      conversationId: conversationId,
       senderId: agentId,
       senderType: 'agent',
       messageType,

@@ -174,7 +174,7 @@ export class InboundController {
     const dbType = channelType.charAt(0).toUpperCase() + channelType.slice(1);
     try {
       const channel = await this.channelsService.findAnyByAccount(dbType, accountId);
-      return { tenantId: channel.tenant, channelId: channel.id, channelConfig: channel };
+      return { tenantId: channel.tenantId, channelId: channel.id, channelConfig: channel };
     } catch (err) {
       this.logger.error(`Channel not found for account ${accountId} (type: ${dbType})`);
       throw new BadRequestException('Channel not found');

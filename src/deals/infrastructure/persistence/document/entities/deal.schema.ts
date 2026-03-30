@@ -15,7 +15,7 @@ export type DealSchemaDocument = HydratedDocument<DealSchemaClass>;
 })
 export class DealSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true, index: true })
   title: string;
@@ -51,7 +51,7 @@ export class DealSchemaClass extends EntityDocumentHelper {
   contactIds?: string[];
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
-  owner?: string;
+  ownerId?: string;
 
   @Prop()
   description?: string;
@@ -82,14 +82,14 @@ export class DealSchemaClass extends EntityDocumentHelper {
     ref: 'UserSchemaClass',
     required: true,
   })
-  createdBy: string;
+  createdById: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     required: true,
   })
-  updatedBy: string;
+  updatedById: string;
 
   @Prop({ default: now })
   createdAt: Date;
@@ -103,4 +103,11 @@ export class DealSchemaClass extends EntityDocumentHelper {
 
 export const DealSchema = SchemaFactory.createForClass(DealSchemaClass);
 
-DealSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
+DealSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+
+DealSchema.virtual('owner', {
+  ref: 'UserSchemaClass',
+  localField: 'ownerId',
+  foreignField: '_id',
+  justOne: true,
+});

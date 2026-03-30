@@ -5,7 +5,7 @@ export class Deal {
   id: string;
 
   @ApiProperty({ example: 'tenant_1' })
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'Enterprise Software License' })
   title: string;
@@ -38,7 +38,7 @@ export class Deal {
   contactIds?: string[];
 
   @ApiProperty()
-  owner?: string;
+  ownerId?: string;
 
   @ApiProperty({ example: 'Full scope project for Acme Corp' })
   description?: string;
@@ -63,6 +63,12 @@ export class Deal {
 
   @ApiProperty()
   lostAt?: Date;
+
+  @ApiProperty()
+  createdById?: string;
+
+  @ApiProperty()
+  updatedById?: string;
 
   @ApiProperty()
   createdAt: Date;

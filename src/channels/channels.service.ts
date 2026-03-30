@@ -41,7 +41,7 @@ export class ChannelsService {
     const tenant = this.cls.get('tenantId');
     const channel = await this.repository.create({
       ...dto,
-      tenant,
+      tenantId: tenant,
       status: 'Pending',
     });
 

@@ -25,7 +25,7 @@ export class NoteService {
     mentions: string[] = [],
   ): Promise<OmniNote> {
     const note = await this.noteRepo.create({
-      tenant: tenantId,
+      tenantId,
       conversationId,
       content,
       authorId,

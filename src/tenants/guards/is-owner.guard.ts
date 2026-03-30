@@ -34,7 +34,7 @@ export class IsOwnerGuard implements CanActivate {
     }
 
     // Check if user is the owner
-    if (tenant.owner !== user.id) {
+    if (tenant.ownerId !== user.id) {
       throw new ForbiddenException(
         'Only the tenant owner can perform this action',
       );

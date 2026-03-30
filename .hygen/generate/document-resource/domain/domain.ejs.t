@@ -9,7 +9,7 @@ export class <%= name %> {
   id: string;
 
   @ApiProperty({ example: '60d0fe4f5311236168a109cb' })
-  tenant: string;
+  tenantId: string;
 
   // Do not remove comment below.
   // <domain-property />

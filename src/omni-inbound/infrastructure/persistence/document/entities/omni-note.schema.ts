@@ -21,7 +21,7 @@ export class OmniNoteSchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  tenant: string;
+  tenantId: string;
 
   @Prop({
     type: String,
@@ -52,10 +52,10 @@ export class OmniNoteSchemaClass extends EntityDocumentHelper {
 
 export const OmniNoteSchema = SchemaFactory.createForClass(OmniNoteSchemaClass);
 
-OmniNoteSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
+OmniNoteSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
 // Index for fetching notes by conversation
 OmniNoteSchema.index(
-  { tenant: 1, conversationId: 1, createdAt: -1 },
+  { tenantId: 1, conversationId: 1, createdAt: -1 },
   { name: 'notes_by_conversation' },
 );

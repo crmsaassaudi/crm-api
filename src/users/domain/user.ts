@@ -16,7 +16,7 @@ export class User {
     type: [Object],
   })
   tenants: {
-    tenant: string;
+    tenantId: string;
     roles: string[];
     joinedAt: Date;
   }[];

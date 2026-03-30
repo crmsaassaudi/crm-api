@@ -6,7 +6,7 @@ import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.
 export type EscalationPolicySchemaDocument =
   HydratedDocument<EscalationPolicySchemaClass>;
 
-@Schema({ timestamps: true, collection: 'escalationPolicies' })
+@Schema({ timestamps: true, collection: 'escalation_policies' })
 export class EscalationPolicySchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, index: true })
   tenant: string;

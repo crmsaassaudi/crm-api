@@ -7,11 +7,11 @@ export class DealsService {
   constructor(private readonly repository: DealRepository) {}
 
   async create(data: Partial<Deal>): Promise<Deal> {
-    const owner = data.owner === '' ? undefined : data.owner;
+    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     return this.repository.create({
       ...data,
       name: data.title || data.name,
-      owner,
+      ownerId,
     } as any);
   }
 
@@ -30,11 +30,11 @@ export class DealsService {
   }
 
   async update(id: string, data: Partial<Deal>): Promise<Deal | null> {
-    const owner = data.owner === '' ? undefined : data.owner;
+    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     return this.repository.update(id, {
       ...data,
       name: data.title || data.name,
-      owner,
+      ownerId,
     } as any);
   }
 

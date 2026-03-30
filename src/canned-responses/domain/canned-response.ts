@@ -5,7 +5,7 @@ export class CannedResponse {
   id: string;
 
   @ApiProperty()
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: '/hi' })
   shortcut: string;
@@ -20,7 +20,7 @@ export class CannedResponse {
   scope: string;
 
   @ApiProperty()
-  createdBy: string;
+  createdById: string;
 
   @ApiProperty({ type: [String] })
   attachments: string[];

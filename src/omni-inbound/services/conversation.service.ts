@@ -1,4 +1,10 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  Inject,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
@@ -11,6 +17,12 @@ import { IdentityService } from './identity.service';
 import { RedisLockService } from '../../redis/redis-lock.service';
 import { ContactsService } from '../../contacts/contacts.service';
 import { FacebookAdapter } from '../adapters/facebook.adapter';
+import { TimelineQueryDto } from '../dto/timeline-query.dto';
+import { TimelineResponseDto } from '../dto/timeline-response.dto';
+import {
+  ThreadIdentity,
+  ThreadSessionSlice,
+} from '../repositories/conversation.repository';
 
 /**
  * ConversationService — listens to `omni.message.received` events and handles:
@@ -46,6 +58,150 @@ export class ConversationService {
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
+  async getConversationTimeline(params: {
+    tenantId: string;
+    conversationId: string;
+    query: TimelineQueryDto;
+  }): Promise<TimelineResponseDto> {
+    const conversation = await this.conversationRepo.findById(
+      params.conversationId,
+    );
+    if (!conversation || conversation.tenantId !== params.tenantId) {
+      throw new NotFoundException(
+        `Conversation ${params.conversationId} not found`,
+      );
+    }
+
+    const sessionLimit = this.parsePositiveInt(
+      params.query.sessionLimit,
+      5,
+      20,
+    );
+    const messageLimit = this.parsePositiveInt(
+      params.query.messageLimit,
+      50,
+      100,
+    );
+
+    const thread: ThreadIdentity = {
+      tenantId: conversation.tenantId,
+      channelType: conversation.channelType,
+      channelAccount: conversation.channelAccount,
+      externalId: conversation.externalConversationId,
+    };
+
+    const anchorCursor = {
+      createdAt: conversation.createdAt,
+      id: conversation.id,
+    };
+
+    const pastCursor = this.parseCursor(
+      params.query.pastCursorCreatedAt,
+      params.query.pastCursorId,
+    );
+    const futureCursor = this.parseCursor(
+      params.query.futureCursorCreatedAt,
+      params.query.futureCursorId,
+    );
+
+    let past: ThreadSessionSlice = {
+      sessions: [],
+      hasMore: false,
+      cursor: null,
+    };
+    let future: ThreadSessionSlice = {
+      sessions: [],
+      hasMore: false,
+      cursor: null,
+    };
+
+    if (!pastCursor && !futureCursor) {
+      const around = await this.conversationRepo.findThreadSessionsAroundAnchor(
+        {
+          thread,
+          anchor: anchorCursor,
+          pastLimit: sessionLimit,
+          futureLimit: sessionLimit,
+        },
+      );
+      past = around.past;
+      future = around.future;
+    } else {
+      if (pastCursor) {
+        past = await this.conversationRepo.findPastSessionsByCursor({
+          ...thread,
+          cursor: pastCursor,
+          limit: sessionLimit,
+        });
+      }
+      if (futureCursor) {
+        future = await this.conversationRepo.findFutureSessionsByCursor({
+          ...thread,
+          cursor: futureCursor,
+          limit: sessionLimit,
+        });
+      }
+    }
+
+    const timelineSessions = [
+      ...past.sessions,
+      conversation,
+      ...future.sessions,
+    ];
+
+    const messageMap =
+      await this.messageRepo.findByConversationIdsChronological(
+        timelineSessions.map((session) => session.id),
+        messageLimit,
+      );
+
+    const toSessionBlock = (session: any) => {
+      const fullName = session.resolvedByAgent
+        ? [session.resolvedByAgent.firstName, session.resolvedByAgent.lastName]
+            .filter(Boolean)
+            .join(' ')
+            .trim() || null
+        : null;
+
+      const sessionMessages = messageMap[session.id] ?? [];
+      const lastMessage = sessionMessages[sessionMessages.length - 1] ?? null;
+
+      return {
+        id: session.id,
+        status: session.status,
+        createdAt: session.createdAt,
+        resolvedAt: session.resolvedAt,
+        resolvedByAgentId: session.resolvedByAgentId,
+        resolvedByAgentName: fullName,
+        resolvedByAgentEmail: session.resolvedByAgent?.email ?? null,
+        resolveReason: session.resolveReason,
+        resolveNote: session.resolveNote,
+        resolveSource: session.resolveSource,
+        lastMessage: session.lastMessage,
+        messages: {
+          data: sessionMessages,
+          hasMore: sessionMessages.length >= messageLimit,
+          cursor: lastMessage
+            ? {
+                createdAt: lastMessage.createdAt,
+                id: lastMessage.id,
+              }
+            : null,
+        },
+      };
+    };
+
+    return {
+      pastSessions: past.sessions.map(toSessionBlock),
+      anchorSession: toSessionBlock(conversation),
+      futureSessions: future.sessions.map(toSessionBlock),
+      hasMorePast: past.hasMore,
+      hasMoreFuture: future.hasMore,
+      pastCursor: past.cursor,
+      futureCursor: future.cursor,
+    };
+  }
+
   /**
    * Event handler: called when a normalized message arrives from any provider.
    *
@@ -75,19 +231,13 @@ export class ConversationService {
     const lockKey = `lock:omni:sender:${payload.senderId}`;
 
     try {
-      await this.lockService.acquire(
-        lockKey,
-        this.LOCK_TTL,
-        async () => {
-          await this.processWithinLock(payload, idemKey);
-        },
-      );
+      await this.lockService.acquire(lockKey, this.LOCK_TTL, async () => {
+        await this.processWithinLock(payload, idemKey);
+      });
     } catch (error: any) {
       // E11000 = duplicate key — another worker already saved this message
       if (error?.code === 11000) {
-        this.logger.warn(
-          `Duplicate message (race condition): ${msgId}`,
-        );
+        this.logger.warn(`Duplicate message (race condition): ${msgId}`);
         return;
       }
       this.logger.error(
@@ -120,7 +270,10 @@ export class ConversationService {
     // ── Step 4a: Check if existing conversation is still active ──
     if (conversationId) {
       const existing = await this.conversationRepo.findById(conversationId);
-      if (existing && (existing.status === 'resolved' || existing.status === 'closed')) {
+      if (
+        existing &&
+        (existing.status === 'resolved' || existing.status === 'closed')
+      ) {
         // Session is no longer active → force creation of a new session
         this.logger.log(
           `Existing conversation ${conversationId} is ${existing.status} ` +
@@ -149,9 +302,14 @@ export class ConversationService {
             isShadow: true,
           } as any);
           contactId = contact.id;
-          this.logger.log(`Created Shadow Contact ${contactId} for sender ${payload.senderId}`);
+          this.logger.log(
+            `Created Shadow Contact ${contactId} for sender ${payload.senderId}`,
+          );
         } catch (err) {
-          this.logger.error(`Failed to create Shadow Contact: ${err.message}`, err.stack);
+          this.logger.error(
+            `Failed to create Shadow Contact: ${err.message}`,
+            err.stack,
+          );
         }
       }
 
@@ -166,14 +324,21 @@ export class ConversationService {
         payload.externalConversationId,
       );
 
-      if (previousConv && (previousConv.status === 'resolved' || previousConv.status === 'closed')) {
+      if (
+        previousConv &&
+        (previousConv.status === 'resolved' || previousConv.status === 'closed')
+      ) {
         previousConversationId = previousConv.id;
         reopenCount = (previousConv.reopenCount ?? 0) + 1;
       }
 
       // ── Step 3b: Eagerly fetch Facebook profile before creating conversation ──
       // This ensures the conversation is created with the real name/avatar from the start.
-      let enrichedProfile: { name?: string; avatarUrl?: string; phone?: string } = {};
+      let enrichedProfile: {
+        name?: string;
+        avatarUrl?: string;
+        phone?: string;
+      } = {};
       if (payload.channelType === 'facebook' && payload.metadata?.accessToken) {
         try {
           const profile = await this.facebookAdapter.enrichProfile(
@@ -182,7 +347,9 @@ export class ConversationService {
           );
           if (profile.name && profile.name !== payload.senderId) {
             enrichedProfile = profile;
-            this.logger.log(`Pre-enriched profile for ${payload.senderId}: ${profile.name}`);
+            this.logger.log(
+              `Pre-enriched profile for ${payload.senderId}: ${profile.name}`,
+            );
           }
         } catch (err) {
           this.logger.warn(`Profile pre-enrichment skipped: ${err.message}`);
@@ -191,16 +358,22 @@ export class ConversationService {
 
       // No active session → create a new one (with enriched profile)
       const conversation = await this.conversationRepo.create({
-        tenant: payload.tenantId,
-        channel: payload.channelId,
+        tenantId: payload.tenantId,
+        channelId: payload.channelId,
         channelAccount: payload.channelAccount,
         channelType: this.toSchemaChannelType(payload.channelType),
         externalId: payload.externalConversationId,
         customer: {
           externalId: payload.senderId,
           contactId: contactId ?? undefined,
-          name: enrichedProfile.name ?? payload.metadata.contactName ?? payload.senderId,
-          avatarUrl: enrichedProfile.avatarUrl ?? payload.metadata.avatarUrl ?? undefined,
+          name:
+            enrichedProfile.name ??
+            payload.metadata.contactName ??
+            payload.senderId,
+          avatarUrl:
+            enrichedProfile.avatarUrl ??
+            payload.metadata.avatarUrl ??
+            undefined,
           phone: enrichedProfile.phone ?? payload.metadata.phone ?? undefined,
         },
         status: 'open',
@@ -269,8 +442,8 @@ export class ConversationService {
 
     // ── Step 5b: Save the message ─────────────────────────────
     await this.messageRepo.create({
-      tenant: payload.tenantId,
-      conversation: conversationId,
+      tenantId: payload.tenantId,
+      conversationId: conversationId,
       senderId: payload.senderId,
       senderType: payload.senderType,
       messageType: payload.messageType,
@@ -284,9 +457,7 @@ export class ConversationService {
     });
 
     // ── Step 5c: Update conversation summary ──────────────────
-    const messagePreview =
-      payload.content ||
-      `[${payload.messageType}]`;
+    const messagePreview = payload.content || `[${payload.messageType}]`;
 
     await this.conversationRepo.updateLastMessage(
       conversationId,
@@ -350,5 +521,38 @@ export class ConversationService {
       livechat: 'LiveChat',
     };
     return map[type] ?? type;
+  }
+
+  private parsePositiveInt(
+    value: string | undefined,
+    fallback: number,
+    max: number,
+  ): number {
+    const parsed = Number.parseInt(value ?? `${fallback}`, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      return fallback;
+    }
+    return Math.min(parsed, max);
+  }
+
+  private parseCursor(
+    createdAt?: string,
+    id?: string,
+  ): { createdAt: Date; id: string } | null {
+    if (!createdAt && !id) {
+      return null;
+    }
+    if (!createdAt || !id) {
+      throw new BadRequestException('Cursor requires both createdAt and id');
+    }
+
+    const parsedDate = new Date(createdAt);
+    if (Number.isNaN(parsedDate.getTime())) {
+      throw new BadRequestException(
+        'Cursor createdAt must be a valid ISO date',
+      );
+    }
+
+    return { createdAt: parsedDate, id };
   }
 }

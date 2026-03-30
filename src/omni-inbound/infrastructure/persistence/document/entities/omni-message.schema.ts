@@ -36,7 +36,7 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  tenant: string;
+  tenantId: string;
 
   @Prop({
     type: String,
@@ -44,7 +44,7 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  conversation: string;
+  conversationId: string;
 
   /** External user/agent ID from the provider or our internal user ID */
   @Prop({ required: true })
@@ -95,21 +95,27 @@ export const OmniMessageSchema = SchemaFactory.createForClass(
   OmniMessageSchemaClass,
 );
 
-OmniMessageSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
+OmniMessageSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
 // Retrieve messages for a conversation, sorted by time
 OmniMessageSchema.index(
-  { conversation: 1, createdAt: 1 },
+  { conversationId: 1, createdAt: 1 },
   { name: 'conversation_messages' },
+);
+
+// Deterministic cursor scan per conversation.
+OmniMessageSchema.index(
+  { conversationId: 1, createdAt: 1, _id: 1 },
+  { name: 'conversation_messages_timeline' },
 );
 
 // Deduplication: prevent processing the same webhook message twice
 // Use partialFilterExpression to only include documents where externalMessageId is a non-null string.
 // This allows outbound messages (which start with no external ID) to coexist without conflict.
 OmniMessageSchema.index(
-  { tenant: 1, externalMessageId: 1 },
-  { 
-    unique: true, 
+  { tenantId: 1, externalMessageId: 1 },
+  {
+    unique: true,
     name: 'dedup_external_message',
     partialFilterExpression: { externalMessageId: { $type: 'string' } },
   },
@@ -118,7 +124,7 @@ OmniMessageSchema.index(
 // Primary deduplication index — compound unique on (tenant, platformMessageId).
 // This is the DB-level safeguard ensuring the same platform message is never stored twice.
 OmniMessageSchema.index(
-  { tenant: 1, platformMessageId: 1 },
+  { tenantId: 1, platformMessageId: 1 },
   {
     unique: true,
     name: 'dedup_platform_message',

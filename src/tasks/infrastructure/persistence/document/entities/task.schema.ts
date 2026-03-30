@@ -15,7 +15,7 @@ export type TaskSchemaDocument = HydratedDocument<TaskSchemaClass>;
 })
 export class TaskSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true, index: true })
   title: string;
@@ -36,7 +36,7 @@ export class TaskSchemaClass extends EntityDocumentHelper {
   category: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
-  assignedTo?: string;
+  assignedToId?: string;
 
   @Prop({ type: MongooseSchema.Types.Mixed })
   relatedTo?: {
@@ -62,14 +62,14 @@ export class TaskSchemaClass extends EntityDocumentHelper {
     ref: 'UserSchemaClass',
     required: true,
   })
-  createdBy: string;
+  createdById: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     required: true,
   })
-  updatedBy: string;
+  updatedById: string;
 
   @Prop({ default: now })
   createdAt: Date;
@@ -83,6 +83,13 @@ export class TaskSchemaClass extends EntityDocumentHelper {
 
 export const TaskSchema = SchemaFactory.createForClass(TaskSchemaClass);
 
-TaskSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
-TaskSchema.index({ tenant: 1, status: 1 });
-TaskSchema.index({ tenant: 1, dueDate: 1 });
+TaskSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+TaskSchema.index({ tenantId: 1, status: 1 });
+TaskSchema.index({ tenantId: 1, dueDate: 1 });
+
+TaskSchema.virtual('assignedTo', {
+  ref: 'UserSchemaClass',
+  localField: 'assignedToId',
+  foreignField: '_id',
+  justOne: true,
+});

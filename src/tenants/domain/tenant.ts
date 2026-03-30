@@ -25,7 +25,7 @@ export class Tenant {
   name: string;
 
   @ApiProperty()
-  owner: string;
+  ownerId: string;
 
   @ApiProperty({ enum: SubscriptionPlan })
   subscriptionPlan: SubscriptionPlan;

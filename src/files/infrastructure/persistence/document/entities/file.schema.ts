@@ -21,7 +21,7 @@ export type FileSchemaDocument = HydratedDocument<FileSchemaClass>;
 })
 export class FileSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
-  tenant: string;
+  tenantId: string;
 
   @Prop()
   path: string;

@@ -17,7 +17,7 @@ export class TagSchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true })
   name: string;
@@ -37,5 +37,5 @@ export class TagSchemaClass extends EntityDocumentHelper {
 
 export const TagSchema = SchemaFactory.createForClass(TagSchemaClass);
 
-TagSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
-TagSchema.index({ tenant: 1, name: 1, scope: 1 }, { unique: true });
+TagSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+TagSchema.index({ tenantId: 1, name: 1, scope: 1 }, { unique: true });

@@ -6,7 +6,7 @@ export class AccountMapper {
   static toDomain(raw: AccountSchemaClass): Account {
     const domainEntity = new Account();
     domainEntity.id = raw._id.toString();
-    domainEntity.tenant = raw.tenant;
+    domainEntity.tenantId = raw.tenantId;
     domainEntity.name = raw.name;
     domainEntity.website = raw.website;
     domainEntity.industry = raw.industry;
@@ -18,11 +18,14 @@ export class AccountMapper {
     domainEntity.numberOfEmployees = raw.numberOfEmployees;
     domainEntity.billingAddress = raw.billingAddress;
     domainEntity.shippingAddress = raw.shippingAddress;
-    if (raw.owner) {
-      domainEntity.owner =
-        typeof raw.owner === 'string'
-          ? raw.owner
-          : UserMapper.toDomain(raw.owner as any);
+    if (raw.ownerId) {
+      domainEntity.ownerId = typeof raw.ownerId === 'string'
+        ? raw.ownerId
+        : (raw.ownerId as any)._id?.toString();
+    }
+    // Handle explicitly populated 'owner' virtual/aggregation field
+    if ((raw as any).owner) {
+      domainEntity.owner = UserMapper.toDomain((raw as any).owner as any);
     }
     domainEntity.status = raw.status;
     domainEntity.isArchived = raw.isArchived;
@@ -39,7 +42,7 @@ export class AccountMapper {
     if (domainEntity.id) {
       persistenceEntity._id = domainEntity.id;
     }
-    persistenceEntity.tenant = domainEntity.tenant;
+    persistenceEntity.tenantId = domainEntity.tenantId;
     persistenceEntity.name = domainEntity.name;
     persistenceEntity.website = domainEntity.website;
     persistenceEntity.industry = domainEntity.industry;
@@ -51,11 +54,7 @@ export class AccountMapper {
     persistenceEntity.numberOfEmployees = domainEntity.numberOfEmployees;
     persistenceEntity.billingAddress = domainEntity.billingAddress;
     persistenceEntity.shippingAddress = domainEntity.shippingAddress;
-    persistenceEntity.owner = (
-      typeof domainEntity.owner === 'object'
-        ? (domainEntity.owner as any).id
-        : domainEntity.owner
-    ) as string | undefined;
+    persistenceEntity.ownerId = domainEntity.ownerId;
     persistenceEntity.status = domainEntity.status;
     persistenceEntity.isArchived = domainEntity.isArchived;
     persistenceEntity.customFields = domainEntity.customFields;

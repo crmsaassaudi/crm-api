@@ -6,7 +6,7 @@ import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.
 export type RoutingRuleSchemaDocument =
   HydratedDocument<RoutingRuleSchemaClass>;
 
-@Schema({ timestamps: true, collection: 'routingRules' })
+@Schema({ timestamps: true, collection: 'routing_rules' })
 export class RoutingRuleSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, index: true })
   tenant: string;

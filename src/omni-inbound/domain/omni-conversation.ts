@@ -56,11 +56,12 @@ export interface OmniConversation {
   // ── Close / Resolve metadata ───────────────────────────────────
   resolvedByAgentId: string | null;
   resolvedAt: Date | null;
-  closedByAgentId: string | null;
-  closedAt: Date | null;
-  closeReason: string | null;
+  resolveReason: string | null;
   resolveNote: string | null;
   resolveSource: 'agent' | 'auto' | 'bot' | 'system' | null;
+
+  assignedAgent?: any;
+  resolvedByAgent?: any;
 
   createdAt: Date;
   updatedAt: Date;

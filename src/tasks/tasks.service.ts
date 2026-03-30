@@ -7,11 +7,11 @@ export class TasksService {
   constructor(private readonly repository: TaskRepository) {}
 
   async create(data: Partial<Task>): Promise<Task> {
-    const assignedTo = data.assignedTo === '' ? undefined : data.assignedTo;
+    const assignedToId = data.assignedToId === '' ? undefined : data.assignedToId;
 
     return this.repository.create({
       ...data,
-      assignedTo,
+      assignedToId,
       status: data.status || 'not_started',
       category: data.category || 'todo',
     } as any);
@@ -32,9 +32,9 @@ export class TasksService {
   }
 
   async update(id: string, data: Partial<Task>): Promise<Task | null> {
-    const assignedTo = data.assignedTo === '' ? undefined : data.assignedTo;
+    const assignedToId = data.assignedToId === '' ? undefined : data.assignedToId;
 
-    const updateData: any = { ...data, assignedTo };
+    const updateData: any = { ...data, assignedToId };
 
     // Auto-set completedAt when status changes to completed
     if (data.status === 'completed' && !data.completedAt) {

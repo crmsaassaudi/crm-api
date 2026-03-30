@@ -15,7 +15,7 @@ export type CrmSettingSchemaDocument = HydratedDocument<CrmSettingSchemaClass>;
 })
 export class CrmSettingSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true, index: true })
   key: string;
@@ -28,5 +28,5 @@ export const CrmSettingSchema = SchemaFactory.createForClass(
   CrmSettingSchemaClass,
 );
 
-CrmSettingSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
-CrmSettingSchema.index({ tenant: 1, key: 1 }, { unique: true });
+CrmSettingSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+CrmSettingSchema.index({ tenantId: 1, key: 1 }, { unique: true });

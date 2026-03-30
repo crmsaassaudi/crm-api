@@ -31,9 +31,9 @@ export class GroupsService {
   }
 
   async create(dto: CreateGroupDto): Promise<Group> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
     try {
-      return await this.repository.create({ ...dto, tenant });
+      return await this.repository.create({ ...dto, tenantId });
     } catch (err: any) {
       if (err?.code === 11000) {
         throw new ConflictException(
@@ -75,7 +75,7 @@ export class GroupsService {
       throw new NotFoundException('User not found');
     }
     const belongsToTenant = user.tenants?.some(
-      (t) => t.tenant?.toString() === tenant.toString(),
+      (t) => t.tenantId?.toString() === tenant.toString(),
     );
     if (!belongsToTenant) {
       throw new UnprocessableEntityException(

@@ -20,7 +20,7 @@ export type ContactSchemaDocument = HydratedDocument<ContactSchemaClass>;
 })
 export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true, index: true })
   firstName: string;
@@ -47,7 +47,7 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   companyName?: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'AccountSchemaClass' })
-  account?: string;
+  accountId?: string;
 
   @Prop()
   title?: string;
@@ -59,21 +59,21 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   score?: number;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
-  owner?: string;
+  ownerId?: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     required: true,
   })
-  createdBy: string;
+  createdById: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     required: true,
   })
-  updatedBy: string;
+  updatedById: string;
 
   @Prop({ default: now })
   createdAt: Date;
@@ -97,6 +97,13 @@ export class ContactSchemaClass extends EntityDocumentHelper {
 
 export const ContactSchema = SchemaFactory.createForClass(ContactSchemaClass);
 
-ContactSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
-ContactSchema.index({ tenant: 1, emails: 1 });
-ContactSchema.index({ tenant: 1, firstName: 1, lastName: 1 });
+ContactSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+ContactSchema.index({ tenantId: 1, emails: 1 });
+ContactSchema.index({ tenantId: 1, firstName: 1, lastName: 1 });
+
+ContactSchema.virtual('owner', {
+  ref: 'UserSchemaClass',
+  localField: 'ownerId',
+  foreignField: '_id',
+  justOne: true,
+});

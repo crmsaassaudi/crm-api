@@ -114,12 +114,13 @@ export class ActivityService {
 
   @OnEvent('omni.conversation.tag_added')
   async onTagAdded(event: {
+    tenantId: string;
     conversationId: string;
     tag: string;
     agentId: string;
   }) {
     await this.log(
-      null, // tenant from context
+      event.tenantId,
       event.conversationId,
       'agent',
       event.agentId,
@@ -164,7 +165,7 @@ export class ActivityService {
   ): Promise<void> {
     try {
       await this.activityRepo.create({
-        tenant: tenantId ?? undefined,
+        tenantId: tenantId ?? undefined,
         conversationId,
         actorType,
         actorId,

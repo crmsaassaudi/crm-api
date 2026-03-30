@@ -6,7 +6,7 @@ import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.
 export type AutomationRuleSchemaDocument =
   HydratedDocument<AutomationRuleSchemaClass>;
 
-@Schema({ timestamps: true, collection: 'automationRules' })
+@Schema({ timestamps: true, collection: 'automation_rules' })
 export class AutomationRuleSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, index: true })
   tenant: string;

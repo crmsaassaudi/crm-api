@@ -5,7 +5,7 @@ export class Ticket {
   id: string;
 
   @ApiProperty({ example: 'tenant_1' })
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'TKT-00001' })
   ticketNumber: string;
@@ -17,10 +17,10 @@ export class Ticket {
   description: string;
 
   @ApiProperty({ example: '60d0fe4f5311236168a109ca' })
-  requester?: string;
+  requesterId?: string;
 
   @ApiProperty({ example: '60d0fe4f5311236168a109cb' })
-  assignee?: string;
+  assigneeId?: string;
 
   @ApiProperty({ example: 'new' })
   status: string;

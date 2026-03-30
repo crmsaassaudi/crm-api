@@ -129,7 +129,7 @@ export class TenantsService {
           keycloakOrgId: keycloakOrgId!,
           alias,
           name: organizationName,
-          owner: null as any,
+          ownerId: null as any,
           subscriptionPlan: SubscriptionPlan.FREE,
           status: TenantStatus.ACTIVE,
         };
@@ -158,7 +158,7 @@ export class TenantsService {
             status: { id: StatusEnum.active } as any,
             keycloakId: keycloakUserId!,
           },
-          [{ tenant: tenant!.id, roles: ['OWNER'], joinedAt: new Date() }],
+          [{ tenantId: tenant!.id, roles: ['OWNER'], joinedAt: new Date() }],
         );
         stepLog(7, `User upserted in MongoDB: ${localUser.id}`);
       } catch (e) {
@@ -325,7 +325,7 @@ export class TenantsService {
           keycloakOrgId: keycloakOrgId!,
           alias,
           name: organizationName,
-          owner: null as any,
+          ownerId: null as any,
           subscriptionPlan: SubscriptionPlan.FREE,
           status: TenantStatus.ACTIVE,
         };
@@ -352,7 +352,7 @@ export class TenantsService {
           },
           [
             {
-              tenant: tenant!.id as string,
+              tenantId: tenant!.id as string,
               roles: ['OWNER'],
               joinedAt: new Date(),
             },

@@ -37,7 +37,7 @@ export class ConversationActivitySchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  tenant: string;
+  tenantId: string;
 
   @Prop({
     type: String,
@@ -74,10 +74,10 @@ export const ConversationActivitySchema = SchemaFactory.createForClass(
   ConversationActivitySchemaClass,
 );
 
-ConversationActivitySchema.plugin(tenantFilterPlugin, { field: 'tenant' });
+ConversationActivitySchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
 // Fetch activities per conversation, newest first
 ConversationActivitySchema.index(
-  { tenant: 1, conversationId: 1, createdAt: -1 },
+  { tenantId: 1, conversationId: 1, createdAt: -1 },
   { name: 'activities_by_conversation' },
 );

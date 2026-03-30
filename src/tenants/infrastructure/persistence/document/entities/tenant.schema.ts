@@ -35,7 +35,7 @@ export class TenantSchemaClass extends EntityDocumentHelper {
     ref: 'UserSchemaClass',
     index: true,
   })
-  owner: Types.ObjectId | null;
+  ownerId: Types.ObjectId | null;
 
   @Prop({
     type: String,

@@ -5,14 +5,14 @@ export class TaskMapper {
   static toDomain(raw: TaskSchemaClass): Task {
     const domainEntity = new Task();
     domainEntity.id = raw._id.toString();
-    domainEntity.tenant = raw.tenant;
+    domainEntity.tenantId = raw.tenantId;
     domainEntity.title = raw.title;
     domainEntity.description = raw.description;
     domainEntity.dueDate = raw.dueDate;
     domainEntity.status = raw.status;
     domainEntity.priority = raw.priority;
     domainEntity.category = raw.category;
-    domainEntity.assignedTo = raw.assignedTo?.toString();
+    domainEntity.assignedToId = raw.assignedToId?.toString();
     domainEntity.relatedTo = raw.relatedTo;
     domainEntity.tags = raw.tags;
     domainEntity.reminderAt = raw.reminderAt;
@@ -29,14 +29,14 @@ export class TaskMapper {
     if (domainEntity.id) {
       persistenceEntity._id = domainEntity.id;
     }
-    persistenceEntity.tenant = domainEntity.tenant;
+    persistenceEntity.tenantId = domainEntity.tenantId;
     persistenceEntity.title = domainEntity.title;
     persistenceEntity.description = domainEntity.description;
     persistenceEntity.dueDate = domainEntity.dueDate;
     persistenceEntity.status = domainEntity.status;
     persistenceEntity.priority = domainEntity.priority;
     persistenceEntity.category = domainEntity.category;
-    persistenceEntity.assignedTo = domainEntity.assignedTo;
+    persistenceEntity.assignedToId = domainEntity.assignedToId;
     persistenceEntity.relatedTo = domainEntity.relatedTo;
     persistenceEntity.tags = domainEntity.tags;
     persistenceEntity.reminderAt = domainEntity.reminderAt;

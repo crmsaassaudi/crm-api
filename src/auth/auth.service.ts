@@ -357,7 +357,7 @@ export class AuthService {
     if (tenants.length === 0) {
       return `${frontend}/onboarding`;
     } else if (tenants.length === 1) {
-      const tenantId = tenants[0].tenant as string;
+      const tenantId = tenants[0].tenantId as string;
       try {
         const tenant = await this.tenantsService.findById(tenantId);
         if (tenant && tenant.alias) {
@@ -440,13 +440,13 @@ export class AuthService {
           // Only add tenants we can actually reference by valid ObjectId.
           // A fresh user will have an empty array and go through onboarding.
           tenants: keycloakTenantIds.map((tid) => ({
-            tenant: tid,
+            tenantId: tid,
             roles: [],
             joinedAt: new Date(),
           })),
         });
       } else {
-        const existingTenantIds = user.tenants.map((t) => t.tenant);
+        const existingTenantIds = user.tenants.map((t) => t.tenantId);
         const newTenantIds = keycloakTenantIds.filter(
           (tid) => !existingTenantIds.includes(tid),
         );
@@ -460,7 +460,7 @@ export class AuthService {
 
         if (tenantsToRemove.length > 0) {
           user.tenants = user.tenants.filter(
-            (t) => !tenantsToRemove.includes(t.tenant),
+            (t) => !tenantsToRemove.includes(t.tenantId),
           );
           hasChanges = true;
         }
@@ -468,7 +468,7 @@ export class AuthService {
           user.tenants = [
             ...user.tenants,
             ...newTenantIds.map((tid) => ({
-              tenant: tid,
+              tenantId: tid,
               roles: [],
               joinedAt: new Date(),
             })),
@@ -530,7 +530,7 @@ export class AuthService {
     }
 
     const tenantIds = Array.from(
-      new Set(user.tenants.map((membership) => membership.tenant?.toString())),
+      new Set(user.tenants.map((membership) => membership.tenantId?.toString())),
     ).filter(Boolean) as string[];
 
     return this.tenantsService.findByIds(tenantIds);

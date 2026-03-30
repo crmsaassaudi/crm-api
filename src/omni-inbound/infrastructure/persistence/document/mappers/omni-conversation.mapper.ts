@@ -1,29 +1,37 @@
 import { OmniConversation } from '../../../../domain/omni-conversation';
 import { OmniConversationSchemaClass } from '../entities/omni-conversation.schema';
 import { ChannelType } from '../../../../domain/omni-payload';
+import { UserMapper } from '../../../../../users/infrastructure/persistence/document/mappers/user.mapper';
 
 export class OmniConversationMapper {
   static toDomain(raw: OmniConversationSchemaClass): OmniConversation {
+    const assignedAgentObj = (raw as any).assignedAgent
+      ? UserMapper.toDomain((raw as any).assignedAgent)
+      : undefined;
+    const resolvedByAgentObj = (raw as any).resolvedByAgent
+      ? UserMapper.toDomain((raw as any).resolvedByAgent)
+      : undefined;
+
     let assignedAgentIdStr = null;
-    if (raw.assignedAgent) {
+    if (raw.assignedAgentId) {
       assignedAgentIdStr =
-        typeof raw.assignedAgent === 'object' && '_id' in raw.assignedAgent
-          ? (raw.assignedAgent as any)._id.toString()
-          : raw.assignedAgent.toString();
+        typeof raw.assignedAgentId === 'object' && '_id' in raw.assignedAgentId
+          ? (raw.assignedAgentId as any)._id.toString()
+          : raw.assignedAgentId.toString();
     }
 
     let claimedByIdStr = null;
-    if (raw.claimedBy) {
+    if (raw.claimedById) {
       claimedByIdStr =
-        typeof raw.claimedBy === 'object' && '_id' in raw.claimedBy
-          ? (raw.claimedBy as any)._id.toString()
-          : raw.claimedBy.toString();
+        typeof raw.claimedById === 'object' && '_id' in raw.claimedById
+          ? (raw.claimedById as any)._id.toString()
+          : raw.claimedById.toString();
     }
 
     return {
       id: raw._id.toString(),
-      tenantId: raw.tenant?.toString(),
-      channelId: raw.channel?.toString(),
+      tenantId: raw.tenantId?.toString(),
+      channelId: raw.channelId?.toString(),
       channelType: raw.channelType as ChannelType,
       channelAccount: (raw as any).channelAccount,
       externalConversationId: raw.externalId,
@@ -36,17 +44,17 @@ export class OmniConversationMapper {
       lastMessageAt: raw.lastMessageAt,
       unreadCount: raw.unreadCount,
       linkedContactId: undefined, // Add if needed
-      linkedLeadId: undefined,    // Add if needed
+      linkedLeadId: undefined, // Add if needed
       tags: raw.tags || [],
       reopenCount: (raw as any).reopenCount ?? 0,
       previousConversationId: (raw as any).previousConversationId ?? null,
       resolvedByAgentId: (raw as any).resolvedByAgentId ?? null,
       resolvedAt: (raw as any).resolvedAt ?? null,
-      closedByAgentId: (raw as any).closedByAgentId ?? null,
-      closedAt: (raw as any).closedAt ?? null,
-      closeReason: (raw as any).closeReason ?? null,
+      resolveReason: (raw as any).resolveReason ?? null,
       resolveNote: (raw as any).resolveNote ?? null,
       resolveSource: (raw as any).resolveSource ?? null,
+      assignedAgent: assignedAgentObj,
+      resolvedByAgent: resolvedByAgentObj,
       createdAt: (raw as any).createdAt,
       updatedAt: (raw as any).updatedAt,
     };
@@ -57,14 +65,14 @@ export class OmniConversationMapper {
     if (domain.id) {
       raw._id = domain.id;
     }
-    raw.tenant = domain.tenantId;
-    raw.channel = domain.channelId;
+    raw.tenantId = domain.tenantId;
+    raw.channelId = domain.channelId;
     (raw as any).channelAccount = domain.channelAccount;
     raw.channelType = domain.channelType;
     raw.externalId = domain.externalConversationId;
     raw.customer = domain.customer;
-    raw.assignedAgent = domain.assignedAgentId;
-    raw.claimedBy = domain.claimedBy;
+    raw.assignedAgentId = domain.assignedAgentId;
+    raw.claimedById = domain.claimedBy;
     raw.claimedAt = domain.claimedAt;
     raw.status = domain.status;
     raw.lastMessage = domain.lastMessage;
@@ -75,12 +83,10 @@ export class OmniConversationMapper {
     (raw as any).previousConversationId = domain.previousConversationId;
     (raw as any).resolvedByAgentId = domain.resolvedByAgentId;
     (raw as any).resolvedAt = domain.resolvedAt;
-    (raw as any).closedByAgentId = domain.closedByAgentId;
-    (raw as any).closedAt = domain.closedAt;
-    (raw as any).closeReason = domain.closeReason;
+    (raw as any).resolveReason = domain.resolveReason;
     (raw as any).resolveNote = domain.resolveNote;
     (raw as any).resolveSource = domain.resolveSource;
-    
+
     // Default system fields handled by mongoose logic generally
     return raw;
   }

@@ -3,10 +3,18 @@ import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
-export type OmniConversationDocument = HydratedDocument<OmniConversationSchemaClass>;
+export type OmniConversationDocument =
+  HydratedDocument<OmniConversationSchemaClass>;
 
 const CONVERSATION_STATUSES = ['open', 'pending', 'resolved', 'closed'];
-const CHANNEL_TYPES = ['Facebook', 'Zalo', 'WhatsApp', 'LiveChat', 'Instagram', 'TikTok'];
+const CHANNEL_TYPES = [
+  'Facebook',
+  'Zalo',
+  'WhatsApp',
+  'LiveChat',
+  'Instagram',
+  'TikTok',
+];
 
 /**
  * Schema for omni-channel conversations (chat sessions).
@@ -27,7 +35,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  tenant: string;
+  tenantId: string;
 
   @Prop({
     type: String,
@@ -35,7 +43,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  channel: string;
+  channelId: string;
 
   @Prop({ required: true, index: true })
   channelAccount: string;
@@ -63,10 +71,10 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   };
 
   @Prop({ type: String, ref: 'UserSchemaClass', default: null })
-  assignedAgent: string | null;
+  assignedAgentId: string | null;
 
   @Prop({ type: String, ref: 'UserSchemaClass', default: null })
-  claimedBy: string | null;
+  claimedById: string | null;
 
   @Prop({ type: Date, default: null })
   claimedAt: Date | null;
@@ -115,18 +123,20 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ type: Date, default: null })
   resolvedAt: Date | null;
 
-  @Prop({ type: String, ref: 'UserSchemaClass', default: null })
-  closedByAgentId: string | null;
-
-  @Prop({ type: Date, default: null })
-  closedAt: Date | null;
-
   @Prop({
     type: String,
-    enum: ['resolved_by_agent', 'auto_resolved', 'customer_left', 'bot_resolved', 'system_resolved', 'other', null],
+    enum: [
+      'resolved_by_agent',
+      'auto_resolved',
+      'customer_left',
+      'bot_resolved',
+      'system_resolved',
+      'other',
+      null,
+    ],
     default: null,
   })
-  closeReason: string | null;
+  resolveReason: string | null;
 
   /** Optional note written by the agent when resolving the conversation */
   @Prop({ type: String, default: null })
@@ -151,20 +161,47 @@ export const OmniConversationSchema = SchemaFactory.createForClass(
   OmniConversationSchemaClass,
 );
 
-OmniConversationSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
+OmniConversationSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
 // Partial unique index: ensure only ONE active (open or pending) session exists per customer thread identifiers.
 OmniConversationSchema.index(
-  { tenant: 1, channelType: 1, channelAccount: 1, externalId: 1 },
-  { 
-    unique: true, 
+  { tenantId: 1, channelType: 1, channelAccount: 1, externalId: 1 },
+  {
+    unique: true,
     name: 'unique_active_session',
-    partialFilterExpression: { status: { $in: ['open', 'pending'] } }
+    partialFilterExpression: { status: { $in: ['open', 'pending'] } },
   },
 );
 
 // List conversations sorted by last activity
 OmniConversationSchema.index(
-  { tenant: 1, status: 1, lastMessageAt: -1 },
+  { tenantId: 1, status: 1, lastMessageAt: -1 },
   { name: 'conversation_list' },
 );
+
+// Thread timeline scan: deterministic ordering by createdAt + _id.
+OmniConversationSchema.index(
+  {
+    tenantId: 1,
+    channelType: 1,
+    channelAccount: 1,
+    externalId: 1,
+    createdAt: 1,
+    _id: 1,
+  },
+  { name: 'conversation_thread_timeline' },
+);
+
+OmniConversationSchema.virtual('assignedAgent', {
+  ref: 'UserSchemaClass',
+  localField: 'assignedAgentId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+OmniConversationSchema.virtual('resolvedByAgent', {
+  ref: 'UserSchemaClass',
+  localField: 'resolvedByAgentId',
+  foreignField: '_id',
+  justOne: true,
+});

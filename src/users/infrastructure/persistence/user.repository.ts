@@ -44,7 +44,7 @@ export abstract class UserRepository {
     keycloakId: string,
     email: string,
     userData: Partial<User>,
-    newTenants: { tenant: string; roles: string[]; joinedAt: Date }[],
+    newTenants: { tenantId: string; roles: string[]; joinedAt: Date }[],
     session?: any,
   ): Promise<User>;
 

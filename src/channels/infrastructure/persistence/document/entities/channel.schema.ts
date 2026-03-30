@@ -28,7 +28,7 @@ export class ChannelSchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true, enum: CHANNEL_TYPES })
   type: string;
@@ -56,5 +56,5 @@ export class ChannelSchemaClass extends EntityDocumentHelper {
 
 export const ChannelSchema = SchemaFactory.createForClass(ChannelSchemaClass);
 
-ChannelSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
-ChannelSchema.index({ tenant: 1, type: 1, account: 1 }, { unique: true });
+ChannelSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+ChannelSchema.index({ tenantId: 1, type: 1, account: 1 }, { unique: true });

@@ -14,7 +14,7 @@ export class UserMapper {
     domainEntity.version = raw.__v;
     domainEntity.tenants = raw.tenants
       ? raw.tenants.map((t) => ({
-          tenant: t.tenant.toString(),
+          tenantId: (t as any).tenantId?.toString() || (t as any).tenant?.toString() || '',
           roles: t.roles,
           joinedAt: t.joinedAt,
         }))
@@ -69,7 +69,7 @@ export class UserMapper {
 
     persistenceSchema.tenants = domainEntity.tenants
       ? domainEntity.tenants.map((t) => ({
-          tenant: t.tenant,
+          tenantId: t.tenantId as any,
           roles: t.roles,
           joinedAt: t.joinedAt,
         }))

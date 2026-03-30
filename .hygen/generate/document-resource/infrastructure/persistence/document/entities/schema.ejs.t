@@ -27,13 +27,13 @@ export class <%= name %>SchemaClass extends EntityDocumentHelper {
   // ── Multitenant fields (auto-injected by BaseDocumentRepository) ──
 
   @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass', required: true })
-  createdBy: string;
+  createdById: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass', required: true })
-  updatedBy: string;
+  updatedById: string;
 
   // ── Resource-specific fields ──
   // Do not remove comment below.
@@ -52,5 +52,5 @@ export class <%= name %>SchemaClass extends EntityDocumentHelper {
 export const <%= name %>Schema = SchemaFactory.createForClass(<%= name %>SchemaClass);
 
 // Auto-apply tenant filtering on all queries
-<%= name %>Schema.plugin(tenantFilterPlugin, { field: 'tenant' });
-<%= name %>Schema.index({ tenant: 1 });
+<%= name %>Schema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+<%= name %>Schema.index({ tenantId: 1 });

@@ -59,7 +59,7 @@ export class CreateUserDto {
   @ApiPropertyOptional({ type: [Object] })
   @IsOptional()
   tenants?: {
-    tenant: string;
+    tenantId: string;
     roles: string[];
     joinedAt: Date;
   }[];

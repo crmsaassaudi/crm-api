@@ -14,13 +14,14 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import { Public } from 'nest-keycloak-connect';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
 import { OutboundService } from '../services/outbound.service';
 import { NoteService } from '../services/note.service';
 import { ActivityService } from '../services/activity.service';
+import { ConversationService } from '../services/conversation.service';
+import { TimelineQueryDto } from '../dto/timeline-query.dto';
 import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
 
@@ -45,6 +46,7 @@ export class OmniController {
   constructor(
     private readonly conversationRepo: ConversationRepository,
     private readonly messageRepo: MessageRepository,
+    private readonly conversationService: ConversationService,
     private readonly outboundService: OutboundService,
     private readonly noteService: NoteService,
     private readonly activityService: ActivityService,
@@ -53,7 +55,6 @@ export class OmniController {
     private readonly usersService: UsersService,
     private readonly tenantsService: TenantsService,
   ) {}
-
 
   // ─── Conversations ────────────────────────────────────────────
 
@@ -75,13 +76,15 @@ export class OmniController {
       throw new BadRequestException('Tenant context not found');
     }
 
-    const statusFilter = status
-      ? status.split(',')
-      : ['open', 'pending'];
+    const statusFilter = status ? status.split(',') : ['open', 'pending'];
 
-    return this.conversationRepo.findPaginated(
+    console.log(
+      `[DEBUG] listConversations: tenantId=${tenantId}, statusFilter=${JSON.stringify(statusFilter)}`,
+    );
+
+    const result = await this.conversationRepo.findPaginated(
       {
-        tenant: tenantId,
+        tenantId,
         status: statusFilter,
         channelType,
         assignedAgent,
@@ -90,6 +93,67 @@ export class OmniController {
       parseInt(page, 10),
       Math.min(parseInt(limit, 10), 50), // cap at 50
     );
+
+    // Resolve display-friendly resolver info for list cards (name/email),
+    // so UI does not have to show raw IDs.
+    const resolverIds = Array.from(
+      new Set(
+        result.data
+          .map((c) => c.resolvedByAgentId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+
+    let resolverMap = new Map<
+      string,
+      { name: string | null; email: string | null }
+    >();
+    if (resolverIds.length > 0) {
+      const users = await this.usersService.findByIdsGlobal(resolverIds);
+      resolverMap = new Map(
+        users.map((u) => {
+          const fullName = [u.firstName, u.lastName]
+            .filter(Boolean)
+            .join(' ')
+            .trim();
+          return [
+            String(u.id),
+            { name: fullName || null, email: u.email ?? null },
+          ];
+        }),
+      );
+    }
+
+    const enrichedData = result.data.map((c) => {
+      const resolvedFromPopulate = c.resolvedByAgent
+        ? {
+            name:
+              [c.resolvedByAgent.firstName, c.resolvedByAgent.lastName]
+                .filter(Boolean)
+                .join(' ')
+                .trim() || null,
+            email: c.resolvedByAgent.email ?? null,
+          }
+        : null;
+
+      const resolvedFromMap = c.resolvedByAgentId
+        ? (resolverMap.get(c.resolvedByAgentId) ?? null)
+        : null;
+
+      const resolvedDisplay = resolvedFromPopulate ?? resolvedFromMap;
+
+      return {
+        ...c,
+        resolvedByAgentName: resolvedDisplay?.name ?? null,
+        resolvedByAgentEmail: resolvedDisplay?.email ?? null,
+      };
+    });
+
+    console.log(`[DEBUG] listConversations: found ${result.data.length} items`);
+    return {
+      ...result,
+      data: enrichedData,
+    };
   }
 
   /**
@@ -129,6 +193,23 @@ export class OmniController {
     );
   }
 
+  @Get('conversations/:id/timeline')
+  async getConversationTimeline(
+    @Param('id') conversationId: string,
+    @Query() query: TimelineQueryDto,
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+
+    return this.conversationService.getConversationTimeline({
+      tenantId,
+      conversationId,
+      query,
+    });
+  }
+
   /**
    * Get the full cross-conversation message history for a customer.
    *
@@ -165,7 +246,9 @@ export class OmniController {
     );
 
     // Exclude the current (active) conversation — it's loaded separately
-    const pastConversations = allConversations.filter((c) => c.id !== conversationId);
+    const pastConversations = allConversations.filter(
+      (c) => c.id !== conversationId,
+    );
     const totalConversations = pastConversations.length;
 
     // ── Step 2: Paginate the conversation set (newest-first batches) ─────────
@@ -180,43 +263,77 @@ export class OmniController {
     const conversationIds = pagedConversations.map((c) => c.id);
 
     // ── Step 3: Fetch messages for this slice only ───────────────────────────
-    const messages = conversationIds.length > 0
-      ? await this.messageRepo.findByConversationIds(
-          conversationIds,
-          parseInt(page, 10),
-          Math.min(parseInt(limit, 10), 100),
-        )
-      : { data: [], total: 0, page: 1, limit: 50 };
+    const messages =
+      conversationIds.length > 0
+        ? await this.messageRepo.findByConversationIds(
+            conversationIds,
+            parseInt(page, 10),
+            Math.min(parseInt(limit, 10), 100),
+          )
+        : { data: [], total: 0, page: 1, limit: 50 };
+
+    const resolverIds = Array.from(
+      new Set(
+        pagedConversations
+          .map((c) => c.resolvedByAgentId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+
+    let resolverMap = new Map<
+      string,
+      { name: string | null; email: string | null }
+    >();
+    if (resolverIds.length > 0) {
+      const users = await this.usersService.findByIdsGlobal(resolverIds);
+      resolverMap = new Map(
+        users.map((u) => {
+          const fullName = [u.firstName, u.lastName]
+            .filter(Boolean)
+            .join(' ')
+            .trim();
+          return [
+            String(u.id),
+            { name: fullName || null, email: u.email ?? null },
+          ];
+        }),
+      );
+    }
 
     // ── Step 4: Build session metadata ──────────────────────────────────────
-    const sessions = pagedConversations.map((c) => ({
-      id: c.id,
-      status: c.status,
-      createdAt: c.createdAt,
-      resolvedAt: c.resolvedAt,
-      closedAt: c.closedAt,
-      resolvedByAgentId: c.resolvedByAgentId,
-      closedByAgentId: c.closedByAgentId,
-      closeReason: c.closeReason,
-      resolveNote: c.resolveNote,
-      resolveSource: c.resolveSource,
-      lastMessage: c.lastMessage,
-    }));
+    const sessions = pagedConversations.map((c) => {
+      const resolvedFromPopulate = c.resolvedByAgent
+        ? {
+            name:
+              [c.resolvedByAgent.firstName, c.resolvedByAgent.lastName]
+                .filter(Boolean)
+                .join(' ')
+                .trim() || null,
+            email: c.resolvedByAgent.email ?? null,
+          }
+        : null;
 
-    // ── Step 5: Batch-resolve unique agent IDs → names (skip tenant filter) ──
-    const agentIds = [...new Set(
-      sessions.flatMap((s) =>
-        [s.resolvedByAgentId, s.closedByAgentId].filter(Boolean) as string[],
-      ),
-    )];
-    const agentMap = new Map<string, string>();
-    if (agentIds.length > 0) {
-      const users = await this.usersService.findByIdsGlobal(agentIds);
-      for (const u of users) {
-        const fullName = [u.firstName, u.lastName].filter(Boolean).join(' ');
-        agentMap.set(String(u.id), fullName || String(u.id));
-      }
-    }
+      const resolvedFromMap = c.resolvedByAgentId
+        ? (resolverMap.get(c.resolvedByAgentId) ?? null)
+        : null;
+
+      const resolvedDisplay = resolvedFromPopulate ?? resolvedFromMap;
+
+      return {
+        id: c.id,
+        status: c.status,
+        createdAt: c.createdAt,
+        resolvedAt: c.resolvedAt,
+        resolvedByAgentId: c.resolvedByAgentId,
+        resolveReason: c.resolveReason,
+        resolveNote: c.resolveNote,
+        resolveSource: c.resolveSource,
+        lastMessage: c.lastMessage,
+        resolvedByAgent: c.resolvedByAgent,
+        resolvedByAgentName: resolvedDisplay?.name ?? null,
+        resolvedByAgentEmail: resolvedDisplay?.email ?? null,
+      };
+    });
 
     return {
       ...messages,
@@ -224,11 +341,7 @@ export class OmniController {
       convPage: cp,
       convLimit: cl,
       hasMoreHistory: start + cl < totalConversations,
-      sessions: sessions.map((s) => ({
-        ...s,
-        resolvedByAgentName: s.resolvedByAgentId ? (agentMap.get(s.resolvedByAgentId) ?? s.resolvedByAgentId) : null,
-        closedByAgentName: s.closedByAgentId ? (agentMap.get(s.closedByAgentId) ?? s.closedByAgentId) : null,
-      })),
+      sessions,
     };
   }
 
@@ -329,7 +442,9 @@ export class OmniController {
       externalConversationId: conversation.externalConversationId,
     });
 
-    this.logger.log(`Conversation ${id} status → ${status} (by ${resolveSource ?? 'agent'} ${agentId})`);
+    this.logger.log(
+      `Conversation ${id} status → ${status} (by ${resolveSource ?? 'agent'} ${agentId})`,
+    );
     return updated;
   }
 
@@ -337,10 +452,7 @@ export class OmniController {
 
   @Post('conversations/:id/tags')
   @HttpCode(HttpStatus.OK)
-  async addTag(
-    @Param('id') id: string,
-    @Body('tag') tag: string,
-  ) {
+  async addTag(@Param('id') id: string, @Body('tag') tag: string) {
     if (!tag || typeof tag !== 'string') {
       throw new BadRequestException('Tag is required');
     }
@@ -351,7 +463,9 @@ export class OmniController {
     }
 
     const agentId = this.cls.get<string>('userId');
+    const tenantId = this.cls.get<string>('tenantId');
     this.eventEmitter.emit('omni.conversation.tag_added', {
+      tenantId,
       conversationId: id,
       tag: tag.trim(),
       agentId,
@@ -386,10 +500,7 @@ export class OmniController {
    */
   @Patch('conversations/:id/assign')
   @HttpCode(HttpStatus.OK)
-  async assignAgent(
-    @Param('id') id: string,
-    @Body('agentId') agentId: string,
-  ) {
+  async assignAgent(@Param('id') id: string, @Body('agentId') agentId: string) {
     if (!agentId) {
       throw new BadRequestException('agentId is required');
     }
@@ -489,7 +600,11 @@ export class OmniController {
       throw new BadRequestException('Content is required');
     }
 
-    const updated = await this.noteService.updateNote(noteId, content, isPrivate);
+    const updated = await this.noteService.updateNote(
+      noteId,
+      content,
+      isPrivate,
+    );
     if (!updated) {
       throw new NotFoundException(`Note ${noteId} not found`);
     }
@@ -552,10 +667,12 @@ export class OmniController {
   async updateSettings(@Body('resolveNoteMode') resolveNoteMode: string) {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) throw new BadRequestException('Tenant context not found');
-    
+
     const validModes = ['disabled', 'optional', 'required'];
     if (!validModes.includes(resolveNoteMode)) {
-      throw new BadRequestException(`resolveNoteMode must be one of: ${validModes.join(', ')}`);
+      throw new BadRequestException(
+        `resolveNoteMode must be one of: ${validModes.join(', ')}`,
+      );
     }
 
     await this.tenantsService.updateOmniSettings(tenantId, {

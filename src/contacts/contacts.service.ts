@@ -15,8 +15,7 @@ export class ContactsService {
   ) {}
 
   async create(data: CreateContactDto): Promise<Contact> {
-    // Sanitize owner: empty string is not a valid ObjectId
-    const owner = data.owner === '' ? undefined : data.owner;
+    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const emails = data.emails ?? [];
     const phones = data.phones ?? [];
 
@@ -25,7 +24,7 @@ export class ContactsService {
       ...data,
       emails,
       phones,
-      owner,
+      ownerId,
     } as any);
   }
 
@@ -44,8 +43,8 @@ export class ContactsService {
   }
 
   async update(id: string, data: UpdateContactDto): Promise<Contact | null> {
-    // Sanitize owner: empty string is not a valid ObjectId
-    const owner = data.owner === '' ? undefined : data.owner;
+    // Sanitize ownerId: empty string is not a valid ObjectId
+    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const emails = data.emails;
     const phones = data.phones;
 
@@ -69,7 +68,7 @@ export class ContactsService {
       ...additionalData,
       ...(emails !== undefined ? { emails } : {}),
       ...(phones !== undefined ? { phones } : {}),
-      owner,
+      ownerId,
     } as any);
   }
 
@@ -120,15 +119,15 @@ export class ContactsService {
     const updatedLead = await this.repository.update(id, {
       isConverted: true,
       status: 'converted',
-      account: finalAccountId,
+      accountId: finalAccountId,
     } as any);
 
     // 3. Create deal if requested
     if (params.dealData && updatedLead) {
       await this.dealsService.create({
         ...params.dealData,
-        contact: updatedLead.id,
-        account: finalAccountId,
+        contactId: updatedLead.id,
+        accountId: finalAccountId,
       });
     }
 

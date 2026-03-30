@@ -24,8 +24,8 @@ export class TagsService {
   }
 
   async create(dto: CreateTagDto): Promise<Tag> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.create({ ...dto, tenant });
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.create({ ...dto, tenantId });
   }
 
   async update(id: string, dto: UpdateTagDto): Promise<Tag> {

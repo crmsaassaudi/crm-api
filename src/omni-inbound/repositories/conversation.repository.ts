@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery, SortOrder } from 'mongoose';
+import { Model, FilterQuery, SortOrder, Types } from 'mongoose';
 import {
   OmniConversationSchemaClass,
   OmniConversationDocument,
@@ -11,11 +11,29 @@ import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
 import { pagination } from '../../utils/pagination';
 
 export interface ConversationQuery {
-  tenant: string;
+  tenantId: string;
   status?: string | string[];
   channelType?: string;
   assignedAgent?: string;
   search?: string;
+}
+
+export interface ConversationTimelineCursor {
+  createdAt: Date;
+  id: string;
+}
+
+export interface ThreadSessionSlice {
+  sessions: OmniConversation[];
+  hasMore: boolean;
+  cursor: ConversationTimelineCursor | null;
+}
+
+export interface ThreadIdentity {
+  tenantId: string;
+  channelType: string;
+  channelAccount: string;
+  externalId: string;
 }
 
 @Injectable()
@@ -26,7 +44,11 @@ export class ConversationRepository {
   ) {}
 
   async findById(id: string): Promise<OmniConversation | null> {
-    const doc = await this.model.findById(id).exec();
+    const doc = await this.model
+      .findById(id)
+      .populate('assignedAgent')
+      .populate('resolvedByAgent')
+      .exec();
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
@@ -36,14 +58,14 @@ export class ConversationRepository {
    * the caller should create a new one.
    */
   async findActiveByExternalId(
-    tenant: string,
+    tenantId: string,
     channelType: string,
     channelAccount: string,
     externalId: string,
   ): Promise<OmniConversation | null> {
     const doc = await this.model
       .findOne({
-        tenant,
+        tenantId,
         channelType,
         channelAccount,
         externalId,
@@ -70,7 +92,7 @@ export class ConversationRepository {
     limit: number,
   ): Promise<PaginationResponseDto<OmniConversation>> {
     const filter: FilterQuery<OmniConversationDocument> = {
-      tenant: query.tenant,
+      tenantId: query.tenantId,
     };
 
     if (query.status) {
@@ -82,7 +104,7 @@ export class ConversationRepository {
       filter.channelType = query.channelType;
     }
     if (query.assignedAgent) {
-      filter.assignedAgent = query.assignedAgent;
+      filter.assignedAgentId = query.assignedAgent;
     }
     if (query.search) {
       filter.$or = [
@@ -92,7 +114,7 @@ export class ConversationRepository {
     }
 
     const sort: Record<string, SortOrder> = { lastMessageAt: -1 };
-    
+
     // Convert 1-indexed to 0-indexed for Mongoose skip
     const safePage = Math.max(1, page);
     const skip = (safePage - 1) * limit;
@@ -103,16 +125,23 @@ export class ConversationRepository {
         .sort(sort)
         .skip(skip)
         .limit(limit)
+        .populate('assignedAgent')
+        .populate('resolvedByAgent')
         .exec(),
       this.model.countDocuments(filter).exec(),
     ]);
 
-    const mappedItems = items.map(doc => OmniConversationMapper.toDomain(doc));
+    const mappedItems = items.map((doc) =>
+      OmniConversationMapper.toDomain(doc),
+    );
 
     return pagination(mappedItems, total, { page: safePage, limit });
   }
 
-  async updateStatus(id: string, status: string): Promise<OmniConversation | null> {
+  async updateStatus(
+    id: string,
+    status: string,
+  ): Promise<OmniConversation | null> {
     const doc = await this.model
       .findByIdAndUpdate(id, { status }, { new: true })
       .exec();
@@ -133,17 +162,12 @@ export class ConversationRepository {
   ): Promise<OmniConversation | null> {
     const update: Record<string, any> = { status };
 
-    if (status === 'resolved') {
-      update.resolvedByAgentId = agentId;
-      update.resolvedAt = new Date();
-      update.resolveSource = resolveSource ?? 'agent';
-      if (note) update.resolveNote = note;
-    } else if (status === 'closed') {
-      update.closedByAgentId = agentId;
-      update.closedAt = new Date();
-    }
+    update.resolvedByAgentId = agentId;
+    update.resolvedAt = new Date();
+    update.resolveSource = resolveSource ?? 'agent';
+    if (note) update.resolveNote = note;
     if (reason) {
-      update.closeReason = reason;
+      update.resolveReason = reason;
     }
 
     const doc = await this.model
@@ -157,14 +181,14 @@ export class ConversationRepository {
    * Used when creating a new session to link back to the previous one.
    */
   async findLastByExternalId(
-    tenant: string,
+    tenantId: string,
     channelType: string,
     channelAccount: string,
     externalId: string,
   ): Promise<OmniConversation | null> {
     const doc = await this.model
       .findOne({
-        tenant,
+        tenantId,
         channelType,
         channelAccount,
         externalId,
@@ -190,11 +214,7 @@ export class ConversationRepository {
 
   async addTag(id: string, tag: string): Promise<OmniConversation | null> {
     const doc = await this.model
-      .findByIdAndUpdate(
-        id,
-        { $addToSet: { tags: tag } },
-        { new: true },
-      )
+      .findByIdAndUpdate(id, { $addToSet: { tags: tag } }, { new: true })
       .exec();
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
@@ -207,14 +227,14 @@ export class ConversationRepository {
       .findByIdAndUpdate(
         id,
         {
-          claimedBy: agentId,
+          claimedById: agentId,
           claimedAt: new Date(),
-          assignedAgent: agentId,
+          assignedAgentId: agentId,
         },
         { new: true },
       )
       .exec();
-      return doc ? OmniConversationMapper.toDomain(doc) : null;
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
   async resetUnreadCount(id: string): Promise<void> {
@@ -229,11 +249,7 @@ export class ConversationRepository {
     agentId: string | null,
   ): Promise<OmniConversation | null> {
     const doc = await this.model
-      .findByIdAndUpdate(
-        id,
-        { assignedAgent: agentId },
-        { new: true },
-      )
+      .findByIdAndUpdate(id, { assignedAgentId: agentId }, { new: true })
       .exec();
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
@@ -258,29 +274,172 @@ export class ConversationRepository {
    * Used for cross-conversation message history.
    */
   async findAllByExternalId(
-    tenant: string,
+    tenantId: string,
     channelType: string,
     channelAccount: string,
     externalId: string,
   ): Promise<OmniConversation[]> {
     const docs = await this.model
-      .find({ tenant, channelType, channelAccount, externalId })
+      .find({ tenantId, channelType, channelAccount, externalId })
       .sort({ createdAt: 1 })
+      .populate('assignedAgent')
+      .populate('resolvedByAgent')
       .exec();
     return docs.map((doc) => OmniConversationMapper.toDomain(doc));
+  }
+
+  async findThreadSessionsAroundAnchor(params: {
+    thread: ThreadIdentity;
+    anchor: ConversationTimelineCursor;
+    pastLimit: number;
+    futureLimit: number;
+  }): Promise<{ past: ThreadSessionSlice; future: ThreadSessionSlice }> {
+    const [past, future] = await Promise.all([
+      this.findPastSessionsByCursor({
+        ...params.thread,
+        cursor: params.anchor,
+        limit: params.pastLimit,
+      }),
+      this.findFutureSessionsByCursor({
+        ...params.thread,
+        cursor: params.anchor,
+        limit: params.futureLimit,
+      }),
+    ]);
+
+    return { past, future };
+  }
+
+  async findPastSessionsByCursor(params: {
+    tenantId: string;
+    channelType: string;
+    channelAccount: string;
+    externalId: string;
+    cursor: ConversationTimelineCursor;
+    limit: number;
+  }): Promise<ThreadSessionSlice> {
+    const safeLimit = Math.max(1, Math.min(params.limit, 50));
+    const filter = {
+      tenantId: params.tenantId,
+      channelType: params.channelType,
+      channelAccount: params.channelAccount,
+      externalId: params.externalId,
+      ...this.buildDirectionalCursorFilter('past', params.cursor),
+    };
+
+    const docs = await this.model
+      .find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(safeLimit + 1)
+      .populate('assignedAgent')
+      .populate('resolvedByAgent')
+      .exec();
+
+    const hasMore = docs.length > safeLimit;
+    const trimmed = hasMore ? docs.slice(0, safeLimit) : docs;
+    const ordered = trimmed.reverse();
+    const sessions = ordered.map((doc) => OmniConversationMapper.toDomain(doc));
+    const oldest = sessions[0] ?? null;
+
+    return {
+      sessions,
+      hasMore,
+      cursor: oldest
+        ? {
+            createdAt: oldest.createdAt,
+            id: oldest.id,
+          }
+        : null,
+    };
+  }
+
+  async findFutureSessionsByCursor(params: {
+    tenantId: string;
+    channelType: string;
+    channelAccount: string;
+    externalId: string;
+    cursor: ConversationTimelineCursor;
+    limit: number;
+  }): Promise<ThreadSessionSlice> {
+    const safeLimit = Math.max(1, Math.min(params.limit, 50));
+    const filter = {
+      tenantId: params.tenantId,
+      channelType: params.channelType,
+      channelAccount: params.channelAccount,
+      externalId: params.externalId,
+      ...this.buildDirectionalCursorFilter('future', params.cursor),
+    };
+
+    const docs = await this.model
+      .find(filter)
+      .sort({ createdAt: 1, _id: 1 })
+      .limit(safeLimit + 1)
+      .populate('assignedAgent')
+      .populate('resolvedByAgent')
+      .exec();
+
+    const hasMore = docs.length > safeLimit;
+    const trimmed = hasMore ? docs.slice(0, safeLimit) : docs;
+    const sessions = trimmed.map((doc) => OmniConversationMapper.toDomain(doc));
+    const newest = sessions[sessions.length - 1] ?? null;
+
+    return {
+      sessions,
+      hasMore,
+      cursor: newest
+        ? {
+            createdAt: newest.createdAt,
+            id: newest.id,
+          }
+        : null,
+    };
   }
 
   /**
    * Count open/pending conversations assigned to a specific agent.
    * Used by the least-busy assignment strategy.
    */
-  async countOpenByAgent(tenant: string, agentId: string): Promise<number> {
+  async countOpenByAgent(tenantId: string, agentId: string): Promise<number> {
     return this.model
       .countDocuments({
-        tenant,
-        assignedAgent: agentId,
+        tenantId,
+        assignedAgentId: agentId,
         status: { $in: ['open', 'pending'] },
       })
       .exec();
+  }
+
+  private buildDirectionalCursorFilter(
+    direction: 'past' | 'future',
+    cursor: ConversationTimelineCursor,
+  ): FilterQuery<OmniConversationDocument> {
+    const cursorId = Types.ObjectId.isValid(cursor.id)
+      ? new Types.ObjectId(cursor.id)
+      : null;
+
+    if (!cursorId) {
+      return {
+        createdAt:
+          direction === 'past'
+            ? { $lt: cursor.createdAt }
+            : { $gt: cursor.createdAt },
+      };
+    }
+
+    if (direction === 'past') {
+      return {
+        $or: [
+          { createdAt: { $lt: cursor.createdAt } },
+          { createdAt: cursor.createdAt, _id: { $lt: cursorId } },
+        ],
+      };
+    }
+
+    return {
+      $or: [
+        { createdAt: { $gt: cursor.createdAt } },
+        { createdAt: cursor.createdAt, _id: { $gt: cursorId } },
+      ],
+    };
   }
 }

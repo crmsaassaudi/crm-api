@@ -30,7 +30,7 @@ export class NoteRepository {
   private toDomain(doc: OmniNoteSchemaClass): OmniNote {
     return {
       id: doc._id.toString(),
-      tenantId: doc.tenant?.toString(),
+      tenantId: doc.tenantId?.toString(),
       conversationId: doc.conversationId?.toString(),
       content: doc.content,
       authorId: doc.authorId?.toString(),

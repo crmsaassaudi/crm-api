@@ -98,7 +98,7 @@ export class UsersDocumentRepository
       const tenantId = this.cls.get('tenantId');
       if (tenantId) {
         domainEntity.tenants = [
-          { tenant: tenantId, roles: [], joinedAt: new Date() },
+          { tenantId: tenantId, roles: [], joinedAt: new Date() },
         ];
       }
     }
@@ -131,7 +131,7 @@ export class UsersDocumentRepository
   }
 
   async findManyByTenant(tenantId: string): Promise<User[]> {
-    const filter = { 'tenants.tenant': tenantId };
+    const filter = { 'tenants.tenantId': tenantId };
     const userObjects = await this.model.find(filter);
     return userObjects.map((userObject) => UserMapper.toDomain(userObject));
   }
@@ -230,7 +230,7 @@ export class UsersDocumentRepository
     keycloakId: string,
     email: string,
     userData: Partial<User>,
-    newTenants: { tenant: string; roles: string[]; joinedAt: Date }[],
+    newTenants: { tenantId: string; roles: string[]; joinedAt: Date }[],
     session?: any,
   ): Promise<User> {
     const persistenceData: any = {
@@ -281,7 +281,7 @@ export class UsersDocumentRepository
   ): Promise<User> {
     const updatedUser = await this.model.findOneAndUpdate(
       { _id: userId },
-      { $pull: { tenants: { tenant: tenantId } } },
+      { $pull: { tenants: { tenantId: tenantId } } },
       { new: true },
     );
 

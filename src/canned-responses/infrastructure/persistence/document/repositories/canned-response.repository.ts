@@ -21,10 +21,10 @@ export class CannedResponseRepository {
     query?: { scope?: string; category?: string; search?: string },
   ): Promise<CannedResponse[]> {
     const filter: FilterQuery<CannedResponseSchemaClass> = {
-      tenant,
+      tenantId: tenant,
       $or: [
         { scope: 'Public' },
-        { scope: 'Private', createdBy: userId },
+        { scope: 'Private', createdById: userId },
         { scope: 'Team' },
       ],
     };
@@ -37,7 +37,7 @@ export class CannedResponseRepository {
   }
 
   async findById(tenant: string, id: string): Promise<CannedResponse | null> {
-    const doc = await this.model.findOne({ _id: id, tenant }).exec();
+    const doc = await this.model.findOne({ _id: id, tenantId: tenant }).exec();
     return doc ? CannedResponseMapper.toDomain(doc) : null;
   }
 
@@ -52,13 +52,13 @@ export class CannedResponseRepository {
     data: Partial<CannedResponse>,
   ): Promise<CannedResponse | null> {
     const doc = await this.model
-      .findOneAndUpdate({ _id: id, tenant }, { $set: data }, { new: true })
+      .findOneAndUpdate({ _id: id, tenantId: tenant }, { $set: data }, { new: true })
       .exec();
     return doc ? CannedResponseMapper.toDomain(doc) : null;
   }
 
   async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model.deleteOne({ _id: id, tenant }).exec();
+    const result = await this.model.deleteOne({ _id: id, tenantId: tenant }).exec();
     return result.deletedCount > 0;
   }
 }

@@ -15,7 +15,7 @@ export type TicketSchemaDocument = HydratedDocument<TicketSchemaClass>;
 })
 export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true, unique: true, index: true })
   ticketNumber: string;
@@ -27,10 +27,10 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   description?: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
-  requester?: string;
+  requesterId?: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
-  assignee?: string;
+  assigneeId?: string;
 
   @Prop({ required: true, default: 'new', index: true })
   status: string;
@@ -74,14 +74,14 @@ export class TicketSchemaClass extends EntityDocumentHelper {
     ref: 'UserSchemaClass',
     required: true,
   })
-  createdBy: string;
+  createdById: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     required: true,
   })
-  updatedBy: string;
+  updatedById: string;
 
   @Prop({ default: now })
   createdAt: Date;
@@ -95,6 +95,20 @@ export class TicketSchemaClass extends EntityDocumentHelper {
 
 export const TicketSchema = SchemaFactory.createForClass(TicketSchemaClass);
 
-TicketSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
-TicketSchema.index({ tenant: 1, ticketNumber: 1 });
-TicketSchema.index({ tenant: 1, status: 1 });
+TicketSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+TicketSchema.index({ tenantId: 1, ticketNumber: 1 });
+TicketSchema.index({ tenantId: 1, status: 1 });
+
+TicketSchema.virtual('requester', {
+  ref: 'UserSchemaClass',
+  localField: 'requesterId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+TicketSchema.virtual('assignee', {
+  ref: 'UserSchemaClass',
+  localField: 'assigneeId',
+  foreignField: '_id',
+  justOne: true,
+});

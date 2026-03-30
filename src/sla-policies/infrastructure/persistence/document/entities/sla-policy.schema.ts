@@ -17,7 +17,7 @@ export class SlaPolicySchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true })
   name: string;
@@ -54,5 +54,5 @@ export class SlaPolicySchemaClass extends EntityDocumentHelper {
 export const SlaPolicySchema =
   SchemaFactory.createForClass(SlaPolicySchemaClass);
 
-SlaPolicySchema.plugin(tenantFilterPlugin, { field: 'tenant' });
-SlaPolicySchema.index({ tenant: 1, name: 1 }, { unique: true });
+SlaPolicySchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+SlaPolicySchema.index({ tenantId: 1, name: 1 }, { unique: true });

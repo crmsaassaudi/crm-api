@@ -18,7 +18,7 @@ export class CannedResponseSchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true })
   shortcut: string;
@@ -33,7 +33,7 @@ export class CannedResponseSchemaClass extends EntityDocumentHelper {
   scope: string;
 
   @Prop({ type: String, ref: 'UserSchemaClass' })
-  createdBy: string;
+  createdById: string;
 
   @Prop({ type: [String], default: [] })
   attachments: string[];
@@ -43,5 +43,5 @@ export const CannedResponseSchema = SchemaFactory.createForClass(
   CannedResponseSchemaClass,
 );
 
-CannedResponseSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
-CannedResponseSchema.index({ tenant: 1, shortcut: 1 }, { unique: true });
+CannedResponseSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+CannedResponseSchema.index({ tenantId: 1, shortcut: 1 }, { unique: true });

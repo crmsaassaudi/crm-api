@@ -18,7 +18,7 @@ export class FileType {
   id: string;
 
   @ApiProperty()
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty()
   version?: number;

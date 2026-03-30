@@ -111,7 +111,7 @@ export class UsersService {
         // Do not remove comment below.
         // <creating-property-payload />
         tenants: tenantId
-          ? [{ tenant: tenantId, roles: [], joinedAt: new Date() }]
+          ? [{ tenantId: tenantId, roles: [], joinedAt: new Date() }]
           : [],
         firstName: createUserDto.firstName,
         lastName: createUserDto.lastName,
@@ -293,7 +293,7 @@ export class UsersService {
     if (existingUser) {
       // Check if user already belongs to this tenant
       const alreadyInTenant = existingUser.tenants?.some(
-        (t) => t.tenant?.toString() === tenantId.toString(),
+        (t) => t.tenantId?.toString() === tenantId.toString(),
       );
       if (alreadyInTenant) {
         throw new UnprocessableEntityException({
@@ -323,7 +323,7 @@ export class UsersService {
         existingUser.keycloakId || '',
         inviteUserDto.email,
         {},
-        [{ tenant: tenantId, roles: [tenantRole], joinedAt: new Date() }],
+        [{ tenantId: tenantId, roles: [tenantRole], joinedAt: new Date() }],
       );
     }
 
@@ -389,7 +389,7 @@ export class UsersService {
         platformRole: { id: PlatformRoleEnum.USER },
         status: { id: StatusEnum.active },
         tenants: [
-          { tenant: tenantId, roles: [tenantRole], joinedAt: new Date() },
+          { tenantId: tenantId, roles: [tenantRole], joinedAt: new Date() },
         ],
       });
     } catch (error) {
@@ -429,7 +429,7 @@ export class UsersService {
     const tenant = await this.tenantsRepository.findById(tenantId);
 
     // Prevent removing tenant owner
-    if (tenant && tenant.owner?.toString() === userId.toString()) {
+    if (tenant && tenant.ownerId?.toString() === userId.toString()) {
       throw new UnprocessableEntityException(
         'Cannot remove the tenant owner from the tenant',
       );
@@ -465,7 +465,7 @@ export class UsersService {
     }
 
     const belongsToTenant = user.tenants?.some(
-      (t) => t.tenant?.toString() === tenantId.toString(),
+      (t) => t.tenantId?.toString() === tenantId.toString(),
     );
     if (!belongsToTenant) {
       throw new UnprocessableEntityException(
@@ -611,7 +611,7 @@ export class UsersService {
         platformRole: { id: PlatformRoleEnum.USER },
         status: { id: StatusEnum.active },
         tenants: [
-          { tenant: tenantId, roles: [tenantRole], joinedAt: new Date() },
+          { tenantId: tenantId, roles: [tenantRole], joinedAt: new Date() },
         ],
       });
     } catch (error) {

@@ -5,7 +5,7 @@ export class Group {
   id: string;
 
   @ApiProperty({ example: 'tenant_1' })
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'Sales Team' })
   name: string;
@@ -17,13 +17,13 @@ export class Group {
     example: '507f1f77bcf86cd799439011',
     nullable: true,
   })
-  parentGroup: string | null;
+  parentGroupId: string | null;
 
   @ApiPropertyOptional({ example: '507f1f77bcf86cd799439011', nullable: true })
-  manager?: string | null;
+  managerId?: string | null;
 
   @ApiProperty({ type: [String] })
-  members: string[];
+  memberIds: string[];
 
   @ApiProperty({ type: [String], example: ['leads:view', 'leads:create'] })
   permissions: string[];

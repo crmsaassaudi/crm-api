@@ -15,9 +15,9 @@ export abstract class BaseDocumentRepository<
 
   /**
    * Auto-enriches data with multitenant context from CLS:
-   *   - tenant    → cls.tenantId   (MongoDB ObjectId)
-   *   - createdBy → cls.userId     (MongoDB ObjectId)
-   *   - updatedBy → cls.userId     (MongoDB ObjectId)
+   *   - tenantId    → cls.tenantId   (MongoDB ObjectId)
+   *   - createdById → cls.userId     (MongoDB ObjectId)
+   *   - updatedById → cls.userId     (MongoDB ObjectId)
    *
    * Existing values in data are NOT overwritten.
    */
@@ -36,7 +36,7 @@ export abstract class BaseDocumentRepository<
   ): FilterQuery<TSchema> {
     const tenantId = this.cls.get('tenantId');
     if (tenantId) {
-      return { ...filter, tenant: tenantId };
+      return { ...filter, tenantId: tenantId };
     }
     return filter;
   }
@@ -133,16 +133,16 @@ export abstract class BaseDocumentRepository<
     const userId = this.cls.get('userId');
 
     if (isCreate) {
-      if (tenantId && !enriched.tenant) {
-        enriched.tenant = tenantId;
+      if (tenantId && !enriched.tenantId) {
+        enriched.tenantId = tenantId;
       }
-      if (userId && !enriched.createdBy) {
-        enriched.createdBy = userId;
+      if (userId && !enriched.createdById) {
+        enriched.createdById = userId;
       }
     }
 
-    if (userId && !enriched.updatedBy) {
-      enriched.updatedBy = userId;
+    if (userId && !enriched.updatedById) {
+      enriched.updatedById = userId;
     }
 
     return enriched;
@@ -152,3 +152,4 @@ export abstract class BaseDocumentRepository<
 
   protected abstract toPersistence(domain: TDomain): any;
 }
+

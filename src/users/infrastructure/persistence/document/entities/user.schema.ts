@@ -29,7 +29,7 @@ export class UserSchemaClass extends EntityDocumentHelper {
   @Prop({
     type: [
       {
-        tenant: {
+        tenantId: {
           type: MongooseSchema.Types.ObjectId,
           ref: 'TenantSchemaClass',
         },
@@ -40,7 +40,7 @@ export class UserSchemaClass extends EntityDocumentHelper {
     default: [],
   })
   tenants: {
-    tenant: string;
+    tenantId: string;
     roles: string[];
     joinedAt: Date;
   }[];
@@ -106,7 +106,7 @@ export class UserSchemaClass extends EntityDocumentHelper {
 
 export const UserSchema = SchemaFactory.createForClass(UserSchemaClass);
 
-UserSchema.plugin(tenantFilterPlugin, { field: 'tenants.tenant' });
+UserSchema.plugin(tenantFilterPlugin, { field: 'tenants.tenantId' });
 
 UserSchema.index({ platformRole: 1 });
-UserSchema.index({ tenant: 1, email: 1 }, { unique: true });
+UserSchema.index({ 'tenants.tenantId': 1, email: 1 }, { unique: true });

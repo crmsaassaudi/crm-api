@@ -5,7 +5,7 @@ export class SlaPolicyMapper {
   static toDomain(raw: SlaPolicySchemaClass): SlaPolicy {
     const entity = new SlaPolicy();
     entity.id = raw._id?.toString();
-    entity.tenant = raw.tenant;
+    entity.tenantId = raw.tenantId;
     entity.name = raw.name;
     entity.type = raw.type;
     entity.targets = raw.targets;

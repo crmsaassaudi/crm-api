@@ -5,7 +5,7 @@ export class TagMapper {
   static toDomain(raw: TagSchemaClass): Tag {
     const entity = new Tag();
     entity.id = raw._id?.toString();
-    entity.tenant = raw.tenant;
+    entity.tenantId = raw.tenantId;
     entity.name = raw.name;
     entity.color = raw.color;
     entity.scope = raw.scope;
@@ -17,7 +17,7 @@ export class TagMapper {
 
   static toPersistence(domain: Tag): Partial<TagSchemaClass> {
     const persistence: any = {};
-    if (domain.tenant) persistence.tenant = domain.tenant;
+    if (domain.tenantId) persistence.tenantId = domain.tenantId;
     if (domain.name) persistence.name = domain.name;
     if (domain.color) persistence.color = domain.color;
     if (domain.scope) persistence.scope = domain.scope;

@@ -5,12 +5,12 @@ export class TicketMapper {
   static toDomain(raw: TicketSchemaClass): Ticket {
     const domainEntity = new Ticket();
     domainEntity.id = raw._id.toString();
-    domainEntity.tenant = raw.tenant;
+    domainEntity.tenantId = raw.tenantId;
     domainEntity.ticketNumber = raw.ticketNumber;
     domainEntity.subject = raw.subject;
     domainEntity.description = raw.description ?? '';
-    domainEntity.requester = raw.requester?.toString();
-    domainEntity.assignee = raw.assignee?.toString();
+    domainEntity.requesterId = raw.requesterId?.toString();
+    domainEntity.assigneeId = raw.assigneeId?.toString();
     domainEntity.status = raw.status;
     domainEntity.priority = raw.priority;
     domainEntity.lifecycleStage = raw.lifecycleStage;
@@ -33,12 +33,12 @@ export class TicketMapper {
     if (domainEntity.id) {
       persistenceEntity._id = domainEntity.id;
     }
-    persistenceEntity.tenant = domainEntity.tenant;
+    persistenceEntity.tenantId = domainEntity.tenantId;
     persistenceEntity.ticketNumber = domainEntity.ticketNumber;
     persistenceEntity.subject = domainEntity.subject;
     persistenceEntity.description = domainEntity.description;
-    persistenceEntity.requester = domainEntity.requester;
-    persistenceEntity.assignee = domainEntity.assignee;
+    persistenceEntity.requesterId = domainEntity.requesterId;
+    persistenceEntity.assigneeId = domainEntity.assigneeId;
     persistenceEntity.status = domainEntity.status;
     persistenceEntity.priority = domainEntity.priority;
     persistenceEntity.lifecycleStage = domainEntity.lifecycleStage;

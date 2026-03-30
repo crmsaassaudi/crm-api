@@ -6,7 +6,7 @@ export class ContactMapper {
   static toDomain(raw: ContactSchemaClass): Contact {
     const domainEntity = new Contact();
     domainEntity.id = raw._id.toString();
-    domainEntity.tenant = raw.tenant;
+    domainEntity.tenantId = raw.tenantId;
     domainEntity.firstName = raw.firstName;
     domainEntity.lastName = raw.lastName;
     domainEntity.emails = raw.emails ?? [];
@@ -15,30 +15,30 @@ export class ContactMapper {
     domainEntity.lifecycleStage = raw.lifecycleStage;
     domainEntity.status = raw.status;
     domainEntity.companyName = raw.companyName;
-    domainEntity.account = raw.account?.toString();
+    domainEntity.accountId = raw.accountId?.toString();
     domainEntity.title = raw.title;
     domainEntity.source = raw.source;
     domainEntity.score = raw.score;
     domainEntity.omniSenderId = raw.omniSenderId;
     domainEntity.isShadow = raw.isShadow;
 
-    if (raw.owner) {
-      domainEntity.owner =
-        typeof raw.owner === 'string'
-          ? raw.owner
-          : UserMapper.toDomain(raw.owner as any);
+    if (raw.ownerId) {
+      domainEntity.ownerId = typeof raw.ownerId === 'string' ? raw.ownerId : (raw.ownerId as any)._id?.toString();
     }
-    if (raw.createdBy) {
-      domainEntity.createdBy =
-        typeof raw.createdBy === 'string'
-          ? raw.createdBy
-          : UserMapper.toDomain(raw.createdBy as any);
+    if ((raw as any).owner) {
+      domainEntity.owner = UserMapper.toDomain((raw as any).owner as any);
     }
-    if (raw.updatedBy) {
-      domainEntity.updatedBy =
-        typeof raw.updatedBy === 'string'
-          ? raw.updatedBy
-          : UserMapper.toDomain(raw.updatedBy as any);
+    if (raw.createdById) {
+      domainEntity.createdById = typeof raw.createdById === 'string' ? raw.createdById : (raw.createdById as any)._id?.toString();
+    }
+    if ((raw as any).createdBy) {
+      domainEntity.createdBy = UserMapper.toDomain((raw as any).createdBy as any);
+    }
+    if (raw.updatedById) {
+      domainEntity.updatedById = typeof raw.updatedById === 'string' ? raw.updatedById : (raw.updatedById as any)._id?.toString();
+    }
+    if ((raw as any).updatedBy) {
+      domainEntity.updatedBy = UserMapper.toDomain((raw as any).updatedBy as any);
     }
 
     domainEntity.createdAt = raw.createdAt;
@@ -52,7 +52,7 @@ export class ContactMapper {
     if (domainEntity.id) {
       persistenceEntity._id = domainEntity.id;
     }
-    persistenceEntity.tenant = domainEntity.tenant;
+    persistenceEntity.tenantId = domainEntity.tenantId;
     persistenceEntity.firstName = domainEntity.firstName;
     persistenceEntity.lastName = domainEntity.lastName;
     persistenceEntity.emails = domainEntity.emails ?? [];
@@ -61,7 +61,7 @@ export class ContactMapper {
     persistenceEntity.lifecycleStage = domainEntity.lifecycleStage;
     persistenceEntity.status = domainEntity.status;
     persistenceEntity.companyName = domainEntity.companyName;
-    persistenceEntity.account = domainEntity.account;
+    persistenceEntity.accountId = domainEntity.accountId;
     persistenceEntity.title = domainEntity.title;
     persistenceEntity.source = domainEntity.source;
     persistenceEntity.score = domainEntity.score;
@@ -69,21 +69,9 @@ export class ContactMapper {
     if (domainEntity.isShadow !== undefined) {
       persistenceEntity.isShadow = domainEntity.isShadow;
     }
-    persistenceEntity.owner = (
-      typeof domainEntity.owner === 'string'
-        ? domainEntity.owner
-        : domainEntity.owner?.id
-    ) as string | undefined;
-    persistenceEntity.createdBy = (
-      typeof domainEntity.createdBy === 'string'
-        ? domainEntity.createdBy
-        : domainEntity.createdBy?.id
-    ) as string;
-    persistenceEntity.updatedBy = (
-      typeof domainEntity.updatedBy === 'string'
-        ? domainEntity.updatedBy
-        : domainEntity.updatedBy?.id
-    ) as string;
+    persistenceEntity.ownerId = domainEntity.ownerId;
+    persistenceEntity.createdById = domainEntity.createdById;
+    persistenceEntity.updatedById = domainEntity.updatedById;
     return persistenceEntity;
   }
 }

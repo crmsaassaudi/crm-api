@@ -17,7 +17,7 @@ export class GroupSchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true, trim: true, maxlength: 100 })
   name: string;
@@ -30,20 +30,20 @@ export class GroupSchemaClass extends EntityDocumentHelper {
     ref: 'GroupSchemaClass',
     default: null,
   })
-  parentGroup: string | null;
+  parentGroupId: string | null;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     default: null,
   })
-  manager?: string | null;
+  managerId?: string | null;
 
   @Prop({
     type: [{ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' }],
     default: [],
   })
-  members: string[];
+  memberIds: string[];
 
   @Prop({ type: [String], default: [] })
   permissions: string[];
@@ -57,5 +57,5 @@ export class GroupSchemaClass extends EntityDocumentHelper {
 
 export const GroupSchema = SchemaFactory.createForClass(GroupSchemaClass);
 
-GroupSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
-GroupSchema.index({ tenant: 1, name: 1 }, { unique: true });
+GroupSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+GroupSchema.index({ tenantId: 1, name: 1 }, { unique: true });

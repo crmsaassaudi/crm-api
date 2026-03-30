@@ -6,7 +6,7 @@ export class Contact {
   id: string;
 
   @ApiProperty({ example: 'tenant_1' })
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'John' })
   firstName: string;
@@ -32,7 +32,7 @@ export class Contact {
   companyName?: string;
 
   @ApiProperty({ example: '60d0fe4f5311236168a109cb' })
-  account?: string;
+  accountId?: string;
 
   @ApiProperty({ example: 'Sales Manager' })
   title?: string;
@@ -44,13 +44,22 @@ export class Contact {
   score?: number;
 
   @ApiProperty({ type: 'string', example: '60d0fe4f5311236168a109cc' })
-  owner?: User | string;
+  ownerId?: string;
+
+  @ApiProperty()
+  owner?: User;
 
   @ApiProperty({ type: 'string' })
-  createdBy: User | string;
+  createdById: string;
+
+  @ApiProperty()
+  createdBy?: User;
 
   @ApiProperty({ type: 'string' })
-  updatedBy: User | string;
+  updatedById: string;
+  
+  @ApiProperty()
+  updatedBy?: User;
 
   @ApiProperty()
   createdAt: Date;

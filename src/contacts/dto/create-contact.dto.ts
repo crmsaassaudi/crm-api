@@ -42,7 +42,7 @@ export class CreateContactDto {
   @ApiProperty({ example: 'user-1' })
   @IsOptional()
   @IsString()
-  owner?: string;
+  ownerId?: string;
 
   @ApiProperty({ example: { lead_score: 100 } })
   @IsOptional()

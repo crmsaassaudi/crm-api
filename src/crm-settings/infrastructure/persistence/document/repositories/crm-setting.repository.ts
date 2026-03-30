@@ -16,13 +16,13 @@ export class CrmSettingRepository {
   ) {}
 
   async findOne(tenant: string, key: string): Promise<CrmSetting | null> {
-    const doc = await this.model.findOne({ tenant, key }).exec();
+    const doc = await this.model.findOne({ tenantId: tenant, key }).exec();
     return doc ? CrmSettingMapper.toDomain(doc) : null;
   }
 
   async update(tenant: string, key: string, value: any): Promise<CrmSetting> {
     const doc = await this.model
-      .findOneAndUpdate({ tenant, key }, { value }, { upsert: true, new: true })
+      .findOneAndUpdate({ tenantId: tenant, key }, { value }, { upsert: true, new: true })
       .exec();
     return CrmSettingMapper.toDomain(doc);
   }
