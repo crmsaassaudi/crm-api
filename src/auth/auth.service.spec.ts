@@ -5,6 +5,8 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '../redis/redis.service';
 import { AuthProvidersEnum } from './auth-providers.enum';
+import { TenantsService } from '../tenants/tenants.service';
+import { SessionService } from './services/session.service';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -33,9 +35,11 @@ describe('AuthService', () => {
       providers: [
         AuthService,
         { provide: UsersService, useValue: usersService },
+        { provide: TenantsService, useValue: {} },
         { provide: HttpService, useValue: {} },
         { provide: ConfigService, useValue: { getOrThrow: jest.fn() } },
         { provide: RedisService, useValue: redisService },
+        { provide: SessionService, useValue: {} },
       ],
     }).compile();
 
@@ -46,7 +50,7 @@ describe('AuthService', () => {
     const keycloakPayload = {
       sub: 'keycloak-123',
       email: 'test@example.com',
-      tenants: ['tenant-1', 'tenant-3'], // Tenant 2 removed, Tenant 3 added
+      tenants: ['507f1f77bcf86cd799439011', '507f1f77bcf86cd799439013'],
     };
 
     const existingUser = {
@@ -54,8 +58,16 @@ describe('AuthService', () => {
       keycloakId: 'keycloak-123',
       email: 'test@example.com',
       tenants: [
-        { tenant: 'tenant-1', roles: [], joinedAt: new Date() },
-        { tenant: 'tenant-2', roles: [], joinedAt: new Date() },
+        {
+          tenantId: '507f1f77bcf86cd799439011',
+          roles: [],
+          joinedAt: new Date(),
+        },
+        {
+          tenantId: '507f1f77bcf86cd799439012',
+          roles: [],
+          joinedAt: new Date(),
+        },
       ],
       provider: AuthProvidersEnum.email,
     };
@@ -70,18 +82,18 @@ describe('AuthService', () => {
       'user-1',
       expect.objectContaining({
         tenants: expect.arrayContaining([
-          expect.objectContaining({ tenant: 'tenant-1' }),
-          expect.objectContaining({ tenant: 'tenant-3' }),
+          expect.objectContaining({ tenantId: '507f1f77bcf86cd799439011' }),
+          expect.objectContaining({ tenantId: '507f1f77bcf86cd799439013' }),
         ]),
       }),
     );
 
     // Verify tenant-2 is gone
     const updateCall = (usersService.update as jest.Mock).mock.calls[0][1];
-    const tenants = updateCall.tenants.map((t: any) => t.tenant);
-    expect(tenants).toContain('tenant-1');
-    expect(tenants).toContain('tenant-3');
-    expect(tenants).not.toContain('tenant-2');
+    const tenants = updateCall.tenants.map((t: any) => t.tenantId);
+    expect(tenants).toContain('507f1f77bcf86cd799439011');
+    expect(tenants).toContain('507f1f77bcf86cd799439013');
+    expect(tenants).not.toContain('507f1f77bcf86cd799439012');
   });
 
   it('should handle JIT provisioning', async () => {
@@ -90,7 +102,7 @@ describe('AuthService', () => {
       email: 'new@example.com',
       given_name: 'New',
       family_name: 'User',
-      tenants: ['tenant-A'],
+      tenants: ['507f1f77bcf86cd799439021'],
     };
 
     (usersService.findByKeycloakIdAndProvider as jest.Mock).mockResolvedValue(
@@ -105,7 +117,7 @@ describe('AuthService', () => {
         email: 'new@example.com',
         keycloakId: 'new-keycloak-id',
         tenants: expect.arrayContaining([
-          expect.objectContaining({ tenant: 'tenant-A' }),
+          expect.objectContaining({ tenantId: '507f1f77bcf86cd799439021' }),
         ]),
       }),
     );

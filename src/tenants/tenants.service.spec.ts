@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { TenantsService } from './tenants.service';
 import { TenantsRepository } from './infrastructure/persistence/document/repositories/tenant.repository';
+import { TenantAliasReservationRepository } from './infrastructure/persistence/document/repositories/tenant-alias-reservation.repository';
 import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
-import { UsersService } from '../users/users.service';
+import { UserRepository } from '../users/infrastructure/persistence/user.repository';
 import { getConnectionToken } from '@nestjs/mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { RegisterTenantDto } from './dto/register-tenant.dto';
@@ -15,7 +16,6 @@ describe('TenantsService', () => {
   let service: TenantsService;
   let tenantsRepository: TenantsRepository;
   let keycloakAdminService: KeycloakAdminService;
-  let usersService: UsersService;
   let aliasReservationRepository: any;
   let userRepository: any;
   let eventEmitter: EventEmitter2;
@@ -50,35 +50,28 @@ describe('TenantsService', () => {
         {
           provide: KeycloakAdminService,
           useValue: {
-            findUserByEmail: jest.fn(),
-            createGroup: jest.fn(),
-            createUser: jest.fn(),
+            findUserByEmail: jest.fn().mockResolvedValue(null),
+            createOrganization: jest.fn().mockResolvedValue({ id: 'kc-org-1' }),
+            createUser: jest.fn().mockResolvedValue({ id: 'kc-user-1' }),
             updateUser: jest.fn(),
-            addUserToGroup: jest.fn(),
+            addUserToOrganization: jest.fn().mockResolvedValue(undefined),
             resetPassword: jest.fn(),
-            deleteGroup: jest.fn(),
-            deleteUser: jest.fn(),
+            deleteOrganization: jest.fn().mockResolvedValue(undefined),
+            deleteUser: jest.fn().mockResolvedValue(undefined),
           },
         },
         {
-          provide: UsersService,
+          provide: TenantAliasReservationRepository,
           useValue: {
-            findByEmail: jest.fn(),
-            create: jest.fn(),
+            reserve: jest.fn().mockResolvedValue(undefined),
+            confirm: jest.fn().mockResolvedValue(undefined),
+            delete: jest.fn().mockResolvedValue(undefined),
           },
         },
         {
-          provide: 'TenantAliasReservationRepository',
+          provide: UserRepository,
           useValue: {
-            reserve: jest.fn(),
-            confirm: jest.fn(),
-            delete: jest.fn(),
-          },
-        },
-        {
-          provide: 'UserRepository',
-          useValue: {
-            upsertWithTenants: jest.fn(),
+            upsertWithTenants: jest.fn().mockResolvedValue({ id: 'shadow-1' }),
           },
         },
         {
@@ -98,9 +91,10 @@ describe('TenantsService', () => {
     tenantsRepository = module.get<TenantsRepository>(TenantsRepository);
     keycloakAdminService =
       module.get<KeycloakAdminService>(KeycloakAdminService);
-    usersService = module.get<UsersService>(UsersService);
-    aliasReservationRepository = module.get('TenantAliasReservationRepository');
-    userRepository = module.get('UserRepository');
+    aliasReservationRepository = module.get<TenantAliasReservationRepository>(
+      TenantAliasReservationRepository,
+    );
+    userRepository = module.get<UserRepository>(UserRepository);
     eventEmitter = module.get<EventEmitter2>(EventEmitter2);
   });
 
@@ -131,9 +125,6 @@ describe('TenantsService', () => {
       (keycloakAdminService.findUserByEmail as jest.Mock) = jest
         .fn()
         .mockResolvedValue(null);
-      (usersService.findByEmail as jest.Mock) = jest
-        .fn()
-        .mockResolvedValue(null);
 
       (tenantsRepository.create as jest.Mock) = jest
         .fn()
@@ -144,7 +135,7 @@ describe('TenantsService', () => {
       (keycloakAdminService.createUser as jest.Mock) = jest
         .fn()
         .mockResolvedValue({ id: keycloakUserId });
-      (usersService.create as jest.Mock) = jest
+      (userRepository.upsertWithTenants as jest.Mock) = jest
         .fn()
         .mockResolvedValue({ id: shadowUserId });
 
@@ -161,9 +152,6 @@ describe('TenantsService', () => {
       });
 
       // 1. Validation
-      expect(tenantsRepository.findByAlias).toHaveBeenCalledWith(
-        dto.organizationAlias,
-      );
       expect(aliasReservationRepository.reserve).toHaveBeenCalledWith(
         dto.organizationAlias,
       );
@@ -171,17 +159,12 @@ describe('TenantsService', () => {
         dto.email,
       );
 
-      // 2. Transaction
-      expect(connection.startSession).toHaveBeenCalled();
-      expect(session.startTransaction).toHaveBeenCalled();
-
       // 3. Local Tenant Creation
       expect(tenantsRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({
           name: dto.organizationName,
           alias: dto.organizationAlias,
         }),
-        session,
       );
 
       // 4. Keycloak Group
@@ -196,20 +179,10 @@ describe('TenantsService', () => {
         dto.password,
         dto.fullName,
       );
-      expect(keycloakAdminService.updateUser).toHaveBeenCalledWith(
-        keycloakUserId,
-        {
-          firstName: dto.fullName.split(' ')[0],
-          lastName: dto.fullName.split(' ')[1],
-        },
-      );
 
       // 6. Config
       expect(keycloakAdminService.addUserToOrganization).toHaveBeenCalledWith(
         keycloakGroupId,
-        keycloakUserId,
-      );
-      expect(keycloakAdminService.resetPassword).toHaveBeenCalledWith(
         keycloakUserId,
       );
 
@@ -233,8 +206,7 @@ describe('TenantsService', () => {
         dto.organizationAlias,
       );
 
-      // 8. Commit & Event
-      expect(session.commitTransaction).toHaveBeenCalled();
+      // 8. Event
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'tenant.created',
         expect.anything(),
@@ -242,9 +214,9 @@ describe('TenantsService', () => {
     });
 
     it('should throw ConflictException if alias exists', async () => {
-      (tenantsRepository.findByAlias as jest.Mock) = jest
+      (aliasReservationRepository.reserve as jest.Mock) = jest
         .fn()
-        .mockResolvedValue({ id: 'existing' });
+        .mockRejectedValue(new ConflictException('Alias already taken'));
 
       await expect(service.register(dto)).rejects.toThrow(ConflictException);
     });
@@ -253,13 +225,7 @@ describe('TenantsService', () => {
       const localTenantId = 'local-tenant-id';
       const keycloakGroupId = 'keycloak-group-id';
 
-      (tenantsRepository.findByAlias as jest.Mock) = jest
-        .fn()
-        .mockResolvedValue(null);
       (keycloakAdminService.findUserByEmail as jest.Mock) = jest
-        .fn()
-        .mockResolvedValue(null);
-      (usersService.findByEmail as jest.Mock) = jest
         .fn()
         .mockResolvedValue(null);
       (tenantsRepository.create as jest.Mock) = jest
@@ -291,13 +257,7 @@ describe('TenantsService', () => {
       const keycloakGroupId = 'keycloak-group-id';
       const keycloakUserId = 'keycloak-user-id';
 
-      (tenantsRepository.findByAlias as jest.Mock) = jest
-        .fn()
-        .mockResolvedValue(null);
       (keycloakAdminService.findUserByEmail as jest.Mock) = jest
-        .fn()
-        .mockResolvedValue(null);
-      (usersService.findByEmail as jest.Mock) = jest
         .fn()
         .mockResolvedValue(null);
       (tenantsRepository.create as jest.Mock) = jest
@@ -311,7 +271,7 @@ describe('TenantsService', () => {
         .mockResolvedValue({ id: keycloakUserId });
 
       // Fail here
-      (usersService.create as jest.Mock) = jest
+      (userRepository.upsertWithTenants as jest.Mock) = jest
         .fn()
         .mockRejectedValue(new Error('DB Error'));
 

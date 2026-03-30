@@ -77,7 +77,7 @@ describe('ConversationService Concurrency', () => {
           },
         },
         { provide: IOREDIS_CLIENT, useValue: redisMock },
-        { provide: EventEmitter2, useValue: {} },
+        { provide: EventEmitter2, useValue: { emit: jest.fn() } },
       ],
     }).compile();
 
@@ -174,7 +174,7 @@ describe('ConversationService Concurrency', () => {
 
     expect(conversationRepoMock.create).not.toHaveBeenCalled(); // No creation
     expect(messageRepoMock.create).toHaveBeenCalledWith(
-      expect.objectContaining({ conversation: 'existing_conv_456' }),
+      expect.objectContaining({ conversationId: 'existing_conv_456' }),
     );
   });
 });
