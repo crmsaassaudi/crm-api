@@ -15,13 +15,19 @@ export class <%= name %> {
   // <domain-property />
 
   /**
-   * References: string (ObjectId) when creating, populated User object when reading.
+    * Internal references must use Id suffix.
    */
   @ApiProperty({ type: 'string' })
-  createdBy: User | string;
+    createdById: string;
 
   @ApiProperty({ type: 'string' })
-  updatedBy: User | string;
+    updatedById: string;
+
+    @ApiProperty({ type: () => User, required: false })
+    createdBy?: User;
+
+    @ApiProperty({ type: () => User, required: false })
+    updatedBy?: User;
 
   @ApiProperty()
   createdAt: Date;
