@@ -1,12 +1,13 @@
 import { Module, Global } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
+import { AllConfigType } from '../config/config.type';
 
 @Global()
 @Module({
   imports: [
     BullModule.forRootAsync({
-      useFactory: (configService: ConfigService) => ({
+      useFactory: (configService: ConfigService<AllConfigType>) => ({
         connection: {
           host: configService.get('queue.host', { infer: true }),
           port: configService.get('queue.port', { infer: true }),
