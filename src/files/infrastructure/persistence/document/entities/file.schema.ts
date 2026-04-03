@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 
 export type FileSchemaDocument = HydratedDocument<FileSchemaClass>;
@@ -20,7 +20,12 @@ export type FileSchemaDocument = HydratedDocument<FileSchemaClass>;
   },
 })
 export class FileSchemaClass extends EntityDocumentHelper {
-  @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TenantSchemaClass',
+    required: true,
+    index: true,
+  })
   tenantId: string;
 
   @Prop()

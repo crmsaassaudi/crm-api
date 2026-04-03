@@ -12,7 +12,7 @@ export type GroupSchemaDocument = HydratedDocument<GroupSchemaClass>;
 })
 export class GroupSchemaClass extends EntityDocumentHelper {
   @Prop({
-    type: String,
+    type: MongooseSchema.Types.ObjectId,
     ref: 'TenantSchemaClass',
     required: true,
     index: true,

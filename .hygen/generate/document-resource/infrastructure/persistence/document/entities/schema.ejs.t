@@ -26,7 +26,7 @@ export type <%= name %>SchemaDocument = HydratedDocument<<%= name %>SchemaClass>
 export class <%= name %>SchemaClass extends EntityDocumentHelper {
   // ── Multitenant fields (auto-injected by BaseDocumentRepository) ──
 
-  @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TenantSchemaClass', required: true, index: true })
   tenantId: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass', required: true })

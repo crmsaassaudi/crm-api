@@ -269,6 +269,10 @@ export class ConversationRepository {
     await this.model.findByIdAndUpdate(id, { $set: update }).exec();
   }
 
+  async updateContactId(id: string, contactId: string): Promise<void> {
+    await this.model.findByIdAndUpdate(id, { $set: { contactId } }).exec();
+  }
+
   /**
    * Find ALL conversations for a given customer thread (any status), sorted oldest-first.
    * Used for cross-conversation message history.

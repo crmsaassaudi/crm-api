@@ -72,7 +72,7 @@ export class IdentityService {
     );
 
     const identity: ResolvedIdentity = {
-      contactId: conversation?.customer?.externalId ?? null,
+      contactId: conversation?.contactId ?? null,
       conversationId: conversation?.id ?? null,
     };
 
@@ -93,7 +93,8 @@ export class IdentityService {
     pageId: string,
     senderId: string,
   ): Promise<ResolvedIdentity> {
-    const key = this.buildKey(platform, pageId, senderId);
+    const key = this.buildKey(platform, pageId, senderId, tenant);
+    const legacyKey = this.buildKey(platform, pageId, senderId);
 
     // Step 1: Redis lookup
     const cached = await this.redis.get(key);
@@ -102,6 +103,19 @@ export class IdentityService {
         return JSON.parse(cached) as ResolvedIdentity;
       } catch {
         await this.redis.del(key);
+      }
+    }
+
+    // Backward compatibility: migrate old non-tenant cache keys lazily.
+    const legacyCached = await this.redis.get(legacyKey);
+    if (legacyCached) {
+      try {
+        const parsed = JSON.parse(legacyCached) as ResolvedIdentity;
+        await this.setCache(key, parsed);
+        await this.redis.del(legacyKey);
+        return parsed;
+      } catch {
+        await this.redis.del(legacyKey);
       }
     }
 
@@ -114,7 +128,7 @@ export class IdentityService {
     );
 
     const identity: ResolvedIdentity = {
-      contactId: conversation?.customer?.externalId ?? null,
+      contactId: conversation?.contactId ?? null,
       conversationId: conversation?.id ?? null,
     };
 
@@ -134,9 +148,16 @@ export class IdentityService {
     pageId: string,
     senderId: string,
     identity: ResolvedIdentity,
+    tenant?: string,
   ): Promise<void> {
-    const key = this.buildKey(platform, pageId, senderId);
+    const key = this.buildKey(platform, pageId, senderId, tenant);
     await this.setCache(key, identity);
+
+    // Cleanup legacy key once tenant-aware key is used.
+    if (tenant) {
+      const legacyKey = this.buildKey(platform, pageId, senderId);
+      await this.redis.del(legacyKey);
+    }
   }
 
   /**
@@ -149,9 +170,14 @@ export class IdentityService {
     platform: string,
     pageId: string,
     senderId: string,
+    tenant?: string,
   ): Promise<void> {
-    const key = this.buildKey(platform, pageId, senderId);
-    await this.redis.del(key);
+    const key = this.buildKey(platform, pageId, senderId, tenant);
+    const keys = [key];
+    if (tenant) {
+      keys.push(this.buildKey(platform, pageId, senderId));
+    }
+    await this.redis.del(...keys);
     this.logger.log(`Invalidated identity cache: ${key}`);
   }
 
@@ -171,8 +197,15 @@ export class IdentityService {
 
   // ────────────────────────── Internals ──────────────────────────
 
-  private buildKey(platform: string, pageId: string, senderId: string): string {
-    return `omni:identity:${platform}:${pageId}:${senderId}`;
+  private buildKey(
+    platform: string,
+    pageId: string,
+    senderId: string,
+    tenant?: string,
+  ): string {
+    return tenant
+      ? `omni:identity:${tenant}:${platform}:${pageId}:${senderId}`
+      : `omni:identity:${platform}:${pageId}:${senderId}`;
   }
 
   private async setCache(

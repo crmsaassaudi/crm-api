@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { CacheModule } from '@nestjs/cache-manager';
 import { RedisService } from './redis.service';
 import { RedisLockService } from './redis-lock.service';
+import { RedisEvictionPolicyGuard } from './redis-eviction-policy.guard';
 import type { RedisOptions } from 'ioredis';
 import * as redisStore from 'cache-manager-ioredis';
 import Redis from 'ioredis';
@@ -27,6 +28,7 @@ import { IOREDIS_CLIENT } from './redis.tokens';
   providers: [
     RedisService,
     RedisLockService,
+    RedisEvictionPolicyGuard,
     {
       // Dedicated raw ioredis client — avoids cache-manager v7 store abstraction issues.
       provide: IOREDIS_CLIENT,

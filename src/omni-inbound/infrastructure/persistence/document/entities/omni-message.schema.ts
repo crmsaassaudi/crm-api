@@ -31,7 +31,7 @@ const MESSAGE_STATUSES = ['sending', 'sent', 'delivered', 'read', 'failed'];
 })
 export class OmniMessageSchemaClass extends EntityDocumentHelper {
   @Prop({
-    type: String,
+    type: MongooseSchema.Types.ObjectId,
     ref: 'TenantSchemaClass',
     required: true,
     index: true,
@@ -39,7 +39,7 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   tenantId: string;
 
   @Prop({
-    type: String,
+    type: MongooseSchema.Types.ObjectId,
     ref: 'OmniConversationSchemaClass',
     required: true,
     index: true,

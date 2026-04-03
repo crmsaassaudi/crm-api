@@ -30,7 +30,7 @@ const CHANNEL_TYPES = [
 })
 export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({
-    type: String,
+    type: MongooseSchema.Types.ObjectId,
     ref: 'TenantSchemaClass',
     required: true,
     index: true,
@@ -38,7 +38,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   tenantId: string;
 
   @Prop({
-    type: String,
+    type: MongooseSchema.Types.ObjectId,
     ref: 'ChannelSchemaClass',
     required: true,
     index: true,
@@ -59,21 +59,36 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, index: true })
   externalId: string;
 
-  /** Cached customer info from the webhook contacts */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'ContactSchemaClass',
+    index: true,
+    default: null,
+  })
+  contactId: string | null;
+
+  /** Cached customer info from the webhook platforms */
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   customer: {
     externalId: string;
-    contactId?: string; // ObjectId reference to ContactSchemaClass
     name: string;
     avatarUrl?: string;
     phone?: string;
     email?: string;
   };
 
-  @Prop({ type: String, ref: 'UserSchemaClass', default: null })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+    default: null,
+  })
   assignedAgentId: string | null;
 
-  @Prop({ type: String, ref: 'UserSchemaClass', default: null })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+    default: null,
+  })
   claimedById: string | null;
 
   @Prop({ type: Date, default: null })
@@ -113,11 +128,19 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 0 })
   reopenCount: number;
 
-  @Prop({ type: String, ref: 'OmniConversationSchemaClass', default: null })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'OmniConversationSchemaClass',
+    default: null,
+  })
   previousConversationId: string | null;
 
   // ── Close / Resolve metadata ───────────────────────────────────
-  @Prop({ type: String, ref: 'UserSchemaClass', default: null })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+    default: null,
+  })
   resolvedByAgentId: string | null;
 
   @Prop({ type: Date, default: null })

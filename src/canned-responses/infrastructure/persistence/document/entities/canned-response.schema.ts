@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
@@ -13,7 +13,7 @@ export type CannedResponseSchemaDocument =
 })
 export class CannedResponseSchemaClass extends EntityDocumentHelper {
   @Prop({
-    type: String,
+    type: MongooseSchema.Types.ObjectId,
     ref: 'TenantSchemaClass',
     required: true,
     index: true,
@@ -32,7 +32,7 @@ export class CannedResponseSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, enum: ['Public', 'Private', 'Team'] })
   scope: string;
 
-  @Prop({ type: String, ref: 'UserSchemaClass' })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   createdById: string;
 
   @Prop({ type: [String], default: [] })

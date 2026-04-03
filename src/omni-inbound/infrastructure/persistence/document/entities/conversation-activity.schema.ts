@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
@@ -33,7 +33,7 @@ const ACTOR_TYPES = ['agent', 'system', 'customer'] as const;
 })
 export class ConversationActivitySchemaClass extends EntityDocumentHelper {
   @Prop({
-    type: String,
+    type: MongooseSchema.Types.ObjectId,
     ref: 'TenantSchemaClass',
     required: true,
     index: true,
@@ -41,7 +41,7 @@ export class ConversationActivitySchemaClass extends EntityDocumentHelper {
   tenantId: string;
 
   @Prop({
-    type: String,
+    type: MongooseSchema.Types.ObjectId,
     ref: 'OmniConversationSchemaClass',
     required: true,
     index: true,
@@ -52,7 +52,11 @@ export class ConversationActivitySchemaClass extends EntityDocumentHelper {
   actorType: string;
 
   /** null for system-generated activities */
-  @Prop({ type: String, ref: 'UserSchemaClass', default: null })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+    default: null,
+  })
   actorId: string | null;
 
   @Prop({ required: true, enum: ACTIVITY_ACTIONS })

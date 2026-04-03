@@ -23,7 +23,7 @@ const CHANNEL_TYPES = [
 })
 export class ChannelSchemaClass extends EntityDocumentHelper {
   @Prop({
-    type: String,
+    type: MongooseSchema.Types.ObjectId,
     ref: 'TenantSchemaClass',
     required: true,
     index: true,

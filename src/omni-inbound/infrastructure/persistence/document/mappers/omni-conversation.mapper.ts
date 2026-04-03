@@ -28,6 +28,15 @@ export class OmniConversationMapper {
           : raw.claimedById.toString();
     }
 
+    let contactIdStr = null;
+    if ((raw as any).contactId) {
+      contactIdStr =
+        typeof (raw as any).contactId === 'object' &&
+        '_id' in (raw as any).contactId
+          ? ((raw as any).contactId as any)._id.toString()
+          : (raw as any).contactId.toString();
+    }
+
     return {
       id: raw._id.toString(),
       tenantId: raw.tenantId?.toString(),
@@ -35,6 +44,7 @@ export class OmniConversationMapper {
       channelType: raw.channelType as ChannelType,
       channelAccount: (raw as any).channelAccount,
       externalConversationId: raw.externalId,
+      contactId: contactIdStr,
       customer: raw.customer,
       assignedAgentId: assignedAgentIdStr,
       claimedBy: claimedByIdStr,
@@ -43,7 +53,6 @@ export class OmniConversationMapper {
       lastMessage: raw.lastMessage,
       lastMessageAt: raw.lastMessageAt,
       unreadCount: raw.unreadCount,
-      linkedContactId: undefined, // Add if needed
       linkedLeadId: undefined, // Add if needed
       tags: raw.tags || [],
       reopenCount: (raw as any).reopenCount ?? 0,
@@ -70,6 +79,7 @@ export class OmniConversationMapper {
     (raw as any).channelAccount = domain.channelAccount;
     raw.channelType = domain.channelType;
     raw.externalId = domain.externalConversationId;
+    (raw as any).contactId = domain.contactId;
     raw.customer = domain.customer;
     raw.assignedAgentId = domain.assignedAgentId;
     raw.claimedById = domain.claimedBy;

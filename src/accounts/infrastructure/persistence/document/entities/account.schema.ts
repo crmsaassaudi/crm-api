@@ -14,7 +14,12 @@ export type AccountSchemaDocument = HydratedDocument<AccountSchemaClass>;
   },
 })
 export class AccountSchemaClass extends EntityDocumentHelper {
-  @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TenantSchemaClass',
+    required: true,
+    index: true,
+  })
   tenantId: string;
 
   @Prop({ required: true, index: true })

@@ -9,6 +9,7 @@ import { RedisLockService } from '../../redis/redis-lock.service';
 import { ContactsService } from '../../contacts/contacts.service';
 import { FacebookAdapter } from '../adapters/facebook.adapter';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
+import { TenantsService } from '../../tenants/tenants.service';
 import { OmniPayload } from '../domain/omni-payload';
 
 describe('ConversationService Concurrency', () => {
@@ -76,6 +77,12 @@ describe('ConversationService Concurrency', () => {
             enrichProfile: jest.fn().mockResolvedValue({ name: 'Test User' }),
           },
         },
+        {
+          provide: TenantsService,
+          useValue: {
+            findById: jest.fn().mockResolvedValue({ ownerId: 'owner_1' }),
+          },
+        },
         { provide: IOREDIS_CLIENT, useValue: redisMock },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
       ],
@@ -119,6 +126,7 @@ describe('ConversationService Concurrency', () => {
       'page_1',
       'thread_1',
       { contactId: 'contact_123', conversationId: 'conv_123' },
+      'tenant_1',
     );
     expect(messageRepoMock.create).toHaveBeenCalled();
     expect(redisMock.set).toHaveBeenCalledWith(
@@ -167,6 +175,14 @@ describe('ConversationService Concurrency', () => {
     identityServiceMock.resolveIdentityForTenant.mockResolvedValueOnce({
       contactId: 'user_1',
       conversationId: 'existing_conv_456',
+    });
+
+    // Mock findById to return the existing active conversation
+    conversationRepoMock.findById.mockResolvedValueOnce({
+      id: 'existing_conv_456',
+      tenantId: 'tenant_1',
+      status: 'open',
+      contactId: 'user_1',
     });
 
     const payload = createPayload('msg_002');

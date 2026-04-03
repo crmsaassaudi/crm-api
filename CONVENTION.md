@@ -35,6 +35,7 @@ Follow the existing modular structure (e.g., `src/omni-inbound`). Do not bypass 
   - Database Collections (Mongoose): MUST use lower `snake_case` in plural form (e.g., `@Schema({ collection: 'routing_rules' })`). Do NOT use `camelCase` (e.g., routingRules) or `PascalCase`.
 - **Database Ref & ID Management (Predictability):**
   - **Internal References:** MUST use `Id` suffix for schema fields that refer to other collections (e.g. `tenantId`, `conversationId`). DO NOT use `tenant` or `conversation` at the schema level.
+  - **Ref Type Standard:** Any schema field using Mongoose `ref` MUST declare `type: MongooseSchema.Types.ObjectId` (or `Types.ObjectId` equivalent). DO NOT use `type: String` for internal refs.
   - **External/3rd-Party IDs:** MUST use `Id` suffix for partner/platform identifiers (e.g. `externalMessageId`, `facebookPageId`).
   - **Populated Objects:** DO NOT use `Id` suffix when returning a full object in DTOs/Business Logic (e.g. return `tenant` as a `TenantDto`).
   - **No Overwriting Populate & Virtuals Usage:** DO NOT use `.populate('tenantId')` to lazily overwrite a primitive string/ObjectId field with an object in Mongoose. To return populated data, you MUST either:

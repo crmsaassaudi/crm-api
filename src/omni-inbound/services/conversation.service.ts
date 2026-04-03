@@ -17,6 +17,7 @@ import { IdentityService } from './identity.service';
 import { RedisLockService } from '../../redis/redis-lock.service';
 import { ContactsService } from '../../contacts/contacts.service';
 import { FacebookAdapter } from '../adapters/facebook.adapter';
+import { TenantsService } from '../../tenants/tenants.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
 import { TimelineResponseDto } from '../dto/timeline-response.dto';
 import {
@@ -54,6 +55,7 @@ export class ConversationService {
     private readonly lockService: RedisLockService,
     private readonly contactsService: ContactsService,
     private readonly facebookAdapter: FacebookAdapter,
+    private readonly tenantsService: TenantsService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
@@ -268,8 +270,24 @@ export class ConversationService {
     let contactId = identity.contactId;
 
     // ── Step 4a: Check if existing conversation is still active ──
+    let existing: {
+      tenantId: string;
+      status: string;
+      contactId: string | null;
+    } | null = null;
     if (conversationId) {
-      const existing = await this.conversationRepo.findById(conversationId);
+      existing = await this.conversationRepo.findById(conversationId);
+
+      if (!existing) {
+        throw new NotFoundException(
+          `Conversation ${conversationId} not found for sender ${payload.senderId}`,
+        );
+      } else if (existing.tenantId !== payload.tenantId) {
+        throw new BadRequestException(
+          `Cross-tenant conversation mapping detected for sender ${payload.senderId}`,
+        );
+      }
+
       if (
         existing &&
         (existing.status === 'resolved' || existing.status === 'closed')
@@ -280,37 +298,38 @@ export class ConversationService {
             `— creating new session for sender ${payload.senderId}`,
         );
         // Keep the contactId from the previous session
-        contactId = existing.customer?.contactId ?? contactId;
+        contactId = existing.contactId ?? contactId;
         // Set conversationId to null so a new one is created below
         conversationId = null;
+      }
+
+      // Self-heal old data: active conversation exists but contact was never linked.
+      if (existing && conversationId && !contactId) {
+        const createdContactId = await this.createShadowContact(payload);
+        if (createdContactId) {
+          contactId = createdContactId;
+          await this.conversationRepo.updateContactId(
+            conversationId,
+            contactId,
+          );
+          await this.identityService.updateIdentity(
+            payload.channelType,
+            payload.channelAccount,
+            payload.externalConversationId,
+            { contactId, conversationId },
+            payload.tenantId,
+          );
+          this.logger.log(
+            `Linked Shadow Contact ${contactId} to existing conversation ${conversationId}`,
+          );
+        }
       }
     }
 
     if (!conversationId) {
       // No active conversation -> maybe no contact either
       if (!contactId) {
-        // Create Shadow Contact
-        try {
-          // Bypassing normal validation, simulate system creation
-          const contact = await this.contactsService.create({
-            firstName: payload.metadata.contactName ?? payload.senderId,
-            lastName: '(Omni)',
-            status: 'new',
-            lifecycleStage: 'lead',
-            source: this.toSchemaChannelType(payload.channelType),
-            omniSenderId: payload.senderId,
-            isShadow: true,
-          } as any);
-          contactId = contact.id;
-          this.logger.log(
-            `Created Shadow Contact ${contactId} for sender ${payload.senderId}`,
-          );
-        } catch (err) {
-          this.logger.error(
-            `Failed to create Shadow Contact: ${err.message}`,
-            err.stack,
-          );
-        }
+        contactId = await this.createShadowContact(payload);
       }
 
       // ── Reopen tracking: find previous conversation if any ──
@@ -363,9 +382,9 @@ export class ConversationService {
         channelAccount: payload.channelAccount,
         channelType: this.toSchemaChannelType(payload.channelType),
         externalId: payload.externalConversationId,
+        contactId: contactId ?? null,
         customer: {
           externalId: payload.senderId,
-          contactId: contactId ?? undefined,
           name:
             enrichedProfile.name ??
             payload.metadata.contactName ??
@@ -421,12 +440,11 @@ export class ConversationService {
         payload.channelType,
         payload.channelAccount,
         payload.externalConversationId,
-        { contactId: contactId ?? payload.senderId, conversationId },
+        { contactId: contactId ?? null, conversationId },
+        payload.tenantId,
       );
 
       // Profile enrichment already done eagerly before conversation creation (Step 3b above).
-      // The omni.conversation.customer_updated event/gateway path remains as a fallback
-      // for cases where enrichment fails initially and retries later.
     }
 
     // ── Step 5a: Cache media if present ───────────────────────
@@ -491,6 +509,7 @@ export class ConversationService {
    */
   @OnEvent('omni.conversation.status_changed')
   async handleStatusChanged(event: {
+    tenantId: string;
     conversationId: string;
     status: string;
     channelType: string;
@@ -502,6 +521,7 @@ export class ConversationService {
         event.channelType,
         event.channelAccount,
         event.externalConversationId,
+        event.tenantId,
       );
       this.logger.log(
         `Invalidated identity cache for conversation ${event.conversationId} (${event.status})`,
@@ -554,5 +574,47 @@ export class ConversationService {
     }
 
     return { createdAt: parsedDate, id };
+  }
+
+  private async createShadowContact(
+    payload: OmniPayload,
+  ): Promise<string | null> {
+    try {
+      const tenant = await this.tenantsService.findById(payload.tenantId);
+      const systemActorId = tenant?.ownerId ?? null;
+
+      if (!systemActorId) {
+        this.logger.warn(
+          `Skipping shadow contact creation for sender ${payload.senderId}: ` +
+            `tenant ${payload.tenantId} has no ownerId`,
+        );
+      }
+
+      // Bypassing normal validation, simulate system creation.
+      const contact = await this.contactsService.create({
+        tenantId: payload.tenantId,
+        firstName: payload.metadata.contactName ?? payload.senderId,
+        lastName: '(Omni)',
+        status: 'new',
+        lifecycleStage: 'lead',
+        source: this.toSchemaChannelType(payload.channelType),
+        omniSenderId: payload.senderId,
+        isShadow: true,
+        createdById: systemActorId ?? undefined,
+        updatedById: systemActorId ?? undefined,
+      } as any);
+
+      this.logger.log(
+        `Created Shadow Contact ${contact.id} for sender ${payload.senderId}`,
+      );
+
+      return contact.id;
+    } catch (err) {
+      this.logger.error(
+        `Failed to create Shadow Contact for sender ${payload.senderId}: ${err.message}`,
+        err.stack ?? JSON.stringify(err),
+      );
+      return null;
+    }
   }
 }

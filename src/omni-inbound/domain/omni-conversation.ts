@@ -18,10 +18,12 @@ export interface OmniConversation {
   /** External thread / conversation ID from the provider */
   externalConversationId: string;
 
+  /** Reference to the overarching Contact entity in CRM */
+  contactId: string | null;
+
   /** Customer information (resolved from provider or linked contact) */
   customer: {
     externalId: string;
-    contactId?: string;
     name: string;
     avatarUrl?: string;
     email?: string;
@@ -44,7 +46,6 @@ export interface OmniConversation {
   unreadCount: number;
 
   /** CRM entity linkage */
-  linkedContactId?: string;
   linkedLeadId?: string;
 
   tags: string[];

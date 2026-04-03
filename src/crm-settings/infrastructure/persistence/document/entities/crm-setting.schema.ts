@@ -14,7 +14,12 @@ export type CrmSettingSchemaDocument = HydratedDocument<CrmSettingSchemaClass>;
   },
 })
 export class CrmSettingSchemaClass extends EntityDocumentHelper {
-  @Prop({ type: String, ref: 'TenantSchemaClass', required: true, index: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TenantSchemaClass',
+    required: true,
+    index: true,
+  })
   tenantId: string;
 
   @Prop({ required: true, index: true })

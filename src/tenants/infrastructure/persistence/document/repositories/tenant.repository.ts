@@ -54,7 +54,7 @@ export class TenantsRepository {
   ): Promise<void> {
     await this.tenantsModel.updateOne(
       { _id: new Types.ObjectId(tenantId) },
-      { $set: { owner: new Types.ObjectId(ownerId) } },
+      { $set: { ownerId: new Types.ObjectId(ownerId) } },
       { session },
     );
   }
