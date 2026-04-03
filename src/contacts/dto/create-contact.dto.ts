@@ -65,10 +65,12 @@ export class CreateContactDto {
   @IsBoolean()
   isConverted?: boolean;
 
-  @ApiProperty({ example: 'psid_123456' })
+  @ApiProperty({
+    example: [{ channelType: 'Facebook', senderId: 'psid_123456' }],
+  })
   @IsOptional()
-  @IsString()
-  omniSenderId?: string;
+  @IsArray()
+  omniIdentities?: Array<{ channelType: string; senderId: string }>;
 
   @ApiProperty({ example: true })
   @IsOptional()

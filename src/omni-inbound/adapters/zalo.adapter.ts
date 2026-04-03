@@ -55,6 +55,7 @@ export class ZaloAdapter implements ChannelAdapter {
       externalMessageId: rawPayload.message?.msg_id ?? '',
       externalConversationId: `${rawPayload.sender.id}_${rawPayload.recipient?.id}`,
       timestamp: new Date(Number(rawPayload.timestamp)),
+      providerTimestamp: new Date(Number(rawPayload.timestamp)),
     };
   }
 

@@ -1,14 +1,14 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { MessageRepository } from '../repositories/message.repository';
-import { ConversationRepository } from '../repositories/conversation.repository';
+import { MessageRepository } from '../omni-inbound/repositories/message.repository';
+import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 import {
   ChannelAdapter,
   CHANNEL_ADAPTERS,
-} from '../adapters/channel-adapter.interface';
-import { ChannelType } from '../domain/omni-payload';
+} from '../omni-inbound/adapters/channel-adapter.interface';
+import { ChannelType } from '../omni-inbound/domain/omni-payload';
 
-import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
+import { ChannelRepository } from '../channels/infrastructure/persistence/document/repositories/channel.repository';
 
 /**
  * OutboundService — handles messages sent from Agents to Customers.

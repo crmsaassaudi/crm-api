@@ -96,6 +96,21 @@ export class TicketSchemaClass extends EntityDocumentHelper {
 
   @Prop()
   deletedAt?: Date;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'OmniConversationSchemaClass',
+    default: null,
+  })
+  omniConversationId?: string;
+
+  @Prop({
+    type: [
+      { type: MongooseSchema.Types.ObjectId, ref: 'OmniMessageSchemaClass' },
+    ],
+    default: [],
+  })
+  linkedMessageIds?: string[];
 }
 
 export const TicketSchema = SchemaFactory.createForClass(TicketSchemaClass);
@@ -103,6 +118,10 @@ export const TicketSchema = SchemaFactory.createForClass(TicketSchemaClass);
 TicketSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 TicketSchema.index({ tenantId: 1, ticketNumber: 1 });
 TicketSchema.index({ tenantId: 1, status: 1 });
+TicketSchema.index(
+  { omniConversationId: 1 },
+  { name: 'ticket_omni_conversation' },
+);
 
 TicketSchema.virtual('requester', {
   ref: 'UserSchemaClass',

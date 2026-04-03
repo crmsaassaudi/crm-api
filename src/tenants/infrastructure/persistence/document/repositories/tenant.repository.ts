@@ -79,4 +79,35 @@ export class TenantsRepository {
       .exec();
     return updated ? TenantMapper.toDomain(updated) : null;
   }
+
+  /**
+   * Atomically increment the tenant's storage usage.
+   * Uses $inc for safe concurrent updates.
+   */
+  async incrementStorageUsage(
+    tenantId: string,
+    sizeInMB: number,
+  ): Promise<void> {
+    await this.tenantsModel.updateOne(
+      { _id: tenantId },
+      { $inc: { 'storageQuota.usedMB': sizeInMB } },
+    );
+  }
+
+  /**
+   * Update the tenant's storage quota limit (admin operation).
+   */
+  async updateStorageQuota(
+    tenantId: string,
+    limitMB: number,
+  ): Promise<Tenant | null> {
+    const updated = await this.tenantsModel
+      .findByIdAndUpdate(
+        tenantId,
+        { $set: { 'storageQuota.limitMB': limitMB } },
+        { new: true },
+      )
+      .exec();
+    return updated ? TenantMapper.toDomain(updated) : null;
+  }
 }

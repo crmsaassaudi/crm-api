@@ -463,4 +463,54 @@ export class TenantsService {
   ): Promise<Tenant | null> {
     return this.tenantsRepository.updateOmniSettings(tenantId, omniSettings);
   }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Storage Quota Management
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Check whether a tenant is within their storage quota.
+   * Returns { allowed, usedMB, limitMB }.
+   * A limitMB of -1 means unlimited.
+   */
+  async checkStorageQuota(
+    tenantId: string,
+  ): Promise<{ allowed: boolean; usedMB: number; limitMB: number }> {
+    const tenant = await this.tenantsRepository.findById(tenantId);
+    const quota = tenant?.storageQuota ?? { limitMB: 1024, usedMB: 0 };
+
+    // -1 = unlimited
+    if (quota.limitMB === -1) {
+      return { allowed: true, usedMB: quota.usedMB, limitMB: -1 };
+    }
+
+    return {
+      allowed: quota.usedMB < quota.limitMB,
+      usedMB: quota.usedMB,
+      limitMB: quota.limitMB,
+    };
+  }
+
+  /**
+   * Atomically increment the tenant's storage usage after a media file is cached.
+   * @param tenantId  Tenant ID
+   * @param sizeInBytes  File size in bytes (converted to MB internally)
+   */
+  async incrementStorageUsage(
+    tenantId: string,
+    sizeInBytes: number,
+  ): Promise<void> {
+    const sizeInMB = sizeInBytes / (1024 * 1024);
+    await this.tenantsRepository.incrementStorageUsage(tenantId, sizeInMB);
+  }
+
+  /**
+   * Update the tenant's storage limit (admin operation / upsell).
+   */
+  async updateStorageQuota(
+    tenantId: string,
+    limitMB: number,
+  ): Promise<Tenant | null> {
+    return this.tenantsRepository.updateStorageQuota(tenantId, limitMB);
+  }
 }

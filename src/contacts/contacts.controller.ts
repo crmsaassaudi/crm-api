@@ -82,4 +82,17 @@ export class ContactsController {
   convertLead(@Param('id') id: string, @Body() body: any) {
     return this.service.convertLead(id, body);
   }
+
+  /**
+   * Link a new omni-channel identity to an existing contact.
+   * Body: { channelType: string, senderId: string }
+   */
+  @Post(':id/merge-identity')
+  @ApiOkResponse({ type: Contact })
+  mergeIdentity(
+    @Param('id') id: string,
+    @Body() body: { channelType: string; senderId: string },
+  ) {
+    return this.service.mergeIdentity(id, body);
+  }
 }

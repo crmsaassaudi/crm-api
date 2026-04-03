@@ -16,6 +16,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
 import { HeaderResolver, I18nModule } from 'nestjs-i18n';
 import { MailModule } from './mail/mail.module';
 import { HomeModule } from './home/home.module';
@@ -110,6 +111,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
       adapter: ExpressAdapter,
     }),
     EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
     ClsModule.forRoot({
       global: true,
       middleware: {

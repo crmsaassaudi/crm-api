@@ -89,6 +89,14 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
    */
   @Prop({ type: String, sparse: true })
   platformMessageId: string;
+
+  /**
+   * Provider's original message timestamp — the canonical sort key.
+   * This ensures messages are displayed in the order the customer
+   * actually sent them, regardless of server processing delays.
+   */
+  @Prop({ type: Date, index: true })
+  providerTimestamp: Date;
 }
 
 export const OmniMessageSchema = SchemaFactory.createForClass(
@@ -103,9 +111,10 @@ OmniMessageSchema.index(
   { name: 'conversation_messages' },
 );
 
-// Deterministic cursor scan per conversation.
+// Deterministic cursor scan per conversation — uses providerTimestamp as primary sort key
+// with createdAt and _id as tiebreakers for consistent ordering.
 OmniMessageSchema.index(
-  { conversationId: 1, createdAt: 1, _id: 1 },
+  { conversationId: 1, providerTimestamp: 1, createdAt: 1, _id: 1 },
   { name: 'conversation_messages_timeline' },
 );
 

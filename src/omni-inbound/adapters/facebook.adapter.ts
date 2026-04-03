@@ -133,6 +133,7 @@ export class FacebookAdapter implements ChannelAdapter {
       externalMessageId: messaging.message?.mid ?? '',
       externalConversationId: `${consumerId}_${pageId}`,
       timestamp: new Date(messaging.timestamp),
+      providerTimestamp: new Date(messaging.timestamp),
     };
   }
 

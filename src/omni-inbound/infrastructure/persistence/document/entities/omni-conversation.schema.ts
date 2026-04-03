@@ -178,6 +178,24 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
     default: null,
   })
   resolveSource: string | null;
+
+  // ── SLA Tracking ───────────────────────────────────────────────
+
+  /** The SLA policy applied to this conversation */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'SlaPolicySchemaClass',
+    default: null,
+  })
+  slaPolicyId: string | null;
+
+  /** Deadline for the first response (computed from SLA policy targets) */
+  @Prop({ type: Date, default: null, index: true })
+  slaDeadline: Date | null;
+
+  /** Whether the SLA has been breached (deadline passed without response) */
+  @Prop({ default: false })
+  slaBreached: boolean;
 }
 
 export const OmniConversationSchema = SchemaFactory.createForClass(

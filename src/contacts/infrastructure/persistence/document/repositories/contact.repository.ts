@@ -130,4 +130,62 @@ export class ContactRepository extends BaseDocumentRepository<
     const docs = await this.model.find(scopedWhere).exec();
     return docs.map((doc) => this.mapToDomain(doc));
   }
+
+  /**
+   * Find a contact by an omni-channel identity (channelType + senderId).
+   */
+  async findByOmniIdentity(
+    channelType: string,
+    senderId: string,
+  ): Promise<Contact | null> {
+    const where: FilterQuery<ContactSchemaClass> = {
+      omniIdentities: {
+        $elemMatch: { channelType, senderId },
+      },
+    };
+    const scopedWhere = this.applyTenantFilter(where);
+    const doc = await this.model.findOne(scopedWhere).exec();
+    return doc ? this.mapToDomain(doc) : null;
+  }
+
+  /**
+   * Atomically push a new omni identity into the contact's array.
+   * Uses $addToSet to prevent duplicates.
+   */
+  async addOmniIdentity(
+    contactId: string,
+    identity: { channelType: string; senderId: string },
+  ): Promise<Contact | null> {
+    const scopedFilter = this.applyTenantFilter({ _id: contactId });
+    const doc = await this.model
+      .findOneAndUpdate(
+        scopedFilter,
+        {
+          $addToSet: { omniIdentities: identity },
+        },
+        { new: true },
+      )
+      .exec();
+    return doc ? this.mapToDomain(doc) : null;
+  }
+
+  /**
+   * Fast lean query to check if a sender is a VIP customer.
+   * Uses the `tenant_sender_vip_lookup` compound index for speed.
+   * Does NOT load the full contact document.
+   */
+  async isVIPSender(tenantId: string, senderId: string): Promise<boolean> {
+    const doc = await this.model
+      .findOne(
+        {
+          tenantId,
+          'omniIdentities.senderId': senderId,
+          isVIP: true,
+        },
+        { _id: 1 },
+      )
+      .lean()
+      .exec();
+    return !!doc;
+  }
 }

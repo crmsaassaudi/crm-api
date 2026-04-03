@@ -23,11 +23,14 @@ import { AgentPresenceService } from './services/agent-presence.service';
 import { AgentPresenceGateway } from './services/agent-presence.gateway';
 import { OmniGateway } from './services/omni.gateway';
 import { ConversationService } from './services/conversation.service';
-import { OutboundService } from './services/outbound.service';
+import { ConversionService } from './services/conversion.service';
+import { OmniOutboundModule } from '../omni-outbound/omni-outbound.module';
+import { OutboundService } from '../omni-outbound/outbound.service';
 import { IdentityService } from './services/identity.service';
 import { NoteService } from './services/note.service';
 import { AssignmentService } from './services/assignment.service';
 import { ActivityService } from './services/activity.service';
+import { AgentFallbackService } from './services/agent-fallback.service';
 
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
@@ -38,6 +41,7 @@ import { ConversationRepository } from './repositories/conversation.repository';
 import { MessageRepository } from './repositories/message.repository';
 import { NoteRepository } from './repositories/note.repository';
 import { ActivityRepository } from './repositories/activity.repository';
+import { AssignmentAuditLogRepository } from './repositories/assignment-audit-log.repository';
 
 // Schemas
 import {
@@ -56,6 +60,10 @@ import {
   ConversationActivitySchemaClass,
   ConversationActivitySchema,
 } from './infrastructure/persistence/document/entities/conversation-activity.schema';
+import {
+  AssignmentAuditLogSchemaClass,
+  AssignmentAuditLogSchema,
+} from './infrastructure/persistence/document/entities/assignment-audit-log.schema';
 
 // External modules
 import { ChannelsModule } from '../channels/channels.module';
@@ -64,6 +72,8 @@ import { ContactsModule } from '../contacts/contacts.module';
 import { UsersModule } from '../users/users.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { AuthModule } from '../auth/auth.module';
+import { DealsModule } from '../deals/deals.module';
+import { TicketsModule } from '../tickets/tickets.module';
 
 /**
  * OmniInboundModule — the complete omni-channel backend.
@@ -88,6 +98,9 @@ import { AuthModule } from '../auth/auth.module';
     TenantsModule,
     forwardRef(() => AuthModule),
     OmniQueueModule,
+    OmniOutboundModule,
+    DealsModule,
+    TicketsModule,
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,
@@ -98,6 +111,10 @@ import { AuthModule } from '../auth/auth.module';
       {
         name: ConversationActivitySchemaClass.name,
         schema: ConversationActivitySchema,
+      },
+      {
+        name: AssignmentAuditLogSchemaClass.name,
+        schema: AssignmentAuditLogSchema,
       },
     ]),
   ],
@@ -139,7 +156,7 @@ import { AuthModule } from '../auth/auth.module';
     ConversationRepository,
     MessageRepository,
     ConversationService,
-    OutboundService,
+    ConversionService,
     IdentityService,
 
     // ── Pillar 7: Notes ───────────────────────────────────────────
@@ -152,6 +169,10 @@ import { AuthModule } from '../auth/auth.module';
     // ── Pillar 9: Audit Trail ─────────────────────────────────────
     ActivityRepository,
     ActivityService,
+    AssignmentAuditLogRepository,
+
+    // ── Pillar 10: Agent Disconnect Fallback ──────────────────────
+    AgentFallbackService,
   ],
   exports: [
     InboundProcessorService,
@@ -164,7 +185,9 @@ import { AuthModule } from '../auth/auth.module';
     IdentityService,
     NoteService,
     AssignmentService,
+    ConversionService,
     ActivityService,
+    AgentFallbackService,
   ],
 })
 export class OmniInboundModule {}

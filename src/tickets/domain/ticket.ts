@@ -67,4 +67,12 @@ export class Ticket {
 
   @ApiProperty()
   deletedAt?: Date;
+
+  @ApiProperty({
+    description: 'Omni-conversation this ticket was created from',
+  })
+  omniConversationId?: string;
+
+  @ApiProperty({ description: 'Linked message IDs from the omni-conversation' })
+  linkedMessageIds?: string[];
 }

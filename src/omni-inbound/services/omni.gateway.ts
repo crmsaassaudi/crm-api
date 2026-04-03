@@ -12,7 +12,8 @@ import { Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { AgentPresenceService } from './agent-presence.service';
 import { AgentPresenceGateway } from './agent-presence.gateway';
-import { OutboundService } from './outbound.service';
+import { AgentFallbackService } from './agent-fallback.service';
+import { OutboundService } from '../../omni-outbound/outbound.service';
 import { SessionService } from '../../auth/services/session.service';
 import { TenantsService } from '../../tenants/tenants.service';
 import { jwtDecode } from 'jwt-decode';
@@ -53,6 +54,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly outboundService: OutboundService,
     private readonly sessionService: SessionService,
     private readonly tenantsService: TenantsService,
+    private readonly agentFallbackService: AgentFallbackService,
   ) {}
 
   private readonly ROOT_DOMAIN = 'crm.com';
@@ -131,6 +133,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Register agent presence
       await this.presenceGateway.onAgentConnected(tenantId, userId, client.id);
+
+      // Cancel any pending reassignment from a previous disconnect
+      await this.agentFallbackService.onAgentReconnected(tenantId, userId);
     } catch (error) {
       this.logger.error(
         `Connection error for client ${client.id}: ${error.message}`,
@@ -147,6 +152,10 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId = user.id ?? user.sub;
 
     await this.presenceGateway.onAgentDisconnected(tenantId, userId);
+
+    // Schedule fallback reassignment if agent stays offline
+    await this.agentFallbackService.onAgentDisconnected(tenantId, userId);
+
     this.logger.log(`Agent ${userId} disconnected from /omni`);
   }
 
@@ -203,6 +212,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
           content: data.content,
           messageId: ack.messageId,
           timestamp: ack.timestamp,
+          providerTimestamp: ack.timestamp,
           createdAt: ack.createdAt,
         });
 
@@ -300,6 +310,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
           content: payload.content,
           messageId: payload.messageId,
           timestamp: payload.timestamp,
+          providerTimestamp: payload.timestamp,
           createdAt: payload.createdAt || payload.timestamp || new Date(),
         });
     }

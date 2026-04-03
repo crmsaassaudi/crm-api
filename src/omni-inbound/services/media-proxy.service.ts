@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { TenantsService } from '../../tenants/tenants.service';
 
 /**
  * Service for proxying and caching media files from messaging providers.
@@ -18,13 +19,20 @@ import { ConfigService } from '@nestjs/config';
 export class MediaProxyService {
   private readonly logger = new Logger(MediaProxyService.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly tenantsService: TenantsService,
+  ) {}
 
   /**
    * Download and cache a media file from a provider.
    * Returns our internal stable URL.
+   *
+   * If the tenant's storage quota is exceeded, returns the original
+   * URL as a fallback (file is not cached).
    */
   async cacheMedia(
+    tenantId: string,
     channelType: string,
     originalUrl: string,
     mediaId: string,
@@ -33,6 +41,22 @@ export class MediaProxyService {
     this.logger.log(
       `Caching media: ${channelType} / ${mediaId} from ${originalUrl}`,
     );
+
+    // ── Quota check ────────────────────────────────────────────────
+    try {
+      const quota = await this.tenantsService.checkStorageQuota(tenantId);
+      if (!quota.allowed) {
+        this.logger.warn(
+          `Tenant ${tenantId} storage quota exceeded ` +
+            `(${quota.usedMB.toFixed(1)}/${quota.limitMB} MB) — returning original URL`,
+        );
+        return originalUrl;
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Quota check failed for tenant ${tenantId}: ${err.message} — proceeding with cache`,
+      );
+    }
 
     try {
       // Step 1: Download from provider
@@ -46,7 +70,19 @@ export class MediaProxyService {
       // Step 2: Store locally or in S3
       const storedPath = await this.store(mediaId, buffer);
 
-      // Step 3: Return the proxy URL
+      // Step 3: Increment tenant storage usage
+      try {
+        await this.tenantsService.incrementStorageUsage(
+          tenantId,
+          buffer.length,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Failed to increment storage usage for tenant ${tenantId}: ${err.message}`,
+        );
+      }
+
+      // Step 4: Return the proxy URL
       const baseUrl = this.configService.get('app.backendDomain', {
         infer: true,
       });

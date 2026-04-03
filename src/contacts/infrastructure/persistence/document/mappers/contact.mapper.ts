@@ -19,7 +19,7 @@ export class ContactMapper {
     domainEntity.title = raw.title;
     domainEntity.source = raw.source;
     domainEntity.score = raw.score;
-    domainEntity.omniSenderId = raw.omniSenderId;
+    domainEntity.omniIdentities = raw.omniIdentities ?? [];
     domainEntity.isShadow = raw.isShadow;
 
     if (raw.ownerId) {
@@ -78,7 +78,7 @@ export class ContactMapper {
     persistenceEntity.title = domainEntity.title;
     persistenceEntity.source = domainEntity.source;
     persistenceEntity.score = domainEntity.score;
-    persistenceEntity.omniSenderId = domainEntity.omniSenderId;
+    persistenceEntity.omniIdentities = domainEntity.omniIdentities ?? [];
     if (domainEntity.isShadow !== undefined) {
       persistenceEntity.isShadow = domainEntity.isShadow;
     }

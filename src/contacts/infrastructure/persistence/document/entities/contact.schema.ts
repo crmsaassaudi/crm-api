@@ -91,13 +91,29 @@ export class ContactSchemaClass extends EntityDocumentHelper {
 
   // ────────────────── OMNI-CHANNEL / SHADOW CONTACT ──────────────────
 
-  /** External sender ID from Omni platforms (e.g. Facebook PSID, Zalo User ID) */
-  @Prop({ sparse: true, index: true })
-  omniSenderId?: string;
+  /**
+   * Multiple omni-channel identities linked to this contact.
+   * Each entry represents one social/messaging account
+   * (e.g. Facebook PSID, Zalo User ID).
+   */
+  @Prop({
+    type: [
+      {
+        channelType: { type: String, required: true },
+        senderId: { type: String, required: true },
+      },
+    ],
+    default: [],
+  })
+  omniIdentities: Array<{ channelType: string; senderId: string }>;
 
   /** Flag to indicate this is a temporary/anonymous contact created from a chat */
   @Prop({ default: false })
   isShadow: boolean;
+
+  /** Flag to indicate this contact is a VIP customer (priority routing) */
+  @Prop({ default: false, index: true })
+  isVIP: boolean;
 }
 
 export const ContactSchema = SchemaFactory.createForClass(ContactSchemaClass);
@@ -105,6 +121,18 @@ export const ContactSchema = SchemaFactory.createForClass(ContactSchemaClass);
 ContactSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 ContactSchema.index({ tenantId: 1, emails: 1 });
 ContactSchema.index({ tenantId: 1, firstName: 1, lastName: 1 });
+ContactSchema.index(
+  { 'omniIdentities.channelType': 1, 'omniIdentities.senderId': 1 },
+  { name: 'omni_identity_lookup' },
+);
+ContactSchema.index(
+  { tenantId: 1, 'omniIdentities.senderId': 1 },
+  { name: 'tenant_omni_sender' },
+);
+ContactSchema.index(
+  { tenantId: 1, 'omniIdentities.senderId': 1, isVIP: 1 },
+  { name: 'tenant_sender_vip_lookup' },
+);
 
 ContactSchema.virtual('owner', {
   ref: 'UserSchemaClass',

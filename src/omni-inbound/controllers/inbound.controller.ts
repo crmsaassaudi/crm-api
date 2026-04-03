@@ -18,7 +18,12 @@ import { Public } from 'nest-keycloak-connect';
 import { InboundProcessorService } from '../processors/inbound-processor.service';
 import { ChannelType } from '../domain/omni-payload';
 import { ChannelsService } from '../../channels/channels.service';
-import { OMNI_WEBHOOK_QUEUE } from '../queue/omni-queue.constants';
+import { ContactRepository } from '../../contacts/infrastructure/persistence/document/repositories/contact.repository';
+import {
+  OMNI_WEBHOOK_QUEUE,
+  PRIORITY_VIP,
+  PRIORITY_NORMAL,
+} from '../queue/omni-queue.constants';
 import { WebhookJobData } from '../queue/webhook-processor';
 
 /**
@@ -39,6 +44,7 @@ export class InboundController {
     private readonly processor: InboundProcessorService,
     private readonly channelsService: ChannelsService,
     private readonly configService: ConfigService,
+    private readonly contactRepo: ContactRepository,
     @InjectQueue(OMNI_WEBHOOK_QUEUE) private readonly webhookQueue: Queue,
   ) {}
 
@@ -98,6 +104,26 @@ export class InboundController {
     // Unwrap batch wrappers per-provider
     const events = this.unwrapEvents(channelType, body);
 
+    // ── VIP Priority Routing ─────────────────────────────────────
+    // Check if any sender in this batch is a VIP customer.
+    // Uses a fast indexed lean query on the Contact collection.
+    let priority = PRIORITY_NORMAL;
+    try {
+      const senderIds = this.extractSenderIds(channelType, events);
+      for (const sid of senderIds) {
+        const isVIP = await this.contactRepo.isVIPSender(tenantId, sid);
+        if (isVIP) {
+          priority = PRIORITY_VIP;
+          this.logger.log(`VIP sender detected: ${sid} — using high priority`);
+          break; // One VIP is enough to prioritize the entire batch
+        }
+      }
+    } catch (err) {
+      this.logger.warn(
+        `VIP check failed, defaulting to normal priority: ${err.message}`,
+      );
+    }
+
     // Push each event to the queue — non-blocking, returns 200 immediately
     const jobs = events.map((event, index) => ({
       name: 'process-webhook',
@@ -110,12 +136,15 @@ export class InboundController {
       } as WebhookJobData,
       opts: {
         jobId: `${channelType}-${Date.now()}-${index}`,
+        priority,
       },
     }));
 
     await this.webhookQueue.addBulk(jobs);
 
-    this.logger.log(`Queued ${jobs.length} ${channelType} event(s)`);
+    this.logger.log(
+      `Queued ${jobs.length} ${channelType} event(s) (priority=${priority})`,
+    );
     return { status: 'ok', queued: jobs.length };
   }
 
@@ -197,5 +226,36 @@ export class InboundController {
       );
       throw new BadRequestException('Channel not found');
     }
+  }
+
+  /**
+   * Extract sender IDs from unwrapped events for VIP lookup.
+   * Best-effort: returns an empty array if the structure is unexpected.
+   */
+  private extractSenderIds(channelType: ChannelType, events: any[]): string[] {
+    const ids = new Set<string>();
+    for (const event of events) {
+      try {
+        switch (channelType) {
+          case 'facebook':
+          case 'instagram':
+            if (event?.sender?.id) ids.add(event.sender.id);
+            break;
+          case 'whatsapp':
+            for (const msg of event?.messages ?? []) {
+              if (msg?.from) ids.add(msg.from);
+            }
+            break;
+          case 'zalo':
+            if (event?.sender?.id) ids.add(event.sender.id);
+            break;
+          default:
+            break;
+        }
+      } catch {
+        // Skip malformed events
+      }
+    }
+    return Array.from(ids);
   }
 }

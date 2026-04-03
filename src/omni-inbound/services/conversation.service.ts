@@ -451,6 +451,7 @@ export class ConversationService {
     let mediaProxyUrl: string | undefined;
     if (payload.mediaUrl) {
       mediaProxyUrl = await this.mediaProxy.cacheMedia(
+        payload.tenantId,
         payload.channelType,
         payload.mediaUrl,
         payload.metadata.mediaId ?? payload.externalMessageId,
@@ -472,6 +473,7 @@ export class ConversationService {
       metadata: payload.metadata,
       externalMessageId: payload.externalMessageId,
       platformMessageId: payload.externalMessageId, // dedup key
+      providerTimestamp: payload.providerTimestamp ?? payload.timestamp,
     });
 
     // ── Step 5c: Update conversation summary ──────────────────
@@ -598,7 +600,12 @@ export class ConversationService {
         status: 'new',
         lifecycleStage: 'lead',
         source: this.toSchemaChannelType(payload.channelType),
-        omniSenderId: payload.senderId,
+        omniIdentities: [
+          {
+            channelType: this.toSchemaChannelType(payload.channelType),
+            senderId: payload.senderId,
+          },
+        ],
         isShadow: true,
         createdById: systemActorId ?? undefined,
         updatedById: systemActorId ?? undefined,

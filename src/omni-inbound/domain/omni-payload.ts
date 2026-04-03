@@ -61,6 +61,14 @@ export interface OmniPayload {
 
   /** When the message was created at the provider */
   timestamp: Date;
+
+  /**
+   * Provider's original message creation timestamp.
+   * Used as the canonical sort key for message ordering — immune to
+   * server-side processing delays and queue re-ordering.
+   * Falls back to `timestamp` if the provider does not supply it.
+   */
+  providerTimestamp: Date;
 }
 
 /**

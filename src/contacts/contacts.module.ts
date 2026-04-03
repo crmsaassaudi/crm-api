@@ -20,6 +20,6 @@ import { DealsModule } from '../deals/deals.module';
   ],
   controllers: [ContactsController],
   providers: [ContactsService, ContactRepository],
-  exports: [ContactsService],
+  exports: [ContactsService, ContactRepository],
 })
 export class ContactsModule {}

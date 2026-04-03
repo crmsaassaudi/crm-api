@@ -70,9 +70,17 @@ export class Contact {
   @ApiProperty()
   deletedAt?: Date;
 
-  @ApiProperty({ example: 'psid_123456' })
-  omniSenderId?: string;
+  @ApiProperty({
+    example: [{ channelType: 'Facebook', senderId: 'psid_123456' }],
+  })
+  omniIdentities?: Array<{ channelType: string; senderId: string }>;
 
   @ApiProperty({ example: true })
   isShadow?: boolean;
+
+  @ApiProperty({
+    example: false,
+    description: 'VIP customer flag for priority routing',
+  })
+  isVIP?: boolean;
 }

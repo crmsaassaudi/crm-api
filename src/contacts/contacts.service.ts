@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { ContactRepository } from './infrastructure/persistence/document/repositories/contact.repository';
 import { Contact } from './domain/contact';
 import { CreateContactDto } from './dto/create-contact.dto';
@@ -74,6 +78,39 @@ export class ContactsService {
 
   async remove(id: string): Promise<void> {
     return this.repository.remove(id);
+  }
+
+  /**
+   * Merge a new omni-channel identity (e.g. Zalo account) into an existing Contact.
+   * Agent workflow: find a contact by phone/email, then link a new channel account.
+   */
+  async mergeIdentity(
+    contactId: string,
+    identity: { channelType: string; senderId: string },
+  ): Promise<Contact> {
+    const contact = await this.repository.findOne({ _id: contactId });
+    if (!contact) {
+      throw new NotFoundException(`Contact ${contactId} not found`);
+    }
+
+    // Check if this identity is already linked to another contact
+    const existing = await this.repository.findByOmniIdentity(
+      identity.channelType,
+      identity.senderId,
+    );
+    if (existing && existing.id !== contactId) {
+      throw new BadRequestException(
+        `Identity ${identity.channelType}:${identity.senderId} is already linked to contact ${existing.id}`,
+      );
+    }
+
+    const updated = await this.repository.addOmniIdentity(contactId, identity);
+    if (!updated) {
+      throw new NotFoundException(
+        `Contact ${contactId} not found after update`,
+      );
+    }
+    return updated;
   }
 
   async checkDuplicate(params: {

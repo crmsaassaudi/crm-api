@@ -65,11 +65,17 @@ export class TenantSchemaClass extends EntityDocumentHelper {
     resolveNoteMode: 'disabled' | 'optional' | 'required';
   };
 
-  @Prop()
-  createdAt: Date;
-
-  @Prop()
-  updatedAt: Date;
+  @Prop({
+    type: {
+      limitMB: { type: Number, default: 1024 },
+      usedMB: { type: Number, default: 0 },
+    },
+    default: () => ({ limitMB: 1024, usedMB: 0 }),
+  })
+  storageQuota: {
+    limitMB: number;
+    usedMB: number;
+  };
 }
 
 export const TenantSchema = SchemaFactory.createForClass(TenantSchemaClass);

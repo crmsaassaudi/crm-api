@@ -38,6 +38,14 @@ export class Tenant {
     resolveNoteMode: 'disabled' | 'optional' | 'required';
   };
 
+  @ApiProperty({ description: 'Storage quota for media files (MB)' })
+  storageQuota: {
+    /** Maximum storage in MB. -1 = unlimited */
+    limitMB: number;
+    /** Currently used storage in MB */
+    usedMB: number;
+  };
+
   @ApiProperty()
   createdAt: Date;
 

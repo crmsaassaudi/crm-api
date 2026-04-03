@@ -17,11 +17,15 @@ import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
-import { OutboundService } from '../services/outbound.service';
+import { OutboundService } from '../../omni-outbound/outbound.service';
 import { NoteService } from '../services/note.service';
 import { ActivityService } from '../services/activity.service';
 import { ConversationService } from '../services/conversation.service';
+import { ConversionService } from '../services/conversion.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
+import { CreateDealFromConversationDto } from '../dto/create-deal-from-conversation.dto';
+import { CreateTicketFromConversationDto } from '../dto/create-ticket-from-conversation.dto';
+import { LinkMessagesDto } from '../dto/link-messages.dto';
 import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
 
@@ -47,6 +51,7 @@ export class OmniController {
     private readonly conversationRepo: ConversationRepository,
     private readonly messageRepo: MessageRepository,
     private readonly conversationService: ConversationService,
+    private readonly conversionService: ConversionService,
     private readonly outboundService: OutboundService,
     private readonly noteService: NoteService,
     private readonly activityService: ActivityService,
@@ -679,5 +684,103 @@ export class OmniController {
       resolveNoteMode: resolveNoteMode as 'disabled' | 'optional' | 'required',
     });
     return { resolveNoteMode };
+  }
+
+  /**
+   * GET /omni/settings/storage-quota
+   * Returns the current tenant's storage usage and limit.
+   */
+  @Get('settings/storage-quota')
+  async getStorageQuota() {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) throw new BadRequestException('Tenant context not found');
+    return this.tenantsService.checkStorageQuota(tenantId);
+  }
+
+  /**
+   * PATCH /omni/settings/storage-quota
+   * Update the tenant's storage limit (admin).
+   */
+  @Patch('settings/storage-quota')
+  async updateStorageQuota(@Body('limitMB') limitMB: number) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) throw new BadRequestException('Tenant context not found');
+
+    if (typeof limitMB !== 'number' || (limitMB < 0 && limitMB !== -1)) {
+      throw new BadRequestException(
+        'limitMB must be a positive number or -1 (unlimited)',
+      );
+    }
+
+    await this.tenantsService.updateStorageQuota(tenantId, limitMB);
+    return { limitMB };
+  }
+
+  // ─── Conversion Engine (Deal / Ticket from Conversation) ──────
+
+  /**
+   * POST /omni/conversations/:id/create-deal
+   * Create a Deal linked to this omni-conversation.
+   */
+  @Post('conversations/:id/create-deal')
+  @HttpCode(HttpStatus.CREATED)
+  async createDealFromConversation(
+    @Param('id') conversationId: string,
+    @Body() dto: CreateDealFromConversationDto,
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    const agentId = this.cls.get<string>('userId');
+    if (!tenantId || !agentId) {
+      throw new BadRequestException('User or Tenant context not found');
+    }
+
+    return this.conversionService.createDeal(
+      tenantId,
+      agentId,
+      conversationId,
+      dto,
+    );
+  }
+
+  /**
+   * POST /omni/conversations/:id/create-ticket
+   * Create a Ticket linked to this omni-conversation.
+   */
+  @Post('conversations/:id/create-ticket')
+  @HttpCode(HttpStatus.CREATED)
+  async createTicketFromConversation(
+    @Param('id') conversationId: string,
+    @Body() dto: CreateTicketFromConversationDto,
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    const agentId = this.cls.get<string>('userId');
+    if (!tenantId || !agentId) {
+      throw new BadRequestException('User or Tenant context not found');
+    }
+
+    return this.conversionService.createTicket(
+      tenantId,
+      agentId,
+      conversationId,
+      dto,
+    );
+  }
+
+  /**
+   * POST /omni/conversations/:id/link-messages
+   * Link specific messages to an existing Deal or Ticket.
+   */
+  @Post('conversations/:id/link-messages')
+  @HttpCode(HttpStatus.OK)
+  async linkMessages(
+    @Param('id') conversationId: string,
+    @Body() dto: LinkMessagesDto,
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+
+    return this.conversionService.linkMessages(tenantId, conversationId, dto);
   }
 }

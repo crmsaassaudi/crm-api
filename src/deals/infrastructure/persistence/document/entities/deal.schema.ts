@@ -104,11 +104,28 @@ export class DealSchemaClass extends EntityDocumentHelper {
 
   @Prop()
   deletedAt?: Date;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'OmniConversationSchemaClass',
+    default: null,
+  })
+  omniConversationId?: string;
+
+  @Prop({
+    type: [
+      { type: MongooseSchema.Types.ObjectId, ref: 'OmniMessageSchemaClass' },
+    ],
+    default: [],
+  })
+  linkedMessageIds?: string[];
 }
 
 export const DealSchema = SchemaFactory.createForClass(DealSchemaClass);
 
 DealSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+
+DealSchema.index({ omniConversationId: 1 }, { name: 'deal_omni_conversation' });
 
 DealSchema.virtual('owner', {
   ref: 'UserSchemaClass',

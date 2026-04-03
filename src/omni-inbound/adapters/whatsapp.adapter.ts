@@ -62,6 +62,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
       externalMessageId: msg.id,
       externalConversationId: `${msg.from}_${rawPayload.metadata?.phone_number_id}`,
       timestamp: new Date(Number(msg.timestamp) * 1000),
+      providerTimestamp: new Date(Number(msg.timestamp) * 1000),
     };
   }
 

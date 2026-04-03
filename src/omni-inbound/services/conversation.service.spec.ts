@@ -104,6 +104,7 @@ describe('ConversationService Concurrency', () => {
     externalMessageId: msgId,
     externalConversationId: 'thread_1',
     timestamp: new Date(),
+    providerTimestamp: new Date(),
   });
 
   it('should process a message and create a conversation when not cached', async () => {

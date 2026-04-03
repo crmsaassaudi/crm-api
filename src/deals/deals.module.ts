@@ -16,6 +16,6 @@ import {
   ],
   controllers: [DealsController],
   providers: [DealsService, DealRepository],
-  exports: [DealsService],
+  exports: [DealsService, DealRepository],
 })
 export class DealsModule {}

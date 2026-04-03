@@ -78,4 +78,10 @@ export class Deal {
 
   @ApiProperty()
   deletedAt?: Date;
+
+  @ApiProperty({ description: 'Omni-conversation this deal was created from' })
+  omniConversationId?: string;
+
+  @ApiProperty({ description: 'Linked message IDs from the omni-conversation' })
+  linkedMessageIds?: string[];
 }

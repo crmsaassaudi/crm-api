@@ -413,6 +413,25 @@ export class ConversationRepository {
       .exec();
   }
 
+  /**
+   * Find all open/pending conversations assigned to a specific agent.
+   * Used by AgentFallbackService to reassign conversations when an agent goes offline.
+   */
+  async findOpenByAgent(
+    tenantId: string,
+    agentId: string,
+  ): Promise<OmniConversation[]> {
+    const docs = await this.model
+      .find({
+        tenantId,
+        assignedAgentId: agentId,
+        status: { $in: ['open', 'pending'] },
+      })
+      .sort({ lastMessageAt: -1 })
+      .exec();
+    return docs.map((doc) => OmniConversationMapper.toDomain(doc));
+  }
+
   private buildDirectionalCursorFilter(
     direction: 'past' | 'future',
     cursor: ConversationTimelineCursor,

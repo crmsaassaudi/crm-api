@@ -3,8 +3,19 @@ import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { AgentPresenceService } from './agent-presence.service';
+import {
+  AssignmentAuditLogRepository,
+  CreateAuditLogDto,
+} from '../repositories/assignment-audit-log.repository';
 
-export type AssignmentStrategy = 'round-robin' | 'least-busy' | 'manual';
+export type AssignmentStrategy =
+  | 'round-robin'
+  | 'least-busy'
+  | 'capacity-based'
+  | 'manual';
+
+/** Default max concurrent open chats per agent */
+const DEFAULT_MAX_CAPACITY = 5;
 
 /**
  * AssignmentService — auto-assigns conversations to agents based on
@@ -13,7 +24,10 @@ export type AssignmentStrategy = 'round-robin' | 'least-busy' | 'manual';
  * Strategies:
  *   - round-robin: cycles through available agents using a Redis counter
  *   - least-busy: picks the agent with fewest open conversations
+ *   - capacity-based: like least-busy but caps each agent to a max capacity
  *   - manual: no auto-assign — goes to queue for manual pickup
+ *
+ * Every assignment decision is recorded in the AssignmentAuditLog.
  */
 @Injectable()
 export class AssignmentService {
@@ -22,6 +36,7 @@ export class AssignmentService {
   constructor(
     private readonly conversationRepo: ConversationRepository,
     private readonly presenceService: AgentPresenceService,
+    private readonly auditLogRepo: AssignmentAuditLogRepository,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -34,6 +49,7 @@ export class AssignmentService {
     conversationId: string,
     strategy: AssignmentStrategy = 'round-robin',
     agentPool?: string[],
+    maxCapacity: number = DEFAULT_MAX_CAPACITY,
   ): Promise<string | null> {
     // Get available agents (online/available status)
     const availableAgents = await this.getAvailableAgents(tenantId, agentPool);
@@ -42,21 +58,70 @@ export class AssignmentService {
       this.logger.warn(
         `No available agents for tenant ${tenantId} — conversation ${conversationId} goes to queue`,
       );
+      await this.writeAuditLog({
+        tenantId,
+        conversationId,
+        assignedAgentId: null,
+        strategy,
+        reason: 'No available agents online — conversation queued',
+        metadata: { poolSize: agentPool?.length ?? 0 },
+        outcome: 'queued',
+      });
       return null;
     }
 
     let selectedAgent: string | null = null;
+    let reason = '';
+    let metadata: Record<string, any> = {};
 
     switch (strategy) {
-      case 'round-robin':
+      case 'round-robin': {
         selectedAgent = await this.roundRobin(tenantId, availableAgents);
+        reason = `Round-robin selected agent (index from Redis counter)`;
+        metadata = { pool: availableAgents };
         break;
-      case 'least-busy':
-        selectedAgent = await this.leastBusy(tenantId, availableAgents);
+      }
+      case 'least-busy': {
+        const result = await this.leastBusy(tenantId, availableAgents);
+        selectedAgent = result.agentId;
+        reason = `Least-busy: agent has ${result.openChats} open chats (fewest in pool)`;
+        metadata = { pool: availableAgents, openChats: result.openChats };
         break;
+      }
+      case 'capacity-based': {
+        const result = await this.capacityBased(
+          tenantId,
+          availableAgents,
+          maxCapacity,
+        );
+        selectedAgent = result.agentId;
+        if (selectedAgent) {
+          reason = `Capacity-based: agent has ${result.openChats}/${maxCapacity} open chats`;
+        } else {
+          reason = `All agents at max capacity (${maxCapacity}) — conversation queued`;
+        }
+        metadata = {
+          pool: availableAgents,
+          maxCapacity,
+          openChats: result.openChats,
+          allLoads: result.allLoads,
+        };
+        break;
+      }
       case 'manual':
-      default:
+      default: {
+        reason = 'Manual assignment — no auto-assign';
+        await this.writeAuditLog({
+          tenantId,
+          conversationId,
+          assignedAgentId: null,
+          strategy: 'manual',
+          reason,
+          metadata: {},
+          outcome: 'queued',
+        });
         return null;
+      }
     }
 
     if (selectedAgent) {
@@ -67,6 +132,28 @@ export class AssignmentService {
       this.logger.log(
         `Auto-assigned conversation ${conversationId} to agent ${selectedAgent} (${strategy})`,
       );
+      await this.writeAuditLog({
+        tenantId,
+        conversationId,
+        assignedAgentId: selectedAgent,
+        strategy,
+        reason,
+        metadata,
+        outcome: 'assigned',
+      });
+    } else {
+      this.logger.warn(
+        `No agent available under ${strategy} for conversation ${conversationId} — queued`,
+      );
+      await this.writeAuditLog({
+        tenantId,
+        conversationId,
+        assignedAgentId: null,
+        strategy,
+        reason,
+        metadata,
+        outcome: 'queued',
+      });
     }
 
     return selectedAgent;
@@ -92,7 +179,10 @@ export class AssignmentService {
   /**
    * Least-busy: pick the agent with the fewest open/pending conversations.
    */
-  private async leastBusy(tenantId: string, agents: string[]): Promise<string> {
+  private async leastBusy(
+    tenantId: string,
+    agents: string[],
+  ): Promise<{ agentId: string; openChats: number }> {
     const counts = await Promise.all(
       agents.map(async (agentId) => ({
         agentId,
@@ -101,7 +191,45 @@ export class AssignmentService {
     );
 
     counts.sort((a, b) => a.count - b.count);
-    return counts[0].agentId;
+    return { agentId: counts[0].agentId, openChats: counts[0].count };
+  }
+
+  /**
+   * Capacity-based: like least-busy, but rejects agents who have reached
+   * their maximum concurrent chat capacity.
+   *
+   * If ALL agents are at max capacity, returns null → conversation goes to queue.
+   */
+  private async capacityBased(
+    tenantId: string,
+    agents: string[],
+    maxCapacity: number,
+  ): Promise<{
+    agentId: string | null;
+    openChats: number;
+    allLoads: Array<{ agentId: string; count: number }>;
+  }> {
+    const counts = await Promise.all(
+      agents.map(async (agentId) => ({
+        agentId,
+        count: await this.conversationRepo.countOpenByAgent(tenantId, agentId),
+      })),
+    );
+
+    // Filter to only agents under capacity
+    const eligible = counts.filter((c) => c.count < maxCapacity);
+
+    if (eligible.length === 0) {
+      return { agentId: null, openChats: 0, allLoads: counts };
+    }
+
+    // Pick the agent with fewest open chats among eligible
+    eligible.sort((a, b) => a.count - b.count);
+    return {
+      agentId: eligible[0].agentId,
+      openChats: eligible[0].count,
+      allLoads: counts,
+    };
   }
 
   /**
@@ -121,6 +249,17 @@ export class AssignmentService {
     } catch {
       // If presence service fails, return the pool as-is or empty
       return pool ?? [];
+    }
+  }
+
+  /**
+   * Write an audit log entry for the assignment decision.
+   */
+  private async writeAuditLog(dto: CreateAuditLogDto): Promise<void> {
+    try {
+      await this.auditLogRepo.create(dto);
+    } catch (err) {
+      this.logger.error(`Failed to write assignment audit log: ${err.message}`);
     }
   }
 }
