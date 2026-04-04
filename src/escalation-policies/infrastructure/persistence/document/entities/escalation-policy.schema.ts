@@ -17,11 +17,25 @@ export class EscalationPolicySchemaClass extends EntityDocumentHelper {
   @Prop({ type: Types.ObjectId, required: true })
   slaId: Types.ObjectId;
 
-  @Prop({ required: true, enum: ['warning', 'breach'] })
+  @Prop({
+    required: true,
+    enum: ['warning', 'breach'],
+  })
   breachType: string;
 
-  @Prop({ required: true, min: 0, max: 100 })
-  thresholdPercentage: number;
+  /**
+   * Time after SLA breach before this escalation triggers.
+   * Example: escalateAfter=5, escalateUnit='minutes' → 5 minutes after breach
+   */
+  @Prop({ required: true, min: 0 })
+  escalateAfter: number;
+
+  @Prop({
+    required: true,
+    enum: ['minutes', 'hours'],
+    default: 'minutes',
+  })
+  escalateUnit: string;
 
   @Prop({
     type: [{ type: { type: String }, value: String }],

@@ -9,13 +9,13 @@ import {
   MinLength,
   MaxLength,
   Min,
-  Max,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 const BREACH_TYPES = ['warning', 'breach'] as const;
-const ACTION_TYPES = ['notify', 'reassign', 'escalate'] as const;
+const ACTION_TYPES = ['notify', 'reassign', 'escalate', 'color_red'] as const;
+const ESCALATE_UNITS = ['minutes', 'hours'] as const;
 
 class EscalationActionDto {
   @ApiProperty({ enum: ACTION_TYPES, example: 'notify' })
@@ -42,11 +42,17 @@ export class CreateEscalationPolicyDto {
   @IsEnum(BREACH_TYPES)
   breachType: string;
 
-  @ApiProperty({ example: 80 })
+  @ApiProperty({
+    example: 5,
+    description: 'Time after SLA breach before escalation',
+  })
   @IsNumber()
   @Min(0)
-  @Max(100)
-  thresholdPercentage: number;
+  escalateAfter: number;
+
+  @ApiProperty({ enum: ESCALATE_UNITS, example: 'minutes' })
+  @IsEnum(ESCALATE_UNITS)
+  escalateUnit: string;
 
   @ApiProperty({ type: [EscalationActionDto] })
   @IsArray()
@@ -78,12 +84,16 @@ export class UpdateEscalationPolicyDto {
   @IsOptional()
   breachType?: string;
 
-  @ApiPropertyOptional({ example: 90 })
+  @ApiPropertyOptional({ example: 15 })
   @IsNumber()
   @Min(0)
-  @Max(100)
   @IsOptional()
-  thresholdPercentage?: number;
+  escalateAfter?: number;
+
+  @ApiPropertyOptional({ enum: ESCALATE_UNITS })
+  @IsEnum(ESCALATE_UNITS)
+  @IsOptional()
+  escalateUnit?: string;
 
   @ApiPropertyOptional({ type: [EscalationActionDto] })
   @IsArray()

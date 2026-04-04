@@ -259,4 +259,135 @@ export class BusinessHoursService {
     const [hours, minutes] = time.split(':').map(Number);
     return (hours || 0) * 60 + (minutes || 0);
   }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // SLA Business Hours Math
+  // ────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Calculate the SLA deadline accounting for business hours.
+   *
+   * Algorithm:
+   *   Walk forward in time, only counting minutes that fall INSIDE
+   *   business hours (excluding holidays and non-working days).
+   *
+   * Example:
+   *   SLA = 2 hours, customer messages Friday 17:00, hours = 09:00–18:00
+   *   → 1 hour consumed Friday (17:00–18:00)
+   *   → Skip Saturday + Sunday
+   *   → 1 hour consumed Monday (09:00–10:00)
+   *   → Deadline = Monday 10:00
+   *
+   * @param tenantId        Tenant for loading business hours config
+   * @param durationMinutes Total SLA budget in minutes
+   * @returns The exact Date when the SLA expires (business-hours aware)
+   */
+  async calculateSlaDeadline(
+    tenantId: string,
+    durationMinutes: number,
+  ): Promise<Date> {
+    const businessHours = await this.settingsService.getSetting(
+      'business_hours',
+      tenantId,
+    );
+
+    if (!businessHours) {
+      // No business hours configured → simple calendar time
+      return new Date(Date.now() + durationMinutes * 60 * 1000);
+    }
+
+    const timezone = businessHours.timezone || 'UTC';
+    let cursor = this.getNow(timezone);
+    let remainingMinutes = durationMinutes;
+
+    // Safety limit: don't loop for more than 365 days
+    const maxIterations = 365;
+    let iterations = 0;
+
+    while (remainingMinutes > 0 && iterations < maxIterations) {
+      iterations++;
+
+      // Skip holidays
+      if (this.isHoliday(cursor, businessHours.holidays)) {
+        cursor = this.advanceToNextDay(cursor);
+        continue;
+      }
+
+      // Get today's schedule
+      const daySchedule = this.getDaySchedule(cursor, businessHours);
+      if (!daySchedule || !daySchedule.enabled) {
+        cursor = this.advanceToNextDay(cursor);
+        continue;
+      }
+
+      // Get working slots for today
+      const slots = this.getWorkingSlots(daySchedule);
+      const currentMinutes = cursor.getHours() * 60 + cursor.getMinutes();
+
+      for (const slot of slots) {
+        const slotStart = this.timeToMinutes(slot.start);
+        const slotEnd = this.timeToMinutes(slot.end);
+
+        // Skip slots that have already passed
+        if (currentMinutes >= slotEnd) continue;
+
+        // Calculate effective start (either now or slot start, whichever is later)
+        const effectiveStart = Math.max(currentMinutes, slotStart);
+        const availableMinutes = slotEnd - effectiveStart;
+
+        if (availableMinutes <= 0) continue;
+
+        if (remainingMinutes <= availableMinutes) {
+          // SLA expires within this slot
+          const deadlineMinutes = effectiveStart + remainingMinutes;
+          cursor.setHours(
+            Math.floor(deadlineMinutes / 60),
+            deadlineMinutes % 60,
+            0,
+            0,
+          );
+          remainingMinutes = 0;
+
+          break;
+        }
+
+        // Consume all available minutes in this slot
+        remainingMinutes -= availableMinutes;
+      }
+
+      if (remainingMinutes > 0) {
+        cursor = this.advanceToNextDay(cursor);
+      }
+    }
+
+    return cursor;
+  }
+
+  /**
+   * Get normalized working slots from a day schedule.
+   */
+  private getWorkingSlots(
+    daySchedule: any,
+  ): Array<{ start: string; end: string }> {
+    if (daySchedule.slots && Array.isArray(daySchedule.slots)) {
+      return daySchedule.slots;
+    }
+    // Legacy format
+    return [
+      {
+        start: daySchedule.start || '09:00',
+        end: daySchedule.end || '18:00',
+      },
+    ];
+  }
+
+  /**
+   * Advance cursor to the start of the next day (00:00).
+   */
+  private advanceToNextDay(date: Date): Date {
+    const next = new Date(date);
+    next.setDate(next.getDate() + 1);
+    next.setHours(0, 0, 0, 0);
+    return next;
+  }
 }

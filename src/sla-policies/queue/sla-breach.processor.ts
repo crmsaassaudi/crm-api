@@ -11,25 +11,26 @@ import {
   OmniConversationDocument,
 } from '../../omni-inbound/infrastructure/persistence/document/entities/omni-conversation.schema';
 
+export type SlaBreachType = 'frt' | 'resolution';
+
 export interface SlaBreachJobData {
   tenantId: string;
   conversationId: string;
   slaPolicyId: string;
+  /** Which SLA type this job monitors */
+  breachType: SlaBreachType;
 }
 
 /**
  * BullMQ processor that handles per-conversation SLA breach-check delayed jobs.
  *
- * Replaces the old `@Cron(EVERY_MINUTE)` DB scan approach. Each conversation
- * gets its own delayed job scheduled for exactly the SLA deadline duration.
+ * Supports two independent SLA types:
+ *   - FRT (First Response Time): breach if agent doesn't reply before deadline
+ *   - Resolution: breach if conversation isn't resolved before deadline
  *
- * When the job fires:
- *   1. Verify conversation is still open/pending and not already breached
- *   2. Mark `slaBreached = true` on the conversation document
- *   3. Emit `sla.breached` event for escalation-policies to react
- *
- * If the agent responded before the deadline, the job will have been removed
- * by SlaCancellationListener — so this processor never runs. Zero wasted work.
+ * Each type has its own delayed job and can be cancelled independently:
+ *   - Agent replies → cancel FRT job
+ *   - Conversation resolved → cancel Resolution job (and FRT if still pending)
  */
 @Processor(SLA_BREACH_QUEUE)
 export class SlaBreachProcessor extends BaseConsumer {
@@ -44,53 +45,58 @@ export class SlaBreachProcessor extends BaseConsumer {
   }
 
   async process(job: Job<SlaBreachJobData>): Promise<void> {
-    const { tenantId, conversationId, slaPolicyId } = job.data;
+    const { tenantId, conversationId, slaPolicyId, breachType } = job.data;
     const now = new Date();
 
     this.logger.debug(
-      `Processing SLA breach check for conversation ${conversationId}`,
+      `Processing SLA breach check [${breachType}] for conversation ${conversationId}`,
     );
 
-    // ── Step 1: Verify conversation is still eligible for breach ──
+    // ── Build query based on breach type ──────────────────────────
+    const breachedField =
+      breachType === 'frt' ? 'frtBreached' : 'resolutionBreached';
+
     const conversation = await this.conversationModel
       .findOne({
         _id: conversationId,
         tenantId,
         status: { $in: ['open', 'pending'] },
-        slaBreached: false,
+        [breachedField]: false,
       })
       .lean()
       .exec();
 
     if (!conversation) {
       this.logger.debug(
-        `Conversation ${conversationId} is no longer eligible for SLA breach ` +
-          `(resolved, closed, or already breached) — skipping`,
+        `Conversation ${conversationId} not eligible for ${breachType} breach — skipping`,
       );
       return;
     }
 
-    // ── Step 2: Mark SLA as breached ──────────────────────────────
+    // ── Mark breach ──────────────────────────────────────────────
     await this.conversationModel.updateOne(
       { _id: conversationId },
-      { $set: { slaBreached: true } },
+      { $set: { [breachedField]: true } },
     );
 
-    // ── Step 3: Emit event for escalation-policies module ────────
+    // ── Emit event for escalation-policies ───────────────────────
+    const deadlineField =
+      breachType === 'frt' ? 'frtDeadline' : 'resolutionDeadline';
+
     this.eventEmitter.emit('sla.breached', {
       tenantId,
       conversationId,
       channelType: conversation.channelType,
       assignedAgentId: conversation.assignedAgentId,
-      slaDeadline: conversation.slaDeadline,
+      slaDeadline: (conversation as any)[deadlineField],
       slaPolicyId,
+      breachType,
       breachedAt: now,
     });
 
     this.logger.warn(
-      `SLA breached for conversation ${conversationId} ` +
-        `(deadline: ${conversation.slaDeadline?.toISOString()}, ` +
-        `policy: ${slaPolicyId})`,
+      `SLA [${breachType}] breached for conversation ${conversationId} ` +
+        `(policy: ${slaPolicyId})`,
     );
   }
 }

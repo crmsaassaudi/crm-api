@@ -16,10 +16,12 @@ import {
   OmniConversationSchema,
   OmniConversationSchemaClass,
 } from '../omni-inbound/infrastructure/persistence/document/entities/omni-conversation.schema';
+import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
 
 @Module({
   imports: [
     SlaQueueModule,
+    OmniInboundModule,
     MongooseModule.forFeature([
       { name: SlaPolicySchemaClass.name, schema: SlaPolicySchema },
       {

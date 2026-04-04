@@ -6,11 +6,8 @@ import { SlaMonitorService } from './sla-monitor.service';
  * SlaCancellationListener — cancels SLA breach-check jobs when they are
  * no longer needed:
  *
- *   1. Agent sends an outbound message → first_response SLA is satisfied
- *   2. Conversation is resolved/closed → no need to check SLA anymore
- *
- * This ensures zero false-positive breaches and cleans up delayed jobs
- * from the BullMQ queue.
+ *   1. Agent sends outbound message → cancel FRT job (first response satisfied)
+ *   2. Conversation resolved/closed → cancel both FRT and Resolution jobs
  */
 @Injectable()
 export class SlaCancellationListener {
@@ -20,7 +17,7 @@ export class SlaCancellationListener {
 
   /**
    * When an agent sends a reply, the first_response SLA is satisfied.
-   * Cancel the breach-check job so it never fires.
+   * Cancel the FRT breach-check job. Resolution job keeps running.
    */
   @OnEvent('omni.outbound.message.sent')
   async handleOutboundMessage(event: {
@@ -28,27 +25,26 @@ export class SlaCancellationListener {
     conversationId: string;
     senderType?: string;
   }): Promise<void> {
-    // Only cancel SLA when an agent (not a bot/system) replies
+    // Only cancel FRT when an agent (not a bot/system) replies
     if (event.senderType && event.senderType !== 'agent') {
       return;
     }
 
     try {
-      await this.slaMonitorService.cancelSlaBreachCheck(event.conversationId);
+      await this.slaMonitorService.cancelFrtBreachCheck(event.conversationId);
       this.logger.debug(
-        `SLA breach check cancelled for conversation ${event.conversationId} ` +
-          `(agent responded)`,
+        `FRT SLA cancelled for conversation ${event.conversationId} (agent responded)`,
       );
     } catch (err: any) {
       this.logger.error(
-        `Failed to cancel SLA on agent reply for ${event.conversationId}: ${err.message}`,
+        `Failed to cancel FRT for ${event.conversationId}: ${err.message}`,
       );
     }
   }
 
   /**
-   * When a conversation is resolved or closed, clean up any pending
-   * SLA breach-check job — the conversation is no longer active.
+   * When a conversation is resolved or closed, clean up ALL pending
+   * SLA breach-check jobs — both FRT and Resolution.
    */
   @OnEvent('omni.conversation.status_changed')
   async handleStatusChanged(event: {
@@ -61,10 +57,9 @@ export class SlaCancellationListener {
     }
 
     try {
-      await this.slaMonitorService.cancelSlaBreachCheck(event.conversationId);
+      await this.slaMonitorService.cancelAllBreachChecks(event.conversationId);
       this.logger.debug(
-        `SLA breach check cancelled for conversation ${event.conversationId} ` +
-          `(status changed to ${event.status})`,
+        `All SLA jobs cancelled for conversation ${event.conversationId} (${event.status})`,
       );
     } catch (err: any) {
       this.logger.error(

@@ -9,7 +9,8 @@ export class EscalationPolicyMapper {
     entity.name = doc.name;
     entity.slaId = doc.slaId?.toString();
     entity.breachType = doc.breachType;
-    entity.thresholdPercentage = doc.thresholdPercentage;
+    entity.escalateAfter = doc.escalateAfter;
+    entity.escalateUnit = doc.escalateUnit;
     entity.actions = doc.actions;
     entity.enabled = doc.enabled;
     entity.createdAt = doc.createdAt;

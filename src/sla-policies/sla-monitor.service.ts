@@ -2,20 +2,21 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { SLA_BREACH_QUEUE } from './queue/sla-queue.constants';
-import type { SlaBreachJobData } from './queue/sla-breach.processor';
+import type {
+  SlaBreachJobData,
+  SlaBreachType,
+} from './queue/sla-breach.processor';
 
 /**
  * SlaMonitorService — manages per-conversation SLA breach-check delayed jobs.
  *
- * Instead of scanning the entire database every minute (cron approach),
- * each conversation gets its own delayed BullMQ job scheduled for exactly
- * the SLA deadline duration. This scales to millions of conversations
- * without any DB load.
+ * Supports two independent SLA types that run in parallel:
+ *   - FRT (First Response Time): cancelled when agent sends first reply
+ *   - Resolution: cancelled when conversation is resolved/closed
  *
- * Key operations:
- *   - scheduleSlaBreachCheck: create a delayed job when SLA deadline is set
- *   - cancelSlaBreachCheck: remove the job when agent responds in time
- *   - rescheduleSlaBreachCheck: reset the timer (for next_response SLA)
+ * Each gets its own BullMQ delayed job with a unique job ID:
+ *   - `sla-breach:frt:{conversationId}`
+ *   - `sla-breach:resolution:{conversationId}`
  */
 @Injectable()
 export class SlaMonitorService {
@@ -29,96 +30,98 @@ export class SlaMonitorService {
   /**
    * Schedule an SLA breach-check delayed job for a conversation.
    *
-   * Called by SlaTriggerListener when a new conversation is created
-   * and an SLA policy applies. The job fires exactly at the deadline.
-   *
-   * @param tenantId   - tenant owning the conversation
+   * @param tenantId       - tenant owning the conversation
    * @param conversationId - the conversation to monitor
    * @param slaPolicyId    - the SLA policy that applies
    * @param delayMs        - milliseconds until the SLA deadline
+   * @param breachType     - 'frt' or 'resolution'
    */
   async scheduleSlaBreachCheck(
     tenantId: string,
     conversationId: string,
     slaPolicyId: string,
     delayMs: number,
+    breachType: SlaBreachType,
   ): Promise<void> {
-    const jobId = this.buildJobId(conversationId);
+    const jobId = this.buildJobId(conversationId, breachType);
 
     try {
-      // Remove any existing job for this conversation first
-      await this.removeExistingJob(conversationId);
+      // Remove any existing job of same type for this conversation
+      await this.removeExistingJob(conversationId, breachType);
 
       await this.slaBreachQueue.add(
         'sla-breach-check',
-        { tenantId, conversationId, slaPolicyId },
+        { tenantId, conversationId, slaPolicyId, breachType },
         { jobId, delay: delayMs },
       );
 
       this.logger.debug(
-        `Scheduled SLA breach check for conversation ${conversationId} ` +
-          `in ${(delayMs / (1000 * 60)).toFixed(1)} minutes ` +
-          `(policy: ${slaPolicyId})`,
+        `Scheduled SLA [${breachType}] breach check for conversation ${conversationId} ` +
+          `in ${(delayMs / (1000 * 60)).toFixed(1)} minutes`,
       );
     } catch (err: any) {
       this.logger.error(
-        `Failed to schedule SLA breach check for conversation ${conversationId}: ${err.message}`,
+        `Failed to schedule SLA [${breachType}] for conversation ${conversationId}: ${err.message}`,
       );
     }
   }
 
   /**
-   * Cancel the SLA breach-check job when an agent responds before the deadline.
-   *
-   * Called by SlaCancellationListener when an outbound message is sent
-   * or when the conversation is resolved/closed.
+   * Cancel the FRT breach-check job when an agent responds.
    */
-  async cancelSlaBreachCheck(conversationId: string): Promise<void> {
-    try {
-      await this.removeExistingJob(conversationId);
-      this.logger.debug(
-        `Cancelled SLA breach check for conversation ${conversationId}`,
-      );
-    } catch (err: any) {
-      this.logger.error(
-        `Failed to cancel SLA breach check for ${conversationId}: ${err.message}`,
-      );
-    }
+  async cancelFrtBreachCheck(conversationId: string): Promise<void> {
+    await this.cancelBreachCheck(conversationId, 'frt');
   }
 
   /**
-   * Reschedule the SLA breach-check job with a new delay.
-   *
-   * Useful for `next_response` SLA type where each agent reply
-   * resets the clock for the next customer message.
+   * Cancel the Resolution breach-check job when conversation is resolved.
    */
-  async rescheduleSlaBreachCheck(
-    tenantId: string,
-    conversationId: string,
-    slaPolicyId: string,
-    delayMs: number,
-  ): Promise<void> {
-    await this.scheduleSlaBreachCheck(
-      tenantId,
-      conversationId,
-      slaPolicyId,
-      delayMs,
-    );
+  async cancelResolutionBreachCheck(conversationId: string): Promise<void> {
+    await this.cancelBreachCheck(conversationId, 'resolution');
   }
 
-  // ────────────────────────────────────────────────────────────────────────
+  /**
+   * Cancel ALL SLA breach-check jobs for a conversation (both FRT and Resolution).
+   */
+  async cancelAllBreachChecks(conversationId: string): Promise<void> {
+    await Promise.all([
+      this.cancelBreachCheck(conversationId, 'frt'),
+      this.cancelBreachCheck(conversationId, 'resolution'),
+    ]);
+  }
+
+  // ────────────────────────────────────────────────────────────────
   // Helpers
-  // ────────────────────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────
 
-  private buildJobId(conversationId: string): string {
-    return `sla-breach:${conversationId}`;
+  private async cancelBreachCheck(
+    conversationId: string,
+    breachType: SlaBreachType,
+  ): Promise<void> {
+    try {
+      await this.removeExistingJob(conversationId, breachType);
+      this.logger.debug(
+        `Cancelled SLA [${breachType}] breach check for conversation ${conversationId}`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to cancel SLA [${breachType}] for ${conversationId}: ${err.message}`,
+      );
+    }
   }
 
-  /**
-   * Remove the existing SLA breach-check job for a conversation (if any).
-   */
-  private async removeExistingJob(conversationId: string): Promise<void> {
-    const jobId = this.buildJobId(conversationId);
+  private buildJobId(
+    conversationId: string,
+    breachType: SlaBreachType,
+  ): string {
+    return `sla-breach:${breachType}:${conversationId}`;
+  }
+
+  private async removeExistingJob(
+    conversationId: string,
+    breachType: SlaBreachType,
+  ): Promise<void> {
+    const jobId = this.buildJobId(conversationId, breachType);
     try {
       const job = await this.slaBreachQueue.getJob(jobId);
       if (job) {

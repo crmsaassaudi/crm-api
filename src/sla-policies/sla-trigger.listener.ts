@@ -4,6 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { SlaPoliciesService } from './sla-policies.service';
 import { SlaMonitorService } from './sla-monitor.service';
+import { BusinessHoursService } from '../omni-inbound/services/business-hours.service';
 import {
   OmniConversationSchemaClass,
   OmniConversationDocument,
@@ -11,12 +12,13 @@ import {
 
 /**
  * SlaTriggerListener — listens to `omni.conversation.created` events
- * and computes the SLA deadline based on the tenant's SLA policies.
+ * and applies SLA policies for both First Response Time (FRT) and
+ * Resolution Time.
  *
- * The deadline is written to the conversation document AND a BullMQ
- * delayed job is scheduled to fire at exactly the deadline. If the
- * agent responds before the deadline, SlaCancellationListener removes
- * the job — zero DB polling, zero wasted work.
+ * For each applicable policy type:
+ *   1. Compute the deadline using BusinessHoursService (skips off-hours & holidays)
+ *   2. Write the deadline to the conversation document
+ *   3. Schedule a BullMQ delayed job to fire at exactly that deadline
  */
 @Injectable()
 export class SlaTriggerListener {
@@ -25,13 +27,14 @@ export class SlaTriggerListener {
   constructor(
     private readonly slaPoliciesService: SlaPoliciesService,
     private readonly slaMonitorService: SlaMonitorService,
+    private readonly businessHoursService: BusinessHoursService,
     @InjectModel(OmniConversationSchemaClass.name)
     private readonly conversationModel: Model<OmniConversationDocument>,
   ) {}
 
   /**
-   * When a new conversation is created, compute and set the SLA deadline.
-   * Looks for an enabled `first_response` SLA policy for the tenant.
+   * When a new conversation is created, find and apply SLA policies
+   * for both first_response and resolution types.
    */
   @OnEvent('omni.conversation.created')
   async handleConversationCreated(event: {
@@ -40,47 +43,93 @@ export class SlaTriggerListener {
   }): Promise<void> {
     try {
       const policies = await this.slaPoliciesService.findAll();
-      // Pick the first enabled first_response policy (highest priority)
-      const firstResponsePolicy = policies
-        .filter((p) => p.enabled && p.type === 'first_response')
+      const enabledPolicies = policies.filter((p) => p.enabled);
+
+      // ── First Response Time (FRT) ──────────────────────────────
+      const frtPolicy = enabledPolicies
+        .filter((p) => p.type === 'first_response')
         .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
 
-      if (!firstResponsePolicy || !firstResponsePolicy.targets?.length) {
-        return; // No applicable SLA policy
+      // ── Resolution Time ────────────────────────────────────────
+      const resolutionPolicy = enabledPolicies
+        .filter((p) => p.type === 'resolution')
+        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
+
+      const updatePayload: Record<string, any> = {};
+
+      // ── Schedule FRT ───────────────────────────────────────────
+      if (frtPolicy && frtPolicy.targets?.length) {
+        const target = frtPolicy.targets[0];
+        const durationMinutes = this.toMinutes(
+          target.timeValue,
+          target.timeUnit,
+        );
+
+        const frtDeadline =
+          await this.businessHoursService.calculateSlaDeadline(
+            event.tenantId,
+            durationMinutes,
+          );
+        const delayMs = frtDeadline.getTime() - Date.now();
+
+        updatePayload.frtPolicyId = frtPolicy.id;
+        updatePayload.frtDeadline = frtDeadline;
+        updatePayload.frtBreached = false;
+
+        await this.slaMonitorService.scheduleSlaBreachCheck(
+          event.tenantId,
+          event.conversationId,
+          frtPolicy.id,
+          Math.max(delayMs, 0),
+          'frt',
+        );
+
+        this.logger.log(
+          `Set FRT deadline for conversation ${event.conversationId}: ` +
+            `${frtDeadline.toISOString()} (policy: ${frtPolicy.name})`,
+        );
       }
 
-      // Use the first target (default segment)
-      const target = firstResponsePolicy.targets[0];
-      const deadlineMs = this.computeDeadlineMs(
-        target.timeValue,
-        target.timeUnit,
-      );
-      const slaDeadline = new Date(Date.now() + deadlineMs);
+      // ── Schedule Resolution ────────────────────────────────────
+      if (resolutionPolicy && resolutionPolicy.targets?.length) {
+        const target = resolutionPolicy.targets[0];
+        const durationMinutes = this.toMinutes(
+          target.timeValue,
+          target.timeUnit,
+        );
 
-      // ── Step 1: Write deadline to conversation document ─────────
-      await this.conversationModel.updateOne(
-        { _id: event.conversationId },
-        {
-          $set: {
-            slaPolicyId: firstResponsePolicy.id,
-            slaDeadline,
-            slaBreached: false,
-          },
-        },
-      );
+        const resolutionDeadline =
+          await this.businessHoursService.calculateSlaDeadline(
+            event.tenantId,
+            durationMinutes,
+          );
+        const delayMs = resolutionDeadline.getTime() - Date.now();
 
-      // ── Step 2: Schedule BullMQ delayed job for breach check ────
-      await this.slaMonitorService.scheduleSlaBreachCheck(
-        event.tenantId,
-        event.conversationId,
-        firstResponsePolicy.id,
-        deadlineMs,
-      );
+        updatePayload.resolutionPolicyId = resolutionPolicy.id;
+        updatePayload.resolutionDeadline = resolutionDeadline;
+        updatePayload.resolutionBreached = false;
 
-      this.logger.log(
-        `Set SLA deadline for conversation ${event.conversationId}: ` +
-          `${slaDeadline.toISOString()} (policy: ${firstResponsePolicy.name})`,
-      );
+        await this.slaMonitorService.scheduleSlaBreachCheck(
+          event.tenantId,
+          event.conversationId,
+          resolutionPolicy.id,
+          Math.max(delayMs, 0),
+          'resolution',
+        );
+
+        this.logger.log(
+          `Set Resolution deadline for conversation ${event.conversationId}: ` +
+            `${resolutionDeadline.toISOString()} (policy: ${resolutionPolicy.name})`,
+        );
+      }
+
+      // ── Write all deadlines to conversation document ───────────
+      if (Object.keys(updatePayload).length > 0) {
+        await this.conversationModel.updateOne(
+          { _id: event.conversationId },
+          { $set: updatePayload },
+        );
+      }
     } catch (err) {
       this.logger.error(
         `Failed to set SLA for conversation ${event.conversationId}: ${err.message}`,
@@ -88,16 +137,16 @@ export class SlaTriggerListener {
     }
   }
 
-  private computeDeadlineMs(timeValue: number, timeUnit: string): number {
+  private toMinutes(timeValue: number, timeUnit: string): number {
     switch (timeUnit) {
       case 'minutes':
-        return timeValue * 60 * 1000;
+        return timeValue;
       case 'hours':
-        return timeValue * 60 * 60 * 1000;
+        return timeValue * 60;
       case 'days':
-        return timeValue * 24 * 60 * 60 * 1000;
+        return timeValue * 24 * 60;
       default:
-        return timeValue * 60 * 1000; // default to minutes
+        return timeValue; // default to minutes
     }
   }
 }

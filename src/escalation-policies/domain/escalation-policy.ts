@@ -16,8 +16,14 @@ export class EscalationPolicy {
   @ApiProperty({ enum: ['warning', 'breach'] })
   breachType: string;
 
-  @ApiProperty({ example: 80 })
-  thresholdPercentage: number;
+  @ApiProperty({
+    example: 5,
+    description: 'Time after SLA breach before escalation triggers',
+  })
+  escalateAfter: number;
+
+  @ApiProperty({ enum: ['minutes', 'hours'], example: 'minutes' })
+  escalateUnit: string;
 
   @ApiProperty()
   actions: Array<{

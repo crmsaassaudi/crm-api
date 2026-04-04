@@ -179,23 +179,65 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   })
   resolveSource: string | null;
 
-  // ── SLA Tracking ───────────────────────────────────────────────
-
-  /** The SLA policy applied to this conversation */
+  // ── SLA Tracking: First Response Time (FRT) ─────────────────────
+  /** The SLA policy applied for first response */
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'SlaPolicySchemaClass',
     default: null,
   })
-  slaPolicyId: string | null;
+  frtPolicyId: string | null;
 
-  /** Deadline for the first response (computed from SLA policy targets) */
+  /** Deadline for the agent's first response */
   @Prop({ type: Date, default: null, index: true })
-  slaDeadline: Date | null;
+  frtDeadline: Date | null;
 
-  /** Whether the SLA has been breached (deadline passed without response) */
+  /** Whether the FRT SLA has been breached */
   @Prop({ default: false })
-  slaBreached: boolean;
+  frtBreached: boolean;
+
+  // ── SLA Tracking: Resolution Time ──────────────────────────────
+  /** The SLA policy applied for resolution */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'SlaPolicySchemaClass',
+    default: null,
+  })
+  resolutionPolicyId: string | null;
+
+  /** Deadline for resolving the conversation */
+  @Prop({ type: Date, default: null, index: true })
+  resolutionDeadline: Date | null;
+
+  /** Whether the resolution SLA has been breached */
+  @Prop({ default: false })
+  resolutionBreached: boolean;
+
+  // ── Escalation Tracking ────────────────────────────────────────
+  /**
+   * Current escalation level for this conversation:
+   * - null: no escalation
+   * - 'warning': visual warning (red highlight)
+   * - 'critical': manager notified
+   */
+  @Prop({
+    type: String,
+    enum: ['warning', 'critical', null],
+    default: null,
+  })
+  escalationLevel: string | null;
+
+  /** ID of the manager/supervisor who was notified during escalation */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+    default: null,
+  })
+  escalatedToId: string | null;
+
+  /** When the escalation was triggered */
+  @Prop({ type: Date, default: null })
+  escalatedAt: Date | null;
 }
 
 export const OmniConversationSchema = SchemaFactory.createForClass(
