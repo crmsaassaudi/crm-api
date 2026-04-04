@@ -9,6 +9,9 @@ import {
 } from './infrastructure/persistence/document/entities/sla-policy.schema';
 import { SlaMonitorService } from './sla-monitor.service';
 import { SlaTriggerListener } from './sla-trigger.listener';
+import { SlaCancellationListener } from './sla-cancellation.listener';
+import { SlaBreachProcessor } from './queue/sla-breach.processor';
+import { SlaQueueModule } from './queue/sla-queue.module';
 import {
   OmniConversationSchema,
   OmniConversationSchemaClass,
@@ -16,6 +19,7 @@ import {
 
 @Module({
   imports: [
+    SlaQueueModule,
     MongooseModule.forFeature([
       { name: SlaPolicySchemaClass.name, schema: SlaPolicySchema },
       {
@@ -30,7 +34,9 @@ import {
     SlaPolicyRepository,
     SlaMonitorService,
     SlaTriggerListener,
+    SlaCancellationListener,
+    SlaBreachProcessor,
   ],
-  exports: [SlaPoliciesService],
+  exports: [SlaPoliciesService, SlaMonitorService],
 })
 export class SlaPoliciesModule {}

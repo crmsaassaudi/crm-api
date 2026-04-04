@@ -3,6 +3,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { SlaPoliciesService } from './sla-policies.service';
+import { SlaMonitorService } from './sla-monitor.service';
 import {
   OmniConversationSchemaClass,
   OmniConversationDocument,
@@ -12,8 +13,10 @@ import {
  * SlaTriggerListener — listens to `omni.conversation.created` events
  * and computes the SLA deadline based on the tenant's SLA policies.
  *
- * The deadline is written directly to the conversation document so that
- * the SlaMonitorService cron job can detect breaches efficiently.
+ * The deadline is written to the conversation document AND a BullMQ
+ * delayed job is scheduled to fire at exactly the deadline. If the
+ * agent responds before the deadline, SlaCancellationListener removes
+ * the job — zero DB polling, zero wasted work.
  */
 @Injectable()
 export class SlaTriggerListener {
@@ -21,6 +24,7 @@ export class SlaTriggerListener {
 
   constructor(
     private readonly slaPoliciesService: SlaPoliciesService,
+    private readonly slaMonitorService: SlaMonitorService,
     @InjectModel(OmniConversationSchemaClass.name)
     private readonly conversationModel: Model<OmniConversationDocument>,
   ) {}
@@ -53,6 +57,7 @@ export class SlaTriggerListener {
       );
       const slaDeadline = new Date(Date.now() + deadlineMs);
 
+      // ── Step 1: Write deadline to conversation document ─────────
       await this.conversationModel.updateOne(
         { _id: event.conversationId },
         {
@@ -62,6 +67,14 @@ export class SlaTriggerListener {
             slaBreached: false,
           },
         },
+      );
+
+      // ── Step 2: Schedule BullMQ delayed job for breach check ────
+      await this.slaMonitorService.scheduleSlaBreachCheck(
+        event.tenantId,
+        event.conversationId,
+        firstResponsePolicy.id,
+        deadlineMs,
       );
 
       this.logger.log(
