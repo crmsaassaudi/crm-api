@@ -18,6 +18,7 @@ export interface ConversationActivity {
   oldValue: string | null;
   newValue: string | null;
   metadata: Record<string, any>;
+  description: string | null;
   createdAt: Date;
 }
 
@@ -39,6 +40,7 @@ export class ActivityRepository {
       oldValue: doc.oldValue,
       newValue: doc.newValue,
       metadata: doc.metadata || {},
+      description: doc.description ?? null,
       createdAt: (doc as any).createdAt,
     };
   }

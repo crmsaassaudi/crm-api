@@ -518,4 +518,28 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: new Date().toISOString(),
       });
   }
+
+  // ─── Activity (Audit Trail) real-time broadcast ─────────────────
+
+  /**
+   * Broadcast new activity log entries to the tenant room.
+   * This enables inline system messages in the ChatWindow
+   * (e.g. "Hệ thống đã gán cuộc hội thoại cho Nguyễn Văn A").
+   */
+  @OnEvent('omni.activity.created')
+  handleActivityCreated(event: {
+    tenantId: string;
+    conversationId: string;
+    activity: any;
+  }) {
+    if (!event.tenantId) return;
+    const room = `tenant:${event.tenantId}`;
+    this.logger.debug(
+      `Broadcasting activity "${event.activity?.action}" for conversation ${event.conversationId}`,
+    );
+    this.server.to(room).emit('omni:activity:new', {
+      conversationId: event.conversationId,
+      activity: event.activity,
+    });
+  }
 }

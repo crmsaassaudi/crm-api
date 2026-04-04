@@ -1,28 +1,42 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   ActivityRepository,
   ConversationActivity,
 } from '../repositories/activity.repository';
 import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
+import { UsersService } from '../../users/users.service';
 
 /**
  * ActivityService — listens to all conversation lifecycle events and
- * persists immutable audit trail entries.
+ * persists immutable audit trail entries with human-readable descriptions.
+ *
+ * After persisting, emits `omni.activity.created` for real-time broadcast
+ * via OmniGateway → Socket.IO → frontend inline system messages.
  *
  * Handles:
- *   - omni.conversation.status_changed → status_changed
- *   - omni.conversation.assigned       → agent_assigned / agent_unassigned
- *   - omni.conversation.tag_added      → tag_added
- *   - omni.conversation.note_added     → note_added
- *   - omni.conversation.created        → conversation_created
- *   - omni.conversation.reopened       → conversation_reopened
+ *   - omni.conversation.created         → conversation_created
+ *   - omni.conversation.reopened        → conversation_reopened
+ *   - omni.conversation.status_changed  → status_changed / auto_resolved
+ *   - omni.conversation.assigned        → agent_assigned / agent_unassigned
+ *   - omni.conversation.tag_added       → tag_added
+ *   - omni.conversation.note_added      → note_added
+ *   - omni.conversation.sla_breached    → sla_breached
+ *   - omni.conversation.escalated       → escalated
+ *   - omni.conversation.ticket_created  → ticket_created
+ *   - omni.conversation.deal_created    → deal_created
+ *   - omni.contact.auto_merged          → identity_merged
  */
 @Injectable()
 export class ActivityService {
   private readonly logger = new Logger(ActivityService.name);
 
-  constructor(private readonly activityRepo: ActivityRepository) {}
+  constructor(
+    private readonly activityRepo: ActivityRepository,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly usersService: UsersService,
+  ) {}
 
   /**
    * Fetch paginated activity timeline for a conversation.
@@ -44,6 +58,7 @@ export class ActivityService {
     channelType: string;
     senderId: string;
   }) {
+    const channelLabel = this.channelLabel(event.channelType);
     await this.log(
       event.tenantId,
       event.conversationId,
@@ -53,6 +68,7 @@ export class ActivityService {
       null,
       'open',
       { channelType: event.channelType, senderId: event.senderId },
+      `Cuộc hội thoại mới từ kênh ${channelLabel}`,
     );
   }
 
@@ -75,6 +91,7 @@ export class ActivityService {
         previousConversationId: event.previousConversationId,
         reopenCount: event.reopenCount,
       },
+      `Khách hàng quay lại — cuộc hội thoại được mở lại (lần thứ ${event.reopenCount})`,
     );
   }
 
@@ -86,7 +103,33 @@ export class ActivityService {
     oldStatus: string;
     agentId: string;
     reason?: string;
+    resolveSource?: string;
   }) {
+    // If auto-resolved by the system, use a separate action
+    if (event.resolveSource === 'auto' || event.resolveSource === 'system') {
+      const reasonText = event.reason
+        ? ` (${this.humanizeReason(event.reason)})`
+        : '';
+      await this.log(
+        event.tenantId,
+        event.conversationId,
+        'system',
+        null,
+        'auto_resolved',
+        event.oldStatus,
+        event.status,
+        { reason: event.reason, resolveSource: event.resolveSource },
+        `Hệ thống đã tự động resolve cuộc hội thoại${reasonText}`,
+      );
+      return;
+    }
+
+    const actorName = await this.resolveActorName(event.agentId);
+    const statusLabel = this.statusLabel(event.status);
+    const reasonText = event.reason
+      ? ` (${this.humanizeReason(event.reason)})`
+      : '';
+
     await this.log(
       event.tenantId,
       event.conversationId,
@@ -95,7 +138,8 @@ export class ActivityService {
       'status_changed',
       event.oldStatus,
       event.status,
-      { reason: event.reason },
+      { reason: event.reason, resolveSource: event.resolveSource },
+      `${actorName} đã ${statusLabel} cuộc hội thoại${reasonText}`,
     );
   }
 
@@ -105,17 +149,39 @@ export class ActivityService {
     conversationId: string;
     agentId: string | null;
     oldAgentId: string | null;
+    strategy?: string;
+    reason?: string;
   }) {
-    const action = event.agentId ? 'agent_assigned' : 'agent_unassigned';
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'agent',
-      event.agentId ?? event.oldAgentId,
-      action,
-      event.oldAgentId,
-      event.agentId,
-    );
+    if (event.agentId) {
+      const agentName = await this.resolveActorName(event.agentId);
+      const strategyText = event.strategy
+        ? ` theo luật ${this.strategyLabel(event.strategy)}`
+        : '';
+      await this.log(
+        event.tenantId,
+        event.conversationId,
+        event.strategy ? 'system' : 'agent',
+        event.agentId,
+        'agent_assigned',
+        event.oldAgentId,
+        event.agentId,
+        { strategy: event.strategy, reason: event.reason },
+        `Hệ thống đã gán cuộc hội thoại cho ${agentName}${strategyText}`,
+      );
+    } else {
+      const oldAgentName = await this.resolveActorName(event.oldAgentId);
+      await this.log(
+        event.tenantId,
+        event.conversationId,
+        'system',
+        event.oldAgentId,
+        'agent_unassigned',
+        event.oldAgentId,
+        null,
+        {},
+        `${oldAgentName} đã được gỡ khỏi cuộc hội thoại — chuyển về hàng chờ`,
+      );
+    }
   }
 
   @OnEvent('omni.conversation.tag_added')
@@ -125,6 +191,7 @@ export class ActivityService {
     tag: string;
     agentId: string;
   }) {
+    const actorName = await this.resolveActorName(event.agentId);
     await this.log(
       event.tenantId,
       event.conversationId,
@@ -133,6 +200,8 @@ export class ActivityService {
       'tag_added',
       null,
       event.tag,
+      {},
+      `${actorName} đã thêm thẻ "${event.tag}"`,
     );
   }
 
@@ -145,6 +214,8 @@ export class ActivityService {
     isPrivate: boolean;
     content: string;
   }) {
+    const actorName = await this.resolveActorName(event.authorId);
+    const visibility = event.isPrivate ? 'nội bộ' : 'công khai';
     await this.log(
       event.tenantId,
       event.conversationId,
@@ -154,10 +225,138 @@ export class ActivityService {
       null,
       event.noteId,
       { content: event.content, isPrivate: event.isPrivate },
+      `${actorName} đã thêm ghi chú ${visibility}`,
     );
   }
 
-  // ─── Helper ─────────────────────────────────────────────────────
+  // ─── New event listeners ────────────────────────────────────────
+
+  @OnEvent('omni.conversation.sla_breached')
+  async onSlaBreach(event: {
+    tenantId: string;
+    conversationId: string;
+    slaType: string;
+    deadline: string;
+  }) {
+    const slaLabel =
+      event.slaType === 'first_response'
+        ? 'Thời gian phản hồi đầu tiên (FRT)'
+        : 'Thời gian xử lý';
+    await this.log(
+      event.tenantId,
+      event.conversationId,
+      'system',
+      null,
+      'sla_breached',
+      null,
+      event.slaType,
+      { deadline: event.deadline, slaType: event.slaType },
+      `⚠️ Vi phạm SLA: ${slaLabel} đã quá hạn`,
+    );
+  }
+
+  @OnEvent('omni.conversation.escalated')
+  async onEscalated(event: {
+    tenantId: string;
+    conversationId: string;
+    level: number;
+    escalatedTo?: string;
+    reason?: string;
+  }) {
+    const targetName = event.escalatedTo
+      ? await this.resolveActorName(event.escalatedTo)
+      : 'quản lý';
+    await this.log(
+      event.tenantId,
+      event.conversationId,
+      'system',
+      null,
+      'escalated',
+      null,
+      String(event.level),
+      {
+        level: event.level,
+        escalatedTo: event.escalatedTo,
+        reason: event.reason,
+      },
+      `Cuộc hội thoại đã được leo thang (cấp ${event.level}) tới ${targetName}`,
+    );
+  }
+
+  @OnEvent('omni.conversation.ticket_created')
+  async onTicketCreated(event: {
+    tenantId: string;
+    conversationId: string;
+    ticketId: string;
+    subject: string;
+    agentId: string;
+  }) {
+    const actorName = await this.resolveActorName(event.agentId);
+    await this.log(
+      event.tenantId,
+      event.conversationId,
+      'agent',
+      event.agentId,
+      'ticket_created',
+      null,
+      event.ticketId,
+      { ticketId: event.ticketId, subject: event.subject },
+      `${actorName} đã tạo Ticket: "${event.subject}"`,
+    );
+  }
+
+  @OnEvent('omni.conversation.deal_created')
+  async onDealCreated(event: {
+    tenantId: string;
+    conversationId: string;
+    dealId: string;
+    title: string;
+    agentId: string;
+  }) {
+    const actorName = await this.resolveActorName(event.agentId);
+    await this.log(
+      event.tenantId,
+      event.conversationId,
+      'agent',
+      event.agentId,
+      'deal_created',
+      null,
+      event.dealId,
+      { dealId: event.dealId, title: event.title },
+      `${actorName} đã tạo Deal: "${event.title}"`,
+    );
+  }
+
+  @OnEvent('omni.contact.auto_merged')
+  async onIdentityMerged(event: {
+    tenantId: string;
+    conversationId?: string;
+    existingContactId: string;
+    senderId: string;
+    channelType: string;
+    matchedBy: string;
+  }) {
+    if (!event.conversationId) return;
+    const channelLabel = this.channelLabel(event.channelType);
+    await this.log(
+      event.tenantId,
+      event.conversationId,
+      'system',
+      null,
+      'identity_merged',
+      null,
+      event.existingContactId,
+      {
+        existingContactId: event.existingContactId,
+        senderId: event.senderId,
+        channelType: event.channelType,
+        matchedBy: event.matchedBy,
+      },
+      `Hệ thống đã tự động liên kết danh tính ${channelLabel} với hồ sơ khách hàng (khớp ${event.matchedBy})`,
+    );
+  }
+
+  // ─── Helpers ────────────────────────────────────────────────────
 
   private async log(
     tenantId: string | null,
@@ -168,9 +367,10 @@ export class ActivityService {
     oldValue: string | null,
     newValue: string | null,
     metadata: Record<string, any> = {},
+    description: string | null = null,
   ): Promise<void> {
     try {
-      await this.activityRepo.create({
+      const activity = await this.activityRepo.create({
         tenantId: tenantId ?? undefined,
         conversationId,
         actorType,
@@ -179,10 +379,88 @@ export class ActivityService {
         oldValue,
         newValue,
         metadata,
+        description,
       } as any);
       this.logger.debug(`Activity logged: ${action} on ${conversationId}`);
+
+      // Emit for real-time WebSocket broadcast
+      this.eventEmitter.emit('omni.activity.created', {
+        tenantId,
+        conversationId,
+        activity,
+      });
     } catch (err) {
       this.logger.error(`Failed to log activity: ${err.message}`);
     }
+  }
+
+  /**
+   * Resolve a user/agent ID to a display name.
+   * Falls back to "Agent" if user cannot be found.
+   */
+  private async resolveActorName(
+    actorId: string | null | undefined,
+  ): Promise<string> {
+    if (!actorId) return 'Hệ thống';
+    try {
+      const users = await this.usersService.findByIds([actorId]);
+      if (users.length > 0) {
+        const u = users[0];
+        const fullName = [u.firstName, u.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+        return fullName || u.email || 'Agent';
+      }
+    } catch {
+      // Fallback silently
+    }
+    return 'Agent';
+  }
+
+  /** Map channel type to human-readable Vietnamese label */
+  private channelLabel(type: string): string {
+    const map: Record<string, string> = {
+      facebook: 'Facebook Messenger',
+      zalo: 'Zalo OA',
+      whatsapp: 'WhatsApp',
+      instagram: 'Instagram',
+      livechat: 'Live Chat',
+    };
+    return map[type?.toLowerCase()] ?? type;
+  }
+
+  /** Map conversation status to Vietnamese verb */
+  private statusLabel(status: string): string {
+    const map: Record<string, string> = {
+      resolved: 'resolve',
+      closed: 'đóng',
+      open: 'mở lại',
+      pending: 'đặt chờ',
+    };
+    return map[status] ?? status;
+  }
+
+  /** Map assignment strategy to Vietnamese label */
+  private strategyLabel(strategy: string): string {
+    const map: Record<string, string> = {
+      'round-robin': 'Round-Robin',
+      'least-busy': 'Least-Busy',
+      'capacity-based': 'Capacity-Based',
+      sticky: 'Sticky Routing',
+      manual: 'thủ công',
+    };
+    return map[strategy] ?? strategy;
+  }
+
+  /** Humanize reason codes */
+  private humanizeReason(reason: string): string {
+    const map: Record<string, string> = {
+      customer_replied_within_reopen_window:
+        'khách hàng trả lời trong cửa sổ mở lại',
+      auto_resolve_idle: 'không hoạt động quá thời gian quy định',
+      sla_breach: 'vi phạm SLA',
+    };
+    return map[reason] ?? reason.replace(/_/g, ' ');
   }
 }

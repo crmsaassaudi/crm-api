@@ -18,6 +18,14 @@ const ACTIVITY_ACTIONS = [
   'note_deleted',
   'priority_changed',
   'message_sent',
+  'auto_resolved',
+  'sla_breached',
+  'escalated',
+  'ticket_created',
+  'deal_created',
+  'identity_merged',
+  'agent_rejected',
+  'agent_transferred',
 ] as const;
 
 const ACTOR_TYPES = ['agent', 'system', 'customer'] as const;
@@ -73,6 +81,10 @@ export class ConversationActivitySchemaClass extends EntityDocumentHelper {
   /** Additional context (e.g. note preview, reason) */
   @Prop({ type: Object, default: {} })
   metadata: Record<string, any>;
+
+  /** Human-readable description for inline system message display */
+  @Prop({ type: String, default: null })
+  description: string | null;
 }
 
 export const ConversationActivitySchema = SchemaFactory.createForClass(
