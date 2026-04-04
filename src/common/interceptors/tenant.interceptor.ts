@@ -83,9 +83,56 @@ export class TenantInterceptor implements NestInterceptor {
       this.cls.set('activeTenantId', tenantId);
     }
 
+    // ── Step 6: Inject tenant i18n settings into CLS ──
+    if (tenantId) {
+      await this.resolveI18nContext(tenantId);
+    }
+
     this.logger.debug(
-      `Context resolved → tenantId=${this.cls.get('tenantId')}, userId=${this.cls.get('userId')}, email=${this.cls.get('email')}`,
+      `Context resolved → tenantId=${this.cls.get('tenantId')}, userId=${this.cls.get('userId')}, locale=${this.cls.get('tenantLocale') ?? 'en'}, tz=${this.cls.get('tenantTimezone') ?? 'UTC'}`,
     );
+  }
+
+  /**
+   * Fetch tenant i18n settings and user overrides, then set into CLS.
+   * Resolution: user preference > tenant default > system default.
+   */
+  private async resolveI18nContext(tenantId: string): Promise<void> {
+    try {
+      const tenantRepo = this.moduleRef.get(TenantsRepository, {
+        strict: false,
+      });
+      const tenant = await tenantRepo.findById(tenantId);
+
+      let locale = tenant?.i18nSettings?.locale ?? 'en';
+      let timezone = tenant?.i18nSettings?.timezone ?? 'UTC';
+
+      // User-level override
+      const userId = this.cls.get('userId');
+      if (userId) {
+        try {
+          const userRepo = this.moduleRef.get(UsersDocumentRepository, {
+            strict: false,
+          });
+          const user = await userRepo.findById(userId);
+          if (user?.i18nPreferences?.locale) {
+            locale = user.i18nPreferences.locale;
+          }
+          if (user?.i18nPreferences?.timezone) {
+            timezone = user.i18nPreferences.timezone;
+          }
+        } catch {
+          // User lookup failed — use tenant defaults
+        }
+      }
+
+      this.cls.set('tenantLocale', locale);
+      this.cls.set('tenantTimezone', timezone);
+    } catch {
+      // Graceful: use system defaults
+      this.cls.set('tenantLocale', 'en');
+      this.cls.set('tenantTimezone', 'UTC');
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────

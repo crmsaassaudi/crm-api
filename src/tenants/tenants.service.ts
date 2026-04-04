@@ -513,4 +513,52 @@ export class TenantsService {
   ): Promise<Tenant | null> {
     return this.tenantsRepository.updateStorageQuota(tenantId, limitMB);
   }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // i18n Settings
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private static readonly I18N_DEFAULTS = {
+    locale: 'en',
+    timezone: 'UTC',
+    dateFormat: 'MM/DD/YYYY',
+    currency: 'USD',
+  };
+
+  /**
+   * Get the tenant's i18n settings, falling back to system defaults.
+   */
+  async getI18nSettings(tenantId: string): Promise<{
+    locale: string;
+    timezone: string;
+    dateFormat: string;
+    currency: string;
+  }> {
+    const tenant = await this.tenantsRepository.findById(tenantId);
+    return tenant?.i18nSettings ?? { ...TenantsService.I18N_DEFAULTS };
+  }
+
+  /**
+   * Partially update the tenant's i18n settings.
+   */
+  async updateI18nSettings(
+    tenantId: string,
+    settings: Partial<{
+      locale: string;
+      timezone: string;
+      dateFormat: string;
+      currency: string;
+    }>,
+  ): Promise<{
+    locale: string;
+    timezone: string;
+    dateFormat: string;
+    currency: string;
+  }> {
+    const updated = await this.tenantsRepository.updateI18nSettings(
+      tenantId,
+      settings,
+    );
+    return updated?.i18nSettings ?? { ...TenantsService.I18N_DEFAULTS };
+  }
 }

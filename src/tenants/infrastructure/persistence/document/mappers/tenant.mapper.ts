@@ -22,6 +22,20 @@ export class TenantMapper {
       ? { resolveNoteMode: raw.omniSettings.resolveNoteMode }
       : { resolveNoteMode: 'optional' };
 
+    tenant.i18nSettings = raw.i18nSettings
+      ? {
+          locale: raw.i18nSettings.locale ?? 'en',
+          timezone: raw.i18nSettings.timezone ?? 'UTC',
+          dateFormat: raw.i18nSettings.dateFormat ?? 'MM/DD/YYYY',
+          currency: raw.i18nSettings.currency ?? 'USD',
+        }
+      : {
+          locale: 'en',
+          timezone: 'UTC',
+          dateFormat: 'MM/DD/YYYY',
+          currency: 'USD',
+        };
+
     tenant.createdAt = raw.createdAt;
     tenant.updatedAt = raw.updatedAt;
     return tenant;
@@ -45,6 +59,10 @@ export class TenantMapper {
     persistence.subscriptionPlan =
       domain.subscriptionPlan ?? SubscriptionPlan.FREE;
     persistence.status = domain.status ?? TenantStatus.ACTIVE;
+
+    if (domain.i18nSettings) {
+      persistence.i18nSettings = { ...domain.i18nSettings };
+    }
 
     return persistence;
   }

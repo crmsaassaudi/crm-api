@@ -76,6 +76,27 @@ export class TenantSchemaClass extends EntityDocumentHelper {
     limitMB: number;
     usedMB: number;
   };
+
+  @Prop({
+    type: {
+      locale: { type: String, default: 'en' },
+      timezone: { type: String, default: 'UTC' },
+      dateFormat: { type: String, default: 'MM/DD/YYYY' },
+      currency: { type: String, default: 'USD' },
+    },
+    default: () => ({
+      locale: 'en',
+      timezone: 'UTC',
+      dateFormat: 'MM/DD/YYYY',
+      currency: 'USD',
+    }),
+  })
+  i18nSettings: {
+    locale: string;
+    timezone: string;
+    dateFormat: string;
+    currency: string;
+  };
 }
 
 export const TenantSchema = SchemaFactory.createForClass(TenantSchemaClass);

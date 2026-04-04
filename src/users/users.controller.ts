@@ -12,6 +12,7 @@ import {
   HttpCode,
   SerializeOptions,
   UseInterceptors,
+  Request,
 } from '@nestjs/common';
 import { CacheTTL } from '@nestjs/cache-manager';
 import { HttpCacheInterceptor } from '../common/cache/interceptors/http-cache.interceptor';
@@ -21,6 +22,7 @@ import { InviteUserDto } from './dto/invite-user.dto';
 import { CreateUserForTenantDto } from './dto/create-user-for-tenant.dto';
 import { CheckEmailDto } from './dto/check-email.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateUserI18nPreferencesDto } from './dto/user-i18n-preferences.dto';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
@@ -37,6 +39,7 @@ import { QueryUserDto } from './dto/query-user.dto';
 import { User } from './domain/user';
 import { UsersService } from './users.service';
 import { RolesGuard } from '../roles/roles.guard';
+import { ClsService } from 'nestjs-cls';
 import {
   PaginationResponse,
   PaginationResponseDto,
@@ -52,7 +55,10 @@ import {
 @UseInterceptors(HttpCacheInterceptor)
 @CacheEntity('User')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly cls: ClsService,
+  ) {}
 
   @ApiCreatedResponse({
     type: User,
@@ -231,5 +237,53 @@ export class UsersController {
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: User['id']): Promise<void> {
     return this.usersService.remove(id);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // i18n Preferences (User-level override with tenant cascade)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  @ApiOperation({
+    summary: 'Get resolved i18n settings for the current user',
+    description:
+      'Returns merged i18n settings: user overrides → tenant defaults → system defaults.',
+  })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        locale: 'vi',
+        timezone: 'Asia/Ho_Chi_Minh',
+        dateFormat: 'DD/MM/YYYY',
+        currency: 'VND',
+        _sources: {
+          locale: 'user',
+          timezone: 'tenant',
+          dateFormat: 'tenant',
+          currency: 'tenant',
+        },
+      },
+    },
+  })
+  @Get('me/i18n')
+  @HttpCode(HttpStatus.OK)
+  async getMyI18n(@Request() req: any) {
+    const userId = req.user?.userId ?? req.user?.sub ?? this.cls.get('userId');
+    const tenantId = this.cls.get('tenantId');
+    return this.usersService.getResolvedI18n(userId, tenantId);
+  }
+
+  @ApiOperation({
+    summary: 'Update current user i18n preferences',
+    description:
+      'Set locale/timezone overrides. Use null to inherit from tenant defaults.',
+  })
+  @Patch('me/i18n')
+  @HttpCode(HttpStatus.OK)
+  async updateMyI18n(
+    @Request() req: any,
+    @Body() dto: UpdateUserI18nPreferencesDto,
+  ) {
+    const userId = req.user?.userId ?? req.user?.sub ?? this.cls.get('userId');
+    return this.usersService.updateI18nPreferences(userId, dto);
   }
 }

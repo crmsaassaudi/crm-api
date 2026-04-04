@@ -99,4 +99,16 @@ export class User {
     required: false,
   })
   skills?: string[];
+
+  @ApiProperty({
+    description:
+      'User-level i18n overrides. Null fields inherit from tenant defaults.',
+    required: false,
+  })
+  i18nPreferences?: {
+    /** Override locale (null = use tenant default) */
+    locale?: string | null;
+    /** Override timezone (null = use tenant default) */
+    timezone?: string | null;
+  } | null;
 }

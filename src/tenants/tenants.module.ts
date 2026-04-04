@@ -4,6 +4,7 @@ import { DocumentTenantPersistenceModule } from './infrastructure/persistence/do
 import { AuthModule } from '../auth/auth.module';
 import { UsersModule } from '../users/users.module';
 import { TenantsAuthController } from './tenants.controller';
+import { TenantSettingsController } from './tenant-settings.controller';
 import { TenantCreatedListener } from './listeners/tenant-created.listener';
 import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
 
@@ -18,7 +19,7 @@ import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
     CrmSettingsModule,
   ],
   providers: [TenantsService, TenantCreatedListener],
-  controllers: [TenantsAuthController],
+  controllers: [TenantsAuthController, TenantSettingsController],
   exports: [TenantsService, DocumentTenantPersistenceModule],
 })
 export class TenantsModule {}

@@ -51,6 +51,12 @@ export class UserMapper {
 
     domainEntity.omniMaxCapacity = raw.omniMaxCapacity ?? null;
     domainEntity.skills = raw.skills ?? [];
+    domainEntity.i18nPreferences = raw.i18nPreferences
+      ? {
+          locale: raw.i18nPreferences.locale ?? null,
+          timezone: raw.i18nPreferences.timezone ?? null,
+        }
+      : null;
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
@@ -101,6 +107,9 @@ export class UserMapper {
     }
     if (domainEntity.skills !== undefined) {
       persistenceSchema.skills = domainEntity.skills;
+    }
+    if (domainEntity.i18nPreferences !== undefined) {
+      persistenceSchema.i18nPreferences = domainEntity.i18nPreferences;
     }
     persistenceSchema.createdAt = domainEntity.createdAt;
     persistenceSchema.updatedAt = domainEntity.updatedAt;

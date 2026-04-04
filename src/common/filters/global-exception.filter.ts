@@ -5,9 +5,16 @@ import {
   HttpException,
   HttpStatus,
   Logger,
+  BadRequestException,
+  NotFoundException,
+  ConflictException,
+  ForbiddenException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { ClsService } from 'nestjs-cls';
+import { BusinessException } from '../exceptions/business.exception';
+import { COMMON_ERRORS } from '../constants/error-code.base';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
@@ -31,15 +38,22 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     const correlationId = this.cls.getId();
 
-    // Extract message and error code if available
-    let message = 'Internal server error';
-    let errorCode = 'INTERNAL_SERVER_ERROR';
+    // Extract message and error code
+    let message: string | string[] = 'Internal server error';
+    let errorCode: string = COMMON_ERRORS.INTERNAL_ERROR;
     let errors = null;
 
-    if (exception instanceof HttpException) {
+    if (exception instanceof BusinessException) {
+      // ── Typed business errors with explicit errorCode ──
+      const response = exception.getResponse() as any;
+      errorCode = exception.errorCode;
+      message = response.message ?? exception.message;
+      errors = response.errors ?? null;
+    } else if (exception instanceof HttpException) {
+      // ── NestJS built-in exceptions → map to generic codes ──
       const response = exception.getResponse() as any;
       message = response.message || exception.message;
-      errorCode = response.error || HttpStatus[httpStatus];
+      errorCode = response.errorCode ?? this.mapNestExceptionToCode(exception);
       errors = response.errors || null;
     } else if (exception instanceof Error) {
       message =
@@ -49,6 +63,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     const responseBody = {
+      statusCode: httpStatus,
       errorCode,
       message,
       errors,
@@ -74,10 +89,28 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       );
     } else {
       this.logger.warn(
-        `[${correlationId}] [User:${userId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)} - ${message}`,
+        `[${correlationId}] [User:${userId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)} - ${errorCode}: ${message}`,
       );
     }
 
     httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
+  }
+
+  /**
+   * Maps NestJS built-in HttpException subclasses to standardised error codes.
+   * Services should progressively migrate to BusinessException for specific codes.
+   */
+  private mapNestExceptionToCode(exception: HttpException): string {
+    if (exception instanceof BadRequestException)
+      return COMMON_ERRORS.VALIDATION_ERROR;
+    if (exception instanceof NotFoundException)
+      return COMMON_ERRORS.ENTITY_NOT_FOUND;
+    if (exception instanceof ConflictException) return COMMON_ERRORS.CONFLICT;
+    if (exception instanceof ForbiddenException) return COMMON_ERRORS.FORBIDDEN;
+    if (exception instanceof UnauthorizedException)
+      return COMMON_ERRORS.UNAUTHORIZED;
+
+    // Fallback for other HttpExceptions
+    return COMMON_ERRORS.INTERNAL_ERROR;
   }
 }

@@ -110,4 +110,36 @@ export class TenantsRepository {
       .exec();
     return updated ? TenantMapper.toDomain(updated) : null;
   }
+
+  /**
+   * Update the tenant's i18n settings (locale, timezone, dateFormat, currency).
+   */
+  async updateI18nSettings(
+    tenantId: string,
+    settings: Partial<{
+      locale: string;
+      timezone: string;
+      dateFormat: string;
+      currency: string;
+    }>,
+  ): Promise<Tenant | null> {
+    const setFields: Record<string, string> = {};
+    if (settings.locale !== undefined)
+      setFields['i18nSettings.locale'] = settings.locale;
+    if (settings.timezone !== undefined)
+      setFields['i18nSettings.timezone'] = settings.timezone;
+    if (settings.dateFormat !== undefined)
+      setFields['i18nSettings.dateFormat'] = settings.dateFormat;
+    if (settings.currency !== undefined)
+      setFields['i18nSettings.currency'] = settings.currency;
+
+    if (Object.keys(setFields).length === 0) {
+      return this.findById(tenantId);
+    }
+
+    const updated = await this.tenantsModel
+      .findByIdAndUpdate(tenantId, { $set: setFields }, { new: true })
+      .exec();
+    return updated ? TenantMapper.toDomain(updated) : null;
+  }
 }

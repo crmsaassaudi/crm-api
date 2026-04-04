@@ -80,4 +80,15 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
   @IsArray()
   @IsString({ each: true })
   skills?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'User-level i18n overrides. Set fields to null to inherit from tenant defaults.',
+    example: { locale: 'vi', timezone: 'Asia/Ho_Chi_Minh' },
+  })
+  @IsOptional()
+  i18nPreferences?: {
+    locale?: string | null;
+    timezone?: string | null;
+  } | null;
 }

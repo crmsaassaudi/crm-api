@@ -46,6 +46,18 @@ export class Tenant {
     usedMB: number;
   };
 
+  @ApiProperty({ description: 'Tenant-level i18n defaults' })
+  i18nSettings: {
+    /** BCP-47 locale: 'en', 'vi', 'fr', 'es', 'zh', 'ar', 'hi', 'uk' */
+    locale: string;
+    /** IANA timezone: 'UTC', 'Asia/Ho_Chi_Minh', 'America/New_York' */
+    timezone: string;
+    /** Date display format: 'DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD' */
+    dateFormat: string;
+    /** ISO 4217 currency code: 'USD', 'VND', 'EUR' */
+    currency: string;
+  };
+
   @ApiProperty()
   createdAt: Date;
 

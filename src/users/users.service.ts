@@ -665,4 +665,68 @@ export class UsersService {
     // 2. Update Local DB
     return this.usersRepository.update(id, { status });
   }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // i18n Preferences (User + Tenant cascade)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private static readonly I18N_SYSTEM_DEFAULTS = {
+    locale: 'en',
+    timezone: 'UTC',
+    dateFormat: 'MM/DD/YYYY',
+    currency: 'USD',
+  };
+
+  /**
+   * Get the resolved i18n settings for the current user.
+   * Resolution order: User preferences → Tenant defaults → System defaults.
+   */
+  async getResolvedI18n(userId: string, tenantId: string) {
+    const [user, tenant] = await Promise.all([
+      this.usersRepository.findById(userId),
+      this.tenantsRepository.findById(tenantId),
+    ]);
+
+    const tenantSettings = tenant?.i18nSettings ?? {
+      ...UsersService.I18N_SYSTEM_DEFAULTS,
+    };
+    const userPrefs = user?.i18nPreferences;
+
+    return {
+      locale: userPrefs?.locale ?? tenantSettings.locale,
+      timezone: userPrefs?.timezone ?? tenantSettings.timezone,
+      dateFormat: tenantSettings.dateFormat,
+      currency: tenantSettings.currency,
+      // Include source info so frontend knows what's inherited vs overridden
+      _sources: {
+        locale: userPrefs?.locale ? 'user' : 'tenant',
+        timezone: userPrefs?.timezone ? 'user' : 'tenant',
+        dateFormat: 'tenant',
+        currency: 'tenant',
+      },
+    };
+  }
+
+  /**
+   * Update the current user's i18n preferences.
+   * Set a field to null to inherit from tenant defaults.
+   */
+  async updateI18nPreferences(
+    userId: string,
+    preferences: { locale?: string | null; timezone?: string | null },
+  ) {
+    const user = await this.usersRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const updated = await this.usersRepository.update(userId, {
+      i18nPreferences: {
+        locale: preferences.locale ?? null,
+        timezone: preferences.timezone ?? null,
+      },
+    });
+
+    return updated?.i18nPreferences ?? null;
+  }
 }

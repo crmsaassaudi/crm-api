@@ -102,6 +102,19 @@ export class UserSchemaClass extends EntityDocumentHelper {
   @Prop({ type: [String], default: [] })
   skills: string[];
 
+  /** User-level i18n overrides. Null = inherit from tenant defaults. */
+  @Prop({
+    type: {
+      locale: { type: String, default: null },
+      timezone: { type: String, default: null },
+    },
+    default: null,
+  })
+  i18nPreferences?: {
+    locale?: string | null;
+    timezone?: string | null;
+  } | null;
+
   @Prop({ default: now })
   createdAt: Date;
 
