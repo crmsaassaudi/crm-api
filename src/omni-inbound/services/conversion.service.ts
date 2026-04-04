@@ -14,6 +14,7 @@ import { CreateTicketFromConversationDto } from '../dto/create-ticket-from-conve
 import { LinkMessagesDto } from '../dto/link-messages.dto';
 import { Deal } from '../../deals/domain/deal';
 import { Ticket } from '../../tickets/domain/ticket';
+import { MessageRepository } from '../repositories/message.repository';
 
 /**
  * ConversionService — creates Deal/Lead or Ticket entities directly
@@ -26,11 +27,59 @@ export class ConversionService {
 
   constructor(
     private readonly conversationRepo: ConversationRepository,
+    private readonly messageRepo: MessageRepository,
     private readonly dealsService: DealsService,
     private readonly ticketsService: TicketsService,
     private readonly dealRepo: DealRepository,
     private readonly ticketRepo: TicketRepository,
   ) {}
+
+  private async generateContextDescription(
+    tenantId: string,
+    conversationId: string,
+    providedDescription?: string,
+  ): Promise<string> {
+    try {
+      const messagesRes = await this.messageRepo.findByConversation(
+        conversationId,
+        1,
+        20, // get up to 20 recent messages
+      );
+
+      const chatLink = `/omni-channel/conversations/${conversationId}`;
+      let transcript = '';
+
+      if (messagesRes.data && messagesRes.data.length > 0) {
+        transcript = messagesRes.data
+          .map((m) => {
+            const sender = m.senderType === 'customer' ? 'Customer' : 'Agent';
+            let msgContent = '';
+            if (m.messageType === 'text') msgContent = m.content ?? '';
+            else if (m.messageType === 'image') msgContent = '[Image Attached]';
+            else if (m.messageType === 'file') msgContent = '[File Attached]';
+            else msgContent = `[${m.messageType}]`;
+
+            return `${sender}: ${msgContent}`;
+          })
+          .join('\n');
+      } else {
+        transcript = 'No messages found in this conversation yet.';
+      }
+
+      const note = `Chat Context Link: ${chatLink}\n\n--- Recent Chat Transcript ---\n${transcript}`;
+
+      if (providedDescription) {
+        return `${providedDescription.trim()}\n\n${note}`;
+      }
+      return note;
+    } catch (e) {
+      this.logger.error(
+        `Failed to generate context description: ${e.message}`,
+        e.stack,
+      );
+      return `Chat Context Link: /omni-channel/conversations/${conversationId}`;
+    }
+  }
 
   /**
    * Create a Deal linked to an omni-conversation.
@@ -49,6 +98,11 @@ export class ConversionService {
 
     const contactIds = conversation.contactId ? [conversation.contactId] : [];
 
+    const contextDescription = await this.generateContextDescription(
+      tenantId,
+      conversationId,
+    );
+
     const deal = await this.dealsService.create({
       tenantId,
       title: dto.title,
@@ -59,6 +113,7 @@ export class ConversionService {
       currency: 'VND',
       source: 'omni-channel',
       contactIds,
+      description: contextDescription,
       omniConversationId: conversationId,
       linkedMessageIds: dto.linkedMessageIds ?? [],
       createdById: agentId,
@@ -86,10 +141,16 @@ export class ConversionService {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
 
+    const contextDescription = await this.generateContextDescription(
+      tenantId,
+      conversationId,
+      dto.description,
+    );
+
     const ticket = await this.ticketsService.create({
       tenantId,
       subject: dto.subject,
-      description: dto.description ?? '',
+      description: contextDescription,
       priority: dto.priority ?? 'MEDIUM',
       status: 'new',
       channel: 'omni-channel',

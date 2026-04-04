@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConversionService } from './conversion.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
+import { MessageRepository } from '../repositories/message.repository';
 import { DealsService } from '../../deals/deals.service';
 import { TicketsService } from '../../tickets/tickets.service';
 import { DealRepository } from '../../deals/infrastructure/persistence/document/repositories/deal.repository';
@@ -10,6 +11,7 @@ import { TicketRepository } from '../../tickets/infrastructure/persistence/docum
 describe('ConversionService', () => {
   let service: ConversionService;
   let conversationRepoMock: any;
+  let messageRepoMock: any;
   let dealsServiceMock: any;
   let ticketsServiceMock: any;
   let dealRepoMock: any;
@@ -18,6 +20,10 @@ describe('ConversionService', () => {
   beforeEach(async () => {
     conversationRepoMock = {
       findById: jest.fn(),
+    };
+
+    messageRepoMock = {
+      findByConversation: jest.fn().mockResolvedValue({ data: [] }),
     };
 
     dealsServiceMock = {
@@ -46,6 +52,7 @@ describe('ConversionService', () => {
       providers: [
         ConversionService,
         { provide: ConversationRepository, useValue: conversationRepoMock },
+        { provide: MessageRepository, useValue: messageRepoMock },
         { provide: DealsService, useValue: dealsServiceMock },
         { provide: TicketsService, useValue: ticketsServiceMock },
         { provide: DealRepository, useValue: dealRepoMock },
