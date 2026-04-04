@@ -31,6 +31,8 @@ import { NoteService } from './services/note.service';
 import { AssignmentService } from './services/assignment.service';
 import { ActivityService } from './services/activity.service';
 import { AgentFallbackService } from './services/agent-fallback.service';
+import { AutoResolveService } from './services/auto-resolve.service';
+import { BusinessHoursService } from './services/business-hours.service';
 
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
@@ -173,6 +175,10 @@ import { TicketsModule } from '../tickets/tickets.module';
 
     // ── Pillar 10: Agent Disconnect Fallback ──────────────────────
     AgentFallbackService,
+
+    // ── Pillar 11: Session Lifecycle (Auto-Resolve + Business Hours) ─
+    AutoResolveService,
+    BusinessHoursService,
   ],
   exports: [
     InboundProcessorService,
@@ -188,6 +194,8 @@ import { TicketsModule } from '../tickets/tickets.module';
     ConversionService,
     ActivityService,
     AgentFallbackService,
+    AutoResolveService,
+    BusinessHoursService,
   ],
 })
 export class OmniInboundModule {}

@@ -199,4 +199,37 @@ export class AgentPresenceService {
     await client.del(key);
     this.logger.log(`Agent ${userId} removed from presence`);
   }
+
+  /**
+   * Update the max capacity for an agent in their Redis presence record.
+   * Called when an admin changes the agent's capacity or when the agent goes online.
+   */
+  async updateMaxCapacity(
+    tenantId: string,
+    userId: string,
+    maxCapacity: number,
+  ): Promise<void> {
+    const presence = await this.getPresence(tenantId, userId);
+    if (!presence) return;
+
+    presence.maxCapacity = maxCapacity;
+
+    const key = agentPresenceKey(tenantId, userId);
+    const client = this.redis.getClient();
+    await client.setex(key, HEARTBEAT_TTL_SECONDS, JSON.stringify(presence));
+
+    this.logger.log(
+      `Updated max capacity for agent ${userId} to ${maxCapacity}`,
+    );
+  }
+
+  /**
+   * Get the configured max capacity for an agent.
+   * Returns the per-agent value from their presence if set,
+   * otherwise returns the default capacity.
+   */
+  async getAgentCapacity(tenantId: string, userId: string): Promise<number> {
+    const presence = await this.getPresence(tenantId, userId);
+    return presence?.maxCapacity ?? AgentPresenceService.DEFAULT_MAX_CAPACITY;
+  }
 }

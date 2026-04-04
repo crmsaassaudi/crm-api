@@ -94,6 +94,14 @@ export class UserSchemaClass extends EntityDocumentHelper {
   })
   status?: string | null;
 
+  /** Max concurrent omni-channel conversations for this agent (null = use tenant default) */
+  @Prop({ type: Number, default: null })
+  omniMaxCapacity?: number | null;
+
+  /** Skill tags for skill-based routing (e.g. ['spanish', 'billing', 'tech']) */
+  @Prop({ type: [String], default: [] })
+  skills: string[];
+
   @Prop({ default: now })
   createdAt: Date;
 

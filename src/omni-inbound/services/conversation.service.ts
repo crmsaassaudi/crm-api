@@ -18,6 +18,8 @@ import { RedisLockService } from '../../redis/redis-lock.service';
 import { ContactsService } from '../../contacts/contacts.service';
 import { FacebookAdapter } from '../adapters/facebook.adapter';
 import { TenantsService } from '../../tenants/tenants.service';
+import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
+import { BusinessHoursService } from './business-hours.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
 import { TimelineResponseDto } from '../dto/timeline-response.dto';
 import {
@@ -32,7 +34,9 @@ import {
  * 2. Distributed lock acquisition (per sender_id)
  * 3. Identity resolution (Redis cache-aside)
  * 4. Session management: finds or creates conversations
- *    - If current session is resolved/closed → creates NEW session with link
+ *    - If current session is resolved/closed:
+ *      a) Within reopen window → reopen existing session
+ *      b) Past reopen window → create NEW session with link
  * 5. Message persistence: saves each message to MongoDB
  * 6. Media caching: proxies expiring URLs via MediaProxyService
  * 7. Cache update: updates identity mapping in Redis
@@ -56,6 +60,8 @@ export class ConversationService {
     private readonly contactsService: ContactsService,
     private readonly facebookAdapter: FacebookAdapter,
     private readonly tenantsService: TenantsService,
+    private readonly settingsService: CrmSettingsService,
+    private readonly businessHoursService: BusinessHoursService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
@@ -292,15 +298,78 @@ export class ConversationService {
         existing &&
         (existing.status === 'resolved' || existing.status === 'closed')
       ) {
-        // Session is no longer active → force creation of a new session
-        this.logger.log(
-          `Existing conversation ${conversationId} is ${existing.status} ` +
-            `— creating new session for sender ${payload.senderId}`,
-        );
-        // Keep the contactId from the previous session
-        contactId = existing.contactId ?? contactId;
-        // Set conversationId to null so a new one is created below
-        conversationId = null;
+        // ── Reopen Window Check ──────────────────────────────────
+        // Fetch tenant session lifecycle config
+        const lifecycleConfig = await this.getSessionLifecycleConfig();
+        const reopenWindowHours = lifecycleConfig.reopenWindowHours ?? 24;
+
+        // Check if the conversation was resolved within the reopen window
+        const resolvedAt =
+          (existing as any).resolvedAt ?? (existing as any).updatedAt;
+        const hoursSinceResolved = resolvedAt
+          ? (Date.now() - new Date(resolvedAt).getTime()) / (1000 * 60 * 60)
+          : Infinity;
+
+        if (reopenWindowHours > 0 && hoursSinceResolved <= reopenWindowHours) {
+          // WITHIN reopen window → reopen existing session
+          this.logger.log(
+            `Conversation ${conversationId} is ${existing.status} but within reopen window ` +
+              `(${hoursSinceResolved.toFixed(1)}h / ${reopenWindowHours}h) — reopening`,
+          );
+
+          const reopened =
+            await this.conversationRepo.reopenConversation(conversationId);
+
+          if (reopened) {
+            // Update identity cache so future messages go to this conversation
+            await this.identityService.updateIdentity(
+              payload.channelType,
+              payload.channelAccount,
+              payload.externalConversationId,
+              {
+                contactId: existing.contactId ?? contactId,
+                conversationId,
+              },
+              payload.tenantId,
+            );
+
+            this.eventEmitter.emit('omni.conversation.reopened', {
+              tenantId: payload.tenantId,
+              conversationId,
+              previousConversationId: null,
+              reopenCount: reopened.reopenCount,
+              conversation: reopened,
+              isReopenedSession: true, // distinguish from new-session reopen
+            });
+
+            this.eventEmitter.emit('omni.conversation.status_changed', {
+              tenantId: payload.tenantId,
+              conversationId,
+              status: 'open',
+              oldStatus: existing.status,
+              agentId: null,
+              reason: 'customer_replied_within_reopen_window',
+              channelType: payload.channelType,
+              channelAccount: payload.channelAccount,
+              externalConversationId: payload.externalConversationId,
+            });
+
+            // Keep contactId from the reopened session
+            contactId = existing.contactId ?? contactId;
+            // conversationId stays the same — don't create a new one
+          }
+        } else {
+          // OUTSIDE reopen window → force creation of a new session
+          this.logger.log(
+            `Existing conversation ${conversationId} is ${existing.status} ` +
+              `and reopen window expired (${hoursSinceResolved.toFixed(1)}h > ${reopenWindowHours}h) ` +
+              `— creating new session for sender ${payload.senderId}`,
+          );
+          // Keep the contactId from the previous session
+          contactId = existing.contactId ?? contactId;
+          // Set conversationId to null so a new one is created below
+          conversationId = null;
+        }
       }
 
       // Self-heal old data: active conversation exists but contact was never linked.
@@ -499,6 +568,9 @@ export class ConversationService {
       conversationId,
       messageId: payload.externalMessageId,
     });
+
+    // ── Step 8: Business Hours / OOO Auto-Reply ────────────────
+    await this.handleBusinessHoursCheck(payload, conversationId);
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -622,6 +694,100 @@ export class ConversationService {
         err.stack ?? JSON.stringify(err),
       );
       return null;
+    }
+  }
+
+  /**
+   * Load session lifecycle configuration from tenant CRM settings.
+   * Falls back to sensible defaults if not configured.
+   */
+  private async getSessionLifecycleConfig(): Promise<{
+    reopenWindowHours: number;
+    autoResolveTimeoutHours: number;
+    autoResolveEnabled: boolean;
+    oooAutoReplyEnabled: boolean;
+    oooMessage: string;
+    oooSetPending: boolean;
+  }> {
+    const defaults = {
+      reopenWindowHours: 24,
+      autoResolveTimeoutHours: 48,
+      autoResolveEnabled: true,
+      oooAutoReplyEnabled: false,
+      oooMessage:
+        'Thank you for your message! Our team is currently offline. We will get back to you during business hours.',
+      oooSetPending: true,
+    };
+
+    try {
+      const config = await this.settingsService.getSetting(
+        'omni_session_lifecycle',
+      );
+      return config ? { ...defaults, ...config } : defaults;
+    } catch {
+      return defaults;
+    }
+  }
+
+  /**
+   * Check if this message arrived outside business hours.
+   * If so, optionally:
+   *   - Send an out-of-office auto-reply message
+   *   - Set the conversation status to 'pending'
+   */
+  private async handleBusinessHoursCheck(
+    payload: OmniPayload,
+    conversationId: string,
+  ): Promise<void> {
+    try {
+      const withinHours = await this.businessHoursService.isWithinBusinessHours(
+        payload.tenantId,
+      );
+
+      if (withinHours) {
+        return; // Normal business hours — nothing to do
+      }
+
+      const oooConfig = await this.businessHoursService.getOOOConfig(
+        payload.tenantId,
+      );
+
+      if (!oooConfig.oooAutoReplyEnabled) {
+        return; // OOO is disabled — nothing to do
+      }
+
+      // Set conversation to pending if configured
+      if (oooConfig.oooSetPending) {
+        await this.conversationRepo.updateStatus(conversationId, 'pending');
+        this.logger.log(
+          `Set conversation ${conversationId} to pending (outside business hours)`,
+        );
+      }
+
+      // Emit an event for the OOO auto-reply message.
+      // The outbound service or gateway can listen to this and send
+      // the actual reply through the appropriate channel.
+      if (oooConfig.oooMessage) {
+        this.eventEmitter.emit('omni.ooo.auto_reply', {
+          tenantId: payload.tenantId,
+          conversationId,
+          channelType: payload.channelType,
+          channelAccount: payload.channelAccount,
+          senderId: payload.senderId,
+          message: oooConfig.oooMessage,
+          externalConversationId: payload.externalConversationId,
+        });
+
+        this.logger.log(
+          `Emitted OOO auto-reply for conversation ${conversationId} ` +
+            `(channel: ${payload.channelType})`,
+        );
+      }
+    } catch (err) {
+      // Non-fatal — don't block message processing if OOO check fails
+      this.logger.warn(
+        `Business hours check failed for conversation ${conversationId}: ${err.message}`,
+      );
     }
   }
 }

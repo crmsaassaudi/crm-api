@@ -155,7 +155,7 @@ export class ConversationRepository {
   async updateStatusWithMetadata(
     id: string,
     status: 'resolved' | 'closed',
-    agentId: string,
+    agentId: string | null,
     reason?: string,
     note?: string,
     resolveSource?: string,
@@ -414,6 +414,73 @@ export class ConversationRepository {
   }
 
   /**
+   * Reopen a resolved/closed conversation: set status back to 'open',
+   * increment reopenCount, and clear resolve metadata.
+   */
+  async reopenConversation(
+    conversationId: string,
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findByIdAndUpdate(
+        conversationId,
+        {
+          $set: {
+            status: 'open',
+            resolvedByAgentId: null,
+            resolvedAt: null,
+            resolveReason: null,
+            resolveNote: null,
+            resolveSource: null,
+          },
+          $inc: { reopenCount: 1 },
+        },
+        { new: true },
+      )
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Find the most recently resolved/closed conversation for a contact.
+   * Used by sticky routing to find the agent who last handled this customer.
+   */
+  async findLastResolvedByContact(
+    tenantId: string,
+    contactId: string,
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findOne({
+        tenantId,
+        contactId,
+        status: { $in: ['resolved', 'closed'] },
+        assignedAgentId: { $ne: null },
+      })
+      .sort({ resolvedAt: -1, updatedAt: -1 })
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Find the most recently resolved/closed conversation for an external sender.
+   * Fallback for sticky routing when contactId is not available.
+   */
+  async findLastResolvedBySender(
+    tenantId: string,
+    externalSenderId: string,
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findOne({
+        tenantId,
+        'customer.externalId': externalSenderId,
+        status: { $in: ['resolved', 'closed'] },
+        assignedAgentId: { $ne: null },
+      })
+      .sort({ resolvedAt: -1, updatedAt: -1 })
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
    * Find all open/pending conversations assigned to a specific agent.
    * Used by AgentFallbackService to reassign conversations when an agent goes offline.
    */
@@ -464,5 +531,38 @@ export class ConversationRepository {
         { createdAt: cursor.createdAt, _id: { $gt: cursorId } },
       ],
     };
+  }
+
+  /**
+   * Get all distinct tenant IDs that have at least one open or pending conversation.
+   * Used by the auto-resolve cron to know which tenants to scan.
+   */
+  async findDistinctTenantIdsWithActiveConversations(): Promise<string[]> {
+    const tenantIds = await this.model.distinct('tenantId', {
+      status: { $in: ['open', 'pending'] },
+    });
+    return tenantIds.map((id) => id.toString());
+  }
+
+  /**
+   * Find open/pending conversations where lastMessageAt is older than the cutoff date.
+   * Used by auto-resolve to identify conversations that should be auto-resolved.
+   */
+  async findIdleConversations(
+    tenantId: string,
+    lastMessageBefore: Date,
+  ): Promise<OmniConversation[]> {
+    const docs = await this.model
+      .find({
+        tenantId,
+        status: { $in: ['open', 'pending'] },
+        $or: [
+          { lastMessageAt: { $lte: lastMessageBefore } },
+          { lastMessageAt: null, createdAt: { $lte: lastMessageBefore } },
+        ],
+      })
+      .limit(100) // Process in batches to avoid memory issues
+      .exec();
+    return docs.map(OmniConversationMapper.toDomain);
   }
 }

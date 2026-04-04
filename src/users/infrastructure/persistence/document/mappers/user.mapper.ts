@@ -49,6 +49,8 @@ export class UserMapper {
       domainEntity.status.name = raw.status;
     }
 
+    domainEntity.omniMaxCapacity = raw.omniMaxCapacity ?? null;
+    domainEntity.skills = raw.skills ?? [];
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
@@ -94,6 +96,12 @@ export class UserMapper {
     persistenceSchema.platformRole = domainEntity.platformRole?.id ?? null;
     persistenceSchema.status = domainEntity.status?.id ?? null;
 
+    if (domainEntity.omniMaxCapacity !== undefined) {
+      persistenceSchema.omniMaxCapacity = domainEntity.omniMaxCapacity;
+    }
+    if (domainEntity.skills !== undefined) {
+      persistenceSchema.skills = domainEntity.skills;
+    }
     persistenceSchema.createdAt = domainEntity.createdAt;
     persistenceSchema.updatedAt = domainEntity.updatedAt;
     persistenceSchema.deletedAt = domainEntity.deletedAt;

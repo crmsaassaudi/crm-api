@@ -66,6 +66,16 @@ export class TenantSettingsSeedingService {
       // ── Business Hours ─────────────────────────────────────────────────────
       this.seed(tenantId, 'business_hours', DEFAULT_BUSINESS_HOURS),
 
+      // ── Omni Routing & Assignment ──────────────────────────────────────────
+      this.seed(tenantId, 'omni_routing', DEFAULT_OMNI_ROUTING),
+
+      // ── Omni Session Lifecycle ─────────────────────────────────────────────
+      this.seed(
+        tenantId,
+        'omni_session_lifecycle',
+        DEFAULT_OMNI_SESSION_LIFECYCLE,
+      ),
+
       // ── General Settings ───────────────────────────────────────────────────
       this.seed(tenantId, 'general_profile', DEFAULT_GENERAL_PROFILE),
       this.seed(tenantId, 'general_localization', DEFAULT_GENERAL_LOCALIZATION),
@@ -857,6 +867,35 @@ const DEFAULT_TASK_LIFECYCLE = {
   ],
 };
 
+// ─── Omni Routing & Assignment defaults ──────────────────────────────────────
+
+const DEFAULT_OMNI_ROUTING = {
+  defaultStrategy: 'round-robin',
+  defaultMaxCapacity: 10,
+  stickyRoutingEnabled: true,
+  stickyTimeoutHours: 72,
+  fallbackStrategy: 'least-busy',
+  skillBasedRoutingEnabled: false,
+};
+
+// ─── Omni Session Lifecycle defaults ─────────────────────────────────────────
+
+const DEFAULT_OMNI_SESSION_LIFECYCLE = {
+  /** Hours after resolve during which a new message reopens the old session */
+  reopenWindowHours: 24,
+  /** Hours of inactivity (no new messages) after which a session is auto-resolved */
+  autoResolveTimeoutHours: 48,
+  /** Whether auto-resolve is enabled */
+  autoResolveEnabled: true,
+  /** Whether to send an OOO message when messages arrive outside business hours */
+  oooAutoReplyEnabled: false,
+  /** The message text sent when messages arrive outside business hours */
+  oooMessage:
+    'Thank you for your message! Our team is currently offline. We will get back to you during business hours.',
+  /** Whether to set conversation to pending when messages arrive outside business hours */
+  oooSetPending: true,
+};
+
 /** Lookup map used by lazySeed() and getDefault(). Add new keys here when a new module ships. */
 export const DEFAULTS_MAP: Record<string, unknown> = {
   contact_identity: DEFAULT_CONTACT_IDENTITY,
@@ -888,4 +927,6 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   general_profile: DEFAULT_GENERAL_PROFILE,
   general_localization: DEFAULT_GENERAL_LOCALIZATION,
   general_notifications: DEFAULT_GENERAL_NOTIFICATIONS,
+  omni_routing: DEFAULT_OMNI_ROUTING,
+  omni_session_lifecycle: DEFAULT_OMNI_SESSION_LIFECYCLE,
 };

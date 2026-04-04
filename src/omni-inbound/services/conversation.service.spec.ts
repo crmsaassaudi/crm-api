@@ -11,6 +11,8 @@ import { FacebookAdapter } from '../adapters/facebook.adapter';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import { TenantsService } from '../../tenants/tenants.service';
 import { OmniPayload } from '../domain/omni-payload';
+import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
+import { BusinessHoursService } from './business-hours.service';
 
 describe('ConversationService Concurrency', () => {
   let service: ConversationService;
@@ -81,6 +83,21 @@ describe('ConversationService Concurrency', () => {
           provide: TenantsService,
           useValue: {
             findById: jest.fn().mockResolvedValue({ ownerId: 'owner_1' }),
+          },
+        },
+        {
+          provide: CrmSettingsService,
+          useValue: {
+            getSetting: jest.fn().mockResolvedValue({}),
+          },
+        },
+        {
+          provide: BusinessHoursService,
+          useValue: {
+            isWithinBusinessHours: jest.fn().mockResolvedValue(true),
+            getOOOConfig: jest.fn().mockResolvedValue({
+              oooAutoReplyEnabled: false,
+            }),
           },
         },
         { provide: IOREDIS_CLIENT, useValue: redisMock },

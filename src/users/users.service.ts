@@ -264,6 +264,8 @@ export class UsersService {
       provider: updateUserDto.provider,
       keycloakId: updateUserDto.keycloakId,
       version: updateUserDto.version,
+      omniMaxCapacity: updateUserDto.omniMaxCapacity,
+      skills: updateUserDto.skills,
     });
   }
 

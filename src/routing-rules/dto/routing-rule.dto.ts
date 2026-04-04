@@ -13,7 +13,13 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 const MATCH_TYPES = ['all', 'any'] as const;
-const STRATEGIES = ['round_robin', 'least_busy', 'manual'] as const;
+const STRATEGIES = [
+  'round_robin',
+  'least_busy',
+  'capacity_based',
+  'sticky',
+  'manual',
+] as const;
 
 class RoutingConditionDto {
   @ApiProperty({ example: 'channel' })
@@ -42,6 +48,12 @@ class RoutingActionsDto {
   @IsBoolean()
   @IsOptional()
   sticky: boolean;
+
+  @ApiPropertyOptional({ example: ['spanish', 'billing'], default: [] })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  requiredSkills?: string[];
 }
 
 export class CreateRoutingRuleDto {

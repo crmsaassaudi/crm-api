@@ -84,4 +84,19 @@ export class User {
 
   @ApiProperty()
   version?: number;
+
+  @ApiProperty({
+    description:
+      'Max concurrent omni-channel conversations (null = use tenant default)',
+    example: 10,
+    required: false,
+  })
+  omniMaxCapacity?: number | null;
+
+  @ApiProperty({
+    description: 'Skill tags for skill-based routing',
+    example: ['spanish', 'billing'],
+    required: false,
+  })
+  skills?: string[];
 }

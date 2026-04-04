@@ -31,13 +31,25 @@ export class RoutingRuleSchemaClass extends EntityDocumentHelper {
       teamId: String,
       strategy: {
         type: String,
-        enum: ['round_robin', 'least_busy', 'manual'],
+        enum: [
+          'round_robin',
+          'least_busy',
+          'capacity_based',
+          'sticky',
+          'manual',
+        ],
       },
       sticky: Boolean,
+      requiredSkills: { type: [String], default: [] },
     },
     required: true,
   })
-  actions: { teamId: string; strategy: string; sticky: boolean };
+  actions: {
+    teamId: string;
+    strategy: string;
+    sticky: boolean;
+    requiredSkills?: string[];
+  };
 
   @Prop({ default: true })
   enabled: boolean;

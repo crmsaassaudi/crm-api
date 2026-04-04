@@ -2,7 +2,16 @@ import { PartialType, ApiPropertyOptional } from '@nestjs/swagger';
 import { CreateUserDto } from './create-user.dto';
 
 import { Transform, Type } from 'class-transformer';
-import { IsEmail, IsOptional, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsOptional,
+  MinLength,
+  IsNumber,
+  IsArray,
+  IsString,
+  Min,
+  Max,
+} from 'class-validator';
 import { FileDto } from '../../files/dto/file.dto';
 import { RoleDto } from '../../roles/dto/role.dto';
 import { StatusDto } from '../../statuses/dto/status.dto';
@@ -51,4 +60,24 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
   @ApiPropertyOptional({ example: 1, type: Number })
   @IsOptional()
   version?: number;
+
+  @ApiPropertyOptional({
+    example: 10,
+    description:
+      'Max concurrent omni-channel conversations (null = use tenant default)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  omniMaxCapacity?: number | null;
+
+  @ApiPropertyOptional({
+    example: ['spanish', 'billing'],
+    description: 'Skill tags for skill-based routing',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  skills?: string[];
 }
