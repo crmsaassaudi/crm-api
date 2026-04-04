@@ -76,6 +76,13 @@ export class TenantSettingsSeedingService {
         DEFAULT_OMNI_SESSION_LIFECYCLE,
       ),
 
+      // ── Omni Identity Resolution ──────────────────────────────────────────
+      this.seed(
+        tenantId,
+        'omni_identity_resolution',
+        DEFAULT_OMNI_IDENTITY_RESOLUTION,
+      ),
+
       // ── General Settings ───────────────────────────────────────────────────
       this.seed(tenantId, 'general_profile', DEFAULT_GENERAL_PROFILE),
       this.seed(tenantId, 'general_localization', DEFAULT_GENERAL_LOCALIZATION),
@@ -867,6 +874,18 @@ const DEFAULT_TASK_LIFECYCLE = {
   ],
 };
 
+// ─── Omni Identity Resolution defaults ───────────────────────────────────────
+
+const DEFAULT_OMNI_IDENTITY_RESOLUTION = {
+  /** Auto-create a shadow CRM contact for every unknown sender */
+  autoCreateShadowContact: true,
+  /** Auto-fetch social profile (name, avatar, phone) via platform APIs */
+  autoEnrichProfile: true,
+  /** Disclaimer message for data enrichment (GDPR/PDPA) */
+  enrichmentDisclaimer:
+    'We collect publicly available profile information to improve your customer experience. You may request data deletion at any time.',
+};
+
 // ─── Omni Routing & Assignment defaults ──────────────────────────────────────
 
 const DEFAULT_OMNI_ROUTING = {
@@ -929,4 +948,5 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   general_notifications: DEFAULT_GENERAL_NOTIFICATIONS,
   omni_routing: DEFAULT_OMNI_ROUTING,
   omni_session_lifecycle: DEFAULT_OMNI_SESSION_LIFECYCLE,
+  omni_identity_resolution: DEFAULT_OMNI_IDENTITY_RESOLUTION,
 };

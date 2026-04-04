@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { getQueueToken } from '@nestjs/bullmq';
 import { ConversationService } from './conversation.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
@@ -13,6 +14,7 @@ import { TenantsService } from '../../tenants/tenants.service';
 import { OmniPayload } from '../domain/omni-payload';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { BusinessHoursService } from './business-hours.service';
+import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 
 describe('ConversationService Concurrency', () => {
   let service: ConversationService;
@@ -102,6 +104,10 @@ describe('ConversationService Concurrency', () => {
         },
         { provide: IOREDIS_CLIENT, useValue: redisMock },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
+        {
+          provide: getQueueToken(OMNI_MEDIA_CACHE_QUEUE),
+          useValue: { add: jest.fn().mockResolvedValue({}) },
+        },
       ],
     }).compile();
 
@@ -134,7 +140,7 @@ describe('ConversationService Concurrency', () => {
     );
     expect(lockServiceMock.acquire).toHaveBeenCalledWith(
       'lock:omni:sender:user_1',
-      10000,
+      5000,
       expect.any(Function),
     );
     expect(identityServiceMock.resolveIdentityForTenant).toHaveBeenCalled();

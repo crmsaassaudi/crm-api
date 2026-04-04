@@ -76,6 +76,14 @@ export class MessageRepository {
   }
 
   /**
+   * Update the media proxy URL on a message after async caching completes.
+   * Called by MediaCacheProcessor when the background download finishes.
+   */
+  async updateMediaProxyUrl(id: string, mediaProxyUrl: string): Promise<void> {
+    await this.model.findByIdAndUpdate(id, { $set: { mediaProxyUrl } }).exec();
+  }
+
+  /**
    * Fetch messages from multiple conversations combined, sorted oldest-first.
    * Used for cross-conversation customer history.
    */

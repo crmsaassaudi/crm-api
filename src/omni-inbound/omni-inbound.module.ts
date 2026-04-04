@@ -37,6 +37,7 @@ import { BusinessHoursService } from './services/business-hours.service';
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
 import { WebhookProcessor } from './queue/webhook-processor';
+import { MediaCacheProcessor } from './queue/media-cache.processor';
 
 // Repositories
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -153,6 +154,7 @@ import { TicketsModule } from '../tickets/tickets.module';
 
     // ── Pillar 4: Webhook Queue ─────────────────────────────────────
     WebhookProcessor,
+    MediaCacheProcessor,
 
     // ── Pillar 5: Persistence ─────────────────────────────────────
     ConversationRepository,

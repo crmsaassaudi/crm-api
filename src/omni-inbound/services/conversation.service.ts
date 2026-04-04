@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { OmniPayload } from '../domain/omni-payload';
@@ -26,6 +28,8 @@ import {
   ThreadIdentity,
   ThreadSessionSlice,
 } from '../repositories/conversation.repository';
+import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
+import type { MediaCacheJobData } from '../queue/media-cache.processor';
 
 /**
  * ConversationService — listens to `omni.message.received` events and handles:
@@ -48,8 +52,9 @@ export class ConversationService {
   /** TTL for the processed-message idempotency marker (1 hour) */
   private readonly IDEM_TTL = 60 * 60;
 
-  /** Lock TTL: 10 seconds should be more than enough for the DB operations */
-  private readonly LOCK_TTL = 10_000;
+  /** Lock TTL: 5 seconds — well above typical DB operations (<500ms)
+   *  but short enough to minimise contention when webhooks burst. */
+  private readonly LOCK_TTL = 5_000;
 
   constructor(
     private readonly conversationRepo: ConversationRepository,
@@ -64,6 +69,8 @@ export class ConversationService {
     private readonly businessHoursService: BusinessHoursService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    @InjectQueue(OMNI_MEDIA_CACHE_QUEUE)
+    private readonly mediaCacheQueue: Queue<MediaCacheJobData>,
   ) {}
 
   async getConversationTimeline(params: {
@@ -374,22 +381,31 @@ export class ConversationService {
 
       // Self-heal old data: active conversation exists but contact was never linked.
       if (existing && conversationId && !contactId) {
-        const createdContactId = await this.createShadowContact(payload);
-        if (createdContactId) {
-          contactId = createdContactId;
-          await this.conversationRepo.updateContactId(
-            conversationId,
-            contactId,
-          );
-          await this.identityService.updateIdentity(
-            payload.channelType,
-            payload.channelAccount,
-            payload.externalConversationId,
-            { contactId, conversationId },
-            payload.tenantId,
-          );
-          this.logger.log(
-            `Linked Shadow Contact ${contactId} to existing conversation ${conversationId}`,
+        const identityConfig = await this.getIdentityResolutionConfig(
+          payload.tenantId,
+        );
+        if (identityConfig.autoCreateShadowContact) {
+          const createdContactId = await this.createShadowContact(payload);
+          if (createdContactId) {
+            contactId = createdContactId;
+            await this.conversationRepo.updateContactId(
+              conversationId,
+              contactId,
+            );
+            await this.identityService.updateIdentity(
+              payload.channelType,
+              payload.channelAccount,
+              payload.externalConversationId,
+              { contactId, conversationId },
+              payload.tenantId,
+            );
+            this.logger.log(
+              `Linked Shadow Contact ${contactId} to existing conversation ${conversationId}`,
+            );
+          }
+        } else {
+          this.logger.debug(
+            `Auto-create shadow contact disabled — skipping for conversation ${conversationId}`,
           );
         }
       }
@@ -398,7 +414,16 @@ export class ConversationService {
     if (!conversationId) {
       // No active conversation -> maybe no contact either
       if (!contactId) {
-        contactId = await this.createShadowContact(payload);
+        const identityConfig = await this.getIdentityResolutionConfig(
+          payload.tenantId,
+        );
+        if (identityConfig.autoCreateShadowContact) {
+          contactId = await this.createShadowContact(payload);
+        } else {
+          this.logger.debug(
+            `Auto-create shadow contact disabled — sender ${payload.senderId} will have no CRM contact`,
+          );
+        }
       }
 
       // ── Reopen tracking: find previous conversation if any ──
@@ -422,12 +447,22 @@ export class ConversationService {
 
       // ── Step 3b: Eagerly fetch Facebook profile before creating conversation ──
       // This ensures the conversation is created with the real name/avatar from the start.
+      // Respects the tenant's autoEnrichProfile setting (GDPR/PDPA compliance).
       let enrichedProfile: {
         name?: string;
         avatarUrl?: string;
         phone?: string;
       } = {};
-      if (payload.channelType === 'facebook' && payload.metadata?.accessToken) {
+
+      const identityResConfig = await this.getIdentityResolutionConfig(
+        payload.tenantId,
+      );
+
+      if (
+        identityResConfig.autoEnrichProfile &&
+        payload.channelType === 'facebook' &&
+        payload.metadata?.accessToken
+      ) {
         try {
           const profile = await this.facebookAdapter.enrichProfile(
             payload.senderId,
@@ -442,6 +477,10 @@ export class ConversationService {
         } catch (err) {
           this.logger.warn(`Profile pre-enrichment skipped: ${err.message}`);
         }
+      } else if (!identityResConfig.autoEnrichProfile) {
+        this.logger.debug(
+          `Auto-enrich profile disabled for tenant ${payload.tenantId} — skipping Facebook profile fetch`,
+        );
       }
 
       // No active session → create a new one (with enriched profile)
@@ -516,20 +555,10 @@ export class ConversationService {
       // Profile enrichment already done eagerly before conversation creation (Step 3b above).
     }
 
-    // ── Step 5a: Cache media if present ───────────────────────
-    let mediaProxyUrl: string | undefined;
-    if (payload.mediaUrl) {
-      mediaProxyUrl = await this.mediaProxy.cacheMedia(
-        payload.tenantId,
-        payload.channelType,
-        payload.mediaUrl,
-        payload.metadata.mediaId ?? payload.externalMessageId,
-        payload.metadata.accessToken,
-      );
-    }
-
-    // ── Step 5b: Save the message ─────────────────────────────
-    await this.messageRepo.create({
+    // ── Step 5a: Save the message immediately (with original media URL) ──
+    // Media caching is done asynchronously via BullMQ to avoid blocking
+    // the distributed lock during large file downloads.
+    const message = await this.messageRepo.create({
       tenantId: payload.tenantId,
       conversationId: conversationId,
       senderId: payload.senderId,
@@ -537,13 +566,34 @@ export class ConversationService {
       messageType: payload.messageType,
       content: payload.content,
       mediaUrl: payload.mediaUrl,
-      mediaProxyUrl,
+      mediaProxyUrl: undefined, // will be set async by MediaCacheProcessor
       status: 'delivered',
       metadata: payload.metadata,
       externalMessageId: payload.externalMessageId,
       platformMessageId: payload.externalMessageId, // dedup key
       providerTimestamp: payload.providerTimestamp ?? payload.timestamp,
     });
+
+    // ── Step 5b: Enqueue async media cache job if media is present ──
+    if (payload.mediaUrl) {
+      await this.mediaCacheQueue.add(
+        'cache-media',
+        {
+          tenantId: payload.tenantId,
+          conversationId,
+          messageId: message.id,
+          mediaUrl: payload.mediaUrl,
+          channelType: payload.channelType,
+          mediaId: payload.metadata?.mediaId ?? payload.externalMessageId,
+          accessToken: payload.metadata?.accessToken,
+        },
+        {
+          // Use messageId as jobId for deduplication
+          jobId: `media-${message.id}`,
+        },
+      );
+      this.logger.debug(`Enqueued media cache job for message ${message.id}`);
+    }
 
     // ── Step 5c: Update conversation summary ──────────────────
     const messagePreview = payload.content || `[${payload.messageType}]`;
@@ -722,6 +772,33 @@ export class ConversationService {
     try {
       const config = await this.settingsService.getSetting(
         'omni_session_lifecycle',
+      );
+      return config ? { ...defaults, ...config } : defaults;
+    } catch {
+      return defaults;
+    }
+  }
+
+  /**
+   * Load identity resolution configuration from tenant CRM settings.
+   * Controls shadow contact creation and social profile enrichment.
+   */
+  private async getIdentityResolutionConfig(tenantId?: string): Promise<{
+    autoCreateShadowContact: boolean;
+    autoEnrichProfile: boolean;
+    enrichmentDisclaimer: string;
+  }> {
+    const defaults = {
+      autoCreateShadowContact: true,
+      autoEnrichProfile: true,
+      enrichmentDisclaimer:
+        'We collect publicly available profile information to improve your customer experience. You may request data deletion at any time.',
+    };
+
+    try {
+      const config = await this.settingsService.getSetting(
+        'omni_identity_resolution',
+        tenantId,
       );
       return config ? { ...defaults, ...config } : defaults;
     } catch {

@@ -290,6 +290,28 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
+   * Listener for `omni.message.media_cached` domain event.
+   * Emitted by MediaCacheProcessor after background media download completes.
+   * Broadcasts the stable proxy URL so the frontend can swap the expiring
+   * provider URL with the permanent cached version.
+   */
+  @OnEvent('omni.message.media_cached')
+  handleMediaCached(event: {
+    tenantId: string;
+    conversationId: string;
+    messageId: string;
+    mediaProxyUrl: string;
+  }) {
+    const room = `tenant:${event.tenantId}`;
+    this.logger.log(`Broadcasting media cached for message ${event.messageId}`);
+    this.server.to(room).emit('omni:message:media_cached', {
+      conversationId: event.conversationId,
+      messageId: event.messageId,
+      mediaProxyUrl: event.mediaProxyUrl,
+    });
+  }
+
+  /**
 
    * Only broadcasts to the room if the message was sent via REST (HTTP).
    * If sent via socket, `handleSendMessage` already emits to clients.
