@@ -1,8 +1,12 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 
 // Service
 import { OutboundService } from './outbound.service';
+
+// Config
+import replyWindowConfig from './config/reply-window.config';
 
 // Adapters (shared with inbound — imported from omni-inbound)
 import { FacebookAdapter } from '../omni-inbound/adapters/facebook.adapter';
@@ -39,6 +43,7 @@ import { ChannelsModule } from '../channels/channels.module';
  */
 @Module({
   imports: [
+    ConfigModule.forFeature(replyWindowConfig),
     ChannelsModule,
     MongooseModule.forFeature([
       {

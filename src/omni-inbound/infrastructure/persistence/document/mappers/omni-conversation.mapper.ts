@@ -64,6 +64,7 @@ export class OmniConversationMapper {
       resolveSource: (raw as any).resolveSource ?? null,
       assignedAgent: assignedAgentObj,
       resolvedByAgent: resolvedByAgentObj,
+      lastCustomerMessageAt: (raw as any).lastCustomerMessageAt ?? null,
       createdAt: (raw as any).createdAt,
       updatedAt: (raw as any).updatedAt,
     };
@@ -96,6 +97,7 @@ export class OmniConversationMapper {
     (raw as any).resolveReason = domain.resolveReason;
     (raw as any).resolveNote = domain.resolveNote;
     (raw as any).resolveSource = domain.resolveSource;
+    (raw as any).lastCustomerMessageAt = domain.lastCustomerMessageAt;
 
     // Default system fields handled by mongoose logic generally
     return raw;

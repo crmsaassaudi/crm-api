@@ -382,6 +382,21 @@ export class OmniController {
     }
   }
 
+  /**
+   * GET /omni/conversations/:id/reply-window
+   * Returns the platform reply window status for this conversation.
+   * The frontend uses this to lock/unlock the chat input.
+   */
+  @Get('conversations/:id/reply-window')
+  async getReplyWindowStatus(@Param('id') conversationId: string) {
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    return this.outboundService.getReplyWindowStatus(conversation);
+  }
+
   // ─── Session management ────────────────────────────────────────
 
   /**

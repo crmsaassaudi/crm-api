@@ -55,6 +55,7 @@ describe('ConversationService Concurrency', () => {
     conversationRepoMock = {
       create: jest.fn().mockResolvedValue({ id: 'conv_123' }),
       updateLastMessage: jest.fn().mockResolvedValue(undefined),
+      updateLastCustomerMessageAt: jest.fn().mockResolvedValue(undefined),
       findLastByExternalId: jest.fn().mockResolvedValue(null),
       findById: jest.fn().mockResolvedValue(null),
     };

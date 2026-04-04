@@ -612,6 +612,14 @@ export class ConversationService {
       payload.timestamp,
     );
 
+    // ── Step 5d-2: Track customer's last message time for reply window ──
+    if (payload.senderType === 'customer') {
+      await this.conversationRepo.updateLastCustomerMessageAt(
+        conversationId,
+        payload.providerTimestamp ?? payload.timestamp,
+      );
+    }
+
     // ── Step 5d: Reschedule auto-resolve timer (message resets the clock) ──
     await this.autoResolveService.rescheduleAutoResolve(
       payload.tenantId,

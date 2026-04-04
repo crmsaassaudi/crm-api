@@ -212,6 +212,16 @@ export class ConversationRepository {
       .exec();
   }
 
+  /**
+   * Update the timestamp of the customer's most recent inbound message.
+   * Used to calculate the platform reply window (e.g. 24h for Facebook).
+   */
+  async updateLastCustomerMessageAt(id: string, date: Date): Promise<void> {
+    await this.model
+      .findByIdAndUpdate(id, { $set: { lastCustomerMessageAt: date } })
+      .exec();
+  }
+
   async addTag(id: string, tag: string): Promise<OmniConversation | null> {
     const doc = await this.model
       .findByIdAndUpdate(id, { $addToSet: { tags: tag } }, { new: true })

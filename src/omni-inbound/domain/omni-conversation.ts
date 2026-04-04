@@ -64,6 +64,9 @@ export interface OmniConversation {
   assignedAgent?: any;
   resolvedByAgent?: any;
 
+  // ── Platform Reply Window ──────────────────────────────────────
+  lastCustomerMessageAt: Date | null;
+
   createdAt: Date;
   updatedAt: Date;
 }

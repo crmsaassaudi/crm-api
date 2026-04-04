@@ -238,6 +238,15 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   /** When the escalation was triggered */
   @Prop({ type: Date, default: null })
   escalatedAt: Date | null;
+
+  // ── Platform Reply Window ──────────────────────────────────────
+  /**
+   * Timestamp of the customer's most recent inbound message.
+   * Used to calculate the platform reply window (e.g. 24h for Facebook).
+   * Agent free-form replies are only allowed within the window.
+   */
+  @Prop({ type: Date, default: null, index: true })
+  lastCustomerMessageAt: Date | null;
 }
 
 export const OmniConversationSchema = SchemaFactory.createForClass(
