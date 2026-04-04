@@ -1,156 +1,209 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { ConversationRepository } from '../repositories/conversation.repository';
+import { Injectable, Logger, Inject } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
+import type Redis from 'ioredis';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
+import { OMNI_AUTO_RESOLVE_QUEUE } from '../queue/omni-auto-resolve-queue.constants';
+import type { AutoResolveJobData } from '../queue/auto-resolve.processor';
 
 /**
- * AutoResolveService — scheduled cron job that auto-resolves conversations
- * after a configurable period of inactivity.
+ * AutoResolveService — manages per-conversation auto-resolve delayed jobs.
  *
- * Configuration key: `omni_session_lifecycle.autoResolveTimeoutHours`
+ * Instead of scanning the entire database every N minutes (cron approach),
+ * each conversation gets its own delayed BullMQ job. This scales to millions
+ * of conversations without any DB load.
  *
- * Flow:
- *   1. Every 5 minutes, scan all tenants with active conversations
- *   2. For each tenant, load the lifecycle config
- *   3. Find conversations where lastMessageAt < (now - autoResolveTimeoutHours)
- *   4. Resolve each one with resolveSource: 'auto', resolveReason: 'auto_resolved'
- *   5. Emit status_changed event for cache invalidation + realtime broadcast
+ * Key operations:
+ *   - scheduleAutoResolve: create a delayed job when a conversation is created
+ *   - rescheduleAutoResolve: reset the timer when a new message arrives
+ *   - cancelAutoResolve: remove the job when a conversation is manually resolved
+ *
+ * Two-phase warning flow (if configured):
+ *   1. After `autoResolveTimeoutHours - autoWarningBeforeResolveHours`:
+ *      → Send "Are you still there?" warning
+ *   2. After remaining `autoWarningBeforeResolveHours`:
+ *      → Actually resolve the conversation
  */
 @Injectable()
 export class AutoResolveService {
   private readonly logger = new Logger(AutoResolveService.name);
 
+  /** Redis key prefix for tracking warning state */
+  private readonly WARN_KEY_PREFIX = 'omni:auto-warn';
+
   constructor(
-    private readonly conversationRepo: ConversationRepository,
     private readonly settingsService: CrmSettingsService,
-    private readonly eventEmitter: EventEmitter2,
+    @InjectQueue(OMNI_AUTO_RESOLVE_QUEUE)
+    private readonly autoResolveQueue: Queue<AutoResolveJobData>,
+    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   /**
-   * Run every 5 minutes — scan for idle conversations and auto-resolve them.
+   * Schedule an auto-resolve delayed job for a conversation.
+   * Called when a new conversation is created.
+   *
+   * If auto-warning is configured, the first job fires the warning
+   * phase; otherwise it fires the resolve phase directly.
    */
-  @Cron(CronExpression.EVERY_5_MINUTES)
-  async handleAutoResolve(): Promise<void> {
-    this.logger.debug('Auto-resolve cron started');
-
-    try {
-      // Get all distinct tenantIds that have open/pending conversations
-      const tenantIds =
-        await this.conversationRepo.findDistinctTenantIdsWithActiveConversations();
-
-      if (tenantIds.length === 0) {
-        this.logger.debug('No active conversations — skipping auto-resolve');
-        return;
-      }
-
-      let totalResolved = 0;
-
-      for (const tenantId of tenantIds) {
-        try {
-          const resolved = await this.autoResolveForTenant(tenantId);
-          totalResolved += resolved;
-        } catch (err) {
-          this.logger.error(
-            `Auto-resolve failed for tenant ${tenantId}: ${err.message}`,
-          );
-        }
-      }
-
-      if (totalResolved > 0) {
-        this.logger.log(
-          `Auto-resolve completed: ${totalResolved} conversations resolved across ${tenantIds.length} tenants`,
-        );
-      }
-    } catch (err) {
-      this.logger.error(`Auto-resolve cron failed: ${err.message}`, err.stack);
-    }
-  }
-
-  /**
-   * Auto-resolve idle conversations for a specific tenant.
-   * Returns the number of conversations resolved.
-   */
-  private async autoResolveForTenant(tenantId: string): Promise<number> {
-    // Load tenant lifecycle config
+  async scheduleAutoResolve(
+    tenantId: string,
+    conversationId: string,
+  ): Promise<void> {
     const config = await this.getLifecycleConfig(tenantId);
 
     if (!config.autoResolveEnabled) {
-      return 0;
+      return;
     }
 
     const timeoutHours = config.autoResolveTimeoutHours ?? 48;
-    const cutoffDate = new Date(Date.now() - timeoutHours * 60 * 60 * 1000);
+    const warningHours = config.autoWarningBeforeResolveHours ?? 0;
 
-    // Find conversations that are idle past the timeout
-    const idleConversations = await this.conversationRepo.findIdleConversations(
-      tenantId,
-      cutoffDate,
-    );
+    let delayMs: number;
+    let phase: 'warning' | 'resolve';
 
-    if (idleConversations.length === 0) {
-      return 0;
+    if (warningHours > 0 && warningHours < timeoutHours) {
+      // Schedule warning first, then resolve later
+      delayMs = (timeoutHours - warningHours) * 60 * 60 * 1000;
+      phase = 'warning';
+    } else {
+      // No warning — schedule direct resolve
+      delayMs = timeoutHours * 60 * 60 * 1000;
+      phase = 'resolve';
     }
 
-    let resolvedCount = 0;
+    const jobId = this.buildJobId(conversationId, phase);
 
-    for (const conversation of idleConversations) {
-      try {
-        await this.conversationRepo.updateStatusWithMetadata(
-          conversation.id,
-          'resolved',
-          null, // no agent (system action)
-          'auto_resolved',
-          `Auto-resolved after ${timeoutHours}h of inactivity`,
-          'auto',
-        );
+    try {
+      // Remove any existing job for this conversation (both phases)
+      await this.removeExistingJobs(conversationId);
 
-        // Emit event for cache invalidation + realtime broadcast
-        this.eventEmitter.emit('omni.conversation.status_changed', {
-          tenantId,
-          conversationId: conversation.id,
-          status: 'resolved',
-          oldStatus: conversation.status,
-          agentId: null,
-          reason: 'auto_resolved',
-          note: `Auto-resolved after ${timeoutHours}h of inactivity`,
-          resolveSource: 'auto',
-          channelType: conversation.channelType,
-          channelAccount: conversation.channelAccount,
-          externalConversationId: conversation.externalConversationId,
-        });
+      await this.autoResolveQueue.add(
+        'auto-resolve',
+        { tenantId, conversationId, phase },
+        { jobId, delay: delayMs },
+      );
 
-        resolvedCount++;
-        this.logger.debug(
-          `Auto-resolved conversation ${conversation.id} (idle since ${conversation.lastMessageAt?.toISOString()})`,
-        );
-      } catch (err) {
-        this.logger.error(
-          `Failed to auto-resolve conversation ${conversation.id}: ${err.message}`,
-        );
-      }
+      this.logger.debug(
+        `Scheduled auto-resolve [${phase}] for conversation ${conversationId} ` +
+          `in ${(delayMs / (1000 * 60 * 60)).toFixed(1)}h`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to schedule auto-resolve for conversation ${conversationId}: ${err.message}`,
+      );
     }
-
-    return resolvedCount;
   }
 
   /**
-   * Load session lifecycle config for a tenant.
+   * Schedule the resolve-phase job after a warning has been sent.
+   * Called by the auto-resolve processor after emitting the warning.
    */
+  async scheduleResolveAfterWarning(
+    tenantId: string,
+    conversationId: string,
+  ): Promise<void> {
+    const config = await this.getLifecycleConfig(tenantId);
+    const warningHours = config.autoWarningBeforeResolveHours ?? 2;
+    const delayMs = warningHours * 60 * 60 * 1000;
+
+    const jobId = this.buildJobId(conversationId, 'resolve');
+
+    try {
+      await this.autoResolveQueue.add(
+        'auto-resolve',
+        { tenantId, conversationId, phase: 'resolve' },
+        { jobId, delay: delayMs },
+      );
+
+      this.logger.debug(
+        `Scheduled auto-resolve [resolve] for conversation ${conversationId} ` +
+          `in ${warningHours}h (after warning)`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to schedule resolve-after-warning for ${conversationId}: ${err.message}`,
+      );
+    }
+  }
+
+  /**
+   * Reschedule auto-resolve when a new message arrives.
+   * Removes the old job and creates a new one with a fresh delay.
+   *
+   * Also clears any warning state — the customer has replied.
+   */
+  async rescheduleAutoResolve(
+    tenantId: string,
+    conversationId: string,
+  ): Promise<void> {
+    // Clear warning state if any
+    await this.redis.del(`${this.WARN_KEY_PREFIX}:${conversationId}`);
+
+    // Re-schedule from scratch
+    await this.scheduleAutoResolve(tenantId, conversationId);
+  }
+
+  /**
+   * Cancel auto-resolve when a conversation is manually resolved/closed.
+   */
+  async cancelAutoResolve(conversationId: string): Promise<void> {
+    try {
+      await this.removeExistingJobs(conversationId);
+      await this.redis.del(`${this.WARN_KEY_PREFIX}:${conversationId}`);
+      this.logger.debug(
+        `Cancelled auto-resolve jobs for conversation ${conversationId}`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to cancel auto-resolve for ${conversationId}: ${err.message}`,
+      );
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Helpers
+  // ────────────────────────────────────────────────────────────────────────
+
+  private buildJobId(
+    conversationId: string,
+    phase: 'warning' | 'resolve',
+  ): string {
+    return `auto-resolve:${phase}:${conversationId}`;
+  }
+
+  /**
+   * Remove all existing auto-resolve jobs for a conversation (both phases).
+   */
+  private async removeExistingJobs(conversationId: string): Promise<void> {
+    for (const phase of ['warning', 'resolve'] as const) {
+      const jobId = this.buildJobId(conversationId, phase);
+      try {
+        const job = await this.autoResolveQueue.getJob(jobId);
+        if (job) {
+          await job.remove();
+        }
+      } catch {
+        // Job may not exist — safe to ignore
+      }
+    }
+  }
+
   private async getLifecycleConfig(tenantId: string): Promise<{
     autoResolveEnabled: boolean;
     autoResolveTimeoutHours: number;
+    autoWarningBeforeResolveHours: number;
+    autoWarningMessage: string;
   }> {
     const defaults = {
       autoResolveEnabled: true,
       autoResolveTimeoutHours: 48,
+      autoWarningBeforeResolveHours: 0,
+      autoWarningMessage:
+        'Are you still there? This conversation will be closed soon if there is no response.',
     };
 
     try {
-      // CrmSettingsService.getSetting uses the CLS-scoped tenantId,
-      // but since we're in a cron job, we need to query by key with tenant prefix.
-      // For now, use the generic getSetting (which works if the CLS context is set).
-      // We fall back to defaults if no config is found.
       const config = await this.settingsService.getSetting(
         'omni_session_lifecycle',
         tenantId,

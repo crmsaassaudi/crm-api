@@ -22,6 +22,7 @@ import { FacebookAdapter } from '../adapters/facebook.adapter';
 import { TenantsService } from '../../tenants/tenants.service';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { BusinessHoursService } from './business-hours.service';
+import { AutoResolveService } from './auto-resolve.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
 import { TimelineResponseDto } from '../dto/timeline-response.dto';
 import {
@@ -67,6 +68,7 @@ export class ConversationService {
     private readonly tenantsService: TenantsService,
     private readonly settingsService: CrmSettingsService,
     private readonly businessHoursService: BusinessHoursService,
+    private readonly autoResolveService: AutoResolveService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectQueue(OMNI_MEDIA_CACHE_QUEUE)
@@ -552,6 +554,12 @@ export class ConversationService {
         payload.tenantId,
       );
 
+      // ── Step 6b: Schedule auto-resolve for new conversation ─────
+      await this.autoResolveService.scheduleAutoResolve(
+        payload.tenantId,
+        conversationId,
+      );
+
       // Profile enrichment already done eagerly before conversation creation (Step 3b above).
     }
 
@@ -604,6 +612,12 @@ export class ConversationService {
       payload.timestamp,
     );
 
+    // ── Step 5d: Reschedule auto-resolve timer (message resets the clock) ──
+    await this.autoResolveService.rescheduleAutoResolve(
+      payload.tenantId,
+      conversationId,
+    );
+
     // ── Step 7: Mark message as processed in Redis ────────────
     await this.redis.set(idemKey, '1', 'EX', this.IDEM_TTL);
 
@@ -647,6 +661,10 @@ export class ConversationService {
         event.externalConversationId,
         event.tenantId,
       );
+
+      // Cancel any pending auto-resolve job for this conversation
+      await this.autoResolveService.cancelAutoResolve(event.conversationId);
+
       this.logger.log(
         `Invalidated identity cache for conversation ${event.conversationId} (${event.status})`,
       );
@@ -714,6 +732,60 @@ export class ConversationService {
         );
       }
 
+      // ── Auto-merge check: does this sender match an existing contact? ──
+      const identityConfig = await this.getIdentityResolutionConfig(
+        payload.tenantId,
+      );
+
+      if (identityConfig.autoMergeShadowContact) {
+        const phone = payload.metadata?.phone;
+        const email = payload.metadata?.email;
+
+        if (phone || email) {
+          const duplicateResult = await this.contactsService.checkDuplicate({
+            phones: phone,
+            emails: email,
+          });
+
+          if (
+            duplicateResult.isDuplicate &&
+            duplicateResult.duplicates.length > 0
+          ) {
+            // Found an existing contact — merge identity into it instead of creating shadow
+            const existingContact = duplicateResult.duplicates[0];
+
+            try {
+              await this.contactsService.mergeIdentity(existingContact.id, {
+                channelType: this.toSchemaChannelType(payload.channelType),
+                senderId: payload.senderId,
+              });
+
+              this.logger.log(
+                `Auto-merged sender ${payload.senderId} into existing contact ${existingContact.id} ` +
+                  `(matched by ${phone ? 'phone' : 'email'})`,
+              );
+
+              // Emit event for audit trail and frontend notification
+              this.eventEmitter.emit('omni.contact.auto_merged', {
+                tenantId: payload.tenantId,
+                existingContactId: existingContact.id,
+                senderId: payload.senderId,
+                channelType: payload.channelType,
+                matchedBy: phone ? 'phone' : 'email',
+              });
+
+              return existingContact.id;
+            } catch (mergeErr: any) {
+              this.logger.warn(
+                `Auto-merge failed for sender ${payload.senderId}: ${mergeErr.message} — creating shadow instead`,
+              );
+              // Fall through to shadow creation below
+            }
+          }
+        }
+      }
+
+      // ── Create shadow contact ─────────────────────────────────────────
       // Bypassing normal validation, simulate system creation.
       const contact = await this.contactsService.create({
         tenantId: payload.tenantId,
@@ -781,18 +853,22 @@ export class ConversationService {
 
   /**
    * Load identity resolution configuration from tenant CRM settings.
-   * Controls shadow contact creation and social profile enrichment.
+   * Controls shadow contact creation, social profile enrichment, and auto-merge behavior.
    */
   private async getIdentityResolutionConfig(tenantId?: string): Promise<{
     autoCreateShadowContact: boolean;
     autoEnrichProfile: boolean;
     enrichmentDisclaimer: string;
+    autoMergeShadowContact: boolean;
+    autoMergeStrategy: string;
   }> {
     const defaults = {
       autoCreateShadowContact: true,
       autoEnrichProfile: true,
       enrichmentDisclaimer:
         'We collect publicly available profile information to improve your customer experience. You may request data deletion at any time.',
+      autoMergeShadowContact: true,
+      autoMergeStrategy: 'phone_email_match',
     };
 
     try {
@@ -844,14 +920,19 @@ export class ConversationService {
       // Emit an event for the OOO auto-reply message.
       // The outbound service or gateway can listen to this and send
       // the actual reply through the appropriate channel.
-      if (oooConfig.oooMessage) {
+      // Use channel-specific message if configured, otherwise fall back to generic.
+      const oooMessage = this.businessHoursService.getChannelOOOMessage(
+        oooConfig,
+        payload.channelType,
+      );
+      if (oooMessage) {
         this.eventEmitter.emit('omni.ooo.auto_reply', {
           tenantId: payload.tenantId,
           conversationId,
           channelType: payload.channelType,
           channelAccount: payload.channelAccount,
           senderId: payload.senderId,
-          message: oooConfig.oooMessage,
+          message: oooMessage,
           externalConversationId: payload.externalConversationId,
         });
 

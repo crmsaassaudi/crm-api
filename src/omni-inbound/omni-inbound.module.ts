@@ -38,6 +38,8 @@ import { BusinessHoursService } from './services/business-hours.service';
 import { OmniQueueModule } from './queue/omni-queue.module';
 import { WebhookProcessor } from './queue/webhook-processor';
 import { MediaCacheProcessor } from './queue/media-cache.processor';
+import { StickyRetryProcessor } from './queue/sticky-retry.processor';
+import { AutoResolveProcessor } from './queue/auto-resolve.processor';
 
 // Repositories
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -89,8 +91,10 @@ import { TicketsModule } from '../tickets/tickets.module';
  * 5. Persistence          — Mongoose schemas, repositories, ConversationService
  * 6. REST API             — OmniController for frontend integration
  * 7. Notes                — NoteService, NoteRepository
- * 8. Assignment Engine    — AssignmentService (round-robin, least-busy)
+ * 8. Assignment Engine    — AssignmentService (round-robin, least-busy, sticky wait-time)
  * 9. Audit Trail          — ActivityService, ActivityRepository
+ * 10. Agent Disconnect Fallback
+ * 11. Session Lifecycle   — AutoResolveService (BullMQ delayed jobs), BusinessHoursService
  */
 @Module({
   imports: [
@@ -155,6 +159,8 @@ import { TicketsModule } from '../tickets/tickets.module';
     // ── Pillar 4: Webhook Queue ─────────────────────────────────────
     WebhookProcessor,
     MediaCacheProcessor,
+    StickyRetryProcessor,
+    AutoResolveProcessor,
 
     // ── Pillar 5: Persistence ─────────────────────────────────────
     ConversationRepository,

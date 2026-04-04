@@ -1,4 +1,6 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { ConversationRepository } from '../repositories/conversation.repository';
@@ -9,6 +11,8 @@ import {
 } from '../repositories/assignment-audit-log.repository';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { UsersService } from '../../users/users.service';
+import { OMNI_STICKY_RETRY_QUEUE } from '../queue/omni-sticky-queue.constants';
+import type { StickyRetryJobData } from '../queue/sticky-retry.processor';
 
 export type AssignmentStrategy =
   | 'round-robin'
@@ -26,6 +30,8 @@ export interface AssignmentOptions {
   contactId?: string | null;
   externalSenderId?: string | null;
   requiredSkills?: string[];
+  /** Skip sticky routing (used by sticky-retry processor to avoid infinite loop) */
+  skipSticky?: boolean;
 }
 
 /**
@@ -57,6 +63,8 @@ export class AssignmentService {
     private readonly settingsService: CrmSettingsService,
     private readonly usersService: UsersService,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    @InjectQueue(OMNI_STICKY_RETRY_QUEUE)
+    private readonly stickyRetryQueue: Queue<StickyRetryJobData>,
   ) {}
 
   /**
@@ -110,8 +118,9 @@ export class AssignmentService {
 
     // ── Sticky routing: try the previous agent first ──────────────────
     if (
-      strategy === 'sticky' ||
-      (routingConfig.stickyRoutingEnabled && strategy !== 'manual')
+      !options.skipSticky &&
+      (strategy === 'sticky' ||
+        (routingConfig.stickyRoutingEnabled && strategy !== 'manual'))
     ) {
       const stickyResult = await this.tryStickyRouting(
         tenantId,
@@ -121,6 +130,21 @@ export class AssignmentService {
         routingConfig,
         tenantMaxCapacity,
       );
+      if (stickyResult === '__sticky_waiting__') {
+        // Conversation is waiting for the preferred agent — delayed retry scheduled
+        await this.writeAuditLog({
+          tenantId,
+          conversationId,
+          assignedAgentId: null,
+          strategy: 'sticky',
+          reason: `Sticky wait-time: waiting for preferred agent (max ${routingConfig.stickyWaitTimeMinutes ?? 3} min)`,
+          metadata: {
+            stickyWaitTimeMinutes: routingConfig.stickyWaitTimeMinutes ?? 3,
+          },
+          outcome: 'queued',
+        });
+        return null;
+      }
       if (stickyResult) return stickyResult;
       // If sticky fails, fall through to the configured strategy
     }
@@ -317,6 +341,42 @@ export class AssignmentService {
     );
 
     if (openChats >= agentCapacity) {
+      // Check if sticky wait-time is configured
+      const stickyWaitMinutes = routingConfig.stickyWaitTimeMinutes ?? 0;
+
+      if (stickyWaitMinutes > 0) {
+        this.logger.log(
+          `Sticky routing: previous agent ${previousAgentId} is at capacity ` +
+            `(${openChats}/${agentCapacity}) — waiting ${stickyWaitMinutes} min`,
+        );
+
+        // Schedule a delayed retry job
+        const fallbackStrategy =
+          (routingConfig.fallbackStrategy as string) ?? 'round-robin';
+        try {
+          await this.stickyRetryQueue.add(
+            'sticky-retry',
+            {
+              tenantId,
+              conversationId,
+              stickyAgentId: previousAgentId,
+              fallbackStrategy,
+            },
+            {
+              jobId: `sticky-retry:${conversationId}`,
+              delay: stickyWaitMinutes * 60 * 1000,
+            },
+          );
+        } catch (err: any) {
+          this.logger.error(
+            `Failed to schedule sticky retry for ${conversationId}: ${err.message}`,
+          );
+          return null; // Fall through to normal assignment
+        }
+
+        return '__sticky_waiting__';
+      }
+
       this.logger.debug(
         `Sticky routing: previous agent ${previousAgentId} is at capacity (${openChats}/${agentCapacity}) — falling back`,
       );

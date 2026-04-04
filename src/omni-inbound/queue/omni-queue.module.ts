@@ -2,14 +2,18 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { OMNI_WEBHOOK_QUEUE } from './omni-queue.constants';
 import { OMNI_MEDIA_CACHE_QUEUE } from './omni-media-queue.constants';
+import { OMNI_STICKY_RETRY_QUEUE } from './omni-sticky-queue.constants';
+import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
 
 /**
  * Registers BullMQ queues for the omni-channel module:
  *   - omni-webhooks: inbound webhook processing
  *   - omni-media-cache: async media download & caching
+ *   - omni-sticky-retry: delayed sticky-routing retry after wait-time
+ *   - omni-auto-resolve: per-conversation delayed auto-resolve (replaces cron)
  *
  * Jobs are added by InboundController / ConversationService and
- * consumed by WebhookProcessor / MediaCacheProcessor.
+ * consumed by WebhookProcessor / MediaCacheProcessor / StickyRetryProcessor / AutoResolveProcessor.
  * Queues use the global Redis connection configured in QueueModule.
  */
 @Module({
@@ -31,6 +35,24 @@ import { OMNI_MEDIA_CACHE_QUEUE } from './omni-media-queue.constants';
           backoff: { type: 'exponential', delay: 3000 },
           removeOnComplete: 50,
           removeOnFail: 200,
+        },
+      },
+      {
+        name: OMNI_STICKY_RETRY_QUEUE,
+        defaultJobOptions: {
+          attempts: 2,
+          backoff: { type: 'exponential', delay: 5000 },
+          removeOnComplete: 50,
+          removeOnFail: 200,
+        },
+      },
+      {
+        name: OMNI_AUTO_RESOLVE_QUEUE,
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 10000 },
+          removeOnComplete: 100,
+          removeOnFail: 500,
         },
       },
     ),

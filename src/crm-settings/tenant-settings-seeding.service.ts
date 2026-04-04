@@ -884,6 +884,10 @@ const DEFAULT_OMNI_IDENTITY_RESOLUTION = {
   /** Disclaimer message for data enrichment (GDPR/PDPA) */
   enrichmentDisclaimer:
     'We collect publicly available profile information to improve your customer experience. You may request data deletion at any time.',
+  /** Auto-merge shadow contact into existing contact when phone/email matches */
+  autoMergeShadowContact: true,
+  /** Strategy for auto-merge: 'phone_email_match' checks phone and email fields */
+  autoMergeStrategy: 'phone_email_match',
 };
 
 // ─── Omni Routing & Assignment defaults ──────────────────────────────────────
@@ -893,6 +897,8 @@ const DEFAULT_OMNI_ROUTING = {
   defaultMaxCapacity: 10,
   stickyRoutingEnabled: true,
   stickyTimeoutHours: 72,
+  /** Minutes to wait for the preferred agent before falling back to another strategy */
+  stickyWaitTimeMinutes: 3,
   fallbackStrategy: 'least-busy',
   skillBasedRoutingEnabled: false,
 };
@@ -906,11 +912,18 @@ const DEFAULT_OMNI_SESSION_LIFECYCLE = {
   autoResolveTimeoutHours: 48,
   /** Whether auto-resolve is enabled */
   autoResolveEnabled: true,
+  /** Hours before auto-resolve to send a warning message (0 = no warning) */
+  autoWarningBeforeResolveHours: 2,
+  /** Warning message sent before auto-resolving */
+  autoWarningMessage:
+    'Are you still there? This conversation will be closed soon if there is no response.',
   /** Whether to send an OOO message when messages arrive outside business hours */
   oooAutoReplyEnabled: false,
-  /** The message text sent when messages arrive outside business hours */
+  /** The default message text sent when messages arrive outside business hours */
   oooMessage:
     'Thank you for your message! Our team is currently offline. We will get back to you during business hours.',
+  /** Channel-specific OOO messages (keyed by lowercase channel type) */
+  oooChannelMessages: {} as Record<string, string>,
   /** Whether to set conversation to pending when messages arrive outside business hours */
   oooSetPending: true,
 };

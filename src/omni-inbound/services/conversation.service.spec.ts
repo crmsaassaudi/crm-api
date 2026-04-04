@@ -14,6 +14,7 @@ import { TenantsService } from '../../tenants/tenants.service';
 import { OmniPayload } from '../domain/omni-payload';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { BusinessHoursService } from './business-hours.service';
+import { AutoResolveService } from './auto-resolve.service';
 import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 
 describe('ConversationService Concurrency', () => {
@@ -100,6 +101,15 @@ describe('ConversationService Concurrency', () => {
             getOOOConfig: jest.fn().mockResolvedValue({
               oooAutoReplyEnabled: false,
             }),
+            getChannelOOOMessage: jest.fn().mockReturnValue(''),
+          },
+        },
+        {
+          provide: AutoResolveService,
+          useValue: {
+            scheduleAutoResolve: jest.fn().mockResolvedValue(undefined),
+            rescheduleAutoResolve: jest.fn().mockResolvedValue(undefined),
+            cancelAutoResolve: jest.fn().mockResolvedValue(undefined),
           },
         },
         { provide: IOREDIS_CLIENT, useValue: redisMock },
