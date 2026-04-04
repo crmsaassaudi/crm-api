@@ -79,4 +79,37 @@ export class TenantSettingsController {
     const tenantId = this.cls.get('tenantId');
     return this.tenantsService.updateI18nSettings(tenantId, dto);
   }
+
+  /**
+   * GET /api/v1/tenants/profile
+   * Returns the current tenant's profile (name, alias, logoUrl).
+   */
+  @Get('profile')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get tenant profile' })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        tenantName: 'Toan Corp',
+        logoUrl: 'https://...',
+        alias: 'toancorp',
+      },
+    },
+  })
+  async getProfile() {
+    const tenantId = this.cls.get('tenantId');
+    return this.tenantsService.getProfile(tenantId);
+  }
+
+  /**
+   * PATCH /api/v1/tenants/profile
+   * Updates the current tenant's profile.
+   */
+  @Patch('profile')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update tenant profile (name, logo)' })
+  async updateProfile(@Body() dto: { tenantName?: string; logoUrl?: string }) {
+    const tenantId = this.cls.get('tenantId');
+    return this.tenantsService.updateProfile(tenantId, dto);
+  }
 }

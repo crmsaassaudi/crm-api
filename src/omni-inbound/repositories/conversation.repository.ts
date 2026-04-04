@@ -414,6 +414,7 @@ export class ConversationRepository {
    * Used by the least-busy assignment strategy.
    */
   async countOpenByAgent(tenantId: string, agentId: string): Promise<number> {
+    if (!Types.ObjectId.isValid(agentId)) return 0;
     return this.model
       .countDocuments({
         tenantId,
@@ -498,6 +499,7 @@ export class ConversationRepository {
     tenantId: string,
     agentId: string,
   ): Promise<OmniConversation[]> {
+    if (!Types.ObjectId.isValid(agentId)) return [];
     const docs = await this.model
       .find({
         tenantId,

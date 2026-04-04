@@ -561,4 +561,39 @@ export class TenantsService {
     );
     return updated?.i18nSettings ?? { ...TenantsService.I18N_DEFAULTS };
   }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Tenant Profile
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get the tenant profile (name, alias, logoUrl).
+   */
+  async getProfile(tenantId: string) {
+    const tenant = await this.tenantsRepository.findById(tenantId);
+    return {
+      tenantName: tenant?.name ?? '',
+      logoUrl: tenant?.logoUrl ?? '',
+      alias: tenant?.alias ?? '',
+    };
+  }
+
+  /**
+   * Partially update the tenant profile.
+   */
+  async updateProfile(
+    tenantId: string,
+    profile: { tenantName?: string; logoUrl?: string },
+  ) {
+    const payload: Partial<{ name: string; logoUrl: string }> = {};
+    if (profile.tenantName !== undefined) payload.name = profile.tenantName;
+    if (profile.logoUrl !== undefined) payload.logoUrl = profile.logoUrl;
+
+    if (Object.keys(payload).length === 0) {
+      return this.getProfile(tenantId);
+    }
+
+    await this.tenantsRepository.update(tenantId, payload);
+    return this.getProfile(tenantId);
+  }
 }

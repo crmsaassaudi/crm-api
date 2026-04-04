@@ -24,6 +24,9 @@ export class Tenant {
   @ApiProperty()
   name: string;
 
+  @ApiProperty({ required: false })
+  logoUrl?: string;
+
   @ApiProperty()
   ownerId: string;
 

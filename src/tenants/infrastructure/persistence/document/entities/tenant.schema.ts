@@ -30,6 +30,9 @@ export class TenantSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true })
   name: string;
 
+  @Prop({ type: String, default: '' })
+  logoUrl: string;
+
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',

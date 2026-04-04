@@ -13,6 +13,7 @@ export class TenantMapper {
     tenant.keycloakOrgId = raw.keycloakOrgId;
     tenant.alias = raw.alias;
     tenant.name = raw.name;
+    tenant.logoUrl = raw.logoUrl || '';
     tenant.ownerId = raw.ownerId ? raw.ownerId.toString() : null!;
     tenant.subscriptionPlan = raw.subscriptionPlan;
     tenant.status = raw.status;
@@ -51,6 +52,9 @@ export class TenantMapper {
     persistence.keycloakOrgId = domain.keycloakOrgId;
     persistence.alias = domain.alias;
     persistence.name = domain.name;
+    if (domain.logoUrl !== undefined) {
+      persistence.logoUrl = domain.logoUrl;
+    }
 
     if (domain.ownerId) {
       persistence.ownerId = new Types.ObjectId(domain.ownerId) as any;

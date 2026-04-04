@@ -267,7 +267,7 @@ export class UsersController {
   @Get('me/i18n')
   @HttpCode(HttpStatus.OK)
   async getMyI18n(@Request() req: any) {
-    const userId = req.user?.userId ?? req.user?.sub ?? this.cls.get('userId');
+    const userId = this.cls.get('userId') ?? req.user?.userId ?? req.user?.sub;
     const tenantId = this.cls.get('tenantId');
     return this.usersService.getResolvedI18n(userId, tenantId);
   }
@@ -283,7 +283,7 @@ export class UsersController {
     @Request() req: any,
     @Body() dto: UpdateUserI18nPreferencesDto,
   ) {
-    const userId = req.user?.userId ?? req.user?.sub ?? this.cls.get('userId');
+    const userId = this.cls.get('userId') ?? req.user?.userId ?? req.user?.sub;
     return this.usersService.updateI18nPreferences(userId, dto);
   }
 }

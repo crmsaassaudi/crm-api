@@ -25,7 +25,6 @@ import { OmniGateway } from './services/omni.gateway';
 import { ConversationService } from './services/conversation.service';
 import { ConversionService } from './services/conversion.service';
 import { OmniOutboundModule } from '../omni-outbound/omni-outbound.module';
-import { OutboundService } from '../omni-outbound/outbound.service';
 import { IdentityService } from './services/identity.service';
 import { NoteService } from './services/note.service';
 import { AssignmentService } from './services/assignment.service';
@@ -195,7 +194,7 @@ import { TicketsModule } from '../tickets/tickets.module';
     ConversationRepository,
     MessageRepository,
     ConversationService,
-    OutboundService,
+    OmniOutboundModule,
     IdentityService,
     NoteService,
     AssignmentService,

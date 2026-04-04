@@ -114,7 +114,17 @@ export class TenantInterceptor implements NestInterceptor {
           const userRepo = this.moduleRef.get(UsersDocumentRepository, {
             strict: false,
           });
-          const user = await userRepo.findById(userId);
+
+          let user: any = null;
+          if (isValidObjectId(userId)) {
+            user = await userRepo.findById(userId);
+          } else if (userId.includes('-')) {
+            user = await userRepo.findByKeycloakIdAndProvider({
+              keycloakId: userId,
+              provider: 'email',
+            });
+          }
+
           if (user?.i18nPreferences?.locale) {
             locale = user.i18nPreferences.locale;
           }

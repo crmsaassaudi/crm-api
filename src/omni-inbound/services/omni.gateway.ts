@@ -125,6 +125,10 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
           `host=${host}, fields=${Object.keys(decoded).join(',')}`,
       );
 
+      // Persist resolved identifiers on the socket for use during disconnect
+      client.data.tenantId = tenantId;
+      client.data.userId = userId;
+
       // Join tenant room for broadcast events
       await client.join(`tenant:${tenantId}`);
       this.logger.log(
@@ -148,8 +152,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const user = client.data?.user;
     if (!user) return;
 
-    const tenantId = user.tenantId ?? 'default-tenant';
-    const userId = user.id ?? user.sub;
+    // Use the identifiers persisted during handleConnection
+    const tenantId = client.data.tenantId ?? user.tenantId ?? 'default-tenant';
+    const userId = client.data.userId ?? user.id ?? user.sub;
 
     await this.presenceGateway.onAgentDisconnected(tenantId, userId);
 

@@ -1,5 +1,6 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Types } from 'mongoose';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { ConversationRepository } from '../repositories/conversation.repository';
@@ -104,6 +105,14 @@ export class AgentFallbackService {
     tenantId: string,
     agentId: string,
   ): Promise<void> {
+    // Guard: agentId must be a valid ObjectId to query assignedAgentId
+    if (!Types.ObjectId.isValid(agentId)) {
+      this.logger.warn(
+        `Agent ${agentId} is not a valid ObjectId — skipping reassignment`,
+      );
+      return;
+    }
+
     const redisKey = `${this.DISCONNECT_KEY_PREFIX}:${tenantId}:${agentId}`;
 
     // Check if the agent has reconnected in the meantime

@@ -682,10 +682,20 @@ export class UsersService {
    * Resolution order: User preferences → Tenant defaults → System defaults.
    */
   async getResolvedI18n(userId: string, tenantId: string) {
-    const [user, tenant] = await Promise.all([
-      this.usersRepository.findById(userId),
-      this.tenantsRepository.findById(tenantId),
-    ]);
+    // Resolve user: try internal ID first, fallback to Keycloak ID
+    let user: User | null = null;
+    if (userId.length === 24) {
+      user = await this.usersRepository.findById(userId);
+    }
+
+    if (!user) {
+      user = await this.usersRepository.findByKeycloakIdAndProvider({
+        keycloakId: userId,
+        provider: AuthProvidersEnum.email,
+      });
+    }
+
+    const tenant = await this.tenantsRepository.findById(tenantId);
 
     const tenantSettings = tenant?.i18nSettings ?? {
       ...UsersService.I18N_SYSTEM_DEFAULTS,
@@ -715,12 +725,25 @@ export class UsersService {
     userId: string,
     preferences: { locale?: string | null; timezone?: string | null },
   ) {
-    const user = await this.usersRepository.findById(userId);
+    let user: User | null = null;
+    if (userId.length === 24) {
+      user = await this.usersRepository.findById(userId);
+    }
+
+    if (!user) {
+      user = await this.usersRepository.findByKeycloakIdAndProvider({
+        keycloakId: userId,
+        provider: AuthProvidersEnum.email,
+      });
+    }
+
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    const updated = await this.usersRepository.update(userId, {
+    const internalId = user.id;
+
+    const updated = await this.usersRepository.update(internalId, {
       i18nPreferences: {
         locale: preferences.locale ?? null,
         timezone: preferences.timezone ?? null,
