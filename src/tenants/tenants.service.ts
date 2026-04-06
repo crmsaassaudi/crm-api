@@ -515,6 +515,59 @@ export class TenantsService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // CRM Settings
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private static readonly CRM_DEFAULTS = {
+    leadManagementMode: 'separated' as 'separated' | 'unified',
+    isMigrating: false,
+  };
+
+  /**
+   * Get the tenant's CRM settings, falling back to system defaults.
+   */
+  async getCrmSettings(tenantId: string): Promise<{
+    leadManagementMode: 'unified' | 'separated';
+    isMigrating: boolean;
+  }> {
+    const tenant = await this.tenantsRepository.findById(tenantId);
+    return {
+      leadManagementMode:
+        tenant?.crmSettings?.leadManagementMode ??
+        TenantsService.CRM_DEFAULTS.leadManagementMode,
+      isMigrating:
+        tenant?.crmSettings?.isMigrating ??
+        TenantsService.CRM_DEFAULTS.isMigrating,
+    };
+  }
+
+  /**
+   * Update the tenant's CRM settings.
+   * Note: Switching leadManagementMode when data already exists
+   * requires running a Migration Wizard first (Phase 3).
+   */
+  async updateCrmSettings(
+    tenantId: string,
+    settings: Partial<{ leadManagementMode: 'unified' | 'separated' }>,
+  ): Promise<{
+    leadManagementMode: 'unified' | 'separated';
+    isMigrating: boolean;
+  }> {
+    const updated = await this.tenantsRepository.updateCrmSettings(
+      tenantId,
+      settings,
+    );
+    return {
+      leadManagementMode:
+        updated?.crmSettings?.leadManagementMode ??
+        TenantsService.CRM_DEFAULTS.leadManagementMode,
+      isMigrating:
+        updated?.crmSettings?.isMigrating ??
+        TenantsService.CRM_DEFAULTS.isMigrating,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // i18n Settings
   // ─────────────────────────────────────────────────────────────────────────────
 

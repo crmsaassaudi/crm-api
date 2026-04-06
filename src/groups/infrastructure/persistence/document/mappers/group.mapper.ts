@@ -5,7 +5,7 @@ export class GroupMapper {
   static toDomain(raw: GroupSchemaClass): Group {
     const entity = new Group();
     entity.id = raw._id?.toString();
-    entity.tenantId = raw.tenantId;
+    entity.tenantId = raw.tenantId?.toString();
     entity.name = raw.name;
     entity.description = raw.description ?? undefined;
     entity.parentGroupId = raw.parentGroupId

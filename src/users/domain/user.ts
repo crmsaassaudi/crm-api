@@ -18,6 +18,8 @@ export class User {
   tenants: {
     tenantId: string;
     roles: string[];
+    permissions?: string[];
+    permissionOverrides?: Record<string, boolean>;
     joinedAt: Date;
   }[];
 

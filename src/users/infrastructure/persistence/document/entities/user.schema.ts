@@ -34,6 +34,8 @@ export class UserSchemaClass extends EntityDocumentHelper {
           ref: 'TenantSchemaClass',
         },
         roles: [String],
+        permissions: { type: [String], default: [] },
+        permissionOverrides: { type: MongooseSchema.Types.Mixed, default: {} },
         joinedAt: { type: Date, default: now },
       },
     ],
@@ -42,6 +44,8 @@ export class UserSchemaClass extends EntityDocumentHelper {
   tenants: {
     tenantId: string;
     roles: string[];
+    permissions?: string[];
+    permissionOverrides?: Record<string, boolean>;
     joinedAt: Date;
   }[];
 
