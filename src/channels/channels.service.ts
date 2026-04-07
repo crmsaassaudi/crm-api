@@ -39,11 +39,18 @@ export class ChannelsService {
 
   async create(dto: CreateChannelDto): Promise<Channel> {
     const tenant = this.cls.get('tenantId');
-    const channel = await this.repository.create({
-      ...dto,
-      tenantId: tenant,
-      status: 'Pending',
-    });
+
+    // --- Upsert: nếu channel (tenant+type+account) đã tồn tại thì update, không tạo mới ---
+    const { channel } = await this.repository.upsert(
+      tenant,
+      dto.type,
+      dto.account,
+      {
+        ...dto,
+        tenantId: tenant,
+        status: 'Pending',
+      },
+    );
 
     if (
       (dto.type === 'Facebook' || dto.type === 'Instagram') &&
@@ -52,33 +59,51 @@ export class ChannelsService {
       try {
         const userToken = dto.credentials.accessToken;
 
-        // 1. Fetch all pages managed by this user to get the specific Page Access Token and Page Name
+        // Fetch tất cả Facebook Pages của user (kèm IG business account nếu có)
         const pagesResponse = await axios.get(
           'https://graph.facebook.com/v19.0/me/accounts',
           {
             params: {
               access_token: userToken,
-              fields: 'id,name,access_token,picture{url}',
+              fields:
+                'id,name,access_token,picture{url},instagram_business_account{id,username,profile_picture_url}',
             },
           },
         );
 
-        const pages = pagesResponse.data.data ?? [];
-        const matchedPage = pages.find((p: any) => p.id === dto.account);
+        const pages: any[] = pagesResponse.data.data ?? [];
 
         let finalAccessToken = userToken;
         let finalPageName = dto.name;
         let avatarUrl = '';
+        let webhookTargetId = dto.account; // ID dùng để subscribe webhook
 
-        if (matchedPage) {
-          finalAccessToken = matchedPage.access_token;
-          finalPageName = matchedPage.name;
-          avatarUrl = matchedPage.picture?.data?.url;
+        if (dto.type === 'Facebook') {
+          // Match theo Facebook Page ID
+          const matchedPage = pages.find((p) => p.id === dto.account);
+          if (matchedPage) {
+            finalAccessToken = matchedPage.access_token;
+            finalPageName = matchedPage.name;
+            avatarUrl = matchedPage.picture?.data?.url ?? '';
+          }
+          webhookTargetId = dto.account; // subscribe trực tiếp trên Page ID
+        } else if (dto.type === 'Instagram') {
+          // Tìm FB Page nào có instagram_business_account.id khớp với dto.account
+          for (const page of pages) {
+            const igAccount = page.instagram_business_account;
+            if (igAccount && igAccount.id === dto.account) {
+              finalAccessToken = page.access_token; // dùng Page Access Token
+              finalPageName = igAccount.username ?? dto.name;
+              avatarUrl = igAccount.profile_picture_url ?? '';
+              webhookTargetId = page.id; // webhook subscribe trên FB Page, không phải IG ID
+              break;
+            }
+          }
         }
 
-        // 2. Subscribe the app to webhooks for this page (requires Page Access Token)
+        // Subscribe app webhooks
         await axios.post(
-          `https://graph.facebook.com/v19.0/${dto.account}/subscribed_apps`,
+          `https://graph.facebook.com/v19.0/${webhookTargetId}/subscribed_apps`,
           {
             subscribed_fields: [
               'messages',
@@ -89,7 +114,7 @@ export class ChannelsService {
           { params: { access_token: finalAccessToken } },
         );
 
-        // 3. Update Channel with real credentials, name and avatar
+        // Update channel với credentials, name và avatar thật
         await this.repository.update(tenant, channel.id, {
           status: 'Connected',
           name: finalPageName,
@@ -97,13 +122,12 @@ export class ChannelsService {
           config: { ...dto.config, avatarUrl },
         });
 
-        // Sync local object properties for the return value
         channel.status = 'Connected';
         channel.name = finalPageName;
         channel.config = { ...dto.config, avatarUrl };
       } catch (error) {
         console.error(
-          'Failed to automated Fanpage setup:',
+          'Failed to automated Meta channel setup:',
           error?.response?.data || error.message,
         );
         await this.repository.update(tenant, channel.id, { status: 'Error' });

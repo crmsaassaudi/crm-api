@@ -5,7 +5,7 @@ export class ChannelMapper {
   static toDomain(raw: ChannelSchemaClass): Channel {
     const entity = new Channel();
     entity.id = raw._id?.toString();
-    entity.tenantId = raw.tenantId;
+    entity.tenantId = raw.tenantId?.toString();
     entity.type = raw.type;
     entity.name = raw.name;
     entity.account = raw.account;

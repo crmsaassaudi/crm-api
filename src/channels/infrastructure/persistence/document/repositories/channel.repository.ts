@@ -78,6 +78,28 @@ export class ChannelRepository {
     return ChannelMapper.toDomain(doc);
   }
 
+  async upsert(
+    tenant: string,
+    type: string,
+    account: string,
+    data: Partial<Channel>,
+  ): Promise<{ channel: Channel; isNew: boolean }> {
+    const updateData = { ...data } as any;
+    delete updateData.tenantId;
+    const doc = await this.model
+      .findOneAndUpdate(
+        { tenantId: tenant, type, account },
+        { $set: { ...updateData, tenantId: tenant, type, account } },
+        { new: true, upsert: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+    // Mongoose doesn't expose isNew from findOneAndUpdate directly,
+    // so we rely on updatedAt vs createdAt to detect new docs.
+    const timeDiff = doc.updatedAt.getTime() - doc.createdAt.getTime();
+    const isNew = timeDiff < 1000;
+    return { channel: ChannelMapper.toDomain(doc), isNew };
+  }
+
   async update(
     tenant: string,
     id: string,
