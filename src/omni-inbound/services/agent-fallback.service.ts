@@ -6,27 +6,28 @@ import type Redis from 'ioredis';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { AssignmentService } from './assignment.service';
 import { AgentPresenceService } from './agent-presence.service';
+import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 
 /**
  * AgentFallbackService — handles agent disconnection gracefully.
  *
  * When an agent disconnects (network drop, tab close, etc.), this service:
  * 1. Records the disconnection timestamp in Redis
- * 2. Schedules a delayed check (default: 3 minutes)
+ * 2. Schedules a delayed check (configurable via omni_auto_reassignment settings)
  * 3. If the agent is still offline after the delay:
  *    - Finds all open conversations assigned to that agent
  *    - Reassigns them to available agents via AssignmentService
  *    - Emits events for realtime broadcast
  *
- * This prevents customer messages from falling into a "black hole"
- * when an agent goes offline unexpectedly.
+ * Configuration (from crm-settings key: omni_auto_reassignment):
+ *   - enabled: boolean — turn off to disable auto-reassignment entirely
+ *   - timeoutMinutes: number — delay before reassignment check (default: 3)
+ *   - strategy: 'back-to-queue' | 'next-available' | 'supervisor'
+ *   - notifyAgent: boolean — whether to notify the original agent
  */
 @Injectable()
 export class AgentFallbackService {
   private readonly logger = new Logger(AgentFallbackService.name);
-
-  /** How long to wait before reassigning (in ms). Default: 3 minutes. */
-  private readonly REASSIGN_DELAY_MS = 3 * 60 * 1000;
 
   /** Redis key prefix for tracking disconnected agents */
   private readonly DISCONNECT_KEY_PREFIX = 'omni:agent:disconnected';
@@ -38,6 +39,7 @@ export class AgentFallbackService {
     private readonly conversationRepo: ConversationRepository,
     private readonly assignmentService: AssignmentService,
     private readonly presenceService: AgentPresenceService,
+    private readonly settingsService: CrmSettingsService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
@@ -47,16 +49,26 @@ export class AgentFallbackService {
    * Records the disconnect time and schedules a delayed reassignment check.
    */
   async onAgentDisconnected(tenantId: string, agentId: string): Promise<void> {
+    const config = await this.getReassignmentConfig(tenantId);
+
+    if (!config.enabled) {
+      this.logger.debug(
+        `Auto-reassignment disabled for tenant ${tenantId} — skipping`,
+      );
+      return;
+    }
+
     const timerKey = `${tenantId}:${agentId}`;
     const redisKey = `${this.DISCONNECT_KEY_PREFIX}:${tenantId}:${agentId}`;
+    const delayMs = (config.timeoutMinutes ?? 3) * 60 * 1000;
 
-    // Record disconnect time in Redis (TTL = REASSIGN_DELAY + 60s buffer)
-    const ttlSeconds = Math.ceil(this.REASSIGN_DELAY_MS / 1000) + 60;
+    // Record disconnect time in Redis (TTL = delay + 60s buffer)
+    const ttlSeconds = Math.ceil(delayMs / 1000) + 60;
     await this.redis.set(redisKey, new Date().toISOString(), 'EX', ttlSeconds);
 
     this.logger.log(
       `Agent ${agentId} disconnected — scheduling reassignment check in ` +
-        `${this.REASSIGN_DELAY_MS / 1000}s`,
+        `${delayMs / 1000}s`,
     );
 
     // Cancel any existing timer for this agent (e.g. rapid disconnect/reconnect)
@@ -68,8 +80,8 @@ export class AgentFallbackService {
     // Schedule delayed reassignment check
     const timer = setTimeout(async () => {
       this.pendingTimers.delete(timerKey);
-      await this.executeReassignmentCheck(tenantId, agentId);
-    }, this.REASSIGN_DELAY_MS);
+      await this.executeReassignmentCheck(tenantId, agentId, config);
+    }, delayMs);
 
     this.pendingTimers.set(timerKey, timer);
   }
@@ -104,6 +116,7 @@ export class AgentFallbackService {
   private async executeReassignmentCheck(
     tenantId: string,
     agentId: string,
+    config: { strategy: string; notifyAgent: boolean },
   ): Promise<void> {
     // Guard: agentId must be a valid ObjectId to query assignedAgentId
     if (!Types.ObjectId.isValid(agentId)) {
@@ -136,8 +149,7 @@ export class AgentFallbackService {
 
     // Agent is confirmed offline — find their open conversations
     this.logger.warn(
-      `Agent ${agentId} still offline after ${this.REASSIGN_DELAY_MS / 1000}s ` +
-        `— reassigning open conversations`,
+      `Agent ${agentId} still offline — reassigning open conversations (strategy: ${config.strategy})`,
     );
 
     const openConversations = await this.conversationRepo.findOpenByAgent(
@@ -155,13 +167,26 @@ export class AgentFallbackService {
       `Reassigning ${openConversations.length} conversation(s) from offline agent ${agentId}`,
     );
 
+    // Map config strategy to assignment strategy
+    const assignmentStrategy = this.mapStrategy(config.strategy);
+
     for (const conversation of openConversations) {
       try {
-        const newAgentId = await this.assignmentService.assignConversation(
-          tenantId,
-          conversation.id,
-          'round-robin',
-        );
+        let newAgentId: string | null = null;
+
+        if (assignmentStrategy === 'unassign') {
+          // 'back-to-queue' — just unassign, conversation goes back to queue
+          await this.conversationRepo.updateAssignment(
+            conversation.id,
+            null as any,
+          );
+        } else {
+          newAgentId = await this.assignmentService.assignConversation(
+            tenantId,
+            conversation.id,
+            assignmentStrategy as any,
+          );
+        }
 
         // Emit event for realtime broadcast
         this.eventEmitter.emit('omni.conversation.assigned', {
@@ -170,11 +195,12 @@ export class AgentFallbackService {
           agentId: newAgentId,
           oldAgentId: agentId,
           reason: 'agent_offline_reassignment',
+          strategy: config.strategy,
         });
 
         this.logger.log(
           `Reassigned conversation ${conversation.id}: ` +
-            `${agentId} → ${newAgentId ?? 'unassigned (no agents available)'}`,
+            `${agentId} → ${newAgentId ?? 'queue (unassigned)'}`,
         );
       } catch (error) {
         this.logger.error(
@@ -185,5 +211,51 @@ export class AgentFallbackService {
 
     // Cleanup disconnect marker
     await this.redis.del(redisKey);
+  }
+
+  /**
+   * Map the config strategy name to an internal assignment strategy.
+   */
+  private mapStrategy(configStrategy: string): string {
+    switch (configStrategy) {
+      case 'back-to-queue':
+        return 'unassign';
+      case 'next-available':
+        return 'round-robin';
+      case 'supervisor':
+        return 'manual'; // supervisor-based → goes to manual queue for supervisor pickup
+      default:
+        return 'round-robin';
+    }
+  }
+
+  /**
+   * Get auto-reassignment configuration from CRM settings.
+   */
+  private async getReassignmentConfig(tenantId: string): Promise<{
+    enabled: boolean;
+    timeoutMinutes: number;
+    strategy: string;
+    notifyAgent: boolean;
+  }> {
+    try {
+      const config = await this.settingsService.getSetting(
+        'omni_auto_reassignment',
+        tenantId,
+      );
+      return {
+        enabled: (config as any)?.enabled ?? true,
+        timeoutMinutes: (config as any)?.timeoutMinutes ?? 3,
+        strategy: (config as any)?.strategy ?? 'back-to-queue',
+        notifyAgent: (config as any)?.notifyAgent ?? true,
+      };
+    } catch {
+      return {
+        enabled: true,
+        timeoutMinutes: 3,
+        strategy: 'back-to-queue',
+        notifyAgent: true,
+      };
+    }
   }
 }

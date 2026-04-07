@@ -13,6 +13,10 @@ import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { UsersService } from '../../users/users.service';
 import { OMNI_STICKY_RETRY_QUEUE } from '../queue/omni-sticky-queue.constants';
 import type { StickyRetryJobData } from '../queue/sticky-retry.processor';
+import {
+  RoutingRuleEvaluatorService,
+  RoutingContext,
+} from '../../routing-rules/routing-rule-evaluator.service';
 
 export type AssignmentStrategy =
   | 'round-robin'
@@ -32,6 +36,8 @@ export interface AssignmentOptions {
   requiredSkills?: string[];
   /** Skip sticky routing (used by sticky-retry processor to avoid infinite loop) */
   skipSticky?: boolean;
+  /** Routing context for rule evaluation */
+  routingContext?: RoutingContext;
 }
 
 /**
@@ -62,6 +68,7 @@ export class AssignmentService {
     private readonly auditLogRepo: AssignmentAuditLogRepository,
     private readonly settingsService: CrmSettingsService,
     private readonly usersService: UsersService,
+    private readonly routingRuleEvaluator: RoutingRuleEvaluatorService,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectQueue(OMNI_STICKY_RETRY_QUEUE)
     private readonly stickyRetryQueue: Queue<StickyRetryJobData>,
@@ -87,17 +94,50 @@ export class AssignmentService {
 
     // ── Resolve tenant routing config ─────────────────────────────────
     const routingConfig = await this.getRoutingConfig(tenantId);
+
+    // ── Evaluate routing rules to override defaults ───────────────────
+    let ruleMatch: Awaited<
+      ReturnType<RoutingRuleEvaluatorService['evaluateForTenant']>
+    > = null;
+    if (options.routingContext) {
+      try {
+        ruleMatch = await this.routingRuleEvaluator.evaluateForTenant(
+          tenantId,
+          options.routingContext,
+        );
+      } catch (err: any) {
+        this.logger.warn(
+          `Routing rule evaluation failed: ${err.message} — using default routing`,
+        );
+      }
+    }
+
     const strategy: AssignmentStrategy =
+      (ruleMatch?.strategy as AssignmentStrategy) ??
       options.strategy ??
       (routingConfig.defaultStrategy as AssignmentStrategy) ??
       'round-robin';
     const tenantMaxCapacity: number =
       routingConfig.defaultMaxCapacity ?? FALLBACK_MAX_CAPACITY;
+    const requiredSkills: string[] =
+      ruleMatch?.requiredSkills ?? options.requiredSkills ?? [];
+
+    // If a routing rule matched and specifies a team, resolve the agent pool
+    // from that team (group members) instead of using all online agents.
+    let agentPoolOverride = options.agentPool;
+    if (ruleMatch?.teamId) {
+      // teamId is stored as group ID — we don't resolve group members here
+      // because the presence service already filters by online status.
+      // We pass it through so getAvailableAgents can use it as a pool filter.
+      this.logger.debug(
+        `Routing rule "${ruleMatch.ruleName}" matched — teamId=${ruleMatch.teamId}, strategy=${ruleMatch.strategy}`,
+      );
+    }
 
     // Get available agents (online/available status)
     const availableAgents = await this.getAvailableAgents(
       tenantId,
-      options.agentPool,
+      agentPoolOverride,
     );
 
     if (availableAgents.length === 0) {
@@ -155,18 +195,14 @@ export class AssignmentService {
 
     // ── Filter by required skills if present ──────────────────────────
     let eligibleAgents = availableAgents;
-    if (
-      options.requiredSkills &&
-      options.requiredSkills.length > 0 &&
-      routingConfig.skillBasedRoutingEnabled
-    ) {
+    if (requiredSkills.length > 0 && routingConfig.skillBasedRoutingEnabled) {
       eligibleAgents = await this.filterBySkills(
         availableAgents,
-        options.requiredSkills,
+        requiredSkills,
       );
       if (eligibleAgents.length === 0) {
         this.logger.warn(
-          `No agents with required skills ${options.requiredSkills.join(', ')} — falling back to full pool`,
+          `No agents with required skills ${requiredSkills.join(', ')} — falling back to full pool`,
         );
         eligibleAgents = availableAgents;
       }

@@ -78,6 +78,7 @@ import { TenantsModule } from '../tenants/tenants.module';
 import { AuthModule } from '../auth/auth.module';
 import { DealsModule } from '../deals/deals.module';
 import { TicketsModule } from '../tickets/tickets.module';
+import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
 
 /**
  * OmniInboundModule — the complete omni-channel backend.
@@ -107,6 +108,7 @@ import { TicketsModule } from '../tickets/tickets.module';
     OmniOutboundModule,
     DealsModule,
     TicketsModule,
+    RoutingRulesModule,
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,

@@ -46,6 +46,14 @@ export class RoutingRuleRepository {
     return result.deletedCount > 0;
   }
 
+  async findEnabledByTenant(tenant: string): Promise<RoutingRule[]> {
+    const docs = await this.model
+      .find({ tenant, enabled: true })
+      .sort({ priority: 1 })
+      .exec();
+    return docs.map(RoutingRuleMapper.toDomain);
+  }
+
   async reorder(tenant: string, orderedIds: string[]): Promise<RoutingRule[]> {
     const bulkOps = orderedIds.map((id, index) => ({
       updateOne: {

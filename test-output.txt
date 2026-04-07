@@ -1,0 +1,136 @@
+﻿npx : FAIL src/omni-inbound/services/a
+ssignment.service.spec.ts
+At line:1 char:1
++ npx jest assignment.service.spec 
+--no-cache 2>&1 | Out-File -FilePath 
+...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
+    + CategoryInfo          : NotSpec 
+   ified: (FAIL src/omni-i...service  
+  .spec.ts:String) [], RemoteExcept   
+ ion
+    + FullyQualifiedErrorId : NativeC 
+   ommandError
+ 
+  ΓùÅ Test suite failed to run
+
+    [96msrc/omni-inbound/services/ass
+ignment.service.spec.ts[0m:[93m247[
+0m:[93m9[0m - [91merror[0m[90m 
+TS2353: [0mObject literal may only 
+specify known properties, and 
+'contactId' does not exist in type 
+'string[]'.
+
+    [7m247[0m         contactId: 
+'contact_1',
+    [7m   [0m [91m        
+~~~~~~~~~[0m
+    [96msrc/omni-inbound/services/ass
+ignment.service.spec.ts[0m:[93m270[
+0m:[93m9[0m - [91merror[0m[90m 
+TS2353: [0mObject literal may only 
+specify known properties, and 
+'contactId' does not exist in type 
+'string[]'.
+
+    [7m270[0m         contactId: 
+'contact_1',
+    [7m   [0m [91m        
+~~~~~~~~~[0m
+    [96msrc/omni-inbound/services/ass
+ignment.service.spec.ts[0m:[93m284[
+0m:[93m9[0m - [91merror[0m[90m 
+TS2353: [0mObject literal may only 
+specify known properties, and 
+'contactId' does not exist in type 
+'string[]'.
+
+    [7m284[0m         contactId: 
+'contact_1',
+    [7m   [0m [91m        
+~~~~~~~~~[0m
+    [96msrc/omni-inbound/services/ass
+ignment.service.spec.ts[0m:[93m311[
+0m:[93m9[0m - [91merror[0m[90m 
+TS2353: [0mObject literal may only 
+specify known properties, and 
+'contactId' does not exist in type 
+'string[]'.
+
+    [7m311[0m         contactId: 
+'contact_1',
+    [7m   [0m [91m        
+~~~~~~~~~[0m
+    [96msrc/omni-inbound/services/ass
+ignment.service.spec.ts[0m:[93m383[
+0m:[93m9[0m - [91merror[0m[90m 
+TS2353: [0mObject literal may only 
+specify known properties, and 
+'requiredSkills' does not exist in 
+type 'string[]'.
+
+    [7m383[0m         
+requiredSkills: ['billing', 
+'spanish'],
+    [7m   [0m [91m        
+~~~~~~~~~~~~~~[0m
+    [96msrc/omni-inbound/services/ass
+ignment.service.spec.ts[0m:[93m399[
+0m:[93m9[0m - [91merror[0m[90m 
+TS2353: [0mObject literal may only 
+specify known properties, and 
+'requiredSkills' does not exist in 
+type 'string[]'.
+
+    [7m399[0m         
+requiredSkills: ['japanese'],
+    [7m   [0m [91m        
+~~~~~~~~~~~~~~[0m
+    [96msrc/omni-inbound/services/ass
+ignment.service.spec.ts[0m:[93m428[
+0m:[93m9[0m - [91merror[0m[90m 
+TS2353: [0mObject literal may only 
+specify known properties, and 
+'routingContext' does not exist in 
+type 'string[]'.
+
+    [7m428[0m         
+routingContext: { channel: 
+'facebook', segment: 'VIP' },
+    [7m   [0m [91m        
+~~~~~~~~~~~~~~[0m
+    [96msrc/omni-inbound/services/ass
+ignment.service.spec.ts[0m:[93m463[
+0m:[93m9[0m - [91merror[0m[90m 
+TS2353: [0mObject literal may only 
+specify known properties, and 
+'routingContext' does not exist in 
+type 'string[]'.
+
+    [7m463[0m         
+routingContext: { channel: 
+'facebook', content: 'Hola' },
+    [7m   [0m [91m        
+~~~~~~~~~~~~~~[0m
+    [96msrc/omni-inbound/services/ass
+ignment.service.spec.ts[0m:[93m474[
+0m:[93m9[0m - [91merror[0m[90m 
+TS2353: [0mObject literal may only 
+specify known properties, and 
+'routingContext' does not exist in 
+type 'string[]'.
+
+    [7m474[0m         
+routingContext: { channel: 'facebook' 
+},
+    [7m   [0m [91m        
+~~~~~~~~~~~~~~[0m
+
+Test Suites: 1 failed, 1 total
+Tests:       0 total
+Snapshots:   0 total
+Time:        6.659 s
+Ran all test suites matching 
+assignment.service.spec.

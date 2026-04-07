@@ -83,6 +83,13 @@ export class TenantSettingsSeedingService {
         DEFAULT_OMNI_IDENTITY_RESOLUTION,
       ),
 
+      // ── Omni Auto-Reassignment ──────────────────────────────────────────
+      this.seed(
+        tenantId,
+        'omni_auto_reassignment',
+        DEFAULT_OMNI_AUTO_REASSIGNMENT,
+      ),
+
       // ── General Settings ───────────────────────────────────────────────────
       this.seed(tenantId, 'general_profile', DEFAULT_GENERAL_PROFILE),
       this.seed(tenantId, 'general_localization', DEFAULT_GENERAL_LOCALIZATION),
@@ -895,12 +902,25 @@ const DEFAULT_OMNI_IDENTITY_RESOLUTION = {
 const DEFAULT_OMNI_ROUTING = {
   defaultStrategy: 'round-robin',
   defaultMaxCapacity: 10,
-  stickyRoutingEnabled: true,
+  stickyRoutingEnabled: false,
   stickyTimeoutHours: 72,
   /** Minutes to wait for the preferred agent before falling back to another strategy */
   stickyWaitTimeMinutes: 3,
   fallbackStrategy: 'least-busy',
   skillBasedRoutingEnabled: false,
+};
+
+// ─── Omni Auto-Reassignment defaults ───────────────────────────────────────
+
+const DEFAULT_OMNI_AUTO_REASSIGNMENT = {
+  /** Whether auto-reassignment is enabled when an agent goes offline */
+  enabled: false,
+  /** Minutes of inactivity/offline before conversations are reassigned */
+  timeoutMinutes: 3,
+  /** Strategy for reassignment: 'back-to-queue' | 'next-available' | 'supervisor' */
+  strategy: 'back-to-queue',
+  /** Whether to notify the original agent about reassignment */
+  notifyAgent: false,
 };
 
 // ─── Omni Session Lifecycle defaults ─────────────────────────────────────────
@@ -960,6 +980,7 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   general_localization: DEFAULT_GENERAL_LOCALIZATION,
   general_notifications: DEFAULT_GENERAL_NOTIFICATIONS,
   omni_routing: DEFAULT_OMNI_ROUTING,
+  omni_auto_reassignment: DEFAULT_OMNI_AUTO_REASSIGNMENT,
   omni_session_lifecycle: DEFAULT_OMNI_SESSION_LIFECYCLE,
   omni_identity_resolution: DEFAULT_OMNI_IDENTITY_RESOLUTION,
 };
