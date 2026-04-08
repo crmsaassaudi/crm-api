@@ -12,6 +12,8 @@ const ACTIVITY_ACTIONS = [
   'status_changed',
   'agent_assigned',
   'agent_unassigned',
+  'group_assigned',
+  'group_unassigned',
   'tag_added',
   'tag_removed',
   'note_added',

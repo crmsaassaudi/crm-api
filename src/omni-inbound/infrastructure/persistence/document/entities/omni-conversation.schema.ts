@@ -86,6 +86,14 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
+    ref: 'GroupSchemaClass',
+    default: null,
+    index: true,
+  })
+  assignedGroupId: string | null;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     default: null,
   })

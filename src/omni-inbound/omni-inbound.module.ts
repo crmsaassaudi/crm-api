@@ -68,6 +68,10 @@ import {
   AssignmentAuditLogSchemaClass,
   AssignmentAuditLogSchema,
 } from './infrastructure/persistence/document/entities/assignment-audit-log.schema';
+import {
+  GroupSchemaClass,
+  GroupSchema,
+} from '../groups/infrastructure/persistence/document/entities/group.schema';
 
 // External modules
 import { ChannelsModule } from '../channels/channels.module';
@@ -123,6 +127,10 @@ import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
       {
         name: AssignmentAuditLogSchemaClass.name,
         schema: AssignmentAuditLogSchema,
+      },
+      {
+        name: GroupSchemaClass.name,
+        schema: GroupSchema,
       },
     ]),
   ],

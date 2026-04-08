@@ -485,9 +485,10 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     conversationId: string;
     agentId: string | null;
     oldAgentId: string | null;
+    groupId?: string | null;
   }) {
     this.logger.log(
-      `Broadcasting assignment: ${event.conversationId} → ${event.agentId ?? 'unassigned'}`,
+      `Broadcasting assignment: ${event.conversationId} → agent=${event.agentId ?? 'unassigned'}, group=${event.groupId ?? 'unchanged'}`,
     );
 
     this.server
@@ -496,6 +497,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         conversationId: event.conversationId,
         agentId: event.agentId,
         oldAgentId: event.oldAgentId,
+        groupId: event.groupId,
         timestamp: new Date().toISOString(),
       });
   }

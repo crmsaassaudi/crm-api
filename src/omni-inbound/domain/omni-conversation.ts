@@ -33,6 +33,9 @@ export interface OmniConversation {
   /** Which agent currently owns this conversation (null = unassigned / in queue) */
   assignedAgentId: string | null;
 
+  /** Which group/team is responsible for this conversation */
+  assignedGroupId: string | null;
+
   /** For collision detection: which agent last "claimed" this conversation */
   claimedBy: string | null;
   claimedAt: Date | null;

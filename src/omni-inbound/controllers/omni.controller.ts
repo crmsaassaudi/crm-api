@@ -516,13 +516,19 @@ export class OmniController {
   }
 
   /**
-   * Assign or reassign agent to a conversation.
+   * Assign or reassign agent and/or group to a conversation.
+   * Supports setting agentId or groupId to null to unassign.
    */
   @Patch('conversations/:id/assign')
   @HttpCode(HttpStatus.OK)
-  async assignAgent(@Param('id') id: string, @Body('agentId') agentId: string) {
-    if (!agentId) {
-      throw new BadRequestException('agentId is required');
+  async assignAgent(
+    @Param('id') id: string,
+    @Body('agentId') agentId?: string | null,
+    @Body('groupId') groupId?: string | null,
+  ) {
+    // Only reject if neither field was provided at all (both undefined)
+    if (agentId === undefined && groupId === undefined) {
+      throw new BadRequestException('agentId or groupId is required');
     }
 
     const conversation = await this.conversationRepo.findById(id);
@@ -531,16 +537,35 @@ export class OmniController {
     }
 
     const oldAgentId = conversation.assignedAgentId;
-    const updated = await this.conversationRepo.updateAssignment(id, agentId);
+    const oldGroupId = conversation.assignedGroupId;
+    // The user performing this assignment (from authenticated session via CLS)
+    const performedByUserId = this.cls.get<string>('userId') ?? null;
+    let updated: any = conversation;
+
+    if (agentId !== undefined) {
+      updated =
+        (await this.conversationRepo.updateAssignment(id, agentId)) ?? updated;
+    }
+
+    if (groupId !== undefined) {
+      updated =
+        (await this.conversationRepo.updateGroupAssignment(id, groupId)) ??
+        updated;
+    }
 
     this.eventEmitter.emit('omni.conversation.assigned', {
       tenantId: conversation.tenantId,
       conversationId: id,
-      agentId,
+      agentId: agentId !== undefined ? agentId : conversation.assignedAgentId,
       oldAgentId,
+      groupId: groupId !== undefined ? groupId : undefined,
+      oldGroupId,
+      performedByUserId,
     });
 
-    this.logger.log(`Conversation ${id} assigned to agent ${agentId}`);
+    this.logger.log(
+      `Conversation ${id} assigned to agent=${agentId ?? 'unchanged'}, group=${groupId ?? 'unchanged'} by user=${performedByUserId}`,
+    );
     return updated;
   }
 
@@ -556,6 +581,7 @@ export class OmniController {
     }
 
     const oldAgentId = conversation.assignedAgentId;
+    const performedByUserId = this.cls.get<string>('userId') ?? null;
     const updated = await this.conversationRepo.updateAssignment(id, null);
 
     this.eventEmitter.emit('omni.conversation.assigned', {
@@ -563,9 +589,12 @@ export class OmniController {
       conversationId: id,
       agentId: null,
       oldAgentId,
+      performedByUserId,
     });
 
-    this.logger.log(`Conversation ${id} unassigned`);
+    this.logger.log(
+      `Conversation ${id} unassigned by user=${performedByUserId}`,
+    );
     return updated;
   }
 

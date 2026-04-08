@@ -125,9 +125,9 @@ export class AssignmentService {
 
     const strategy: AssignmentStrategy = normalizeStrategy(
       ruleMatch?.strategy ??
-      options.strategy ??
-      (routingConfig.defaultStrategy as string) ??
-      'round-robin',
+        options.strategy ??
+        (routingConfig.defaultStrategy as string) ??
+        'round-robin',
     );
     const tenantMaxCapacity: number =
       routingConfig.defaultMaxCapacity ?? FALLBACK_MAX_CAPACITY;

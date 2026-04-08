@@ -265,6 +265,19 @@ export class ConversationRepository {
   }
 
   /**
+   * Update the assigned group for a conversation.
+   */
+  async updateGroupAssignment(
+    id: string,
+    groupId: string | null,
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findByIdAndUpdate(id, { assignedGroupId: groupId }, { new: true })
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
    * Update the cached customer profile (name, avatarUrl) fetched from the platform.
    * Used after creating a new conversation to enrich the display information.
    */

@@ -47,6 +47,7 @@ export class OmniConversationMapper {
       contactId: contactIdStr,
       customer: raw.customer,
       assignedAgentId: assignedAgentIdStr,
+      assignedGroupId: raw.assignedGroupId?.toString() ?? null,
       claimedBy: claimedByIdStr,
       claimedAt: raw.claimedAt,
       status: raw.status as any,
@@ -83,6 +84,7 @@ export class OmniConversationMapper {
     (raw as any).contactId = domain.contactId;
     raw.customer = domain.customer;
     raw.assignedAgentId = domain.assignedAgentId;
+    (raw as any).assignedGroupId = domain.assignedGroupId;
     raw.claimedById = domain.claimedBy;
     raw.claimedAt = domain.claimedAt;
     raw.status = domain.status;

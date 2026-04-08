@@ -7,6 +7,8 @@ import {
 } from '../repositories/activity.repository';
 import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
 import { UsersService } from '../../users/users.service';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 
 /**
  * ActivityService — listens to all conversation lifecycle events and
@@ -19,7 +21,7 @@ import { UsersService } from '../../users/users.service';
  *   - omni.conversation.created         → conversation_created
  *   - omni.conversation.reopened        → conversation_reopened
  *   - omni.conversation.status_changed  → status_changed / auto_resolved
- *   - omni.conversation.assigned        → agent_assigned / agent_unassigned
+ *   - omni.conversation.assigned        → agent_assigned / agent_unassigned / group_assigned / group_unassigned
  *   - omni.conversation.tag_added       → tag_added
  *   - omni.conversation.note_added      → note_added
  *   - omni.conversation.sla_breached    → sla_breached
@@ -36,6 +38,8 @@ export class ActivityService {
     private readonly activityRepo: ActivityRepository,
     private readonly eventEmitter: EventEmitter2,
     private readonly usersService: UsersService,
+    @InjectModel('GroupSchemaClass')
+    private readonly groupModel: Model<any>,
   ) {}
 
   /**
@@ -149,38 +153,119 @@ export class ActivityService {
     conversationId: string;
     agentId: string | null;
     oldAgentId: string | null;
+    groupId?: string | null;
+    oldGroupId?: string | null;
     strategy?: string;
     reason?: string;
+    /** The user who triggered this via REST API — null means system/auto-routing */
+    performedByUserId?: string | null;
   }) {
-    if (event.agentId) {
-      const agentName = await this.resolveActorName(event.agentId);
-      const strategyText = event.strategy
-        ? ` theo luật ${this.strategyLabel(event.strategy)}`
-        : '';
-      await this.log(
-        event.tenantId,
-        event.conversationId,
-        event.strategy ? 'system' : 'agent',
-        event.agentId,
-        'agent_assigned',
-        event.oldAgentId,
-        event.agentId,
-        { strategy: event.strategy, reason: event.reason },
-        `Hệ thống đã gán cuộc hội thoại cho ${agentName}${strategyText}`,
-      );
-    } else {
-      const oldAgentName = await this.resolveActorName(event.oldAgentId);
-      await this.log(
-        event.tenantId,
-        event.conversationId,
-        'system',
-        event.oldAgentId,
-        'agent_unassigned',
-        event.oldAgentId,
-        null,
-        {},
-        `${oldAgentName} đã được gỡ khỏi cuộc hội thoại — chuyển về hàng chờ`,
-      );
+    this.logger.debug(
+      `[onAssigned] event received: agentId=${event.agentId}, oldAgentId=${event.oldAgentId}, ` +
+        `groupId=${event.groupId}, oldGroupId=${event.oldGroupId}, performedBy=${event.performedByUserId}`,
+    );
+
+    // Resolve who performed the action
+    const isManual = !!event.performedByUserId && !event.strategy;
+    const isAutoRoutingRule = !!event.strategy;
+    const performerName = event.performedByUserId
+      ? await this.resolveActorName(event.performedByUserId)
+      : null;
+
+    const strategyText = event.strategy
+      ? ` (luật: ${this.strategyLabel(event.strategy)})`
+      : '';
+
+    // Prefix: who/what did the assignment
+    const actorPrefix = isManual
+      ? `${performerName}` // "Nguyễn Văn A"
+      : isAutoRoutingRule
+        ? `Hệ thống routing${strategyText}` // "Hệ thống routing (luật: round-robin)"
+        : `Hệ thống`; // fallback
+
+    // ── Agent assignment activity ─────────────────────────────────
+    if (event.agentId !== undefined && event.agentId !== event.oldAgentId) {
+      if (event.agentId) {
+        const agentName = await this.resolveActorName(event.agentId);
+        await this.log(
+          event.tenantId,
+          event.conversationId,
+          isManual ? 'agent' : 'system',
+          event.performedByUserId ?? event.agentId,
+          'agent_assigned',
+          event.oldAgentId,
+          event.agentId,
+          {
+            strategy: event.strategy,
+            reason: event.reason,
+            agentName,
+            performedByUserId: event.performedByUserId,
+            performerName,
+          },
+          `${actorPrefix} đã phân công hội thoại cho tư vấn viên ${agentName}`,
+        );
+      } else if (event.oldAgentId) {
+        const oldAgentName = await this.resolveActorName(event.oldAgentId);
+        await this.log(
+          event.tenantId,
+          event.conversationId,
+          isManual ? 'agent' : 'system',
+          event.performedByUserId ?? event.oldAgentId,
+          'agent_unassigned',
+          event.oldAgentId,
+          null,
+          {
+            reason: event.reason,
+            performedByUserId: event.performedByUserId,
+            performerName,
+          },
+          `${actorPrefix} đã gỡ tư vấn viên ${oldAgentName} khỏi hội thoại — chuyển về hàng chờ`,
+        );
+      }
+    }
+
+    // ── Group assignment activity ─────────────────────────────────
+    if (event.groupId !== undefined) {
+      if (event.groupId) {
+        const groupName = await this.resolveGroupName(event.groupId);
+        this.logger.debug(
+          `[onAssigned] logging group_assigned for ${event.groupId} → ${groupName}`,
+        );
+        await this.log(
+          event.tenantId,
+          event.conversationId,
+          isManual ? 'agent' : 'system',
+          event.performedByUserId ?? null,
+          'group_assigned',
+          event.oldGroupId ?? null,
+          event.groupId,
+          {
+            groupId: event.groupId,
+            groupName,
+            performedByUserId: event.performedByUserId,
+            performerName,
+          },
+          `${actorPrefix} đã phân công hội thoại cho nhóm ${groupName}`,
+        );
+      } else {
+        const oldGroupName = event.oldGroupId
+          ? await this.resolveGroupName(event.oldGroupId)
+          : 'nhóm';
+        this.logger.debug(
+          `[onAssigned] logging group_unassigned, oldGroup=${event.oldGroupId}`,
+        );
+        await this.log(
+          event.tenantId,
+          event.conversationId,
+          isManual ? 'agent' : 'system',
+          event.performedByUserId ?? null,
+          'group_unassigned',
+          event.oldGroupId ?? null,
+          null,
+          {},
+          `Đã gỡ ${oldGroupName} khỏi hội thoại`,
+        );
+      }
     }
   }
 
@@ -403,19 +488,39 @@ export class ActivityService {
   ): Promise<string> {
     if (!actorId) return 'Hệ thống';
     try {
-      const users = await this.usersService.findByIds([actorId]);
+      const users = await this.usersService.findByIdsGlobal([actorId]);
       if (users.length > 0) {
         const u = users[0];
         const fullName = [u.firstName, u.lastName]
           .filter(Boolean)
           .join(' ')
           .trim();
+        if (fullName && u.email) return `${fullName} (${u.email})`;
         return fullName || u.email || 'Agent';
       }
     } catch {
       // Fallback silently
     }
     return 'Agent';
+  }
+
+  /**
+   * Resolve a group ID to a display name.
+   * Falls back to "Nhóm" if group cannot be found.
+   */
+  private async resolveGroupName(
+    groupId: string | null | undefined,
+  ): Promise<string> {
+    if (!groupId) return 'Nhóm';
+    try {
+      const group = await this.groupModel.findById(groupId).lean().exec();
+      if (group) {
+        return (group as any).name || 'Nhóm';
+      }
+    } catch {
+      // Fallback silently
+    }
+    return 'Nhóm';
   }
 
   /** Map channel type to human-readable Vietnamese label */
