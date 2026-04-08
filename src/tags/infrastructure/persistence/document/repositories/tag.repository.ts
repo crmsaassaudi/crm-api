@@ -16,7 +16,7 @@ export class TagRepository {
     tenant: string,
     query?: { scope?: string; search?: string },
   ): Promise<Tag[]> {
-    const filter: FilterQuery<TagSchemaClass> = { tenant };
+    const filter: FilterQuery<TagSchemaClass> = { tenantId: tenant };
     if (query?.scope) filter.scope = query.scope;
     if (query?.search) {
       filter.name = { $regex: query.search, $options: 'i' };
@@ -26,7 +26,7 @@ export class TagRepository {
   }
 
   async findById(tenant: string, id: string): Promise<Tag | null> {
-    const doc = await this.model.findOne({ _id: id, tenant }).exec();
+    const doc = await this.model.findOne({ _id: id, tenantId: tenant }).exec();
     return doc ? TagMapper.toDomain(doc) : null;
   }
 
@@ -41,13 +41,19 @@ export class TagRepository {
     data: Partial<Tag>,
   ): Promise<Tag | null> {
     const doc = await this.model
-      .findOneAndUpdate({ _id: id, tenant }, { $set: data }, { new: true })
+      .findOneAndUpdate(
+        { _id: id, tenantId: tenant },
+        { $set: data },
+        { new: true },
+      )
       .exec();
     return doc ? TagMapper.toDomain(doc) : null;
   }
 
   async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model.deleteOne({ _id: id, tenant }).exec();
+    const result = await this.model
+      .deleteOne({ _id: id, tenantId: tenant })
+      .exec();
     return result.deletedCount > 0;
   }
 }

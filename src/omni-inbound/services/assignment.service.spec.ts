@@ -362,7 +362,7 @@ describe('AssignmentService', () => {
       redisMock.incr.mockResolvedValue(1);
 
       // Falls back to default strategy (round-robin)
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
+      await service.assignConversation('tenant_1', 'conv_1', {
         strategy: 'sticky',
         contactId: 'contact_1',
       });

@@ -348,7 +348,7 @@ describe('RoutingRuleEvaluatorService', () => {
         }),
       ]);
 
-      const result = await service.evaluateForTenant('tenant_1', {
+      await service.evaluateForTenant('tenant_1', {
         channel: 'facebook',
       });
 

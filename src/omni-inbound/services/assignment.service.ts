@@ -136,7 +136,7 @@ export class AssignmentService {
 
     // If a routing rule matched and specifies a team, resolve the agent pool
     // from that team (group members) instead of using all online agents.
-    let agentPoolOverride = options.agentPool;
+    const agentPoolOverride = options.agentPool;
     if (ruleMatch?.teamId) {
       // teamId is stored as group ID — we don't resolve group members here
       // because the presence service already filters by online status.

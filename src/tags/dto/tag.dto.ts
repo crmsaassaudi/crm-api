@@ -51,6 +51,11 @@ export class UpdateTagDto {
   @IsOptional()
   color?: string;
 
+  @ApiPropertyOptional({ enum: TAG_SCOPES, example: 'Contact' })
+  @IsEnum(TAG_SCOPES)
+  @IsOptional()
+  scope?: string;
+
   @ApiPropertyOptional({ example: 'Spend > 5000' })
   @IsString()
   @IsOptional()

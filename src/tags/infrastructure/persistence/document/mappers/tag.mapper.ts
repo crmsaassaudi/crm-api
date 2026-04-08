@@ -5,7 +5,7 @@ export class TagMapper {
   static toDomain(raw: TagSchemaClass): Tag {
     const entity = new Tag();
     entity.id = raw._id?.toString();
-    entity.tenantId = raw.tenantId;
+    entity.tenantId = raw.tenantId?.toString();
     entity.name = raw.name;
     entity.color = raw.color;
     entity.scope = raw.scope;
