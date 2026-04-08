@@ -6,6 +6,17 @@ import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.
 export type RoutingRuleSchemaDocument =
   HydratedDocument<RoutingRuleSchemaClass>;
 
+const ASSIGNMENT_STRATEGIES = [
+  'round_robin',
+  'round-robin',
+  'least_busy',
+  'least-busy',
+  'capacity_based',
+  'capacity-based',
+  'sticky',
+  'manual',
+];
+
 @Schema({ timestamps: true, collection: 'routing_rules' })
 export class RoutingRuleSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, index: true })
@@ -31,13 +42,7 @@ export class RoutingRuleSchemaClass extends EntityDocumentHelper {
       teamId: String,
       strategy: {
         type: String,
-        enum: [
-          'round_robin',
-          'least_busy',
-          'capacity_based',
-          'sticky',
-          'manual',
-        ],
+        enum: ASSIGNMENT_STRATEGIES,
       },
       sticky: Boolean,
       requiredSkills: { type: [String], default: [] },
@@ -59,7 +64,7 @@ export const RoutingRuleSchema = SchemaFactory.createForClass(
   RoutingRuleSchemaClass,
 );
 
-RoutingRuleSchema.plugin(tenantFilterPlugin);
+RoutingRuleSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
 
 RoutingRuleSchema.index({ tenant: 1, name: 1 }, { unique: true });
 RoutingRuleSchema.index({ tenant: 1, priority: 1 });

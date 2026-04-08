@@ -15,8 +15,11 @@ import { Type } from 'class-transformer';
 const MATCH_TYPES = ['all', 'any'] as const;
 const STRATEGIES = [
   'round_robin',
+  'round-robin',
   'least_busy',
+  'least-busy',
   'capacity_based',
+  'capacity-based',
   'sticky',
   'manual',
 ] as const;

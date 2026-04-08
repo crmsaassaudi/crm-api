@@ -112,11 +112,23 @@ export class AssignmentService {
       }
     }
 
-    const strategy: AssignmentStrategy =
-      (ruleMatch?.strategy as AssignmentStrategy) ??
+    // Normalize strategy: accept both 'round_robin' (DB/settings format)
+    // and 'round-robin' (AssignmentService internal format)
+    const normalizeStrategy = (s: string | undefined): AssignmentStrategy => {
+      const map: Record<string, AssignmentStrategy> = {
+        round_robin: 'round-robin',
+        least_busy: 'least-busy',
+        capacity_based: 'capacity-based',
+      };
+      return (map[s as string] ?? s ?? 'round-robin') as AssignmentStrategy;
+    };
+
+    const strategy: AssignmentStrategy = normalizeStrategy(
+      ruleMatch?.strategy ??
       options.strategy ??
-      (routingConfig.defaultStrategy as AssignmentStrategy) ??
-      'round-robin';
+      (routingConfig.defaultStrategy as string) ??
+      'round-robin',
+    );
     const tenantMaxCapacity: number =
       routingConfig.defaultMaxCapacity ?? FALLBACK_MAX_CAPACITY;
     const requiredSkills: string[] =
