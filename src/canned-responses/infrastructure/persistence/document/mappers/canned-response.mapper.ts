@@ -5,7 +5,7 @@ export class CannedResponseMapper {
   static toDomain(raw: CannedResponseSchemaClass): CannedResponse {
     const entity = new CannedResponse();
     entity.id = raw._id?.toString();
-    entity.tenantId = raw.tenantId;
+    entity.tenantId = raw.tenantId?.toString();
     entity.shortcut = raw.shortcut;
     entity.content = raw.content;
     entity.category = raw.category;

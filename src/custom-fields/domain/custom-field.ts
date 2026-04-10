@@ -5,7 +5,7 @@ export class CustomField {
   id: string;
 
   @ApiProperty()
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty()
   module: string;

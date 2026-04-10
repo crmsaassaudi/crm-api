@@ -900,6 +900,8 @@ const DEFAULT_OMNI_IDENTITY_RESOLUTION = {
 // ─── Omni Routing & Assignment defaults ──────────────────────────────────────
 
 const DEFAULT_OMNI_ROUTING = {
+  /** Master switch — when false, all conversations go to queue (no auto-assign) */
+  autoAssignmentEnabled: true,
   defaultStrategy: 'round-robin',
   defaultMaxCapacity: 10,
   stickyRoutingEnabled: false,

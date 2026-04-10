@@ -12,8 +12,13 @@ export type CustomFieldSchemaDocument =
   toJSON: { virtuals: true, getters: true },
 })
 export class CustomFieldSchemaClass extends EntityDocumentHelper {
-  @Prop({ type: String, required: true, index: true })
-  tenant: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TenantSchemaClass',
+    required: true,
+    index: true,
+  })
+  tenantId: string;
 
   @Prop({ required: true, index: true })
   module: string;

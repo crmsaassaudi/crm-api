@@ -320,4 +320,22 @@ Nếu bạn cần hỗ trợ thêm, vui lòng liên hệ:
 
 ---
 
+
+Tin nhắn đến → load Channel config
+│
+├── Channel.autoAssign === false (override tắt)
+│   └── ❌ KHÔNG ASSIGN → vào hàng đợi
+│
+├── Channel.autoAssign === true (override bật)
+│   ├── Channel có supportUsers/Groups/routing rule?
+│   │   ├── YES → Chạy theo quy tắc channel ✅
+│   │   └── NO  → Dùng global strategy (round-robin/least-busy...) ✅
+│   └── (Channel bật = luôn assign, bất kể global bật/tắt)
+│
+└── Channel.autoAssign === undefined (không set)
+    └── Theo global setting
+        ├── Global BẬT → Chạy theo global strategy ✅
+        └── Global TẮT → ❌ KHÔNG ASSIGN → hàng đợi
+
+
 *Tài liệu này được cập nhật theo phiên bản hệ thống. Vui lòng kiểm tra phiên bản mới nhất tại cổng tài liệu.*

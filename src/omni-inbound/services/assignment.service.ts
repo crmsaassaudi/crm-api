@@ -1,6 +1,8 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { Model } from 'mongoose';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { ConversationRepository } from '../repositories/conversation.repository';
@@ -38,6 +40,13 @@ export interface AssignmentOptions {
   skipSticky?: boolean;
   /** Routing context for rule evaluation */
   routingContext?: RoutingContext;
+  /**
+   * Channel-level auto-assignment override.
+   *   - true  → channel explicitly enabled auto-assign (ignores global toggle)
+   *   - false → channel explicitly disabled (handled upstream, should not reach here)
+   *   - undefined → channel did not set; defer to global toggle
+   */
+  channelAutoAssignOverride?: boolean;
 }
 
 /**
@@ -72,6 +81,8 @@ export class AssignmentService {
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectQueue(OMNI_STICKY_RETRY_QUEUE)
     private readonly stickyRetryQueue: Queue<StickyRetryJobData>,
+    @InjectModel('GroupSchemaClass')
+    private readonly groupModel: Model<any>,
   ) {}
 
   /**
@@ -94,22 +105,95 @@ export class AssignmentService {
 
     // ── Resolve tenant routing config ─────────────────────────────────
     const routingConfig = await this.getRoutingConfig(tenantId);
+    this.logger.warn(
+      `[ASSIGN DEBUG] ─── AssignmentService.assignConversation ───`,
+    );
+    this.logger.warn(
+      `[ASSIGN DEBUG] tenantId=${tenantId}, conversationId=${conversationId}`,
+    );
+    this.logger.warn(
+      `[ASSIGN DEBUG] Routing config: ${JSON.stringify(routingConfig, null, 2)}`,
+    );
+
+    // ── Channel-first auto-assignment hierarchy ───────────────────────
+    //
+    // Priority:
+    //   1. Channel.autoAssign === false → SKIP (handled upstream in triggerAutoAssignment)
+    //   2. Channel.autoAssign === true  → ALWAYS assign (skip global check)
+    //   3. Channel.autoAssign === undefined → Defer to global toggle
+    //      - Global ON  → assign
+    //      - Global OFF → queue
+    //
+    const channelOverride = options.channelAutoAssignOverride;
+    this.logger.warn(
+      `[ASSIGN DEBUG] channelOverride=${JSON.stringify(channelOverride)} (type: ${typeof channelOverride})`,
+    );
+
+    if (channelOverride === true) {
+      // Channel explicitly enabled — proceed regardless of global setting
+      this.logger.warn(
+        `[ASSIGN DEBUG] Channel override=TRUE → bypassing global toggle`,
+      );
+    } else if (channelOverride === undefined) {
+      // Channel did not set — check global toggle
+      this.logger.warn(
+        `[ASSIGN DEBUG] Channel override=UNDEFINED → checking global toggle: autoAssignmentEnabled=${JSON.stringify(routingConfig.autoAssignmentEnabled)} (type: ${typeof routingConfig.autoAssignmentEnabled})`,
+      );
+      if (routingConfig.autoAssignmentEnabled === false) {
+        this.logger.warn(
+          `[ASSIGN DEBUG] ❌ EARLY EXIT: Global auto-assign is FALSE and channel did not override → QUEUED`,
+        );
+        this.logger.log(
+          `Auto-assignment globally disabled for tenant ${tenantId} ` +
+            `and channel did not override — conversation ${conversationId} queued`,
+        );
+        await this.writeAuditLog({
+          tenantId,
+          conversationId,
+          assignedAgentId: null,
+          strategy: 'manual',
+          reason:
+            'Auto-assignment globally disabled (omni_routing.autoAssignmentEnabled = false) ' +
+            'and channel did not override',
+          metadata: { channelOverride: 'undefined', globalEnabled: false },
+          outcome: 'queued',
+        });
+        return null;
+      }
+      this.logger.warn(
+        `[ASSIGN DEBUG] Global toggle is NOT false (value=${JSON.stringify(routingConfig.autoAssignmentEnabled)}) → proceeding`,
+      );
+    }
+    // channelOverride === false is already handled upstream (triggerAutoAssignment)
 
     // ── Evaluate routing rules to override defaults ───────────────────
     let ruleMatch: Awaited<
       ReturnType<RoutingRuleEvaluatorService['evaluateForTenant']>
     > = null;
     if (options.routingContext) {
+      this.logger.warn(
+        `[ASSIGN DEBUG] Evaluating routing rules for tenant ${tenantId}...`,
+      );
       try {
         ruleMatch = await this.routingRuleEvaluator.evaluateForTenant(
           tenantId,
           options.routingContext,
         );
+        this.logger.warn(
+          `[ASSIGN DEBUG] Routing rule evaluation result: ${JSON.stringify(ruleMatch)}`,
+        );
       } catch (err: any) {
+        this.logger.warn(
+          `[ASSIGN DEBUG] Routing rule evaluation EXCEPTION: ${err.message}`,
+        );
         this.logger.warn(
           `Routing rule evaluation failed: ${err.message} — using default routing`,
         );
       }
+    } else {
+      this.logger.warn(
+        `[ASSIGN DEBUG] No routingContext provided — skipping rule evaluation`,
+      );
     }
 
     // Normalize strategy: accept both 'round_robin' (DB/settings format)
@@ -135,24 +219,48 @@ export class AssignmentService {
       ruleMatch?.requiredSkills ?? options.requiredSkills ?? [];
 
     // If a routing rule matched and specifies a team, resolve the agent pool
-    // from that team (group members) instead of using all online agents.
-    const agentPoolOverride = options.agentPool;
+    // from that team (group members) and intersect with channel pool.
+    let effectivePool = options.agentPool;
     if (ruleMatch?.teamId) {
-      // teamId is stored as group ID — we don't resolve group members here
-      // because the presence service already filters by online status.
-      // We pass it through so getAvailableAgents can use it as a pool filter.
       this.logger.debug(
         `Routing rule "${ruleMatch.ruleName}" matched — teamId=${ruleMatch.teamId}, strategy=${ruleMatch.strategy}`,
       );
+      const teamMembers = await this.resolveGroupMembers(ruleMatch.teamId);
+      if (teamMembers.length > 0) {
+        if (effectivePool && effectivePool.length > 0) {
+          // Intersect: only agents in BOTH channel pool AND routing rule team
+          const teamSet = new Set(teamMembers);
+          effectivePool = effectivePool.filter((id) => teamSet.has(id));
+          this.logger.debug(
+            `Team pool intersected with channel pool: ${effectivePool.length} agents eligible`,
+          );
+        } else {
+          effectivePool = teamMembers;
+        }
+      }
     }
+
+    this.logger.warn(
+      `[ASSIGN DEBUG] Strategy resolved: ${strategy} (effectiveStrategy=${strategy === 'sticky' ? ((routingConfig.fallbackStrategy as string) ?? 'round-robin') : strategy})`,
+    );
+    this.logger.warn(
+      `[ASSIGN DEBUG] tenantMaxCapacity=${tenantMaxCapacity}, requiredSkills=${JSON.stringify(requiredSkills)}`,
+    );
+    this.logger.warn(
+      `[ASSIGN DEBUG] effectivePool=${JSON.stringify(effectivePool)}`,
+    );
 
     // Get available agents (online/available status)
     const availableAgents = await this.getAvailableAgents(
       tenantId,
-      agentPoolOverride,
+      effectivePool,
+    );
+    this.logger.warn(
+      `[ASSIGN DEBUG] Available agents (online): ${JSON.stringify(availableAgents)} (count=${availableAgents.length})`,
     );
 
     if (availableAgents.length === 0) {
+      this.logger.warn(`[ASSIGN DEBUG] ❌ NO AGENTS ONLINE → queued`);
       this.logger.warn(
         `No available agents for tenant ${tenantId} — conversation ${conversationId} goes to queue`,
       );
@@ -607,6 +715,36 @@ export class AssignmentService {
     } catch {
       // If presence service fails, return the pool as-is or empty
       return pool ?? [];
+    }
+  }
+
+  /**
+   * Resolve group (team) members from MongoDB.
+   * Accepts a single groupId or an array of groupIds.
+   * Returns deduplicated list of member user IDs.
+   */
+  async resolveGroupMembers(
+    groupIdOrIds: string | string[],
+  ): Promise<string[]> {
+    const ids = Array.isArray(groupIdOrIds) ? groupIdOrIds : [groupIdOrIds];
+    if (ids.length === 0) return [];
+
+    try {
+      const groups = await this.groupModel
+        .find({ _id: { $in: ids } })
+        .lean()
+        .exec();
+
+      const allMembers = groups.flatMap((g: any) =>
+        (g.memberIds ?? g.members ?? []).map(String),
+      );
+
+      return [...new Set(allMembers)];
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to resolve group members for ${ids.join(',')}: ${err.message}`,
+      );
+      return [];
     }
   }
 

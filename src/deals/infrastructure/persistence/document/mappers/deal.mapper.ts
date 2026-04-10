@@ -5,7 +5,7 @@ export class DealMapper {
   static toDomain(raw: DealSchemaClass): Deal {
     const domainEntity = new Deal();
     domainEntity.id = raw._id.toString();
-    domainEntity.tenantId = raw.tenantId;
+    domainEntity.tenantId = raw.tenantId?.toString();
     domainEntity.title = raw.title;
     domainEntity.name = raw.name;
     domainEntity.pipeline = raw.pipeline;

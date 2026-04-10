@@ -16,6 +16,7 @@ import { AgentFallbackService } from './agent-fallback.service';
 import { OutboundService } from '../../omni-outbound/outbound.service';
 import { SessionService } from '../../auth/services/session.service';
 import { TenantsService } from '../../tenants/tenants.service';
+import { UsersService } from '../../users/users.service';
 import { jwtDecode } from 'jwt-decode';
 import * as cookie from 'cookie';
 
@@ -55,6 +56,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly sessionService: SessionService,
     private readonly tenantsService: TenantsService,
     private readonly agentFallbackService: AgentFallbackService,
+    private readonly usersService: UsersService,
   ) {}
 
   private readonly ROOT_DOMAIN = 'crm.com';
@@ -92,7 +94,33 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       client.data.user = decoded;
-      const userId = decoded.id ?? decoded.sub;
+      const keycloakUserId = decoded.id ?? decoded.sub;
+
+      // ── Resolve MongoDB _id from keycloakId ──────────────────────────
+      // The JWT contains the keycloakId (UUID), but channel configs, assignment,
+      // and supportUserIds all use MongoDB ObjectId. We MUST resolve the internal
+      // _id so presence, assignment, and pool filtering all use the same ID format.
+      let userId = keycloakUserId;
+      try {
+        const dbUser = await this.usersService.findByKeycloakIdAndProvider({
+          keycloakId: keycloakUserId,
+          provider: 'email',
+        });
+        if (dbUser) {
+          userId = dbUser.id.toString();
+          this.logger.log(
+            `Resolved keycloakId ${keycloakUserId} → MongoDB _id ${userId}`,
+          );
+        } else {
+          this.logger.warn(
+            `Could not resolve MongoDB _id for keycloakId ${keycloakUserId} — using keycloakId as fallback`,
+          );
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Failed to resolve MongoDB _id for keycloakId ${keycloakUserId}: ${err.message} — using keycloakId as fallback`,
+        );
+      }
 
       // Resolve tenantId from the socket handshake hostname (subdomain → DB lookup)
       let tenantId = 'default-tenant';
@@ -121,8 +149,8 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       this.logger.debug(
-        `JWT decoded for ${client.id}: tenantId=${tenantId}, userId=${userId}, ` +
-          `host=${host}, fields=${Object.keys(decoded).join(',')}`,
+        `JWT decoded for ${client.id}: tenantId=${tenantId}, keycloakId=${keycloakUserId}, ` +
+          `resolvedUserId=${userId}, host=${host}, fields=${Object.keys(decoded).join(',')}`,
       );
 
       // Persist resolved identifiers on the socket for use during disconnect

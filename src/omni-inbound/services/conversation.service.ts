@@ -8,7 +8,9 @@ import {
 import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
+import { InjectModel } from '@nestjs/mongoose';
 import { Queue } from 'bullmq';
+import { Model } from 'mongoose';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { OmniPayload } from '../domain/omni-payload';
@@ -23,6 +25,9 @@ import { TenantsService } from '../../tenants/tenants.service';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { BusinessHoursService } from './business-hours.service';
 import { AutoResolveService } from './auto-resolve.service';
+import { AssignmentService } from './assignment.service';
+import { AgentPresenceService } from './agent-presence.service';
+import { ChannelsService } from '../../channels/channels.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
 import { TimelineResponseDto } from '../dto/timeline-response.dto';
 import {
@@ -69,10 +74,15 @@ export class ConversationService {
     private readonly settingsService: CrmSettingsService,
     private readonly businessHoursService: BusinessHoursService,
     private readonly autoResolveService: AutoResolveService,
+    private readonly assignmentService: AssignmentService,
+    private readonly agentPresenceService: AgentPresenceService,
+    private readonly channelsService: ChannelsService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectQueue(OMNI_MEDIA_CACHE_QUEUE)
     private readonly mediaCacheQueue: Queue<MediaCacheJobData>,
+    @InjectModel('GroupSchemaClass')
+    private readonly groupModel: Model<any>,
   ) {}
 
   async getConversationTimeline(params: {
@@ -289,6 +299,7 @@ export class ConversationService {
       tenantId: string;
       status: string;
       contactId: string | null;
+      assignedAgentId: string | null;
     } | null = null;
     if (conversationId) {
       existing = await this.conversationRepo.findById(conversationId);
@@ -363,6 +374,34 @@ export class ConversationService {
               externalConversationId: payload.externalConversationId,
             });
 
+            // ── Auto-reassignment on reopen if agent is offline/unassigned ──
+            const currentAgent = (reopened as any).assignedAgentId;
+            if (!currentAgent) {
+              await this.triggerAutoAssignment(
+                payload,
+                conversationId,
+                contactId ?? existing.contactId ?? null,
+                'reopen_no_agent',
+              );
+            } else {
+              // Check if the previous agent is still online
+              const presence = await this.agentPresenceService.getPresence(
+                payload.tenantId,
+                currentAgent,
+              );
+              if (!presence || presence.status !== 'available') {
+                this.logger.log(
+                  `Reopened conversation ${conversationId}: previous agent ${currentAgent} is offline — triggering reassignment`,
+                );
+                await this.triggerAutoAssignment(
+                  payload,
+                  conversationId,
+                  contactId ?? existing.contactId ?? null,
+                  'reopen_agent_offline',
+                );
+              }
+            }
+
             // Keep contactId from the reopened session
             contactId = existing.contactId ?? contactId;
             // conversationId stays the same — don't create a new one
@@ -408,6 +447,35 @@ export class ConversationService {
         } else {
           this.logger.debug(
             `Auto-create shadow contact disabled — skipping for conversation ${conversationId}`,
+          );
+        }
+      }
+
+      // ── Retry auto-assignment for existing open/pending conversations ──
+      // If the conversation is still active but has no agent assigned,
+      // retry auto-assignment. This covers cases where:
+      //   - The original auto-assign failed (e.g. no agents online)
+      //   - The conversation was unassigned manually
+      //   - Agent disconnected and fallback didn't find a replacement
+      if (
+        existing &&
+        conversationId &&
+        (existing.status === 'open' || existing.status === 'pending')
+      ) {
+        const assignedAgent = existing.assignedAgentId;
+        if (!assignedAgent) {
+          this.logger.warn(
+            `[AUTO-ASSIGN DEBUG] Existing conversation ${conversationId} is ${existing.status} but has NO agent — retrying auto-assignment`,
+          );
+          await this.triggerAutoAssignment(
+            payload,
+            conversationId,
+            contactId ?? existing.contactId ?? null,
+            'existing_unassigned',
+          );
+        } else {
+          this.logger.debug(
+            `Existing conversation ${conversationId} already assigned to agent ${assignedAgent} — skipping auto-assignment`,
           );
         }
       }
@@ -560,6 +628,15 @@ export class ConversationService {
         conversationId,
       );
 
+      // ── Step 6c: Auto-assign conversation to an agent ──────────
+      await this.triggerAutoAssignment(
+        payload,
+        conversationId,
+        contactId ?? null,
+        previousConversationId ? 'reopen_new_session' : 'new_conversation',
+        enrichedProfile,
+      );
+
       // Profile enrichment already done eagerly before conversation creation (Step 3b above).
     }
 
@@ -643,6 +720,220 @@ export class ConversationService {
 
     // ── Step 8: Business Hours / OOO Auto-Reply ────────────────
     await this.handleBusinessHoursCheck(payload, conversationId);
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Auto-Assignment Engine
+  // ────────────────────────────────────────────────────────────────
+
+  /**
+   * Trigger auto-assignment for a conversation.
+   *
+   * Flow:
+   * 1. Load channel config → supportUserIds + supportGroupIds
+   * 2. Resolve group members into individual user IDs
+   * 3. Merge into a deduplicated agent pool
+   * 4. Call AssignmentService with routing context + agent pool
+   * 5. Emit assignment event for real-time broadcast + activity trail
+   *
+   * If the channel has autoAssignmentEnabled = false, skip assignment.
+   * If supportUserIds AND supportGroupIds are both empty, use all online agents.
+   */
+  private async triggerAutoAssignment(
+    payload: OmniPayload,
+    conversationId: string,
+    contactId: string | null,
+    reason: string,
+    enrichedProfile?: { name?: string; avatarUrl?: string; phone?: string },
+  ): Promise<void> {
+    try {
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG] ═══════════════════════════════════════════════`,
+      );
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG] triggerAutoAssignment called for conversation=${conversationId}, reason=${reason}`,
+      );
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG] tenantId=${payload.tenantId}, channelType=${payload.channelType}, channelAccount=${payload.channelAccount}`,
+      );
+
+      // 1. Load channel config
+      let channelConfig: Record<string, any> = {};
+      try {
+        const channel = await this.channelsService.findAnyByAccount(
+          this.toSchemaChannelType(payload.channelType),
+          payload.channelAccount,
+        );
+        this.logger.warn(
+          `[AUTO-ASSIGN DEBUG] Channel lookup result: ${channel ? `found (id=${channel.id})` : 'NOT FOUND'}`,
+        );
+        this.logger.warn(
+          `[AUTO-ASSIGN DEBUG] Channel full config: ${JSON.stringify(channel?.config ?? {}, null, 2)}`,
+        );
+        channelConfig = channel?.config ?? {};
+      } catch (channelErr: any) {
+        // Channel not found in DB — use defaults (assign from all agents)
+        this.logger.warn(
+          `[AUTO-ASSIGN DEBUG] Channel lookup EXCEPTION: ${channelErr.message}`,
+        );
+        this.logger.debug(
+          `Channel not found for ${payload.channelType}/${payload.channelAccount} — using default routing`,
+        );
+      }
+
+      // 2. Channel-first auto-assignment hierarchy
+      //    - false  → SKIP immediately (channel override OFF)
+      //    - true   → ALWAYS assign (channel override ON, bypasses global)
+      //    - undefined → defer to global toggle (handled by AssignmentService)
+      const channelAutoAssign = channelConfig.autoAssignmentEnabled;
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG] channelConfig.autoAssignmentEnabled = ${JSON.stringify(channelAutoAssign)} (type: ${typeof channelAutoAssign})`,
+      );
+
+      if (channelAutoAssign === false) {
+        this.logger.warn(
+          `[AUTO-ASSIGN DEBUG] ❌ EARLY EXIT: Channel auto-assign is explicitly FALSE — skipping assignment`,
+        );
+        this.logger.log(
+          `Auto-assignment explicitly disabled for channel ${payload.channelAccount} — skipping`,
+        );
+        return;
+      }
+
+      // 3. Build agent pool from channel's support config
+      const supportUserIds: string[] = channelConfig.supportUserIds ?? [];
+      const supportGroupIds: string[] = channelConfig.supportGroupIds ?? [];
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG] supportUserIds=${JSON.stringify(supportUserIds)}, supportGroupIds=${JSON.stringify(supportGroupIds)}`,
+      );
+
+      let agentPool: string[] | undefined = undefined;
+      if (supportUserIds.length > 0 || supportGroupIds.length > 0) {
+        const groupMemberIds =
+          await this.resolveGroupMembersForAssignment(supportGroupIds);
+        this.logger.warn(
+          `[AUTO-ASSIGN DEBUG] Resolved group members: ${JSON.stringify(groupMemberIds)}`,
+        );
+        const allSupportIds = [
+          ...new Set([...supportUserIds, ...groupMemberIds]),
+        ];
+        agentPool = allSupportIds.length > 0 ? allSupportIds : undefined;
+
+        this.logger.warn(
+          `[AUTO-ASSIGN DEBUG] Final agent pool: ${JSON.stringify(agentPool)} (${allSupportIds.length} unique)`,
+        );
+      } else {
+        this.logger.warn(
+          `[AUTO-ASSIGN DEBUG] No support users/groups configured — agent pool is UNDEFINED (all online agents)`,
+        );
+      }
+
+      // 4. Build routing context for rule evaluation
+      const customerName =
+        enrichedProfile?.name ??
+        payload.metadata?.contactName ??
+        payload.senderId;
+
+      // 5. Call AssignmentService with channel override flag
+      const routingContext = {
+        channel: payload.channelType,
+        tags: [],
+        customerName,
+        content: payload.content ?? '',
+        time: this.getCurrentTimeHHmm(),
+        segment: undefined,
+      };
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG] Calling AssignmentService.assignConversation with:`,
+      );
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG]   channelAutoAssignOverride=${JSON.stringify(channelAutoAssign)}`,
+      );
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG]   agentPool=${JSON.stringify(agentPool)}`,
+      );
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG]   contactId=${contactId}, senderId=${payload.senderId}`,
+      );
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG]   routingContext=${JSON.stringify(routingContext)}`,
+      );
+
+      const assignedAgentId = await this.assignmentService.assignConversation(
+        payload.tenantId,
+        conversationId,
+        {
+          agentPool,
+          contactId,
+          externalSenderId: payload.senderId,
+          channelAutoAssignOverride: channelAutoAssign, // true | undefined
+          routingContext,
+        },
+      );
+
+      // 6. Emit assignment event for real-time broadcast
+      if (assignedAgentId) {
+        this.logger.warn(
+          `[AUTO-ASSIGN DEBUG] ✅ SUCCESS: conversation ${conversationId} assigned to agent ${assignedAgentId}`,
+        );
+        this.eventEmitter.emit('omni.conversation.assigned', {
+          tenantId: payload.tenantId,
+          conversationId,
+          agentId: assignedAgentId,
+          oldAgentId: null,
+          strategy: 'auto',
+          reason,
+        });
+        this.logger.log(
+          `Auto-assigned conversation ${conversationId} → agent ${assignedAgentId} (reason: ${reason})`,
+        );
+      } else {
+        this.logger.warn(
+          `[AUTO-ASSIGN DEBUG] ⚠️ NO ASSIGNMENT: conversation ${conversationId} goes to queue (reason: ${reason})`,
+        );
+        this.logger.log(
+          `Conversation ${conversationId} goes to queue — no available agent (reason: ${reason})`,
+        );
+      }
+      this.logger.warn(
+        `[AUTO-ASSIGN DEBUG] ═══════════════════════════════════════════════`,
+      );
+    } catch (err: any) {
+      // Auto-assignment failure must NOT block message processing
+      this.logger.error(
+        `Auto-assignment failed for conversation ${conversationId}: ${err.message}`,
+        err.stack,
+      );
+    }
+  }
+
+  /**
+   * Resolve group IDs to member user IDs from MongoDB.
+   */
+  private async resolveGroupMembersForAssignment(
+    groupIds: string[],
+  ): Promise<string[]> {
+    if (groupIds.length === 0) return [];
+    try {
+      const groups = await this.groupModel
+        .find({ _id: { $in: groupIds } })
+        .lean()
+        .exec();
+      return groups.flatMap((g: any) =>
+        (g.memberIds ?? g.members ?? []).map(String),
+      );
+    } catch (err: any) {
+      this.logger.warn(`Failed to resolve group members: ${err.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get current time as HH:mm for routing rule time-based conditions.
+   */
+  private getCurrentTimeHHmm(): string {
+    const now = new Date();
+    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
   }
 
   // ────────────────────────────────────────────────────────────────

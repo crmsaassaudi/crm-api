@@ -6,7 +6,7 @@ export class ContactMapper {
   static toDomain(raw: ContactSchemaClass): Contact {
     const domainEntity = new Contact();
     domainEntity.id = raw._id.toString();
-    domainEntity.tenantId = raw.tenantId;
+    domainEntity.tenantId = raw.tenantId?.toString();
     domainEntity.firstName = raw.firstName;
     domainEntity.lastName = raw.lastName;
     domainEntity.emails = raw.emails ?? [];

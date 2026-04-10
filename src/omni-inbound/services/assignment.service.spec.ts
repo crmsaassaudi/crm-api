@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
+import { getModelToken } from '@nestjs/mongoose';
 import { AssignmentService } from './assignment.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { AgentPresenceService } from './agent-presence.service';
@@ -84,6 +85,14 @@ describe('AssignmentService', () => {
         {
           provide: getQueueToken(OMNI_STICKY_RETRY_QUEUE),
           useValue: stickyRetryQueueMock,
+        },
+        {
+          provide: getModelToken('GroupSchemaClass'),
+          useValue: {
+            find: jest.fn().mockReturnValue({
+              lean: () => ({ exec: () => Promise.resolve([]) }),
+            }),
+          },
         },
       ],
     }).compile();
@@ -544,6 +553,140 @@ describe('AssignmentService', () => {
       });
 
       // Should fall back to default round-robin
+      expect(result).toBe('agent_1');
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Channel-first Auto-Assignment Hierarchy
+  // ────────────────────────────────────────────────────────────────────────
+
+  describe('channel-first auto-assignment hierarchy', () => {
+    // Scenario 1: Channel ON + has own pool → use channel rules
+    it('should assign using channel agent pool when channel explicitly enables', async () => {
+      redisMock.incr.mockResolvedValue(1);
+      // Only agent_2 is in the channel pool
+      presenceServiceMock.getOnlineAgents.mockResolvedValue(['agent_2']);
+
+      const result = await service.assignConversation('tenant_1', 'conv_1', {
+        channelAutoAssignOverride: true,
+        agentPool: ['agent_2'],
+      });
+
+      expect(result).toBe('agent_2');
+      expect(conversationRepoMock.updateAssignment).toHaveBeenCalledWith(
+        'conv_1',
+        'agent_2',
+      );
+    });
+
+    // Scenario 2a: Channel ON + no own rules + Global ON → use global strategy
+    it('should use global strategy when channel has no own pool and global is ON', async () => {
+      redisMock.incr.mockResolvedValue(1);
+      settingsServiceMock.getSetting.mockResolvedValue({
+        autoAssignmentEnabled: true,
+        defaultStrategy: 'round-robin',
+        defaultMaxCapacity: 10,
+        stickyRoutingEnabled: false,
+        fallbackStrategy: 'least-busy',
+        skillBasedRoutingEnabled: false,
+      });
+
+      const result = await service.assignConversation('tenant_1', 'conv_1', {
+        channelAutoAssignOverride: true,
+        // no agentPool → use all available agents
+      });
+
+      expect(result).toBe('agent_1');
+    });
+
+    // Scenario 2b: Channel ON + no own rules + Global OFF → still assign (channel overrides)
+    it('should STILL assign when channel explicitly ON even if global is OFF', async () => {
+      redisMock.incr.mockResolvedValue(1);
+      settingsServiceMock.getSetting.mockResolvedValue({
+        autoAssignmentEnabled: false, // Global OFF
+        defaultStrategy: 'round-robin',
+        defaultMaxCapacity: 10,
+        stickyRoutingEnabled: false,
+        fallbackStrategy: 'least-busy',
+        skillBasedRoutingEnabled: false,
+      });
+
+      const result = await service.assignConversation('tenant_1', 'conv_1', {
+        channelAutoAssignOverride: true, // Channel ON → overrides global
+      });
+
+      // Should STILL assign because channel explicitly enabled
+      expect(result).toBe('agent_1');
+      expect(conversationRepoMock.updateAssignment).toHaveBeenCalled();
+    });
+
+    // Scenario 4: Channel undefined + Global ON → use global strategy
+    it('should use global strategy when channel did not set and global is ON', async () => {
+      redisMock.incr.mockResolvedValue(1);
+      settingsServiceMock.getSetting.mockResolvedValue({
+        autoAssignmentEnabled: true,
+        defaultStrategy: 'round-robin',
+        defaultMaxCapacity: 10,
+        stickyRoutingEnabled: false,
+        fallbackStrategy: 'least-busy',
+        skillBasedRoutingEnabled: false,
+      });
+
+      const result = await service.assignConversation('tenant_1', 'conv_1', {
+        channelAutoAssignOverride: undefined, // Channel did not set
+      });
+
+      expect(result).toBe('agent_1');
+    });
+
+    // Scenario 5: Channel undefined + Global OFF → queue
+    it('should queue when channel did not set and global is OFF', async () => {
+      settingsServiceMock.getSetting.mockResolvedValue({
+        autoAssignmentEnabled: false, // Global OFF
+        defaultStrategy: 'round-robin',
+        defaultMaxCapacity: 10,
+        stickyRoutingEnabled: false,
+        fallbackStrategy: 'least-busy',
+        skillBasedRoutingEnabled: false,
+      });
+
+      const result = await service.assignConversation('tenant_1', 'conv_1', {
+        channelAutoAssignOverride: undefined, // Channel didn't set → defer to global
+      });
+
+      expect(result).toBeNull();
+      expect(conversationRepoMock.updateAssignment).not.toHaveBeenCalled();
+      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          strategy: 'manual',
+          outcome: 'queued',
+          reason: expect.stringContaining('globally disabled'),
+        }),
+      );
+    });
+
+    // Scenario 3 is handled upstream in conversation.service.ts (channelAutoAssign === false)
+    // But verify that if somehow false reaches here, the service still works
+    // (channelAutoAssign === false should never reach assignConversation)
+
+    // Edge: Global setting not set at all (legacy tenants) → treat as enabled
+    it('should treat missing global setting as enabled (backward compat)', async () => {
+      redisMock.incr.mockResolvedValue(1);
+      settingsServiceMock.getSetting.mockResolvedValue({
+        // autoAssignmentEnabled is NOT set (legacy tenant)
+        defaultStrategy: 'round-robin',
+        defaultMaxCapacity: 10,
+        stickyRoutingEnabled: false,
+        fallbackStrategy: 'least-busy',
+        skillBasedRoutingEnabled: false,
+      });
+
+      const result = await service.assignConversation('tenant_1', 'conv_1', {
+        channelAutoAssignOverride: undefined,
+      });
+
+      // Should still assign (autoAssignmentEnabled !== false → undefined !== false → proceed)
       expect(result).toBe('agent_1');
     });
   });

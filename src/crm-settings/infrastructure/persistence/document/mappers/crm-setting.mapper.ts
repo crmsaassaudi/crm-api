@@ -4,7 +4,7 @@ import { CrmSettingSchemaClass } from '../entities/crm-setting.schema';
 export class CrmSettingMapper {
   static toDomain(raw: CrmSettingSchemaClass): CrmSetting {
     const domainEntity = new CrmSetting();
-    domainEntity.tenantId = raw.tenantId;
+    domainEntity.tenantId = raw.tenantId?.toString();
     domainEntity.key = raw.key;
     domainEntity.value = raw.value;
     domainEntity.createdAt = raw.createdAt;

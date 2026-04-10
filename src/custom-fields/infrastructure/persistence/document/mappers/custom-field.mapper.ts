@@ -5,7 +5,7 @@ export class CustomFieldMapper {
   static toDomain(raw: CustomFieldSchemaClass): CustomField {
     const domain = new CustomField();
     domain.id = raw._id.toString();
-    domain.tenant = raw.tenant;
+    domain.tenantId = raw.tenantId?.toString();
     domain.module = raw.module;
     domain.internalKey = raw.internalKey;
     domain.displayLabel = raw.displayLabel;
