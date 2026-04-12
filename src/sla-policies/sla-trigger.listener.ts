@@ -1,14 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { SlaPoliciesService } from './sla-policies.service';
 import { SlaMonitorService } from './sla-monitor.service';
 import { BusinessHoursService } from '../omni-inbound/services/business-hours.service';
-import {
-  OmniConversationSchemaClass,
-  OmniConversationDocument,
-} from '../omni-inbound/infrastructure/persistence/document/entities/omni-conversation.schema';
+import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 
 /**
  * SlaTriggerListener — listens to `omni.conversation.created` events
@@ -28,8 +23,7 @@ export class SlaTriggerListener {
     private readonly slaPoliciesService: SlaPoliciesService,
     private readonly slaMonitorService: SlaMonitorService,
     private readonly businessHoursService: BusinessHoursService,
-    @InjectModel(OmniConversationSchemaClass.name)
-    private readonly conversationModel: Model<OmniConversationDocument>,
+    private readonly conversationRepository: ConversationRepository,
   ) {}
 
   /**
@@ -125,9 +119,9 @@ export class SlaTriggerListener {
 
       // ── Write all deadlines to conversation document ───────────
       if (Object.keys(updatePayload).length > 0) {
-        await this.conversationModel.updateOne(
-          { _id: event.conversationId },
-          { $set: updatePayload },
+        await this.conversationRepository.updateSlaFields(
+          event.conversationId,
+          updatePayload,
         );
       }
     } catch (err) {

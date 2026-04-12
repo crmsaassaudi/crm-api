@@ -1,0 +1,507 @@
+﻿npx : FAIL src/omni-inbound/services/c
+onversation.service.spec.ts (6.485 s)
+At line:1 char:1
++ npx jest src/omni-inbound/services/c
+onversation.service.spec.ts --no- ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpec 
+   ified: (FAIL src/omni-i...ec.ts (  
+  6.485 s):String) [], RemoteExcept   
+ ion
+    + FullyQualifiedErrorId : NativeC 
+   ommandError
+ 
+  ConversationService Concurrency
+    ├ù should process a message and 
+create a conversation when not cached 
+(21 ms)
+    ├ù should skip processing if 
+idempotency check returns true in 
+Redis (5 ms)
+    ├ù should skip processing if 
+E11000 is thrown during save (2 ms)
+    ├ù should use existing 
+conversation from identity cache (3 
+ms)
+
+  ΓùÅ ConversationService Concurrency 
+ΓÇ║ should process a message and 
+create a conversation when not cached
+
+    Nest can't resolve dependencies 
+of the ConversationService 
+(ConversationRepository, 
+MessageRepository, MediaProxyService, 
+IdentityService, RedisLockService, 
+ContactsService, FacebookAdapter, 
+TenantsService, CrmSettingsService, 
+BusinessHoursService, 
+AutoResolveService, ?, 
+AgentPresenceService, 
+ChannelsService, EventEmitter, 
+IOREDIS_CLIENT, 
+BullQueue_omni-media-cache, 
+GroupSchemaClassModel). Please make 
+sure that the argument 
+AssignmentService at index [11] is 
+available in the RootTestModule 
+module.
+
+    Potential solutions:
+    - Is RootTestModule a valid 
+NestJS module?
+    - If AssignmentService is a 
+provider, is it part of the current 
+RootTestModule?
+    - If AssignmentService is 
+exported from a separate @Module, is 
+that module imported within 
+RootTestModule?
+      @Module({
+        imports: [ /* the Module 
+containing AssignmentService */ ]
+      })
+
+    For more common dependency 
+resolution issues, see: https://docs.n
+estjs.com/faq/common-errors
+
+    [0m [90m 69 |[39m     
+}[33m;[39m
+     [90m 70 |[39m
+    [31m[1m>[22m[39m[90m 71 
+|[39m     [36mconst[39m 
+module[33m:[39m 
+[33mTestingModule[39m [33m=[39m 
+[36mawait[39m [33mTest[39m[33m.[
+39mcreateTestingModule({
+     [90m    |[39m                  
+                 [31m[1m^[22m[39m
+     [90m 72 |[39m       
+providers[33m:[39m [
+     [90m 73 |[39m         [33mConv
+ersationService[39m[33m,[39m
+     [90m 74 |[39m         { 
+provide[33m:[39m [33mConversationRe
+pository[39m[33m,[39m 
+useValue[33m:[39m 
+conversationRepoMock }[33m,[39m[0m
+
+      at TestingInjector.lookupCompone
+ntInParentModules (../node_modules/@ne
+stjs/core/injector/injector.js:290:19)
+      at TestingInjector.resolveCompon
+entWrapper (../node_modules/@nestjs/te
+sting/testing-injector.js:19:45)
+      at resolveParam (../node_modules
+/@nestjs/core/injector/injector.js:140
+:38)
+          at async Promise.all (index 
+11)
+      at TestingInjector.resolveConstr
+uctorParams (../node_modules/@nestjs/c
+ore/injector/injector.js:169:27)
+      at TestingInjector.loadInstance 
+(../node_modules/@nestjs/core/injector
+/injector.js:75:13)
+      at TestingInjector.loadProvider 
+(../node_modules/@nestjs/core/injector
+/injector.js:103:9)
+      at ../node_modules/@nestjs/core/
+injector/instance-loader.js:56:13
+          at async Promise.all (index 
+3)
+      at TestingInstanceLoader.createI
+nstancesOfProviders (../node_modules/@
+nestjs/core/injector/instance-loader.j
+s:55:9)
+      at ../node_modules/@nestjs/core/
+injector/instance-loader.js:40:13
+          at async Promise.all (index 
+1)
+      at 
+TestingInstanceLoader.createInstances 
+(../node_modules/@nestjs/core/injector
+/instance-loader.js:39:9)
+      at TestingInstanceLoader.createI
+nstancesOfDependencies (../node_module
+s/@nestjs/core/injector/instance-loade
+r.js:22:13)
+      at TestingInstanceLoader.createI
+nstancesOfDependencies (../node_module
+s/@nestjs/testing/testing-instance-loa
+der.js:9:9)
+      at TestingModuleBuilder.createIn
+stancesOfDependencies (../node_modules
+/@nestjs/testing/testing-module.builde
+r.js:118:9)
+      at TestingModuleBuilder.compile 
+(../node_modules/@nestjs/testing/testi
+ng-module.builder.js:74:9)
+      at Object.<anonymous> (omni-inbo
+und/services/conversation.service.spec
+.ts:71:35)
+
+  ΓùÅ ConversationService Concurrency 
+ΓÇ║ should skip processing if 
+idempotency check returns true in 
+Redis
+
+    Nest can't resolve dependencies 
+of the ConversationService 
+(ConversationRepository, 
+MessageRepository, MediaProxyService, 
+IdentityService, RedisLockService, 
+ContactsService, FacebookAdapter, 
+TenantsService, CrmSettingsService, 
+BusinessHoursService, 
+AutoResolveService, ?, 
+AgentPresenceService, 
+ChannelsService, EventEmitter, 
+IOREDIS_CLIENT, 
+BullQueue_omni-media-cache, 
+GroupSchemaClassModel). Please make 
+sure that the argument 
+AssignmentService at index [11] is 
+available in the RootTestModule 
+module.
+
+    Potential solutions:
+    - Is RootTestModule a valid 
+NestJS module?
+    - If AssignmentService is a 
+provider, is it part of the current 
+RootTestModule?
+    - If AssignmentService is 
+exported from a separate @Module, is 
+that module imported within 
+RootTestModule?
+      @Module({
+        imports: [ /* the Module 
+containing AssignmentService */ ]
+      })
+
+    For more common dependency 
+resolution issues, see: https://docs.n
+estjs.com/faq/common-errors
+
+    [0m [90m 69 |[39m     
+}[33m;[39m
+     [90m 70 |[39m
+    [31m[1m>[22m[39m[90m 71 
+|[39m     [36mconst[39m 
+module[33m:[39m 
+[33mTestingModule[39m [33m=[39m 
+[36mawait[39m [33mTest[39m[33m.[
+39mcreateTestingModule({
+     [90m    |[39m                  
+                 [31m[1m^[22m[39m
+     [90m 72 |[39m       
+providers[33m:[39m [
+     [90m 73 |[39m         [33mConv
+ersationService[39m[33m,[39m
+     [90m 74 |[39m         { 
+provide[33m:[39m [33mConversationRe
+pository[39m[33m,[39m 
+useValue[33m:[39m 
+conversationRepoMock }[33m,[39m[0m
+
+      at TestingInjector.lookupCompone
+ntInParentModules (../node_modules/@ne
+stjs/core/injector/injector.js:290:19)
+      at TestingInjector.resolveCompon
+entWrapper (../node_modules/@nestjs/te
+sting/testing-injector.js:19:45)
+      at resolveParam (../node_modules
+/@nestjs/core/injector/injector.js:140
+:38)
+          at async Promise.all (index 
+11)
+      at TestingInjector.resolveConstr
+uctorParams (../node_modules/@nestjs/c
+ore/injector/injector.js:169:27)
+      at TestingInjector.loadInstance 
+(../node_modules/@nestjs/core/injector
+/injector.js:75:13)
+      at TestingInjector.loadProvider 
+(../node_modules/@nestjs/core/injector
+/injector.js:103:9)
+      at ../node_modules/@nestjs/core/
+injector/instance-loader.js:56:13
+          at async Promise.all (index 
+3)
+      at TestingInstanceLoader.createI
+nstancesOfProviders (../node_modules/@
+nestjs/core/injector/instance-loader.j
+s:55:9)
+      at ../node_modules/@nestjs/core/
+injector/instance-loader.js:40:13
+          at async Promise.all (index 
+1)
+      at 
+TestingInstanceLoader.createInstances 
+(../node_modules/@nestjs/core/injector
+/instance-loader.js:39:9)
+      at TestingInstanceLoader.createI
+nstancesOfDependencies (../node_module
+s/@nestjs/core/injector/instance-loade
+r.js:22:13)
+      at TestingInstanceLoader.createI
+nstancesOfDependencies (../node_module
+s/@nestjs/testing/testing-instance-loa
+der.js:9:9)
+      at TestingModuleBuilder.createIn
+stancesOfDependencies (../node_modules
+/@nestjs/testing/testing-module.builde
+r.js:118:9)
+      at TestingModuleBuilder.compile 
+(../node_modules/@nestjs/testing/testi
+ng-module.builder.js:74:9)
+      at Object.<anonymous> (omni-inbo
+und/services/conversation.service.spec
+.ts:71:35)
+
+  ΓùÅ ConversationService Concurrency 
+ΓÇ║ should skip processing if E11000 
+is thrown during save
+
+    Nest can't resolve dependencies 
+of the ConversationService 
+(ConversationRepository, 
+MessageRepository, MediaProxyService, 
+IdentityService, RedisLockService, 
+ContactsService, FacebookAdapter, 
+TenantsService, CrmSettingsService, 
+BusinessHoursService, 
+AutoResolveService, ?, 
+AgentPresenceService, 
+ChannelsService, EventEmitter, 
+IOREDIS_CLIENT, 
+BullQueue_omni-media-cache, 
+GroupSchemaClassModel). Please make 
+sure that the argument 
+AssignmentService at index [11] is 
+available in the RootTestModule 
+module.
+
+    Potential solutions:
+    - Is RootTestModule a valid 
+NestJS module?
+    - If AssignmentService is a 
+provider, is it part of the current 
+RootTestModule?
+    - If AssignmentService is 
+exported from a separate @Module, is 
+that module imported within 
+RootTestModule?
+      @Module({
+        imports: [ /* the Module 
+containing AssignmentService */ ]
+      })
+
+    For more common dependency 
+resolution issues, see: https://docs.n
+estjs.com/faq/common-errors
+
+    [0m [90m 69 |[39m     
+}[33m;[39m
+     [90m 70 |[39m
+    [31m[1m>[22m[39m[90m 71 
+|[39m     [36mconst[39m 
+module[33m:[39m 
+[33mTestingModule[39m [33m=[39m 
+[36mawait[39m [33mTest[39m[33m.[
+39mcreateTestingModule({
+     [90m    |[39m                  
+                 [31m[1m^[22m[39m
+     [90m 72 |[39m       
+providers[33m:[39m [
+     [90m 73 |[39m         [33mConv
+ersationService[39m[33m,[39m
+     [90m 74 |[39m         { 
+provide[33m:[39m [33mConversationRe
+pository[39m[33m,[39m 
+useValue[33m:[39m 
+conversationRepoMock }[33m,[39m[0m
+
+      at TestingInjector.lookupCompone
+ntInParentModules (../node_modules/@ne
+stjs/core/injector/injector.js:290:19)
+      at TestingInjector.resolveCompon
+entWrapper (../node_modules/@nestjs/te
+sting/testing-injector.js:19:45)
+      at resolveParam (../node_modules
+/@nestjs/core/injector/injector.js:140
+:38)
+          at async Promise.all (index 
+11)
+      at TestingInjector.resolveConstr
+uctorParams (../node_modules/@nestjs/c
+ore/injector/injector.js:169:27)
+      at TestingInjector.loadInstance 
+(../node_modules/@nestjs/core/injector
+/injector.js:75:13)
+      at TestingInjector.loadProvider 
+(../node_modules/@nestjs/core/injector
+/injector.js:103:9)
+      at ../node_modules/@nestjs/core/
+injector/instance-loader.js:56:13
+          at async Promise.all (index 
+3)
+      at TestingInstanceLoader.createI
+nstancesOfProviders (../node_modules/@
+nestjs/core/injector/instance-loader.j
+s:55:9)
+      at ../node_modules/@nestjs/core/
+injector/instance-loader.js:40:13
+          at async Promise.all (index 
+1)
+      at 
+TestingInstanceLoader.createInstances 
+(../node_modules/@nestjs/core/injector
+/instance-loader.js:39:9)
+      at TestingInstanceLoader.createI
+nstancesOfDependencies (../node_module
+s/@nestjs/core/injector/instance-loade
+r.js:22:13)
+      at TestingInstanceLoader.createI
+nstancesOfDependencies (../node_module
+s/@nestjs/testing/testing-instance-loa
+der.js:9:9)
+      at TestingModuleBuilder.createIn
+stancesOfDependencies (../node_modules
+/@nestjs/testing/testing-module.builde
+r.js:118:9)
+      at TestingModuleBuilder.compile 
+(../node_modules/@nestjs/testing/testi
+ng-module.builder.js:74:9)
+      at Object.<anonymous> (omni-inbo
+und/services/conversation.service.spec
+.ts:71:35)
+
+  ΓùÅ ConversationService Concurrency 
+ΓÇ║ should use existing conversation 
+from identity cache
+
+    Nest can't resolve dependencies 
+of the ConversationService 
+(ConversationRepository, 
+MessageRepository, MediaProxyService, 
+IdentityService, RedisLockService, 
+ContactsService, FacebookAdapter, 
+TenantsService, CrmSettingsService, 
+BusinessHoursService, 
+AutoResolveService, ?, 
+AgentPresenceService, 
+ChannelsService, EventEmitter, 
+IOREDIS_CLIENT, 
+BullQueue_omni-media-cache, 
+GroupSchemaClassModel). Please make 
+sure that the argument 
+AssignmentService at index [11] is 
+available in the RootTestModule 
+module.
+
+    Potential solutions:
+    - Is RootTestModule a valid 
+NestJS module?
+    - If AssignmentService is a 
+provider, is it part of the current 
+RootTestModule?
+    - If AssignmentService is 
+exported from a separate @Module, is 
+that module imported within 
+RootTestModule?
+      @Module({
+        imports: [ /* the Module 
+containing AssignmentService */ ]
+      })
+
+    For more common dependency 
+resolution issues, see: https://docs.n
+estjs.com/faq/common-errors
+
+    [0m [90m 69 |[39m     
+}[33m;[39m
+     [90m 70 |[39m
+    [31m[1m>[22m[39m[90m 71 
+|[39m     [36mconst[39m 
+module[33m:[39m 
+[33mTestingModule[39m [33m=[39m 
+[36mawait[39m [33mTest[39m[33m.[
+39mcreateTestingModule({
+     [90m    |[39m                  
+                 [31m[1m^[22m[39m
+     [90m 72 |[39m       
+providers[33m:[39m [
+     [90m 73 |[39m         [33mConv
+ersationService[39m[33m,[39m
+     [90m 74 |[39m         { 
+provide[33m:[39m [33mConversationRe
+pository[39m[33m,[39m 
+useValue[33m:[39m 
+conversationRepoMock }[33m,[39m[0m
+
+      at TestingInjector.lookupCompone
+ntInParentModules (../node_modules/@ne
+stjs/core/injector/injector.js:290:19)
+      at TestingInjector.resolveCompon
+entWrapper (../node_modules/@nestjs/te
+sting/testing-injector.js:19:45)
+      at resolveParam (../node_modules
+/@nestjs/core/injector/injector.js:140
+:38)
+          at async Promise.all (index 
+11)
+      at TestingInjector.resolveConstr
+uctorParams (../node_modules/@nestjs/c
+ore/injector/injector.js:169:27)
+      at TestingInjector.loadInstance 
+(../node_modules/@nestjs/core/injector
+/injector.js:75:13)
+      at TestingInjector.loadProvider 
+(../node_modules/@nestjs/core/injector
+/injector.js:103:9)
+      at ../node_modules/@nestjs/core/
+injector/instance-loader.js:56:13
+          at async Promise.all (index 
+3)
+      at TestingInstanceLoader.createI
+nstancesOfProviders (../node_modules/@
+nestjs/core/injector/instance-loader.j
+s:55:9)
+      at ../node_modules/@nestjs/core/
+injector/instance-loader.js:40:13
+          at async Promise.all (index 
+1)
+      at 
+TestingInstanceLoader.createInstances 
+(../node_modules/@nestjs/core/injector
+/instance-loader.js:39:9)
+      at TestingInstanceLoader.createI
+nstancesOfDependencies (../node_module
+s/@nestjs/core/injector/instance-loade
+r.js:22:13)
+      at TestingInstanceLoader.createI
+nstancesOfDependencies (../node_module
+s/@nestjs/testing/testing-instance-loa
+der.js:9:9)
+      at TestingModuleBuilder.createIn
+stancesOfDependencies (../node_modules
+/@nestjs/testing/testing-module.builde
+r.js:118:9)
+      at TestingModuleBuilder.compile 
+(../node_modules/@nestjs/testing/testi
+ng-module.builder.js:74:9)
+      at Object.<anonymous> (omni-inbo
+und/services/conversation.service.spec
+.ts:71:35)
+
+Test Suites: 1 failed, 1 total
+Tests:       4 failed, 4 total
+Snapshots:   0 total
+Time:        6.836 s, estimated 30 s
+Ran all test suites matching src/omni-
+inbound/services/conversation.service.
+spec.ts.

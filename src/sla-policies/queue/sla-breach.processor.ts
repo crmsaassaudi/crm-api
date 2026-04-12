@@ -1,15 +1,10 @@
 import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BaseConsumer } from '../../queue/base.consumer';
 import { SLA_BREACH_QUEUE } from './sla-queue.constants';
-import {
-  OmniConversationSchemaClass,
-  OmniConversationDocument,
-} from '../../omni-inbound/infrastructure/persistence/document/entities/omni-conversation.schema';
+import { ConversationRepository } from '../../omni-inbound/repositories/conversation.repository';
 
 export type SlaBreachType = 'frt' | 'resolution';
 
@@ -37,8 +32,7 @@ export class SlaBreachProcessor extends BaseConsumer {
   protected readonly logger = new Logger(SlaBreachProcessor.name);
 
   constructor(
-    @InjectModel(OmniConversationSchemaClass.name)
-    private readonly conversationModel: Model<OmniConversationDocument>,
+    private readonly conversationRepository: ConversationRepository,
     private readonly eventEmitter: EventEmitter2,
   ) {
     super();
@@ -56,15 +50,11 @@ export class SlaBreachProcessor extends BaseConsumer {
     const breachedField =
       breachType === 'frt' ? 'frtBreached' : 'resolutionBreached';
 
-    const conversation = await this.conversationModel
-      .findOne({
-        _id: conversationId,
-        tenantId,
-        status: { $in: ['open', 'pending'] },
-        [breachedField]: false,
-      })
-      .lean()
-      .exec();
+    const conversation = await this.conversationRepository.findByIdForSla(
+      conversationId,
+      tenantId,
+      breachedField,
+    );
 
     if (!conversation) {
       this.logger.debug(
@@ -74,9 +64,9 @@ export class SlaBreachProcessor extends BaseConsumer {
     }
 
     // ── Mark breach ──────────────────────────────────────────────
-    await this.conversationModel.updateOne(
-      { _id: conversationId },
-      { $set: { [breachedField]: true } },
+    await this.conversationRepository.markSlaBreached(
+      conversationId,
+      breachedField,
     );
 
     // ── Emit event for escalation-policies ───────────────────────
@@ -88,7 +78,7 @@ export class SlaBreachProcessor extends BaseConsumer {
       conversationId,
       channelType: conversation.channelType,
       assignedAgentId: conversation.assignedAgentId,
-      slaDeadline: (conversation as any)[deadlineField],
+      slaDeadline: conversation[deadlineField],
       slaPolicyId,
       breachType,
       breachedAt: now,

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { EscalationPolicyRepository } from './infrastructure/persistence/document/repositories/escalation-policy.repository';
 import { EscalationPolicy } from './domain/escalation-policy';
@@ -27,8 +31,17 @@ export class EscalationPoliciesService {
   }
 
   async create(dto: CreateEscalationPolicyDto): Promise<EscalationPolicy> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.create({ ...dto, tenant });
+    const tenantId = this.cls.get('tenantId');
+    try {
+      return await this.repository.create({ ...dto, tenantId });
+    } catch (error) {
+      if (error?.code === 11000) {
+        throw new ConflictException(
+          `Escalation Policy with name "${dto.name}" already exists`,
+        );
+      }
+      throw error;
+    }
   }
 
   async update(
@@ -36,9 +49,18 @@ export class EscalationPoliciesService {
     dto: UpdateEscalationPolicyDto,
   ): Promise<EscalationPolicy> {
     const tenant = this.cls.get('tenantId');
-    const policy = await this.repository.update(tenant, id, dto);
-    if (!policy) throw new NotFoundException('Escalation Policy not found');
-    return policy;
+    try {
+      const policy = await this.repository.update(tenant, id, dto);
+      if (!policy) throw new NotFoundException('Escalation Policy not found');
+      return policy;
+    } catch (error) {
+      if (error?.code === 11000) {
+        throw new ConflictException(
+          `Escalation Policy with name "${dto.name}" already exists`,
+        );
+      }
+      throw error;
+    }
   }
 
   async delete(id: string): Promise<void> {

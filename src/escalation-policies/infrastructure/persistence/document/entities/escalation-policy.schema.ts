@@ -9,7 +9,7 @@ export type EscalationPolicySchemaDocument =
 @Schema({ timestamps: true, collection: 'escalation_policies' })
 export class EscalationPolicySchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, index: true })
-  tenant: string;
+  tenantId: string;
 
   @Prop({ required: true })
   name: string;
@@ -51,6 +51,6 @@ export const EscalationPolicySchema = SchemaFactory.createForClass(
   EscalationPolicySchemaClass,
 );
 
-EscalationPolicySchema.plugin(tenantFilterPlugin);
+EscalationPolicySchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
-EscalationPolicySchema.index({ tenant: 1, name: 1 }, { unique: true });
+EscalationPolicySchema.index({ tenantId: 1, name: 1 }, { unique: true });

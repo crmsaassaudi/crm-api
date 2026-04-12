@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { getModelToken } from '@nestjs/mongoose';
 import { ActivityService } from './activity.service';
 import { ActivityRepository } from '../repositories/activity.repository';
 import { UsersService } from '../../users/users.service';
@@ -49,7 +50,7 @@ describe('ActivityService', () => {
         {
           provide: UsersService,
           useValue: {
-            findByIds: jest.fn().mockResolvedValue([
+            findByIdsGlobal: jest.fn().mockResolvedValue([
               {
                 id: 'agent-1',
                 firstName: 'Nguyễn',
@@ -57,6 +58,16 @@ describe('ActivityService', () => {
                 email: 'a@test.com',
               },
             ]),
+          },
+        },
+        {
+          provide: getModelToken('GroupSchemaClass'),
+          useValue: {
+            findById: jest.fn().mockReturnValue({
+              lean: jest.fn().mockReturnValue({
+                exec: jest.fn().mockResolvedValue({ name: 'Test Group' }),
+              }),
+            }),
           },
         },
       ],
@@ -156,7 +167,7 @@ describe('ActivityService', () => {
         agentId: 'agent-1',
       });
 
-      expect(usersService.findByIds).toHaveBeenCalledWith(['agent-1']);
+      expect(usersService.findByIdsGlobal).toHaveBeenCalledWith(['agent-1']);
       expect(activityRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'status_changed',
@@ -222,7 +233,7 @@ describe('ActivityService', () => {
       expect(activityRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'agent_unassigned',
-          description: expect.stringContaining('gỡ khỏi'),
+          description: expect.stringContaining('khỏi hội thoại'),
         }),
       );
     });

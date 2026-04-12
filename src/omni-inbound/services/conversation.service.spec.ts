@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { getQueueToken } from '@nestjs/bullmq';
+import { getModelToken } from '@nestjs/mongoose';
 import { ConversationService } from './conversation.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
@@ -15,6 +16,9 @@ import { OmniPayload } from '../domain/omni-payload';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { BusinessHoursService } from './business-hours.service';
 import { AutoResolveService } from './auto-resolve.service';
+import { AssignmentService } from './assignment.service';
+import { AgentPresenceService } from './agent-presence.service';
+import { ChannelsService } from '../../channels/channels.service';
 import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 
 describe('ConversationService Concurrency', () => {
@@ -113,11 +117,39 @@ describe('ConversationService Concurrency', () => {
             cancelAutoResolve: jest.fn().mockResolvedValue(undefined),
           },
         },
+        {
+          provide: AssignmentService,
+          useValue: {
+            assignConversation: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: AgentPresenceService,
+          useValue: {
+            getPresence: jest.fn().mockResolvedValue({ status: 'available' }),
+          },
+        },
+        {
+          provide: ChannelsService,
+          useValue: {
+            findAnyByAccount: jest.fn().mockResolvedValue(null),
+          },
+        },
         { provide: IOREDIS_CLIENT, useValue: redisMock },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
         {
           provide: getQueueToken(OMNI_MEDIA_CACHE_QUEUE),
           useValue: { add: jest.fn().mockResolvedValue({}) },
+        },
+        {
+          provide: getModelToken('GroupSchemaClass'),
+          useValue: {
+            find: jest.fn().mockReturnValue({
+              lean: jest
+                .fn()
+                .mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }),
+            }),
+          },
         },
       ],
     }).compile();

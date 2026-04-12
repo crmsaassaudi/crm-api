@@ -1,0 +1,35 @@
+﻿npx : PASS src/omni-inbound/services/c
+onversation.service.spec.ts (6.228 s)
+At line:1 char:1
++ npx jest src/omni-inbound/services/c
+onversation.service.spec.ts src/o ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpec 
+   ified: (PASS src/omni-i...ec.ts (  
+  6.228 s):String) [], RemoteExcept   
+ ion
+    + FullyQualifiedErrorId : NativeC 
+   ommandError
+ 
+[31m[Nest] 11372  - [39m12/04/2026, 
+12:56:22 [31m  ERROR[39m 
+[38;5;3m[ActivityService] 
+[39m[31mFailed to log activity: DB 
+error[39m
+[31m[Nest] 11372  - [39m12/04/2026, 
+12:56:22 [31m  ERROR[39m 
+[38;5;3m[ActivityService] 
+[39m[31mFailed to log activity: DB 
+error[39m
+PASS src/omni-inbound/services/activit
+y.service.spec.ts (7.402 s)
+
+Test Suites: 2 passed, 2 total
+Tests:       20 passed, 20 total
+Snapshots:   0 total
+Time:        8.263 s, estimated 13 s
+Ran all test suites matching src/omni-
+inbound/services/conversation.service.
+spec.ts|src/omni-inbound/services/acti
+vity.service.spec.ts.

@@ -1,0 +1,123 @@
+﻿npx : [31m[Nest] 15084  - 
+[39m12/04/2026, 12:47:27 [31m  
+ERROR[39m [38;5;3m[ActivityService] 
+[39m[31mFailed to log activity: DB 
+error[39m
+At line:1 char:1
++ npx jest src/omni-inbound/services/c
+onversation.service.spec.ts src/o ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpec 
+   ified: ([31m[Nest] 150...: DB er  
+  ror[39m:String) [], RemoteExcept   
+ ion
+    + FullyQualifiedErrorId : NativeC 
+   ommandError
+ 
+[31m[Nest] 15084  - [39m12/04/2026, 
+12:47:27 [31m  ERROR[39m 
+[38;5;3m[ActivityService] 
+[39m[31mFailed to log activity: DB 
+error[39m
+FAIL src/omni-inbound/services/activit
+y.service.spec.ts (10.717 s)
+  ΓùÅ ActivityService ΓÇ║ 
+onStatusChanged ΓÇ║ should log 
+agent-triggered status change with 
+agent name
+
+    expect(received).toHaveBeenCalledW
+ith(...expected)
+
+    Matcher error: received value 
+must be a mock or spy function
+
+    Received has value: undefined
+
+    [0m [90m 168 |[39m       
+})[33m;[39m
+     [90m 169 |[39m
+    [31m[1m>[22m[39m[90m 170 
+|[39m       expect(usersService[33m.
+[39mfindByIds)[33m.[39mtoHaveBeenCa
+lledWith([[32m'agent-1'[39m])[33m;
+[39m
+     [90m     |[39m                 
+                     
+[31m[1m^[22m[39m
+     [90m 171 |[39m       expect(act
+ivityRepo[33m.[39mcreate)[33m.[39m
+toHaveBeenCalledWith(
+     [90m 172 |[39m         
+expect[33m.[39mobjectContaining({
+     [90m 173 |[39m           
+action[33m:[39m [32m'status_changed
+'[39m[33m,[39m[0m
+
+      at Object.<anonymous> (omni-inbo
+und/services/activity.service.spec.ts:
+170:38)
+
+  ΓùÅ ActivityService ΓÇ║ onAssigned 
+ΓÇ║ should log unassignment
+
+    expect(jest.fn()).toHaveBeenCalled
+With(...expected)
+
+    Expected: ObjectContaining 
+{"action": "agent_unassigned", 
+"description": StringContaining "gß╗í 
+khß╗Åi"}
+    Received: {"action": 
+"agent_unassigned", "actorId": 
+"agent-1", "actorType": "system", 
+"conversationId": "conv-1", 
+"description": "Hß╗ç thß╗æng ─æ├ú 
+gß╗í t╞░ vß║Ñn vi├¬n Nguyß╗àn V─ân A 
+(a@test.com) khß╗Åi hß╗Öi thoß║íi ΓÇö 
+chuyß╗ân vß╗ü h├áng chß╗¥", 
+"metadata": {"performedByUserId": 
+undefined, "performerName": null, 
+"reason": undefined}, "newValue": 
+null, "oldValue": "agent-1", 
+"tenantId": "tenant-1"}
+
+    Number of calls: 1
+
+    [0m [90m 231 |[39m       
+})[33m;[39m
+     [90m 232 |[39m
+    [31m[1m>[22m[39m[90m 233 
+|[39m       expect(activityRepo[33m.
+[39mcreate)[33m.[39mtoHaveBeenCalle
+dWith(
+     [90m     |[39m                 
+                  [31m[1m^[22m[39m
+     [90m 234 |[39m         
+expect[33m.[39mobjectContaining({
+     [90m 235 |[39m           
+action[33m:[39m [32m'agent_unassign
+ed'[39m[33m,[39m
+     [90m 236 |[39m           
+description[33m:[39m expect[33m.[3
+9mstringContaining([32m'gß╗í 
+khß╗Åi'[39m)[33m,[39m[0m
+
+      at Object.<anonymous> (omni-inbo
+und/services/activity.service.spec.ts:
+233:35)
+
+PASS src/omni-inbound/services/convers
+ation.service.spec.ts (12.613 s)
+
+Test Suites: 1 failed, 1 passed, 2 
+total
+Tests:       2 failed, 18 passed, 20 
+total
+Snapshots:   0 total
+Time:        13.618 s
+Ran all test suites matching src/omni-
+inbound/services/conversation.service.
+spec.ts|src/omni-inbound/services/acti
+vity.service.spec.ts.

@@ -5,10 +5,15 @@ export class SlaPolicyMapper {
   static toDomain(raw: SlaPolicySchemaClass): SlaPolicy {
     const entity = new SlaPolicy();
     entity.id = raw._id?.toString();
-    entity.tenantId = raw.tenantId;
+    entity.tenantId = raw.tenantId?.toString();
     entity.name = raw.name;
     entity.type = raw.type;
-    entity.targets = raw.targets;
+    entity.targets =
+      raw.targets?.map((t) => ({
+        segment: t.segment,
+        timeValue: t.timeValue,
+        timeUnit: t.timeUnit,
+      })) ?? [];
     entity.enabled = raw.enabled;
     entity.priority = raw.priority;
     entity.createdAt = raw.createdAt;

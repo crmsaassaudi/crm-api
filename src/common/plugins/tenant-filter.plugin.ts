@@ -43,6 +43,12 @@ export function tenantFilterPlugin(
  *  - skipTenantFilter option is true (admin / cross-tenant queries)
  */
 function applyTenantFilter(query: any, tenantField: string) {
+  // Guard: prevent infinite recursion.
+  // setQuery() re-triggers the pre hook; bail out if we already applied the filter.
+  if (query.__tenantFiltered) {
+    return;
+  }
+
   // nestjs-cls official API for accessing CLS outside DI context
   let cls;
   try {
@@ -69,19 +75,22 @@ function applyTenantFilter(query: any, tenantField: string) {
 
   const currentFilter = query.getFilter();
 
-  // SECURITY: Always force the tenant filter using $and.
+  // SECURITY: Always force the tenant filter.
   // Never trust the existing filter — it may contain attacker-injected values.
   // Remove any user-supplied tenant field to prevent bypass.
   const sanitizedFilter = { ...currentFilter };
   delete sanitizedFilter[tenantField];
 
-  const finalQuery = {
-    $and: [sanitizedFilter, { [tenantField]: activeTenantId }],
-  };
+  const hasOtherConditions = Object.keys(sanitizedFilter).length > 0;
+  const finalQuery = hasOtherConditions
+    ? { $and: [sanitizedFilter, { [tenantField]: activeTenantId }] }
+    : { [tenantField]: activeTenantId };
 
   console.log(
     `[TenantPlugin][${tenantField}] activeTenantId=${activeTenantId} | filter=${JSON.stringify(finalQuery)}`,
   );
 
+  // Mark the query to prevent re-entry before calling setQuery
+  query.__tenantFiltered = true;
   query.setQuery(finalQuery);
 }

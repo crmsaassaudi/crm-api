@@ -5,7 +5,7 @@ export class EscalationPolicy {
   id: string;
 
   @ApiProperty()
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'Critical SLA Breach' })
   name: string;

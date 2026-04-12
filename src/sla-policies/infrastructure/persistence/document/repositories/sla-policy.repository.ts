@@ -16,12 +16,15 @@ export class SlaPolicyRepository {
   ) {}
 
   async findAll(tenant: string): Promise<SlaPolicy[]> {
-    const docs = await this.model.find({ tenant }).sort({ priority: 1 }).exec();
+    const docs = await this.model
+      .find({ tenantId: tenant })
+      .sort({ priority: 1 })
+      .exec();
     return docs.map(SlaPolicyMapper.toDomain);
   }
 
   async findById(tenant: string, id: string): Promise<SlaPolicy | null> {
-    const doc = await this.model.findOne({ _id: id, tenant }).exec();
+    const doc = await this.model.findOne({ _id: id, tenantId: tenant }).exec();
     return doc ? SlaPolicyMapper.toDomain(doc) : null;
   }
 
@@ -36,13 +39,19 @@ export class SlaPolicyRepository {
     data: Partial<SlaPolicy>,
   ): Promise<SlaPolicy | null> {
     const doc = await this.model
-      .findOneAndUpdate({ _id: id, tenant }, { $set: data }, { new: true })
+      .findOneAndUpdate(
+        { _id: id, tenantId: tenant },
+        { $set: data },
+        { new: true },
+      )
       .exec();
     return doc ? SlaPolicyMapper.toDomain(doc) : null;
   }
 
   async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model.deleteOne({ _id: id, tenant }).exec();
+    const result = await this.model
+      .deleteOne({ _id: id, tenantId: tenant })
+      .exec();
     return result.deletedCount > 0;
   }
 }

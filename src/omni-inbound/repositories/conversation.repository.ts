@@ -559,6 +559,68 @@ export class ConversationRepository {
   }
 
   /**
+   * Patch SLA deadline / breach fields on a conversation document.
+   * Used by SlaTriggerListener after scheduling BullMQ breach-check jobs.
+   */
+  async updateSlaFields(
+    conversationId: string,
+    fields: Partial<{
+      frtPolicyId: string | null;
+      frtDeadline: Date | null;
+      frtBreached: boolean;
+      resolutionPolicyId: string | null;
+      resolutionDeadline: Date | null;
+      resolutionBreached: boolean;
+    }>,
+  ): Promise<void> {
+    if (Object.keys(fields).length === 0) return;
+    await this.model
+      .updateOne({ _id: conversationId }, { $set: fields })
+      .setOptions({ skipTenantFilter: true })
+      .exec();
+  }
+
+  /**
+   * Fetch an active (open/pending), unbreached conversation by ID for SLA processing.
+   * Returns the raw lean document so the breach processor can read inline fields
+   * (channelType, assignedAgentId, frtDeadline, resolutionDeadline) without mapping.
+   *
+   * @param conversationId  - MongoDB ObjectId string of the conversation
+   * @param tenantId        - tenant owning the conversation (security check)
+   * @param breachedField   - 'frtBreached' | 'resolutionBreached' — must still be false
+   */
+  async findByIdForSla(
+    conversationId: string,
+    tenantId: string,
+    breachedField: 'frtBreached' | 'resolutionBreached',
+  ): Promise<Record<string, any> | null> {
+    return this.model
+      .findOne({
+        _id: conversationId,
+        tenantId,
+        status: { $in: ['open', 'pending'] },
+        [breachedField]: false,
+      })
+      .setOptions({ skipTenantFilter: true })
+      .lean()
+      .exec();
+  }
+
+  /**
+   * Atomically mark a conversation's SLA as breached.
+   * Runs in a BullMQ worker — no CLS context — so skipTenantFilter is required.
+   */
+  async markSlaBreached(
+    conversationId: string,
+    breachedField: 'frtBreached' | 'resolutionBreached',
+  ): Promise<void> {
+    await this.model
+      .updateOne({ _id: conversationId }, { $set: { [breachedField]: true } })
+      .setOptions({ skipTenantFilter: true })
+      .exec();
+  }
+
+  /**
    * Get all distinct tenant IDs that have at least one open or pending conversation.
    * Used by the auto-resolve cron to know which tenants to scan.
    */
