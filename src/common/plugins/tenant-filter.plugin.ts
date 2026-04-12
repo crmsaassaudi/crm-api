@@ -67,9 +67,9 @@ function applyTenantFilter(query: any, tenantField: string) {
 
   // null / undefined = no tenant context → skip (platform-level query)
   if (!activeTenantId) {
-    console.log(
-      `[TenantPlugin][${tenantField}] ⚠️  No activeTenantId in CLS — skipping filter`,
-    );
+    // console.log(
+    //   `[TenantPlugin][${tenantField}] ⚠️  No activeTenantId in CLS — skipping filter`,
+    // );
     return;
   }
 

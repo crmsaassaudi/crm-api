@@ -36,8 +36,9 @@ export class AgentPresenceGateway {
     const user = client.data.user;
     if (!user) return;
 
-    const tenantId = user.tenantId ?? 'default-tenant';
-    const userId = user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    const userId = client.data.userId;
+    if (!tenantId || !userId) return;
 
     const presence = await this.presenceService.updateStatus(
       tenantId,
@@ -63,8 +64,9 @@ export class AgentPresenceGateway {
     const user = client.data.user;
     if (!user) return;
 
-    const tenantId = user.tenantId ?? 'default-tenant';
-    const userId = user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    const userId = client.data.userId;
+    if (!tenantId || !userId) return;
 
     await this.presenceService.heartbeat(tenantId, userId);
     return { ok: true };
@@ -75,7 +77,8 @@ export class AgentPresenceGateway {
     const user = client.data.user;
     if (!user) return;
 
-    const tenantId = user.tenantId ?? 'default-tenant';
+    const tenantId = client.data.tenantId;
+    if (!tenantId) return;
     const agents = await this.presenceService.getAllAgents(tenantId);
 
     return { ok: true, agents };

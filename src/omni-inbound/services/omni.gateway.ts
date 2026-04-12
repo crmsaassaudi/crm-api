@@ -101,8 +101,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // and supportUserIds all use MongoDB ObjectId. We MUST resolve the internal
       // _id so presence, assignment, and pool filtering all use the same ID format.
       let userId = keycloakUserId;
+      let dbUser: any = null;
       try {
-        const dbUser = await this.usersService.findByKeycloakIdAndProvider({
+        dbUser = await this.usersService.findByKeycloakIdAndProvider({
           keycloakId: keycloakUserId,
           provider: 'email',
         });
@@ -122,10 +123,13 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         );
       }
 
-      // Resolve tenantId from the socket handshake hostname (subdomain → DB lookup)
-      let tenantId = 'default-tenant';
+      // ── Resolve tenantId ────────────────────────────────────────────
+      // Strategy: subdomain → user DB membership. No silent fallback.
+      let tenantId: string | null = null;
       const host = client.handshake.headers.host ?? '';
-      const hostWithoutPort = host.split(':')[0]; // Remove port
+      const hostWithoutPort = host.split(':')[0];
+
+      // 1. Try subdomain resolution (production: tenant.crm.com)
       if (hostWithoutPort.endsWith(`.${this.ROOT_DOMAIN}`)) {
         const subdomain = hostWithoutPort.slice(
           0,
@@ -146,6 +150,25 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
             this.logger.warn(`Tenant alias "${subdomain}" not found in DB`);
           }
         }
+      }
+
+      // 2. Fallback: resolve from user's DB tenant membership (e.g. localhost)
+      if (!tenantId && dbUser?.tenants?.length > 0) {
+        tenantId = dbUser.tenants[0].tenantId?.toString() ?? null;
+        if (tenantId) {
+          this.logger.log(
+            `No subdomain (host=${host}) — resolved tenantId from user membership: ${tenantId}`,
+          );
+        }
+      }
+
+      // 3. No tenant resolved → reject connection
+      if (!tenantId) {
+        this.logger.warn(
+          `Client ${client.id} — cannot resolve tenantId (host=${host}, user=${userId}). Disconnecting.`,
+        );
+        client.disconnect();
+        return;
       }
 
       this.logger.debug(
@@ -181,8 +204,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!user) return;
 
     // Use the identifiers persisted during handleConnection
-    const tenantId = client.data.tenantId ?? user.tenantId ?? 'default-tenant';
-    const userId = client.data.userId ?? user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    const userId = client.data.userId;
+    if (!tenantId || !userId) return;
 
     await this.presenceGateway.onAgentDisconnected(tenantId, userId);
 
@@ -208,8 +232,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const user = client.data.user;
     if (!user) return { ok: false, error: 'Unauthenticated' };
 
-    const userId = user.id ?? user.sub;
-    const tenantId = user.tenantId ?? 'default-tenant';
+    const userId = client.data.userId ?? user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    if (!tenantId) return { ok: false, error: 'No tenant context' };
 
     this.logger.log(
       `Agent ${userId} sends message to conversation ${data.conversationId}`,
@@ -383,7 +408,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     client.to(`conversation:${data.conversationId}`).emit('omni:typing:start', {
       conversationId: data.conversationId,
-      userId: user.id ?? user.sub,
+      userId: client.data.userId ?? user.id ?? user.sub,
       userName: user.name ?? 'Agent',
     });
   }
@@ -398,7 +423,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     client.to(`conversation:${data.conversationId}`).emit('omni:typing:stop', {
       conversationId: data.conversationId,
-      userId: user.id ?? user.sub,
+      userId: client.data.userId ?? user.id ?? user.sub,
     });
   }
 
@@ -412,8 +437,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const user = client.data.user;
     if (!user) return { ok: false, error: 'Unauthenticated' };
 
-    const userId = user.id ?? user.sub;
-    const tenantId = user.tenantId ?? 'default-tenant';
+    const userId = client.data.userId ?? user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    if (!tenantId) return { ok: false, error: 'No tenant context' };
     const { conversationId } = data;
 
     // Check for existing claim
