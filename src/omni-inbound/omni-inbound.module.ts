@@ -16,6 +16,7 @@ import { InboundProcessorService } from './processors/inbound-processor.service'
 import { InboundController } from './controllers/inbound.controller';
 import { MediaProxyController } from './controllers/media-proxy.controller';
 import { OmniController } from './controllers/omni.controller';
+import { AgentStatusAuditController } from './controllers/agent-status-audit.controller';
 
 // Services
 import { MediaProxyService } from './services/media-proxy.service';
@@ -32,6 +33,7 @@ import { ActivityService } from './services/activity.service';
 import { AgentFallbackService } from './services/agent-fallback.service';
 import { AutoResolveService } from './services/auto-resolve.service';
 import { BusinessHoursService } from './services/business-hours.service';
+import { AgentStatusAuditService } from './services/agent-status-audit.service';
 
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
@@ -46,6 +48,7 @@ import { MessageRepository } from './repositories/message.repository';
 import { NoteRepository } from './repositories/note.repository';
 import { ActivityRepository } from './repositories/activity.repository';
 import { AssignmentAuditLogRepository } from './repositories/assignment-audit-log.repository';
+import { AgentStatusAuditRepository } from './repositories/agent-status-audit.repository';
 
 // Schemas
 import {
@@ -72,6 +75,10 @@ import {
   GroupSchemaClass,
   GroupSchema,
 } from '../groups/infrastructure/persistence/document/entities/group.schema';
+import {
+  AgentStatusAuditLogSchemaClass,
+  AgentStatusAuditLogSchema,
+} from './infrastructure/persistence/document/entities/agent-status-audit-log.schema';
 
 // External modules
 import { ChannelsModule } from '../channels/channels.module';
@@ -132,9 +139,18 @@ import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
         name: GroupSchemaClass.name,
         schema: GroupSchema,
       },
+      {
+        name: AgentStatusAuditLogSchemaClass.name,
+        schema: AgentStatusAuditLogSchema,
+      },
     ]),
   ],
-  controllers: [InboundController, MediaProxyController, OmniController],
+  controllers: [
+    InboundController,
+    MediaProxyController,
+    OmniController,
+    AgentStatusAuditController,
+  ],
   providers: [
     // ── Pillar 1: Data Normalization ───────────────────────────────
     FacebookAdapter,
@@ -196,6 +212,10 @@ import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
     // ── Pillar 11: Session Lifecycle (Auto-Resolve + Business Hours) ─
     AutoResolveService,
     BusinessHoursService,
+
+    // ── Pillar 12: Agent Status Audit + Work Time KPI ─────────────
+    AgentStatusAuditRepository,
+    AgentStatusAuditService,
   ],
   exports: [
     InboundProcessorService,
@@ -213,6 +233,7 @@ import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
     AgentFallbackService,
     AutoResolveService,
     BusinessHoursService,
+    AgentStatusAuditService,
   ],
 })
 export class OmniInboundModule {}

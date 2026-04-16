@@ -186,7 +186,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         `Agent ${userId} connected to /omni, joined room tenant:${tenantId}`,
       );
 
-      // Register agent presence
+      // Register agent presence (multi-tab aware)
       await this.presenceGateway.onAgentConnected(tenantId, userId, client.id);
 
       // Cancel any pending reassignment from a previous disconnect
@@ -208,12 +208,24 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId = client.data.userId;
     if (!tenantId || !userId) return;
 
-    await this.presenceGateway.onAgentDisconnected(tenantId, userId);
+    // Per-socket disconnect (multi-tab aware).
+    // Only triggers grace period when ALL sockets for this agent are gone.
+    const { allDisconnected } = await this.presenceGateway.onAgentDisconnected(
+      tenantId,
+      userId,
+      client.id,
+    );
 
-    // Schedule fallback reassignment if agent stays offline
-    await this.agentFallbackService.onAgentDisconnected(tenantId, userId);
+    // Only schedule fallback reassignment if ALL connections are lost.
+    // The grace period in the gateway will delay the actual offline transition.
+    if (allDisconnected) {
+      await this.agentFallbackService.onAgentDisconnected(tenantId, userId);
+    }
 
-    this.logger.log(`Agent ${userId} disconnected from /omni`);
+    this.logger.log(
+      `Agent ${userId} socket ${client.id} disconnected from /omni` +
+        (allDisconnected ? ' (all connections lost)' : ''),
+    );
   }
 
   // ─── Messaging ─────────────────────────────────────────────────────
