@@ -202,14 +202,21 @@ export class ConversationRepository {
     id: string,
     lastMessage: string,
     lastMessageAt: Date,
+    senderType?: string,
   ): Promise<void> {
-    await this.model
-      .findByIdAndUpdate(id, {
-        lastMessage,
-        lastMessageAt,
-        $inc: { messageCount: 1, unreadCount: 1 },
-      })
-      .exec();
+    const update: Record<string, any> = {
+      lastMessage,
+      lastMessageAt,
+      $inc: { messageCount: 1 },
+    };
+
+    // Only increment unread count for customer messages — agent/system
+    // messages should not trigger the unread badge.
+    if (!senderType || senderType === 'customer') {
+      update.$inc.unreadCount = 1;
+    }
+
+    await this.model.findByIdAndUpdate(id, update).exec();
   }
 
   /**

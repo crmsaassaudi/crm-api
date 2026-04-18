@@ -88,6 +88,8 @@ export class ContactRepository extends BaseDocumentRepository<
         .skip((paginationOptions.page - 1) * paginationOptions.limit)
         .limit(paginationOptions.limit)
         .populate('owner')
+        .populate('createdBy')
+        .populate('updatedBy')
         .exec(),
       this.model.countDocuments(scopedWhere).exec(),
     ]);
@@ -103,7 +105,12 @@ export class ContactRepository extends BaseDocumentRepository<
     filter: FilterQuery<ContactSchemaClass>,
   ): Promise<Contact | null> {
     const scopedFilter = this.applyTenantFilter(filter);
-    const doc = await this.model.findOne(scopedFilter).populate('owner').exec();
+    const doc = await this.model
+      .findOne(scopedFilter)
+      .populate('owner')
+      .populate('createdBy')
+      .populate('updatedBy')
+      .exec();
     return doc ? this.mapToDomain(doc) : null;
   }
 

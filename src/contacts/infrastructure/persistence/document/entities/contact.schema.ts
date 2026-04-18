@@ -140,3 +140,17 @@ ContactSchema.virtual('owner', {
   foreignField: '_id',
   justOne: true,
 });
+
+ContactSchema.virtual('createdBy', {
+  ref: 'UserSchemaClass',
+  localField: 'createdById',
+  foreignField: '_id',
+  justOne: true,
+});
+
+ContactSchema.virtual('updatedBy', {
+  ref: 'UserSchemaClass',
+  localField: 'updatedById',
+  foreignField: '_id',
+  justOne: true,
+});

@@ -305,9 +305,19 @@ export class ConversationService {
       existing = await this.conversationRepo.findById(conversationId);
 
       if (!existing) {
-        throw new NotFoundException(
-          `Conversation ${conversationId} not found for sender ${payload.senderId}`,
+        // Stale identity cache: conversation was deleted or doesn't exist.
+        // Invalidate the cache entry and fall through to create a new one.
+        this.logger.warn(
+          `Stale identity cache: conversation ${conversationId} not found for sender ${payload.senderId} — invalidating and creating new`,
         );
+        await this.identityService.invalidateIdentity(
+          payload.channelType,
+          payload.channelAccount,
+          payload.externalConversationId,
+          payload.tenantId,
+        );
+        conversationId = null;
+        contactId = null;
       } else if (existing.tenantId !== payload.tenantId) {
         throw new BadRequestException(
           `Cross-tenant conversation mapping detected for sender ${payload.senderId}`,
@@ -337,8 +347,9 @@ export class ConversationService {
               `(${hoursSinceResolved.toFixed(1)}h / ${reopenWindowHours}h) — reopening`,
           );
 
-          const reopened =
-            await this.conversationRepo.reopenConversation(conversationId);
+          const reopened = await this.conversationRepo.reopenConversation(
+            conversationId!,
+          );
 
           if (reopened) {
             // Update identity cache so future messages go to this conversation
@@ -379,7 +390,7 @@ export class ConversationService {
             if (!currentAgent) {
               await this.triggerAutoAssignment(
                 payload,
-                conversationId,
+                conversationId!,
                 contactId ?? existing.contactId ?? null,
                 'reopen_no_agent',
               );
@@ -395,7 +406,7 @@ export class ConversationService {
                 );
                 await this.triggerAutoAssignment(
                   payload,
-                  conversationId,
+                  conversationId!,
                   contactId ?? existing.contactId ?? null,
                   'reopen_agent_offline',
                 );
@@ -482,41 +493,9 @@ export class ConversationService {
     }
 
     if (!conversationId) {
-      // No active conversation -> maybe no contact either
-      if (!contactId) {
-        const identityConfig = await this.getIdentityResolutionConfig(
-          payload.tenantId,
-        );
-        if (identityConfig.autoCreateShadowContact) {
-          contactId = await this.createShadowContact(payload);
-        } else {
-          this.logger.debug(
-            `Auto-create shadow contact disabled — sender ${payload.senderId} will have no CRM contact`,
-          );
-        }
-      }
-
-      // ── Reopen tracking: find previous conversation if any ──
-      let previousConversationId: string | null = null;
-      let reopenCount = 0;
-
-      const previousConv = await this.conversationRepo.findLastByExternalId(
-        payload.tenantId,
-        this.toSchemaChannelType(payload.channelType),
-        payload.channelAccount,
-        payload.externalConversationId,
-      );
-
-      if (
-        previousConv &&
-        (previousConv.status === 'resolved' || previousConv.status === 'closed')
-      ) {
-        previousConversationId = previousConv.id;
-        reopenCount = (previousConv.reopenCount ?? 0) + 1;
-      }
-
       // ── Step 3b: Eagerly fetch Facebook profile before creating conversation ──
-      // This ensures the conversation is created with the real name/avatar from the start.
+      // This ensures BOTH the conversation AND shadow contact are created
+      // with the real name/avatar from the start.
       // Respects the tenant's autoEnrichProfile setting (GDPR/PDPA compliance).
       let enrichedProfile: {
         name?: string;
@@ -551,6 +530,36 @@ export class ConversationService {
         this.logger.debug(
           `Auto-enrich profile disabled for tenant ${payload.tenantId} — skipping Facebook profile fetch`,
         );
+      }
+
+      // No active conversation -> maybe no contact either
+      if (!contactId) {
+        if (identityResConfig.autoCreateShadowContact) {
+          contactId = await this.createShadowContact(payload, enrichedProfile);
+        } else {
+          this.logger.debug(
+            `Auto-create shadow contact disabled — sender ${payload.senderId} will have no CRM contact`,
+          );
+        }
+      }
+
+      // ── Reopen tracking: find previous conversation if any ──
+      let previousConversationId: string | null = null;
+      let reopenCount = 0;
+
+      const previousConv = await this.conversationRepo.findLastByExternalId(
+        payload.tenantId,
+        this.toSchemaChannelType(payload.channelType),
+        payload.channelAccount,
+        payload.externalConversationId,
+      );
+
+      if (
+        previousConv &&
+        (previousConv.status === 'resolved' || previousConv.status === 'closed')
+      ) {
+        previousConversationId = previousConv.id;
+        reopenCount = (previousConv.reopenCount ?? 0) + 1;
       }
 
       // No active session → create a new one (with enriched profile)
@@ -687,6 +696,7 @@ export class ConversationService {
       conversationId,
       messagePreview.substring(0, 200),
       payload.timestamp,
+      payload.senderType,
     );
 
     // ── Step 5d-2: Track customer's last message time for reply window ──
@@ -1019,6 +1029,7 @@ export class ConversationService {
 
   private async createShadowContact(
     payload: OmniPayload,
+    enrichedProfile: { name?: string; avatarUrl?: string; phone?: string } = {},
   ): Promise<string | null> {
     try {
       const tenant = await this.tenantsService.findById(payload.tenantId);
@@ -1086,10 +1097,24 @@ export class ConversationService {
 
       // ── Create shadow contact ─────────────────────────────────────────
       // Bypassing normal validation, simulate system creation.
+      // Use enriched profile name if available, otherwise fall back to
+      // metadata.contactName or raw senderId.
+      const displayName =
+        enrichedProfile.name ??
+        payload.metadata?.contactName ??
+        payload.senderId;
+
+      // Split "Nguyễn Toàn" → firstName="Nguyễn", lastName="Toàn"
+      // If only one word, use it as firstName and "(Omni)" as lastName
+      const nameParts = displayName.trim().split(/\s+/);
+      const firstName = nameParts[0];
+      const lastName =
+        nameParts.length > 1 ? nameParts.slice(1).join(' ') : '(Omni)';
+
       const contact = await this.contactsService.create({
         tenantId: payload.tenantId,
-        firstName: payload.metadata.contactName ?? payload.senderId,
-        lastName: '(Omni)',
+        firstName,
+        lastName,
         status: 'new',
         lifecycleStage: 'lead',
         source: this.toSchemaChannelType(payload.channelType),

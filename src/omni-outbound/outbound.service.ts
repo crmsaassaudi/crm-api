@@ -108,6 +108,7 @@ export class OutboundService {
       conversationId,
       content.substring(0, 200),
       new Date(),
+      'agent',
     );
 
     // 4. Send to Provider API via Adapter

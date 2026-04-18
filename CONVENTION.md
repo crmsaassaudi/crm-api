@@ -46,6 +46,53 @@ Follow the existing modular structure (e.g., `src/omni-inbound`). Do not bypass 
   - Utilize `class-validator` decorators heavily in DTOs.
   - Map Mongoose documents to raw entities/objects before sending them back up to services (using `mappers` when appropriate).
 
+## Common Pitfalls
+
+### ⚠️ Mongoose Subdocument / Populated Document → "Maximum call stack size exceeded"
+
+**Triệu chứng:** API trả về `500 Internal Server Error` với message `"Maximum call stack size exceeded"`, thường xảy ra ở các file `*.mapper.ts`.
+
+**Nguyên nhân gốc:**
+
+Khi mapper gán trực tiếp một Mongoose array (subdocument) hoặc populated document vào domain entity mà **không chuyển đổi sang plain object**, các cấu trúc nội bộ của Mongoose (`$__`, `$parent`, circular refs) sẽ bị duyệt đệ quy vô hạn bởi chuỗi interceptor:
+
+```
+ClassSerializerInterceptor (instanceToPlain)
+  → ResolvePromisesInterceptor (deepResolvePromises)
+    → NormalizeIdInterceptor (recursive normalize)
+```
+
+**Các trường hợp HAY GẶP:**
+
+1. **Subdocument arrays** (ví dụ: `omniIdentities`, `tenants`, hoặc bất kỳ embedded array nào có `_id` tự sinh):
+   ```typescript
+   // ❌ SAI – gán trực tiếp Mongoose DocumentArray (có circular refs)
+   domainEntity.omniIdentities = raw.omniIdentities ?? [];
+
+   // ✅ ĐÚNG – map sang plain object, chỉ lấy field cần thiết
+   domainEntity.omniIdentities = (raw.omniIdentities || []).map((el: any) => ({
+     channelType: el.channelType,
+     senderId: el.senderId?.toString(),
+   }));
+   ```
+
+2. **Populated documents** (virtual populate hoặc ref populate):
+   ```typescript
+   // ⚠️ CẨN THẬN – populated document là Mongoose doc, có thể gây lỗi
+   // nếu UserMapper không xử lý đúng
+   if ((raw as any).owner) {
+     domainEntity.owner = UserMapper.toDomain((raw as any).owner);
+   }
+   ```
+
+**Quy tắc chung cho Mapper:**
+- **KHÔNG BAO GIỜ** gán trực tiếp Mongoose array/subdocument vào domain entity.
+- **LUÔN LUÔN** `.map()` tạo plain object mới cho embedded arrays.
+- Với populated documents, cân nhắc dùng `.toObject()` nếu mapper downstream có vấn đề.
+- Dùng `.toString()` cho tất cả ObjectId fields (`ownerId`, `createdById`, `tenantId`, v.v.).
+
+---
+
 ## Operations & Scripts
 - Before proposing any test automation scripts or running them, inspect the available scripts in `package.json`.
 - Execute tests inside the respective sub-project (`npm run test`).

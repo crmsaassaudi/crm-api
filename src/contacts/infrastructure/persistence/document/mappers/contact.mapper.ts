@@ -19,39 +19,26 @@ export class ContactMapper {
     domainEntity.title = raw.title;
     domainEntity.source = raw.source;
     domainEntity.score = raw.score;
-    domainEntity.omniIdentities = raw.omniIdentities ?? [];
+    domainEntity.omniIdentities = (raw.omniIdentities || []).map((el: any) => {
+      return {
+        channelType: el.channelType,
+        senderId: el.senderId?.toString(),
+      };
+    });
     domainEntity.isShadow = raw.isShadow;
 
-    if (raw.ownerId) {
-      domainEntity.ownerId =
-        typeof raw.ownerId === 'string'
-          ? raw.ownerId
-          : (raw.ownerId as any)._id?.toString();
-    }
+    domainEntity.ownerId = raw.ownerId?.toString();
+    domainEntity.createdById = raw.createdById?.toString();
+    domainEntity.updatedById = raw.updatedById?.toString();
+
     if ((raw as any).owner) {
-      domainEntity.owner = UserMapper.toDomain((raw as any).owner as any);
-    }
-    if (raw.createdById) {
-      domainEntity.createdById =
-        typeof raw.createdById === 'string'
-          ? raw.createdById
-          : (raw.createdById as any)._id?.toString();
+      domainEntity.owner = UserMapper.toDomain((raw as any).owner);
     }
     if ((raw as any).createdBy) {
-      domainEntity.createdBy = UserMapper.toDomain(
-        (raw as any).createdBy as any,
-      );
-    }
-    if (raw.updatedById) {
-      domainEntity.updatedById =
-        typeof raw.updatedById === 'string'
-          ? raw.updatedById
-          : (raw.updatedById as any)._id?.toString();
+      domainEntity.createdBy = UserMapper.toDomain((raw as any).createdBy);
     }
     if ((raw as any).updatedBy) {
-      domainEntity.updatedBy = UserMapper.toDomain(
-        (raw as any).updatedBy as any,
-      );
+      domainEntity.updatedBy = UserMapper.toDomain((raw as any).updatedBy);
     }
 
     domainEntity.createdAt = raw.createdAt;
