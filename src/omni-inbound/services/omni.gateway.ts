@@ -577,6 +577,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     conversationId: string;
     noteId: string;
     authorId: string;
+    authorName?: string;
     isPrivate: boolean;
     content: string;
   }) {
@@ -586,6 +587,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         conversationId: event.conversationId,
         noteId: event.noteId,
         authorId: event.authorId,
+        authorName: event.authorName,
         isPrivate: event.isPrivate,
         content: event.content,
         timestamp: new Date().toISOString(),

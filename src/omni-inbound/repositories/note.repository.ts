@@ -14,6 +14,7 @@ export interface OmniNote {
   conversationId: string;
   content: string;
   authorId: string;
+  authorName?: string;
   mentions: string[];
   isPrivate: boolean;
   /** True when this note is pinned as a Handover Note banner */
@@ -30,12 +31,28 @@ export class NoteRepository {
   ) {}
 
   private toDomain(doc: OmniNoteSchemaClass): OmniNote {
+    let authorName: string | undefined;
+
+    if (doc.authorId && typeof doc.authorId === 'object') {
+      const u = doc.authorId as any;
+      const fullName = [u.firstName, u.lastName]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      authorName = fullName || u.email || 'Agent';
+      if (fullName && u.email) authorName = `${fullName} (${u.email})`;
+    }
+
     return {
       id: doc._id.toString(),
       tenantId: doc.tenantId?.toString(),
       conversationId: doc.conversationId?.toString(),
       content: doc.content,
-      authorId: doc.authorId?.toString(),
+      authorId:
+        typeof doc.authorId === 'object'
+          ? (doc.authorId as any)._id?.toString()
+          : doc.authorId?.toString(),
+      authorName,
       mentions: doc.mentions || [],
       isPrivate: doc.isPrivate ?? true,
       isPinned: doc.isPinned ?? false,
@@ -46,7 +63,12 @@ export class NoteRepository {
 
   async create(data: Partial<OmniNoteSchemaClass>): Promise<OmniNote> {
     const doc = await this.model.create(data);
-    return this.toDomain(doc);
+    // Re-fetch with populate to get author name immediately
+    const populated = await this.model
+      .findById(doc._id)
+      .populate('authorId', 'firstName lastName email')
+      .exec();
+    return this.toDomain(populated || doc);
   }
 
   async findByConversation(
@@ -60,6 +82,7 @@ export class NoteRepository {
     const [items, total] = await Promise.all([
       this.model
         .find({ conversationId })
+        .populate('authorId', 'firstName lastName email')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -72,7 +95,10 @@ export class NoteRepository {
   }
 
   async findById(id: string): Promise<OmniNote | null> {
-    const doc = await this.model.findById(id).exec();
+    const doc = await this.model
+      .findById(id)
+      .populate('authorId', 'firstName lastName email')
+      .exec();
     return doc ? this.toDomain(doc) : null;
   }
 
@@ -103,6 +129,7 @@ export class NoteRepository {
   ): Promise<OmniNote | null> {
     const doc = await this.model
       .findOne({ conversationId, isPinned: true })
+      .populate('authorId', 'firstName lastName email')
       .sort({ createdAt: -1 })
       .exec();
     return doc ? this.toDomain(doc) : null;

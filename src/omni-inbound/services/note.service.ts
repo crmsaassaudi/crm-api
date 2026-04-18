@@ -46,6 +46,7 @@ export class NoteService {
       conversationId,
       noteId: note.id,
       authorId,
+      authorName: note.authorName,
       isPrivate,
       isPinned,
       content: content.substring(0, 100), // preview for activity log
