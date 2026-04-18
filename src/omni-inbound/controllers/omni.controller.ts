@@ -468,8 +468,6 @@ export class OmniController {
     return updated;
   }
 
-  // ─── Tags ──────────────────────────────────────────────────────
-
   @Post('conversations/:id/tags')
   @HttpCode(HttpStatus.OK)
   async addTag(@Param('id') id: string, @Body('tag') tag: string) {
@@ -477,17 +475,50 @@ export class OmniController {
       throw new BadRequestException('Tag is required');
     }
 
-    const updated = await this.conversationRepo.addTag(id, tag.trim());
+    // Fetch conversation first to check if tag already exists
+    const conversation = await this.conversationRepo.findById(id);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${id} not found`);
+    }
+
+    const normalizedTag = tag.trim();
+    const alreadyTagged = conversation.tags?.includes(normalizedTag) ?? false;
+
+    const updated = await this.conversationRepo.addTag(id, normalizedTag);
+    if (!updated) {
+      throw new NotFoundException(`Conversation ${id} not found`);
+    }
+
+    // Only emit event (and create activity log) if the tag is genuinely new
+    if (!alreadyTagged) {
+      const agentId = this.cls.get<string>('userId');
+      const tenantId = this.cls.get<string>('tenantId');
+      this.eventEmitter.emit('omni.conversation.tag_added', {
+        tenantId,
+        conversationId: id,
+        tag: normalizedTag,
+        agentId,
+      });
+    }
+
+    return updated;
+  }
+
+  @Delete('conversations/:id/tags/:tag')
+  @HttpCode(HttpStatus.OK)
+  async removeTag(@Param('id') id: string, @Param('tag') tag: string) {
+    const normalizedTag = decodeURIComponent(tag).trim();
+    const updated = await this.conversationRepo.removeTag(id, normalizedTag);
     if (!updated) {
       throw new NotFoundException(`Conversation ${id} not found`);
     }
 
     const agentId = this.cls.get<string>('userId');
     const tenantId = this.cls.get<string>('tenantId');
-    this.eventEmitter.emit('omni.conversation.tag_added', {
+    this.eventEmitter.emit('omni.conversation.tag_removed', {
       tenantId,
       conversationId: id,
-      tag: tag.trim(),
+      tag: normalizedTag,
       agentId,
     });
 
@@ -607,6 +638,7 @@ export class OmniController {
     @Body('content') content: string,
     @Body('isPrivate') isPrivate?: boolean,
     @Body('mentions') mentions?: string[],
+    @Body('isPinned') isPinned?: boolean,
   ) {
     if (!content) {
       throw new BadRequestException('Content is required');
@@ -622,6 +654,7 @@ export class OmniController {
       content,
       isPrivate ?? true,
       mentions ?? [],
+      isPinned ?? false,
     );
   }
 
@@ -638,12 +671,20 @@ export class OmniController {
     );
   }
 
+  @Get('conversations/:id/notes/pinned')
+  async getPinnedNote(@Param('id') conversationId: string) {
+    const note = await this.noteService.getPinnedNote(conversationId);
+    // Return empty object with null so frontend can handle gracefully
+    return { data: note ?? null };
+  }
+
   @Patch('conversations/:convId/notes/:noteId')
   @HttpCode(HttpStatus.OK)
   async updateNote(
     @Param('noteId') noteId: string,
     @Body('content') content: string,
     @Body('isPrivate') isPrivate?: boolean,
+    @Body('isPinned') isPinned?: boolean,
   ) {
     if (!content) {
       throw new BadRequestException('Content is required');
@@ -653,6 +694,7 @@ export class OmniController {
       noteId,
       content,
       isPrivate,
+      isPinned,
     );
     if (!updated) {
       throw new NotFoundException(`Note ${noteId} not found`);

@@ -48,6 +48,14 @@ export class OmniNoteSchemaClass extends EntityDocumentHelper {
   /** If true, note is only visible to agents (not synced to platform) */
   @Prop({ default: true })
   isPrivate: boolean;
+
+  /**
+   * If true, this note is pinned as a Handover Note — displayed as a
+   * sticky context banner at the top of the chat window for newly assigned agents.
+   * Only one pinned note per conversation is expected at a time.
+   */
+  @Prop({ default: false })
+  isPinned: boolean;
 }
 
 export const OmniNoteSchema = SchemaFactory.createForClass(OmniNoteSchemaClass);
@@ -58,4 +66,10 @@ OmniNoteSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 OmniNoteSchema.index(
   { tenantId: 1, conversationId: 1, createdAt: -1 },
   { name: 'notes_by_conversation' },
+);
+
+// Index for fast pinned-note lookup
+OmniNoteSchema.index(
+  { conversationId: 1, isPinned: 1 },
+  { name: 'notes_pinned_lookup' },
 );

@@ -16,6 +16,8 @@ export interface OmniNote {
   authorId: string;
   mentions: string[];
   isPrivate: boolean;
+  /** True when this note is pinned as a Handover Note banner */
+  isPinned: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -36,6 +38,7 @@ export class NoteRepository {
       authorId: doc.authorId?.toString(),
       mentions: doc.mentions || [],
       isPrivate: doc.isPrivate ?? true,
+      isPinned: doc.isPinned ?? false,
       createdAt: (doc as any).createdAt,
       updatedAt: (doc as any).updatedAt,
     };
@@ -90,5 +93,34 @@ export class NoteRepository {
 
   async countByConversation(conversationId: string): Promise<number> {
     return this.model.countDocuments({ conversationId }).exec();
+  }
+
+  /**
+   * Returns the most recent pinned (Handover) note for a conversation, or null.
+   */
+  async findPinnedByConversation(
+    conversationId: string,
+  ): Promise<OmniNote | null> {
+    const doc = await this.model
+      .findOne({ conversationId, isPinned: true })
+      .sort({ createdAt: -1 })
+      .exec();
+    return doc ? this.toDomain(doc) : null;
+  }
+
+  /**
+   * Unpin all previously pinned notes for a conversation, then pin the given note.
+   * Ensures only one Handover Note is active at a time.
+   */
+  async setPinnedNote(conversationId: string, noteId: string): Promise<void> {
+    await this.model
+      .updateMany(
+        { conversationId, isPinned: true },
+        { $set: { isPinned: false } },
+      )
+      .exec();
+    await this.model
+      .findByIdAndUpdate(noteId, { $set: { isPinned: true } })
+      .exec();
   }
 }

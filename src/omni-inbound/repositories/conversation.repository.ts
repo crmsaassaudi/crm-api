@@ -229,6 +229,13 @@ export class ConversationRepository {
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
+  async removeTag(id: string, tag: string): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findByIdAndUpdate(id, { $pull: { tags: tag } }, { new: true })
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
   async claimConversation(
     id: string,
     agentId: string,

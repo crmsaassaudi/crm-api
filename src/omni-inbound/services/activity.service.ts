@@ -23,6 +23,7 @@ import { Model } from 'mongoose';
  *   - omni.conversation.status_changed  → status_changed / auto_resolved
  *   - omni.conversation.assigned        → agent_assigned / agent_unassigned / group_assigned / group_unassigned
  *   - omni.conversation.tag_added       → tag_added
+ *   - omni.conversation.tag_removed     → tag_removed
  *   - omni.conversation.note_added      → note_added
  *   - omni.conversation.sla_breached    → sla_breached
  *   - omni.conversation.escalated       → escalated
@@ -287,6 +288,27 @@ export class ActivityService {
       event.tag,
       {},
       `${actorName} đã thêm thẻ "${event.tag}"`,
+    );
+  }
+
+  @OnEvent('omni.conversation.tag_removed')
+  async onTagRemoved(event: {
+    tenantId: string;
+    conversationId: string;
+    tag: string;
+    agentId: string;
+  }) {
+    const actorName = await this.resolveActorName(event.agentId);
+    await this.log(
+      event.tenantId,
+      event.conversationId,
+      'agent',
+      event.agentId,
+      'tag_removed',
+      event.tag,
+      null,
+      {},
+      `${actorName} đã gỡ thẻ "${event.tag}"`,
     );
   }
 
