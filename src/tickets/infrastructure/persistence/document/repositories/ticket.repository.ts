@@ -70,6 +70,7 @@ export class TicketRepository extends BaseDocumentRepository<
         .limit(paginationOptions.limit)
         .populate('requester', 'firstName lastName photo email')
         .populate('assignee', 'firstName lastName photo email')
+        .populate('owner', 'firstName lastName photo email')
         .exec(),
       this.model.countDocuments(scopedWhere).exec(),
     ]);
@@ -89,6 +90,7 @@ export class TicketRepository extends BaseDocumentRepository<
       .findOne(scopedFilter)
       .populate('requester', 'firstName lastName photo email')
       .populate('assignee', 'firstName lastName photo email')
+      .populate('owner', 'firstName lastName photo email')
       .exec();
     return doc ? this.mapToDomain(doc) : null;
   }

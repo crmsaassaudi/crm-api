@@ -1,5 +1,6 @@
 import { Ticket } from '../../../../domain/ticket';
 import { TicketSchemaClass } from '../entities/ticket.schema';
+import { UserMapper } from '../../../../../users/infrastructure/persistence/document/mappers/user.mapper';
 
 export class TicketMapper {
   static toDomain(raw: TicketSchemaClass): Ticket {
@@ -11,6 +12,7 @@ export class TicketMapper {
     domainEntity.description = raw.description ?? '';
     domainEntity.requesterId = raw.requesterId?.toString();
     domainEntity.assigneeId = raw.assigneeId?.toString();
+    domainEntity.ownerId = raw.ownerId?.toString();
     domainEntity.status = raw.status;
     domainEntity.priority = raw.priority;
     domainEntity.lifecycleStage = raw.lifecycleStage;
@@ -25,6 +27,11 @@ export class TicketMapper {
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
+
+    if ((raw as any).owner) {
+      domainEntity.owner = UserMapper.toDomain((raw as any).owner);
+    }
+
     return domainEntity;
   }
 
@@ -39,6 +46,7 @@ export class TicketMapper {
     persistenceEntity.description = domainEntity.description;
     persistenceEntity.requesterId = domainEntity.requesterId;
     persistenceEntity.assigneeId = domainEntity.assigneeId;
+    persistenceEntity.ownerId = domainEntity.ownerId;
     persistenceEntity.status = domainEntity.status;
     persistenceEntity.priority = domainEntity.priority;
     persistenceEntity.lifecycleStage = domainEntity.lifecycleStage;

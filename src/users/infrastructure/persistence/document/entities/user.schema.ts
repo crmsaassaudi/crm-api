@@ -119,6 +119,14 @@ export class UserSchemaClass extends EntityDocumentHelper {
     timezone?: string | null;
   } | null;
 
+  /** The user's direct manager (for Role Hierarchy / data visibility) */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+    default: null,
+  })
+  reportsToId?: string | null;
+
   @Prop({ default: now })
   createdAt: Date;
 

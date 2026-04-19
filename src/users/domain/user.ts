@@ -113,4 +113,11 @@ export class User {
     /** Override timezone (null = use tenant default) */
     timezone?: string | null;
   } | null;
+
+  @ApiProperty({
+    description: 'Direct manager ID for Role Hierarchy (Reports To)',
+    example: '60d0fe4f5311236168a109ca',
+    required: false,
+  })
+  reportsToId?: string | null;
 }

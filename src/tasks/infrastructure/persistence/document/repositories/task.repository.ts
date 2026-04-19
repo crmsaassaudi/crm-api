@@ -62,6 +62,7 @@ export class TaskRepository extends BaseDocumentRepository<
         .skip((paginationOptions.page - 1) * paginationOptions.limit)
         .limit(paginationOptions.limit)
         .populate('assignedTo', 'firstName lastName photo email')
+        .populate('owner', 'firstName lastName photo email')
         .exec(),
       this.model.countDocuments(scopedWhere).exec(),
     ]);
@@ -78,6 +79,7 @@ export class TaskRepository extends BaseDocumentRepository<
     const doc = await this.model
       .findOne(scopedFilter)
       .populate('assignedTo', 'firstName lastName photo email')
+      .populate('owner', 'firstName lastName photo email')
       .exec();
     return doc ? this.mapToDomain(doc) : null;
   }

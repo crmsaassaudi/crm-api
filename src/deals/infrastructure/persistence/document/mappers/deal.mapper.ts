@@ -1,5 +1,6 @@
 import { Deal } from '../../../../domain/deal';
 import { DealSchemaClass } from '../entities/deal.schema';
+import { UserMapper } from '../../../../../users/infrastructure/persistence/document/mappers/user.mapper';
 
 export class DealMapper {
   static toDomain(raw: DealSchemaClass): Deal {
@@ -38,6 +39,12 @@ export class DealMapper {
 
     domainEntity.description = raw.description;
     domainEntity.source = raw.source;
+
+    // Populate owner User object from virtual
+    if ((raw as any).owner) {
+      domainEntity.owner = UserMapper.toDomain((raw as any).owner);
+    }
+
     domainEntity.lostReason = raw.lostReason;
     domainEntity.tags = raw.tags;
     domainEntity.customFields = raw.customFields;

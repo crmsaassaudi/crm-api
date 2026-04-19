@@ -37,6 +37,13 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   assigneeId?: string;
 
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+    index: true,
+  })
+  ownerId?: string;
+
   @Prop({ required: true, default: 'new', index: true })
   status: string;
 
@@ -133,6 +140,13 @@ TicketSchema.virtual('requester', {
 TicketSchema.virtual('assignee', {
   ref: 'UserSchemaClass',
   localField: 'assigneeId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+TicketSchema.virtual('owner', {
+  ref: 'UserSchemaClass',
+  localField: 'ownerId',
   foreignField: '_id',
   justOne: true,
 });

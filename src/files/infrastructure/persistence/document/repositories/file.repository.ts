@@ -33,6 +33,11 @@ export class FileDocumentRepository
     return FileMapper.toPersistence(domain);
   }
 
+  /** Files are infrastructure objects — disable ownerId-based visibility filtering */
+  protected enableDataVisibility(): boolean {
+    return false;
+  }
+
   async create(
     data: Omit<
       FileType,

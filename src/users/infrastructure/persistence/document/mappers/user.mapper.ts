@@ -59,6 +59,7 @@ export class UserMapper {
           timezone: raw.i18nPreferences.timezone ?? null,
         }
       : null;
+    domainEntity.reportsToId = raw.reportsToId?.toString() ?? null;
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
@@ -114,6 +115,9 @@ export class UserMapper {
     }
     if (domainEntity.i18nPreferences !== undefined) {
       persistenceSchema.i18nPreferences = domainEntity.i18nPreferences;
+    }
+    if (domainEntity.reportsToId !== undefined) {
+      persistenceSchema.reportsToId = domainEntity.reportsToId;
     }
     persistenceSchema.createdAt = domainEntity.createdAt;
     persistenceSchema.updatedAt = domainEntity.updatedAt;

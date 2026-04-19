@@ -34,11 +34,46 @@ export abstract class BaseDocumentRepository<
   protected applyTenantFilter(
     filter: FilterQuery<TSchema> = {},
   ): FilterQuery<TSchema> {
+    let enriched: any = { ...filter };
     const tenantId = this.cls.get('tenantId');
     if (tenantId) {
-      return { ...filter, tenantId: tenantId };
+      enriched.tenantId = tenantId;
     }
-    return filter;
+
+    // ── Data Visibility Filter ──────────────────────────────────────────────
+    // visibleOwnerIds is set by DataVisibilityInterceptor:
+    //   undefined → not evaluated (skip)
+    //   null      → admin/owner bypass (see all)
+    //   string[]  → filter to these owner IDs only
+    if (this.enableDataVisibility()) {
+      const visibleOwnerIds = this.cls.get('visibleOwnerIds');
+      if (Array.isArray(visibleOwnerIds)) {
+        enriched = {
+          ...enriched,
+          $and: [
+            ...(enriched.$and || []),
+            {
+              $or: [
+                { ownerId: { $in: visibleOwnerIds } },
+                { ownerId: { $exists: false } }, // Legacy records without ownerId
+                { ownerId: null },
+              ],
+            },
+          ],
+        };
+      }
+      // null or undefined → no additional filter
+    }
+
+    return enriched;
+  }
+
+  /**
+   * Override in subclasses to disable data visibility filtering.
+   * Default: true for CRM entities. Override to false for User, Settings, etc.
+   */
+  protected enableDataVisibility(): boolean {
+    return true;
   }
 
   async find(filter: FilterQuery<TSchema>, options?: any): Promise<TDomain[]> {
@@ -138,6 +173,10 @@ export abstract class BaseDocumentRepository<
       }
       if (userId && !enriched.createdById) {
         enriched.createdById = userId;
+      }
+      // Auto-assign data owner to creator if not explicitly set
+      if (userId && !enriched.ownerId) {
+        enriched.ownerId = userId;
       }
     }
 

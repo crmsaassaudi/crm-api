@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { User } from '../../users/domain/user';
 
 export class Deal {
   @ApiProperty({ example: '60d0fe4f5311236168a109cd' })
@@ -39,6 +40,9 @@ export class Deal {
 
   @ApiProperty()
   ownerId?: string;
+
+  @ApiProperty({ type: () => User })
+  owner?: User;
 
   @ApiProperty({ example: 'Full scope project for Acme Corp' })
   description?: string;

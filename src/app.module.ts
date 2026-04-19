@@ -47,6 +47,7 @@ import { RoutingRulesModule } from './routing-rules/routing-rules.module';
 import { AutomationRulesModule } from './automation-rules/automation-rules.module';
 import { GroupsModule } from './groups/groups.module';
 import { OmniInboundModule } from './omni-inbound/omni-inbound.module';
+import { DataVisibilityModule } from './data-visibility/data-visibility.module';
 
 import {
   KeycloakConnectModule,
@@ -55,6 +56,7 @@ import {
 } from 'nest-keycloak-connect';
 import { HybridAuthGuard } from './auth/guards/hybrid-auth.guard';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { DataVisibilityInterceptor } from './data-visibility/data-visibility.interceptor';
 
 const infrastructureDatabaseModule = MongooseModule.forRootAsync({
   useClass: MongooseConfigService,
@@ -224,6 +226,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     AutomationRulesModule,
     GroupsModule,
     OmniInboundModule,
+    DataVisibilityModule,
   ],
   providers: [
     {
@@ -241,6 +244,10 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     {
       provide: APP_INTERCEPTOR,
       useClass: TenantInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: DataVisibilityInterceptor,
     },
   ],
 })

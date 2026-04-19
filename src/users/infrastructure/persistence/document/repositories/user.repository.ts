@@ -34,6 +34,11 @@ export class UsersDocumentRepository
     return UserMapper.toPersistence(domain);
   }
 
+  /** Users are not CRM records — disable ownerId-based visibility filtering */
+  protected enableDataVisibility(): boolean {
+    return false;
+  }
+
   async findManyWithPagination({
     filterOptions,
     sortOptions,

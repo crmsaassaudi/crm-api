@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { User } from '../../users/domain/user';
 
 export class Ticket {
   @ApiProperty({ example: '60d0fe4f5311236168a109ce' })
@@ -21,6 +22,12 @@ export class Ticket {
 
   @ApiProperty({ example: '60d0fe4f5311236168a109cb' })
   assigneeId?: string;
+
+  @ApiProperty({ type: 'string', example: '60d0fe4f5311236168a109cc' })
+  ownerId?: string;
+
+  @ApiProperty()
+  owner?: User;
 
   @ApiProperty({ example: 'new' })
   status: string;

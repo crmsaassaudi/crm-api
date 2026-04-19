@@ -98,6 +98,10 @@ export class TenantSettingsSeedingService {
         'general_notifications',
         DEFAULT_GENERAL_NOTIFICATIONS,
       ),
+
+      // ── Data Visibility & Sharing ──────────────────────────────────────────
+      this.seed(tenantId, 'data_visibility', DEFAULT_DATA_VISIBILITY),
+      this.seed(tenantId, 'sharing_rules', DEFAULT_SHARING_RULES),
     ]);
 
     this.logger.log(`[Seeding] Completed for tenant ${tenantId}`);
@@ -950,6 +954,45 @@ const DEFAULT_OMNI_SESSION_LIFECYCLE = {
   oooSetPending: true,
 };
 
+// ─── Data Visibility & Sharing Rules ─────────────────────────────────────────
+
+/**
+ * Data Visibility configuration.
+ *
+ * defaultAccess:
+ *   - 'private':     Users see only records they own + subordinates' records (role hierarchy).
+ *                    Admin/Owner roles bypass this restriction.
+ *   - 'public_read': All users can see all records across the tenant (no ownerId filtering).
+ *
+ * moduleOverrides: Per-module overrides. e.g. Tickets might be 'public_read'
+ *                  even if the default is 'private'.
+ */
+const DEFAULT_DATA_VISIBILITY = {
+  defaultAccess: 'private',
+  moduleOverrides: {} as Record<string, 'private' | 'public_read'>,
+};
+
+/**
+ * Sharing Rules — grant cross-hierarchy access to specific users/roles.
+ *
+ * Each rule specifies:
+ *   - sharedFrom: whose records to share (user IDs or "all")
+ *   - shareWith:  who gets access (user IDs, role names)
+ *   - module:     which CRM module this applies to ('*' = all)
+ *   - accessLevel: 'read_only' or 'read_write'
+ */
+const DEFAULT_SHARING_RULES = {
+  rules: [] as Array<{
+    id: string;
+    name: string;
+    module: string;
+    isActive: boolean;
+    sharedFrom: { type: 'user' | 'all'; ids?: string[] };
+    shareWith: { type: 'user' | 'role'; ids: string[] };
+    accessLevel: 'read_only' | 'read_write';
+  }>,
+};
+
 /** Lookup map used by lazySeed() and getDefault(). Add new keys here when a new module ships. */
 export const DEFAULTS_MAP: Record<string, unknown> = {
   contact_identity: DEFAULT_CONTACT_IDENTITY,
@@ -985,4 +1028,6 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   omni_auto_reassignment: DEFAULT_OMNI_AUTO_REASSIGNMENT,
   omni_session_lifecycle: DEFAULT_OMNI_SESSION_LIFECYCLE,
   omni_identity_resolution: DEFAULT_OMNI_IDENTITY_RESOLUTION,
+  data_visibility: DEFAULT_DATA_VISIBILITY,
+  sharing_rules: DEFAULT_SHARING_RULES,
 };

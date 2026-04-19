@@ -13,6 +13,7 @@ export class TaskMapper {
     domainEntity.priority = raw.priority;
     domainEntity.category = raw.category;
     domainEntity.assignedToId = raw.assignedToId?.toString();
+    domainEntity.ownerId = raw.ownerId?.toString();
     domainEntity.relatedTo = raw.relatedTo;
     domainEntity.tags = raw.tags;
     domainEntity.reminderAt = raw.reminderAt;
@@ -37,6 +38,7 @@ export class TaskMapper {
     persistenceEntity.priority = domainEntity.priority;
     persistenceEntity.category = domainEntity.category;
     persistenceEntity.assignedToId = domainEntity.assignedToId;
+    persistenceEntity.ownerId = domainEntity.ownerId;
     persistenceEntity.relatedTo = domainEntity.relatedTo;
     persistenceEntity.tags = domainEntity.tags;
     persistenceEntity.reminderAt = domainEntity.reminderAt;
