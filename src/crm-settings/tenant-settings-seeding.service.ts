@@ -102,6 +102,9 @@ export class TenantSettingsSeedingService {
       // ── Data Visibility & Sharing ──────────────────────────────────────────
       this.seed(tenantId, 'data_visibility', DEFAULT_DATA_VISIBILITY),
       this.seed(tenantId, 'sharing_rules', DEFAULT_SHARING_RULES),
+
+      // ── List Views ──────────────────────────────────────────────────────────
+      this.seed(tenantId, 'list_views', DEFAULT_LIST_VIEWS),
     ]);
 
     this.logger.log(`[Seeding] Completed for tenant ${tenantId}`);
@@ -993,6 +996,102 @@ const DEFAULT_SHARING_RULES = {
   }>,
 };
 
+// ─── List Views ──────────────────────────────────────────────────────────────
+
+const DEFAULT_LIST_VIEWS = {
+  views: [
+    // ── Lead views ──
+    {
+      id: 'lead_all_fields',
+      name: 'All Fields',
+      module: 'Lead',
+      createdBy: 'system',
+      isSystemDefault: true,
+      columns: [
+        { key: 'fullName', label: 'Name', isVisible: true, sortOrder: 1 },
+        { key: 'emails', label: 'Email', isVisible: true, sortOrder: 2 },
+        { key: 'companyName', label: 'Company', isVisible: true, sortOrder: 3 },
+        { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 4 },
+        {
+          key: 'lifecycleStage',
+          label: 'Stage',
+          isVisible: true,
+          sortOrder: 5,
+        },
+        { key: 'source', label: 'Source', isVisible: true, sortOrder: 6 },
+        { key: 'status', label: 'Status', isVisible: true, sortOrder: 7 },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
+    {
+      id: 'lead_compact',
+      name: 'Compact',
+      module: 'Lead',
+      createdBy: 'system',
+      isSystemDefault: false,
+      columns: [
+        { key: 'fullName', label: 'Name', isVisible: true, sortOrder: 1 },
+        { key: 'emails', label: 'Email', isVisible: true, sortOrder: 2 },
+        { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 3 },
+        {
+          key: 'lifecycleStage',
+          label: 'Stage',
+          isVisible: true,
+          sortOrder: 4,
+        },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
+    // ── Contact views ──
+    {
+      id: 'contact_all_fields',
+      name: 'All Fields',
+      module: 'Contact',
+      createdBy: 'system',
+      isSystemDefault: true,
+      columns: [
+        { key: 'fullName', label: 'Name', isVisible: true, sortOrder: 1 },
+        { key: 'emails', label: 'Email', isVisible: true, sortOrder: 2 },
+        { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 3 },
+        {
+          key: 'lifecycleStage',
+          label: 'Stage',
+          isVisible: true,
+          sortOrder: 4,
+        },
+        { key: 'status', label: 'Status', isVisible: true, sortOrder: 5 },
+        { key: 'companyName', label: 'Account', isVisible: true, sortOrder: 6 },
+        { key: 'source', label: 'Source', isVisible: true, sortOrder: 7 },
+        { key: 'title', label: 'Title', isVisible: true, sortOrder: 8 },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
+    {
+      id: 'contact_compact',
+      name: 'Compact',
+      module: 'Contact',
+      createdBy: 'system',
+      isSystemDefault: false,
+      columns: [
+        { key: 'fullName', label: 'Name', isVisible: true, sortOrder: 1 },
+        { key: 'emails', label: 'Email', isVisible: true, sortOrder: 2 },
+        { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 3 },
+        {
+          key: 'lifecycleStage',
+          label: 'Stage',
+          isVisible: true,
+          sortOrder: 4,
+        },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
+  ],
+};
+
 /** Lookup map used by lazySeed() and getDefault(). Add new keys here when a new module ships. */
 export const DEFAULTS_MAP: Record<string, unknown> = {
   contact_identity: DEFAULT_CONTACT_IDENTITY,
@@ -1030,4 +1129,5 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   omni_identity_resolution: DEFAULT_OMNI_IDENTITY_RESOLUTION,
   data_visibility: DEFAULT_DATA_VISIBILITY,
   sharing_rules: DEFAULT_SHARING_RULES,
+  list_views: DEFAULT_LIST_VIEWS,
 };

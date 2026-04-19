@@ -9,6 +9,7 @@ import {
 } from './infrastructure/persistence/document/entities/contact.schema';
 import { AccountsModule } from '../accounts/accounts.module';
 import { DealsModule } from '../deals/deals.module';
+import { ListViewsModule } from '../list-views/list-views.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { DealsModule } from '../deals/deals.module';
     ]),
     AccountsModule,
     DealsModule,
+    ListViewsModule,
   ],
   controllers: [ContactsController],
   providers: [ContactsService, ContactRepository],

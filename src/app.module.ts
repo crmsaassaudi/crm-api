@@ -48,6 +48,7 @@ import { AutomationRulesModule } from './automation-rules/automation-rules.modul
 import { GroupsModule } from './groups/groups.module';
 import { OmniInboundModule } from './omni-inbound/omni-inbound.module';
 import { DataVisibilityModule } from './data-visibility/data-visibility.module';
+import { ListViewsModule } from './list-views/list-views.module';
 
 import {
   KeycloakConnectModule,
@@ -227,6 +228,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     GroupsModule,
     OmniInboundModule,
     DataVisibilityModule,
+    ListViewsModule,
   ],
   providers: [
     {

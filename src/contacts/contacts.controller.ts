@@ -23,6 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
+import { ListViewsService } from '../list-views/list-views.service';
 
 @ApiTags('Contacts')
 @ApiBearerAuth()
@@ -32,7 +33,10 @@ import { UpdateContactDto } from './dto/update-contact.dto';
   version: '1',
 })
 export class ContactsController {
-  constructor(private readonly service: ContactsService) {}
+  constructor(
+    private readonly service: ContactsService,
+    private readonly listViewsService: ListViewsService,
+  ) {}
 
   @ApiCreatedResponse({ type: Contact })
   @Post()
@@ -43,7 +47,7 @@ export class ContactsController {
   @ApiOkResponse({ type: [Contact] })
   @Get()
   @MaskedResource('Lead') // Default for findAll as it often serves Leads first in current UI context or mixed
-  findAll(@Query() query: any) {
+  async findAll(@Query() query: any) {
     if (
       query?.isConverted === 'true' ||
       query?.filters?.includes('isConverted":true')
@@ -51,7 +55,26 @@ export class ContactsController {
       // Dynamic tagging would be better, but interceptor can check query too.
       // For now we use the resource logic.
     }
-    return this.service.findAll(query);
+    const result = await this.service.findAll(query);
+
+    // Attach view metadata if viewId is provided
+    if (query?.viewId) {
+      try {
+        const view = await this.listViewsService.getViewById(query.viewId);
+        return {
+          ...result,
+          viewMetadata: {
+            viewId: view.id,
+            viewName: view.name,
+            columns: view.columns,
+          },
+        };
+      } catch {
+        // View not found — return data without metadata
+      }
+    }
+
+    return result;
   }
 
   @Get('check-duplicate')
