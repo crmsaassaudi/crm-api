@@ -120,6 +120,63 @@ export class ListViewsService {
     return views.find((v) => v.isSystemDefault) || views[0] || null;
   }
 
+  /**
+   * Build a merged view from all views available to the current user.
+   * Union of all columns — visible if ANY view has it visible, min sortOrder.
+   */
+  async getMergedViewForUser(
+    module: string,
+  ): Promise<ListViewDefinition | null> {
+    const views = await this.getViewsForUser(module);
+    if (views.length <= 1) return null; // No merge needed for 0 or 1 views
+
+    // Collect all columns across all views
+    const columnMap = new Map<
+      string,
+      { key: string; label?: string; isVisible: boolean; sortOrder: number }
+    >();
+
+    for (const view of views) {
+      for (const col of view.columns) {
+        const existing = columnMap.get(col.key);
+        if (existing) {
+          // Union: visible if ANY view has it visible
+          existing.isVisible = existing.isVisible || col.isVisible;
+          // Use min sortOrder (higher priority position)
+          existing.sortOrder = Math.min(existing.sortOrder, col.sortOrder);
+          // Keep label from the first view that has one
+          if (!existing.label && col.label) existing.label = col.label;
+        } else {
+          columnMap.set(col.key, {
+            key: col.key,
+            label: col.label,
+            isVisible: col.isVisible,
+            sortOrder: col.sortOrder,
+          });
+        }
+      }
+    }
+
+    // Sort by sortOrder
+    const mergedColumns = Array.from(columnMap.values()).sort(
+      (a, b) => a.sortOrder - b.sortOrder,
+    );
+
+    // Re-assign sequential sortOrder
+    mergedColumns.forEach((c, i) => (c.sortOrder = i + 1));
+
+    return {
+      id: '__merged__',
+      name: 'Merged View',
+      module,
+      createdBy: 'system',
+      isSystemDefault: false,
+      columns: mergedColumns,
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    };
+  }
+
   // ── Read (Admin — for Object Manager) ───────────────────────────────────
 
   /**

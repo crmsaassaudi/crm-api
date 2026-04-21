@@ -42,6 +42,14 @@ export class ListViewsController {
     return this.service.getDefaultViewForUser(module);
   }
 
+  @Get('merged')
+  @ApiOperation({
+    summary: 'Get merged view (union of all columns) for current user',
+  })
+  getMergedView(@Query('module') module: string) {
+    return this.service.getMergedViewForUser(module);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a single list view by ID' })
   getViewById(@Param('id') id: string) {
