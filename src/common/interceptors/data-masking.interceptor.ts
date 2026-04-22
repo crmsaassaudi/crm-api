@@ -101,14 +101,11 @@ export class DataMaskingInterceptor implements NestInterceptor {
       target = { ...item };
     }
 
-    // Dynamic resource determination for Contact/Lead
+    // Dynamic resource determination: use lifecycle stage for masking context
+    // All contacts now use 'Contact' layout config regardless of stage
     let resource = baseResource;
     if (baseResource === 'Contact' || baseResource === 'Lead') {
-      if (target.isConverted === false) {
-        resource = 'Lead';
-      } else if (target.isConverted === true) {
-        resource = 'Contact';
-      }
+      resource = 'Contact';
     }
 
     const maskedFields = this.getMaskedFields(layoutConfig, resource);

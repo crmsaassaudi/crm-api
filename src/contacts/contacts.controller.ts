@@ -46,15 +46,8 @@ export class ContactsController {
 
   @ApiOkResponse({ type: [Contact] })
   @Get()
-  @MaskedResource('Lead') // Default for findAll as it often serves Leads first in current UI context or mixed
+  @MaskedResource('Contact')
   async findAll(@Query() query: any) {
-    if (
-      query?.isConverted === 'true' ||
-      query?.filters?.includes('isConverted":true')
-    ) {
-      // Dynamic tagging would be better, but interceptor can check query too.
-      // For now we use the resource logic.
-    }
     const result = await this.service.findAll(query);
 
     // Attach view metadata if viewId is provided
@@ -101,9 +94,28 @@ export class ContactsController {
     return this.service.remove(id);
   }
 
+  @Post(':id/change-stage')
+  changeStage(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      stage: string;
+      createAccount?: boolean;
+      accountId?: string;
+      accountData?: any;
+      dealData?: any;
+    },
+  ) {
+    return this.service.changeStage(id, body.stage, body);
+  }
+
+  /**
+   * @deprecated Use POST :id/change-stage instead.
+   * Kept for backward compatibility — delegates to changeStage.
+   */
   @Post(':id/convert')
   convertLead(@Param('id') id: string, @Body() body: any) {
-    return this.service.convertLead(id, body);
+    return this.service.changeStage(id, body.stage || 'customer', body);
   }
 
   /**

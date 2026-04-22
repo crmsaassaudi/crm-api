@@ -52,17 +52,14 @@ export class ContactsService {
     const emails = data.emails;
     const phones = data.phones;
 
-    // ── Phase 5.4: Lead Promotion (Shadow Contact) ──
+    // Shadow contact promotion: when a shadow contact gets real data, promote it
     const existingContact = await this.repository.findOne({ _id: id });
     let additionalData: any = {};
     if (existingContact && existingContact.isShadow) {
       const hasNewEmail = emails && emails.length > 0;
       const hasNewPhone = phones && phones.length > 0;
       if (hasNewEmail || hasNewPhone) {
-        additionalData = {
-          isShadow: false,
-          lifecycleStage: 'marketing_qualified_lead', // Promoted from 'lead'
-        };
+        additionalData = { isShadow: false };
       }
     }
 
@@ -126,44 +123,47 @@ export class ContactsService {
         name: `${d.firstName} ${d.lastName}`,
         email: d.emails?.[0],
         phone: d.phones?.[0],
-        type: d.isConverted ? 'Contact' : 'Lead',
+        stage: d.lifecycleStage,
       })),
     };
   }
 
-  async convertLead(
+  /**
+   * Change the lifecycle stage of a contact.
+   * This replaces the old convertLead method — "conversion" is now just a stage transition.
+   */
+  async changeStage(
     id: string,
-    params: {
-      createAccount: boolean;
+    newStage: string,
+    params?: {
+      createAccount?: boolean;
       accountId?: string;
       accountData?: any;
       dealData?: any;
-      isIndividual?: boolean;
     },
   ): Promise<any> {
-    const lead = await this.repository.findOne({ _id: id });
-    if (!lead) throw new NotFoundException('Lead not found');
+    const contact = await this.repository.findOne({ _id: id });
+    if (!contact) throw new NotFoundException('Contact not found');
 
-    let finalAccountId = params.accountId;
+    let finalAccountId = params?.accountId;
 
-    // 1. Create account if requested
-    if (params.createAccount && params.accountData) {
+    // Optionally create account on stage transition
+    if (params?.createAccount && params?.accountData) {
       const account = await this.accountsService.create(params.accountData);
       finalAccountId = account.id;
     }
 
-    // 2. Mark as converted and link to account
-    const updatedLead = await this.repository.update(id, {
-      isConverted: true,
-      status: 'converted',
-      accountId: finalAccountId,
+    // Update stage (and optionally link to account)
+    const updated = await this.repository.update(id, {
+      lifecycleStage: newStage,
+      ...(finalAccountId ? { accountId: finalAccountId } : {}),
     } as any);
 
-    // 3. Create deal if requested
-    if (params.dealData && updatedLead) {
+    // Optionally create deal on stage transition
+    if (params?.dealData && updated) {
       await this.dealsService.create({
         ...params.dealData,
-        contactId: updatedLead.id,
+        contactId: updated.id,
         accountId: finalAccountId,
       });
     }
@@ -171,6 +171,7 @@ export class ContactsService {
     return {
       success: true,
       contact: id,
+      stage: newStage,
       account: finalAccountId,
     };
   }

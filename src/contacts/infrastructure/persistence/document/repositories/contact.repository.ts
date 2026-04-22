@@ -53,8 +53,9 @@ export class ContactRepository extends BaseDocumentRepository<
       ];
     }
 
-    if (filterOptions?.isConverted !== undefined) {
-      where.isConverted = filterOptions.isConverted;
+    // Filter by lifecycle stage (replaces the old isConverted filter)
+    if (filterOptions?.lifecycleStage) {
+      where.lifecycleStage = filterOptions.lifecycleStage;
     }
 
     if (filterOptions?.filters) {
