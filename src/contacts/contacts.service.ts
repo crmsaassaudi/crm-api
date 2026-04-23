@@ -9,6 +9,7 @@ import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { AccountsService } from '../accounts/accounts.service';
 import { DealsService } from '../deals/deals.service';
+import { ClsService } from 'nestjs-cls';
 
 @Injectable()
 export class ContactsService {
@@ -16,6 +17,7 @@ export class ContactsService {
     private readonly repository: ContactRepository,
     private readonly accountsService: AccountsService,
     private readonly dealsService: DealsService,
+    private readonly cls: ClsService,
   ) {}
 
   async create(data: CreateContactDto): Promise<Contact> {
@@ -131,6 +133,7 @@ export class ContactsService {
   /**
    * Change the lifecycle stage of a contact.
    * This replaces the old convertLead method — "conversion" is now just a stage transition.
+   * Records a stage history entry for conversion rate and velocity tracking.
    */
   async changeStage(
     id: string,
@@ -140,39 +143,68 @@ export class ContactsService {
       accountId?: string;
       accountData?: any;
       dealData?: any;
+      reason?: string;
     },
   ): Promise<any> {
     const contact = await this.repository.findOne({ _id: id });
     if (!contact) throw new NotFoundException('Contact not found');
 
+    const previousStage = contact.lifecycleStage;
+
+    // Get the current user from CLS context for attribution
+    const changedById = this.cls.get('user.id') || contact.updatedById;
+
+    // 1. Push stage history entry (atomic $push, no race conditions)
+    await this.repository.pushStageHistory(id, {
+      fromStage: previousStage,
+      toStage: newStage,
+      changedAt: new Date(),
+      changedById,
+      reason: params?.reason,
+    });
+
     let finalAccountId = params?.accountId;
 
-    // Optionally create account on stage transition
+    // 2. Optionally create account on stage transition
     if (params?.createAccount && params?.accountData) {
       const account = await this.accountsService.create(params.accountData);
       finalAccountId = account.id;
     }
 
-    // Update stage (and optionally link to account)
+    // 3. Update stage (and optionally link to account)
     const updated = await this.repository.update(id, {
       lifecycleStage: newStage,
       ...(finalAccountId ? { accountId: finalAccountId } : {}),
     } as any);
 
-    // Optionally create deal on stage transition
+    // 4. Optionally create deal on stage transition
+    let dealId: string | undefined;
     if (params?.dealData && updated) {
-      await this.dealsService.create({
+      const deal = await this.dealsService.create({
         ...params.dealData,
         contactId: updated.id,
         accountId: finalAccountId,
       });
+      dealId = deal.id;
     }
 
     return {
       success: true,
       contact: id,
+      previousStage,
       stage: newStage,
       account: finalAccountId,
+      deal: dealId,
     };
+  }
+
+  /**
+   * Get the stage transition history for a contact.
+   * Returns entries sorted newest-first.
+   */
+  async getStageHistory(id: string): Promise<any[]> {
+    const contact = await this.repository.findOne({ _id: id });
+    if (!contact) throw new NotFoundException('Contact not found');
+    return this.repository.getStageHistory(id);
   }
 }

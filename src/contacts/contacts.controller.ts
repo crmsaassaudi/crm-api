@@ -104,9 +104,16 @@ export class ContactsController {
       accountId?: string;
       accountData?: any;
       dealData?: any;
+      reason?: string;
     },
   ) {
     return this.service.changeStage(id, body.stage, body);
+  }
+
+  @ApiOkResponse({ description: 'Stage transition history for a contact' })
+  @Get(':id/stage-history')
+  getStageHistory(@Param('id') id: string) {
+    return this.service.getStageHistory(id);
   }
 
   /**

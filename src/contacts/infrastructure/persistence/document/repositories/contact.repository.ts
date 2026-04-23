@@ -196,4 +196,51 @@ export class ContactRepository extends BaseDocumentRepository<
       .exec();
     return !!doc;
   }
+
+  /**
+   * Atomically push a new stage history entry into the contact's stageHistory array.
+   * Uses $push to avoid race conditions.
+   */
+  async pushStageHistory(
+    contactId: string,
+    entry: {
+      fromStage: string | null;
+      toStage: string;
+      changedAt: Date;
+      changedById: string;
+      reason?: string;
+    },
+  ): Promise<void> {
+    const scopedFilter = this.applyTenantFilter({ _id: contactId });
+    await this.model
+      .updateOne(scopedFilter, {
+        $push: { stageHistory: entry },
+      })
+      .exec();
+  }
+
+  /**
+   * Get the stage history of a contact, sorted by changedAt descending (newest first).
+   */
+  async getStageHistory(contactId: string): Promise<
+    Array<{
+      fromStage: string | null;
+      toStage: string;
+      changedAt: Date;
+      changedById: string;
+      reason?: string;
+    }>
+  > {
+    const scopedFilter = this.applyTenantFilter({ _id: contactId });
+    const doc = await this.model
+      .findOne(scopedFilter, { stageHistory: 1 })
+      .lean()
+      .exec();
+    if (!doc) return [];
+    const history = (doc.stageHistory || []) as any[];
+    return history.sort(
+      (a: any, b: any) =>
+        new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime(),
+    );
+  }
 }

@@ -114,6 +114,35 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   /** Flag to indicate this contact is a VIP customer (priority routing) */
   @Prop({ default: false, index: true })
   isVIP: boolean;
+
+  // ────────────────── STAGE HISTORY TRACKING ──────────────────
+
+  /**
+   * Embedded log of all lifecycle stage transitions.
+   * Each entry records: from → to, timestamp, who made the change, and optional reason.
+   */
+  @Prop({
+    type: [
+      {
+        fromStage: { type: String, default: null },
+        toStage: { type: String, required: true },
+        changedAt: { type: Date, required: true, default: Date.now },
+        changedById: {
+          type: MongooseSchema.Types.ObjectId,
+          ref: 'UserSchemaClass',
+        },
+        reason: { type: String },
+      },
+    ],
+    default: [],
+  })
+  stageHistory: Array<{
+    fromStage: string | null;
+    toStage: string;
+    changedAt: Date;
+    changedById: string;
+    reason?: string;
+  }>;
 }
 
 export const ContactSchema = SchemaFactory.createForClass(ContactSchemaClass);

@@ -87,4 +87,16 @@ export class Contact {
     description: 'VIP customer flag for priority routing',
   })
   isVIP?: boolean;
+
+  @ApiProperty({
+    example: [],
+    description: 'Log of all lifecycle stage transitions',
+  })
+  stageHistory?: Array<{
+    fromStage: string | null;
+    toStage: string;
+    changedAt: Date;
+    changedById: string;
+    reason?: string;
+  }>;
 }

@@ -26,6 +26,13 @@ export class ContactMapper {
       };
     });
     domainEntity.isShadow = raw.isShadow;
+    domainEntity.stageHistory = (raw.stageHistory || []).map((entry: any) => ({
+      fromStage: entry.fromStage,
+      toStage: entry.toStage,
+      changedAt: entry.changedAt,
+      changedById: entry.changedById?.toString(),
+      reason: entry.reason,
+    }));
 
     domainEntity.ownerId = raw.ownerId?.toString();
     domainEntity.createdById = raw.createdById?.toString();
@@ -72,6 +79,7 @@ export class ContactMapper {
     persistenceEntity.ownerId = domainEntity.ownerId;
     persistenceEntity.createdById = domainEntity.createdById;
     persistenceEntity.updatedById = domainEntity.updatedById;
+    persistenceEntity.stageHistory = domainEntity.stageHistory ?? [];
     return persistenceEntity;
   }
 }
