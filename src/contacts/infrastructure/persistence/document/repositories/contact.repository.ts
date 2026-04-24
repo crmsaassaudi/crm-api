@@ -209,6 +209,8 @@ export class ContactRepository extends BaseDocumentRepository<
       changedAt: Date;
       changedById: string;
       reason?: string;
+      direction?: 'forward' | 'backward' | 'lateral';
+      skippedStages?: string[];
     },
   ): Promise<void> {
     const scopedFilter = this.applyTenantFilter({ _id: contactId });
@@ -229,6 +231,8 @@ export class ContactRepository extends BaseDocumentRepository<
       changedAt: Date;
       changedById: string;
       reason?: string;
+      direction?: 'forward' | 'backward' | 'lateral';
+      skippedStages?: string[];
     }>
   > {
     const scopedFilter = this.applyTenantFilter({ _id: contactId });

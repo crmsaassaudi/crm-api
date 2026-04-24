@@ -9,6 +9,7 @@ import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { AccountsService } from '../accounts/accounts.service';
 import { DealsService } from '../deals/deals.service';
+import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 import { ClsService } from 'nestjs-cls';
 
 @Injectable()
@@ -17,6 +18,7 @@ export class ContactsService {
     private readonly repository: ContactRepository,
     private readonly accountsService: AccountsService,
     private readonly dealsService: DealsService,
+    private readonly settingsService: CrmSettingsService,
     private readonly cls: ClsService,
   ) {}
 
@@ -131,9 +133,39 @@ export class ContactsService {
   }
 
   /**
+   * Resolve the valid lifecycle stages from tenant settings.
+   * Returns an ordered array of stage apiNames.
+   */
+  private async getValidStages(): Promise<string[]> {
+    const lifecycle = await this.settingsService.getSetting(
+      'lifecycle:Contact',
+    );
+    if (!lifecycle?.stages || !Array.isArray(lifecycle.stages)) {
+      // Fallback: default stage pipeline if no settings configured
+      return [
+        'subscriber',
+        'lead',
+        'mql',
+        'sql',
+        'opportunity',
+        'customer',
+        'evangelist',
+      ];
+    }
+    return lifecycle.stages
+      .sort((a: any, b: any) => a.sortOrder - b.sortOrder)
+      .map((s: any) => s.apiName);
+  }
+
+  /**
    * Change the lifecycle stage of a contact.
    * This replaces the old convertLead method — "conversion" is now just a stage transition.
    * Records a stage history entry for conversion rate and velocity tracking.
+   *
+   * Guardrails (v2.5):
+   * - Validates that newStage exists in lifecycle config (rejects invalid strings)
+   * - Computes transition direction (forward/backward/lateral) for analytics
+   * - Records skipped stages when jumping non-sequentially
    */
   async changeStage(
     id: string,
@@ -149,7 +181,38 @@ export class ContactsService {
     const contact = await this.repository.findOne({ _id: id });
     if (!contact) throw new NotFoundException('Contact not found');
 
+    // --- Guardrail 1: Validate stage exists in lifecycle config ---
+    const validStages = await this.getValidStages();
+    if (!validStages.includes(newStage)) {
+      throw new BadRequestException(
+        `Invalid lifecycle stage: "${newStage}". Valid stages: ${validStages.join(', ')}`,
+      );
+    }
+
     const previousStage = contact.lifecycleStage;
+
+    // --- Guardrail 2: Compute transition direction + skipped stages ---
+    const fromIndex = validStages.indexOf(previousStage);
+    const toIndex = validStages.indexOf(newStage);
+
+    let direction: 'forward' | 'backward' | 'lateral' = 'lateral';
+    let skippedStages: string[] = [];
+
+    if (fromIndex >= 0 && toIndex >= 0) {
+      if (toIndex > fromIndex) {
+        direction = 'forward';
+        // Record any skipped stages (non-sequential forward jump)
+        if (toIndex - fromIndex > 1) {
+          skippedStages = validStages.slice(fromIndex + 1, toIndex);
+        }
+      } else if (toIndex < fromIndex) {
+        direction = 'backward';
+        // Record stages being "reversed over"
+        if (fromIndex - toIndex > 1) {
+          skippedStages = validStages.slice(toIndex + 1, fromIndex);
+        }
+      }
+    }
 
     // Get the current user from CLS context for attribution
     const changedById = this.cls.get('user.id') || contact.updatedById;
@@ -161,6 +224,8 @@ export class ContactsService {
       changedAt: new Date(),
       changedById,
       reason: params?.reason,
+      direction,
+      skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
     });
 
     let finalAccountId = params?.accountId;
@@ -193,6 +258,8 @@ export class ContactsService {
       contact: id,
       previousStage,
       stage: newStage,
+      direction,
+      skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
       account: finalAccountId,
       deal: dealId,
     };
