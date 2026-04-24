@@ -86,22 +86,23 @@ export class ListViewsService {
     // Agent: resolve their groups
     const userGroupIds = await this.getUserGroupIds(userId);
 
-    // Find views assigned to any of the user's groups, excluding views where user is explicitly excluded
-    const groupViews = moduleViews.filter(
+    // System views are always visible to all agents — they define the column layout
+    // foundation and should never be hidden even when custom views exist.
+    const systemViews = moduleViews.filter((v) => v.isSystemDefault);
+
+    // Custom views: only visible to members of their assigned groups.
+    // A view with no assignedGroupIds is not surfaced to any specific group.
+    const groupCustomViews = moduleViews.filter(
       (v) =>
         !v.isSystemDefault &&
+        v.assignedGroupIds.length > 0 &&
         v.assignedGroupIds.some((gId) => userGroupIds.includes(gId)) &&
         !(v.excludedUserIds || []).includes(userId),
     );
 
-    // If agent has group views → return only those
-    if (groupViews.length > 0) {
-      return groupViews;
-    }
-
-    // Fallback: no group view assigned → return system default only
-    return moduleViews.filter((v) => v.isSystemDefault);
+    return [...systemViews, ...groupCustomViews];
   }
+
 
   /**
    * Resolve the default view for the current user.
