@@ -15,7 +15,6 @@ import {
 } from '@nestjs/swagger';
 import { TenantsService } from './tenants.service';
 import { UpdateTenantI18nDto } from './dto/i18n-settings.dto';
-import { UpdateTenantCrmSettingsDto } from './dto/crm-settings.dto';
 
 @ApiTags('Tenants')
 @ApiBearerAuth()
@@ -112,52 +111,5 @@ export class TenantSettingsController {
   async updateProfile(@Body() dto: { tenantName?: string; logoUrl?: string }) {
     const tenantId = this.cls.get('tenantId');
     return this.tenantsService.updateProfile(tenantId, dto);
-  }
-
-  // ─── CRM Settings ───────────────────────────────────────────────────────────
-
-  /**
-   * GET /api/v1/tenants/crm
-   * Returns the current tenant's CRM configuration.
-   */
-  @Get('crm')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Get tenant CRM settings',
-    description:
-      'Returns leadManagementMode and migration status for the current tenant.',
-  })
-  @ApiOkResponse({
-    schema: {
-      example: { leadManagementMode: 'separated', isMigrating: false },
-    },
-  })
-  async getCrmSettings() {
-    const tenantId = this.cls.get('tenantId');
-    return this.tenantsService.getCrmSettings(tenantId);
-  }
-
-  /**
-   * PATCH /api/v1/tenants/crm
-   * Updates the current tenant's CRM configuration.
-   * Note: Switching leadManagementMode on a tenant with existing data
-   * will be locked (isMigrating guard) until Phase 3 Migration Wizard is complete.
-   */
-  @Patch('crm')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Update tenant CRM settings',
-    description:
-      "Partially updates the tenant's CRM config (e.g. leadManagementMode). " +
-      'Returns 409 if a migration is already in progress.',
-  })
-  @ApiOkResponse({
-    schema: {
-      example: { leadManagementMode: 'unified', isMigrating: false },
-    },
-  })
-  async updateCrmSettings(@Body() dto: UpdateTenantCrmSettingsDto) {
-    const tenantId = this.cls.get('tenantId');
-    return this.tenantsService.updateCrmSettings(tenantId, dto);
   }
 }

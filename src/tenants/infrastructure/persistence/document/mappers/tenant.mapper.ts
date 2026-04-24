@@ -23,14 +23,6 @@ export class TenantMapper {
       ? { resolveNoteMode: raw.omniSettings.resolveNoteMode }
       : { resolveNoteMode: 'optional' };
 
-    // crmSettings — default to 'separated' for backward-compatibility
-    tenant.crmSettings = raw.crmSettings
-      ? {
-          leadManagementMode: raw.crmSettings.leadManagementMode ?? 'separated',
-          isMigrating: raw.crmSettings.isMigrating ?? false,
-        }
-      : { leadManagementMode: 'separated', isMigrating: false };
-
     tenant.i18nSettings = raw.i18nSettings
       ? {
           locale: raw.i18nSettings.locale ?? 'en',
@@ -74,10 +66,6 @@ export class TenantMapper {
 
     if (domain.i18nSettings) {
       persistence.i18nSettings = { ...domain.i18nSettings };
-    }
-
-    if (domain.crmSettings) {
-      persistence.crmSettings = { ...domain.crmSettings };
     }
 
     return persistence;

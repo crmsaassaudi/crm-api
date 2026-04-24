@@ -11,8 +11,6 @@ export enum TenantStatus {
   SUSPENDED = 'SUSPENDED',
 }
 
-export type LeadManagementMode = 'unified' | 'separated';
-
 export class Tenant {
   @ApiProperty({ type: String })
   id: string;
@@ -41,24 +39,6 @@ export class Tenant {
   @ApiProperty()
   omniSettings: {
     resolveNoteMode: 'disabled' | 'optional' | 'required';
-  };
-
-  @ApiProperty({
-    description: 'CRM-level configuration for this tenant',
-    example: { leadManagementMode: 'separated' },
-  })
-  crmSettings: {
-    /**
-     * 'unified'   → Single "Contacts" module (HubSpot-style, B2C friendly).
-     * 'separated' → Separate "Leads" + "Contacts" modules (Salesforce-style, B2B).
-     * Default: 'separated' (backward-compatible for existing tenants).
-     */
-    leadManagementMode: LeadManagementMode;
-    /**
-     * True while a background migration job is running after a mode switch.
-     * UI should lock the setting toggle when this is true.
-     */
-    isMigrating?: boolean;
   };
 
   @ApiProperty({ description: 'Storage quota for media files (MB)' })

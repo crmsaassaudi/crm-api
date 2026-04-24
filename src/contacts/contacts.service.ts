@@ -137,9 +137,8 @@ export class ContactsService {
    * Returns an ordered array of stage apiNames.
    */
   private async getValidStages(): Promise<string[]> {
-    const lifecycle = await this.settingsService.getSetting(
-      'lifecycle:Contact',
-    );
+    const lifecycle =
+      await this.settingsService.getSetting('lifecycle:Contact');
     if (!lifecycle?.stages || !Array.isArray(lifecycle.stages)) {
       // Fallback: default stage pipeline if no settings configured
       return [

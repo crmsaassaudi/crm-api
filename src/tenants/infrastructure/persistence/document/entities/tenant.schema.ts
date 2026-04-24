@@ -70,22 +70,6 @@ export class TenantSchemaClass extends EntityDocumentHelper {
 
   @Prop({
     type: {
-      leadManagementMode: {
-        type: String,
-        enum: ['unified', 'separated'],
-        default: 'separated',
-      },
-      isMigrating: { type: Boolean, default: false },
-    },
-    default: () => ({ leadManagementMode: 'separated', isMigrating: false }),
-  })
-  crmSettings: {
-    leadManagementMode: 'unified' | 'separated';
-    isMigrating?: boolean;
-  };
-
-  @Prop({
-    type: {
       limitMB: { type: Number, default: 1024 },
       usedMB: { type: Number, default: 0 },
     },

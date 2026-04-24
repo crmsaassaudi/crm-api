@@ -142,30 +142,4 @@ export class TenantsRepository {
       .exec();
     return updated ? TenantMapper.toDomain(updated) : null;
   }
-
-  /**
-   * Update the tenant's CRM settings (leadManagementMode, isMigrating flag).
-   */
-  async updateCrmSettings(
-    tenantId: string,
-    settings: Partial<{
-      leadManagementMode: 'unified' | 'separated';
-      isMigrating: boolean;
-    }>,
-  ): Promise<Tenant | null> {
-    const setFields: Record<string, unknown> = {};
-    if (settings.leadManagementMode !== undefined)
-      setFields['crmSettings.leadManagementMode'] = settings.leadManagementMode;
-    if (settings.isMigrating !== undefined)
-      setFields['crmSettings.isMigrating'] = settings.isMigrating;
-
-    if (Object.keys(setFields).length === 0) {
-      return this.findById(tenantId);
-    }
-
-    const updated = await this.tenantsModel
-      .findByIdAndUpdate(tenantId, { $set: setFields }, { new: true })
-      .exec();
-    return updated ? TenantMapper.toDomain(updated) : null;
-  }
 }
