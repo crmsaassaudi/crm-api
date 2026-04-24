@@ -55,8 +55,7 @@ export abstract class BaseDocumentRepository<
             {
               $or: [
                 { ownerId: { $in: visibleOwnerIds } },
-                { ownerId: { $exists: false } }, // Legacy records without ownerId
-                { ownerId: null },
+                { ownerId: null }, // covers both null and missing ownerId field
               ],
             },
           ],

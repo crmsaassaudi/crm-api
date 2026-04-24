@@ -43,11 +43,7 @@ export class TaskSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   assignedToId?: string;
 
-  @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: 'UserSchemaClass',
-    index: true,
-  })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   ownerId?: string;
 
   @Prop({ type: MongooseSchema.Types.Mixed })
@@ -98,6 +94,7 @@ export const TaskSchema = SchemaFactory.createForClass(TaskSchemaClass);
 TaskSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 TaskSchema.index({ tenantId: 1, status: 1 });
 TaskSchema.index({ tenantId: 1, dueDate: 1 });
+TaskSchema.index({ tenantId: 1, ownerId: 1 }, { name: 'tenant_owner_lookup' });
 
 TaskSchema.virtual('assignedTo', {
   ref: 'UserSchemaClass',

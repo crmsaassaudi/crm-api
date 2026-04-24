@@ -97,6 +97,10 @@ export class AccountSchemaClass extends EntityDocumentHelper {
 export const AccountSchema = SchemaFactory.createForClass(AccountSchemaClass);
 
 AccountSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+AccountSchema.index(
+  { tenantId: 1, ownerId: 1 },
+  { name: 'tenant_owner_lookup' },
+);
 
 AccountSchema.virtual('owner', {
   ref: 'UserSchemaClass',

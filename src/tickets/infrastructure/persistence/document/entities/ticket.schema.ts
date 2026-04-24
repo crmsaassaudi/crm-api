@@ -37,11 +37,7 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   assigneeId?: string;
 
-  @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: 'UserSchemaClass',
-    index: true,
-  })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   ownerId?: string;
 
   @Prop({ required: true, default: 'new', index: true })
@@ -125,6 +121,10 @@ export const TicketSchema = SchemaFactory.createForClass(TicketSchemaClass);
 TicketSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 TicketSchema.index({ tenantId: 1, ticketNumber: 1 });
 TicketSchema.index({ tenantId: 1, status: 1 });
+TicketSchema.index(
+  { tenantId: 1, ownerId: 1 },
+  { name: 'tenant_owner_lookup' },
+);
 TicketSchema.index(
   { omniConversationId: 1 },
   { name: 'ticket_omni_conversation' },

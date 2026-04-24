@@ -162,6 +162,10 @@ ContactSchema.index(
   { tenantId: 1, 'omniIdentities.senderId': 1, isVIP: 1 },
   { name: 'tenant_sender_vip_lookup' },
 );
+ContactSchema.index(
+  { tenantId: 1, ownerId: 1 },
+  { name: 'tenant_owner_lookup', sparse: false },
+);
 
 ContactSchema.virtual('owner', {
   ref: 'UserSchemaClass',

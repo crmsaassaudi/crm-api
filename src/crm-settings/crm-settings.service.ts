@@ -34,10 +34,17 @@ export class CrmSettingsService {
     // ── layout_settings: transparent migration for existing tenants ──
     // If the stored value exists but has no sectionConfigs, inject the system
     // defaults and persist them so subsequent reads are consistent.
-    if (key === 'layout_settings' && setting.value && !setting.value['sectionConfigs']) {
+    if (
+      key === 'layout_settings' &&
+      setting.value &&
+      !setting.value['sectionConfigs']
+    ) {
       const defaults = this.seeding.getDefault(key) as any;
       if (defaults?.sectionConfigs) {
-        const migrated = { ...setting.value, sectionConfigs: defaults.sectionConfigs };
+        const migrated = {
+          ...setting.value,
+          sectionConfigs: defaults.sectionConfigs,
+        };
         await this.repository.update(tid, key, migrated);
         return migrated;
       }
