@@ -1081,68 +1081,10 @@ const DEFAULT_SHARING_RULES = {
 
 const DEFAULT_LIST_VIEWS = {
   views: [
-    // ── Contact views ──
-
-    {
-      id: 'contact_all_contacts',
-      name: 'All Contacts',
-      module: 'Contact',
-      createdBy: 'system',
-      isSystemDefault: true,
-      columns: [
-        { key: 'fullName', label: 'Name', isVisible: true, sortOrder: 1 },
-        { key: 'emails', label: 'Email', isVisible: true, sortOrder: 2 },
-        { key: 'phones', label: 'Phone', isVisible: true, sortOrder: 3 },
-        { key: 'companyName', label: 'Company', isVisible: true, sortOrder: 4 },
-        { key: 'lifecycleStage', label: 'Stage', isVisible: true, sortOrder: 5 },
-        { key: 'status', label: 'Status', isVisible: true, sortOrder: 6 },
-        { key: 'source', label: 'Source', isVisible: true, sortOrder: 7 },
-        { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 8 },
-        { key: 'updatedAt', label: 'Last Activity', isVisible: true, sortOrder: 9 },
-      ],
-      assignedGroupIds: [],
-      excludedUserIds: [],
-    },
-    {
-      id: 'contact_my_open_leads',
-      name: 'My Open Leads',
-      module: 'Contact',
-      createdBy: 'system',
-      isSystemDefault: true,
-      columns: [
-        { key: 'fullName', label: 'Name', isVisible: true, sortOrder: 1 },
-        { key: 'emails', label: 'Email', isVisible: true, sortOrder: 2 },
-        { key: 'phones', label: 'Phone', isVisible: true, sortOrder: 3 },
-        { key: 'companyName', label: 'Company', isVisible: true, sortOrder: 4 },
-        { key: 'status', label: 'Status', isVisible: true, sortOrder: 5 },
-        { key: 'source', label: 'Source', isVisible: true, sortOrder: 6 },
-        { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 7 },
-        { key: 'createdAt', label: 'Created', isVisible: true, sortOrder: 8 },
-        { key: 'updatedAt', label: 'Last Activity', isVisible: true, sortOrder: 9 },
-      ],
-      assignedGroupIds: [],
-      excludedUserIds: [],
-    },
-    {
-      id: 'contact_my_active_customers',
-      name: 'My Active Customers',
-      module: 'Contact',
-      createdBy: 'system',
-      isSystemDefault: true,
-      columns: [
-        { key: 'fullName', label: 'Name', isVisible: true, sortOrder: 1 },
-        { key: 'emails', label: 'Email', isVisible: true, sortOrder: 2 },
-        { key: 'phones', label: 'Phone', isVisible: true, sortOrder: 3 },
-        { key: 'companyName', label: 'Company', isVisible: true, sortOrder: 4 },
-        { key: 'lifecycleStage', label: 'Stage', isVisible: true, sortOrder: 5 },
-        { key: 'status', label: 'Status', isVisible: true, sortOrder: 6 },
-        { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 7 },
-        { key: 'updatedAt', label: 'Last Activity', isVisible: true, sortOrder: 8 },
-        { key: 'dealCount', label: 'Deals', isVisible: true, sortOrder: 9 },
-      ],
-      assignedGroupIds: [],
-      excludedUserIds: [],
-    },
+    // ── Contact column layout views ──
+    // These define WHICH COLUMNS are visible in the table.
+    // Filter presets ("All Contacts", "My Open Leads", etc.) are a separate feature
+    // managed by the saved views/filters system, NOT here.
     {
       id: 'contact_all_fields',
       name: 'All Fields',
@@ -1177,7 +1119,6 @@ const DEFAULT_LIST_VIEWS = {
       assignedGroupIds: [],
       excludedUserIds: [],
     },
-
   ],
 };
 
