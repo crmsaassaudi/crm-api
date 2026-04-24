@@ -50,7 +50,33 @@ export class CrmSettingsService {
       }
     }
 
+    // ── list_views: transparent migration for existing tenants ──
+    // Merge new system-default views from seed into existing tenant data.
+    // This ensures existing tenants receive new system views (e.g. "All Contacts",
+    // "My Open Leads") without needing a manual migration script.
+    if (key === 'list_views' && setting.value?.views) {
+      const defaults = this.seeding.getDefault(key) as any;
+      const defaultViews: any[] = defaults?.views || [];
+      const existingViews: any[] = setting.value.views;
+      const existingIds = new Set(existingViews.map((v: any) => v.id));
+
+      const missingSystemViews = defaultViews.filter(
+        (v: any) => v.isSystemDefault && !existingIds.has(v.id),
+      );
+
+      if (missingSystemViews.length > 0) {
+        // Prepend missing system views before custom ones
+        const migrated = {
+          ...setting.value,
+          views: [...missingSystemViews, ...existingViews],
+        };
+        await this.repository.update(tid, key, migrated);
+        return migrated;
+      }
+    }
+
     return setting.value;
+
   }
 
   async updateSetting(
