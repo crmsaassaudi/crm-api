@@ -609,6 +609,34 @@ const DEFAULT_TASK_ADVANCED = {
 
 // ─── Layout & Validation defaults ────────────────────────────────────────────
 
+const DEFAULT_SECTION_CONFIGS = {
+  Contact: [
+    { id: 'general', label: 'General Information', sortOrder: 1, visibleAtStages: [] },
+    { id: 'marketing_attribution', label: 'Marketing Attribution', sortOrder: 2, visibleAtStages: [] },
+    { id: 'sales_qualification', label: 'Sales Qualification', sortOrder: 3, visibleAtStages: [] },
+    { id: 'financial_info', label: 'Financial Information', sortOrder: 4, visibleAtStages: [] },
+    { id: 'custom', label: 'Custom Fields', sortOrder: 5, visibleAtStages: [] },
+  ],
+  Account: [
+    { id: 'general', label: 'General Information', sortOrder: 1, visibleAtStages: [] },
+    { id: 'financial_info', label: 'Financial Information', sortOrder: 2, visibleAtStages: [] },
+    { id: 'custom', label: 'Custom Fields', sortOrder: 3, visibleAtStages: [] },
+  ],
+  Deal: [
+    { id: 'general', label: 'General Information', sortOrder: 1, visibleAtStages: [] },
+    { id: 'deal_details', label: 'Deal Details', sortOrder: 2, visibleAtStages: [] },
+    { id: 'custom', label: 'Custom Fields', sortOrder: 3, visibleAtStages: [] },
+  ],
+  Ticket: [
+    { id: 'general', label: 'General Information', sortOrder: 1, visibleAtStages: [] },
+    { id: 'custom', label: 'Custom Fields', sortOrder: 2, visibleAtStages: [] },
+  ],
+  Task: [
+    { id: 'general', label: 'General Information', sortOrder: 1, visibleAtStages: [] },
+    { id: 'custom', label: 'Custom Fields', sortOrder: 2, visibleAtStages: [] },
+  ],
+};
+
 const DEFAULT_LAYOUT_SETTINGS = {
   groupLayouts: {
     default: {
@@ -671,6 +699,9 @@ const DEFAULT_LAYOUT_SETTINGS = {
       Task: [],
     },
   },
+  // System-default section configurations per module.
+  // Tenants can add, reorder, or rename sections in Settings > Object Manager > Record Types.
+  sectionConfigs: DEFAULT_SECTION_CONFIGS,
 };
 
 const DEFAULT_VALIDATION_RULES = {

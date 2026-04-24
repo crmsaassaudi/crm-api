@@ -24,11 +24,26 @@ export class CrmSettingsService {
   async getSetting(key: string, tenantId?: string): Promise<any> {
     const tid = this.resolveTenantId(tenantId);
     const setting = await this.repository.findOne(tid, key);
-    if (setting) return setting.value;
 
-    // Lazy-seed: existing tenants that predate a new module deployment
-    // will receive the default value on their first GET.
-    return this.seeding.lazySeed(tid, key);
+    if (!setting) {
+      // Lazy-seed: existing tenants that predate a new module deployment
+      // will receive the default value on their first GET.
+      return this.seeding.lazySeed(tid, key);
+    }
+
+    // ── layout_settings: transparent migration for existing tenants ──
+    // If the stored value exists but has no sectionConfigs, inject the system
+    // defaults and persist them so subsequent reads are consistent.
+    if (key === 'layout_settings' && setting.value && !setting.value['sectionConfigs']) {
+      const defaults = this.seeding.getDefault(key) as any;
+      if (defaults?.sectionConfigs) {
+        const migrated = { ...setting.value, sectionConfigs: defaults.sectionConfigs };
+        await this.repository.update(tid, key, migrated);
+        return migrated;
+      }
+    }
+
+    return setting.value;
   }
 
   async updateSetting(
