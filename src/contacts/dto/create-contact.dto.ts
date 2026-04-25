@@ -39,6 +39,20 @@ export class CreateContactDto {
   @IsString()
   source?: string;
 
+  @ApiProperty({ example: 'CEO' })
+  @IsOptional()
+  @IsString()
+  role?: string;
+
+  @ApiProperty({ example: '123 Main St' })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiProperty({ example: '1990-01-01' })
+  @IsOptional()
+  birthday?: Date;
+
   @ApiProperty({ example: 'user-1' })
   @IsOptional()
   @IsString()

@@ -60,6 +60,18 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop()
   source?: string;
 
+  @Prop()
+  role?: string;
+
+  @Prop()
+  address?: string;
+
+  @Prop()
+  birthday?: Date;
+
+  @Prop({ type: MongooseSchema.Types.Mixed })
+  customFields?: Record<string, any>;
+
   @Prop({ default: 0 })
   score?: number;
 

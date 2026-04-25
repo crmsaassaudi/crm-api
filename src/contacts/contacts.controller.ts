@@ -40,6 +40,7 @@ export class ContactsController {
 
   @ApiCreatedResponse({ type: Contact })
   @Post()
+  @MaskedResource('Contact')
   create(@Body() data: CreateContactDto) {
     return this.service.create(data);
   }
@@ -85,6 +86,7 @@ export class ContactsController {
   @ApiOkResponse({ type: Contact })
   @Patch(':id')
   @UsePipes(new SanitizeMaskedInputPipe())
+  @MaskedResource('Contact')
   update(@Param('id') id: string, @Body() data: UpdateContactDto) {
     return this.service.update(id, data);
   }

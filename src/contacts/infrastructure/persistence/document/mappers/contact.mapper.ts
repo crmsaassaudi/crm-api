@@ -18,6 +18,10 @@ export class ContactMapper {
     domainEntity.accountId = raw.accountId?.toString();
     domainEntity.title = raw.title;
     domainEntity.source = raw.source;
+    domainEntity.role = raw.role;
+    domainEntity.address = raw.address;
+    domainEntity.birthday = raw.birthday;
+    domainEntity.customFields = raw.customFields;
     domainEntity.score = raw.score;
     domainEntity.omniIdentities = (raw.omniIdentities || []).map((el: any) => {
       return {
@@ -71,6 +75,10 @@ export class ContactMapper {
     persistenceEntity.accountId = domainEntity.accountId;
     persistenceEntity.title = domainEntity.title;
     persistenceEntity.source = domainEntity.source;
+    persistenceEntity.role = domainEntity.role;
+    persistenceEntity.address = domainEntity.address;
+    persistenceEntity.birthday = domainEntity.birthday;
+    persistenceEntity.customFields = domainEntity.customFields;
     persistenceEntity.score = domainEntity.score;
     persistenceEntity.omniIdentities = domainEntity.omniIdentities ?? [];
     if (domainEntity.isShadow !== undefined) {

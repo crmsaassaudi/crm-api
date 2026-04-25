@@ -44,6 +44,18 @@ export class Contact {
   @ApiProperty({ example: '1' })
   source?: string;
 
+  @ApiProperty({ example: 'CEO' })
+  role?: string;
+
+  @ApiProperty({ example: '123 Main St' })
+  address?: string;
+
+  @ApiProperty({ example: '1990-01-01' })
+  birthday?: Date;
+
+  @ApiProperty({ example: { custom_1: 'value' } })
+  customFields?: Record<string, any>;
+
   @ApiProperty({ example: 50 })
   score?: number;
 

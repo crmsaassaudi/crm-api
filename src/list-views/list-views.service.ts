@@ -103,7 +103,6 @@ export class ListViewsService {
     return [...systemViews, ...groupCustomViews];
   }
 
-
   /**
    * Resolve the default view for the current user.
    * Priority: first group-assigned view → system default.

@@ -34,8 +34,6 @@ export class CrmSettingsService {
     return setting.value;
   }
 
-
-
   async updateSetting(
     key: string,
     value: any,

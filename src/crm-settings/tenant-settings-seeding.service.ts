@@ -690,67 +690,14 @@ const DEFAULT_SECTION_CONFIGS = {
 const DEFAULT_LAYOUT_SETTINGS = {
   groupLayouts: {
     default: {
-      Lead: [
-        {
-          key: 'emails',
-          isVisible: true,
-          isRequired: true,
-          isDisabled: false,
-          masking: 'mask_all',
-          accessLevel: 'read_write',
-        },
-        {
-          key: 'phones',
-          isVisible: true,
-          isRequired: true,
-          isDisabled: false,
-          masking: 'last_4',
-          accessLevel: 'read_write',
-        },
-      ],
-      Contact: [
-        {
-          key: 'emails',
-          isVisible: true,
-          isRequired: true,
-          isDisabled: false,
-          masking: 'mask_all',
-          accessLevel: 'read_write',
-        },
-        {
-          key: 'phones',
-          isVisible: true,
-          isRequired: true,
-          isDisabled: false,
-          masking: 'last_4',
-          accessLevel: 'read_write',
-        },
-      ],
-      Account: [
-        {
-          key: 'emails',
-          isVisible: true,
-          isRequired: false,
-          isDisabled: false,
-          masking: 'none',
-          accessLevel: 'read_write',
-        },
-        {
-          key: 'phones',
-          isVisible: true,
-          isRequired: false,
-          isDisabled: false,
-          masking: 'none',
-          accessLevel: 'read_write',
-        },
-      ],
+      Lead: [],
+      Contact: [],
+      Account: [],
       Deal: [],
       Ticket: [],
       Task: [],
     },
   },
-  // System-default section configurations per module.
-  // Tenants can add, reorder, or rename sections in Settings > Object Manager > Record Types.
   sectionConfigs: DEFAULT_SECTION_CONFIGS,
 };
 
@@ -1095,7 +1042,12 @@ const DEFAULT_LIST_VIEWS = {
         { key: 'fullName', label: 'Name', isVisible: true, sortOrder: 1 },
         { key: 'emails', label: 'Email', isVisible: true, sortOrder: 2 },
         { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 3 },
-        { key: 'lifecycleStage', label: 'Stage', isVisible: true, sortOrder: 4 },
+        {
+          key: 'lifecycleStage',
+          label: 'Stage',
+          isVisible: true,
+          sortOrder: 4,
+        },
         { key: 'status', label: 'Status', isVisible: true, sortOrder: 5 },
         { key: 'companyName', label: 'Account', isVisible: true, sortOrder: 6 },
         { key: 'source', label: 'Source', isVisible: true, sortOrder: 7 },
@@ -1114,7 +1066,12 @@ const DEFAULT_LIST_VIEWS = {
         { key: 'fullName', label: 'Name', isVisible: true, sortOrder: 1 },
         { key: 'emails', label: 'Email', isVisible: true, sortOrder: 2 },
         { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 3 },
-        { key: 'lifecycleStage', label: 'Stage', isVisible: true, sortOrder: 4 },
+        {
+          key: 'lifecycleStage',
+          label: 'Stage',
+          isVisible: true,
+          sortOrder: 4,
+        },
       ],
       assignedGroupIds: [],
       excludedUserIds: [],
