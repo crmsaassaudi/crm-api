@@ -69,6 +69,20 @@ export class ContactRepository extends BaseDocumentRepository<
             if (f.id && f.value) {
               if (['lifecycleStage', 'status', 'source'].includes(f.id)) {
                 where[f.id] = f.value;
+              } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
+                // Map virtual field names to actual DB field names
+                const fieldMap: Record<string, string> = {
+                  owner: 'ownerId',
+                  createdBy: 'createdById',
+                  updatedBy: 'updatedById',
+                };
+                const dbField = fieldMap[f.id] || f.id;
+                where[dbField] = Array.isArray(f.value)
+                  ? { $in: f.value }
+                  : f.value;
+              } else if (Array.isArray(f.value)) {
+                // Any other array value: use $in
+                where[f.id] = { $in: f.value };
               } else {
                 where[f.id] = { $regex: f.value, $options: 'i' };
               }

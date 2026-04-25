@@ -67,6 +67,18 @@ export class DealRepository extends BaseDocumentRepository<
               } else if (f.id === 'value') {
                 const val = Number(f.value);
                 if (!isNaN(val)) where[f.id] = val;
+              } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
+                const fieldMap: Record<string, string> = {
+                  owner: 'ownerId',
+                  createdBy: 'createdById',
+                  updatedBy: 'updatedById',
+                };
+                const dbField = fieldMap[f.id] || f.id;
+                where[dbField] = Array.isArray(f.value)
+                  ? { $in: f.value }
+                  : f.value;
+              } else if (Array.isArray(f.value)) {
+                where[f.id] = { $in: f.value };
               } else {
                 where[f.id] = { $regex: f.value, $options: 'i' };
               }

@@ -64,6 +64,18 @@ export class AccountRepository extends BaseDocumentRepository<
             if (f.id && f.value) {
               if (['industry', 'status'].includes(f.id)) {
                 where[f.id] = f.value;
+              } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
+                const fieldMap: Record<string, string> = {
+                  owner: 'ownerId',
+                  createdBy: 'createdById',
+                  updatedBy: 'updatedById',
+                };
+                const dbField = fieldMap[f.id] || f.id;
+                where[dbField] = Array.isArray(f.value)
+                  ? { $in: f.value }
+                  : f.value;
+              } else if (Array.isArray(f.value)) {
+                where[f.id] = { $in: f.value };
               } else {
                 where[f.id] = { $regex: f.value, $options: 'i' };
               }
