@@ -1243,6 +1243,70 @@ const DEFAULT_LIST_VIEWS = {
       assignedGroupIds: [],
       excludedUserIds: [],
     },
+
+    // ── Task column layout views ──
+    {
+      id: 'task_all_fields',
+      name: 'All Fields',
+      module: 'Task',
+      createdBy: 'system',
+      isSystemDefault: true,
+      columns: [
+        { key: 'title', label: 'Title', isVisible: true, sortOrder: 1 },
+        {
+          key: 'category',
+          label: 'Category',
+          isVisible: true,
+          sortOrder: 2,
+        },
+        { key: 'status', label: 'Status', isVisible: true, sortOrder: 3 },
+        {
+          key: 'priority',
+          label: 'Priority',
+          isVisible: true,
+          sortOrder: 4,
+        },
+        {
+          key: 'assignedTo',
+          label: 'Assignee',
+          isVisible: true,
+          sortOrder: 5,
+        },
+        {
+          key: 'dueDate',
+          label: 'Due Date',
+          isVisible: true,
+          sortOrder: 6,
+        },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
+    {
+      id: 'task_compact',
+      name: 'Compact',
+      module: 'Task',
+      createdBy: 'system',
+      isSystemDefault: false,
+      columns: [
+        { key: 'title', label: 'Title', isVisible: true, sortOrder: 1 },
+        { key: 'status', label: 'Status', isVisible: true, sortOrder: 2 },
+        {
+          key: 'priority',
+          label: 'Priority',
+          isVisible: true,
+          sortOrder: 3,
+        },
+        {
+          key: 'dueDate',
+          label: 'Due Date',
+          isVisible: true,
+          sortOrder: 4,
+        },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
   ],
 };
 
