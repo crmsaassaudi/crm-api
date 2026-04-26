@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 import { GroupsService } from '../groups/groups.service';
 import { ClsService } from 'nestjs-cls';
 import { UsersService } from '../users/users.service';
+import { DEFAULTS_MAP } from '../crm-settings/tenant-settings-seeding.service';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ export interface ListViewsSettings {
 @Injectable()
 export class ListViewsService {
   private readonly SETTINGS_KEY = 'list_views';
+  private readonly logger = new Logger(ListViewsService.name);
 
   constructor(
     private readonly settingsService: CrmSettingsService,
@@ -291,10 +293,38 @@ export class ListViewsService {
     }
   }
 
+  /**
+   * Load list_views settings, auto-migrating missing module defaults.
+   *
+   * When a new module ships (e.g. Account), existing tenants already have the
+   * `list_views` key so lazySeed won't fire. This method detects missing module
+   * views by comparing against DEFAULTS_MAP and merges them in automatically.
+   */
   private async getSettings(): Promise<ListViewsSettings> {
     const raw = await this.settingsService.getSetting(this.SETTINGS_KEY);
     if (raw && typeof raw === 'object' && Array.isArray(raw.views)) {
-      return raw as ListViewsSettings;
+      const settings = raw as ListViewsSettings;
+
+      // Auto-migrate: merge in default views for modules that don't have any views yet
+      const defaultListViews = DEFAULTS_MAP['list_views'] as
+        | ListViewsSettings
+        | undefined;
+      if (defaultListViews?.views) {
+        const existingModules = new Set(settings.views.map((v) => v.module));
+        const missingViews = defaultListViews.views.filter(
+          (dv) => !existingModules.has(dv.module),
+        );
+        if (missingViews.length > 0) {
+          settings.views.push(...(missingViews as ListViewDefinition[]));
+          // Persist so migration happens only once
+          await this.saveSettings(settings);
+          this.logger.log(
+            `[ListViews] Auto-migrated ${missingViews.length} default views for modules: ${[...new Set(missingViews.map((v) => v.module))].join(', ')}`,
+          );
+        }
+      }
+
+      return settings;
     }
     return { views: [] };
   }

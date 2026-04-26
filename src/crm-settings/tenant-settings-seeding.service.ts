@@ -1076,6 +1076,48 @@ const DEFAULT_LIST_VIEWS = {
       assignedGroupIds: [],
       excludedUserIds: [],
     },
+
+    // ── Account column layout views ──
+    {
+      id: 'account_all_fields',
+      name: 'All Fields',
+      module: 'Account',
+      createdBy: 'system',
+      isSystemDefault: true,
+      columns: [
+        { key: 'name', label: 'Account Name', isVisible: true, sortOrder: 1 },
+        { key: 'industry', label: 'Industry', isVisible: true, sortOrder: 2 },
+        { key: 'website', label: 'Website', isVisible: true, sortOrder: 3 },
+        { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 4 },
+        { key: 'status', label: 'Status', isVisible: true, sortOrder: 5 },
+        { key: 'phones', label: 'Phone', isVisible: true, sortOrder: 6 },
+        { key: 'emails', label: 'Email', isVisible: true, sortOrder: 7 },
+        {
+          key: 'annualRevenue',
+          label: 'Annual Revenue',
+          isVisible: true,
+          sortOrder: 8,
+        },
+        { key: 'employees', label: 'Employees', isVisible: true, sortOrder: 9 },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
+    {
+      id: 'account_compact',
+      name: 'Compact',
+      module: 'Account',
+      createdBy: 'system',
+      isSystemDefault: false,
+      columns: [
+        { key: 'name', label: 'Account Name', isVisible: true, sortOrder: 1 },
+        { key: 'industry', label: 'Industry', isVisible: true, sortOrder: 2 },
+        { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 3 },
+        { key: 'status', label: 'Status', isVisible: true, sortOrder: 4 },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
   ],
 };
 
