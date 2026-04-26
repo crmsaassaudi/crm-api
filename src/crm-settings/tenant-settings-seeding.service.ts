@@ -819,6 +819,126 @@ const DEFAULT_TASK_SOURCE = {
   ],
 };
 
+// ─── Ticket Type / Category / Resolution defaults ────────────────────────────
+
+const DEFAULT_TICKET_TYPE = {
+  types: [
+    {
+      id: '1',
+      name: 'Incident',
+      apiName: 'incident',
+      description: 'Something is broken or not working correctly',
+      color: '#ef4444',
+    },
+    {
+      id: '2',
+      name: 'Question',
+      apiName: 'question',
+      description: 'Customer has a question or needs information',
+      color: '#3b82f6',
+    },
+    {
+      id: '3',
+      name: 'Request',
+      apiName: 'request',
+      description: 'Service request or feature request',
+      color: '#8b5cf6',
+    },
+    {
+      id: '4',
+      name: 'Problem',
+      apiName: 'problem',
+      description: 'Root cause of one or more incidents',
+      color: '#f59e0b',
+    },
+    {
+      id: '5',
+      name: 'Task',
+      apiName: 'task',
+      description: 'Internal task related to support operations',
+      color: '#64748b',
+    },
+  ],
+};
+
+/**
+ * Category tree with recursive children (n-level depth).
+ * Default seed: 2 levels (Category → Sub-Category).
+ * Each node: { id, name, apiName, children?: CategoryNode[] }
+ */
+const DEFAULT_TICKET_CATEGORY = {
+  categories: [
+    {
+      id: '1',
+      name: 'Billing',
+      apiName: 'billing',
+      children: [
+        { id: '1a', name: 'Refund', apiName: 'refund', children: [] },
+        {
+          id: '1b',
+          name: 'Invoice Issue',
+          apiName: 'invoice_issue',
+          children: [],
+        },
+        {
+          id: '1c',
+          name: 'Payment Failed',
+          apiName: 'payment_failed',
+          children: [],
+        },
+      ],
+    },
+    {
+      id: '2',
+      name: 'Technical',
+      apiName: 'technical',
+      children: [
+        { id: '2a', name: 'Server Down', apiName: 'server_down', children: [] },
+        { id: '2b', name: 'Bug Report', apiName: 'bug_report', children: [] },
+        {
+          id: '2c',
+          name: 'Change Password',
+          apiName: 'change_password',
+          children: [],
+        },
+        { id: '2d', name: 'Integration', apiName: 'integration', children: [] },
+      ],
+    },
+    {
+      id: '3',
+      name: 'Sales',
+      apiName: 'sales',
+      children: [
+        { id: '3a', name: 'Pricing', apiName: 'pricing', children: [] },
+        {
+          id: '3b',
+          name: 'Upgrade/Downgrade',
+          apiName: 'upgrade_downgrade',
+          children: [],
+        },
+      ],
+    },
+    {
+      id: '4',
+      name: 'General',
+      apiName: 'general',
+      children: [],
+    },
+  ],
+};
+
+const DEFAULT_TICKET_RESOLUTION = {
+  codes: [
+    { id: '1', name: 'Fixed', apiName: 'fixed' },
+    { id: '2', name: 'Duplicate', apiName: 'duplicate' },
+    { id: '3', name: "Won't Fix", apiName: 'wont_fix' },
+    { id: '4', name: 'User Error', apiName: 'user_error' },
+    { id: '5', name: 'Not Reproducible', apiName: 'not_reproducible' },
+    { id: '6', name: 'By Design', apiName: 'by_design' },
+    { id: '7', name: 'Workaround Provided', apiName: 'workaround_provided' },
+  ],
+};
+
 const DEFAULT_TICKET_LIFECYCLE = {
   stages: [
     {
@@ -1322,6 +1442,9 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   account_source: DEFAULT_ACCOUNT_SOURCE,
   deal_source: DEFAULT_DEAL_SOURCE,
   ticket_source: DEFAULT_TICKET_SOURCE,
+  ticket_type: DEFAULT_TICKET_TYPE,
+  ticket_category: DEFAULT_TICKET_CATEGORY,
+  ticket_resolution: DEFAULT_TICKET_RESOLUTION,
   task_source: DEFAULT_TASK_SOURCE,
   contact_lifecycle: DEFAULT_CONTACT_LIFECYCLE,
   account_lifecycle: DEFAULT_ACCOUNT_LIFECYCLE,

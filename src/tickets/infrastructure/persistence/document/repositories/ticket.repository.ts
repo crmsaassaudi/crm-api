@@ -60,6 +60,18 @@ export class TicketRepository extends BaseDocumentRepository<
       where.priority = filterOptions.priority;
     }
 
+    if (filterOptions?.type) {
+      where.type = filterOptions.type;
+    }
+
+    if (filterOptions?.category) {
+      where.category = filterOptions.category;
+    }
+
+    if (filterOptions?.groupId) {
+      where.groupId = filterOptions.groupId;
+    }
+
     const scopedWhere = this.applyTenantFilter(where);
 
     const [docs, totalItems] = await Promise.all([
@@ -71,6 +83,7 @@ export class TicketRepository extends BaseDocumentRepository<
         .populate('contact', 'firstName lastName emails phones photo')
         .populate('account', 'name')
         .populate('owner', 'firstName lastName photo email')
+        .populate('group', 'name')
         .exec(),
       this.model.countDocuments(scopedWhere).exec(),
     ]);
@@ -91,6 +104,7 @@ export class TicketRepository extends BaseDocumentRepository<
       .populate('contact', 'firstName lastName emails phones photo')
       .populate('account', 'name')
       .populate('owner', 'firstName lastName photo email')
+      .populate('group', 'name')
       .exec();
     return doc ? this.mapToDomain(doc) : null;
   }

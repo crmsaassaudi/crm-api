@@ -8,15 +8,18 @@ export class TicketsService {
 
   async create(data: Partial<Ticket>): Promise<Ticket> {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
+    const groupId = data.groupId === '' ? undefined : data.groupId;
     const ticketNumber = await this.repository.generateTicketNumber();
 
     return this.repository.create({
       ...data,
       ticketNumber,
       ownerId,
+      groupId,
+      type: data.type || 'Incident',
       status: data.status || 'new',
-      lifecycleStage: data.lifecycleStage || 'new',
-      slaBreached: false,
+      isSlaBreached: false,
+      timeSpentSeconds: 0,
     } as any);
   }
 
@@ -36,8 +39,9 @@ export class TicketsService {
 
   async update(id: string, data: Partial<Ticket>): Promise<Ticket | null> {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
+    const groupId = data.groupId === '' ? undefined : data.groupId;
 
-    const updateData: any = { ...data, ownerId };
+    const updateData: any = { ...data, ownerId, groupId };
 
     // Auto-set timestamps based on status changes
     if (data.status === 'resolved' && !data.resolvedAt) {
