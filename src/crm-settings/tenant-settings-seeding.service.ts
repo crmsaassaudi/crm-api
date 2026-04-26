@@ -1188,6 +1188,61 @@ const DEFAULT_LIST_VIEWS = {
       assignedGroupIds: [],
       excludedUserIds: [],
     },
+
+    // ── Deal column layout views ──
+    {
+      id: 'deal_all_fields',
+      name: 'All Fields',
+      module: 'Deal',
+      createdBy: 'system',
+      isSystemDefault: true,
+      columns: [
+        { key: 'title', label: 'Title', isVisible: true, sortOrder: 1 },
+        {
+          key: 'accountName',
+          label: 'Account',
+          isVisible: true,
+          sortOrder: 2,
+        },
+        { key: 'value', label: 'Value', isVisible: true, sortOrder: 3 },
+        { key: 'owner', label: 'Owner', isVisible: true, sortOrder: 4 },
+        { key: 'stage', label: 'Stage', isVisible: true, sortOrder: 5 },
+        {
+          key: 'probability',
+          label: 'Win %',
+          isVisible: true,
+          sortOrder: 6,
+        },
+        {
+          key: 'closeDate',
+          label: 'Close Date',
+          isVisible: true,
+          sortOrder: 7,
+        },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
+    {
+      id: 'deal_compact',
+      name: 'Compact',
+      module: 'Deal',
+      createdBy: 'system',
+      isSystemDefault: false,
+      columns: [
+        { key: 'title', label: 'Title', isVisible: true, sortOrder: 1 },
+        { key: 'value', label: 'Value', isVisible: true, sortOrder: 2 },
+        { key: 'stage', label: 'Stage', isVisible: true, sortOrder: 3 },
+        {
+          key: 'closeDate',
+          label: 'Close Date',
+          isVisible: true,
+          sortOrder: 4,
+        },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
   ],
 };
 
