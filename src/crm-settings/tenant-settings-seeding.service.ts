@@ -1118,6 +1118,76 @@ const DEFAULT_LIST_VIEWS = {
       assignedGroupIds: [],
       excludedUserIds: [],
     },
+
+    // ── Ticket column layout views ──
+    {
+      id: 'ticket_all_fields',
+      name: 'All Fields',
+      module: 'Ticket',
+      createdBy: 'system',
+      isSystemDefault: true,
+      columns: [
+        {
+          key: 'ticketNumber',
+          label: 'Ticket #',
+          isVisible: true,
+          sortOrder: 1,
+        },
+        { key: 'subject', label: 'Subject', isVisible: true, sortOrder: 2 },
+        {
+          key: 'requester',
+          label: 'Requester',
+          isVisible: true,
+          sortOrder: 3,
+        },
+        {
+          key: 'assignee',
+          label: 'Assignee',
+          isVisible: true,
+          sortOrder: 4,
+        },
+        {
+          key: 'priority',
+          label: 'Priority',
+          isVisible: true,
+          sortOrder: 5,
+        },
+        { key: 'status', label: 'Status', isVisible: true, sortOrder: 6 },
+        {
+          key: 'createdAt',
+          label: 'Created At',
+          isVisible: true,
+          sortOrder: 7,
+        },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
+    {
+      id: 'ticket_compact',
+      name: 'Compact',
+      module: 'Ticket',
+      createdBy: 'system',
+      isSystemDefault: false,
+      columns: [
+        {
+          key: 'ticketNumber',
+          label: 'Ticket #',
+          isVisible: true,
+          sortOrder: 1,
+        },
+        { key: 'subject', label: 'Subject', isVisible: true, sortOrder: 2 },
+        {
+          key: 'priority',
+          label: 'Priority',
+          isVisible: true,
+          sortOrder: 3,
+        },
+        { key: 'status', label: 'Status', isVisible: true, sortOrder: 4 },
+      ],
+      assignedGroupIds: [],
+      excludedUserIds: [],
+    },
   ],
 };
 
