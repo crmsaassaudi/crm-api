@@ -31,12 +31,14 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop()
   description?: string;
 
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
-  requesterId?: string;
+  // ── Customer link ──────────────────────────────────────────────────────
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'ContactSchemaClass' })
+  contactId?: string;
 
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
-  assigneeId?: string;
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'AccountSchemaClass' })
+  accountId?: string;
 
+  // ── Owner (person responsible / assignee) ──────────────────────────────
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   ownerId?: string;
 
@@ -126,20 +128,28 @@ TicketSchema.index(
   { name: 'tenant_owner_lookup' },
 );
 TicketSchema.index(
+  { tenantId: 1, contactId: 1 },
+  { name: 'tenant_contact_lookup' },
+);
+TicketSchema.index(
+  { tenantId: 1, accountId: 1 },
+  { name: 'tenant_account_lookup' },
+);
+TicketSchema.index(
   { omniConversationId: 1 },
   { name: 'ticket_omni_conversation' },
 );
 
-TicketSchema.virtual('requester', {
-  ref: 'UserSchemaClass',
-  localField: 'requesterId',
+TicketSchema.virtual('contact', {
+  ref: 'ContactSchemaClass',
+  localField: 'contactId',
   foreignField: '_id',
   justOne: true,
 });
 
-TicketSchema.virtual('assignee', {
-  ref: 'UserSchemaClass',
-  localField: 'assigneeId',
+TicketSchema.virtual('account', {
+  ref: 'AccountSchemaClass',
+  localField: 'accountId',
   foreignField: '_id',
   justOne: true,
 });

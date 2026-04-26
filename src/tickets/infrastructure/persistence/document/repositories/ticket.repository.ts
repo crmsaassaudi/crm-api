@@ -68,8 +68,8 @@ export class TicketRepository extends BaseDocumentRepository<
         .sort({ createdAt: -1 })
         .skip((paginationOptions.page - 1) * paginationOptions.limit)
         .limit(paginationOptions.limit)
-        .populate('requester', 'firstName lastName photo email')
-        .populate('assignee', 'firstName lastName photo email')
+        .populate('contact', 'firstName lastName emails phones photo')
+        .populate('account', 'name')
         .populate('owner', 'firstName lastName photo email')
         .exec(),
       this.model.countDocuments(scopedWhere).exec(),
@@ -88,8 +88,8 @@ export class TicketRepository extends BaseDocumentRepository<
     const scopedFilter = this.applyTenantFilter(filter);
     const doc = await this.model
       .findOne(scopedFilter)
-      .populate('requester', 'firstName lastName photo email')
-      .populate('assignee', 'firstName lastName photo email')
+      .populate('contact', 'firstName lastName emails phones photo')
+      .populate('account', 'name')
       .populate('owner', 'firstName lastName photo email')
       .exec();
     return doc ? this.mapToDomain(doc) : null;

@@ -7,13 +7,13 @@ export class TicketsService {
   constructor(private readonly repository: TicketRepository) {}
 
   async create(data: Partial<Ticket>): Promise<Ticket> {
-    const assigneeId = data.assigneeId === '' ? undefined : data.assigneeId;
+    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const ticketNumber = await this.repository.generateTicketNumber();
 
     return this.repository.create({
       ...data,
       ticketNumber,
-      assigneeId,
+      ownerId,
       status: data.status || 'new',
       lifecycleStage: data.lifecycleStage || 'new',
       slaBreached: false,
@@ -35,9 +35,9 @@ export class TicketsService {
   }
 
   async update(id: string, data: Partial<Ticket>): Promise<Ticket | null> {
-    const assigneeId = data.assigneeId === '' ? undefined : data.assigneeId;
+    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
 
-    const updateData: any = { ...data, assigneeId };
+    const updateData: any = { ...data, ownerId };
 
     // Auto-set timestamps based on status changes
     if (data.status === 'resolved' && !data.resolvedAt) {

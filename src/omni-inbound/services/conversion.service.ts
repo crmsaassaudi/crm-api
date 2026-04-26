@@ -155,7 +155,7 @@ export class ConversionService {
       status: 'new',
       channel: 'omni-channel',
       source: 'omni-channel',
-      requesterId: conversation.contactId ?? undefined,
+      contactId: conversation.contactId ?? undefined,
       omniConversationId: conversationId,
       linkedMessageIds: dto.linkedMessageIds ?? [],
       createdById: agentId,

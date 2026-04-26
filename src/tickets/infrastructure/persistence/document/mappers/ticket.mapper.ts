@@ -10,8 +10,8 @@ export class TicketMapper {
     domainEntity.ticketNumber = raw.ticketNumber;
     domainEntity.subject = raw.subject;
     domainEntity.description = raw.description ?? '';
-    domainEntity.requesterId = raw.requesterId?.toString();
-    domainEntity.assigneeId = raw.assigneeId?.toString();
+    domainEntity.contactId = raw.contactId?.toString();
+    domainEntity.accountId = raw.accountId?.toString();
     domainEntity.ownerId = raw.ownerId?.toString();
     domainEntity.status = raw.status;
     domainEntity.priority = raw.priority;
@@ -44,8 +44,8 @@ export class TicketMapper {
     persistenceEntity.ticketNumber = domainEntity.ticketNumber;
     persistenceEntity.subject = domainEntity.subject;
     persistenceEntity.description = domainEntity.description;
-    persistenceEntity.requesterId = domainEntity.requesterId;
-    persistenceEntity.assigneeId = domainEntity.assigneeId;
+    persistenceEntity.contactId = domainEntity.contactId;
+    persistenceEntity.accountId = domainEntity.accountId;
     persistenceEntity.ownerId = domainEntity.ownerId;
     persistenceEntity.status = domainEntity.status;
     persistenceEntity.priority = domainEntity.priority;

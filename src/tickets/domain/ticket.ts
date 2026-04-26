@@ -17,12 +17,20 @@ export class Ticket {
   @ApiProperty({ example: 'Detailed description of the issue' })
   description: string;
 
-  @ApiProperty({ example: '60d0fe4f5311236168a109ca' })
-  requesterId?: string;
+  // ── Customer link ──
+  @ApiProperty({
+    example: '60d0fe4f5311236168a109ca',
+    description: 'Contact who raised the ticket',
+  })
+  contactId?: string;
 
-  @ApiProperty({ example: '60d0fe4f5311236168a109cb' })
-  assigneeId?: string;
+  @ApiProperty({
+    example: '60d0fe4f5311236168a109cb',
+    description: 'Account the ticket belongs to',
+  })
+  accountId?: string;
 
+  // ── Owner (person responsible) ──
   @ApiProperty({ type: 'string', example: '60d0fe4f5311236168a109cc' })
   ownerId?: string;
 

@@ -25,9 +25,6 @@ export class Task {
   @ApiProperty({ example: 'call' })
   category: string;
 
-  @ApiProperty({ example: '60d0fe4f5311236168a109cb' })
-  assignedToId?: string;
-
   @ApiProperty({ type: 'string', example: '60d0fe4f5311236168a109cc' })
   ownerId?: string;
 
