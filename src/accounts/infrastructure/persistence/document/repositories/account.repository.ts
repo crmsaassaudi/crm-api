@@ -62,7 +62,7 @@ export class AccountRepository extends BaseDocumentRepository<
         if (Array.isArray(parsedFilters)) {
           parsedFilters.forEach((f: any) => {
             if (f.id && f.value) {
-              if (['industry', 'status'].includes(f.id)) {
+              if (['industry', 'statusId'].includes(f.id)) {
                 where[f.id] = f.value;
               } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
                 const fieldMap: Record<string, string> = {
@@ -96,6 +96,8 @@ export class AccountRepository extends BaseDocumentRepository<
         .skip((paginationOptions.page - 1) * paginationOptions.limit)
         .limit(paginationOptions.limit)
         .populate('owner')
+        .populate('accountStatus')
+        .populate('accountType')
         .exec(),
       this.model.countDocuments(scopedWhere).exec(),
     ]);
@@ -111,7 +113,12 @@ export class AccountRepository extends BaseDocumentRepository<
     filter: FilterQuery<AccountSchemaClass>,
   ): Promise<Account | null> {
     const scopedFilter = this.applyTenantFilter(filter);
-    const doc = await this.model.findOne(scopedFilter).populate('owner').exec();
+    const doc = await this.model
+      .findOne(scopedFilter)
+      .populate('owner')
+      .populate('accountStatus')
+      .populate('accountType')
+      .exec();
     return doc ? this.mapToDomain(doc) : null;
   }
 }

@@ -9,15 +9,37 @@ export class TaskMapper {
     domainEntity.title = raw.title;
     domainEntity.description = raw.description;
     domainEntity.dueDate = raw.dueDate;
-    domainEntity.status = raw.status;
+    domainEntity.statusId = raw.statusId?.toString();
     domainEntity.priority = raw.priority;
-    domainEntity.category = raw.category;
+    domainEntity.categoryId = raw.categoryId?.toString();
     domainEntity.ownerId = raw.ownerId?.toString();
     domainEntity.relatedTo = raw.relatedTo;
     domainEntity.tags = raw.tags;
     domainEntity.reminderAt = raw.reminderAt;
     domainEntity.completedAt = raw.completedAt;
-    domainEntity.source = raw.source;
+    domainEntity.sourceId = raw.sourceId?.toString();
+    if ((raw as any).taskStatus) {
+      const s = (raw as any).taskStatus;
+      domainEntity.taskStatus = {
+        id: s._id?.toString(),
+        label: s.label,
+        apiName: s.apiName,
+        color: s.color,
+        isTerminal: s.isTerminal,
+      };
+    }
+    if ((raw as any).taskCategory) {
+      const s = (raw as any).taskCategory;
+      domainEntity.taskCategory = {
+        id: s._id?.toString(),
+        name: s.name,
+        apiName: s.apiName,
+      };
+    }
+    if ((raw as any).taskSource) {
+      const s = (raw as any).taskSource;
+      domainEntity.taskSource = { id: s._id?.toString(), name: s.name };
+    }
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
@@ -33,15 +55,15 @@ export class TaskMapper {
     persistenceEntity.title = domainEntity.title;
     persistenceEntity.description = domainEntity.description;
     persistenceEntity.dueDate = domainEntity.dueDate;
-    persistenceEntity.status = domainEntity.status;
+    persistenceEntity.statusId = domainEntity.statusId;
     persistenceEntity.priority = domainEntity.priority;
-    persistenceEntity.category = domainEntity.category;
+    persistenceEntity.categoryId = domainEntity.categoryId;
     persistenceEntity.ownerId = domainEntity.ownerId;
     persistenceEntity.relatedTo = domainEntity.relatedTo;
     persistenceEntity.tags = domainEntity.tags;
     persistenceEntity.reminderAt = domainEntity.reminderAt;
     persistenceEntity.completedAt = domainEntity.completedAt;
-    persistenceEntity.source = domainEntity.source;
+    persistenceEntity.sourceId = domainEntity.sourceId;
     return persistenceEntity;
   }
 }

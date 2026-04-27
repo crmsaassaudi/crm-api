@@ -18,7 +18,10 @@ export class Account {
   industry?: string;
 
   @ApiProperty({ example: 'Customer' })
-  type?: string;
+  typeId?: string;
+
+  @ApiProperty()
+  accountType?: { id: string; name: string; apiName: string };
 
   @ApiProperty({ example: ['info@acme.com'] })
   emails?: string[];
@@ -48,7 +51,10 @@ export class Account {
   owner?: User;
 
   @ApiProperty({ example: 'active' })
-  status?: string;
+  statusId?: string;
+
+  @ApiProperty()
+  accountStatus?: { id: string; label: string; apiName: string; color: string };
 
   @ApiProperty({ example: false })
   isArchived?: boolean;

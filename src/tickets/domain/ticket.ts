@@ -18,16 +18,10 @@ export class Ticket {
   description: string;
 
   // ── Customer Context ──
-  @ApiProperty({
-    example: '60d0fe4f5311236168a109ca',
-    description: 'Contact who raised the ticket',
-  })
+  @ApiProperty({ description: 'Contact who raised the ticket' })
   contactId?: string;
 
-  @ApiProperty({
-    example: '60d0fe4f5311236168a109cb',
-    description: 'Account the ticket belongs to',
-  })
+  @ApiProperty({ description: 'Account the ticket belongs to' })
   accountId?: string;
 
   @ApiProperty({
@@ -46,20 +40,14 @@ export class Ticket {
   };
 
   // ── Classification & Routing ──
-  @ApiProperty({
-    example: 'Incident',
-    description: 'Incident, Question, Request, Problem, Task',
-  })
-  type: string;
+  @ApiProperty({ description: 'ObjectId ref to TicketType collection' })
+  typeId: string;
 
-  @ApiProperty({
-    example: 'Technical',
-    description: 'Billing, Technical, Sales',
-  })
-  category?: string;
+  @ApiProperty({ description: 'Populated ticket type' })
+  ticketType?: { id: string; name: string; apiName: string; color?: string };
 
-  @ApiProperty({ example: 'Server Down' })
-  subCategory?: string;
+  @ApiProperty({ description: 'N-level category path as array of node IDs' })
+  categoryPath?: string[];
 
   @ApiProperty({ example: 'HIGH' })
   priority: string;
@@ -67,8 +55,11 @@ export class Ticket {
   @ApiProperty({ example: 'email' })
   channel?: string;
 
-  @ApiProperty({ example: 'web' })
-  source?: string;
+  @ApiProperty({ description: 'ObjectId ref to TicketSource collection' })
+  sourceId?: string;
+
+  @ApiProperty({ description: 'Populated ticket source' })
+  ticketSource?: { id: string; name: string };
 
   @ApiProperty({ example: ['billing'] })
   tags?: string[];
@@ -77,13 +68,13 @@ export class Ticket {
   customFields?: Record<string, any>;
 
   // ── Assignment & Collaboration ──
-  @ApiProperty({ description: 'Team/Queue assigned to handle this ticket' })
+  @ApiProperty({ description: 'Team/Queue assigned' })
   groupId?: string;
 
   @ApiProperty()
   group?: any;
 
-  @ApiProperty({ type: 'string', example: '60d0fe4f5311236168a109cc' })
+  @ApiProperty()
   ownerId?: string;
 
   @ApiProperty()
@@ -92,17 +83,27 @@ export class Ticket {
   @ApiProperty({ description: 'User IDs watching this ticket' })
   watchers?: string[];
 
-  @ApiProperty({ example: 'new' })
-  status: string;
+  @ApiProperty({ description: 'ObjectId ref to TicketStatus collection' })
+  statusId: string;
+
+  @ApiProperty({ description: 'Populated ticket status' })
+  ticketStatus?: {
+    id: string;
+    label: string;
+    apiName: string;
+    color?: string;
+    isDefault?: boolean;
+    isTerminal?: boolean;
+  };
 
   // ── SLA Management ──
-  @ApiProperty({ description: 'SLA Policy applied to this ticket' })
+  @ApiProperty()
   slaPolicyId?: string;
 
-  @ApiProperty({ description: 'Deadline for first response' })
+  @ApiProperty()
   firstResponseDueAt?: Date;
 
-  @ApiProperty({ description: 'Deadline for resolution' })
+  @ApiProperty()
   resolutionDueAt?: Date;
 
   @ApiProperty({ example: false })
@@ -110,25 +111,24 @@ export class Ticket {
 
   // ── Metrics & Resolution ──
   @ApiProperty({
-    example: 'Fixed',
-    description: 'Fixed, Duplicate, Wont_Fix, User_Error',
+    description: 'ObjectId ref to TicketResolutionCode collection',
   })
-  resolutionCode?: string;
+  resolutionCodeId?: string;
+
+  @ApiProperty({ description: 'Populated resolution code' })
+  ticketResolution?: { id: string; name: string; apiName: string };
 
   @ApiProperty({ description: 'Internal notes when closing ticket' })
   resolutionNotes?: string;
 
-  @ApiProperty({ example: 5, description: 'Customer Satisfaction score (1-5)' })
+  @ApiProperty({ example: 5 })
   csatScore?: number;
 
-  @ApiProperty({
-    example: 3600,
-    description: 'Total time agent spent working on ticket (seconds)',
-  })
+  @ApiProperty({ example: 3600 })
   timeSpentSeconds?: number;
 
   // ── Timestamps & Audit ──
-  @ApiProperty({ description: 'When agent first responded' })
+  @ApiProperty()
   firstRespondedAt?: Date;
 
   @ApiProperty()

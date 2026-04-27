@@ -34,6 +34,21 @@ export class TicketRepository extends BaseDocumentRepository<
     return TicketMapper.toPersistence(domain);
   }
 
+  private populateRefs(query: any) {
+    return query
+      .populate('contact', 'firstName lastName emails phones photo')
+      .populate('account', 'name')
+      .populate('owner', 'firstName lastName photo email')
+      .populate('group', 'name')
+      .populate(
+        'ticketStatus',
+        'label apiName color sortOrder isDefault isTerminal',
+      )
+      .populate('ticketType', 'name apiName description color')
+      .populate('ticketSource', 'name')
+      .populate('ticketResolution', 'name apiName');
+  }
+
   async findManyWithPagination({
     filterOptions,
     paginationOptions,
@@ -52,20 +67,20 @@ export class TicketRepository extends BaseDocumentRepository<
       ];
     }
 
-    if (filterOptions?.status) {
-      where.status = filterOptions.status;
+    if (filterOptions?.statusId) {
+      where.statusId = filterOptions.statusId;
     }
 
     if (filterOptions?.priority) {
       where.priority = filterOptions.priority;
     }
 
-    if (filterOptions?.type) {
-      where.type = filterOptions.type;
+    if (filterOptions?.typeId) {
+      where.typeId = filterOptions.typeId;
     }
 
-    if (filterOptions?.category) {
-      where.category = filterOptions.category;
+    if (filterOptions?.categoryPath) {
+      where.categoryPath = { $in: [filterOptions.categoryPath] } as any;
     }
 
     if (filterOptions?.groupId) {
@@ -75,16 +90,13 @@ export class TicketRepository extends BaseDocumentRepository<
     const scopedWhere = this.applyTenantFilter(where);
 
     const [docs, totalItems] = await Promise.all([
-      this.model
-        .find(scopedWhere)
-        .sort({ createdAt: -1 })
-        .skip((paginationOptions.page - 1) * paginationOptions.limit)
-        .limit(paginationOptions.limit)
-        .populate('contact', 'firstName lastName emails phones photo')
-        .populate('account', 'name')
-        .populate('owner', 'firstName lastName photo email')
-        .populate('group', 'name')
-        .exec(),
+      this.populateRefs(
+        this.model
+          .find(scopedWhere)
+          .sort({ createdAt: -1 })
+          .skip((paginationOptions.page - 1) * paginationOptions.limit)
+          .limit(paginationOptions.limit),
+      ).exec(),
       this.model.countDocuments(scopedWhere).exec(),
     ]);
 
@@ -99,13 +111,9 @@ export class TicketRepository extends BaseDocumentRepository<
     filter: FilterQuery<TicketSchemaClass>,
   ): Promise<Ticket | null> {
     const scopedFilter = this.applyTenantFilter(filter);
-    const doc = await this.model
-      .findOne(scopedFilter)
-      .populate('contact', 'firstName lastName emails phones photo')
-      .populate('account', 'name')
-      .populate('owner', 'firstName lastName photo email')
-      .populate('group', 'name')
-      .exec();
+    const doc = await this.populateRefs(
+      this.model.findOne(scopedFilter),
+    ).exec();
     return doc ? this.mapToDomain(doc) : null;
   }
 

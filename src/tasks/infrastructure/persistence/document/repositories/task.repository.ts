@@ -46,7 +46,7 @@ export class TaskRepository extends BaseDocumentRepository<
     }
 
     if (filterOptions?.status) {
-      where.status = filterOptions.status;
+      where.statusId = filterOptions.status;
     }
 
     if (filterOptions?.priority) {
@@ -63,6 +63,9 @@ export class TaskRepository extends BaseDocumentRepository<
         .limit(paginationOptions.limit)
         .populate('assignedTo', 'firstName lastName photo email')
         .populate('owner', 'firstName lastName photo email')
+        .populate('taskStatus')
+        .populate('taskCategory')
+        .populate('taskSource')
         .exec(),
       this.model.countDocuments(scopedWhere).exec(),
     ]);
@@ -80,6 +83,9 @@ export class TaskRepository extends BaseDocumentRepository<
       .findOne(scopedFilter)
       .populate('assignedTo', 'firstName lastName photo email')
       .populate('owner', 'firstName lastName photo email')
+      .populate('taskStatus')
+      .populate('taskCategory')
+      .populate('taskSource')
       .exec();
     return doc ? this.mapToDomain(doc) : null;
   }

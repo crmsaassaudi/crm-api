@@ -55,7 +55,7 @@ export class ContactRepository extends BaseDocumentRepository<
 
     // Filter by lifecycle stage (replaces the old isConverted filter)
     if (filterOptions?.lifecycleStage) {
-      where.lifecycleStage = filterOptions.lifecycleStage;
+      where.lifecycleStageId = filterOptions.lifecycleStage;
     }
 
     if (filterOptions?.filters) {
@@ -67,7 +67,7 @@ export class ContactRepository extends BaseDocumentRepository<
         if (Array.isArray(parsedFilters)) {
           parsedFilters.forEach((f: any) => {
             if (f.id && f.value) {
-              if (['lifecycleStage', 'status', 'source'].includes(f.id)) {
+              if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
                 where[f.id] = f.value;
               } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
                 // Map virtual field names to actual DB field names
@@ -105,6 +105,9 @@ export class ContactRepository extends BaseDocumentRepository<
         .populate('owner')
         .populate('createdBy')
         .populate('updatedBy')
+        .populate('contactStatus')
+        .populate('contactSource')
+        .populate('contactLifecycleStage')
         .exec(),
       this.model.countDocuments(scopedWhere).exec(),
     ]);
@@ -125,6 +128,9 @@ export class ContactRepository extends BaseDocumentRepository<
       .populate('owner')
       .populate('createdBy')
       .populate('updatedBy')
+      .populate('contactStatus')
+      .populate('contactSource')
+      .populate('contactLifecycleStage')
       .exec();
     return doc ? this.mapToDomain(doc) : null;
   }

@@ -62,7 +62,7 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   })
   linkedMessageIds?: string[];
 
-  // Polymorphic link: Ticket này phàn nàn về Đơn hàng, Sản phẩm hay Hóa đơn nào?
+  // Polymorphic link
   @Prop({ type: MongooseSchema.Types.Mixed })
   relatedTo?: {
     type: string;
@@ -70,15 +70,18 @@ export class TicketSchemaClass extends EntityDocumentHelper {
     name: string;
   };
 
-  // ── 3. CLASSIFICATION & ROUTING (Phân loại để điều hướng) ────────────
-  @Prop({ required: true, default: 'Incident' })
-  type: string; // Incident, Question, Request, Problem, Task
+  // ── 3. CLASSIFICATION & ROUTING ────────────────────────────────────────
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TicketTypeSchemaClass',
+    required: true,
+    index: true,
+  })
+  typeId: string;
 
-  @Prop({ index: true })
-  category?: string; // Billing, Technical, Sales
-
-  @Prop()
-  subCategory?: string; // Refund, Server Down, Change Password
+  // N-level category path: array of node IDs from root → leaf
+  @Prop({ type: [String], default: undefined })
+  categoryPath?: string[];
 
   @Prop({ required: true, default: 'MEDIUM' })
   priority: string; // URGENT, HIGH, MEDIUM, LOW
@@ -86,8 +89,12 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop()
   channel?: string;
 
-  @Prop()
-  source?: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TicketSourceSchemaClass',
+    index: true,
+  })
+  sourceId?: string;
 
   @Prop({ type: [String], default: [] })
   tags?: string[];
@@ -95,30 +102,35 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.Mixed })
   customFields?: Record<string, any>;
 
-  // ── 4. ASSIGNMENT & COLLABORATION (Ai xử lý?) ────────────────────────
+  // ── 4. ASSIGNMENT & COLLABORATION ─────────────────────────────────────
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'GroupSchemaClass',
     index: true,
   })
-  groupId?: string; // Team/Queue trước khi gán cho 1 người
+  groupId?: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     index: true,
   })
-  ownerId?: string; // Agent trực tiếp xử lý
+  ownerId?: string;
 
   @Prop({
     type: [{ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' }],
   })
   watchers?: string[];
 
-  @Prop({ required: true, default: 'new', index: true })
-  status: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TicketStatusSchemaClass',
+    required: true,
+    index: true,
+  })
+  statusId: string;
 
-  // ── 5. SLA MANAGEMENT (Cam kết dịch vụ) ──────────────────────────────
+  // ── 5. SLA MANAGEMENT ─────────────────────────────────────────────────
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'SlaPolicySchemaClass' })
   slaPolicyId?: string;
 
@@ -131,9 +143,12 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ default: false, index: true })
   isSlaBreached: boolean;
 
-  // ── 6. METRICS & RESOLUTION (Đo lường năng suất) ─────────────────────
-  @Prop()
-  resolutionCode?: string; // Fixed, Duplicate, Wont_Fix, User_Error
+  // ── 6. METRICS & RESOLUTION ───────────────────────────────────────────
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TicketResolutionCodeSchemaClass',
+  })
+  resolutionCodeId?: string;
 
   @Prop()
   resolutionNotes?: string;
@@ -144,7 +159,7 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 0 })
   timeSpentSeconds?: number;
 
-  // ── 7. TIMESTAMPS & AUDIT ──────────────────────────────────────────────
+  // ── 7. TIMESTAMPS & AUDIT ─────────────────────────────────────────────
   @Prop()
   firstRespondedAt?: Date;
 
@@ -184,7 +199,7 @@ TicketSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
 // ── Compound Indexes ─────────────────────────────────────────────────────
 TicketSchema.index({ tenantId: 1, ticketNumber: 1 });
-TicketSchema.index({ tenantId: 1, status: 1 });
+TicketSchema.index({ tenantId: 1, statusId: 1 });
 TicketSchema.index(
   { tenantId: 1, ownerId: 1 },
   { name: 'tenant_owner_lookup' },
@@ -201,7 +216,7 @@ TicketSchema.index(
   { tenantId: 1, groupId: 1 },
   { name: 'tenant_group_lookup' },
 );
-TicketSchema.index({ tenantId: 1, type: 1 }, { name: 'tenant_type_lookup' });
+TicketSchema.index({ tenantId: 1, typeId: 1 }, { name: 'tenant_type_lookup' });
 TicketSchema.index(
   { tenantId: 1, isSlaBreached: 1 },
   { name: 'tenant_sla_breached' },
@@ -243,6 +258,34 @@ TicketSchema.virtual('group', {
 TicketSchema.virtual('slaPolicy', {
   ref: 'SlaPolicySchemaClass',
   localField: 'slaPolicyId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+TicketSchema.virtual('ticketStatus', {
+  ref: 'TicketStatusSchemaClass',
+  localField: 'statusId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+TicketSchema.virtual('ticketType', {
+  ref: 'TicketTypeSchemaClass',
+  localField: 'typeId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+TicketSchema.virtual('ticketSource', {
+  ref: 'TicketSourceSchemaClass',
+  localField: 'sourceId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+TicketSchema.virtual('ticketResolution', {
+  ref: 'TicketResolutionCodeSchemaClass',
+  localField: 'resolutionCodeId',
   foreignField: '_id',
   justOne: true,
 });

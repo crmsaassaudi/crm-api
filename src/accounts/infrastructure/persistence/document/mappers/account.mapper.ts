@@ -10,7 +10,7 @@ export class AccountMapper {
     domainEntity.name = raw.name;
     domainEntity.website = raw.website;
     domainEntity.industry = raw.industry;
-    domainEntity.type = raw.type;
+    domainEntity.typeId = raw.typeId?.toString();
     domainEntity.emails = raw.emails ?? [];
     domainEntity.phones = raw.phones ?? [];
     domainEntity.taxId = raw.taxId;
@@ -28,10 +28,27 @@ export class AccountMapper {
     if ((raw as any).owner) {
       domainEntity.owner = UserMapper.toDomain((raw as any).owner as any);
     }
-    domainEntity.status = raw.status;
+    domainEntity.statusId = raw.statusId?.toString();
     domainEntity.isArchived = raw.isArchived;
     domainEntity.customFields = raw.customFields;
     domainEntity.tags = raw.tags;
+    if ((raw as any).accountStatus) {
+      const s = (raw as any).accountStatus;
+      domainEntity.accountStatus = {
+        id: s._id?.toString(),
+        label: s.label,
+        apiName: s.apiName,
+        color: s.color,
+      };
+    }
+    if ((raw as any).accountType) {
+      const s = (raw as any).accountType;
+      domainEntity.accountType = {
+        id: s._id?.toString(),
+        name: s.name,
+        apiName: s.apiName,
+      };
+    }
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
@@ -47,7 +64,7 @@ export class AccountMapper {
     persistenceEntity.name = domainEntity.name;
     persistenceEntity.website = domainEntity.website;
     persistenceEntity.industry = domainEntity.industry;
-    persistenceEntity.type = domainEntity.type;
+    persistenceEntity.typeId = domainEntity.typeId;
     persistenceEntity.emails = domainEntity.emails ?? [];
     persistenceEntity.phones = domainEntity.phones ?? [];
     persistenceEntity.taxId = domainEntity.taxId;
@@ -56,7 +73,7 @@ export class AccountMapper {
     persistenceEntity.billingAddress = domainEntity.billingAddress;
     persistenceEntity.shippingAddress = domainEntity.shippingAddress;
     persistenceEntity.ownerId = domainEntity.ownerId;
-    persistenceEntity.status = domainEntity.status;
+    persistenceEntity.statusId = domainEntity.statusId;
     persistenceEntity.isArchived = domainEntity.isArchived;
     persistenceEntity.customFields = domainEntity.customFields;
     persistenceEntity.tags = domainEntity.tags;

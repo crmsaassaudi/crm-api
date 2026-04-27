@@ -6,7 +6,7 @@ export class TicketMapper {
   static toDomain(raw: TicketSchemaClass): Ticket {
     const domainEntity = new Ticket();
     domainEntity.id = raw._id.toString();
-    domainEntity.tenantId = raw.tenantId;
+    domainEntity.tenantId = raw.tenantId?.toString();
     domainEntity.ticketNumber = raw.ticketNumber;
     domainEntity.subject = raw.subject;
     domainEntity.description = raw.description ?? '';
@@ -19,12 +19,11 @@ export class TicketMapper {
     domainEntity.relatedTo = raw.relatedTo;
 
     // Classification & Routing
-    domainEntity.type = raw.type;
-    domainEntity.category = raw.category;
-    domainEntity.subCategory = raw.subCategory;
+    domainEntity.typeId = raw.typeId?.toString();
+    domainEntity.categoryPath = raw.categoryPath;
     domainEntity.priority = raw.priority;
     domainEntity.channel = raw.channel;
-    domainEntity.source = raw.source;
+    domainEntity.sourceId = raw.sourceId?.toString();
     domainEntity.tags = raw.tags;
     domainEntity.customFields = raw.customFields;
 
@@ -32,7 +31,7 @@ export class TicketMapper {
     domainEntity.groupId = raw.groupId?.toString();
     domainEntity.ownerId = raw.ownerId?.toString();
     domainEntity.watchers = raw.watchers?.map((w) => w.toString());
-    domainEntity.status = raw.status;
+    domainEntity.statusId = raw.statusId?.toString();
 
     // SLA Management
     domainEntity.slaPolicyId = raw.slaPolicyId?.toString();
@@ -41,7 +40,7 @@ export class TicketMapper {
     domainEntity.isSlaBreached = raw.isSlaBreached ?? false;
 
     // Metrics & Resolution
-    domainEntity.resolutionCode = raw.resolutionCode;
+    domainEntity.resolutionCodeId = raw.resolutionCodeId?.toString();
     domainEntity.resolutionNotes = raw.resolutionNotes;
     domainEntity.csatScore = raw.csatScore;
     domainEntity.timeSpentSeconds = raw.timeSpentSeconds;
@@ -63,6 +62,41 @@ export class TicketMapper {
       domainEntity.group = {
         id: g._id?.toString(),
         name: g.name,
+      };
+    }
+    if ((raw as any).ticketStatus) {
+      const s = (raw as any).ticketStatus;
+      domainEntity.ticketStatus = {
+        id: s._id?.toString(),
+        label: s.label,
+        apiName: s.apiName,
+        color: s.color,
+        isDefault: s.isDefault,
+        isTerminal: s.isTerminal,
+      };
+    }
+    if ((raw as any).ticketType) {
+      const t = (raw as any).ticketType;
+      domainEntity.ticketType = {
+        id: t._id?.toString(),
+        name: t.name,
+        apiName: t.apiName,
+        color: t.color,
+      };
+    }
+    if ((raw as any).ticketSource) {
+      const src = (raw as any).ticketSource;
+      domainEntity.ticketSource = {
+        id: src._id?.toString(),
+        name: src.name,
+      };
+    }
+    if ((raw as any).ticketResolution) {
+      const r = (raw as any).ticketResolution;
+      domainEntity.ticketResolution = {
+        id: r._id?.toString(),
+        name: r.name,
+        apiName: r.apiName,
       };
     }
 
@@ -87,12 +121,11 @@ export class TicketMapper {
     persistenceEntity.relatedTo = domainEntity.relatedTo;
 
     // Classification & Routing
-    persistenceEntity.type = domainEntity.type;
-    persistenceEntity.category = domainEntity.category;
-    persistenceEntity.subCategory = domainEntity.subCategory;
+    persistenceEntity.typeId = domainEntity.typeId;
+    persistenceEntity.categoryPath = domainEntity.categoryPath;
     persistenceEntity.priority = domainEntity.priority;
     persistenceEntity.channel = domainEntity.channel;
-    persistenceEntity.source = domainEntity.source;
+    persistenceEntity.sourceId = domainEntity.sourceId;
     persistenceEntity.tags = domainEntity.tags;
     persistenceEntity.customFields = domainEntity.customFields;
 
@@ -100,7 +133,7 @@ export class TicketMapper {
     persistenceEntity.groupId = domainEntity.groupId;
     persistenceEntity.ownerId = domainEntity.ownerId;
     persistenceEntity.watchers = domainEntity.watchers;
-    persistenceEntity.status = domainEntity.status;
+    persistenceEntity.statusId = domainEntity.statusId;
 
     // SLA Management
     persistenceEntity.slaPolicyId = domainEntity.slaPolicyId;
@@ -109,7 +142,7 @@ export class TicketMapper {
     persistenceEntity.isSlaBreached = domainEntity.isSlaBreached;
 
     // Metrics & Resolution
-    persistenceEntity.resolutionCode = domainEntity.resolutionCode;
+    persistenceEntity.resolutionCodeId = domainEntity.resolutionCodeId;
     persistenceEntity.resolutionNotes = domainEntity.resolutionNotes;
     persistenceEntity.csatScore = domainEntity.csatScore;
     persistenceEntity.timeSpentSeconds = domainEntity.timeSpentSeconds;

@@ -27,10 +27,21 @@ export class Contact {
   isConverted: boolean;
 
   @ApiProperty({ example: 'lead' })
-  lifecycleStage: string;
+  lifecycleStageId: string;
+
+  @ApiProperty()
+  contactLifecycleStage?: {
+    id: string;
+    label: string;
+    apiName: string;
+    color: string;
+  };
 
   @ApiProperty({ example: 'new' })
-  status: string;
+  statusId: string;
+
+  @ApiProperty()
+  contactStatus?: { id: string; label: string; apiName: string; color: string };
 
   @ApiProperty({ example: 'Acme Corp' })
   companyName?: string;
@@ -42,7 +53,10 @@ export class Contact {
   title?: string;
 
   @ApiProperty({ example: '1' })
-  source?: string;
+  sourceId?: string;
+
+  @ApiProperty()
+  contactSource?: { id: string; name: string };
 
   @ApiProperty({ example: 'CEO' })
   role?: string;

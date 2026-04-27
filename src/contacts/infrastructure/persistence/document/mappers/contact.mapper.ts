@@ -12,12 +12,12 @@ export class ContactMapper {
     domainEntity.emails = raw.emails ?? [];
     domainEntity.phones = raw.phones ?? [];
     domainEntity.isConverted = raw.isConverted;
-    domainEntity.lifecycleStage = raw.lifecycleStage;
-    domainEntity.status = raw.status;
+    domainEntity.lifecycleStageId = raw.lifecycleStageId?.toString();
+    domainEntity.statusId = raw.statusId?.toString();
     domainEntity.companyName = raw.companyName;
     domainEntity.accountId = raw.accountId?.toString();
     domainEntity.title = raw.title;
-    domainEntity.source = raw.source;
+    domainEntity.sourceId = raw.sourceId?.toString();
     domainEntity.role = raw.role;
     domainEntity.address = raw.address;
     domainEntity.birthday = raw.birthday;
@@ -51,6 +51,28 @@ export class ContactMapper {
     if ((raw as any).updatedBy) {
       domainEntity.updatedBy = UserMapper.toDomain((raw as any).updatedBy);
     }
+    if ((raw as any).contactStatus) {
+      const s = (raw as any).contactStatus;
+      domainEntity.contactStatus = {
+        id: s._id?.toString(),
+        label: s.label,
+        apiName: s.apiName,
+        color: s.color,
+      };
+    }
+    if ((raw as any).contactSource) {
+      const s = (raw as any).contactSource;
+      domainEntity.contactSource = { id: s._id?.toString(), name: s.name };
+    }
+    if ((raw as any).contactLifecycleStage) {
+      const s = (raw as any).contactLifecycleStage;
+      domainEntity.contactLifecycleStage = {
+        id: s._id?.toString(),
+        label: s.label,
+        apiName: s.apiName,
+        color: s.color,
+      };
+    }
 
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
@@ -69,12 +91,12 @@ export class ContactMapper {
     persistenceEntity.emails = domainEntity.emails ?? [];
     persistenceEntity.phones = domainEntity.phones ?? [];
     persistenceEntity.isConverted = domainEntity.isConverted;
-    persistenceEntity.lifecycleStage = domainEntity.lifecycleStage;
-    persistenceEntity.status = domainEntity.status;
+    persistenceEntity.lifecycleStageId = domainEntity.lifecycleStageId;
+    persistenceEntity.statusId = domainEntity.statusId;
     persistenceEntity.companyName = domainEntity.companyName;
     persistenceEntity.accountId = domainEntity.accountId;
     persistenceEntity.title = domainEntity.title;
-    persistenceEntity.source = domainEntity.source;
+    persistenceEntity.sourceId = domainEntity.sourceId;
     persistenceEntity.role = domainEntity.role;
     persistenceEntity.address = domainEntity.address;
     persistenceEntity.birthday = domainEntity.birthday;

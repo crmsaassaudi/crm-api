@@ -17,13 +17,25 @@ export class Task {
   dueDate: Date;
 
   @ApiProperty({ example: 'not_started' })
-  status: string;
+  statusId: string;
+
+  @ApiProperty()
+  taskStatus?: {
+    id: string;
+    label: string;
+    apiName: string;
+    color: string;
+    isTerminal: boolean;
+  };
 
   @ApiProperty({ example: 'HIGH' })
   priority: string;
 
   @ApiProperty({ example: 'call' })
-  category: string;
+  categoryId?: string;
+
+  @ApiProperty()
+  taskCategory?: { id: string; name: string; apiName: string };
 
   @ApiProperty({ type: 'string', example: '60d0fe4f5311236168a109cc' })
   ownerId?: string;
@@ -45,7 +57,10 @@ export class Task {
   completedAt?: Date;
 
   @ApiProperty({ example: 'manual' })
-  source?: string;
+  sourceId?: string;
+
+  @ApiProperty()
+  taskSource?: { id: string; name: string };
 
   @ApiProperty()
   createdAt: Date;

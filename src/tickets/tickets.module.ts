@@ -7,12 +7,14 @@ import {
   TicketSchema,
   TicketSchemaClass,
 } from './infrastructure/persistence/document/entities/ticket.schema';
+import { TicketSettingsModule } from '../ticket-settings/ticket-settings.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: TicketSchemaClass.name, schema: TicketSchema },
     ]),
+    TicketSettingsModule,
   ],
   controllers: [TicketsController],
   providers: [TicketsService, TicketRepository],

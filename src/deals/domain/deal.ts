@@ -18,7 +18,18 @@ export class Deal {
   pipeline: string;
 
   @ApiProperty({ example: 'qualification' })
-  stage: string;
+  stageId: string;
+
+  @ApiProperty()
+  dealStage?: {
+    id: string;
+    label: string;
+    apiName: string;
+    color: string;
+    probability: number;
+    isWon: boolean;
+    isLost: boolean;
+  };
 
   @ApiProperty({ example: 50 })
   probability?: number;
@@ -48,7 +59,10 @@ export class Deal {
   description?: string;
 
   @ApiProperty({ example: 'Inbound' })
-  source?: string;
+  sourceId?: string;
+
+  @ApiProperty()
+  dealSource?: { id: string; name: string };
 
   @ApiProperty({ example: 'Budget constraint' })
   lostReason?: string;

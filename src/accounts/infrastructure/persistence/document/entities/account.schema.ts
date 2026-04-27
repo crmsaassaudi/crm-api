@@ -31,8 +31,8 @@ export class AccountSchemaClass extends EntityDocumentHelper {
   @Prop({ index: true })
   industry?: string;
 
-  @Prop()
-  type?: string;
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'AccountTypeSchemaClass' })
+  typeId?: string;
 
   @Prop({ type: [String], default: [] })
   emails?: string[];
@@ -58,8 +58,12 @@ export class AccountSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   ownerId?: string;
 
-  @Prop({ default: 'active', index: true })
-  status?: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'AccountStatusSchemaClass',
+    index: true,
+  })
+  statusId?: string;
 
   @Prop({ default: false })
   isArchived?: boolean;
@@ -105,6 +109,20 @@ AccountSchema.index(
 AccountSchema.virtual('owner', {
   ref: 'UserSchemaClass',
   localField: 'ownerId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+AccountSchema.virtual('accountStatus', {
+  ref: 'AccountStatusSchemaClass',
+  localField: 'statusId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+AccountSchema.virtual('accountType', {
+  ref: 'AccountTypeSchemaClass',
+  localField: 'typeId',
   foreignField: '_id',
   justOne: true,
 });

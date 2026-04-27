@@ -50,7 +50,7 @@ export class DealRepository extends BaseDocumentRepository<
     }
 
     if (filterOptions?.stage) {
-      where.stage = filterOptions.stage;
+      where.stageId = filterOptions.stage;
     }
 
     if (filterOptions?.filters) {
@@ -62,7 +62,7 @@ export class DealRepository extends BaseDocumentRepository<
         if (Array.isArray(parsedFilters)) {
           parsedFilters.forEach((f: any) => {
             if (f.id && f.value) {
-              if (['stage'].includes(f.id)) {
+              if (['stageId'].includes(f.id)) {
                 where[f.id] = f.value;
               } else if (f.id === 'value') {
                 const val = Number(f.value);
@@ -99,6 +99,8 @@ export class DealRepository extends BaseDocumentRepository<
         .skip((paginationOptions.page - 1) * paginationOptions.limit)
         .limit(paginationOptions.limit)
         .populate('owner')
+        .populate('dealStage')
+        .populate('dealSource')
         .exec(),
       this.model.countDocuments(scopedWhere).exec(),
     ]);
@@ -112,7 +114,12 @@ export class DealRepository extends BaseDocumentRepository<
 
   async findOne(filter: FilterQuery<DealSchemaClass>): Promise<Deal | null> {
     const scopedFilter = this.applyTenantFilter(filter);
-    const doc = await this.model.findOne(scopedFilter).populate('owner').exec();
+    const doc = await this.model
+      .findOne(scopedFilter)
+      .populate('owner')
+      .populate('dealStage')
+      .populate('dealSource')
+      .exec();
     return doc ? this.mapToDomain(doc) : null;
   }
 }

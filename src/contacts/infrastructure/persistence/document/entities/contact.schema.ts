@@ -42,11 +42,19 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop({ default: false })
   isConverted: boolean;
 
-  @Prop({ required: true, index: true })
-  lifecycleStage: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'ContactLifecycleStageSchemaClass',
+    index: true,
+  })
+  lifecycleStageId: string;
 
-  @Prop({ required: true, index: true })
-  status: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'ContactStatusSchemaClass',
+    index: true,
+  })
+  statusId: string;
 
   @Prop()
   companyName?: string;
@@ -57,8 +65,11 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop()
   title?: string;
 
-  @Prop()
-  source?: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'ContactSourceSchemaClass',
+  })
+  sourceId?: string;
 
   @Prop()
   role?: string;
@@ -196,6 +207,27 @@ ContactSchema.virtual('createdBy', {
 ContactSchema.virtual('updatedBy', {
   ref: 'UserSchemaClass',
   localField: 'updatedById',
+  foreignField: '_id',
+  justOne: true,
+});
+
+ContactSchema.virtual('contactStatus', {
+  ref: 'ContactStatusSchemaClass',
+  localField: 'statusId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+ContactSchema.virtual('contactSource', {
+  ref: 'ContactSourceSchemaClass',
+  localField: 'sourceId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+ContactSchema.virtual('contactLifecycleStage', {
+  ref: 'ContactLifecycleStageSchemaClass',
+  localField: 'lifecycleStageId',
   foreignField: '_id',
   justOne: true,
 });

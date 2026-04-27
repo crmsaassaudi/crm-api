@@ -1,0 +1,57 @@
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
+import { EntityDocumentHelper } from '../../utils/document-entity-helper';
+import { tenantFilterPlugin } from '../../common/plugins/tenant-filter.plugin';
+
+export type DealStageDocument = HydratedDocument<DealStageSchemaClass>;
+
+@Schema({
+  timestamps: true,
+  collection: 'deal_stages',
+  toJSON: { virtuals: true, getters: true },
+})
+export class DealStageSchemaClass extends EntityDocumentHelper {
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TenantSchemaClass',
+    required: true,
+    index: true,
+  })
+  tenantId: string;
+
+  @Prop({ required: true })
+  label: string;
+
+  @Prop({ required: true })
+  apiName: string;
+
+  @Prop({ default: '#3b82f6' })
+  color: string;
+
+  @Prop({ default: 0 })
+  sortOrder: number;
+
+  @Prop({ required: true, default: 'default' })
+  pipelineId: string;
+
+  @Prop({ type: Number, default: 0 })
+  probability: number;
+
+  @Prop({ default: false })
+  isDefault: boolean;
+
+  @Prop({ default: false })
+  isWon: boolean;
+
+  @Prop({ default: false })
+  isLost: boolean;
+}
+
+export const DealStageSchema =
+  SchemaFactory.createForClass(DealStageSchemaClass);
+DealStageSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+DealStageSchema.index(
+  { tenantId: 1, pipelineId: 1, apiName: 1 },
+  { unique: true },
+);
+DealStageSchema.index({ tenantId: 1, pipelineId: 1, sortOrder: 1 });

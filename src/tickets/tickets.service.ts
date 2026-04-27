@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { TicketRepository } from './infrastructure/persistence/document/repositories/ticket.repository';
 import { Ticket } from './domain/ticket';
+import { TicketSettingsService } from '../ticket-settings/ticket-settings.service';
 
 @Injectable()
 export class TicketsService {
-  constructor(private readonly repository: TicketRepository) {}
+  constructor(
+    private readonly repository: TicketRepository,
+    private readonly ticketSettingsService: TicketSettingsService,
+  ) {}
 
   async create(data: Partial<Ticket>): Promise<Ticket> {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
@@ -16,8 +20,6 @@ export class TicketsService {
       ticketNumber,
       ownerId,
       groupId,
-      type: data.type || 'Incident',
-      status: data.status || 'new',
       isSlaBreached: false,
       timeSpentSeconds: 0,
     } as any);
@@ -43,12 +45,19 @@ export class TicketsService {
 
     const updateData: any = { ...data, ownerId, groupId };
 
-    // Auto-set timestamps based on status changes
-    if (data.status === 'resolved' && !data.resolvedAt) {
-      updateData.resolvedAt = new Date();
-    }
-    if (data.status === 'closed' && !data.closedAt) {
-      updateData.closedAt = new Date();
+    // Auto-set timestamps based on terminal status
+    if (data.statusId) {
+      const status = await this.ticketSettingsService.findStatusById(
+        data.statusId,
+      );
+      if (status?.isTerminal) {
+        if (!data.resolvedAt) {
+          updateData.resolvedAt = new Date();
+        }
+        if (!data.closedAt) {
+          updateData.closedAt = new Date();
+        }
+      }
     }
 
     return this.repository.update(id, updateData);

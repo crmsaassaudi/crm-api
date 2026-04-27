@@ -31,8 +31,13 @@ export class DealSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true })
   pipeline: string;
 
-  @Prop({ required: true, index: true })
-  stage: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'DealStageSchemaClass',
+    required: true,
+    index: true,
+  })
+  stageId: string;
 
   @Prop({ type: Number })
   probability?: number;
@@ -61,8 +66,8 @@ export class DealSchemaClass extends EntityDocumentHelper {
   @Prop()
   description?: string;
 
-  @Prop()
-  source?: string;
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'DealSourceSchemaClass' })
+  sourceId?: string;
 
   @Prop()
   lostReason?: string;
@@ -131,6 +136,20 @@ DealSchema.index({ tenantId: 1, ownerId: 1 }, { name: 'tenant_owner_lookup' });
 DealSchema.virtual('owner', {
   ref: 'UserSchemaClass',
   localField: 'ownerId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+DealSchema.virtual('dealStage', {
+  ref: 'DealStageSchemaClass',
+  localField: 'stageId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+DealSchema.virtual('dealSource', {
+  ref: 'DealSourceSchemaClass',
+  localField: 'sourceId',
   foreignField: '_id',
   justOne: true,
 });

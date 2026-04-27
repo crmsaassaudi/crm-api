@@ -127,7 +127,7 @@ export class ContactsService {
         name: `${d.firstName} ${d.lastName}`,
         email: d.emails?.[0],
         phone: d.phones?.[0],
-        stage: d.lifecycleStage,
+        stage: d.lifecycleStageId,
       })),
     };
   }
@@ -188,7 +188,7 @@ export class ContactsService {
       );
     }
 
-    const previousStage = contact.lifecycleStage;
+    const previousStage = contact.lifecycleStageId;
 
     // --- Guardrail 2: Compute transition direction + skipped stages ---
     const fromIndex = validStages.indexOf(previousStage);
@@ -237,7 +237,7 @@ export class ContactsService {
 
     // 3. Update stage (and optionally link to account)
     const updated = await this.repository.update(id, {
-      lifecycleStage: newStage,
+      lifecycleStageId: newStage,
       ...(finalAccountId ? { accountId: finalAccountId } : {}),
     } as any);
 

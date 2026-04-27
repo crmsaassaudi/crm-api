@@ -10,7 +10,7 @@ export class DealMapper {
     domainEntity.title = raw.title;
     domainEntity.name = raw.name;
     domainEntity.pipeline = raw.pipeline;
-    domainEntity.stage = raw.stage;
+    domainEntity.stageId = raw.stageId?.toString();
     domainEntity.probability = raw.probability;
     domainEntity.value = raw.value;
     domainEntity.currency = raw.currency;
@@ -38,11 +38,27 @@ export class DealMapper {
     }
 
     domainEntity.description = raw.description;
-    domainEntity.source = raw.source;
+    domainEntity.sourceId = raw.sourceId?.toString();
 
     // Populate owner User object from virtual
     if ((raw as any).owner) {
       domainEntity.owner = UserMapper.toDomain((raw as any).owner);
+    }
+    if ((raw as any).dealStage) {
+      const s = (raw as any).dealStage;
+      domainEntity.dealStage = {
+        id: s._id?.toString(),
+        label: s.label,
+        apiName: s.apiName,
+        color: s.color,
+        probability: s.probability,
+        isWon: s.isWon,
+        isLost: s.isLost,
+      };
+    }
+    if ((raw as any).dealSource) {
+      const s = (raw as any).dealSource;
+      domainEntity.dealSource = { id: s._id?.toString(), name: s.name };
     }
 
     domainEntity.lostReason = raw.lostReason;
@@ -66,7 +82,7 @@ export class DealMapper {
     persistenceEntity.title = domainEntity.title;
     persistenceEntity.name = domainEntity.name;
     persistenceEntity.pipeline = domainEntity.pipeline;
-    persistenceEntity.stage = domainEntity.stage;
+    persistenceEntity.stageId = domainEntity.stageId;
     persistenceEntity.probability = domainEntity.probability;
     persistenceEntity.value = domainEntity.value;
     persistenceEntity.currency = domainEntity.currency;
@@ -75,7 +91,7 @@ export class DealMapper {
     persistenceEntity.contactIds = domainEntity.contactIds;
     persistenceEntity.ownerId = domainEntity.ownerId;
     persistenceEntity.description = domainEntity.description;
-    persistenceEntity.source = domainEntity.source;
+    persistenceEntity.sourceId = domainEntity.sourceId;
     persistenceEntity.lostReason = domainEntity.lostReason;
     persistenceEntity.tags = domainEntity.tags;
     persistenceEntity.customFields = domainEntity.customFields;

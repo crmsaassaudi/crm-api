@@ -31,14 +31,18 @@ export class TaskSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true })
   dueDate: Date;
 
-  @Prop({ required: true, default: 'not_started', index: true })
-  status: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TaskStatusSchemaClass',
+    index: true,
+  })
+  statusId: string;
 
   @Prop({ required: true, default: 'MEDIUM', index: true })
   priority: string;
 
-  @Prop({ default: 'todo' })
-  category: string;
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TaskCategorySchemaClass' })
+  categoryId?: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   ownerId?: string;
@@ -59,8 +63,8 @@ export class TaskSchemaClass extends EntityDocumentHelper {
   @Prop()
   completedAt?: Date;
 
-  @Prop()
-  source?: string;
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TaskSourceSchemaClass' })
+  sourceId?: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -96,6 +100,27 @@ TaskSchema.index({ tenantId: 1, ownerId: 1 }, { name: 'tenant_owner_lookup' });
 TaskSchema.virtual('owner', {
   ref: 'UserSchemaClass',
   localField: 'ownerId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+TaskSchema.virtual('taskStatus', {
+  ref: 'TaskStatusSchemaClass',
+  localField: 'statusId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+TaskSchema.virtual('taskCategory', {
+  ref: 'TaskCategorySchemaClass',
+  localField: 'categoryId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+TaskSchema.virtual('taskSource', {
+  ref: 'TaskSourceSchemaClass',
+  localField: 'sourceId',
   foreignField: '_id',
   justOne: true,
 });

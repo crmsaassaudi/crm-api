@@ -36,6 +36,11 @@ import { AccountsModule } from './accounts/accounts.module';
 import { DealsModule } from './deals/deals.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { TicketsModule } from './tickets/tickets.module';
+import { TicketSettingsModule } from './ticket-settings/ticket-settings.module';
+import { ContactSettingsModule } from './contact-settings/contact-settings.module';
+import { DealSettingsModule } from './deal-settings/deal-settings.module';
+import { AccountSettingsModule } from './account-settings/account-settings.module';
+import { TaskSettingsModule } from './task-settings/task-settings.module';
 import { TasksModule } from './tasks/tasks.module';
 import { CustomFieldsModule } from './custom-fields/custom-fields.module';
 import { TagsModule } from './tags/tags.module';
@@ -216,6 +221,11 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     DealsModule,
     ContactsModule,
     TicketsModule,
+    TicketSettingsModule,
+    ContactSettingsModule,
+    DealSettingsModule,
+    AccountSettingsModule,
+    TaskSettingsModule,
     TasksModule,
     CustomFieldsModule,
     TagsModule,

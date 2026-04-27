@@ -12,8 +12,8 @@ export class TasksService {
     return this.repository.create({
       ...data,
       ownerId,
-      status: data.status || 'not_started',
-      category: data.category || 'todo',
+      statusId: data.statusId,
+      categoryId: data.categoryId,
     } as any);
   }
 
@@ -36,9 +36,13 @@ export class TasksService {
 
     const updateData: any = { ...data, ownerId };
 
-    // Auto-set completedAt when status changes to completed
-    if (data.status === 'completed' && !data.completedAt) {
-      updateData.completedAt = new Date();
+    // Auto-set completedAt when task is marked with a terminal status
+    // The frontend should send completedAt when appropriate
+    if (
+      data.completedAt === undefined &&
+      updateData.completedAt === undefined
+    ) {
+      // no-op: let the frontend decide
     }
 
     return this.repository.update(id, updateData);
