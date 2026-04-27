@@ -54,6 +54,7 @@ import { GroupsModule } from './groups/groups.module';
 import { OmniInboundModule } from './omni-inbound/omni-inbound.module';
 import { DataVisibilityModule } from './data-visibility/data-visibility.module';
 import { ListViewsModule } from './list-views/list-views.module';
+import { AssignmentEngineModule } from './assignment-engine/assignment-engine.module';
 
 import {
   KeycloakConnectModule,
@@ -239,6 +240,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     OmniInboundModule,
     DataVisibilityModule,
     ListViewsModule,
+    AssignmentEngineModule,
   ],
   providers: [
     {
