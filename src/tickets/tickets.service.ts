@@ -2,12 +2,20 @@ import { Injectable } from '@nestjs/common';
 import { TicketRepository } from './infrastructure/persistence/document/repositories/ticket.repository';
 import { Ticket } from './domain/ticket';
 import { TicketSettingsService } from '../ticket-settings/ticket-settings.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ClsService } from 'nestjs-cls';
+import {
+  AutomationEventPayload,
+  buildAutomationEventName,
+} from '../automation-rules/events/automation-event.payload';
 
 @Injectable()
 export class TicketsService {
   constructor(
     private readonly repository: TicketRepository,
     private readonly ticketSettingsService: TicketSettingsService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly cls: ClsService,
   ) {}
 
   async create(data: Partial<Ticket>): Promise<Ticket> {
@@ -15,7 +23,7 @@ export class TicketsService {
     const groupId = data.groupId === '' ? undefined : data.groupId;
     const ticketNumber = await this.repository.generateTicketNumber();
 
-    return this.repository.create({
+    const ticket = await this.repository.create({
       ...data,
       ticketNumber,
       ownerId,
@@ -23,6 +31,11 @@ export class TicketsService {
       isSlaBreached: false,
       timeSpentSeconds: 0,
     } as any);
+
+    // Emit automation event: record_created.Ticket
+    this.emitAutomationEvent('record_created', ticket);
+
+    return ticket;
   }
 
   async findAll(filter: any): Promise<any> {
@@ -60,10 +73,41 @@ export class TicketsService {
       }
     }
 
-    return this.repository.update(id, updateData);
+    const updated = await this.repository.update(id, updateData);
+
+    // Emit automation event: field_updated.Ticket
+    if (updated) {
+      const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
+      this.emitAutomationEvent('field_updated', updated, changedFields);
+    }
+
+    return updated;
   }
 
   async remove(id: string): Promise<void> {
     return this.repository.remove(id);
+  }
+
+  // ── Automation Event Emitter ─────────────────────────────────────────────
+
+  private emitAutomationEvent(
+    event: 'record_created' | 'field_updated',
+    record: Ticket,
+    changedFields?: string[],
+  ): void {
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    if (!tenantId) return;
+
+    const payload: AutomationEventPayload = {
+      tenantId,
+      event,
+      object: 'Ticket',
+      recordId: record.id,
+      data: record as any,
+      ...(changedFields ? { changedFields } : {}),
+      automationDepth: 0,
+    };
+
+    this.eventEmitter.emit(buildAutomationEventName(event, 'Ticket'), payload);
   }
 }

@@ -1,0 +1,53 @@
+﻿
+E:\CRM\crm-api\src\automation-rules\automation-execution-log.controller.ts
+  6:3  error  'HttpCode' is defined but never used    @typescript-eslint/no-unused-vars
+  7:3  error  'HttpStatus' is defined but never used  @typescript-eslint/no-unused-vars
+
+E:\CRM\crm-api\src\automation-rules\engine\action-executors.ts
+    3:10  error  'AutomationExecutionLogRepository' is defined but never used  @typescript-eslint/no-unused-vars
+   29:3   error  Async method 'execute' has no 'await' expression              @typescript-eslint/require-await
+   78:3   error  Async method 'execute' has no 'await' expression              @typescript-eslint/require-await
+  131:3   error  Async method 'execute' has no 'await' expression              @typescript-eslint/require-await
+  172:3   error  Async method 'execute' has no 'await' expression              @typescript-eslint/require-await
+
+E:\CRM\crm-api\src\automation-rules\engine\condition-evaluator.service.spec.ts
+   20:3  error  "it" should start with "should"  no-restricted-syntax
+   33:3  error  "it" should start with "should"  no-restricted-syntax
+   48:3  error  "it" should start with "should"  no-restricted-syntax
+   59:3  error  "it" should start with "should"  no-restricted-syntax
+   72:3  error  "it" should start with "should"  no-restricted-syntax
+   91:3  error  "it" should start with "should"  no-restricted-syntax
+  112:3  error  "it" should start with "should"  no-restricted-syntax
+  120:3  error  "it" should start with "should"  no-restricted-syntax
+  128:3  error  "it" should start with "should"  no-restricted-syntax
+  136:3  error  "it" should start with "should"  no-restricted-syntax
+  144:3  error  "it" should start with "should"  no-restricted-syntax
+  154:3  error  "it" should start with "should"  no-restricted-syntax
+  162:3  error  "it" should start with "should"  no-restricted-syntax
+  170:3  error  "it" should start with "should"  no-restricted-syntax
+  180:3  error  "it" should start with "should"  no-restricted-syntax
+  188:3  error  "it" should start with "should"  no-restricted-syntax
+  196:3  error  "it" should start with "should"  no-restricted-syntax
+  204:3  error  "it" should start with "should"  no-restricted-syntax
+  214:3  error  "it" should start with "should"  no-restricted-syntax
+  224:3  error  "it" should start with "should"  no-restricted-syntax
+  234:3  error  "it" should start with "should"  no-restricted-syntax
+  265:3  error  "it" should start with "should"  no-restricted-syntax
+  286:3  error  "it" should start with "should"  no-restricted-syntax
+
+E:\CRM\crm-api\src\automation-rules\events\automation-event-listener.service.ts
+  5:3  error  'buildAutomationEventName' is defined but never used  @typescript-eslint/no-unused-vars
+
+E:\CRM\crm-api\src\automation-rules\infrastructure\persistence\document\repositories\automation-workflow.repository.ts
+    6:3   error  'AutomationWorkflowDocument' is defined but never used  @typescript-eslint/no-unused-vars
+  112:13  error  '_id' is assigned a value but never used                @typescript-eslint/no-unused-vars
+  112:18  error  '__v' is assigned a value but never used                @typescript-eslint/no-unused-vars
+  112:23  error  'createdAt' is assigned a value but never used          @typescript-eslint/no-unused-vars
+  112:34  error  'updatedAt' is assigned a value but never used          @typescript-eslint/no-unused-vars
+
+E:\CRM\crm-api\src\automation-rules\queue\automation-action.processor.ts
+  3:18  error  'Injectable' is defined but never used         @typescript-eslint/no-unused-vars
+  8:3   error  'AutomationJobName' is defined but never used  @typescript-eslint/no-unused-vars
+
+Γ£û 38 problems (38 errors, 0 warnings)
+

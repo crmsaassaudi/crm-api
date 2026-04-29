@@ -11,6 +11,11 @@ import { AccountsService } from '../accounts/accounts.service';
 import { DealsService } from '../deals/deals.service';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 import { ClsService } from 'nestjs-cls';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  AutomationEventPayload,
+  buildAutomationEventName,
+} from '../automation-rules/events/automation-event.payload';
 
 @Injectable()
 export class ContactsService {
@@ -20,6 +25,7 @@ export class ContactsService {
     private readonly dealsService: DealsService,
     private readonly settingsService: CrmSettingsService,
     private readonly cls: ClsService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async create(data: CreateContactDto): Promise<Contact> {
@@ -28,12 +34,17 @@ export class ContactsService {
     const phones = data.phones ?? [];
 
     // tenant, createdBy, updatedBy are auto-injected by BaseDocumentRepository from CLS
-    return this.repository.create({
+    const contact = await this.repository.create({
       ...data,
       emails,
       phones,
       ownerId,
     } as any);
+
+    // Emit automation event: record_created.Contact
+    this.emitAutomationEvent('record_created', contact);
+
+    return contact;
   }
 
   async findAll(filter: any): Promise<any> {
@@ -68,13 +79,21 @@ export class ContactsService {
     }
 
     // updatedBy is auto-injected by BaseDocumentRepository from CLS
-    return this.repository.update(id, {
+    const updated = await this.repository.update(id, {
       ...data,
       ...additionalData,
       ...(emails !== undefined ? { emails } : {}),
       ...(phones !== undefined ? { phones } : {}),
       ownerId,
     } as any);
+
+    // Emit automation event: field_updated.Contact
+    if (updated) {
+      const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
+      this.emitAutomationEvent('field_updated', updated, changedFields);
+    }
+
+    return updated;
   }
 
   async remove(id: string): Promise<void> {
@@ -272,5 +291,29 @@ export class ContactsService {
     const contact = await this.repository.findOne({ _id: id });
     if (!contact) throw new NotFoundException('Contact not found');
     return this.repository.getStageHistory(id);
+  }
+
+  // ── Automation Event Emitter ─────────────────────────────────────────────
+
+  private emitAutomationEvent(
+    event: 'record_created' | 'field_updated',
+    record: Contact,
+    changedFields?: string[],
+  ): void {
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    if (!tenantId) return; // No tenant context (e.g. seeder, migration)
+
+    const payload: AutomationEventPayload = {
+      tenantId,
+      event,
+      object: 'Contact',
+      recordId: record.id,
+      data: record as any,
+      ...(changedFields ? { changedFields } : {}),
+      automationDepth: 0,
+    };
+
+    // Fire-and-forget — errors are caught by the listener
+    this.eventEmitter.emit(buildAutomationEventName(event, 'Contact'), payload);
   }
 }
