@@ -38,7 +38,7 @@ export class AutomationWorkflowRepository {
   async findActiveByTrigger(
     tenantId: string,
     event: 'record_created' | 'field_updated',
-    object: 'Lead' | 'Contact' | 'Ticket',
+    object: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task',
   ) {
     return this.model
       .find({

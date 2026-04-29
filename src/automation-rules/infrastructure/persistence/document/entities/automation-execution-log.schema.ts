@@ -59,7 +59,7 @@ export class AutomationExecutionLogSchemaClass {
 
   @Prop({
     required: true,
-    enum: ['Lead', 'Contact', 'Ticket'],
+    enum: ['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'],
   })
   recordType: string;
 

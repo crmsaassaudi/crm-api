@@ -14,9 +14,11 @@ export class TriggerConfigDto {
   @IsEnum(['record_created', 'field_updated'])
   event: 'record_created' | 'field_updated';
 
-  @ApiProperty({ enum: ['Lead', 'Contact', 'Ticket'] })
-  @IsEnum(['Lead', 'Contact', 'Ticket'])
-  object: 'Lead' | 'Contact' | 'Ticket';
+  @ApiProperty({
+    enum: ['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'],
+  })
+  @IsEnum(['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'])
+  object: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task';
 
   @ApiPropertyOptional()
   @IsOptional()

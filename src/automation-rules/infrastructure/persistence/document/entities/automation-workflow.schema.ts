@@ -7,7 +7,7 @@ import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.
 
 export interface WorkflowTriggerConfig {
   event: 'record_created' | 'field_updated';
-  object: 'Lead' | 'Contact' | 'Ticket';
+  object: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task';
   field?: string; // Only for field_updated
   runOncePerRecord: boolean;
 }
@@ -70,7 +70,7 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
       object: {
         type: String,
         required: true,
-        enum: ['Lead', 'Contact', 'Ticket'],
+        enum: ['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'],
       },
       field: { type: String, default: null },
       runOncePerRecord: { type: Boolean, default: false },
