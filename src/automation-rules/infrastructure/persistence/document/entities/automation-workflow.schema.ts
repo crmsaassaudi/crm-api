@@ -22,8 +22,14 @@ export interface WorkflowNode {
 export interface WorkflowEdge {
   id: string;
   source: string; // Node ID
-  sourceHandle?: 'matched' | 'not_matched'; // True/False Split
+  sourceHandle?: 'matched' | 'not_matched' | 'success' | 'failure'; // True/False Split + Action branching
   target: string; // Node ID
+}
+
+export interface WorkflowViewport {
+  x: number;
+  y: number;
+  zoom: number;
 }
 
 export type WorkflowStatus = 'draft' | 'active' | 'paused';
@@ -106,7 +112,7 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
         source: { type: String, required: true },
         sourceHandle: {
           type: String,
-          enum: ['matched', 'not_matched', null],
+          enum: ['matched', 'not_matched', 'success', 'failure', null],
           default: null,
         },
         target: { type: String, required: true },
@@ -115,6 +121,16 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
     default: [],
   })
   edges: WorkflowEdge[];
+
+  @Prop({
+    type: {
+      x: { type: Number, default: 0 },
+      y: { type: Number, default: 0 },
+      zoom: { type: Number, default: 1 },
+    },
+    default: { x: 0, y: 0, zoom: 1 },
+  })
+  viewport: WorkflowViewport;
 
   @Prop({ default: 0 })
   executionCount: number;

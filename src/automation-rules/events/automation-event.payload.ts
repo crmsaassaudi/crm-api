@@ -1,9 +1,20 @@
 /**
+ * All CRM modules supported by the Automation Engine.
+ */
+export type AutomationCrmModule =
+  | 'Lead'
+  | 'Contact'
+  | 'Ticket'
+  | 'Deal'
+  | 'Account'
+  | 'Task';
+
+/**
  * Automation Event Payload — the contract between CRM Core services
  * and the Automation Engine's Event Listener.
  *
- * Emitted by ContactsService, TicketsService (and future LeadsService)
- * after successful DB writes.
+ * Emitted by ContactsService, TicketsService, DealsService, AccountsService,
+ * TasksService, and LeadsService after successful DB writes.
  */
 export interface AutomationEventPayload {
   /** Tenant that owns the record */
@@ -13,7 +24,7 @@ export interface AutomationEventPayload {
   event: 'record_created' | 'field_updated';
 
   /** The CRM object type */
-  object: 'Lead' | 'Contact' | 'Ticket';
+  object: AutomationCrmModule;
 
   /** The record's MongoDB _id */
   recordId: string;
@@ -45,10 +56,11 @@ export interface AutomationEventPayload {
  * Examples:
  *   - automation.record_created.Contact
  *   - automation.field_updated.Ticket
+ *   - automation.record_created.Deal
  */
 export function buildAutomationEventName(
   event: 'record_created' | 'field_updated',
-  object: 'Lead' | 'Contact' | 'Ticket',
+  object: AutomationCrmModule,
 ): string {
   return `automation.${event}.${object}`;
 }

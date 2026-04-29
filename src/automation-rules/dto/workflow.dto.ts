@@ -4,6 +4,8 @@ import {
   IsEnum,
   IsBoolean,
   IsArray,
+  IsNumber,
+  IsDateString,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -72,6 +74,20 @@ export class WorkflowEdgeDto {
   targetHandle?: string | null;
 }
 
+export class ViewportDto {
+  @ApiProperty()
+  @IsNumber()
+  x: number;
+
+  @ApiProperty()
+  @IsNumber()
+  y: number;
+
+  @ApiProperty()
+  @IsNumber()
+  zoom: number;
+}
+
 export class CreateWorkflowDto {
   @ApiProperty()
   @IsString()
@@ -98,9 +114,23 @@ export class CreateWorkflowDto {
   @ValidateNested({ each: true })
   @Type(() => WorkflowEdgeDto)
   edges: WorkflowEdgeDto[];
+
+  @ApiPropertyOptional({ type: ViewportDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ViewportDto)
+  viewport?: ViewportDto;
 }
 
-export class UpdateWorkflowDto extends PartialType(CreateWorkflowDto) {}
+export class UpdateWorkflowDto extends PartialType(CreateWorkflowDto) {
+  @ApiPropertyOptional({
+    description:
+      'For optimistic concurrency control. If provided, the server verifies this matches the DB value before updating.',
+  })
+  @IsOptional()
+  @IsDateString()
+  updatedAt?: string;
+}
 
 export class UpdateWorkflowStatusDto {
   @ApiProperty({ enum: ['draft', 'active', 'paused'] })

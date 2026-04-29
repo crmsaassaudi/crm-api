@@ -146,7 +146,7 @@ export class AutomationExecutionLogRepository {
     workflowId: string;
     workflowName: string;
     recordId: string;
-    recordType: 'Lead' | 'Contact' | 'Ticket';
+    recordType: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task';
     automationDepth: number;
   }) {
     const now = new Date();

@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
@@ -66,6 +67,7 @@ export class AutomationWorkflowService {
       triggerConfig: dto.triggerConfig as any,
       nodes: dto.nodes as any,
       edges: dto.edges as any,
+      viewport: dto.viewport ?? { x: 0, y: 0, zoom: 1 },
       executionCount: 0,
       lastExecutedAt: null,
       createdBy: this.userId,
@@ -77,12 +79,30 @@ export class AutomationWorkflowService {
     const existing = await this.repo.findById(this.tenantId, id);
     if (!existing) throw new NotFoundException('Workflow not found');
 
+    // ── Optimistic Concurrency Control ──────────────────────────────────
+    // If the client sends updatedAt, verify it matches the DB timestamp.
+    // This prevents 'Last Write Wins' when multiple admins edit simultaneously.
+    if (dto.updatedAt) {
+      const clientTimestamp = new Date(dto.updatedAt).getTime();
+      const dbTimestamp = new Date((existing as any).updatedAt).getTime();
+
+      if (clientTimestamp !== dbTimestamp) {
+        throw new ConflictException(
+          'This workflow has been modified by another user. Please reload and try again.',
+        );
+      }
+    }
+
     if (dto.nodes || dto.edges) {
       this.validateWorkflow(dto as any);
     }
 
+    // Strip updatedAt from the payload — Mongoose timestamps: true handles it
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { updatedAt: _clientTs, ...updateData } = dto;
+
     return this.repo.update(this.tenantId, id, {
-      ...dto,
+      ...updateData,
       updatedBy: this.userId,
     } as any);
   }

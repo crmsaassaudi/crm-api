@@ -27,8 +27,25 @@ export class SendEmailExecutor implements ActionExecutor {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
-    const { recordId, recordData, actionConfig, tenantId } = job;
-    const to = recordData.emails?.[0] || recordData.email;
+    const { recordId, recordData, actionConfig, tenantId, recordType } = job;
+
+    // ── Polymorphic Task Support ──────────────────────────────────────────
+    // Tasks don't have email directly. Resolve from parent entity.
+    let to = recordData.emails?.[0] || recordData.email;
+    if (!to && recordType === 'Task') {
+      // Fallback: look for parent contact/account email attached to the task record
+      to =
+        recordData.contactEmail ||
+        recordData.accountEmail ||
+        recordData.relatedContact?.email ||
+        recordData.relatedAccount?.emails?.[0];
+      if (to) {
+        this.logger.log(
+          `[SendEmail] Resolved email from parent entity for Task ${recordId}: ${to}`,
+        );
+      }
+    }
+
     const subject = this.interpolate(actionConfig.subject || '', recordData);
     const body = this.interpolate(actionConfig.template || '', recordData);
 
@@ -37,7 +54,7 @@ export class SendEmailExecutor implements ActionExecutor {
         success: false,
         error: {
           code: 'NO_EMAIL',
-          message: `Record ${recordId} has no email address`,
+          message: `Record ${recordId} (${recordType}) has no email address`,
         },
       };
     }
@@ -77,8 +94,25 @@ export class SendSmsExecutor implements ActionExecutor {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
-    const { recordId, recordData, actionConfig, tenantId } = job;
-    const phone = recordData.phones?.[0] || recordData.phone;
+    const { recordId, recordData, actionConfig, tenantId, recordType } = job;
+
+    // ── Polymorphic Task Support ──────────────────────────────────────────
+    // Tasks don't have phone directly. Resolve from parent entity.
+    let phone = recordData.phones?.[0] || recordData.phone;
+    if (!phone && recordType === 'Task') {
+      // Fallback: look for parent contact/account phone attached to the task record
+      phone =
+        recordData.contactPhone ||
+        recordData.accountPhone ||
+        recordData.relatedContact?.phone ||
+        recordData.relatedAccount?.phones?.[0];
+      if (phone) {
+        this.logger.log(
+          `[SendSMS] Resolved phone from parent entity for Task ${recordId}: ${phone}`,
+        );
+      }
+    }
+
     const message = this.interpolate(actionConfig.message || '', recordData);
 
     if (!phone) {
@@ -86,7 +120,7 @@ export class SendSmsExecutor implements ActionExecutor {
         success: false,
         error: {
           code: 'NO_PHONE',
-          message: `Record ${recordId} has no phone number`,
+          message: `Record ${recordId} (${recordType}) has no phone number`,
         },
       };
     }

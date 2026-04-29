@@ -39,7 +39,7 @@ export interface AutomationActionJobData {
 
   /** The record that triggered the workflow */
   recordId: string;
-  recordType: 'Lead' | 'Contact' | 'Ticket';
+  recordType: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task';
   recordData: Record<string, any>;
 
   /** Automation depth for loop prevention Layer 2 */
