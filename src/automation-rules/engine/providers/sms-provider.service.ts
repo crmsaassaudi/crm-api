@@ -11,7 +11,11 @@ import { ActionExecutionResult } from '../action-executors';
  * Provider is selected based on TWILIO_ACCOUNT_SID env var presence.
  */
 export interface SmsProviderService {
-  send(params: { to: string; message: string }): Promise<ActionExecutionResult>;
+  send(params: {
+    to: string;
+    message: string;
+    fromNumber?: string;
+  }): Promise<ActionExecutionResult>;
 }
 
 /**

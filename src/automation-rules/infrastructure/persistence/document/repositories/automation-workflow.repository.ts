@@ -160,4 +160,82 @@ export class AutomationWorkflowRepository {
 
     return clone.toObject();
   }
+
+  /**
+   * Replace configId in all action nodes across active + draft workflows.
+   *
+   * Used by the Channel Config migration flow: when admin deletes a config,
+   * all workflow nodes that reference the old configId are updated to point
+   * to the new fallback configId.
+   *
+   * Updates both:
+   *   - nodes[].config.configId (draft)
+   *   - publishedNodes[].config.configId (published snapshot)
+   *
+   * Uses MongoDB session (transaction) for atomicity.
+   * Returns count of updated workflow documents.
+   */
+  async replaceConfigIdInNodes(
+    tenantId: string,
+    sourceConfigId: string,
+    targetConfigId: string,
+  ): Promise<number> {
+    const session = await this.model.startSession();
+    let updatedCount = 0;
+
+    try {
+      await session.withTransaction(async () => {
+        // Find all workflows that reference the source configId
+        // in either draft nodes or published nodes
+        const workflows = await this.model
+          .find({
+            tenantId,
+            $or: [
+              { 'nodes.config.configId': sourceConfigId },
+              { 'publishedNodes.config.configId': sourceConfigId },
+            ],
+          })
+          .session(session)
+          .exec();
+
+        for (const workflow of workflows) {
+          let modified = false;
+
+          // Update draft nodes
+          if (workflow.nodes && Array.isArray(workflow.nodes)) {
+            for (const node of workflow.nodes as any[]) {
+              if (node.config?.configId === sourceConfigId) {
+                node.config.configId = targetConfigId;
+                modified = true;
+              }
+            }
+          }
+
+          // Update published nodes
+          if (
+            workflow.publishedNodes &&
+            Array.isArray(workflow.publishedNodes)
+          ) {
+            for (const node of workflow.publishedNodes as any[]) {
+              if (node.config?.configId === sourceConfigId) {
+                node.config.configId = targetConfigId;
+                modified = true;
+              }
+            }
+          }
+
+          if (modified) {
+            workflow.markModified('nodes');
+            workflow.markModified('publishedNodes');
+            await workflow.save({ session });
+            updatedCount++;
+          }
+        }
+      });
+    } finally {
+      await session.endSession();
+    }
+
+    return updatedCount;
+  }
 }

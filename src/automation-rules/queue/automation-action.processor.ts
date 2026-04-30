@@ -62,6 +62,22 @@ export class ActionProcessorMixin {
       await this.logActionStep(data, stepStart, result);
 
       if (!result.success) {
+        // ── Smart Retry (Phase 2): Non-retryable → DLQ immediately ────
+        if (result.retryable === false) {
+          this.logger.warn(
+            `[Processor] Non-retryable failure for node=${data.nodeId}: ${result.error?.code} — routing to DLQ (skip BullMQ retry)`,
+          );
+          await this.dlqProducer
+            .sendToDlq(data, result.error?.message || 'Non-retryable failure')
+            .catch((dlqErr) =>
+              this.logger.error(
+                `[Processor] Failed to send to DLQ: ${dlqErr.message}`,
+              ),
+            );
+          // Return without throwing — prevents BullMQ from retrying
+          return;
+        }
+
         this.logger.warn(
           `[Processor] Action ${data.actionType} failed for node=${data.nodeId}: ${result.error?.message}`,
         );

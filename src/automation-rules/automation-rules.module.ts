@@ -84,6 +84,7 @@ import { DealsModule } from '../deals/deals.module';
 import { AccountsModule } from '../accounts/accounts.module';
 import { TasksModule } from '../tasks/tasks.module';
 import { AssignmentEngineModule } from '../assignment-engine/assignment-engine.module';
+import { ChannelsModule } from '../channels/channels.module';
 
 @Module({
   imports: [
@@ -110,6 +111,8 @@ import { AssignmentEngineModule } from '../assignment-engine/assignment-engine.m
     forwardRef(() => AccountsModule),
     forwardRef(() => TasksModule),
     forwardRef(() => AssignmentEngineModule),
+    // Channel Config — needed by SendEmailExecutor/SendSmsExecutor for dynamic credentials
+    forwardRef(() => ChannelsModule),
   ],
   controllers: [
     AutomationRulesController,

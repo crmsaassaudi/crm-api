@@ -17,6 +17,8 @@ export interface EmailProviderService {
     subject: string;
     body: string;
     from?: string;
+    fromEmail?: string;
+    fromName?: string;
   }): Promise<ActionExecutionResult>;
 }
 
