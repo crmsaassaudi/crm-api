@@ -3,6 +3,8 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { AutomationEventPayload } from './automation-event.payload';
 import { AutomationWorkflowRepository } from '../infrastructure/persistence/document/repositories/automation-workflow.repository';
 import { WorkflowOrchestratorService } from '../engine/workflow-orchestrator.service';
+import { BulkEventThrottleService } from '../engine/bulk-event-throttle.service';
+import { AutomationBulkProducer } from '../queue/automation-bulk.producer';
 
 /**
  * AutomationEventListenerService — listens for CRM object events
@@ -10,11 +12,11 @@ import { WorkflowOrchestratorService } from '../engine/workflow-orchestrator.ser
  *
  * This is the entry point of the Automation Engine. When ContactsService
  * or TicketsService emit an event, this listener:
- *   1. Queries active workflows matching the event + object type
+ *   1. Queries active workflows matching the PUBLISHED event + object type
  *   2. Filters out self-triggered workflows (loop prevention Layer 0)
- *   3. Delegates to WorkflowOrchestratorService (Task 1.6) for execution
- *
- * @see docs/prd-visual-automation-builder.md — Task 1.2
+ *   3. Checks bulk event throttling (Phase 3)
+ *   4. Delegates to WorkflowOrchestratorService for normal execution,
+ *      or routes to bulk queue when rate limit exceeded
  */
 @Injectable()
 export class AutomationEventListenerService {
@@ -23,6 +25,8 @@ export class AutomationEventListenerService {
   constructor(
     private readonly workflowRepo: AutomationWorkflowRepository,
     private readonly orchestrator: WorkflowOrchestratorService,
+    private readonly throttle: BulkEventThrottleService,
+    private readonly bulkProducer: AutomationBulkProducer,
   ) {}
 
   // ── Wildcard listener for all automation events ───────────────────────
@@ -37,7 +41,7 @@ export class AutomationEventListenerService {
     );
 
     try {
-      // Find all active workflows that match this event + object
+      // Find all active workflows that match this event + object (using PUBLISHED config)
       const workflows = await this.workflowRepo.findActiveByTrigger(
         tenantId,
         event,
@@ -64,13 +68,15 @@ export class AutomationEventListenerService {
         }
 
         // For field_updated triggers with specific field, check if the changed
-        // field matches the configured trigger field
+        // field matches the configured trigger field (using PUBLISHED config)
         if (
           event === 'field_updated' &&
-          wf.triggerConfig.field &&
+          (wf as any).publishedTriggerConfig?.field &&
           payload.changedFields
         ) {
-          return payload.changedFields.includes(wf.triggerConfig.field);
+          return payload.changedFields.includes(
+            (wf as any).publishedTriggerConfig.field,
+          );
         }
 
         return true;
@@ -80,14 +86,26 @@ export class AutomationEventListenerService {
         `Found ${eligibleWorkflows.length} eligible workflow(s) for ${event}.${object} (record=${recordId})`,
       );
 
+      // ── Bulk Event Throttling (Phase 3) ──────────────────────────────
+      const { throttled } = await this.throttle.shouldThrottle(tenantId);
+
       // Delegate to WorkflowOrchestratorService for each eligible workflow
       for (const wf of eligibleWorkflows) {
         this.logger.log(
-          `  → Triggering workflow "${wf.name}" (${wf._id}) [depth=${depth}]`,
+          `  → Triggering workflow "${wf.name}" (${wf._id}) [depth=${depth}] ${throttled ? '[THROTTLED → bulk queue]' : ''}`,
         );
-        // Execute each workflow independently — one failure doesn't block others
+
         try {
-          await this.orchestrator.execute(wf, payload);
+          if (throttled) {
+            // Over threshold: route to low-priority bulk queue
+            await this.bulkProducer.dispatch({
+              workflow: wf,
+              payload,
+            });
+          } else {
+            // Normal path: execute directly via orchestrator
+            await this.orchestrator.execute(wf, payload);
+          }
         } catch (wfError: any) {
           this.logger.error(
             `Workflow "${wf.name}" (${wf._id}) execution failed: ${wfError.message}`,

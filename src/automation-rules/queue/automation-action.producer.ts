@@ -3,12 +3,19 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import {
   AUTOMATION_ACTION_QUEUE,
+  AUTOMATION_EMAIL_QUEUE,
+  AUTOMATION_SMS_QUEUE,
+  AUTOMATION_INTERNAL_QUEUE,
+  AUTOMATION_WEBHOOK_QUEUE,
   AutomationJobName,
   AutomationActionJobData,
 } from './automation-queue.constants';
 
 /**
- * AutomationActionProducer — dispatches action jobs to the BullMQ queue.
+ * AutomationActionProducer — dispatches action jobs to typed BullMQ queues.
+ *
+ * Phase 4: Routes each action to its dedicated queue for independent
+ * rate limiting (email → email queue, sms → sms queue, etc.).
  *
  * Called by the WorkflowOrchestratorService after conditions evaluate to true.
  * Each action node in the workflow becomes a separate job.
@@ -17,24 +24,44 @@ import {
 export class AutomationActionProducer {
   private readonly logger = new Logger(AutomationActionProducer.name);
 
+  /** Map action type → queue instance */
+  private readonly queueMap: Map<string, Queue>;
+
   constructor(
     @InjectQueue(AUTOMATION_ACTION_QUEUE)
-    private readonly queue: Queue,
-  ) {}
+    private readonly mainQueue: Queue,
+    @InjectQueue(AUTOMATION_EMAIL_QUEUE)
+    private readonly emailQueue: Queue,
+    @InjectQueue(AUTOMATION_SMS_QUEUE)
+    private readonly smsQueue: Queue,
+    @InjectQueue(AUTOMATION_INTERNAL_QUEUE)
+    private readonly internalQueue: Queue,
+    @InjectQueue(AUTOMATION_WEBHOOK_QUEUE)
+    private readonly webhookQueue: Queue,
+  ) {
+    this.queueMap = new Map<string, Queue>([
+      ['send_email', this.emailQueue],
+      ['send_sms', this.smsQueue],
+      ['update_field', this.internalQueue],
+      ['route_to_team', this.internalQueue],
+      ['webhook', this.webhookQueue],
+    ]);
+  }
 
   /**
-   * Dispatch an action job to the queue.
+   * Dispatch an action job to the appropriate typed queue.
    */
   async dispatch(data: AutomationActionJobData): Promise<string | undefined> {
     const jobName = this.resolveJobName(data.actionType);
+    const queue = this.queueMap.get(data.actionType) || this.mainQueue;
 
-    const job = await this.queue.add(jobName, data, {
+    const job = await queue.add(jobName, data, {
       // Priority: email/sms are higher priority than update-field
       priority: this.resolvePriority(data.actionType),
     });
 
     this.logger.log(
-      `Dispatched job ${job.id} [${jobName}] for workflow=${data.workflowId} node=${data.nodeId}`,
+      `Dispatched job ${job.id} [${jobName}] → queue=${queue.name} workflow=${data.workflowId} node=${data.nodeId}`,
     );
 
     return job.id;
@@ -60,8 +87,10 @@ export class AutomationActionProducer {
         return AutomationJobName.UPDATE_FIELD;
       case 'route_to_team':
         return AutomationJobName.ROUTE_TO_TEAM;
+      case 'webhook':
+        return AutomationJobName.WEBHOOK;
       default:
-        return AutomationJobName.SEND_EMAIL; // fallback
+        return AutomationJobName.UPDATE_FIELD; // fallback to internal
     }
   }
 
@@ -76,6 +105,8 @@ export class AutomationActionProducer {
         return 2;
       case 'update_field':
         return 3;
+      case 'webhook':
+        return 4;
       default:
         return 5;
     }

@@ -63,6 +63,15 @@ export class AutomationWorkflowController {
     return this.service.duplicate(id);
   }
 
+  @Post(':id/publish')
+  @ApiOperation({
+    summary:
+      'Publish a workflow — snapshot draft to published for immutable execution',
+  })
+  publish(@Param('id') id: string) {
+    return this.service.publish(id);
+  }
+
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a workflow' })

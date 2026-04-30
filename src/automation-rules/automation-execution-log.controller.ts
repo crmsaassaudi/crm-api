@@ -1,4 +1,13 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -7,6 +16,8 @@ import {
 } from '@nestjs/swagger';
 import { ClsService } from 'nestjs-cls';
 import { AutomationExecutionLogRepository } from './infrastructure/persistence/document/repositories/automation-execution-log.repository';
+import { AutomationActionProducer } from './queue/automation-action.producer';
+import { RetryStepDto } from './dto/workflow.dto';
 
 /**
  * AutomationExecutionLogController — REST API for querying execution logs.
@@ -21,6 +32,7 @@ export class AutomationExecutionLogController {
   constructor(
     private readonly repo: AutomationExecutionLogRepository,
     private readonly cls: ClsService,
+    private readonly actionProducer: AutomationActionProducer,
   ) {}
 
   private get tenantId(): string {
@@ -92,5 +104,56 @@ export class AutomationExecutionLogController {
   @ApiOperation({ summary: 'Get execution log detail with step trace' })
   async findById(@Param('id') id: string) {
     return this.repo.findByIdWithSteps(this.tenantId, id);
+  }
+
+  // ── Manual Retry ────────────────────────────────────────────────────────
+
+  @Post(':id/retry-step')
+  @ApiOperation({
+    summary:
+      'Retry a failed/DLQ step — re-dispatch the action to the main queue',
+  })
+  async retryStep(@Param('id') id: string, @Body() dto: RetryStepDto) {
+    // 1. Verify execution log exists
+    const log = await this.repo.findByIdWithSteps(this.tenantId, id);
+    if (!log) throw new NotFoundException('Execution log not found');
+
+    // 2. Get the step data for re-dispatch
+    const stepData = await this.repo.getStepData(id, dto.nodeId);
+    if (!stepData) {
+      throw new NotFoundException(
+        `Step with nodeId "${dto.nodeId}" not found in execution log`,
+      );
+    }
+
+    // 3. Atomic idempotency guard: only failed/dlq steps can be retried
+    const transitioned = await this.repo.retryStep(id, dto.nodeId);
+    if (!transitioned) {
+      throw new BadRequestException(
+        'Step is not in a retryable state. Only failed or DLQ steps can be retried.',
+      );
+    }
+
+    // 4. Re-dispatch the action job using original data from the step
+    const { step, executionLog } = stepData;
+    await this.actionProducer.dispatch({
+      executionId: id,
+      workflowId: executionLog.workflowId?.toString() || '',
+      tenantId: this.tenantId,
+      nodeId: dto.nodeId,
+      nodeName: step.nodeName,
+      actionType: step.input?.actionType || 'send_email',
+      actionConfig: step.input?.config || {},
+      recordId: executionLog.recordId,
+      recordType: executionLog.recordType,
+      recordData: {},
+      automationDepth: executionLog.automationDepth || 0,
+      sourceWorkflowId: executionLog.workflowId?.toString() || '',
+    });
+
+    return {
+      message: 'Step retry dispatched successfully',
+      nodeId: dto.nodeId,
+    };
   }
 }

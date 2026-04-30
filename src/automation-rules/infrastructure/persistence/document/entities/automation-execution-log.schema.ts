@@ -9,14 +9,15 @@ export type ExecutionStatus =
   | 'success'
   | 'failed'
   | 'loop_blocked'
-  | 'skipped_run_once';
+  | 'skipped_run_once'
+  | 'waiting';
 
 export interface ExecutionStep {
   nodeId: string;
   nodeName: string;
-  nodeType: 'trigger' | 'condition' | 'action';
+  nodeType: 'trigger' | 'condition' | 'action' | 'wait';
   branch?: 'matched' | 'not_matched';
-  status: 'success' | 'failed' | 'skipped';
+  status: 'success' | 'failed' | 'skipped' | 'retrying' | 'dlq' | 'waiting';
   input: Record<string, any>;
   output?: Record<string, any>;
   error?: { code: string; message: string };
@@ -65,7 +66,14 @@ export class AutomationExecutionLogSchemaClass {
 
   @Prop({
     required: true,
-    enum: ['running', 'success', 'failed', 'loop_blocked', 'skipped_run_once'],
+    enum: [
+      'running',
+      'success',
+      'failed',
+      'loop_blocked',
+      'skipped_run_once',
+      'waiting',
+    ],
     default: 'running',
   })
   status: ExecutionStatus;
@@ -90,7 +98,7 @@ export class AutomationExecutionLogSchemaClass {
         nodeType: {
           type: String,
           required: true,
-          enum: ['trigger', 'condition', 'action'],
+          enum: ['trigger', 'condition', 'action', 'wait'],
         },
         branch: {
           type: String,
@@ -100,7 +108,7 @@ export class AutomationExecutionLogSchemaClass {
         status: {
           type: String,
           required: true,
-          enum: ['success', 'failed', 'skipped'],
+          enum: ['success', 'failed', 'skipped', 'retrying', 'dlq', 'waiting'],
         },
         input: { type: MongooseSchema.Types.Mixed, default: {} },
         output: { type: MongooseSchema.Types.Mixed, default: null },

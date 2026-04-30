@@ -1,9 +1,13 @@
-import { Processor } from '@nestjs/bullmq';
+import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { BaseConsumer } from '../../queue/base.consumer';
 import {
   AUTOMATION_ACTION_QUEUE,
+  AUTOMATION_EMAIL_QUEUE,
+  AUTOMATION_SMS_QUEUE,
+  AUTOMATION_INTERNAL_QUEUE,
+  AUTOMATION_WEBHOOK_QUEUE,
   AutomationActionJobData,
 } from './automation-queue.constants';
 import {
@@ -13,42 +17,24 @@ import {
   SendSmsExecutor,
   UpdateFieldExecutor,
   RouteToTeamExecutor,
+  WebhookExecutor,
 } from '../engine/action-executors';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
+import { AutomationDlqProducer } from './automation-dlq.producer';
 
 /**
- * AutomationActionProcessor — BullMQ consumer for automation action jobs.
- *
- * Receives jobs dispatched by the WorkflowOrchestrator, resolves the
- * correct ActionExecutor by action type, executes it, and logs the result
- * back to the execution log.
- *
- * Follows the BaseConsumer pattern from SlaBreachProcessor.
+ * Shared action processing logic used by all typed queue processors.
+ * Extracted to avoid code duplication across 4+ queue consumers.
  */
-@Processor(AUTOMATION_ACTION_QUEUE)
-export class AutomationActionProcessor extends BaseConsumer {
-  protected readonly logger = new Logger(AutomationActionProcessor.name);
-
-  /** Map of action type → executor instance */
-  private readonly executors: Map<string, ActionExecutor>;
-
+export class ActionProcessorMixin {
   constructor(
-    private readonly executionLogRepo: AutomationExecutionLogRepository,
-    sendEmail: SendEmailExecutor,
-    sendSms: SendSmsExecutor,
-    updateField: UpdateFieldExecutor,
-    routeToTeam: RouteToTeamExecutor,
-  ) {
-    super();
-    this.executors = new Map<string, ActionExecutor>([
-      [sendEmail.actionType, sendEmail],
-      [sendSms.actionType, sendSms],
-      [updateField.actionType, updateField],
-      [routeToTeam.actionType, routeToTeam],
-    ]);
-  }
+    protected readonly executors: Map<string, ActionExecutor>,
+    protected readonly executionLogRepo: AutomationExecutionLogRepository,
+    protected readonly dlqProducer: AutomationDlqProducer,
+    protected readonly logger: Logger,
+  ) {}
 
-  async process(job: Job<AutomationActionJobData>): Promise<void> {
+  async processAction(job: Job<AutomationActionJobData>): Promise<void> {
     const data = job.data;
     const stepStart = new Date();
 
@@ -98,9 +84,27 @@ export class AutomationActionProcessor extends BaseConsumer {
     }
   }
 
-  /**
-   * Log the action execution result to the execution log.
-   */
+  handleFailedJob(job: Job, error: Error): void {
+    const attemptsRemaining = (job.opts?.attempts ?? 3) - job.attemptsMade;
+
+    if (attemptsRemaining <= 0) {
+      this.logger.warn(
+        `[Processor] Job ${job.id} exhausted all retries — routing to DLQ`,
+      );
+      this.dlqProducer
+        .sendToDlq(job.data, error.message)
+        .catch((dlqErr) =>
+          this.logger.error(
+            `[Processor] Failed to send to DLQ: ${dlqErr.message}`,
+          ),
+        );
+    } else {
+      this.logger.error(
+        `Job ${job.id} failed (${attemptsRemaining} retries left). Name: ${job.name}. Error: ${error.message}`,
+      );
+    }
+  }
+
   private async logActionStep(
     data: AutomationActionJobData,
     stepStart: Date,
@@ -130,5 +134,195 @@ export class AutomationActionProcessor extends BaseConsumer {
         `[Processor] Failed to log step for execution=${data.executionId}: ${logError.message}`,
       );
     }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Legacy main queue processor (backward compat)
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Processor(AUTOMATION_ACTION_QUEUE)
+export class AutomationActionProcessor extends BaseConsumer {
+  protected readonly logger = new Logger(AutomationActionProcessor.name);
+  private readonly mixin: ActionProcessorMixin;
+
+  constructor(
+    private readonly executionLogRepo: AutomationExecutionLogRepository,
+    private readonly dlqProducer: AutomationDlqProducer,
+    sendEmail: SendEmailExecutor,
+    sendSms: SendSmsExecutor,
+    updateField: UpdateFieldExecutor,
+    routeToTeam: RouteToTeamExecutor,
+    webhook: WebhookExecutor,
+  ) {
+    super();
+    const executors = new Map<string, ActionExecutor>([
+      [sendEmail.actionType, sendEmail],
+      [sendSms.actionType, sendSms],
+      [updateField.actionType, updateField],
+      [routeToTeam.actionType, routeToTeam],
+      [webhook.actionType, webhook],
+    ]);
+    this.mixin = new ActionProcessorMixin(
+      executors,
+      executionLogRepo,
+      dlqProducer,
+      this.logger,
+    );
+  }
+
+  @OnWorkerEvent('failed')
+  override onFailed(job: Job, error: Error) {
+    this.mixin.handleFailedJob(job, error);
+  }
+
+  async process(job: Job<AutomationActionJobData>): Promise<void> {
+    return this.mixin.processAction(job);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Email Queue Processor
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Processor(AUTOMATION_EMAIL_QUEUE)
+export class AutomationEmailProcessor extends BaseConsumer {
+  protected readonly logger = new Logger(AutomationEmailProcessor.name);
+  private readonly mixin: ActionProcessorMixin;
+
+  constructor(
+    executionLogRepo: AutomationExecutionLogRepository,
+    dlqProducer: AutomationDlqProducer,
+    sendEmail: SendEmailExecutor,
+  ) {
+    super();
+    const executors = new Map<string, ActionExecutor>([
+      [sendEmail.actionType, sendEmail],
+    ]);
+    this.mixin = new ActionProcessorMixin(
+      executors,
+      executionLogRepo,
+      dlqProducer,
+      this.logger,
+    );
+  }
+
+  @OnWorkerEvent('failed')
+  override onFailed(job: Job, error: Error) {
+    this.mixin.handleFailedJob(job, error);
+  }
+
+  async process(job: Job<AutomationActionJobData>): Promise<void> {
+    return this.mixin.processAction(job);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SMS Queue Processor
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Processor(AUTOMATION_SMS_QUEUE)
+export class AutomationSmsProcessor extends BaseConsumer {
+  protected readonly logger = new Logger(AutomationSmsProcessor.name);
+  private readonly mixin: ActionProcessorMixin;
+
+  constructor(
+    executionLogRepo: AutomationExecutionLogRepository,
+    dlqProducer: AutomationDlqProducer,
+    sendSms: SendSmsExecutor,
+  ) {
+    super();
+    const executors = new Map<string, ActionExecutor>([
+      [sendSms.actionType, sendSms],
+    ]);
+    this.mixin = new ActionProcessorMixin(
+      executors,
+      executionLogRepo,
+      dlqProducer,
+      this.logger,
+    );
+  }
+
+  @OnWorkerEvent('failed')
+  override onFailed(job: Job, error: Error) {
+    this.mixin.handleFailedJob(job, error);
+  }
+
+  async process(job: Job<AutomationActionJobData>): Promise<void> {
+    return this.mixin.processAction(job);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal Queue Processor (UpdateField + RouteToTeam)
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Processor(AUTOMATION_INTERNAL_QUEUE)
+export class AutomationInternalProcessor extends BaseConsumer {
+  protected readonly logger = new Logger(AutomationInternalProcessor.name);
+  private readonly mixin: ActionProcessorMixin;
+
+  constructor(
+    executionLogRepo: AutomationExecutionLogRepository,
+    dlqProducer: AutomationDlqProducer,
+    updateField: UpdateFieldExecutor,
+    routeToTeam: RouteToTeamExecutor,
+  ) {
+    super();
+    const executors = new Map<string, ActionExecutor>([
+      [updateField.actionType, updateField],
+      [routeToTeam.actionType, routeToTeam],
+    ]);
+    this.mixin = new ActionProcessorMixin(
+      executors,
+      executionLogRepo,
+      dlqProducer,
+      this.logger,
+    );
+  }
+
+  @OnWorkerEvent('failed')
+  override onFailed(job: Job, error: Error) {
+    this.mixin.handleFailedJob(job, error);
+  }
+
+  async process(job: Job<AutomationActionJobData>): Promise<void> {
+    return this.mixin.processAction(job);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Webhook Queue Processor
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Processor(AUTOMATION_WEBHOOK_QUEUE)
+export class AutomationWebhookProcessor extends BaseConsumer {
+  protected readonly logger = new Logger(AutomationWebhookProcessor.name);
+  private readonly mixin: ActionProcessorMixin;
+
+  constructor(
+    executionLogRepo: AutomationExecutionLogRepository,
+    dlqProducer: AutomationDlqProducer,
+    webhook: WebhookExecutor,
+  ) {
+    super();
+    const executors = new Map<string, ActionExecutor>([
+      [webhook.actionType, webhook],
+    ]);
+    this.mixin = new ActionProcessorMixin(
+      executors,
+      executionLogRepo,
+      dlqProducer,
+      this.logger,
+    );
+  }
+
+  @OnWorkerEvent('failed')
+  override onFailed(job: Job, error: Error) {
+    this.mixin.handleFailedJob(job, error);
+  }
+
+  async process(job: Job<AutomationActionJobData>): Promise<void> {
+    return this.mixin.processAction(job);
   }
 }

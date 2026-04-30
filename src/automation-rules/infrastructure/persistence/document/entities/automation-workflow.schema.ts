@@ -14,7 +14,7 @@ export interface WorkflowTriggerConfig {
 
 export interface WorkflowNode {
   id: string; // Client-generated UUID
-  type: 'trigger' | 'condition' | 'action';
+  type: 'trigger' | 'condition' | 'action' | 'wait';
   position: { x: number; y: number };
   config: Record<string, any>; // Type-specific JSON
 }
@@ -92,7 +92,7 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
         type: {
           type: String,
           required: true,
-          enum: ['trigger', 'condition', 'action'],
+          enum: ['trigger', 'condition', 'action', 'wait'],
         },
         position: {
           x: { type: Number, required: true },
@@ -151,6 +151,70 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
     required: true,
   })
   updatedBy: string;
+
+  // ── Published Snapshot (Immutable Execution State) ──────────────────────
+
+  @Prop({
+    type: [
+      {
+        id: { type: String, required: true },
+        type: {
+          type: String,
+          required: true,
+          enum: ['trigger', 'condition', 'action', 'wait'],
+        },
+        position: {
+          x: { type: Number, required: true },
+          y: { type: Number, required: true },
+        },
+        config: { type: MongooseSchema.Types.Mixed, default: {} },
+      },
+    ],
+    default: [],
+  })
+  publishedNodes: WorkflowNode[];
+
+  @Prop({
+    type: [
+      {
+        id: { type: String, required: true },
+        source: { type: String, required: true },
+        sourceHandle: {
+          type: String,
+          enum: ['matched', 'not_matched', 'success', 'failure', null],
+          default: null,
+        },
+        target: { type: String, required: true },
+      },
+    ],
+    default: [],
+  })
+  publishedEdges: WorkflowEdge[];
+
+  @Prop({
+    type: {
+      event: {
+        type: String,
+        required: true,
+        enum: ['record_created', 'field_updated'],
+      },
+      object: {
+        type: String,
+        required: true,
+        enum: ['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'],
+      },
+      field: { type: String, default: null },
+      runOncePerRecord: { type: Boolean, default: false },
+    },
+    default: null,
+  })
+  publishedTriggerConfig: WorkflowTriggerConfig | null;
+
+  @Prop({ type: Date, default: null })
+  publishedAt: Date | null;
+
+  @Prop({ default: 0 })
+  version: number;
 }
 
 export const AutomationWorkflowSchema = SchemaFactory.createForClass(
@@ -164,12 +228,12 @@ AutomationWorkflowSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 // List active workflows per tenant
 AutomationWorkflowSchema.index({ tenantId: 1, status: 1 });
 
-// Event matching — find workflows triggered by a specific event + object
+// Event matching — Orchestrator hot-path: find active workflows by PUBLISHED trigger config
 AutomationWorkflowSchema.index({
   tenantId: 1,
   status: 1,
-  'triggerConfig.event': 1,
-  'triggerConfig.object': 1,
+  'publishedTriggerConfig.event': 1,
+  'publishedTriggerConfig.object': 1,
 });
 
 // Unique name per tenant

@@ -13,12 +13,19 @@ import {
   UpdateWorkflowStatusDto,
 } from './dto/workflow.dto';
 import { ConditionEvaluatorService } from './engine/condition-evaluator.service';
+import { AutomationAuditService } from './automation-audit.service';
 
 /**
  * AutomationWorkflowService — business logic for workflow CRUD.
  *
  * Validates workflow structure before saving, ensures tenant isolation
- * via CLS context, and provides duplicate functionality.
+ * via CLS context, provides duplicate/publish functionality, and logs
+ * every lifecycle action to the audit trail.
+ *
+ * Phase 3 additions:
+ * - publish(): Snapshots draft → published for immutable execution
+ * - Audit logging on every mutation
+ * - Activation requires publishedNodes (can't activate unpublished workflows)
  */
 @Injectable()
 export class AutomationWorkflowService {
@@ -28,6 +35,7 @@ export class AutomationWorkflowService {
     private readonly repo: AutomationWorkflowRepository,
     private readonly cls: ClsService,
     private readonly conditionEvaluator: ConditionEvaluatorService,
+    private readonly auditService: AutomationAuditService,
   ) {}
 
   private get tenantId(): string {
@@ -59,7 +67,7 @@ export class AutomationWorkflowService {
   async create(dto: CreateWorkflowDto) {
     this.validateWorkflow(dto);
 
-    return this.repo.create({
+    const result = await this.repo.create({
       tenantId: this.tenantId,
       name: dto.name,
       description: dto.description || '',
@@ -70,9 +78,30 @@ export class AutomationWorkflowService {
       viewport: dto.viewport ?? { x: 0, y: 0, zoom: 1 },
       executionCount: 0,
       lastExecutedAt: null,
+      // Published state starts empty — must Publish before Activating
+      publishedNodes: [],
+      publishedEdges: [],
+      publishedTriggerConfig: null,
+      publishedAt: null,
+      version: 0,
       createdBy: this.userId,
       updatedBy: this.userId,
     });
+
+    // Audit: workflow created
+    await this.auditService.logAction({
+      tenantId: this.tenantId,
+      userId: this.userId,
+      workflowId: result._id.toString(),
+      workflowName: result.name,
+      action: 'created',
+      metadata: {
+        triggerEvent: dto.triggerConfig.event,
+        triggerObject: dto.triggerConfig.object,
+      },
+    });
+
+    return result;
   }
 
   async update(id: string, dto: UpdateWorkflowDto) {
@@ -101,45 +130,135 @@ export class AutomationWorkflowService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { updatedAt: _clientTs, ...updateData } = dto;
 
-    return this.repo.update(this.tenantId, id, {
+    // Compute diff for audit
+    const diff = this.auditService.computeDiff(existing as any, updateData);
+
+    const result = await this.repo.update(this.tenantId, id, {
       ...updateData,
       updatedBy: this.userId,
     } as any);
+
+    // Audit: workflow updated
+    if (diff.length > 0) {
+      await this.auditService.logAction({
+        tenantId: this.tenantId,
+        userId: this.userId,
+        workflowId: id,
+        workflowName: result?.name || existing.name,
+        action: 'updated',
+        diff,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Publish a workflow: snapshot draft → published for immutable execution.
+   * Does NOT change status (Publish is decoupled from Activate).
+   */
+  async publish(id: string) {
+    const existing = await this.repo.findById(this.tenantId, id);
+    if (!existing) throw new NotFoundException('Workflow not found');
+
+    // Validate the draft has at least a trigger + 1 action before publishing
+    const nodes = existing.nodes || [];
+    const hasTrigger = nodes.some(
+      (n: any) => n.type === 'trigger' || n.type === 'triggerNode',
+    );
+    const hasAction = nodes.some(
+      (n: any) => n.type === 'action' || n.type === 'actionNode',
+    );
+
+    if (!hasTrigger || !hasAction) {
+      throw new BadRequestException(
+        'Workflow must have at least a Trigger node and one Action node to be published',
+      );
+    }
+
+    const result = await this.repo.publish(this.tenantId, id);
+    if (!result) throw new NotFoundException('Workflow not found');
+
+    // Audit: workflow published
+    await this.auditService.logAction({
+      tenantId: this.tenantId,
+      userId: this.userId,
+      workflowId: id,
+      workflowName: result.name,
+      action: 'published',
+      metadata: {
+        version: result.version,
+        nodesCount: (result.publishedNodes || []).length,
+        edgesCount: (result.publishedEdges || []).length,
+      },
+    });
+
+    return result;
   }
 
   async updateStatus(id: string, dto: UpdateWorkflowStatusDto) {
     const existing = await this.repo.findById(this.tenantId, id);
     if (!existing) throw new NotFoundException('Workflow not found');
 
-    // Validate that the workflow has at least a trigger + 1 action before activating
+    // Validate: can't activate without published snapshot
     if (dto.status === 'active') {
-      const nodes = existing.nodes || [];
-      const hasTrigger = nodes.some(
-        (n: any) => n.type === 'trigger' || n.type === 'triggerNode',
-      );
-      const hasAction = nodes.some(
-        (n: any) => n.type === 'action' || n.type === 'actionNode',
-      );
-
-      if (!hasTrigger || !hasAction) {
+      const publishedNodes = (existing as any).publishedNodes || [];
+      if (publishedNodes.length === 0) {
         throw new BadRequestException(
-          'Workflow must have at least a Trigger node and one Action node to be activated',
+          'Workflow must be published before it can be activated. Please publish first.',
         );
       }
     }
 
-    return this.repo.updateStatus(this.tenantId, id, dto.status);
+    const previousStatus = existing.status;
+    const result = await this.repo.updateStatus(this.tenantId, id, dto.status);
+
+    // Audit: status changed
+    await this.auditService.logAction({
+      tenantId: this.tenantId,
+      userId: this.userId,
+      workflowId: id,
+      workflowName: existing.name,
+      action: 'status_changed',
+      diff: [{ field: 'status', before: previousStatus, after: dto.status }],
+      metadata: { previousStatus, newStatus: dto.status },
+    });
+
+    return result;
   }
 
   async duplicate(id: string) {
     const result = await this.repo.duplicate(this.tenantId, id, this.userId);
     if (!result) throw new NotFoundException('Workflow not found');
+
+    // Audit: workflow duplicated
+    await this.auditService.logAction({
+      tenantId: this.tenantId,
+      userId: this.userId,
+      workflowId: result._id.toString(),
+      workflowName: result.name,
+      action: 'duplicated',
+      metadata: { sourceWorkflowId: id },
+    });
+
     return result;
   }
 
   async delete(id: string) {
+    const existing = await this.repo.findById(this.tenantId, id);
+    if (!existing) throw new NotFoundException('Workflow not found');
+
     const deleted = await this.repo.delete(this.tenantId, id);
     if (!deleted) throw new NotFoundException('Workflow not found');
+
+    // Audit: workflow deleted
+    await this.auditService.logAction({
+      tenantId: this.tenantId,
+      userId: this.userId,
+      workflowId: id,
+      workflowName: existing.name,
+      action: 'deleted',
+    });
   }
 
   // ── Validation ─────────────────────────────────────────────────────────

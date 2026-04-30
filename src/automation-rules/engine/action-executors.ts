@@ -1,9 +1,21 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { AutomationActionJobData } from '../queue/automation-queue.constants';
+import { TemplateInterpolationService } from './template-interpolation.service';
+import { CrmRecordUpdateService } from './crm-record-update.service';
+import { SsrfGuardService } from './ssrf-guard.service';
+import {
+  EmailProviderService,
+  EMAIL_PROVIDER_TOKEN,
+} from './providers/email-provider.service';
+import {
+  SmsProviderService,
+  SMS_PROVIDER_TOKEN,
+} from './providers/sms-provider.service';
+import { AssignmentEngineService } from '../../assignment-engine/assignment-engine.service';
 
 /**
  * Base interface for all action executors.
- * Each executor handles one action type (email, sms, update_field, route).
+ * Each executor handles one action type (email, sms, update_field, route, webhook).
  */
 export interface ActionExecutor {
   readonly actionType: string;
@@ -25,7 +37,12 @@ export class SendEmailExecutor implements ActionExecutor {
   readonly actionType = 'send_email';
   private readonly logger = new Logger(SendEmailExecutor.name);
 
-  // eslint-disable-next-line @typescript-eslint/require-await
+  constructor(
+    private readonly templateEngine: TemplateInterpolationService,
+    @Inject(EMAIL_PROVIDER_TOKEN)
+    private readonly emailProvider: EmailProviderService,
+  ) {}
+
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordData, actionConfig, tenantId, recordType } = job;
 
@@ -46,9 +63,6 @@ export class SendEmailExecutor implements ActionExecutor {
       }
     }
 
-    const subject = this.interpolate(actionConfig.subject || '', recordData);
-    const body = this.interpolate(actionConfig.template || '', recordData);
-
     if (!to) {
       return {
         success: false,
@@ -59,27 +73,24 @@ export class SendEmailExecutor implements ActionExecutor {
       };
     }
 
+    // ── Template Interpolation with null-safe fallback ─────────────────
+    const subject = this.templateEngine.interpolate(
+      actionConfig.subject || '',
+      recordData,
+      { fallbackMap: { Name: 'Quý khách', firstName: 'Quý khách' } },
+    );
+    const body = this.templateEngine.interpolate(
+      actionConfig.template || '',
+      recordData,
+      { fallbackMap: { Name: 'Quý khách', firstName: 'Quý khách' } },
+    );
+
     this.logger.log(
       `[SendEmail] tenant=${tenantId} to=${to} subject="${subject}"`,
     );
 
-    // TODO: Integrate with actual email provider (SendGrid, SES, etc.)
-    // For now, log the email that would be sent
-    return {
-      success: true,
-      output: { to, subject, bodyLength: body.length },
-    };
-  }
-
-  private interpolate(template: string, data: Record<string, any>): string {
-    return template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_, path) => {
-      const keys = path.split('.');
-      let value: any = data;
-      for (const key of keys) {
-        value = value?.[key];
-      }
-      return value !== undefined && value !== null ? String(value) : '';
-    });
+    // ── Send via provider (SendGrid or dry-run) ────────────────────────
+    return this.emailProvider.send({ to, subject, body });
   }
 }
 
@@ -92,7 +103,12 @@ export class SendSmsExecutor implements ActionExecutor {
   readonly actionType = 'send_sms';
   private readonly logger = new Logger(SendSmsExecutor.name);
 
-  // eslint-disable-next-line @typescript-eslint/require-await
+  constructor(
+    private readonly templateEngine: TemplateInterpolationService,
+    @Inject(SMS_PROVIDER_TOKEN)
+    private readonly smsProvider: SmsProviderService,
+  ) {}
+
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordData, actionConfig, tenantId, recordType } = job;
 
@@ -113,8 +129,6 @@ export class SendSmsExecutor implements ActionExecutor {
       }
     }
 
-    const message = this.interpolate(actionConfig.message || '', recordData);
-
     if (!phone) {
       return {
         success: false,
@@ -124,6 +138,13 @@ export class SendSmsExecutor implements ActionExecutor {
         },
       };
     }
+
+    // ── Template Interpolation ──────────────────────────────────────────
+    const message = this.templateEngine.interpolate(
+      actionConfig.message || '',
+      recordData,
+      { fallbackMap: { Name: 'Quý khách', firstName: 'Quý khách' } },
+    );
 
     if (message.length > 160) {
       this.logger.warn(
@@ -135,22 +156,8 @@ export class SendSmsExecutor implements ActionExecutor {
       `[SendSMS] tenant=${tenantId} to=${phone} chars=${message.length}`,
     );
 
-    // TODO: Integrate with SMS provider (Twilio, Vonage, etc.)
-    return {
-      success: true,
-      output: { phone, messageLength: message.length },
-    };
-  }
-
-  private interpolate(template: string, data: Record<string, any>): string {
-    return template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_, path) => {
-      const keys = path.split('.');
-      let value: any = data;
-      for (const key of keys) {
-        value = value?.[key];
-      }
-      return value !== undefined && value !== null ? String(value) : '';
-    });
+    // ── Send via provider (Twilio or dry-run) ───────────────────────────
+    return this.smsProvider.send({ to: phone, message });
   }
 }
 
@@ -163,7 +170,8 @@ export class UpdateFieldExecutor implements ActionExecutor {
   readonly actionType = 'update_field';
   private readonly logger = new Logger(UpdateFieldExecutor.name);
 
-  // eslint-disable-next-line @typescript-eslint/require-await
+  constructor(private readonly crmUpdate: CrmRecordUpdateService) {}
+
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId } = job;
     const field = actionConfig.targetField;
@@ -180,17 +188,37 @@ export class UpdateFieldExecutor implements ActionExecutor {
       `[UpdateField] tenant=${tenantId} ${recordType}(${recordId}).${field} = "${value}"`,
     );
 
-    // TODO: Call the appropriate service (ContactsService, TicketsService)
-    // to update the record field. Must set _automationSourceWorkflowId
-    // in the event payload to prevent self-loop triggers.
+    // ── Call CRM service to update the record ───────────────────────────
+    const result = await this.crmUpdate.updateField({
+      tenantId,
+      recordType,
+      recordId,
+      field,
+      value,
+      sourceWorkflowId: job.sourceWorkflowId,
+      automationDepth: job.automationDepth,
+    });
+
+    if (!result.success) {
+      return {
+        success: false,
+        error: {
+          code: 'UPDATE_FIELD_FAILED',
+          message:
+            result.error ||
+            `Failed to update ${recordType}(${recordId}).${field}`,
+        },
+      };
+    }
+
     return {
       success: true,
       output: {
         recordType,
         recordId,
         field,
-        previousValue: job.recordData[field],
-        newValue: value,
+        previousValue: result.previousValue,
+        newValue: result.newValue,
       },
     };
   }
@@ -205,7 +233,11 @@ export class RouteToTeamExecutor implements ActionExecutor {
   readonly actionType = 'route_to_team';
   private readonly logger = new Logger(RouteToTeamExecutor.name);
 
-  // eslint-disable-next-line @typescript-eslint/require-await
+  constructor(
+    private readonly assignmentEngine: AssignmentEngineService,
+    private readonly crmUpdate: CrmRecordUpdateService,
+  ) {}
+
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId } = job;
     const teamId = actionConfig.teamId;
@@ -222,17 +254,239 @@ export class RouteToTeamExecutor implements ActionExecutor {
       `[RouteToTeam] tenant=${tenantId} ${recordType}(${recordId}) → team=${teamId || 'N/A'} user=${userId || 'round-robin'}`,
     );
 
-    // TODO: Call AssignmentEngineService to route the record to the
-    // specified team/user. For tickets: update groupId + ownerId.
-    // For contacts: update ownerId.
-    return {
-      success: true,
-      output: {
+    // ── Direct user assignment (skip assignment engine) ─────────────────
+    if (userId) {
+      const result = await this.crmUpdate.updateField({
+        tenantId,
         recordType,
         recordId,
-        assignedTeam: teamId,
-        assignedUser: userId || 'round-robin',
-      },
-    };
+        field: 'ownerId',
+        value: userId,
+        sourceWorkflowId: job.sourceWorkflowId,
+        automationDepth: job.automationDepth,
+      });
+
+      if (!result.success) {
+        return {
+          success: false,
+          error: {
+            code: 'ROUTE_FAILED',
+            message:
+              result.error ||
+              `Failed to assign ${recordType}(${recordId}) to user ${userId}`,
+          },
+        };
+      }
+
+      return {
+        success: true,
+        output: {
+          recordType,
+          recordId,
+          assignedUser: userId,
+          strategy: 'direct',
+        },
+      };
+    }
+
+    // ── Team-based assignment via AssignmentEngine (round-robin) ─────────
+    try {
+      const assignResult = await this.assignmentEngine.assign({
+        module: recordType as any,
+        tenantId,
+        entityId: recordId,
+        attributes: job.recordData,
+      });
+
+      if (!assignResult.ownerId) {
+        return {
+          success: false,
+          error: {
+            code: 'NO_ELIGIBLE_AGENT',
+            message:
+              assignResult.reason ||
+              `No eligible agent found for team ${teamId}`,
+          },
+        };
+      }
+
+      // Update the ownerId on the record
+      const updateResult = await this.crmUpdate.updateField({
+        tenantId,
+        recordType,
+        recordId,
+        field: 'ownerId',
+        value: assignResult.ownerId,
+        sourceWorkflowId: job.sourceWorkflowId,
+        automationDepth: job.automationDepth,
+      });
+
+      if (!updateResult.success) {
+        return {
+          success: false,
+          error: {
+            code: 'ROUTE_UPDATE_FAILED',
+            message:
+              updateResult.error || 'Failed to update ownerId after assignment',
+          },
+        };
+      }
+
+      return {
+        success: true,
+        output: {
+          recordType,
+          recordId,
+          assignedTeam: teamId,
+          assignedUser: assignResult.ownerId,
+          strategy: assignResult.strategy,
+          reason: assignResult.reason,
+        },
+      };
+    } catch (error: any) {
+      this.logger.error(
+        `[RouteToTeam] AssignmentEngine error: ${error.message}`,
+        error.stack,
+      );
+      return {
+        success: false,
+        error: {
+          code: 'ASSIGNMENT_ENGINE_ERROR',
+          message: error.message,
+        },
+      };
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Webhook Executor
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Hard timeout cap for webhook requests (milliseconds).
+ * Exceeding this → AbortError → WEBHOOK_TIMEOUT → retry → DLQ.
+ */
+const WEBHOOK_HARD_TIMEOUT_MS = 5000;
+
+@Injectable()
+export class WebhookExecutor implements ActionExecutor {
+  readonly actionType = 'webhook';
+  private readonly logger = new Logger(WebhookExecutor.name);
+
+  constructor(
+    private readonly templateEngine: TemplateInterpolationService,
+    private readonly ssrfGuard: SsrfGuardService,
+  ) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { actionConfig, recordData, tenantId } = job;
+    const url = actionConfig.webhookUrl;
+    const method = (actionConfig.method || 'POST').toUpperCase();
+    const headers: Record<string, string> = actionConfig.headers || {};
+    const timeout = Math.min(
+      actionConfig.timeout || WEBHOOK_HARD_TIMEOUT_MS,
+      WEBHOOK_HARD_TIMEOUT_MS,
+    ); // Hard cap 5s
+
+    if (!url) {
+      return {
+        success: false,
+        error: { code: 'NO_WEBHOOK_URL', message: 'webhookUrl is required' },
+      };
+    }
+
+    // ── SSRF Guard ────────────────────────────────────────────────────────
+    const ssrfCheck = await this.ssrfGuard.validate(url);
+    if (!ssrfCheck.safe) {
+      this.logger.warn(`[Webhook] SSRF BLOCKED: ${url} — ${ssrfCheck.reason}`);
+      return {
+        success: false,
+        error: { code: 'SSRF_BLOCKED', message: ssrfCheck.reason! },
+      };
+    }
+
+    // ── Interpolate body template ─────────────────────────────────────────
+    let bodyStr: string;
+    if (actionConfig.bodyTemplate) {
+      bodyStr = this.templateEngine.interpolate(
+        actionConfig.bodyTemplate,
+        recordData,
+      );
+    } else {
+      // Default: send full record data as JSON
+      bodyStr = JSON.stringify(recordData);
+    }
+
+    this.logger.log(
+      `[Webhook] tenant=${tenantId} ${method} ${url} bodyLength=${bodyStr.length} timeout=${timeout}ms`,
+    );
+
+    // ── HTTP Request with hard timeout ────────────────────────────────────
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+
+      const fetchOptions: RequestInit = {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...headers,
+        },
+        signal: controller.signal,
+      };
+
+      // Only attach body for non-GET requests
+      if (method !== 'GET' && method !== 'HEAD') {
+        fetchOptions.body = bodyStr;
+      }
+
+      const response = await fetch(url, fetchOptions);
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        const responseBody = await response.text().catch(() => '(unreadable)');
+        return {
+          success: false,
+          error: {
+            code: 'WEBHOOK_HTTP_ERROR',
+            message: `HTTP ${response.status} ${response.statusText}: ${responseBody.substring(0, 200)}`,
+          },
+        };
+      }
+
+      return {
+        success: true,
+        output: {
+          status: response.status,
+          statusText: response.statusText,
+          url,
+          method,
+        },
+      };
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        this.logger.warn(`[Webhook] TIMEOUT after ${timeout}ms: ${url}`);
+        return {
+          success: false,
+          error: {
+            code: 'WEBHOOK_TIMEOUT',
+            message: `Webhook request to ${url} timed out after ${timeout}ms`,
+          },
+        };
+      }
+
+      this.logger.error(
+        `[Webhook] Request failed: ${error.message}`,
+        error.stack,
+      );
+      return {
+        success: false,
+        error: {
+          code: 'WEBHOOK_ERROR',
+          message: error.message,
+        },
+      };
+    }
   }
 }

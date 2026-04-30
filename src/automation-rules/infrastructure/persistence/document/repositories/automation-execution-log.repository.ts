@@ -280,4 +280,62 @@ export class AutomationExecutionLogRepository {
       )
       .exec();
   }
+
+  // ── DLQ & Retry Support ──────────────────────────────────────────────────
+
+  /**
+   * Atomically mark a failed/dlq step as 'retrying'.
+   * Idempotency guard: only transitions from 'failed' or 'dlq'.
+   * Returns true if the transition was successful, false if step was not in a retryable state.
+   */
+  async retryStep(executionId: string, nodeId: string): Promise<boolean> {
+    const result = await this.model
+      .updateOne(
+        {
+          _id: executionId,
+          'steps.nodeId': nodeId,
+          'steps.status': { $in: ['failed', 'dlq'] },
+        },
+        {
+          $set: { 'steps.$.status': 'retrying' },
+        },
+      )
+      .exec();
+
+    return result.modifiedCount > 0;
+  }
+
+  /**
+   * Mark a step as dead-lettered after exhausting all retry attempts.
+   */
+  async markStepDlq(executionId: string, nodeId: string): Promise<void> {
+    await this.model
+      .updateOne(
+        {
+          _id: executionId,
+          'steps.nodeId': nodeId,
+        },
+        {
+          $set: { 'steps.$.status': 'dlq' },
+        },
+      )
+      .exec();
+  }
+
+  /**
+   * Retrieve step data for re-dispatch during manual retry.
+   */
+  async getStepData(
+    executionId: string,
+    nodeId: string,
+  ): Promise<{ step: any; executionLog: any } | null> {
+    const log = await this.model.findById(executionId).lean().exec();
+
+    if (!log) return null;
+
+    const step = log.steps.find((s: any) => s.nodeId === nodeId);
+    if (!step) return null;
+
+    return { step, executionLog: log };
+  }
 }

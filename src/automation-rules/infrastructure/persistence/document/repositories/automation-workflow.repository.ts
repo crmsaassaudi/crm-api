@@ -32,8 +32,9 @@ export class AutomationWorkflowRepository {
   }
 
   /**
-   * Find all active workflows matching a specific trigger event + object.
+   * Find all active workflows matching a specific PUBLISHED trigger event + object.
    * Used by the Event Listener to determine which workflows to evaluate.
+   * Queries publishedTriggerConfig (immutable snapshot) — NOT draft triggerConfig.
    */
   async findActiveByTrigger(
     tenantId: string,
@@ -44,8 +45,8 @@ export class AutomationWorkflowRepository {
       .find({
         tenantId,
         status: 'active',
-        'triggerConfig.event': event,
-        'triggerConfig.object': object,
+        'publishedTriggerConfig.event': event,
+        'publishedTriggerConfig.object': object,
       })
       .lean()
       .exec();
@@ -92,6 +93,36 @@ export class AutomationWorkflowRepository {
       .exec();
   }
 
+  /**
+   * Publish a workflow: atomically copy draft → published snapshot.
+   * Increments the version counter and sets publishedAt.
+   * Does NOT change status (Publish is decoupled from Activate).
+   */
+  async publish(tenantId: string, id: string) {
+    const workflow = await this.model
+      .findOne({ _id: id, tenantId })
+      .lean()
+      .exec();
+    if (!workflow) return null;
+
+    return this.model
+      .findOneAndUpdate(
+        { _id: id, tenantId },
+        {
+          $set: {
+            publishedNodes: workflow.nodes,
+            publishedEdges: workflow.edges,
+            publishedTriggerConfig: workflow.triggerConfig,
+            publishedAt: new Date(),
+          },
+          $inc: { version: 1 },
+        },
+        { new: true },
+      )
+      .lean()
+      .exec();
+  }
+
   async delete(tenantId: string, id: string): Promise<boolean> {
     const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;
@@ -117,6 +148,12 @@ export class AutomationWorkflowRepository {
       status: 'draft',
       executionCount: 0,
       lastExecutedAt: null,
+      // Reset published state — clones start as pure drafts
+      publishedNodes: [],
+      publishedEdges: [],
+      publishedTriggerConfig: null,
+      publishedAt: null,
+      version: 0,
       createdBy: userId,
       updatedBy: userId,
     });

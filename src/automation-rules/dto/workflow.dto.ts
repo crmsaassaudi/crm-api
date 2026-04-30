@@ -137,3 +137,9 @@ export class UpdateWorkflowStatusDto {
   @IsEnum(['draft', 'active', 'paused'])
   status: 'draft' | 'active' | 'paused';
 }
+
+export class RetryStepDto {
+  @ApiProperty({ description: 'The node ID of the failed step to retry' })
+  @IsString()
+  nodeId: string;
+}
