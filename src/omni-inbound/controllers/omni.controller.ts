@@ -382,6 +382,42 @@ export class OmniController {
     }
   }
 
+  @Post('conversations/:id/email-reply')
+  @HttpCode(HttpStatus.CREATED)
+  async emailReply(
+    @Param('id') conversationId: string,
+    @Body()
+    payload: {
+      to: string[];
+      cc?: string[];
+      bcc?: string[];
+      subject: string;
+      htmlBody: string;
+      inReplyTo?: string;
+      references?: string[];
+      attachments?: { url: string; filename: string; contentType: string }[];
+    },
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    const agentId = this.cls.get<string>('userId');
+
+    if (!tenantId || !agentId) {
+      throw new BadRequestException('User or Tenant context not found');
+    }
+
+    try {
+      return await this.outboundService.sendEmailReply({
+        tenantId,
+        conversationId,
+        agentId,
+        ...payload,
+      });
+    } catch (error) {
+      this.logger.error(`Failed to send email reply: ${error.message}`);
+      throw new BadRequestException(error.message);
+    }
+  }
+
   /**
    * GET /omni/conversations/:id/reply-window
    * Returns the platform reply window status for this conversation.

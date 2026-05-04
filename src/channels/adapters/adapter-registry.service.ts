@@ -5,6 +5,7 @@ import {
 } from './connection-adapter.interface';
 import { SendGridAdapter } from './sendgrid.adapter';
 import { TwilioAdapter } from './twilio.adapter';
+import { SmtpAdapter } from './smtp.adapter';
 
 /**
  * Adapter Registry — Routes verifyConnection calls to the correct provider adapter.
@@ -18,9 +19,14 @@ export class AdapterRegistryService {
   private readonly logger = new Logger(AdapterRegistryService.name);
   private readonly adapters = new Map<string, ConnectionAdapter>();
 
-  constructor(sendgrid: SendGridAdapter, twilio: TwilioAdapter) {
+  constructor(
+    sendgrid: SendGridAdapter,
+    twilio: TwilioAdapter,
+    smtp: SmtpAdapter,
+  ) {
     this.register(sendgrid);
     this.register(twilio);
+    this.register(smtp);
     this.logger.log(
       `[AdapterRegistry] Registered ${this.adapters.size} adapters: ${[...this.adapters.keys()].join(', ')}`,
     );

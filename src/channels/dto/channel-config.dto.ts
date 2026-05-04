@@ -8,7 +8,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-const PROVIDER_TYPES = ['sendgrid', 'twilio'] as const;
+const PROVIDER_TYPES = ['sendgrid', 'twilio', 'smtp'] as const;
 
 export class VerifyAndSaveChannelConfigDto {
   @ApiProperty({ enum: PROVIDER_TYPES })

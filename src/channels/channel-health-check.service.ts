@@ -390,7 +390,9 @@ export class ChannelHealthCheckService {
 
   private isEnabled(): boolean {
     return (
-      this.configService.get<string>('CHANNEL_HEALTH_CHECK_ENABLED') === 'true'
+      this.configService.get<string>('CHANNEL_HEALTH_CHECK_ENABLED', {
+        infer: true,
+      }) === 'true'
     );
   }
 

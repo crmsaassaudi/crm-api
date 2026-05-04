@@ -1,0 +1,679 @@
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { RedisLockService } from '../../redis/redis-lock.service';
+import { RedisService } from '../../redis/redis.service';
+import { BusinessHoursService } from '../../omni-inbound/services/business-hours.service';
+import { EmailNormalizerService } from './email-normalizer.service';
+import { ChannelConfigRepository } from '../infrastructure/persistence/document/repositories/channel-config.repository';
+import { EmailContentSchemaClass } from '../infrastructure/persistence/document/entities/email-content.schema';
+import { EmailMetadataSchemaClass } from '../infrastructure/persistence/document/entities/email-metadata.schema';
+import { ICryptoService, CRYPTO_SERVICE_TOKEN } from '../domain/crypto.service';
+import { Inject } from '@nestjs/common';
+import { simpleParser, ParsedMail } from 'mailparser';
+
+/**
+ * ImapPollerService — Enterprise email inbound engine.
+ *
+ * Architecture:
+ *   - Scheduled via setInterval (not BullMQ cron, to support dynamic intervals)
+ *   - Each tenant's SMTP config with IMAP fields triggers a polling job
+ *   - Distributed Redis Lock prevents double-polling in multi-instance deploy
+ *   - Dynamic Polling: Business-Hour-aware interval (2min active / 15min idle/off-hours)
+ *   - Timezone-aware: reads tenant's Business Hours config, NOT hardcoded (GCC support)
+ *
+ * Flow:
+ *   1. Scan all tenant SMTP configs with imapHost configured
+ *   2. For each config: acquire Redis lock → connect IMAP → fetch UNSEEN → process
+ *   3. EmailNormalizer filters auto-responders & bounces
+ *   4. Clean emails → save to email_contents/email_metadata → emit to OmniInbound pipeline
+ */
+@Injectable()
+export class ImapPollerService implements OnModuleDestroy {
+  private readonly logger = new Logger(ImapPollerService.name);
+  private pollTimer: NodeJS.Timeout | null = null;
+  /** Graceful shutdown flag — stops in-flight polling loops */
+  private destroying = false;
+
+  /** Active interval (within business hours + recent activity) */
+  private readonly ACTIVE_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+  /** Idle interval (outside business hours or no recent activity) */
+  private readonly IDLE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  /** Lock TTL: max time a single poll can take before lock expires */
+  private readonly LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes (handles large batches)
+  /** Max emails to process per poll cycle (rest will be caught next cycle) */
+  private readonly MAX_BATCH_SIZE = 50;
+  /** Activity threshold: tenant is "idle" if no email in/out for 24h */
+  private readonly ACTIVITY_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+
+  constructor(
+    private readonly configRepo: ChannelConfigRepository,
+    private readonly lockService: RedisLockService,
+    private readonly redisService: RedisService,
+    private readonly businessHoursService: BusinessHoursService,
+    private readonly normalizer: EmailNormalizerService,
+    private readonly eventEmitter: EventEmitter2,
+    @Inject(CRYPTO_SERVICE_TOKEN)
+    private readonly crypto: ICryptoService,
+    @InjectModel(EmailContentSchemaClass.name)
+    private readonly emailContentModel: Model<EmailContentSchemaClass>,
+    @InjectModel(EmailMetadataSchemaClass.name)
+    private readonly emailMetadataModel: Model<EmailMetadataSchemaClass>,
+  ) {
+    // Clean stale IMAP locks from previous instance (hot-reload / crash)
+    void this.cleanupStaleLocks();
+    // Start the master scheduler
+    this.startScheduler();
+  }
+
+  onModuleDestroy(): void {
+    this.destroying = true;
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.logger.log('[ImapPoller] Destroyed — scheduler stopped');
+  }
+
+  // ── Stale Lock Cleanup (hot-reload / crash recovery) ─────────────────────
+
+  /**
+   * On startup, delete any IMAP locks left by a previous process.
+   * Since we're a fresh instance, no in-flight polls exist from THIS process.
+   */
+  private async cleanupStaleLocks(): Promise<void> {
+    try {
+      const client = this.redisService.getClient();
+      const keys = await client.keys('imap:lock:*');
+      if (keys.length > 0) {
+        await client.del(...keys);
+        this.logger.warn(
+          `[ImapPoller] Cleaned up ${keys.length} stale lock(s) from previous instance`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `[ImapPoller] Failed to cleanup stale locks: ${err.message}`,
+      );
+    }
+  }
+
+  // ── Master Scheduler ────────────────────────────────────────────────────
+
+  /**
+   * Master tick: runs every minute, decides which tenants need polling.
+   * This is NOT a per-tenant timer — it's a single scheduler that fans out.
+   */
+  private startScheduler(): void {
+    // Run first tick after 30 seconds (let app bootstrap complete)
+    setTimeout(() => this.masterTick(), 30_000);
+    // Then every 60 seconds
+    this.pollTimer = setInterval(() => this.masterTick(), 60_000);
+    this.logger.log('[ImapPoller] Master scheduler started (60s tick)');
+  }
+
+  /**
+   * Master tick: find all SMTP configs with IMAP enabled, check intervals.
+   */
+  private async masterTick(): Promise<void> {
+    if (this.destroying) return;
+
+    try {
+      const imapConfigs = await this.findImapEnabledConfigs();
+
+      if (imapConfigs.length === 0) {
+        this.logger.log('[ImapPoller] Tick: No IMAP-enabled configs found');
+        return;
+      }
+
+      this.logger.log(
+        `[ImapPoller] Tick: ${imapConfigs.length} IMAP-enabled configs found`,
+      );
+
+      // Fan out: check each config's polling schedule
+      await Promise.allSettled(
+        imapConfigs.map((config) => this.checkAndPoll(config)),
+      );
+    } catch (err: any) {
+      this.logger.error(`[ImapPoller] Master tick error: ${err.message}`);
+    }
+  }
+
+  // ── Per-Tenant Polling Decision ─────────────────────────────────────────
+
+  /**
+   * Decide whether to poll this tenant's mailbox NOW.
+   * Uses Redis to track last poll time and compare with dynamic interval.
+   */
+  private async checkAndPoll(config: any): Promise<void> {
+    const cacheKey = `imap:lastpoll:${config.id}`;
+    const client = this.redisService.getClient();
+
+    // Check when we last polled this config
+    const lastPollStr = await client.get(cacheKey);
+    const lastPollMs = lastPollStr ? parseInt(lastPollStr, 10) : 0;
+
+    // Determine interval based on business hours + activity
+    const interval = await this.getDynamicInterval(config.tenantId);
+
+    // First poll ever for this config → run immediately; otherwise respect interval
+    if (lastPollMs > 0) {
+      const elapsed = Date.now() - lastPollMs;
+
+      if (elapsed < interval) {
+        this.logger.log(
+          `[ImapPoller] ${config.name}: Skipping — next poll in ${Math.ceil((interval - elapsed) / 1000)}s`,
+        );
+        return;
+      }
+      this.logger.log(
+        `[ImapPoller] ${config.name}: Interval elapsed (${Math.ceil(elapsed / 1000)}s >= ${Math.ceil(interval / 1000)}s) — polling now`,
+      );
+    } else {
+      this.logger.log(
+        `[ImapPoller] ${config.name}: First poll — running immediately`,
+      );
+    }
+
+    // Time to poll — acquire distributed lock
+    const lockKey = `imap:lock:${config.id}`;
+
+    try {
+      await this.lockService.acquire(
+        lockKey,
+        this.LOCK_TTL_MS,
+        async () => {
+          this.logger.log(
+            `[ImapPoller] ${config.name}: Lock acquired — starting pollMailbox`,
+          );
+          await this.pollMailbox(config);
+          // Record poll time
+          await client.set(cacheKey, Date.now().toString(), 'PX', interval * 2);
+          this.logger.log(
+            `[ImapPoller] ${config.name}: Poll complete — recorded lastPoll`,
+          );
+        },
+        200, // retry delay
+        3, // max retries (don't fight for locks)
+      );
+    } catch (err: any) {
+      // Lock busy = another instance is polling this mailbox.
+      if (err.message?.includes('Could not acquire lock')) {
+        this.logger.warn(
+          `[ImapPoller] ${config.name}: Could not acquire lock — another instance is polling`,
+        );
+        return;
+      }
+      this.logger.error(
+        `[ImapPoller] Poll error for config ${config.name}: ${err.message}`,
+      );
+    }
+  }
+
+  /**
+   * Dynamic Polling Interval — Timezone-aware, Business-Hours-aware.
+   *
+   * Strategy (from Product Researcher feedback):
+   *   - Within business hours + active (email in last 24h): 2 minutes
+   *   - Within business hours + idle: 15 minutes
+   *   - Outside business hours: 15 minutes
+   *   - Uses tenant's configured timezone (GCC/Saudi support)
+   */
+  private async getDynamicInterval(tenantId: string): Promise<number> {
+    // Dev mode: always poll at active interval (skip business-hours check)
+    if (process.env.NODE_ENV !== 'production') {
+      return this.ACTIVE_INTERVAL_MS;
+    }
+
+    try {
+      // Check business hours (uses tenant's timezone, NOT hardcoded)
+      const isBusinessHours =
+        await this.businessHoursService.isWithinBusinessHours(tenantId);
+
+      if (!isBusinessHours) {
+        return this.IDLE_INTERVAL_MS;
+      }
+
+      // Check recent activity
+      const activityKey = `imap:activity:${tenantId}`;
+      const client = this.redisService.getClient();
+      const lastActivity = await client.get(activityKey);
+
+      if (lastActivity) {
+        const elapsed = Date.now() - parseInt(lastActivity, 10);
+        if (elapsed < this.ACTIVITY_THRESHOLD_MS) {
+          return this.ACTIVE_INTERVAL_MS; // Active tenant
+        }
+      }
+
+      return this.IDLE_INTERVAL_MS; // Idle tenant
+    } catch {
+      return this.IDLE_INTERVAL_MS; // Default to idle on error
+    }
+  }
+
+  /**
+   * Record activity for a tenant (called when email is received or sent).
+   * Resets the idle timer so polling stays at 2-minute intervals.
+   */
+  async recordActivity(tenantId: string): Promise<void> {
+    const client = this.redisService.getClient();
+    await client.set(
+      `imap:activity:${tenantId}`,
+      Date.now().toString(),
+      'PX',
+      this.ACTIVITY_THRESHOLD_MS,
+    );
+  }
+
+  // ── IMAP Polling Logic ──────────────────────────────────────────────────
+
+  /**
+   * Connect to IMAP, fetch UNSEEN emails, process each through normalizer.
+   */
+  private async pollMailbox(config: any): Promise<void> {
+    let ImapFlow: any;
+    try {
+      // Dynamic import — imapflow is an ESM package
+      ImapFlow = (await import('imapflow')).ImapFlow;
+    } catch {
+      this.logger.error(
+        '[ImapPoller] imapflow package not installed. Run: npm install imapflow',
+      );
+      return;
+    }
+
+    // Decrypt credentials
+    let credentials: Record<string, any>;
+    try {
+      credentials = JSON.parse(
+        await this.crypto.decrypt(config.encryptedCredentials),
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `[ImapPoller] Failed to decrypt credentials for ${config.name}: ${err.message}`,
+      );
+      return;
+    }
+
+    const imapHost = config.publicSettings?.imapHost;
+    const imapPort = Number(config.publicSettings?.imapPort || 993);
+
+    if (!imapHost) return;
+
+    const client = new ImapFlow({
+      host: imapHost,
+      port: imapPort,
+      secure: imapPort === 993,
+      auth: {
+        user: credentials.user,
+        pass: credentials.password,
+      },
+      logger: false, // Suppress noisy IMAP protocol logs
+    });
+
+    try {
+      await client.connect();
+
+      // Open INBOX
+      const lock = await client.getMailboxLock('INBOX');
+
+      try {
+        // ── UID-based tracking (never miss read emails) ─────────────
+        // Instead of { seen: false } which misses emails the user already
+        // opened in Gmail/Outlook, track the last processed UID in Redis
+        // and fetch everything newer.
+        const uidCacheKey = `imap:lastuid:${config.id}`;
+        const redisClient = this.redisService.getClient();
+        const lastUidStr = await redisClient.get(uidCacheKey);
+        const lastUid = lastUidStr ? parseInt(lastUidStr, 10) : 0;
+
+        // Build fetch range: all UIDs > lastUid, or UNSEEN if first run
+        const fetchQuery =
+          lastUid > 0 ? { uid: `${lastUid + 1}:*` } : { seen: false }; // First run: only UNSEEN to avoid importing entire mailbox
+
+        // Fetch messages
+        const messages: any[] = [];
+        for await (const msg of client.fetch(fetchQuery, {
+          envelope: true,
+          source: true,
+          bodyStructure: true,
+        })) {
+          messages.push(msg);
+        }
+
+        if (messages.length === 0) {
+          return;
+        }
+
+        this.logger.log(
+          `[ImapPoller] ${config.name}: Found ${messages.length} new email(s)`,
+        );
+
+        // Cap batch size to avoid lock expiration and overload
+        const batch = messages.slice(0, this.MAX_BATCH_SIZE);
+        if (messages.length > this.MAX_BATCH_SIZE) {
+          this.logger.warn(
+            `[ImapPoller] ${config.name}: Processing first ${this.MAX_BATCH_SIZE} of ${messages.length} emails (rest will sync next cycle)`,
+          );
+        }
+
+        // Record tenant activity (keeps polling at 2min)
+        await this.recordActivity(config.tenantId);
+
+        // Process each message
+        let processed = 0;
+        const processedUids: number[] = [];
+        for (const msg of batch) {
+          // Graceful shutdown: stop processing remaining emails
+          if (this.destroying) {
+            this.logger.warn(
+              `[ImapPoller] Shutdown in progress — aborting remaining email(s) for ${config.name}`,
+            );
+            break;
+          }
+
+          try {
+            this.logger.log(
+              `[ImapPoller] ▶ Processing UID=${msg.uid} (${config.name})`,
+            );
+            await this.processEmail(config, msg, client);
+            processedUids.push(msg.uid);
+            processed++;
+          } catch (err: any) {
+            this.logger.error(
+              `[ImapPoller] Failed to process email UID=${msg.uid}: ${err.message}`,
+            );
+          }
+        }
+
+        // Batch mark all processed emails as SEEN (single IMAP command)
+        if (processedUids.length > 0) {
+          try {
+            await client.messageFlagsAdd(processedUids, ['\\Seen'], {
+              uid: true,
+            });
+            this.logger.log(
+              `[ImapPoller] ${config.name}: Marked ${processedUids.length} email(s) as SEEN`,
+            );
+          } catch (err: any) {
+            this.logger.error(
+              `[ImapPoller] ${config.name}: Failed to mark emails as SEEN: ${err.message}`,
+            );
+          }
+        }
+
+        if (processed > 0) {
+          this.logger.log(
+            `[ImapPoller] ${config.name}: Successfully processed ${processed}/${batch.length} email(s)`,
+          );
+        }
+
+        // Save highest UID from this batch for next poll cycle
+        // Use all messages (not just processedUids) to avoid re-fetching skipped/duplicates
+        const maxUid = Math.max(...messages.map((m: any) => m.uid));
+        if (maxUid > 0) {
+          await redisClient.set(uidCacheKey, maxUid.toString());
+        }
+      } finally {
+        lock.release();
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `[ImapPoller] IMAP connection failed for ${config.name} (${imapHost}:${imapPort}): ${err.message}`,
+      );
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
+  // ── Email Processing ────────────────────────────────────────────────────
+
+  /**
+   * Process a single fetched email through the normalizer pipeline.
+   */
+  private async processEmail(
+    config: any,
+    msg: any,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _imapClient: any,
+  ): Promise<void> {
+    // ── Early Duplicate Check (from envelope, no parsing needed) ──────
+    const envelopeMessageId = msg.envelope?.messageId;
+    if (envelopeMessageId) {
+      const existing = await this.emailMetadataModel
+        .findOne({
+          tenantId: config.tenantId,
+          emailMessageId: envelopeMessageId,
+        })
+        .lean();
+      if (existing) {
+        this.logger.warn(
+          `[ImapPoller] UID=${msg.uid}: Skipped duplicate (envelope) — ${envelopeMessageId}`,
+        );
+        return;
+      }
+    }
+
+    // ── Parse email using mailparser (proper MIME/QP/Base64 decoding) ──
+    const rawSource = msg.source;
+    if (!rawSource) {
+      this.logger.warn(
+        `[ImapPoller] UID=${msg.uid}: No source data — skipping`,
+      );
+      return;
+    }
+
+    this.logger.log(
+      `[ImapPoller] UID=${msg.uid}: Parsing (${Buffer.isBuffer(rawSource) ? rawSource.length : 'unknown'} bytes)`,
+    );
+    const parsed: ParsedMail = await simpleParser(rawSource, {
+      skipImageLinks: true,
+      skipHtmlToText: false,
+      skipTextToHtml: false,
+    });
+    this.logger.log(
+      `[ImapPoller] UID=${msg.uid}: Parsed OK — subject="${parsed.subject || '(none)'}"`,
+    );
+
+    // Extract properly decoded content
+    const htmlBody = parsed.html || '';
+    const textBody = parsed.text || '';
+    const subject = parsed.subject || msg.envelope?.subject || '(no subject)';
+
+    // ── Extract structured participant data from mailparser ──────────
+    // mailparser returns AddressObject with { value: [{ address, name }] }
+    // to/cc/bcc can be AddressObject | AddressObject[] — normalize to flat array
+    const extractAddresses = (field: any): string[] => {
+      if (!field) return [];
+      const items = Array.isArray(field) ? field : [field];
+      return items.flatMap((obj: any) =>
+        (obj.value || []).map((a: any) => a.address).filter(Boolean),
+      );
+    };
+    const fromAddr = parsed.from?.value?.[0]?.address || '';
+    const fromName =
+      parsed.from?.value?.[0]?.name || fromAddr.split('@')[0] || 'Unknown';
+    const toAddrs = extractAddresses(parsed.to);
+    const ccAddrs = extractAddresses(parsed.cc);
+    const bccAddrs = extractAddresses(parsed.bcc);
+
+    // Build headers map for normalizer compatibility (auto-responder, bounce, thread)
+    // Only use string-safe headers — skip structured objects (from/to/cc)
+    const headers: Record<string, string> = {};
+    parsed.headers.forEach((value, key) => {
+      const k = key.toLowerCase();
+      // Skip address fields — we use parsed.from/to/cc directly
+      if (['from', 'to', 'cc', 'bcc', 'sender', 'reply-to'].includes(k)) {
+        headers[k] =
+          typeof value === 'object' && value !== null && 'text' in value
+            ? (value as any).text
+            : String(value ?? '');
+        return;
+      }
+      headers[k] =
+        typeof value === 'string'
+          ? value
+          : Array.isArray(value)
+            ? value.join(', ')
+            : String(value ?? '');
+    });
+
+    // ── Sad Path #1: Auto-Responder Filter ────────────────────────────
+    if (this.normalizer.isAutoResponder(headers)) {
+      this.logger.warn(`[ImapPoller] Dropped auto-responder: ${subject}`);
+      return;
+    }
+
+    // ── Sad Path #2: Bounce Detection ─────────────────────────────────
+    const bounce = this.normalizer.detectBounce(headers, textBody);
+    if (bounce?.isBounce) {
+      this.normalizer.handleBounce(
+        config.tenantId,
+        bounce.originalMessageId,
+        bounce.reason,
+      );
+      return;
+    }
+
+    // ── Extract Threading ───────────────────────────────────────────
+    const threadInfo = this.normalizer.extractThreadInfo(headers);
+
+    // ── Generate clean snippet from plain text ────────────────────────
+    // Use parsed.text (already decoded by mailparser) — no CSS/HTML artifacts
+    const snippet = (textBody || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 200);
+
+    // ── Idempotency Guard: skip if already imported ──────────────────
+    const rfcMessageId = threadInfo.messageId;
+    if (rfcMessageId) {
+      const existing = await this.emailMetadataModel
+        .findOne({
+          tenantId: config.tenantId,
+          emailMessageId: rfcMessageId,
+        })
+        .lean();
+      if (existing) {
+        this.logger.warn(
+          `[ImapPoller] Skipped duplicate: ${rfcMessageId} (already imported)`,
+        );
+        return;
+      }
+    }
+
+    // ── Generate a placeholder messageId upfront ──────────────────────
+    const generatedMessageId = new Types.ObjectId();
+
+    // ── Save heavy content to email_contents ───────────────────────────
+    const emailContent = await this.emailContentModel.create({
+      tenantId: config.tenantId,
+      messageId: generatedMessageId,
+      contactIds: [],
+      subject,
+      htmlBody: htmlBody || '',
+      textBody: textBody || '',
+      attachments: [],
+      from: fromAddr,
+      to: toAddrs,
+      cc: ccAddrs,
+      rfc822MessageId: threadInfo.messageId || null,
+    });
+
+    // ── Save metadata to email_metadata ────────────────────────────────
+    let emailMetadata: any;
+    try {
+      emailMetadata = await this.emailMetadataModel.create({
+        tenantId: config.tenantId,
+        messageId: generatedMessageId,
+        emailMessageId:
+          threadInfo.messageId || `<imap-${generatedMessageId}@local>`,
+        inReplyTo: threadInfo.inReplyTo,
+        references: threadInfo.references,
+        from: fromAddr,
+        to: toAddrs,
+        cc: ccAddrs,
+        bcc: bccAddrs,
+        deliveryStatus: 'unknown',
+        bounceReason: null,
+      });
+    } catch (err: any) {
+      if (err.code === 11000) {
+        await this.emailContentModel
+          .deleteOne({ _id: emailContent._id })
+          .catch(() => {});
+        this.logger.debug(
+          `[ImapPoller] Skipped duplicate (race): ${threadInfo.messageId}`,
+        );
+        return;
+      }
+      throw err;
+    }
+
+    // ── Emit lightweight payload to OmniInbound pipeline ───────────────
+    this.eventEmitter.emit('email.inbound.received', {
+      tenantId: config.tenantId,
+      configId: config.id,
+      channelType: 'email',
+      generatedMessageId: generatedMessageId.toString(),
+      from: fromAddr,
+      fromName,
+      to: toAddrs,
+      cc: ccAddrs,
+      subject,
+      snippet,
+      threadInfo,
+      emailContentId: emailContent._id?.toString(),
+      emailMetadataId: emailMetadata._id?.toString(),
+      timestamp: parsed.date || new Date(),
+    });
+
+    this.logger.log(
+      `[ImapPoller] ✉️ Processed: "${subject}" from ${fromName} <${fromAddr}>`,
+    );
+  }
+
+  // ── Config Discovery ────────────────────────────────────────────────────
+
+  /**
+   * Find all SMTP channel configs that have IMAP sync enabled.
+   * A config is IMAP-enabled if publicSettings.imapHost is non-empty.
+   */
+  private async findImapEnabledConfigs(): Promise<any[]> {
+    try {
+      // Use raw Mongoose query since repo doesn't have this filter
+      const ChannelConfigModel =
+        this.configRepo['configModel'] || (this.configRepo as any).model;
+
+      if (!ChannelConfigModel) {
+        // Fallback: scan visible configs
+        return [];
+      }
+
+      const configs = await ChannelConfigModel.find({
+        providerType: 'smtp',
+        deletedAt: null,
+        status: 'active',
+        'publicSettings.imapHost': { $exists: true, $ne: '' },
+      })
+        .select('+encryptedCredentials')
+        .lean();
+
+      // .lean() strips Mongoose virtuals — add `id` from `_id`
+      return configs.map((c: any) => ({
+        ...c,
+        id: c._id?.toString(),
+        tenantId: c.tenantId?.toString(),
+      }));
+    } catch (err: any) {
+      this.logger.error(`[ImapPoller] Config scan error: ${err.message}`);
+      return [];
+    }
+  }
+
+  // ── Basic Email Parsers ─────────────────────────────────────────────────
+
+  // parseHeaders and parseBody are now handled by mailparser in processEmail()
+}

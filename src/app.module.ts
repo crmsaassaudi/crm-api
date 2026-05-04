@@ -55,6 +55,7 @@ import { OmniInboundModule } from './omni-inbound/omni-inbound.module';
 import { DataVisibilityModule } from './data-visibility/data-visibility.module';
 import { ListViewsModule } from './list-views/list-views.module';
 import { AssignmentEngineModule } from './assignment-engine/assignment-engine.module';
+import { MailInboundModule } from './channels/mail-inbound/mail-inbound.module';
 
 import {
   KeycloakConnectModule,
@@ -241,6 +242,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     DataVisibilityModule,
     ListViewsModule,
     AssignmentEngineModule,
+    MailInboundModule,
   ],
   providers: [
     {

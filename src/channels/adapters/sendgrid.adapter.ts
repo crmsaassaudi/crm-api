@@ -17,6 +17,7 @@ export class SendGridAdapter implements ConnectionAdapter {
 
   async verifyConnection(
     credentials: Record<string, any>,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _settings: Record<string, any>,
   ): Promise<ConnectionVerifyResult> {
     const apiKey = credentials.apiKey;

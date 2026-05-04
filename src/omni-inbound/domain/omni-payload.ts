@@ -3,7 +3,8 @@ export type ChannelType =
   | 'instagram'
   | 'zalo'
   | 'whatsapp'
-  | 'livechat';
+  | 'livechat'
+  | 'email';
 export type SenderType = 'customer' | 'agent' | 'system';
 export type MessageType =
   | 'text'

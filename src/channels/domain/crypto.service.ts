@@ -39,7 +39,9 @@ export class EnvCryptoService implements ICryptoService, OnModuleInit {
   constructor(private readonly configService: ConfigService) {}
 
   onModuleInit() {
-    const rawKey = this.configService.get<string>('CHANNEL_ENCRYPTION_KEY');
+    const rawKey = this.configService.get<string>('CHANNEL_ENCRYPTION_KEY', {
+      infer: true,
+    });
 
     if (!rawKey) {
       this.logger.warn(
@@ -61,6 +63,7 @@ export class EnvCryptoService implements ICryptoService, OnModuleInit {
     this.logger.log('[CryptoService] AES-256-GCM initialized (env mode)');
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await
   async encrypt(plaintext: string): Promise<string> {
     const iv = randomBytes(16); // Random IV per encryption -- critical for GCM security
     const cipher = createCipheriv('aes-256-gcm', this.key, iv);
@@ -74,6 +77,7 @@ export class EnvCryptoService implements ICryptoService, OnModuleInit {
     return `${iv.toString('base64')}:${authTag.toString('base64')}:${encrypted}`;
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await
   async decrypt(encrypted: string): Promise<string> {
     const parts = encrypted.split(':');
     if (parts.length !== 3) {
@@ -137,10 +141,12 @@ export class KmsCryptoService implements ICryptoService, OnModuleInit {
   constructor(private readonly configService: ConfigService) {}
 
   async onModuleInit() {
-    this.keyId = this.configService.getOrThrow<string>('AWS_KMS_KEY_ID');
+    this.keyId = this.configService.getOrThrow<string>('AWS_KMS_KEY_ID', {
+      infer: true,
+    });
     const region =
-      this.configService.get<string>('AWS_KMS_REGION') ||
-      this.configService.get<string>('AWS_REGION') ||
+      this.configService.get<string>('AWS_KMS_REGION', { infer: true }) ||
+      this.configService.get<string>('AWS_REGION', { infer: true }) ||
       'ap-southeast-1';
 
     // Dynamic import to avoid bundling KMS SDK when using env mode
@@ -251,8 +257,10 @@ export class KmsCryptoService implements ICryptoService, OnModuleInit {
 export function cryptoServiceFactory(
   configService: ConfigService,
 ): ICryptoService {
-  const provider = configService.get<string>('ENCRYPTION_PROVIDER') || 'env';
-  const nodeEnv = configService.get<string>('NODE_ENV') || 'development';
+  const provider =
+    configService.get<string>('ENCRYPTION_PROVIDER', { infer: true }) || 'env';
+  const nodeEnv =
+    configService.get<string>('NODE_ENV', { infer: true }) || 'development';
 
   // -- Bootstrap Halt: Production guard --
   if (nodeEnv === 'production' && provider === 'env') {

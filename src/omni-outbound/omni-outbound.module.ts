@@ -35,6 +35,16 @@ import {
 // External modules
 import { ChannelsModule } from '../channels/channels.module';
 
+// Email schemas
+import {
+  EmailContentSchemaClass,
+  EmailContentSchema,
+} from '../channels/infrastructure/persistence/document/entities/email-content.schema';
+import {
+  EmailMetadataSchemaClass,
+  EmailMetadataSchema,
+} from '../channels/infrastructure/persistence/document/entities/email-metadata.schema';
+
 /**
  * OmniOutboundModule — independent module for all outbound message operations.
  *
@@ -51,6 +61,8 @@ import { ChannelsModule } from '../channels/channels.module';
         schema: OmniConversationSchema,
       },
       { name: OmniMessageSchemaClass.name, schema: OmniMessageSchema },
+      { name: EmailContentSchemaClass.name, schema: EmailContentSchema },
+      { name: EmailMetadataSchemaClass.name, schema: EmailMetadataSchema },
     ]),
   ],
   providers: [

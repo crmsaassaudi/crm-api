@@ -14,6 +14,7 @@ const CHANNEL_TYPES = [
   'LiveChat',
   'Instagram',
   'TikTok',
+  'Email',
 ];
 
 /**

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CrmSettingRepository } from './infrastructure/persistence/document/repositories/crm-setting.repository';
+import { DEFAULT_EMAIL_SETTINGS } from '../channels/domain/email-settings.defaults';
 
 /**
  * Seeds default CRM settings for a newly created tenant.
@@ -105,6 +106,9 @@ export class TenantSettingsSeedingService {
 
       // ── List Views ──────────────────────────────────────────────────────────
       this.seed(tenantId, 'list_views', DEFAULT_LIST_VIEWS),
+
+      // ── Email Channel Settings ──────────────────────────────────────────────
+      this.seed(tenantId, 'email_settings', DEFAULT_EMAIL_SETTINGS),
     ]);
 
     this.logger.log(`[Seeding] Completed for tenant ${tenantId}`);
@@ -1471,4 +1475,5 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   data_visibility: DEFAULT_DATA_VISIBILITY,
   sharing_rules: DEFAULT_SHARING_RULES,
   list_views: DEFAULT_LIST_VIEWS,
+  email_settings: DEFAULT_EMAIL_SETTINGS,
 };

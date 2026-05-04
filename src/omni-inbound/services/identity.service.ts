@@ -222,6 +222,7 @@ export class IdentityService {
       zalo: 'Zalo',
       whatsapp: 'WhatsApp',
       livechat: 'LiveChat',
+      email: 'Email',
     };
     return map[type] ?? type;
   }

@@ -19,6 +19,15 @@ import {
   ChannelConfigSchema,
   ChannelConfigSchemaClass,
 } from './infrastructure/persistence/document/entities/channel-config.schema';
+import {
+  EmailContentSchema,
+  EmailContentSchemaClass,
+} from './infrastructure/persistence/document/entities/email-content.schema';
+import { EmailContentController } from './email-content.controller';
+import {
+  EmailMetadataSchema,
+  EmailMetadataSchemaClass,
+} from './infrastructure/persistence/document/entities/email-metadata.schema';
 
 // -- Channel Config Audit Trail --
 import {
@@ -32,13 +41,13 @@ import { ChannelConfigAuditService } from './channel-config-audit.service';
 import {
   CRYPTO_SERVICE_TOKEN,
   EnvCryptoService,
-  KmsCryptoService,
   cryptoServiceFactory,
 } from './domain/crypto.service';
 
 // -- Connection Adapters --
 import { SendGridAdapter } from './adapters/sendgrid.adapter';
 import { TwilioAdapter } from './adapters/twilio.adapter';
+import { SmtpAdapter } from './adapters/smtp.adapter';
 import { AdapterRegistryService } from './adapters/adapter-registry.service';
 
 // -- Phase 2: Health Check & Alert --
@@ -47,6 +56,33 @@ import { ChannelAlertService } from './channel-alert.service';
 
 // -- Phase 3: Transport Pool (LRU cache for decrypted credentials) --
 import { TransportPoolService } from './transport-pool.service';
+
+// -- Phase 1 Enterprise Email Services --
+import { AttachmentSecurityService } from './services/attachment-security.service';
+import { OutboundQueueService } from './services/outbound-queue.service';
+import {
+  EmailSignatureService,
+  EmailSignatureSchemaClass,
+  EmailSignatureSchema,
+} from './services/email-signature.service';
+import { EmailNormalizerService } from './services/email-normalizer.service';
+
+// -- Phase 2 Enterprise Email Services --
+import { HistoricalSyncService } from './services/historical-sync.service';
+import {
+  EmailTrackingService,
+  EmailTrackingSchemaClass,
+  EmailTrackingSchema,
+} from './services/email-tracking.service';
+import { EmailTrackingController } from './email-tracking.controller';
+
+// -- Phase 4 Enterprise Email Services --
+import { EmailChannelSettingsService } from './services/email-channel-settings.service';
+import { GdprEmailService } from './services/gdpr-email.service';
+import { EmailSettingsController } from './email-settings.controller';
+
+// -- CRM Settings Module (for EmailChannelSettingsService) --
+import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
 
 // -- Automation (for delete protection + migration) --
 import { AutomationRulesModule } from '../automation-rules/automation-rules.module';
@@ -63,13 +99,26 @@ import { SocketModule } from '../modules/realtime/socket.module';
         name: ChannelConfigAuditSchemaClass.name,
         schema: ChannelConfigAuditSchema,
       },
+      // Email-specific storage (Phase 1 — Enterprise Email)
+      { name: EmailContentSchemaClass.name, schema: EmailContentSchema },
+      { name: EmailMetadataSchemaClass.name, schema: EmailMetadataSchema },
+      { name: EmailSignatureSchemaClass.name, schema: EmailSignatureSchema },
+      { name: EmailTrackingSchemaClass.name, schema: EmailTrackingSchema },
     ]),
     // forwardRef to avoid circular dependency
     forwardRef(() => AutomationRulesModule),
     // Phase 2: WebSocket for real-time alerts
     SocketModule,
+    // Phase 4: CRM Settings for tenant-level email config
+    CrmSettingsModule,
   ],
-  controllers: [ChannelsController, ChannelConfigController],
+  controllers: [
+    ChannelsController,
+    ChannelConfigController,
+    EmailContentController,
+    EmailTrackingController,
+    EmailSettingsController,
+  ],
   providers: [
     // Existing
     ChannelsService,
@@ -94,6 +143,7 @@ import { SocketModule } from '../modules/realtime/socket.module';
     // Connection Adapters
     SendGridAdapter,
     TwilioAdapter,
+    SmtpAdapter,
     AdapterRegistryService,
 
     // Phase 2: Health Check & Alert
@@ -102,6 +152,19 @@ import { SocketModule } from '../modules/realtime/socket.module';
 
     // Phase 3: Transport Pool (LRU cache for decrypted credentials)
     TransportPoolService,
+
+    // Phase 1 Enterprise Email Services
+    AttachmentSecurityService,
+    OutboundQueueService,
+    EmailSignatureService,
+    EmailNormalizerService,
+
+    HistoricalSyncService,
+    EmailTrackingService,
+
+    // Phase 4 Enterprise Email Services
+    EmailChannelSettingsService,
+    GdprEmailService,
   ],
   exports: [
     ChannelsService,
@@ -112,6 +175,9 @@ import { SocketModule } from '../modules/realtime/socket.module';
     AdapterRegistryService,
     CRYPTO_SERVICE_TOKEN,
     TransportPoolService,
+    AttachmentSecurityService,
+    OutboundQueueService,
+    EmailSignatureService,
   ],
 })
 export class ChannelsModule {}

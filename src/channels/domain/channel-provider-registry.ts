@@ -17,7 +17,7 @@ export interface ProviderFieldSchema {
   key: string;
 
   /** Input type for frontend rendering */
-  type: 'text' | 'password' | 'email';
+  type: 'text' | 'password' | 'email' | 'checkbox';
 
   /** Human-readable label (English default; i18n handled by frontend) */
   label: string;
@@ -87,6 +87,79 @@ export const PROVIDER_REGISTRY: ProviderSchema[] = [
         label: 'From Name',
         required: true,
         placeholder: 'My Company',
+      },
+    ],
+  },
+  {
+    providerType: 'smtp',
+    label: 'Email (SMTP)',
+    icon: 'mail',
+    category: 'email',
+    credentialFields: [
+      {
+        key: 'user',
+        type: 'text',
+        label: 'Email / Username',
+        required: true,
+        placeholder: 'you@gmail.com',
+        helpText: 'Your email address or SMTP username',
+      },
+      {
+        key: 'password',
+        type: 'password',
+        label: 'App Password',
+        required: true,
+        placeholder: '••••••••••••••••',
+        helpText:
+          'Gmail: Create an App Password at myaccount.google.com/apppasswords',
+      },
+    ],
+    settingFields: [
+      {
+        key: 'host',
+        type: 'text',
+        label: 'SMTP Host',
+        required: true,
+        placeholder: 'smtp.gmail.com',
+        helpText: 'Gmail: smtp.gmail.com / Outlook: smtp.office365.com',
+      },
+      {
+        key: 'port',
+        type: 'text',
+        label: 'SMTP Port',
+        required: true,
+        placeholder: '587',
+        helpText: '587 (STARTTLS) or 465 (SSL)',
+      },
+      {
+        key: 'fromEmail',
+        type: 'email',
+        label: 'From Email',
+        required: true,
+        placeholder: 'you@gmail.com',
+      },
+      {
+        key: 'fromName',
+        type: 'text',
+        label: 'From Name',
+        required: false,
+        placeholder: 'My Company',
+      },
+      {
+        key: 'imapHost',
+        type: 'text',
+        label: 'IMAP Host (Inbound Sync)',
+        required: false,
+        placeholder: 'imap.gmail.com',
+        helpText: 'Leave empty to disable email inbound sync',
+      },
+      {
+        key: 'imapPort',
+        type: 'text',
+        label: 'IMAP Port',
+        required: false,
+        placeholder: '993',
+        helpText: '993 (SSL) or 143 (STARTTLS)',
       },
     ],
   },

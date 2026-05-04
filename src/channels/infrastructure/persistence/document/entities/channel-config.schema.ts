@@ -6,7 +6,7 @@ import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.
 export type ChannelConfigSchemaDocument =
   HydratedDocument<ChannelConfigSchemaClass>;
 
-const PROVIDER_TYPES = ['sendgrid', 'twilio'] as const;
+const PROVIDER_TYPES = ['sendgrid', 'smtp', 'twilio'] as const;
 const CONFIG_STATUSES = ['active', 'error', 'disabled'] as const;
 const HEALTH_STATES = ['healthy', 'degraded', 'unhealthy'] as const;
 

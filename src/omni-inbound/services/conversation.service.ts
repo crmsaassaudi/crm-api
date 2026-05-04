@@ -990,6 +990,7 @@ export class ConversationService {
       zalo: 'Zalo',
       whatsapp: 'WhatsApp',
       livechat: 'LiveChat',
+      email: 'Email',
     };
     return map[type] ?? type;
   }
@@ -1047,9 +1048,64 @@ export class ConversationService {
         payload.tenantId,
       );
 
+      // ── Email-specific deduplication ────────────────────────────────────
+      // For email channels, the senderId IS the email address.
+      // Check if any existing contact already has this email in their
+      // emails[] array or omniIdentities — prevents N contacts for one sender.
+      if (payload.channelType === 'email' && payload.senderId) {
+        const senderEmail = payload.senderId.toLowerCase();
+
+        // Search by emails[] array first (most reliable)
+        const existingByEmail = await this.contactsService.findByEmail(
+          payload.tenantId,
+          senderEmail,
+        );
+        if (existingByEmail) {
+          // Ensure this contact has the Email omni identity
+          try {
+            await this.contactsService.mergeIdentity(existingByEmail.id, {
+              channelType: this.toSchemaChannelType(payload.channelType),
+              senderId: payload.senderId,
+            });
+          } catch {
+            /* identity may already exist */
+          }
+
+          this.logger.log(
+            `Reused existing contact ${existingByEmail.id} for email ${senderEmail}`,
+          );
+          return existingByEmail.id;
+        }
+
+        // Search by omniIdentities.senderId (catches earlier shadow contacts)
+        const existingByIdentity = await this.contactsService.findBySenderId(
+          payload.tenantId,
+          this.toSchemaChannelType(payload.channelType),
+          payload.senderId,
+        );
+        if (existingByIdentity) {
+          // Add email to emails[] array if not already there
+          try {
+            await this.contactsService.addEmailIfMissing(
+              existingByIdentity.id,
+              senderEmail,
+            );
+          } catch {
+            /* best effort */
+          }
+
+          this.logger.log(
+            `Reused existing contact ${existingByIdentity.id} for sender ${senderEmail} (identity match)`,
+          );
+          return existingByIdentity.id;
+        }
+      }
+
       if (identityConfig.autoMergeShadowContact) {
         const phone = payload.metadata?.phone;
-        const email = payload.metadata?.email;
+        const email =
+          payload.metadata?.email ||
+          (payload.channelType === 'email' ? payload.senderId : undefined);
 
         if (phone || email) {
           const duplicateResult = await this.contactsService.checkDuplicate({
@@ -1075,7 +1131,6 @@ export class ConversationService {
                   `(matched by ${phone ? 'phone' : 'email'})`,
               );
 
-              // Emit event for audit trail and frontend notification
               this.eventEmitter.emit('omni.contact.auto_merged', {
                 tenantId: payload.tenantId,
                 existingContactId: existingContact.id,
@@ -1089,32 +1144,33 @@ export class ConversationService {
               this.logger.warn(
                 `Auto-merge failed for sender ${payload.senderId}: ${mergeErr.message} — creating shadow instead`,
               );
-              // Fall through to shadow creation below
             }
           }
         }
       }
 
       // ── Create shadow contact ─────────────────────────────────────────
-      // Bypassing normal validation, simulate system creation.
-      // Use enriched profile name if available, otherwise fall back to
-      // metadata.contactName or raw senderId.
       const displayName =
         enrichedProfile.name ??
         payload.metadata?.contactName ??
         payload.senderId;
 
-      // Split "Nguyễn Toàn" → firstName="Nguyễn", lastName="Toàn"
-      // If only one word, use it as firstName and "(Omni)" as lastName
       const nameParts = displayName.trim().split(/\s+/);
       const firstName = nameParts[0];
       const lastName =
         nameParts.length > 1 ? nameParts.slice(1).join(' ') : '(Omni)';
 
+      // For email channels, populate the emails[] array for future dedup
+      const emailsArray =
+        payload.channelType === 'email' && payload.senderId
+          ? [payload.senderId.toLowerCase()]
+          : [];
+
       const contact = await this.contactsService.create({
         tenantId: payload.tenantId,
         firstName,
         lastName,
+        emails: emailsArray,
         status: 'new',
         lifecycleStage: 'lead',
         source: this.toSchemaChannelType(payload.channelType),

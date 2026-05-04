@@ -152,6 +152,41 @@ export class ContactsService {
   }
 
   /**
+   * Find a contact by email address in the emails[] array.
+   * Used for email channel deduplication.
+   */
+  async findByEmail(tenantId: string, email: string): Promise<Contact | null> {
+    return this.repository.findOne({
+      tenantId,
+      emails: email.toLowerCase(),
+    });
+  }
+
+  /**
+   * Find a contact by omniIdentities senderId.
+   * Used for email channel deduplication when emails[] is empty.
+   */
+  async findBySenderId(
+    tenantId: string,
+    channelType: string,
+    senderId: string,
+  ): Promise<Contact | null> {
+    return this.repository.findOne({
+      tenantId,
+      'omniIdentities.channelType': channelType,
+      'omniIdentities.senderId': senderId,
+    });
+  }
+
+  /**
+   * Add an email to a contact's emails[] array if not already present.
+   * Uses MongoDB $addToSet for atomicity.
+   */
+  async addEmailIfMissing(contactId: string, email: string): Promise<void> {
+    await this.repository.addEmailIfMissing(contactId, email.toLowerCase());
+  }
+
+  /**
    * Resolve the valid lifecycle stages from tenant settings.
    * Returns an ordered array of stage apiNames.
    */

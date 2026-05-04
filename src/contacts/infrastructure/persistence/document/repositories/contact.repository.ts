@@ -198,6 +198,18 @@ export class ContactRepository extends BaseDocumentRepository<
   }
 
   /**
+   * Atomically add an email to a contact's emails[] array if not already present.
+   */
+  async addEmailIfMissing(contactId: string, email: string): Promise<void> {
+    const scopedFilter = this.applyTenantFilter({ _id: contactId });
+    await this.model
+      .updateOne(scopedFilter, {
+        $addToSet: { emails: email },
+      })
+      .exec();
+  }
+
+  /**
    * Fast lean query to check if a sender is a VIP customer.
    * Uses the `tenant_sender_vip_lookup` compound index for speed.
    * Does NOT load the full contact document.
