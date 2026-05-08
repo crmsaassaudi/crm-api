@@ -17,18 +17,21 @@ export type { EmailSettings };
  * These settings are lazy-seeded on first access (existing tenants) or
  * explicitly seeded on tenant creation via TenantSettingsSeedingService.
  *
- * ┌─────────────────── email_settings schema ───────────────────┐
- * │  trackingEnabled:           boolean  (opt-in, default OFF)  │
- * │  trackingDefaultPerEmail:   boolean  (per-compose checkbox) │
- * │  lazyReplyBreakDays:        number   (configurable SLA)     │
- * │  dailyQuotaOverride:        number   (0 = use provider def) │
- * │  bulkRecipientLimit:        number   (max recipients/email) │
- * │  signatureAutoAppend:       boolean  (auto-append sigs)     │
- * │  historicalSyncMode:        string   (last-used sync mode)  │
- * │  domainBlacklistExtra:      string[] (tenant-specific)      │
- * │  immutableRecords:          boolean  (never delete emails)  │
- * │  gdprAutoRedactDays:        number   (0 = disabled)         │
- * └─────────────────────────────────────────────────────────────┘
+ * ┌─────────────────── email_settings schema ────────────────────┐
+ * │  trackingEnabled:           boolean  (opt-in, default OFF)   │
+ * │  trackingDefaultPerEmail:   boolean  (per-compose checkbox)  │
+ * │  lazyReplyBreakDays:        number   (configurable SLA)      │
+ * │  dailyQuotaOverride:        number   (0 = use provider def)  │
+ * │  bulkRecipientLimit:        number   (max recipients/email)  │
+ * │  signatureAutoAppend:       boolean  (auto-append sigs)      │
+ * │  historicalSyncMode:        string   (last-used sync mode)   │
+ * │  domainBlacklistExtra:      string[] (tenant-specific)       │
+ * │  immutableRecords:          boolean  (never delete emails)   │
+ * │  gdprAutoRedactDays:        number   (0 = disabled)          │
+ * │  syncReadState:             boolean  (opt-in two-way sync)   │
+ * │  initialSyncDays:           number   (days to look back)     │
+ * │  blockAutoResponders:       boolean  (drop OOF/auto-replies) │
+ * └──────────────────────────────────────────────────────────────┘
  */
 
 const SETTINGS_KEY = 'email_settings';
@@ -90,6 +93,11 @@ export class EmailChannelSettingsService {
         );
       }
     }
+    if (updates.initialSyncDays !== undefined) {
+      if (updates.initialSyncDays < 1 || updates.initialSyncDays > 365) {
+        throw new Error('initialSyncDays must be between 1 and 365');
+      }
+    }
 
     const merged: EmailSettings = { ...current, ...updates };
     await this.crmSettings.updateSetting(SETTINGS_KEY, merged, tenantId);
@@ -127,5 +135,33 @@ export class EmailChannelSettingsService {
     return settings.dailyQuotaOverride > 0
       ? settings.dailyQuotaOverride
       : providerDefault;
+  }
+
+  /**
+   * Helper: check if Two-Way Read State Sync is enabled for the tenant.
+   * Used by ReadStateSyncProcessor to decide whether to process sync jobs.
+   */
+  async isSyncReadStateEnabled(tenantId?: string): Promise<boolean> {
+    const settings = await this.getSettings(tenantId);
+    return settings.syncReadState;
+  }
+
+  /**
+   * Helper: get initial sync window (days to look back on first IMAP run).
+   * ImapPollerService uses this for the `since:` date filter on first poll.
+   */
+  async getInitialSyncDays(tenantId?: string): Promise<number> {
+    const settings = await this.getSettings(tenantId);
+    return settings.initialSyncDays;
+  }
+
+  /**
+   * Helper: check if auto-responder blocking is enabled for the tenant.
+   * Default is false → sync ALL emails (no filtering).
+   * When true, Out-of-Office and system auto-replies are dropped during ingest.
+   */
+  async isBlockAutoRespondersEnabled(tenantId?: string): Promise<boolean> {
+    const settings = await this.getSettings(tenantId);
+    return settings.blockAutoResponders;
   }
 }

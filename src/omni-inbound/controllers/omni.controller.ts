@@ -769,7 +769,20 @@ export class OmniController {
   @Patch('conversations/:id/read')
   @HttpCode(HttpStatus.NO_CONTENT)
   async markAsRead(@Param('id') id: string) {
+    const conversation = await this.conversationRepo.findById(id);
     await this.conversationRepo.resetUnreadCount(id);
+
+    // Two-Way Read State Sync: trigger background IMAP \Seen flag update
+    // for email conversations when the agent reads them in the CRM UI.
+    // The sync worker checks the opt-in flag (syncReadState) before processing.
+    if (conversation?.channelType === 'email') {
+      this.eventEmitter.emit('email.read_state.changed', {
+        tenantId: conversation.tenantId,
+        conversationId: id,
+        configId: conversation.channelAccount, // channelAccount = SMTP config ID
+        targetState: 'read' as const,
+      });
+    }
   }
 
   // ─── Settings ─────────────────────────────────────────────────

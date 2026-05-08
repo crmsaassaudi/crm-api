@@ -178,6 +178,7 @@ import { SocketModule } from '../modules/realtime/socket.module';
     AttachmentSecurityService,
     OutboundQueueService,
     EmailSignatureService,
+    EmailChannelSettingsService,
   ],
 })
 export class ChannelsModule {}

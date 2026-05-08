@@ -112,6 +112,37 @@ export class EmailMetadataSchemaClass {
    */
   @Prop({ type: String, default: null })
   bounceReason: string | null;
+
+  // ── Two-Way Read State Sync (Phase 2) ──────────────────────────────────
+
+  /**
+   * IMAP UID from the provider mailbox.
+   * Used by ReadStateSyncProcessor to target the correct email for flag mutation.
+   * May become stale if UIDValidity changes — worker falls back to Message-ID search.
+   */
+  @Prop({ type: Number, default: null })
+  imapUid: number | null;
+
+  /**
+   * Read state sync status:
+   *   - null: not yet synced (default)
+   *   - 'pending': sync job queued
+   *   - 'synced': \Seen flag successfully set/removed on provider
+   *   - 'failed': sync failed after max retries
+   */
+  @Prop({
+    type: String,
+    enum: ['pending', 'synced', 'failed', null],
+    default: null,
+  })
+  syncStatus: string | null;
+
+  /**
+   * Error message from the last failed sync attempt.
+   * Helps Support debug without digging through BullMQ logs.
+   */
+  @Prop({ type: String, default: null })
+  lastSyncError: string | null;
 }
 
 export const EmailMetadataSchema = SchemaFactory.createForClass(

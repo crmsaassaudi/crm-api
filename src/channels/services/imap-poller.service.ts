@@ -329,9 +329,24 @@ export class ImapPollerService implements OnModuleDestroy {
         const lastUidStr = await redisClient.get(uidCacheKey);
         const lastUid = lastUidStr ? parseInt(lastUidStr, 10) : 0;
 
-        // Build fetch range: all UIDs > lastUid, or UNSEEN if first run
+        // Fetch tenant-specific settings from channel config
+        const initialSyncDays =
+          parseInt(config.publicSettings?.initialSyncDays) || 30;
+        const blockAutoResponders =
+          config.publicSettings?.blockAutoResponders === true ||
+          config.publicSettings?.blockAutoResponders === 'true';
+
+        // Build fetch range: all UIDs > lastUid, or ALL from last N days if first run
+        // First run fetches ALL emails (read + unread) to ensure complete mailbox sync.
+        // Subsequent runs use UID-based tracking to never miss emails.
         const fetchQuery =
-          lastUid > 0 ? { uid: `${lastUid + 1}:*` } : { seen: false }; // First run: only UNSEEN to avoid importing entire mailbox
+          lastUid > 0
+            ? { uid: `${lastUid + 1}:*` }
+            : {
+                since: new Date(
+                  Date.now() - initialSyncDays * 24 * 60 * 60 * 1000,
+                ),
+              };
 
         // Fetch messages
         const messages: any[] = [];
@@ -378,28 +393,12 @@ export class ImapPollerService implements OnModuleDestroy {
             this.logger.log(
               `[ImapPoller] ▶ Processing UID=${msg.uid} (${config.name})`,
             );
-            await this.processEmail(config, msg, client);
+            await this.processEmail(config, msg, client, blockAutoResponders);
             processedUids.push(msg.uid);
             processed++;
           } catch (err: any) {
             this.logger.error(
               `[ImapPoller] Failed to process email UID=${msg.uid}: ${err.message}`,
-            );
-          }
-        }
-
-        // Batch mark all processed emails as SEEN (single IMAP command)
-        if (processedUids.length > 0) {
-          try {
-            await client.messageFlagsAdd(processedUids, ['\\Seen'], {
-              uid: true,
-            });
-            this.logger.log(
-              `[ImapPoller] ${config.name}: Marked ${processedUids.length} email(s) as SEEN`,
-            );
-          } catch (err: any) {
-            this.logger.error(
-              `[ImapPoller] ${config.name}: Failed to mark emails as SEEN: ${err.message}`,
             );
           }
         }
@@ -411,8 +410,9 @@ export class ImapPollerService implements OnModuleDestroy {
         }
 
         // Save highest UID from this batch for next poll cycle
-        // Use all messages (not just processedUids) to avoid re-fetching skipped/duplicates
-        const maxUid = Math.max(...messages.map((m: any) => m.uid));
+        // Crucial: Use 'batch' here, not 'messages'. If we use 'messages',
+        // we skip emails that were fetched but not yet processed due to batch limits.
+        const maxUid = Math.max(...batch.map((m: any) => m.uid));
         if (maxUid > 0) {
           await redisClient.set(uidCacheKey, maxUid.toString());
         }
@@ -436,8 +436,8 @@ export class ImapPollerService implements OnModuleDestroy {
   private async processEmail(
     config: any,
     msg: any,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _imapClient: any,
+    blockAutoResponders: boolean = false,
   ): Promise<void> {
     // ── Early Duplicate Check (from envelope, no parsing needed) ──────
     const envelopeMessageId = msg.envelope?.messageId;
@@ -521,7 +521,10 @@ export class ImapPollerService implements OnModuleDestroy {
     });
 
     // ── Sad Path #1: Auto-Responder Filter ────────────────────────────
-    if (this.normalizer.isAutoResponder(headers)) {
+    if (
+      blockAutoResponders &&
+      this.normalizer.isAutoResponder(headers, blockAutoResponders)
+    ) {
       this.logger.warn(`[ImapPoller] Dropped auto-responder: ${subject}`);
       return;
     }
@@ -598,6 +601,9 @@ export class ImapPollerService implements OnModuleDestroy {
         bcc: bccAddrs,
         deliveryStatus: 'unknown',
         bounceReason: null,
+        imapUid: msg.uid || null,
+        syncStatus: null,
+        lastSyncError: null,
       });
     } catch (err: any) {
       if (err.code === 11000) {
@@ -627,6 +633,7 @@ export class ImapPollerService implements OnModuleDestroy {
       threadInfo,
       emailContentId: emailContent._id?.toString(),
       emailMetadataId: emailMetadata._id?.toString(),
+      imapUid: msg.uid || null,
       timestamp: parsed.date || new Date(),
     });
 

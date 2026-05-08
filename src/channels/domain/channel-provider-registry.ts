@@ -30,6 +30,9 @@ export interface ProviderFieldSchema {
 
   /** Help text displayed below the input */
   helpText?: string;
+
+  /** Default value for the field when creating a new config */
+  defaultValue?: string | boolean | number;
 }
 
 // ── Provider Schema ───────────────────────────────────────────────────────
@@ -160,6 +163,34 @@ export const PROVIDER_REGISTRY: ProviderSchema[] = [
         required: false,
         placeholder: '993',
         helpText: '993 (SSL) or 143 (STARTTLS)',
+      },
+      {
+        key: 'syncReadState',
+        type: 'checkbox',
+        label: 'Sync Read Status (Two-way sync)',
+        required: false,
+        helpText:
+          'Sync read status back to email provider (Gmail/Outlook). Enabled by default.',
+        defaultValue: true,
+      },
+      {
+        key: 'initialSyncDays',
+        type: 'text',
+        label: 'Initial Sync Window (Days)',
+        required: false,
+        placeholder: '30',
+        helpText:
+          'Number of days to look back for emails during the first synchronization',
+        defaultValue: '30',
+      },
+      {
+        key: 'blockAutoResponders',
+        type: 'checkbox',
+        label: 'Block Auto-Responders',
+        required: false,
+        helpText:
+          'Filter out and drop auto-responders/system-generated emails. Disabled by default (syncs all).',
+        defaultValue: false,
       },
     ],
   },

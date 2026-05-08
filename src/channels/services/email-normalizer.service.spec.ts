@@ -21,44 +21,50 @@ describe('EmailNormalizerService', () => {
   describe('isAutoResponder()', () => {
     it('should DROP emails with Auto-Submitted: auto-replied (RFC 3834)', () => {
       expect(
-        service.isAutoResponder({ 'auto-submitted': 'auto-replied' }),
+        service.isAutoResponder({ 'auto-submitted': 'auto-replied' }, true),
       ).toBe(true);
     });
 
-    it('should DROP emails with Auto-Submitted: auto-generated', () => {
+    it('should NOT drop emails with Auto-Submitted: auto-generated', () => {
       expect(
-        service.isAutoResponder({ 'auto-submitted': 'auto-generated' }),
-      ).toBe(true);
+        service.isAutoResponder({ 'auto-submitted': 'auto-generated' }, true),
+      ).toBe(false);
     });
 
     it('should NOT drop emails with Auto-Submitted: no', () => {
-      expect(service.isAutoResponder({ 'auto-submitted': 'no' })).toBe(false);
+      expect(service.isAutoResponder({ 'auto-submitted': 'no' }, true)).toBe(
+        false,
+      );
     });
 
     it('should DROP emails with X-Auto-Response-Suppress header', () => {
       expect(
-        service.isAutoResponder({ 'x-auto-response-suppress': 'All' }),
+        service.isAutoResponder({ 'x-auto-response-suppress': 'All' }, true),
       ).toBe(true);
     });
 
     it('should DROP emails with X-Autoreply header', () => {
-      expect(service.isAutoResponder({ 'x-autoreply': 'yes' })).toBe(true);
+      expect(service.isAutoResponder({ 'x-autoreply': 'yes' }, true)).toBe(
+        true,
+      );
     });
 
     it('should DROP emails with X-Autorespond header', () => {
-      expect(service.isAutoResponder({ 'x-autorespond': 'yes' })).toBe(true);
+      expect(service.isAutoResponder({ 'x-autorespond': 'yes' }, true)).toBe(
+        true,
+      );
     });
 
-    it('should DROP emails with Precedence: bulk', () => {
-      expect(service.isAutoResponder({ precedence: 'bulk' })).toBe(true);
+    it('should NOT drop emails with Precedence: bulk', () => {
+      expect(service.isAutoResponder({ precedence: 'bulk' }, true)).toBe(false);
     });
 
     it('should DROP emails with Precedence: junk', () => {
-      expect(service.isAutoResponder({ precedence: 'junk' })).toBe(true);
+      expect(service.isAutoResponder({ precedence: 'junk' }, true)).toBe(true);
     });
 
-    it('should DROP emails with Precedence: list (mailing lists)', () => {
-      expect(service.isAutoResponder({ precedence: 'list' })).toBe(true);
+    it('should NOT drop emails with Precedence: list (mailing lists)', () => {
+      expect(service.isAutoResponder({ precedence: 'list' }, true)).toBe(false);
     });
 
     it('should NOT drop emails with empty Return-Path (could be bounce)', () => {
@@ -76,8 +82,8 @@ describe('EmailNormalizerService', () => {
     });
 
     it('should handle case-insensitive Precedence values', () => {
-      expect(service.isAutoResponder({ precedence: 'BULK' })).toBe(true);
-      expect(service.isAutoResponder({ precedence: 'Junk' })).toBe(true);
+      expect(service.isAutoResponder({ precedence: 'BULK' }, true)).toBe(false);
+      expect(service.isAutoResponder({ precedence: 'Junk' }, true)).toBe(true);
     });
   });
 

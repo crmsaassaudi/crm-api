@@ -56,6 +56,7 @@ import { DataVisibilityModule } from './data-visibility/data-visibility.module';
 import { ListViewsModule } from './list-views/list-views.module';
 import { AssignmentEngineModule } from './assignment-engine/assignment-engine.module';
 import { MailInboundModule } from './channels/mail-inbound/mail-inbound.module';
+import { ReadStateSyncModule } from './queue/read-state-sync/read-state-sync.module';
 
 import {
   KeycloakConnectModule,
@@ -243,6 +244,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
     ListViewsModule,
     AssignmentEngineModule,
     MailInboundModule,
+    ReadStateSyncModule,
   ],
   providers: [
     {

@@ -64,19 +64,39 @@ export class EmailNormalizerService {
    *
    * Returns true if the email should be DROPPED (not processed).
    */
-  isAutoResponder(headers: Record<string, string | string[]>): boolean {
+  isAutoResponder(
+    headers: Record<string, string | string[]>,
+    blockAutoResponders: boolean = false,
+  ): boolean {
+    if (!blockAutoResponders) {
+      return false;
+    }
+
     // RFC 3834: Auto-Submitted header
-    const autoSubmitted = this.getHeader(headers, 'auto-submitted');
-    if (autoSubmitted && autoSubmitted !== 'no') {
+    // We only want to drop 'auto-replied' (Out-of-Office).
+    // 'auto-generated' (GitHub, Jira, etc.) should be ALLOWED.
+    const autoSubmitted = (
+      this.getHeader(headers, 'auto-submitted') || ''
+    ).toLowerCase();
+    if (autoSubmitted === 'auto-replied') {
       this.logger.debug(
-        `[EmailNormalizer] Dropping auto-reply: Auto-Submitted=${autoSubmitted}`,
+        `[EmailNormalizer] Dropping Out-of-Office/Auto-reply: Auto-Submitted=${autoSubmitted}`,
       );
       return true;
     }
 
     // Microsoft/Exchange: X-Auto-Response-Suppress
-    const autoResponse = this.getHeader(headers, 'x-auto-response-suppress');
-    if (autoResponse) {
+    // Only drop if it specifically suppresses all or OOF
+    const autoResponse = (
+      this.getHeader(headers, 'x-auto-response-suppress') || ''
+    ).toLowerCase();
+    if (
+      autoResponse &&
+      (autoResponse.includes('all') || autoResponse.includes('oof'))
+    ) {
+      this.logger.debug(
+        `[EmailNormalizer] Dropping MS-Exchange OOF: ${autoResponse}`,
+      );
       return true;
     }
 
@@ -88,20 +108,14 @@ export class EmailNormalizerService {
       return true;
     }
 
-    // Precedence: bulk, junk, list (mailing list / newsletter)
-    const precedence = this.getHeader(headers, 'precedence');
-    if (
-      precedence &&
-      ['bulk', 'junk', 'list'].includes(precedence.toLowerCase())
-    ) {
+    // Precedence: bulk, junk, list
+    // We NO LONGER drop 'bulk' or 'list' because many important system notifications
+    // (like GitHub launch codes, password resets) use these headers.
+    const precedence = (
+      this.getHeader(headers, 'precedence') || ''
+    ).toLowerCase();
+    if (precedence === 'junk') {
       return true;
-    }
-
-    // Return-Path: <> (empty envelope sender = bounce/system mail)
-    const returnPath = this.getHeader(headers, 'return-path');
-    if (returnPath === '<>' || returnPath === '') {
-      // Could be a bounce — let bounce handler deal with it, not auto-drop
-      return false;
     }
 
     return false;

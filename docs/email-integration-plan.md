@@ -246,6 +246,7 @@ File: `src/channels/services/imap-poller.service.ts`
 3. Dynamic polling interval based on business hours + activity (see Section 8)
 4. UID-based high watermark (`lastSeenUid`) to only fetch new emails
 5. Stream-based email fetching for memory efficiency
+6. **Strict Read-Only Fetch**: Relies purely on UID tracking. Does NOT mutate the `\Seen` flag, preserving users' native Inbox unread states (CRM is not a mirror).
 
 **MIME Parsing Pipeline (mailparser):**
 ```typescript
@@ -844,6 +845,7 @@ mongosh <connection_string> --eval "
 | **DKIM/SPF Validation**               | Deferred | DNS verification flow — requires domain management UI                                 |
 | **ClamAV Scanning**                   | Deferred | Extension blocklist active. Full AV scanning not yet integrated.                      |
 | **Cold Storage (Atlas Tiering)**      | Deferred | Retention policies defined, cold migration not yet automated.                         |
+| **Two-Way Read State Sync**           | Deferred | Optional toggle to sync CRM UI reads back to IMAP via a background worker queue.      |
 
 ---
 
@@ -887,3 +889,6 @@ mongosh <connection_string> --eval "
 
 ### M. Email CSS Preservation
 > `DOMPurify.sanitize()` with `ADD_TAGS: ['style']` preserves email `<style>` blocks. Removed Tailwind `prose` class that was overriding email colors. `.email-body-content` forces white background like Gmail.
+
+### N. Two-Way Sync / Non-Destructive Polling
+> CRM does not arbitrarily mark emails as Read (`\Seen`) during IMAP polling. Users rely on the unread status in their native email clients (Gmail/Outlook) as a rudimentary to-do list. The read state is maintained locally in the CRM. Optional Two-Way Sync pushes the read state back to the provider only via explicit UI interaction, decoupled from the ingestion process.

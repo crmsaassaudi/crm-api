@@ -35,6 +35,15 @@ export interface EmailSettings {
 
   /** GDPR: auto-redact email content after N days (0 = disabled). */
   gdprAutoRedactDays: number;
+
+  /** Opt-in: sync read status back to email provider (Gmail/Outlook). */
+  syncReadState: boolean;
+
+  /** Number of days to look back for emails during the first synchronization. */
+  initialSyncDays: number;
+
+  /** Whether to filter out and drop auto-responders/system-generated emails. */
+  blockAutoResponders: boolean;
 }
 
 export const DEFAULT_EMAIL_SETTINGS: EmailSettings = {
@@ -48,4 +57,7 @@ export const DEFAULT_EMAIL_SETTINGS: EmailSettings = {
   domainBlacklistExtra: [], // No extra domains
   immutableRecords: true, // Don't delete emails
   gdprAutoRedactDays: 0, // Disabled by default
+  syncReadState: false, // Opt-in model — disabled by default
+  initialSyncDays: 30, // Default window for first-run sync
+  blockAutoResponders: false, // Sync ALL by default as requested
 };
