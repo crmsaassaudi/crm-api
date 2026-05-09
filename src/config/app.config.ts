@@ -58,7 +58,7 @@ export default registerAs<AppConfig>('app', () => {
     workingDirectory: process.env.PWD || process.cwd(),
     frontendDomain: process.env.FRONTEND_DOMAIN,
     backendDomain: process.env.BACKEND_DOMAIN ?? 'http://localhost',
-    rootDomain: process.env.APP_ROOT_DOMAIN || 'crm.com',
+    rootDomain: process.env.APP_ROOT_DOMAIN || 'crmsaudi.dev',
     port: process.env.APP_PORT
       ? parseInt(process.env.APP_PORT, 10)
       : process.env.PORT

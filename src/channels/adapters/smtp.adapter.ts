@@ -4,6 +4,7 @@ import {
   ConnectionAdapter,
   ConnectionVerifyResult,
 } from './connection-adapter.interface';
+import { OAuth2TokenManager } from '../services/oauth2-token-manager.service';
 
 /**
  * SMTP Connection Adapter.
@@ -19,15 +20,29 @@ export class SmtpAdapter implements ConnectionAdapter {
   readonly providerType = 'smtp';
   private readonly logger = new Logger(SmtpAdapter.name);
 
+  constructor(private readonly oauth2TokenManager: OAuth2TokenManager) {}
+
   async verifyConnection(
     credentials: Record<string, any>,
     settings: Record<string, any>,
   ): Promise<ConnectionVerifyResult> {
+    const authType =
+      credentials.authType || settings.authType || 'app_password';
     const { user, password } = credentials;
     const { host, port } = settings;
 
-    if (!user || !password) {
+    if (!user) {
+      return { success: false, error: 'Username is required' };
+    }
+    if (authType === 'app_password' && !password) {
       return { success: false, error: 'Username and Password are required' };
+    }
+    if (
+      authType === 'oauth2' &&
+      !credentials.accessToken &&
+      !settings.oauthConfig
+    ) {
+      return { success: false, error: 'OAuth2 access token is required' };
     }
     if (!host || !port) {
       return { success: false, error: 'SMTP Host and Port are required' };
@@ -41,12 +56,27 @@ export class SmtpAdapter implements ConnectionAdapter {
     let transporter: nodemailer.Transporter | null = null;
 
     try {
+      const resolvedCredentials = settings.oauthConfig
+        ? await this.oauth2TokenManager.buildOAuth2Credentials(
+            settings.oauthConfig,
+            credentials,
+          )
+        : credentials;
+      const auth =
+        authType === 'oauth2'
+          ? {
+              type: 'OAuth2' as const,
+              user,
+              accessToken: resolvedCredentials.accessToken,
+            }
+          : { user, pass: password };
+
       transporter = nodemailer.createTransport({
         host,
         port: numPort,
         // Port 465 uses implicit TLS (secure), others use STARTTLS
         secure: numPort === 465,
-        auth: { user, pass: password },
+        auth,
         // Timeout settings to avoid hanging on unreachable servers
         connectionTimeout: 10_000, // 10s to establish TCP
         greetingTimeout: 10_000, // 10s for SMTP greeting

@@ -3,6 +3,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { ChannelConfigRepository } from './infrastructure/persistence/document/repositories/channel-config.repository';
 import { ICryptoService, CRYPTO_SERVICE_TOKEN } from './domain/crypto.service';
 import { ChannelConfig } from './domain/channel-config';
+import { OAuth2TokenManager } from './services/oauth2-token-manager.service';
 
 /**
  * Resolved credentials from the Transport Pool.
@@ -14,10 +15,12 @@ export interface ResolvedTransport {
   providerType: string;
   name: string;
   status: string;
+  authType: string;
   /** Internal health state for adaptive scheduling (healthy/degraded/unhealthy) */
   healthState: string;
   credentials: Record<string, any>; // Decrypted — cached in-memory
   publicSettings: Record<string, any>;
+  tokenExpiresAt: Date | null;
   consecutiveFailures: number;
 }
 
@@ -70,6 +73,7 @@ export class TransportPoolService implements OnModuleDestroy {
 
   constructor(
     private readonly repository: ChannelConfigRepository,
+    private readonly oauth2TokenManager: OAuth2TokenManager,
     @Inject(CRYPTO_SERVICE_TOKEN)
     private readonly crypto: ICryptoService,
   ) {
@@ -118,6 +122,10 @@ export class TransportPoolService implements OnModuleDestroy {
       credentials = JSON.parse(
         await this.crypto.decrypt(config.encryptedCredentials),
       );
+      credentials = await this.oauth2TokenManager.buildOAuth2Credentials(
+        config,
+        credentials,
+      );
     } catch (err: any) {
       this.logger.error(
         `[TransportPool] Decrypt failed for config "${config.name}" (${configId}): ${err.message}`,
@@ -132,9 +140,11 @@ export class TransportPoolService implements OnModuleDestroy {
       providerType: config.providerType,
       name: config.name,
       status: config.status,
+      authType: config.authType || 'app_password',
       healthState: (config as any).healthState || 'healthy',
       credentials,
       publicSettings: config.publicSettings || {},
+      tokenExpiresAt: config.tokenExpiresAt || null,
       consecutiveFailures: config.consecutiveFailures || 0,
     };
 
@@ -259,7 +269,16 @@ export class TransportPoolService implements OnModuleDestroy {
   }
 
   private isExpired(entry: CacheEntry): boolean {
-    return Date.now() - entry.cachedAt > this.TTL_MS;
+    if (Date.now() - entry.cachedAt > this.TTL_MS) return true;
+
+    const expiresAt = entry.transport.tokenExpiresAt
+      ? new Date(entry.transport.tokenExpiresAt).getTime()
+      : 0;
+    return (
+      entry.transport.authType === 'oauth2' &&
+      expiresAt > 0 &&
+      expiresAt <= Date.now() + 2 * 60 * 1000
+    );
   }
 
   /**

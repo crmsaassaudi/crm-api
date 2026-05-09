@@ -8,6 +8,7 @@ import { AdapterRegistryService } from './adapters/adapter-registry.service';
 import { ICryptoService, CRYPTO_SERVICE_TOKEN } from './domain/crypto.service';
 import { Inject } from '@nestjs/common';
 import { ChannelConfig } from './domain/channel-config';
+import { OAuth2TokenManager } from './services/oauth2-token-manager.service';
 
 // ── Backoff intervals for adaptive health check ────────────────────────────
 const BACKOFF_INTERVALS_MS = [
@@ -56,6 +57,7 @@ export class ChannelHealthCheckService {
     private readonly crypto: ICryptoService,
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly oauth2TokenManager: OAuth2TokenManager,
   ) {}
 
   // ── Mode 1: Baseline Health Check (Every 6 Hours) ─────────────────────────
@@ -277,12 +279,20 @@ export class ChannelHealthCheckService {
       const credentials = JSON.parse(
         await this.crypto.decrypt(config.encryptedCredentials),
       );
+      const resolvedCredentials =
+        await this.oauth2TokenManager.buildOAuth2Credentials(
+          config,
+          credentials,
+        );
 
       // Verify via adapter
       const result = await this.adapterRegistry.verify(
         config.providerType,
-        credentials,
-        config.publicSettings || {},
+        resolvedCredentials,
+        {
+          ...(config.publicSettings || {}),
+          authType: config.authType || 'app_password',
+        },
       );
 
       if (result.success) {

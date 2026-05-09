@@ -88,6 +88,7 @@ import { EmailIntegrationController } from './email-integration.controller';
 import { EmailLabelController } from './email-label.controller';
 import { EmailIntegrationService } from './services/email-integration.service';
 import { EmailLabelService } from './services/email-label.service';
+import { OAuth2TokenManager } from './services/oauth2-token-manager.service';
 
 // -- CRM Settings Module (for EmailChannelSettingsService) --
 import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
@@ -181,6 +182,7 @@ import { SocketModule } from '../modules/realtime/socket.module';
     GdprEmailService,
     EmailIntegrationService,
     EmailLabelService,
+    OAuth2TokenManager,
   ],
   exports: [
     ChannelsService,
@@ -196,6 +198,7 @@ import { SocketModule } from '../modules/realtime/socket.module';
     EmailSignatureService,
     EmailChannelSettingsService,
     EmailLabelService,
+    OAuth2TokenManager,
   ],
 })
 export class ChannelsModule {}

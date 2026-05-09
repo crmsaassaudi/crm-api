@@ -26,6 +26,12 @@ export class ChannelConfig {
   @ApiPropertyOptional()
   publicSettings: Record<string, any>;
 
+  @ApiPropertyOptional({ enum: ['app_password', 'oauth2'] })
+  authType: string;
+
+  @ApiPropertyOptional()
+  tokenExpiresAt: Date | null;
+
   @ApiPropertyOptional()
   deletedAt: Date | null;
 
@@ -59,4 +65,10 @@ export class ChannelConfig {
    * Only used internally by the service layer for decryption.
    */
   encryptedCredentials?: string;
+
+  /**
+   * OAuth2 tokens are encrypted at rest and only selected for internal flows.
+   */
+  accessToken?: string | null;
+  refreshToken?: string | null;
 }

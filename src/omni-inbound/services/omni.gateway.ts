@@ -19,6 +19,8 @@ import { TenantsService } from '../../tenants/tenants.service';
 import { UsersService } from '../../users/users.service';
 import { jwtDecode } from 'jwt-decode';
 import * as cookie from 'cookie';
+import { ConfigService } from '@nestjs/config';
+import { AllConfigType } from '../../config/config.type';
 
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
@@ -57,9 +59,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly tenantsService: TenantsService,
     private readonly agentFallbackService: AgentFallbackService,
     private readonly usersService: UsersService,
+    private readonly configService: ConfigService<AllConfigType>,
   ) {}
 
-  private readonly ROOT_DOMAIN = 'crm.com';
   private readonly SYSTEM_SUBDOMAINS = ['api', 'admin', 'auth', 'www', 'mail'];
 
   // ─── Connection lifecycle ──────────────────────────────────────────
@@ -129,11 +131,15 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const host = client.handshake.headers.host ?? '';
       const hostWithoutPort = host.split(':')[0];
 
-      // 1. Try subdomain resolution (production: tenant.crm.com)
-      if (hostWithoutPort.endsWith(`.${this.ROOT_DOMAIN}`)) {
+      const rootDomain =
+        this.configService.get('app.rootDomain', { infer: true }) ??
+        'crmsaudi.dev';
+
+      // 1. Try subdomain resolution (production: tenant.crmsaudi.dev)
+      if (hostWithoutPort.endsWith(`.${rootDomain}`)) {
         const subdomain = hostWithoutPort.slice(
           0,
-          hostWithoutPort.length - this.ROOT_DOMAIN.length - 1,
+          hostWithoutPort.length - rootDomain.length - 1,
         );
         if (
           subdomain &&

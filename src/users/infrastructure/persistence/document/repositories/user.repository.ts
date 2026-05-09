@@ -10,8 +10,8 @@ import { FilterQuery, Model } from 'mongoose';
 import { UserMapper } from '../mappers/user.mapper';
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
-import { PaginationResponseDto } from 'src/utils/dto/pagination-response.dto';
-import { pagination } from 'src/utils/pagination';
+import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
+import { pagination } from '../../../../../utils/pagination';
 
 @Injectable()
 export class UsersDocumentRepository

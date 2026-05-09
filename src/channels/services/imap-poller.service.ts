@@ -14,6 +14,7 @@ import { ICryptoService, CRYPTO_SERVICE_TOKEN } from '../domain/crypto.service';
 import { EmailChannelSettingsService } from './email-channel-settings.service';
 import { Inject } from '@nestjs/common';
 import { simpleParser, ParsedMail } from 'mailparser';
+import { OAuth2TokenManager } from './oauth2-token-manager.service';
 
 type MailboxLabelContext = {
   crmFolder: string | null;
@@ -70,6 +71,7 @@ export class ImapPollerService implements OnModuleDestroy {
     private readonly businessHoursService: BusinessHoursService,
     private readonly normalizer: EmailNormalizerService,
     private readonly emailSettings: EmailChannelSettingsService,
+    private readonly oauth2TokenManager: OAuth2TokenManager,
     private readonly eventEmitter: EventEmitter2,
     @Inject(CRYPTO_SERVICE_TOKEN)
     private readonly crypto: ICryptoService,
@@ -309,6 +311,10 @@ export class ImapPollerService implements OnModuleDestroy {
       credentials = JSON.parse(
         await this.crypto.decrypt(config.encryptedCredentials),
       );
+      credentials = await this.oauth2TokenManager.buildOAuth2Credentials(
+        config,
+        credentials,
+      );
     } catch (err: any) {
       this.logger.error(
         `[ImapPoller] Failed to decrypt credentials for ${config.name}: ${err.message}`,
@@ -321,14 +327,22 @@ export class ImapPollerService implements OnModuleDestroy {
 
     if (!imapHost) return;
 
+    const auth =
+      (config.authType || 'app_password') === 'oauth2'
+        ? {
+            user: credentials.user,
+            accessToken: credentials.accessToken,
+          }
+        : {
+            user: credentials.user,
+            pass: credentials.password,
+          };
+
     const client = new ImapFlow({
       host: imapHost,
       port: imapPort,
       secure: imapPort === 993,
-      auth: {
-        user: credentials.user,
-        pass: credentials.password,
-      },
+      auth,
       logger: false, // Suppress noisy IMAP protocol logs
     });
 
@@ -911,7 +925,7 @@ export class ImapPollerService implements OnModuleDestroy {
         status: 'active',
         'publicSettings.imapHost': { $exists: true, $ne: '' },
       })
-        .select('+encryptedCredentials')
+        .select('+encryptedCredentials +accessToken +refreshToken')
         .lean();
 
       // .lean() strips Mongoose virtuals — add `id` from `_id`

@@ -1,12 +1,76 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsEnum,
   IsObject,
   IsOptional,
   IsString,
   Max,
   Min,
 } from 'class-validator';
+
+const OAUTH2_PROVIDERS = ['google_workspace', 'microsoft_entra'] as const;
+
+export class OAuth2AuthUrlDto {
+  @ApiPropertyOptional({ enum: OAUTH2_PROVIDERS })
+  @IsEnum(OAUTH2_PROVIDERS)
+  provider: 'google_workspace' | 'microsoft_entra';
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  redirectUri?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  state?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  loginHint?: string;
+}
+
+export class OAuth2CallbackDto {
+  @ApiPropertyOptional({ enum: OAUTH2_PROVIDERS })
+  @IsEnum(OAUTH2_PROVIDERS)
+  provider: 'google_workspace' | 'microsoft_entra';
+
+  @ApiPropertyOptional()
+  @IsString()
+  code: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  redirectUri?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  configId?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  emailAddress?: string;
+
+  @ApiPropertyOptional()
+  @IsObject()
+  @IsOptional()
+  publicSettings?: Record<string, any>;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  isDefault?: boolean;
+}
 
 export class UpdateEmailIntegrationSettingsDto {
   @ApiPropertyOptional()

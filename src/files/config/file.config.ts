@@ -34,11 +34,15 @@ class EnvironmentVariablesValidator {
 }
 
 export default registerAs<FileConfig>('file', () => {
-  validateConfig(process.env, EnvironmentVariablesValidator);
+  const config = {
+    ...process.env,
+    FILE_DRIVER: process.env.FILE_DRIVER ?? FileDriver.LOCAL,
+  };
+
+  validateConfig(config, EnvironmentVariablesValidator);
 
   return {
-    driver:
-      (process.env.FILE_DRIVER as FileDriver | undefined) ?? FileDriver.LOCAL,
+    driver: config.FILE_DRIVER as FileDriver,
     accessKeyId: process.env.ACCESS_KEY_ID,
     secretAccessKey: process.env.SECRET_ACCESS_KEY,
     awsDefaultS3Bucket: process.env.AWS_DEFAULT_S3_BUCKET,

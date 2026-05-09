@@ -30,7 +30,7 @@ import { TenantsRepository } from '../../tenants/infrastructure/persistence/docu
  * Resolution order (first match wins for each field):
  *
  *   tenantId:
- *     1. Subdomain alias  (daitoan.crm.com → lookup → ObjectId)
+ *     1. Subdomain alias  (daitoan.crmsaudi.dev -> lookup -> ObjectId)
  *     2. x-tenant-id header (DEV/TEST only)
  *     3. BFF session JWT claim (tenantId)
  *     4. Bearer JWT claim (tenantId)

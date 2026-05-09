@@ -335,7 +335,7 @@ export class OutboundService {
       const src = $(el).attr('src');
       if (src && src.includes('s3')) {
         // Matches any S3/storage URL
-        const cid = `inline-${index}-${Date.now()}@crm.com`;
+        const cid = `inline-${index}-${Date.now()}@crmsaudi.dev`;
         $(el).attr('src', `cid:${cid}`);
 
         try {

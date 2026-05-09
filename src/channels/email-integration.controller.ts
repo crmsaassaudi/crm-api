@@ -13,11 +13,14 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { ClsService } from 'nestjs-cls';
 import {
+  OAuth2AuthUrlDto,
+  OAuth2CallbackDto,
   ReconnectEmailIntegrationDto,
   TestEmailSyncDto,
   UpdateEmailIntegrationSettingsDto,
 } from './dto/email-integration.dto';
 import { EmailIntegrationService } from './services/email-integration.service';
+import { OAuth2TokenManager } from './services/oauth2-token-manager.service';
 
 @ApiTags('Email Integrations')
 @ApiBearerAuth()
@@ -26,7 +29,21 @@ export class EmailIntegrationController {
   constructor(
     private readonly service: EmailIntegrationService,
     private readonly cls: ClsService,
+    private readonly oauth2TokenManager: OAuth2TokenManager,
   ) {}
+
+  @Post('oauth2/auth-url')
+  @HttpCode(HttpStatus.OK)
+  getOAuth2AuthUrl(@Body() dto: OAuth2AuthUrlDto) {
+    return this.oauth2TokenManager.generateAuthUrl(dto);
+  }
+
+  @Post('oauth2/callback')
+  @HttpCode(HttpStatus.OK)
+  handleOAuth2Callback(@Req() req: Request, @Body() dto: OAuth2CallbackDto) {
+    this.setRequestContext(req);
+    return this.oauth2TokenManager.exchangeCodeAndSave(dto);
+  }
 
   @Get(':id/health')
   getHealth(@Param('id') id: string) {

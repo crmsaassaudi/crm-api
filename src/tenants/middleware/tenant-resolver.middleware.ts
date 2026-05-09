@@ -7,32 +7,32 @@ import { AllConfigType } from '../../config/config.type';
  * TenantResolverMiddleware
  *
  * Extracts the tenant alias from the request's Host header.
- * For a host of "toancorp.crm.com", the alias is "toancorp".
+ * For a host of "toancorp.crmsaudi.dev", the alias is "toancorp".
  *
  * The resolved alias is attached to the request object as `req['tenantAlias']`
  * and can be read downstream (guards, interceptors, CLS setup).
  *
- * Hosts that don't carry a subdomain (e.g. "crm.com", "localhost", "api.crm.com")
+ * Hosts that don't carry a tenant subdomain (e.g. "crmsaudi.dev", "localhost", "api.crmsaudi.dev")
  * are left with undfined tenantAlias.
  */
 @Injectable()
 export class TenantResolverMiddleware implements NestMiddleware {
   /**
-   * The root domain configured in the environment (e.g. "crm.com").
+   * The root domain configured in the environment (e.g. "crmsaudi.dev").
    * We use this to determine which part of the host is the subdomain.
    */
   private readonly rootDomain: string;
 
   constructor(configService: ConfigService<AllConfigType>) {
-    // Read from config; fall back to "crm.com" for local dev
+    // Read from config; fall back to the production root domain.
     this.rootDomain =
-      configService.get('app.rootDomain', { infer: true }) ?? 'crm.com';
+      configService.get('app.rootDomain', { infer: true }) ?? 'crmsaudi.dev';
   }
 
   private readonly SYSTEM_SUBDOMAINS = ['api', 'admin', 'auth', 'www', 'mail'];
 
   use(req: Request, _res: Response, next: NextFunction): void {
-    const host = req.hostname; // e.g. "toancorp.crm.com" (strips port)
+    const host = req.hostname; // e.g. "toancorp.crmsaudi.dev" (strips port)
 
     if (host && host.endsWith(`.${this.rootDomain}`)) {
       // Extract the leading subdomain segment

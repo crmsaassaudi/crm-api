@@ -362,7 +362,7 @@ export class AuthService {
         if (tenant && tenant.alias) {
           const rootDomain =
             this.configService.get('app.rootDomain', { infer: true }) ||
-            'crm.com';
+            'crmsaudi.dev';
           const url = new URL(frontend);
 
           if (process.env.NODE_ENV === 'development') {

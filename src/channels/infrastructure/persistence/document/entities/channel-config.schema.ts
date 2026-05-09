@@ -9,6 +9,7 @@ export type ChannelConfigSchemaDocument =
 const PROVIDER_TYPES = ['sendgrid', 'smtp', 'twilio'] as const;
 const CONFIG_STATUSES = ['active', 'error', 'disabled'] as const;
 const HEALTH_STATES = ['healthy', 'degraded', 'unhealthy'] as const;
+const AUTH_TYPES = ['app_password', 'oauth2'] as const;
 
 @Schema({
   timestamps: true,
@@ -40,6 +41,18 @@ export class ChannelConfigSchemaClass extends EntityDocumentHelper {
    */
   @Prop({ type: String, select: false })
   encryptedCredentials: string;
+
+  @Prop({ type: String, enum: AUTH_TYPES, default: 'app_password' })
+  authType: string;
+
+  @Prop({ type: String, select: false, default: null })
+  accessToken: string | null;
+
+  @Prop({ type: String, select: false, default: null })
+  refreshToken: string | null;
+
+  @Prop({ type: Date, default: null })
+  tokenExpiresAt: Date | null;
 
   /**
    * Non-sensitive settings (fromEmail, fromName, fromNumber).

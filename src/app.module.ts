@@ -83,6 +83,14 @@ import { Request } from 'express';
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.middleware';
 
+const nodeEnv = process.env.NODE_ENV || 'development';
+const envFilePath = [
+  `.env.${nodeEnv}.local`,
+  `.env.${nodeEnv}`,
+  '.env.local',
+  '.env',
+];
+
 @Module({
   imports: [
     DatabaseModule,
@@ -98,7 +106,7 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
         redisConfig,
         keycloakConfig,
       ],
-      envFilePath: ['.env'],
+      envFilePath,
     }),
     KeycloakConnectModule.registerAsync({
       useFactory: (configService: ConfigService<AllConfigType>) => {

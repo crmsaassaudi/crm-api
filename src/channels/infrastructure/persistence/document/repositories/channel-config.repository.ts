@@ -45,7 +45,7 @@ export class ChannelConfigRepository {
   ): Promise<ChannelConfig | null> {
     const doc = await this.model
       .findOne({ _id: id, tenantId, deletedAt: null })
-      .select('+encryptedCredentials')
+      .select('+encryptedCredentials +accessToken +refreshToken')
       .exec();
     return doc ? this.toDomain(doc) : null;
   }
@@ -59,7 +59,7 @@ export class ChannelConfigRepository {
   ): Promise<ChannelConfig | null> {
     const doc = await this.model
       .findOne({ _id: id, deletedAt: null })
-      .select('+encryptedCredentials')
+      .select('+encryptedCredentials +accessToken +refreshToken')
       .setOptions({ skipTenantFilter: true } as any)
       .exec();
     return doc ? this.toDomain(doc) : null;
@@ -81,6 +81,61 @@ export class ChannelConfigRepository {
         { $set: data },
         { new: true },
       )
+      .exec();
+    return doc ? this.toDomain(doc) : null;
+  }
+
+  async updateOAuthTokens(
+    id: string,
+    data: {
+      accessToken: string;
+      refreshToken?: string | null;
+      tokenExpiresAt: Date | null;
+      authType?: string;
+      encryptedCredentials?: string;
+      publicSettings?: Record<string, any>;
+      status?: string;
+      lastVerifiedAt?: Date;
+      lastHealthError?: string | null;
+      consecutiveFailures?: number;
+      healthState?: string;
+      nextHealthCheckAt?: Date | null;
+    },
+  ): Promise<ChannelConfig | null> {
+    const $set: Record<string, any> = {
+      accessToken: data.accessToken,
+      tokenExpiresAt: data.tokenExpiresAt,
+      authType: data.authType || 'oauth2',
+    };
+
+    if (data.refreshToken !== undefined && data.refreshToken !== null) {
+      $set.refreshToken = data.refreshToken;
+    }
+    if (data.encryptedCredentials !== undefined) {
+      $set.encryptedCredentials = data.encryptedCredentials;
+    }
+    if (data.publicSettings !== undefined) {
+      $set.publicSettings = data.publicSettings;
+    }
+    if (data.status !== undefined) $set.status = data.status;
+    if (data.lastVerifiedAt !== undefined) {
+      $set.lastVerifiedAt = data.lastVerifiedAt;
+    }
+    if (data.lastHealthError !== undefined) {
+      $set.lastHealthError = data.lastHealthError;
+    }
+    if (data.consecutiveFailures !== undefined) {
+      $set.consecutiveFailures = data.consecutiveFailures;
+    }
+    if (data.healthState !== undefined) $set.healthState = data.healthState;
+    if (data.nextHealthCheckAt !== undefined) {
+      $set.nextHealthCheckAt = data.nextHealthCheckAt;
+    }
+
+    const doc = await this.model
+      .findOneAndUpdate({ _id: id, deletedAt: null }, { $set }, { new: true })
+      .select('+encryptedCredentials +accessToken +refreshToken')
+      .setOptions({ skipTenantFilter: true } as any)
       .exec();
     return doc ? this.toDomain(doc) : null;
   }
@@ -137,7 +192,7 @@ export class ChannelConfigRepository {
         deletedAt: null,
         status: { $ne: 'disabled' },
       })
-      .select('+encryptedCredentials')
+      .select('+encryptedCredentials +accessToken +refreshToken')
       .setOptions({ skipTenantFilter: true } as any)
       .sort({ _id: 1 }) // deterministic order for batch processing
       .exec();
@@ -177,7 +232,7 @@ export class ChannelConfigRepository {
         status: { $ne: 'disabled' },
         nextHealthCheckAt: { $lte: now },
       })
-      .select('+encryptedCredentials')
+      .select('+encryptedCredentials +accessToken +refreshToken')
       .setOptions({ skipTenantFilter: true } as any)
       .sort({ nextHealthCheckAt: 1 })
       .limit(100) // Cap per run to prevent overload
@@ -196,6 +251,8 @@ export class ChannelConfigRepository {
     entity.isDefault = raw.isDefault;
     entity.status = raw.status;
     entity.publicSettings = raw.publicSettings || {};
+    entity.authType = (raw as any).authType || 'app_password';
+    entity.tokenExpiresAt = (raw as any).tokenExpiresAt || null;
     entity.deletedAt = raw.deletedAt;
     // Health Check Metadata (Phase 2)
     entity.lastVerifiedAt = raw.lastVerifiedAt || null;
@@ -209,6 +266,8 @@ export class ChannelConfigRepository {
     if (raw.encryptedCredentials) {
       entity.encryptedCredentials = raw.encryptedCredentials;
     }
+    entity.accessToken = (raw as any).accessToken || null;
+    entity.refreshToken = (raw as any).refreshToken || null;
     return entity;
   }
 }

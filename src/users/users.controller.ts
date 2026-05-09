@@ -43,7 +43,7 @@ import { ClsService } from 'nestjs-cls';
 import {
   PaginationResponse,
   PaginationResponseDto,
-} from 'src/utils/dto/pagination-response.dto';
+} from '../utils/dto/pagination-response.dto';
 
 @ApiBearerAuth()
 @UseGuards(RolesGuard)

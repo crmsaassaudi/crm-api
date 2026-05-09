@@ -25,7 +25,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { ClsService } from 'nestjs-cls';
 import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
 import { InviteUserDto } from './dto/invite-user.dto';
-import { PaginationResponseDto } from 'src/utils/dto/pagination-response.dto';
+import { PaginationResponseDto } from '../utils/dto/pagination-response.dto';
 import { TenantsRepository } from '../tenants/infrastructure/persistence/document/repositories/tenant.repository';
 import { GroupRepository } from '../groups/infrastructure/persistence/document/repositories/group.repository';
 

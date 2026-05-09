@@ -36,7 +36,7 @@ export class TenantsAuthController {
    * POST /api/v1/auth/register
    *
    * Creates a new tenant (Organization) in Keycloak + MongoDB with full Saga rollback.
-   * The organization alias becomes the canonical subdomain: https://{alias}.crm.com
+   * The organization alias becomes the canonical subdomain: https://{alias}.crmsaudi.dev
    */
   @Public()
   @Post('register')
@@ -55,7 +55,7 @@ export class TenantsAuthController {
         alias: 'toancorp',
         organizationName: 'Toan Corp',
         keycloakOrgId: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
-        loginUrl: 'https://toancorp.crm.com/login',
+        loginUrl: 'https://toancorp.crmsaudi.dev/login',
       },
     },
   })

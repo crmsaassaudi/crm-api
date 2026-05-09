@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import {
   ClassSerializerInterceptor,
   ValidationPipe,
@@ -30,7 +29,7 @@ async function bootstrap() {
     infer: true,
   });
   app.enableCors({
-    // In local development, allow any origin to support dynamic tenant subdomains (e.g., daitoan.crm.com:4200)
+    // In local development, allow any origin to support dynamic tenant subdomains.
     origin:
       process.env.NODE_ENV === 'development'
         ? true

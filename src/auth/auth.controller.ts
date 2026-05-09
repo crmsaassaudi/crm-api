@@ -39,10 +39,10 @@ const getCookieOptions = (hostname: string, isProduction: boolean) => {
   if (!isLocalhost) {
     const parts = hostname.split('.');
     if (parts.length > 2) {
-      // e.g. daitoan.crm.com → .crm.com (share cookie across all subdomains)
+      // e.g. daitoan.crmsaudi.dev -> .crmsaudi.dev (share cookie across all subdomains)
       domain = `.${parts.slice(-2).join('.')}`;
     } else if (parts.length === 2) {
-      // e.g. crm.com → .crm.com
+      // e.g. crmsaudi.dev -> .crmsaudi.dev
       domain = `.${hostname}`;
     }
   }

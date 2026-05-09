@@ -9,6 +9,7 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 const PROVIDER_TYPES = ['sendgrid', 'twilio', 'smtp'] as const;
+const AUTH_TYPES = ['app_password', 'oauth2'] as const;
 
 export class VerifyAndSaveChannelConfigDto {
   @ApiProperty({ enum: PROVIDER_TYPES })
@@ -32,6 +33,11 @@ export class VerifyAndSaveChannelConfigDto {
   @IsObject()
   @IsOptional()
   publicSettings?: Record<string, any>;
+
+  @ApiPropertyOptional({ enum: AUTH_TYPES, default: 'app_password' })
+  @IsEnum(AUTH_TYPES)
+  @IsOptional()
+  authType?: 'app_password' | 'oauth2';
 
   @ApiPropertyOptional()
   @IsBoolean()
@@ -57,6 +63,11 @@ export class UpdateChannelConfigDto {
   @IsObject()
   @IsOptional()
   publicSettings?: Record<string, any>;
+
+  @ApiPropertyOptional({ enum: AUTH_TYPES })
+  @IsEnum(AUTH_TYPES)
+  @IsOptional()
+  authType?: 'app_password' | 'oauth2';
 
   @ApiPropertyOptional({ enum: ['active', 'error', 'disabled'] })
   @IsEnum(['active', 'error', 'disabled'])

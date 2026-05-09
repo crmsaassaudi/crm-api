@@ -17,6 +17,8 @@ import { StatusEnum } from '../statuses/statuses.enum';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { TenantCreatedEvent } from './events/tenant-created.event';
 import { UserRepository } from '../users/infrastructure/persistence/user.repository';
+import { ConfigService } from '@nestjs/config';
+import { AllConfigType } from '../config/config.type';
 
 export interface RegisterTenantResult {
   tenantId: string;
@@ -36,7 +38,25 @@ export class TenantsService {
     private readonly keycloakAdminService: KeycloakAdminService,
     private readonly userRepository: UserRepository,
     private readonly eventEmitter: EventEmitter2,
+    private readonly configService: ConfigService<AllConfigType>,
   ) {}
+
+  private getTenantLoginUrl(alias: string): string {
+    const frontendUrl =
+      this.configService.get('keycloak.frontendUrl', { infer: true }) ||
+      'https://crmsaudi.dev';
+    const rootDomain =
+      this.configService.get('app.rootDomain', { infer: true }) ||
+      'crmsaudi.dev';
+    const url = new URL(frontendUrl);
+
+    url.hostname = `${alias}.${rootDomain}`;
+    url.pathname = '/login';
+    url.search = '';
+    url.hash = '';
+
+    return url.toString();
+  }
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Saga: POST /api/auth/register
@@ -198,7 +218,7 @@ export class TenantsService {
         alias,
         organizationName,
         keycloakOrgId: keycloakOrgId!,
-        loginUrl: `https://${alias}.crm.com/login`,
+        loginUrl: this.getTenantLoginUrl(alias),
       };
     } catch (error: unknown) {
       // ── Saga Rollback (compensating transactions) ──────────────────────────────
@@ -400,7 +420,7 @@ export class TenantsService {
         alias,
         organizationName,
         keycloakOrgId: keycloakOrgId!,
-        loginUrl: `https://${alias}.crm.com/login`,
+        loginUrl: this.getTenantLoginUrl(alias),
       };
     } catch (error: unknown) {
       // ── Saga Rollback (compensating transactions) ──────────────────────────────

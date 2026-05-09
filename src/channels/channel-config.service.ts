@@ -101,6 +101,7 @@ export class ChannelConfigService {
       tenantId: tenant,
       providerType: dto.providerType,
       name: dto.name,
+      authType: dto.authType || 'app_password',
       encryptedCredentials,
       publicSettings: dto.publicSettings || {},
       status: 'active',
@@ -153,6 +154,7 @@ export class ChannelConfigService {
     if (dto.name) updateData.name = dto.name;
     if (dto.publicSettings) updateData.publicSettings = dto.publicSettings;
     if (dto.status) updateData.status = dto.status;
+    if (dto.authType) updateData.authType = dto.authType;
 
     // If credentials changed, re-verify and re-encrypt
     if (dto.credentials) {

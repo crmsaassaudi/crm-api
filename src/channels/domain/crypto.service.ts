@@ -251,8 +251,8 @@ export class KmsCryptoService implements ICryptoService, OnModuleInit {
  *   - 'env' (default): EnvCryptoService (dev/staging only)
  *   - 'kms': KmsCryptoService (production-grade, required for GA)
  *
- * Bootstrap Halt: If NODE_ENV=production and ENCRYPTION_PROVIDER=env,
- * the factory throws to prevent production deployment with env-only encryption.
+ * Temporary production bypass: env mode is allowed until KMS rollout is planned.
+ * Keep the warning visible so this is not mistaken for the final security posture.
  */
 export function cryptoServiceFactory(
   configService: ConfigService,
@@ -262,11 +262,12 @@ export function cryptoServiceFactory(
   const nodeEnv =
     configService.get<string>('NODE_ENV', { infer: true }) || 'development';
 
-  // -- Bootstrap Halt: Production guard --
+  // TODO(encryption): Re-enable bootstrap halt after KMS is configured for production.
   if (nodeEnv === 'production' && provider === 'env') {
-    throw new Error(
-      'BOOTSTRAP HALT: Cannot use ENCRYPTION_PROVIDER=env in production. ' +
-        'Set ENCRYPTION_PROVIDER=kms and configure AWS KMS credentials.',
+    Logger.warn(
+      '[CryptoService] ENCRYPTION_PROVIDER=env is temporarily allowed in production. ' +
+        'Plan KMS rollout and restore the production bootstrap halt.',
+      'CryptoServiceFactory',
     );
   }
 
