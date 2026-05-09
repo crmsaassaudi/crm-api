@@ -1,0 +1,33 @@
+services:
+  crm-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crm-api
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      APP_PORT: 3000
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
+    ports:
+      - "127.0.0.1:3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./files:/usr/src/app/files
+    networks:
+      crm_api_net:
+        ipv4_address: 172.25.0.10
+
+networks:
+  crm_api_net:
+    name: crm_api_net
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.25.0.0/16
+          gateway: 172.25.0.1
