@@ -13,6 +13,10 @@ import {
   EmailMetadataSchema,
   EmailMetadataSchemaClass,
 } from '../infrastructure/persistence/document/entities/email-metadata.schema';
+import {
+  OmniMessageSchema,
+  OmniMessageSchemaClass,
+} from '../../omni-inbound/infrastructure/persistence/document/entities/omni-message.schema';
 
 import { ChannelsModule } from '../channels.module';
 import { RedisModule } from '../../redis/redis.module';
@@ -44,6 +48,7 @@ import { BusinessHoursService } from '../../omni-inbound/services/business-hours
     MongooseModule.forFeature([
       { name: EmailContentSchemaClass.name, schema: EmailContentSchema },
       { name: EmailMetadataSchemaClass.name, schema: EmailMetadataSchema },
+      { name: OmniMessageSchemaClass.name, schema: OmniMessageSchema },
     ]),
   ],
   providers: [

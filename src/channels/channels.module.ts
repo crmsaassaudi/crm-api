@@ -28,6 +28,10 @@ import {
   EmailMetadataSchema,
   EmailMetadataSchemaClass,
 } from './infrastructure/persistence/document/entities/email-metadata.schema';
+import {
+  EmailProviderLabelSchema,
+  EmailProviderLabelSchemaClass,
+} from './infrastructure/persistence/document/entities/email-provider-label.schema';
 
 // -- Channel Config Audit Trail --
 import {
@@ -80,6 +84,10 @@ import { EmailTrackingController } from './email-tracking.controller';
 import { EmailChannelSettingsService } from './services/email-channel-settings.service';
 import { GdprEmailService } from './services/gdpr-email.service';
 import { EmailSettingsController } from './email-settings.controller';
+import { EmailIntegrationController } from './email-integration.controller';
+import { EmailLabelController } from './email-label.controller';
+import { EmailIntegrationService } from './services/email-integration.service';
+import { EmailLabelService } from './services/email-label.service';
 
 // -- CRM Settings Module (for EmailChannelSettingsService) --
 import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
@@ -102,6 +110,10 @@ import { SocketModule } from '../modules/realtime/socket.module';
       // Email-specific storage (Phase 1 — Enterprise Email)
       { name: EmailContentSchemaClass.name, schema: EmailContentSchema },
       { name: EmailMetadataSchemaClass.name, schema: EmailMetadataSchema },
+      {
+        name: EmailProviderLabelSchemaClass.name,
+        schema: EmailProviderLabelSchema,
+      },
       { name: EmailSignatureSchemaClass.name, schema: EmailSignatureSchema },
       { name: EmailTrackingSchemaClass.name, schema: EmailTrackingSchema },
     ]),
@@ -118,6 +130,8 @@ import { SocketModule } from '../modules/realtime/socket.module';
     EmailContentController,
     EmailTrackingController,
     EmailSettingsController,
+    EmailIntegrationController,
+    EmailLabelController,
   ],
   providers: [
     // Existing
@@ -165,6 +179,8 @@ import { SocketModule } from '../modules/realtime/socket.module';
     // Phase 4 Enterprise Email Services
     EmailChannelSettingsService,
     GdprEmailService,
+    EmailIntegrationService,
+    EmailLabelService,
   ],
   exports: [
     ChannelsService,
@@ -179,6 +195,7 @@ import { SocketModule } from '../modules/realtime/socket.module';
     OutboundQueueService,
     EmailSignatureService,
     EmailChannelSettingsService,
+    EmailLabelService,
   ],
 })
 export class ChannelsModule {}

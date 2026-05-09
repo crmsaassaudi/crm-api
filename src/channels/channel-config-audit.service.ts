@@ -63,6 +63,57 @@ export class ChannelConfigAuditService {
     await this.writeLog('verify', payload);
   }
 
+  @OnEvent('channel-config.audit.reconnect')
+  async handleReconnect(payload: ChannelConfigAuditEvent): Promise<void> {
+    await this.writeLog('reconnect', payload);
+  }
+
+  @OnEvent('channel-config.audit.test-sync')
+  async handleTestSync(payload: ChannelConfigAuditEvent): Promise<void> {
+    await this.writeLog('test_sync', payload);
+  }
+
+  @OnEvent('channel-config.audit.label-reconcile')
+  async handleLabelReconcile(payload: ChannelConfigAuditEvent): Promise<void> {
+    await this.writeLog('label_reconcile', payload);
+  }
+
+  @OnEvent('channel-config.health.failed')
+  async handleHealthFailed(payload: {
+    configId: string;
+    configName: string;
+    providerType?: string | null;
+    tenantId: string;
+    error?: string;
+    consecutiveFailures?: number;
+    statusChanged?: boolean;
+  }): Promise<void> {
+    await this.writeLog('health_check', {
+      ...payload,
+      userId: 'system',
+      changes: {
+        result: 'failure',
+        error: payload.error,
+        consecutiveFailures: payload.consecutiveFailures,
+        statusChanged: payload.statusChanged,
+      },
+    });
+  }
+
+  @OnEvent('channel-config.health.recovered')
+  async handleHealthRecovered(payload: {
+    configId: string;
+    configName: string;
+    providerType?: string | null;
+    tenantId: string;
+  }): Promise<void> {
+    await this.writeLog('health_check', {
+      ...payload,
+      userId: 'system',
+      changes: { result: 'success', recovered: true },
+    });
+  }
+
   // -- Core Write --
 
   private async writeLog(

@@ -30,6 +30,18 @@ export class EmailMetadataSchemaClass {
   tenantId: string;
 
   /**
+   * Mailbox/channel config that imported or sent this message.
+   * Used by the mailbox label dictionary and mailbox-scoped filters.
+   */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'ChannelConfigSchemaClass',
+    default: null,
+    index: true,
+  })
+  mailboxId: string | null;
+
+  /**
    * Reference to the parent message in the `messages` collection.
    */
   @Prop({
@@ -118,6 +130,19 @@ export class EmailMetadataSchemaClass {
   providerLabels: string[];
 
   /**
+   * Structured label snapshots captured at ingest time.
+   * The provider label dictionary remains the source for filtering, while this
+   * snapshot lets list/detail views render labels even before reconciliation.
+   */
+  @Prop({ type: [MongooseSchema.Types.Mixed], default: [] })
+  providerLabelDetails: Array<{
+    id: string;
+    name: string;
+    type: 'system' | 'user';
+    color: string | null;
+  }>;
+
+  /**
    * CRM User ID who sent this email (outbound only).
    * Used for BCC privacy enforcement: only sender or admin can view BCC field.
    */
@@ -196,3 +221,5 @@ EmailMetadataSchema.index({ tenantId: 1, inReplyTo: 1 }, { sparse: true });
 EmailMetadataSchema.index({ tenantId: 1, from: 1 });
 EmailMetadataSchema.index({ tenantId: 1, crmFolder: 1, createdAt: -1 });
 EmailMetadataSchema.index({ tenantId: 1, providerLabels: 1 });
+EmailMetadataSchema.index({ tenantId: 1, mailboxId: 1, createdAt: -1 });
+EmailMetadataSchema.index({ tenantId: 1, mailboxId: 1, providerLabelIds: 1 });

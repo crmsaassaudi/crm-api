@@ -37,7 +37,7 @@ export class ChannelConfigAuditRepository {
   async findByConfig(
     configId: string,
     options?: { limit?: number; skip?: number },
-  ): Promise<{ logs: ChannelConfigAuditSchemaClass[]; total: number }> {
+  ): Promise<{ logs: any[]; total: number }> {
     const limit = options?.limit || 20;
     const skip = options?.skip || 0;
 
@@ -48,11 +48,30 @@ export class ChannelConfigAuditRepository {
         .skip(skip)
         .limit(limit)
         .setOptions({ skipTenantFilter: true } as any)
+        .lean({ virtuals: true } as any)
         .exec(),
-      this.model.countDocuments({ configId }),
+      this.model
+        .countDocuments({ configId })
+        .setOptions({ skipTenantFilter: true } as any),
     ]);
 
-    return { logs, total };
+    return {
+      logs: logs.map((log: any) => ({
+        id: log._id?.toString() || log.id,
+        tenantId: log.tenantId?.toString(),
+        userId: this.stringifyId(log.userId),
+        configId: log.configId?.toString(),
+        action: log.action,
+        configName: log.configName,
+        providerType: log.providerType,
+        changes: log.changes || {},
+        ipAddress: log.ipAddress || null,
+        userAgent: log.userAgent || null,
+        createdAt: log.createdAt,
+        updatedAt: log.updatedAt,
+      })),
+      total,
+    };
   }
 
   /**
@@ -62,7 +81,7 @@ export class ChannelConfigAuditRepository {
   async findByTenant(
     tenantId: string,
     options?: { limit?: number; skip?: number },
-  ): Promise<{ logs: ChannelConfigAuditSchemaClass[]; total: number }> {
+  ): Promise<{ logs: any[]; total: number }> {
     const limit = options?.limit || 50;
     const skip = options?.skip || 0;
 
@@ -72,10 +91,34 @@ export class ChannelConfigAuditRepository {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
+        .lean({ virtuals: true } as any)
         .exec(),
       this.model.countDocuments({ tenantId }),
     ]);
 
-    return { logs, total };
+    return {
+      logs: logs.map((log: any) => ({
+        id: log._id?.toString() || log.id,
+        tenantId: log.tenantId?.toString(),
+        userId: this.stringifyId(log.userId),
+        configId: log.configId?.toString(),
+        action: log.action,
+        configName: log.configName,
+        providerType: log.providerType,
+        changes: log.changes || {},
+        ipAddress: log.ipAddress || null,
+        userAgent: log.userAgent || null,
+        createdAt: log.createdAt,
+        updatedAt: log.updatedAt,
+      })),
+      total,
+    };
+  }
+
+  private stringifyId(value: any): string {
+    if (!value) return 'system';
+    if (typeof value === 'string') return value;
+    if (typeof value.toString === 'function') return value.toString();
+    return JSON.stringify(value);
   }
 }

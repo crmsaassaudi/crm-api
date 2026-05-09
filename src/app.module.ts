@@ -12,6 +12,7 @@ import queueConfig from './queue/config/queue.config';
 import redisConfig from './redis/config/redis.config';
 import keycloakConfig from './auth/config/keycloak.config';
 import path from 'path';
+import { existsSync } from 'fs';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
@@ -183,12 +184,23 @@ import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.m
       inject: [ClsService],
     }),
     I18nModule.forRootAsync({
-      useFactory: (configService: ConfigService<AllConfigType>) => ({
-        fallbackLanguage: configService.getOrThrow('app.fallbackLanguage', {
-          infer: true,
-        }),
-        loaderOptions: { path: path.join(__dirname, '/i18n/'), watch: true },
-      }),
+      useFactory: (configService: ConfigService<AllConfigType>) => {
+        const distI18nPath = path.join(__dirname, 'i18n');
+        const sourceI18nPath = path.join(process.cwd(), 'src', 'i18n');
+        const i18nPath = existsSync(distI18nPath)
+          ? distI18nPath
+          : sourceI18nPath;
+
+        return {
+          fallbackLanguage: configService.getOrThrow('app.fallbackLanguage', {
+            infer: true,
+          }),
+          loaderOptions: {
+            path: i18nPath,
+            watch: process.env.NODE_ENV !== 'production',
+          },
+        };
+      },
       resolvers: [
         {
           use: HeaderResolver,

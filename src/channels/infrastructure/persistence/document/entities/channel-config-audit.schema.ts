@@ -12,6 +12,10 @@ const AUDIT_ACTIONS = [
   'delete',
   'set_default',
   'verify',
+  'reconnect',
+  'test_sync',
+  'label_reconcile',
+  'health_check',
 ] as const;
 
 /**
@@ -45,8 +49,7 @@ export class ChannelConfigAuditSchemaClass extends EntityDocumentHelper {
 
   /** User who performed the action (from JWT/CLS context) */
   @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: 'UserSchemaClass',
+    type: String,
     required: true,
   })
   userId: string;

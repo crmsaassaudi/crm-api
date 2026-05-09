@@ -490,6 +490,7 @@ export class OutboundService {
 
     await this.emailMetadataModel.create({
       tenantId,
+      mailboxId: channelId,
       messageId: messageRecord.id,
       emailMessageId: externalId,
       inReplyTo,

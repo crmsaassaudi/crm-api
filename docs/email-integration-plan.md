@@ -246,7 +246,8 @@ File: `src/channels/services/imap-poller.service.ts`
 3. Dynamic polling interval based on business hours + activity (see Section 8)
 4. UID-based high watermark (`lastSeenUid`) to only fetch new emails
 5. Stream-based email fetching for memory efficiency
-6. **Strict Read-Only Fetch**: Relies purely on UID tracking. Does NOT mutate the `\Seen` flag, preserving users' native Inbox unread states (CRM is not a mirror).
+6. **Strict Read-Only Fetch**: Relies purely on UID tracking. Does NOT mutate the `\Seen` flag during inbound polling to prevent disruption of user email workflows.
+7. **Idempotency & Connection Pooling**: Uses envelope metadata checks to skip parsing duplicates, and utilizes connection pooling for improved throughput.
 
 **MIME Parsing Pipeline (mailparser):**
 ```typescript
@@ -264,6 +265,17 @@ import { simpleParser, ParsedMail } from 'mailparser';
 ```
 
 **Why mailparser?** Previous raw string parsing failed on Quoted-Printable encoded emails (e.g., MailChimp newsletters), producing garbled output like `=F0=9F=93=A2 Campaign Info= rmation`. `mailparser` is the Node.js industry standard for robust MIME decoding.
+
+### 4.1.5 Two-Way Read State Sync (Background Worker)
+
+File: `src/queue/read-state-sync/read-state-sync.processor.ts`
+
+While the default behavior is read-only, we provide an **opt-in Two-Way Read State Sync** feature:
+- Triggered dynamically when an agent reads/unreads an email in the CRM UI.
+- Pushes a job to the `read-state-sync` BullMQ queue.
+- The `ReadStateSyncProcessor` executes the sync using `imapflow`, checking the `syncReadState` toggle in the tenant's `ChannelConfig`.
+- Employs Redis locks (`readstate:lock:{messageId}`) and UID validity fallbacks (searching by `Message-ID` header if the UID is stale).
+- Features robust authentication error handling to prevent credential-related account lockouts.
 
 ### 4.2 Email Normalizer Service
 
@@ -340,7 +352,8 @@ File: `src/channels/services/gdpr-email.service.ts`
 File: `src/channels/services/email-channel-settings.service.ts`  
 Controller: `src/channels/email-settings.controller.ts`
 
-- Tenant-level email configuration management
+- Tenant-level email configuration management (`DynamicFormModal` in the frontend)
+- Dynamic polling settings: `syncReadState` (opt-in 2-way read sync), `initialSyncDays`, and `blockAutoResponders`
 - Signature CRUD operations
 - Quota configuration
 

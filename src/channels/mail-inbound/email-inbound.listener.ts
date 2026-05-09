@@ -32,6 +32,17 @@ export class EmailInboundListener {
     };
     emailContentId: string;
     emailMetadataId: string;
+    mailboxId?: string;
+    crmFolder?: string | null;
+    providerFolder?: string | null;
+    providerLabelIds?: string[];
+    providerLabels?: string[];
+    providerLabelDetails?: Array<{
+      id: string;
+      name: string;
+      type: 'system' | 'user';
+      color: string | null;
+    }>;
     timestamp: Date;
   }): void {
     this.logger.log(
@@ -57,6 +68,12 @@ export class EmailInboundListener {
         emailContentId: event.emailContentId,
         emailMetadataId: event.emailMetadataId,
         generatedMessageId: event.generatedMessageId,
+        mailboxId: event.mailboxId,
+        crmFolder: event.crmFolder,
+        providerFolder: event.providerFolder,
+        providerLabelIds: event.providerLabelIds || [],
+        providerLabels: event.providerLabels || [],
+        providerLabelDetails: event.providerLabelDetails || [],
         subject: event.subject,
         from: event.from,
         fromName: event.fromName,

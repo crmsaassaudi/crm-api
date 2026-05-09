@@ -9,10 +9,25 @@ import { EmailNormalizerService } from './email-normalizer.service';
 import { ChannelConfigRepository } from '../infrastructure/persistence/document/repositories/channel-config.repository';
 import { EmailContentSchemaClass } from '../infrastructure/persistence/document/entities/email-content.schema';
 import { EmailMetadataSchemaClass } from '../infrastructure/persistence/document/entities/email-metadata.schema';
+import { OmniMessageSchemaClass } from '../../omni-inbound/infrastructure/persistence/document/entities/omni-message.schema';
 import { ICryptoService, CRYPTO_SERVICE_TOKEN } from '../domain/crypto.service';
 import { EmailChannelSettingsService } from './email-channel-settings.service';
 import { Inject } from '@nestjs/common';
 import { simpleParser, ParsedMail } from 'mailparser';
+
+type MailboxLabelContext = {
+  crmFolder: string | null;
+  providerFolder: string | null;
+  providerLabelIds: string[];
+  providerLabels: string[];
+};
+
+type ProviderLabelDetail = {
+  id: string;
+  name: string;
+  type: 'system' | 'user';
+  color: string | null;
+};
 
 /**
  * ImapPollerService — Enterprise email inbound engine.
@@ -62,6 +77,8 @@ export class ImapPollerService implements OnModuleDestroy {
     private readonly emailContentModel: Model<EmailContentSchemaClass>,
     @InjectModel(EmailMetadataSchemaClass.name)
     private readonly emailMetadataModel: Model<EmailMetadataSchemaClass>,
+    @InjectModel(OmniMessageSchemaClass.name)
+    private readonly omniMessageModel: Model<OmniMessageSchemaClass>,
   ) {
     // Clean stale IMAP locks from previous instance (hot-reload / crash)
     void this.cleanupStaleLocks();
@@ -368,6 +385,7 @@ export class ImapPollerService implements OnModuleDestroy {
           envelope: true,
           source: true,
           bodyStructure: true,
+          labels: true,
         })) {
           messages.push(msg);
         }
@@ -407,11 +425,12 @@ export class ImapPollerService implements OnModuleDestroy {
             this.logger.log(
               `[ImapPoller] ▶ Processing UID=${msg.uid} (${config.name})`,
             );
+            const gmailLabels = this.buildGmailLabelContext(msg.labels);
             await this.processEmail(config, msg, client, blockAutoResponders, {
               crmFolder: 'INBOX',
               providerFolder: 'INBOX',
-              providerLabelIds: ['INBOX'],
-              providerLabels: ['Inbox'],
+              providerLabelIds: gmailLabels.providerLabelIds,
+              providerLabels: gmailLabels.providerLabels,
             });
             processedUids.push(msg.uid);
             processed++;
@@ -457,12 +476,7 @@ export class ImapPollerService implements OnModuleDestroy {
     msg: any,
     _imapClient: any,
     blockAutoResponders: boolean = false,
-    mailboxContext: {
-      crmFolder: string | null;
-      providerFolder: string | null;
-      providerLabelIds: string[];
-      providerLabels: string[];
-    } = {
+    mailboxContext: MailboxLabelContext = {
       crmFolder: 'INBOX',
       providerFolder: 'INBOX',
       providerLabelIds: ['INBOX'],
@@ -479,6 +493,13 @@ export class ImapPollerService implements OnModuleDestroy {
         })
         .lean();
       if (existing) {
+        await this.refreshDuplicateEmailLabels(
+          config,
+          msg,
+          existing,
+          mailboxContext,
+          envelopeMessageId,
+        );
         this.logger.warn(
           `[ImapPoller] UID=${msg.uid}: Skipped duplicate (envelope) — ${envelopeMessageId}`,
         );
@@ -590,6 +611,13 @@ export class ImapPollerService implements OnModuleDestroy {
         })
         .lean();
       if (existing) {
+        await this.refreshDuplicateEmailLabels(
+          config,
+          msg,
+          existing,
+          mailboxContext,
+          rfcMessageId,
+        );
         this.logger.warn(
           `[ImapPoller] Skipped duplicate: ${rfcMessageId} (already imported)`,
         );
@@ -616,10 +644,13 @@ export class ImapPollerService implements OnModuleDestroy {
     });
 
     // ── Save metadata to email_metadata ────────────────────────────────
+    const providerLabelDetails = this.buildProviderLabelDetails(mailboxContext);
+
     let emailMetadata: any;
     try {
       emailMetadata = await this.emailMetadataModel.create({
         tenantId: config.tenantId,
+        mailboxId: config.id,
         messageId: generatedMessageId,
         emailMessageId:
           threadInfo.messageId || `<imap-${generatedMessageId}@local>`,
@@ -633,6 +664,7 @@ export class ImapPollerService implements OnModuleDestroy {
         providerFolder: mailboxContext.providerFolder,
         providerLabelIds: mailboxContext.providerLabelIds,
         providerLabels: mailboxContext.providerLabels,
+        providerLabelDetails,
         deliveryStatus: 'unknown',
         bounceReason: null,
         imapUid: msg.uid || null,
@@ -644,6 +676,23 @@ export class ImapPollerService implements OnModuleDestroy {
         await this.emailContentModel
           .deleteOne({ _id: emailContent._id })
           .catch(() => {});
+        const existing = threadInfo.messageId
+          ? await this.emailMetadataModel
+              .findOne({
+                tenantId: config.tenantId,
+                emailMessageId: threadInfo.messageId,
+              })
+              .lean()
+          : null;
+        if (existing) {
+          await this.refreshDuplicateEmailLabels(
+            config,
+            msg,
+            existing,
+            mailboxContext,
+            threadInfo.messageId,
+          );
+        }
         this.logger.debug(
           `[ImapPoller] Skipped duplicate (race): ${threadInfo.messageId}`,
         );
@@ -667,8 +716,21 @@ export class ImapPollerService implements OnModuleDestroy {
       threadInfo,
       emailContentId: emailContent._id?.toString(),
       emailMetadataId: emailMetadata._id?.toString(),
+      mailboxId: config.id,
+      crmFolder: mailboxContext.crmFolder,
+      providerFolder: mailboxContext.providerFolder,
+      providerLabelIds: mailboxContext.providerLabelIds,
+      providerLabels: mailboxContext.providerLabels,
+      providerLabelDetails,
       imapUid: msg.uid || null,
       timestamp: parsed.date || new Date(),
+    });
+
+    this.eventEmitter.emit('email.labels.observed', {
+      tenantId: config.tenantId,
+      mailboxId: config.id,
+      provider: config.providerType,
+      labels: providerLabelDetails,
     });
 
     this.logger.log(
@@ -677,6 +739,156 @@ export class ImapPollerService implements OnModuleDestroy {
   }
 
   // ── Config Discovery ────────────────────────────────────────────────────
+
+  private async refreshDuplicateEmailLabels(
+    config: any,
+    msg: any,
+    existing: any,
+    mailboxContext: MailboxLabelContext,
+    messageIdForLog: string,
+  ): Promise<void> {
+    const providerLabelDetails = this.buildProviderLabelDetails(mailboxContext);
+    const existingLabelIds = this.normalizeLabelSet(existing.providerLabelIds);
+    const nextLabelIds = this.normalizeLabelSet(
+      mailboxContext.providerLabelIds,
+    );
+    const labelsChanged = !this.sameStringArray(existingLabelIds, nextLabelIds);
+
+    await this.emailMetadataModel
+      .updateOne(
+        { _id: existing._id },
+        {
+          $set: {
+            mailboxId: existing.mailboxId || config.id,
+            crmFolder: mailboxContext.crmFolder,
+            providerFolder: mailboxContext.providerFolder,
+            providerLabelIds: mailboxContext.providerLabelIds,
+            providerLabels: mailboxContext.providerLabels,
+            providerLabelDetails,
+            imapUid: msg.uid || existing.imapUid || null,
+          },
+        },
+      )
+      .exec();
+
+    await this.omniMessageModel
+      .updateOne(
+        {
+          tenantId: config.tenantId,
+          externalMessageId: existing.emailMessageId,
+        },
+        {
+          $set: {
+            'metadata.mailboxId': existing.mailboxId || config.id,
+            'metadata.crmFolder': mailboxContext.crmFolder,
+            'metadata.providerFolder': mailboxContext.providerFolder,
+            'metadata.providerLabelIds': mailboxContext.providerLabelIds,
+            'metadata.providerLabels': mailboxContext.providerLabels,
+            'metadata.providerLabelDetails': providerLabelDetails,
+          },
+        },
+      )
+      .exec();
+
+    const newlyObservedLabels = providerLabelDetails.filter(
+      (label) => !existingLabelIds.includes(label.id),
+    );
+    if (newlyObservedLabels.length > 0) {
+      this.eventEmitter.emit('email.labels.observed', {
+        tenantId: config.tenantId,
+        mailboxId: config.id,
+        provider: config.providerType,
+        labels: newlyObservedLabels,
+      });
+    }
+
+    if (labelsChanged) {
+      this.logger.log(
+        `[ImapPoller] UID=${msg.uid}: Refreshed labels for duplicate ${messageIdForLog}`,
+      );
+    }
+  }
+
+  private buildProviderLabelDetails(
+    mailboxContext: MailboxLabelContext,
+  ): ProviderLabelDetail[] {
+    return mailboxContext.providerLabelIds.map((id, index) => ({
+      id,
+      name: mailboxContext.providerLabels[index] || id,
+      type: this.detectProviderLabelType(id),
+      color: null,
+    }));
+  }
+
+  private detectProviderLabelType(labelId: string): 'system' | 'user' {
+    return [
+      'INBOX',
+      'SENT',
+      'DRAFTS',
+      'TRASH',
+      'SPAM',
+      'ARCHIVE',
+      'UNREAD',
+      'STARRED',
+      'IMPORTANT',
+    ].includes(labelId.toUpperCase())
+      ? 'system'
+      : 'user';
+  }
+
+  private normalizeLabelSet(labels?: string[]): string[] {
+    return [...new Set((labels || []).filter(Boolean))].sort();
+  }
+
+  private sameStringArray(left: string[], right: string[]): boolean {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => value === right[index])
+    );
+  }
+
+  private buildGmailLabelContext(labels?: Set<string>): {
+    providerLabelIds: string[];
+    providerLabels: string[];
+  } {
+    const rawLabels = labels ? Array.from(labels) : [];
+    const normalized = rawLabels
+      .map((label) => this.normalizeProviderLabel(label))
+      .filter((label) => label.id && !label.id.startsWith('[Gmail]/'));
+
+    if (!normalized.some((label) => label.id === 'INBOX')) {
+      normalized.unshift({ id: 'INBOX', name: 'Inbox' });
+    }
+
+    return {
+      providerLabelIds: normalized.map((label) => label.id),
+      providerLabels: normalized.map((label) => label.name),
+    };
+  }
+
+  private normalizeProviderLabel(label: string): { id: string; name: string } {
+    const trimmed = String(label || '').trim();
+    if (!trimmed) return { id: '', name: '' };
+
+    if (trimmed === '\\Inbox' || trimmed.toUpperCase() === 'INBOX') {
+      return { id: 'INBOX', name: 'Inbox' };
+    }
+    if (trimmed === '\\Sent' || trimmed.toUpperCase() === 'SENT') {
+      return { id: 'SENT', name: 'Sent' };
+    }
+    if (trimmed === '\\Draft' || trimmed.toUpperCase() === 'DRAFTS') {
+      return { id: 'DRAFTS', name: 'Drafts' };
+    }
+    if (trimmed === '\\Trash' || trimmed.toUpperCase() === 'TRASH') {
+      return { id: 'TRASH', name: 'Trash' };
+    }
+    if (trimmed === '\\Junk' || trimmed.toUpperCase() === 'SPAM') {
+      return { id: 'SPAM', name: 'Spam' };
+    }
+
+    const withoutSlash = trimmed.startsWith('\\') ? trimmed.slice(1) : trimmed;
+    return { id: withoutSlash, name: withoutSlash };
+  }
 
   /**
    * Find all SMTP channel configs that have IMAP sync enabled.
