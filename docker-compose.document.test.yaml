@@ -16,12 +16,11 @@ services:
       - 1080
       - 1025
 
-  # Uncomment to use redis
-  # redis:
-  #   image: redis:7-alpine
-  #   expose:
-  #     - 6379
-  #   command: ["redis-server", "--maxmemory-policy", "noeviction"]
+  redis:
+    image: redis:7-alpine
+    expose:
+      - 6379
+    command: ["redis-server", "--maxmemory-policy", "noeviction"]
 
   api:
     build:

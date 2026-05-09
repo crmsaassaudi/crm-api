@@ -4,7 +4,7 @@ RUN apk add --no-cache bash
 RUN npm i -g @nestjs/cli typescript ts-node
 
 COPY package*.json /tmp/app/
-RUN cd /tmp/app && npm install
+RUN cd /tmp/app && npm ci --legacy-peer-deps
 
 COPY . /usr/src/app
 
