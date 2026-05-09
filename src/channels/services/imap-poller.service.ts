@@ -10,6 +10,7 @@ import { ChannelConfigRepository } from '../infrastructure/persistence/document/
 import { EmailContentSchemaClass } from '../infrastructure/persistence/document/entities/email-content.schema';
 import { EmailMetadataSchemaClass } from '../infrastructure/persistence/document/entities/email-metadata.schema';
 import { ICryptoService, CRYPTO_SERVICE_TOKEN } from '../domain/crypto.service';
+import { EmailChannelSettingsService } from './email-channel-settings.service';
 import { Inject } from '@nestjs/common';
 import { simpleParser, ParsedMail } from 'mailparser';
 
@@ -53,6 +54,7 @@ export class ImapPollerService implements OnModuleDestroy {
     private readonly redisService: RedisService,
     private readonly businessHoursService: BusinessHoursService,
     private readonly normalizer: EmailNormalizerService,
+    private readonly emailSettings: EmailChannelSettingsService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(CRYPTO_SERVICE_TOKEN)
     private readonly crypto: ICryptoService,
@@ -316,7 +318,19 @@ export class ImapPollerService implements OnModuleDestroy {
     try {
       await client.connect();
 
-      // Open INBOX
+      const syncTargetFolders = await this.emailSettings.getSyncTargetFolders(
+        config.tenantId,
+      );
+
+      if (!syncTargetFolders.includes('INBOX')) {
+        this.logger.debug(
+          `[ImapPoller] ${config.name}: INBOX is not in syncTargetFolders; skipping mailbox poll`,
+        );
+        return;
+      }
+
+      // Open INBOX. Additional provider-specific folder paths can be layered
+      // here once Gmail/Graph adapters expose stable folder/label discovery.
       const lock = await client.getMailboxLock('INBOX');
 
       try {
@@ -393,7 +407,12 @@ export class ImapPollerService implements OnModuleDestroy {
             this.logger.log(
               `[ImapPoller] ▶ Processing UID=${msg.uid} (${config.name})`,
             );
-            await this.processEmail(config, msg, client, blockAutoResponders);
+            await this.processEmail(config, msg, client, blockAutoResponders, {
+              crmFolder: 'INBOX',
+              providerFolder: 'INBOX',
+              providerLabelIds: ['INBOX'],
+              providerLabels: ['Inbox'],
+            });
             processedUids.push(msg.uid);
             processed++;
           } catch (err: any) {
@@ -438,6 +457,17 @@ export class ImapPollerService implements OnModuleDestroy {
     msg: any,
     _imapClient: any,
     blockAutoResponders: boolean = false,
+    mailboxContext: {
+      crmFolder: string | null;
+      providerFolder: string | null;
+      providerLabelIds: string[];
+      providerLabels: string[];
+    } = {
+      crmFolder: 'INBOX',
+      providerFolder: 'INBOX',
+      providerLabelIds: ['INBOX'],
+      providerLabels: ['Inbox'],
+    },
   ): Promise<void> {
     // ── Early Duplicate Check (from envelope, no parsing needed) ──────
     const envelopeMessageId = msg.envelope?.messageId;
@@ -599,6 +629,10 @@ export class ImapPollerService implements OnModuleDestroy {
         to: toAddrs,
         cc: ccAddrs,
         bcc: bccAddrs,
+        crmFolder: mailboxContext.crmFolder,
+        providerFolder: mailboxContext.providerFolder,
+        providerLabelIds: mailboxContext.providerLabelIds,
+        providerLabels: mailboxContext.providerLabels,
         deliveryStatus: 'unknown',
         bounceReason: null,
         imapUid: msg.uid || null,

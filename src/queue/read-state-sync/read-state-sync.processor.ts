@@ -11,6 +11,7 @@ import {
   ICryptoService,
   CRYPTO_SERVICE_TOKEN,
 } from '../../channels/domain/crypto.service';
+import { EmailChannelSettingsService } from '../../channels/services/email-channel-settings.service';
 import { RedisLockService } from '../../redis/redis-lock.service';
 import {
   classifyProviderError,
@@ -41,6 +42,7 @@ export class ReadStateSyncProcessor extends BaseConsumer {
 
   constructor(
     private readonly configRepo: ChannelConfigRepository,
+    private readonly emailSettings: EmailChannelSettingsService,
     @Inject(CRYPTO_SERVICE_TOKEN)
     private readonly crypto: ICryptoService,
     private readonly lockService: RedisLockService,
@@ -68,12 +70,14 @@ export class ReadStateSyncProcessor extends BaseConsumer {
       return;
     }
 
-    const isEnabled =
+    const tenantReadStateEnabled =
+      await this.emailSettings.isSyncReadStateEnabled(job.data.tenantId);
+    const configReadStateEnabled =
       config.publicSettings?.syncReadState !== false &&
       config.publicSettings?.syncReadState !== 'false';
-    if (!isEnabled) {
+    if (!tenantReadStateEnabled || !configReadStateEnabled) {
       this.logger.debug(
-        `[ReadStateSync] Dropped: syncReadState disabled for config ${config.name}`,
+        `[ReadStateSync] Dropped: read-state sync disabled for tenant or config ${config.name}`,
       );
       return;
     }

@@ -13,9 +13,16 @@ import { pagination } from '../../utils/pagination';
 export interface ConversationQuery {
   tenantId: string;
   status?: string | string[];
-  channelType?: string;
-  assignedAgent?: string;
+  channels?: string[];
+  assignedAgent?: string | null;
+  assignedGroup?: string | null;
+  unassigned?: boolean;
+  sla?: string[];
+  tags?: string[];
+  isVip?: boolean;
+  hasUnread?: boolean;
   search?: string;
+  cursor?: string;
 }
 
 export interface ConversationTimelineCursor {
@@ -91,28 +98,7 @@ export class ConversationRepository {
     page: number,
     limit: number,
   ): Promise<PaginationResponseDto<OmniConversation>> {
-    const filter: FilterQuery<OmniConversationDocument> = {
-      tenantId: query.tenantId,
-    };
-
-    if (query.status) {
-      filter.status = Array.isArray(query.status)
-        ? { $in: query.status }
-        : query.status;
-    }
-    if (query.channelType) {
-      filter.channelType = query.channelType;
-    }
-    if (query.assignedAgent) {
-      filter.assignedAgentId = query.assignedAgent;
-    }
-    if (query.search) {
-      filter.$or = [
-        { 'customer.name': { $regex: query.search, $options: 'i' } },
-        { lastMessage: { $regex: query.search, $options: 'i' } },
-      ];
-    }
-
+    const filter = this.buildFilter(query);
     const sort: Record<string, SortOrder> = { lastMessageAt: -1 };
 
     // Convert 1-indexed to 0-indexed for Mongoose skip
@@ -136,6 +122,130 @@ export class ConversationRepository {
     );
 
     return pagination(mappedItems, total, { page: safePage, limit });
+  }
+
+  async findCursorPaginated(query: ConversationQuery, limit: number) {
+    const filter = this.buildFilter(query);
+
+    if (query.cursor) {
+      filter.lastMessageAt = { $lt: new Date(query.cursor) };
+    }
+
+    const safeLimit = Math.max(1, Math.min(limit, 50));
+
+    // Fetch limit + 1 to check if there are more items
+    const [items, total] = await Promise.all([
+      this.model
+        .find(filter)
+        .sort({ lastMessageAt: -1, _id: -1 })
+        .limit(safeLimit + 1)
+        .populate('assignedAgent')
+        .populate('resolvedByAgent')
+        .exec(),
+      this.model.countDocuments(filter).exec(),
+    ]);
+
+    const hasNextPage = items.length > safeLimit;
+    const pageItems = hasNextPage ? items.slice(0, safeLimit) : items;
+
+    const mappedItems = pageItems.map((doc) =>
+      OmniConversationMapper.toDomain(doc),
+    );
+
+    const nextCursor =
+      pageItems.length > 0 && pageItems[pageItems.length - 1].lastMessageAt
+        ? pageItems[pageItems.length - 1].lastMessageAt?.toISOString() || null
+        : null;
+
+    return {
+      data: mappedItems,
+      nextCursor,
+      hasNextPage,
+      totalItems: total,
+    };
+  }
+
+  private buildFilter(
+    query: ConversationQuery,
+  ): FilterQuery<OmniConversationDocument> {
+    const filter: FilterQuery<OmniConversationDocument> = {
+      tenantId: query.tenantId,
+    };
+
+    if (query.status) {
+      filter.status = Array.isArray(query.status)
+        ? { $in: query.status }
+        : query.status;
+    }
+    if (query.channels && query.channels.length > 0) {
+      filter.channelType = { $in: query.channels };
+    }
+    if (query.unassigned) {
+      filter.assignedAgentId = null;
+      filter.assignedGroupId = null;
+    } else {
+      if (query.assignedAgent !== undefined) {
+        filter.assignedAgentId = query.assignedAgent;
+      }
+      if (query.assignedGroup !== undefined) {
+        filter.assignedGroupId = query.assignedGroup;
+      }
+    }
+
+    if (query.sla && query.sla.length > 0) {
+      // Logic for sla: 'warning' or 'breached'
+      // Assuming we map 'warning' to some criteria and 'breached' to frtBreached / resolutionBreached
+      const slaOrConditions: any[] = [];
+      if (query.sla.includes('breached')) {
+        slaOrConditions.push({ frtBreached: true });
+        slaOrConditions.push({ resolutionBreached: true });
+      }
+      if (query.sla.includes('warning')) {
+        // Find documents where deadline is soon (e.g. within 15 minutes) but not breached
+        const warningTime = new Date(Date.now() + 15 * 60000);
+        slaOrConditions.push({
+          frtBreached: false,
+          frtDeadline: { $lte: warningTime },
+        });
+        slaOrConditions.push({
+          resolutionBreached: false,
+          resolutionDeadline: { $lte: warningTime },
+        });
+      }
+      if (slaOrConditions.length > 0) {
+        filter.$or = slaOrConditions;
+      }
+    }
+
+    if (query.tags && query.tags.length > 0) {
+      filter.tags = { $in: query.tags };
+    }
+
+    if (query.isVip !== undefined) {
+      filter.isVip = query.isVip;
+    }
+
+    if (query.hasUnread !== undefined) {
+      filter.unreadCount = query.hasUnread ? { $gt: 0 } : 0;
+    }
+
+    if (query.search) {
+      const searchCondition = {
+        $or: [
+          { 'customer.name': { $regex: query.search, $options: 'i' } },
+          { lastMessage: { $regex: query.search, $options: 'i' } },
+        ],
+      };
+      // If we already have $or from SLA, we must use $and
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, searchCondition];
+        delete filter.$or;
+      } else {
+        filter.$or = searchCondition.$or;
+      }
+    }
+
+    return filter;
   }
 
   async updateStatus(

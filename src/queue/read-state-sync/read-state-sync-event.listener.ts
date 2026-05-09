@@ -8,6 +8,7 @@ import {
   ReadStateSyncJobData,
 } from './read-state-sync.producer';
 import { EmailMetadataSchemaClass } from '../../channels/infrastructure/persistence/document/entities/email-metadata.schema';
+import { EmailChannelSettingsService } from '../../channels/services/email-channel-settings.service';
 
 /**
  * ReadStateSyncEventListener — Bridges domain events to BullMQ jobs.
@@ -23,6 +24,7 @@ export class ReadStateSyncEventListener {
 
   constructor(
     private readonly producer: ReadStateSyncProducer,
+    private readonly emailSettings: EmailChannelSettingsService,
     @InjectModel(EmailMetadataSchemaClass.name)
     private readonly emailMetadataModel: Model<any>,
   ) {}
@@ -50,6 +52,16 @@ export class ReadStateSyncEventListener {
     );
 
     try {
+      const shouldSyncOnView =
+        await this.emailSettings.shouldSyncReadStateOnView(tenantId);
+
+      if (!shouldSyncOnView) {
+        this.logger.debug(
+          `[ReadStateSync] Dropped passive read event for conversation ${conversationId}; readStateStrategy.syncOnlyOnAction is enabled or provider sync is off`,
+        );
+        return;
+      }
+
       // Find all email metadata for this conversation's messages.
       // We need to look up messages by conversationId via the omni_messages collection,
       // then match their metadata. However, email_metadata links via messageId (ObjectId),

@@ -8,13 +8,13 @@ export type OmniConversationDocument =
 
 const CONVERSATION_STATUSES = ['open', 'pending', 'resolved', 'closed'];
 const CHANNEL_TYPES = [
-  'Facebook',
-  'Zalo',
-  'WhatsApp',
-  'LiveChat',
-  'Instagram',
-  'TikTok',
-  'Email',
+  'facebook',
+  'zalo',
+  'whatsapp',
+  'livechat',
+  'instagram',
+  'tiktok',
+  'email',
 ];
 
 /**

@@ -35,6 +35,15 @@ export type { EmailSettings };
  */
 
 const SETTINGS_KEY = 'email_settings';
+const VALID_MAILBOX_TYPES = new Set(['personal', 'shared']);
+const VALID_LABEL_SYNC_MODES = new Set(['none', 'pull_only', 'two_way']);
+const VALID_SYNC_TARGET_FOLDERS = new Set([
+  'INBOX',
+  'SENT',
+  'DRAFTS',
+  'TRASH',
+  'SPAM',
+]);
 
 @Injectable()
 export class EmailChannelSettingsService {
@@ -50,10 +59,25 @@ export class EmailChannelSettingsService {
     const stored = await this.crmSettings.getSetting(SETTINGS_KEY, tenantId);
     if (!stored) return { ...DEFAULT_EMAIL_SETTINGS };
 
+    const storedSettings = stored as Partial<EmailSettings>;
+    const readStateStrategy = {
+      ...DEFAULT_EMAIL_SETTINGS.readStateStrategy,
+      ...(storedSettings.readStateStrategy ?? {}),
+    };
+
+    if (
+      storedSettings.syncReadState !== undefined &&
+      storedSettings.readStateStrategy === undefined
+    ) {
+      readStateStrategy.syncToProvider = storedSettings.syncReadState;
+    }
+
     // Merge with defaults to handle new fields added after tenant was seeded
     return {
       ...DEFAULT_EMAIL_SETTINGS,
-      ...(stored as Partial<EmailSettings>),
+      ...storedSettings,
+      readStateStrategy,
+      syncReadState: readStateStrategy.syncToProvider,
     };
   }
 
@@ -98,8 +122,51 @@ export class EmailChannelSettingsService {
         throw new Error('initialSyncDays must be between 1 and 365');
       }
     }
+    if (
+      updates.mailboxType !== undefined &&
+      !VALID_MAILBOX_TYPES.has(updates.mailboxType)
+    ) {
+      throw new Error('mailboxType must be one of: personal, shared');
+    }
+    if (
+      updates.labelSyncMode !== undefined &&
+      !VALID_LABEL_SYNC_MODES.has(updates.labelSyncMode)
+    ) {
+      throw new Error('labelSyncMode must be one of: none, pull_only, two_way');
+    }
+    if (updates.syncTargetFolders !== undefined) {
+      if (
+        !Array.isArray(updates.syncTargetFolders) ||
+        updates.syncTargetFolders.length === 0 ||
+        !updates.syncTargetFolders.every((folder) =>
+          VALID_SYNC_TARGET_FOLDERS.has(folder),
+        )
+      ) {
+        throw new Error(
+          'syncTargetFolders must contain one or more of: INBOX, SENT, DRAFTS, TRASH, SPAM',
+        );
+      }
+    }
 
-    const merged: EmailSettings = { ...current, ...updates };
+    const readStateStrategy = {
+      ...current.readStateStrategy,
+      ...(updates.readStateStrategy ?? {}),
+    };
+
+    if (updates.syncReadState !== undefined) {
+      readStateStrategy.syncToProvider = updates.syncReadState;
+    }
+
+    if (updates.readStateStrategy !== undefined) {
+      updates.syncReadState = readStateStrategy.syncToProvider;
+    }
+
+    const merged: EmailSettings = {
+      ...current,
+      ...updates,
+      readStateStrategy,
+      syncReadState: readStateStrategy.syncToProvider,
+    };
     await this.crmSettings.updateSetting(SETTINGS_KEY, merged, tenantId);
 
     this.logger.log(
@@ -143,7 +210,29 @@ export class EmailChannelSettingsService {
    */
   async isSyncReadStateEnabled(tenantId?: string): Promise<boolean> {
     const settings = await this.getSettings(tenantId);
-    return settings.syncReadState;
+    return settings.readStateStrategy.syncToProvider;
+  }
+
+  /**
+   * Helper: should a passive "open/read" action be pushed to provider.
+   * Shared mailboxes usually keep this false to avoid hiding work from teammates.
+   */
+  async shouldSyncReadStateOnView(tenantId?: string): Promise<boolean> {
+    const settings = await this.getSettings(tenantId);
+    return (
+      settings.readStateStrategy.syncToProvider &&
+      !settings.readStateStrategy.syncOnlyOnAction
+    );
+  }
+
+  /**
+   * Helper: return standard folders/labels selected for mailbox sync.
+   */
+  async getSyncTargetFolders(
+    tenantId?: string,
+  ): Promise<EmailSettings['syncTargetFolders']> {
+    const settings = await this.getSettings(tenantId);
+    return settings.syncTargetFolders;
   }
 
   /**

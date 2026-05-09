@@ -86,6 +86,38 @@ export class EmailMetadataSchemaClass {
   bcc: string[];
 
   /**
+   * CRM-standard mailbox context derived from provider folders/labels.
+   * Gmail system labels and Outlook folders are normalized into this value.
+   */
+  @Prop({
+    type: String,
+    enum: ['INBOX', 'SENT', 'DRAFTS', 'TRASH', 'SPAM', 'ARCHIVE', null],
+    default: null,
+    index: true,
+  })
+  crmFolder: string | null;
+
+  /**
+   * Raw provider mailbox/folder path where the message was fetched.
+   * Example: INBOX, Sent Items, [Gmail]/All Mail.
+   */
+  @Prop({ type: String, default: null })
+  providerFolder: string | null;
+
+  /**
+   * Raw provider label identifiers, when available.
+   * Gmail may return several labels for a single message.
+   */
+  @Prop({ type: [String], default: [] })
+  providerLabelIds: string[];
+
+  /**
+   * Human-readable provider labels preserved for agent context.
+   */
+  @Prop({ type: [String], default: [] })
+  providerLabels: string[];
+
+  /**
    * CRM User ID who sent this email (outbound only).
    * Used for BCC privacy enforcement: only sender or admin can view BCC field.
    */
@@ -162,3 +194,5 @@ EmailMetadataSchema.index({ tenantId: 1, inReplyTo: 1 }, { sparse: true });
 
 // Contact lookup: find all emails from/to a specific address
 EmailMetadataSchema.index({ tenantId: 1, from: 1 });
+EmailMetadataSchema.index({ tenantId: 1, crmFolder: 1, createdAt: -1 });
+EmailMetadataSchema.index({ tenantId: 1, providerLabels: 1 });

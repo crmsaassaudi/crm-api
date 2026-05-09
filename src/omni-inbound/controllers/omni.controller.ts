@@ -69,34 +69,64 @@ export class OmniController {
    */
   @Get('conversations')
   async listConversations(
-    @Query('page') page = '1',
+    @Query('cursor') cursor?: string,
     @Query('limit') limit = '20',
     @Query('status') status?: string,
-    @Query('channelType') channelType?: string,
-    @Query('assignedAgent') assignedAgent?: string,
+    @Query('channels') channels?: string,
+    @Query('assignedTo') assignedTo?: string,
+    @Query('sla') sla?: string,
+    @Query('tags') tags?: string,
+    @Query('isVip') isVip?: string,
+    @Query('hasUnread') hasUnread?: string,
     @Query('search') search?: string,
   ) {
     const tenantId = this.cls.get<string>('tenantId');
+    const userId = this.cls.get<string>('userId');
     if (!tenantId) {
       throw new BadRequestException('Tenant context not found');
     }
 
     const statusFilter = status ? status.split(',') : ['open', 'pending'];
+    // Normalize channels to lowercase for case-insensitive matching
+    const channelFilter = channels
+      ? channels.split(',').map((ch) => ch.toLowerCase())
+      : undefined;
+    const slaFilter = sla ? sla.split(',') : undefined;
+    const tagsFilter = tags ? tags.split(',') : undefined;
 
-    console.log(
-      `[DEBUG] listConversations: tenantId=${tenantId}, statusFilter=${JSON.stringify(statusFilter)}`,
-    );
+    let assignedAgent: string | null | undefined = undefined;
+    let assignedGroup: string | null | undefined = undefined;
+    let unassigned = false;
 
-    const result = await this.conversationRepo.findPaginated(
+    if (assignedTo === 'me') {
+      assignedAgent = userId;
+    } else if (assignedTo === 'unassigned') {
+      unassigned = true;
+    } else if (assignedTo?.startsWith('group:')) {
+      assignedGroup = assignedTo.substring(6);
+    }
+
+    const result = await this.conversationRepo.findCursorPaginated(
       {
         tenantId,
         status: statusFilter,
-        channelType,
+        channels: channelFilter,
         assignedAgent,
+        assignedGroup,
+        unassigned,
+        sla: slaFilter,
+        tags: tagsFilter,
+        isVip: isVip === 'true' ? true : isVip === 'false' ? false : undefined,
+        hasUnread:
+          hasUnread === 'true'
+            ? true
+            : hasUnread === 'false'
+              ? false
+              : undefined,
         search,
+        cursor,
       },
-      parseInt(page, 10),
-      Math.min(parseInt(limit, 10), 50), // cap at 50
+      parseInt(limit, 10), // cap will be applied in repo
     );
 
     // Resolve display-friendly resolver info for list cards (name/email),

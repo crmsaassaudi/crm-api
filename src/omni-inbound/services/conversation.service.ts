@@ -981,18 +981,11 @@ export class ConversationService {
   }
 
   /**
-   * Map lowercase channel types to the schema enum values.
+   * Map channel types to lowercase for schema storage.
    */
   private toSchemaChannelType(type: string): string {
-    const map: Record<string, string> = {
-      facebook: 'Facebook',
-      instagram: 'Instagram',
-      zalo: 'Zalo',
-      whatsapp: 'WhatsApp',
-      livechat: 'LiveChat',
-      email: 'Email',
-    };
-    return map[type] ?? type;
+    // Return lowercase to match schema enum and domain model
+    return type.toLowerCase();
   }
 
   private parsePositiveInt(

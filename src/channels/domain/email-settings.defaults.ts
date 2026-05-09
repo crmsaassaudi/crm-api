@@ -39,6 +39,38 @@ export interface EmailSettings {
   /** Opt-in: sync read status back to email provider (Gmail/Outlook). */
   syncReadState: boolean;
 
+  /**
+   * Mailbox ownership model.
+   * personal: one agent owns the provider mailbox.
+   * shared: support@/sales@ style mailbox routed through Omni.
+   */
+  mailboxType: 'personal' | 'shared';
+
+  /**
+   * Provider label sync policy.
+   * pull_only is the safe default for enterprise shared mailboxes because it
+   * preserves provider context without creating CRM tag churn or write bursts.
+   */
+  labelSyncMode: 'none' | 'pull_only' | 'two_way';
+
+  /**
+   * Standard mailbox folders/labels CRM should sync.
+   * Providers map these differently: Outlook folders, Gmail system labels.
+   */
+  syncTargetFolders: Array<'INBOX' | 'SENT' | 'DRAFTS' | 'TRASH' | 'SPAM'>;
+
+  /**
+   * Provider read-state writeback behavior.
+   * syncOnlyOnAction avoids marking shared provider mailboxes as read on view.
+   */
+  readStateStrategy: {
+    syncToProvider: boolean;
+    syncOnlyOnAction: boolean;
+  };
+
+  /** Enable collaborative locking/collision detection for shared mailboxes. */
+  collisionDetectionEnabled: boolean;
+
   /** Number of days to look back for emails during the first synchronization. */
   initialSyncDays: number;
 
@@ -58,6 +90,14 @@ export const DEFAULT_EMAIL_SETTINGS: EmailSettings = {
   immutableRecords: true, // Don't delete emails
   gdprAutoRedactDays: 0, // Disabled by default
   syncReadState: false, // Opt-in model — disabled by default
+  mailboxType: 'shared',
+  labelSyncMode: 'pull_only',
+  syncTargetFolders: ['INBOX', 'SENT'],
+  readStateStrategy: {
+    syncToProvider: false,
+    syncOnlyOnAction: true,
+  },
+  collisionDetectionEnabled: true,
   initialSyncDays: 30, // Default window for first-run sync
   blockAutoResponders: false, // Sync ALL by default as requested
 };
