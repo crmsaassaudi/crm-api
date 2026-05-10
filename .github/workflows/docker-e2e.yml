@@ -1,10 +1,17 @@
 name: NestJS API CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+    paths:
+      - "src/**"
+      - "test/**"
+      - "package*.json"
+      - "docker-compose.document.ci.yaml"
+      - "document.e2e.Dockerfile"
+      - "startup.document.ci.sh"
+      - ".github/workflows/docker-e2e.yml"
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,9 +27,13 @@ jobs:
         id: document
         run: docker compose -f docker-compose.document.ci.yaml --env-file env-example-document -p ci-document up --build --exit-code-from api
 
+      - name: Show Docker logs on failure
+        if: ${{ failure() && steps.document.conclusion == 'failure' }}
+        run: docker compose -f docker-compose.document.ci.yaml --env-file env-example-document -p ci-document logs --no-color
+
       - name: Copy prod.log from container to host
         if: ${{ failure() && steps.document.conclusion == 'failure' }}
-        run: docker cp ci-document-api-1:/usr/src/app/prod.log .
+        run: docker cp ci-document-api-1:/usr/src/app/prod.log . || true
       # </database-document-block>
 
       - name: Upload prod.log to artifacts for debugging
@@ -31,3 +42,7 @@ jobs:
         with:
           name: prod-logs
           path: prod.log
+
+      - name: Cleanup Docker compose stack
+        if: always()
+        run: docker compose -f docker-compose.document.ci.yaml --env-file env-example-document -p ci-document down -v --remove-orphans

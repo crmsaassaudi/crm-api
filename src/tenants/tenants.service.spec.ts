@@ -11,6 +11,7 @@ import {
   ConflictException,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 describe('TenantsService', () => {
   let service: TenantsService;
@@ -82,6 +83,16 @@ describe('TenantsService', () => {
           provide: EventEmitter2,
           useValue: {
             emit: jest.fn(),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn().mockImplementation((key: string) => {
+              if (key === 'keycloak.frontendUrl') return 'https://crmsaudi.dev';
+              if (key === 'app.rootDomain') return 'crmsaudi.dev';
+              return null;
+            }),
           },
         },
       ],
