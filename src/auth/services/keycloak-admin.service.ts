@@ -226,6 +226,43 @@ export class KeycloakAdminService implements OnModuleInit {
     });
   }
 
+  /**
+   * Trigger Keycloak's "Execute Actions Email" for a user.
+   *
+   * Sends an email with a secure link that allows the user to perform the
+   * specified actions (e.g. UPDATE_PASSWORD, VERIFY_EMAIL).
+   *
+   * @param userId      Keycloak user ID
+   * @param actions     List of required actions (e.g. ['UPDATE_PASSWORD'])
+   * @param redirectUri Where Keycloak redirects after the user completes the actions
+   * @param clientId    Optional: override the client ID for the redirect
+   */
+  async executeActionsEmail(
+    userId: string,
+    actions: string[],
+    redirectUri?: string,
+    clientId?: string,
+  ): Promise<void> {
+    return this.ensureClient(async () => {
+      const payload: Record<string, unknown> = {
+        id: userId,
+        actions,
+      };
+
+      if (redirectUri) {
+        payload.redirectUri = redirectUri;
+      }
+      if (clientId) {
+        payload.clientId = clientId;
+      }
+
+      await this.kcAdminClient.users.executeActionsEmail(payload);
+      this.logger.log(
+        `Execute actions email sent to user ${userId}: ${actions.join(', ')}`,
+      );
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Identity Provider Links (Phase 1.2 SSO Support)
   // ─────────────────────────────────────────────────────────────────────────────

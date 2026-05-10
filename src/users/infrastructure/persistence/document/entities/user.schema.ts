@@ -127,6 +127,14 @@ export class UserSchemaClass extends EntityDocumentHelper {
   })
   reportsToId?: string | null;
 
+  /** Onboarding lifecycle tag: INCOMPLETE_ONBOARDING | COMPLETED | null */
+  @Prop({
+    type: String,
+    enum: ['INCOMPLETE_ONBOARDING', 'COMPLETED'],
+    default: null,
+  })
+  onboardingStatus?: string | null;
+
   @Prop({ default: now })
   createdAt: Date;
 

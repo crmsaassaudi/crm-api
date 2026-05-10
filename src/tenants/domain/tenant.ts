@@ -11,6 +11,13 @@ export enum TenantStatus {
   SUSPENDED = 'SUSPENDED',
 }
 
+export enum ProvisioningStatus {
+  QUEUED = 'QUEUED',
+  PROVISIONING = 'PROVISIONING',
+  READY = 'READY',
+  FAILED = 'FAILED',
+}
+
 export class Tenant {
   @ApiProperty({ type: String })
   id: string;
@@ -35,6 +42,24 @@ export class Tenant {
 
   @ApiProperty({ enum: TenantStatus })
   status: TenantStatus;
+
+  @ApiProperty({
+    enum: ProvisioningStatus,
+    description: 'Async provisioning lifecycle state',
+  })
+  provisioningStatus: ProvisioningStatus;
+
+  @ApiProperty({
+    required: false,
+    description: 'Error message when provisioningStatus is FAILED',
+  })
+  provisioningError?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'User-selected onboarding use case (PLG)',
+  })
+  onboardingGoal?: string;
 
   @ApiProperty()
   omniSettings: {

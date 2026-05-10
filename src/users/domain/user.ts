@@ -120,4 +120,11 @@ export class User {
     required: false,
   })
   reportsToId?: string | null;
+
+  @ApiProperty({
+    description: 'Onboarding lifecycle tag for orphan cleanup',
+    enum: ['INCOMPLETE_ONBOARDING', 'COMPLETED'],
+    required: false,
+  })
+  onboardingStatus?: 'INCOMPLETE_ONBOARDING' | 'COMPLETED';
 }

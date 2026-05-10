@@ -3,6 +3,7 @@ import {
   Tenant,
   SubscriptionPlan,
   TenantStatus,
+  ProvisioningStatus,
 } from '../../../../domain/tenant';
 import { TenantSchemaClass } from '../entities/tenant.schema';
 
@@ -17,6 +18,10 @@ export class TenantMapper {
     tenant.ownerId = raw.ownerId ? raw.ownerId.toString() : null!;
     tenant.subscriptionPlan = raw.subscriptionPlan;
     tenant.status = raw.status;
+    tenant.provisioningStatus =
+      raw.provisioningStatus ?? ProvisioningStatus.READY;
+    tenant.provisioningError = raw.provisioningError ?? undefined;
+    tenant.onboardingGoal = raw.onboardingGoal ?? undefined;
 
     // Extract plain object to avoid Mongoose subdocument serialization issues
     tenant.omniSettings = raw.omniSettings
@@ -63,6 +68,14 @@ export class TenantMapper {
     persistence.subscriptionPlan =
       domain.subscriptionPlan ?? SubscriptionPlan.FREE;
     persistence.status = domain.status ?? TenantStatus.ACTIVE;
+    persistence.provisioningStatus =
+      domain.provisioningStatus ?? ProvisioningStatus.READY;
+    if (domain.provisioningError !== undefined) {
+      persistence.provisioningError = domain.provisioningError;
+    }
+    if (domain.onboardingGoal !== undefined) {
+      persistence.onboardingGoal = domain.onboardingGoal;
+    }
 
     if (domain.i18nSettings) {
       persistence.i18nSettings = { ...domain.i18nSettings };

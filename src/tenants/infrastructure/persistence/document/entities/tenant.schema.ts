@@ -1,7 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
-import { SubscriptionPlan, TenantStatus } from '../../../../domain/tenant';
+import {
+  SubscriptionPlan,
+  TenantStatus,
+  ProvisioningStatus,
+} from '../../../../domain/tenant';
 
 export type TenantSchemaDocument = HydratedDocument<TenantSchemaClass>;
 
@@ -53,6 +57,19 @@ export class TenantSchemaClass extends EntityDocumentHelper {
     default: TenantStatus.ACTIVE,
   })
   status: TenantStatus;
+
+  @Prop({
+    type: String,
+    enum: Object.values(ProvisioningStatus),
+    default: ProvisioningStatus.READY,
+  })
+  provisioningStatus: ProvisioningStatus;
+
+  @Prop({ type: String, default: null })
+  provisioningError?: string;
+
+  @Prop({ type: String, default: null })
+  onboardingGoal?: string;
 
   @Prop({
     type: {

@@ -58,6 +58,7 @@ import { ListViewsModule } from './list-views/list-views.module';
 import { AssignmentEngineModule } from './assignment-engine/assignment-engine.module';
 import { MailInboundModule } from './channels/mail-inbound/mail-inbound.module';
 import { ReadStateSyncModule } from './queue/read-state-sync/read-state-sync.module';
+import { OnboardingModule } from './tenants/onboarding.module';
 
 import {
   KeycloakConnectModule,
@@ -265,6 +266,7 @@ const envFilePath = [
     AssignmentEngineModule,
     MailInboundModule,
     ReadStateSyncModule,
+    OnboardingModule,
   ],
   providers: [
     {
