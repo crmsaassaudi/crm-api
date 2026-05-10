@@ -7,6 +7,7 @@ import { TenantsAuthController } from './tenants.controller';
 import { TenantSettingsController } from './tenant-settings.controller';
 import { TenantCreatedListener } from './listeners/tenant-created.listener';
 import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
+import { OnboardingModule } from './onboarding.module';
 
 @Module({
   imports: [
@@ -17,6 +18,8 @@ import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
     forwardRef(() => UsersModule),
     // CrmSettingsModule provides TenantSettingsSeedingService
     CrmSettingsModule,
+    // OnboardingModule provides SampleDataSeederService
+    forwardRef(() => OnboardingModule),
   ],
   providers: [TenantsService, TenantCreatedListener],
   controllers: [TenantsAuthController, TenantSettingsController],
