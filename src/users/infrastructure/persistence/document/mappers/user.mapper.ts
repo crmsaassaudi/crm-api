@@ -60,6 +60,10 @@ export class UserMapper {
         }
       : null;
     domainEntity.reportsToId = raw.reportsToId?.toString() ?? null;
+    domainEntity.onboardingStatus = raw.onboardingStatus as
+      | 'INCOMPLETE_ONBOARDING'
+      | 'COMPLETED'
+      | undefined;
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
@@ -118,6 +122,9 @@ export class UserMapper {
     }
     if (domainEntity.reportsToId !== undefined) {
       persistenceSchema.reportsToId = domainEntity.reportsToId;
+    }
+    if (domainEntity.onboardingStatus !== undefined) {
+      persistenceSchema.onboardingStatus = domainEntity.onboardingStatus;
     }
     persistenceSchema.createdAt = domainEntity.createdAt;
     persistenceSchema.updatedAt = domainEntity.updatedAt;

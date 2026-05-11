@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   UnauthorizedException,
@@ -183,10 +185,37 @@ export class KeycloakAdminService implements OnModuleInit {
         ],
       };
 
-      const response =
-        await this.kcAdminClient.users.create(userRepresentation);
+      let response: { id?: string };
+      try {
+        response = await this.kcAdminClient.users.create(userRepresentation);
+      } catch (error: any) {
+        const status = error?.response?.status;
+        const message =
+          error?.response?.data?.errorMessage ||
+          error?.response?.data?.error ||
+          error?.message ||
+          'Failed to create Keycloak user';
+
+        this.logger.error(
+          `Failed to create Keycloak user ${email}: ${message}`,
+          error?.stack || error,
+        );
+
+        if (status === 409) {
+          throw new ConflictException(
+            'Email already registered. Please login instead.',
+          );
+        }
+
+        if (status === 400) {
+          throw new BadRequestException(message);
+        }
+
+        throw error;
+      }
+
       return {
-        id: response.id,
+        id: response.id!,
         email,
         firstName,
         lastName,

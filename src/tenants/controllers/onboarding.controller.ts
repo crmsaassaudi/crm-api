@@ -83,10 +83,12 @@ export class OnboardingController {
   ) {
     const { email, fullName, password } = dto;
 
-    // 1. Check if email already exists in Keycloak
-    const existingKcUser =
-      await this.keycloakAdminService.findUserByEmail(email);
-    if (existingKcUser) {
+    // 1. Check if email already exists in MongoDB or Keycloak
+    const [existingLocalUser, existingKcUser] = await Promise.all([
+      this.userRepository.findByEmail(email),
+      this.keycloakAdminService.findUserByEmail(email),
+    ]);
+    if (existingLocalUser || existingKcUser) {
       throw new ConflictException(
         'Email already registered. Please login instead.',
       );
