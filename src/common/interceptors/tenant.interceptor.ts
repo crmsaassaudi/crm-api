@@ -15,7 +15,7 @@ import {
   SessionData,
 } from '../../auth/services/session.service';
 import { ModuleRef } from '@nestjs/core';
-import { UsersDocumentRepository } from '../../users/infrastructure/persistence/document/repositories/user.repository';
+import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
 
 /**
@@ -111,7 +111,7 @@ export class TenantInterceptor implements NestInterceptor {
       const userId = this.cls.get('userId');
       if (userId) {
         try {
-          const userRepo = this.moduleRef.get(UsersDocumentRepository, {
+          const userRepo = this.moduleRef.get(UserRepository, {
             strict: false,
           });
 
@@ -233,7 +233,7 @@ export class TenantInterceptor implements NestInterceptor {
     const currentUserId = this.cls.get('userId');
     if (currentUserId && currentUserId.includes('-')) {
       try {
-        const userRepo = this.moduleRef.get(UsersDocumentRepository, {
+        const userRepo = this.moduleRef.get(UserRepository, {
           strict: false,
         });
         const dbUser = await userRepo.findByKeycloakIdAndProvider({
@@ -307,7 +307,7 @@ export class TenantInterceptor implements NestInterceptor {
     if (!userId) return;
 
     try {
-      const userRepo = this.moduleRef.get(UsersDocumentRepository, {
+      const userRepo = this.moduleRef.get(UserRepository, {
         strict: false,
       });
       let dbUser = isValidObjectId(userId)

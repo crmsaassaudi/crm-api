@@ -132,6 +132,8 @@ export class KeycloakAdminService implements OnModuleInit {
     alias: string,
   ): Promise<KeycloakOrganization> {
     return this.ensureClient(async () => {
+      await this.ensureOrganizationsEnabled();
+
       const orgData = {
         name,
         alias,
@@ -146,6 +148,31 @@ export class KeycloakAdminService implements OnModuleInit {
         alias: alias,
       };
     });
+  }
+
+  private async ensureOrganizationsEnabled(): Promise<void> {
+    const realm = this.configService.getOrThrow('keycloak.realm', {
+      infer: true,
+    });
+
+    const realmRepresentation = await this.kcAdminClient.realms.findOne({
+      realm,
+    });
+
+    if (realmRepresentation?.organizationsEnabled) {
+      return;
+    }
+
+    this.logger.warn(
+      `Organizations are disabled for realm "${realm}". Enabling now...`,
+    );
+
+    await this.kcAdminClient.realms.update(
+      { realm },
+      { organizationsEnabled: true },
+    );
+
+    this.logger.log(`Organizations enabled for realm "${realm}"`);
   }
 
   async deleteOrganization(orgId: string): Promise<void> {

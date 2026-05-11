@@ -28,6 +28,10 @@ import {
   DealSchemaClass,
   DealSchema,
 } from '../deals/infrastructure/persistence/document/entities/deal.schema';
+import {
+  DealStageSchemaClass,
+  DealStageSchema,
+} from '../deal-settings/entities/deal-stage.schema';
 
 /**
  * OnboardingModule wires the async tenant provisioning system:
@@ -53,6 +57,7 @@ import {
       { name: ContactSchemaClass.name, schema: ContactSchema },
       { name: AccountSchemaClass.name, schema: AccountSchema },
       { name: DealSchemaClass.name, schema: DealSchema },
+      { name: DealStageSchemaClass.name, schema: DealStageSchema },
     ]),
     // AuthModule provides KeycloakAdminService + SessionService
     forwardRef(() => AuthModule),

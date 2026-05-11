@@ -24,6 +24,8 @@ export class SampleDataSeederService {
     @InjectModel('AccountSchemaClass')
     private readonly accountModel: Model<any>,
     @InjectModel('DealSchemaClass') private readonly dealModel: Model<any>,
+    @InjectModel('DealStageSchemaClass')
+    private readonly dealStageModel: Model<any>,
   ) {}
 
   /**
@@ -37,7 +39,7 @@ export class SampleDataSeederService {
   ): Promise<void> {
     // Guard: Don't seed if tenant already has contacts
     const existingCount = await this.contactModel.countDocuments({
-      'tenants.tenantId': new Types.ObjectId(tenantId),
+      tenantId: new Types.ObjectId(tenantId),
     });
     if (existingCount > 0) {
       this.logger.log(
@@ -46,23 +48,26 @@ export class SampleDataSeederService {
       return;
     }
 
-    const tenantRef = { tenantId: new Types.ObjectId(tenantId) };
+    const seedContext = {
+      tenantId: new Types.ObjectId(tenantId),
+      ownerId: new Types.ObjectId(ownerId),
+    };
 
     try {
       switch (useCase) {
         case 'sales_pipeline':
-          await this.seedSalesPipeline(tenantRef, ownerId);
+          await this.seedSalesPipeline(seedContext);
           break;
         case 'customer_support':
-          await this.seedCustomerSupport(tenantRef, ownerId);
+          await this.seedCustomerSupport(seedContext);
           break;
         case 'marketing':
-          await this.seedMarketing(tenantRef, ownerId);
+          await this.seedMarketing(seedContext);
           break;
         case 'all':
         default:
-          await this.seedSalesPipeline(tenantRef, ownerId);
-          await this.seedCustomerSupport(tenantRef, ownerId);
+          await this.seedSalesPipeline(seedContext);
+          await this.seedCustomerSupport(seedContext);
           break;
       }
 
@@ -81,108 +86,93 @@ export class SampleDataSeederService {
   // Sales Pipeline focus
   // ─────────────────────────────────────────────────────────────────────────────
 
-  private async seedSalesPipeline(
-    tenantRef: { tenantId: Types.ObjectId },
-    ownerId: string,
-  ): Promise<void> {
-    const ownerOid = new Types.ObjectId(ownerId);
+  private async seedSalesPipeline(context: SeedContext): Promise<void> {
+    const audit = this.auditFields(context);
+    const defaultStageId = await this.getDefaultDealStageId(context);
 
     // Sample Accounts
     const accounts = await this.accountModel.insertMany([
       {
+        ...audit,
         name: 'Acme Corporation',
         industry: 'Technology',
         website: 'https://acme.example.com',
-        phone: '+1-555-100-2000',
-        assignedTo: ownerOid,
-        tenants: [tenantRef],
+        phones: ['+1-555-100-2000'],
       },
       {
+        ...audit,
         name: 'GlobalTech Solutions',
         industry: 'Finance',
         website: 'https://globaltech.example.com',
-        phone: '+1-555-200-3000',
-        assignedTo: ownerOid,
-        tenants: [tenantRef],
+        phones: ['+1-555-200-3000'],
       },
       {
+        ...audit,
         name: 'Sunrise Retail',
         industry: 'Retail',
         website: 'https://sunrise.example.com',
-        assignedTo: ownerOid,
-        tenants: [tenantRef],
       },
     ]);
 
     // Sample Contacts
     const contacts = await this.contactModel.insertMany([
       {
+        ...audit,
         firstName: 'Sarah',
         lastName: 'Johnson',
-        emails: [{ email: 'sarah@acme.example.com', isPrimary: true }],
-        phones: [{ phone: '+1-555-101-0001', isPrimary: true }],
+        emails: ['sarah@acme.example.com'],
+        phones: ['+1-555-101-0001'],
         title: 'VP of Engineering',
         accountId: accounts[0]._id,
-        assignedTo: ownerOid,
-        lifecycleStage: 'sql',
-        lifecycleStatus: 'demo_scheduled',
-        source: 'Website',
-        tenants: [tenantRef],
       },
       {
+        ...audit,
         firstName: 'Michael',
         lastName: 'Chen',
-        emails: [
-          { email: 'michael.chen@globaltech.example.com', isPrimary: true },
-        ],
-        phones: [{ phone: '+1-555-201-0002', isPrimary: true }],
+        emails: ['michael.chen@globaltech.example.com'],
+        phones: ['+1-555-201-0002'],
         title: 'CTO',
         accountId: accounts[1]._id,
-        assignedTo: ownerOid,
-        lifecycleStage: 'opportunity',
-        lifecycleStatus: 'proposal_sent',
-        source: 'Referral',
-        tenants: [tenantRef],
       },
       {
+        ...audit,
         firstName: 'Emily',
         lastName: 'Davis',
-        emails: [{ email: 'emily@sunrise.example.com', isPrimary: true }],
+        emails: ['emily@sunrise.example.com'],
         title: 'Procurement Manager',
         accountId: accounts[2]._id,
-        assignedTo: ownerOid,
-        lifecycleStage: 'lead',
-        lifecycleStatus: 'new',
-        source: 'Google Ads',
-        tenants: [tenantRef],
       },
     ]);
 
     // Sample Deals
     await this.dealModel.insertMany([
       {
+        ...audit,
         title: 'Acme CRM Enterprise License',
-        amount: 45000,
+        name: 'Acme CRM Enterprise License',
+        pipeline: 'default',
+        stageId: defaultStageId,
+        value: 45000,
         currency: 'USD',
-        stage: 'negotiation',
         probability: 70,
-        contactId: contacts[0]._id,
+        contactIds: [contacts[0]._id],
         accountId: accounts[0]._id,
-        assignedTo: ownerOid,
-        expectedCloseDate: new Date(Date.now() + 14 * 86_400_000),
-        tenants: [tenantRef],
+        accountName: accounts[0].name,
+        closeDate: new Date(Date.now() + 14 * 86_400_000),
       },
       {
+        ...audit,
         title: 'GlobalTech Annual Subscription',
-        amount: 120000,
+        name: 'GlobalTech Annual Subscription',
+        pipeline: 'default',
+        stageId: defaultStageId,
+        value: 120000,
         currency: 'USD',
-        stage: 'proposal',
         probability: 40,
-        contactId: contacts[1]._id,
+        contactIds: [contacts[1]._id],
         accountId: accounts[1]._id,
-        assignedTo: ownerOid,
-        expectedCloseDate: new Date(Date.now() + 30 * 86_400_000),
-        tenants: [tenantRef],
+        accountName: accounts[1].name,
+        closeDate: new Date(Date.now() + 30 * 86_400_000),
       },
     ]);
   }
@@ -191,45 +181,33 @@ export class SampleDataSeederService {
   // Customer Support focus
   // ─────────────────────────────────────────────────────────────────────────────
 
-  private async seedCustomerSupport(
-    tenantRef: { tenantId: Types.ObjectId },
-    ownerId: string,
-  ): Promise<void> {
-    const ownerOid = new Types.ObjectId(ownerId);
+  private async seedCustomerSupport(context: SeedContext): Promise<void> {
+    const audit = this.auditFields(context);
 
     const account = await this.accountModel.create({
+      ...audit,
       name: 'VIP Customer Inc.',
       industry: 'Healthcare',
       website: 'https://vip-customer.example.com',
-      assignedTo: ownerOid,
-      tenants: [tenantRef],
     });
 
     await this.contactModel.insertMany([
       {
+        ...audit,
         firstName: 'Anna',
         lastName: 'Smith',
-        emails: [{ email: 'anna@vip-customer.example.com', isPrimary: true }],
-        phones: [{ phone: '+1-555-300-0001', isPrimary: true }],
+        emails: ['anna@vip-customer.example.com'],
+        phones: ['+1-555-300-0001'],
         title: 'IT Manager',
         accountId: account._id,
-        assignedTo: ownerOid,
-        lifecycleStage: 'customer',
-        lifecycleStatus: 'active',
-        source: 'Website',
-        tenants: [tenantRef],
       },
       {
+        ...audit,
         firstName: 'James',
         lastName: 'Wilson',
-        emails: [{ email: 'james@vip-customer.example.com', isPrimary: true }],
+        emails: ['james@vip-customer.example.com'],
         title: 'Support Lead',
         accountId: account._id,
-        assignedTo: ownerOid,
-        lifecycleStage: 'customer',
-        lifecycleStatus: 'active',
-        source: 'Referral',
-        tenants: [tenantRef],
       },
     ]);
   }
@@ -238,50 +216,74 @@ export class SampleDataSeederService {
   // Marketing focus
   // ─────────────────────────────────────────────────────────────────────────────
 
-  private async seedMarketing(
-    tenantRef: { tenantId: Types.ObjectId },
-    ownerId: string,
-  ): Promise<void> {
-    const ownerOid = new Types.ObjectId(ownerId);
+  private async seedMarketing(context: SeedContext): Promise<void> {
+    const audit = this.auditFields(context);
 
     await this.contactModel.insertMany([
       {
+        ...audit,
         firstName: 'Lisa',
         lastName: 'Wang',
-        emails: [{ email: 'lisa@marketing-demo.example.com', isPrimary: true }],
+        emails: ['lisa@marketing-demo.example.com'],
         title: 'Marketing Director',
-        assignedTo: ownerOid,
-        lifecycleStage: 'subscriber',
-        lifecycleStatus: 'engaged',
-        source: 'Facebook',
-        tenants: [tenantRef],
       },
       {
+        ...audit,
         firstName: 'David',
         lastName: 'Park',
-        emails: [
-          { email: 'david@marketing-demo.example.com', isPrimary: true },
-        ],
+        emails: ['david@marketing-demo.example.com'],
         title: 'Growth Manager',
-        assignedTo: ownerOid,
-        lifecycleStage: 'mql',
-        lifecycleStatus: 'qualified',
-        source: 'Google Ads',
-        tenants: [tenantRef],
       },
       {
+        ...audit,
         firstName: 'Maria',
         lastName: 'Garcia',
-        emails: [
-          { email: 'maria@marketing-demo.example.com', isPrimary: true },
-        ],
+        emails: ['maria@marketing-demo.example.com'],
         title: 'Content Strategist',
-        assignedTo: ownerOid,
-        lifecycleStage: 'lead',
-        lifecycleStatus: 'nurturing',
-        source: 'Website',
-        tenants: [tenantRef],
       },
     ]);
   }
+
+  private auditFields(context: SeedContext) {
+    return {
+      tenantId: context.tenantId,
+      ownerId: context.ownerId,
+      createdById: context.ownerId,
+      updatedById: context.ownerId,
+    };
+  }
+
+  private async getDefaultDealStageId(
+    context: SeedContext,
+  ): Promise<Types.ObjectId> {
+    const existing = await this.dealStageModel
+      .findOne({
+        tenantId: context.tenantId,
+        pipelineId: 'default',
+        apiName: 'qualification',
+      })
+      .exec();
+
+    if (existing?._id) {
+      return existing._id;
+    }
+
+    const stage = await this.dealStageModel.create({
+      tenantId: context.tenantId,
+      label: 'Qualification',
+      apiName: 'qualification',
+      color: '#3b82f6',
+      sortOrder: 1,
+      pipelineId: 'default',
+      probability: 10,
+      isDefault: true,
+    });
+
+    return stage._id;
+  }
 }
+
+type SeedContext = {
+  tenantId: Types.ObjectId;
+  ownerId: Types.ObjectId;
+};
