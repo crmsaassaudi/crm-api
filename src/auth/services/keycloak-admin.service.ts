@@ -214,8 +214,14 @@ export class KeycloakAdminService implements OnModuleInit {
         throw error;
       }
 
+      if (!response.id) {
+        throw new BadRequestException(
+          'Keycloak did not return a user id after creating the account.',
+        );
+      }
+
       return {
-        id: response.id!,
+        id: response.id,
         email,
         firstName,
         lastName,

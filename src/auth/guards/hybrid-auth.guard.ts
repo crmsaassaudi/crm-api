@@ -75,10 +75,17 @@ export class HybridAuthGuard extends AuthGuard {
           }
         }
 
+        const sessionToken = session.idToken || session.accessToken;
+        if (!sessionToken && this.isOnboardingSessionRoute(request)) {
+          (request as any).user = {
+            id: session.userId,
+            sub: session.userId,
+          };
+          return true;
+        }
+
         // Verify/Assign payload to request
-        const decodedToken = this.decodeJwt(
-          session.idToken || session.accessToken,
-        );
+        const decodedToken = this.decodeJwt(sessionToken);
         if (!decodedToken) {
           throw new UnauthorizedException('Malformed token in session');
         }
@@ -103,5 +110,14 @@ export class HybridAuthGuard extends AuthGuard {
     } catch {
       return null;
     }
+  }
+
+  private isOnboardingSessionRoute(request: Request): boolean {
+    const path = request.originalUrl || request.url || '';
+    return (
+      path.includes('/onboarding/context') ||
+      path.includes('/onboarding/complete') ||
+      path.includes('/onboarding/status/')
+    );
   }
 }

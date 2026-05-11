@@ -11,6 +11,7 @@ import {
   HttpStatus,
   ConflictException,
   NotFoundException,
+  HttpException,
   Logger,
 } from '@nestjs/common';
 import { Response } from 'express';
@@ -82,73 +83,110 @@ export class OnboardingController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const { email, fullName, password } = dto;
+    let step = 'checking existing account';
+    let createdKcUserId: string | null = null;
 
-    // 1. Check if email already exists in MongoDB or Keycloak
-    const [existingLocalUser, existingKcUser] = await Promise.all([
-      this.userRepository.findByEmail(email),
-      this.keycloakAdminService.findUserByEmail(email),
-    ]);
-    if (existingLocalUser || existingKcUser) {
-      throw new ConflictException(
-        'Email already registered. Please login instead.',
+    try {
+      // 1. Check if email already exists in MongoDB or Keycloak
+      const [existingLocalUser, existingKcUser] = await Promise.all([
+        this.userRepository.findByEmail(email),
+        this.keycloakAdminService.findUserByEmail(email),
+      ]);
+      if (existingLocalUser || existingKcUser) {
+        throw new ConflictException(
+          'Email already registered. Please login instead.',
+        );
+      }
+
+      // 2. Create Keycloak user (emailVerified=false for later banner)
+      step = 'creating Keycloak user';
+      const kcUser = await this.keycloakAdminService.createUser(
+        email,
+        password,
+        fullName,
       );
+      createdKcUserId = kcUser.id;
+
+      // 3. Create MongoDB user with INCOMPLETE tag
+      step = 'creating local user';
+      const spaceIdx = fullName.indexOf(' ');
+      const firstName = spaceIdx > -1 ? fullName.slice(0, spaceIdx) : fullName;
+      const lastName = spaceIdx > -1 ? fullName.slice(spaceIdx + 1) : '';
+
+      const localUser = await this.userRepository.create({
+        email,
+        firstName,
+        lastName,
+        keycloakId: kcUser.id,
+        provider: AuthProvidersEnum.email,
+        platformRole: { id: PlatformRoleEnum.USER } as any,
+        status: { id: StatusEnum.active } as any,
+        tenants: [],
+        onboardingStatus: 'INCOMPLETE_ONBOARDING',
+      } as any);
+
+      // 4. Create session (lightweight — no full OAuth token exchange)
+      step = 'creating session';
+      const sid = await this.sessionService.createSession(
+        {
+          access_token: '',
+          refresh_token: '',
+          id_token: '',
+          expires_in: 86400,
+        },
+        localUser.id as string,
+      );
+
+      // 5. Set session cookie
+      const isProd =
+        this.configService.get('app.nodeEnv', { infer: true }) === 'production';
+      res.cookie(SID_COOKIE, sid, {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: 'lax',
+      });
+
+      // 6. Create onboarding session in Redis
+      step = 'creating onboarding session';
+      await this.onboardingService.createSession(localUser.id as string);
+
+      this.logger.log(
+        `PLG onboarding started for ${email} (userId=${localUser.id})`,
+      );
+
+      return {
+        userId: localUser.id,
+        nextStep: 2,
+      };
+    } catch (error: any) {
+      if (createdKcUserId) {
+        await this.keycloakAdminService
+          .deleteUser(createdKcUserId)
+          .catch((rollbackError) => {
+            this.logger.error(
+              `[OnboardingStart][Rollback] Failed to delete Keycloak user ${createdKcUserId}`,
+              rollbackError?.stack || rollbackError,
+            );
+          });
+      }
+
+      this.logger.error(
+        `[OnboardingStart] Failed while ${step} for ${email}: ${error?.message || error}`,
+        error?.stack || error,
+      );
+
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      if (error?.code === 11000) {
+        throw new ConflictException(
+          'Email already registered. Please login instead.',
+        );
+      }
+
+      throw error;
     }
-
-    // 2. Create Keycloak user (emailVerified=false for later banner)
-    const kcUser = await this.keycloakAdminService.createUser(
-      email,
-      password,
-      fullName,
-    );
-
-    // 3. Create MongoDB user with INCOMPLETE tag
-    const spaceIdx = fullName.indexOf(' ');
-    const firstName = spaceIdx > -1 ? fullName.slice(0, spaceIdx) : fullName;
-    const lastName = spaceIdx > -1 ? fullName.slice(spaceIdx + 1) : '';
-
-    const localUser = await this.userRepository.create({
-      email,
-      firstName,
-      lastName,
-      keycloakId: kcUser.id,
-      provider: AuthProvidersEnum.email,
-      platformRole: { id: PlatformRoleEnum.USER } as any,
-      status: { id: StatusEnum.active } as any,
-      tenants: [],
-      onboardingStatus: 'INCOMPLETE_ONBOARDING',
-    } as any);
-
-    // 4. Create session (lightweight — no full OAuth token exchange)
-    const sid = await this.sessionService.createSession(
-      {
-        access_token: '',
-        refresh_token: '',
-        id_token: '',
-        expires_in: 86400,
-      },
-      localUser.id as string,
-    );
-
-    // 5. Set session cookie
-    const isProd =
-      this.configService.get('app.nodeEnv', { infer: true }) === 'production';
-    res.cookie(SID_COOKIE, sid, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: 'lax',
-    });
-
-    // 6. Create onboarding session in Redis
-    await this.onboardingService.createSession(localUser.id as string);
-
-    this.logger.log(
-      `PLG onboarding started for ${email} (userId=${localUser.id})`,
-    );
-
-    return {
-      userId: localUser.id,
-      nextStep: 2,
-    };
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
