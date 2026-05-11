@@ -1,5 +1,5 @@
 import { registerAs } from '@nestjs/config';
-import { IsString, IsUrl } from 'class-validator';
+import { IsOptional, IsString, IsUrl } from 'class-validator';
 import validateConfig from '../../utils/validate-config';
 import { KeycloakConfig } from './keycloak-config.type';
 
@@ -16,6 +16,14 @@ class EnvironmentVariablesValidator {
   @IsString()
   KEYCLOAK_CLIENT_SECRET: string;
 
+  @IsOptional()
+  @IsString()
+  KEYCLOAK_ADMIN_CLIENT_ID: string;
+
+  @IsOptional()
+  @IsString()
+  KEYCLOAK_ADMIN_CLIENT_SECRET: string;
+
   @IsString()
   KEYCLOAK_CALLBACK_URL: string;
 
@@ -31,6 +39,14 @@ export default registerAs<KeycloakConfig>('keycloak', () => {
     realm: process.env.KEYCLOAK_REALM ?? '',
     clientId: process.env.KEYCLOAK_CLIENT_ID ?? '',
     clientSecret: process.env.KEYCLOAK_CLIENT_SECRET ?? '',
+    adminClientId:
+      process.env.KEYCLOAK_ADMIN_CLIENT_ID ??
+      process.env.KEYCLOAK_CLIENT_ID ??
+      '',
+    adminClientSecret:
+      process.env.KEYCLOAK_ADMIN_CLIENT_SECRET ??
+      process.env.KEYCLOAK_CLIENT_SECRET ??
+      '',
     callbackUrl: process.env.KEYCLOAK_CALLBACK_URL ?? '',
     frontendUrl: process.env.KEYCLOAK_FRONTEND_URL ?? 'http://localhost:4200',
   };

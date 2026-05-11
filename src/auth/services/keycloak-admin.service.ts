@@ -33,6 +33,7 @@ interface IdentityProviderLink {
 export class KeycloakAdminService implements OnModuleInit {
   private readonly logger = new Logger(KeycloakAdminService.name);
   private kcAdminClient: any;
+  private tokenProviderRegistered = false;
 
   constructor(private readonly configService: ConfigService<AllConfigType>) {}
 
@@ -59,6 +60,16 @@ export class KeycloakAdminService implements OnModuleInit {
       }),
     });
 
+    if (!this.tokenProviderRegistered) {
+      this.kcAdminClient.registerTokenProvider({
+        getAccessToken: async () => {
+          await this.authenticate();
+          return this.kcAdminClient.accessToken;
+        },
+      });
+      this.tokenProviderRegistered = true;
+    }
+
     return this.kcAdminClient;
   }
 
@@ -67,12 +78,15 @@ export class KeycloakAdminService implements OnModuleInit {
     try {
       await client.auth({
         grantType: 'client_credentials',
-        clientId: this.configService.getOrThrow('keycloak.clientId', {
+        clientId: this.configService.getOrThrow('keycloak.adminClientId', {
           infer: true,
         }),
-        clientSecret: this.configService.getOrThrow('keycloak.clientSecret', {
-          infer: true,
-        }),
+        clientSecret: this.configService.getOrThrow(
+          'keycloak.adminClientSecret',
+          {
+            infer: true,
+          },
+        ),
       });
       this.logger.log('Successfully authenticated Keycloak Admin Client');
     } catch (error) {
@@ -83,20 +97,30 @@ export class KeycloakAdminService implements OnModuleInit {
     }
   }
 
-  // Helper to ensure token is valid before calls. The library handles token refresh automatically
-  // internally when using client_credentials, but we wrap calls to standardise error handling if needed.
+  // Client credentials grants do not return a refresh token. The registered
+  // token provider above prevents the client from attempting refresh_token flow.
   private async ensureClient<T>(operation: () => Promise<T>): Promise<T> {
     await this.getClient();
+
     try {
       return await operation();
     } catch (error: any) {
-      if (error?.response?.status === 401) {
-        this.logger.warn('Keycloak token expired, re-authenticating...');
+      if (this.isAuthRetryableError(error)) {
+        this.logger.warn('Keycloak admin token invalid, re-authenticating...');
         await this.authenticate();
         return await operation();
       }
       throw error;
     }
+  }
+
+  private isAuthRetryableError(error: any): boolean {
+    const message = error?.message || '';
+    return (
+      error?.response?.status === 401 ||
+      message.includes('Cannot refresh token') ||
+      message.includes('missing refresh token')
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

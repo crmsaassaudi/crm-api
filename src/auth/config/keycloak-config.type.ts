@@ -3,6 +3,8 @@ export type KeycloakConfig = {
   realm: string;
   clientId: string;
   clientSecret: string;
+  adminClientId: string;
+  adminClientSecret: string;
   callbackUrl: string;
   frontendUrl: string;
 };
