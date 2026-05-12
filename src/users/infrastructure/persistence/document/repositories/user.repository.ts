@@ -168,6 +168,23 @@ export class UsersDocumentRepository
     return userObject ? UserMapper.toDomain(userObject) : null;
   }
 
+  async findIncompleteOnboardingBefore(
+    cutoffDate: Date,
+    limit = 100,
+  ): Promise<User[]> {
+    const userObjects = await this.model
+      .find({
+        onboardingStatus: 'INCOMPLETE_ONBOARDING',
+        createdAt: { $lt: cutoffDate },
+        $or: [{ tenants: { $exists: false } }, { tenants: { $size: 0 } }],
+      })
+      .setOptions({ skipTenantFilter: true })
+      .limit(limit)
+      .exec();
+
+    return userObjects.map((userObject) => UserMapper.toDomain(userObject));
+  }
+
   async update(
     id: User['id'],
     payload: Partial<User>,
@@ -248,6 +265,13 @@ export class UsersDocumentRepository
       platformRole: userData.platformRole?.id ?? null,
       status: userData.status?.id ?? null,
     };
+    const setFields: Record<string, unknown> = {
+      updatedAt: new Date(),
+    };
+
+    if (userData.onboardingStatus !== undefined) {
+      setFields.onboardingStatus = userData.onboardingStatus;
+    }
 
     // Use findOneAndUpdate with upsert for idempotency
     const updatedUser = await this.model.findOneAndUpdate(
@@ -262,7 +286,7 @@ export class UsersDocumentRepository
         },
         $set: {
           // Always update these fields
-          updatedAt: new Date(),
+          ...setFields,
         },
         $addToSet: {
           // Add tenants only if they don't exist (prevents duplicates)

@@ -11,7 +11,8 @@ import { KeycloakAdminService } from '../../auth/services/keycloak-admin.service
  *
  * Criteria:
  *  - onboardingStatus = 'INCOMPLETE_ONBOARDING'
- *  - createdAt > 24 hours ago
+ *  - createdAt < 24 hours ago
+ *  - no tenant membership was created
  *
  * Actions:
  *  1. Delete the Keycloak user (if exists)
@@ -37,9 +38,11 @@ export class OrphanCleanupCron {
     let errorCount = 0;
 
     try {
-      // Find all incomplete users older than 24h
-      // Using direct repo query since we need a custom filter
-      const incompleteUsers = await this.findIncompleteUsers(cutoffDate);
+      const incompleteUsers =
+        await this.userRepository.findIncompleteOnboardingBefore(
+          cutoffDate,
+          100,
+        );
 
       if (incompleteUsers.length === 0) {
         this.logger.log(
@@ -89,36 +92,6 @@ export class OrphanCleanupCron {
     this.logger.log(
       `[OrphanCleanup] Complete — cleaned: ${cleanedCount}, errors: ${errorCount}`,
     );
-  }
-
-  /**
-   * Find users with INCOMPLETE_ONBOARDING status created before the cutoff date.
-   *
-   * Note: This is a direct query because the UserRepository doesn't expose
-   * a filter for onboardingStatus. In a future refactor, this should be moved
-   * to a proper repository method.
-   */
-  private async findIncompleteUsers(
-    cutoffDate: Date,
-  ): Promise<
-    Array<{ id: string; email: string; keycloakId?: string; createdAt: Date }>
-  > {
-    // We use the repository's findManyWithPagination with a custom filter
-    // or fallback to a more specific approach
-    const result = await this.userRepository.findManyWithPagination({
-      filterOptions: {
-        onboardingStatus: 'INCOMPLETE_ONBOARDING',
-        createdBefore: cutoffDate,
-      } as any,
-      paginationOptions: { page: 1, limit: 100 },
-    });
-
-    return result.data.map((u) => ({
-      id: u.id as string,
-      email: u.email || '',
-      keycloakId: u.keycloakId || undefined,
-      createdAt: u.createdAt,
-    }));
   }
 
   private getAge(createdAt: Date): string {

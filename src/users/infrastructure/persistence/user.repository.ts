@@ -35,6 +35,11 @@ export abstract class UserRepository {
     provider: User['provider'];
   }): Promise<NullableType<User>>;
 
+  abstract findIncompleteOnboardingBefore(
+    cutoffDate: Date,
+    limit?: number,
+  ): Promise<User[]>;
+
   abstract update(
     id: User['id'],
     payload: DeepPartial<User>,

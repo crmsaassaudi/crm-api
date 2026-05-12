@@ -270,6 +270,15 @@ export class UsersService {
   }
 
   async remove(id: User['id']): Promise<void> {
+    const ownedTenants = await this.tenantsRepository.findByOwnerId(
+      id.toString(),
+    );
+    if (ownedTenants.length > 0) {
+      throw new UnprocessableEntityException(
+        'Cannot delete a user who owns a tenant. Transfer ownership or delete the tenant first.',
+      );
+    }
+
     await this.usersRepository.remove(id);
   }
 

@@ -47,6 +47,13 @@ export class TenantsRepository {
     return docs.map((doc) => TenantMapper.toDomain(doc));
   }
 
+  async findByOwnerId(ownerId: string): Promise<Tenant[]> {
+    const docs = await this.tenantsModel
+      .find({ ownerId: new Types.ObjectId(ownerId) })
+      .exec();
+    return docs.map((doc) => TenantMapper.toDomain(doc));
+  }
+
   async updateOwner(
     tenantId: string,
     ownerId: string,
