@@ -34,6 +34,7 @@ import { AgentFallbackService } from './services/agent-fallback.service';
 import { AutoResolveService } from './services/auto-resolve.service';
 import { BusinessHoursService } from './services/business-hours.service';
 import { AgentStatusAuditService } from './services/agent-status-audit.service';
+import { ConversationLockService } from './services/conversation-lock.service';
 
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
@@ -177,6 +178,7 @@ import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
     // ── Pillar 2: Agent System ────────────────────────────────────
     AgentPresenceService,
     AgentPresenceGateway,
+    ConversationLockService,
 
     // ── Pillar 3: Realtime UX ─────────────────────────────────────
     OmniGateway,
@@ -234,6 +236,7 @@ import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
     AutoResolveService,
     BusinessHoursService,
     AgentStatusAuditService,
+    ConversationLockService,
   ],
 })
 export class OmniInboundModule {}

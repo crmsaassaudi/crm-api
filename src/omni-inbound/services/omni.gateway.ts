@@ -21,6 +21,8 @@ import { jwtDecode } from 'jwt-decode';
 import * as cookie from 'cookie';
 import { ConfigService } from '@nestjs/config';
 import { AllConfigType } from '../../config/config.type';
+import { ConversationLockService } from './conversation-lock.service';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
@@ -44,7 +46,7 @@ import { AllConfigType } from '../../config/config.type';
 })
 export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   private readonly logger = new Logger(OmniGateway.name);
 
@@ -60,6 +62,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly agentFallbackService: AgentFallbackService,
     private readonly usersService: UsersService,
     private readonly configService: ConfigService<AllConfigType>,
+    private readonly conversationLockService: ConversationLockService,
   ) {}
 
   private readonly SYSTEM_SUBDOMAINS = ['api', 'admin', 'auth', 'www', 'mail'];
@@ -188,8 +191,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Join tenant room for broadcast events
       await client.join(`tenant:${tenantId}`);
+      await client.join(`agent:${userId}`);
       this.logger.log(
-        `Agent ${userId} connected to /omni, joined room tenant:${tenantId}`,
+        `Agent ${userId} connected to /omni, joined tenant:${tenantId} and agent:${userId}`,
       );
 
       // Register agent presence (multi-tab aware)
@@ -198,9 +202,8 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Cancel any pending reassignment from a previous disconnect
       await this.agentFallbackService.onAgentReconnected(tenantId, userId);
     } catch (error) {
-      this.logger.error(
-        `Connection error for client ${client.id}: ${error.message}`,
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Connection error for client ${client.id}: ${message}`);
       client.disconnect();
     }
   }
@@ -245,6 +248,8 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       content: string;
       messageType?: string;
       tempId?: string; // Client-side optimistic ID for matching acks
+      idempotencyKey?: string;
+      clientMessageId?: string;
     },
   ) {
     const user = client.data.user;
@@ -266,6 +271,8 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         agentId: userId,
         content: data.content,
         messageType: data.messageType,
+        idempotencyKey: data.idempotencyKey,
+        clientMessageId: data.clientMessageId ?? data.tempId,
         source: 'socket',
       });
 
@@ -273,29 +280,39 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         ok: true,
         tempId: data.tempId,
         messageId: result.messageId,
+        idempotencyKey: result.idempotencyKey ?? data.idempotencyKey,
+        clientMessageId:
+          result.clientMessageId ?? data.clientMessageId ?? data.tempId,
+        reused: result.reused ?? false,
         timestamp: new Date().toISOString(),
         createdAt: new Date(),
       };
 
-      // Broadcast the message to other agents watching this conversation
-      client
-        .to(`conversation:${data.conversationId}`)
-        .emit('omni:message:new', {
-          conversationId: data.conversationId,
-          senderId: userId,
-          senderType: 'agent',
-          messageType: data.messageType ?? 'text',
-          content: data.content,
-          messageId: ack.messageId,
-          timestamp: ack.timestamp,
-          providerTimestamp: ack.timestamp,
-          createdAt: ack.createdAt,
-        });
+      if (!result.reused) {
+        // Broadcast the message to other agents watching this conversation
+        client
+          .to(`conversation:${data.conversationId}`)
+          .emit('omni:message:new', {
+            conversationId: data.conversationId,
+            senderId: userId,
+            senderType: 'agent',
+            messageType: data.messageType ?? 'text',
+            content: data.content,
+            messageId: ack.messageId,
+            idempotencyKey: ack.idempotencyKey,
+            clientMessageId: ack.clientMessageId,
+            timestamp: ack.timestamp,
+            providerTimestamp: ack.timestamp,
+            createdAt: ack.createdAt,
+          });
+      }
 
       return ack;
     } catch (error) {
-      this.logger.error(`SendMessage error: ${error.message}`);
-      return { ok: false, error: error.message };
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`SendMessage error: ${errorMessage}`);
+      return { ok: false, error: errorMessage };
     }
   }
 
@@ -407,6 +424,8 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
           messageType: payload.messageType,
           content: payload.content,
           messageId: payload.messageId,
+          idempotencyKey: payload.idempotencyKey,
+          clientMessageId: payload.clientMessageId,
           timestamp: payload.timestamp,
           providerTimestamp: payload.timestamp,
           createdAt: payload.createdAt || payload.timestamp || new Date(),
@@ -414,19 +433,74 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('conversation.subscribe')
+  async handleConversationSubscribe(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string },
+  ) {
+    if (!client.data.user) return { ok: false, error: 'Unauthenticated' };
+    if (!data?.conversationId) {
+      return { ok: false, error: 'conversationId is required' };
+    }
+
+    await client.join(`conversation:${data.conversationId}`);
+    return { ok: true, room: `conversation:${data.conversationId}` };
+  }
+
+  @SubscribeMessage('conversation.unsubscribe')
+  async handleConversationUnsubscribe(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string },
+  ) {
+    if (!client.data.user) return { ok: false, error: 'Unauthenticated' };
+    if (!data?.conversationId) {
+      return { ok: false, error: 'conversationId is required' };
+    }
+
+    await client.leave(`conversation:${data.conversationId}`);
+    return { ok: true, room: `conversation:${data.conversationId}` };
+  }
+
   // ─── Typing indicators ─────────────────────────────────────────────
 
   @SubscribeMessage('omni:typing:start')
-  handleTypingStart(
+  async handleTypingStart(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { conversationId: string },
   ) {
     const user = client.data.user;
     if (!user) return;
 
+    const userId = client.data.userId ?? user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    if (tenantId && data?.conversationId) {
+      try {
+        await this.conversationLockService.heartbeat({
+          tenantId,
+          conversationId: data.conversationId,
+          agentId: userId,
+          agentName: user.name ?? null,
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : error && typeof error === 'object' && 'message' in error
+              ? (error as any).message
+              : String(error);
+
+        client.emit('omni:collision', {
+          conversationId: data.conversationId,
+          message,
+          lock: (error as any)?.response?.lock,
+        });
+        return;
+      }
+    }
+
     client.to(`conversation:${data.conversationId}`).emit('omni:typing:start', {
       conversationId: data.conversationId,
-      userId: client.data.userId ?? user.id ?? user.sub,
+      userId,
       userName: user.name ?? 'Agent',
     });
   }
@@ -504,6 +578,39 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { ok: false, error: 'Agent at capacity' };
     }
 
+    try {
+      await this.conversationLockService.acquireLock({
+        tenantId,
+        conversationId,
+        agentId: userId,
+        agentName: user.name ?? null,
+        source: 'conversation_claim',
+      });
+    } catch (error: unknown) {
+      const lock =
+        typeof error === 'object' &&
+        error !== null &&
+        'response' in error &&
+        typeof (error as { response?: unknown }).response === 'object' &&
+        (error as { response?: unknown }).response !== null &&
+        'lock' in ((error as { response?: { lock?: unknown } }).response ?? {})
+          ? (error as { response?: { lock?: unknown } }).response?.lock
+          : undefined;
+
+      this.claimLocks.delete(conversationId);
+      await this.presenceService.releaseConversation(tenantId, userId);
+      client.emit('omni:collision', {
+        conversationId,
+        message: 'This conversation is already claimed by another agent.',
+        lock,
+      });
+      return {
+        ok: false,
+        error: 'Already claimed',
+        lock,
+      };
+    }
+
     // Join the conversation room for targeted events
     await client.join(`conversation:${conversationId}`);
 
@@ -516,6 +623,62 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     this.logger.log(`Agent ${userId} claimed conversation ${conversationId}`);
     return { ok: true };
+  }
+
+  @SubscribeMessage('conversation.lock.heartbeat')
+  async handleLockHeartbeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string },
+  ) {
+    const user = client.data.user;
+    if (!user) return { ok: false, error: 'Unauthenticated' };
+    const tenantId = client.data.tenantId;
+    const agentId = client.data.userId ?? user.id ?? user.sub;
+    if (!tenantId) return { ok: false, error: 'No tenant context' };
+
+    try {
+      const lock = await this.conversationLockService.heartbeat({
+        tenantId,
+        conversationId: data.conversationId,
+        agentId,
+        agentName: user.name ?? null,
+      });
+      return { ok: true, lock };
+    } catch (error: any) {
+      return { ok: false, error: error.message, lock: error.response?.lock };
+    }
+  }
+
+  @SubscribeMessage('conversation.takeover')
+  async handleConversationTakeover(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: { conversationId: string; reason?: string; force?: boolean },
+  ) {
+    const user = client.data.user;
+    if (!user) return { ok: false, error: 'Unauthenticated' };
+    const tenantId = client.data.tenantId;
+    const agentId = client.data.userId ?? user.id ?? user.sub;
+    if (!tenantId) return { ok: false, error: 'No tenant context' };
+
+    try {
+      const result = await this.conversationLockService.takeover({
+        tenantId,
+        conversationId: data.conversationId,
+        newAgentId: agentId,
+        newAgentName: user.name ?? null,
+        reason: data.reason,
+        force: data.force ?? false,
+      });
+      return {
+        ok: true,
+        previousAgentId: result.previousLock?.agentId ?? null,
+        newAgentId: agentId,
+        lockExpiresAt: result.newLock.expiresAt,
+      };
+    } catch (error: any) {
+      return { ok: false, error: error.message, lock: error.response?.lock };
+    }
   }
 
   // ─── Event listeners: status & assignment broadcasts ────────────
@@ -574,6 +737,65 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
   }
 
+  @OnEvent('omni.conversation.lock_acquired')
+  handleLockAcquired(event: any) {
+    const payload = this.standardEvent('conversation.lock_acquired', event);
+    this.server
+      .to(`conversation:${event.conversationId}`)
+      .emit('conversation.lock_acquired', payload);
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:conversation:locked', {
+        conversationId: event.conversationId,
+        lockedBy: event.agentId,
+        lockedByName: event.agentName,
+        expiresAt: event.expiresAt,
+      });
+  }
+
+  @OnEvent('omni.conversation.lock_released')
+  handleLockReleased(event: any) {
+    const payload = this.standardEvent('conversation.lock_released', event);
+    this.server
+      .to(`conversation:${event.conversationId}`)
+      .emit('conversation.lock_released', payload);
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:conversation:unlocked', {
+        conversationId: event.conversationId,
+        agentId: event.agentId,
+        releasedAt: event.releasedAt,
+      });
+  }
+
+  @OnEvent('omni.conversation.takeover')
+  handleTakeover(event: any) {
+    const payload = this.standardEvent('conversation.takeover', event);
+    this.server
+      .to(`conversation:${event.conversationId}`)
+      .emit('conversation.takeover', payload);
+
+    if (event.previousAgentId) {
+      this.server
+        .to(`agent:${event.previousAgentId}`)
+        .emit('conversation.takeover', payload);
+    }
+    this.server
+      .to(`agent:${event.newAgentId}`)
+      .emit('conversation.takeover', payload);
+
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:conversation:takeover', {
+        conversationId: event.conversationId,
+        previousAgentId: event.previousAgentId,
+        newAgentId: event.newAgentId,
+        newAgentName: event.newAgentName,
+        reason: event.reason,
+        occurredAt: event.occurredAt,
+      });
+  }
+
   /**
    * Broadcast new note creation to agents watching the conversation.
    */
@@ -622,5 +844,16 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       conversationId: event.conversationId,
       activity: event.activity,
     });
+  }
+
+  private standardEvent(eventName: string, payload: any) {
+    return {
+      eventId: uuidv4(),
+      event: eventName,
+      conversationId: payload.conversationId,
+      occurredAt: payload.occurredAt ?? new Date().toISOString(),
+      version: Date.now(),
+      payload,
+    };
   }
 }

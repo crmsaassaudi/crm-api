@@ -22,6 +22,14 @@ export class MessageRepository {
     return OmniMessageMapper.toDomain(doc);
   }
 
+  async findByIdempotencyKey(
+    tenantId: string,
+    idempotencyKey: string,
+  ): Promise<OmniMessage | null> {
+    const doc = await this.model.findOne({ tenantId, idempotencyKey }).exec();
+    return doc ? OmniMessageMapper.toDomain(doc) : null;
+  }
+
   /**
    * Get messages for a conversation, paginated, most recent first (for chat scroll).
    */

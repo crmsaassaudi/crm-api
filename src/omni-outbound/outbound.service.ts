@@ -65,6 +65,8 @@ export class OutboundService {
     content: string;
     messageType?: string;
     source?: 'http' | 'socket';
+    idempotencyKey?: string;
+    clientMessageId?: string;
   }): Promise<any> {
     const {
       tenantId,
@@ -73,7 +75,32 @@ export class OutboundService {
       content,
       messageType = 'text',
       source = 'http',
+      idempotencyKey,
+      clientMessageId,
     } = params;
+
+    let retryMessage: Awaited<
+      ReturnType<MessageRepository['findByIdempotencyKey']>
+    > = null;
+
+    if (idempotencyKey) {
+      const existing = await this.messageRepo.findByIdempotencyKey(
+        tenantId,
+        idempotencyKey,
+      );
+      if (existing && existing.status !== 'failed') {
+        return {
+          ok: true,
+          messageId: existing.id,
+          externalMessageId: existing.externalMessageId,
+          status: existing.status,
+          idempotencyKey,
+          clientMessageId: existing.clientMessageId,
+          reused: true,
+        };
+      }
+      retryMessage = existing;
+    }
 
     // 1. Fetch conversation to get channel details and external ID
     const conversation = await this.conversationRepo.findById(conversationId);
@@ -112,23 +139,53 @@ export class OutboundService {
     );
 
     // 3. Persist to MessageRepository
-    const message = await this.messageRepo.create({
-      tenantId: tenantId,
-      conversationId: conversationId,
-      senderId: agentId,
-      senderType: 'agent',
-      messageType,
-      content,
-      status: 'sending',
-    });
+    let message = retryMessage;
+    if (message) {
+      await this.messageRepo.updateStatus(message.id, 'sending');
+    } else {
+      try {
+        message = await this.messageRepo.create({
+          tenantId: tenantId,
+          conversationId: conversationId,
+          senderId: agentId,
+          senderType: 'agent',
+          messageType,
+          content,
+          status: 'sending',
+          idempotencyKey,
+          clientMessageId,
+        });
+      } catch (error) {
+        if (idempotencyKey && (error as any)?.code === 11000) {
+          const existing = await this.messageRepo.findByIdempotencyKey(
+            tenantId,
+            idempotencyKey,
+          );
+          if (existing) {
+            return {
+              ok: true,
+              messageId: existing.id,
+              externalMessageId: existing.externalMessageId,
+              status: existing.status,
+              idempotencyKey,
+              clientMessageId: existing.clientMessageId,
+              reused: true,
+            };
+          }
+        }
+        throw error;
+      }
+    }
 
     // 3. Update conversation last message summary
-    await this.conversationRepo.updateLastMessage(
-      conversationId,
-      content.substring(0, 200),
-      new Date(),
-      'agent',
-    );
+    if (!retryMessage) {
+      await this.conversationRepo.updateLastMessage(
+        conversationId,
+        content.substring(0, 200),
+        new Date(),
+        'agent',
+      );
+    }
 
     // 4. Send to Provider API via Adapter
     try {
@@ -160,15 +217,24 @@ export class OutboundService {
         messageId: message.id,
         externalMessageId: externalId,
         status: 'sent',
+        idempotencyKey,
+        clientMessageId,
         timestamp: new Date().toISOString(),
         source,
       });
 
-      return { ok: true, messageId: message.id, externalMessageId: externalId };
+      return {
+        ok: true,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        clientMessageId,
+      };
     } catch (error) {
-      this.logger.error(
-        `Failed to send message via provider: ${error.message}`,
-      );
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to send message via provider: ${errorMessage}`);
       await this.messageRepo.updateStatus(message.id, 'failed');
       throw error;
     }
@@ -353,9 +419,13 @@ export class OutboundService {
             content: response.data,
             contentType: response.headers['content-type'],
           });
-        } catch (downloadErr) {
+        } catch (downloadErr: unknown) {
+          const errorMessage =
+            downloadErr instanceof Error
+              ? downloadErr.message
+              : String(downloadErr);
           this.logger.warn(
-            `Failed to download inline image from ${src}: ${downloadErr.message}`,
+            `Failed to download inline image from ${src}: ${errorMessage}`,
           );
           // Fallback: If we couldn't download it, we leave the S3 URL to avoid breaking the email entirely
           $(el).attr('src', src);

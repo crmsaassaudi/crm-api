@@ -463,6 +463,47 @@ export class ActivityService {
     );
   }
 
+  @OnEvent('omni.conversation.takeover')
+  async onConversationTakeover(event: {
+    tenantId: string;
+    conversationId: string;
+    previousAgentId: string | null;
+    previousAgentName?: string | null;
+    newAgentId: string;
+    newAgentName?: string | null;
+    reason?: string;
+    force?: boolean;
+    lockExpiresAt?: string;
+  }) {
+    const newAgentName =
+      event.newAgentName ?? (await this.resolveActorName(event.newAgentId));
+    const previousAgentName = event.previousAgentId
+      ? (event.previousAgentName ??
+        (await this.resolveActorName(event.previousAgentId)))
+      : 'chưa có agent';
+    const reasonText = event.reason ? ` (${event.reason})` : '';
+
+    await this.log(
+      event.tenantId,
+      event.conversationId,
+      'agent',
+      event.newAgentId,
+      'conversation_takeover',
+      event.previousAgentId,
+      event.newAgentId,
+      {
+        previousAgentId: event.previousAgentId,
+        previousAgentName,
+        newAgentId: event.newAgentId,
+        newAgentName,
+        reason: event.reason,
+        force: event.force,
+        lockExpiresAt: event.lockExpiresAt,
+      },
+      `${newAgentName} đã tiếp quản hội thoại từ ${previousAgentName}${reasonText}`,
+    );
+  }
+
   // ─── Helpers ────────────────────────────────────────────────────
 
   private async log(
@@ -497,7 +538,8 @@ export class ActivityService {
         activity,
       });
     } catch (err) {
-      this.logger.error(`Failed to log activity: ${err.message}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Failed to log activity: ${msg}`);
     }
   }
 

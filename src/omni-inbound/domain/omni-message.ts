@@ -28,6 +28,8 @@ export interface OmniMessage {
   status: MessageStatus;
   metadata?: Record<string, any>;
   externalMessageId?: string;
+  idempotencyKey?: string;
+  clientMessageId?: string;
   createdAt: Date;
   updatedAt: Date;
 }

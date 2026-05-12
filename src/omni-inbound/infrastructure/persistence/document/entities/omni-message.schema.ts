@@ -82,6 +82,18 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   externalMessageId: string;
 
   /**
+   * Client-generated idempotency key for outbound agent messages.
+   * Retries with the same key must return this same message instead of
+   * creating or sending a duplicate provider message.
+   */
+  @Prop({ type: String, sparse: true })
+  idempotencyKey: string;
+
+  /** Optional optimistic UI identifier supplied by the browser. */
+  @Prop({ type: String, sparse: true })
+  clientMessageId: string;
+
+  /**
    * Canonical platform message ID used as the primary deduplication key.
    * This is the unique ID assigned by the provider (FB mid, Zalo msgId, etc.).
    * A compound unique index on (tenant, platformMessageId) is the final
@@ -143,5 +155,15 @@ OmniMessageSchema.index(
     unique: true,
     name: 'dedup_platform_message',
     partialFilterExpression: { platformMessageId: { $type: 'string' } },
+  },
+);
+
+// Outbound idempotency: one client-generated key can produce only one message.
+OmniMessageSchema.index(
+  { tenantId: 1, idempotencyKey: 1 },
+  {
+    unique: true,
+    name: 'dedup_outbound_idempotency_key',
+    partialFilterExpression: { idempotencyKey: { $type: 'string' } },
   },
 );

@@ -22,6 +22,7 @@ import { NoteService } from '../services/note.service';
 import { ActivityService } from '../services/activity.service';
 import { ConversationService } from '../services/conversation.service';
 import { ConversionService } from '../services/conversion.service';
+import { ConversationLockService } from '../services/conversation-lock.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
 import { CreateDealFromConversationDto } from '../dto/create-deal-from-conversation.dto';
 import { CreateTicketFromConversationDto } from '../dto/create-ticket-from-conversation.dto';
@@ -55,6 +56,7 @@ export class OmniController {
     private readonly outboundService: OutboundService,
     private readonly noteService: NoteService,
     private readonly activityService: ActivityService,
+    private readonly conversationLockService: ConversationLockService,
     private readonly cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
     private readonly usersService: UsersService,
@@ -228,6 +230,41 @@ export class OmniController {
     );
   }
 
+  @Get('conversations/:id/sync')
+  async syncConversation(
+    @Param('id') conversationId: string,
+    @Query('afterVersion') afterVersion?: string,
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    const messages = await this.messageRepo.findByConversation(
+      conversationId,
+      1,
+      100,
+    );
+
+    return {
+      mode: 'snapshot',
+      conversationId,
+      afterVersion: afterVersion ? Number(afterVersion) : null,
+      currentVersion: Date.now(),
+      conversation,
+      messages: messages.data,
+      lock: await this.conversationLockService.getLock(
+        tenantId,
+        conversationId,
+      ),
+    };
+  }
+
   @Get('conversations/:id/timeline')
   async getConversationTimeline(
     @Param('id') conversationId: string,
@@ -386,6 +423,8 @@ export class OmniController {
     @Param('id') conversationId: string,
     @Body('content') content: string,
     @Body('messageType') messageType?: string,
+    @Body('idempotencyKey') idempotencyKey?: string,
+    @Body('clientMessageId') clientMessageId?: string,
   ) {
     if (!content) {
       throw new BadRequestException('Content is required');
@@ -405,6 +444,8 @@ export class OmniController {
         agentId,
         content,
         messageType,
+        idempotencyKey,
+        clientMessageId,
       });
     } catch (error) {
       this.logger.error(`Failed to send message: ${error.message}`);
@@ -461,6 +502,126 @@ export class OmniController {
     }
 
     return this.outboundService.getReplyWindowStatus(conversation);
+  }
+
+  @Get('conversations/:id/lock')
+  async getConversationLock(@Param('id') conversationId: string) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+
+    return {
+      lock: await this.conversationLockService.getLock(
+        tenantId,
+        conversationId,
+      ),
+    };
+  }
+
+  @Post('conversations/:id/lock')
+  @HttpCode(HttpStatus.OK)
+  async acquireConversationLock(
+    @Param('id') conversationId: string,
+    @Body('source') source?: string,
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    const agentId = this.cls.get<string>('userId');
+    if (!tenantId || !agentId) {
+      throw new BadRequestException('User or Tenant context not found');
+    }
+
+    return this.conversationLockService.acquireLock({
+      tenantId,
+      conversationId,
+      agentId,
+      agentName: await this.resolveAgentName(agentId),
+      source,
+    });
+  }
+
+  @Post('conversations/:id/lock/heartbeat')
+  @HttpCode(HttpStatus.OK)
+  async heartbeatConversationLock(@Param('id') conversationId: string) {
+    const tenantId = this.cls.get<string>('tenantId');
+    const agentId = this.cls.get<string>('userId');
+    if (!tenantId || !agentId) {
+      throw new BadRequestException('User or Tenant context not found');
+    }
+
+    return {
+      lock: await this.conversationLockService.heartbeat({
+        tenantId,
+        conversationId,
+        agentId,
+        agentName: await this.resolveAgentName(agentId),
+      }),
+    };
+  }
+
+  @Delete('conversations/:id/lock')
+  @HttpCode(HttpStatus.OK)
+  async releaseConversationLock(@Param('id') conversationId: string) {
+    const tenantId = this.cls.get<string>('tenantId');
+    const agentId = this.cls.get<string>('userId');
+    if (!tenantId || !agentId) {
+      throw new BadRequestException('User or Tenant context not found');
+    }
+
+    return {
+      released: await this.conversationLockService.releaseLock({
+        tenantId,
+        conversationId,
+        agentId,
+      }),
+    };
+  }
+
+  @Post('conversations/:id/takeover')
+  @HttpCode(HttpStatus.OK)
+  async takeoverConversation(
+    @Param('id') conversationId: string,
+    @Body('reason') reason?: string,
+    @Body('force') force?: boolean,
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    const agentId = this.cls.get<string>('userId');
+    if (!tenantId || !agentId) {
+      throw new BadRequestException('User or Tenant context not found');
+    }
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    const result = await this.conversationLockService.takeover({
+      tenantId,
+      conversationId,
+      newAgentId: agentId,
+      newAgentName: await this.resolveAgentName(agentId),
+      reason,
+      force: force ?? false,
+    });
+
+    if (conversation.assignedAgentId !== agentId) {
+      await this.conversationRepo.updateAssignment(conversationId, agentId);
+      this.eventEmitter.emit('omni.conversation.assigned', {
+        tenantId,
+        conversationId,
+        agentId,
+        oldAgentId: conversation.assignedAgentId,
+        performedByUserId: agentId,
+        reason: 'takeover',
+      });
+    }
+
+    return {
+      conversationId,
+      previousAgentId: result.previousLock?.agentId ?? null,
+      newAgentId: agentId,
+      lockExpiresAt: result.newLock.expiresAt,
+    };
   }
 
   // ─── Session management ────────────────────────────────────────
@@ -947,5 +1108,16 @@ export class OmniController {
     }
 
     return this.conversionService.linkMessages(tenantId, conversationId, dto);
+  }
+
+  private async resolveAgentName(agentId: string): Promise<string | null> {
+    const users = await this.usersService.findByIdsGlobal([agentId]);
+    const user = users[0];
+    if (!user) return null;
+    const fullName = [user.firstName, user.lastName]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    return fullName || user.email || null;
   }
 }

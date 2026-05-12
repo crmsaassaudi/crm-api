@@ -16,6 +16,8 @@ export class OmniMessageMapper {
       status: raw.status as any,
       metadata: raw.metadata,
       externalMessageId: raw.externalMessageId,
+      idempotencyKey: raw.idempotencyKey,
+      clientMessageId: raw.clientMessageId,
       createdAt: raw.createdAt,
       updatedAt: raw.updatedAt,
     };
@@ -37,6 +39,8 @@ export class OmniMessageMapper {
     raw.status = domain.status;
     raw.metadata = domain.metadata as Record<string, any>;
     raw.externalMessageId = domain.externalMessageId as string;
+    raw.idempotencyKey = domain.idempotencyKey as string;
+    raw.clientMessageId = domain.clientMessageId as string;
 
     return raw;
   }

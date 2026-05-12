@@ -28,6 +28,7 @@ const ACTIVITY_ACTIONS = [
   'identity_merged',
   'agent_rejected',
   'agent_transferred',
+  'conversation_takeover',
 ] as const;
 
 const ACTOR_TYPES = ['agent', 'system', 'customer'] as const;
