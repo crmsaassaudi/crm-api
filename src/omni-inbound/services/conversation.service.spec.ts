@@ -182,7 +182,7 @@ describe('ConversationService Concurrency', () => {
       'omni:processed:tenant_1:msg_001',
     );
     expect(lockServiceMock.acquire).toHaveBeenCalledWith(
-      'lock:omni:sender:user_1',
+      'lock:inbound:tenant_1:channel_1:user_1',
       5000,
       expect.any(Function),
     );

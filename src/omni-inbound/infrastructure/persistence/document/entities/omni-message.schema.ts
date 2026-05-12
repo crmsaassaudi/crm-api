@@ -111,6 +111,11 @@ OmniMessageSchema.index(
   { name: 'conversation_messages' },
 );
 
+OmniMessageSchema.index(
+  { conversationId: 1, createdAt: 1, _id: 1 },
+  { name: 'conversation_messages_created_cursor' },
+);
+
 // Deterministic cursor scan per conversation — uses providerTimestamp as primary sort key
 // with createdAt and _id as tiebreakers for consistent ordering.
 OmniMessageSchema.index(

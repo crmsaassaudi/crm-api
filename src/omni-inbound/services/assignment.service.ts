@@ -47,6 +47,8 @@ export interface AssignmentOptions {
    *   - undefined → channel did not set; defer to global toggle
    */
   channelAutoAssignOverride?: boolean;
+  /** Allow replacing an existing assigned agent (used by offline fallback). */
+  allowReassignment?: boolean;
 }
 
 /**
@@ -336,35 +338,44 @@ export class AssignmentService {
 
     switch (effectiveStrategy) {
       case 'round-robin': {
-        selectedAgent = await this.roundRobin(tenantId, eligibleAgents);
+        const orderedAgents = await this.roundRobinOrder(
+          tenantId,
+          eligibleAgents,
+        );
+        selectedAgent = await this.reserveCandidate(
+          tenantId,
+          orderedAgents,
+          'round-robin',
+        );
         reason = `Round-robin selected agent (index from Redis counter)`;
         metadata = { pool: eligibleAgents };
         break;
       }
       case 'least-busy': {
-        const result = await this.leastBusy(tenantId, eligibleAgents);
-        selectedAgent = result.agentId;
-        reason = `Least-busy: agent has ${result.openChats} open chats (fewest in pool)`;
-        metadata = { pool: eligibleAgents, openChats: result.openChats };
+        selectedAgent = await this.reserveCandidate(
+          tenantId,
+          eligibleAgents,
+          'least-busy',
+        );
+        reason = `Least-busy: reserved the lowest-load eligible agent from Redis`;
+        metadata = { pool: eligibleAgents };
         break;
       }
       case 'capacity-based': {
-        const result = await this.capacityBased(
+        selectedAgent = await this.reserveCandidate(
           tenantId,
           eligibleAgents,
+          'capacity-based',
           tenantMaxCapacity,
         );
-        selectedAgent = result.agentId;
         if (selectedAgent) {
-          reason = `Capacity-based: agent has ${result.openChats}/${result.agentCapacity} open chats`;
+          reason = `Capacity-based: reserved agent below capacity via Redis`;
         } else {
           reason = `All agents at max capacity — conversation queued`;
         }
         metadata = {
           pool: eligibleAgents,
           tenantMaxCapacity,
-          openChats: result.openChats,
-          allLoads: result.allLoads,
         };
         break;
       }
@@ -385,10 +396,34 @@ export class AssignmentService {
     }
 
     if (selectedAgent) {
-      await this.conversationRepo.updateAssignment(
-        conversationId,
-        selectedAgent,
-      );
+      const committed = options.allowReassignment
+        ? await this.conversationRepo.updateAssignment(
+            conversationId,
+            selectedAgent,
+          )
+        : typeof (this.conversationRepo as any).assignIfUnassigned ===
+            'function'
+          ? await this.conversationRepo.assignIfUnassigned(
+              conversationId,
+              selectedAgent,
+            )
+          : await this.conversationRepo.updateAssignment(
+              conversationId,
+              selectedAgent,
+            );
+
+      if (committed === null) {
+        await this.presenceService.releaseConversation?.(
+          tenantId,
+          selectedAgent,
+        );
+        reason =
+          'Assignment reservation rolled back because the conversation was already assigned or inactive';
+        selectedAgent = null;
+      }
+    }
+
+    if (selectedAgent) {
       this.logger.log(
         `Auto-assigned conversation ${conversationId} to agent ${selectedAgent} (${effectiveStrategy})`,
       );
@@ -486,17 +521,26 @@ export class AssignmentService {
       return null;
     }
 
-    const agentCapacity = await this.resolveAgentCapacity(
-      tenantId,
-      previousAgentId,
-      tenantMaxCapacity,
-    );
-    const openChats = await this.conversationRepo.countOpenByAgent(
+    const presence = await this.presenceService.getPresence(
       tenantId,
       previousAgentId,
     );
+    const agentCapacity =
+      presence?.maxCapacity ??
+      (tenantMaxCapacity > 0 ? tenantMaxCapacity : FALLBACK_MAX_CAPACITY);
+    const openChats =
+      presence?.activeConversations ??
+      (await this.conversationRepo.countOpenByAgent(tenantId, previousAgentId));
 
-    if (openChats >= agentCapacity) {
+    const reserve = (this.presenceService as any).reserveAgentFromCandidates;
+    const reservedAgent =
+      typeof reserve === 'function'
+        ? await reserve.call(this.presenceService, tenantId, [previousAgentId])
+        : openChats < agentCapacity
+          ? previousAgentId
+          : null;
+
+    if (!reservedAgent) {
       // Check if sticky wait-time is configured
       const stickyWaitMinutes = routingConfig.stickyWaitTimeMinutes ?? 0;
 
@@ -539,11 +583,29 @@ export class AssignmentService {
       return null;
     }
 
-    // Assign!
-    await this.conversationRepo.updateAssignment(
-      conversationId,
-      previousAgentId,
-    );
+    const committed = options.allowReassignment
+      ? await this.conversationRepo.updateAssignment(
+          conversationId,
+          previousAgentId,
+        )
+      : typeof (this.conversationRepo as any).assignIfUnassigned === 'function'
+        ? await this.conversationRepo.assignIfUnassigned(
+            conversationId,
+            previousAgentId,
+          )
+        : await this.conversationRepo.updateAssignment(
+            conversationId,
+            previousAgentId,
+          );
+
+    if (committed === null) {
+      await this.presenceService.releaseConversation?.(
+        tenantId,
+        previousAgentId,
+      );
+      return null;
+    }
+
     this.logger.log(
       `Sticky-assigned conversation ${conversationId} to previous agent ${previousAgentId} (lookup: ${lookupSource})`,
     );
@@ -569,13 +631,36 @@ export class AssignmentService {
   // Core Strategies
   // ────────────────────────────────────────────────────────────────────────
 
+  private async reserveCandidate(
+    tenantId: string,
+    agents: string[],
+    strategy: AssignmentStrategy,
+    tenantMaxCapacity = FALLBACK_MAX_CAPACITY,
+  ): Promise<string | null> {
+    const reserve = (this.presenceService as any).reserveAgentFromCandidates;
+    if (typeof reserve === 'function') {
+      return reserve.call(this.presenceService, tenantId, agents);
+    }
+
+    if (strategy === 'least-busy') {
+      return (await this.leastBusy(tenantId, agents)).agentId;
+    }
+
+    if (strategy === 'capacity-based') {
+      return (await this.capacityBased(tenantId, agents, tenantMaxCapacity))
+        .agentId;
+    }
+
+    return agents[0] ?? null;
+  }
+
   /**
    * Round-robin: use a Redis counter to cycle through the agent pool.
    */
-  private async roundRobin(
+  private async roundRobinOrder(
     tenantId: string,
     agents: string[],
-  ): Promise<string> {
+  ): Promise<string[]> {
     const key = `omni:rr:${tenantId}`;
     const counter = await this.redis.incr(key);
     // Set TTL on first creation (24h)
@@ -583,7 +668,7 @@ export class AssignmentService {
       await this.redis.expire(key, 86400);
     }
     const index = (counter - 1) % agents.length;
-    return agents[index];
+    return [...agents.slice(index), ...agents.slice(0, index)];
   }
 
   /**
@@ -709,7 +794,8 @@ export class AssignmentService {
     try {
       const onlineAgents = await this.presenceService.getOnlineAgents(tenantId);
       if (pool && pool.length > 0) {
-        return onlineAgents.filter((id) => pool.includes(id));
+        const poolSet = new Set(pool);
+        return onlineAgents.filter((id) => poolSet.has(id));
       }
       return onlineAgents;
     } catch {

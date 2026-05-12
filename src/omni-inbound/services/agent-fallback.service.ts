@@ -184,7 +184,10 @@ export class AgentFallbackService {
           newAgentId = await this.assignmentService.assignConversation(
             tenantId,
             conversation.id,
-            assignmentStrategy as any,
+            {
+              strategy: assignmentStrategy as any,
+              allowReassignment: true,
+            },
           );
         }
 

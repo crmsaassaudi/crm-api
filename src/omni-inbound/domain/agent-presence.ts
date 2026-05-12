@@ -154,6 +154,12 @@ export const agentPresenceKey = (tenantId: string, userId: string) =>
 export const tenantAgentsKey = (tenantId: string) =>
   `${AGENT_PRESENCE_PREFIX}:${tenantId}:*`;
 
+export const tenantPresenceHashKey = (tenantId: string) =>
+  `omni:presence:${tenantId}`;
+
+export const tenantAgentLoadKey = (tenantId: string) =>
+  `omni:agent_load:${tenantId}`;
+
 // ─── Constants ──────────────────────────────────────────────────────
 
 /** Heartbeat TTL — if an agent doesn't heartbeat within this window, Redis expires the key */

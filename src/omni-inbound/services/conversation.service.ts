@@ -255,7 +255,7 @@ export class ConversationService {
     }
 
     // ── Step 2: Acquire distributed lock on sender ────────────
-    const lockKey = `lock:omni:sender:${payload.senderId}`;
+    const lockKey = `lock:inbound:${payload.tenantId}:${payload.channelId}:${payload.senderId}`;
 
     try {
       await this.lockService.acquire(lockKey, this.LOCK_TTL, async () => {
@@ -878,6 +878,7 @@ export class ConversationService {
           externalSenderId: payload.senderId,
           channelAutoAssignOverride: channelAutoAssign, // true | undefined
           routingContext,
+          allowReassignment: reason === 'reopen_agent_offline',
         },
       );
 
@@ -959,6 +960,7 @@ export class ConversationService {
     tenantId: string;
     conversationId: string;
     status: string;
+    agentId?: string | null;
     channelType: string;
     channelAccount: string;
     externalConversationId: string;
@@ -973,6 +975,16 @@ export class ConversationService {
 
       // Cancel any pending auto-resolve job for this conversation
       await this.autoResolveService.cancelAutoResolve(event.conversationId);
+
+      const assignedAgentId =
+        (await this.conversationRepo.findById(event.conversationId))
+          ?.assignedAgentId ?? null;
+      if (assignedAgentId) {
+        await this.agentPresenceService.releaseConversation(
+          event.tenantId,
+          assignedAgentId,
+        );
+      }
 
       this.logger.log(
         `Invalidated identity cache for conversation ${event.conversationId} (${event.status})`,

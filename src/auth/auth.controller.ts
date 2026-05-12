@@ -71,8 +71,11 @@ export class AuthController {
   @Unprotected()
   @HttpCode(HttpStatus.FOUND)
   @ApiOperation({ summary: 'Initiate OAuth 2.0 Authorization Code Flow' })
-  async login(@Res() res: Response) {
-    const { url } = await this.service.buildLoginUrl();
+  async login(
+    @Query('returnTo') returnTo: string | undefined,
+    @Res() res: Response,
+  ) {
+    const { url } = await this.service.buildLoginUrl(returnTo);
     return res.redirect(url);
   }
 

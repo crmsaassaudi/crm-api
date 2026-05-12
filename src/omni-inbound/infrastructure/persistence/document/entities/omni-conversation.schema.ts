@@ -280,6 +280,35 @@ OmniConversationSchema.index(
   { name: 'conversation_list' },
 );
 
+// Agent load checks for assignment and fallback.
+OmniConversationSchema.index(
+  { tenantId: 1, assignedAgentId: 1, status: 1 },
+  { name: 'agent_open_load' },
+);
+
+// Sticky routing lookup by linked contact.
+OmniConversationSchema.index(
+  { tenantId: 1, contactId: 1, status: 1, resolvedAt: -1, updatedAt: -1 },
+  { name: 'sticky_by_contact' },
+);
+
+// Sticky routing fallback lookup by platform sender id.
+OmniConversationSchema.index(
+  {
+    tenantId: 1,
+    'customer.externalId': 1,
+    status: 1,
+    resolvedAt: -1,
+    updatedAt: -1,
+  },
+  { name: 'sticky_by_sender' },
+);
+
+OmniConversationSchema.index(
+  { tenantId: 1, 'customer.name': 'text', lastMessage: 'text' },
+  { name: 'conversation_text_search' },
+);
+
 // Thread timeline scan: deterministic ordering by createdAt + _id.
 OmniConversationSchema.index(
   {

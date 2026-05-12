@@ -28,6 +28,11 @@ import { Tenant } from '../tenants/domain/tenant';
 const STATE_PREFIX = 'oauth:state:';
 const STATE_TTL_SECONDS = 300; // 5 minutes
 
+type OAuthStatePayload = {
+  nonce: string;
+  returnTo?: string;
+};
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -45,7 +50,9 @@ export class AuthService {
 
   // ─── Step 1: Build login URL with CSRF state ──────────────────────────────
 
-  async buildLoginUrl(): Promise<{ url: string; state: string }> {
+  async buildLoginUrl(
+    returnTo?: string,
+  ): Promise<{ url: string; state: string }> {
     const authServerUrl = this.configService.getOrThrow(
       'keycloak.authServerUrl',
       { infer: true },
@@ -62,12 +69,17 @@ export class AuthService {
 
     const state = uuidv4();
     const nonce = uuidv4();
+    const safeReturnTo = this.sanitizeReturnTo(returnTo);
+    const statePayload: OAuthStatePayload = {
+      nonce,
+      ...(safeReturnTo ? { returnTo: safeReturnTo } : {}),
+    };
 
     // Use raw ioredis client (not cache-manager) to avoid key-prefix/TTL interference
     const redisClient = this.redisService.getClient();
     await redisClient.set(
       `${STATE_PREFIX}${state}`,
-      nonce,
+      JSON.stringify(statePayload),
       'EX',
       STATE_TTL_SECONDS,
     );
@@ -93,7 +105,7 @@ export class AuthService {
   private async validateStateAndExchange(
     code: string,
     state: string,
-  ): Promise<any> {
+  ): Promise<{ tokens: any; returnTo?: string }> {
     const redisKey = `${STATE_PREFIX}${state}`;
     this.logger.log(`[validateState] Checking Redis key: ${redisKey}`);
 
@@ -109,13 +121,16 @@ export class AuthService {
         'Invalid or expired state — possible CSRF attack',
       );
     }
+    const parsedState = this.parseOAuthState(stored);
+
     // One-time use: delete immediately after validation
     await redisClient.del(redisKey);
     this.logger.log(
       '[validateState] State validated and deleted from Redis. Proceeding to code exchange.',
     );
 
-    return this.exchangeCode(code);
+    const tokens = await this.exchangeCode(code);
+    return { tokens, returnTo: parsedState.returnTo };
   }
 
   private async exchangeCode(code: string): Promise<any> {
@@ -171,8 +186,11 @@ export class AuthService {
 
     // 1. Validate CSRF state + exchange code
     let tokens: any;
+    let returnTo: string | undefined;
     try {
-      tokens = await this.validateStateAndExchange(code, state);
+      const exchangeResult = await this.validateStateAndExchange(code, state);
+      tokens = exchangeResult.tokens;
+      returnTo = exchangeResult.returnTo;
       this.logger.log(
         `[handleCallback] Step 2: Tokens received. expires_in=${tokens?.expires_in}`,
       );
@@ -229,7 +247,7 @@ export class AuthService {
     }
 
     // 5. Tenant routing
-    const redirectUrl = await this.resolveTenantRedirect(user);
+    const redirectUrl = await this.resolveTenantRedirect(user, returnTo);
     this.logger.log(
       `[handleCallback] Step 6: Redirect URL resolved: ${redirectUrl}`,
     );
@@ -347,7 +365,65 @@ export class AuthService {
     return JSON.parse(json);
   }
 
-  private async resolveTenantRedirect(user: User): Promise<string> {
+  private parseOAuthState(stored: string): OAuthStatePayload {
+    try {
+      const parsed = JSON.parse(stored) as OAuthStatePayload;
+      return {
+        nonce: parsed.nonce,
+        returnTo: this.sanitizeReturnTo(parsed.returnTo),
+      };
+    } catch {
+      // Backward compatibility for states created before JSON payloads.
+      return { nonce: stored };
+    }
+  }
+
+  private sanitizeReturnTo(returnTo?: string): string | undefined {
+    if (!returnTo) return undefined;
+
+    try {
+      const url = new URL(returnTo);
+      const rootDomain = (
+        this.configService.get('app.rootDomain', { infer: true }) ||
+        'crmsaudi.dev'
+      ).toLowerCase();
+      const hostname = url.hostname.toLowerCase();
+      const isProd =
+        this.configService.get('app.nodeEnv', { infer: true }) === 'production';
+      const isLocalhost =
+        !isProd && (hostname === 'localhost' || hostname === '127.0.0.1');
+      const isRootDomain = hostname === rootDomain;
+      const subdomain = hostname.endsWith(`.${rootDomain}`)
+        ? hostname.slice(0, hostname.length - rootDomain.length - 1)
+        : '';
+      const isTenantDomain =
+        !!subdomain &&
+        !subdomain.includes('.') &&
+        !['api', 'auth', 'admin', 'www', 'mail'].includes(subdomain);
+
+      if (!isLocalhost && !isRootDomain && !isTenantDomain) {
+        this.logger.warn(`[sanitizeReturnTo] Rejected host: ${hostname}`);
+        return undefined;
+      }
+
+      if (isProd && url.protocol !== 'https:') {
+        this.logger.warn(
+          `[sanitizeReturnTo] Rejected protocol: ${url.protocol}`,
+        );
+        return undefined;
+      }
+
+      return url.toString();
+    } catch {
+      this.logger.warn('[sanitizeReturnTo] Rejected invalid returnTo URL');
+      return undefined;
+    }
+  }
+
+  private async resolveTenantRedirect(
+    user: User,
+    preferredRedirectUrl?: string,
+  ): Promise<string> {
     const frontend = this.configService.getOrThrow('keycloak.frontendUrl', {
       infer: true,
     });
@@ -355,6 +431,8 @@ export class AuthService {
 
     if (tenants.length === 0) {
       return `${frontend}/onboarding`;
+    } else if (preferredRedirectUrl) {
+      return preferredRedirectUrl;
     } else if (tenants.length === 1) {
       const tenantId = tenants[0].tenantId as string;
       try {

@@ -45,6 +45,7 @@ export class StickyRetryProcessor extends BaseConsumer {
         conversationId,
         {
           strategy: fallbackStrategy as any,
+          skipSticky: true,
           // Exclude sticky routing — we already tried and waited
         },
       );

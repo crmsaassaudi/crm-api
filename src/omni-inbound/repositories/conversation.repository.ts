@@ -134,16 +134,13 @@ export class ConversationRepository {
     const safeLimit = Math.max(1, Math.min(limit, 50));
 
     // Fetch limit + 1 to check if there are more items
-    const [items, total] = await Promise.all([
-      this.model
-        .find(filter)
-        .sort({ lastMessageAt: -1, _id: -1 })
-        .limit(safeLimit + 1)
-        .populate('assignedAgent')
-        .populate('resolvedByAgent')
-        .exec(),
-      this.model.countDocuments(filter).exec(),
-    ]);
+    const items = await this.model
+      .find(filter)
+      .sort({ lastMessageAt: -1, _id: -1 })
+      .limit(safeLimit + 1)
+      .populate('assignedAgent')
+      .populate('resolvedByAgent')
+      .exec();
 
     const hasNextPage = items.length > safeLimit;
     const pageItems = hasNextPage ? items.slice(0, safeLimit) : items;
@@ -161,7 +158,7 @@ export class ConversationRepository {
       data: mappedItems,
       nextCursor,
       hasNextPage,
-      totalItems: total,
+      totalItems: undefined,
     };
   }
 
@@ -230,19 +227,7 @@ export class ConversationRepository {
     }
 
     if (query.search) {
-      const searchCondition = {
-        $or: [
-          { 'customer.name': { $regex: query.search, $options: 'i' } },
-          { lastMessage: { $regex: query.search, $options: 'i' } },
-        ],
-      };
-      // If we already have $or from SLA, we must use $and
-      if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, searchCondition];
-        delete filter.$or;
-      } else {
-        filter.$or = searchCondition.$or;
-      }
+      filter.$text = { $search: query.search };
     }
 
     return filter;
@@ -384,6 +369,31 @@ export class ConversationRepository {
   ): Promise<OmniConversation | null> {
     const doc = await this.model
       .findByIdAndUpdate(id, { assignedAgentId: agentId }, { new: true })
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Optimistic assignment used by the auto-assignment hot path.
+   * It only succeeds when the conversation is still active and unassigned.
+   */
+  async assignIfUnassigned(
+    id: string,
+    agentId: string,
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findOneAndUpdate(
+        {
+          _id: id,
+          status: { $in: ['open', 'pending'] },
+          $or: [
+            { assignedAgentId: null },
+            { assignedAgentId: { $exists: false } },
+          ],
+        },
+        { $set: { assignedAgentId: agentId } },
+        { new: true },
+      )
       .exec();
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }

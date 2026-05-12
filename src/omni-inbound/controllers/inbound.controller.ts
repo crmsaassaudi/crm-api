@@ -14,6 +14,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { createHash } from 'crypto';
 import { Public } from 'nest-keycloak-connect';
 import { InboundProcessorService } from '../processors/inbound-processor.service';
 import { ChannelType } from '../domain/omni-payload';
@@ -135,7 +136,13 @@ export class InboundController {
         channelConfig,
       } as WebhookJobData,
       opts: {
-        jobId: `${channelType}-${Date.now()}-${index}`,
+        jobId: this.buildDeterministicJobId(
+          tenantId,
+          channelType,
+          channelId,
+          event,
+          index,
+        ),
         priority,
       },
     }));
@@ -257,5 +264,31 @@ export class InboundController {
       }
     }
     return Array.from(ids);
+  }
+
+  private buildDeterministicJobId(
+    tenantId: string,
+    channelType: ChannelType,
+    channelId: string,
+    event: any,
+    index: number,
+  ): string {
+    const senderId =
+      this.extractSenderIds(channelType, [event])[0] ?? 'unknown';
+    const providerMessageId =
+      event?.message?.mid ??
+      event?.message?.msg_id ??
+      event?.message?.id ??
+      event?.messages?.[0]?.id ??
+      event?.message_id ??
+      event?.msg_id ??
+      event?.id ??
+      index;
+
+    return createHash('sha256')
+      .update(
+        `${tenantId}:${channelType}:${channelId}:${senderId}:${providerMessageId}`,
+      )
+      .digest('hex');
   }
 }

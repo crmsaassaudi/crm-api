@@ -284,7 +284,10 @@ describe('AgentFallbackService', () => {
       expect(assignmentServiceMock.assignConversation).toHaveBeenCalledWith(
         'tenant_1',
         'conv_1',
-        'round-robin',
+        {
+          strategy: 'round-robin',
+          allowReassignment: true,
+        },
       );
 
       jest.useRealTimers();

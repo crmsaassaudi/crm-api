@@ -7,11 +7,7 @@ export abstract class BaseConsumer extends WorkerHost {
 
   @OnWorkerEvent('completed')
   onCompleted(job: Job) {
-    this.logger.log(
-      `Job ${job.id} completed successfully. Name: ${job.name}. Data: ${JSON.stringify(
-        job.data,
-      )}`,
-    );
+    this.logger.log(`Job ${job.id} completed successfully. Name: ${job.name}.`);
   }
 
   @OnWorkerEvent('failed')

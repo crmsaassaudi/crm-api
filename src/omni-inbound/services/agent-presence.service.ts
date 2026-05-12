@@ -12,6 +12,8 @@ import {
   isEligibleForRouting,
   HEARTBEAT_TTL_SECONDS,
   DEFAULT_MAX_CAPACITY,
+  tenantAgentLoadKey,
+  tenantPresenceHashKey,
 } from '../domain/agent-presence';
 
 // ────────────────────────────────────────────────────────────────────────
@@ -19,55 +21,20 @@ import {
 // ────────────────────────────────────────────────────────────────────────
 
 /**
- * Atomic assign: increment activeConversations ONLY if under capacity.
- *
- * KEYS[1] = presence key
- * ARGV[1] = TTL seconds
- *
- * Returns 1 if assigned, 0 if at capacity or key missing.
- * Also updates routingStatus and recomputes display status.
- */
-const LUA_ATOMIC_ASSIGN = `
-local key = KEYS[1]
-local ttl = tonumber(ARGV[1])
-local raw = redis.call('GET', key)
-if not raw then return 0 end
-
-local data = cjson.decode(raw)
-if data.activeConversations >= data.maxCapacity then return 0 end
-
-data.activeConversations = data.activeConversations + 1
-
-if data.activeConversations >= data.maxCapacity then
-  data.routingStatus = 'full'
-else
-  data.routingStatus = 'accept'
-end
-
--- Recompute display status
-if data.intentStatus == 'offline' or data.connectionStatus == 'disconnected' then
-  data.status = 'offline'
-else
-  data.status = data.intentStatus
-end
-
-redis.call('SETEX', key, ttl, cjson.encode(data))
-return 1
-`;
-
-/**
  * Atomic release: decrement activeConversations, update routingStatus.
  * NEVER touches intentStatus.
  *
- * KEYS[1] = presence key
- * ARGV[1] = TTL seconds
+ * KEYS[1] = tenant presence hash
+ * KEYS[2] = tenant load ZSET
+ * ARGV[1] = agent id
  *
  * Returns the updated presence JSON, or nil if key missing.
  */
 const LUA_ATOMIC_RELEASE = `
-local key = KEYS[1]
-local ttl = tonumber(ARGV[1])
-local raw = redis.call('GET', key)
+local presenceHash = KEYS[1]
+local loadZset = KEYS[2]
+local agentId = ARGV[1]
+local raw = redis.call('HGET', presenceHash, agentId)
 if not raw then return nil end
 
 local data = cjson.decode(raw)
@@ -86,8 +53,70 @@ else
   data.status = data.intentStatus
 end
 
-redis.call('SETEX', key, ttl, cjson.encode(data))
+redis.call('HSET', presenceHash, agentId, cjson.encode(data))
+redis.call('ZADD', loadZset, data.activeConversations, agentId)
 return cjson.encode(data)
+`;
+
+/**
+ * Reserve one eligible agent from a candidate list.
+ *
+ * KEYS[1] = tenant presence hash
+ * KEYS[2] = tenant load ZSET
+ * ARGV[1] = number of candidates
+ * ARGV[2..n] = candidate agent ids
+ *
+ * Returns the selected agent id, or nil if no candidate has capacity.
+ */
+const LUA_RESERVE_FROM_CANDIDATES = `
+local presenceHash = KEYS[1]
+local loadZset = KEYS[2]
+local candidateCount = tonumber(ARGV[1])
+local bestAgent = nil
+local bestLoad = nil
+
+for i = 1, candidateCount do
+  local agentId = ARGV[i + 1]
+  local raw = redis.call('HGET', presenceHash, agentId)
+  if raw then
+    local data = cjson.decode(raw)
+    local active = tonumber(data.activeConversations or 0)
+    local capacity = tonumber(data.maxCapacity or 0)
+    if data.intentStatus == 'available'
+      and data.connectionStatus == 'connected'
+      and capacity > 0
+      and active < capacity then
+      local score = redis.call('ZSCORE', loadZset, agentId)
+      local load = tonumber(score or active)
+      if bestLoad == nil or load < bestLoad then
+        bestLoad = load
+        bestAgent = agentId
+      end
+    end
+  end
+end
+
+if not bestAgent then return nil end
+
+local raw = redis.call('HGET', presenceHash, bestAgent)
+if not raw then return nil end
+
+local data = cjson.decode(raw)
+local active = tonumber(data.activeConversations or 0)
+local capacity = tonumber(data.maxCapacity or 0)
+if active >= capacity then return nil end
+
+active = active + 1
+data.activeConversations = active
+if active >= capacity then
+  data.routingStatus = 'full'
+else
+  data.routingStatus = 'accept'
+end
+
+redis.call('HSET', presenceHash, bestAgent, cjson.encode(data))
+redis.call('ZADD', loadZset, active, bestAgent)
+return bestAgent
 `;
 
 /**
@@ -125,6 +154,33 @@ export class AgentPresenceService {
 
   constructor(private readonly redis: RedisService) {}
 
+  private async persistPresence(presence: AgentPresence): Promise<void> {
+    const client = this.redis.getClient();
+    const key = agentPresenceKey(presence.tenantId, presence.userId);
+    const hashKey = tenantPresenceHashKey(presence.tenantId);
+    const loadKey = tenantAgentLoadKey(presence.tenantId);
+    const encoded = JSON.stringify(presence);
+
+    const pipeline = client.pipeline();
+    pipeline.setex(key, HEARTBEAT_TTL_SECONDS, encoded);
+    pipeline.hset(hashKey, presence.userId, encoded);
+    pipeline.zadd(loadKey, presence.activeConversations, presence.userId);
+    await pipeline.exec();
+  }
+
+  private isPresenceFresh(presence: AgentPresence): boolean {
+    const lastHeartbeat = new Date(presence.lastHeartbeat).getTime();
+    return Date.now() - lastHeartbeat <= HEARTBEAT_TTL_SECONDS * 1000;
+  }
+
+  private parsePresence(raw: string): AgentPresence | null {
+    try {
+      return JSON.parse(raw) as AgentPresence;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Register a callback to be invoked on every intentStatus transition.
    * Called by AgentStatusAuditService during module init.
@@ -149,8 +205,6 @@ export class AgentPresenceService {
     intentStatus: AgentIntentStatus,
     trigger: StatusTransitionTrigger = 'agent_manual',
   ): Promise<AgentPresence> {
-    const key = agentPresenceKey(tenantId, userId);
-    const client = this.redis.getClient();
     const existing = await this.getPresence(tenantId, userId);
 
     const oldIntent = existing?.intentStatus ?? 'offline';
@@ -176,7 +230,7 @@ export class AgentPresenceService {
       socketId: existing?.socketId,
     };
 
-    await client.setex(key, HEARTBEAT_TTL_SECONDS, JSON.stringify(presence));
+    await this.persistPresence(presence);
 
     this.logger.log(
       `Agent ${userId} intentStatus → ${intentStatus} (trigger: ${trigger})`,
@@ -193,7 +247,9 @@ export class AgentPresenceService {
           trigger,
         );
       } catch (err) {
-        this.logger.error(`Status transition callback failed: ${err.message}`);
+        this.logger.error(
+          `Status transition callback failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -221,13 +277,11 @@ export class AgentPresenceService {
 
     // Preserve socketId for backward compat
     if (socketId) {
-      const key = agentPresenceKey(tenantId, userId);
-      const client = this.redis.getClient();
       result.socketId = socketId;
       if (!result.connections.includes(socketId)) {
         result.connections.push(socketId);
       }
-      await client.setex(key, HEARTBEAT_TTL_SECONDS, JSON.stringify(result));
+      await this.persistPresence(result);
     }
 
     return result;
@@ -254,8 +308,6 @@ export class AgentPresenceService {
     socketId: string,
     autoAvailableOnConnect: boolean = false,
   ): Promise<{ presence: AgentPresence; isFreshSession: boolean }> {
-    const key = agentPresenceKey(tenantId, userId);
-    const client = this.redis.getClient();
     const existing = await this.getPresence(tenantId, userId);
 
     const isFreshSession = !existing;
@@ -303,7 +355,7 @@ export class AgentPresenceService {
       socketId,
     };
 
-    await client.setex(key, HEARTBEAT_TTL_SECONDS, JSON.stringify(presence));
+    await this.persistPresence(presence);
 
     this.logger.log(
       `Agent ${userId} socket ${socketId} connected (${connections.length} total connections)`,
@@ -319,8 +371,9 @@ export class AgentPresenceService {
           intentStatus,
           trigger,
         );
-      } catch (err) {
-        this.logger.error(`Status transition callback failed: ${err.message}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Status transition callback failed: ${message}`);
       }
     }
 
@@ -338,8 +391,9 @@ export class AgentPresenceService {
           intentStatus,
           trigger,
         );
-      } catch (err) {
-        this.logger.error(`Status transition callback failed: ${err.message}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Status transition callback failed: ${message}`);
       }
     }
 
@@ -365,8 +419,6 @@ export class AgentPresenceService {
     presence: AgentPresence | null;
     allDisconnected: boolean;
   }> {
-    const key = agentPresenceKey(tenantId, userId);
-    const client = this.redis.getClient();
     const existing = await this.getPresence(tenantId, userId);
 
     if (!existing) {
@@ -394,7 +446,7 @@ export class AgentPresenceService {
       presence.socketId = connections[0]; // next available, or undefined
     }
 
-    await client.setex(key, HEARTBEAT_TTL_SECONDS, JSON.stringify(presence));
+    await this.persistPresence(presence);
 
     this.logger.log(
       `Agent ${userId} socket ${socketId} disconnected ` +
@@ -448,14 +500,10 @@ export class AgentPresenceService {
    * The grace period + fallback service handles that case properly.
    */
   async heartbeat(tenantId: string, userId: string): Promise<void> {
-    const key = agentPresenceKey(tenantId, userId);
-    const client = this.redis.getClient();
-
-    const raw = await client.get(key);
-    if (raw) {
-      const presence: AgentPresence = JSON.parse(raw);
+    const presence = await this.getPresence(tenantId, userId);
+    if (presence) {
       presence.lastHeartbeat = new Date();
-      await client.setex(key, HEARTBEAT_TTL_SECONDS, JSON.stringify(presence));
+      await this.persistPresence(presence);
     } else {
       // Key expired or never existed — do NOT auto-register.
       // The frontend will re-establish via socket connect → addConnection().
@@ -478,17 +526,10 @@ export class AgentPresenceService {
    * even with concurrent requests across multiple server nodes.
    */
   async assignConversation(tenantId: string, userId: string): Promise<boolean> {
-    const key = agentPresenceKey(tenantId, userId);
-    const client = this.redis.getClient();
-
-    const result = await client.eval(
-      LUA_ATOMIC_ASSIGN,
-      1,
-      key,
-      HEARTBEAT_TTL_SECONDS.toString(),
-    );
-
-    const assigned = result === 1;
+    const assignedAgent = await this.reserveAgentFromCandidates(tenantId, [
+      userId,
+    ]);
+    const assigned = assignedAgent === userId;
 
     if (assigned) {
       const presence = await this.getPresence(tenantId, userId);
@@ -503,6 +544,31 @@ export class AgentPresenceService {
   }
 
   /**
+   * Atomically reserve the least-loaded eligible agent from a candidate list.
+   * The Lua script runs entirely inside Redis: it checks presence eligibility,
+   * capacity, ZSET score, increments load, and returns the selected agent id.
+   */
+  async reserveAgentFromCandidates(
+    tenantId: string,
+    candidateIds: string[],
+  ): Promise<string | null> {
+    const candidates = [...new Set(candidateIds.filter(Boolean))];
+    if (candidates.length === 0) return null;
+
+    const client = this.redis.getClient();
+    const result = await client.eval(
+      LUA_RESERVE_FROM_CANDIDATES,
+      2,
+      tenantPresenceHashKey(tenantId),
+      tenantAgentLoadKey(tenantId),
+      candidates.length.toString(),
+      ...candidates,
+    );
+
+    return typeof result === 'string' ? result : null;
+  }
+
+  /**
    * Atomically decrement the active conversation count for an agent.
    *
    * CRITICAL: This NEVER changes intentStatus. If the agent manually
@@ -510,18 +576,23 @@ export class AgentPresenceService {
    * (full → accept when capacity frees up).
    */
   async releaseConversation(tenantId: string, userId: string): Promise<void> {
-    const key = agentPresenceKey(tenantId, userId);
     const client = this.redis.getClient();
 
     const result = await client.eval(
       LUA_ATOMIC_RELEASE,
-      1,
-      key,
-      HEARTBEAT_TTL_SECONDS.toString(),
+      2,
+      tenantPresenceHashKey(tenantId),
+      tenantAgentLoadKey(tenantId),
+      userId,
     );
 
     if (result) {
       const updated: AgentPresence = JSON.parse(result as string);
+      await client.setex(
+        agentPresenceKey(tenantId, userId),
+        HEARTBEAT_TTL_SECONDS,
+        JSON.stringify(updated),
+      );
       this.logger.log(
         `Released conversation for agent ${userId} ` +
           `(${updated.activeConversations}/${updated.maxCapacity}) ` +
@@ -541,10 +612,25 @@ export class AgentPresenceService {
     tenantId: string,
     userId: string,
   ): Promise<AgentPresence | null> {
-    const key = agentPresenceKey(tenantId, userId);
     const client = this.redis.getClient();
-    const raw = await client.get(key);
-    return raw ? JSON.parse(raw) : null;
+    const hashKey = tenantPresenceHashKey(tenantId);
+    const rawFromHash = await client.hget(hashKey, userId);
+    const fromHash = rawFromHash ? this.parsePresence(rawFromHash) : null;
+    if (fromHash && this.isPresenceFresh(fromHash)) {
+      return fromHash;
+    }
+
+    if (fromHash) {
+      await client.hdel(hashKey, userId);
+      await client.zrem(tenantAgentLoadKey(tenantId), userId);
+    }
+
+    const raw = await client.get(agentPresenceKey(tenantId, userId));
+    const presence = raw ? this.parsePresence(raw) : null;
+    if (!presence || !this.isPresenceFresh(presence)) return null;
+
+    await this.persistPresence(presence);
+    return presence;
   }
 
   /**
@@ -552,21 +638,25 @@ export class AgentPresenceService {
    */
   async getAllAgents(tenantId: string): Promise<AgentPresence[]> {
     const client = this.redis.getClient();
-    const pattern = `omni:agent:presence:${tenantId}:*`;
-    const keys = await client.keys(pattern);
-
-    if (keys.length === 0) return [];
-
-    const pipeline = client.pipeline();
-    keys.forEach((k) => pipeline.get(k));
-    const results = await pipeline.exec();
-
+    const hashKey = tenantPresenceHashKey(tenantId);
+    const entries = await client.hgetall(hashKey);
     const agents: AgentPresence[] = [];
-    for (const result of results ?? []) {
-      const [err, raw] = result;
-      if (!err && raw) {
-        agents.push(JSON.parse(raw as string));
+
+    const staleIds: string[] = [];
+    for (const [agentId, raw] of Object.entries(entries)) {
+      const presence = this.parsePresence(raw);
+      if (presence && this.isPresenceFresh(presence)) {
+        agents.push(presence);
+      } else {
+        staleIds.push(agentId);
       }
+    }
+
+    if (staleIds.length > 0) {
+      const pipeline = client.pipeline();
+      pipeline.hdel(hashKey, ...staleIds);
+      pipeline.zrem(tenantAgentLoadKey(tenantId), ...staleIds);
+      await pipeline.exec();
     }
 
     return agents;
@@ -602,9 +692,12 @@ export class AgentPresenceService {
    * Remove an agent's presence entirely (e.g. on explicit logout).
    */
   async removePresence(tenantId: string, userId: string): Promise<void> {
-    const key = agentPresenceKey(tenantId, userId);
     const client = this.redis.getClient();
-    await client.del(key);
+    const pipeline = client.pipeline();
+    pipeline.del(agentPresenceKey(tenantId, userId));
+    pipeline.hdel(tenantPresenceHashKey(tenantId), userId);
+    pipeline.zrem(tenantAgentLoadKey(tenantId), userId);
+    await pipeline.exec();
     this.logger.log(`Agent ${userId} removed from presence`);
   }
 
@@ -630,9 +723,7 @@ export class AgentPresenceService {
       presence.connectionStatus,
     );
 
-    const key = agentPresenceKey(tenantId, userId);
-    const client = this.redis.getClient();
-    await client.setex(key, HEARTBEAT_TTL_SECONDS, JSON.stringify(presence));
+    await this.persistPresence(presence);
 
     this.logger.log(
       `Updated max capacity for agent ${userId} to ${maxCapacity} ` +
