@@ -115,6 +115,18 @@ export interface AutomationDelayedJobData {
 }
 
 /**
+ * Hot Redis queue payload for due delayed jobs.
+ *
+ * `delayedJobId` is present for the Mongo cold-storage implementation.
+ * It is optional so legacy BullMQ delayed jobs created before the migration
+ * continue to resume safely.
+ */
+export interface AutomationDelayedQueueJobData
+  extends AutomationDelayedJobData {
+  delayedJobId?: string;
+}
+
+/**
  * Map action type → which typed queue to dispatch to.
  */
 export function resolveQueueForAction(actionType: string): string {

@@ -1,27 +1,22 @@
-import { Processor } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { BaseConsumer } from '../../queue/base.consumer';
 import {
   AUTOMATION_DELAYED_QUEUE,
   AutomationDelayedJobData,
+  AutomationDelayedQueueJobData,
 } from './automation-queue.constants';
 import { WorkflowOrchestratorService } from '../engine/workflow-orchestrator.service';
 import { CrmRecordUpdateService } from '../engine/crm-record-update.service';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationWorkflowRepository } from '../infrastructure/persistence/document/repositories/automation-workflow.repository';
+import { AutomationDelayedJobRepository } from '../infrastructure/persistence/document/repositories/automation-delayed-job.repository';
 
 /**
- * AutomationDelayedProcessor — resumes workflow execution after a Wait/Delay node.
- *
- * When the delay timer expires, this processor:
- *   1. Re-fetches the record from DB (decision #2: always use latest data)
- *   2. Loads the published workflow snapshot (published nodes/edges)
- *   3. Calls orchestrator.resumeFromNode() to continue DAG traversal
- *
- * Handles edge cases:
- *   - Record deleted during wait → RECORD_NOT_FOUND → DLQ
- *   - Workflow deactivated during wait → log warning, still execute (honor commitment)
+ * Consumes hot resume jobs from Redis. The source of truth is MongoDB when
+ * delayedJobId is present; payload-only jobs are supported for pre-migration
+ * BullMQ delayed jobs that may still exist in Redis.
  */
 @Processor(AUTOMATION_DELAYED_QUEUE)
 export class AutomationDelayedProcessor extends BaseConsumer {
@@ -32,20 +27,74 @@ export class AutomationDelayedProcessor extends BaseConsumer {
     private readonly crmUpdate: CrmRecordUpdateService,
     private readonly executionLogRepo: AutomationExecutionLogRepository,
     private readonly workflowRepo: AutomationWorkflowRepository,
+    private readonly delayedJobRepo: AutomationDelayedJobRepository,
   ) {
     super();
   }
 
-  async process(job: Job<AutomationDelayedJobData>): Promise<void> {
-    const data = job.data;
+  async process(job: Job<AutomationDelayedQueueJobData>): Promise<void> {
+    const data = await this.resolveJobData(job.data);
+    if (!data) return;
 
+    try {
+      await this.resumeWorkflow(data);
+
+      if (job.data.delayedJobId) {
+        await this.delayedJobRepo.markCompleted(job.data.delayedJobId);
+      }
+    } catch (error: any) {
+      this.logger.error(
+        `[DelayedResume] Failed execution=${data.executionId}: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  @OnWorkerEvent('failed')
+  override onFailed(job: Job<AutomationDelayedQueueJobData>, error: Error) {
+    super.onFailed(job, error);
+
+    const attemptsRemaining = (job.opts?.attempts ?? 1) - job.attemptsMade;
+    if (attemptsRemaining > 0 || !job.data.delayedJobId) return;
+
+    this.delayedJobRepo
+      .markFailed(job.data.delayedJobId, error.message)
+      .catch((repoError) =>
+        this.logger.error(
+          `[DelayedResume] Failed to mark delayed job as failed: ${repoError.message}`,
+          repoError.stack,
+        ),
+      );
+  }
+
+  private async resolveJobData(
+    hotData: AutomationDelayedQueueJobData,
+  ): Promise<AutomationDelayedJobData | null> {
+    if (!hotData.delayedJobId) return hotData;
+
+    const delayedJob = await this.delayedJobRepo.markProcessing(
+      hotData.delayedJobId,
+    );
+
+    if (!delayedJob) {
+      this.logger.warn(
+        `[DelayedResume] Skipping hot job ${hotData.delayedJobId}; ` +
+          'it is already terminal or not ready for processing',
+      );
+      return null;
+    }
+
+    return delayedJob.payload;
+  }
+
+  private async resumeWorkflow(data: AutomationDelayedJobData): Promise<void> {
     this.logger.log(
       `[DelayedResume] Resuming execution=${data.executionId} ` +
         `workflow=${data.workflowId} node=${data.resumeFromNodeId} ` +
         `record=${data.recordType}(${data.recordId})`,
     );
 
-    // ── Step 1: Re-fetch record data (latest from DB) ──────────────────
     const record = await this.crmUpdate.fetchRecord(
       data.recordType,
       data.recordId,
@@ -53,11 +102,10 @@ export class AutomationDelayedProcessor extends BaseConsumer {
 
     if (!record) {
       this.logger.warn(
-        `[DelayedResume] Record ${data.recordType}(${data.recordId}) not found — ` +
-          `may have been deleted during wait period`,
+        `[DelayedResume] Record ${data.recordType}(${data.recordId}) not found; ` +
+          'it may have been deleted during the wait period',
       );
 
-      // Mark the step as failed and the execution as failed
       const stepStart = new Date();
       await this.executionLogRepo.logStep(data.executionId, {
         nodeId: data.resumeFromNodeId,
@@ -76,7 +124,7 @@ export class AutomationDelayedProcessor extends BaseConsumer {
 
       await this.executionLogRepo.failExecution(data.executionId, {
         code: 'RECORD_NOT_FOUND',
-        message: `Record deleted during delay — cannot resume workflow`,
+        message: 'Record deleted during delay; cannot resume workflow',
         nodeId: data.resumeFromNodeId,
       });
 
@@ -85,7 +133,6 @@ export class AutomationDelayedProcessor extends BaseConsumer {
       );
     }
 
-    // ── Step 2: Load published workflow snapshot ────────────────────────
     const workflow = await this.workflowRepo.findById(
       data.tenantId,
       data.workflowId,
@@ -93,11 +140,11 @@ export class AutomationDelayedProcessor extends BaseConsumer {
 
     if (!workflow) {
       this.logger.error(
-        `[DelayedResume] Workflow ${data.workflowId} not found — cannot resume`,
+        `[DelayedResume] Workflow ${data.workflowId} not found; cannot resume`,
       );
       await this.executionLogRepo.failExecution(data.executionId, {
         code: 'WORKFLOW_NOT_FOUND',
-        message: `Workflow ${data.workflowId} was deleted during delay — cannot resume`,
+        message: `Workflow ${data.workflowId} was deleted during delay; cannot resume`,
       });
       throw new Error(`WORKFLOW_NOT_FOUND: ${data.workflowId}`);
     }
@@ -107,7 +154,7 @@ export class AutomationDelayedProcessor extends BaseConsumer {
 
     if (publishedNodes.length === 0) {
       this.logger.warn(
-        `[DelayedResume] Workflow ${data.workflowId} has no published nodes — was it unpublished during wait?`,
+        `[DelayedResume] Workflow ${data.workflowId} has no published nodes`,
       );
       await this.executionLogRepo.failExecution(data.executionId, {
         code: 'UNPUBLISHED_WORKFLOW',
@@ -116,14 +163,13 @@ export class AutomationDelayedProcessor extends BaseConsumer {
       throw new Error(`UNPUBLISHED_WORKFLOW: ${data.workflowId}`);
     }
 
-    // ── Step 3: Resume DAG traversal ────────────────────────────────────
     await this.orchestrator.resumeFromNode(
       data.resumeFromNodeId,
       publishedNodes,
       publishedEdges,
       {
         tenantId: data.tenantId,
-        event: 'record_created', // Synthetic — not used during resume
+        event: 'record_created',
         object: data.recordType,
         recordId: data.recordId,
         data: record,
@@ -138,7 +184,7 @@ export class AutomationDelayedProcessor extends BaseConsumer {
     );
 
     this.logger.log(
-      `[DelayedResume] ✅ Resumed and completed execution=${data.executionId}`,
+      `[DelayedResume] Resumed and completed execution=${data.executionId}`,
     );
   }
 }

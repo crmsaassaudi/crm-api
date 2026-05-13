@@ -6,6 +6,7 @@ import {
   ChannelConfigSchemaDocument,
 } from '../entities/channel-config.schema';
 import { ChannelConfig } from '../../../../domain/channel-config';
+import { getProviderSchema } from '../../../../domain/channel-provider-registry';
 
 @Injectable()
 export class ChannelConfigRepository {
@@ -23,6 +24,7 @@ export class ChannelConfigRepository {
       .find({ tenantId, deletedAt: null })
       .sort({ providerType: 1, name: 1 })
       .exec();
+    await Promise.all(docs.map((doc) => this.migrateOnRead(doc)));
     return docs.map((d) => this.toDomain(d));
   }
 
@@ -33,6 +35,7 @@ export class ChannelConfigRepository {
     const doc = await this.model
       .findOne({ _id: id, tenantId, deletedAt: null })
       .exec();
+    if (doc) await this.migrateOnRead(doc);
     return doc ? this.toDomain(doc) : null;
   }
 
@@ -47,6 +50,7 @@ export class ChannelConfigRepository {
       .findOne({ _id: id, tenantId, deletedAt: null })
       .select('+encryptedCredentials +accessToken +refreshToken')
       .exec();
+    if (doc) await this.migrateOnRead(doc);
     return doc ? this.toDomain(doc) : null;
   }
 
@@ -62,11 +66,12 @@ export class ChannelConfigRepository {
       .select('+encryptedCredentials +accessToken +refreshToken')
       .setOptions({ skipTenantFilter: true } as any)
       .exec();
+    if (doc) await this.migrateOnRead(doc);
     return doc ? this.toDomain(doc) : null;
   }
 
   async create(data: Partial<ChannelConfig>): Promise<ChannelConfig> {
-    const doc = await this.model.create(data);
+    const doc = await this.model.create(this.withCurrentSchema(data));
     return this.toDomain(doc);
   }
 
@@ -78,7 +83,7 @@ export class ChannelConfigRepository {
     const doc = await this.model
       .findOneAndUpdate(
         { _id: id, tenantId, deletedAt: null },
-        { $set: data },
+        { $set: this.withCurrentSchema(data) },
         { new: true },
       )
       .exec();
@@ -115,7 +120,10 @@ export class ChannelConfigRepository {
       $set.encryptedCredentials = data.encryptedCredentials;
     }
     if (data.publicSettings !== undefined) {
-      $set.publicSettings = data.publicSettings;
+      $set.publicSettings = this.withCurrentSchema({
+        providerType: undefined,
+        publicSettings: data.publicSettings,
+      }).publicSettings;
     }
     if (data.status !== undefined) $set.status = data.status;
     if (data.lastVerifiedAt !== undefined) {
@@ -137,6 +145,7 @@ export class ChannelConfigRepository {
       .select('+encryptedCredentials +accessToken +refreshToken')
       .setOptions({ skipTenantFilter: true } as any)
       .exec();
+    if (doc) await this.migrateOnRead(doc);
     return doc ? this.toDomain(doc) : null;
   }
 
@@ -196,6 +205,7 @@ export class ChannelConfigRepository {
       .setOptions({ skipTenantFilter: true } as any)
       .sort({ _id: 1 }) // deterministic order for batch processing
       .exec();
+    await Promise.all(docs.map((doc) => this.migrateOnRead(doc)));
     return docs.map((d) => this.toDomain(d));
   }
 
@@ -237,6 +247,7 @@ export class ChannelConfigRepository {
       .sort({ nextHealthCheckAt: 1 })
       .limit(100) // Cap per run to prevent overload
       .exec();
+    await Promise.all(docs.map((doc) => this.migrateOnRead(doc)));
     return docs.map((d) => this.toDomain(d));
   }
 
@@ -247,6 +258,7 @@ export class ChannelConfigRepository {
     entity.id = raw._id?.toString();
     entity.tenantId = raw.tenantId?.toString();
     entity.providerType = raw.providerType;
+    entity.schemaVersion = (raw as any).schemaVersion || 1;
     entity.name = raw.name;
     entity.isDefault = raw.isDefault;
     entity.status = raw.status;
@@ -269,5 +281,101 @@ export class ChannelConfigRepository {
     entity.accessToken = (raw as any).accessToken || null;
     entity.refreshToken = (raw as any).refreshToken || null;
     return entity;
+  }
+
+  private async migrateOnRead(doc: ChannelConfigSchemaDocument): Promise<void> {
+    const update = this.computeSchemaEvolutionUpdate(doc);
+    if (Object.keys(update).length === 0) return;
+
+    await this.model
+      .updateOne({ _id: doc._id }, { $set: update })
+      .setOptions({ skipTenantFilter: true } as any)
+      .exec();
+
+    Object.assign(doc, update);
+  }
+
+  private withCurrentSchema(
+    data: Partial<ChannelConfig>,
+  ): Partial<ChannelConfig> {
+    const providerType = data.providerType?.toLowerCase();
+    const schema = providerType ? getProviderSchema(providerType) : undefined;
+    const publicSettings = this.applyPublicSettingDefaults(
+      providerType,
+      data.publicSettings,
+    );
+
+    return {
+      ...data,
+      ...(providerType ? { providerType } : {}),
+      ...(schema ? { schemaVersion: schema.schemaVersion } : {}),
+      ...(publicSettings !== undefined ? { publicSettings } : {}),
+    };
+  }
+
+  private computeSchemaEvolutionUpdate(
+    raw: ChannelConfigSchemaClass,
+  ): Record<string, any> {
+    const update: Record<string, any> = {};
+    const normalizedProviderType =
+      typeof raw.providerType === 'string'
+        ? raw.providerType.toLowerCase()
+        : raw.providerType;
+
+    if (normalizedProviderType && normalizedProviderType !== raw.providerType) {
+      update.providerType = normalizedProviderType;
+    }
+
+    const schema = normalizedProviderType
+      ? getProviderSchema(normalizedProviderType)
+      : undefined;
+
+    const currentVersion = (raw as any).schemaVersion || 1;
+    if (schema && currentVersion < schema.schemaVersion) {
+      update.schemaVersion = schema.schemaVersion;
+    } else if (!(raw as any).schemaVersion) {
+      update.schemaVersion = schema?.schemaVersion || 1;
+    }
+
+    if (!(raw as any).authType) update.authType = 'app_password';
+    if (!(raw as any).status) update.status = 'active';
+    if ((raw as any).isDefault === undefined) update.isDefault = false;
+    if ((raw as any).consecutiveFailures === undefined) {
+      update.consecutiveFailures = 0;
+    }
+    if (!(raw as any).healthState) update.healthState = 'healthy';
+
+    const publicSettings = this.applyPublicSettingDefaults(
+      normalizedProviderType,
+      raw.publicSettings,
+    );
+    if (publicSettings && publicSettings !== raw.publicSettings) {
+      update.publicSettings = publicSettings;
+    }
+
+    return update;
+  }
+
+  private applyPublicSettingDefaults(
+    providerType?: string,
+    publicSettings?: Record<string, any>,
+  ): Record<string, any> | undefined {
+    if (publicSettings === undefined && !providerType) return undefined;
+
+    const schema = providerType ? getProviderSchema(providerType) : undefined;
+    const next = { ...(publicSettings || {}) };
+    let changed = publicSettings === undefined;
+
+    for (const field of schema?.settingFields || []) {
+      if (
+        field.defaultValue !== undefined &&
+        (next[field.key] === undefined || next[field.key] === null)
+      ) {
+        next[field.key] = field.defaultValue;
+        changed = true;
+      }
+    }
+
+    return changed ? next : publicSettings;
   }
 }

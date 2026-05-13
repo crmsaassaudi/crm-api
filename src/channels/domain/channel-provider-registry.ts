@@ -41,6 +41,9 @@ export interface ProviderSchema {
   /** Unique identifier (e.g. 'sendgrid', 'twilio') */
   providerType: string;
 
+  /** Schema version for migration-on-read and provider evolution */
+  schemaVersion: number;
+
   /** Display name */
   label: string;
 
@@ -62,6 +65,7 @@ export interface ProviderSchema {
 export const PROVIDER_REGISTRY: ProviderSchema[] = [
   {
     providerType: 'sendgrid',
+    schemaVersion: 1,
     label: 'SendGrid',
     icon: 'mail',
     category: 'email',
@@ -95,6 +99,7 @@ export const PROVIDER_REGISTRY: ProviderSchema[] = [
   },
   {
     providerType: 'smtp',
+    schemaVersion: 2,
     label: 'Email (SMTP)',
     icon: 'mail',
     category: 'email',
@@ -196,6 +201,7 @@ export const PROVIDER_REGISTRY: ProviderSchema[] = [
   },
   {
     providerType: 'twilio',
+    schemaVersion: 1,
     label: 'Twilio',
     icon: 'phone',
     category: 'sms',

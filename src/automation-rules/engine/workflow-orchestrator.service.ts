@@ -14,6 +14,7 @@ import {
   AutomationActionJobData,
   AutomationDelayedJobData,
 } from '../queue/automation-queue.constants';
+import { WebhookHeaderCryptoService } from './webhook-header-crypto.service';
 
 /**
  * Wait/Delay node configuration schema.
@@ -52,6 +53,7 @@ export class WorkflowOrchestratorService {
     private readonly loopPrevention: LoopPreventionService,
     private readonly actionProducer: AutomationActionProducer,
     private readonly delayedProducer: AutomationDelayedProducer,
+    private readonly webhookHeaderCrypto: WebhookHeaderCryptoService,
   ) {}
 
   /**
@@ -362,15 +364,18 @@ export class WorkflowOrchestratorService {
         if (hibernated) return true;
       }
     } else if (node.type === 'action') {
+      const actionConfig = await this.encryptActionConfigForQueue(
+        node.config || {},
+      );
       // Action node: dispatch to typed queue
       const actionData: AutomationActionJobData = {
         executionId,
         workflowId,
         tenantId,
         nodeId,
-        nodeName: node.config?.name || node.config?.actionType || 'Action',
-        actionType: node.config?.actionType,
-        actionConfig: node.config || {},
+        nodeName: actionConfig?.name || actionConfig?.actionType || 'Action',
+        actionType: actionConfig?.actionType,
+        actionConfig,
         recordId: payload.recordId,
         recordType: payload.object,
         recordData: payload.data,
@@ -386,7 +391,7 @@ export class WorkflowOrchestratorService {
           nodeName: actionData.nodeName,
           nodeType: 'action',
           status: 'success',
-          input: { actionType: node.config?.actionType, config: node.config },
+          input: { actionType: actionConfig?.actionType, config: actionConfig },
           output: { queued: true },
           startedAt: stepStart,
           completedAt: new Date(),
@@ -494,5 +499,12 @@ export class WorkflowOrchestratorService {
       default:
         return value * 60 * 1000; // default to minutes
     }
+  }
+
+  private async encryptActionConfigForQueue(
+    config: Record<string, any>,
+  ): Promise<Record<string, any>> {
+    if (config.actionType !== 'webhook') return config;
+    return (await this.webhookHeaderCrypto.encryptWebhookConfig(config)).config;
   }
 }

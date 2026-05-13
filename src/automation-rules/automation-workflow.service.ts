@@ -14,6 +14,7 @@ import {
 } from './dto/workflow.dto';
 import { ConditionEvaluatorService } from './engine/condition-evaluator.service';
 import { AutomationAuditService } from './automation-audit.service';
+import { WebhookHeaderCryptoService } from './engine/webhook-header-crypto.service';
 
 /**
  * AutomationWorkflowService — business logic for workflow CRUD.
@@ -36,6 +37,7 @@ export class AutomationWorkflowService {
     private readonly cls: ClsService,
     private readonly conditionEvaluator: ConditionEvaluatorService,
     private readonly auditService: AutomationAuditService,
+    private readonly webhookHeaderCrypto: WebhookHeaderCryptoService,
   ) {}
 
   private get tenantId(): string {
@@ -49,23 +51,29 @@ export class AutomationWorkflowService {
   // ── Queries ────────────────────────────────────────────────────────────
 
   async findAll() {
-    return this.repo.findAll(this.tenantId);
+    const workflows = await this.repo.findAll(this.tenantId);
+    return workflows.map((workflow) => this.redactWorkflowHeaders(workflow));
   }
 
   async findById(id: string) {
     const workflow = await this.repo.findById(this.tenantId, id);
     if (!workflow) throw new NotFoundException('Workflow not found');
-    return workflow;
+    const migratedWorkflow = await this.migrateWebhookHeadersAtRest(workflow);
+    return this.decryptWorkflowHeadersForResponse(migratedWorkflow);
   }
 
   async findByStatus(status: 'draft' | 'active' | 'paused') {
-    return this.repo.findByStatus(this.tenantId, status);
+    const workflows = await this.repo.findByStatus(this.tenantId, status);
+    return workflows.map((workflow) => this.redactWorkflowHeaders(workflow));
   }
 
   // ── Mutations ──────────────────────────────────────────────────────────
 
   async create(dto: CreateWorkflowDto) {
     this.validateWorkflow(dto);
+    const encryptedDraftNodes = await this.webhookHeaderCrypto.encryptNodes(
+      dto.nodes as any,
+    );
 
     const result = await this.repo.create({
       tenantId: this.tenantId,
@@ -73,7 +81,7 @@ export class AutomationWorkflowService {
       description: dto.description || '',
       status: 'draft',
       triggerConfig: dto.triggerConfig as any,
-      nodes: dto.nodes as any,
+      nodes: encryptedDraftNodes.nodes as any,
       edges: dto.edges as any,
       viewport: dto.viewport ?? { x: 0, y: 0, zoom: 1 },
       executionCount: 0,
@@ -101,7 +109,7 @@ export class AutomationWorkflowService {
       },
     });
 
-    return result;
+    return this.decryptWorkflowHeadersForResponse(result);
   }
 
   async update(id: string, dto: UpdateWorkflowDto) {
@@ -129,12 +137,42 @@ export class AutomationWorkflowService {
     // Strip updatedAt from the payload — Mongoose timestamps: true handles it
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { updatedAt: _clientTs, ...updateData } = dto;
+    const [existingDraftNodes, existingPublishedNodes] = await Promise.all([
+      this.webhookHeaderCrypto.encryptNodes((existing as any).nodes || []),
+      this.webhookHeaderCrypto.encryptNodes(
+        (existing as any).publishedNodes || [],
+      ),
+    ]);
+    const existingForDiff = {
+      ...(existing as any),
+      nodes: existingDraftNodes.nodes,
+      publishedNodes: existingPublishedNodes.nodes,
+    };
+    const encryptedUpdateData: Record<string, any> = { ...updateData };
+    const persistData: Record<string, any> = { ...updateData };
+
+    if (updateData.nodes) {
+      const encryptedDraftNodes = await this.webhookHeaderCrypto.encryptNodes(
+        updateData.nodes as any,
+      );
+      encryptedUpdateData.nodes = encryptedDraftNodes.nodes;
+      persistData.nodes = encryptedDraftNodes.nodes;
+    } else if (existingDraftNodes.changed) {
+      persistData.nodes = existingDraftNodes.nodes;
+    }
+
+    if (existingPublishedNodes.changed) {
+      persistData.publishedNodes = existingPublishedNodes.nodes;
+    }
 
     // Compute diff for audit
-    const diff = this.auditService.computeDiff(existing as any, updateData);
+    const diff = this.auditService.computeDiff(
+      existingForDiff,
+      encryptedUpdateData,
+    );
 
     const result = await this.repo.update(this.tenantId, id, {
-      ...updateData,
+      ...persistData,
       updatedBy: this.userId,
     } as any);
 
@@ -150,7 +188,7 @@ export class AutomationWorkflowService {
       });
     }
 
-    return result;
+    return result ? this.decryptWorkflowHeadersForResponse(result) : result;
   }
 
   /**
@@ -176,6 +214,8 @@ export class AutomationWorkflowService {
       );
     }
 
+    await this.migrateWebhookHeadersAtRest(existing);
+
     const result = await this.repo.publish(this.tenantId, id);
     if (!result) throw new NotFoundException('Workflow not found');
 
@@ -193,7 +233,7 @@ export class AutomationWorkflowService {
       },
     });
 
-    return result;
+    return this.decryptWorkflowHeadersForResponse(result);
   }
 
   async updateStatus(id: string, dto: UpdateWorkflowStatusDto) {
@@ -224,12 +264,13 @@ export class AutomationWorkflowService {
       metadata: { previousStatus, newStatus: dto.status },
     });
 
-    return result;
+    return result ? this.decryptWorkflowHeadersForResponse(result) : result;
   }
 
   async duplicate(id: string) {
     const result = await this.repo.duplicate(this.tenantId, id, this.userId);
     if (!result) throw new NotFoundException('Workflow not found');
+    const migratedResult = await this.migrateWebhookHeadersAtRest(result);
 
     // Audit: workflow duplicated
     await this.auditService.logAction({
@@ -241,7 +282,7 @@ export class AutomationWorkflowService {
       metadata: { sourceWorkflowId: id },
     });
 
-    return result;
+    return this.decryptWorkflowHeadersForResponse(migratedResult);
   }
 
   async delete(id: string) {
@@ -311,5 +352,49 @@ export class AutomationWorkflowService {
         );
       }
     }
+  }
+
+  private async migrateWebhookHeadersAtRest(workflow: any): Promise<any> {
+    const [draftResult, publishedResult] = await Promise.all([
+      this.webhookHeaderCrypto.encryptNodes(workflow.nodes || []),
+      this.webhookHeaderCrypto.encryptNodes(workflow.publishedNodes || []),
+    ]);
+
+    const update: Record<string, any> = {};
+    if (draftResult.changed) update.nodes = draftResult.nodes;
+    if (publishedResult.changed) update.publishedNodes = publishedResult.nodes;
+
+    if (Object.keys(update).length > 0) {
+      const updatedWorkflow = await this.repo.update(
+        this.tenantId,
+        workflow._id.toString(),
+        update,
+      );
+      return updatedWorkflow || workflow;
+    }
+
+    return workflow;
+  }
+
+  private async decryptWorkflowHeadersForResponse(workflow: any) {
+    return {
+      ...workflow,
+      nodes: await this.webhookHeaderCrypto.decryptNodesForResponse(
+        workflow.nodes || [],
+      ),
+      publishedNodes: await this.webhookHeaderCrypto.decryptNodesForResponse(
+        workflow.publishedNodes || [],
+      ),
+    };
+  }
+
+  private redactWorkflowHeaders(workflow: any) {
+    return {
+      ...workflow,
+      nodes: this.webhookHeaderCrypto.redactNodes(workflow.nodes || []),
+      publishedNodes: this.webhookHeaderCrypto.redactNodes(
+        workflow.publishedNodes || [],
+      ),
+    };
   }
 }

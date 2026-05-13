@@ -18,12 +18,17 @@ import {
   AutomationAuditLogSchema,
   AutomationAuditLogSchemaClass,
 } from './infrastructure/persistence/document/entities/automation-audit-log.schema';
+import {
+  AutomationDelayedJobSchema,
+  AutomationDelayedJobSchemaClass,
+} from './infrastructure/persistence/document/entities/automation-delayed-job.schema';
 
 // ── Repositories ─────────────────────────────────────────────────────────
 import { AutomationRuleRepository } from './infrastructure/persistence/document/repositories/automation-rule.repository';
 import { AutomationWorkflowRepository } from './infrastructure/persistence/document/repositories/automation-workflow.repository';
 import { AutomationExecutionLogRepository } from './infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationAuditLogRepository } from './infrastructure/persistence/document/repositories/automation-audit-log.repository';
+import { AutomationDelayedJobRepository } from './infrastructure/persistence/document/repositories/automation-delayed-job.repository';
 
 // ── Controllers & Services ───────────────────────────────────────────────
 import { AutomationRulesController } from './automation-rules.controller';
@@ -42,6 +47,7 @@ import { BulkEventThrottleService } from './engine/bulk-event-throttle.service';
 import { TemplateInterpolationService } from './engine/template-interpolation.service';
 import { CrmRecordUpdateService } from './engine/crm-record-update.service';
 import { SsrfGuardService } from './engine/ssrf-guard.service';
+import { WebhookHeaderCryptoService } from './engine/webhook-header-crypto.service';
 import {
   SendEmailExecutor,
   SendSmsExecutor,
@@ -76,6 +82,7 @@ import { AutomationBulkProducer } from './queue/automation-bulk.producer';
 import { AutomationBulkProcessor } from './queue/automation-bulk.processor';
 import { AutomationDelayedProducer } from './queue/automation-delayed.producer';
 import { AutomationDelayedProcessor } from './queue/automation-delayed.processor';
+import { AutomationDelayedScheduler } from './queue/automation-delayed.scheduler';
 
 // ── CRM Modules (for real action executors) ──────────────────────────────
 import { ContactsModule } from '../contacts/contacts.module';
@@ -101,6 +108,10 @@ import { ChannelsModule } from '../channels/channels.module';
       {
         name: AutomationAuditLogSchemaClass.name,
         schema: AutomationAuditLogSchema,
+      },
+      {
+        name: AutomationDelayedJobSchemaClass.name,
+        schema: AutomationDelayedJobSchema,
       },
     ]),
     AutomationQueueModule,
@@ -129,6 +140,7 @@ import { ChannelsModule } from '../channels/channels.module';
     AutomationWorkflowRepository,
     AutomationExecutionLogRepository,
     AutomationAuditLogRepository,
+    AutomationDelayedJobRepository,
     // Engine — core
     AutomationEventListenerService,
     ConditionEvaluatorService,
@@ -139,6 +151,7 @@ import { ChannelsModule } from '../channels/channels.module';
     TemplateInterpolationService,
     CrmRecordUpdateService,
     SsrfGuardService,
+    WebhookHeaderCryptoService,
     // Action Executors (all 5 types)
     SendEmailExecutor,
     SendSmsExecutor,
@@ -168,12 +181,14 @@ import { ChannelsModule } from '../channels/channels.module';
     AutomationBulkProcessor,
     AutomationDelayedProducer,
     AutomationDelayedProcessor,
+    AutomationDelayedScheduler,
   ],
   exports: [
     AutomationRulesService,
     AutomationWorkflowService,
     AutomationWorkflowRepository,
     AutomationExecutionLogRepository,
+    AutomationDelayedJobRepository,
     ConditionEvaluatorService,
     WorkflowOrchestratorService,
     TemplateInterpolationService,

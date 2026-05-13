@@ -23,6 +23,7 @@ import {
 } from '../../channels/domain/error-classifier';
 import { TransportPoolService } from '../../channels/transport-pool.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { WebhookHeaderCryptoService } from './webhook-header-crypto.service';
 
 /**
  * Base interface for all action executors.
@@ -662,13 +663,13 @@ export class WebhookExecutor implements ActionExecutor {
   constructor(
     private readonly templateEngine: TemplateInterpolationService,
     private readonly ssrfGuard: SsrfGuardService,
+    private readonly webhookHeaderCrypto: WebhookHeaderCryptoService,
   ) {}
 
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { actionConfig, recordData, tenantId } = job;
     const url = actionConfig.webhookUrl;
     const method = (actionConfig.method || 'POST').toUpperCase();
-    const headers: Record<string, string> = actionConfig.headers || {};
     const timeout = Math.min(
       actionConfig.timeout || WEBHOOK_HARD_TIMEOUT_MS,
       WEBHOOK_HARD_TIMEOUT_MS,
@@ -711,6 +712,8 @@ export class WebhookExecutor implements ActionExecutor {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeout);
+      const headers =
+        await this.webhookHeaderCrypto.resolveHeadersForExecution(actionConfig);
 
       const fetchOptions: RequestInit = {
         method,

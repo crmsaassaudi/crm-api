@@ -11,8 +11,11 @@ export class ChannelConfig {
   @ApiProperty()
   tenantId: string;
 
-  @ApiProperty({ enum: ['sendgrid', 'twilio'] })
+  @ApiProperty({ enum: ['sendgrid', 'smtp', 'twilio'] })
   providerType: string;
+
+  @ApiProperty({ default: 1 })
+  schemaVersion: number;
 
   @ApiProperty({ example: 'Production SendGrid' })
   name: string;
