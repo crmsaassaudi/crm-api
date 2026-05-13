@@ -444,6 +444,23 @@ export class ConversationRepository {
     await this.model.findByIdAndUpdate(id, { $set: update }).exec();
   }
 
+  async updateCustomerInfo(
+    id: string,
+    info: { email?: string; phone?: string; name?: string },
+  ): Promise<OmniConversation | null> {
+    const update: Record<string, any> = {};
+    if (info.email !== undefined) update['customer.email'] = info.email;
+    if (info.phone !== undefined) update['customer.phone'] = info.phone;
+    if (info.name !== undefined) update['customer.name'] = info.name;
+
+    if (Object.keys(update).length === 0) return null;
+
+    const doc = await this.model
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
   async updateContactId(id: string, contactId: string): Promise<void> {
     await this.model.findByIdAndUpdate(id, { $set: { contactId } }).exec();
   }

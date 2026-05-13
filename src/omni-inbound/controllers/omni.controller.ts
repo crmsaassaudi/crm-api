@@ -205,6 +205,34 @@ export class OmniController {
     return conversation;
   }
 
+  /**
+   * Update customer info (name, email, phone) for a conversation.
+   */
+  @Patch('conversations/:id/customer')
+  @HttpCode(HttpStatus.OK)
+  async updateCustomer(
+    @Param('id') id: string,
+    @Body() body: { name?: string; email?: string; phone?: string },
+  ) {
+    const updated = await this.conversationRepo.updateCustomerInfo(id, body);
+    if (!updated) {
+      throw new NotFoundException(`Conversation ${id} not found`);
+    }
+
+    const tenantId = this.cls.get<string>('tenantId');
+    const agentId = this.cls.get<string>('userId');
+
+    // Emit event to update UI via socket
+    this.eventEmitter.emit('omni.conversation.customer_updated', {
+      tenantId,
+      conversationId: id,
+      customer: updated.customer,
+      agentId,
+    });
+
+    return updated;
+  }
+
   // ─── Messages ─────────────────────────────────────────────────
 
   /**
