@@ -29,31 +29,11 @@ import { AuthUpdateDto } from './dto/auth-update.dto';
 import { NullableType } from '../utils/types/nullable.type';
 import { User } from '../users/domain/user';
 import { Tenant } from '../tenants/domain/tenant';
-
-const SID_COOKIE = 'sid';
-
-const getCookieOptions = (hostname: string, isProduction: boolean) => {
-  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
-  let domain: string | undefined = undefined;
-
-  if (!isLocalhost) {
-    const parts = hostname.split('.');
-    if (parts.length > 2) {
-      // e.g. daitoan.crmsaudi.dev -> .crmsaudi.dev (share cookie across all subdomains)
-      domain = `.${parts.slice(-2).join('.')}`;
-    } else if (parts.length === 2) {
-      // e.g. crmsaudi.dev -> .crmsaudi.dev
-      domain = `.${hostname}`;
-    }
-  }
-
-  return {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: 'lax' as const,
-    domain, // Always set domain for subdomain cookie sharing (dev & prod)
-  };
-};
+import {
+  SID_COOKIE,
+  clearSessionCookieVariants,
+  getSessionCookieOptions,
+} from './session-cookie.util';
 
 @ApiTags('Auth')
 @Controller({ path: 'auth', version: '1' })
@@ -64,8 +44,6 @@ export class AuthController {
     private readonly service: AuthService,
     private readonly configService: ConfigService<AllConfigType>,
   ) {}
-
-  // ─── GET /auth/login ──────────────────────────────────────────────────────
 
   @Get('login')
   @Unprotected()
@@ -78,8 +56,6 @@ export class AuthController {
     const { url } = await this.service.buildLoginUrl(returnTo);
     return res.redirect(url);
   }
-
-  // ─── GET /auth/callback ───────────────────────────────────────────────────
 
   @Get('callback')
   @Unprotected()
@@ -105,10 +81,13 @@ export class AuthController {
         state,
       );
 
-      // Set HttpOnly session cookie — token NEVER reaches the browser
-      const isProd =
-        this.configService.get('app.nodeEnv', { infer: true }) === 'production';
-      res.cookie(SID_COOKIE, sid, getCookieOptions(req.hostname, isProd));
+      // Tokens stay server-side; the browser receives only an HttpOnly sid.
+      clearSessionCookieVariants(res, this.configService, req.hostname);
+      res.cookie(
+        SID_COOKIE,
+        sid,
+        getSessionCookieOptions(this.configService, req.hostname),
+      );
 
       return res.redirect(redirectUrl);
     } catch (e: any) {
@@ -117,31 +96,28 @@ export class AuthController {
     }
   }
 
-  // ─── POST /auth/refresh ───────────────────────────────────────────────────
-
   @Post('refresh')
   @Unprotected()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Silent token refresh using session cookie' })
   async refresh(@Request() req, @Res({ passthrough: true }) res: Response) {
-    const sid = req.cookies?.[SID_COOKIE];
-    if (!sid) {
+    const sidCandidates = this.getSidCandidates(req);
+    if (sidCandidates.length === 0) {
       throw new UnauthorizedException('No session cookie');
     }
 
-    try {
-      await this.service.refreshTokens(sid);
-      return { message: 'Token refreshed successfully' };
-    } catch {
-      // Refresh token expired → clear cookie and force re-login
-      const isProd =
-        this.configService.get('app.nodeEnv', { infer: true }) === 'production';
-      res.clearCookie(SID_COOKIE, getCookieOptions(req.hostname, isProd));
-      throw new UnauthorizedException('Session expired — please log in again');
+    for (const sid of sidCandidates) {
+      try {
+        await this.service.refreshTokens(sid);
+        return { message: 'Token refreshed successfully' };
+      } catch {
+        // Try the next sid candidate.
+      }
     }
-  }
 
-  // ─── POST /auth/logout ────────────────────────────────────────────────────
+    clearSessionCookieVariants(res, this.configService, req.hostname);
+    throw new UnauthorizedException('Session expired - please log in again');
+  }
 
   @Post('logout')
   @Unprotected()
@@ -150,17 +126,12 @@ export class AuthController {
     summary: 'Logout: clear session, cookie, and Keycloak IdP session',
   })
   async logout(@Request() req, @Res({ passthrough: true }) res: Response) {
-    const sid = req.cookies?.[SID_COOKIE];
-    if (sid) {
-      await this.service.logout(sid);
+    for (const sid of this.getSidCandidates(req)) {
+      await this.service.logout(sid).catch(() => undefined);
     }
-    // Clear cookie regardless (Max-Age=0 equivalent)
-    const isProd =
-      this.configService.get('app.nodeEnv', { infer: true }) === 'production';
-    res.clearCookie(SID_COOKIE, getCookieOptions(req.hostname, isProd));
-  }
 
-  // ─── GET /auth/me ─────────────────────────────────────────────────────────
+    clearSessionCookieVariants(res, this.configService, req.hostname);
+  }
 
   @ApiBearerAuth()
   @SerializeOptions({ groups: ['me'] })
@@ -179,8 +150,6 @@ export class AuthController {
     return this.service.myTenants(req.user);
   }
 
-  // ─── PATCH /auth/me ───────────────────────────────────────────────────────
-
   @ApiBearerAuth()
   @SerializeOptions({ groups: ['me'] })
   @Patch('me')
@@ -193,8 +162,6 @@ export class AuthController {
     return this.service.update(request.user, userDto);
   }
 
-  // ─── DELETE /auth/me ─────────────────────────────────────────────────────
-
   @ApiBearerAuth()
   @Delete('me')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -202,5 +169,34 @@ export class AuthController {
     return this.service.softDelete(request.user);
   }
 
-  // ─── Helper ──────────────────────────────────────────────────────────────
+  private getSidCandidates(req: any): string[] {
+    const candidates: string[] = [];
+    const parsedSid = req.cookies?.[SID_COOKIE];
+    if (typeof parsedSid === 'string' && parsedSid) {
+      candidates.push(parsedSid);
+    }
+
+    const rawCookieHeader = req.headers?.cookie;
+    const rawCookie = Array.isArray(rawCookieHeader)
+      ? rawCookieHeader.join(';')
+      : rawCookieHeader;
+
+    if (rawCookie) {
+      for (const part of rawCookie.split(';')) {
+        const [rawName, ...rawValueParts] = part.trim().split('=');
+        if (rawName !== SID_COOKIE) continue;
+
+        const rawValue = rawValueParts.join('=');
+        if (!rawValue) continue;
+
+        try {
+          candidates.push(decodeURIComponent(rawValue));
+        } catch {
+          candidates.push(rawValue);
+        }
+      }
+    }
+
+    return Array.from(new Set(candidates));
+  }
 }

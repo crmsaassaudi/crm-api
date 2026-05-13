@@ -306,7 +306,7 @@ export class TenantProvisioningWorker extends WorkerHost {
       'crmsaudi.dev';
     const url = new URL(frontendUrl);
     url.hostname = `${alias}.${rootDomain}`;
-    url.pathname = '/';
+    url.pathname = '/login';
     url.search = '';
     url.hash = '';
     return url.toString();

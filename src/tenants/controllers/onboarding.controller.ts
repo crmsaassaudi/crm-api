@@ -44,8 +44,11 @@ import { StatusEnum } from '../../statuses/statuses.enum';
 import { SubscriptionPlan } from '../domain/tenant';
 import { generateAlias, ensureUniqueAlias } from '../utils/alias-generator';
 import { TenantAliasReservationRepository } from '../infrastructure/persistence/document/repositories/tenant-alias-reservation.repository';
-
-const SID_COOKIE = 'sid';
+import {
+  SID_COOKIE,
+  clearSessionCookieVariants,
+  getSessionCookieOptions,
+} from '../../auth/session-cookie.util';
 
 @ApiTags('Onboarding')
 @Controller({
@@ -137,14 +140,13 @@ export class OnboardingController {
         localUser.id as string,
       );
 
-      // 5. Set session cookie
-      const isProd =
-        this.configService.get('app.nodeEnv', { infer: true }) === 'production';
-      res.cookie(SID_COOKIE, sid, {
-        httpOnly: true,
-        secure: isProd,
-        sameSite: 'lax',
-      });
+      // 5. Set onboarding session cookie using the same scope as auth cookies.
+      clearSessionCookieVariants(res, this.configService, req.hostname);
+      res.cookie(
+        SID_COOKIE,
+        sid,
+        getSessionCookieOptions(this.configService, req.hostname),
+      );
 
       // 6. Create onboarding session in Redis
       step = 'creating onboarding session';
@@ -317,11 +319,18 @@ export class OnboardingController {
   @ApiOperation({ summary: 'Poll provisioning status' })
   @ApiOkResponse({ description: 'Current provisioning status' })
   @ApiNotFoundResponse({ description: 'Provisioning ID not found' })
-  async getStatus(@Param('provisioningId') provisioningId: string) {
+  async getStatus(
+    @Param('provisioningId') provisioningId: string,
+    @Request() req,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const status =
       await this.onboardingService.getProvisioningStatus(provisioningId);
     if (!status) {
       throw new NotFoundException('Provisioning ID not found');
+    }
+    if (status.status === 'READY') {
+      clearSessionCookieVariants(res, this.configService, req.hostname);
     }
     return status;
   }
