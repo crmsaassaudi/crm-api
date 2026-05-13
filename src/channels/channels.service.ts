@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -251,6 +252,7 @@ export class ChannelsService {
 
   async create(dto: CreateChannelDto): Promise<Channel> {
     const tenant = this.cls.get('tenantId');
+    await this.assertChannelAccountAvailable(dto.type, dto.account, tenant);
 
     // --- Upsert: nếu channel (tenant+type+account) đã tồn tại thì update, không tạo mới ---
     const { channel } = await this.repository.upsert(
@@ -338,9 +340,10 @@ export class ChannelsService {
         channel.name = finalPageName;
         channel.config = { ...dto.config, avatarUrl };
       } catch (error) {
+        const err = error as any;
         console.error(
           'Failed to automated Meta channel setup:',
-          error?.response?.data || error.message,
+          err?.response?.data || err?.message,
         );
         await this.repository.update(tenant, channel.id, { status: 'Error' });
         channel.status = 'Error';
@@ -376,7 +379,10 @@ export class ChannelsService {
       } catch (error) {
         console.error(
           'Failed to unsubscribe Meta webhook during disconnect:',
-          error?.response?.data || error.message,
+          error instanceof Error
+            ? error.message
+            : (error as { response?: { data?: unknown } })?.response?.data ||
+                'Unknown error',
         );
       }
     }
@@ -405,6 +411,12 @@ export class ChannelsService {
     metaChannel: MetaAvailableChannel,
   ): Promise<Channel> {
     const tenant = this.cls.get('tenantId');
+    await this.assertChannelAccountAvailable(
+      metaChannel.type,
+      metaChannel.accountId,
+      tenant,
+    );
+
     const { channel } = await this.repository.upsert(
       tenant,
       metaChannel.type,
@@ -472,6 +484,29 @@ export class ChannelsService {
       });
       return updated ?? { ...channel, status: 'Error' };
     }
+  }
+
+  private async assertChannelAccountAvailable(
+    type: string,
+    account: string,
+    tenant: string,
+  ): Promise<void> {
+    const existing = await this.repository.findAnyByAccount(type, account);
+    if (!existing || existing.tenantId?.toString() === tenant?.toString()) {
+      return;
+    }
+
+    throw new ConflictException({
+      message:
+        `${type} channel "${account}" is already connected to another tenant. ` +
+        'Disconnect it from the existing tenant before connecting it here.',
+      errorCode: 'CHANNEL_ALREADY_CONNECTED_TO_ANOTHER_TENANT',
+      errors: {
+        type,
+        account,
+        existingTenantId: existing.tenantId,
+      },
+    });
   }
 
   private async getMetaResultPayload(

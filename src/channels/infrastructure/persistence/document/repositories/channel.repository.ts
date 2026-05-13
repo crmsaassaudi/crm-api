@@ -46,6 +46,7 @@ export class ChannelRepository {
     const doc = await this.model
       .findOne({ type, account })
       .select('+credentials') // Include credentials so adapters can use the access token
+      .setOptions({ skipTenantFilter: true } as any)
       .exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
@@ -92,6 +93,7 @@ export class ChannelRepository {
         { $set: { ...updateData, tenantId: tenant, type, account } },
         { new: true, upsert: true, setDefaultsOnInsert: true },
       )
+      .setOptions({ skipTenantFilter: true } as any)
       .exec();
     // Mongoose doesn't expose isNew from findOneAndUpdate directly,
     // so we rely on updatedAt vs createdAt to detect new docs.
