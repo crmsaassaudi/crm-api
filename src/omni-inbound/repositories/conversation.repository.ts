@@ -59,6 +59,24 @@ export class ConversationRepository {
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
+  async findByIds(
+    tenantId: string,
+    ids: string[],
+  ): Promise<OmniConversation[]> {
+    const safeIds = Array.from(new Set(ids)).filter((id) =>
+      Types.ObjectId.isValid(id),
+    );
+    if (safeIds.length === 0) return [];
+
+    const docs = await this.model
+      .find({ _id: { $in: safeIds }, tenantId })
+      .populate('assignedAgent')
+      .populate('resolvedByAgent')
+      .exec();
+
+    return docs.map((doc) => OmniConversationMapper.toDomain(doc));
+  }
+
   /**
    * Find the ACTIVE (open or pending) conversation for a given external thread ID.
    * This is the key query for session management — if no active session exists,

@@ -286,6 +286,57 @@ export class OmniController {
     };
   }
 
+  @Post('conversations/batch-sync')
+  @HttpCode(HttpStatus.OK)
+  async batchSyncConversations(
+    @Body()
+    body: {
+      conversationIds?: string[];
+      lastUpdated?: string;
+    },
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+
+    const conversationIds = Array.from(
+      new Set((body.conversationIds ?? []).filter(Boolean)),
+    ).slice(0, 50);
+
+    if (conversationIds.length === 0) {
+      return {
+        conversations: [],
+        serverTime: new Date().toISOString(),
+      };
+    }
+
+    const lastUpdatedAt = body.lastUpdated ? new Date(body.lastUpdated) : null;
+    const conversations = await this.conversationRepo.findByIds(
+      tenantId,
+      conversationIds,
+    );
+
+    return {
+      conversations: conversations.map((conversation) => ({
+        id: conversation.id,
+        status: conversation.status,
+        lastMessage: conversation.lastMessage,
+        lastMessageAt: conversation.lastMessageAt,
+        unreadCount: conversation.unreadCount,
+        assignedAgentId: conversation.assignedAgentId,
+        assignedGroupId: conversation.assignedGroupId,
+        tags: conversation.tags,
+        updatedAt: conversation.updatedAt,
+        hasChangesSince:
+          !!lastUpdatedAt &&
+          !!conversation.updatedAt &&
+          new Date(conversation.updatedAt).getTime() > lastUpdatedAt.getTime(),
+      })),
+      serverTime: new Date().toISOString(),
+    };
+  }
+
   @Get('conversations/:id/timeline')
   async getConversationTimeline(
     @Param('id') conversationId: string,
