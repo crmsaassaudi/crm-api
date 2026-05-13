@@ -234,6 +234,8 @@ export class OmniController {
   async syncConversation(
     @Param('id') conversationId: string,
     @Query('afterVersion') afterVersion?: string,
+    @Query('afterMessageId') afterMessageId?: string,
+    @Query('afterCreatedAt') afterCreatedAt?: string,
   ) {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) {
@@ -245,19 +247,38 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
 
-    const messages = await this.messageRepo.findByConversation(
-      conversationId,
-      1,
-      100,
-    );
+    const cursorCreatedAt = afterCreatedAt ? new Date(afterCreatedAt) : null;
+    const canDeltaSync =
+      !!afterMessageId &&
+      !!cursorCreatedAt &&
+      !Number.isNaN(cursorCreatedAt.getTime());
+
+    const messageResult = canDeltaSync
+      ? await this.messageRepo.findByConversationIdWithCursor({
+          conversationId,
+          limit: 100,
+          direction: 'future',
+          cursor: {
+            id: afterMessageId,
+            createdAt: cursorCreatedAt,
+          },
+        })
+      : await this.messageRepo.findByConversation(conversationId, 1, 100);
+    const messages = messageResult.data;
+    const hasMore =
+      'hasMore' in messageResult
+        ? messageResult.hasMore
+        : messageResult.hasNextPage;
 
     return {
-      mode: 'snapshot',
+      mode: canDeltaSync ? 'delta' : 'snapshot',
       conversationId,
       afterVersion: afterVersion ? Number(afterVersion) : null,
+      afterMessageId: afterMessageId ?? null,
       currentVersion: Date.now(),
       conversation,
-      messages: messages.data,
+      messages,
+      hasMore,
       lock: await this.conversationLockService.getLock(
         tenantId,
         conversationId,
@@ -448,8 +469,10 @@ export class OmniController {
         clientMessageId,
       });
     } catch (error) {
-      this.logger.error(`Failed to send message: ${error.message}`);
-      throw new BadRequestException(error.message);
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Failed to send message: ${errorMessage}`);
+      throw new BadRequestException(errorMessage);
     }
   }
 
@@ -484,8 +507,14 @@ export class OmniController {
         ...payload,
       });
     } catch (error) {
-      this.logger.error(`Failed to send email reply: ${error.message}`);
-      throw new BadRequestException(error.message);
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : JSON.stringify(error);
+      this.logger.error(`Failed to send email reply: ${message}`);
+      throw new BadRequestException(message);
     }
   }
 

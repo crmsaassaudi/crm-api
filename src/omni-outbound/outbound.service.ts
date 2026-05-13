@@ -24,6 +24,10 @@ import * as nodemailer from 'nodemailer';
 import { v4 as uuidv4 } from 'uuid';
 import * as cheerio from 'cheerio';
 import axios from 'axios';
+import type Redis from 'ioredis';
+import { IOREDIS_CLIENT } from '../redis/redis.tokens';
+
+const OUTBOUND_IDEMPOTENCY_TTL_SECONDS = 86_400;
 
 /**
  * OutboundService — handles messages sent from Agents to Customers.
@@ -53,6 +57,7 @@ export class OutboundService {
     private readonly emailContentModel: Model<EmailContentDocument>,
     @InjectModel('EmailMetadataSchemaClass')
     private readonly emailMetadataModel: Model<EmailMetadataDocument>,
+    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   /**
@@ -100,6 +105,46 @@ export class OutboundService {
         };
       }
       retryMessage = existing;
+    }
+
+    const outboundIdempotencyRedisKey = idempotencyKey
+      ? `omni:outbound:idempotency:${tenantId}:${idempotencyKey}`
+      : null;
+    let reservedIdempotencyKey = false;
+
+    if (outboundIdempotencyRedisKey && !retryMessage) {
+      const reserved = await this.redis.set(
+        outboundIdempotencyRedisKey,
+        'processing',
+        'EX',
+        OUTBOUND_IDEMPOTENCY_TTL_SECONDS,
+        'NX',
+      );
+
+      if (reserved === 'OK') {
+        reservedIdempotencyKey = true;
+      } else {
+        const existing = await this.messageRepo.findByIdempotencyKey(
+          tenantId,
+          idempotencyKey!,
+        );
+        if (existing && existing.status !== 'failed') {
+          return {
+            ok: true,
+            messageId: existing.id,
+            externalMessageId: existing.externalMessageId,
+            status: existing.status,
+            idempotencyKey,
+            clientMessageId: existing.clientMessageId,
+            reused: true,
+          };
+        }
+        if (existing) {
+          retryMessage = existing;
+        } else {
+          throw new Error('Duplicate message is already being processed');
+        }
+      }
     }
 
     // 1. Fetch conversation to get channel details and external ID
@@ -173,6 +218,9 @@ export class OutboundService {
             };
           }
         }
+        if (reservedIdempotencyKey && outboundIdempotencyRedisKey) {
+          await this.redis.del(outboundIdempotencyRedisKey);
+        }
         throw error;
       }
     }
@@ -236,6 +284,9 @@ export class OutboundService {
         error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to send message via provider: ${errorMessage}`);
       await this.messageRepo.updateStatus(message.id, 'failed');
+      if (reservedIdempotencyKey && outboundIdempotencyRedisKey) {
+        await this.redis.del(outboundIdempotencyRedisKey);
+      }
       throw error;
     }
   }
