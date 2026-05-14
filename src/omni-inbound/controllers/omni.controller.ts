@@ -525,6 +525,7 @@ export class OmniController {
     @Body('messageType') messageType?: string,
     @Body('idempotencyKey') idempotencyKey?: string,
     @Body('clientMessageId') clientMessageId?: string,
+    @Body('source') source?: string,
   ) {
     if (!content) {
       throw new BadRequestException('Content is required');
@@ -544,6 +545,8 @@ export class OmniController {
         agentId,
         content,
         messageType,
+        source: source ?? 'api',
+        transport: 'http',
         idempotencyKey,
         clientMessageId,
       });

@@ -131,7 +131,7 @@ export class UsersDocumentRepository
     const userObjects = await this.model
       .find({ _id: { $in: ids.map(String) } })
       .setOptions({ skipTenantFilter: true })
-      .select('firstName lastName email');
+      .select('firstName lastName email photo');
     return userObjects.map((userObject) => UserMapper.toDomain(userObject));
   }
 

@@ -20,7 +20,10 @@ export interface OmniMessage {
   tenantId: string;
   conversationId: string;
   senderId: string;
+  senderName?: string | null;
+  senderAvatarUrl?: string | null;
   senderType: SenderType;
+  source?: string | null;
   messageType: MessageType;
   content: string;
   mediaUrl?: string;
@@ -30,6 +33,7 @@ export interface OmniMessage {
   externalMessageId?: string;
   idempotencyKey?: string;
   clientMessageId?: string;
+  providerTimestamp?: Date;
   createdAt: Date;
   updatedAt: Date;
 }

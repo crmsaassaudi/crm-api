@@ -8,7 +8,10 @@ export class OmniMessageMapper {
       tenantId: raw.tenantId?.toString(),
       conversationId: raw.conversationId?.toString(),
       senderId: raw.senderId,
+      senderName: raw.senderName,
+      senderAvatarUrl: raw.senderAvatarUrl,
       senderType: raw.senderType as any,
+      source: raw.source,
       messageType: raw.messageType as any,
       content: raw.content,
       mediaUrl: raw.mediaUrl,
@@ -18,6 +21,7 @@ export class OmniMessageMapper {
       externalMessageId: raw.externalMessageId,
       idempotencyKey: raw.idempotencyKey,
       clientMessageId: raw.clientMessageId,
+      providerTimestamp: raw.providerTimestamp,
       createdAt: raw.createdAt,
       updatedAt: raw.updatedAt,
     };
@@ -31,7 +35,10 @@ export class OmniMessageMapper {
     raw.tenantId = domain.tenantId;
     raw.conversationId = domain.conversationId;
     raw.senderId = domain.senderId;
+    raw.senderName = domain.senderName as string;
+    raw.senderAvatarUrl = domain.senderAvatarUrl as string;
     raw.senderType = domain.senderType;
+    raw.source = domain.source as string;
     raw.messageType = domain.messageType;
     raw.content = domain.content;
     raw.mediaUrl = domain.mediaUrl as string;
@@ -41,6 +48,7 @@ export class OmniMessageMapper {
     raw.externalMessageId = domain.externalMessageId as string;
     raw.idempotencyKey = domain.idempotencyKey as string;
     raw.clientMessageId = domain.clientMessageId as string;
+    raw.providerTimestamp = domain.providerTimestamp as Date;
 
     return raw;
   }

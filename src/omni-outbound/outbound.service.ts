@@ -26,6 +26,7 @@ import * as cheerio from 'cheerio';
 import axios from 'axios';
 import type Redis from 'ioredis';
 import { IOREDIS_CLIENT } from '../redis/redis.tokens';
+import { UsersService } from '../users/users.service';
 
 const OUTBOUND_IDEMPOTENCY_TTL_SECONDS = 86_400;
 
@@ -53,6 +54,7 @@ export class OutboundService {
     private readonly transportPool: TransportPoolService,
     private readonly outboundQueue: OutboundQueueService,
     private readonly emailSignatureService: EmailSignatureService,
+    private readonly usersService: UsersService,
     @InjectModel('EmailContentSchemaClass')
     private readonly emailContentModel: Model<EmailContentDocument>,
     @InjectModel('EmailMetadataSchemaClass')
@@ -69,7 +71,8 @@ export class OutboundService {
     agentId: string;
     content: string;
     messageType?: string;
-    source?: 'http' | 'socket';
+    source?: string;
+    transport?: 'http' | 'socket';
     idempotencyKey?: string;
     clientMessageId?: string;
   }): Promise<any> {
@@ -79,10 +82,13 @@ export class OutboundService {
       agentId,
       content,
       messageType = 'text',
-      source = 'http',
+      source = 'api',
+      transport = 'http',
       idempotencyKey,
       clientMessageId,
     } = params;
+
+    const senderContext = await this.resolveSenderContext(agentId);
 
     let retryMessage: Awaited<
       ReturnType<MessageRepository['findByIdempotencyKey']>
@@ -101,6 +107,11 @@ export class OutboundService {
           status: existing.status,
           idempotencyKey,
           clientMessageId: existing.clientMessageId,
+          senderId: existing.senderId,
+          senderName: existing.senderName ?? senderContext.name,
+          senderAvatarUrl:
+            existing.senderAvatarUrl ?? senderContext.avatarUrl ?? null,
+          source: existing.source ?? source,
           reused: true,
         };
       }
@@ -136,6 +147,11 @@ export class OutboundService {
             status: existing.status,
             idempotencyKey,
             clientMessageId: existing.clientMessageId,
+            senderId: existing.senderId,
+            senderName: existing.senderName ?? senderContext.name,
+            senderAvatarUrl:
+              existing.senderAvatarUrl ?? senderContext.avatarUrl ?? null,
+            source: existing.source ?? source,
             reused: true,
           };
         }
@@ -193,12 +209,25 @@ export class OutboundService {
           tenantId: tenantId,
           conversationId: conversationId,
           senderId: agentId,
+          senderName: senderContext.name,
+          senderAvatarUrl: senderContext.avatarUrl ?? undefined,
           senderType: 'agent',
+          source,
           messageType,
           content,
           status: 'sending',
           idempotencyKey,
           clientMessageId,
+          metadata: {
+            sender: {
+              id: agentId,
+              name: senderContext.name,
+              avatarUrl: senderContext.avatarUrl ?? null,
+              type: 'agent',
+            },
+            source,
+            transport,
+          },
         });
       } catch (error) {
         if (idempotencyKey && (error as any)?.code === 11000) {
@@ -214,6 +243,11 @@ export class OutboundService {
               status: existing.status,
               idempotencyKey,
               clientMessageId: existing.clientMessageId,
+              senderId: existing.senderId,
+              senderName: existing.senderName ?? senderContext.name,
+              senderAvatarUrl:
+                existing.senderAvatarUrl ?? senderContext.avatarUrl ?? null,
+              source: existing.source ?? source,
               reused: true,
             };
           }
@@ -259,6 +293,8 @@ export class OutboundService {
         tenantId,
         conversationId,
         senderId: agentId,
+        senderName: senderContext.name,
+        senderAvatarUrl: senderContext.avatarUrl ?? null,
         senderType: 'agent',
         messageType,
         content,
@@ -269,6 +305,7 @@ export class OutboundService {
         clientMessageId,
         timestamp: new Date().toISOString(),
         source,
+        transport,
       });
 
       return {
@@ -278,6 +315,10 @@ export class OutboundService {
         status: 'sent',
         idempotencyKey,
         clientMessageId,
+        senderId: agentId,
+        senderName: senderContext.name,
+        senderAvatarUrl: senderContext.avatarUrl ?? null,
+        source,
       };
     } catch (error) {
       const errorMessage =
@@ -288,6 +329,34 @@ export class OutboundService {
         await this.redis.del(outboundIdempotencyRedisKey);
       }
       throw error;
+    }
+  }
+
+  private async resolveSenderContext(agentId: string): Promise<{
+    name: string;
+    avatarUrl?: string | null;
+  }> {
+    try {
+      const users = await this.usersService.findByIdsGlobal([agentId]);
+      const user = users[0];
+      if (!user) return { name: 'Agent', avatarUrl: null };
+
+      const fullName = [user.firstName, user.lastName]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+
+      return {
+        name: fullName || user.email || 'Agent',
+        avatarUrl: user.photo?.path ?? null,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Failed to resolve sender context for agent ${agentId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return { name: 'Agent', avatarUrl: null };
     }
   }
 
@@ -402,6 +471,7 @@ export class OutboundService {
       references = [],
       attachments: standardAttachments = [],
     } = params;
+    const senderContext = await this.resolveSenderContext(agentId);
 
     const conversation = await this.conversationRepo.findById(conversationId);
     if (!conversation) {
@@ -543,10 +613,22 @@ export class OutboundService {
         tenantId,
         conversationId,
         senderId: agentId,
+        senderName: senderContext.name,
+        senderAvatarUrl: senderContext.avatarUrl ?? undefined,
         senderType: 'agent',
+        source: 'api',
         messageType: 'text',
         content: snippet,
         status: 'sending',
+        metadata: {
+          sender: {
+            id: agentId,
+            name: senderContext.name,
+            avatarUrl: senderContext.avatarUrl ?? null,
+            type: 'agent',
+          },
+          source: 'api',
+        },
       });
     } catch (dbErr) {
       throw new Error(`Failed to create message record: ${dbErr}`);
@@ -628,6 +710,8 @@ export class OutboundService {
       tenantId,
       conversationId,
       senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? null,
       senderType: 'agent',
       messageType: 'text',
       content: snippet, // For UI preview
@@ -635,7 +719,8 @@ export class OutboundService {
       externalMessageId: externalId,
       status: 'sent',
       timestamp: new Date().toISOString(),
-      source: 'http',
+      source: 'api',
+      transport: 'http',
     });
 
     return {

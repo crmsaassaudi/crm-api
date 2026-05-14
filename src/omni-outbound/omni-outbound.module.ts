@@ -34,6 +34,7 @@ import {
 
 // External modules
 import { ChannelsModule } from '../channels/channels.module';
+import { UsersModule } from '../users/users.module';
 
 // Email schemas
 import {
@@ -55,6 +56,7 @@ import {
   imports: [
     ConfigModule.forFeature(replyWindowConfig),
     ChannelsModule,
+    UsersModule,
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,

@@ -250,6 +250,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       tempId?: string; // Client-side optimistic ID for matching acks
       idempotencyKey?: string;
       clientMessageId?: string;
+      source?: string;
     },
   ) {
     const user = client.data.user;
@@ -273,7 +274,8 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         messageType: data.messageType,
         idempotencyKey: data.idempotencyKey,
         clientMessageId: data.clientMessageId ?? data.tempId,
-        source: 'socket',
+        source: data.source ?? 'outbound',
+        transport: 'socket',
       });
 
       const ack = {
@@ -294,8 +296,11 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
           .to(`conversation:${data.conversationId}`)
           .emit('omni:message:new', {
             conversationId: data.conversationId,
-            senderId: userId,
+            senderId: result.senderId ?? userId,
+            senderName: result.senderName,
+            senderAvatarUrl: result.senderAvatarUrl,
             senderType: 'agent',
+            source: result.source ?? data.source ?? 'outbound',
             messageType: data.messageType ?? 'text',
             content: data.content,
             messageId: ack.messageId,
@@ -411,7 +416,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
    */
   @OnEvent('omni.message.sent')
   handleOutboundMessage(payload: any) {
-    if (payload.source === 'http') {
+    if (payload.transport === 'http') {
       this.logger.log(
         `Broadcasting HTTP-sent message to conversation ${payload.conversationId}`,
       );
@@ -420,7 +425,10 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         .emit('omni:message:new', {
           conversationId: payload.conversationId,
           senderId: payload.senderId,
+          senderName: payload.senderName,
+          senderAvatarUrl: payload.senderAvatarUrl,
           senderType: payload.senderType,
+          source: payload.source,
           messageType: payload.messageType,
           content: payload.content,
           messageId: payload.messageId,

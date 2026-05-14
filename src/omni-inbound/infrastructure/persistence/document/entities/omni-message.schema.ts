@@ -50,8 +50,20 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true })
   senderId: string;
 
+  /** Display name captured at send time for agent/API/bot attribution */
+  @Prop()
+  senderName: string;
+
+  /** Avatar captured at send time, if available */
+  @Prop()
+  senderAvatarUrl: string;
+
   @Prop({ required: true, enum: SENDER_TYPES })
   senderType: string;
+
+  /** Origin of the outbound message, e.g. outbound, api, bot, workflow */
+  @Prop({ type: String, index: true })
+  source: string;
 
   @Prop({ required: true, enum: MESSAGE_TYPES })
   messageType: string;
