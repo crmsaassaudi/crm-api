@@ -174,6 +174,10 @@ ContactSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 ContactSchema.index({ tenantId: 1, emails: 1 });
 ContactSchema.index({ tenantId: 1, firstName: 1, lastName: 1 });
 ContactSchema.index(
+  { tenantId: 1, createdAt: -1, _id: -1 },
+  { name: 'tenant_created_cursor' },
+);
+ContactSchema.index(
   { 'omniIdentities.channelType': 1, 'omniIdentities.senderId': 1 },
   { name: 'omni_identity_lookup' },
 );
