@@ -30,6 +30,21 @@ import { UsersService } from '../users/users.service';
 
 const OUTBOUND_IDEMPOTENCY_TTL_SECONDS = 86_400;
 
+const normalizeOutboundSource = (source?: string | null): string => {
+  switch ((source ?? '').toLowerCase()) {
+    case 'outbound':
+    case 'socket':
+      return 'agent_ui';
+    case 'api':
+    case 'http':
+      return 'crm_api';
+    case '':
+      return 'crm_api';
+    default:
+      return source!.toLowerCase();
+  }
+};
+
 /**
  * OutboundService — handles messages sent from Agents to Customers.
  *
@@ -82,12 +97,13 @@ export class OutboundService {
       agentId,
       content,
       messageType = 'text',
-      source = 'api',
+      source: rawSource = 'crm_api',
       transport = 'http',
       idempotencyKey,
       clientMessageId,
     } = params;
 
+    const source = normalizeOutboundSource(rawSource);
     const senderContext = await this.resolveSenderContext(agentId);
 
     let retryMessage: Awaited<
@@ -616,7 +632,7 @@ export class OutboundService {
         senderName: senderContext.name,
         senderAvatarUrl: senderContext.avatarUrl ?? undefined,
         senderType: 'agent',
-        source: 'api',
+        source: 'crm_api',
         messageType: 'text',
         content: snippet,
         status: 'sending',
@@ -627,7 +643,7 @@ export class OutboundService {
             avatarUrl: senderContext.avatarUrl ?? null,
             type: 'agent',
           },
-          source: 'api',
+          source: 'crm_api',
         },
       });
     } catch (dbErr) {
@@ -719,7 +735,7 @@ export class OutboundService {
       externalMessageId: externalId,
       status: 'sent',
       timestamp: new Date().toISOString(),
-      source: 'api',
+      source: 'crm_api',
       transport: 'http',
     });
 

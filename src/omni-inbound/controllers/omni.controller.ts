@@ -545,7 +545,7 @@ export class OmniController {
         agentId,
         content,
         messageType,
-        source: source ?? 'api',
+        source: source ?? 'crm_api',
         transport: 'http',
         idempotencyKey,
         clientMessageId,

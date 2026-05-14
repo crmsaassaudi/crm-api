@@ -274,7 +274,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         messageType: data.messageType,
         idempotencyKey: data.idempotencyKey,
         clientMessageId: data.clientMessageId ?? data.tempId,
-        source: data.source ?? 'outbound',
+        source: data.source ?? 'agent_ui',
         transport: 'socket',
       });
 
@@ -300,7 +300,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
             senderName: result.senderName,
             senderAvatarUrl: result.senderAvatarUrl,
             senderType: 'agent',
-            source: result.source ?? data.source ?? 'outbound',
+            source: result.source ?? data.source ?? 'agent_ui',
             messageType: data.messageType ?? 'text',
             content: data.content,
             messageId: ack.messageId,

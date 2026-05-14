@@ -61,7 +61,7 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, enum: SENDER_TYPES })
   senderType: string;
 
-  /** Origin of the outbound message, e.g. outbound, api, bot, workflow */
+  /** Business origin of the outbound message, e.g. agent_ui, crm_api, bot, job, automation */
   @Prop({ type: String, index: true })
   source: string;
 
