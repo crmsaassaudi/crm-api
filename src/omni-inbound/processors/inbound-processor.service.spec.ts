@@ -13,7 +13,7 @@ describe('InboundProcessorService', () => {
 
   beforeEach(() => {
     eventEmitter = new EventEmitter2();
-    jest.spyOn(eventEmitter, 'emit');
+    jest.spyOn(eventEmitter, 'emitAsync');
 
     adapters = new Map<ChannelType, ChannelAdapter>();
     adapters.set('facebook', new FacebookAdapter());
@@ -35,7 +35,7 @@ describe('InboundProcessorService', () => {
 
     expect(result!.channelType).toBe('facebook');
     expect(result!.content).toBe('Hello FB!');
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
       'omni.message.received',
       expect.objectContaining({ channelType: 'facebook' }),
     );
@@ -55,7 +55,7 @@ describe('InboundProcessorService', () => {
 
     expect(result!.channelType).toBe('zalo');
     expect(result!.content).toBe('Hello Zalo!');
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
       'omni.message.received',
       expect.objectContaining({ channelType: 'zalo' }),
     );
@@ -81,7 +81,7 @@ describe('InboundProcessorService', () => {
 
     expect(result!.channelType).toBe('whatsapp');
     expect(result!.content).toBe('Hello WA!');
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
       'omni.message.received',
       expect.objectContaining({ channelType: 'whatsapp' }),
     );
@@ -103,8 +103,8 @@ describe('InboundProcessorService', () => {
 
     await service.process('facebook', raw, 'tenant_1', 'ch_1');
 
-    expect(eventEmitter.emit).toHaveBeenCalledTimes(1);
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
+    expect(eventEmitter.emitAsync).toHaveBeenCalledTimes(1);
+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
       'omni.message.received',
       expect.objectContaining({
         content: 'Event test',

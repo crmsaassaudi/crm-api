@@ -65,10 +65,8 @@ export class InboundProcessorService {
         `from sender ${normalized.senderId}`,
     );
 
-    // Fire-and-forget domain event — listeners handle persistence & realtime
-    await Promise.resolve(
-      this.eventEmitter.emit('omni.message.received', normalized),
-    );
+    // Await listeners so persistence/realtime failures make the BullMQ job retry.
+    await this.eventEmitter.emitAsync('omni.message.received', normalized);
 
     return normalized;
   }

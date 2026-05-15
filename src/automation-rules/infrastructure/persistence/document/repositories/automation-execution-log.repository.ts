@@ -179,6 +179,18 @@ export class AutomationExecutionLogRepository {
   }
 
   /**
+   * Append multiple steps in one atomic update.
+   * Used by the orchestrator to avoid one MongoDB write per DAG node.
+   */
+  async logSteps(executionId: string, steps: ExecutionStep[]): Promise<void> {
+    if (steps.length === 0) return;
+
+    await this.model
+      .updateOne({ _id: executionId }, { $push: { steps: { $each: steps } } })
+      .exec();
+  }
+
+  /**
    * Mark execution as completed successfully.
    */
   async completeExecution(executionId: string): Promise<void> {
