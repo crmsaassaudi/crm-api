@@ -149,4 +149,58 @@ export class TenantsRepository {
       .exec();
     return updated ? TenantMapper.toDomain(updated) : null;
   }
+
+  /**
+   * Grant one or more feature permission keys to a tenant.
+   * Uses $addToSet to avoid duplicates. Idempotent.
+   */
+  async grantFeaturePermissions(
+    tenantId: string,
+    permissions: string[],
+  ): Promise<Tenant | null> {
+    const updated = await this.tenantsModel
+      .findByIdAndUpdate(
+        tenantId,
+        { $addToSet: { availablePermissions: { $each: permissions } } },
+        { new: true },
+      )
+      .exec();
+    return updated ? TenantMapper.toDomain(updated) : null;
+  }
+
+  /**
+   * Revoke one or more feature permission keys from a tenant.
+   * Uses $pull to remove. Idempotent.
+   */
+  async revokeFeaturePermissions(
+    tenantId: string,
+    permissions: string[],
+  ): Promise<Tenant | null> {
+    const updated = await this.tenantsModel
+      .findByIdAndUpdate(
+        tenantId,
+        { $pull: { availablePermissions: { $in: permissions } } },
+        { new: true },
+      )
+      .exec();
+    return updated ? TenantMapper.toDomain(updated) : null;
+  }
+
+  /**
+   * Replace the entire availablePermissions array for a tenant.
+   * Pass null to reset to Core-only baseline.
+   */
+  async setAvailablePermissions(
+    tenantId: string,
+    permissions: string[] | null,
+  ): Promise<Tenant | null> {
+    const updated = await this.tenantsModel
+      .findByIdAndUpdate(
+        tenantId,
+        { $set: { availablePermissions: permissions } },
+        { new: true },
+      )
+      .exec();
+    return updated ? TenantMapper.toDomain(updated) : null;
+  }
 }

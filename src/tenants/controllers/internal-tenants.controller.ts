@@ -1,6 +1,8 @@
 import {
   Controller,
   Post,
+  Delete,
+  Get,
   Body,
   Param,
   HttpCode,
@@ -18,6 +20,10 @@ import {
 } from '@nestjs/swagger';
 import { Unprotected } from 'nest-keycloak-connect';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  CORE_PERMISSIONS,
+  FEATURE_PERMISSIONS,
+} from '../../common/permissions/permission.constants';
 
 import {
   InternalProvisionDto,
@@ -210,6 +216,128 @@ export class InternalTenantsController {
       email,
       role,
       tenantAlias: tenant.alias,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GET /api/v1/internal/tenants/:tenantId/feature-permissions
+  // Inspect what feature permissions are granted to a specific tenant
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  @Get(':tenantId/feature-permissions')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Admin: List feature permissions for a tenant',
+    description:
+      'Returns the Core baseline and any extra Feature permissions explicitly ' +
+      'granted to this tenant.',
+  })
+  @ApiOkResponse()
+  @ApiNotFoundResponse({ description: 'Tenant not found' })
+  async getFeaturePermissions(@Param('tenantId') tenantId: string) {
+    const tenant = await this.tenantsRepository.findById(tenantId);
+    if (!tenant) {
+      throw new NotFoundException(`Tenant ${tenantId} not found`);
+    }
+
+    return {
+      tenantId,
+      tenantAlias: tenant.alias,
+      corePermissions: CORE_PERMISSIONS,
+      grantedFeaturePermissions: tenant.availablePermissions ?? [],
+      availableFeaturePermissions: FEATURE_PERMISSIONS,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // POST /api/v1/internal/tenants/:tenantId/feature-permissions/grant
+  // Grant one or more feature permissions to a specific tenant
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  @Post(':tenantId/feature-permissions/grant')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Admin: Grant feature permissions to a tenant',
+    description:
+      "Adds the given permission keys to the tenant's `availablePermissions` list. " +
+      "The tenant's Owner gains access immediately on the next request. Idempotent.",
+  })
+  @ApiOkResponse()
+  @ApiBadRequestResponse({ description: 'Invalid permission keys' })
+  @ApiNotFoundResponse({ description: 'Tenant not found' })
+  async grantFeaturePermissions(
+    @Param('tenantId') tenantId: string,
+    @Body() body: { permissions: string[] },
+  ) {
+    const tenant = await this.tenantsRepository.findById(tenantId);
+    if (!tenant) {
+      throw new NotFoundException(`Tenant ${tenantId} not found`);
+    }
+
+    // Validate: only known FEATURE_PERMISSIONS can be granted via this endpoint
+    const invalid = body.permissions.filter(
+      (p) => !FEATURE_PERMISSIONS.includes(p),
+    );
+    if (invalid.length > 0) {
+      throw new Error(
+        `Unknown or non-feature permissions: ${invalid.join(', ')}. ` +
+          `Only FEATURE_PERMISSIONS can be granted via this endpoint.`,
+      );
+    }
+
+    const updated = await this.tenantsRepository.grantFeaturePermissions(
+      tenantId,
+      body.permissions,
+    );
+
+    this.logger.log(
+      `[Admin] Granted [${body.permissions.join(', ')}] to tenant "${tenant.alias}"`,
+    );
+
+    return {
+      tenantId,
+      tenantAlias: tenant.alias,
+      grantedFeaturePermissions: updated?.availablePermissions ?? [],
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // DELETE /api/v1/internal/tenants/:tenantId/feature-permissions/revoke
+  // Revoke one or more feature permissions from a specific tenant
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  @Delete(':tenantId/feature-permissions/revoke')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Admin: Revoke feature permissions from a tenant',
+    description:
+      "Removes the given permission keys from the tenant's `availablePermissions` " +
+      'list. Takes effect immediately on the next request. Idempotent.',
+  })
+  @ApiOkResponse()
+  @ApiNotFoundResponse({ description: 'Tenant not found' })
+  async revokeFeaturePermissions(
+    @Param('tenantId') tenantId: string,
+    @Body() body: { permissions: string[] },
+  ) {
+    const tenant = await this.tenantsRepository.findById(tenantId);
+    if (!tenant) {
+      throw new NotFoundException(`Tenant ${tenantId} not found`);
+    }
+
+    const updated = await this.tenantsRepository.revokeFeaturePermissions(
+      tenantId,
+      body.permissions,
+    );
+
+    this.logger.log(
+      `[Admin] Revoked [${body.permissions.join(', ')}] from tenant "${tenant.alias}"`,
+    );
+
+    return {
+      tenantId,
+      tenantAlias: tenant.alias,
+      grantedFeaturePermissions: updated?.availablePermissions ?? [],
     };
   }
 }

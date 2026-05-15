@@ -42,6 +42,9 @@ export class TenantMapper {
           currency: 'USD',
         };
 
+    // null = Core only (default); array = Core + granted features
+    tenant.availablePermissions = raw.availablePermissions ?? null;
+
     tenant.createdAt = raw.createdAt;
     tenant.updatedAt = raw.updatedAt;
     return tenant;
@@ -79,6 +82,11 @@ export class TenantMapper {
 
     if (domain.i18nSettings) {
       persistence.i18nSettings = { ...domain.i18nSettings };
+    }
+
+    // Persist null explicitly to keep the "Core only" semantic in DB
+    if (domain.availablePermissions !== undefined) {
+      persistence.availablePermissions = domain.availablePermissions;
     }
 
     return persistence;

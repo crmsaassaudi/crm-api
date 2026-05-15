@@ -113,9 +113,103 @@ export const PERMISSION_REGISTRY: Record<
   },
 };
 
+/**
+ * ALL_PERMISSIONS: Complete set of every permission key in the registry.
+ * Used as the superset for type-checking and seeding.
+ */
 export const ALL_PERMISSIONS = Object.values(PERMISSION_REGISTRY).flatMap(
   (resource) => Object.values(resource).filter(Boolean) as string[],
 );
+
+/**
+ * CORE_PERMISSIONS: The default permission set automatically available to
+ * every tenant Owner/Admin without explicit granting.
+ *
+ * Add a permission here to make it universally available to all Owners.
+ * Remove it from here (and place in FEATURE_PERMISSIONS) to gate it
+ * so it must be explicitly enabled per-tenant.
+ */
+export const CORE_PERMISSIONS: string[] = [
+  // Leads
+  'leads:view',
+  'leads:create',
+  'leads:edit',
+  'leads:delete',
+  'leads:assign',
+  // Contacts
+  'contacts:view',
+  'contacts:create',
+  'contacts:edit',
+  'contacts:delete',
+  // Accounts
+  'accounts:view',
+  'accounts:create',
+  'accounts:edit',
+  'accounts:delete',
+  // Deals
+  'deals:view',
+  'deals:create',
+  'deals:edit',
+  'deals:delete',
+  'deals:move_stage',
+  // Tickets
+  'tickets:view',
+  'tickets:create',
+  'tickets:edit',
+  'tickets:delete',
+  'tickets:resolve',
+  // Tasks
+  'tasks:view',
+  'tasks:create',
+  'tasks:edit',
+  'tasks:delete',
+  // Reports (view only by default)
+  'reports:view',
+  // Users & Groups management
+  'users:view',
+  'users:create',
+  'users:edit',
+  'users:delete',
+  'users:manage_roles',
+  'groups:view',
+  'groups:create',
+  'groups:edit',
+  'groups:delete',
+  'groups:manage_members',
+  // Settings
+  'settings:view',
+  'settings:manage_billing',
+  'settings:manage_system',
+];
+
+/**
+ * FEATURE_PERMISSIONS: Permissions that must be explicitly granted to a
+ * specific Tenant's `availablePermissions` field in the database.
+ *
+ * Use this for: Beta features, Premium add-ons, Partner-only capabilities.
+ *
+ * To enable for ONE tenant: add the key to that tenant's `availablePermissions`
+ * array in MongoDB (merged on top of CORE_PERMISSIONS).
+ *
+ * To enable for ALL tenants: move the key into CORE_PERMISSIONS above.
+ */
+export const FEATURE_PERMISSIONS: string[] = [
+  // Data import/export — may require billing tier
+  'leads:export',
+  'leads:import',
+  'contacts:export',
+  'contacts:import',
+  'accounts:export',
+  // Reports advanced
+  'reports:create',
+  'reports:export',
+  // Campaigns — gated feature
+  'campaigns:view',
+  'campaigns:create',
+  'campaigns:edit',
+  'campaigns:delete',
+  'campaigns:launch',
+];
 
 export const getPermissionKey = (
   action: PermissionAction,

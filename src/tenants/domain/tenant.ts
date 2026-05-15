@@ -86,6 +86,17 @@ export class Tenant {
     currency: string;
   };
 
+  @ApiProperty({
+    required: false,
+    type: [String],
+    nullable: true,
+    description:
+      'Explicit list of FEATURE permission keys granted to this tenant on top ' +
+      'of the CORE_PERMISSIONS baseline. Null = Core permissions only (default).',
+    example: ['contacts:import', 'campaigns:view'],
+  })
+  availablePermissions: string[] | null;
+
   @ApiProperty()
   createdAt: Date;
 

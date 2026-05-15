@@ -117,6 +117,14 @@ export class TenantSchemaClass extends EntityDocumentHelper {
     dateFormat: string;
     currency: string;
   };
+
+  /**
+   * Explicit list of FEATURE permission keys granted to this tenant.
+   * Null (default) → tenant has only CORE_PERMISSIONS.
+   * Non-empty array → tenant has CORE_PERMISSIONS + these extra keys.
+   */
+  @Prop({ type: [String], default: null })
+  availablePermissions: string[] | null;
 }
 
 export const TenantSchema = SchemaFactory.createForClass(TenantSchemaClass);
