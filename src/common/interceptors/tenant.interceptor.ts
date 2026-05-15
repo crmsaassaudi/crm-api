@@ -311,7 +311,7 @@ export class TenantInterceptor implements NestInterceptor {
         strict: false,
       });
       let dbUser = isValidObjectId(userId)
-        ? await userRepo.findById(userId)
+        ? (await userRepo.findByIdsGlobal([userId]))[0] || null
         : null;
 
       if (!dbUser) {

@@ -2,10 +2,12 @@ import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ClsService } from 'nestjs-cls';
 import { BaseConsumer } from '../../queue/base.consumer';
 import { MediaProxyService } from '../services/media-proxy.service';
 import { MessageRepository } from '../repositories/message.repository';
 import { OMNI_MEDIA_CACHE_QUEUE } from './omni-media-queue.constants';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 export interface MediaCacheJobData {
   tenantId: string;
@@ -43,6 +45,7 @@ export class MediaCacheProcessor extends BaseConsumer {
     private readonly mediaProxy: MediaProxyService,
     private readonly messageRepo: MessageRepository,
     private readonly eventEmitter: EventEmitter2,
+    private readonly cls: ClsService,
   ) {
     super();
   }
@@ -58,49 +61,51 @@ export class MediaCacheProcessor extends BaseConsumer {
       accessToken,
     } = job.data;
 
-    this.logger.log(
-      `Processing media cache job ${job.id} — ${channelType} media for message ${messageId}`,
-    );
-
-    try {
-      // Step 1: Download and cache the media
-      const proxyUrl = await this.mediaProxy.cacheMedia(
-        tenantId,
-        channelType,
-        mediaUrl,
-        mediaId,
-        accessToken,
-      );
-
-      // Step 2: If the proxy URL is the same as original, caching failed or was skipped
-      // (e.g. quota exceeded) — no need to update
-      if (proxyUrl === mediaUrl) {
-        this.logger.debug(
-          `Media cache returned original URL for message ${messageId} — skipping update`,
-        );
-        return;
-      }
-
-      // Step 3: Update the message record with the stable proxy URL
-      await this.messageRepo.updateMediaProxyUrl(messageId, proxyUrl);
-
-      // Step 4: Emit event for real-time frontend notification
-      this.eventEmitter.emit('omni.message.media_cached', {
-        tenantId,
-        conversationId,
-        messageId,
-        mediaProxyUrl: proxyUrl,
-      });
-
+    return runWithTenantContext(this.cls, tenantId, async () => {
       this.logger.log(
-        `Media cached successfully for message ${messageId}: ${proxyUrl}`,
+        `Processing media cache job ${job.id} — ${channelType} media for message ${messageId}`,
       );
-    } catch (error: any) {
-      this.logger.error(
-        `Failed to cache media for message ${messageId}: ${error.message}`,
-        error.stack,
-      );
-      throw error; // Re-throw so BullMQ retries
-    }
+
+      try {
+        // Step 1: Download and cache the media
+        const proxyUrl = await this.mediaProxy.cacheMedia(
+          tenantId,
+          channelType,
+          mediaUrl,
+          mediaId,
+          accessToken,
+        );
+
+        // Step 2: If the proxy URL is the same as original, caching failed or was skipped
+        // (e.g. quota exceeded) — no need to update
+        if (proxyUrl === mediaUrl) {
+          this.logger.debug(
+            `Media cache returned original URL for message ${messageId} — skipping update`,
+          );
+          return;
+        }
+
+        // Step 3: Update the message record with the stable proxy URL
+        await this.messageRepo.updateMediaProxyUrl(messageId, proxyUrl);
+
+        // Step 4: Emit event for real-time frontend notification
+        this.eventEmitter.emit('omni.message.media_cached', {
+          tenantId,
+          conversationId,
+          messageId,
+          mediaProxyUrl: proxyUrl,
+        });
+
+        this.logger.log(
+          `Media cached successfully for message ${messageId}: ${proxyUrl}`,
+        );
+      } catch (error: any) {
+        this.logger.error(
+          `Failed to cache media for message ${messageId}: ${error.message}`,
+          error.stack,
+        );
+        throw error; // Re-throw so BullMQ retries
+      }
+    });
   }
 }

@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { Logger, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { ClsService } from 'nestjs-cls';
 
 import { BaseConsumer } from '../base.consumer';
 import { ReadStateSyncJobData } from './read-state-sync.producer';
@@ -18,6 +19,7 @@ import {
   ErrorSeverity,
 } from '../../channels/domain/error-classifier';
 import { EmailMetadataSchemaClass } from '../../channels/infrastructure/persistence/document/entities/email-metadata.schema';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 /**
  * ReadStateSyncProcessor — BullMQ worker for Two-Way Read State Sync.
@@ -48,6 +50,7 @@ export class ReadStateSyncProcessor extends BaseConsumer {
     private readonly lockService: RedisLockService,
     @InjectModel(EmailMetadataSchemaClass.name)
     private readonly emailMetadataModel: Model<any>,
+    private readonly cls: ClsService,
   ) {
     super();
   }
@@ -55,45 +58,47 @@ export class ReadStateSyncProcessor extends BaseConsumer {
   async process(job: Job<ReadStateSyncJobData>): Promise<void> {
     const { emailMessageId, targetState } = job.data;
 
-    this.logger.log(
-      `[ReadStateSync] Processing: ${emailMessageId} → ${targetState} (attempt ${job.attemptsMade + 1})`,
-    );
-
-    // ── Step 1: Retrieve config & check opt-in ────────────────────────
-    const config = await this.configRepo.findByIdWithCredentialsNoTenant(
-      job.data.configId,
-    );
-    if (!config) {
-      this.logger.error(
-        `[ReadStateSync] Config ${job.data.configId} not found — dropping job`,
+    return runWithTenantContext(this.cls, job.data.tenantId, async () => {
+      this.logger.log(
+        `[ReadStateSync] Processing: ${emailMessageId} → ${targetState} (attempt ${job.attemptsMade + 1})`,
       );
-      return;
-    }
 
-    const tenantReadStateEnabled =
-      await this.emailSettings.isSyncReadStateEnabled(job.data.tenantId);
-    const configReadStateEnabled =
-      config.publicSettings?.syncReadState !== false &&
-      config.publicSettings?.syncReadState !== 'false';
-    if (!tenantReadStateEnabled || !configReadStateEnabled) {
-      this.logger.debug(
-        `[ReadStateSync] Dropped: read-state sync disabled for tenant or config ${config.name}`,
+      // ── Step 1: Retrieve config & check opt-in ────────────────────────
+      const config = await this.configRepo.findByIdWithCredentialsNoTenant(
+        job.data.configId,
       );
-      return;
-    }
+      if (!config) {
+        this.logger.error(
+          `[ReadStateSync] Config ${job.data.configId} not found — dropping job`,
+        );
+        return;
+      }
 
-    // ── Step 2: Redis lock (prevent concurrent sync of same message) ──
-    const lockKey = `readstate:lock:${emailMessageId}`;
+      const tenantReadStateEnabled =
+        await this.emailSettings.isSyncReadStateEnabled(job.data.tenantId);
+      const configReadStateEnabled =
+        config.publicSettings?.syncReadState !== false &&
+        config.publicSettings?.syncReadState !== 'false';
+      if (!tenantReadStateEnabled || !configReadStateEnabled) {
+        this.logger.debug(
+          `[ReadStateSync] Dropped: read-state sync disabled for tenant or config ${config.name}`,
+        );
+        return;
+      }
 
-    await this.lockService.acquire(
-      lockKey,
-      this.LOCK_TTL_MS,
-      async () => {
-        await this.executeSync(job.data, config);
-      },
-      200, // retry delay
-      5, // max retries for lock
-    );
+      // ── Step 2: Redis lock (prevent concurrent sync of same message) ──
+      const lockKey = `readstate:lock:${emailMessageId}`;
+
+      await this.lockService.acquire(
+        lockKey,
+        this.LOCK_TTL_MS,
+        async () => {
+          await this.executeSync(job.data, config);
+        },
+        200, // retry delay
+        5, // max retries for lock
+      );
+    });
   }
 
   /**

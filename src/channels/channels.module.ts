@@ -98,6 +98,7 @@ import { AutomationRulesModule } from '../automation-rules/automation-rules.modu
 
 // -- Realtime (for WebSocket alerts) --
 import { SocketModule } from '../modules/realtime/socket.module';
+import { isWorkerRuntime } from '../config/runtime-role';
 
 @Module({
   imports: [
@@ -162,7 +163,7 @@ import { SocketModule } from '../modules/realtime/socket.module';
     AdapterRegistryService,
 
     // Phase 2: Health Check & Alert
-    ChannelHealthCheckService,
+    ...(isWorkerRuntime() ? [ChannelHealthCheckService] : []),
     ChannelAlertService,
 
     // Phase 3: Transport Pool (LRU cache for decrypted credentials)

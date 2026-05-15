@@ -14,6 +14,7 @@ import { DocumentTenantPersistenceModule } from './infrastructure/persistence/do
 import { AuthModule } from '../auth/auth.module';
 import { UsersModule } from '../users/users.module';
 import { RedisModule } from '../redis/redis.module';
+import { isWorkerRuntime } from '../config/runtime-role';
 
 // Schema imports for sample data seeder
 import {
@@ -71,8 +72,7 @@ import {
     OnboardingService,
     SampleDataSeederService,
     TenantProvisioningProducer,
-    TenantProvisioningWorker,
-    OrphanCleanupCron,
+    ...(isWorkerRuntime() ? [TenantProvisioningWorker, OrphanCleanupCron] : []),
   ],
   exports: [
     OnboardingService,

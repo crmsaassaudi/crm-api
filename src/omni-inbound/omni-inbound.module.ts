@@ -91,6 +91,16 @@ import { AuthModule } from '../auth/auth.module';
 import { DealsModule } from '../deals/deals.module';
 import { TicketsModule } from '../tickets/tickets.module';
 import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
+import { isWorkerRuntime } from '../config/runtime-role';
+
+const workerProviders = isWorkerRuntime()
+  ? [
+      WebhookProcessor,
+      MediaCacheProcessor,
+      StickyRetryProcessor,
+      AutoResolveProcessor,
+    ]
+  : [];
 
 /**
  * OmniInboundModule — the complete omni-channel backend.
@@ -184,10 +194,7 @@ import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
     OmniGateway,
 
     // ── Pillar 4: Webhook Queue ─────────────────────────────────────
-    WebhookProcessor,
-    MediaCacheProcessor,
-    StickyRetryProcessor,
-    AutoResolveProcessor,
+    ...workerProviders,
 
     // ── Pillar 5: Persistence ─────────────────────────────────────
     ConversationRepository,

@@ -2,9 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { ClsService } from 'nestjs-cls';
 import { EscalationPoliciesService } from './escalation-policies.service';
 import { ESCALATION_QUEUE } from './queue/escalation-queue.constants';
 import type { EscalationJobData } from './queue/escalation.processor';
+import { runWithTenantContext } from '../common/tenancy/tenant-context';
 
 /**
  * EscalationTriggerListener — listens to `sla.breached` events and
@@ -30,6 +32,7 @@ export class EscalationTriggerListener {
     private readonly escalationService: EscalationPoliciesService,
     @InjectQueue(ESCALATION_QUEUE)
     private readonly escalationQueue: Queue<EscalationJobData>,
+    private readonly cls: ClsService,
   ) {}
 
   @OnEvent('sla.breached')
@@ -40,61 +43,63 @@ export class EscalationTriggerListener {
     breachType: string;
     breachedAt: Date;
   }): Promise<void> {
-    try {
-      const allPolicies = await this.escalationService.findAll();
+    return runWithTenantContext(this.cls, event.tenantId, async () => {
+      try {
+        const allPolicies = await this.escalationService.findAll();
 
-      // Filter policies that match the breached SLA policy
-      const matchingPolicies = allPolicies.filter(
-        (p) => p.enabled && p.slaId === event.slaPolicyId,
-      );
-
-      if (matchingPolicies.length === 0) {
-        this.logger.debug(
-          `No escalation policies for SLA ${event.slaPolicyId} — skipping`,
-        );
-        return;
-      }
-
-      for (const policy of matchingPolicies) {
-        const delayMs = this.computeDelayMs(
-          policy.escalateAfter,
-          policy.escalateUnit,
+        // Filter policies that match the breached SLA policy
+        const matchingPolicies = allPolicies.filter(
+          (p) => p.enabled && p.slaId === event.slaPolicyId,
         );
 
-        const jobId = `escalation:${policy.id}:${event.conversationId}`;
-        const level: 'warning' | 'breach' =
-          policy.breachType === 'breach' ? 'breach' : 'warning';
-
-        try {
-          // Remove any existing job (idempotent)
-          const existingJob = await this.escalationQueue.getJob(jobId);
-          if (existingJob) await existingJob.remove();
-        } catch {
-          // Safe to ignore
+        if (matchingPolicies.length === 0) {
+          this.logger.debug(
+            `No escalation policies for SLA ${event.slaPolicyId} — skipping`,
+          );
+          return;
         }
 
-        await this.escalationQueue.add(
-          'escalation',
-          {
-            tenantId: event.tenantId,
-            conversationId: event.conversationId,
-            escalationPolicyId: policy.id,
-            level,
-            actions: policy.actions,
-          },
-          { jobId, delay: delayMs },
-        );
+        for (const policy of matchingPolicies) {
+          const delayMs = this.computeDelayMs(
+            policy.escalateAfter,
+            policy.escalateUnit,
+          );
 
-        this.logger.log(
-          `Scheduled escalation [${policy.name}] for conversation ${event.conversationId} ` +
-            `in ${policy.escalateAfter} ${policy.escalateUnit} (${level})`,
+          const jobId = `escalation:${policy.id}:${event.conversationId}`;
+          const level: 'warning' | 'breach' =
+            policy.breachType === 'breach' ? 'breach' : 'warning';
+
+          try {
+            // Remove any existing job (idempotent)
+            const existingJob = await this.escalationQueue.getJob(jobId);
+            if (existingJob) await existingJob.remove();
+          } catch {
+            // Safe to ignore
+          }
+
+          await this.escalationQueue.add(
+            'escalation',
+            {
+              tenantId: event.tenantId,
+              conversationId: event.conversationId,
+              escalationPolicyId: policy.id,
+              level,
+              actions: policy.actions,
+            },
+            { jobId, delay: delayMs },
+          );
+
+          this.logger.log(
+            `Scheduled escalation [${policy.name}] for conversation ${event.conversationId} ` +
+              `in ${policy.escalateAfter} ${policy.escalateUnit} (${level})`,
+          );
+        }
+      } catch (err: any) {
+        this.logger.error(
+          `Failed to schedule escalation for conversation ${event.conversationId}: ${err.message}`,
         );
       }
-    } catch (err: any) {
-      this.logger.error(
-        `Failed to schedule escalation for conversation ${event.conversationId}: ${err.message}`,
-      );
-    }
+    });
   }
 
   private computeDelayMs(value: number, unit: string): number {

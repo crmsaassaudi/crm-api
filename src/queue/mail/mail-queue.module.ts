@@ -4,6 +4,7 @@ import { BullBoardModule } from '@bull-board/nestjs';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { MailProducer } from './mail.producer';
 import { MailProcessor } from './mail.processor';
+import { isWorkerRuntime } from '../../config/runtime-role';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { MailProcessor } from './mail.processor';
       adapter: BullMQAdapter,
     }),
   ],
-  providers: [MailProducer, MailProcessor],
+  providers: [MailProducer, ...(isWorkerRuntime() ? [MailProcessor] : [])],
   exports: [MailProducer],
 })
 export class MailQueueModule {}

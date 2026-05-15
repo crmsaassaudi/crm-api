@@ -47,12 +47,12 @@ export class ChannelConfigAuditRepository {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .setOptions({ skipTenantFilter: true } as any)
+        .setOptions({ isPlatformQuery: true } as any)
         .lean({ virtuals: true } as any)
         .exec(),
       this.model
         .countDocuments({ configId })
-        .setOptions({ skipTenantFilter: true } as any),
+        .setOptions({ isPlatformQuery: true } as any),
     ]);
 
     return {

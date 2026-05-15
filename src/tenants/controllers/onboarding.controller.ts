@@ -274,7 +274,7 @@ export class OnboardingController {
     );
 
     // 2. Look up user details for the job
-    const user = await this.userRepository.findById(userId);
+    const user = (await this.userRepository.findByIdsGlobal([userId]))[0];
     if (!user) throw new NotFoundException('User not found');
 
     // 3. Enqueue provisioning job

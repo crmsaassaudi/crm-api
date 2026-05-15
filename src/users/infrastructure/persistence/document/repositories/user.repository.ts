@@ -130,7 +130,7 @@ export class UsersDocumentRepository
   async findByIdsGlobal(ids: User['id'][]): Promise<User[]> {
     const userObjects = await this.model
       .find({ _id: { $in: ids.map(String) } })
-      .setOptions({ skipTenantFilter: true })
+      .setOptions({ isPlatformQuery: true })
       .select('firstName lastName email photo');
     return userObjects.map((userObject) => UserMapper.toDomain(userObject));
   }
@@ -147,7 +147,7 @@ export class UsersDocumentRepository
     // Skip tenant filter for global email lookup (authentication/JIT)
     const userObject = await this.model
       .findOne({ email })
-      .setOptions({ skipTenantFilter: true });
+      .setOptions({ isPlatformQuery: true });
     return userObject ? UserMapper.toDomain(userObject) : null;
   }
 
@@ -163,7 +163,7 @@ export class UsersDocumentRepository
     // Skip tenant filter for global keycloak ID lookup (authentication/JIT)
     const userObject = await this.model
       .findOne({ keycloakId, provider })
-      .setOptions({ skipTenantFilter: true });
+      .setOptions({ isPlatformQuery: true });
 
     return userObject ? UserMapper.toDomain(userObject) : null;
   }
@@ -178,7 +178,7 @@ export class UsersDocumentRepository
         createdAt: { $lt: cutoffDate },
         $or: [{ tenants: { $exists: false } }, { tenants: { $size: 0 } }],
       })
-      .setOptions({ skipTenantFilter: true })
+      .setOptions({ isPlatformQuery: true })
       .limit(limit)
       .exec();
 
@@ -241,7 +241,11 @@ export class UsersDocumentRepository
 
   async remove(id: User['id']): Promise<void> {
     const filter = this.applyTenantFilter({ _id: id.toString() });
-    await this.model.deleteOne(filter);
+    const query = this.model.deleteOne(filter);
+    if (!this.cls.get('tenantId')) {
+      query.setOptions({ isPlatformQuery: true });
+    }
+    await query;
   }
 
   /**
@@ -274,32 +278,34 @@ export class UsersDocumentRepository
     }
 
     // Use findOneAndUpdate with upsert for idempotency
-    const updatedUser = await this.model.findOneAndUpdate(
-      {
-        $or: [{ keycloakId }, { email }],
-      },
-      {
-        $setOnInsert: {
-          // Only set these fields on insert (first time creation)
-          ...persistenceData,
-          createdAt: new Date(),
+    const updatedUser = await this.model
+      .findOneAndUpdate(
+        {
+          $or: [{ keycloakId }, { email }],
         },
-        $set: {
-          // Always update these fields
-          ...setFields,
+        {
+          $setOnInsert: {
+            // Only set these fields on insert (first time creation)
+            ...persistenceData,
+            createdAt: new Date(),
+          },
+          $set: {
+            // Always update these fields
+            ...setFields,
+          },
+          $addToSet: {
+            // Add tenants only if they don't exist (prevents duplicates)
+            tenants: { $each: newTenants },
+          },
         },
-        $addToSet: {
-          // Add tenants only if they don't exist (prevents duplicates)
-          tenants: { $each: newTenants },
+        {
+          upsert: true, // Create if doesn't exist
+          new: true, // Return updated document
+          setDefaultsOnInsert: true, // Apply schema defaults on insert
+          session: session || null, // Ensure transaction flows
         },
-      },
-      {
-        upsert: true, // Create if doesn't exist
-        new: true, // Return updated document
-        setDefaultsOnInsert: true, // Apply schema defaults on insert
-        session: session || null, // Ensure transaction flows
-      },
-    );
+      )
+      .setOptions({ isPlatformQuery: true });
 
     return UserMapper.toDomain(updatedUser);
   }
@@ -308,11 +314,13 @@ export class UsersDocumentRepository
     userId: string,
     tenantId: string,
   ): Promise<User> {
-    const updatedUser = await this.model.findOneAndUpdate(
-      { _id: userId },
-      { $pull: { tenants: { tenantId: tenantId } } },
-      { new: true },
-    );
+    const updatedUser = await this.model
+      .findOneAndUpdate(
+        { _id: userId },
+        { $pull: { tenants: { tenantId: tenantId } } },
+        { new: true },
+      )
+      .setOptions({ isPlatformQuery: true });
 
     if (!updatedUser) {
       throw new ConflictException('User not found');

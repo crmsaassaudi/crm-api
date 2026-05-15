@@ -1,6 +1,7 @@
 import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
 import { BaseConsumer } from '../../queue/base.consumer';
 import {
   AUTOMATION_ACTION_QUEUE,
@@ -21,6 +22,7 @@ import {
 } from '../engine/action-executors';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationDlqProducer } from './automation-dlq.producer';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 /**
  * Shared action processing logic used by all typed queue processors.
@@ -32,9 +34,19 @@ export class ActionProcessorMixin {
     protected readonly executionLogRepo: AutomationExecutionLogRepository,
     protected readonly dlqProducer: AutomationDlqProducer,
     protected readonly logger: Logger,
+    protected readonly cls: ClsService,
   ) {}
 
   async processAction(job: Job<AutomationActionJobData>): Promise<void> {
+    const data = job.data;
+    return runWithTenantContext(this.cls, data.tenantId, () =>
+      this.processActionInTenantContext(job),
+    );
+  }
+
+  private async processActionInTenantContext(
+    job: Job<AutomationActionJobData>,
+  ): Promise<void> {
     const data = job.data;
     const stepStart = new Date();
 
@@ -170,6 +182,7 @@ export class AutomationActionProcessor extends BaseConsumer {
     updateField: UpdateFieldExecutor,
     routeToTeam: RouteToTeamExecutor,
     webhook: WebhookExecutor,
+    cls: ClsService,
   ) {
     super();
     const executors = new Map<string, ActionExecutor>([
@@ -184,6 +197,7 @@ export class AutomationActionProcessor extends BaseConsumer {
       executionLogRepo,
       dlqProducer,
       this.logger,
+      cls,
     );
   }
 
@@ -210,6 +224,7 @@ export class AutomationEmailProcessor extends BaseConsumer {
     executionLogRepo: AutomationExecutionLogRepository,
     dlqProducer: AutomationDlqProducer,
     sendEmail: SendEmailExecutor,
+    cls: ClsService,
   ) {
     super();
     const executors = new Map<string, ActionExecutor>([
@@ -220,6 +235,7 @@ export class AutomationEmailProcessor extends BaseConsumer {
       executionLogRepo,
       dlqProducer,
       this.logger,
+      cls,
     );
   }
 
@@ -246,6 +262,7 @@ export class AutomationSmsProcessor extends BaseConsumer {
     executionLogRepo: AutomationExecutionLogRepository,
     dlqProducer: AutomationDlqProducer,
     sendSms: SendSmsExecutor,
+    cls: ClsService,
   ) {
     super();
     const executors = new Map<string, ActionExecutor>([
@@ -256,6 +273,7 @@ export class AutomationSmsProcessor extends BaseConsumer {
       executionLogRepo,
       dlqProducer,
       this.logger,
+      cls,
     );
   }
 
@@ -283,6 +301,7 @@ export class AutomationInternalProcessor extends BaseConsumer {
     dlqProducer: AutomationDlqProducer,
     updateField: UpdateFieldExecutor,
     routeToTeam: RouteToTeamExecutor,
+    cls: ClsService,
   ) {
     super();
     const executors = new Map<string, ActionExecutor>([
@@ -294,6 +313,7 @@ export class AutomationInternalProcessor extends BaseConsumer {
       executionLogRepo,
       dlqProducer,
       this.logger,
+      cls,
     );
   }
 
@@ -320,6 +340,7 @@ export class AutomationWebhookProcessor extends BaseConsumer {
     executionLogRepo: AutomationExecutionLogRepository,
     dlqProducer: AutomationDlqProducer,
     webhook: WebhookExecutor,
+    cls: ClsService,
   ) {
     super();
     const executors = new Map<string, ActionExecutor>([
@@ -330,6 +351,7 @@ export class AutomationWebhookProcessor extends BaseConsumer {
       executionLogRepo,
       dlqProducer,
       this.logger,
+      cls,
     );
   }
 

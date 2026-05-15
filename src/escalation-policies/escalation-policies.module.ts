@@ -14,6 +14,7 @@ import {
   OmniConversationSchema,
   OmniConversationSchemaClass,
 } from '../omni-inbound/infrastructure/persistence/document/entities/omni-conversation.schema';
+import { isWorkerRuntime } from '../config/runtime-role';
 
 @Module({
   imports: [
@@ -33,8 +34,8 @@ import {
   providers: [
     EscalationPoliciesService,
     EscalationPolicyRepository,
-    EscalationProcessor,
     EscalationTriggerListener,
+    ...(isWorkerRuntime() ? [EscalationProcessor] : []),
   ],
   exports: [EscalationPoliciesService],
 })

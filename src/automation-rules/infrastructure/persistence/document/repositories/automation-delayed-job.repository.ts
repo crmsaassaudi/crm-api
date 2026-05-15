@@ -79,6 +79,7 @@ export class AutomationDelayedJobRepository {
           },
           { new: true, sort: { resumeAt: 1 } },
         )
+        .setOptions({ isPlatformQuery: true })
         .lean()
         .exec();
 
@@ -101,6 +102,7 @@ export class AutomationDelayedJobRepository {
           },
         },
       )
+      .setOptions({ isPlatformQuery: true })
       .exec();
   }
 

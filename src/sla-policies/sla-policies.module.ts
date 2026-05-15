@@ -14,6 +14,7 @@ import { SlaBreachProcessor } from './queue/sla-breach.processor';
 import { SlaQueueModule } from './queue/sla-queue.module';
 
 import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
+import { isWorkerRuntime } from '../config/runtime-role';
 
 @Module({
   imports: [
@@ -30,7 +31,7 @@ import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
     SlaMonitorService,
     SlaTriggerListener,
     SlaCancellationListener,
-    SlaBreachProcessor,
+    ...(isWorkerRuntime() ? [SlaBreachProcessor] : []),
   ],
   exports: [SlaPoliciesService, SlaMonitorService],
 })

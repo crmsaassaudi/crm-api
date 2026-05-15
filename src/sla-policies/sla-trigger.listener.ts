@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { ClsService } from 'nestjs-cls';
 import { SlaPoliciesService } from './sla-policies.service';
 import { SlaMonitorService } from './sla-monitor.service';
 import { BusinessHoursService } from '../omni-inbound/services/business-hours.service';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
+import { runWithTenantContext } from '../common/tenancy/tenant-context';
 
 /**
  * SlaTriggerListener — listens to `omni.conversation.created` events
@@ -24,6 +26,7 @@ export class SlaTriggerListener {
     private readonly slaMonitorService: SlaMonitorService,
     private readonly businessHoursService: BusinessHoursService,
     private readonly conversationRepository: ConversationRepository,
+    private readonly cls: ClsService,
   ) {}
 
   /**
@@ -35,100 +38,102 @@ export class SlaTriggerListener {
     tenantId: string;
     conversationId: string;
   }): Promise<void> {
-    try {
-      const policies = await this.slaPoliciesService.findAll();
-      const enabledPolicies = policies.filter((p) => p.enabled);
+    return runWithTenantContext(this.cls, event.tenantId, async () => {
+      try {
+        const policies = await this.slaPoliciesService.findAll();
+        const enabledPolicies = policies.filter((p) => p.enabled);
 
-      // ── First Response Time (FRT) ──────────────────────────────
-      const frtPolicy = enabledPolicies
-        .filter((p) => p.type === 'first_response')
-        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
+        // ── First Response Time (FRT) ──────────────────────────────
+        const frtPolicy = enabledPolicies
+          .filter((p) => p.type === 'first_response')
+          .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
 
-      // ── Resolution Time ────────────────────────────────────────
-      const resolutionPolicy = enabledPolicies
-        .filter((p) => p.type === 'resolution')
-        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
+        // ── Resolution Time ────────────────────────────────────────
+        const resolutionPolicy = enabledPolicies
+          .filter((p) => p.type === 'resolution')
+          .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
 
-      const updatePayload: Record<string, any> = {};
+        const updatePayload: Record<string, any> = {};
 
-      // ── Schedule FRT ───────────────────────────────────────────
-      if (frtPolicy && frtPolicy.targets?.length) {
-        const target = frtPolicy.targets[0];
-        const durationMinutes = this.toMinutes(
-          target.timeValue,
-          target.timeUnit,
-        );
-
-        const frtDeadline =
-          await this.businessHoursService.calculateSlaDeadline(
-            event.tenantId,
-            durationMinutes,
+        // ── Schedule FRT ───────────────────────────────────────────
+        if (frtPolicy && frtPolicy.targets?.length) {
+          const target = frtPolicy.targets[0];
+          const durationMinutes = this.toMinutes(
+            target.timeValue,
+            target.timeUnit,
           );
-        const delayMs = frtDeadline.getTime() - Date.now();
 
-        updatePayload.frtPolicyId = frtPolicy.id;
-        updatePayload.frtDeadline = frtDeadline;
-        updatePayload.frtBreached = false;
+          const frtDeadline =
+            await this.businessHoursService.calculateSlaDeadline(
+              event.tenantId,
+              durationMinutes,
+            );
+          const delayMs = frtDeadline.getTime() - Date.now();
 
-        await this.slaMonitorService.scheduleSlaBreachCheck(
-          event.tenantId,
-          event.conversationId,
-          frtPolicy.id,
-          Math.max(delayMs, 0),
-          'frt',
-        );
+          updatePayload.frtPolicyId = frtPolicy.id;
+          updatePayload.frtDeadline = frtDeadline;
+          updatePayload.frtBreached = false;
 
-        this.logger.log(
-          `Set FRT deadline for conversation ${event.conversationId}: ` +
-            `${frtDeadline.toISOString()} (policy: ${frtPolicy.name})`,
-        );
-      }
-
-      // ── Schedule Resolution ────────────────────────────────────
-      if (resolutionPolicy && resolutionPolicy.targets?.length) {
-        const target = resolutionPolicy.targets[0];
-        const durationMinutes = this.toMinutes(
-          target.timeValue,
-          target.timeUnit,
-        );
-
-        const resolutionDeadline =
-          await this.businessHoursService.calculateSlaDeadline(
+          await this.slaMonitorService.scheduleSlaBreachCheck(
             event.tenantId,
-            durationMinutes,
+            event.conversationId,
+            frtPolicy.id,
+            Math.max(delayMs, 0),
+            'frt',
           );
-        const delayMs = resolutionDeadline.getTime() - Date.now();
 
-        updatePayload.resolutionPolicyId = resolutionPolicy.id;
-        updatePayload.resolutionDeadline = resolutionDeadline;
-        updatePayload.resolutionBreached = false;
+          this.logger.log(
+            `Set FRT deadline for conversation ${event.conversationId}: ` +
+              `${frtDeadline.toISOString()} (policy: ${frtPolicy.name})`,
+          );
+        }
 
-        await this.slaMonitorService.scheduleSlaBreachCheck(
-          event.tenantId,
-          event.conversationId,
-          resolutionPolicy.id,
-          Math.max(delayMs, 0),
-          'resolution',
-        );
+        // ── Schedule Resolution ────────────────────────────────────
+        if (resolutionPolicy && resolutionPolicy.targets?.length) {
+          const target = resolutionPolicy.targets[0];
+          const durationMinutes = this.toMinutes(
+            target.timeValue,
+            target.timeUnit,
+          );
 
-        this.logger.log(
-          `Set Resolution deadline for conversation ${event.conversationId}: ` +
-            `${resolutionDeadline.toISOString()} (policy: ${resolutionPolicy.name})`,
+          const resolutionDeadline =
+            await this.businessHoursService.calculateSlaDeadline(
+              event.tenantId,
+              durationMinutes,
+            );
+          const delayMs = resolutionDeadline.getTime() - Date.now();
+
+          updatePayload.resolutionPolicyId = resolutionPolicy.id;
+          updatePayload.resolutionDeadline = resolutionDeadline;
+          updatePayload.resolutionBreached = false;
+
+          await this.slaMonitorService.scheduleSlaBreachCheck(
+            event.tenantId,
+            event.conversationId,
+            resolutionPolicy.id,
+            Math.max(delayMs, 0),
+            'resolution',
+          );
+
+          this.logger.log(
+            `Set Resolution deadline for conversation ${event.conversationId}: ` +
+              `${resolutionDeadline.toISOString()} (policy: ${resolutionPolicy.name})`,
+          );
+        }
+
+        // ── Write all deadlines to conversation document ───────────
+        if (Object.keys(updatePayload).length > 0) {
+          await this.conversationRepository.updateSlaFields(
+            event.conversationId,
+            updatePayload,
+          );
+        }
+      } catch (err) {
+        this.logger.error(
+          `Failed to set SLA for conversation ${event.conversationId}: ${err.message}`,
         );
       }
-
-      // ── Write all deadlines to conversation document ───────────
-      if (Object.keys(updatePayload).length > 0) {
-        await this.conversationRepository.updateSlaFields(
-          event.conversationId,
-          updatePayload,
-        );
-      }
-    } catch (err) {
-      this.logger.error(
-        `Failed to set SLA for conversation ${event.conversationId}: ${err.message}`,
-      );
-    }
+    });
   }
 
   private toMinutes(timeValue: number, timeUnit: string): number {

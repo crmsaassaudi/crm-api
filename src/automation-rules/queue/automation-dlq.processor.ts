@@ -1,9 +1,11 @@
 import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
 import { BaseConsumer } from '../../queue/base.consumer';
 import { AUTOMATION_ACTION_DLQ } from './automation-queue.constants';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 /**
  * AutomationDlqProcessor — consumes dead-lettered automation jobs.
@@ -20,6 +22,7 @@ export class AutomationDlqProcessor extends BaseConsumer {
 
   constructor(
     private readonly executionLogRepo: AutomationExecutionLogRepository,
+    private readonly cls: ClsService,
   ) {
     super();
   }
@@ -27,20 +30,22 @@ export class AutomationDlqProcessor extends BaseConsumer {
   async process(job: Job): Promise<void> {
     const data = job.data;
 
-    this.logger.warn(
-      `[DLQ Processor] Dead-lettered job: action=${data.actionType} workflow=${data.workflowId} node=${data.nodeId} reason=${data.failedReason}`,
-    );
+    return runWithTenantContext(this.cls, data.tenantId, async () => {
+      this.logger.warn(
+        `[DLQ Processor] Dead-lettered job: action=${data.actionType} workflow=${data.workflowId} node=${data.nodeId} reason=${data.failedReason}`,
+      );
 
-    // Mark the step as 'dlq' in the execution log
-    try {
-      await this.executionLogRepo.markStepDlq(data.executionId, data.nodeId);
-      this.logger.log(
-        `[DLQ Processor] Marked step ${data.nodeId} as 'dlq' in execution ${data.executionId}`,
-      );
-    } catch (error: any) {
-      this.logger.error(
-        `[DLQ Processor] Failed to mark step as dlq: ${error.message}`,
-      );
-    }
+      // Mark the step as 'dlq' in the execution log
+      try {
+        await this.executionLogRepo.markStepDlq(data.executionId, data.nodeId);
+        this.logger.log(
+          `[DLQ Processor] Marked step ${data.nodeId} as 'dlq' in execution ${data.executionId}`,
+        );
+      } catch (error: any) {
+        this.logger.error(
+          `[DLQ Processor] Failed to mark step as dlq: ${error.message}`,
+        );
+      }
+    });
   }
 }

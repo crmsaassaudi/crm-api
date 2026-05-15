@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
+import { ClsService } from 'nestjs-cls';
 import { AllConfigType } from '../../config/config.type';
 
 import { TENANT_PROVISIONING_QUEUE } from '../constants/queue.constants';
@@ -25,6 +26,7 @@ import { AuthProvidersEnum } from '../../auth/auth-providers.enum';
 import { PlatformRoleEnum } from '../../roles/platform-role.enum';
 import { StatusEnum } from '../../statuses/statuses.enum';
 import { Tenant } from '../domain/tenant';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 const PROVISIONING_KEY_PREFIX = 'provisioning:';
 const PROVISIONING_TTL = 86_400; // 24h
@@ -54,6 +56,7 @@ export class TenantProvisioningWorker extends WorkerHost {
     private readonly redisService: RedisService,
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService<AllConfigType>,
+    private readonly cls: ClsService,
   ) {
     super();
   }
@@ -193,14 +196,16 @@ export class TenantProvisioningWorker extends WorkerHost {
       });
 
       // ── Emit event for downstream listeners (CRM settings seeding, etc.)
-      this.eventEmitter.emit(
-        'tenant.created',
-        new TenantCreatedEvent(
-          tenantId!,
-          data.companyName,
-          data.email,
-          localUser.id as string,
-          data.useCase,
+      runWithTenantContext(this.cls, tenantId!, () =>
+        this.eventEmitter.emit(
+          'tenant.created',
+          new TenantCreatedEvent(
+            tenantId!,
+            data.companyName,
+            data.email,
+            localUser.id as string,
+            data.useCase,
+          ),
         ),
       );
 

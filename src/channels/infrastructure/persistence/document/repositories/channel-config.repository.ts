@@ -64,7 +64,7 @@ export class ChannelConfigRepository {
     const doc = await this.model
       .findOne({ _id: id, deletedAt: null })
       .select('+encryptedCredentials +accessToken +refreshToken')
-      .setOptions({ skipTenantFilter: true } as any)
+      .setOptions({ isPlatformQuery: true } as any)
       .exec();
     if (doc) await this.migrateOnRead(doc);
     return doc ? this.toDomain(doc) : null;
@@ -143,7 +143,7 @@ export class ChannelConfigRepository {
     const doc = await this.model
       .findOneAndUpdate({ _id: id, deletedAt: null }, { $set }, { new: true })
       .select('+encryptedCredentials +accessToken +refreshToken')
-      .setOptions({ skipTenantFilter: true } as any)
+      .setOptions({ isPlatformQuery: true } as any)
       .exec();
     if (doc) await this.migrateOnRead(doc);
     return doc ? this.toDomain(doc) : null;
@@ -202,7 +202,7 @@ export class ChannelConfigRepository {
         status: { $ne: 'disabled' },
       })
       .select('+encryptedCredentials +accessToken +refreshToken')
-      .setOptions({ skipTenantFilter: true } as any)
+      .setOptions({ isPlatformQuery: true } as any)
       .sort({ _id: 1 }) // deterministic order for batch processing
       .exec();
     await Promise.all(docs.map((doc) => this.migrateOnRead(doc)));
@@ -226,7 +226,7 @@ export class ChannelConfigRepository {
   ): Promise<void> {
     await this.model
       .findOneAndUpdate({ _id: id, deletedAt: null }, { $set: update })
-      .setOptions({ skipTenantFilter: true } as any)
+      .setOptions({ isPlatformQuery: true } as any)
       .exec();
   }
 
@@ -243,7 +243,7 @@ export class ChannelConfigRepository {
         nextHealthCheckAt: { $lte: now },
       })
       .select('+encryptedCredentials +accessToken +refreshToken')
-      .setOptions({ skipTenantFilter: true } as any)
+      .setOptions({ isPlatformQuery: true } as any)
       .sort({ nextHealthCheckAt: 1 })
       .limit(100) // Cap per run to prevent overload
       .exec();
@@ -289,7 +289,7 @@ export class ChannelConfigRepository {
 
     await this.model
       .updateOne({ _id: doc._id }, { $set: update })
-      .setOptions({ skipTenantFilter: true } as any)
+      .setOptions({ isPlatformQuery: true } as any)
       .exec();
 
     Object.assign(doc, update);

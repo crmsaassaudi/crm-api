@@ -1,6 +1,7 @@
 import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
 import { BaseConsumer } from '../../queue/base.consumer';
 import {
   AUTOMATION_DELAYED_QUEUE,
@@ -12,6 +13,7 @@ import { CrmRecordUpdateService } from '../engine/crm-record-update.service';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationWorkflowRepository } from '../infrastructure/persistence/document/repositories/automation-workflow.repository';
 import { AutomationDelayedJobRepository } from '../infrastructure/persistence/document/repositories/automation-delayed-job.repository';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 /**
  * Consumes hot resume jobs from Redis. The source of truth is MongoDB when
@@ -28,27 +30,30 @@ export class AutomationDelayedProcessor extends BaseConsumer {
     private readonly executionLogRepo: AutomationExecutionLogRepository,
     private readonly workflowRepo: AutomationWorkflowRepository,
     private readonly delayedJobRepo: AutomationDelayedJobRepository,
+    private readonly cls: ClsService,
   ) {
     super();
   }
 
   async process(job: Job<AutomationDelayedQueueJobData>): Promise<void> {
-    const data = await this.resolveJobData(job.data);
-    if (!data) return;
+    return runWithTenantContext(this.cls, job.data.tenantId, async () => {
+      const data = await this.resolveJobData(job.data);
+      if (!data) return;
 
-    try {
-      await this.resumeWorkflow(data);
+      try {
+        await this.resumeWorkflow(data);
 
-      if (job.data.delayedJobId) {
-        await this.delayedJobRepo.markCompleted(job.data.delayedJobId);
+        if (job.data.delayedJobId) {
+          await this.delayedJobRepo.markCompleted(job.data.delayedJobId);
+        }
+      } catch (error: any) {
+        this.logger.error(
+          `[DelayedResume] Failed execution=${data.executionId}: ${error.message}`,
+          error.stack,
+        );
+        throw error;
       }
-    } catch (error: any) {
-      this.logger.error(
-        `[DelayedResume] Failed execution=${data.executionId}: ${error.message}`,
-        error.stack,
-      );
-      throw error;
-    }
+    });
   }
 
   @OnWorkerEvent('failed')
@@ -58,14 +63,17 @@ export class AutomationDelayedProcessor extends BaseConsumer {
     const attemptsRemaining = (job.opts?.attempts ?? 1) - job.attemptsMade;
     if (attemptsRemaining > 0 || !job.data.delayedJobId) return;
 
-    this.delayedJobRepo
-      .markFailed(job.data.delayedJobId, error.message)
-      .catch((repoError) =>
-        this.logger.error(
-          `[DelayedResume] Failed to mark delayed job as failed: ${repoError.message}`,
-          repoError.stack,
-        ),
-      );
+    const delayedJobId = job.data.delayedJobId;
+    runWithTenantContext(this.cls, job.data.tenantId, () => {
+      this.delayedJobRepo
+        .markFailed(delayedJobId, error.message)
+        .catch((repoError) =>
+          this.logger.error(
+            `[DelayedResume] Failed to mark delayed job as failed: ${repoError.message}`,
+            repoError.stack,
+          ),
+        );
+    });
   }
 
   private async resolveJobData(

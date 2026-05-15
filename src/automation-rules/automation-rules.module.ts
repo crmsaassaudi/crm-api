@@ -92,6 +92,21 @@ import { AccountsModule } from '../accounts/accounts.module';
 import { TasksModule } from '../tasks/tasks.module';
 import { AssignmentEngineModule } from '../assignment-engine/assignment-engine.module';
 import { ChannelsModule } from '../channels/channels.module';
+import { isWorkerRuntime } from '../config/runtime-role';
+
+const workerProviders = isWorkerRuntime()
+  ? [
+      AutomationActionProcessor,
+      AutomationEmailProcessor,
+      AutomationSmsProcessor,
+      AutomationInternalProcessor,
+      AutomationWebhookProcessor,
+      AutomationDlqProcessor,
+      AutomationBulkProcessor,
+      AutomationDelayedProcessor,
+      AutomationDelayedScheduler,
+    ]
+  : [];
 
 @Module({
   imports: [
@@ -170,18 +185,10 @@ import { ChannelsModule } from '../channels/channels.module';
     },
     // Queue — Producers & Processors
     AutomationActionProducer,
-    AutomationActionProcessor,
-    AutomationEmailProcessor,
-    AutomationSmsProcessor,
-    AutomationInternalProcessor,
-    AutomationWebhookProcessor,
     AutomationDlqProducer,
-    AutomationDlqProcessor,
     AutomationBulkProducer,
-    AutomationBulkProcessor,
     AutomationDelayedProducer,
-    AutomationDelayedProcessor,
-    AutomationDelayedScheduler,
+    ...workerProviders,
   ],
   exports: [
     AutomationRulesService,

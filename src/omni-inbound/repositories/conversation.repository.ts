@@ -745,7 +745,6 @@ export class ConversationRepository {
     if (Object.keys(fields).length === 0) return;
     await this.model
       .updateOne({ _id: conversationId }, { $set: fields })
-      .setOptions({ skipTenantFilter: true })
       .exec();
   }
 
@@ -770,14 +769,13 @@ export class ConversationRepository {
         status: { $in: ['open', 'pending'] },
         [breachedField]: false,
       })
-      .setOptions({ skipTenantFilter: true })
       .lean()
       .exec();
   }
 
   /**
    * Atomically mark a conversation's SLA as breached.
-   * Runs in a BullMQ worker — no CLS context — so skipTenantFilter is required.
+   * Runs in a BullMQ worker with tenant CLS seeded from the job payload.
    */
   async markSlaBreached(
     conversationId: string,
@@ -785,7 +783,6 @@ export class ConversationRepository {
   ): Promise<void> {
     await this.model
       .updateOne({ _id: conversationId }, { $set: { [breachedField]: true } })
-      .setOptions({ skipTenantFilter: true })
       .exec();
   }
 

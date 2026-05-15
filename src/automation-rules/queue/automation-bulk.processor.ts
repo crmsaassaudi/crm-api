@@ -1,12 +1,14 @@
 import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
 import { BaseConsumer } from '../../queue/base.consumer';
 import { AUTOMATION_BULK_QUEUE } from './automation-queue.constants';
 import { WorkflowOrchestratorService } from '../engine/workflow-orchestrator.service';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 /**
- * AutomationBulkProcessor — consumes throttled automation events from the bulk queue.
+ * AutomationBulkProcessor - consumes throttled automation events from the bulk queue.
  *
  * Processes events at a controlled concurrency to prevent Redis/CPU starvation
  * during high-volume operations like CSV imports.
@@ -19,21 +21,27 @@ import { WorkflowOrchestratorService } from '../engine/workflow-orchestrator.ser
 export class AutomationBulkProcessor extends BaseConsumer {
   protected readonly logger = new Logger(AutomationBulkProcessor.name);
 
-  constructor(private readonly orchestrator: WorkflowOrchestratorService) {
+  constructor(
+    private readonly orchestrator: WorkflowOrchestratorService,
+    private readonly cls: ClsService,
+  ) {
     super();
   }
 
   async process(job: Job): Promise<void> {
     const { workflow, payload } = job.data;
+    const tenantId = payload?.tenantId ?? workflow?.tenantId;
 
-    this.logger.log(
-      `[Bulk Processor] Processing throttled event: job=${job.id} workflow=${workflow._id || workflow.name} record=${payload.recordId}`,
-    );
+    return runWithTenantContext(this.cls, tenantId, async () => {
+      this.logger.log(
+        `[Bulk Processor] Processing throttled event: job=${job.id} workflow=${workflow._id || workflow.name} record=${payload.recordId}`,
+      );
 
-    await this.orchestrator.execute(workflow, payload);
+      await this.orchestrator.execute(workflow, payload);
 
-    this.logger.log(
-      `[Bulk Processor] ✅ Completed throttled event: job=${job.id}`,
-    );
+      this.logger.log(
+        `[Bulk Processor] Completed throttled event: job=${job.id}`,
+      );
+    });
   }
 }

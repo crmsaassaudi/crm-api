@@ -14,6 +14,7 @@ import {
 } from '../../channels/infrastructure/persistence/document/entities/email-metadata.schema';
 import { ChannelsModule } from '../../channels/channels.module';
 import { RedisModule } from '../../redis/redis.module';
+import { isWorkerRuntime } from '../../config/runtime-role';
 
 /**
  * ReadStateSyncModule — BullMQ queue for Two-Way Read State Sync.
@@ -54,8 +55,8 @@ import { RedisModule } from '../../redis/redis.module';
   ],
   providers: [
     ReadStateSyncProducer,
-    ReadStateSyncProcessor,
     ReadStateSyncEventListener,
+    ...(isWorkerRuntime() ? [ReadStateSyncProcessor] : []),
   ],
   exports: [ReadStateSyncProducer],
 })

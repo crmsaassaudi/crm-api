@@ -2,12 +2,14 @@ import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Inject, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ClsService } from 'nestjs-cls';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { BaseConsumer } from '../../queue/base.consumer';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 export interface AutoResolveJobData {
   tenantId: string;
@@ -41,6 +43,7 @@ export class AutoResolveProcessor extends BaseConsumer {
     private readonly settingsService: CrmSettingsService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    private readonly cls: ClsService,
   ) {
     super();
   }
@@ -48,50 +51,52 @@ export class AutoResolveProcessor extends BaseConsumer {
   async process(job: Job<AutoResolveJobData>): Promise<void> {
     const { tenantId, conversationId, phase } = job.data;
 
-    this.logger.debug(
-      `Auto-resolve job [${phase}] for conversation ${conversationId}`,
-    );
-
-    // Verify conversation is still active
-    const conversation = await this.conversationRepo.findById(conversationId);
-    if (!conversation) {
+    return runWithTenantContext(this.cls, tenantId, async () => {
       this.logger.debug(
-        `Conversation ${conversationId} not found — skipping auto-resolve`,
+        `Auto-resolve job [${phase}] for conversation ${conversationId}`,
       );
-      return;
-    }
 
-    if (conversation.status !== 'open' && conversation.status !== 'pending') {
-      this.logger.debug(
-        `Conversation ${conversationId} is ${conversation.status} — skipping auto-resolve`,
-      );
-      return;
-    }
+      // Verify conversation is still active
+      const conversation = await this.conversationRepo.findById(conversationId);
+      if (!conversation) {
+        this.logger.debug(
+          `Conversation ${conversationId} not found — skipping auto-resolve`,
+        );
+        return;
+      }
 
-    // Load tenant config
-    const config = await this.getLifecycleConfig(tenantId);
-    if (!config.autoResolveEnabled) {
-      this.logger.debug(
-        `Auto-resolve disabled for tenant ${tenantId} — skipping`,
-      );
-      return;
-    }
+      if (conversation.status !== 'open' && conversation.status !== 'pending') {
+        this.logger.debug(
+          `Conversation ${conversationId} is ${conversation.status} — skipping auto-resolve`,
+        );
+        return;
+      }
 
-    if (phase === 'warning') {
-      await this.handleWarningPhase(
-        tenantId,
-        conversationId,
-        conversation,
-        config,
-      );
-    } else {
-      await this.handleResolvePhase(
-        tenantId,
-        conversationId,
-        conversation,
-        config,
-      );
-    }
+      // Load tenant config
+      const config = await this.getLifecycleConfig(tenantId);
+      if (!config.autoResolveEnabled) {
+        this.logger.debug(
+          `Auto-resolve disabled for tenant ${tenantId} — skipping`,
+        );
+        return;
+      }
+
+      if (phase === 'warning') {
+        await this.handleWarningPhase(
+          tenantId,
+          conversationId,
+          conversation,
+          config,
+        );
+      } else {
+        await this.handleResolvePhase(
+          tenantId,
+          conversationId,
+          conversation,
+          config,
+        );
+      }
+    });
   }
 
   /**
