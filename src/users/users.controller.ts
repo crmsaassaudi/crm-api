@@ -40,6 +40,7 @@ import { User } from './domain/user';
 import { UsersService } from './users.service';
 import { RolesGuard } from '../roles/roles.guard';
 import { ClsService } from 'nestjs-cls';
+import { RequirePermission } from '../common/permissions';
 import {
   PaginationResponse,
   PaginationResponseDto,
@@ -77,6 +78,7 @@ export class UsersController {
     description: 'Check if an email already exists in the system',
   })
   @ApiOperation({ summary: 'Check if a user with this email exists' })
+  @RequirePermission('create', 'users')
   @Post('check-email')
   @HttpCode(HttpStatus.OK)
   checkEmail(@Body() checkEmailDto: CheckEmailDto): Promise<{
@@ -90,6 +92,7 @@ export class UsersController {
     type: User,
   })
   @ApiOperation({ summary: 'Invite an existing user to the current tenant' })
+  @RequirePermission('create', 'users')
   @SerializeOptions({
     groups: ['admin'],
   })
@@ -105,6 +108,7 @@ export class UsersController {
   @ApiOperation({
     summary: 'Create a new user and add them to the current tenant',
   })
+  @RequirePermission('create', 'users')
   @SerializeOptions({
     groups: ['admin'],
   })
@@ -123,6 +127,7 @@ export class UsersController {
     groups: ['admin'],
   })
   @Get()
+  @RequirePermission('view', 'users')
   @HttpCode(HttpStatus.OK)
   @CacheTTL(60)
   async findAll(
@@ -180,6 +185,7 @@ export class UsersController {
     groups: ['admin'],
   })
   @Get(':id')
+  @RequirePermission('view', 'users')
   @HttpCode(HttpStatus.OK)
   @ApiParam({
     name: 'id',
@@ -193,6 +199,7 @@ export class UsersController {
 
   @ApiOkResponse({ description: 'Groups the user belongs to in this tenant' })
   @ApiOperation({ summary: 'Get all groups a user belongs to in the tenant' })
+  @RequirePermission('view', 'users')
   @Get(':id/groups')
   @HttpCode(HttpStatus.OK)
   @ApiParam({ name: 'id', type: String, required: true })
@@ -207,6 +214,7 @@ export class UsersController {
     groups: ['admin'],
   })
   @Patch(':id')
+  @RequirePermission('edit', 'users')
   @HttpCode(HttpStatus.OK)
   @ApiParam({
     name: 'id',
@@ -221,6 +229,7 @@ export class UsersController {
   }
 
   @ApiOperation({ summary: 'Remove a user from the current tenant' })
+  @RequirePermission('delete', 'users')
   @Delete(':id/tenant')
   @ApiParam({ name: 'id', type: String, required: true })
   @HttpCode(HttpStatus.OK)
@@ -229,6 +238,7 @@ export class UsersController {
   }
 
   @Delete(':id')
+  @RequirePermission('delete', 'users')
   @ApiParam({
     name: 'id',
     type: String,
