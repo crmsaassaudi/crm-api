@@ -1,6 +1,6 @@
 import { CallHandler, ExecutionContext } from '@nestjs/common';
 import { ConflictException } from '@nestjs/common';
-import { lastValueFrom, of } from 'rxjs';
+import { lastValueFrom, of, throwError } from 'rxjs';
 import { IdempotencyInterceptor } from './idempotency.interceptor';
 import { RedisService } from '../../redis/redis.service';
 
@@ -9,15 +9,13 @@ describe('IdempotencyInterceptor', () => {
   let redisService: jest.Mocked<RedisService>;
   let redisClient: {
     set: jest.Mock;
-    del: jest.Mock;
-    exists: jest.Mock;
+    eval: jest.Mock;
   };
 
   beforeEach(() => {
     redisClient = {
       set: jest.fn(),
-      del: jest.fn().mockResolvedValue(1),
-      exists: jest.fn(),
+      eval: jest.fn().mockResolvedValue(1),
     };
 
     redisService = {
@@ -45,10 +43,15 @@ describe('IdempotencyInterceptor', () => {
       { ok: true },
       7200,
     );
-    expect(redisClient.del).toHaveBeenCalledWith('lock:idmp:abc');
+    expect(redisClient.eval).toHaveBeenCalledWith(
+      expect.any(String),
+      1,
+      'lock:idmp:abc',
+      expect.any(String),
+    );
   });
 
-  it('should return cached response when duplicate request finishes while waiting', async () => {
+  it('should return cached response when duplicate request finishes before fail-fast check', async () => {
     redisService.get
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ ok: true });
@@ -63,39 +66,32 @@ describe('IdempotencyInterceptor', () => {
     expect(redisClient.set).toHaveBeenCalledTimes(1);
   });
 
-  it('should process a duplicate request when the original lock ended without cache', async () => {
-    redisService.get.mockResolvedValue(undefined);
-    redisClient.set.mockResolvedValueOnce(null).mockResolvedValueOnce('OK');
-    redisClient.exists.mockResolvedValue(0);
-
-    const observable = await interceptor.intercept(
-      createContext('abc'),
-      createHandler({ recovered: true }),
-    );
-
-    await expect(lastValueFrom(observable)).resolves.toEqual({
-      recovered: true,
-    });
-    expect(redisClient.set).toHaveBeenCalledTimes(2);
-    expect(redisService.set).toHaveBeenCalledWith(
-      'idmp:abc',
-      { recovered: true },
-      7200,
-    );
-  });
-
-  it('should still reject duplicates when the first request is processing after the wait window', async () => {
-    jest
-      .spyOn<any, any>(interceptor, 'waitForCachedResponse')
-      .mockResolvedValue({
-        status: 'processing',
-      });
+  it('should reject a duplicate request when the original is still processing', async () => {
     redisService.get.mockResolvedValue(undefined);
     redisClient.set.mockResolvedValue(null);
 
     await expect(
       interceptor.intercept(createContext('abc'), createHandler({ ok: false })),
     ).rejects.toBeInstanceOf(ConflictException);
+    expect(redisClient.set).toHaveBeenCalledTimes(1);
+  });
+
+  it('should release only the lock owned by this request when handler fails', async () => {
+    redisService.get.mockResolvedValue(undefined);
+    redisClient.set.mockResolvedValue('OK');
+    const error = new Error('boom');
+
+    const observable = await interceptor.intercept(createContext('abc'), {
+      handle: jest.fn(() => throwError(() => error)),
+    });
+
+    await expect(lastValueFrom(observable)).rejects.toThrow('boom');
+    expect(redisClient.eval).toHaveBeenCalledWith(
+      expect.any(String),
+      1,
+      'lock:idmp:abc',
+      expect.any(String),
+    );
   });
 
   function createContext(idempotencyKey: string): ExecutionContext {

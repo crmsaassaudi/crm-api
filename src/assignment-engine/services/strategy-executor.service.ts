@@ -8,11 +8,34 @@ import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
  *
  * Strategies:
  *   - round-robin: Redis atomic counter scoped by key
- *   - least-busy: pick candidate with fewest active entities
+ *   - least-busy: pick candidate with fewest active entities, with optional
+ *     Redis reservation to avoid concurrent stale-read races
  */
 @Injectable()
 export class StrategyExecutorService {
   private readonly logger = new Logger(StrategyExecutorService.name);
+  private readonly leastBusyReservationScript = `
+    local key = KEYS[1]
+    local candidateCount = tonumber(ARGV[1])
+    local bestCandidate = nil
+    local bestLoad = nil
+
+    for i = 1, candidateCount do
+      local candidate = ARGV[i + 1]
+      local score = redis.call('ZSCORE', key, candidate)
+      if score then
+        local load = tonumber(score)
+        if bestLoad == nil or load < bestLoad then
+          bestLoad = load
+          bestCandidate = candidate
+        end
+      end
+    end
+
+    if not bestCandidate then return nil end
+    redis.call('ZINCRBY', key, 1, bestCandidate)
+    return { bestCandidate, tostring(bestLoad) }
+  `;
 
   constructor(@Inject(IOREDIS_CLIENT) private readonly redis: Redis) {}
 
@@ -66,5 +89,54 @@ export class StrategyExecutorService {
       `Least-busy: selected=${minId} with load=${minLoad} (pool size=${loadMap.size})`,
     );
     return { candidateId: minId, load: minLoad };
+  }
+
+  /**
+   * Atomic least-busy reservation backed by a Redis sorted set.
+   *
+   * The MongoDB load map is only used to seed missing candidates. Existing
+   * Redis scores are not overwritten, so concurrent assignments increment the
+   * same counter instead of repeatedly picking the same stale DB minimum.
+   */
+  async leastBusyAtomic(
+    scope: string,
+    loadMap: Map<string, number>,
+    ttlSeconds = 300,
+  ): Promise<{
+    candidateId: string;
+    load: number;
+  }> {
+    if (loadMap.size === 0) {
+      throw new Error('Least-busy called with empty load map');
+    }
+
+    const key = `assign:load:${scope}`;
+    const candidates = Array.from(loadMap.keys());
+    const pipeline = this.redis.pipeline();
+
+    for (const [candidateId, load] of loadMap) {
+      pipeline.zadd(key, 'NX', load, candidateId);
+    }
+    pipeline.expire(key, ttlSeconds);
+    await pipeline.exec();
+
+    const result = await this.redis.eval(
+      this.leastBusyReservationScript,
+      1,
+      key,
+      candidates.length.toString(),
+      ...candidates,
+    );
+
+    if (!Array.isArray(result) || typeof result[0] !== 'string') {
+      throw new Error('Least-busy could not reserve a candidate');
+    }
+
+    const candidateId = result[0];
+    const load = Number(result[1] ?? 0);
+    this.logger.debug(
+      `Least-busy atomic [${scope}]: selected=${candidateId} with load=${load} (pool size=${loadMap.size})`,
+    );
+    return { candidateId, load };
   }
 }

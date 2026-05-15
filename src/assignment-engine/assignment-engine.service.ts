@@ -250,7 +250,10 @@ export class AssignmentEngineService {
         context.module,
         eligible,
       );
-      const result = await this.strategyExecutor.leastBusy(loadMap);
+      const result = await this.strategyExecutor.leastBusyAtomic(
+        rrScope,
+        loadMap,
+      );
       selectedId = result.candidateId;
     } else if (strategy === 'manual') {
       return this.handleFallback(context, matchedRule, 'manual');

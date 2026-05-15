@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ClsServiceManager } from 'nestjs-cls';
 import { ConflictException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { Observable, of } from 'rxjs';
 import { catchError, mergeMap } from 'rxjs/operators';
 import { RedisService } from '../../redis/redis.service';
@@ -19,15 +20,6 @@ const RESPONSE_TTL_SECONDS = readPositiveNumberEnv(
   'IDEMPOTENCY_RESPONSE_TTL_SECONDS',
   2 * 60 * 60,
 );
-const WAIT_TIMEOUT_MS = readPositiveNumberEnv(
-  'IDEMPOTENCY_WAIT_TIMEOUT_MS',
-  5000,
-);
-const WAIT_POLL_INTERVAL_MS = readPositiveNumberEnv(
-  'IDEMPOTENCY_WAIT_POLL_INTERVAL_MS',
-  100,
-);
-
 function readPositiveNumberEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -35,11 +27,6 @@ function readPositiveNumberEnv(name: string, fallback: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
-
-type WaitResult =
-  | { status: 'cached'; response: any }
-  | { status: 'retryable' }
-  | { status: 'processing' };
 
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
@@ -76,6 +63,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
     const namespacedKey = `${tenantPrefix}idmp:${key}`;
     const lockKey = `lock:${namespacedKey}`;
+    const lockValue = randomUUID();
 
     const existingResponse = await this.redisService.get(namespacedKey);
     if (existingResponse !== undefined) {
@@ -84,50 +72,26 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
     // 1. Try to acquire lock
     // SET key value NX EX seconds
-    let acquired = await client.set(
+    const acquired = await client.set(
       lockKey,
-      'processing',
+      lockValue,
       'EX',
       LOCK_TTL_SECONDS,
       'NX',
     );
 
     if (!acquired) {
-      const waitResult = await this.waitForCachedResponse(
-        client,
-        namespacedKey,
-        lockKey,
-      );
-
-      if (waitResult.status === 'cached') {
-        return of(waitResult.response);
-      }
-
-      if (waitResult.status === 'retryable') {
-        acquired = await client.set(
-          lockKey,
-          'processing',
-          'EX',
-          LOCK_TTL_SECONDS,
-          'NX',
-        );
-      }
-
-      if (!acquired) {
-        throw new ConflictException('Request is being processed. Please wait.');
-      }
-
       const cachedResponse = await this.redisService.get(namespacedKey);
       if (cachedResponse !== undefined) {
-        await client.del(lockKey);
         return of(cachedResponse);
       }
+      throw new ConflictException('Request is being processed. Please retry.');
     }
 
     // 3. If lock acquired, check cache one last time (double-check optimization)
     const cachedResponse = await this.redisService.get(namespacedKey);
     if (cachedResponse !== undefined) {
-      await client.del(lockKey); // Release lock if we somehow got here
+      await this.releaseLock(client, lockKey, lockValue);
       return of(cachedResponse);
     }
 
@@ -138,42 +102,28 @@ export class IdempotencyInterceptor implements NestInterceptor {
           response,
           RESPONSE_TTL_SECONDS,
         );
-        await client.del(lockKey);
+        await this.releaseLock(client, lockKey, lockValue);
         return response;
       }),
       // Handle errors - make sure to release lock if processing fails
       catchError(async (err) => {
-        await client.del(lockKey);
+        await this.releaseLock(client, lockKey, lockValue);
         throw err;
       }),
     );
   }
 
-  private async waitForCachedResponse(
+  private async releaseLock(
     client: Redis,
-    responseKey: string,
-    lockKey: string,
-  ): Promise<WaitResult> {
-    const deadline = Date.now() + WAIT_TIMEOUT_MS;
-
-    while (Date.now() < deadline) {
-      await this.sleep(WAIT_POLL_INTERVAL_MS);
-
-      const cachedResponse = await this.redisService.get(responseKey);
-      if (cachedResponse !== undefined) {
-        return { status: 'cached', response: cachedResponse };
-      }
-
-      const lockExists = await client.exists(lockKey);
-      if (!lockExists) {
-        return { status: 'retryable' };
-      }
-    }
-
-    return { status: 'processing' };
-  }
-
-  private async sleep(ms: number): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, ms));
+    key: string,
+    value: string,
+  ): Promise<void> {
+    const script = `
+      if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+      end
+      return 0
+    `;
+    await client.eval(script, 1, key, value);
   }
 }

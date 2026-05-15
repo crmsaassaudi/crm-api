@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   CallHandler,
   Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { Observable, from } from 'rxjs';
 import { switchMap } from 'rxjs/operators';
@@ -96,12 +97,14 @@ export class DataVisibilityInterceptor implements NestInterceptor {
         `Visibility for user ${userId}: ${visibleIds.length} owner IDs`,
       );
     } catch (e) {
-      // Fail-open: if visibility resolution fails, allow full access
-      // to avoid blocking all data for the user
+      // Fail-closed: visibility failures must never widen access.
       this.logger.error(
-        `Visibility resolution failed, fail-open: ${(e as Error).message}`,
+        `Visibility resolution failed, fail-closed: ${(e as Error).message}`,
       );
-      this.cls.set('visibleOwnerIds', null);
+      this.cls.set('visibleOwnerIds', []);
+      throw new InternalServerErrorException(
+        'Data visibility resolution failed',
+      );
     }
   }
 
