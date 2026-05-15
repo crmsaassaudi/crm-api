@@ -15,6 +15,7 @@ import {
 } from '@nestjs/swagger';
 import { TenantsService } from './tenants.service';
 import { UpdateTenantI18nDto } from './dto/i18n-settings.dto';
+import { RequirePermission } from '../common/permissions';
 
 @ApiTags('Tenants')
 @ApiBearerAuth()
@@ -33,6 +34,7 @@ export class TenantSettingsController {
    * Returns the current tenant's i18n settings.
    */
   @Get('i18n')
+  @RequirePermission('view', 'settings')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get tenant i18n settings',
@@ -59,6 +61,7 @@ export class TenantSettingsController {
    * Updates the current tenant's i18n settings.
    */
   @Patch('i18n')
+  @RequirePermission('manage_system', 'settings')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Update tenant i18n settings',
@@ -85,6 +88,7 @@ export class TenantSettingsController {
    * Returns the current tenant's profile (name, alias, logoUrl).
    */
   @Get('profile')
+  @RequirePermission('view', 'settings')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get tenant profile' })
   @ApiOkResponse({
@@ -106,6 +110,7 @@ export class TenantSettingsController {
    * Updates the current tenant's profile.
    */
   @Patch('profile')
+  @RequirePermission('manage_system', 'settings')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update tenant profile (name, logo)' })
   async updateProfile(@Body() dto: { tenantName?: string; logoUrl?: string }) {

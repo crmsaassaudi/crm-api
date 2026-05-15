@@ -13,6 +13,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CustomFieldsService } from './custom-fields.service';
 import { CustomField } from './domain/custom-field';
+import { RequirePermission } from '../common/permissions';
 
 @ApiTags('Custom Fields')
 @ApiBearerAuth()
@@ -24,12 +25,14 @@ export class CustomFieldsController {
   constructor(private readonly service: CustomFieldsService) {}
 
   @Get()
+  @RequirePermission('view', 'settings')
   @ApiQuery({ name: 'module', required: false })
   getFields(@Query('module') module?: string): Promise<CustomField[]> {
     return module ? this.service.getByModule(module) : this.service.getAll();
   }
 
   @Post()
+  @RequirePermission('manage_system', 'settings')
   @HttpCode(HttpStatus.CREATED)
   createField(
     @Body()
@@ -39,11 +42,13 @@ export class CustomFieldsController {
   }
 
   @Patch(':id')
+  @RequirePermission('manage_system', 'settings')
   updateField(@Param('id') id: string, @Body() body: Partial<CustomField>) {
     return this.service.update(id, body);
   }
 
   @Delete(':id')
+  @RequirePermission('manage_system', 'settings')
   @HttpCode(HttpStatus.NO_CONTENT)
   removeField(@Param('id') id: string): Promise<void> {
     return this.service.remove(id);

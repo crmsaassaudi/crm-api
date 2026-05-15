@@ -29,6 +29,7 @@ import { CreateTicketFromConversationDto } from '../dto/create-ticket-from-conve
 import { LinkMessagesDto } from '../dto/link-messages.dto';
 import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
+import { RequirePermission } from '../../common/permissions';
 
 /**
  * REST API for omni-channel conversations and messages.
@@ -70,6 +71,7 @@ export class OmniController {
    * Supports filtering by status, channelType, assignedAgent, and search.
    */
   @Get('conversations')
+  @RequirePermission('view', 'contacts')
   async listConversations(
     @Query('cursor') cursor?: string,
     @Query('limit') limit = '20',
@@ -197,6 +199,7 @@ export class OmniController {
    * Get a single conversation by ID (with customer info).
    */
   @Get('conversations/:id')
+  @RequirePermission('view', 'contacts')
   async getConversation(@Param('id') id: string) {
     const conversation = await this.conversationRepo.findById(id);
     if (!conversation) {
@@ -209,6 +212,7 @@ export class OmniController {
    * Update customer info (name, email, phone) for a conversation.
    */
   @Patch('conversations/:id/customer')
+  @RequirePermission('edit', 'contacts')
   @HttpCode(HttpStatus.OK)
   async updateCustomer(
     @Param('id') id: string,
@@ -240,6 +244,7 @@ export class OmniController {
    * Returns oldest-first for chat display.
    */
   @Get('conversations/:id/messages')
+  @RequirePermission('view', 'contacts')
   async getMessages(
     @Param('id') conversationId: string,
     @Query('page') page = '1',
@@ -259,6 +264,7 @@ export class OmniController {
   }
 
   @Get('conversations/:id/sync')
+  @RequirePermission('view', 'contacts')
   async syncConversation(
     @Param('id') conversationId: string,
     @Query('afterVersion') afterVersion?: string,
@@ -315,6 +321,7 @@ export class OmniController {
   }
 
   @Post('conversations/batch-sync')
+  @RequirePermission('view', 'contacts')
   @HttpCode(HttpStatus.OK)
   async batchSyncConversations(
     @Body()
@@ -366,6 +373,7 @@ export class OmniController {
   }
 
   @Get('conversations/:id/timeline')
+  @RequirePermission('view', 'contacts')
   async getConversationTimeline(
     @Param('id') conversationId: string,
     @Query() query: TimelineQueryDto,
@@ -396,6 +404,7 @@ export class OmniController {
    * @param limit     Messages per page
    */
   @Get('conversations/:id/history')
+  @RequirePermission('view', 'contacts')
   async getConversationHistory(
     @Param('id') conversationId: string,
     @Query('convPage') convPage = '1',
@@ -518,6 +527,7 @@ export class OmniController {
   }
 
   @Post('conversations/:id/messages')
+  @RequirePermission('edit', 'contacts')
   @HttpCode(HttpStatus.CREATED)
   async sendMessage(
     @Param('id') conversationId: string,
@@ -559,6 +569,7 @@ export class OmniController {
   }
 
   @Post('conversations/:id/email-reply')
+  @RequirePermission('edit', 'contacts')
   @HttpCode(HttpStatus.CREATED)
   async emailReply(
     @Param('id') conversationId: string,
@@ -606,6 +617,7 @@ export class OmniController {
    * The frontend uses this to lock/unlock the chat input.
    */
   @Get('conversations/:id/reply-window')
+  @RequirePermission('view', 'contacts')
   async getReplyWindowStatus(@Param('id') conversationId: string) {
     const conversation = await this.conversationRepo.findById(conversationId);
     if (!conversation) {
@@ -616,6 +628,7 @@ export class OmniController {
   }
 
   @Get('conversations/:id/lock')
+  @RequirePermission('view', 'contacts')
   async getConversationLock(@Param('id') conversationId: string) {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) {
@@ -631,6 +644,7 @@ export class OmniController {
   }
 
   @Post('conversations/:id/lock')
+  @RequirePermission('edit', 'contacts')
   @HttpCode(HttpStatus.OK)
   async acquireConversationLock(
     @Param('id') conversationId: string,
@@ -652,6 +666,7 @@ export class OmniController {
   }
 
   @Post('conversations/:id/lock/heartbeat')
+  @RequirePermission('edit', 'contacts')
   @HttpCode(HttpStatus.OK)
   async heartbeatConversationLock(@Param('id') conversationId: string) {
     const tenantId = this.cls.get<string>('tenantId');
@@ -671,6 +686,7 @@ export class OmniController {
   }
 
   @Delete('conversations/:id/lock')
+  @RequirePermission('edit', 'contacts')
   @HttpCode(HttpStatus.OK)
   async releaseConversationLock(@Param('id') conversationId: string) {
     const tenantId = this.cls.get<string>('tenantId');
@@ -689,6 +705,7 @@ export class OmniController {
   }
 
   @Post('conversations/:id/takeover')
+  @RequirePermission('edit', 'contacts')
   @HttpCode(HttpStatus.OK)
   async takeoverConversation(
     @Param('id') conversationId: string,
@@ -746,6 +763,7 @@ export class OmniController {
    *   - WebSocket broadcast
    */
   @Patch('conversations/:id/status')
+  @RequirePermission('edit', 'contacts')
   @HttpCode(HttpStatus.OK)
   async updateStatus(
     @Param('id') id: string,

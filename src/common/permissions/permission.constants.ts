@@ -8,7 +8,8 @@ export type PermissionResource =
   | 'reports'
   | 'users'
   | 'groups'
-  | 'settings';
+  | 'settings'
+  | 'tasks';
 
 export type PermissionAction =
   | 'view'
@@ -103,6 +104,12 @@ export const PERMISSION_REGISTRY: Record<
     view: 'settings:view',
     manage_billing: 'settings:manage_billing',
     manage_system: 'settings:manage_system',
+  },
+  tasks: {
+    view: 'tasks:view',
+    create: 'tasks:create',
+    edit: 'tasks:edit',
+    delete: 'tasks:delete',
   },
 };
 

@@ -24,6 +24,7 @@ import {
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { ListViewsService } from '../list-views/list-views.service';
+import { RequirePermission } from '../common/permissions';
 
 @ApiTags('Contacts')
 @ApiBearerAuth()
@@ -40,6 +41,7 @@ export class ContactsController {
 
   @ApiCreatedResponse({ type: Contact })
   @Post()
+  @RequirePermission('create', 'contacts')
   @MaskedResource('Contact')
   create(@Body() data: CreateContactDto) {
     return this.service.create(data);
@@ -47,6 +49,7 @@ export class ContactsController {
 
   @ApiOkResponse({ type: [Contact] })
   @Get()
+  @RequirePermission('view', 'contacts')
   @MaskedResource('Contact')
   async findAll(@Query() query: any) {
     const result = await this.service.findAll(query);
@@ -72,12 +75,14 @@ export class ContactsController {
   }
 
   @Get('check-duplicate')
+  @RequirePermission('view', 'contacts')
   checkDuplicate(@Query() query: any) {
     return this.service.checkDuplicate(query);
   }
 
   @ApiOkResponse({ type: Contact })
   @Get(':id')
+  @RequirePermission('view', 'contacts')
   @MaskedResource('Contact') // Fallback to Contact if specific resource not identified
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
@@ -85,6 +90,7 @@ export class ContactsController {
 
   @ApiOkResponse({ type: Contact })
   @Patch(':id')
+  @RequirePermission('edit', 'contacts')
   @UsePipes(new SanitizeMaskedInputPipe())
   @MaskedResource('Contact')
   update(@Param('id') id: string, @Body() data: UpdateContactDto) {
@@ -92,11 +98,13 @@ export class ContactsController {
   }
 
   @Delete(':id')
+  @RequirePermission('delete', 'contacts')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }
 
   @Post(':id/change-stage')
+  @RequirePermission('edit', 'contacts')
   changeStage(
     @Param('id') id: string,
     @Body()
@@ -114,6 +122,7 @@ export class ContactsController {
 
   @ApiOkResponse({ description: 'Stage transition history for a contact' })
   @Get(':id/stage-history')
+  @RequirePermission('view', 'contacts')
   getStageHistory(@Param('id') id: string) {
     return this.service.getStageHistory(id);
   }
@@ -123,6 +132,7 @@ export class ContactsController {
    * Kept for backward compatibility — delegates to changeStage.
    */
   @Post(':id/convert')
+  @RequirePermission('edit', 'contacts')
   convertLead(@Param('id') id: string, @Body() body: any) {
     return this.service.changeStage(id, body.stage || 'customer', body);
   }
@@ -132,6 +142,7 @@ export class ContactsController {
    * Body: { channelType: string, senderId: string }
    */
   @Post(':id/merge-identity')
+  @RequirePermission('edit', 'contacts')
   @ApiOkResponse({ type: Contact })
   mergeIdentity(
     @Param('id') id: string,
