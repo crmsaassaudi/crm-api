@@ -97,6 +97,15 @@ export class Tenant {
   })
   availablePermissions: string[] | null;
 
+  @ApiProperty({
+    required: false,
+    type: [String],
+    description:
+      'Core permission keys explicitly disabled for this tenant. Empty means full Core baseline.',
+    example: ['tasks:delete'],
+  })
+  disabledCorePermissions: string[];
+
   @ApiProperty()
   createdAt: Date;
 

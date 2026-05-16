@@ -17,6 +17,7 @@ export interface PermissionTenant {
    * - `['campaigns:view']` → tenant has CORE_PERMISSIONS + campaigns:view.
    */
   availablePermissions?: string[] | null;
+  disabledCorePermissions?: string[] | null;
 }
 
 export interface PermissionUserMembership {
@@ -51,7 +52,10 @@ const idsEqual = (left?: unknown, right?: unknown) =>
  *   - Setting `availablePermissions = null` (default) gives exactly Core.
  */
 export const getTenantPermissions = (tenant: PermissionTenant): Set<string> => {
-  const core = new Set<string>(CORE_PERMISSIONS);
+  const disabledCore = new Set(tenant.disabledCorePermissions ?? []);
+  const core = new Set<string>(
+    CORE_PERMISSIONS.filter((permission) => !disabledCore.has(permission)),
+  );
   // Merge any explicitly granted feature permissions on top of Core
   if (tenant.availablePermissions && tenant.availablePermissions.length > 0) {
     tenant.availablePermissions.forEach((p) => core.add(p));

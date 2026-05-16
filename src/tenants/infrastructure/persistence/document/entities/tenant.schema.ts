@@ -125,6 +125,13 @@ export class TenantSchemaClass extends EntityDocumentHelper {
    */
   @Prop({ type: [String], default: null })
   availablePermissions: string[] | null;
+
+  /**
+   * Explicit list of CORE permission keys disabled for this tenant.
+   * Empty/default means the full CORE_PERMISSIONS baseline is enabled.
+   */
+  @Prop({ type: [String], default: [] })
+  disabledCorePermissions: string[];
 }
 
 export const TenantSchema = SchemaFactory.createForClass(TenantSchemaClass);

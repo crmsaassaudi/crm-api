@@ -44,6 +44,7 @@ export class TenantMapper {
 
     // null = Core only (default); array = Core + granted features
     tenant.availablePermissions = raw.availablePermissions ?? null;
+    tenant.disabledCorePermissions = raw.disabledCorePermissions ?? [];
 
     tenant.createdAt = raw.createdAt;
     tenant.updatedAt = raw.updatedAt;
@@ -87,6 +88,10 @@ export class TenantMapper {
     // Persist null explicitly to keep the "Core only" semantic in DB
     if (domain.availablePermissions !== undefined) {
       persistence.availablePermissions = domain.availablePermissions;
+    }
+
+    if (domain.disabledCorePermissions !== undefined) {
+      persistence.disabledCorePermissions = domain.disabledCorePermissions;
     }
 
     return persistence;

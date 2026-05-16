@@ -244,6 +244,7 @@ export class InternalTenantsController {
       tenantId,
       tenantAlias: tenant.alias,
       corePermissions: CORE_PERMISSIONS,
+      disabledCorePermissions: tenant.disabledCorePermissions ?? [],
       grantedFeaturePermissions: tenant.availablePermissions ?? [],
       availableFeaturePermissions: FEATURE_PERMISSIONS,
     };
