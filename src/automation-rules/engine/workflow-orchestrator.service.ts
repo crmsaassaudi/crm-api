@@ -27,8 +27,6 @@ interface WaitNodeConfig {
   delayUnit: 'minutes' | 'hours' | 'days';
 }
 
-const DEFAULT_STEP_LOG_BATCH_SIZE = 50;
-
 /**
  * WorkflowOrchestratorService — the brain of the Automation Engine.
  *
@@ -48,11 +46,6 @@ const DEFAULT_STEP_LOG_BATCH_SIZE = 50;
 @Injectable()
 export class WorkflowOrchestratorService {
   private readonly logger = new Logger(WorkflowOrchestratorService.name);
-  private readonly stepLogBatchSize = this.readNumberEnv(
-    'AUTOMATION_STEP_LOG_BATCH_SIZE',
-    DEFAULT_STEP_LOG_BATCH_SIZE,
-  );
-
   constructor(
     private readonly workflowRepo: AutomationWorkflowRepository,
     private readonly executionLogRepo: AutomationExecutionLogRepository,
@@ -138,7 +131,6 @@ export class WorkflowOrchestratorService {
       automationDepth: depth,
     });
     const executionId = execLog._id.toString();
-    const stepBuffer: ExecutionStep[] = [];
 
     try {
       // ── Walk the DAG (using PUBLISHED snapshot — immune to live edits) ──
@@ -169,11 +161,9 @@ export class WorkflowOrchestratorService {
         tenantId,
         executionSessionId,
         depth,
-        stepBuffer,
       );
 
       // ── Mark success (only if no wait node paused the execution) ────────
-      await this.flushStepBuffer(executionId, stepBuffer);
 
       if (!hibernated) {
         await this.executionLogRepo.completeExecution(executionId);
@@ -193,7 +183,6 @@ export class WorkflowOrchestratorService {
         `[Orchestrator] ❌ Workflow "${workflow.name}" failed: ${error.message}`,
         error.stack,
       );
-      await this.flushStepBuffer(executionId, stepBuffer);
       await this.executionLogRepo.failExecution(executionId, {
         code: 'EXECUTION_ERROR',
         message: error.message,
@@ -218,8 +207,6 @@ export class WorkflowOrchestratorService {
     executionSessionId: string,
     depth: number,
   ): Promise<void> {
-    const stepBuffer: ExecutionStep[] = [];
-
     try {
       await this.traverseFromNode(
         nodeId,
@@ -231,11 +218,9 @@ export class WorkflowOrchestratorService {
         tenantId,
         executionSessionId,
         depth,
-        stepBuffer,
       );
 
       // Mark execution as completed after delayed resume finishes
-      await this.flushStepBuffer(executionId, stepBuffer);
       await this.executionLogRepo.completeExecution(executionId);
       await this.workflowRepo.incrementExecutionCount(tenantId, workflowId);
 
@@ -247,7 +232,6 @@ export class WorkflowOrchestratorService {
         `[Orchestrator] ❌ Resumed execution ${executionId} failed: ${error.message}`,
         error.stack,
       );
-      await this.flushStepBuffer(executionId, stepBuffer);
       await this.executionLogRepo.failExecution(executionId, {
         code: 'RESUME_ERROR',
         message: error.message,
@@ -271,7 +255,6 @@ export class WorkflowOrchestratorService {
     tenantId: string,
     executionSessionId: string,
     depth: number,
-    stepBuffer: ExecutionStep[],
   ): Promise<boolean> {
     const node = nodes.find((n: any) => n.id === nodeId);
     if (!node) return false;
@@ -285,7 +268,7 @@ export class WorkflowOrchestratorService {
       nodeId,
     });
     if (!loopCheck.allowed) {
-      await this.bufferStep(executionId, stepBuffer, {
+      await this.logStep(executionId, {
         nodeId,
         nodeName: node.config?.name || node.type,
         nodeType: node.type,
@@ -305,7 +288,7 @@ export class WorkflowOrchestratorService {
     // ── Process node by type ────────────────────────────────────────────
     if (node.type === 'trigger') {
       // Trigger node: just log and move to next
-      await this.bufferStep(executionId, stepBuffer, {
+      await this.logStep(executionId, {
         nodeId,
         nodeName: 'Trigger',
         nodeType: 'trigger',
@@ -329,7 +312,6 @@ export class WorkflowOrchestratorService {
           tenantId,
           executionSessionId,
           depth,
-          stepBuffer,
         );
         if (hibernated) return true;
       }
@@ -347,7 +329,7 @@ export class WorkflowOrchestratorService {
 
       const branch = matched ? 'matched' : 'not_matched';
 
-      await this.bufferStep(executionId, stepBuffer, {
+      await this.logStep(executionId, {
         nodeId,
         nodeName: node.config?.name || 'Condition',
         nodeType: 'condition',
@@ -379,7 +361,6 @@ export class WorkflowOrchestratorService {
           tenantId,
           executionSessionId,
           depth,
-          stepBuffer,
         );
         if (hibernated) return true;
       }
@@ -406,7 +387,7 @@ export class WorkflowOrchestratorService {
       try {
         await this.actionProducer.dispatch(actionData);
 
-        await this.bufferStep(executionId, stepBuffer, {
+        await this.logStep(executionId, {
           nodeId,
           nodeName: actionData.nodeName,
           nodeType: 'action',
@@ -418,7 +399,7 @@ export class WorkflowOrchestratorService {
           duration: Date.now() - stepStart.getTime(),
         });
       } catch (error: any) {
-        await this.bufferStep(executionId, stepBuffer, {
+        await this.logStep(executionId, {
           nodeId,
           nodeName: actionData.nodeName,
           nodeType: 'action',
@@ -445,7 +426,6 @@ export class WorkflowOrchestratorService {
           tenantId,
           executionSessionId,
           depth,
-          stepBuffer,
         );
         if (hibernated) return true;
       }
@@ -460,7 +440,7 @@ export class WorkflowOrchestratorService {
       );
 
       // Log the wait step
-      await this.bufferStep(executionId, stepBuffer, {
+      await this.logStep(executionId, {
         nodeId,
         nodeName: config.name || 'Wait',
         nodeType: 'wait' as any,
@@ -505,36 +485,13 @@ export class WorkflowOrchestratorService {
   }
 
   /**
-   * Buffer step logs and flush as a MongoDB batch once the buffer is full.
+   * Persist step logs immediately so a pod crash cannot drop in-memory batches.
    */
-  private async bufferStep(
+  private async logStep(
     executionId: string,
-    buffer: ExecutionStep[],
     step: ExecutionStep,
   ): Promise<void> {
-    buffer.push(step);
-
-    if (buffer.length >= this.stepLogBatchSize) {
-      await this.flushStepBuffer(executionId, buffer);
-    }
-  }
-
-  private async flushStepBuffer(
-    executionId: string,
-    buffer: ExecutionStep[],
-  ): Promise<void> {
-    if (buffer.length === 0) return;
-
-    const batch = buffer.splice(0, buffer.length);
-    await this.executionLogRepo.logSteps(executionId, batch);
-  }
-
-  private readNumberEnv(name: string, fallback: number): number {
-    const raw = process.env[name];
-    if (!raw) return fallback;
-
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    await this.executionLogRepo.logStep(executionId, step);
   }
 
   /**
