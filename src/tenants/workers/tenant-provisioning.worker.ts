@@ -175,12 +175,14 @@ export class TenantProvisioningWorker extends WorkerHost {
       await this.reportStep(provisioningId, 7);
 
       // ── Step 8: Provision crm-bot Typebot workspace ───────────────────
-      await this.crmBotWorkspaceProvisioningService.provisionWorkspace({
-        tenantId: tenantId!,
-        ownerEmail: data.email,
-        ownerName: data.fullName,
-        tenantName: data.companyName,
-      });
+      const botWorkspaceId =
+        await this.crmBotWorkspaceProvisioningService.provisionWorkspace({
+          tenantId: tenantId!,
+          ownerEmail: data.email,
+          ownerName: data.fullName,
+          tenantName: data.companyName,
+        });
+      await this.tenantsRepository.update(tenantId!, { botWorkspaceId } as any);
       await this.reportStep(provisioningId, 8);
 
       // ── Step 9: Confirm alias reservation ─────────────────────────────

@@ -71,6 +71,9 @@ export class TenantSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, default: null })
   onboardingGoal?: string;
 
+  @Prop({ type: String, default: null })
+  botWorkspaceId?: string;
+
   @Prop({
     type: {
       resolveNoteMode: {

@@ -22,6 +22,7 @@ export class TenantMapper {
       raw.provisioningStatus ?? ProvisioningStatus.READY;
     tenant.provisioningError = raw.provisioningError ?? undefined;
     tenant.onboardingGoal = raw.onboardingGoal ?? undefined;
+    tenant.botWorkspaceId = raw.botWorkspaceId ?? undefined;
 
     // Extract plain object to avoid Mongoose subdocument serialization issues
     tenant.omniSettings = raw.omniSettings
@@ -79,6 +80,9 @@ export class TenantMapper {
     }
     if (domain.onboardingGoal !== undefined) {
       persistence.onboardingGoal = domain.onboardingGoal;
+    }
+    if (domain.botWorkspaceId !== undefined) {
+      persistence.botWorkspaceId = domain.botWorkspaceId;
     }
 
     if (domain.i18nSettings) {

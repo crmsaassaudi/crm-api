@@ -61,6 +61,12 @@ export class Tenant {
   })
   onboardingGoal?: string;
 
+  @ApiProperty({
+    required: false,
+    description: 'ID of the associated typebot workspace',
+  })
+  botWorkspaceId?: string;
+
   @ApiProperty()
   omniSettings: {
     resolveNoteMode: 'disabled' | 'optional' | 'required';
