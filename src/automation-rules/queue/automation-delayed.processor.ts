@@ -182,6 +182,7 @@ export class AutomationDelayedProcessor extends BaseConsumer {
         recordId: data.recordId,
         data: record,
         automationDepth: data.automationDepth,
+        automationBreadcrumbs: data.automationBreadcrumbs,
         _automationSourceWorkflowId: data.sourceWorkflowId,
       },
       data.executionId,

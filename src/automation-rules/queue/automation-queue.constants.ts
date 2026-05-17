@@ -75,6 +75,9 @@ export interface AutomationActionJobData {
   /** Automation depth for loop prevention Layer 2 */
   automationDepth: number;
 
+  /** Workflow IDs already visited in this automation chain */
+  automationBreadcrumbs?: string[];
+
   /** Source workflow ID for self-loop prevention */
   sourceWorkflowId: string;
 }
@@ -106,6 +109,9 @@ export interface AutomationDelayedJobData {
 
   /** Automation depth for loop prevention Layer 2 */
   automationDepth: number;
+
+  /** Workflow IDs already visited in this automation chain */
+  automationBreadcrumbs?: string[];
 
   /** Source workflow ID for self-loop prevention */
   sourceWorkflowId: string;

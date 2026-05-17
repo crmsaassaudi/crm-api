@@ -53,6 +53,7 @@ export class CrmRecordUpdateService {
     value: any;
     sourceWorkflowId: string;
     automationDepth?: number;
+    automationBreadcrumbs?: string[];
   }): Promise<{
     success: boolean;
     previousValue: any;
@@ -116,6 +117,7 @@ export class CrmRecordUpdateService {
         changedFields: [field],
         sourceWorkflowId,
         automationDepth: (params.automationDepth ?? 0) + 1,
+        automationBreadcrumbs: params.automationBreadcrumbs,
       });
 
       this.logger.log(
@@ -250,6 +252,7 @@ export class CrmRecordUpdateService {
     changedFields: string[];
     sourceWorkflowId: string;
     automationDepth: number;
+    automationBreadcrumbs?: string[];
   }): void {
     const payload: AutomationEventPayload = {
       tenantId: params.tenantId,
@@ -259,6 +262,7 @@ export class CrmRecordUpdateService {
       data: params.record,
       changedFields: params.changedFields,
       automationDepth: params.automationDepth,
+      automationBreadcrumbs: params.automationBreadcrumbs,
       _automationSourceWorkflowId: params.sourceWorkflowId,
     };
 

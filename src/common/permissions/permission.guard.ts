@@ -9,6 +9,7 @@ import {
   PERMISSION_RULE_METADATA,
   PermissionRuleMetadata,
 } from './permission.decorator';
+import { getPermissionKey } from './permission.constants';
 import { calculateEffectivePermissions, canAccess } from './permission.engine';
 
 @Injectable()
@@ -46,6 +47,21 @@ export class PermissionGuard implements CanActivate {
 
     if (!rawUserId) {
       return false;
+    }
+
+    const claimPermissions = this.extractEffectivePermissionClaims(payload);
+    if (claimPermissions && payload?.tenantId) {
+      const allowed =
+        this.hasSuperAdminClaim(payload) ||
+        this.canAccessClaimPermissions(claimPermissions, rule);
+      if (allowed) {
+        this.cls.set('userId', String(payload?.userId ?? payload?.sub));
+        this.cls.set('email', payload?.email);
+        this.cls.set('tenantId', String(payload?.tenantId ?? ''));
+        this.cls.set('activeTenantId', String(payload?.tenantId ?? ''));
+        this.cls.set('user', payload);
+      }
+      return allowed;
     }
 
     const rawUserIdString = String(rawUserId);
@@ -116,5 +132,51 @@ export class PermissionGuard implements CanActivate {
     const value = request.headers?.[name];
     if (Array.isArray(value)) return value[0];
     return value;
+  }
+
+  private extractEffectivePermissionClaims(payload: any): Set<string> | null {
+    const direct =
+      payload?.effectivePermissions ??
+      payload?.permissions ??
+      payload?.authorization?.permissions;
+
+    if (!Array.isArray(direct) || direct.length === 0) {
+      return null;
+    }
+
+    const permissions = direct
+      .map((permission) => {
+        if (typeof permission === 'string') return permission;
+        if (typeof permission?.rsname === 'string' && permission?.scopes) {
+          return permission.scopes.map(
+            (scope: string) => `${permission.rsname}:${scope}`,
+          );
+        }
+        return null;
+      })
+      .flat()
+      .filter((permission): permission is string => !!permission);
+
+    return permissions.length > 0 ? new Set(permissions) : null;
+  }
+
+  private canAccessClaimPermissions(
+    effectivePermissions: Set<string>,
+    rule: PermissionRuleMetadata,
+  ): boolean {
+    const permissionKey = getPermissionKey(rule.action, rule.resource);
+    return permissionKey ? effectivePermissions.has(permissionKey) : false;
+  }
+
+  private hasSuperAdminClaim(payload: any): boolean {
+    const roles = [
+      ...(payload?.realm_access?.roles ?? []),
+      ...Object.values(payload?.resource_access ?? {}).flatMap(
+        (resource: any) => resource?.roles ?? [],
+      ),
+      ...(payload?.roles ?? []),
+    ].map(String);
+
+    return roles.includes(PlatformRoleEnum.SUPER_ADMIN);
   }
 }

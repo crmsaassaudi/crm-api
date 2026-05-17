@@ -38,10 +38,20 @@ export class SsrfGuardService {
   }> = [
     { network: this.ipToInt('127.0.0.0'), mask: 8, label: 'loopback' },
     { network: this.ipToInt('10.0.0.0'), mask: 8, label: 'private-A' },
+    {
+      network: this.ipToInt('100.64.0.0'),
+      mask: 10,
+      label: 'carrier-grade-nat',
+    },
     { network: this.ipToInt('172.16.0.0'), mask: 12, label: 'private-B' },
     { network: this.ipToInt('192.168.0.0'), mask: 16, label: 'private-C' },
+    { network: this.ipToInt('192.0.0.0'), mask: 24, label: 'ietf-protocol' },
     { network: this.ipToInt('169.254.0.0'), mask: 16, label: 'link-local' },
+    { network: this.ipToInt('198.18.0.0'), mask: 15, label: 'benchmark' },
+    { network: this.ipToInt('224.0.0.0'), mask: 4, label: 'multicast' },
+    { network: this.ipToInt('240.0.0.0'), mask: 4, label: 'reserved' },
     { network: this.ipToInt('0.0.0.0'), mask: 8, label: 'default-route' },
+    { network: this.ipToInt('255.255.255.255'), mask: 32, label: 'broadcast' },
   ];
 
   /**
@@ -78,10 +88,14 @@ export class SsrfGuardService {
     }
 
     const hostname = parsed.hostname;
+    if (!hostname) {
+      return { safe: false, reason: 'Invalid URL: hostname is required' };
+    }
 
     // ── Step 2: Check if hostname is a raw IP ───────────────────────────
-    if (isIP(hostname)) {
-      const blocked = this.isBlockedIp(hostname);
+    const normalizedIp = this.normalizeIp(hostname);
+    if (normalizedIp) {
+      const blocked = this.isBlockedIp(normalizedIp);
       if (blocked) {
         return {
           safe: false,
@@ -131,10 +145,12 @@ export class SsrfGuardService {
    * @returns The range label if blocked, or null if safe
    */
   private isBlockedIp(ip: string): string | null {
-    const version = isIP(ip);
+    const normalizedIp = this.normalizeIp(ip);
+    if (!normalizedIp) return 'invalid-ip';
+    const version = isIP(normalizedIp);
 
     if (version === 4) {
-      const ipInt = this.ipToInt(ip);
+      const ipInt = this.ipToInt(normalizedIp);
       for (const range of this.BLOCKED_IPV4_RANGES) {
         const maskBits = 0xffffffff << (32 - range.mask);
         if ((ipInt & maskBits) === (range.network & maskBits)) {
@@ -142,11 +158,23 @@ export class SsrfGuardService {
         }
       }
     } else if (version === 6) {
-      const normalized = ip.toLowerCase();
+      const normalized = normalizedIp.toLowerCase();
       if (normalized === '::1') return 'ipv6-loopback';
       for (const prefix of this.BLOCKED_IPV6_PREFIXES) {
         if (normalized.startsWith(prefix)) return `ipv6-${prefix}`;
       }
+    }
+
+    return null;
+  }
+
+  private normalizeIp(hostnameOrIp: string): string | null {
+    const trimmed = hostnameOrIp.trim().replace(/^\[|\]$/g, '');
+    if (isIP(trimmed)) return trimmed;
+
+    const ipv4Mapped = trimmed.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+    if (ipv4Mapped && isIP(ipv4Mapped[1]) === 4) {
+      return ipv4Mapped[1];
     }
 
     return null;

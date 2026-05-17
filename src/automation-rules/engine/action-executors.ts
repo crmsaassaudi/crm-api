@@ -483,6 +483,7 @@ export class UpdateFieldExecutor implements ActionExecutor {
       value,
       sourceWorkflowId: job.sourceWorkflowId,
       automationDepth: job.automationDepth,
+      automationBreadcrumbs: job.automationBreadcrumbs,
     });
 
     if (!result.success) {
@@ -550,6 +551,7 @@ export class RouteToTeamExecutor implements ActionExecutor {
         value: userId,
         sourceWorkflowId: job.sourceWorkflowId,
         automationDepth: job.automationDepth,
+        automationBreadcrumbs: job.automationBreadcrumbs,
       });
 
       if (!result.success) {
@@ -605,6 +607,7 @@ export class RouteToTeamExecutor implements ActionExecutor {
         value: assignResult.ownerId,
         sourceWorkflowId: job.sourceWorkflowId,
         automationDepth: job.automationDepth,
+        automationBreadcrumbs: job.automationBreadcrumbs,
       });
 
       if (!updateResult.success) {

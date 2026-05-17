@@ -1,5 +1,5 @@
 services:
-  crm-api:
+  api-service:
     build:
       context: .
       dockerfile: Dockerfile
@@ -12,15 +12,41 @@ services:
       APP_PORT: 3000
       REDIS_HOST: host.docker.internal
       REDIS_PORT: 6379
+      REDIS_CACHE_DB: 0
+      REDIS_QUEUE_DB: 1
+    command: ['npm', 'run', 'start:api:prod']
     ports:
-      - "127.0.0.1:3000:3000"
+      - '127.0.0.1:3000:3000'
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - 'host.docker.internal:host-gateway'
     volumes:
       - ./files:/usr/src/app/files
     networks:
       crm_api_net:
         ipv4_address: 172.25.0.10
+
+  worker-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crm-api-worker
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
+      REDIS_CACHE_DB: 0
+      REDIS_QUEUE_DB: 1
+    command: ['npm', 'run', 'start:worker:prod']
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - ./files:/usr/src/app/files
+    networks:
+      crm_api_net:
+        ipv4_address: 172.25.0.11
 
 networks:
   crm_api_net:

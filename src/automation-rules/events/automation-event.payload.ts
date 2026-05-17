@@ -44,6 +44,12 @@ export interface AutomationEventPayload {
   automationDepth?: number;
 
   /**
+   * Workflow IDs already visited in this automation chain.
+   * Used to block A -> B -> A loops across workers/processes.
+   */
+  automationBreadcrumbs?: string[];
+
+  /**
    * When true, this update was triggered by the Automation Engine itself.
    * The listener uses this to avoid re-triggering the *same* workflow
    * that caused the update (self-loop prevention).

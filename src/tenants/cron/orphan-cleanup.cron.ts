@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { KeycloakAdminService } from '../../auth/services/keycloak-admin.service';
+import { RedisLockService } from '../../redis/redis-lock.service';
 
 /**
  * Orphan Cleanup Cron
@@ -25,10 +26,31 @@ export class OrphanCleanupCron {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly keycloakAdminService: KeycloakAdminService,
+    private readonly lockService: RedisLockService,
   ) {}
 
   @Cron(CronExpression.EVERY_6_HOURS)
   async handleOrphanCleanup(): Promise<void> {
+    try {
+      await this.lockService.acquire(
+        'cron:tenant-onboarding:orphan-cleanup',
+        30 * 60 * 1000,
+        () => this.runCleanup(),
+        0,
+        1,
+      );
+    } catch (err: any) {
+      if (err?.message?.includes('Could not acquire lock')) {
+        this.logger.debug(
+          '[OrphanCleanup] Skipped; another worker owns this tick',
+        );
+        return;
+      }
+      throw err;
+    }
+  }
+
+  private async runCleanup(): Promise<void> {
     this.logger.log(
       '[OrphanCleanup] Starting scan for incomplete onboarding accounts…',
     );

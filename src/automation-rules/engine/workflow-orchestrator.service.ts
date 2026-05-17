@@ -68,6 +68,7 @@ export class WorkflowOrchestratorService {
     const workflowId = workflow._id.toString();
     const recordId = payload.recordId;
     const depth = payload.automationDepth ?? 0;
+    const breadcrumbs = payload.automationBreadcrumbs ?? [];
     const executionSessionId = uuid();
 
     this.logger.log(
@@ -89,6 +90,29 @@ export class WorkflowOrchestratorService {
       await this.executionLogRepo.blockExecution(execLog._id.toString(), {
         code: 'LOOP_DEPTH_EXCEEDED',
         message: depthCheck.reason!,
+      });
+      return;
+    }
+
+    const breadcrumbCheck = this.loopPrevention.checkBreadcrumbs({
+      workflowId,
+      breadcrumbs,
+    });
+    if (!breadcrumbCheck.allowed) {
+      this.logger.warn(
+        `[Orchestrator] BREADCRUMB_LOOP: ${breadcrumbCheck.reason}`,
+      );
+      const execLog = await this.executionLogRepo.startExecution({
+        tenantId,
+        workflowId,
+        workflowName: workflow.name,
+        recordId,
+        recordType: payload.object,
+        automationDepth: depth,
+      });
+      await this.executionLogRepo.blockExecution(execLog._id.toString(), {
+        code: 'LOOP_BREADCRUMB_DETECTED',
+        message: breadcrumbCheck.reason!,
       });
       return;
     }
@@ -381,6 +405,10 @@ export class WorkflowOrchestratorService {
         recordType: payload.object,
         recordData: payload.data,
         automationDepth: depth,
+        automationBreadcrumbs: this.appendBreadcrumb(
+          payload.automationBreadcrumbs,
+          workflowId,
+        ),
         sourceWorkflowId: workflowId,
       };
 
@@ -470,6 +498,10 @@ export class WorkflowOrchestratorService {
           recordId: payload.recordId,
           recordType: payload.object,
           automationDepth: depth,
+          automationBreadcrumbs: this.appendBreadcrumb(
+            payload.automationBreadcrumbs,
+            workflowId,
+          ),
           sourceWorkflowId: workflowId,
           executionSessionId,
         };
@@ -492,6 +524,13 @@ export class WorkflowOrchestratorService {
     step: ExecutionStep,
   ): Promise<void> {
     await this.executionLogRepo.logStep(executionId, step);
+  }
+
+  private appendBreadcrumb(
+    breadcrumbs: string[] | undefined,
+    workflowId: string,
+  ): string[] {
+    return [...new Set([...(breadcrumbs ?? []), workflowId])];
   }
 
   /**

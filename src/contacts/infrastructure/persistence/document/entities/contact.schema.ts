@@ -182,6 +182,14 @@ ContactSchema.index(
   { name: 'omni_identity_lookup' },
 );
 ContactSchema.index(
+  {
+    tenantId: 1,
+    'omniIdentities.channelType': 1,
+    'omniIdentities.senderId': 1,
+  },
+  { name: 'tenant_omni_identity_lookup' },
+);
+ContactSchema.index(
   { tenantId: 1, 'omniIdentities.senderId': 1 },
   { name: 'tenant_omni_sender' },
 );

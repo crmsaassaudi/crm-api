@@ -132,6 +132,15 @@ DealSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
 DealSchema.index({ omniConversationId: 1 }, { name: 'deal_omni_conversation' });
 DealSchema.index({ tenantId: 1, ownerId: 1 }, { name: 'tenant_owner_lookup' });
+DealSchema.index({ tenantId: 1, stageId: 1 }, { name: 'tenant_stage_lookup' });
+DealSchema.index(
+  { tenantId: 1, sourceId: 1 },
+  { name: 'tenant_source_lookup' },
+);
+DealSchema.index(
+  { tenantId: 1, createdAt: -1, _id: -1 },
+  { name: 'tenant_created_cursor' },
+);
 
 DealSchema.virtual('owner', {
   ref: 'UserSchemaClass',

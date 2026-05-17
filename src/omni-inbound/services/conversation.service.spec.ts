@@ -34,8 +34,9 @@ describe('ConversationService Concurrency', () => {
   beforeEach(async () => {
     // Mock Redis for idempotency check
     redisMock = {
-      get: jest.fn().mockResolvedValue(null),
       set: jest.fn().mockResolvedValue('OK'),
+      expire: jest.fn().mockResolvedValue(1),
+      del: jest.fn().mockResolvedValue(1),
     };
 
     // Mock RedisLockService: execute callback immediately
@@ -185,8 +186,12 @@ describe('ConversationService Concurrency', () => {
 
     await service.handleInboundMessage(payload);
 
-    expect(redisMock.get).toHaveBeenCalledWith(
+    expect(redisMock.set).toHaveBeenCalledWith(
       'omni:processed:tenant_1:msg_001',
+      '1',
+      'EX',
+      3600,
+      'NX',
     );
     expect(lockServiceMock.acquire).toHaveBeenCalledWith(
       'lock:inbound:tenant_1:channel_1:user_1',
@@ -203,22 +208,24 @@ describe('ConversationService Concurrency', () => {
       'tenant_1',
     );
     expect(messageRepoMock.create).toHaveBeenCalled();
-    expect(redisMock.set).toHaveBeenCalledWith(
+    expect(redisMock.expire).toHaveBeenCalledWith(
       'omni:processed:tenant_1:msg_001',
-      '1',
-      'EX',
       3600,
     );
   });
 
   it('should skip processing if idempotency check returns true in Redis', async () => {
-    redisMock.get.mockResolvedValueOnce('1'); // already processed
+    redisMock.set.mockResolvedValueOnce(null); // already processed
 
     const payload = createPayload('msg_001');
     await service.handleInboundMessage(payload);
 
-    expect(redisMock.get).toHaveBeenCalledWith(
+    expect(redisMock.set).toHaveBeenCalledWith(
       'omni:processed:tenant_1:msg_001',
+      '1',
+      'EX',
+      3600,
+      'NX',
     );
     expect(lockServiceMock.acquire).not.toHaveBeenCalled();
     expect(conversationRepoMock.create).not.toHaveBeenCalled();

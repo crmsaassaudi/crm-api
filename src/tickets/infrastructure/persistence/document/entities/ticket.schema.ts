@@ -222,6 +222,10 @@ TicketSchema.index(
   { name: 'tenant_sla_breached' },
 );
 TicketSchema.index(
+  { tenantId: 1, createdAt: -1, _id: -1 },
+  { name: 'tenant_created_cursor' },
+);
+TicketSchema.index(
   { omniConversationId: 1 },
   { name: 'ticket_omni_conversation' },
 );

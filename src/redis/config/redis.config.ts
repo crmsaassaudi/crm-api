@@ -25,16 +25,55 @@ class EnvironmentVariablesValidator {
   @IsInt()
   @IsOptional()
   REDIS_TTL: number;
+
+  @IsString()
+  @IsOptional()
+  REDIS_CACHE_URL: string;
+
+  @IsInt()
+  @IsOptional()
+  REDIS_CACHE_DB: number;
 }
 
 export default registerAs<RedisConfig>('redis', () => {
   validateConfig(process.env, EnvironmentVariablesValidator);
+  const url = process.env.REDIS_CACHE_URL || process.env.REDIS_URL;
+  const parsed = parseRedisUrl(url);
 
   return {
-    host: process.env.REDIS_HOST || 'localhost',
-    port: process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT, 10) : 6379,
-    password: process.env.REDIS_PASSWORD,
-    db: process.env.REDIS_DB ? parseInt(process.env.REDIS_DB, 10) : 0,
+    url,
+    host: parsed.host || process.env.REDIS_HOST || 'localhost',
+    port: parsed.port ?? parseInt(process.env.REDIS_PORT || '6379', 10),
+    password: parsed.password || process.env.REDIS_PASSWORD || undefined,
+    db:
+      parseOptionalInt(process.env.REDIS_CACHE_DB) ??
+      parsed.db ??
+      parseOptionalInt(process.env.REDIS_DB) ??
+      0,
     ttl: process.env.REDIS_TTL ? parseInt(process.env.REDIS_TTL, 10) : 86400, // 24 hours default
   };
 });
+
+function parseOptionalInt(value?: string): number | undefined {
+  if (!value) return undefined;
+  const parsed = parseInt(value, 10);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function parseRedisUrl(url?: string): Partial<RedisConfig> {
+  if (!url) return {};
+  try {
+    const parsed = new URL(url);
+    const db = parsed.pathname?.replace('/', '');
+    return {
+      host: parsed.hostname,
+      port: parsed.port ? parseInt(parsed.port, 10) : undefined,
+      password: parsed.password
+        ? decodeURIComponent(parsed.password)
+        : undefined,
+      db: db ? parseOptionalInt(db) : undefined,
+    };
+  } catch {
+    return {};
+  }
+}

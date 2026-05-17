@@ -28,8 +28,8 @@ export class LoopPreventionService {
   /** Layer 1: TTL for strict loop detection keys (seconds) */
   private readonly STRICT_TTL = 5;
 
-  /** Layer 2: Max cross-automation chain depth */
-  private readonly MAX_DEPTH = 5;
+  /** Layer 2: Max cross-automation chain depth. Depth 0-3 is allowed. */
+  private readonly MAX_DEPTH = 3;
 
   /** Layer 3: TTL for run-once keys (seconds) — 24 hours */
   private readonly RUN_ONCE_TTL = 86400;
@@ -85,7 +85,7 @@ export class LoopPreventionService {
     allowed: boolean;
     reason?: string;
   } {
-    if (depth >= this.MAX_DEPTH) {
+    if (depth > this.MAX_DEPTH) {
       this.logger.warn(
         `[Layer 2] LOOP_DEPTH_EXCEEDED: depth=${depth} max=${this.MAX_DEPTH}`,
       );
@@ -95,6 +95,28 @@ export class LoopPreventionService {
       };
     }
     return { allowed: true };
+  }
+
+  /**
+   * Block if a workflow appears twice in the same automation chain.
+   * Breadcrumbs travel in queue payloads, so this works across workers.
+   */
+  checkBreadcrumbs(params: { workflowId: string; breadcrumbs?: string[] }): {
+    allowed: boolean;
+    reason?: string;
+  } {
+    const breadcrumbs = params.breadcrumbs ?? [];
+    if (!breadcrumbs.includes(params.workflowId)) {
+      return { allowed: true };
+    }
+
+    this.logger.warn(
+      `[Layer 2] LOOP_BREADCRUMB_DETECTED: workflow=${params.workflowId} chain=${breadcrumbs.join('>')}`,
+    );
+    return {
+      allowed: false,
+      reason: `Workflow ${params.workflowId} already exists in automation chain`,
+    };
   }
 
   // ── Layer 3: Run Once Per Record ─────────────────────────────────────

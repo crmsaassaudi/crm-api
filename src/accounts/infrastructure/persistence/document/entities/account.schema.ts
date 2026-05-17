@@ -105,6 +105,15 @@ AccountSchema.index(
   { tenantId: 1, ownerId: 1 },
   { name: 'tenant_owner_lookup' },
 );
+AccountSchema.index(
+  { tenantId: 1, statusId: 1 },
+  { name: 'tenant_status_lookup' },
+);
+AccountSchema.index({ tenantId: 1, typeId: 1 }, { name: 'tenant_type_lookup' });
+AccountSchema.index(
+  { tenantId: 1, createdAt: -1, _id: -1 },
+  { name: 'tenant_created_cursor' },
+);
 
 AccountSchema.virtual('owner', {
   ref: 'UserSchemaClass',

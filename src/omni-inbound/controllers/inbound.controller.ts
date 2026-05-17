@@ -18,11 +18,8 @@ import { createHash } from 'crypto';
 import { Public } from 'nest-keycloak-connect';
 import { InboundProcessorService } from '../processors/inbound-processor.service';
 import { ChannelType } from '../domain/omni-payload';
-import { ChannelsService } from '../../channels/channels.service';
-import { ContactRepository } from '../../contacts/infrastructure/persistence/document/repositories/contact.repository';
 import {
   OMNI_WEBHOOK_QUEUE,
-  PRIORITY_VIP,
   PRIORITY_NORMAL,
 } from '../queue/omni-queue.constants';
 import { WebhookJobData } from '../queue/webhook-processor';
@@ -30,22 +27,20 @@ import { WebhookJobData } from '../queue/webhook-processor';
 /**
  * Webhook receiver for all messaging providers.
  *
- * URL pattern:  POST /omni/webhook/:channelType
+ * URL pattern: POST /omni/webhook/:channelType
  *
- * Instead of processing webhooks inline (which risks timeout under load),
- * this controller pushes each event to the BullMQ `omni-webhooks` queue
- * and immediately returns 200 OK to the provider.
+ * The hot path validates the signature, splits provider batches, enqueues the
+ * raw event, and returns 200 OK. Tenant/channel resolution and VIP checks run
+ * in the BullMQ worker so provider retries are not caused by database latency.
  */
 @Controller({ path: 'omni/webhook', version: '1' })
-@Public() // Webhooks are unauthenticated — validated via HMAC signatures
+@Public()
 export class InboundController {
   private readonly logger = new Logger(InboundController.name);
 
   constructor(
     private readonly processor: InboundProcessorService,
-    private readonly channelsService: ChannelsService,
     private readonly configService: ConfigService,
-    private readonly contactRepo: ContactRepository,
     @InjectQueue(OMNI_WEBHOOK_QUEUE) private readonly webhookQueue: Queue,
   ) {}
 
@@ -63,7 +58,7 @@ export class InboundController {
   ) {
     const expectedToken =
       this.configService.get('OMNI_VERIFY_TOKEN', { infer: true }) ||
-      'crm_omni_24';
+      'crm_omni_2026';
 
     if (mode === 'subscribe' && verifyToken === expectedToken) {
       this.logger.log(`Webhook verification for ${channelType}: SUCCESS`);
@@ -78,9 +73,6 @@ export class InboundController {
 
   /**
    * Receive inbound webhook events from any provider.
-   *
-   * Validates the signature, unwraps the batch, and pushes each
-   * individual event to the queue (fire-and-forget).
    */
   @Post(':channelType')
   @HttpCode(HttpStatus.OK)
@@ -91,90 +83,52 @@ export class InboundController {
   ) {
     this.logger.log(`Received ${channelType} webhook`);
 
-    // Validate the webhook signature
     const isValid = this.processor.validateWebhook(channelType, headers, body);
     if (!isValid) {
       this.logger.warn(`Invalid webhook signature for ${channelType}`);
       throw new BadRequestException('Invalid webhook signature');
     }
 
-    // Resolve context
-    const { tenantId, channelId, channelConfig } =
-      await this.resolveChannelData(channelType, body);
-
-    // Unwrap batch wrappers per-provider
     const events = this.unwrapEvents(channelType, body);
+    const accountId = this.extractAccountId(channelType, body);
 
-    // ── VIP Priority Routing ─────────────────────────────────────
-    // Check if any sender in this batch is a VIP customer.
-    // Uses a fast indexed lean query on the Contact collection.
-    let priority = PRIORITY_NORMAL;
-    try {
-      const senderIds = this.extractSenderIds(channelType, events);
-      for (const sid of senderIds) {
-        const isVIP = await this.contactRepo.isVIPSender(tenantId, sid);
-        if (isVIP) {
-          priority = PRIORITY_VIP;
-          this.logger.log(`VIP sender detected: ${sid} — using high priority`);
-          break; // One VIP is enough to prioritize the entire batch
-        }
-      }
-    } catch (err) {
-      this.logger.warn(
-        `VIP check failed, defaulting to normal priority: ${err.message}`,
-      );
-    }
-
-    // Push each event to the queue — non-blocking, returns 200 immediately
     const jobs = events.map((event, index) => ({
       name: 'process-webhook',
       data: {
         channelType,
         event,
-        tenantId,
-        channelId,
-        channelConfig,
+        accountId,
       } as WebhookJobData,
       opts: {
         jobId: this.buildDeterministicJobId(
-          tenantId,
           channelType,
-          channelId,
+          accountId,
           event,
           index,
         ),
-        priority,
+        priority: PRIORITY_NORMAL,
       },
     }));
 
     await this.webhookQueue.addBulk(jobs);
 
-    this.logger.log(
-      `Queued ${jobs.length} ${channelType} event(s) (priority=${priority})`,
-    );
+    this.logger.log(`Queued ${jobs.length} ${channelType} event(s)`);
     return { status: 'ok', queued: jobs.length };
   }
 
-  /**
-   * Each provider wraps individual message events in a different batch structure.
-   * This method peels off the wrapper and returns an array of per-event objects.
-   */
   private unwrapEvents(channelType: ChannelType, body: any): any[] {
     switch (channelType) {
       case 'facebook':
-        // FB: entry[].messaging[] — flatten all messaging arrays
         return (body.entry ?? []).flatMap(
           (entry: any) => entry.messaging ?? [],
         );
 
       case 'whatsapp':
-        // WA Cloud API: entry[].changes[].value (which contains messages[])
         return (body.entry ?? []).flatMap((entry: any) =>
           (entry.changes ?? []).map((change: any) => change.value),
         );
 
       case 'zalo':
-        // Zalo sends one event per request
         return [body];
 
       default:
@@ -182,63 +136,22 @@ export class InboundController {
     }
   }
 
-  /**
-   * Resolve tenant and channel ID from the webhook body identifiers.
-   */
-  private async resolveChannelData(
-    channelType: ChannelType,
-    body: any,
-  ): Promise<{ tenantId: string; channelId: string; channelConfig: any }> {
-    let accountId = '';
-
+  private extractAccountId(channelType: ChannelType, body: any): string {
     switch (channelType) {
       case 'facebook':
       case 'instagram':
-        accountId = body.entry?.[0]?.id; // Usually the page ID
-        break;
+        return body.entry?.[0]?.id ?? '';
       case 'whatsapp':
-        accountId =
-          body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
-        break;
+        return (
+          body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id ?? ''
+        );
       case 'zalo':
-        accountId = body.sender?.id; // Or whatever oa_id is
-        break;
+        return body.sender?.id ?? body.recipient?.id ?? body.oa_id ?? '';
       default:
-        break;
-    }
-
-    if (!accountId) {
-      this.logger.warn(
-        `Could not determine channel account ID from webhook body for type ${channelType}`,
-      );
-      throw new BadRequestException(
-        'Could not determine channel account ID from webhook',
-      );
-    }
-
-    const dbType = channelType.charAt(0).toUpperCase() + channelType.slice(1);
-    try {
-      const channel = await this.channelsService.findAnyByAccount(
-        dbType,
-        accountId,
-      );
-      return {
-        tenantId: channel.tenantId,
-        channelId: channel.id,
-        channelConfig: channel,
-      };
-    } catch {
-      this.logger.error(
-        `Channel not found for account ${accountId} (type: ${dbType})`,
-      );
-      throw new BadRequestException('Channel not found');
+        return '';
     }
   }
 
-  /**
-   * Extract sender IDs from unwrapped events for VIP lookup.
-   * Best-effort: returns an empty array if the structure is unexpected.
-   */
   private extractSenderIds(channelType: ChannelType, events: any[]): string[] {
     const ids = new Set<string>();
     for (const event of events) {
@@ -260,16 +173,15 @@ export class InboundController {
             break;
         }
       } catch {
-        // Skip malformed events
+        // Skip malformed events.
       }
     }
     return Array.from(ids);
   }
 
   private buildDeterministicJobId(
-    tenantId: string,
     channelType: ChannelType,
-    channelId: string,
+    accountId: string,
     event: any,
     index: number,
   ): string {
@@ -287,7 +199,7 @@ export class InboundController {
 
     return createHash('sha256')
       .update(
-        `${tenantId}:${channelType}:${channelId}:${senderId}:${providerMessageId}`,
+        `${channelType}:${accountId || 'unknown'}:${senderId}:${providerMessageId}`,
       )
       .digest('hex');
   }

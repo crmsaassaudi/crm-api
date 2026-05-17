@@ -62,7 +62,9 @@ export class ImapPollerService implements OnModuleDestroy {
   /** Lock TTL: max time a single poll can take before lock expires */
   private readonly LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes (handles large batches)
   /** Max emails to process per poll cycle (rest will be caught next cycle) */
-  private readonly MAX_BATCH_SIZE = 50;
+  private readonly MAX_BATCH_SIZE = 10;
+  /** Hard cap for raw RFC822 parsing until attachment streaming is implemented. */
+  private readonly MAX_RAW_EMAIL_BYTES = 15 * 1024 * 1024;
   /** Activity threshold: tenant is "idle" if no email in/out for 24h */
   private readonly ACTIVITY_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 
@@ -409,6 +411,7 @@ export class ImapPollerService implements OnModuleDestroy {
           labels: true,
         })) {
           messages.push(msg);
+          if (messages.length >= this.MAX_BATCH_SIZE) break;
         }
 
         if (messages.length === 0) {
@@ -530,6 +533,11 @@ export class ImapPollerService implements OnModuleDestroy {
 
     // ── Parse email using mailparser (proper MIME/QP/Base64 decoding) ──
     const rawSource = msg.source;
+    const rawSize = Buffer.isBuffer(rawSource)
+      ? rawSource.length
+      : rawSource
+        ? Buffer.byteLength(String(rawSource))
+        : 0;
     if (!rawSource) {
       this.logger.warn(
         `[ImapPoller] UID=${msg.uid}: No source data — skipping`,
@@ -537,9 +545,14 @@ export class ImapPollerService implements OnModuleDestroy {
       return;
     }
 
-    this.logger.log(
-      `[ImapPoller] UID=${msg.uid}: Parsing (${Buffer.isBuffer(rawSource) ? rawSource.length : 'unknown'} bytes)`,
-    );
+    if (rawSize > this.MAX_RAW_EMAIL_BYTES) {
+      this.logger.warn(
+        `[ImapPoller] UID=${msg.uid}: Raw email too large (${rawSize} bytes) - skipping to avoid OOM`,
+      );
+      return;
+    }
+
+    this.logger.log(`[ImapPoller] UID=${msg.uid}: Parsing (${rawSize} bytes)`);
     const parsed: ParsedMail = await simpleParser(rawSource, {
       skipImageLinks: true,
       skipHtmlToText: false,

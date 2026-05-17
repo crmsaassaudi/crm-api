@@ -251,8 +251,14 @@ export class ConversationService {
 
     // ── Step 1: Optimistic idempotency check (Redis) ──────────
     const idemKey = `omni:processed:${payload.tenantId}:${msgId}`;
-    const alreadyProcessed = await this.redis.get(idemKey);
-    if (alreadyProcessed) {
+    const idempotencyReserved = await this.redis.set(
+      idemKey,
+      '1',
+      'EX',
+      this.IDEM_TTL,
+      'NX',
+    );
+    if (!idempotencyReserved) {
       this.logger.debug(`Idempotency hit — skipping message ${msgId}`);
       return;
     }
@@ -270,6 +276,7 @@ export class ConversationService {
         this.logger.warn(`Duplicate message (race condition): ${msgId}`);
         return;
       }
+      await this.redis.del(idemKey).catch(() => undefined);
       this.logger.error(
         `Failed to handle inbound message: ${error.message}`,
         error.stack,
@@ -722,8 +729,8 @@ export class ConversationService {
       conversationId,
     );
 
-    // ── Step 7: Mark message as processed in Redis ────────────
-    await this.redis.set(idemKey, '1', 'EX', this.IDEM_TTL);
+    // ── Step 7: Refresh processed marker TTL ────────────
+    await this.redis.expire(idemKey, this.IDEM_TTL);
 
     this.logger.log(
       `Saved message ${payload.externalMessageId} ` +

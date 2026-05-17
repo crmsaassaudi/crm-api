@@ -9,6 +9,7 @@ import { ICryptoService, CRYPTO_SERVICE_TOKEN } from './domain/crypto.service';
 import { Inject } from '@nestjs/common';
 import { ChannelConfig } from './domain/channel-config';
 import { OAuth2TokenManager } from './services/oauth2-token-manager.service';
+import { RedisLockService } from '../redis/redis-lock.service';
 
 // ── Backoff intervals for adaptive health check ────────────────────────────
 const BACKOFF_INTERVALS_MS = [
@@ -58,6 +59,7 @@ export class ChannelHealthCheckService {
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
     private readonly oauth2TokenManager: OAuth2TokenManager,
+    private readonly lockService: RedisLockService,
   ) {}
 
   // ── Mode 1: Baseline Health Check (Every 6 Hours) ─────────────────────────
@@ -77,7 +79,25 @@ export class ChannelHealthCheckService {
       return;
     }
 
-    await this.executeHealthCheck();
+    try {
+      await this.lockService.acquire(
+        'cron:channel-health:baseline',
+        5 * 60 * 1000,
+        async () => {
+          await this.executeHealthCheck();
+        },
+        0,
+        1,
+      );
+    } catch (error: any) {
+      if (error?.message?.includes('Could not acquire lock')) {
+        this.logger.debug(
+          '[HealthCheck] Baseline skipped; another worker owns this tick',
+        );
+        return;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -181,6 +201,26 @@ export class ChannelHealthCheckService {
       return;
     }
 
+    try {
+      await this.lockService.acquire(
+        'cron:channel-health:adaptive',
+        55_000,
+        () => this.executeAdaptiveHealthCheck(),
+        0,
+        1,
+      );
+    } catch (error: any) {
+      if (error?.message?.includes('Could not acquire lock')) {
+        this.logger.debug(
+          '[AdaptiveCheck] Skipped; another worker owns this tick',
+        );
+        return;
+      }
+      this.logger.error(`[AdaptiveCheck] Error: ${error.message}`, error.stack);
+    }
+  }
+
+  private async executeAdaptiveHealthCheck(): Promise<void> {
     this.isAdaptiveRunning = true;
     try {
       const dueConfigs = await this.repository.findDueForAdaptiveCheck(
@@ -192,7 +232,6 @@ export class ChannelHealthCheckService {
         `[AdaptiveCheck] Processing ${dueConfigs.length} due config(s)`,
       );
 
-      // Rate-limited concurrent processing (max 10 concurrent verify calls)
       const results: Array<'passed' | 'failed' | 'skipped'> = [];
       for (
         let i = 0;
@@ -214,8 +253,6 @@ export class ChannelHealthCheckService {
       this.logger.log(
         `[AdaptiveCheck] Complete: ${passed} passed, ${failed} failed out of ${dueConfigs.length}`,
       );
-    } catch (error: any) {
-      this.logger.error(`[AdaptiveCheck] Error: ${error.message}`, error.stack);
     } finally {
       this.isAdaptiveRunning = false;
     }
