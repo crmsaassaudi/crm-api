@@ -36,6 +36,7 @@ type OAuthStatePayload = {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly refreshInflight = new Map<string, Promise<SessionData>>();
 
   constructor(
     @Inject(forwardRef(() => UsersService))
@@ -258,7 +259,50 @@ export class AuthService {
   // ─── Step 4: Token refresh ────────────────────────────────────────────────
 
   async refreshTokens(sid: string): Promise<SessionData> {
-    const session = await this.sessionService.getSession(sid);
+    const inflight = this.refreshInflight.get(sid);
+    if (inflight) {
+      return inflight;
+    }
+
+    const refreshPromise = this.refreshTokensOnce(sid).finally(() => {
+      this.refreshInflight.delete(sid);
+    });
+    this.refreshInflight.set(sid, refreshPromise);
+    return refreshPromise;
+  }
+
+  private async refreshTokensOnce(sid: string): Promise<SessionData> {
+    const redisClient = this.redisService.getClient();
+    const lockKey = `lock:auth:refresh:${sid}`;
+    const lockToken = uuidv4();
+    const acquired = await redisClient.set(
+      lockKey,
+      lockToken,
+      'PX',
+      10_000,
+      'NX',
+    );
+
+    if (!acquired) {
+      return this.waitForRefreshedSession(sid);
+    }
+
+    try {
+      return await this.performTokenRefresh(sid);
+    } finally {
+      try {
+        const currentToken = await redisClient.get(lockKey);
+        if (currentToken === lockToken) {
+          await redisClient.del(lockKey);
+        }
+      } catch {
+        // Lock cleanup failure is non-fatal; Redis TTL will release it.
+      }
+    }
+  }
+
+  private async performTokenRefresh(sid: string): Promise<SessionData> {
+    const session = await this.sessionService.getSessionFresh(sid);
     if (!session) {
       throw new UnauthorizedException('Session not found');
     }
@@ -316,6 +360,30 @@ export class AuthService {
       await this.sessionService.deleteSession(sid);
       throw new UnauthorizedException('Session expired — please log in again');
     }
+  }
+
+  private async waitForRefreshedSession(sid: string): Promise<SessionData> {
+    const deadline = Date.now() + 10_000;
+    let lastSession: SessionData | null = null;
+
+    while (Date.now() < deadline) {
+      lastSession = await this.sessionService.getSessionFresh(sid);
+      if (!lastSession) {
+        throw new UnauthorizedException('Session not found');
+      }
+
+      if (lastSession.expiresAt > Date.now() + 30_000) {
+        return lastSession;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    if (lastSession) {
+      return lastSession;
+    }
+
+    throw new UnauthorizedException('Session refresh timeout');
   }
 
   // ─── Step 5: Logout ───────────────────────────────────────────────────────

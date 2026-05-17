@@ -15,6 +15,8 @@ import { EmailChannelSettingsService } from './email-channel-settings.service';
 import { Inject } from '@nestjs/common';
 import { simpleParser, ParsedMail } from 'mailparser';
 import { OAuth2TokenManager } from './oauth2-token-manager.service';
+import { ClsService } from 'nestjs-cls';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 type MailboxLabelContext = {
   crmFolder: string | null;
@@ -72,6 +74,7 @@ export class ImapPollerService implements OnModuleDestroy {
     private readonly normalizer: EmailNormalizerService,
     private readonly emailSettings: EmailChannelSettingsService,
     private readonly oauth2TokenManager: OAuth2TokenManager,
+    private readonly cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(CRYPTO_SERVICE_TOKEN)
     private readonly crypto: ICryptoService,
@@ -176,7 +179,9 @@ export class ImapPollerService implements OnModuleDestroy {
     const lastPollMs = lastPollStr ? parseInt(lastPollStr, 10) : 0;
 
     // Determine interval based on business hours + activity
-    const interval = await this.getDynamicInterval(config.tenantId);
+    const interval = await runWithTenantContext(this.cls, config.tenantId, () =>
+      this.getDynamicInterval(config.tenantId),
+    );
 
     // First poll ever for this config → run immediately; otherwise respect interval
     if (lastPollMs > 0) {
@@ -208,7 +213,9 @@ export class ImapPollerService implements OnModuleDestroy {
           this.logger.log(
             `[ImapPoller] ${config.name}: Lock acquired — starting pollMailbox`,
           );
-          await this.pollMailbox(config);
+          await runWithTenantContext(this.cls, config.tenantId, () =>
+            this.pollMailbox(config),
+          );
           // Record poll time
           await client.set(cacheKey, Date.now().toString(), 'PX', interval * 2);
           this.logger.log(
@@ -926,6 +933,7 @@ export class ImapPollerService implements OnModuleDestroy {
         'publicSettings.imapHost': { $exists: true, $ne: '' },
       })
         .select('+encryptedCredentials +accessToken +refreshToken')
+        .setOptions({ isPlatformQuery: true } as any)
         .lean();
 
       // .lean() strips Mongoose virtuals — add `id` from `_id`

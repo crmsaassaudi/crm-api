@@ -76,6 +76,18 @@ export class SessionService {
     return session;
   }
 
+  async getSessionFresh(sid: string): Promise<SessionData | null> {
+    const raw = await this.ioredis.get(`${SESSION_PREFIX}${sid}`);
+    if (!raw) {
+      this.lru.delete(sid);
+      return null;
+    }
+
+    const session: SessionData = JSON.parse(raw);
+    this.setLru(sid, session);
+    return session;
+  }
+
   async updateSession(
     sid: string,
     session: SessionData,

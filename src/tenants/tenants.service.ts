@@ -3,6 +3,7 @@ import {
   ConflictException,
   InternalServerErrorException,
   Logger,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { TenantsRepository } from './infrastructure/persistence/document/repositories/tenant.repository';
 import { TenantAliasReservationRepository } from './infrastructure/persistence/document/repositories/tenant-alias-reservation.repository';
@@ -554,6 +555,9 @@ export class TenantsService {
     dateFormat: string;
     currency: string;
   }> {
+    if (!tenantId) {
+      throw new UnprocessableEntityException('Tenant context missing');
+    }
     const tenant = await this.tenantsRepository.findById(tenantId);
     return tenant?.i18nSettings ?? { ...TenantsService.I18N_DEFAULTS };
   }
@@ -590,6 +594,9 @@ export class TenantsService {
    * Get the tenant profile (name, alias, logoUrl).
    */
   async getProfile(tenantId: string) {
+    if (!tenantId) {
+      throw new UnprocessableEntityException('Tenant context missing');
+    }
     const tenant = await this.tenantsRepository.findById(tenantId);
     return {
       tenantName: tenant?.name ?? '',

@@ -48,10 +48,11 @@ export class PermissionGuard implements CanActivate {
       return false;
     }
 
-    const user = /^[0-9a-fA-F]{24}$/.test(rawUserId)
-      ? await userRepository.findById(rawUserId)
+    const rawUserIdString = String(rawUserId);
+    const user = /^[0-9a-fA-F]{24}$/.test(rawUserIdString)
+      ? (await userRepository.findByIdsGlobal([rawUserIdString]))[0] || null
       : await userRepository.findByKeycloakIdAndProvider({
-          keycloakId: rawUserId,
+          keycloakId: rawUserIdString,
           provider: 'email',
         });
 
@@ -61,7 +62,10 @@ export class PermissionGuard implements CanActivate {
 
     const tenantHint =
       this.cls.get<string>('tenantId') ??
-      this.extractHeader(request, 'x-tenant-id') ??
+      request.tenantAlias ??
+      (process.env.NODE_ENV !== 'production'
+        ? this.extractHeader(request, 'x-tenant-id')
+        : undefined) ??
       payload?.tenantId ??
       user.tenants?.[0]?.tenantId;
 
@@ -69,14 +73,26 @@ export class PermissionGuard implements CanActivate {
       return false;
     }
 
-    const tenant = /^[0-9a-fA-F]{24}$/.test(tenantHint)
-      ? await tenantsRepository.findById(tenantHint)
-      : ((await tenantsRepository.findByAlias(tenantHint)) ??
-        (await tenantsRepository.findByKeycloakOrgId(tenantHint)));
+    const tenantHintString = String(tenantHint);
+    const tenant = /^[0-9a-fA-F]{24}$/.test(tenantHintString)
+      ? await tenantsRepository.findById(tenantHintString)
+      : ((await tenantsRepository.findByAlias(tenantHintString)) ??
+        (await tenantsRepository.findByKeycloakOrgId(tenantHintString)));
 
     if (!tenant) {
       return false;
     }
+
+    this.cls.set('userId', String(user.id));
+    this.cls.set('email', user.email ?? payload?.email);
+    this.cls.set('tenantId', String(tenant.id));
+    this.cls.set('activeTenantId', String(tenant.id));
+    this.cls.set('user', payload);
+    request.user = {
+      ...payload,
+      id: String(user.id),
+      userId: String(user.id),
+    };
 
     if (user.platformRole?.id === PlatformRoleEnum.SUPER_ADMIN) {
       return true;

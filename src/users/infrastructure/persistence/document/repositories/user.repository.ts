@@ -39,6 +39,20 @@ export class UsersDocumentRepository
     return false;
   }
 
+  protected applyTenantFilter(
+    filter: FilterQuery<UserSchemaDocument> = {},
+  ): FilterQuery<UserSchemaDocument> {
+    const tenantId = this.cls.get('tenantId');
+    if (!tenantId) {
+      return { ...filter };
+    }
+
+    return {
+      ...filter,
+      'tenants.tenantId': tenantId,
+    };
+  }
+
   async findManyWithPagination({
     filterOptions,
     sortOptions,
@@ -130,8 +144,7 @@ export class UsersDocumentRepository
   async findByIdsGlobal(ids: User['id'][]): Promise<User[]> {
     const userObjects = await this.model
       .find({ _id: { $in: ids.map(String) } })
-      .setOptions({ isPlatformQuery: true })
-      .select('firstName lastName email photo');
+      .setOptions({ isPlatformQuery: true });
     return userObjects.map((userObject) => UserMapper.toDomain(userObject));
   }
 
