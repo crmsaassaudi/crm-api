@@ -4,6 +4,7 @@ import { OMNI_WEBHOOK_QUEUE } from './omni-queue.constants';
 import { OMNI_MEDIA_CACHE_QUEUE } from './omni-media-queue.constants';
 import { OMNI_STICKY_RETRY_QUEUE } from './omni-sticky-queue.constants';
 import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
+import { BOT_PROCESSING_QUEUE } from './bot-processing-queue.constants';
 
 /**
  * Registers BullMQ queues for the omni-channel module:
@@ -11,6 +12,7 @@ import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
  *   - omni-media-cache: async media download & caching
  *   - omni-sticky-retry: delayed sticky-routing retry after wait-time
  *   - omni-auto-resolve: per-conversation delayed auto-resolve (replaces cron)
+ *   - bot-processing: async Typebot reply processing after inbound persistence
  *
  * Jobs are added by InboundController / ConversationService and
  * consumed by WebhookProcessor / MediaCacheProcessor / StickyRetryProcessor / AutoResolveProcessor.
@@ -51,6 +53,15 @@ import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
         defaultJobOptions: {
           attempts: 3,
           backoff: { type: 'exponential', delay: 10000 },
+          removeOnComplete: 100,
+          removeOnFail: 500,
+        },
+      },
+      {
+        name: BOT_PROCESSING_QUEUE,
+        defaultJobOptions: {
+          attempts: 8,
+          backoff: { type: 'exponential', delay: 1000 },
           removeOnComplete: 100,
           removeOnFail: 500,
         },

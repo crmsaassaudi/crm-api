@@ -428,15 +428,18 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
           senderName: payload.senderName,
           senderAvatarUrl: payload.senderAvatarUrl,
           senderType: payload.senderType,
+          direction: payload.direction,
           source: payload.source,
           messageType: payload.messageType,
           content: payload.content,
           messageId: payload.messageId,
+          status: payload.status,
           idempotencyKey: payload.idempotencyKey,
           clientMessageId: payload.clientMessageId,
           timestamp: payload.timestamp,
           providerTimestamp: payload.timestamp,
           createdAt: payload.createdAt || payload.timestamp || new Date(),
+          metadata: payload.metadata,
         });
     }
   }

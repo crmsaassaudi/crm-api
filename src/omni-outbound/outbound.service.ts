@@ -228,6 +228,7 @@ export class OutboundService {
           senderName: senderContext.name,
           senderAvatarUrl: senderContext.avatarUrl ?? undefined,
           senderType: 'agent',
+          direction: 'outbound',
           source,
           messageType,
           content,
@@ -344,6 +345,184 @@ export class OutboundService {
       if (reservedIdempotencyKey && outboundIdempotencyRedisKey) {
         await this.redis.del(outboundIdempotencyRedisKey);
       }
+      throw error;
+    }
+  }
+
+  /**
+   * Send a chatbot reply to the customer.
+   *
+   * The bot service never calls channel providers directly; it returns a reply
+   * plan and crm-api owns persistence, provider dispatch, and realtime events.
+   */
+  async sendBotMessage(params: {
+    tenantId: string;
+    conversationId: string;
+    content: string;
+    messageType?: string;
+    buttons?: Array<{ id?: string; label: string; value?: string }>;
+    idempotencyKey?: string;
+  }): Promise<any> {
+    const {
+      tenantId,
+      conversationId,
+      content,
+      messageType = 'text',
+      buttons,
+      idempotencyKey,
+    } = params;
+
+    if (idempotencyKey) {
+      const existing = await this.messageRepo.findByIdempotencyKey(
+        tenantId,
+        idempotencyKey,
+      );
+      if (existing && existing.status !== 'failed') {
+        return {
+          ok: true,
+          messageId: existing.id,
+          externalMessageId: existing.externalMessageId,
+          status: existing.status,
+          idempotencyKey,
+          reused: true,
+        };
+      }
+    }
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new Error(`Conversation ${conversationId} not found`);
+    }
+
+    let channel = await this.channelRepo.findByIdWithCredentials(
+      tenantId,
+      conversation.channelId.toString(),
+    );
+
+    if (!channel && (conversation as any).channelAccount) {
+      channel = await this.channelRepo.findByAccountWithCredentials(
+        tenantId,
+        conversation.channelType,
+        (conversation as any).channelAccount,
+      );
+    }
+
+    if (!channel) {
+      throw new Error(
+        `Channel for conversation ${conversationId} not found or disconnected`,
+      );
+    }
+
+    this.enforceReplyWindow(conversation);
+
+    const metadata = {
+      sender: {
+        id: 'bot:typebot',
+        name: 'Bot',
+        avatarUrl: null,
+        type: 'bot',
+      },
+      source: 'bot',
+      provider: 'typebot',
+      buttons: buttons ?? [],
+    };
+
+    let message;
+    try {
+      message = await this.messageRepo.create({
+        tenantId,
+        conversationId,
+        senderId: 'bot:typebot',
+        senderName: 'Bot',
+        senderType: 'bot',
+        direction: 'outbound',
+        source: 'bot',
+        messageType,
+        content,
+        status: 'sending',
+        idempotencyKey,
+        metadata,
+      });
+    } catch (error) {
+      if (idempotencyKey && (error as any)?.code === 11000) {
+        const existing = await this.messageRepo.findByIdempotencyKey(
+          tenantId,
+          idempotencyKey,
+        );
+        if (existing) {
+          return {
+            ok: true,
+            messageId: existing.id,
+            externalMessageId: existing.externalMessageId,
+            status: existing.status,
+            idempotencyKey,
+            reused: true,
+          };
+        }
+      }
+      throw error;
+    }
+
+    await this.conversationRepo.updateLastMessage(
+      conversationId,
+      content.substring(0, 200),
+      new Date(),
+      'bot',
+    );
+
+    try {
+      let adapterResponse: any = null;
+      const adapter = this.adapters.get(
+        conversation.channelType.toLowerCase() as ChannelType,
+      );
+      if (adapter) {
+        adapterResponse = await adapter.send(
+          conversation.customer.externalId,
+          content,
+          messageType,
+          { credentials: channel.credentials, account: channel.account },
+        );
+      }
+
+      const externalId =
+        (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
+      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
+
+      this.eventEmitter.emit('omni.message.sent', {
+        tenantId,
+        conversationId,
+        senderId: 'bot:typebot',
+        senderName: 'Bot',
+        senderAvatarUrl: null,
+        senderType: 'bot',
+        direction: 'outbound',
+        messageType,
+        content,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        timestamp: new Date().toISOString(),
+        source: 'bot',
+        transport: 'http',
+        metadata,
+      });
+
+      return {
+        ok: true,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        source: 'bot',
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to send bot message via provider: ${errorMessage}`,
+      );
+      await this.messageRepo.updateStatus(message.id, 'failed');
       throw error;
     }
   }
@@ -632,6 +811,7 @@ export class OutboundService {
         senderName: senderContext.name,
         senderAvatarUrl: senderContext.avatarUrl ?? undefined,
         senderType: 'agent',
+        direction: 'outbound',
         source: 'crm_api',
         messageType: 'text',
         content: snippet,

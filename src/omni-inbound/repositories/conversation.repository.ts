@@ -261,6 +261,60 @@ export class ConversationRepository {
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
+  async updateBotState(
+    id: string,
+    fields: Partial<{
+      enabled: boolean;
+      provider: string;
+      flowId: string | null;
+      sessionId: string | null;
+      status: 'active' | 'handoff' | 'ended';
+      lastError: string | null;
+      lockedAt: Date | null;
+    }>,
+  ): Promise<OmniConversation | null> {
+    const $set: Record<string, any> = {};
+    const $unset: Record<string, 1> = {};
+
+    for (const [key, value] of Object.entries(fields)) {
+      const path = `bot.${key}`;
+      if (value === null) {
+        $unset[path] = 1;
+      } else if (value !== undefined) {
+        $set[path] = value;
+      }
+    }
+
+    const update: Record<string, any> = {};
+    if (Object.keys($set).length > 0) update.$set = $set;
+    if (Object.keys($unset).length > 0) update.$unset = $unset;
+    if (Object.keys(update).length === 0) return this.findById(id);
+
+    const doc = await this.model
+      .findByIdAndUpdate(id, update, { new: true })
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  async markBotHandoff(id: string): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            'bot.enabled': false,
+            'bot.status': 'handoff',
+          },
+          $unset: {
+            'bot.lockedAt': 1,
+          },
+        },
+        { new: true },
+      )
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
   /**
    * Update status with metadata — captures who resolved/closed and when.
    * Also invalidates identity cache by emitting an event.

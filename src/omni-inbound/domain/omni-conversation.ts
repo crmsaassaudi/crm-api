@@ -1,6 +1,17 @@
 import { ChannelType } from './omni-payload';
 
 export type ConversationStatus = 'open' | 'pending' | 'resolved' | 'closed';
+export type BotConversationStatus = 'active' | 'handoff' | 'ended';
+
+export interface ConversationBotState {
+  enabled: boolean;
+  provider: string;
+  flowId?: string | null;
+  sessionId?: string | null;
+  status: BotConversationStatus;
+  lastError?: string | null;
+  lockedAt?: Date | null;
+}
 
 /**
  * Normalized conversation entity — aggregates messages from a single
@@ -41,6 +52,9 @@ export interface OmniConversation {
   claimedAt: Date | null;
 
   status: ConversationStatus;
+
+  /** Chatbot runtime state for async bot handoff/reply processing. */
+  bot?: ConversationBotState | null;
 
   /** Snippet of the last message for the chat list */
   lastMessage: string;

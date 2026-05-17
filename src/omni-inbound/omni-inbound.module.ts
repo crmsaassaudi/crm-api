@@ -42,6 +42,10 @@ import { WebhookProcessor } from './queue/webhook-processor';
 import { MediaCacheProcessor } from './queue/media-cache.processor';
 import { StickyRetryProcessor } from './queue/sticky-retry.processor';
 import { AutoResolveProcessor } from './queue/auto-resolve.processor';
+import { BotProcessingProcessor } from './bot/bot-processing.processor';
+import { BotApiService } from './bot/bot-api.service';
+import { BotConversationLockService } from './bot/bot-conversation-lock.service';
+import { BotQueueService } from './bot/bot-queue.service';
 
 // Repositories
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -99,6 +103,7 @@ const workerProviders = isWorkerRuntime()
       MediaCacheProcessor,
       StickyRetryProcessor,
       AutoResolveProcessor,
+      BotProcessingProcessor,
     ]
   : [];
 
@@ -195,6 +200,9 @@ const workerProviders = isWorkerRuntime()
 
     // ── Pillar 4: Webhook Queue ─────────────────────────────────────
     ...workerProviders,
+    BotQueueService,
+    BotApiService,
+    BotConversationLockService,
 
     // ── Pillar 5: Persistence ─────────────────────────────────────
     ConversationRepository,
@@ -244,6 +252,7 @@ const workerProviders = isWorkerRuntime()
     BusinessHoursService,
     AgentStatusAuditService,
     ConversationLockService,
+    BotQueueService,
   ],
 })
 export class OmniInboundModule {}

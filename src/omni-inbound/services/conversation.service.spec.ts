@@ -20,6 +20,7 @@ import { AssignmentService } from './assignment.service';
 import { AgentPresenceService } from './agent-presence.service';
 import { ChannelsService } from '../../channels/channels.service';
 import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
+import { BotQueueService } from '../bot/bot-queue.service';
 
 describe('ConversationService Concurrency', () => {
   let service: ConversationService;
@@ -133,6 +134,12 @@ describe('ConversationService Concurrency', () => {
           provide: ChannelsService,
           useValue: {
             findAnyByAccount: jest.fn().mockResolvedValue(null),
+          },
+        },
+        {
+          provide: BotQueueService,
+          useValue: {
+            enqueueInboundMessage: jest.fn().mockResolvedValue(undefined),
           },
         },
         { provide: IOREDIS_CLIENT, useValue: redisMock },

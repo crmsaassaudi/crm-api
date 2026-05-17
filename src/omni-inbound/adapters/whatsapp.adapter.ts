@@ -31,7 +31,12 @@ import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 export class WhatsAppAdapter implements ChannelAdapter {
   readonly channelType: ChannelType = 'whatsapp';
 
-  normalize(rawPayload: any, tenantId: string, channelId: string): OmniPayload {
+  normalize(
+    rawPayload: any,
+    tenantId: string,
+    channelId: string,
+    channelConfig?: any,
+  ): OmniPayload {
     const msg = rawPayload.messages?.[0];
     if (!msg) {
       throw new Error('WhatsApp webhook has no messages');
@@ -58,6 +63,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
         // For media: the WA media ID that must be fetched via Graph API
         mediaId: this.extractMediaId(msg),
         mimeType: this.extractMimeType(msg),
+        bot: this.resolveBotConfig(channelConfig),
       },
       externalMessageId: msg.id,
       externalConversationId: `${msg.from}_${rawPayload.metadata?.phone_number_id}`,
@@ -108,6 +114,13 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private extractMimeType(msg: any): string | null {
     if (msg.type === 'text' || msg.type === 'location') return null;
     return msg[msg.type]?.mime_type ?? null;
+  }
+
+  private resolveBotConfig(
+    channelConfig?: any,
+  ): Record<string, any> | undefined {
+    const config = channelConfig?.config ?? {};
+    return config.bot ?? config.typebot ?? undefined;
   }
 
   send(

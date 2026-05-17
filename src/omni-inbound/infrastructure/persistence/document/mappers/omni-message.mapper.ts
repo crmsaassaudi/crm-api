@@ -11,6 +11,7 @@ export class OmniMessageMapper {
       senderName: raw.senderName,
       senderAvatarUrl: raw.senderAvatarUrl,
       senderType: raw.senderType as any,
+      direction: raw.direction as any,
       source: raw.source,
       messageType: raw.messageType as any,
       content: raw.content,
@@ -38,6 +39,7 @@ export class OmniMessageMapper {
     raw.senderName = domain.senderName as string;
     raw.senderAvatarUrl = domain.senderAvatarUrl as string;
     raw.senderType = domain.senderType;
+    raw.direction = domain.direction as string;
     raw.source = domain.source as string;
     raw.messageType = domain.messageType;
     raw.content = domain.content;

@@ -5,7 +5,7 @@ export type ChannelType =
   | 'whatsapp'
   | 'livechat'
   | 'email';
-export type SenderType = 'customer' | 'agent' | 'system';
+export type SenderType = 'customer' | 'agent' | 'system' | 'bot';
 export type MessageType =
   | 'text'
   | 'image'

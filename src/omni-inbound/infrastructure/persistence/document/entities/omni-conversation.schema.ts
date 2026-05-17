@@ -7,6 +7,7 @@ export type OmniConversationDocument =
   HydratedDocument<OmniConversationSchemaClass>;
 
 const CONVERSATION_STATUSES = ['open', 'pending', 'resolved', 'closed'];
+const BOT_STATUSES = ['active', 'handoff', 'ended'];
 const CHANNEL_TYPES = [
   'facebook',
   'zalo',
@@ -117,6 +118,35 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
     index: true,
   })
   status: string;
+
+  /**
+   * Bot runtime state.
+   *
+   * Keep this object default-free in the schema. New records should receive
+   * application-level values from the conversation creation flow so old data is
+   * never silently backfilled with misleading runtime defaults.
+   */
+  @Prop({
+    type: {
+      enabled: { type: Boolean },
+      provider: { type: String },
+      flowId: { type: String },
+      sessionId: { type: String },
+      status: { type: String, enum: BOT_STATUSES },
+      lastError: { type: String },
+      lockedAt: { type: Date },
+    },
+    _id: false,
+  })
+  bot?: {
+    enabled: boolean;
+    provider: string;
+    flowId?: string | null;
+    sessionId?: string | null;
+    status: 'active' | 'handoff' | 'ended';
+    lastError?: string | null;
+    lockedAt?: Date | null;
+  };
 
   @Prop({ default: '' })
   lastMessage: string;

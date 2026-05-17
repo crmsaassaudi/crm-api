@@ -28,7 +28,12 @@ import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 export class ZaloAdapter implements ChannelAdapter {
   readonly channelType: ChannelType = 'zalo';
 
-  normalize(rawPayload: any, tenantId: string, channelId: string): OmniPayload {
+  normalize(
+    rawPayload: any,
+    tenantId: string,
+    channelId: string,
+    channelConfig?: any,
+  ): OmniPayload {
     const messageType = this.resolveMessageType(
       rawPayload.event_name,
       rawPayload.message,
@@ -51,6 +56,7 @@ export class ZaloAdapter implements ChannelAdapter {
         oaId: rawPayload.recipient?.id,
         // Keep raw attachment metadata for the media proxy
         attachmentMeta: rawPayload.message?.attachments?.[0]?.payload,
+        bot: this.resolveBotConfig(channelConfig),
       },
       externalMessageId: rawPayload.message?.msg_id ?? '',
       externalConversationId: `${rawPayload.sender.id}_${rawPayload.recipient?.id}`,
@@ -106,6 +112,13 @@ export class ZaloAdapter implements ChannelAdapter {
   private extractMediaUrl(message: any): string | null {
     const attachment = message?.attachments?.[0];
     return attachment?.payload?.url ?? attachment?.payload?.thumbnail ?? null;
+  }
+
+  private resolveBotConfig(
+    channelConfig?: any,
+  ): Record<string, any> | undefined {
+    const config = channelConfig?.config ?? {};
+    return config.bot ?? config.typebot ?? undefined;
   }
 
   send(

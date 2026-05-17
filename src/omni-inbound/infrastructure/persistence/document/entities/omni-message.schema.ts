@@ -5,7 +5,8 @@ import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.
 
 export type OmniMessageDocument = HydratedDocument<OmniMessageSchemaClass>;
 
-const SENDER_TYPES = ['customer', 'agent', 'system'];
+const SENDER_TYPES = ['customer', 'agent', 'system', 'bot'];
+const MESSAGE_DIRECTIONS = ['inbound', 'outbound', 'internal'];
 const MESSAGE_TYPES = [
   'text',
   'image',
@@ -60,6 +61,10 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
 
   @Prop({ required: true, enum: SENDER_TYPES })
   senderType: string;
+
+  /** Message traffic direction. Set by application logic for new records. */
+  @Prop({ enum: MESSAGE_DIRECTIONS })
+  direction?: string;
 
   /** Business origin of the outbound message, e.g. agent_ui, crm_api, bot, job, automation */
   @Prop({ type: String, index: true })

@@ -129,6 +129,7 @@ export class FacebookAdapter implements ChannelAdapter {
         replyTo: messaging.message?.reply_to,
         isEcho,
         accessToken: channelConfig?.credentials?.accessToken,
+        bot: this.resolveBotConfig(channelConfig),
       },
       externalMessageId: messaging.message?.mid ?? '',
       externalConversationId: `${consumerId}_${pageId}`,
@@ -173,6 +174,13 @@ export class FacebookAdapter implements ChannelAdapter {
   private extractMediaUrl(message: any): string | null {
     const attachment = message?.attachments?.[0];
     return attachment?.payload?.url ?? null;
+  }
+
+  private resolveBotConfig(
+    channelConfig?: any,
+  ): Record<string, any> | undefined {
+    const config = channelConfig?.config ?? {};
+    return config.bot ?? config.typebot ?? undefined;
   }
 
   async send(

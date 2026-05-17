@@ -1,4 +1,5 @@
-export type SenderType = 'customer' | 'agent' | 'system';
+export type SenderType = 'customer' | 'agent' | 'system' | 'bot';
+export type MessageDirection = 'inbound' | 'outbound' | 'internal';
 export type MessageType =
   | 'text'
   | 'image'
@@ -23,6 +24,7 @@ export interface OmniMessage {
   senderName?: string | null;
   senderAvatarUrl?: string | null;
   senderType: SenderType;
+  direction?: MessageDirection;
   source?: string | null;
   messageType: MessageType;
   content: string;

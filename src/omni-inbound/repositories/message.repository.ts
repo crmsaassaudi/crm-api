@@ -30,6 +30,16 @@ export class MessageRepository {
     return doc ? OmniMessageMapper.toDomain(doc) : null;
   }
 
+  async findByExternalId(
+    tenantId: string,
+    externalMessageId: string,
+  ): Promise<OmniMessage | null> {
+    const doc = await this.model
+      .findOne({ tenantId, externalMessageId })
+      .exec();
+    return doc ? OmniMessageMapper.toDomain(doc) : null;
+  }
+
   /**
    * Get messages for a conversation, paginated, most recent first (for chat scroll).
    */

@@ -36,6 +36,8 @@ import {
 } from '../repositories/conversation.repository';
 import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 import type { MediaCacheJobData } from '../queue/media-cache.processor';
+import { BotQueueService } from '../bot/bot-queue.service';
+import { ConversationBotState } from '../domain/omni-conversation';
 
 /**
  * ConversationService — listens to `omni.message.received` events and handles:
@@ -77,6 +79,7 @@ export class ConversationService {
     private readonly assignmentService: AssignmentService,
     private readonly agentPresenceService: AgentPresenceService,
     private readonly channelsService: ChannelsService,
+    private readonly botQueueService: BotQueueService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectQueue(OMNI_MEDIA_CACHE_QUEUE)
@@ -524,7 +527,11 @@ export class ConversationService {
             );
           }
         } catch (err) {
-          this.logger.warn(`Profile pre-enrichment skipped: ${err.message}`);
+          this.logger.warn(
+            `Profile pre-enrichment skipped: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
         }
       } else if (!identityResConfig.autoEnrichProfile) {
         this.logger.debug(
@@ -587,6 +594,7 @@ export class ConversationService {
         lastMessageAt: payload.timestamp,
         previousConversationId,
         reopenCount,
+        bot: this.resolveInitialBotState(payload.metadata?.bot),
       } as any);
 
       conversationId = conversation.id;
@@ -657,6 +665,7 @@ export class ConversationService {
       conversationId: conversationId,
       senderId: payload.senderId,
       senderType: payload.senderType,
+      direction: 'inbound',
       messageType: payload.messageType,
       content: payload.content,
       mediaUrl: payload.mediaUrl,
@@ -726,10 +735,57 @@ export class ConversationService {
       ...payload,
       conversationId,
       messageId: payload.externalMessageId,
+      internalMessageId: message.id,
     });
+
+    await this.enqueueBotProcessingIfNeeded(
+      payload,
+      conversationId,
+      message.id,
+    );
 
     // ── Step 8: Business Hours / OOO Auto-Reply ────────────────
     await this.handleBusinessHoursCheck(payload, conversationId);
+  }
+
+  private resolveInitialBotState(
+    botConfig: Record<string, any> | undefined,
+  ): ConversationBotState {
+    return {
+      enabled: Boolean(botConfig?.enabled),
+      provider: botConfig?.provider ?? 'typebot',
+      flowId: botConfig?.flowId ?? botConfig?.publicId ?? null,
+      sessionId: null,
+      status: 'active',
+      lastError: null,
+      lockedAt: null,
+    };
+  }
+
+  private async enqueueBotProcessingIfNeeded(
+    payload: OmniPayload,
+    conversationId: string,
+    inboundMessageId: string,
+  ): Promise<void> {
+    if (payload.senderType !== 'customer') return;
+    if (payload.messageType !== 'text') return;
+
+    try {
+      await this.botQueueService.enqueueInboundMessage({
+        tenantId: payload.tenantId,
+        org: payload.tenantId,
+        conversationId,
+        messageId: inboundMessageId,
+        text: payload.content,
+        channel: payload.channelType,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to enqueue bot job for inbound message ${inboundMessageId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -1196,9 +1252,10 @@ export class ConversationService {
 
       return contact.id;
     } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
       this.logger.error(
-        `Failed to create Shadow Contact for sender ${payload.senderId}: ${err.message}`,
-        err.stack ?? JSON.stringify(err),
+        `Failed to create Shadow Contact for sender ${payload.senderId}: ${error.message}`,
+        error.stack ?? JSON.stringify(err),
       );
       return null;
     }
@@ -1328,8 +1385,9 @@ export class ConversationService {
       }
     } catch (err) {
       // Non-fatal — don't block message processing if OOO check fails
+      const errorMessage = err instanceof Error ? err.message : String(err);
       this.logger.warn(
-        `Business hours check failed for conversation ${conversationId}: ${err.message}`,
+        `Business hours check failed for conversation ${conversationId}: ${errorMessage}`,
       );
     }
   }

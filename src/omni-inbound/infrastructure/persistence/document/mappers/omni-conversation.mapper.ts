@@ -51,6 +51,17 @@ export class OmniConversationMapper {
       claimedBy: claimedByIdStr,
       claimedAt: raw.claimedAt,
       status: raw.status as any,
+      bot: (raw as any).bot
+        ? {
+            enabled: Boolean((raw as any).bot.enabled),
+            provider: (raw as any).bot.provider ?? 'typebot',
+            flowId: (raw as any).bot.flowId ?? null,
+            sessionId: (raw as any).bot.sessionId ?? null,
+            status: (raw as any).bot.status ?? 'active',
+            lastError: (raw as any).bot.lastError ?? null,
+            lockedAt: (raw as any).bot.lockedAt ?? null,
+          }
+        : null,
       lastMessage: raw.lastMessage,
       lastMessageAt: raw.lastMessageAt,
       unreadCount: raw.unreadCount,
@@ -88,6 +99,7 @@ export class OmniConversationMapper {
     raw.claimedById = domain.claimedBy;
     raw.claimedAt = domain.claimedAt;
     raw.status = domain.status;
+    (raw as any).bot = domain.bot ?? undefined;
     raw.lastMessage = domain.lastMessage;
     raw.lastMessageAt = domain.lastMessageAt;
     raw.unreadCount = domain.unreadCount;
