@@ -6,6 +6,7 @@ import { TENANT_PROVISIONING_QUEUE } from './constants/queue.constants';
 import { OnboardingController } from './controllers/onboarding.controller';
 import { InternalTenantsController } from './controllers/internal-tenants.controller';
 import { OnboardingService } from './services/onboarding.service';
+import { CrmBotWorkspaceProvisioningService } from './services/crm-bot-workspace-provisioning.service';
 import { SampleDataSeederService } from './services/sample-data-seeder.service';
 import { TenantProvisioningProducer } from './workers/tenant-provisioning.producer';
 import { TenantProvisioningWorker } from './workers/tenant-provisioning.worker';
@@ -70,6 +71,7 @@ import {
   controllers: [OnboardingController, InternalTenantsController],
   providers: [
     OnboardingService,
+    CrmBotWorkspaceProvisioningService,
     SampleDataSeederService,
     TenantProvisioningProducer,
     ...(isWorkerRuntime() ? [TenantProvisioningWorker, OrphanCleanupCron] : []),
@@ -78,6 +80,7 @@ import {
     OnboardingService,
     TenantProvisioningProducer,
     SampleDataSeederService,
+    CrmBotWorkspaceProvisioningService,
   ],
 })
 export class OnboardingModule {}

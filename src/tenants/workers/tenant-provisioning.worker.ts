@@ -16,6 +16,7 @@ import { TenantAliasReservationRepository } from '../infrastructure/persistence/
 import { KeycloakAdminService } from '../../auth/services/keycloak-admin.service';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { RedisService } from '../../redis/redis.service';
+import { CrmBotWorkspaceProvisioningService } from '../services/crm-bot-workspace-provisioning.service';
 import { TenantCreatedEvent } from '../events/tenant-created.event';
 import {
   SubscriptionPlan,
@@ -30,7 +31,7 @@ import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 const PROVISIONING_KEY_PREFIX = 'provisioning:';
 const PROVISIONING_TTL = 86_400; // 24h
-const TOTAL_STEPS = 9;
+const TOTAL_STEPS = 10;
 
 const STEP_LABELS: Record<number, string> = {
   1: 'Reserving workspace name…',
@@ -40,8 +41,9 @@ const STEP_LABELS: Record<number, string> = {
   5: 'Creating your workspace…',
   6: 'Configuring user permissions…',
   7: 'Finalizing ownership…',
-  8: 'Confirming workspace…',
-  9: 'Seeding sample data…',
+  8: 'Creating bot workspace…',
+  9: 'Confirming workspace…',
+  10: 'Seeding sample data…',
 };
 
 @Processor(TENANT_PROVISIONING_QUEUE)
@@ -54,6 +56,7 @@ export class TenantProvisioningWorker extends WorkerHost {
     private readonly keycloakAdminService: KeycloakAdminService,
     private readonly userRepository: UserRepository,
     private readonly redisService: RedisService,
+    private readonly crmBotWorkspaceProvisioningService: CrmBotWorkspaceProvisioningService,
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService<AllConfigType>,
     private readonly cls: ClsService,
@@ -171,13 +174,22 @@ export class TenantProvisioningWorker extends WorkerHost {
       );
       await this.reportStep(provisioningId, 7);
 
-      // ── Step 8: Confirm alias reservation ─────────────────────────────
-      await this.aliasReservationRepository.confirm(data.alias);
+      // ── Step 8: Provision crm-bot Typebot workspace ───────────────────
+      await this.crmBotWorkspaceProvisioningService.provisionWorkspace({
+        tenantId: tenantId!,
+        ownerEmail: data.email,
+        ownerName: data.fullName,
+        tenantName: data.companyName,
+      });
       await this.reportStep(provisioningId, 8);
 
-      // ── Step 9: Seed sample data (placeholder for Phase 3) ────────────
-      // TODO: Implement sample data seeder based on data.useCase
+      // ── Step 9: Confirm alias reservation ─────────────────────────────
+      await this.aliasReservationRepository.confirm(data.alias);
       await this.reportStep(provisioningId, 9);
+
+      // ── Step 10: Seed sample data (placeholder for Phase 3) ───────────
+      // TODO: Implement sample data seeder based on data.useCase
+      await this.reportStep(provisioningId, 10);
 
       // ── Mark provisioning as READY ────────────────────────────────────
       await this.tenantsRepository.update(tenantId!, {
