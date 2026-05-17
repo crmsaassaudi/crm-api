@@ -15,27 +15,22 @@ export class ChannelRepository {
     private readonly model: Model<ChannelSchemaDocument>,
   ) {}
 
-  async findAll(tenant: string): Promise<Channel[]> {
-    const docs = await this.model
-      .find({ tenantId: tenant })
-      .sort({ name: 1 })
-      .exec();
+  async findAll(tenantId: string): Promise<Channel[]> {
+    const docs = await this.model.find({ tenantId }).sort({ name: 1 }).exec();
     return docs.map(ChannelMapper.toDomain);
   }
 
-  async findById(tenant: string, id: string): Promise<Channel | null> {
-    const doc = await this.model.findOne({ _id: id, tenantId: tenant }).exec();
+  async findById(tenantId: string, id: string): Promise<Channel | null> {
+    const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
   async findByAccount(
-    tenant: string,
+    tenantId: string,
     type: string,
     account: string,
   ): Promise<Channel | null> {
-    const doc = await this.model
-      .findOne({ tenantId: tenant, type, account })
-      .exec();
+    const doc = await this.model.findOne({ tenantId, type, account }).exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
@@ -52,23 +47,23 @@ export class ChannelRepository {
   }
 
   async findByAccountWithCredentials(
-    tenant: string,
+    tenantId: string,
     type: string,
     account: string,
   ): Promise<Channel | null> {
     const doc = await this.model
-      .findOne({ tenantId: tenant, type, account, status: 'Connected' })
+      .findOne({ tenantId, type, account, status: 'Connected' })
       .select('+credentials')
       .exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
   async findByIdWithCredentials(
-    tenant: string,
+    tenantId: string,
     id: string,
   ): Promise<Channel | null> {
     const doc = await this.model
-      .findOne({ _id: id, tenantId: tenant })
+      .findOne({ _id: id, tenantId })
       .select('+credentials')
       .exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
@@ -80,7 +75,7 @@ export class ChannelRepository {
   }
 
   async upsert(
-    tenant: string,
+    tenantId: string,
     type: string,
     account: string,
     data: Partial<Channel>,
@@ -89,8 +84,8 @@ export class ChannelRepository {
     delete updateData.tenantId;
     const doc = await this.model
       .findOneAndUpdate(
-        { tenantId: tenant, type, account },
-        { $set: { ...updateData, tenantId: tenant, type, account } },
+        { tenantId, type, account },
+        { $set: { ...updateData, tenantId, type, account } },
         { new: true, upsert: true, setDefaultsOnInsert: true },
       )
       .setOptions({ isPlatformQuery: true } as any)
@@ -103,24 +98,18 @@ export class ChannelRepository {
   }
 
   async update(
-    tenant: string,
+    tenantId: string,
     id: string,
     data: Partial<Channel>,
   ): Promise<Channel | null> {
     const doc = await this.model
-      .findOneAndUpdate(
-        { _id: id, tenantId: tenant },
-        { $set: data },
-        { new: true },
-      )
+      .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
       .exec();
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
-  async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model
-      .deleteOne({ _id: id, tenantId: tenant })
-      .exec();
+  async delete(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;
   }
 }

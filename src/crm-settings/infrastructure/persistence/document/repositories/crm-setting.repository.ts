@@ -15,15 +15,15 @@ export class CrmSettingRepository {
     private readonly model: Model<CrmSettingSchemaDocument>,
   ) {}
 
-  async findOne(tenant: string, key: string): Promise<CrmSetting | null> {
-    const doc = await this.model.findOne({ tenantId: tenant, key }).exec();
+  async findOne(tenantId: string, key: string): Promise<CrmSetting | null> {
+    const doc = await this.model.findOne({ tenantId, key }).exec();
     return doc ? CrmSettingMapper.toDomain(doc) : null;
   }
 
-  async update(tenant: string, key: string, value: any): Promise<CrmSetting> {
+  async update(tenantId: string, key: string, value: any): Promise<CrmSetting> {
     const doc = await this.model
       .findOneAndUpdate(
-        { tenantId: tenant, key },
+        { tenantId, key },
         { value },
         { upsert: true, new: true },
       )

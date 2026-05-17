@@ -5,7 +5,7 @@ export class RoutingRuleMapper {
   static toDomain(doc: RoutingRuleSchemaDocument): RoutingRule {
     const entity = new RoutingRule();
     entity.id = doc._id.toString();
-    entity.tenant = doc.tenant;
+    entity.tenantId = doc.tenantId?.toString();
     entity.name = doc.name;
     entity.priority = doc.priority;
     entity.matchType = doc.matchType;

@@ -16,12 +16,12 @@ export class CannedResponseRepository {
   ) {}
 
   async findAll(
-    tenant: string,
+    tenantId: string,
     userId: string,
     query?: { scope?: string; category?: string; search?: string },
   ): Promise<CannedResponse[]> {
     const filter: FilterQuery<CannedResponseSchemaClass> = {
-      tenantId: tenant,
+      tenantId,
       $or: [
         { scope: 'Public' },
         { scope: 'Private', createdById: userId },
@@ -36,8 +36,8 @@ export class CannedResponseRepository {
     return docs.map(CannedResponseMapper.toDomain);
   }
 
-  async findById(tenant: string, id: string): Promise<CannedResponse | null> {
-    const doc = await this.model.findOne({ _id: id, tenantId: tenant }).exec();
+  async findById(tenantId: string, id: string): Promise<CannedResponse | null> {
+    const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? CannedResponseMapper.toDomain(doc) : null;
   }
 
@@ -47,24 +47,18 @@ export class CannedResponseRepository {
   }
 
   async update(
-    tenant: string,
+    tenantId: string,
     id: string,
     data: Partial<CannedResponse>,
   ): Promise<CannedResponse | null> {
     const doc = await this.model
-      .findOneAndUpdate(
-        { _id: id, tenantId: tenant },
-        { $set: data },
-        { new: true },
-      )
+      .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
       .exec();
     return doc ? CannedResponseMapper.toDomain(doc) : null;
   }
 
-  async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model
-      .deleteOne({ _id: id, tenantId: tenant })
-      .exec();
+  async delete(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;
   }
 }

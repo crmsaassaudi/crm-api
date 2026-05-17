@@ -35,11 +35,6 @@ export abstract class BaseDocumentRepository<
     filter: FilterQuery<TSchema> = {},
   ): FilterQuery<TSchema> {
     let enriched: any = { ...filter };
-    const tenantId = this.cls.get('tenantId');
-    if (tenantId) {
-      enriched.tenantId = tenantId;
-    }
-
     // ── Data Visibility Filter ──────────────────────────────────────────────
     // visibleOwnerIds is set by DataVisibilityInterceptor:
     //   undefined → not evaluated (skip)

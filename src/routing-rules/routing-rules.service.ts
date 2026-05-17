@@ -15,37 +15,37 @@ export class RoutingRulesService {
   ) {}
 
   async findAll(): Promise<RoutingRule[]> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.findAll(tenant);
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.findAll(tenantId);
   }
 
   async findById(id: string): Promise<RoutingRule> {
-    const tenant = this.cls.get('tenantId');
-    const rule = await this.repository.findById(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const rule = await this.repository.findById(tenantId, id);
     if (!rule) throw new NotFoundException('Routing Rule not found');
     return rule;
   }
 
   async create(dto: CreateRoutingRuleDto): Promise<RoutingRule> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.create({ ...dto, tenant });
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.create({ ...dto, tenantId });
   }
 
   async update(id: string, dto: UpdateRoutingRuleDto): Promise<RoutingRule> {
-    const tenant = this.cls.get('tenantId');
-    const rule = await this.repository.update(tenant, id, dto);
+    const tenantId = this.cls.get('tenantId');
+    const rule = await this.repository.update(tenantId, id, dto);
     if (!rule) throw new NotFoundException('Routing Rule not found');
     return rule;
   }
 
   async delete(id: string): Promise<void> {
-    const tenant = this.cls.get('tenantId');
-    const deleted = await this.repository.delete(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const deleted = await this.repository.delete(tenantId, id);
     if (!deleted) throw new NotFoundException('Routing Rule not found');
   }
 
   async reorder(orderedIds: string[]): Promise<RoutingRule[]> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.reorder(tenant, orderedIds);
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.reorder(tenantId, orderedIds);
   }
 }

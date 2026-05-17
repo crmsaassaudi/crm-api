@@ -13,10 +13,10 @@ export class TagRepository {
   ) {}
 
   async findAll(
-    tenant: string,
+    tenantId: string,
     query?: { scope?: string; search?: string },
   ): Promise<Tag[]> {
-    const filter: FilterQuery<TagSchemaClass> = { tenantId: tenant };
+    const filter: FilterQuery<TagSchemaClass> = { tenantId };
     if (query?.scope) filter.scope = query.scope;
     if (query?.search) {
       filter.name = { $regex: query.search, $options: 'i' };
@@ -25,8 +25,8 @@ export class TagRepository {
     return docs.map(TagMapper.toDomain);
   }
 
-  async findById(tenant: string, id: string): Promise<Tag | null> {
-    const doc = await this.model.findOne({ _id: id, tenantId: tenant }).exec();
+  async findById(tenantId: string, id: string): Promise<Tag | null> {
+    const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? TagMapper.toDomain(doc) : null;
   }
 
@@ -36,24 +36,18 @@ export class TagRepository {
   }
 
   async update(
-    tenant: string,
+    tenantId: string,
     id: string,
     data: Partial<Tag>,
   ): Promise<Tag | null> {
     const doc = await this.model
-      .findOneAndUpdate(
-        { _id: id, tenantId: tenant },
-        { $set: data },
-        { new: true },
-      )
+      .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
       .exec();
     return doc ? TagMapper.toDomain(doc) : null;
   }
 
-  async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model
-      .deleteOne({ _id: id, tenantId: tenant })
-      .exec();
+  async delete(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;
   }
 }

@@ -88,12 +88,12 @@ export class IdentityService {
    * Resolve with a specific tenant (used in the refactored inbound flow).
    */
   async resolveIdentityForTenant(
-    tenant: string,
+    tenantId: string,
     platform: string,
     pageId: string,
     senderId: string,
   ): Promise<ResolvedIdentity> {
-    const key = this.buildKey(platform, pageId, senderId, tenant);
+    const key = this.buildKey(platform, pageId, senderId, tenantId);
     const legacyKey = this.buildKey(platform, pageId, senderId);
 
     // Step 1: Redis lookup
@@ -121,7 +121,7 @@ export class IdentityService {
 
     // Step 2: DB lookup with explicit tenant
     const conversation = await this.conversationRepo.findActiveByExternalId(
-      tenant,
+      tenantId,
       this.toSchemaChannelType(platform),
       pageId,
       senderId,
@@ -148,13 +148,13 @@ export class IdentityService {
     pageId: string,
     senderId: string,
     identity: ResolvedIdentity,
-    tenant?: string,
+    tenantId?: string,
   ): Promise<void> {
-    const key = this.buildKey(platform, pageId, senderId, tenant);
+    const key = this.buildKey(platform, pageId, senderId, tenantId);
     await this.setCache(key, identity);
 
     // Cleanup legacy key once tenant-aware key is used.
-    if (tenant) {
+    if (tenantId) {
       const legacyKey = this.buildKey(platform, pageId, senderId);
       await this.redis.del(legacyKey);
     }
@@ -170,11 +170,11 @@ export class IdentityService {
     platform: string,
     pageId: string,
     senderId: string,
-    tenant?: string,
+    tenantId?: string,
   ): Promise<void> {
-    const key = this.buildKey(platform, pageId, senderId, tenant);
+    const key = this.buildKey(platform, pageId, senderId, tenantId);
     const keys = [key];
-    if (tenant) {
+    if (tenantId) {
       keys.push(this.buildKey(platform, pageId, senderId));
     }
     await this.redis.del(...keys);
@@ -201,10 +201,10 @@ export class IdentityService {
     platform: string,
     pageId: string,
     senderId: string,
-    tenant?: string,
+    tenantId?: string,
   ): string {
-    return tenant
-      ? `omni:identity:${tenant}:${platform}:${pageId}:${senderId}`
+    return tenantId
+      ? `omni:identity:${tenantId}:${platform}:${pageId}:${senderId}`
       : `omni:identity:${platform}:${pageId}:${senderId}`;
   }
 

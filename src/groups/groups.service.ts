@@ -19,13 +19,13 @@ export class GroupsService {
   ) {}
 
   async findAll(query?: QueryGroupDto): Promise<Group[]> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.findAll(tenant, query);
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.findAll(tenantId, query);
   }
 
   async findById(id: string): Promise<Group> {
-    const tenant = this.cls.get('tenantId');
-    const group = await this.repository.findById(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const group = await this.repository.findById(tenantId, id);
     if (!group) throw new NotFoundException('Group not found');
     return group;
   }
@@ -45,9 +45,9 @@ export class GroupsService {
   }
 
   async update(id: string, dto: UpdateGroupDto): Promise<Group> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
     try {
-      const group = await this.repository.update(tenant, id, dto);
+      const group = await this.repository.update(tenantId, id, dto);
       if (!group) throw new NotFoundException('Group not found');
       return group;
     } catch (err: any) {
@@ -61,13 +61,13 @@ export class GroupsService {
   }
 
   async delete(id: string): Promise<void> {
-    const tenant = this.cls.get('tenantId');
-    const deleted = await this.repository.delete(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const deleted = await this.repository.delete(tenantId, id);
     if (!deleted) throw new NotFoundException('Group not found');
   }
 
   async addMember(groupId: string, userId: string): Promise<Group> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
 
     // Validate user belongs to this tenant before adding to group
     const user = await this.userRepository.findById(userId);
@@ -75,7 +75,7 @@ export class GroupsService {
       throw new NotFoundException('User not found');
     }
     const belongsToTenant = user.tenants?.some(
-      (t) => t.tenantId?.toString() === tenant.toString(),
+      (t) => t.tenantId?.toString() === tenantId.toString(),
     );
     if (!belongsToTenant) {
       throw new UnprocessableEntityException(
@@ -83,14 +83,14 @@ export class GroupsService {
       );
     }
 
-    const group = await this.repository.addMember(tenant, groupId, userId);
+    const group = await this.repository.addMember(tenantId, groupId, userId);
     if (!group) throw new NotFoundException('Group not found');
     return group;
   }
 
   async removeMember(groupId: string, userId: string): Promise<Group> {
-    const tenant = this.cls.get('tenantId');
-    const group = await this.repository.removeMember(tenant, groupId, userId);
+    const tenantId = this.cls.get('tenantId');
+    const group = await this.repository.removeMember(tenantId, groupId, userId);
     if (!group) throw new NotFoundException('Group not found');
     return group;
   }

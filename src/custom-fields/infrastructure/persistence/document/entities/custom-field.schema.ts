@@ -61,9 +61,9 @@ export const CustomFieldSchema = SchemaFactory.createForClass(
   CustomFieldSchemaClass,
 );
 
-CustomFieldSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
-CustomFieldSchema.index({ tenant: 1, module: 1 });
+CustomFieldSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+CustomFieldSchema.index({ tenantId: 1, module: 1 });
 CustomFieldSchema.index(
-  { tenant: 1, internalKey: 1, module: 1 },
+  { tenantId: 1, internalKey: 1, module: 1 },
   { unique: true },
 );

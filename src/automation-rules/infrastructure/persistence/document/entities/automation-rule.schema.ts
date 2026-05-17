@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
@@ -8,8 +8,13 @@ export type AutomationRuleSchemaDocument =
 
 @Schema({ timestamps: true, collection: 'automation_rules' })
 export class AutomationRuleSchemaClass extends EntityDocumentHelper {
-  @Prop({ required: true, index: true })
-  tenant: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TenantSchemaClass',
+    required: true,
+    index: true,
+  })
+  tenantId: string;
 
   @Prop({ required: true })
   name: string;
@@ -48,6 +53,6 @@ export const AutomationRuleSchema = SchemaFactory.createForClass(
   AutomationRuleSchemaClass,
 );
 
-AutomationRuleSchema.plugin(tenantFilterPlugin);
+AutomationRuleSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
-AutomationRuleSchema.index({ tenant: 1, name: 1 }, { unique: true });
+AutomationRuleSchema.index({ tenantId: 1, name: 1 }, { unique: true });

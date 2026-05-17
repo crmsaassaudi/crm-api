@@ -1,5 +1,11 @@
-import { Schema } from 'mongoose';
+import { Schema, Types } from 'mongoose';
 import { ClsServiceManager } from 'nestjs-cls';
+
+type TenantFilterPluginOptions = {
+  field?: string;
+  enforceDocumentWrites?: boolean;
+  protectTenantWrites?: boolean;
+};
 
 /**
  * Global Mongoose Plugin - Automatic Tenant Filtering.
@@ -17,9 +23,13 @@ import { ClsServiceManager } from 'nestjs-cls';
  */
 export function tenantFilterPlugin(
   schema: Schema,
-  options?: { field?: string },
+  options?: TenantFilterPluginOptions,
 ) {
-  const tenantField = options?.field || 'tenants.tenant';
+  const tenantField = options?.field || 'tenantId';
+  const enforceDocumentWrites =
+    options?.enforceDocumentWrites ?? !tenantField.includes('.');
+  const protectTenantWrites =
+    options?.protectTenantWrites ?? !tenantField.includes('.');
 
   const hooks = [
     'find',
@@ -41,6 +51,36 @@ export function tenantFilterPlugin(
   for (const hook of hooks) {
     schema.pre(hook as any, function () {
       applyTenantFilter(this, tenantField);
+      if (protectTenantWrites) {
+        protectTenantMutation(this, tenantField);
+      }
+    });
+  }
+
+  schema.pre('aggregate', function () {
+    applyTenantFilterToAggregate(this, tenantField, schema);
+  });
+
+  if (enforceDocumentWrites) {
+    schema.pre('save', function (next) {
+      try {
+        enforceTenantOnDocument(this, tenantField);
+        next();
+      } catch (error) {
+        next(error as Error);
+      }
+    });
+
+    schema.pre('insertMany', function (next, docs) {
+      try {
+        const documents = Array.isArray(docs) ? docs : [docs];
+        for (const doc of documents) {
+          enforceTenantOnPlainDocument(doc, tenantField);
+        }
+        next();
+      } catch (error) {
+        next(error as Error);
+      }
     });
   }
 }
@@ -100,6 +140,199 @@ function applyTenantFilter(query: any, tenantField: string) {
   query.setQuery(finalQuery);
 }
 
+function applyTenantFilterToAggregate(
+  aggregate: any,
+  tenantField: string,
+  schema: Schema,
+) {
+  if (aggregate.__tenantFiltered) {
+    return;
+  }
+
+  const opts = aggregate.options ?? {};
+  if (opts.isPlatformQuery === true) {
+    return;
+  }
+
+  if (opts.skipTenantFilter) {
+    throw new Error(
+      `[TenantPlugin] Refusing legacy skipTenantFilter on ${getQueryTarget(
+        aggregate,
+      )}. Use option({ isPlatformQuery: true }) for explicit platform-level aggregates.`,
+    );
+  }
+
+  const activeTenantId = getActiveTenantId(aggregate, tenantField);
+  const tenantMatchValue = castTenantForAggregate(
+    schema,
+    tenantField,
+    activeTenantId,
+  );
+  const tenantMatch = { $match: { [tenantField]: tenantMatchValue } };
+  const pipeline = aggregate.pipeline();
+  const firstStage = pipeline[0];
+
+  aggregate.__tenantFiltered = true;
+
+  if (firstStage?.$geoNear) {
+    firstStage.$geoNear.query = firstStage.$geoNear.query
+      ? {
+          $and: [
+            firstStage.$geoNear.query,
+            { [tenantField]: tenantMatchValue },
+          ],
+        }
+      : { [tenantField]: tenantMatchValue };
+    return;
+  }
+
+  if (firstStage?.$search || firstStage?.$vectorSearch) {
+    pipeline.splice(1, 0, tenantMatch);
+    return;
+  }
+
+  pipeline.unshift(tenantMatch);
+}
+
+function protectTenantMutation(query: any, tenantField: string) {
+  const opts = query.getOptions?.() ?? {};
+  if (opts.isPlatformQuery === true) {
+    return;
+  }
+
+  const update = query.getUpdate?.();
+  if (!update) {
+    return;
+  }
+
+  const activeTenantId = getActiveTenantId(query, tenantField);
+
+  if (Array.isArray(update)) {
+    if (containsTenantField(update, tenantField)) {
+      throwTenantMutationError(query, tenantField);
+    }
+    return;
+  }
+
+  if (!isPlainObject(update)) {
+    return;
+  }
+
+  if (!hasAtomicUpdateOperator(update)) {
+    enforceTenantOnPlainDocument(update, tenantField, activeTenantId);
+    query.setUpdate(update);
+    return;
+  }
+
+  for (const [operator, payload] of Object.entries(update)) {
+    if (!isPlainObject(payload)) {
+      continue;
+    }
+
+    if (operator === '$setOnInsert') {
+      update[operator] = stripTenantField(payload, tenantField);
+      continue;
+    }
+
+    if (operator === '$rename') {
+      const renameTouchesTenant = Object.entries(payload).some(
+        ([from, to]) => from === tenantField || to === tenantField,
+      );
+      if (renameTouchesTenant) {
+        throwTenantMutationError(query, tenantField);
+      }
+      continue;
+    }
+
+    if (containsTenantField(payload, tenantField)) {
+      throwTenantMutationError(query, tenantField);
+    }
+  }
+
+  if (opts.upsert === true && !tenantField.includes('.')) {
+    update.$setOnInsert = {
+      ...(isPlainObject(update.$setOnInsert) ? update.$setOnInsert : {}),
+      [tenantField]: activeTenantId,
+    };
+  }
+
+  query.setUpdate(update);
+}
+
+function enforceTenantOnDocument(doc: any, tenantField: string) {
+  if (doc?.$locals?.isPlatformQuery === true) {
+    return;
+  }
+
+  const activeTenantId = getActiveTenantId(doc, tenantField);
+  const currentValue =
+    typeof doc.get === 'function' ? doc.get(tenantField) : doc[tenantField];
+
+  if (isMissingValue(currentValue)) {
+    doc.set?.(tenantField, activeTenantId);
+    if (typeof doc.set !== 'function') {
+      doc[tenantField] = activeTenantId;
+    }
+    return;
+  }
+
+  assertTenantValueMatches(currentValue, activeTenantId, doc, tenantField);
+}
+
+function enforceTenantOnPlainDocument(
+  doc: any,
+  tenantField: string,
+  activeTenantId?: string,
+) {
+  const tenantId = activeTenantId ?? getActiveTenantId(doc, tenantField);
+  const currentValue = doc?.[tenantField];
+
+  if (isMissingValue(currentValue)) {
+    doc[tenantField] = tenantId;
+    return;
+  }
+
+  assertTenantValueMatches(currentValue, tenantId, doc, tenantField);
+}
+
+function getActiveTenantId(target: any, tenantField: string): string {
+  let cls;
+  try {
+    cls = ClsServiceManager.getClsService();
+  } catch {
+    throwMissingTenantContext(
+      target,
+      tenantField,
+      'CLS service is unavailable',
+    );
+  }
+
+  const activeTenantId = cls.get('activeTenantId') || cls.get('tenantId');
+
+  if (!activeTenantId) {
+    throwMissingTenantContext(target, tenantField, 'activeTenantId is missing');
+  }
+
+  return String(activeTenantId);
+}
+
+function castTenantForAggregate(
+  schema: Schema,
+  tenantField: string,
+  activeTenantId: string,
+) {
+  const schemaPath = schema.path(tenantField);
+
+  if (
+    schemaPath?.instance === 'ObjectId' &&
+    Types.ObjectId.isValid(activeTenantId)
+  ) {
+    return new Types.ObjectId(activeTenantId);
+  }
+
+  return activeTenantId;
+}
+
 function throwMissingTenantContext(
   query: any,
   tenantField: string,
@@ -121,6 +354,66 @@ function getQueryTarget(query: any): string {
     query?.schema?.options?.collection ??
     'unknown collection'
   );
+}
+
+function throwTenantMutationError(query: any, tenantField: string): never {
+  throw new Error(
+    `[TenantPlugin] Refusing mutation of protected tenant field "${tenantField}" on ${getQueryTarget(
+      query,
+    )}. Tenant context is controlled by CLS only.`,
+  );
+}
+
+function hasAtomicUpdateOperator(update: Record<string, any>): boolean {
+  return Object.keys(update).some((key) => key.startsWith('$'));
+}
+
+function assertTenantValueMatches(
+  value: any,
+  activeTenantId: string,
+  target: any,
+  tenantField: string,
+) {
+  const values = Array.isArray(value) ? value : [value];
+  const hasMismatch = values.some(
+    (item) => !isMissingValue(item) && String(item) !== activeTenantId,
+  );
+
+  if (hasMismatch) {
+    throw new Error(
+      `[TenantPlugin] Cross-tenant write detected on ${getQueryTarget(
+        target,
+      )} (${tenantField}).`,
+    );
+  }
+}
+
+function containsTenantField(
+  value: any,
+  tenantField: string,
+  path = '',
+): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => containsTenantField(item, tenantField, path));
+  }
+
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  for (const [key, childValue] of Object.entries(value)) {
+    const nextPath = key.startsWith('$') ? path : path ? `${path}.${key}` : key;
+
+    if (nextPath === tenantField) {
+      return true;
+    }
+
+    if (containsTenantField(childValue, tenantField, nextPath)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function stripTenantField(value: any, tenantField: string, path = ''): any {
@@ -167,4 +460,8 @@ function isEmptyFilter(value: any): boolean {
   }
 
   return isPlainObject(value) && Object.keys(value).length === 0;
+}
+
+function isMissingValue(value: any): boolean {
+  return value === undefined || value === null || value === '';
 }

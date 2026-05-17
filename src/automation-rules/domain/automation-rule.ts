@@ -5,7 +5,7 @@ export class AutomationRule {
   id: string;
 
   @ApiProperty()
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'Auto-assign new tickets' })
   name: string;

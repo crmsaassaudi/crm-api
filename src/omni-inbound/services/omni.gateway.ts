@@ -129,14 +129,15 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       // ── Resolve tenantId ────────────────────────────────────────────
-      // Strategy: subdomain → user DB membership. No silent fallback.
+      // Strategy: subdomain or explicit token/handshake tenant. No membership guessing.
       let tenantId: string | null = null;
       const host = client.handshake.headers.host ?? '';
-      const hostWithoutPort = host.split(':')[0];
+      const hostWithoutPort = this.normalizeHost(host.split(':')[0]);
 
-      const rootDomain =
+      const rootDomain = this.normalizeHost(
         this.configService.get('app.rootDomain', { infer: true }) ??
-        'crmsaudi.dev';
+          'crmsaudi.dev',
+      );
 
       // 1. Try subdomain resolution (production: tenant.crmsaudi.dev)
       if (hostWithoutPort.endsWith(`.${rootDomain}`)) {
@@ -161,20 +162,48 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       }
 
-      // 2. Fallback: resolve from user's DB tenant membership (e.g. localhost)
-      if (!tenantId && dbUser?.tenants?.length > 0) {
-        tenantId = dbUser.tenants[0].tenantId?.toString() ?? null;
-        if (tenantId) {
-          this.logger.log(
-            `No subdomain (host=${host}) — resolved tenantId from user membership: ${tenantId}`,
-          );
+      // 2. Resolve only explicit tenant hints from token or non-production handshake.
+      if (!tenantId) {
+        const explicitTenantHint =
+          decoded.tenantId ??
+          decoded.tenant_id ??
+          (process.env.NODE_ENV !== 'production'
+            ? (client.handshake.auth?.tenantId ??
+              client.handshake.headers['x-tenant-id'])
+            : null);
+
+        if (typeof explicitTenantHint === 'string' && explicitTenantHint) {
+          if (/^[0-9a-fA-F]{24}$/.test(explicitTenantHint)) {
+            const tenant =
+              await this.tenantsService.findById(explicitTenantHint);
+            tenantId = tenant?.id ?? null;
+          } else {
+            const tenant =
+              await this.tenantsService.findByAlias(explicitTenantHint);
+            tenantId = tenant?.id ?? null;
+          }
         }
+      }
+
+      if (
+        tenantId &&
+        dbUser &&
+        !dbUser.tenants?.some(
+          (membership: any) =>
+            membership.tenantId?.toString() === tenantId?.toString(),
+        )
+      ) {
+        this.logger.warn(
+          `Client ${client.id} requested tenant ${tenantId} without membership. Disconnecting.`,
+        );
+        client.disconnect();
+        return;
       }
 
       // 3. No tenant resolved → reject connection
       if (!tenantId) {
         this.logger.warn(
-          `Client ${client.id} — cannot resolve tenantId (host=${host}, user=${userId}). Disconnecting.`,
+          `Client ${client.id} — cannot resolve explicit tenantId (host=${host}, user=${userId}). Disconnecting.`,
         );
         client.disconnect();
         return;
@@ -866,5 +895,9 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
       version: Date.now(),
       payload,
     };
+  }
+
+  private normalizeHost(host?: string): string {
+    return (host ?? '').toLowerCase().replace(/\.$/, '');
   }
 }

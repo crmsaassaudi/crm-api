@@ -36,7 +36,7 @@ describe('RoutingRulesService', () => {
         Object.assign(rule, data);
         return Promise.resolve(rule);
       }),
-      update: jest.fn().mockImplementation((tenant, id, dto) => {
+      update: jest.fn().mockImplementation((tenantId, id, dto) => {
         const rule = sampleRule();
         Object.assign(rule, dto);
         rule.id = id;
@@ -122,7 +122,7 @@ describe('RoutingRulesService', () => {
 
       expect(repositoryMock.create).toHaveBeenCalledWith({
         ...dto,
-        tenant: 'tenant_1',
+        tenantId: 'tenant_1',
       });
       expect(result).toBeDefined();
     });
@@ -213,7 +213,7 @@ describe('RoutingRulesService', () => {
         },
       });
       expect(repositoryMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({ tenant: 'tenant_1' }),
+        expect.objectContaining({ tenantId: 'tenant_1' }),
       );
 
       await service.delete('rule_1');

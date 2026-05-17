@@ -46,13 +46,13 @@ export class ChannelConfigService {
   // ── CRUD ────────────────────────────────────────────────────────────────
 
   async findAll(): Promise<ChannelConfig[]> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.findAllByTenant(tenant);
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.findAllByTenant(tenantId);
   }
 
   async findById(id: string): Promise<ChannelConfig> {
-    const tenant = this.cls.get('tenantId');
-    const config = await this.repository.findById(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const config = await this.repository.findById(tenantId, id);
     if (!config) throw new NotFoundException('Channel config not found');
     return config;
   }
@@ -62,7 +62,7 @@ export class ChannelConfigService {
   async verifyAndSave(
     dto: VerifyAndSaveChannelConfigDto,
   ): Promise<ChannelConfig> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
 
     // 1. Validate provider type exists in registry
     const schema = getProviderSchema(dto.providerType);
@@ -77,7 +77,7 @@ export class ChannelConfigService {
 
     // 3. Verify connection via adapter
     this.logger.log(
-      `[ChannelConfig] Verifying connection for ${dto.providerType} (tenant=${tenant})`,
+      `[ChannelConfig] Verifying connection for ${dto.providerType} (tenantId=${tenantId})`,
     );
     const result = await this.adapterRegistry.verify(
       dto.providerType,
@@ -98,7 +98,7 @@ export class ChannelConfigService {
 
     // 5. Save to DB
     const config = await this.repository.create({
-      tenantId: tenant,
+      tenantId,
       providerType: dto.providerType,
       name: dto.name,
       authType: dto.authType || 'app_password',
@@ -114,7 +114,7 @@ export class ChannelConfigService {
 
     // 6. If set as default, unset others
     if (dto.isDefault) {
-      await this.repository.setDefault(tenant, config.id, dto.providerType);
+      await this.repository.setDefault(tenantId, config.id, dto.providerType);
     }
 
     this.logger.log(
@@ -144,9 +144,12 @@ export class ChannelConfigService {
     id: string,
     dto: UpdateChannelConfigDto,
   ): Promise<ChannelConfig> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
 
-    const existing = await this.repository.findByIdWithCredentials(tenant, id);
+    const existing = await this.repository.findByIdWithCredentials(
+      tenantId,
+      id,
+    );
     if (!existing) throw new NotFoundException('Channel config not found');
 
     const updateData: Partial<ChannelConfig> = {};
@@ -190,7 +193,7 @@ export class ChannelConfigService {
       (updateData as any).nextHealthCheckAt = null;
     }
 
-    const updated = await this.repository.update(tenant, id, updateData);
+    const updated = await this.repository.update(tenantId, id, updateData);
     if (!updated) throw new NotFoundException('Channel config not found');
 
     // Invalidate TransportPool cache — event-driven invalidation
@@ -224,14 +227,14 @@ export class ChannelConfigService {
   async softDelete(
     id: string,
   ): Promise<{ deleted: boolean; warning?: string }> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
 
-    const config = await this.repository.findById(tenant, id);
+    const config = await this.repository.findById(tenantId, id);
     if (!config) throw new NotFoundException('Channel config not found');
 
     // Proactive Validation: Check if any active workflows reference this config
     const referencingWorkflows = await this.findWorkflowsUsingConfig(
-      tenant,
+      tenantId,
       id,
     );
 
@@ -245,7 +248,7 @@ export class ChannelConfigService {
 
     // Check draft-only references (allow with warning)
     const draftReferences = await this.findDraftWorkflowsUsingConfig(
-      tenant,
+      tenantId,
       id,
     );
     const warning =
@@ -254,7 +257,7 @@ export class ChannelConfigService {
           `They will need to be updated before publishing.`
         : undefined;
 
-    await this.repository.softDelete(tenant, id);
+    await this.repository.softDelete(tenantId, id);
 
     // Invalidate TransportPool cache — event-driven invalidation
     this.eventEmitter.emit('channel-config.deleted', {
@@ -279,12 +282,12 @@ export class ChannelConfigService {
   // ── Set Default ─────────────────────────────────────────────────────────
 
   async setDefault(id: string): Promise<ChannelConfig> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
 
-    const config = await this.repository.findById(tenant, id);
+    const config = await this.repository.findById(tenantId, id);
     if (!config) throw new NotFoundException('Channel config not found');
 
-    await this.repository.setDefault(tenant, id, config.providerType);
+    await this.repository.setDefault(tenantId, id, config.providerType);
 
     // Invalidate pool for all configs of this provider type (default flag changed)
     this.eventEmitter.emit('channel-config.updated', {
@@ -316,12 +319,12 @@ export class ChannelConfigService {
     affectedWorkflows: { id: string; name: string; nodeCount: number }[];
     compatibleConfigs: { id: string; name: string; providerType: string }[];
   }> {
-    const tenant = this.cls.get('tenantId');
-    const config = await this.repository.findById(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const config = await this.repository.findById(tenantId, id);
     if (!config) throw new NotFoundException('Channel config not found');
 
     // Find all active workflows referencing this config
-    const activeWorkflows = await this.findWorkflowsUsingConfig(tenant, id);
+    const activeWorkflows = await this.findWorkflowsUsingConfig(tenantId, id);
     const affectedWorkflows = activeWorkflows.map((w: any) => {
       const nodes = (w.publishedNodes || []).filter(
         (n: any) => n.type === 'action' && n.config?.configId === id,
@@ -334,7 +337,7 @@ export class ChannelConfigService {
     });
 
     // Find compatible fallback configs (same providerType, active, not this one)
-    const allConfigs = await this.repository.findAllByTenant(tenant);
+    const allConfigs = await this.repository.findAllByTenant(tenantId);
     const compatibleConfigs = allConfigs
       .filter(
         (c) =>
@@ -361,13 +364,13 @@ export class ChannelConfigService {
     sourceConfigId: string,
     targetConfigId: string,
   ): Promise<{ migratedWorkflows: number; deleted: boolean }> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
 
     // Validate both configs exist and belong to tenant
-    const source = await this.repository.findById(tenant, sourceConfigId);
+    const source = await this.repository.findById(tenantId, sourceConfigId);
     if (!source) throw new NotFoundException('Source config not found');
 
-    const target = await this.repository.findById(tenant, targetConfigId);
+    const target = await this.repository.findById(tenantId, targetConfigId);
     if (!target) throw new NotFoundException('Target config not found');
 
     if (target.status !== 'active') {
@@ -380,7 +383,7 @@ export class ChannelConfigService {
     let migratedCount = 0;
     try {
       migratedCount = await this.workflowRepository.replaceConfigIdInNodes(
-        tenant,
+        tenantId,
         sourceConfigId,
         targetConfigId,
       );
@@ -394,7 +397,7 @@ export class ChannelConfigService {
     }
 
     // Soft-delete the source config
-    await this.repository.softDelete(tenant, sourceConfigId);
+    await this.repository.softDelete(tenantId, sourceConfigId);
 
     // Invalidate pool cache
     this.eventEmitter.emit('channel-config.deleted', {

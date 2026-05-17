@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
@@ -8,7 +8,12 @@ export type EscalationPolicySchemaDocument =
 
 @Schema({ timestamps: true, collection: 'escalation_policies' })
 export class EscalationPolicySchemaClass extends EntityDocumentHelper {
-  @Prop({ required: true, index: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TenantSchemaClass',
+    required: true,
+    index: true,
+  })
   tenantId: string;
 
   @Prop({ required: true })

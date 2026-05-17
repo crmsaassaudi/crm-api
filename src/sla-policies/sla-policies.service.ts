@@ -16,13 +16,13 @@ export class SlaPoliciesService {
   ) {}
 
   async findAll(): Promise<SlaPolicy[]> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.findAll(tenant);
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.findAll(tenantId);
   }
 
   async findById(id: string): Promise<SlaPolicy> {
-    const tenant = this.cls.get('tenantId');
-    const policy = await this.repository.findById(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const policy = await this.repository.findById(tenantId, id);
     if (!policy) throw new NotFoundException('SLA Policy not found');
     return policy;
   }
@@ -42,9 +42,9 @@ export class SlaPoliciesService {
   }
 
   async update(id: string, dto: UpdateSlaPolicyDto): Promise<SlaPolicy> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
     try {
-      const policy = await this.repository.update(tenant, id, dto);
+      const policy = await this.repository.update(tenantId, id, dto);
       if (!policy) throw new NotFoundException('SLA Policy not found');
       return policy;
     } catch (error) {
@@ -58,8 +58,8 @@ export class SlaPoliciesService {
   }
 
   async delete(id: string): Promise<void> {
-    const tenant = this.cls.get('tenantId');
-    const deleted = await this.repository.delete(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const deleted = await this.repository.delete(tenantId, id);
     if (!deleted) throw new NotFoundException('SLA Policy not found');
   }
 }

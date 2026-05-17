@@ -19,13 +19,13 @@ export class EscalationPoliciesService {
   ) {}
 
   async findAll(): Promise<EscalationPolicy[]> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.findAll(tenant);
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.findAll(tenantId);
   }
 
   async findById(id: string): Promise<EscalationPolicy> {
-    const tenant = this.cls.get('tenantId');
-    const policy = await this.repository.findById(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const policy = await this.repository.findById(tenantId, id);
     if (!policy) throw new NotFoundException('Escalation Policy not found');
     return policy;
   }
@@ -48,9 +48,9 @@ export class EscalationPoliciesService {
     id: string,
     dto: UpdateEscalationPolicyDto,
   ): Promise<EscalationPolicy> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
     try {
-      const policy = await this.repository.update(tenant, id, dto);
+      const policy = await this.repository.update(tenantId, id, dto);
       if (!policy) throw new NotFoundException('Escalation Policy not found');
       return policy;
     } catch (error) {
@@ -64,8 +64,8 @@ export class EscalationPoliciesService {
   }
 
   async delete(id: string): Promise<void> {
-    const tenant = this.cls.get('tenantId');
-    const deleted = await this.repository.delete(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const deleted = await this.repository.delete(tenantId, id);
     if (!deleted) throw new NotFoundException('Escalation Policy not found');
   }
 }

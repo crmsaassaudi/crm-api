@@ -15,13 +15,16 @@ export class RoutingRuleRepository {
     private readonly model: Model<RoutingRuleSchemaDocument>,
   ) {}
 
-  async findAll(tenant: string): Promise<RoutingRule[]> {
-    const docs = await this.model.find({ tenant }).sort({ priority: 1 }).exec();
+  async findAll(tenantId: string): Promise<RoutingRule[]> {
+    const docs = await this.model
+      .find({ tenantId })
+      .sort({ priority: 1 })
+      .exec();
     return docs.map(RoutingRuleMapper.toDomain);
   }
 
-  async findById(tenant: string, id: string): Promise<RoutingRule | null> {
-    const doc = await this.model.findOne({ _id: id, tenant }).exec();
+  async findById(tenantId: string, id: string): Promise<RoutingRule | null> {
+    const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? RoutingRuleMapper.toDomain(doc) : null;
   }
 
@@ -31,37 +34,40 @@ export class RoutingRuleRepository {
   }
 
   async update(
-    tenant: string,
+    tenantId: string,
     id: string,
     data: Partial<RoutingRule>,
   ): Promise<RoutingRule | null> {
     const doc = await this.model
-      .findOneAndUpdate({ _id: id, tenant }, { $set: data }, { new: true })
+      .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
       .exec();
     return doc ? RoutingRuleMapper.toDomain(doc) : null;
   }
 
-  async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model.deleteOne({ _id: id, tenant }).exec();
+  async delete(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;
   }
 
-  async findEnabledByTenant(tenant: string): Promise<RoutingRule[]> {
+  async findEnabledByTenant(tenantId: string): Promise<RoutingRule[]> {
     const docs = await this.model
-      .find({ tenant, enabled: true })
+      .find({ tenantId, enabled: true })
       .sort({ priority: 1 })
       .exec();
     return docs.map(RoutingRuleMapper.toDomain);
   }
 
-  async reorder(tenant: string, orderedIds: string[]): Promise<RoutingRule[]> {
+  async reorder(
+    tenantId: string,
+    orderedIds: string[],
+  ): Promise<RoutingRule[]> {
     const bulkOps = orderedIds.map((id, index) => ({
       updateOne: {
-        filter: { _id: id, tenant },
+        filter: { _id: id, tenantId },
         update: { $set: { priority: index } },
       },
     }));
     await this.model.bulkWrite(bulkOps);
-    return this.findAll(tenant);
+    return this.findAll(tenantId);
   }
 }

@@ -15,13 +15,13 @@ export class AutomationRuleRepository {
     private readonly model: Model<AutomationRuleSchemaDocument>,
   ) {}
 
-  async findAll(tenant: string): Promise<AutomationRule[]> {
-    const docs = await this.model.find({ tenant }).sort({ name: 1 }).exec();
+  async findAll(tenantId: string): Promise<AutomationRule[]> {
+    const docs = await this.model.find({ tenantId }).sort({ name: 1 }).exec();
     return docs.map(AutomationRuleMapper.toDomain);
   }
 
-  async findById(tenant: string, id: string): Promise<AutomationRule | null> {
-    const doc = await this.model.findOne({ _id: id, tenant }).exec();
+  async findById(tenantId: string, id: string): Promise<AutomationRule | null> {
+    const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? AutomationRuleMapper.toDomain(doc) : null;
   }
 
@@ -31,18 +31,18 @@ export class AutomationRuleRepository {
   }
 
   async update(
-    tenant: string,
+    tenantId: string,
     id: string,
     data: Partial<AutomationRule>,
   ): Promise<AutomationRule | null> {
     const doc = await this.model
-      .findOneAndUpdate({ _id: id, tenant }, { $set: data }, { new: true })
+      .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
       .exec();
     return doc ? AutomationRuleMapper.toDomain(doc) : null;
   }
 
-  async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model.deleteOne({ _id: id, tenant }).exec();
+  async delete(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;
   }
 }

@@ -42,15 +42,7 @@ export class UsersDocumentRepository
   protected applyTenantFilter(
     filter: FilterQuery<UserSchemaDocument> = {},
   ): FilterQuery<UserSchemaDocument> {
-    const tenantId = this.cls.get('tenantId');
-    if (!tenantId) {
-      return { ...filter };
-    }
-
-    return {
-      ...filter,
-      'tenants.tenantId': tenantId,
-    };
+    return super.applyTenantFilter(filter);
   }
 
   async findManyWithPagination({

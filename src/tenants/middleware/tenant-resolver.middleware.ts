@@ -25,14 +25,15 @@ export class TenantResolverMiddleware implements NestMiddleware {
 
   constructor(configService: ConfigService<AllConfigType>) {
     // Read from config; fall back to the production root domain.
-    this.rootDomain =
-      configService.get('app.rootDomain', { infer: true }) ?? 'crmsaudi.dev';
+    this.rootDomain = this.normalizeHost(
+      configService.get('app.rootDomain', { infer: true }) ?? 'crmsaudi.dev',
+    );
   }
 
   private readonly SYSTEM_SUBDOMAINS = ['api', 'admin', 'auth', 'www', 'mail'];
 
   use(req: Request, _res: Response, next: NextFunction): void {
-    const host = req.hostname; // e.g. "toancorp.crmsaudi.dev" (strips port)
+    const host = this.normalizeHost(req.hostname); // e.g. "toancorp.crmsaudi.dev" (strips port)
 
     if (host && host.endsWith(`.${this.rootDomain}`)) {
       // Extract the leading subdomain segment
@@ -50,5 +51,9 @@ export class TenantResolverMiddleware implements NestMiddleware {
     }
 
     next();
+  }
+
+  private normalizeHost(host?: string): string {
+    return (host ?? '').toLowerCase().replace(/\.$/, '');
   }
 }

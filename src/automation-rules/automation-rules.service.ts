@@ -15,35 +15,35 @@ export class AutomationRulesService {
   ) {}
 
   async findAll(): Promise<AutomationRule[]> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.findAll(tenant);
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.findAll(tenantId);
   }
 
   async findById(id: string): Promise<AutomationRule> {
-    const tenant = this.cls.get('tenantId');
-    const rule = await this.repository.findById(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const rule = await this.repository.findById(tenantId, id);
     if (!rule) throw new NotFoundException('Automation Rule not found');
     return rule;
   }
 
   async create(dto: CreateAutomationRuleDto): Promise<AutomationRule> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.create({ ...dto, tenant });
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.create({ ...dto, tenantId });
   }
 
   async update(
     id: string,
     dto: UpdateAutomationRuleDto,
   ): Promise<AutomationRule> {
-    const tenant = this.cls.get('tenantId');
-    const rule = await this.repository.update(tenant, id, dto);
+    const tenantId = this.cls.get('tenantId');
+    const rule = await this.repository.update(tenantId, id, dto);
     if (!rule) throw new NotFoundException('Automation Rule not found');
     return rule;
   }
 
   async delete(id: string): Promise<void> {
-    const tenant = this.cls.get('tenantId');
-    const deleted = await this.repository.delete(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const deleted = await this.repository.delete(tenantId, id);
     if (!deleted) throw new NotFoundException('Automation Rule not found');
   }
 }

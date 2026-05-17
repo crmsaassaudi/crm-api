@@ -5,7 +5,7 @@ export class RoutingRule {
   id: string;
 
   @ApiProperty()
-  tenant: string;
+  tenantId: string;
 
   @ApiProperty({ example: 'Route VIP to Senior Team' })
   name: string;

@@ -15,42 +15,42 @@ export class CustomFieldRepository {
     private readonly model: Model<CustomFieldSchemaDocument>,
   ) {}
 
-  async findByTenant(tenant: string): Promise<CustomField[]> {
+  async findByTenant(tenantId: string): Promise<CustomField[]> {
     const docs = await this.model
-      .find({ tenant })
+      .find({ tenantId })
       .sort({ orderIndex: 1 })
       .exec();
     return docs.map(CustomFieldMapper.toDomain);
   }
 
-  async findByModule(tenant: string, module: string): Promise<CustomField[]> {
+  async findByModule(tenantId: string, module: string): Promise<CustomField[]> {
     const docs = await this.model
-      .find({ tenant, module })
+      .find({ tenantId, module })
       .sort({ orderIndex: 1 })
       .exec();
     return docs.map(CustomFieldMapper.toDomain);
   }
 
   async create(
-    tenant: string,
-    data: Omit<CustomField, 'id' | 'tenant' | 'createdAt' | 'updatedAt'>,
+    tenantId: string,
+    data: Omit<CustomField, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>,
   ): Promise<CustomField> {
-    const doc = await this.model.create({ tenant, ...data });
+    const doc = await this.model.create({ tenantId, ...data });
     return CustomFieldMapper.toDomain(doc);
   }
 
   async update(
-    tenant: string,
+    tenantId: string,
     id: string,
     data: Partial<CustomField>,
   ): Promise<CustomField | null> {
     const doc = await this.model
-      .findOneAndUpdate({ _id: id, tenant }, data, { new: true })
+      .findOneAndUpdate({ _id: id, tenantId }, data, { new: true })
       .exec();
     return doc ? CustomFieldMapper.toDomain(doc) : null;
   }
 
-  async delete(tenant: string, id: string): Promise<void> {
-    await this.model.deleteOne({ _id: id, tenant }).exec();
+  async delete(tenantId: string, id: string): Promise<void> {
+    await this.model.deleteOne({ _id: id, tenantId }).exec();
   }
 }

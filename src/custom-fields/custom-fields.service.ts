@@ -15,21 +15,21 @@ export class CustomFieldsService {
   ) {}
 
   getAll(): Promise<CustomField[]> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.findByTenant(tenant);
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.findByTenant(tenantId);
   }
 
   getByModule(module: string): Promise<CustomField[]> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.findByModule(tenant, module);
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.findByModule(tenantId, module);
   }
 
   async create(
-    data: Omit<CustomField, 'id' | 'tenant' | 'createdAt' | 'updatedAt'>,
+    data: Omit<CustomField, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>,
   ): Promise<CustomField> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
     try {
-      return await this.repository.create(tenant, data);
+      return await this.repository.create(tenantId, data);
     } catch (err: any) {
       if (err?.code === 11000) {
         throw new ConflictException(
@@ -41,8 +41,8 @@ export class CustomFieldsService {
   }
 
   async update(id: string, data: Partial<CustomField>): Promise<CustomField> {
-    const tenant = this.cls.get('tenantId');
-    const updated = await this.repository.update(tenant, id, data);
+    const tenantId = this.cls.get('tenantId');
+    const updated = await this.repository.update(tenantId, id, data);
     if (!updated) {
       throw new NotFoundException(`Custom field ${id} not found`);
     }
@@ -50,7 +50,7 @@ export class CustomFieldsService {
   }
 
   async remove(id: string): Promise<void> {
-    const tenant = this.cls.get('tenantId');
-    await this.repository.delete(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    await this.repository.delete(tenantId, id);
   }
 }

@@ -69,20 +69,24 @@ export class ChannelsService {
   ) {}
 
   async findAll(): Promise<Channel[]> {
-    const tenant = this.cls.get('tenantId');
-    return this.repository.findAll(tenant);
+    const tenantId = this.cls.get('tenantId');
+    return this.repository.findAll(tenantId);
   }
 
   async findById(id: string): Promise<Channel> {
-    const tenant = this.cls.get('tenantId');
-    const channel = await this.repository.findById(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const channel = await this.repository.findById(tenantId, id);
     if (!channel) throw new NotFoundException('Channel not found');
     return channel;
   }
 
   async findByAccount(type: string, account: string): Promise<Channel> {
-    const tenant = this.cls.get('tenantId');
-    const channel = await this.repository.findByAccount(tenant, type, account);
+    const tenantId = this.cls.get('tenantId');
+    const channel = await this.repository.findByAccount(
+      tenantId,
+      type,
+      account,
+    );
     if (!channel) throw new NotFoundException('Channel not found');
     return channel;
   }
@@ -251,17 +255,17 @@ export class ChannelsService {
   }
 
   async create(dto: CreateChannelDto): Promise<Channel> {
-    const tenant = this.cls.get('tenantId');
-    await this.assertChannelAccountAvailable(dto.type, dto.account, tenant);
+    const tenantId = this.cls.get('tenantId');
+    await this.assertChannelAccountAvailable(dto.type, dto.account, tenantId);
 
     // --- Upsert: nếu channel (tenant+type+account) đã tồn tại thì update, không tạo mới ---
     const { channel } = await this.repository.upsert(
-      tenant,
+      tenantId,
       dto.type,
       dto.account,
       {
         ...dto,
-        tenantId: tenant,
+        tenantId,
         status: 'Pending',
       },
     );
@@ -329,7 +333,7 @@ export class ChannelsService {
         );
 
         // Update channel với credentials, name và avatar thật
-        await this.repository.update(tenant, channel.id, {
+        await this.repository.update(tenantId, channel.id, {
           status: 'Connected',
           name: finalPageName,
           credentials: { ...dto.credentials, accessToken: finalAccessToken },
@@ -345,7 +349,7 @@ export class ChannelsService {
           'Failed to automated Meta channel setup:',
           err?.response?.data || err?.message,
         );
-        await this.repository.update(tenant, channel.id, { status: 'Error' });
+        await this.repository.update(tenantId, channel.id, { status: 'Error' });
         channel.status = 'Error';
       }
     }
@@ -354,15 +358,15 @@ export class ChannelsService {
   }
 
   async update(id: string, dto: UpdateChannelDto): Promise<Channel> {
-    const tenant = this.cls.get('tenantId');
-    const channel = await this.repository.update(tenant, id, dto);
+    const tenantId = this.cls.get('tenantId');
+    const channel = await this.repository.update(tenantId, id, dto);
     if (!channel) throw new NotFoundException('Channel not found');
     return channel;
   }
 
   async disconnect(id: string): Promise<Channel> {
-    const tenant = this.cls.get('tenantId');
-    const channel = await this.repository.findByIdWithCredentials(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const channel = await this.repository.findByIdWithCredentials(tenantId, id);
     if (!channel) throw new NotFoundException('Channel not found');
 
     if (
@@ -387,15 +391,15 @@ export class ChannelsService {
       }
     }
 
-    const updated = await this.repository.update(tenant, id, {
+    const updated = await this.repository.update(tenantId, id, {
       status: 'Disconnected',
     });
     return updated!;
   }
 
   async delete(id: string): Promise<void> {
-    const tenant = this.cls.get('tenantId');
-    const channel = await this.repository.findByIdWithCredentials(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const channel = await this.repository.findByIdWithCredentials(tenantId, id);
     if (!channel) throw new NotFoundException('Channel not found');
 
     // Attempt to disconnect first if it was connected
@@ -403,26 +407,26 @@ export class ChannelsService {
       await this.disconnect(id).catch(() => {});
     }
 
-    const deleted = await this.repository.delete(tenant, id);
+    const deleted = await this.repository.delete(tenantId, id);
     if (!deleted) throw new NotFoundException('Channel not found');
   }
 
   private async connectMetaChannel(
     metaChannel: MetaAvailableChannel,
   ): Promise<Channel> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
     await this.assertChannelAccountAvailable(
       metaChannel.type,
       metaChannel.accountId,
-      tenant,
+      tenantId,
     );
 
     const { channel } = await this.repository.upsert(
-      tenant,
+      tenantId,
       metaChannel.type,
       metaChannel.accountId,
       {
-        tenantId: tenant,
+        tenantId,
         type: metaChannel.type,
         name: metaChannel.name,
         account: metaChannel.accountId,
@@ -456,7 +460,7 @@ export class ChannelsService {
         );
       }
 
-      const updated = await this.repository.update(tenant, channel.id, {
+      const updated = await this.repository.update(tenantId, channel.id, {
         status: 'Connected',
         credentials: { accessToken: metaChannel.accessToken },
         config: {
@@ -473,7 +477,7 @@ export class ChannelsService {
         'Failed to connect Meta channel',
         error?.response?.data || error?.message || error,
       );
-      const updated = await this.repository.update(tenant, channel.id, {
+      const updated = await this.repository.update(tenantId, channel.id, {
         status: 'Error',
         config: {
           ...channel.config,
@@ -489,10 +493,10 @@ export class ChannelsService {
   private async assertChannelAccountAvailable(
     type: string,
     account: string,
-    tenant: string,
+    tenantId: string,
   ): Promise<void> {
     const existing = await this.repository.findAnyByAccount(type, account);
-    if (!existing || existing.tenantId?.toString() === tenant?.toString()) {
+    if (!existing || existing.tenantId?.toString() === tenantId?.toString()) {
       return;
     }
 

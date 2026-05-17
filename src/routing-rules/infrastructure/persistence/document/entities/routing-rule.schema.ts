@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
@@ -19,8 +19,13 @@ const ASSIGNMENT_STRATEGIES = [
 
 @Schema({ timestamps: true, collection: 'routing_rules' })
 export class RoutingRuleSchemaClass extends EntityDocumentHelper {
-  @Prop({ required: true, index: true })
-  tenant: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TenantSchemaClass',
+    required: true,
+    index: true,
+  })
+  tenantId: string;
 
   @Prop({ required: true })
   name: string;
@@ -64,7 +69,7 @@ export const RoutingRuleSchema = SchemaFactory.createForClass(
   RoutingRuleSchemaClass,
 );
 
-RoutingRuleSchema.plugin(tenantFilterPlugin, { field: 'tenant' });
+RoutingRuleSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
-RoutingRuleSchema.index({ tenant: 1, name: 1 }, { unique: true });
-RoutingRuleSchema.index({ tenant: 1, priority: 1 });
+RoutingRuleSchema.index({ tenantId: 1, name: 1 }, { unique: true });
+RoutingRuleSchema.index({ tenantId: 1, priority: 1 });

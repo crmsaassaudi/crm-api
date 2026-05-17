@@ -15,16 +15,16 @@ export class SlaPolicyRepository {
     private readonly model: Model<SlaPolicySchemaDocument>,
   ) {}
 
-  async findAll(tenant: string): Promise<SlaPolicy[]> {
+  async findAll(tenantId: string): Promise<SlaPolicy[]> {
     const docs = await this.model
-      .find({ tenantId: tenant })
+      .find({ tenantId })
       .sort({ priority: 1 })
       .exec();
     return docs.map(SlaPolicyMapper.toDomain);
   }
 
-  async findById(tenant: string, id: string): Promise<SlaPolicy | null> {
-    const doc = await this.model.findOne({ _id: id, tenantId: tenant }).exec();
+  async findById(tenantId: string, id: string): Promise<SlaPolicy | null> {
+    const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? SlaPolicyMapper.toDomain(doc) : null;
   }
 
@@ -34,24 +34,18 @@ export class SlaPolicyRepository {
   }
 
   async update(
-    tenant: string,
+    tenantId: string,
     id: string,
     data: Partial<SlaPolicy>,
   ): Promise<SlaPolicy | null> {
     const doc = await this.model
-      .findOneAndUpdate(
-        { _id: id, tenantId: tenant },
-        { $set: data },
-        { new: true },
-      )
+      .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
       .exec();
     return doc ? SlaPolicyMapper.toDomain(doc) : null;
   }
 
-  async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model
-      .deleteOne({ _id: id, tenantId: tenant })
-      .exec();
+  async delete(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;
   }
 }

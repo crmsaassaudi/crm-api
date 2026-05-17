@@ -19,17 +19,17 @@ export class CannedResponsesService {
     category?: string;
     search?: string;
   }): Promise<CannedResponse[]> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
     const userId = this.cls.get('userId');
-    return this.repository.findAll(tenant, userId, query);
+    return this.repository.findAll(tenantId, userId, query);
   }
 
   async create(dto: CreateCannedResponseDto): Promise<CannedResponse> {
-    const tenant = this.cls.get('tenantId');
+    const tenantId = this.cls.get('tenantId');
     const userId = this.cls.get('userId');
     return this.repository.create({
       ...dto,
-      tenantId: tenant,
+      tenantId,
       createdById: userId,
     } as any);
   }
@@ -38,15 +38,15 @@ export class CannedResponsesService {
     id: string,
     dto: UpdateCannedResponseDto,
   ): Promise<CannedResponse> {
-    const tenant = this.cls.get('tenantId');
-    const result = await this.repository.update(tenant, id, dto);
+    const tenantId = this.cls.get('tenantId');
+    const result = await this.repository.update(tenantId, id, dto);
     if (!result) throw new NotFoundException('Canned response not found');
     return result;
   }
 
   async delete(id: string): Promise<void> {
-    const tenant = this.cls.get('tenantId');
-    const deleted = await this.repository.delete(tenant, id);
+    const tenantId = this.cls.get('tenantId');
+    const deleted = await this.repository.delete(tenantId, id);
     if (!deleted) throw new NotFoundException('Canned response not found');
   }
 }

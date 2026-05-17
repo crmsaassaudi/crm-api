@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 
 export type AgentStatusAuditLogDocument =
   HydratedDocument<AgentStatusAuditLogSchemaClass>;
@@ -20,7 +20,12 @@ export type AgentStatusAuditLogDocument =
   timestamps: true,
 })
 export class AgentStatusAuditLogSchemaClass {
-  @Prop({ required: true, index: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TenantSchemaClass',
+    required: true,
+    index: true,
+  })
   tenantId: string;
 
   @Prop({ required: true, index: true })

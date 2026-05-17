@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   CallHandler,
   Logger,
+  BadRequestException,
 } from '@nestjs/common';
 import { Observable, from } from 'rxjs';
 import { switchMap } from 'rxjs/operators';
@@ -34,7 +35,7 @@ import { TenantsRepository } from '../../tenants/infrastructure/persistence/docu
  *     2. x-tenant-id header (DEV/TEST only)
  *     3. BFF session JWT claim (tenantId)
  *     4. Bearer JWT claim (tenantId)
- *     5. User's first tenant membership (fallback)
+ *     5. Missing tenant context is rejected for tenant-scoped operations
  *
  *   userId / email:
  *     1. BFF session cookie (sid → SessionData.userId)
@@ -72,9 +73,9 @@ export class TenantInterceptor implements NestInterceptor {
     // ── Step 3: Resolve tenantId (alias/UUID → MongoDB ObjectId) ──
     await this.resolveTenant(raw);
 
-    // ── Step 4: Final fallback — user's first tenant membership ──
+    // ── Step 4: Reject ambiguous tenant context for tenant-scoped requests ──
     if (!this.cls.get('tenantId')) {
-      await this.fallbackTenantFromUser();
+      this.rejectMissingTenantContext(request);
     }
 
     // ── Step 5: Sync activeTenantId for downstream compatibility ──
@@ -246,10 +247,8 @@ export class TenantInterceptor implements NestInterceptor {
             `Resolved Keycloak UUID → MongoDB userId: ${dbUser.id}`,
           );
 
-          // Also collect tenant from user if available
-          if (dbUser.tenants?.length > 0) {
-            raw.tenantHints.push(dbUser.tenants[0].tenantId);
-          }
+          // Do not infer tenant from membership. Tenant context must come from
+          // request routing/header/session/JWT, never from tenants[0].
         }
       } catch (e) {
         this.logger.error(
@@ -299,38 +298,27 @@ export class TenantInterceptor implements NestInterceptor {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Step 4 — Fallback: use the user's first tenant membership
+  // Step 4 — Missing tenant context policy
   // ──────────────────────────────────────────────────────────────────────────
 
-  private async fallbackTenantFromUser(): Promise<void> {
+  private rejectMissingTenantContext(request: Request): void {
     const userId = this.cls.get('userId');
     if (!userId) return;
 
-    try {
-      const userRepo = this.moduleRef.get(UserRepository, {
-        strict: false,
-      });
-      let dbUser = isValidObjectId(userId)
-        ? (await userRepo.findByIdsGlobal([userId]))[0] || null
-        : null;
-
-      if (!dbUser) {
-        dbUser = await userRepo.findByKeycloakIdAndProvider({
-          keycloakId: userId,
-          provider: 'email',
-        });
-      }
-
-      if (dbUser?.tenants?.length) {
-        const tenantId = dbUser.tenants[0].tenantId.toString();
-        this.cls.set('tenantId', tenantId);
-        this.logger.debug(`Tenant fallback from user membership: ${tenantId}`);
-      } else {
-        this.logger.warn(`No tenant found for user: ${userId}`);
-      }
-    } catch (e) {
-      this.logger.error(`Tenant fallback error: ${(e as Error).message}`);
+    if (this.isTenantContextOptionalRoute(request)) {
+      return;
     }
+
+    throw new BadRequestException(
+      'Tenant context is required. Provide a valid tenant subdomain, X-Tenant-Id header in non-production, or tenantId claim.',
+    );
+  }
+
+  private isTenantContextOptionalRoute(request: Request): boolean {
+    const path = request.path || request.originalUrl || '';
+    return ['/', '/docs', '/queues', '/api/v1/auth', '/api/v1/onboarding'].some(
+      (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+    );
   }
 
   // ──────────────────────────────────────────────────────────────────────────

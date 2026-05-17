@@ -5,7 +5,7 @@ export class AutomationRuleMapper {
   static toDomain(doc: AutomationRuleSchemaDocument): AutomationRule {
     const entity = new AutomationRule();
     entity.id = doc._id.toString();
-    entity.tenant = doc.tenant?.toString();
+    entity.tenantId = doc.tenantId?.toString();
     entity.name = doc.name;
     entity.trigger = doc.trigger;
     entity.actions = doc.actions;

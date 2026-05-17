@@ -15,16 +15,16 @@ export class EscalationPolicyRepository {
     private readonly model: Model<EscalationPolicySchemaDocument>,
   ) {}
 
-  async findAll(tenant: string): Promise<EscalationPolicy[]> {
-    const docs = await this.model
-      .find({ tenantId: tenant })
-      .sort({ name: 1 })
-      .exec();
+  async findAll(tenantId: string): Promise<EscalationPolicy[]> {
+    const docs = await this.model.find({ tenantId }).sort({ name: 1 }).exec();
     return docs.map(EscalationPolicyMapper.toDomain);
   }
 
-  async findById(tenant: string, id: string): Promise<EscalationPolicy | null> {
-    const doc = await this.model.findOne({ _id: id, tenantId: tenant }).exec();
+  async findById(
+    tenantId: string,
+    id: string,
+  ): Promise<EscalationPolicy | null> {
+    const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? EscalationPolicyMapper.toDomain(doc) : null;
   }
 
@@ -34,24 +34,18 @@ export class EscalationPolicyRepository {
   }
 
   async update(
-    tenant: string,
+    tenantId: string,
     id: string,
     data: Partial<EscalationPolicy>,
   ): Promise<EscalationPolicy | null> {
     const doc = await this.model
-      .findOneAndUpdate(
-        { _id: id, tenantId: tenant },
-        { $set: data },
-        { new: true },
-      )
+      .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
       .exec();
     return doc ? EscalationPolicyMapper.toDomain(doc) : null;
   }
 
-  async delete(tenant: string, id: string): Promise<boolean> {
-    const result = await this.model
-      .deleteOne({ _id: id, tenantId: tenant })
-      .exec();
+  async delete(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;
   }
 }
