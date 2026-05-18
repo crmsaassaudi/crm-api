@@ -14,6 +14,7 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AllConfigType } from '../config/config.type';
@@ -47,6 +48,7 @@ export class AuthController {
 
   @Get('login')
   @Unprotected()
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @HttpCode(HttpStatus.FOUND)
   @ApiOperation({ summary: 'Initiate OAuth 2.0 Authorization Code Flow' })
   async login(
@@ -59,6 +61,7 @@ export class AuthController {
 
   @Get('callback')
   @Unprotected()
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @HttpCode(HttpStatus.FOUND)
   @ApiOperation({ summary: 'Handle Keycloak OAuth callback' })
   async callback(
@@ -98,6 +101,7 @@ export class AuthController {
 
   @Post('refresh')
   @Unprotected()
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Silent token refresh using session cookie' })
   async refresh(@Request() req, @Res({ passthrough: true }) res: Response) {

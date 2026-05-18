@@ -44,11 +44,16 @@ export class EnvCryptoService implements ICryptoService, OnModuleInit {
     });
 
     if (!rawKey) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error(
+          '[CryptoService] CHANNEL_ENCRYPTION_KEY is required in production. ' +
+            'Generate a 64-char hex key with: openssl rand -hex 32',
+        );
+      }
       this.logger.warn(
         '[CryptoService] No CHANNEL_ENCRYPTION_KEY found -- using derived fallback key. ' +
           'This is ONLY acceptable for development.',
       );
-      // Derive a deterministic key from a fixed salt for dev convenience
       this.key = scryptSync('dev-fallback-key', 'crm-dev-salt', 32);
       return;
     }

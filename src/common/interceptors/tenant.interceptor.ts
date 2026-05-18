@@ -18,6 +18,11 @@ import {
 import { ModuleRef } from '@nestjs/core';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
+import { RedisService } from '../../redis/redis.service';
+
+const TENANT_ALIAS_CACHE_TTL = 300; // 5 minutes
+const TENANT_I18N_CACHE_TTL = 300;
+const USER_KEYCLOAK_CACHE_TTL = 300;
 
 /**
  * TenantInterceptor — Resolves multitenant context for every request.
@@ -50,6 +55,7 @@ export class TenantInterceptor implements NestInterceptor {
     private readonly cls: ClsService,
     private readonly sessionService: SessionService,
     private readonly moduleRef: ModuleRef,
+    private readonly redisService: RedisService,
   ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
@@ -100,37 +106,61 @@ export class TenantInterceptor implements NestInterceptor {
    */
   private async resolveI18nContext(tenantId: string): Promise<void> {
     try {
-      const tenantRepo = this.moduleRef.get(TenantsRepository, {
-        strict: false,
-      });
-      const tenant = await tenantRepo.findById(tenantId);
+      // Check Redis cache for tenant i18n settings
+      const tenantI18nKey = `tenant:i18n:${tenantId}`;
+      let locale = 'en';
+      let timezone = 'UTC';
 
-      let locale = tenant?.i18nSettings?.locale ?? 'en';
-      let timezone = tenant?.i18nSettings?.timezone ?? 'UTC';
+      try {
+        const cachedI18n = await this.redisService.get<{ locale: string; timezone: string }>(tenantI18nKey);
+        if (cachedI18n) {
+          locale = cachedI18n.locale;
+          timezone = cachedI18n.timezone;
+        } else {
+          const tenantRepo = this.moduleRef.get(TenantsRepository, { strict: false });
+          const tenant = await tenantRepo.findById(tenantId);
+          locale = tenant?.i18nSettings?.locale ?? 'en';
+          timezone = tenant?.i18nSettings?.timezone ?? 'UTC';
+          await this.redisService
+            .set(tenantI18nKey, { locale, timezone }, TENANT_I18N_CACHE_TTL)
+            .catch(() => {/* non-fatal */});
+        }
+      } catch {
+        // Cache/DB failure — use defaults
+      }
 
       // User-level override
       const userId = this.cls.get('userId');
       if (userId) {
         try {
-          const userRepo = this.moduleRef.get(UserRepository, {
-            strict: false,
-          });
+          const userI18nKey = `user:i18n:${userId}`;
+          const cachedUser = await this.redisService
+            .get<{ locale?: string; timezone?: string }>(userI18nKey)
+            .catch(() => null);
 
-          let user: any = null;
-          if (isValidObjectId(userId)) {
-            user = await userRepo.findById(userId);
-          } else if (userId.includes('-')) {
-            user = await userRepo.findByKeycloakIdAndProvider({
-              keycloakId: userId,
-              provider: 'email',
-            });
-          }
-
-          if (user?.i18nPreferences?.locale) {
-            locale = user.i18nPreferences.locale;
-          }
-          if (user?.i18nPreferences?.timezone) {
-            timezone = user.i18nPreferences.timezone;
+          if (cachedUser) {
+            if (cachedUser.locale) locale = cachedUser.locale;
+            if (cachedUser.timezone) timezone = cachedUser.timezone;
+          } else {
+            const userRepo = this.moduleRef.get(UserRepository, { strict: false });
+            let user: any = null;
+            if (isValidObjectId(userId)) {
+              user = await userRepo.findById(userId);
+            } else if (userId.includes('-')) {
+              user = await userRepo.findByKeycloakIdAndProvider({
+                keycloakId: userId,
+                provider: 'email',
+              });
+            }
+            const userPrefs = {
+              locale: user?.i18nPreferences?.locale ?? null,
+              timezone: user?.i18nPreferences?.timezone ?? null,
+            };
+            await this.redisService
+              .set(userI18nKey, userPrefs, USER_KEYCLOAK_CACHE_TTL)
+              .catch(() => {/* non-fatal */});
+            if (userPrefs.locale) locale = userPrefs.locale;
+            if (userPrefs.timezone) timezone = userPrefs.timezone;
           }
         } catch {
           // User lookup failed — use tenant defaults
@@ -140,7 +170,6 @@ export class TenantInterceptor implements NestInterceptor {
       this.cls.set('tenantLocale', locale);
       this.cls.set('tenantTimezone', timezone);
     } catch {
-      // Graceful: use system defaults
       this.cls.set('tenantLocale', 'en');
       this.cls.set('tenantTimezone', 'UTC');
     }
@@ -233,6 +262,18 @@ export class TenantInterceptor implements NestInterceptor {
     // If userId is a Keycloak UUID (contains '-'), resolve to MongoDB ObjectId
     const currentUserId = this.cls.get('userId');
     if (currentUserId && currentUserId.includes('-')) {
+      // Check cache before hitting the DB
+      const kcCacheKey = `user:keycloak:${currentUserId}`;
+      try {
+        const cachedMongoId = await this.redisService.get<string>(kcCacheKey);
+        if (cachedMongoId) {
+          this.cls.set('userId', cachedMongoId);
+          this.logger.debug(`Resolved Keycloak UUID → MongoDB userId (cache): ${cachedMongoId}`);
+          return;
+        }
+      } catch {
+        // Cache miss — fall through to DB
+      }
       try {
         const userRepo = this.moduleRef.get(UserRepository, {
           strict: false,
@@ -242,9 +283,13 @@ export class TenantInterceptor implements NestInterceptor {
           provider: 'email',
         });
         if (dbUser) {
-          this.cls.set('userId', dbUser.id.toString());
+          const mongoId = dbUser.id.toString();
+          this.cls.set('userId', mongoId);
+          await this.redisService
+            .set(kcCacheKey, mongoId, USER_KEYCLOAK_CACHE_TTL)
+            .catch(() => {/* non-fatal */});
           this.logger.debug(
-            `Resolved Keycloak UUID → MongoDB userId: ${dbUser.id}`,
+            `Resolved Keycloak UUID → MongoDB userId: ${mongoId}`,
           );
 
           // Do not infer tenant from membership. Tenant context must come from
@@ -266,14 +311,27 @@ export class TenantInterceptor implements NestInterceptor {
     for (const hint of raw.tenantHints) {
       if (!hint) continue;
 
-      // Already a valid MongoDB ObjectId
+      // Already a valid MongoDB ObjectId — use directly
       if (/^[0-9a-fA-F]{24}$/.test(hint)) {
         this.cls.set('tenantId', hint);
         this.logger.debug(`Tenant resolved (ObjectId): ${hint}`);
         return;
       }
 
-      // Resolve alias or Keycloak org ID → ObjectId
+      // Check Redis cache for alias/orgId → ObjectId mapping
+      const cacheKey = `tenant:alias:${hint}`;
+      try {
+        const cached = await this.redisService.get<string>(cacheKey);
+        if (cached) {
+          this.cls.set('tenantId', cached);
+          this.logger.debug(`Tenant resolved (cache hit "${hint}"): ${cached}`);
+          return;
+        }
+      } catch {
+        // Cache miss — fall through to DB lookup
+      }
+
+      // Resolve alias or Keycloak org ID → ObjectId via DB
       try {
         const tenantRepo = this.moduleRef.get(TenantsRepository, {
           strict: false,
@@ -283,10 +341,15 @@ export class TenantInterceptor implements NestInterceptor {
           (await tenantRepo.findByKeycloakOrgId(hint));
 
         if (tenant) {
-          this.cls.set('tenantId', tenant.id.toString());
+          const tenantId = tenant.id.toString();
+          this.cls.set('tenantId', tenantId);
           this.logger.debug(
-            `Tenant resolved (alias/orgId "${hint}"): ${tenant.id}`,
+            `Tenant resolved (alias/orgId "${hint}"): ${tenantId}`,
           );
+          // Cache the mapping to avoid repeated DB lookups
+          await this.redisService
+            .set(cacheKey, tenantId, TENANT_ALIAS_CACHE_TTL)
+            .catch(() => {/* non-fatal */});
           return;
         }
       } catch (e) {

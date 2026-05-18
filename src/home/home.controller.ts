@@ -1,5 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { Unprotected } from 'nest-keycloak-connect';
 
 import { HomeService } from './home.service';
 
@@ -11,5 +12,11 @@ export class HomeController {
   @Get()
   appInfo() {
     return this.service.appInfo();
+  }
+
+  @Get('health')
+  @Unprotected()
+  health() {
+    return { status: 'ok' };
   }
 }

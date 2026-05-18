@@ -16,6 +16,7 @@ export interface SlaBreachJobData {
   slaPolicyId: string;
   /** Which SLA type this job monitors */
   breachType: SlaBreachType;
+  timeoutMs?: number;
 }
 
 /**
@@ -45,53 +46,81 @@ export class SlaBreachProcessor extends BaseConsumer {
     const { tenantId, conversationId, slaPolicyId, breachType } = job.data;
     const now = new Date();
 
-    return runWithTenantContext(this.cls, tenantId, async () => {
-      this.logger.debug(
-        `Processing SLA breach check [${breachType}] for conversation ${conversationId}`,
-      );
-
-      // ── Build query based on breach type ──────────────────────────
-      const breachedField =
-        breachType === 'frt' ? 'frtBreached' : 'resolutionBreached';
-
-      const conversation = await this.conversationRepository.findByIdForSla(
-        conversationId,
-        tenantId,
-        breachedField,
-      );
-
-      if (!conversation) {
+    await this.withTimeout(
+      runWithTenantContext(this.cls, tenantId, async () => {
         this.logger.debug(
-          `Conversation ${conversationId} not eligible for ${breachType} breach — skipping`,
+          `Processing SLA breach check [${breachType}] for conversation ${conversationId}`,
         );
-        return;
+
+        // ── Build query based on breach type ──────────────────────────
+        const breachedField =
+          breachType === 'frt' ? 'frtBreached' : 'resolutionBreached';
+
+        const conversation = await this.conversationRepository.findByIdForSla(
+          conversationId,
+          tenantId,
+          breachedField,
+        );
+
+        if (!conversation) {
+          this.logger.debug(
+            `Conversation ${conversationId} not eligible for ${breachType} breach — skipping`,
+          );
+          return;
+        }
+
+        // ── Mark breach ──────────────────────────────────────────────
+        await this.conversationRepository.markSlaBreached(
+          conversationId,
+          breachedField,
+        );
+
+        // ── Emit event for escalation-policies ───────────────────────
+        const deadlineField =
+          breachType === 'frt' ? 'frtDeadline' : 'resolutionDeadline';
+
+        this.eventEmitter.emit('sla.breached', {
+          tenantId,
+          conversationId,
+          channelType: conversation.channelType,
+          assignedAgentId: conversation.assignedAgentId,
+          slaDeadline: conversation[deadlineField],
+          slaPolicyId,
+          breachType,
+          breachedAt: now,
+        });
+
+        this.logger.warn(
+          `SLA [${breachType}] breached for conversation ${conversationId} ` +
+            `(policy: ${slaPolicyId})`,
+        );
+      }),
+      job.data.timeoutMs ?? 30_000,
+      `SLA breach job ${job.id} timed out`,
+    );
+  }
+
+  private async withTimeout<T>(
+    work: Promise<T>,
+    timeoutMs: number,
+    errorMessage: string,
+  ): Promise<T> {
+    let timeout: NodeJS.Timeout | undefined;
+
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error(errorMessage)),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
       }
-
-      // ── Mark breach ──────────────────────────────────────────────
-      await this.conversationRepository.markSlaBreached(
-        conversationId,
-        breachedField,
-      );
-
-      // ── Emit event for escalation-policies ───────────────────────
-      const deadlineField =
-        breachType === 'frt' ? 'frtDeadline' : 'resolutionDeadline';
-
-      this.eventEmitter.emit('sla.breached', {
-        tenantId,
-        conversationId,
-        channelType: conversation.channelType,
-        assignedAgentId: conversation.assignedAgentId,
-        slaDeadline: conversation[deadlineField],
-        slaPolicyId,
-        breachType,
-        breachedAt: now,
-      });
-
-      this.logger.warn(
-        `SLA [${breachType}] breached for conversation ${conversationId} ` +
-          `(policy: ${slaPolicyId})`,
-      );
-    });
+    }
   }
 }

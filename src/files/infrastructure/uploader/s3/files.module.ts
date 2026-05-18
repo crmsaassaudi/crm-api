@@ -14,6 +14,10 @@ import { FilesS3Service } from './files.service';
 
 import { DocumentFilePersistenceModule } from '../../persistence/document/document-persistence.module';
 import { AllConfigType } from '../../../../config/config.type';
+import {
+  isAllowedImageFileName,
+  isAllowedImageMimeType,
+} from '../../../file-upload-security.util';
 
 const infrastructurePersistenceModule = DocumentFilePersistenceModule;
 
@@ -38,7 +42,10 @@ const infrastructurePersistenceModule = DocumentFilePersistenceModule;
 
         return {
           fileFilter: (request, file, callback) => {
-            if (!file.originalname.match(/\.(jpg|jpeg|png|gif)$/i)) {
+            if (
+              !isAllowedImageFileName(file.originalname) ||
+              !isAllowedImageMimeType(file.mimetype)
+            ) {
               return callback(
                 new UnprocessableEntityException({
                   status: HttpStatus.UNPROCESSABLE_ENTITY,

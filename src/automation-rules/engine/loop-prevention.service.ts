@@ -28,8 +28,8 @@ export class LoopPreventionService {
   /** Layer 1: TTL for strict loop detection keys (seconds) */
   private readonly STRICT_TTL = 5;
 
-  /** Layer 2: Max cross-automation chain depth. Depth 0-3 is allowed. */
-  private readonly MAX_DEPTH = 3;
+  /** Layer 2: Max cross-automation chain depth. Depth 0-5 is allowed. */
+  private readonly MAX_DEPTH = 5;
 
   /** Layer 3: TTL for run-once keys (seconds) — 24 hours */
   private readonly RUN_ONCE_TTL = 86400;

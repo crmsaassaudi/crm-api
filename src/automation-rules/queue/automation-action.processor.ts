@@ -39,9 +39,105 @@ export class ActionProcessorMixin {
 
   async processAction(job: Job<AutomationActionJobData>): Promise<void> {
     const data = job.data;
+    const validationError = this.validateJobData(data);
+
+    if (validationError) {
+      const reason = `schema-invalid: ${validationError}`;
+      this.logger.error(`[Processor] Job ${job.id} rejected: ${reason}`);
+      await this.dlqProducer
+        .sendToDlq(data as AutomationActionJobData, reason)
+        .catch((dlqErr) =>
+          this.logger.error(
+            `[Processor] Failed to send invalid job ${job.id} to DLQ: ${dlqErr.message}`,
+          ),
+        );
+      return;
+    }
+
     return runWithTenantContext(this.cls, data.tenantId, () =>
       this.processActionInTenantContext(job),
     );
+  }
+
+  private validateJobData(data: unknown): string | null {
+    if (!this.isRecord(data)) {
+      return 'payload must be an object';
+    }
+
+    const requiredStringFields = [
+      'executionId',
+      'workflowId',
+      'tenantId',
+      'nodeId',
+      'nodeName',
+      'actionType',
+      'recordId',
+      'recordType',
+      'sourceWorkflowId',
+    ];
+
+    for (const field of requiredStringFields) {
+      if (typeof data[field] !== 'string' || data[field].trim().length === 0) {
+        return `${field} is required`;
+      }
+    }
+
+    if (!/^[0-9a-fA-F]{24}$/.test(data.tenantId as string)) {
+      return `tenantId must be a Mongo ObjectId, got "${data.tenantId}"`;
+    }
+
+    const validActions = new Set([
+      'send_email',
+      'send_sms',
+      'update_field',
+      'route_to_team',
+      'webhook',
+    ]);
+    if (!validActions.has(data.actionType as string)) {
+      return `unknown actionType "${data.actionType}"`;
+    }
+
+    const validRecordTypes = new Set([
+      'Lead',
+      'Contact',
+      'Ticket',
+      'Deal',
+      'Account',
+      'Task',
+    ]);
+    if (!validRecordTypes.has(data.recordType as string)) {
+      return `unknown recordType "${data.recordType}"`;
+    }
+
+    if (!this.isRecord(data.actionConfig)) {
+      return 'actionConfig must be an object';
+    }
+
+    if (!this.isRecord(data.recordData)) {
+      return 'recordData must be an object';
+    }
+
+    if (
+      typeof data.automationDepth !== 'number' ||
+      !Number.isInteger(data.automationDepth) ||
+      data.automationDepth < 0
+    ) {
+      return 'automationDepth must be a non-negative integer';
+    }
+
+    if (
+      data.automationBreadcrumbs !== undefined &&
+      (!Array.isArray(data.automationBreadcrumbs) ||
+        data.automationBreadcrumbs.some((item) => typeof item !== 'string'))
+    ) {
+      return 'automationBreadcrumbs must be an array of strings';
+    }
+
+    return null;
+  }
+
+  private isRecord(value: unknown): value is Record<string, any> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
 
   private async processActionInTenantContext(

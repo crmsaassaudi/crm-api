@@ -2,6 +2,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
+import { LRUCache } from 'lru-cache';
 
 export interface SessionData {
   accessToken: string;
@@ -22,8 +23,11 @@ interface LruEntry {
 
 @Injectable()
 export class SessionService {
-  private readonly lru = new Map<string, LruEntry>();
-  private readonly MAX_LRU = 1000;
+  // lru-cache: evicts by true least-recently-used access order + TTL auto-expiry
+  private readonly lru = new LRUCache<string, LruEntry>({
+    max: 1000,
+    ttl: LRU_TTL_MS,
+  });
 
   constructor(@Inject(IOREDIS_CLIENT) private readonly ioredis: Redis) {}
 
@@ -61,9 +65,9 @@ export class SessionService {
   }
 
   async getSession(sid: string): Promise<SessionData | null> {
-    // 1. Check in-memory LRU first
+    // 1. Check in-memory LRU first (lru-cache handles TTL + LRU eviction)
     const cached = this.lru.get(sid);
-    if (cached && Date.now() - cached.cachedAt < LRU_TTL_MS) {
+    if (cached) {
       return cached.data;
     }
 
@@ -108,10 +112,6 @@ export class SessionService {
   }
 
   private setLru(sid: string, data: SessionData): void {
-    if (this.lru.size >= this.MAX_LRU) {
-      const firstKey = this.lru.keys().next().value;
-      if (firstKey) this.lru.delete(firstKey);
-    }
     this.lru.set(sid, { data, cachedAt: Date.now() });
   }
 }

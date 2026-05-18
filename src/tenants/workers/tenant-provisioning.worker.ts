@@ -18,6 +18,7 @@ import { UserRepository } from '../../users/infrastructure/persistence/user.repo
 import { RedisService } from '../../redis/redis.service';
 import { CrmBotWorkspaceProvisioningService } from '../services/crm-bot-workspace-provisioning.service';
 import { TenantCreatedEvent } from '../events/tenant-created.event';
+import { TransactionManager } from '../../database/transaction-manager.service';
 import {
   SubscriptionPlan,
   TenantStatus,
@@ -60,6 +61,7 @@ export class TenantProvisioningWorker extends WorkerHost {
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService<AllConfigType>,
     private readonly cls: ClsService,
+    private readonly transactionManager: TransactionManager,
   ) {
     super();
   }
@@ -141,37 +143,49 @@ export class TenantProvisioningWorker extends WorkerHost {
         provisioningStatus: ProvisioningStatus.PROVISIONING,
         onboardingGoal: data.useCase,
       };
-      const tenant = await this.tenantsRepository.create(tenantData);
-      tenantId = tenant.id;
-      await this.reportStep(provisioningId, 5);
-
-      // ── Step 6: Upsert User in MongoDB & add OWNER membership ────────
       const spaceIdx = data.fullName.indexOf(' ');
       const firstName =
         spaceIdx > -1 ? data.fullName.slice(0, spaceIdx) : data.fullName;
       const lastName = spaceIdx > -1 ? data.fullName.slice(spaceIdx + 1) : '';
 
-      const localUser = await this.userRepository.upsertWithTenants(
-        keycloakUserId!,
-        data.email,
-        {
-          firstName,
-          lastName,
-          provider: AuthProvidersEnum.email,
-          platformRole: { id: PlatformRoleEnum.USER } as any,
-          status: { id: StatusEnum.active } as any,
-          keycloakId: keycloakUserId!,
-          onboardingStatus: 'COMPLETED',
-        },
-        [{ tenantId: tenantId!, roles: ['OWNER'], joinedAt: new Date() }],
-      );
+      const transactionalResult =
+        await this.transactionManager.runInTransaction(async (session) => {
+          const tenant = await this.tenantsRepository.create(
+            tenantData,
+            session,
+          );
+
+          const localUser = await this.userRepository.upsertWithTenants(
+            keycloakUserId!,
+            data.email,
+            {
+              firstName,
+              lastName,
+              provider: AuthProvidersEnum.email,
+              platformRole: { id: PlatformRoleEnum.USER } as any,
+              status: { id: StatusEnum.active } as any,
+              keycloakId: keycloakUserId!,
+              onboardingStatus: 'COMPLETED',
+            },
+            [{ tenantId: tenant.id, roles: ['OWNER'], joinedAt: new Date() }],
+            session,
+          );
+
+          await this.tenantsRepository.updateOwner(
+            tenant.id,
+            localUser.id as string,
+            session,
+          );
+
+          return { tenant, localUser };
+        });
+
+      const tenant = transactionalResult.tenant;
+      const localUser = transactionalResult.localUser;
+      tenantId = tenant.id;
+      await this.reportStep(provisioningId, 5);
       await this.reportStep(provisioningId, 6);
 
-      // ── Step 7: Set owner on the Tenant ───────────────────────────────
-      await this.tenantsRepository.updateOwner(
-        tenantId!,
-        localUser.id as string,
-      );
       await this.reportStep(provisioningId, 7);
 
       // ── Step 8: Provision crm-bot Typebot workspace ───────────────────

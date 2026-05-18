@@ -34,6 +34,17 @@ class EnvironmentVariablesValidator {
 export default registerAs<KeycloakConfig>('keycloak', () => {
   validateConfig(process.env, EnvironmentVariablesValidator);
 
+  assertProductionClientSecret(
+    'KEYCLOAK_CLIENT_SECRET',
+    process.env.KEYCLOAK_CLIENT_SECRET,
+  );
+  if (process.env.KEYCLOAK_ADMIN_CLIENT_SECRET) {
+    assertProductionClientSecret(
+      'KEYCLOAK_ADMIN_CLIENT_SECRET',
+      process.env.KEYCLOAK_ADMIN_CLIENT_SECRET,
+    );
+  }
+
   return {
     authServerUrl: process.env.KEYCLOAK_AUTH_SERVER_URL ?? '',
     realm: process.env.KEYCLOAK_REALM ?? '',
@@ -51,3 +62,13 @@ export default registerAs<KeycloakConfig>('keycloak', () => {
     frontendUrl: process.env.KEYCLOAK_FRONTEND_URL ?? 'http://localhost:4200',
   };
 });
+
+function assertProductionClientSecret(name: string, value?: string): void {
+  if (process.env.NODE_ENV !== 'production') {
+    return;
+  }
+
+  if (!value || value.length < 32 || value.startsWith('change-me')) {
+    throw new Error(`${name} must be at least 32 characters in production.`);
+  }
+}

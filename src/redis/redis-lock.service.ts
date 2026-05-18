@@ -70,8 +70,8 @@ export class RedisLockService {
         try {
           const value = await callback();
           if (lockLost) {
-            this.logger.error(
-              `Callback completed after Redis lock ${key} may have expired`,
+            throw new InternalServerErrorException(
+              `Redis lock expired during execution of key: ${key}. Result discarded to prevent data races.`,
             );
           }
           return value;

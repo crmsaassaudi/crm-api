@@ -34,6 +34,17 @@ class EnvironmentVariablesValidator {
 export default registerAs<AuthConfig>('auth', () => {
   validateConfig(process.env, EnvironmentVariablesValidator);
 
+  assertProductionSecret('AUTH_JWT_SECRET', process.env.AUTH_JWT_SECRET);
+  assertProductionSecret(
+    'AUTH_REFRESH_SECRET',
+    process.env.AUTH_REFRESH_SECRET,
+  );
+  assertProductionSecret('AUTH_FORGOT_SECRET', process.env.AUTH_FORGOT_SECRET);
+  assertProductionSecret(
+    'AUTH_CONFIRM_EMAIL_SECRET',
+    process.env.AUTH_CONFIRM_EMAIL_SECRET,
+  );
+
   return {
     secret: process.env.AUTH_JWT_SECRET,
     expires: process.env.AUTH_JWT_TOKEN_EXPIRES_IN as ms.StringValue,
@@ -46,3 +57,21 @@ export default registerAs<AuthConfig>('auth', () => {
       .AUTH_CONFIRM_EMAIL_TOKEN_EXPIRES_IN as ms.StringValue,
   };
 });
+
+function assertProductionSecret(name: string, value?: string): void {
+  if (process.env.NODE_ENV !== 'production') {
+    return;
+  }
+
+  const weakDefaults = new Set([
+    'secret',
+    'secret_for_refresh',
+    'secret_for_forgot',
+    'secret_for_confirm_email',
+    'change-me',
+  ]);
+
+  if (!value || value.length < 32 || weakDefaults.has(value)) {
+    throw new Error(`${name} must be at least 32 characters in production.`);
+  }
+}

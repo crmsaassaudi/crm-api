@@ -107,14 +107,8 @@ export class AssignmentService {
 
     // ── Resolve tenant routing config ─────────────────────────────────
     const routingConfig = await this.getRoutingConfig(tenantId);
-    this.logger.warn(
-      `[ASSIGN DEBUG] ─── AssignmentService.assignConversation ───`,
-    );
-    this.logger.warn(
-      `[ASSIGN DEBUG] tenantId=${tenantId}, conversationId=${conversationId}`,
-    );
-    this.logger.warn(
-      `[ASSIGN DEBUG] Routing config: ${JSON.stringify(routingConfig, null, 2)}`,
+    this.logger.debug(
+      `assignConversation tenantId=${tenantId}, conversationId=${conversationId}`,
     );
 
     // ── Channel-first auto-assignment hierarchy ───────────────────────
@@ -127,24 +121,17 @@ export class AssignmentService {
     //      - Global OFF → queue
     //
     const channelOverride = options.channelAutoAssignOverride;
-    this.logger.warn(
-      `[ASSIGN DEBUG] channelOverride=${JSON.stringify(channelOverride)} (type: ${typeof channelOverride})`,
-    );
+    this.logger.debug(`channelOverride=${channelOverride ?? 'undefined'}`);
 
     if (channelOverride === true) {
       // Channel explicitly enabled — proceed regardless of global setting
-      this.logger.warn(
-        `[ASSIGN DEBUG] Channel override=TRUE → bypassing global toggle`,
-      );
+      this.logger.debug(`Channel override=true → bypassing global toggle`);
     } else if (channelOverride === undefined) {
       // Channel did not set — check global toggle
-      this.logger.warn(
-        `[ASSIGN DEBUG] Channel override=UNDEFINED → checking global toggle: autoAssignmentEnabled=${JSON.stringify(routingConfig.autoAssignmentEnabled)} (type: ${typeof routingConfig.autoAssignmentEnabled})`,
+      this.logger.debug(
+        `Channel override=undefined → checking global toggle: autoAssignmentEnabled=${routingConfig.autoAssignmentEnabled}`,
       );
       if (routingConfig.autoAssignmentEnabled === false) {
-        this.logger.warn(
-          `[ASSIGN DEBUG] ❌ EARLY EXIT: Global auto-assign is FALSE and channel did not override → QUEUED`,
-        );
         this.logger.log(
           `Auto-assignment globally disabled for tenant ${tenantId} ` +
             `and channel did not override — conversation ${conversationId} queued`,
@@ -162,9 +149,7 @@ export class AssignmentService {
         });
         return null;
       }
-      this.logger.warn(
-        `[ASSIGN DEBUG] Global toggle is NOT false (value=${JSON.stringify(routingConfig.autoAssignmentEnabled)}) → proceeding`,
-      );
+      this.logger.debug(`Global auto-assign enabled → proceeding`);
     }
     // channelOverride === false is already handled upstream (triggerAutoAssignment)
 
@@ -173,29 +158,22 @@ export class AssignmentService {
       ReturnType<RoutingRuleEvaluatorService['evaluateForTenant']>
     > = null;
     if (options.routingContext) {
-      this.logger.warn(
-        `[ASSIGN DEBUG] Evaluating routing rules for tenant ${tenantId}...`,
-      );
+      this.logger.debug(`Evaluating routing rules for tenant ${tenantId}`);
       try {
         ruleMatch = await this.routingRuleEvaluator.evaluateForTenant(
           tenantId,
           options.routingContext,
         );
-        this.logger.warn(
-          `[ASSIGN DEBUG] Routing rule evaluation result: ${JSON.stringify(ruleMatch)}`,
+        this.logger.debug(
+          `Routing rule matched: strategy=${ruleMatch?.strategy ?? 'none'}, teamId=${ruleMatch?.teamId ?? 'none'}`,
         );
       } catch (err: any) {
-        this.logger.warn(
-          `[ASSIGN DEBUG] Routing rule evaluation EXCEPTION: ${err.message}`,
-        );
         this.logger.warn(
           `Routing rule evaluation failed: ${err.message} — using default routing`,
         );
       }
     } else {
-      this.logger.warn(
-        `[ASSIGN DEBUG] No routingContext provided — skipping rule evaluation`,
-      );
+      this.logger.debug(`No routingContext provided — skipping rule evaluation`);
     }
 
     // Normalize strategy: accept both 'round_robin' (DB/settings format)
@@ -242,14 +220,8 @@ export class AssignmentService {
       }
     }
 
-    this.logger.warn(
-      `[ASSIGN DEBUG] Strategy resolved: ${strategy} (effectiveStrategy=${strategy === 'sticky' ? ((routingConfig.fallbackStrategy as string) ?? 'round-robin') : strategy})`,
-    );
-    this.logger.warn(
-      `[ASSIGN DEBUG] tenantMaxCapacity=${tenantMaxCapacity}, requiredSkills=${JSON.stringify(requiredSkills)}`,
-    );
-    this.logger.warn(
-      `[ASSIGN DEBUG] effectivePool=${JSON.stringify(effectivePool)}`,
+    this.logger.debug(
+      `Strategy resolved: ${strategy}, tenantMaxCapacity=${tenantMaxCapacity}, requiredSkills=[${requiredSkills.join(',')}], effectivePool size=${effectivePool?.length ?? 'all'}`,
     );
 
     // Get available agents (online/available status)
@@ -257,12 +229,9 @@ export class AssignmentService {
       tenantId,
       effectivePool,
     );
-    this.logger.warn(
-      `[ASSIGN DEBUG] Available agents (online): ${JSON.stringify(availableAgents)} (count=${availableAgents.length})`,
-    );
+    this.logger.debug(`Available agents online: count=${availableAgents.length}`);
 
     if (availableAgents.length === 0) {
-      this.logger.warn(`[ASSIGN DEBUG] ❌ NO AGENTS ONLINE → queued`);
       this.logger.warn(
         `No available agents for tenant ${tenantId} — conversation ${conversationId} goes to queue`,
       );

@@ -75,6 +75,13 @@ class EnvironmentVariablesValidator {
 export default registerAs<DatabaseConfig>('database', () => {
   validateConfig(process.env, EnvironmentVariablesValidator);
 
+  const synchronize = process.env.DATABASE_SYNCHRONIZE === 'true';
+  if (process.env.NODE_ENV === 'production' && synchronize) {
+    throw new Error(
+      'DATABASE_SYNCHRONIZE must not be true when NODE_ENV=production.',
+    );
+  }
+
   return {
     isDocumentDatabase: ['mongodb'].includes(process.env.DATABASE_TYPE ?? ''),
     url: process.env.DATABASE_URL,
@@ -86,7 +93,7 @@ export default registerAs<DatabaseConfig>('database', () => {
     password: process.env.DATABASE_PASSWORD,
     name: process.env.DATABASE_NAME,
     username: process.env.DATABASE_USERNAME,
-    synchronize: process.env.DATABASE_SYNCHRONIZE === 'true',
+    synchronize,
     maxConnections: process.env.DATABASE_MAX_CONNECTIONS
       ? parseInt(process.env.DATABASE_MAX_CONNECTIONS, 10)
       : 100,

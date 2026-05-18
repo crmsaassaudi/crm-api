@@ -17,6 +17,7 @@ import { GlobalExceptionFilter } from './common/filters/global-exception.filter'
 import cookieParser from 'cookie-parser';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { RedisIoAdapter } from './modules/realtime/redis-io.adapter';
+import helmet from 'helmet';
 
 async function bootstrap() {
   process.env.APP_RUNTIME = 'api';
@@ -31,18 +32,31 @@ async function bootstrap() {
   useContainer(app.select(AppModule), { fallbackOnErrors: true });
   const configService = app.get(ConfigService<AllConfigType>);
 
+  // Security headers — must be before any route registration
+  app.use(helmet());
+
   const frontendDomain = configService.get('app.frontendDomain', {
     infer: true,
   });
+  const isProduction = process.env.NODE_ENV === 'production';
+  // In production, FRONTEND_DOMAIN must be set. Falling back to wildcard true
+  // is a security risk (cross-tenant data leakage).
+  const corsOrigin = isProduction
+    ? frontendDomain
+      ? frontendDomain.split(',').map((d) => d.trim())
+      : false // deny all cross-origin in production if FRONTEND_DOMAIN is unset
+    : true; // dev: allow any origin for dynamic tenant subdomains
   app.enableCors({
-    // In local development, allow any origin to support dynamic tenant subdomains.
-    origin:
-      process.env.NODE_ENV === 'development'
-        ? true
-        : frontendDomain
-          ? frontendDomain.split(',')
-          : true,
+    origin: corsOrigin,
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Idempotency-Key',
+      'x-custom-lang',
+      'x-tenant-id',
+    ],
   });
 
   // Enable cookie parsing for HttpOnly session cookies (BFF pattern)

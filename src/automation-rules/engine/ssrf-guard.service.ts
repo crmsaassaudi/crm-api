@@ -70,13 +70,24 @@ export class SsrfGuardService {
    * @returns { safe: true } if URL targets a public host, or
    *          { safe: false, reason: string } if blocked
    */
+  private readonly DNS_TIMEOUT_MS = 5_000;
+  private readonly MAX_URL_LENGTH = 2_048;
+
   async validate(url: string): Promise<{ safe: boolean; reason?: string }> {
+    // ── Step 0: Length guard ────────────────────────────────────────────
+    if (url.length > this.MAX_URL_LENGTH) {
+      return {
+        safe: false,
+        reason: `URL exceeds maximum length of ${this.MAX_URL_LENGTH} characters`,
+      };
+    }
+
     // ── Step 1: Parse URL ───────────────────────────────────────────────
     let parsed: URL;
     try {
       parsed = new URL(url);
     } catch {
-      return { safe: false, reason: `Invalid URL format: ${url}` };
+      return { safe: false, reason: `Invalid URL format` };
     }
 
     // Block non-HTTP(S) protocols
@@ -115,7 +126,7 @@ export class SsrfGuardService {
 
     // ── Step 3: DNS resolve and check all resolved IPs ──────────────────
     try {
-      const results = await lookup(hostname, { all: true });
+      const results = await this.lookupWithTimeout(hostname);
 
       for (const result of results) {
         const blocked = this.isBlockedIp(result.address);
@@ -137,6 +148,28 @@ export class SsrfGuardService {
         safe: false,
         reason: `DNS resolution failed for ${hostname}: ${dnsError.message}`,
       };
+    }
+  }
+
+  private async lookupWithTimeout(
+    hostname: string,
+  ): Promise<Array<{ address: string; family: number }>> {
+    let timeout: NodeJS.Timeout | undefined;
+
+    try {
+      return await Promise.race([
+        lookup(hostname, { all: true }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('DNS resolution timeout')),
+            this.DNS_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
     }
   }
 

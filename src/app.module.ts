@@ -1,4 +1,5 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { UsersModule } from './users/users.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { FilesModule } from './files/files.module';
@@ -59,6 +60,7 @@ import { AssignmentEngineModule } from './assignment-engine/assignment-engine.mo
 import { MailInboundModule } from './channels/mail-inbound/mail-inbound.module';
 import { ReadStateSyncModule } from './queue/read-state-sync/read-state-sync.module';
 import { OnboardingModule } from './tenants/onboarding.module';
+import { ObservabilityModule } from './observability/observability.module';
 
 import {
   KeycloakConnectModule,
@@ -132,6 +134,7 @@ const envFilePath = [
       inject: [ConfigService],
     }),
     infrastructureDatabaseModule,
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     BullBoardModule.forRoot({
       route: '/queues',
       adapter: ExpressAdapter,
@@ -272,8 +275,13 @@ const envFilePath = [
     MailInboundModule,
     ReadStateSyncModule,
     OnboardingModule,
+    ObservabilityModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: HybridAuthGuard,

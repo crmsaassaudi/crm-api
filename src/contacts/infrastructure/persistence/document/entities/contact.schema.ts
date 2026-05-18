@@ -201,6 +201,17 @@ ContactSchema.index(
   { tenantId: 1, ownerId: 1 },
   { name: 'tenant_owner_lookup', sparse: false },
 );
+ContactSchema.index(
+  { tenantId: 1, isVIP: 1, createdAt: -1 },
+  { name: 'tenant_vip_created_lookup' },
+);
+ContactSchema.index(
+  { firstName: 'text', lastName: 'text', emails: 'text' },
+  {
+    name: 'contact_text_search',
+    default_language: 'none',
+  },
+);
 
 ContactSchema.virtual('owner', {
   ref: 'UserSchemaClass',

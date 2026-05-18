@@ -16,7 +16,7 @@ const getCookieBaseOptions = (
   return {
     httpOnly: true,
     secure: isProd,
-    sameSite: 'lax',
+    sameSite: isProd ? 'strict' : 'lax',
     path: '/',
   };
 };

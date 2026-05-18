@@ -62,10 +62,11 @@ export class RedisEvictionPolicyGuard implements OnModuleInit {
 
   private isAutoFixEnabled(): boolean {
     const val = process.env.REDIS_AUTO_FIX_EVICTION_POLICY;
-    if (val === undefined) {
-      return true;
+    if (val !== undefined) {
+      return val.toLowerCase() === 'true';
     }
-    return val.toLowerCase() !== 'false';
+    // Auto-fix is opt-in in production to avoid silent Redis config changes.
+    return (process.env.NODE_ENV ?? '').toLowerCase() !== 'production';
   }
 
   private buildPolicyMismatchMessage(policy: string): string {

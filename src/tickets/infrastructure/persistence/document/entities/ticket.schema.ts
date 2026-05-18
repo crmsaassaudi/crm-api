@@ -229,6 +229,18 @@ TicketSchema.index(
   { omniConversationId: 1 },
   { name: 'ticket_omni_conversation' },
 );
+TicketSchema.index(
+  { tenantId: 1, firstResponseDueAt: 1, isSlaBreached: 1 },
+  { name: 'tenant_first_response_due_sla' },
+);
+TicketSchema.index(
+  { tenantId: 1, resolutionDueAt: 1, isSlaBreached: 1 },
+  { name: 'tenant_resolution_due_sla' },
+);
+TicketSchema.index(
+  { tenantId: 1, statusId: 1, createdAt: -1 },
+  { name: 'tenant_status_created_lookup' },
+);
 
 // ── Virtuals ─────────────────────────────────────────────────────────────
 TicketSchema.virtual('contact', {

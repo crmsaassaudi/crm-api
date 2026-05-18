@@ -283,7 +283,10 @@ export class UsersService {
       );
     }
 
+    // Fetch before deletion so we know which tenant caches to invalidate
+    const user = await this.usersRepository.findById(id);
     await this.usersRepository.remove(id);
+    if (user) this.emitUserPermissionsUpdated(user);
   }
 
   async invite(inviteUserDto: InviteUserDto): Promise<User> {

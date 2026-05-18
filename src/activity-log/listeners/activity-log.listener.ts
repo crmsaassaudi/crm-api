@@ -6,8 +6,8 @@ import { BaseEvent } from '../../common/events/base.event';
 export class ActivityLogListener {
   private readonly logger = new Logger(ActivityLogListener.name);
 
-  @OnEvent('**')
-  handleAllEvents(event: BaseEvent) {
+  @OnEvent('**', { async: true })
+  handleAllEvents(event: BaseEvent): void {
     // In a real application, you would save this to the database
     // validation to ensure it inherits from BaseEvent or specific event types
     if (event instanceof BaseEvent) {

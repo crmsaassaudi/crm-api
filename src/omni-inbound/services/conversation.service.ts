@@ -5,6 +5,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -247,7 +248,7 @@ export class ConversationService {
    */
   @OnEvent('omni.message.received')
   async handleInboundMessage(payload: OmniPayload): Promise<void> {
-    const msgId = payload.externalMessageId;
+    const msgId = this.buildMessageDedupId(payload);
 
     // ── Step 1: Optimistic idempotency check (Redis) ──────────
     const idemKey = `omni:processed:${payload.tenantId}:${msgId}`;
@@ -268,7 +269,7 @@ export class ConversationService {
 
     try {
       await this.lockService.acquire(lockKey, this.LOCK_TTL, async () => {
-        await this.processWithinLock(payload, idemKey);
+        await this.processWithinLock(payload, idemKey, msgId);
       });
     } catch (error: any) {
       // E11000 = duplicate key — another worker already saved this message
@@ -291,6 +292,7 @@ export class ConversationService {
   private async processWithinLock(
     payload: OmniPayload,
     idemKey: string,
+    messageDedupId: string,
   ): Promise<void> {
     // ── Step 3: Resolve identity (Cache-aside) ────────────────
     const identity = await this.identityService.resolveIdentityForTenant(
@@ -680,15 +682,15 @@ export class ConversationService {
         mediaProxyUrl: undefined, // will be set async by MediaCacheProcessor
         status: 'delivered',
         metadata: payload.metadata,
-        externalMessageId: payload.externalMessageId,
-        platformMessageId: payload.externalMessageId, // dedup key
+        externalMessageId: messageDedupId,
+        platformMessageId: messageDedupId, // dedup key
         providerTimestamp: payload.providerTimestamp ?? payload.timestamp,
       });
 
     if (!inserted) {
       await this.redis.expire(idemKey, this.IDEM_TTL);
       this.logger.debug(
-        `Duplicate inbound message ${payload.externalMessageId} already persisted; skipping side effects`,
+        `Duplicate inbound message ${messageDedupId} already persisted; skipping side effects`,
       );
       return;
     }
@@ -703,7 +705,7 @@ export class ConversationService {
           messageId: message.id,
           mediaUrl: payload.mediaUrl,
           channelType: payload.channelType,
-          mediaId: payload.metadata?.mediaId ?? payload.externalMessageId,
+          mediaId: payload.metadata?.mediaId ?? messageDedupId,
           accessToken: payload.metadata?.accessToken,
         },
         {
@@ -742,15 +744,14 @@ export class ConversationService {
     await this.redis.expire(idemKey, this.IDEM_TTL);
 
     this.logger.log(
-      `Saved message ${payload.externalMessageId} ` +
-        `to conversation ${conversationId}`,
+      `Saved message ${messageDedupId} ` + `to conversation ${conversationId}`,
     );
 
     // Emit persisted event with internal IDs for realtime broadcast
     this.eventEmitter.emit('omni.message.persisted', {
       ...payload,
       conversationId,
-      messageId: payload.externalMessageId,
+      messageId: messageDedupId,
       internalMessageId: message.id,
     });
 
@@ -762,6 +763,37 @@ export class ConversationService {
 
     // ── Step 8: Business Hours / OOO Auto-Reply ────────────────
     await this.handleBusinessHoursCheck(payload, conversationId);
+  }
+
+  private buildMessageDedupId(payload: OmniPayload): string {
+    const externalMessageId = payload.externalMessageId?.trim();
+    if (externalMessageId) {
+      return externalMessageId;
+    }
+
+    const fingerprint = [
+      payload.tenantId,
+      payload.channelType,
+      payload.channelId,
+      payload.channelAccount,
+      payload.externalConversationId,
+      payload.senderId,
+      this.toFingerprintDate(payload.providerTimestamp ?? payload.timestamp),
+      payload.messageType,
+      payload.content ?? '',
+      payload.mediaUrl ?? '',
+    ].join('|');
+
+    return `synthetic:${createHash('sha256').update(fingerprint).digest('hex')}`;
+  }
+
+  private toFingerprintDate(value: Date | string | undefined): string {
+    if (!value) {
+      return '';
+    }
+
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
   }
 
   private resolveInitialBotState(

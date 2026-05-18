@@ -51,8 +51,21 @@ export class SlaMonitorService {
 
       await this.slaBreachQueue.add(
         'sla-breach-check',
-        { tenantId, conversationId, slaPolicyId, breachType },
-        { jobId, delay: delayMs },
+        {
+          tenantId,
+          conversationId,
+          slaPolicyId,
+          breachType,
+          timeoutMs: 30_000,
+        },
+        {
+          jobId,
+          delay: delayMs,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5_000 },
+          removeOnComplete: { count: 100 },
+          removeOnFail: { count: 50 },
+        },
       );
 
       this.logger.debug(

@@ -82,7 +82,14 @@ export class HybridAuthGuard extends AuthGuard {
       this.guardLogger.log(
         `[canActivate] Access token expired/expiring for sid=${sid}, auto-refreshing...`,
       );
-      session = await this.authService.refreshTokens(sid);
+      try {
+        session = await this.authService.refreshTokens(sid);
+      } catch (e) {
+        this.guardLogger.warn(
+          `[canActivate] Token refresh failed for sid=${sid}: ${(e as Error).message} — forcing re-authentication`,
+        );
+        return false;
+      }
     }
 
     const sessionToken = session.idToken || session.accessToken;

@@ -85,34 +85,37 @@ export class IdempotencyInterceptor implements NestInterceptor {
     const lockKey = `lock:${namespacedKey}`;
     const lockValue = randomUUID();
 
-    const existingResponse = await this.redisService.get(namespacedKey);
-    if (existingResponse !== undefined) {
-      return this.replayCached(existingResponse);
-    }
-
-    // 1. Try to acquire lock
-    // SET key value NX EX seconds
-    const acquired = await client.set(
+    // Atomic check-and-lock: single Lua round-trip replaces 3 separate Redis ops.
+    // Returns: cached JSON string | 'LOCKED' | null (lock acquired, proceed).
+    const checkAndLockScript = `
+      local cached = redis.call('get', KEYS[1])
+      if cached ~= false then return cached end
+      if redis.call('set', KEYS[2], ARGV[1], 'EX', ARGV[2], 'NX') == false then
+        return 'LOCKED'
+      end
+      return nil
+    `;
+    const scriptResult = await client.eval(
+      checkAndLockScript,
+      2,
+      namespacedKey,
       lockKey,
       lockValue,
-      'EX',
-      LOCK_TTL_SECONDS,
-      'NX',
+      String(LOCK_TTL_SECONDS),
     );
 
-    if (!acquired) {
-      const cachedResponse = await this.redisService.get(namespacedKey);
-      if (cachedResponse !== undefined) {
-        return this.replayCached(cachedResponse);
+    if (scriptResult !== null) {
+      if (scriptResult === 'LOCKED') {
+        throw new ConflictException('Request is being processed. Please retry.');
       }
-      throw new ConflictException('Request is being processed. Please retry.');
-    }
-
-    // 3. If lock acquired, check cache one last time (double-check optimization)
-    const cachedResponse = await this.redisService.get(namespacedKey);
-    if (cachedResponse !== undefined) {
-      await this.releaseLock(client, lockKey, lockValue);
-      return this.replayCached(cachedResponse);
+      // Cached result found — replay it
+      try {
+        const parsed: unknown =
+          typeof scriptResult === 'string' ? JSON.parse(scriptResult) : scriptResult;
+        return this.replayCached(parsed);
+      } catch {
+        return this.replayCached(scriptResult);
+      }
     }
 
     return next.handle().pipe(

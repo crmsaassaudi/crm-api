@@ -13,6 +13,10 @@ import { randomStringGenerator } from '@nestjs/common/utils/random-string-genera
 import { ConfigService } from '@nestjs/config';
 import { FileType } from '../../../domain/file';
 import { AllConfigType } from '../../../../config/config.type';
+import {
+  isAllowedImageFileName,
+  isAllowedImageMimeType,
+} from '../../../file-upload-security.util';
 
 @Injectable()
 export class FilesS3PresignedService {
@@ -47,7 +51,10 @@ export class FilesS3PresignedService {
       });
     }
 
-    if (!file.fileName.match(/\.(jpg|jpeg|png|gif)$/i)) {
+    if (
+      !isAllowedImageFileName(file.fileName) ||
+      (file.contentType && !isAllowedImageMimeType(file.contentType))
+    ) {
       throw new UnprocessableEntityException({
         status: HttpStatus.UNPROCESSABLE_ENTITY,
         errors: {
@@ -80,6 +87,7 @@ export class FilesS3PresignedService {
       }),
       Key: key,
       ContentLength: file.fileSize,
+      ContentType: file.contentType,
     });
     const signedUrl = await getSignedUrl(this.s3, command, { expiresIn: 3600 });
     const data = await this.fileRepository.create({
