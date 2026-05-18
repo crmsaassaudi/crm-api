@@ -60,6 +60,7 @@
     "@nestjs/schedule": "^6.1.1",
     "@nestjs/swagger": "^11.2.6",
     "@nestjs/websockets": "^11.1.13",
+    "@socket.io/redis-adapter": "^8.3.0",
     "@types/cookie-parser": "^1.4.10",
     "@types/multer-s3": "3.0.3",
     "apple-signin-auth": "2.0.0",
