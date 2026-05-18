@@ -248,9 +248,9 @@ sudo systemctl reload nginx
 
 ```bash
 cd /var/www/crm-api
-docker compose build --pull crm-api
-docker compose up -d crm-api
-docker compose logs -f crm-api
+docker compose build --pull api-service
+docker compose up -d api-service
+docker compose logs -f api-service
 ```
 
 Sau do moi lan push vao branch `main`, GitHub Actions se tu dong SSH vao VPS, pull code, build image va restart container.

@@ -35,6 +35,6 @@ jobs:
 
             test -f .env.production
 
-            docker compose -f docker-compose.yml build --pull crm-api
-            docker compose -f docker-compose.yml up -d --remove-orphans crm-api
+            docker compose -f docker-compose.yml build --pull api-service
+            docker compose -f docker-compose.yml up -d --remove-orphans api-service
             docker image prune -f
