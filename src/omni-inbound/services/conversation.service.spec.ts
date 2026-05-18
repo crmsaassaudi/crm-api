@@ -67,7 +67,10 @@ describe('ConversationService Concurrency', () => {
     };
 
     messageRepoMock = {
-      create: jest.fn().mockResolvedValue({ id: 'msg_123' }),
+      upsertInboundByExternalId: jest.fn().mockResolvedValue({
+        message: { id: 'msg_123' },
+        inserted: true,
+      }),
     };
 
     contactsServiceMock = {
@@ -207,7 +210,7 @@ describe('ConversationService Concurrency', () => {
       { contactId: 'contact_123', conversationId: 'conv_123' },
       'tenant_1',
     );
-    expect(messageRepoMock.create).toHaveBeenCalled();
+    expect(messageRepoMock.upsertInboundByExternalId).toHaveBeenCalled();
     expect(redisMock.expire).toHaveBeenCalledWith(
       'omni:processed:tenant_1:msg_001',
       3600,
@@ -229,7 +232,7 @@ describe('ConversationService Concurrency', () => {
     );
     expect(lockServiceMock.acquire).not.toHaveBeenCalled();
     expect(conversationRepoMock.create).not.toHaveBeenCalled();
-    expect(messageRepoMock.create).not.toHaveBeenCalled();
+    expect(messageRepoMock.upsertInboundByExternalId).not.toHaveBeenCalled();
   });
 
   it('should skip processing if E11000 is thrown during save', async () => {
@@ -270,8 +273,26 @@ describe('ConversationService Concurrency', () => {
     await service.handleInboundMessage(payload);
 
     expect(conversationRepoMock.create).not.toHaveBeenCalled(); // No creation
-    expect(messageRepoMock.create).toHaveBeenCalledWith(
+    expect(messageRepoMock.upsertInboundByExternalId).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: 'existing_conv_456' }),
+    );
+  });
+
+  it('should skip duplicate side effects when inbound upsert finds existing message', async () => {
+    messageRepoMock.upsertInboundByExternalId.mockResolvedValueOnce({
+      message: { id: 'msg_existing' },
+      inserted: false,
+    });
+
+    const eventEmitter = (service as any).eventEmitter;
+    const payload = createPayload('msg_duplicate');
+
+    await service.handleInboundMessage(payload);
+
+    expect(messageRepoMock.upsertInboundByExternalId).toHaveBeenCalled();
+    expect(eventEmitter.emit).not.toHaveBeenCalledWith(
+      'omni.message.persisted',
+      expect.anything(),
     );
   });
 });

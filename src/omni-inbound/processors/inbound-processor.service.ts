@@ -1,10 +1,16 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { createHash } from 'crypto';
 import {
   ChannelAdapter,
   CHANNEL_ADAPTERS,
 } from '../adapters/channel-adapter.interface';
 import { OmniPayload, ChannelType } from '../domain/omni-payload';
+import {
+  OMNI_ROUTING_QUEUE,
+  PRIORITY_NORMAL,
+} from '../queue/omni-queue.constants';
 
 /**
  * Single entry-point for all inbound messages from any provider.
@@ -22,7 +28,8 @@ export class InboundProcessorService {
   constructor(
     @Inject(CHANNEL_ADAPTERS)
     private readonly adapters: Map<ChannelType, ChannelAdapter>,
-    private readonly eventEmitter: EventEmitter2,
+    @InjectQueue(OMNI_ROUTING_QUEUE)
+    private readonly routingQueue: Queue<OmniPayload>,
   ) {}
 
   /**
@@ -65,8 +72,10 @@ export class InboundProcessorService {
         `from sender ${normalized.senderId}`,
     );
 
-    // Await listeners so persistence/realtime failures make the BullMQ job retry.
-    await this.eventEmitter.emitAsync('omni.message.received', normalized);
+    await this.routingQueue.add('omni.route', normalized, {
+      jobId: this.buildRoutingJobId(normalized),
+      priority: PRIORITY_NORMAL,
+    });
 
     return normalized;
   }
@@ -82,5 +91,20 @@ export class InboundProcessorService {
     const adapter = this.adapters.get(channelType);
     if (!adapter) return false;
     return adapter.validateWebhook(headers, body);
+  }
+
+  private buildRoutingJobId(payload: OmniPayload): string {
+    return createHash('sha256')
+      .update(
+        [
+          payload.tenantId,
+          payload.channelType,
+          payload.channelAccount,
+          payload.externalMessageId,
+        ]
+          .map((part) => String(part || 'unknown'))
+          .join('|'),
+      )
+      .digest('hex');
   }
 }

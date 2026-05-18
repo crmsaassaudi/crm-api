@@ -1,4 +1,3 @@
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InboundProcessorService } from './inbound-processor.service';
 import { FacebookAdapter } from '../adapters/facebook.adapter';
 import { ZaloAdapter } from '../adapters/zalo.adapter';
@@ -8,19 +7,18 @@ import { ChannelAdapter } from '../adapters/channel-adapter.interface';
 
 describe('InboundProcessorService', () => {
   let service: InboundProcessorService;
-  let eventEmitter: EventEmitter2;
+  let routingQueue: { add: jest.Mock };
   let adapters: Map<ChannelType, ChannelAdapter>;
 
   beforeEach(() => {
-    eventEmitter = new EventEmitter2();
-    jest.spyOn(eventEmitter, 'emitAsync');
+    routingQueue = { add: jest.fn().mockResolvedValue({ id: 'route_1' }) };
 
     adapters = new Map<ChannelType, ChannelAdapter>();
     adapters.set('facebook', new FacebookAdapter());
     adapters.set('zalo', new ZaloAdapter());
     adapters.set('whatsapp', new WhatsAppAdapter());
 
-    service = new InboundProcessorService(adapters, eventEmitter);
+    service = new InboundProcessorService(adapters, routingQueue as any);
   });
 
   it('should route a Facebook payload to the Facebook adapter', async () => {
@@ -35,9 +33,10 @@ describe('InboundProcessorService', () => {
 
     expect(result!.channelType).toBe('facebook');
     expect(result!.content).toBe('Hello FB!');
-    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
-      'omni.message.received',
+    expect(routingQueue.add).toHaveBeenCalledWith(
+      'omni.route',
       expect.objectContaining({ channelType: 'facebook' }),
+      expect.objectContaining({ jobId: expect.any(String), priority: 10 }),
     );
   });
 
@@ -55,9 +54,10 @@ describe('InboundProcessorService', () => {
 
     expect(result!.channelType).toBe('zalo');
     expect(result!.content).toBe('Hello Zalo!');
-    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
-      'omni.message.received',
+    expect(routingQueue.add).toHaveBeenCalledWith(
+      'omni.route',
       expect.objectContaining({ channelType: 'zalo' }),
+      expect.objectContaining({ jobId: expect.any(String), priority: 10 }),
     );
   });
 
@@ -81,9 +81,10 @@ describe('InboundProcessorService', () => {
 
     expect(result!.channelType).toBe('whatsapp');
     expect(result!.content).toBe('Hello WA!');
-    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
-      'omni.message.received',
+    expect(routingQueue.add).toHaveBeenCalledWith(
+      'omni.route',
       expect.objectContaining({ channelType: 'whatsapp' }),
+      expect.objectContaining({ jobId: expect.any(String), priority: 10 }),
     );
   });
 
@@ -93,7 +94,7 @@ describe('InboundProcessorService', () => {
     ).rejects.toThrow('No adapter registered for channel type: telegram');
   });
 
-  it('should emit omni.message.received event on successful processing', async () => {
+  it('should enqueue omni routing job on successful processing', async () => {
     const raw = {
       sender: { id: 'psid_123' },
       recipient: { id: 'page_456' },
@@ -103,13 +104,14 @@ describe('InboundProcessorService', () => {
 
     await service.process('facebook', raw, 'tenant_1', 'ch_1');
 
-    expect(eventEmitter.emitAsync).toHaveBeenCalledTimes(1);
-    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
-      'omni.message.received',
+    expect(routingQueue.add).toHaveBeenCalledTimes(1);
+    expect(routingQueue.add).toHaveBeenCalledWith(
+      'omni.route',
       expect.objectContaining({
         content: 'Event test',
         externalMessageId: 'mid.event',
       }),
+      expect.objectContaining({ jobId: expect.any(String), priority: 10 }),
     );
   });
 });

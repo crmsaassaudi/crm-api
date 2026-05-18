@@ -39,6 +39,7 @@ import { ConversationLockService } from './services/conversation-lock.service';
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
 import { WebhookProcessor } from './queue/webhook-processor';
+import { OmniRoutingProcessor } from './queue/omni-routing.processor';
 import { MediaCacheProcessor } from './queue/media-cache.processor';
 import { StickyRetryProcessor } from './queue/sticky-retry.processor';
 import { AutoResolveProcessor } from './queue/auto-resolve.processor';
@@ -100,6 +101,7 @@ import { isWorkerRuntime } from '../config/runtime-role';
 const workerProviders = isWorkerRuntime()
   ? [
       WebhookProcessor,
+      OmniRoutingProcessor,
       MediaCacheProcessor,
       StickyRetryProcessor,
       AutoResolveProcessor,

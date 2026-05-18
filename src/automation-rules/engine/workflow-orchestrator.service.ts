@@ -155,6 +155,7 @@ export class WorkflowOrchestratorService {
       automationDepth: depth,
     });
     const executionId = execLog._id.toString();
+    const stepLogs: ExecutionStep[] = [];
 
     try {
       // ── Walk the DAG (using PUBLISHED snapshot — immune to live edits) ──
@@ -185,11 +186,13 @@ export class WorkflowOrchestratorService {
         tenantId,
         executionSessionId,
         depth,
+        stepLogs,
       );
 
       // ── Mark success (only if no wait node paused the execution) ────────
 
       if (!hibernated) {
+        await this.flushStepLogs(executionId, stepLogs);
         await this.executionLogRepo.completeExecution(executionId);
         await this.workflowRepo.incrementExecutionCount(tenantId, workflowId);
 
@@ -207,6 +210,7 @@ export class WorkflowOrchestratorService {
         `[Orchestrator] ❌ Workflow "${workflow.name}" failed: ${error.message}`,
         error.stack,
       );
+      await this.flushStepLogs(executionId, stepLogs);
       await this.executionLogRepo.failExecution(executionId, {
         code: 'EXECUTION_ERROR',
         message: error.message,
@@ -231,8 +235,9 @@ export class WorkflowOrchestratorService {
     executionSessionId: string,
     depth: number,
   ): Promise<void> {
+    const stepLogs: ExecutionStep[] = [];
     try {
-      await this.traverseFromNode(
+      const hibernated = await this.traverseFromNode(
         nodeId,
         nodes,
         edges,
@@ -242,20 +247,29 @@ export class WorkflowOrchestratorService {
         tenantId,
         executionSessionId,
         depth,
+        stepLogs,
       );
 
-      // Mark execution as completed after delayed resume finishes
-      await this.executionLogRepo.completeExecution(executionId);
-      await this.workflowRepo.incrementExecutionCount(tenantId, workflowId);
+      if (!hibernated) {
+        // Mark execution as completed after delayed resume finishes
+        await this.flushStepLogs(executionId, stepLogs);
+        await this.executionLogRepo.completeExecution(executionId);
+        await this.workflowRepo.incrementExecutionCount(tenantId, workflowId);
 
-      this.logger.log(
-        `[Orchestrator] ✅ Resumed execution ${executionId} completed`,
-      );
+        this.logger.log(
+          `[Orchestrator] ✅ Resumed execution ${executionId} completed`,
+        );
+      } else {
+        this.logger.log(
+          `[Orchestrator] Resumed execution ${executionId} hibernated again`,
+        );
+      }
     } catch (error: any) {
       this.logger.error(
         `[Orchestrator] ❌ Resumed execution ${executionId} failed: ${error.message}`,
         error.stack,
       );
+      await this.flushStepLogs(executionId, stepLogs);
       await this.executionLogRepo.failExecution(executionId, {
         code: 'RESUME_ERROR',
         message: error.message,
@@ -279,6 +293,7 @@ export class WorkflowOrchestratorService {
     tenantId: string,
     executionSessionId: string,
     depth: number,
+    stepLogs: ExecutionStep[],
   ): Promise<boolean> {
     const node = nodes.find((n: any) => n.id === nodeId);
     if (!node) return false;
@@ -292,7 +307,7 @@ export class WorkflowOrchestratorService {
       nodeId,
     });
     if (!loopCheck.allowed) {
-      await this.logStep(executionId, {
+      this.bufferStep(stepLogs, {
         nodeId,
         nodeName: node.config?.name || node.type,
         nodeType: node.type,
@@ -312,7 +327,7 @@ export class WorkflowOrchestratorService {
     // ── Process node by type ────────────────────────────────────────────
     if (node.type === 'trigger') {
       // Trigger node: just log and move to next
-      await this.logStep(executionId, {
+      this.bufferStep(stepLogs, {
         nodeId,
         nodeName: 'Trigger',
         nodeType: 'trigger',
@@ -336,6 +351,7 @@ export class WorkflowOrchestratorService {
           tenantId,
           executionSessionId,
           depth,
+          stepLogs,
         );
         if (hibernated) return true;
       }
@@ -353,7 +369,7 @@ export class WorkflowOrchestratorService {
 
       const branch = matched ? 'matched' : 'not_matched';
 
-      await this.logStep(executionId, {
+      this.bufferStep(stepLogs, {
         nodeId,
         nodeName: node.config?.name || 'Condition',
         nodeType: 'condition',
@@ -385,6 +401,7 @@ export class WorkflowOrchestratorService {
           tenantId,
           executionSessionId,
           depth,
+          stepLogs,
         );
         if (hibernated) return true;
       }
@@ -415,7 +432,7 @@ export class WorkflowOrchestratorService {
       try {
         await this.actionProducer.dispatch(actionData);
 
-        await this.logStep(executionId, {
+        this.bufferStep(stepLogs, {
           nodeId,
           nodeName: actionData.nodeName,
           nodeType: 'action',
@@ -427,7 +444,7 @@ export class WorkflowOrchestratorService {
           duration: Date.now() - stepStart.getTime(),
         });
       } catch (error: any) {
-        await this.logStep(executionId, {
+        this.bufferStep(stepLogs, {
           nodeId,
           nodeName: actionData.nodeName,
           nodeType: 'action',
@@ -454,6 +471,7 @@ export class WorkflowOrchestratorService {
           tenantId,
           executionSessionId,
           depth,
+          stepLogs,
         );
         if (hibernated) return true;
       }
@@ -468,7 +486,7 @@ export class WorkflowOrchestratorService {
       );
 
       // Log the wait step
-      await this.logStep(executionId, {
+      this.bufferStep(stepLogs, {
         nodeId,
         nodeName: config.name || 'Wait',
         nodeType: 'wait' as any,
@@ -486,6 +504,7 @@ export class WorkflowOrchestratorService {
         completedAt: new Date(),
         duration: 0,
       });
+      await this.flushStepLogs(executionId, stepLogs);
 
       // Schedule delayed resume for each downstream edge
       const nextEdges = edges.filter((e: any) => e.source === nodeId);
@@ -516,14 +535,17 @@ export class WorkflowOrchestratorService {
     return false;
   }
 
-  /**
-   * Persist step logs immediately so a pod crash cannot drop in-memory batches.
-   */
-  private async logStep(
+  private bufferStep(stepLogs: ExecutionStep[], step: ExecutionStep): void {
+    stepLogs.push(step);
+  }
+
+  private async flushStepLogs(
     executionId: string,
-    step: ExecutionStep,
+    stepLogs: ExecutionStep[],
   ): Promise<void> {
-    await this.executionLogRepo.logStep(executionId, step);
+    if (stepLogs.length === 0) return;
+    const batch = stepLogs.splice(0, stepLogs.length);
+    await this.executionLogRepo.logSteps(executionId, batch);
   }
 
   private appendBreadcrumb(

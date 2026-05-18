@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
-import { OMNI_WEBHOOK_QUEUE } from './omni-queue.constants';
+import { OMNI_ROUTING_QUEUE, OMNI_WEBHOOK_QUEUE } from './omni-queue.constants';
 import { OMNI_MEDIA_CACHE_QUEUE } from './omni-media-queue.constants';
 import { OMNI_STICKY_RETRY_QUEUE } from './omni-sticky-queue.constants';
 import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
@@ -9,6 +9,7 @@ import { BOT_PROCESSING_QUEUE } from './bot-processing-queue.constants';
 /**
  * Registers BullMQ queues for the omni-channel module:
  *   - omni-webhooks: inbound webhook processing
+ *   - omni-routing: normalized OmniPayload routing boundary
  *   - omni-media-cache: async media download & caching
  *   - omni-sticky-retry: delayed sticky-routing retry after wait-time
  *   - omni-auto-resolve: per-conversation delayed auto-resolve (replaces cron)
@@ -27,6 +28,15 @@ import { BOT_PROCESSING_QUEUE } from './bot-processing-queue.constants';
           attempts: 3,
           backoff: { type: 'exponential', delay: 2000 },
           removeOnComplete: 100, // keep last 100 completed for debugging
+          removeOnFail: 500,
+        },
+      },
+      {
+        name: OMNI_ROUTING_QUEUE,
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+          removeOnComplete: 100,
           removeOnFail: 500,
         },
       },

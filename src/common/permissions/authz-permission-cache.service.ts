@@ -1,0 +1,274 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
+import { RedisService } from '../../redis/redis.service';
+import { PlatformRoleEnum } from '../../roles/platform-role.enum';
+import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
+import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
+import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
+import {
+  calculateEffectivePermissions,
+  canAccess,
+  PermissionTenant,
+} from './permission.engine';
+import { PermissionRuleMetadata } from './permission.decorator';
+import { getPermissionKey } from './permission.constants';
+
+const DEFAULT_CACHE_TTL_SECONDS = 5 * 60;
+const EMPTY_SENTINEL = '__empty__';
+const ALL_SENTINEL = '__all__';
+
+export interface AuthzPermissionCheckResult {
+  allowed: boolean;
+  userId?: string;
+  tenantId?: string;
+  email?: string | null;
+  cacheHit: boolean;
+}
+
+@Injectable()
+export class AuthzPermissionCacheService {
+  private readonly logger = new Logger(AuthzPermissionCacheService.name);
+  private readonly ttlSeconds = this.readPositiveNumberEnv(
+    'AUTHZ_PERMISSION_CACHE_TTL_SECONDS',
+    DEFAULT_CACHE_TTL_SECONDS,
+  );
+
+  constructor(
+    private readonly moduleRef: ModuleRef,
+    private readonly redisService: RedisService,
+  ) {}
+
+  async canAccess(params: {
+    rawUserId: string;
+    tenantHint?: string;
+    rule: PermissionRuleMetadata;
+  }): Promise<AuthzPermissionCheckResult> {
+    const permissionKey = getPermissionKey(
+      params.rule.action,
+      params.rule.resource,
+    );
+
+    if (!permissionKey) {
+      return { allowed: false, cacheHit: false };
+    }
+
+    const hintedTenantId = this.isObjectId(params.tenantHint)
+      ? params.tenantHint
+      : undefined;
+    const rawUserId = String(params.rawUserId);
+
+    if (hintedTenantId && this.isObjectId(rawUserId)) {
+      const cached = await this.readCachedPermission(
+        hintedTenantId,
+        rawUserId,
+        permissionKey,
+      );
+      if (cached !== null) {
+        return {
+          allowed: cached,
+          userId: rawUserId,
+          tenantId: hintedTenantId,
+          cacheHit: true,
+        };
+      }
+    }
+
+    const userRepository = this.moduleRef.get(UserRepository, {
+      strict: false,
+    });
+    const tenantsRepository = this.moduleRef.get(TenantsRepository, {
+      strict: false,
+    });
+    const groupRepository = this.moduleRef.get(GroupRepository, {
+      strict: false,
+    });
+
+    const user = this.isObjectId(rawUserId)
+      ? (await userRepository.findByIdsGlobal([rawUserId]))[0] || null
+      : await userRepository.findByKeycloakIdAndProvider({
+          keycloakId: rawUserId,
+          provider: 'email',
+        });
+
+    if (!user) {
+      return { allowed: false, cacheHit: false };
+    }
+
+    const tenantHint = params.tenantHint ?? user.tenants?.[0]?.tenantId;
+    const tenant = await this.resolveTenant(tenantsRepository, tenantHint);
+    if (!tenant) {
+      return {
+        allowed: false,
+        userId: String(user.id),
+        email: user.email,
+        cacheHit: false,
+      };
+    }
+
+    const cached = await this.readCachedPermission(
+      String(tenant.id),
+      String(user.id),
+      permissionKey,
+    );
+    if (cached !== null) {
+      return {
+        allowed: cached,
+        userId: String(user.id),
+        tenantId: String(tenant.id),
+        email: user.email,
+        cacheHit: true,
+      };
+    }
+
+    if (user.platformRole?.id === PlatformRoleEnum.SUPER_ADMIN) {
+      await this.populatePermissions(String(tenant.id), String(user.id), [
+        ALL_SENTINEL,
+      ]);
+
+      return {
+        allowed: true,
+        userId: String(user.id),
+        tenantId: String(tenant.id),
+        email: user.email,
+        cacheHit: false,
+      };
+    }
+
+    const userGroups = await groupRepository.findGroupsByMember(
+      String(tenant.id),
+      String(user.id),
+    );
+    const effectivePermissions = calculateEffectivePermissions(
+      tenant as PermissionTenant,
+      user,
+      userGroups,
+    );
+
+    await this.populatePermissions(
+      String(tenant.id),
+      String(user.id),
+      Array.from(effectivePermissions),
+    );
+
+    return {
+      allowed: canAccess(
+        effectivePermissions,
+        params.rule.action,
+        params.rule.resource,
+      ),
+      userId: String(user.id),
+      tenantId: String(tenant.id),
+      email: user.email,
+      cacheHit: false,
+    };
+  }
+
+  async invalidateUser(tenantId: string, userId: string): Promise<void> {
+    await this.redisService.getClient().del(this.buildKey(tenantId, userId));
+  }
+
+  async invalidateUsers(tenantId: string, userIds: string[]): Promise<void> {
+    const keys = Array.from(new Set(userIds.filter(Boolean))).map((userId) =>
+      this.buildKey(tenantId, userId),
+    );
+    if (keys.length === 0) return;
+    await this.redisService.getClient().del(...keys);
+  }
+
+  async invalidateTenant(tenantId: string): Promise<void> {
+    const client = this.redisService.getClient();
+    const pattern = `authz:t:${tenantId}:u:*:perms`;
+    let cursor = '0';
+    let deleted = 0;
+
+    do {
+      const [nextCursor, keys] = await client.scan(
+        cursor,
+        'MATCH',
+        pattern,
+        'COUNT',
+        100,
+      );
+      cursor = nextCursor;
+      if (keys.length > 0) {
+        deleted += await client.del(...keys);
+      }
+    } while (cursor !== '0');
+
+    this.logger.debug(
+      `Invalidated ${deleted} authz permission cache keys for tenant=${tenantId}`,
+    );
+  }
+
+  private async readCachedPermission(
+    tenantId: string,
+    userId: string,
+    permissionKey: string,
+  ): Promise<boolean | null> {
+    const client = this.redisService.getClient();
+    const key = this.buildKey(tenantId, userId);
+    const exists = await client.exists(key);
+
+    if (!exists) {
+      this.logger.debug(`Authz permission cache miss key=${key}`);
+      return null;
+    }
+
+    this.logger.debug(`Authz permission cache hit key=${key}`);
+    const [hasAll, hasPermission] = await Promise.all([
+      client.sismember(key, ALL_SENTINEL),
+      client.sismember(key, permissionKey),
+    ]);
+
+    return hasAll === 1 || hasPermission === 1;
+  }
+
+  private async populatePermissions(
+    tenantId: string,
+    userId: string,
+    permissions: string[],
+  ): Promise<void> {
+    const key = this.buildKey(tenantId, userId);
+    const members = permissions.length > 0 ? permissions : [EMPTY_SENTINEL];
+    const client = this.redisService.getClient();
+    const pipeline = client.pipeline();
+
+    pipeline.del(key);
+    pipeline.sadd(key, ...members);
+    pipeline.expire(key, this.ttlSeconds);
+    await pipeline.exec();
+  }
+
+  private async resolveTenant(
+    tenantsRepository: TenantsRepository,
+    tenantHint?: string,
+  ) {
+    if (!tenantHint) return null;
+    const tenantHintString = String(tenantHint);
+
+    if (this.isObjectId(tenantHintString)) {
+      return tenantsRepository.findById(tenantHintString);
+    }
+
+    return (
+      (await tenantsRepository.findByAlias(tenantHintString)) ??
+      (await tenantsRepository.findByKeycloakOrgId(tenantHintString))
+    );
+  }
+
+  private buildKey(tenantId: string, userId: string): string {
+    return `authz:t:${tenantId}:u:${userId}:perms`;
+  }
+
+  private isObjectId(value?: string): value is string {
+    return !!value && /^[0-9a-fA-F]{24}$/.test(value);
+  }
+
+  private readPositiveNumberEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (!raw) return fallback;
+
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+}

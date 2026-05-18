@@ -22,6 +22,42 @@ export class MessageRepository {
     return OmniMessageMapper.toDomain(doc);
   }
 
+  async upsertInboundByExternalId(
+    data: Partial<OmniMessageSchemaClass> & {
+      tenantId: string;
+      externalMessageId: string;
+    },
+  ): Promise<{ message: OmniMessage; inserted: boolean }> {
+    const result = await this.model
+      .updateOne(
+        {
+          tenantId: data.tenantId,
+          externalMessageId: data.externalMessageId,
+        },
+        { $setOnInsert: data },
+        { upsert: true },
+      )
+      .exec();
+
+    const doc = await this.model
+      .findOne({
+        tenantId: data.tenantId,
+        externalMessageId: data.externalMessageId,
+      })
+      .exec();
+
+    if (!doc) {
+      throw new Error(
+        `Failed to read upserted inbound message ${data.externalMessageId}`,
+      );
+    }
+
+    return {
+      message: OmniMessageMapper.toDomain(doc),
+      inserted: result.upsertedCount > 0,
+    };
+  }
+
   async findByIdempotencyKey(
     tenantId: string,
     idempotencyKey: string,

@@ -23,6 +23,7 @@ import { Role } from '../roles/domain/role';
 import { Status } from '../statuses/domain/status';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ClsService } from 'nestjs-cls';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
 import { InviteUserDto } from './dto/invite-user.dto';
 import { PaginationResponseDto } from '../utils/dto/pagination-response.dto';
@@ -41,6 +42,7 @@ export class UsersService {
     private readonly keycloakAdminService: KeycloakAdminService,
     private readonly tenantsRepository: TenantsRepository,
     private readonly groupRepository: GroupRepository,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async create(
@@ -251,7 +253,7 @@ export class UsersService {
       status = { id: updateUserDto.status.id as StatusEnum };
     }
 
-    return this.usersRepository.update(id, {
+    const updated = await this.usersRepository.update(id, {
       // Do not remove comment below.
       // <updating-property-payload />
       firstName: updateUserDto.firstName,
@@ -267,6 +269,8 @@ export class UsersService {
       omniMaxCapacity: updateUserDto.omniMaxCapacity,
       skills: updateUserDto.skills,
     });
+    if (updated) this.emitUserPermissionsUpdated(updated);
+    return updated;
   }
 
   async remove(id: User['id']): Promise<void> {
@@ -330,12 +334,14 @@ export class UsersService {
       }
 
       // Add tenant membership via upsertWithTenants
-      return this.usersRepository.upsertWithTenants(
+      const updated = await this.usersRepository.upsertWithTenants(
         existingUser.keycloakId || '',
         inviteUserDto.email,
         {},
         [{ tenantId: tenantId, roles: [tenantRole], joinedAt: new Date() }],
       );
+      this.emitUserTenantMembershipUpdated(updated, tenantId);
+      return updated;
     }
 
     // ── Case 2: User does NOT exist — create in Keycloak + DB ───────────────
@@ -391,7 +397,7 @@ export class UsersService {
     }
 
     try {
-      return await this.usersRepository.create({
+      const created = await this.usersRepository.create({
         firstName: null,
         lastName: null,
         email: inviteUserDto.email,
@@ -403,6 +409,8 @@ export class UsersService {
           { tenantId: tenantId, roles: [tenantRole], joinedAt: new Date() },
         ],
       });
+      this.emitUserTenantMembershipUpdated(created, tenantId);
+      return created;
     } catch (error) {
       this.logger.error(
         'Failed to create user in local DB, rolling back...',
@@ -456,7 +464,15 @@ export class UsersService {
     }
 
     // Remove tenant membership
-    return this.usersRepository.removeTenantMembership(userId, tenantId);
+    const updated = await this.usersRepository.removeTenantMembership(
+      userId,
+      tenantId,
+    );
+    this.eventEmitter.emit('user.tenant-membership.updated', {
+      tenantId,
+      userId,
+    });
+    return updated;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -613,7 +629,7 @@ export class UsersService {
     }
 
     try {
-      return await this.usersRepository.create({
+      const created = await this.usersRepository.create({
         firstName: dto.firstName,
         lastName: dto.lastName,
         email: dto.email,
@@ -625,6 +641,8 @@ export class UsersService {
           { tenantId: tenantId, roles: [tenantRole], joinedAt: new Date() },
         ],
       });
+      this.emitUserTenantMembershipUpdated(created, tenantId);
+      return created;
     } catch (error) {
       this.logger.error(
         'Failed to create user in local DB, rolling back...',
@@ -672,7 +690,9 @@ export class UsersService {
     }
 
     // 2. Update Local DB
-    return this.usersRepository.update(id, { status });
+    const updated = await this.usersRepository.update(id, { status });
+    if (updated) this.emitUserPermissionsUpdated(updated);
+    return updated;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -760,5 +780,21 @@ export class UsersService {
     });
 
     return updated?.i18nPreferences ?? null;
+  }
+
+  private emitUserPermissionsUpdated(user: User): void {
+    for (const membership of user.tenants ?? []) {
+      this.eventEmitter.emit('user.permissions.updated', {
+        tenantId: String(membership.tenantId),
+        userId: String(user.id),
+      });
+    }
+  }
+
+  private emitUserTenantMembershipUpdated(user: User, tenantId: string): void {
+    this.eventEmitter.emit('user.tenant-membership.updated', {
+      tenantId,
+      userId: String(user.id),
+    });
   }
 }

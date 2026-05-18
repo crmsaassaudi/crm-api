@@ -158,6 +158,15 @@ AutomationExecutionLogSchema.index({
   workflowId: 1,
   startedAt: -1,
 });
+AutomationExecutionLogSchema.index(
+  {
+    tenantId: 1,
+    workflowId: 1,
+    status: 1,
+    startedAt: -1,
+  },
+  { name: 'automation_logs_workflow_status_started' },
+);
 
 // Logs per record
 AutomationExecutionLogSchema.index({ tenantId: 1, recordId: 1 });

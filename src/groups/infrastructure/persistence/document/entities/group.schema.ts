@@ -59,3 +59,7 @@ export const GroupSchema = SchemaFactory.createForClass(GroupSchemaClass);
 
 GroupSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 GroupSchema.index({ tenantId: 1, name: 1 }, { unique: true });
+GroupSchema.index(
+  { tenantId: 1, memberIds: 1 },
+  { name: 'groups_member_lookup' },
+);

@@ -151,3 +151,11 @@ UserSchema.plugin(tenantFilterPlugin, { field: 'tenants.tenantId' });
 
 UserSchema.index({ platformRole: 1 });
 UserSchema.index({ 'tenants.tenantId': 1, email: 1 }, { unique: true });
+UserSchema.index(
+  { keycloakId: 1, provider: 1 },
+  { name: 'users_keycloak_provider', sparse: true },
+);
+UserSchema.index(
+  { 'tenants.tenantId': 1, _id: 1 },
+  { name: 'users_tenant_member_lookup' },
+);

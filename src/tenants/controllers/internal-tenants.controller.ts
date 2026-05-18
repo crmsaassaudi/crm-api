@@ -20,6 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { Unprotected } from 'nest-keycloak-connect';
 import { v4 as uuidv4 } from 'uuid';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   CORE_PERMISSIONS,
   FEATURE_PERMISSIONS,
@@ -65,6 +66,7 @@ export class InternalTenantsController {
     private readonly tenantsRepository: TenantsRepository,
     private readonly aliasReservationRepository: TenantAliasReservationRepository,
     private readonly configService: ConfigService<AllConfigType>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -290,6 +292,7 @@ export class InternalTenantsController {
       tenantId,
       body.permissions,
     );
+    this.eventEmitter.emit('tenant.permissions.updated', { tenantId });
 
     this.logger.log(
       `[Admin] Granted [${body.permissions.join(', ')}] to tenant "${tenant.alias}"`,
@@ -330,6 +333,7 @@ export class InternalTenantsController {
       tenantId,
       body.permissions,
     );
+    this.eventEmitter.emit('tenant.permissions.updated', { tenantId });
 
     this.logger.log(
       `[Admin] Revoked [${body.permissions.join(', ')}] from tenant "${tenant.alias}"`,

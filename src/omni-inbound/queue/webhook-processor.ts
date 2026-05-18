@@ -44,12 +44,10 @@ export class WebhookProcessor extends BaseConsumer {
 
   async process(job: Job<WebhookJobData>): Promise<void> {
     const { channelType, event } = job.data;
-    const { tenantId, channelId, channelConfig } =
-      await this.resolveChannelData(job.data);
-
+    const accountId = job.data.accountId || this.extractAccountId(job.data);
     const idempotencyKey = this.buildIdempotencyKey(
-      tenantId,
       channelType,
+      accountId,
       event,
       job.id,
     );
@@ -70,12 +68,15 @@ export class WebhookProcessor extends BaseConsumer {
       return;
     }
 
-    return runWithTenantContext(this.cls, tenantId, async () => {
-      this.logger.log(
-        `Processing webhook job ${job.id} - ${channelType} for tenant ${tenantId}`,
-      );
+    try {
+      const { tenantId, channelId, channelConfig } =
+        await this.resolveChannelData({ ...job.data, accountId });
 
-      try {
+      await runWithTenantContext(this.cls, tenantId, async () => {
+        this.logger.log(
+          `Processing webhook job ${job.id} - ${channelType} for tenant ${tenantId}`,
+        );
+
         await this.logVipSenderIfAny(tenantId, channelType, event);
         await this.processor.process(
           channelType,
@@ -84,21 +85,21 @@ export class WebhookProcessor extends BaseConsumer {
           channelId,
           channelConfig,
         );
-      } catch (error: any) {
-        // E11000 = MongoDB Duplicate Key - message was already persisted.
-        // Acknowledge the job as completed to avoid BullMQ retries and log spam.
-        if (error?.code === 11000) {
-          this.logger.warn(
-            `Duplicate message detected (E11000) in job ${job.id} - marking as completed`,
-          );
-          return;
-        }
-        if (idempotencyKey) {
-          await this.redis.del(idempotencyKey).catch(() => undefined);
-        }
-        throw error; // Re-throw any other error so BullMQ retries normally
+      });
+    } catch (error: any) {
+      // E11000 = MongoDB Duplicate Key - message was already persisted.
+      // Acknowledge the job as completed to avoid BullMQ retries and log spam.
+      if (error?.code === 11000) {
+        this.logger.warn(
+          `Duplicate message detected (E11000) in job ${job.id} - marking as completed`,
+        );
+        return;
       }
-    });
+      if (idempotencyKey) {
+        await this.redis.del(idempotencyKey).catch(() => undefined);
+      }
+      throw error; // Re-throw any other error so BullMQ retries normally
+    }
   }
 
   private async resolveChannelData(data: WebhookJobData): Promise<{
@@ -163,15 +164,15 @@ export class WebhookProcessor extends BaseConsumer {
   }
 
   private buildIdempotencyKey(
-    tenantId: string,
     channelType: ChannelType,
-    event: any,
+    accountId?: string,
+    event?: any,
     fallbackJobId?: string | number,
   ): string | null {
     const providerMessageId = this.extractProviderMessageId(event);
     if (!providerMessageId && fallbackJobId === undefined) return null;
 
-    return `omni:webhook:${tenantId}:${channelType}:${
+    return `processed:webhook:${channelType}:${accountId || 'unknown'}:${
       providerMessageId ?? fallbackJobId
     }`;
   }

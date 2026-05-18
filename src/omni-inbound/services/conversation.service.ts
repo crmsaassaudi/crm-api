@@ -667,22 +667,31 @@ export class ConversationService {
     // ── Step 5a: Save the message immediately (with original media URL) ──
     // Media caching is done asynchronously via BullMQ to avoid blocking
     // the distributed lock during large file downloads.
-    const message = await this.messageRepo.create({
-      tenantId: payload.tenantId,
-      conversationId: conversationId,
-      senderId: payload.senderId,
-      senderType: payload.senderType,
-      direction: 'inbound',
-      messageType: payload.messageType,
-      content: payload.content,
-      mediaUrl: payload.mediaUrl,
-      mediaProxyUrl: undefined, // will be set async by MediaCacheProcessor
-      status: 'delivered',
-      metadata: payload.metadata,
-      externalMessageId: payload.externalMessageId,
-      platformMessageId: payload.externalMessageId, // dedup key
-      providerTimestamp: payload.providerTimestamp ?? payload.timestamp,
-    });
+    const { message, inserted } =
+      await this.messageRepo.upsertInboundByExternalId({
+        tenantId: payload.tenantId,
+        conversationId: conversationId,
+        senderId: payload.senderId,
+        senderType: payload.senderType,
+        direction: 'inbound',
+        messageType: payload.messageType,
+        content: payload.content,
+        mediaUrl: payload.mediaUrl,
+        mediaProxyUrl: undefined, // will be set async by MediaCacheProcessor
+        status: 'delivered',
+        metadata: payload.metadata,
+        externalMessageId: payload.externalMessageId,
+        platformMessageId: payload.externalMessageId, // dedup key
+        providerTimestamp: payload.providerTimestamp ?? payload.timestamp,
+      });
+
+    if (!inserted) {
+      await this.redis.expire(idemKey, this.IDEM_TTL);
+      this.logger.debug(
+        `Duplicate inbound message ${payload.externalMessageId} already persisted; skipping side effects`,
+      );
+      return;
+    }
 
     // ── Step 5b: Enqueue async media cache job if media is present ──
     if (payload.mediaUrl) {

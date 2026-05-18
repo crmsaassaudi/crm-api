@@ -66,7 +66,11 @@ import {
   RoleGuard,
 } from 'nest-keycloak-connect';
 import { HybridAuthGuard } from './auth/guards/hybrid-auth.guard';
-import { PermissionGuard } from './common/permissions';
+import {
+  AuthzPermissionCacheService,
+  AuthzPermissionInvalidationListener,
+  PermissionGuard,
+} from './common/permissions';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { DataVisibilityInterceptor } from './data-visibility/data-visibility.interceptor';
 
@@ -286,6 +290,8 @@ const envFilePath = [
       provide: APP_GUARD,
       useClass: PermissionGuard,
     },
+    AuthzPermissionCacheService,
+    AuthzPermissionInvalidationListener,
     {
       provide: APP_INTERCEPTOR,
       useClass: TenantInterceptor,
