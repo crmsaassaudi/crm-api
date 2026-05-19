@@ -41,4 +41,20 @@ export class TenantProvisioningProducer {
 
     return job.id!;
   }
+
+  /**
+   * Retry a failed provisioning job by ID.
+   *
+   * @param provisioningId  The failed job's provisioning ID
+   * @returns               Boolean representing if the retry was successfully enqueued
+   */
+  async retry(provisioningId: string): Promise<boolean> {
+    const job = await this.provisioningQueue.getJob(provisioningId);
+    if (job) {
+      await job.retry();
+      this.logger.log(`Retried enqueued job: ${provisioningId}`);
+      return true;
+    }
+    return false;
+  }
 }
