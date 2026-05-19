@@ -344,15 +344,13 @@ export class TenantProvisioningWorker extends WorkerHost {
     provisioningId: string,
     payload: ProvisioningStatusPayload,
   ): Promise<void> {
-    const webhookUrl = this.configService.get<string>(
+    const webhookUrl = (this.configService as ConfigService).get<string>(
       'MANAGER_API_INTERNAL_WEBHOOK_URL',
-      { infer: false },
     );
     if (!webhookUrl) return;
 
-    const internalApiKey = this.configService.get<string>(
+    const internalApiKey = (this.configService as ConfigService).get<string>(
       'INTERNAL_API_KEY',
-      { infer: false },
     );
 
     try {
