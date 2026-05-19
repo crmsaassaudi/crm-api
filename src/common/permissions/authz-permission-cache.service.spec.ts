@@ -112,4 +112,40 @@ describe('AuthzPermissionCacheService', () => {
       300,
     );
   });
+
+  it('should continue with repository permission lookup when Redis read fails', async () => {
+    redisClient.exists.mockRejectedValueOnce(new Error('redis offline'));
+
+    const result = await service.canAccess({
+      rawUserId: userId,
+      tenantHint: tenantId,
+      rule: { action: 'view', resource: 'contacts' },
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(result.cacheHit).toBe(false);
+    expect(userRepository.findByIdsGlobal).toHaveBeenCalledWith([userId]);
+    expect(groupRepository.findGroupsByMember).toHaveBeenCalledWith(
+      tenantId,
+      userId,
+    );
+  });
+
+  it('should not fail authorization when Redis populate fails', async () => {
+    redisClient.pipeline.mockReturnValueOnce({
+      del: jest.fn().mockReturnThis(),
+      sadd: jest.fn().mockReturnThis(),
+      expire: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockRejectedValue(new Error('redis offline')),
+    });
+
+    const result = await service.canAccess({
+      rawUserId: userId,
+      tenantHint: tenantId,
+      rule: { action: 'view', resource: 'contacts' },
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(result.cacheHit).toBe(false);
+  });
 });

@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Version } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Unprotected } from 'nest-keycloak-connect';
 
@@ -15,6 +15,7 @@ export class HomeController {
   }
 
   @Get('health')
+  @Version('1')
   @Unprotected()
   health() {
     return { status: 'ok' };

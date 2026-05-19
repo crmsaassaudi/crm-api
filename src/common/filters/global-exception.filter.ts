@@ -75,18 +75,22 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     // Log the error with correlation ID and User ID
     const userId = request.user?.id || 'anonymous';
     const isProduction = process.env.NODE_ENV === 'production';
+    const exceptionName =
+      exception instanceof Error ? exception.name : typeof exception;
+    const exceptionMessage =
+      exception instanceof Error ? exception.message : String(exception);
+    const exceptionStack =
+      exception instanceof Error ? exception.stack : String(exception);
+    const serializedMessage = Array.isArray(message)
+      ? message.join(', ')
+      : message;
 
     if (httpStatus >= 500) {
-      this.logger.error(
-        `[${correlationId}] [User:${userId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)}`,
-        isProduction
-          ? exception instanceof Error
-            ? exception.message
-            : String(exception)
-          : exception instanceof Error
-            ? exception.stack
-            : String(exception),
-      );
+      const logMessage =
+        `[${correlationId}] [User:${userId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)}` +
+        ` - ${errorCode}: ${serializedMessage}; exception=${exceptionName}; detail=${exceptionMessage}`;
+
+      this.logger.error(logMessage, isProduction ? undefined : exceptionStack);
     } else {
       this.logger.warn(
         `[${correlationId}] [User:${userId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)} - ${errorCode}: ${message}`,

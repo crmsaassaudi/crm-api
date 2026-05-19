@@ -23,6 +23,8 @@ export interface AuthzPermissionCheckResult {
   tenantId?: string;
   email?: string | null;
   cacheHit: boolean;
+  requiredPermission?: string;
+  denyReason?: string;
 }
 
 @Injectable()
@@ -49,7 +51,14 @@ export class AuthzPermissionCacheService {
     );
 
     if (!permissionKey) {
-      return { allowed: false, cacheHit: false };
+      this.logger.warn(
+        `Permission denied: unknown permission action=${params.rule.action} resource=${params.rule.resource}`,
+      );
+      return {
+        allowed: false,
+        cacheHit: false,
+        denyReason: 'unknown_permission',
+      };
     }
 
     const hintedTenantId = this.isObjectId(params.tenantHint)
@@ -58,7 +67,7 @@ export class AuthzPermissionCacheService {
     const rawUserId = String(params.rawUserId);
 
     if (hintedTenantId && this.isObjectId(rawUserId)) {
-      const cached = await this.readCachedPermission(
+      const cached = await this.readCachedPermissionSafely(
         hintedTenantId,
         rawUserId,
         permissionKey,
@@ -69,6 +78,8 @@ export class AuthzPermissionCacheService {
           userId: rawUserId,
           tenantId: hintedTenantId,
           cacheHit: true,
+          requiredPermission: permissionKey,
+          denyReason: cached ? undefined : 'cached_permission_denied',
         };
       }
     }
@@ -91,21 +102,34 @@ export class AuthzPermissionCacheService {
         });
 
     if (!user) {
-      return { allowed: false, cacheHit: false };
+      this.logger.warn(
+        `Permission denied: user not found rawUserId=${rawUserId} requiredPermission=${permissionKey}`,
+      );
+      return {
+        allowed: false,
+        cacheHit: false,
+        requiredPermission: permissionKey,
+        denyReason: 'user_not_found',
+      };
     }
 
     const tenantHint = params.tenantHint ?? user.tenants?.[0]?.tenantId;
     const tenant = await this.resolveTenant(tenantsRepository, tenantHint);
     if (!tenant) {
+      this.logger.warn(
+        `Permission denied: tenant not resolved userId=${String(user.id)} tenantHint=${tenantHint ? String(tenantHint) : 'none'} requiredPermission=${permissionKey}`,
+      );
       return {
         allowed: false,
         userId: String(user.id),
         email: user.email,
         cacheHit: false,
+        requiredPermission: permissionKey,
+        denyReason: 'tenant_not_resolved',
       };
     }
 
-    const cached = await this.readCachedPermission(
+    const cached = await this.readCachedPermissionSafely(
       String(tenant.id),
       String(user.id),
       permissionKey,
@@ -117,11 +141,13 @@ export class AuthzPermissionCacheService {
         tenantId: String(tenant.id),
         email: user.email,
         cacheHit: true,
+        requiredPermission: permissionKey,
+        denyReason: cached ? undefined : 'cached_permission_denied',
       };
     }
 
     if (user.platformRole?.id === PlatformRoleEnum.SUPER_ADMIN) {
-      await this.populatePermissions(String(tenant.id), String(user.id), [
+      await this.populatePermissionsSafely(String(tenant.id), String(user.id), [
         ALL_SENTINEL,
       ]);
 
@@ -131,6 +157,7 @@ export class AuthzPermissionCacheService {
         tenantId: String(tenant.id),
         email: user.email,
         cacheHit: false,
+        requiredPermission: permissionKey,
       };
     }
 
@@ -144,27 +171,40 @@ export class AuthzPermissionCacheService {
       userGroups,
     );
 
-    await this.populatePermissions(
+    await this.populatePermissionsSafely(
       String(tenant.id),
       String(user.id),
       Array.from(effectivePermissions),
     );
 
+    const allowed = canAccess(
+      effectivePermissions,
+      params.rule.action,
+      params.rule.resource,
+    );
+
+    if (!allowed) {
+      this.logger.warn(
+        `Permission denied: permission not granted userId=${String(user.id)} tenantId=${String(tenant.id)} requiredPermission=${permissionKey} effectivePermissions=${effectivePermissions.size} groups=${userGroups.length}`,
+      );
+    }
+
     return {
-      allowed: canAccess(
-        effectivePermissions,
-        params.rule.action,
-        params.rule.resource,
-      ),
+      allowed,
       userId: String(user.id),
       tenantId: String(tenant.id),
       email: user.email,
       cacheHit: false,
+      requiredPermission: permissionKey,
+      denyReason: allowed ? undefined : 'permission_not_granted',
     };
   }
 
   async invalidateUser(tenantId: string, userId: string): Promise<void> {
-    await this.redisService.getClient().del(this.buildKey(tenantId, userId));
+    await this.redisService
+      .getClient()
+      .del(this.buildKey(tenantId, userId))
+      .catch((error) => this.logRedisWarning('invalidate user', error));
   }
 
   async invalidateUsers(tenantId: string, userIds: string[]): Promise<void> {
@@ -172,32 +212,64 @@ export class AuthzPermissionCacheService {
       this.buildKey(tenantId, userId),
     );
     if (keys.length === 0) return;
-    await this.redisService.getClient().del(...keys);
+    await this.redisService
+      .getClient()
+      .del(...keys)
+      .catch((error) => this.logRedisWarning('invalidate users', error));
   }
 
   async invalidateTenant(tenantId: string): Promise<void> {
-    const client = this.redisService.getClient();
-    const pattern = `authz:t:${tenantId}:u:*:perms`;
-    let cursor = '0';
-    let deleted = 0;
+    try {
+      const client = this.redisService.getClient();
+      const pattern = `authz:t:${tenantId}:u:*:perms`;
+      let cursor = '0';
+      let deleted = 0;
 
-    do {
-      const [nextCursor, keys] = await client.scan(
-        cursor,
-        'MATCH',
-        pattern,
-        'COUNT',
-        100,
+      do {
+        const [nextCursor, keys] = await client.scan(
+          cursor,
+          'MATCH',
+          pattern,
+          'COUNT',
+          100,
+        );
+        cursor = nextCursor;
+        if (keys.length > 0) {
+          deleted += await client.del(...keys);
+        }
+      } while (cursor !== '0');
+
+      this.logger.debug(
+        `Invalidated ${deleted} authz permission cache keys for tenant=${tenantId}`,
       );
-      cursor = nextCursor;
-      if (keys.length > 0) {
-        deleted += await client.del(...keys);
-      }
-    } while (cursor !== '0');
+    } catch (error) {
+      this.logRedisWarning('invalidate tenant', error);
+    }
+  }
 
-    this.logger.debug(
-      `Invalidated ${deleted} authz permission cache keys for tenant=${tenantId}`,
-    );
+  private async readCachedPermissionSafely(
+    tenantId: string,
+    userId: string,
+    permissionKey: string,
+  ): Promise<boolean | null> {
+    try {
+      return await this.readCachedPermission(tenantId, userId, permissionKey);
+    } catch (error) {
+      this.logRedisWarning('read permission cache', error);
+      return null;
+    }
+  }
+
+  private async populatePermissionsSafely(
+    tenantId: string,
+    userId: string,
+    permissions: string[],
+  ): Promise<void> {
+    try {
+      await this.populatePermissions(tenantId, userId, permissions);
+    } catch (error) {
+      this.logRedisWarning('populate permission cache', error);
+    }
   }
 
   private async readCachedPermission(
@@ -270,5 +342,13 @@ export class AuthzPermissionCacheService {
 
     const parsed = Number(raw);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private logRedisWarning(action: string, error: unknown): void {
+    this.logger.warn(
+      `Authz Redis ${action} failed; continuing without cache: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 }
