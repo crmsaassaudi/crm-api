@@ -9,6 +9,8 @@ import {
   HttpStatus,
   Logger,
   NotFoundException,
+  UseGuards,
+  Headers,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,10 +19,13 @@ import {
   ApiOkResponse,
   ApiBadRequestResponse,
   ApiNotFoundResponse,
+  ApiSecurity,
 } from '@nestjs/swagger';
 import { Unprotected } from 'nest-keycloak-connect';
 import { v4 as uuidv4 } from 'uuid';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InternalApiKeyGuard } from '../../common/guards/internal-api-key.guard';
+import { Idempotent } from '../../common/decorators/idempotent.decorator';
 import {
   CORE_PERMISSIONS,
   FEATURE_PERMISSIONS,
@@ -32,6 +37,7 @@ import {
 } from '../dto/internal-provision.dto';
 import { TenantProvisioningProducer } from '../workers/tenant-provisioning.producer';
 import { OnboardingService } from '../services/onboarding.service';
+import { ProvisioningJobRepository } from '../infrastructure/persistence/document/repositories/provisioning-job.repository';
 import { KeycloakAdminService } from '../../auth/services/keycloak-admin.service';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { TenantsRepository } from '../infrastructure/persistence/document/repositories/tenant.repository';
@@ -50,11 +56,13 @@ import { AllConfigType } from '../../config/config.type';
  * and should be protected by API key or internal network policy.
  */
 @ApiTags('Internal – Tenant Provisioning')
+@ApiSecurity('x-internal-api-key')
 @Controller({
   path: 'internal/tenants',
   version: '1',
 })
-@Unprotected() // TODO: Replace with API key guard for production
+@Unprotected()
+@UseGuards(InternalApiKeyGuard)
 export class InternalTenantsController {
   private readonly logger = new Logger(InternalTenantsController.name);
 
@@ -65,6 +73,7 @@ export class InternalTenantsController {
     private readonly userRepository: UserRepository,
     private readonly tenantsRepository: TenantsRepository,
     private readonly aliasReservationRepository: TenantAliasReservationRepository,
+    private readonly provisioningJobRepository: ProvisioningJobRepository,
     private readonly configService: ConfigService<AllConfigType>,
     private readonly eventEmitter: EventEmitter2,
   ) {}
@@ -75,17 +84,22 @@ export class InternalTenantsController {
   // ─────────────────────────────────────────────────────────────────────────────
 
   @Post('provision')
+  @Idempotent()
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary: 'SLG: Provision a new tenant for a customer',
     description:
       'Enqueues an async provisioning job. The admin user will be created ' +
       'in Keycloak without a password — use the /invite endpoint to trigger ' +
-      'a password setup email.',
+      'a password setup email. Pass X-Idempotency-Key to make duplicate ' +
+      'submits safe; the same provisioningId is returned for repeated calls.',
   })
   @ApiAcceptedResponse({ description: 'Provisioning job queued' })
   @ApiBadRequestResponse({ description: 'Invalid payload' })
-  async provision(@Body() dto: InternalProvisionDto) {
+  async provision(
+    @Body() dto: InternalProvisionDto,
+    @Headers('x-correlation-id') correlationId?: string,
+  ) {
     const { companyName, adminEmail, adminFullName, plan } = dto;
 
     // 1. Generate and reserve unique alias
@@ -95,9 +109,19 @@ export class InternalTenantsController {
       this.aliasReservationRepository,
     );
 
-    // 2. Enqueue provisioning job
+    // 2. Generate provisioningId and persist to MongoDB first (DB-first pattern)
     const provisioningId = `prov_${uuidv4().slice(0, 12)}`;
 
+    // DB write before Redis — MongoDB is the source of truth for history/audit
+    await this.provisioningJobRepository.create({
+      provisioningId,
+      source: 'SLG',
+      companyName,
+      adminEmail,
+      alias,
+    });
+
+    // Redis cache for fast polling (best-effort; DB remains authoritative)
     await this.onboardingService.setProvisioningQueued(provisioningId);
 
     await this.provisioningProducer.enqueue({
@@ -112,13 +136,19 @@ export class InternalTenantsController {
     });
 
     this.logger.log(
-      `[SLG] Provisioning queued: ${provisioningId} for "${companyName}" (admin: ${adminEmail})`,
+      `[SLG] Provisioning queued: ${provisioningId} for "${companyName}" (admin: ${adminEmail}) correlationId=${correlationId ?? '-'}`,
     );
+
+    const apiPrefix =
+      this.configService.get('app.apiPrefix', { infer: true }) ?? 'api';
+    const apiVersion = '1';
 
     return {
       provisioningId,
       status: 'QUEUED',
       alias,
+      pollingUrl: `/${apiPrefix}/v${apiVersion}/onboarding/status/${provisioningId}`,
+      realtimeChannel: `provisioning:${provisioningId}`,
     };
   }
 

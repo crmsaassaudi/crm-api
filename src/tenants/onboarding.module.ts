@@ -34,6 +34,11 @@ import {
   DealStageSchemaClass,
   DealStageSchema,
 } from '../deal-settings/entities/deal-stage.schema';
+import {
+  ProvisioningJobSchemaClass,
+  ProvisioningJobSchema,
+} from './infrastructure/persistence/document/entities/provisioning-job.schema';
+import { ProvisioningJobRepository } from './infrastructure/persistence/document/repositories/provisioning-job.repository';
 
 /**
  * OnboardingModule wires the async tenant provisioning system:
@@ -54,12 +59,13 @@ import {
     }),
     // Persistence layer (TenantsRepository, AliasReservationRepository)
     DocumentTenantPersistenceModule,
-    // Mongoose models for sample data seeder
+    // Mongoose models for sample data seeder + provisioning history
     MongooseModule.forFeature([
       { name: ContactSchemaClass.name, schema: ContactSchema },
       { name: AccountSchemaClass.name, schema: AccountSchema },
       { name: DealSchemaClass.name, schema: DealSchema },
       { name: DealStageSchemaClass.name, schema: DealStageSchema },
+      { name: ProvisioningJobSchemaClass.name, schema: ProvisioningJobSchema },
     ]),
     // AuthModule provides KeycloakAdminService + SessionService
     forwardRef(() => AuthModule),
@@ -74,6 +80,7 @@ import {
     CrmBotWorkspaceProvisioningService,
     SampleDataSeederService,
     TenantProvisioningProducer,
+    ProvisioningJobRepository,
     ...(isWorkerRuntime() ? [TenantProvisioningWorker, OrphanCleanupCron] : []),
   ],
   exports: [
@@ -81,6 +88,7 @@ import {
     TenantProvisioningProducer,
     SampleDataSeederService,
     CrmBotWorkspaceProvisioningService,
+    ProvisioningJobRepository,
   ],
 })
 export class OnboardingModule {}

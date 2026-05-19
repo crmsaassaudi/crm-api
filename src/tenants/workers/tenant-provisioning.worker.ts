@@ -13,6 +13,7 @@ import {
 } from '../interfaces/tenant-provisioning.interfaces';
 import { TenantsRepository } from '../infrastructure/persistence/document/repositories/tenant.repository';
 import { TenantAliasReservationRepository } from '../infrastructure/persistence/document/repositories/tenant-alias-reservation.repository';
+import { ProvisioningJobRepository } from '../infrastructure/persistence/document/repositories/provisioning-job.repository';
 import { KeycloakAdminService } from '../../auth/services/keycloak-admin.service';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { RedisService } from '../../redis/redis.service';
@@ -54,6 +55,7 @@ export class TenantProvisioningWorker extends WorkerHost {
   constructor(
     private readonly tenantsRepository: TenantsRepository,
     private readonly aliasReservationRepository: TenantAliasReservationRepository,
+    private readonly provisioningJobRepository: ProvisioningJobRepository,
     private readonly keycloakAdminService: KeycloakAdminService,
     private readonly userRepository: UserRepository,
     private readonly redisService: RedisService,
@@ -312,8 +314,62 @@ export class TenantProvisioningWorker extends WorkerHost {
     provisioningId: string,
     payload: ProvisioningStatusPayload,
   ): Promise<void> {
+    // 1. DB-first: MongoDB is the source of truth for history/audit.
+    try {
+      await this.provisioningJobRepository.updateStatus(provisioningId, {
+        status: payload.status,
+        currentStep: payload.currentStep,
+        totalSteps: payload.totalSteps,
+        stepLabel: payload.stepLabel,
+        tenantId: payload.tenantId,
+        redirectUrl: payload.redirectUrl,
+        error: payload.error,
+      });
+    } catch (dbErr) {
+      // Log but do not block — Redis and webhook writes still proceed
+      this.logger.error(
+        `[DB] Failed to persist provisioning status for ${provisioningId}: ${dbErr instanceof Error ? dbErr.message : dbErr}`,
+      );
+    }
+
+    // 2. Redis cache for low-latency polling fallback
     const key = `${PROVISIONING_KEY_PREFIX}${provisioningId}`;
     await this.redisService.set(key, JSON.stringify(payload), PROVISIONING_TTL);
+
+    // 3. Push realtime event to crm-manager-api WebSocket gateway (fire-and-forget)
+    void this.notifyManagerGateway(provisioningId, payload);
+  }
+
+  private async notifyManagerGateway(
+    provisioningId: string,
+    payload: ProvisioningStatusPayload,
+  ): Promise<void> {
+    const webhookUrl = this.configService.get<string>(
+      'MANAGER_API_INTERNAL_WEBHOOK_URL',
+      { infer: false },
+    );
+    if (!webhookUrl) return;
+
+    const internalApiKey = this.configService.get<string>(
+      'INTERNAL_API_KEY',
+      { infer: false },
+    );
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3_000);
+      await fetch(`${webhookUrl}/api/onboarding/internal/provisioning-events`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(internalApiKey ? { 'X-Internal-Api-Key': internalApiKey } : {}),
+        },
+        body: JSON.stringify({ provisioningId, ...payload }),
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timeout));
+    } catch {
+      // Non-critical — polling or WebSocket reconnect will hydrate state
+    }
   }
 
   private async safeRollback(
