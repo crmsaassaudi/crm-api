@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
+import { ClsService } from 'nestjs-cls';
 import { RedisService } from '../../redis/redis.service';
 import { PlatformRoleEnum } from '../../roles/platform-role.enum';
 import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
@@ -38,6 +39,7 @@ export class AuthzPermissionCacheService {
   constructor(
     private readonly moduleRef: ModuleRef,
     private readonly redisService: RedisService,
+    private readonly cls: ClsService,
   ) {}
 
   async canAccess(params: {
@@ -128,6 +130,12 @@ export class AuthzPermissionCacheService {
         denyReason: 'tenant_not_resolved',
       };
     }
+
+    this.setAuthorizationContext({
+      userId: String(user.id),
+      tenantId: String(tenant.id),
+      email: user.email,
+    });
 
     const cached = await this.readCachedPermissionSafely(
       String(tenant.id),
@@ -350,5 +358,16 @@ export class AuthzPermissionCacheService {
         error instanceof Error ? error.message : String(error)
       }`,
     );
+  }
+
+  private setAuthorizationContext(context: {
+    userId: string;
+    tenantId: string;
+    email?: string | null;
+  }): void {
+    this.cls.set('userId', context.userId);
+    this.cls.set('tenantId', context.tenantId);
+    this.cls.set('activeTenantId', context.tenantId);
+    this.cls.set('email', context.email);
   }
 }

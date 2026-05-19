@@ -12,6 +12,7 @@ describe('AuthzPermissionCacheService', () => {
   let userRepository: any;
   let tenantsRepository: any;
   let groupRepository: any;
+  let cls: { set: jest.Mock };
   let service: AuthzPermissionCacheService;
 
   beforeEach(() => {
@@ -64,9 +65,17 @@ describe('AuthzPermissionCacheService', () => {
       }),
     } as any;
 
-    service = new AuthzPermissionCacheService(moduleRef, {
-      getClient: () => redisClient,
-    } as any);
+    cls = {
+      set: jest.fn(),
+    };
+
+    service = new AuthzPermissionCacheService(
+      moduleRef,
+      {
+        getClient: () => redisClient,
+      } as any,
+      cls as any,
+    );
   });
 
   it('should use Redis SISMEMBER on cache hit without querying MongoDB', async () => {
@@ -103,6 +112,7 @@ describe('AuthzPermissionCacheService', () => {
       tenantId,
       userId,
     );
+    expect(cls.set).toHaveBeenCalledWith('activeTenantId', tenantId);
     expect(pipeline.sadd).toHaveBeenCalledWith(
       `authz:t:${tenantId}:u:${userId}:perms`,
       'contacts:view',
