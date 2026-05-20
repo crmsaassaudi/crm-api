@@ -30,6 +30,7 @@ import { RedisModule } from './redis/redis.module';
 import { QueueModule } from './queue/queue.module';
 import { MailQueueModule } from './queue/mail/mail-queue.module';
 import { ActivityLogModule } from './activity-log/activity-log.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
 import { HttpResilienceModule } from './common/http/http-resilience.module';
 import { CommonCacheModule } from './common/cache/common-cache.module';
 import { SocketModule } from './modules/realtime/socket.module';
@@ -246,6 +247,7 @@ const envFilePath = [
     QueueModule,
     MailQueueModule,
     ActivityLogModule,
+    AuditLogModule,
     HttpResilienceModule,
     CommonCacheModule,
     SocketModule,

@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { AccountRepository } from './infrastructure/persistence/document/repositories/account.repository';
 import { Account } from './domain/account';
+import {
+  DEFAULT_CURSOR_COUNT_LIMIT,
+  clampPaginationLimit,
+  resolvePaginationMode,
+} from '../utils/cursor-pagination';
 
 @Injectable()
 export class AccountsService {
@@ -19,11 +24,27 @@ export class AccountsService {
   }
 
   async findAll(filter: any): Promise<any> {
+    const limit = clampPaginationLimit(filter.limit);
+
+    if (resolvePaginationMode(filter) === 'cursor') {
+      return this.repository.findManyWithCursorPagination({
+        filterOptions: filter,
+        paginationOptions: {
+          limit,
+          cursor: filter.cursor,
+          direction: filter.direction,
+          sortBy: filter.sortBy,
+          sortOrder: filter.sortOrder,
+          countLimit: DEFAULT_CURSOR_COUNT_LIMIT,
+        },
+      });
+    }
+
     return this.repository.findManyWithPagination({
       filterOptions: filter,
       paginationOptions: {
         page: Number(filter.page) || 1,
-        limit: Number(filter.limit) || 10,
+        limit,
       },
     });
   }

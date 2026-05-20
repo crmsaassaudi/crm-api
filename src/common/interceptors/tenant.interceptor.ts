@@ -70,6 +70,13 @@ export class TenantInterceptor implements NestInterceptor {
   // ──────────────────────────────────────────────────────────────────────────
 
   private async resolveContext(request: Request): Promise<void> {
+    const forwardedFor = request.headers['x-forwarded-for'];
+    const forwardedIp = Array.isArray(forwardedFor)
+      ? forwardedFor[0]
+      : forwardedFor?.split(',')[0]?.trim();
+    this.cls.set('requestIp', forwardedIp || request.ip);
+    this.cls.set('userAgent', request.headers['user-agent']);
+
     // ── Step 1: Collect raw identifiers from all sources ──
     const raw = this.collectRawIdentifiers(request);
 

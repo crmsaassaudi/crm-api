@@ -86,6 +86,18 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 0 })
   score?: number;
 
+  @Prop({ default: false })
+  emailOptIn?: boolean;
+
+  @Prop({ default: false })
+  smsOptIn?: boolean;
+
+  @Prop({ default: false })
+  doNotCall?: boolean;
+
+  @Prop({ type: [String], default: [] })
+  tags?: string[];
+
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   ownerId?: string;
 

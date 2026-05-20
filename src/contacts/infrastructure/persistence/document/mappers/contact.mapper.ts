@@ -23,6 +23,10 @@ export class ContactMapper {
     domainEntity.birthday = raw.birthday;
     domainEntity.customFields = raw.customFields;
     domainEntity.score = raw.score;
+    domainEntity.emailOptIn = raw.emailOptIn ?? false;
+    domainEntity.smsOptIn = raw.smsOptIn ?? false;
+    domainEntity.doNotCall = raw.doNotCall ?? false;
+    domainEntity.tags = raw.tags ?? [];
     domainEntity.omniIdentities = (raw.omniIdentities || []).map((el: any) => {
       return {
         channelType: el.channelType,
@@ -103,6 +107,10 @@ export class ContactMapper {
     persistenceEntity.birthday = domainEntity.birthday;
     persistenceEntity.customFields = domainEntity.customFields;
     persistenceEntity.score = domainEntity.score;
+    persistenceEntity.emailOptIn = domainEntity.emailOptIn;
+    persistenceEntity.smsOptIn = domainEntity.smsOptIn;
+    persistenceEntity.doNotCall = domainEntity.doNotCall;
+    persistenceEntity.tags = domainEntity.tags ?? [];
     persistenceEntity.omniIdentities = domainEntity.omniIdentities ?? [];
     if (domainEntity.isShadow !== undefined) {
       persistenceEntity.isShadow = domainEntity.isShadow;

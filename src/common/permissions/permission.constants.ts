@@ -18,6 +18,7 @@ export type PermissionAction =
   | 'delete'
   | 'export'
   | 'import'
+  | 'unmask'
   | 'assign'
   | 'move_stage'
   | 'launch'
@@ -52,6 +53,7 @@ export const PERMISSION_REGISTRY: Record<
     delete: 'contacts:delete',
     export: 'contacts:export',
     import: 'contacts:import',
+    unmask: 'contacts:unmask',
   },
   accounts: {
     view: 'accounts:view',
@@ -199,6 +201,7 @@ export const FEATURE_PERMISSIONS: string[] = [
   'leads:import',
   'contacts:export',
   'contacts:import',
+  'contacts:unmask',
   'accounts:export',
   // Reports advanced
   'reports:create',

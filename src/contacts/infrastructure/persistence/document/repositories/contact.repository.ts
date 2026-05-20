@@ -413,6 +413,82 @@ export class ContactRepository extends BaseDocumentRepository<
       .exec();
   }
 
+  async addTagsToContacts(
+    contactIds: string[],
+    tags: string[],
+  ): Promise<{ matchedCount: number; modifiedCount: number }> {
+    const scopedFilter = this.applyTenantFilter({
+      _id: { $in: contactIds },
+      deletedAt: { $exists: false },
+    } as FilterQuery<ContactSchemaClass>);
+    const result = await this.model
+      .updateMany(scopedFilter, {
+        $addToSet: { tags: { $each: tags } },
+      })
+      .exec();
+
+    return {
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    };
+  }
+
+  async recomputeScoresForAllTenants(
+    limit: number,
+  ): Promise<{ scanned: number; updated: number }> {
+    const docs = await this.model
+      .find({ deletedAt: { $exists: false } })
+      .select({
+        _id: 1,
+        emails: 1,
+        phones: 1,
+        companyName: 1,
+        title: 1,
+        ownerId: 1,
+        lastActivityAt: 1,
+        createdAt: 1,
+      })
+      .limit(limit)
+      .lean()
+      .exec();
+
+    if (docs.length === 0) {
+      return { scanned: 0, updated: 0 };
+    }
+
+    const now = Date.now();
+    const operations = docs.map((doc: any) => {
+      const lastActivityAt = doc.lastActivityAt || doc.createdAt;
+      const ageDays = lastActivityAt
+        ? Math.max(
+            0,
+            Math.floor((now - new Date(lastActivityAt).getTime()) / 86_400_000),
+          )
+        : 365;
+      const recencyScore = Math.max(0, 40 - Math.min(40, ageDays));
+      const completenessScore =
+        (doc.emails?.length ? 15 : 0) +
+        (doc.phones?.length ? 15 : 0) +
+        (doc.ownerId ? 10 : 0) +
+        (doc.companyName ? 10 : 0) +
+        (doc.title ? 10 : 0);
+      const score = Math.min(100, Math.round(recencyScore + completenessScore));
+
+      return {
+        updateOne: {
+          filter: { _id: doc._id },
+          update: { $set: { score } },
+        },
+      };
+    });
+
+    const result = await this.model.bulkWrite(operations, { ordered: false });
+    return {
+      scanned: docs.length,
+      updated: result.modifiedCount,
+    };
+  }
+
   /**
    * Fast lean query to check if a sender is a VIP customer.
    * Uses the `tenant_sender_vip_lookup` compound index for speed.

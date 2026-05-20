@@ -14,6 +14,12 @@ import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { NotesModule } from '../notes/notes.module';
 import { TasksModule } from '../tasks/tasks.module';
 import { TicketsModule } from '../tickets/tickets.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
+import { ContactExportStorageService } from './contact-export-storage.service';
+import { ContactScoringService } from './contact-scoring.service';
+import { isWorkerRuntime } from '../config/runtime-role';
+
+const workerProviders = isWorkerRuntime() ? [ContactScoringService] : [];
 
 @Module({
   imports: [
@@ -27,9 +33,15 @@ import { TicketsModule } from '../tickets/tickets.module';
     NotesModule,
     TasksModule,
     TicketsModule,
+    AuditLogModule,
   ],
   controllers: [ContactsController],
-  providers: [ContactsService, ContactRepository],
+  providers: [
+    ContactsService,
+    ContactRepository,
+    ContactExportStorageService,
+    ...workerProviders,
+  ],
   exports: [ContactsService, ContactRepository],
 })
 export class ContactsModule {}

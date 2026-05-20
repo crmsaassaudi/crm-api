@@ -22,6 +22,8 @@ import {
   resolvePaginationMode,
 } from '../utils/cursor-pagination';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { ContactExportStorageService } from './contact-export-storage.service';
 
 @Injectable()
 export class ContactsService {
@@ -33,6 +35,8 @@ export class ContactsService {
     private readonly cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
     private readonly activityLogService: ActivityLogService,
+    private readonly auditLogService: AuditLogService,
+    private readonly exportStorageService: ContactExportStorageService,
   ) {}
 
   async create(data: CreateContactDto): Promise<Contact> {
@@ -114,13 +118,33 @@ export class ContactsService {
     if (updated) {
       const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
       this.emitAutomationEvent('field_updated', updated, changedFields);
+
+      if (
+        ownerId !== undefined &&
+        String(existingContact?.ownerId ?? '') !== String(ownerId ?? '')
+      ) {
+        await this.auditLogService.record({
+          action: 'CONTACT_OWNER_CHANGED',
+          targetEntityType: 'Contact',
+          targetEntityId: id,
+          metadata: {
+            previousOwnerId: existingContact?.ownerId,
+            nextOwnerId: ownerId,
+          },
+        });
+      }
     }
 
     return updated;
   }
 
   async remove(id: string): Promise<void> {
-    return this.repository.remove(id);
+    await this.repository.remove(id);
+    await this.auditLogService.record({
+      action: 'CONTACT_DELETED',
+      targetEntityType: 'Contact',
+      targetEntityId: id,
+    });
   }
 
   /**
@@ -319,6 +343,19 @@ export class ContactsService {
         skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
       },
     });
+    await this.auditLogService.record({
+      action: 'CONTACT_STAGE_CHANGED',
+      targetEntityType: 'Contact',
+      targetEntityId: id,
+      actorId: changedById,
+      metadata: {
+        fromStage: previousStage,
+        toStage: newStage,
+        direction,
+        skippedStages,
+        reason: params?.reason,
+      },
+    });
     await this.repository.touchLastActivity(id, occurredAt);
 
     let finalAccountId = params?.accountId;
@@ -370,10 +407,95 @@ export class ContactsService {
 
   // ── Automation Event Emitter ─────────────────────────────────────────────
 
-  async exportContacts(params: {
-    ids?: string[];
-    filters?: any;
-  }): Promise<{ downloadUrl: string; expiresAt: string; recordCount: number }> {
+  async unmaskFields(
+    id: string,
+    requestedFields?: string[],
+  ): Promise<{
+    fields: Pick<Contact, 'emails' | 'phones'>;
+    token: string;
+    expiresAt: string;
+    ttlSeconds: number;
+  }> {
+    const contact = await this.repository.findOne({ _id: id });
+    if (!contact) throw new NotFoundException('Contact not found');
+
+    const allowedFields = new Set(['emails', 'phones']);
+    const fieldsToReturn =
+      requestedFields && requestedFields.length > 0
+        ? requestedFields.filter((field) => allowedFields.has(field))
+        : ['emails', 'phones'];
+
+    const rawFields: Pick<Contact, 'emails' | 'phones'> = {
+      emails: fieldsToReturn.includes('emails') ? contact.emails || [] : [],
+      phones: fieldsToReturn.includes('phones') ? contact.phones || [] : [],
+    };
+    const ttlSeconds = 30;
+
+    await this.auditLogService.record({
+      action: 'CONTACT_FIELDS_UNMASKED',
+      targetEntityType: 'Contact',
+      targetEntityId: id,
+      metadata: {
+        fields: fieldsToReturn,
+        ttlSeconds,
+      },
+    });
+
+    return {
+      fields: rawFields,
+      token: `${id}:${Date.now()}`,
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+      ttlSeconds,
+    };
+  }
+
+  async bulkTagContacts(params: {
+    contactIds: string[];
+    tags: string[];
+  }): Promise<{ success: true; matchedCount: number; modifiedCount: number }> {
+    const contactIds = Array.from(new Set(params.contactIds || [])).filter(
+      Boolean,
+    );
+    const tags = Array.from(
+      new Set(
+        (params.tags || [])
+          .map((tag) => tag.trim())
+          .filter((tag) => tag.length > 0),
+      ),
+    );
+
+    if (contactIds.length === 0) {
+      throw new BadRequestException('contactIds is required');
+    }
+    if (tags.length === 0) {
+      throw new BadRequestException('tags is required');
+    }
+
+    const result = await this.repository.addTagsToContacts(contactIds, tags);
+    await this.auditLogService.record({
+      action: 'CONTACTS_BULK_TAGGED',
+      targetEntityType: 'Contact',
+      targetEntityId: 'bulk',
+      metadata: {
+        contactIds,
+        tags,
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount,
+      },
+    });
+
+    return {
+      success: true,
+      ...result,
+    };
+  }
+
+  async exportContacts(params: { ids?: string[]; filters?: any }): Promise<{
+    downloadUrl: string;
+    expiresAt: string;
+    recordCount: number;
+    storageKey: string;
+  }> {
     const contacts =
       params.ids && params.ids.length > 0
         ? await this.repository.find({ _id: { $in: params.ids } } as any)
@@ -402,6 +524,11 @@ export class ContactsService {
       header.map((key) => this.csvCell((contact as any)[key])).join(','),
     );
     const csv = [header.join(','), ...rows].join('\n');
+    const exportFile = await this.exportStorageService.storeCsv(
+      csv,
+      `contacts-export-${new Date().toISOString().slice(0, 10)}.csv`,
+      5 * 60,
+    );
 
     await this.activityLogService.create({
       targetType: 'contact',
@@ -413,14 +540,37 @@ export class ContactsService {
         filters: params.filters,
       },
     });
+    await this.auditLogService.record({
+      action: 'CONTACTS_EXPORTED',
+      targetEntityType: 'Contact',
+      targetEntityId: 'export',
+      metadata: {
+        recordCount: contacts.length,
+        ids: params.ids,
+        filters: params.filters,
+        storageKey: exportFile.storageKey,
+        expiresAt: exportFile.expiresAt,
+      },
+    });
 
     return {
-      downloadUrl: `data:text/csv;base64,${Buffer.from(csv).toString(
-        'base64',
-      )}`,
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      downloadUrl: exportFile.downloadUrl,
+      expiresAt: exportFile.expiresAt,
       recordCount: contacts.length,
+      storageKey: exportFile.storageKey,
     };
+  }
+
+  async getExportDownload(
+    token: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    await this.auditLogService.record({
+      action: 'CONTACT_EXPORT_DOWNLOADED',
+      targetEntityType: 'Contact',
+      targetEntityId: 'export',
+      metadata: { token },
+    });
+    return this.exportStorageService.readLocalExport(token);
   }
 
   private csvCell(value: any): string {
@@ -495,6 +645,14 @@ export class ContactsService {
         mergedContactId: targetId,
         emailsAdded: target.emails || [],
         phonesAdded: target.phones || [],
+      },
+    });
+    await this.auditLogService.record({
+      action: 'CONTACTS_MERGED',
+      targetEntityType: 'Contact',
+      targetEntityId: primaryId,
+      metadata: {
+        mergedContactId: targetId,
       },
     });
 

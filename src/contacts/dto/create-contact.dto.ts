@@ -79,6 +79,27 @@ export class CreateContactDto {
   @IsBoolean()
   isConverted?: boolean;
 
+  @ApiProperty({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  emailOptIn?: boolean;
+
+  @ApiProperty({ example: false })
+  @IsOptional()
+  @IsBoolean()
+  smsOptIn?: boolean;
+
+  @ApiProperty({ example: false })
+  @IsOptional()
+  @IsBoolean()
+  doNotCall?: boolean;
+
+  @ApiProperty({ example: ['enterprise', 'webinar'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+
   @ApiProperty({
     example: [{ channelType: 'Facebook', senderId: 'psid_123456' }],
   })

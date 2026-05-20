@@ -73,6 +73,18 @@ export class Contact {
   @ApiProperty({ example: 50 })
   score?: number;
 
+  @ApiProperty({ example: true })
+  emailOptIn?: boolean;
+
+  @ApiProperty({ example: false })
+  smsOptIn?: boolean;
+
+  @ApiProperty({ example: false })
+  doNotCall?: boolean;
+
+  @ApiProperty({ example: ['enterprise', 'webinar'] })
+  tags?: string[];
+
   @ApiProperty({ type: 'string', example: '60d0fe4f5311236168a109cc' })
   ownerId?: string;
 

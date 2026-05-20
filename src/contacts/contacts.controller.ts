@@ -9,6 +9,7 @@ import {
   Query,
   UseInterceptors,
   UsePipes,
+  StreamableFile,
 } from '@nestjs/common';
 import { ContactsService } from './contacts.service';
 import { Contact } from './domain/contact';
@@ -90,15 +91,37 @@ export class ContactsController {
   }
 
   @Post('export')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('export', 'contacts')
   exportContacts(@Body() body: { ids?: string[]; filters?: any }) {
     return this.service.exportContacts(body || {});
+  }
+
+  @Get('export-download/:token')
+  @RequirePermission('export', 'contacts')
+  async downloadExport(@Param('token') token: string) {
+    const file = await this.service.getExportDownload(token);
+    return new StreamableFile(file.buffer, {
+      type: 'text/csv; charset=utf-8',
+      disposition: `attachment; filename="${file.filename}"`,
+    });
+  }
+
+  @Post('bulk-tag')
+  @RequirePermission('edit', 'contacts')
+  bulkTag(@Body() body: { contactIds: string[]; tags: string[] }) {
+    return this.service.bulkTagContacts(body);
   }
 
   @Post(':id/merge')
   @RequirePermission('edit', 'contacts')
   mergeContacts(@Param('id') id: string, @Query('targetId') targetId: string) {
     return this.service.mergeContacts(id, targetId);
+  }
+
+  @Post(':id/unmask-fields')
+  @RequirePermission('unmask', 'contacts')
+  unmaskFields(@Param('id') id: string, @Body() body: { fields?: string[] }) {
+    return this.service.unmaskFields(id, body?.fields);
   }
 
   @Get(':id/activities')
