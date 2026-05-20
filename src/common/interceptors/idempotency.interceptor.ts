@@ -106,12 +106,16 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
     if (scriptResult !== null) {
       if (scriptResult === 'LOCKED') {
-        throw new ConflictException('Request is being processed. Please retry.');
+        throw new ConflictException(
+          'Request is being processed. Please retry.',
+        );
       }
       // Cached result found — replay it
       try {
         const parsed: unknown =
-          typeof scriptResult === 'string' ? JSON.parse(scriptResult) : scriptResult;
+          typeof scriptResult === 'string'
+            ? JSON.parse(scriptResult)
+            : scriptResult;
         return this.replayCached(parsed);
       } catch {
         return this.replayCached(scriptResult);

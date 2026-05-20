@@ -98,6 +98,9 @@ export class Contact {
   updatedAt: Date;
 
   @ApiProperty()
+  lastActivityAt?: Date;
+
+  @ApiProperty()
   deletedAt?: Date;
 
   @ApiProperty({

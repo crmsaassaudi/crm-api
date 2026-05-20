@@ -109,6 +109,9 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop({ default: now })
   updatedAt: Date;
 
+  @Prop({ index: true })
+  lastActivityAt?: Date;
+
   @Prop()
   deletedAt?: Date;
 

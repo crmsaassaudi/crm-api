@@ -1,7 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
-export type ProvisioningJobDocument = HydratedDocument<ProvisioningJobSchemaClass>;
+export type ProvisioningJobDocument =
+  HydratedDocument<ProvisioningJobSchemaClass>;
 
 @Schema({
   collection: 'provisioning_jobs',

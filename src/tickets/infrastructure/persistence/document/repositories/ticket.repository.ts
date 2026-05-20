@@ -87,6 +87,10 @@ export class TicketRepository extends BaseDocumentRepository<
       where.groupId = filterOptions.groupId;
     }
 
+    if (filterOptions?.contactId) {
+      where.contactId = filterOptions.contactId;
+    }
+
     const scopedWhere = this.applyTenantFilter(where);
 
     const [docs, totalItems] = await Promise.all([

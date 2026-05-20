@@ -53,6 +53,19 @@ export class TaskRepository extends BaseDocumentRepository<
       where.priority = filterOptions.priority;
     }
 
+    if (filterOptions?.contactId) {
+      where.$and = [
+        ...(where.$and || []),
+        { 'relatedTo.type': 'Contact' },
+        {
+          $or: [
+            { 'relatedTo._id': filterOptions.contactId },
+            { 'relatedTo.id': filterOptions.contactId },
+          ],
+        },
+      ];
+    }
+
     const scopedWhere = this.applyTenantFilter(where);
 
     const [docs, totalItems] = await Promise.all([

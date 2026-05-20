@@ -345,11 +345,15 @@ export class OnboardingController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Retry a failed provisioning job' })
   @ApiOkResponse({ description: 'Provisioning job retried' })
-  @ApiNotFoundResponse({ description: 'Provisioning ID not found or not in queue' })
+  @ApiNotFoundResponse({
+    description: 'Provisioning ID not found or not in queue',
+  })
   async retryProvisioning(@Param('provisioningId') provisioningId: string) {
     const success = await this.provisioningProducer.retry(provisioningId);
     if (!success) {
-      throw new NotFoundException('Failed provisioning job not found or not retryable');
+      throw new NotFoundException(
+        'Failed provisioning job not found or not retryable',
+      );
     }
     await this.onboardingService.setProvisioningQueued(provisioningId);
     return { status: 'QUEUED', provisioningId };

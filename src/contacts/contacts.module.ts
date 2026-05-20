@@ -10,6 +10,10 @@ import {
 import { AccountsModule } from '../accounts/accounts.module';
 import { DealsModule } from '../deals/deals.module';
 import { ListViewsModule } from '../list-views/list-views.module';
+import { ActivityLogModule } from '../activity-log/activity-log.module';
+import { NotesModule } from '../notes/notes.module';
+import { TasksModule } from '../tasks/tasks.module';
+import { TicketsModule } from '../tickets/tickets.module';
 
 @Module({
   imports: [
@@ -19,6 +23,10 @@ import { ListViewsModule } from '../list-views/list-views.module';
     AccountsModule,
     DealsModule,
     ListViewsModule,
+    ActivityLogModule,
+    NotesModule,
+    TasksModule,
+    TicketsModule,
   ],
   controllers: [ContactsController],
   providers: [ContactsService, ContactRepository],

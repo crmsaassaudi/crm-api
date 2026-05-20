@@ -84,7 +84,10 @@ export class ProvisioningJobRepository {
     return this.model.findOne({ provisioningId }).exec();
   }
 
-  async findByEmail(adminEmail: string, limit = 20): Promise<ProvisioningJobDocument[]> {
+  async findByEmail(
+    adminEmail: string,
+    limit = 20,
+  ): Promise<ProvisioningJobDocument[]> {
     return this.model
       .find({ adminEmail })
       .sort({ createdAt: -1 })

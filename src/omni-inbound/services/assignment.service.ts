@@ -173,7 +173,9 @@ export class AssignmentService {
         );
       }
     } else {
-      this.logger.debug(`No routingContext provided — skipping rule evaluation`);
+      this.logger.debug(
+        `No routingContext provided — skipping rule evaluation`,
+      );
     }
 
     // Normalize strategy: accept both 'round_robin' (DB/settings format)
@@ -229,7 +231,9 @@ export class AssignmentService {
       tenantId,
       effectivePool,
     );
-    this.logger.debug(`Available agents online: count=${availableAgents.length}`);
+    this.logger.debug(
+      `Available agents online: count=${availableAgents.length}`,
+    );
 
     if (availableAgents.length === 0) {
       this.logger.warn(

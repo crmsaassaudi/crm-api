@@ -32,6 +32,7 @@ export class ContactRepository extends BaseDocumentRepository<
   private readonly cursorSortableFields = new Set([
     'createdAt',
     'updatedAt',
+    'lastActivityAt',
     'firstName',
     'lastName',
     'companyName',
@@ -55,7 +56,9 @@ export class ContactRepository extends BaseDocumentRepository<
   }
 
   private buildListWhere(filterOptions?: any | null) {
-    const where: FilterQuery<ContactSchemaClass> = {};
+    const where: FilterQuery<ContactSchemaClass> = {
+      deletedAt: { $exists: false },
+    };
 
     if (filterOptions?.search) {
       const searchExpr = { $regex: filterOptions.search, $options: 'i' };
@@ -450,6 +453,18 @@ export class ContactRepository extends BaseDocumentRepository<
     await this.model
       .updateOne(scopedFilter, {
         $push: { stageHistory: entry },
+      })
+      .exec();
+  }
+
+  async touchLastActivity(
+    contactId: string,
+    occurredAt = new Date(),
+  ): Promise<void> {
+    const scopedFilter = this.applyTenantFilter({ _id: contactId });
+    await this.model
+      .updateOne(scopedFilter, {
+        $set: { lastActivityAt: occurredAt },
       })
       .exec();
   }

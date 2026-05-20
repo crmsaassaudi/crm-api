@@ -21,6 +21,7 @@ import {
   clampPaginationLimit,
   resolvePaginationMode,
 } from '../utils/cursor-pagination';
+import { ActivityLogService } from '../activity-log/activity-log.service';
 
 @Injectable()
 export class ContactsService {
@@ -31,6 +32,7 @@ export class ContactsService {
     private readonly settingsService: CrmSettingsService,
     private readonly cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly activityLogService: ActivityLogService,
   ) {}
 
   async create(data: CreateContactDto): Promise<Contact> {
@@ -302,6 +304,23 @@ export class ContactsService {
       skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
     });
 
+    const occurredAt = new Date();
+    await this.activityLogService.create({
+      targetType: 'contact',
+      targetId: id,
+      event: 'stage_change',
+      actorId: changedById,
+      occurredAt,
+      payload: {
+        fromStage: previousStage,
+        toStage: newStage,
+        reason: params?.reason,
+        direction,
+        skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
+      },
+    });
+    await this.repository.touchLastActivity(id, occurredAt);
+
     let finalAccountId = params?.accountId;
 
     // 2. Optionally create account on stage transition
@@ -350,6 +369,141 @@ export class ContactsService {
   }
 
   // ── Automation Event Emitter ─────────────────────────────────────────────
+
+  async exportContacts(params: {
+    ids?: string[];
+    filters?: any;
+  }): Promise<{ downloadUrl: string; expiresAt: string; recordCount: number }> {
+    const contacts =
+      params.ids && params.ids.length > 0
+        ? await this.repository.find({ _id: { $in: params.ids } } as any)
+        : (
+            await this.findAll({
+              ...(params.filters || {}),
+              paginationMode: 'offset',
+              page: 1,
+              limit: 5_000,
+            })
+          ).data;
+
+    const header = [
+      'id',
+      'firstName',
+      'lastName',
+      'emails',
+      'phones',
+      'companyName',
+      'title',
+      'lifecycleStageId',
+      'statusId',
+      'lastActivityAt',
+    ];
+    const rows = contacts.map((contact: Contact) =>
+      header.map((key) => this.csvCell((contact as any)[key])).join(','),
+    );
+    const csv = [header.join(','), ...rows].join('\n');
+
+    await this.activityLogService.create({
+      targetType: 'contact',
+      targetId: 'export',
+      event: 'export',
+      payload: {
+        recordCount: contacts.length,
+        ids: params.ids,
+        filters: params.filters,
+      },
+    });
+
+    return {
+      downloadUrl: `data:text/csv;base64,${Buffer.from(csv).toString(
+        'base64',
+      )}`,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      recordCount: contacts.length,
+    };
+  }
+
+  private csvCell(value: any): string {
+    const normalized = Array.isArray(value)
+      ? value.join('; ')
+      : value instanceof Date
+        ? value.toISOString()
+        : value == null
+          ? ''
+          : String(value);
+    return `"${normalized.replace(/"/g, '""')}"`;
+  }
+
+  async mergeContacts(
+    primaryId: string,
+    targetId: string,
+  ): Promise<{ success: true; contact: Contact; mergedContactId: string }> {
+    if (primaryId === targetId) {
+      throw new BadRequestException('Cannot merge a contact into itself');
+    }
+
+    const [primary, target] = await Promise.all([
+      this.repository.findOne({ _id: primaryId }),
+      this.repository.findOne({ _id: targetId }),
+    ]);
+
+    if (!primary || primary.deletedAt) {
+      throw new NotFoundException('Primary contact not found');
+    }
+    if (!target || target.deletedAt) {
+      throw new NotFoundException('Target contact not found');
+    }
+
+    const unionByValue = <T>(left: T[] = [], right: T[] = []) =>
+      Array.from(new Set([...left, ...right].filter(Boolean)));
+    const identityKey = (identity: { channelType: string; senderId: string }) =>
+      `${identity.channelType}:${identity.senderId}`;
+    const omniIdentities = [
+      ...(primary.omniIdentities || []),
+      ...(target.omniIdentities || []),
+    ].filter((identity, index, all) => {
+      const key = identityKey(identity);
+      return all.findIndex((item) => identityKey(item) === key) === index;
+    });
+
+    const occurredAt = new Date();
+    const merged = await this.repository.update(primaryId, {
+      emails: unionByValue(primary.emails, target.emails),
+      phones: unionByValue(primary.phones, target.phones),
+      omniIdentities,
+      stageHistory: [
+        ...(primary.stageHistory || []),
+        ...(target.stageHistory || []),
+      ].sort(
+        (a, b) =>
+          new Date(a.changedAt).getTime() - new Date(b.changedAt).getTime(),
+      ),
+      lastActivityAt: occurredAt,
+    } as any);
+
+    await this.repository.update(targetId, {
+      deletedAt: occurredAt,
+      lastActivityAt: occurredAt,
+    } as any);
+
+    await this.activityLogService.create({
+      targetType: 'contact',
+      targetId: primaryId,
+      event: 'merge',
+      occurredAt,
+      payload: {
+        mergedContactId: targetId,
+        emailsAdded: target.emails || [],
+        phonesAdded: target.phones || [],
+      },
+    });
+
+    return {
+      success: true,
+      contact: merged!,
+      mergedContactId: targetId,
+    };
+  }
 
   private emitAutomationEvent(
     event: 'record_created' | 'field_updated',

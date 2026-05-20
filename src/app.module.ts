@@ -61,6 +61,7 @@ import { MailInboundModule } from './channels/mail-inbound/mail-inbound.module';
 import { ReadStateSyncModule } from './queue/read-state-sync/read-state-sync.module';
 import { OnboardingModule } from './tenants/onboarding.module';
 import { ObservabilityModule } from './observability/observability.module';
+import { NotesModule } from './notes/notes.module';
 
 import {
   KeycloakConnectModule,
@@ -276,6 +277,7 @@ const envFilePath = [
     ReadStateSyncModule,
     OnboardingModule,
     ObservabilityModule,
+    NotesModule,
   ],
   providers: [
     {

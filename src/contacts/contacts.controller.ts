@@ -25,6 +25,11 @@ import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { ListViewsService } from '../list-views/list-views.service';
 import { RequirePermission } from '../common/permissions';
+import { ActivityLogService } from '../activity-log/activity-log.service';
+import { NotesService } from '../notes/notes.service';
+import { CreateNoteDto } from '../notes/dto/create-note.dto';
+import { TasksService } from '../tasks/tasks.service';
+import { TicketsService } from '../tickets/tickets.service';
 
 @ApiTags('Contacts')
 @ApiBearerAuth()
@@ -37,6 +42,10 @@ export class ContactsController {
   constructor(
     private readonly service: ContactsService,
     private readonly listViewsService: ListViewsService,
+    private readonly activityLogService: ActivityLogService,
+    private readonly notesService: NotesService,
+    private readonly tasksService: TasksService,
+    private readonly ticketsService: TicketsService,
   ) {}
 
   @ApiCreatedResponse({ type: Contact })
@@ -78,6 +87,60 @@ export class ContactsController {
   @RequirePermission('view', 'contacts')
   checkDuplicate(@Query() query: any) {
     return this.service.checkDuplicate(query);
+  }
+
+  @Post('export')
+  @RequirePermission('view', 'contacts')
+  exportContacts(@Body() body: { ids?: string[]; filters?: any }) {
+    return this.service.exportContacts(body || {});
+  }
+
+  @Post(':id/merge')
+  @RequirePermission('edit', 'contacts')
+  mergeContacts(@Param('id') id: string, @Query('targetId') targetId: string) {
+    return this.service.mergeContacts(id, targetId);
+  }
+
+  @Get(':id/activities')
+  @RequirePermission('view', 'contacts')
+  getActivities(@Param('id') id: string, @Query() query: any) {
+    return this.activityLogService.getFeed({
+      targetType: 'contact',
+      targetId: id,
+      type: query?.type,
+      limit: query?.limit,
+      cursor: query?.cursor,
+    });
+  }
+
+  @Get(':id/notes')
+  @RequirePermission('view', 'contacts')
+  getNotes(@Param('id') id: string, @Query() query: any) {
+    return this.notesService.findByContact(id, query);
+  }
+
+  @Post(':id/notes')
+  @RequirePermission('edit', 'contacts')
+  createNote(@Param('id') id: string, @Body() body: CreateNoteDto) {
+    return this.notesService.createForContact(id, body);
+  }
+
+  @Delete(':id/notes/:noteId')
+  @RequirePermission('delete', 'contacts')
+  deleteContactNote(@Param('noteId') noteId: string) {
+    return this.notesService.delete(noteId);
+  }
+
+  @Get(':id/tasks')
+  @RequirePermission('view', 'tasks')
+  getTasks(@Param('id') id: string, @Query() query: any) {
+    return this.tasksService.findAll({ ...query, contactId: id });
+  }
+
+  @Get(':id/tickets')
+  @RequirePermission('view', 'tickets')
+  getTickets(@Param('id') id: string, @Query() query: any) {
+    return this.ticketsService.findAll({ ...query, contactId: id });
   }
 
   @ApiOkResponse({ type: Contact })

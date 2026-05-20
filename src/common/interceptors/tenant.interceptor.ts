@@ -112,18 +112,25 @@ export class TenantInterceptor implements NestInterceptor {
       let timezone = 'UTC';
 
       try {
-        const cachedI18n = await this.redisService.get<{ locale: string; timezone: string }>(tenantI18nKey);
+        const cachedI18n = await this.redisService.get<{
+          locale: string;
+          timezone: string;
+        }>(tenantI18nKey);
         if (cachedI18n) {
           locale = cachedI18n.locale;
           timezone = cachedI18n.timezone;
         } else {
-          const tenantRepo = this.moduleRef.get(TenantsRepository, { strict: false });
+          const tenantRepo = this.moduleRef.get(TenantsRepository, {
+            strict: false,
+          });
           const tenant = await tenantRepo.findById(tenantId);
           locale = tenant?.i18nSettings?.locale ?? 'en';
           timezone = tenant?.i18nSettings?.timezone ?? 'UTC';
           await this.redisService
             .set(tenantI18nKey, { locale, timezone }, TENANT_I18N_CACHE_TTL)
-            .catch(() => {/* non-fatal */});
+            .catch(() => {
+              /* non-fatal */
+            });
         }
       } catch {
         // Cache/DB failure — use defaults
@@ -142,7 +149,9 @@ export class TenantInterceptor implements NestInterceptor {
             if (cachedUser.locale) locale = cachedUser.locale;
             if (cachedUser.timezone) timezone = cachedUser.timezone;
           } else {
-            const userRepo = this.moduleRef.get(UserRepository, { strict: false });
+            const userRepo = this.moduleRef.get(UserRepository, {
+              strict: false,
+            });
             let user: any = null;
             if (isValidObjectId(userId)) {
               user = await userRepo.findById(userId);
@@ -158,7 +167,9 @@ export class TenantInterceptor implements NestInterceptor {
             };
             await this.redisService
               .set(userI18nKey, userPrefs, USER_KEYCLOAK_CACHE_TTL)
-              .catch(() => {/* non-fatal */});
+              .catch(() => {
+                /* non-fatal */
+              });
             if (userPrefs.locale) locale = userPrefs.locale;
             if (userPrefs.timezone) timezone = userPrefs.timezone;
           }
@@ -268,7 +279,9 @@ export class TenantInterceptor implements NestInterceptor {
         const cachedMongoId = await this.redisService.get<string>(kcCacheKey);
         if (cachedMongoId) {
           this.cls.set('userId', cachedMongoId);
-          this.logger.debug(`Resolved Keycloak UUID → MongoDB userId (cache): ${cachedMongoId}`);
+          this.logger.debug(
+            `Resolved Keycloak UUID → MongoDB userId (cache): ${cachedMongoId}`,
+          );
           return;
         }
       } catch {
@@ -287,7 +300,9 @@ export class TenantInterceptor implements NestInterceptor {
           this.cls.set('userId', mongoId);
           await this.redisService
             .set(kcCacheKey, mongoId, USER_KEYCLOAK_CACHE_TTL)
-            .catch(() => {/* non-fatal */});
+            .catch(() => {
+              /* non-fatal */
+            });
           this.logger.debug(
             `Resolved Keycloak UUID → MongoDB userId: ${mongoId}`,
           );
@@ -349,7 +364,9 @@ export class TenantInterceptor implements NestInterceptor {
           // Cache the mapping to avoid repeated DB lookups
           await this.redisService
             .set(cacheKey, tenantId, TENANT_ALIAS_CACHE_TTL)
-            .catch(() => {/* non-fatal */});
+            .catch(() => {
+              /* non-fatal */
+            });
           return;
         }
       } catch (e) {

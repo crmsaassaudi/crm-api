@@ -76,6 +76,7 @@ export class ContactMapper {
 
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
+    domainEntity.lastActivityAt = raw.lastActivityAt || raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
     return domainEntity;
   }
@@ -109,6 +110,8 @@ export class ContactMapper {
     persistenceEntity.ownerId = domainEntity.ownerId;
     persistenceEntity.createdById = domainEntity.createdById;
     persistenceEntity.updatedById = domainEntity.updatedById;
+    persistenceEntity.lastActivityAt = domainEntity.lastActivityAt;
+    persistenceEntity.deletedAt = domainEntity.deletedAt;
     persistenceEntity.stageHistory = domainEntity.stageHistory ?? [];
     return persistenceEntity;
   }
