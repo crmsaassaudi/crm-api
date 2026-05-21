@@ -5,6 +5,7 @@ import {
   IsString,
   IsArray,
   IsBoolean,
+  IsDateString,
 } from 'class-validator';
 
 export class CreateContactDto {
@@ -26,18 +27,20 @@ export class CreateContactDto {
   @IsString()
   title?: string;
 
-  @ApiProperty({ example: 'new' })
-  @IsString()
-  status: string;
-
-  @ApiProperty({ example: 'lead' })
-  @IsString()
-  lifecycleStage: string;
-
-  @ApiProperty({ example: '2' })
+  @ApiProperty({ example: '6a04ae41e74cd5dfaeac8a4b' })
   @IsOptional()
   @IsString()
-  source?: string;
+  statusId?: string;
+
+  @ApiProperty({ example: '6a04ae41e74cd5dfaeac8a4a' })
+  @IsOptional()
+  @IsString()
+  lifecycleStageId?: string;
+
+  @ApiProperty({ example: '6a04ae41e74cd5dfaeac8a4c' })
+  @IsOptional()
+  @IsString()
+  sourceId?: string;
 
   @ApiProperty({ example: 'CEO' })
   @IsOptional()
@@ -51,7 +54,13 @@ export class CreateContactDto {
 
   @ApiProperty({ example: '1990-01-01' })
   @IsOptional()
+  @IsDateString()
   birthday?: Date;
+
+  @ApiProperty({ example: '6a04ae41e74cd5dfaeac8a4d' })
+  @IsOptional()
+  @IsString()
+  accountId?: string;
 
   @ApiProperty({ example: 'user-1' })
   @IsOptional()

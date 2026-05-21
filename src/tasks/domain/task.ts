@@ -43,7 +43,7 @@ export class Task {
   @ApiProperty()
   relatedTo?: {
     type: string;
-    _id: string;
+    id: string;
     name: string;
   };
 

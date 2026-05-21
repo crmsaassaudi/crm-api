@@ -24,6 +24,7 @@ import {
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ContactExportStorageService } from './contact-export-storage.service';
+import { ContactSettingsService } from '../contact-settings/contact-settings.service';
 
 @Injectable()
 export class ContactsService {
@@ -37,6 +38,7 @@ export class ContactsService {
     private readonly activityLogService: ActivityLogService,
     private readonly auditLogService: AuditLogService,
     private readonly exportStorageService: ContactExportStorageService,
+    private readonly contactSettingsService: ContactSettingsService,
   ) {}
 
   async create(data: CreateContactDto): Promise<Contact> {
@@ -281,19 +283,29 @@ export class ContactsService {
     const contact = await this.repository.findOne({ _id: id });
     if (!contact) throw new NotFoundException('Contact not found');
 
+    // Find the stage document by id or apiName
+    const stages = await this.contactSettingsService.findAllLifecycleStages();
+    const stageDoc = stages.find((s) => s.id === newStage || s.apiName === newStage);
+    if (!stageDoc) {
+      throw new BadRequestException(`Lifecycle stage "${newStage}" not found`);
+    }
+
     // --- Guardrail 1: Validate stage exists in lifecycle config ---
     const validStages = await this.getValidStages();
-    if (!validStages.includes(newStage)) {
+    if (!validStages.includes(stageDoc.apiName)) {
       throw new BadRequestException(
-        `Invalid lifecycle stage: "${newStage}". Valid stages: ${validStages.join(', ')}`,
+        `Invalid lifecycle stage: "${stageDoc.apiName}". Valid stages: ${validStages.join(', ')}`,
       );
     }
 
-    const previousStage = contact.lifecycleStageId;
+    const previousStageDoc = stages.find(
+      (s) => s.id === contact.lifecycleStageId || s.apiName === contact.lifecycleStageId,
+    );
+    const previousStageName = previousStageDoc ? previousStageDoc.apiName : null;
 
     // --- Guardrail 2: Compute transition direction + skipped stages ---
-    const fromIndex = validStages.indexOf(previousStage);
-    const toIndex = validStages.indexOf(newStage);
+    const fromIndex = previousStageName ? validStages.indexOf(previousStageName) : -1;
+    const toIndex = validStages.indexOf(stageDoc.apiName);
 
     let direction: 'forward' | 'backward' | 'lateral' = 'lateral';
     let skippedStages: string[] = [];
@@ -319,8 +331,8 @@ export class ContactsService {
 
     // 1. Push stage history entry (atomic $push, no race conditions)
     await this.repository.pushStageHistory(id, {
-      fromStage: previousStage,
-      toStage: newStage,
+      fromStage: previousStageName,
+      toStage: stageDoc.apiName,
       changedAt: new Date(),
       changedById,
       reason: params?.reason,
@@ -336,8 +348,8 @@ export class ContactsService {
       actorId: changedById,
       occurredAt,
       payload: {
-        fromStage: previousStage,
-        toStage: newStage,
+        fromStage: previousStageName,
+        toStage: stageDoc.apiName,
         reason: params?.reason,
         direction,
         skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
@@ -349,8 +361,8 @@ export class ContactsService {
       targetEntityId: id,
       actorId: changedById,
       metadata: {
-        fromStage: previousStage,
-        toStage: newStage,
+        fromStage: previousStageName,
+        toStage: stageDoc.apiName,
         direction,
         skippedStages,
         reason: params?.reason,
@@ -368,7 +380,7 @@ export class ContactsService {
 
     // 3. Update stage (and optionally link to account)
     const updated = await this.repository.update(id, {
-      lifecycleStageId: newStage,
+      lifecycleStageId: stageDoc.id,
       ...(finalAccountId ? { accountId: finalAccountId } : {}),
     } as any);
 
@@ -386,8 +398,8 @@ export class ContactsService {
     return {
       success: true,
       contact: id,
-      previousStage,
-      stage: newStage,
+      previousStage: previousStageName,
+      stage: stageDoc.apiName,
       direction,
       skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
       account: finalAccountId,

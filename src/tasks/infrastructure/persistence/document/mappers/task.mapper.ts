@@ -13,7 +13,13 @@ export class TaskMapper {
     domainEntity.priority = raw.priority;
     domainEntity.categoryId = raw.categoryId?.toString();
     domainEntity.ownerId = raw.ownerId?.toString();
-    domainEntity.relatedTo = raw.relatedTo;
+    if (raw.relatedTo) {
+      domainEntity.relatedTo = {
+        type: raw.relatedTo.type,
+        id: raw.relatedTo._id?.toString() || (raw.relatedTo as any).id?.toString(),
+        name: raw.relatedTo.name,
+      };
+    }
     domainEntity.tags = raw.tags;
     domainEntity.reminderAt = raw.reminderAt;
     domainEntity.completedAt = raw.completedAt;
@@ -59,7 +65,13 @@ export class TaskMapper {
     persistenceEntity.priority = domainEntity.priority;
     persistenceEntity.categoryId = domainEntity.categoryId;
     persistenceEntity.ownerId = domainEntity.ownerId;
-    persistenceEntity.relatedTo = domainEntity.relatedTo;
+    if (domainEntity.relatedTo) {
+      persistenceEntity.relatedTo = {
+        type: domainEntity.relatedTo.type,
+        _id: domainEntity.relatedTo.id || (domainEntity.relatedTo as any)._id,
+        name: domainEntity.relatedTo.name,
+      };
+    }
     persistenceEntity.tags = domainEntity.tags;
     persistenceEntity.reminderAt = domainEntity.reminderAt;
     persistenceEntity.completedAt = domainEntity.completedAt;
