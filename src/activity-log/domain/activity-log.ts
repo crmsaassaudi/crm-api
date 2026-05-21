@@ -28,6 +28,9 @@ export class ActivityLog {
   actorId?: string;
 
   @ApiProperty({ required: false })
+  actor?: any;
+
+  @ApiProperty({ required: false })
   payload?: Record<string, any>;
 
   @ApiProperty()

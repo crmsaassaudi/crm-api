@@ -57,3 +57,10 @@ ActivityLogSchema.index(
   { targetType: 1, targetId: 1, tenantId: 1, occurredAt: -1 },
   { name: 'target_activity_lookup' },
 );
+
+ActivityLogSchema.virtual('actor', {
+  ref: 'UserSchemaClass',
+  localField: 'actorId',
+  foreignField: '_id',
+  justOne: true,
+});

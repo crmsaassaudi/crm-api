@@ -65,6 +65,10 @@ export class ActivityLogRepository extends BaseDocumentRepository<
     const scopedWhere = this.applyTenantFilter(where);
     const docs = await this.model
       .find(scopedWhere)
+      .populate({
+        path: 'actor',
+        select: 'firstName lastName email photo',
+      })
       .sort({ occurredAt: -1, _id: -1 })
       .limit(params.limit + 1)
       .exec();

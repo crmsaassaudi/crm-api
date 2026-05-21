@@ -57,6 +57,7 @@ export class ActivityLogService {
         id: item.id,
         type: item.event,
         actorId: item.actorId,
+        actor: item.actor,
         occurredAt: item.occurredAt,
         payload: item.payload || {},
       })),

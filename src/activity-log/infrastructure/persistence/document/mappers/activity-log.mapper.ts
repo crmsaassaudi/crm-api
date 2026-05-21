@@ -1,15 +1,21 @@
 import { ActivityLog } from '../../../../domain/activity-log';
 import { ActivityLogSchemaClass } from '../entities/activity-log.schema';
+import { UserMapper } from '../../../../../users/infrastructure/persistence/document/mappers/user.mapper';
 
 export class ActivityLogMapper {
   static toDomain(raw: ActivityLogSchemaClass): ActivityLog {
     const entity = new ActivityLog();
+    const actor = (raw as any).actor;
+
     entity.id = raw._id.toString();
     entity.tenantId = raw.tenantId?.toString();
     entity.targetType = raw.targetType;
     entity.targetId = raw.targetId?.toString();
     entity.event = raw.event;
     entity.actorId = raw.actorId?.toString();
+    if (actor) {
+      entity.actor = UserMapper.toDomain(actor);
+    }
     entity.payload = raw.payload;
     entity.occurredAt = raw.occurredAt;
     entity.createdAt = raw.createdAt;
