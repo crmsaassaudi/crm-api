@@ -63,6 +63,7 @@ import { ReadStateSyncModule } from './queue/read-state-sync/read-state-sync.mod
 import { OnboardingModule } from './tenants/onboarding.module';
 import { ObservabilityModule } from './observability/observability.module';
 import { NotesModule } from './notes/notes.module';
+import { SystemSettingsModule } from './system-settings/system-settings.module';
 
 import {
   KeycloakConnectModule,
@@ -92,6 +93,7 @@ import { Request } from 'express';
 
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.middleware';
+import { MaintenanceModeGuard } from './system-settings/maintenance-mode.guard';
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 const envFilePath = [
@@ -280,8 +282,13 @@ const envFilePath = [
     OnboardingModule,
     ObservabilityModule,
     NotesModule,
+    SystemSettingsModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: MaintenanceModeGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
