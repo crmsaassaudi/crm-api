@@ -8,12 +8,17 @@ import {
   CrmSettingSchema,
   CrmSettingSchemaClass,
 } from './infrastructure/persistence/document/entities/crm-setting.schema';
+import {
+  ContactSchema,
+  ContactSchemaClass,
+} from '../contacts/infrastructure/persistence/document/entities/contact.schema';
 
 @Global()
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: CrmSettingSchemaClass.name, schema: CrmSettingSchema },
+      { name: ContactSchemaClass.name, schema: ContactSchema },
     ]),
   ],
   controllers: [CrmSettingsController],
