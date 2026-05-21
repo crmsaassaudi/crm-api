@@ -5,6 +5,7 @@ import {
   CallHandler,
   Logger,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Observable, from } from 'rxjs';
 import { switchMap } from 'rxjs/operators';
@@ -86,6 +87,18 @@ export class TenantInterceptor implements NestInterceptor {
     // ── Step 3: Resolve tenantId (alias/UUID → MongoDB ObjectId) ──
     await this.resolveTenant(raw);
 
+    // ── Step 3.5: Verify the authenticated user belongs to the resolved tenant ──
+    const resolvedTenantId = this.cls.get('tenantId');
+    const resolvedUserId = this.cls.get('userId');
+    if (
+      resolvedTenantId &&
+      resolvedUserId &&
+      isValidObjectId(resolvedUserId) &&
+      !this.isTenantContextOptionalRoute(request)
+    ) {
+      await this.verifyTenantMembership(resolvedTenantId, resolvedUserId);
+    }
+
     // ── Step 4: Reject ambiguous tenant context for tenant-scoped requests ──
     if (!this.cls.get('tenantId')) {
       this.rejectMissingTenantContext(request);
@@ -127,17 +140,32 @@ export class TenantInterceptor implements NestInterceptor {
           locale = cachedI18n.locale;
           timezone = cachedI18n.timezone;
         } else {
-          const tenantRepo = this.moduleRef.get(TenantsRepository, {
-            strict: false,
-          });
-          const tenant = await tenantRepo.findById(tenantId);
-          locale = tenant?.i18nSettings?.locale ?? 'en';
-          timezone = tenant?.i18nSettings?.timezone ?? 'UTC';
-          await this.redisService
-            .set(tenantI18nKey, { locale, timezone }, TENANT_I18N_CACHE_TTL)
-            .catch(() => {
-              /* non-fatal */
-            });
+          // Mutex lock: only one requester hits the DB on cache miss.
+          // Others use safe defaults for this request — cache populates within ms.
+          const lockKey = `${tenantI18nKey}:lock`;
+          const client = this.redisService.getClient();
+          const lockAcquired = await client.set(lockKey, '1', 'NX', 'EX', 5);
+          if (lockAcquired === 'OK') {
+            try {
+              const tenantRepo = this.moduleRef.get(TenantsRepository, {
+                strict: false,
+              });
+              const tenant = await tenantRepo.findById(tenantId);
+              locale = tenant?.i18nSettings?.locale ?? 'en';
+              timezone = tenant?.i18nSettings?.timezone ?? 'UTC';
+              await this.redisService
+                .set(
+                  tenantI18nKey,
+                  { locale, timezone },
+                  TENANT_I18N_CACHE_TTL,
+                )
+                .catch(() => {
+                  /* non-fatal */
+                });
+            } finally {
+              await client.del(lockKey);
+            }
+          }
         }
       } catch {
         // Cache/DB failure — use defaults
@@ -165,7 +193,8 @@ export class TenantInterceptor implements NestInterceptor {
             } else if (userId.includes('-')) {
               user = await userRepo.findByKeycloakIdAndProvider({
                 keycloakId: userId,
-                provider: 'email',
+                provider:
+                  (this.cls.get('user') as any)?.identity_provider ?? 'email',
               });
             }
             const userPrefs = {
@@ -298,9 +327,11 @@ export class TenantInterceptor implements NestInterceptor {
         const userRepo = this.moduleRef.get(UserRepository, {
           strict: false,
         });
+        const provider =
+          (this.cls.get('user') as any)?.identity_provider ?? 'email';
         const dbUser = await userRepo.findByKeycloakIdAndProvider({
           keycloakId: currentUserId,
-          provider: 'email',
+          provider,
         });
         if (dbUser) {
           const mongoId = dbUser.id.toString();
@@ -381,6 +412,50 @@ export class TenantInterceptor implements NestInterceptor {
           `Error resolving tenant hint "${hint}": ${(e as Error).message}`,
         );
       }
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Step 3.5 — Tenant membership check (prevents cross-tenant header forgery)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  private async verifyTenantMembership(
+    tenantId: string,
+    userId: string,
+  ): Promise<void> {
+    const cacheKey = `tenant:member:${tenantId}:${userId}`;
+    try {
+      const cached = await this.redisService.get<boolean>(cacheKey);
+      if (cached === true) return;
+      if (cached === false) {
+        throw new UnauthorizedException(
+          'User is not a member of this tenant',
+        );
+      }
+
+      const userRepo = this.moduleRef.get(UserRepository, { strict: false });
+      const user = await userRepo.findById(userId);
+      const isMember =
+        user?.tenants?.some(
+          (t: any) => t.tenantId?.toString() === tenantId,
+        ) ?? false;
+
+      await this.redisService
+        .set(cacheKey, isMember, USER_KEYCLOAK_CACHE_TTL)
+        .catch(() => {
+          /* non-fatal */
+        });
+
+      if (!isMember) {
+        throw new UnauthorizedException(
+          'User is not a member of this tenant',
+        );
+      }
+    } catch (err) {
+      if (err instanceof UnauthorizedException) throw err;
+      this.logger.warn(
+        `[TenantInterceptor] Membership check failed (fail-open): ${(err as Error).message}`,
+      );
     }
   }
 

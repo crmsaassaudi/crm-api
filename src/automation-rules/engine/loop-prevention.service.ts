@@ -52,12 +52,22 @@ export class LoopPreventionService {
   }): Promise<{ allowed: boolean; reason?: string }> {
     const key = `automation:loop:${params.tenantId}:${params.executionSessionId}:${params.nodeId}`;
 
-    const count = await this.redis.incr(key);
-
-    // Set TTL only on first increment
-    if (count === 1) {
-      await this.redis.expire(key, this.STRICT_TTL);
-    }
+    // Atomic incr + expire: a plain INCR followed by a conditional EXPIRE has a
+    // race window where two concurrent workers both see count > 1 and neither
+    // sets the TTL, leaking the key forever.
+    const incrWithTtlScript = `
+      local count = redis.call('incr', KEYS[1])
+      if count == 1 then
+        redis.call('expire', KEYS[1], ARGV[1])
+      end
+      return count
+    `;
+    const count = (await this.redis.eval(
+      incrWithTtlScript,
+      1,
+      key,
+      String(this.STRICT_TTL),
+    )) as number;
 
     if (count > this.STRICT_THRESHOLD) {
       this.logger.warn(

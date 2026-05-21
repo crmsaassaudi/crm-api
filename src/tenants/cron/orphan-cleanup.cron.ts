@@ -77,32 +77,22 @@ export class OrphanCleanupCron {
         `[OrphanCleanup] Found ${incompleteUsers.length} orphan account(s) to clean up`,
       );
 
-      for (const user of incompleteUsers) {
-        try {
-          // 1. Delete Keycloak user if they have a keycloakId
-          if (user.keycloakId) {
-            await this.keycloakAdminService
-              .deleteUser(user.keycloakId)
-              .catch((e) => {
-                // KC user may already be deleted — non-fatal
-                this.logger.warn(
-                  `[OrphanCleanup] KC delete for ${user.email} failed (may not exist): ${e.message}`,
-                );
-              });
+      const CLEANUP_CONCURRENCY = 5;
+      for (let i = 0; i < incompleteUsers.length; i += CLEANUP_CONCURRENCY) {
+        const batch = incompleteUsers.slice(i, i + CLEANUP_CONCURRENCY);
+        const results = await Promise.allSettled(
+          batch.map((user) => this.cleanupUser(user)),
+        );
+        for (let j = 0; j < results.length; j++) {
+          const result = results[j];
+          if (result.status === 'fulfilled') {
+            cleanedCount++;
+          } else {
+            errorCount++;
+            this.logger.error(
+              `[OrphanCleanup] Failed to clean ${batch[j].email}: ${result.reason instanceof Error ? result.reason.message : result.reason}`,
+            );
           }
-
-          // 2. Delete MongoDB user
-          await this.userRepository.remove(user.id);
-
-          cleanedCount++;
-          this.logger.log(
-            `[OrphanCleanup] Cleaned up: ${user.email} (userId=${user.id}, age=${this.getAge(user.createdAt)})`,
-          );
-        } catch (err) {
-          errorCount++;
-          this.logger.error(
-            `[OrphanCleanup] Failed to clean ${user.email}: ${err instanceof Error ? err.message : err}`,
-          );
         }
       }
     } catch (err) {
@@ -113,6 +103,20 @@ export class OrphanCleanupCron {
 
     this.logger.log(
       `[OrphanCleanup] Complete — cleaned: ${cleanedCount}, errors: ${errorCount}`,
+    );
+  }
+
+  private async cleanupUser(user: any): Promise<void> {
+    if (user.keycloakId) {
+      await this.keycloakAdminService.deleteUser(user.keycloakId).catch((e) => {
+        this.logger.warn(
+          `[OrphanCleanup] KC delete for ${user.email} failed (may not exist): ${e.message}`,
+        );
+      });
+    }
+    await this.userRepository.remove(user.id);
+    this.logger.log(
+      `[OrphanCleanup] Cleaned up: ${user.email} (userId=${user.id}, age=${this.getAge(user.createdAt)})`,
     );
   }
 

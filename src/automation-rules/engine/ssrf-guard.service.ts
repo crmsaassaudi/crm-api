@@ -73,7 +73,9 @@ export class SsrfGuardService {
   private readonly DNS_TIMEOUT_MS = 5_000;
   private readonly MAX_URL_LENGTH = 2_048;
 
-  async validate(url: string): Promise<{ safe: boolean; reason?: string }> {
+  async validate(
+    url: string,
+  ): Promise<{ safe: boolean; reason?: string; resolvedIp?: string }> {
     // ── Step 0: Length guard ────────────────────────────────────────────
     if (url.length > this.MAX_URL_LENGTH) {
       return {
@@ -113,7 +115,7 @@ export class SsrfGuardService {
           reason: `SSRF blocked: ${hostname} is a private/reserved IP (${blocked})`,
         };
       }
-      return { safe: true };
+      return { safe: true, resolvedIp: normalizedIp };
     }
 
     // Block localhost aliases
@@ -138,7 +140,7 @@ export class SsrfGuardService {
         }
       }
 
-      return { safe: true };
+      return { safe: true, resolvedIp: results[0].address };
     } catch (dnsError: any) {
       // If DNS fails, it's safer to block than to allow
       this.logger.warn(

@@ -82,8 +82,11 @@ export class IdempotencyInterceptor implements NestInterceptor {
       /* CLS unavailable */
     }
     const subjectScope = this.resolveSubjectScope(request);
-    const namespacedKey = `${tenantPrefix}idmp:${subjectScope}:${key}`;
-    const lockKey = `lock:${namespacedKey}`;
+    // Hash-tag forces both keys to the same Redis Cluster slot so the
+    // multi-key Lua script never raises a CROSSSLOT error.
+    const hashTag = `{idmp:${tenantPrefix}${subjectScope}:${key}}`;
+    const namespacedKey = hashTag;
+    const lockKey = `${hashTag}:lock`;
     const lockValue = ulid();
 
     // Atomic check-and-lock: single Lua round-trip replaces 3 separate Redis ops.

@@ -124,7 +124,7 @@ export class SendEmailExecutor implements ActionExecutor {
         // Cache hit: ~0.01ms | Cache miss: DB + decrypt (~50ms)
         const transport = this.transportPool
           ? await this.transportPool.resolve(configId)
-          : await this.fallbackResolve(configId);
+          : await this.fallbackResolve(configId, tenantId);
 
         if (!transport) {
           return {
@@ -225,11 +225,12 @@ export class SendEmailExecutor implements ActionExecutor {
   }
 
   /** Fallback: resolve without pool (backward compat when TransportPool not injected) */
-  private async fallbackResolve(configId: string) {
+  private async fallbackResolve(configId: string, tenantId: string) {
     if (!this.channelConfigRepo || !this.crypto) return null;
     const config =
       await this.channelConfigRepo.findByIdWithCredentialsNoTenant(configId);
     if (!config?.encryptedCredentials) return null;
+    if (config.tenantId !== tenantId) return null;
     const credentials = JSON.parse(
       await this.crypto.decrypt(config.encryptedCredentials),
     );
@@ -323,7 +324,7 @@ export class SendSmsExecutor implements ActionExecutor {
         // P0: Transport Pool (LRU Cache) - same pattern as SendEmailExecutor
         const transport = this.smsTransportPool
           ? await this.smsTransportPool.resolve(configId)
-          : await this.smsFallbackResolve(configId);
+          : await this.smsFallbackResolve(configId, tenantId);
 
         if (!transport) {
           return {
@@ -425,11 +426,12 @@ export class SendSmsExecutor implements ActionExecutor {
   }
 
   /** Fallback: resolve without pool (backward compat when TransportPool not injected) */
-  private async smsFallbackResolve(configId: string) {
+  private async smsFallbackResolve(configId: string, tenantId: string) {
     if (!this.smsChannelConfigRepo || !this.smsCrypto) return null;
     const config =
       await this.smsChannelConfigRepo.findByIdWithCredentialsNoTenant(configId);
     if (!config?.encryptedCredentials) return null;
+    if (config.tenantId !== tenantId) return null;
     const credentials = JSON.parse(
       await this.smsCrypto.decrypt(config.encryptedCredentials),
     );
@@ -695,6 +697,21 @@ export class WebhookExecutor implements ActionExecutor {
       };
     }
 
+    // DNS Pinning: connect to the pre-verified IP to prevent DNS rebinding.
+    // The original hostname travels as the Host header so the server routes correctly.
+    let fetchUrl = url;
+    const pinnedHeaders: Record<string, string> = {};
+    if (ssrfCheck.resolvedIp) {
+      const parsedUrl = new URL(url);
+      const originalHost = parsedUrl.host;
+      const ipLiteral = ssrfCheck.resolvedIp.includes(':')
+        ? `[${ssrfCheck.resolvedIp}]`
+        : ssrfCheck.resolvedIp;
+      parsedUrl.hostname = ipLiteral;
+      fetchUrl = parsedUrl.toString();
+      pinnedHeaders['Host'] = originalHost;
+    }
+
     // Interpolate body template
     let bodyStr: string;
     if (actionConfig.bodyTemplate) {
@@ -723,6 +740,7 @@ export class WebhookExecutor implements ActionExecutor {
         headers: {
           'Content-Type': 'application/json',
           ...headers,
+          ...pinnedHeaders, // DNS-pinned Host overrides any user-supplied Host
         },
         signal: controller.signal,
       };
@@ -732,11 +750,13 @@ export class WebhookExecutor implements ActionExecutor {
         fetchOptions.body = bodyStr;
       }
 
-      const response = await fetch(url, fetchOptions);
-      clearTimeout(timer);
+      const response = await fetch(fetchUrl, fetchOptions);
 
       if (!response.ok) {
+        // Read body BEFORE clearing the timer: a Slowloris server could stall
+        // body delivery indefinitely if the abort timer is cancelled too early.
         const responseBody = await response.text().catch(() => '(unreadable)');
+        clearTimeout(timer);
         return {
           success: false,
           error: {
@@ -746,6 +766,7 @@ export class WebhookExecutor implements ActionExecutor {
         };
       }
 
+      clearTimeout(timer);
       return {
         success: true,
         output: {
