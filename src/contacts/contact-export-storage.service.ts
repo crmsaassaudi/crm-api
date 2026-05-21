@@ -12,7 +12,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
-import { randomUUID } from 'crypto';
+import { ulid } from 'ulid';
 import { ClsService } from 'nestjs-cls';
 import { AllConfigType } from '../config/config.type';
 
@@ -60,7 +60,7 @@ export class ContactExportStorageService {
     });
 
     if (this.s3 && bucket) {
-      const storageKey = `exports/contacts/${randomUUID()}-${filename}`;
+      const storageKey = `exports/contacts/${ulid()}-${filename}`;
       await this.s3.send(
         new PutObjectCommand({
           Bucket: bucket,
@@ -83,13 +83,13 @@ export class ContactExportStorageService {
       };
     }
 
-    const storageKey = randomUUID();
+    const storageKey = ulid();
     const exportDir = join(process.cwd(), 'tmp', 'exports', 'contacts');
     const filePath = join(exportDir, `${storageKey}.csv`);
     await mkdir(exportDir, { recursive: true });
     await writeFile(filePath, csv, 'utf8');
 
-    const token = randomUUID();
+    const token = ulid();
     this.localTokens.set(token, {
       filePath,
       filename,

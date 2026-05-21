@@ -9,14 +9,13 @@ import { CrmSettingRepository } from './infrastructure/persistence/document/repo
 import { CrmSetting } from './domain/crm-setting';
 import { ClsService } from 'nestjs-cls';
 import { TenantSettingsSeedingService } from './tenant-settings-seeding.service';
-import { randomBytes } from 'crypto';
+import { ulid } from 'ulid';
 import { Model } from 'mongoose';
 import {
   ContactSchemaClass,
   ContactSchemaDocument,
 } from '../contacts/infrastructure/persistence/document/entities/contact.schema';
 
-const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const LIFECYCLE_STAGE_MUTABLE_FIELDS = new Set([
   'name',
   'apiName',
@@ -455,20 +454,7 @@ export class CrmSettingsService {
   }
 
   private generateUlid(): string {
-    let timestamp = Date.now();
-    let time = '';
-    for (let i = 0; i < 10; i += 1) {
-      time = ULID_ALPHABET[timestamp % 32] + time;
-      timestamp = Math.floor(timestamp / 32);
-    }
-
-    const entropy = randomBytes(16);
-    let random = '';
-    for (let i = 0; i < 16; i += 1) {
-      random += ULID_ALPHABET[entropy[i] & 31];
-    }
-
-    return `${time}${random}`;
+    return ulid();
   }
 
   private async assertLifecycleStageIsNotReferenced(

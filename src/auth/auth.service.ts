@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { v4 as uuidv4 } from 'uuid';
+import { ulid } from 'ulid';
 import { isValidObjectId } from 'mongoose';
 import { TenantsService } from '../tenants/tenants.service';
 import { AuthUpdateDto } from './dto/auth-update.dto';
@@ -68,8 +68,8 @@ export class AuthService {
       infer: true,
     });
 
-    const state = uuidv4();
-    const nonce = uuidv4();
+    const state = ulid();
+    const nonce = ulid();
     const safeReturnTo = this.sanitizeReturnTo(returnTo);
     const statePayload: OAuthStatePayload = {
       nonce,
@@ -274,7 +274,7 @@ export class AuthService {
   private async refreshTokensOnce(sid: string): Promise<SessionData> {
     const redisClient = this.redisService.getClient();
     const lockKey = `lock:auth:refresh:${sid}`;
-    const lockToken = uuidv4();
+    const lockToken = ulid();
     const acquired = await redisClient.set(
       lockKey,
       lockToken,

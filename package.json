@@ -105,7 +105,7 @@
     "socket.io": "^4.8.3",
     "source-map-support": "0.5.21",
     "swagger-ui-express": "5.0.1",
-    "uuid": "^8.3.2",
+    "ulid": "^3.0.2",
     "winston": "^3.19.0"
   },
   "devDependencies": {

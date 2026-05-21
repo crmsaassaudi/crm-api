@@ -13,7 +13,7 @@ export interface WorkflowTriggerConfig {
 }
 
 export interface WorkflowNode {
-  id: string; // Client-generated UUID
+  id: string; // Client-generated ULID
   type: 'trigger' | 'condition' | 'action' | 'wait';
   position: { x: number; y: number };
   config: Record<string, any>; // Type-specific JSON

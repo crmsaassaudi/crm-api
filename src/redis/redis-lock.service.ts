@@ -3,7 +3,7 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { ulid } from 'ulid';
 import { RedisService } from './redis.service';
 
 @Injectable()
@@ -36,7 +36,7 @@ export class RedisLockService {
     maxRetries = 50,
   ): Promise<T> {
     const client = this.redisService.getClient();
-    const lockValue = randomUUID();
+    const lockValue = ulid();
     let retries = 0;
 
     while (retries < maxRetries) {

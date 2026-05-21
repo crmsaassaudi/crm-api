@@ -30,6 +30,7 @@ import { PlatformRoleEnum } from '../../roles/platform-role.enum';
 import { StatusEnum } from '../../statuses/statuses.enum';
 import { Tenant } from '../domain/tenant';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
+import { ulid } from 'ulid';
 
 const PROVISIONING_KEY_PREFIX = 'provisioning:';
 const PROVISIONING_TTL = 86_400; // 24h
@@ -401,9 +402,6 @@ export class TenantProvisioningWorker extends WorkerHost {
 
   private generateTempPassword(): string {
     // SLG flow: user will reset via Keycloak executeActionsEmail
-    return `Temp${crypto.randomUUID().slice(0, 12)}!`;
+    return `Temp${ulid().slice(-12)}!`;
   }
 }
-
-// Node crypto for generateTempPassword
-import * as crypto from 'crypto';

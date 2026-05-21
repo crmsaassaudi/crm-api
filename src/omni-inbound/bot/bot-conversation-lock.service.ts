@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { ulid } from 'ulid';
 import type Redis from 'ioredis';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 
@@ -16,7 +16,7 @@ export class BotConversationLockService {
   constructor(@Inject(IOREDIS_CLIENT) private readonly redis: Redis) {}
 
   async tryAcquire(key: string, ttlMs: number): Promise<string | null> {
-    const token = randomUUID();
+    const token = ulid();
     const acquired = await this.redis.set(key, token, 'PX', ttlMs, 'NX');
     return acquired === 'OK' ? token : null;
   }

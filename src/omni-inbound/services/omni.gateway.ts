@@ -22,7 +22,7 @@ import * as cookie from 'cookie';
 import { ConfigService } from '@nestjs/config';
 import { AllConfigType } from '../../config/config.type';
 import { ConversationLockService } from './conversation-lock.service';
-import { v4 as uuidv4 } from 'uuid';
+import { ulid } from 'ulid';
 
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
@@ -888,7 +888,7 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private standardEvent(eventName: string, payload: any) {
     return {
-      eventId: uuidv4(),
+      eventId: ulid(),
       event: eventName,
       conversationId: payload.conversationId,
       occurredAt: payload.occurredAt ?? new Date().toISOString(),

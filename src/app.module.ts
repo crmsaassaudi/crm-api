@@ -87,7 +87,7 @@ import { ClsModule, ClsService } from 'nestjs-cls';
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
 import { utilities as nestWinstonUtilities } from 'nest-winston';
-import { v4 as uuidv4 } from 'uuid';
+import { ulid } from 'ulid';
 import { Request } from 'express';
 
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
@@ -154,7 +154,7 @@ const envFilePath = [
           if (Array.isArray(correlationId)) {
             return correlationId[0];
           }
-          return correlationId ?? uuidv4();
+          return correlationId ?? ulid();
         },
         setup: (cls, req: Request) => {
           // CLS middleware only sets initial values from synchronous sources.

@@ -29,7 +29,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { Unprotected } from 'nest-keycloak-connect';
-import { v4 as uuidv4 } from 'uuid';
+import { ulid } from 'ulid';
 
 import { OnboardingStartDto } from '../dto/onboarding-start.dto';
 import { OnboardingContextDto } from '../dto/onboarding-context.dto';
@@ -278,7 +278,7 @@ export class OnboardingController {
     if (!user) throw new NotFoundException('User not found');
 
     // 3. Enqueue provisioning job
-    const provisioningId = `prov_${uuidv4().slice(0, 12)}`;
+    const provisioningId = `prov_${ulid()}`;
 
     await this.onboardingService.setProvisioningQueued(provisioningId);
 

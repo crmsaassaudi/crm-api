@@ -11,7 +11,7 @@ import { EmailTrackingService } from './services/email-tracking.service';
  * in the email HTML body.
  *
  * Security:
- *   - No sensitive data exposed — the pixel URL is just a UUID
+ *   - No sensitive data exposed — the pixel URL is just an opaque identifier
  *   - Bot filtering happens in EmailTrackingService
  *   - Rate limiting via trackingId idempotency
  */

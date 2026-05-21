@@ -22,7 +22,7 @@ import {
   ApiSecurity,
 } from '@nestjs/swagger';
 import { Unprotected } from 'nest-keycloak-connect';
-import { v4 as uuidv4 } from 'uuid';
+import { ulid } from 'ulid';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InternalApiKeyGuard } from '../../common/guards/internal-api-key.guard';
 import { Idempotent } from '../../common/decorators/idempotent.decorator';
@@ -110,7 +110,7 @@ export class InternalTenantsController {
     );
 
     // 2. Generate provisioningId and persist to MongoDB first (DB-first pattern)
-    const provisioningId = `prov_${uuidv4().slice(0, 12)}`;
+    const provisioningId = `prov_${ulid()}`;
 
     // DB write before Redis — MongoDB is the source of truth for history/audit
     await this.provisioningJobRepository.create({
@@ -189,7 +189,7 @@ export class InternalTenantsController {
       this.logger.log(`Reusing existing KC user ${kcUserId} for ${email}`);
     } else {
       // Create without a real password — user will set it via the action email
-      const tempPassword = `Temp${uuidv4().slice(0, 12)}!`;
+      const tempPassword = `Temp${ulid().slice(-12)}!`;
       kcUser = await this.keycloakAdminService.createUser(
         email,
         tempPassword,

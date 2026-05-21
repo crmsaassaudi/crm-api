@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+import { ulid } from 'ulid';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { LRUCache } from 'lru-cache';
@@ -40,7 +40,7 @@ export class SessionService {
     },
     userId: string,
   ): Promise<string> {
-    const sid = uuidv4();
+    const sid = ulid();
     const expiresAt = Date.now() + tokens.expires_in * 1000;
 
     const session: SessionData = {

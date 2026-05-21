@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { v4 as uuid } from 'uuid';
+import { ulid } from 'ulid';
 import { AutomationWorkflowRepository } from '../infrastructure/persistence/document/repositories/automation-workflow.repository';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { ExecutionStep } from '../infrastructure/persistence/document/entities/automation-execution-log.schema';
@@ -69,7 +69,7 @@ export class WorkflowOrchestratorService {
     const recordId = payload.recordId;
     const depth = payload.automationDepth ?? 0;
     const breadcrumbs = payload.automationBreadcrumbs ?? [];
-    const executionSessionId = uuid();
+    const executionSessionId = ulid();
 
     this.logger.log(
       `[Orchestrator] Starting workflow "${workflow.name}" (${workflowId}) for record=${recordId} depth=${depth}`,

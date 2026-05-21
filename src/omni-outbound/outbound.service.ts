@@ -21,7 +21,7 @@ import { Model } from 'mongoose';
 import { EmailContentDocument } from '../channels/infrastructure/persistence/document/entities/email-content.schema';
 import { EmailMetadataDocument } from '../channels/infrastructure/persistence/document/entities/email-metadata.schema';
 import * as nodemailer from 'nodemailer';
-import { v4 as uuidv4 } from 'uuid';
+import { ulid } from 'ulid';
 import * as cheerio from 'cheerio';
 import axios from 'axios';
 import type Redis from 'ioredis';
@@ -858,7 +858,7 @@ export class OutboundService {
       throw err;
     }
 
-    const externalId = info.messageId || `<${uuidv4()}@crm.local>`;
+    const externalId = info.messageId || `<${ulid()}@crm.local>`;
 
     // 5. Update Status + Record Send for Quota Tracking
     await this.messageRepo.updateStatus(messageRecord.id, 'sent', externalId);

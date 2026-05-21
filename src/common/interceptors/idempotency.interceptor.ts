@@ -7,7 +7,8 @@ import {
 } from '@nestjs/common';
 import { ClsServiceManager } from 'nestjs-cls';
 import { ConflictException } from '@nestjs/common';
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { ulid } from 'ulid';
 import { Observable, of, throwError } from 'rxjs';
 import { catchError, mergeMap } from 'rxjs/operators';
 import { RedisService } from '../../redis/redis.service';
@@ -83,7 +84,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     const subjectScope = this.resolveSubjectScope(request);
     const namespacedKey = `${tenantPrefix}idmp:${subjectScope}:${key}`;
     const lockKey = `lock:${namespacedKey}`;
-    const lockValue = randomUUID();
+    const lockValue = ulid();
 
     // Atomic check-and-lock: single Lua round-trip replaces 3 separate Redis ops.
     // Returns: cached JSON string | 'LOCKED' | null (lock acquired, proceed).

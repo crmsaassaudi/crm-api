@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ClsService } from 'nestjs-cls';
-import { v4 as uuidv4 } from 'uuid';
+import { ulid } from 'ulid';
 import { ChannelRepository } from './infrastructure/persistence/document/repositories/channel.repository';
 import { Channel } from './domain/channel';
 import {
@@ -107,7 +107,7 @@ export class ChannelsService {
     }
 
     const type = this.normalizeMetaType(rawType);
-    const state = uuidv4();
+    const state = ulid();
     const statePayload: MetaOAuthStatePayload = {
       type,
       tenantId,
@@ -179,7 +179,7 @@ export class ChannelsService {
         accessToken,
         userTokenExpiry,
       );
-      const resultId = uuidv4();
+      const resultId = ulid();
       const resultPayload: MetaOAuthResultPayload = {
         ...statePayload,
         channels,
