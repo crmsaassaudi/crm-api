@@ -24,7 +24,6 @@ import {
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ContactExportStorageService } from './contact-export-storage.service';
-import { ContactSettingsService } from '../contact-settings/contact-settings.service';
 
 @Injectable()
 export class ContactsService {
@@ -38,10 +37,10 @@ export class ContactsService {
     private readonly activityLogService: ActivityLogService,
     private readonly auditLogService: AuditLogService,
     private readonly exportStorageService: ContactExportStorageService,
-    private readonly contactSettingsService: ContactSettingsService,
   ) {}
 
   async create(data: CreateContactDto): Promise<Contact> {
+    const normalizedLifecycle = await this.normalizeLifecycleFields(data);
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const emails = data.emails ?? [];
     const phones = data.phones ?? [];
@@ -49,6 +48,7 @@ export class ContactsService {
     // tenant, createdBy, updatedBy are auto-injected by BaseDocumentRepository from CLS
     const contact = await this.repository.create({
       ...data,
+      ...normalizedLifecycle,
       emails,
       phones,
       ownerId,
@@ -91,13 +91,17 @@ export class ContactsService {
   }
 
   async update(id: string, data: UpdateContactDto): Promise<Contact | null> {
+    const existingContact = await this.repository.findOne({ _id: id });
+    const normalizedLifecycle = await this.normalizeLifecycleFields(
+      data,
+      existingContact ?? undefined,
+    );
     // Sanitize ownerId: empty string is not a valid ObjectId
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const emails = data.emails;
     const phones = data.phones;
 
     // Shadow contact promotion: when a shadow contact gets real data, promote it
-    const existingContact = await this.repository.findOne({ _id: id });
     let additionalData: any = {};
     if (existingContact && existingContact.isShadow) {
       const hasNewEmail = emails && emails.length > 0;
@@ -110,6 +114,7 @@ export class ContactsService {
     // updatedBy is auto-injected by BaseDocumentRepository from CLS
     const updated = await this.repository.update(id, {
       ...data,
+      ...normalizedLifecycle,
       ...additionalData,
       ...(emails !== undefined ? { emails } : {}),
       ...(phones !== undefined ? { phones } : {}),
@@ -241,7 +246,7 @@ export class ContactsService {
    */
   private async getValidStages(): Promise<string[]> {
     const lifecycle =
-      await this.settingsService.getSetting('lifecycle:Contact');
+      await this.settingsService.getSetting('contact_lifecycle');
     if (!lifecycle?.stages || !Array.isArray(lifecycle.stages)) {
       // Fallback: default stage pipeline if no settings configured
       return [
@@ -257,6 +262,76 @@ export class ContactsService {
     return lifecycle.stages
       .sort((a: any, b: any) => a.sortOrder - b.sortOrder)
       .map((s: any) => s.apiName);
+  }
+
+  private async getContactLifecycle(): Promise<any> {
+    return this.settingsService.getSetting('contact_lifecycle');
+  }
+
+  private sortBySortOrder<T extends { sortOrder?: number }>(
+    items: T[] = [],
+  ): T[] {
+    return [...items].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  }
+
+  private findLifecycleStage(lifecycle: any, value?: string) {
+    if (!value) return undefined;
+    return lifecycle?.stages?.find(
+      (stage: any) => stage.apiName === value || stage.id === value,
+    );
+  }
+
+  private findLifecycleStatus(stage: any, value?: string) {
+    if (!value) return undefined;
+    return stage?.statuses?.find(
+      (status: any) => status.apiName === value || status.id === value,
+    );
+  }
+
+  private async normalizeLifecycleFields(
+    data: Pick<CreateContactDto, 'lifecycleStageId' | 'statusId'>,
+    existingContact?: Pick<Contact, 'lifecycleStageId' | 'statusId'>,
+  ): Promise<Partial<Pick<Contact, 'lifecycleStageId' | 'statusId'>>> {
+    const lifecycle = await this.getContactLifecycle();
+    const stages = this.sortBySortOrder(lifecycle?.stages ?? []);
+    const existingStage = this.findLifecycleStage(
+      lifecycle,
+      existingContact?.lifecycleStageId,
+    );
+    const requestedStage =
+      this.findLifecycleStage(lifecycle, data.lifecycleStageId) ??
+      existingStage ??
+      stages[0];
+
+    if (!requestedStage) return {};
+
+    const normalized: Partial<Pick<Contact, 'lifecycleStageId' | 'statusId'>> =
+      {};
+    if (data.lifecycleStageId !== undefined || !existingStage) {
+      normalized.lifecycleStageId = requestedStage.apiName;
+    }
+
+    const statuses = this.sortBySortOrder(requestedStage.statuses ?? []);
+    const existingStatus = this.findLifecycleStatus(
+      requestedStage,
+      existingContact?.statusId,
+    );
+    const requestedStatus =
+      this.findLifecycleStatus(requestedStage, data.statusId) ??
+      existingStatus ??
+      statuses.find((status: any) => status.isDefault) ??
+      statuses[0];
+
+    if (
+      requestedStatus &&
+      (data.statusId !== undefined ||
+        data.lifecycleStageId !== undefined ||
+        !existingStatus)
+    ) {
+      normalized.statusId = requestedStatus.apiName;
+    }
+
+    return normalized;
   }
 
   /**
@@ -283,29 +358,31 @@ export class ContactsService {
     const contact = await this.repository.findOne({ _id: id });
     if (!contact) throw new NotFoundException('Contact not found');
 
-    // Find the stage document by id or apiName
-    const stages = await this.contactSettingsService.findAllLifecycleStages();
-    const stageDoc = stages.find((s) => s.id === newStage || s.apiName === newStage);
-    if (!stageDoc) {
+    const lifecycle = await this.getContactLifecycle();
+    const stage = this.findLifecycleStage(lifecycle, newStage);
+    if (!stage) {
       throw new BadRequestException(`Lifecycle stage "${newStage}" not found`);
     }
 
     // --- Guardrail 1: Validate stage exists in lifecycle config ---
     const validStages = await this.getValidStages();
-    if (!validStages.includes(stageDoc.apiName)) {
+    if (!validStages.includes(stage.apiName)) {
       throw new BadRequestException(
-        `Invalid lifecycle stage: "${stageDoc.apiName}". Valid stages: ${validStages.join(', ')}`,
+        `Invalid lifecycle stage: "${stage.apiName}". Valid stages: ${validStages.join(', ')}`,
       );
     }
 
-    const previousStageDoc = stages.find(
-      (s) => s.id === contact.lifecycleStageId || s.apiName === contact.lifecycleStageId,
+    const previousStage = this.findLifecycleStage(
+      lifecycle,
+      contact.lifecycleStageId,
     );
-    const previousStageName = previousStageDoc ? previousStageDoc.apiName : null;
+    const previousStageName = previousStage?.apiName ?? null;
 
     // --- Guardrail 2: Compute transition direction + skipped stages ---
-    const fromIndex = previousStageName ? validStages.indexOf(previousStageName) : -1;
-    const toIndex = validStages.indexOf(stageDoc.apiName);
+    const fromIndex = previousStageName
+      ? validStages.indexOf(previousStageName)
+      : -1;
+    const toIndex = validStages.indexOf(stage.apiName);
 
     let direction: 'forward' | 'backward' | 'lateral' = 'lateral';
     let skippedStages: string[] = [];
@@ -332,7 +409,7 @@ export class ContactsService {
     // 1. Push stage history entry (atomic $push, no race conditions)
     await this.repository.pushStageHistory(id, {
       fromStage: previousStageName,
-      toStage: stageDoc.apiName,
+      toStage: stage.apiName,
       changedAt: new Date(),
       changedById,
       reason: params?.reason,
@@ -349,7 +426,7 @@ export class ContactsService {
       occurredAt,
       payload: {
         fromStage: previousStageName,
-        toStage: stageDoc.apiName,
+        toStage: stage.apiName,
         reason: params?.reason,
         direction,
         skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
@@ -362,7 +439,7 @@ export class ContactsService {
       actorId: changedById,
       metadata: {
         fromStage: previousStageName,
-        toStage: stageDoc.apiName,
+        toStage: stage.apiName,
         direction,
         skippedStages,
         reason: params?.reason,
@@ -379,8 +456,13 @@ export class ContactsService {
     }
 
     // 3. Update stage (and optionally link to account)
+    const sortedStatuses = this.sortBySortOrder<any>(stage.statuses ?? []);
+    const defaultStatus =
+      sortedStatuses.find((status: any) => status.isDefault) ??
+      sortedStatuses[0];
     const updated = await this.repository.update(id, {
-      lifecycleStageId: stageDoc.id,
+      lifecycleStageId: stage.apiName,
+      ...(defaultStatus ? { statusId: defaultStatus.apiName } : {}),
       ...(finalAccountId ? { accountId: finalAccountId } : {}),
     } as any);
 
@@ -399,7 +481,7 @@ export class ContactsService {
       success: true,
       contact: id,
       previousStage: previousStageName,
-      stage: stageDoc.apiName,
+      stage: stage.apiName,
       direction,
       skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
       account: finalAccountId,

@@ -133,9 +133,6 @@ export class ContactRepository extends BaseDocumentRepository<
         .populate('owner')
         .populate('createdBy')
         .populate('updatedBy')
-        .populate('contactStatus')
-        .populate('contactSource')
-        .populate('contactLifecycleStage')
         .exec(),
       this.model.countDocuments(scopedWhere).exec(),
     ]);
@@ -189,9 +186,6 @@ export class ContactRepository extends BaseDocumentRepository<
         .populate('owner')
         .populate('createdBy')
         .populate('updatedBy')
-        .populate('contactStatus')
-        .populate('contactSource')
-        .populate('contactLifecycleStage')
         .exec(),
       this.countDocumentsWithCap(scopedWhere, countLimit),
     ]);
@@ -332,9 +326,6 @@ export class ContactRepository extends BaseDocumentRepository<
       .populate('owner')
       .populate('createdBy')
       .populate('updatedBy')
-      .populate('contactStatus')
-      .populate('contactSource')
-      .populate('contactLifecycleStage')
       .exec();
     return doc ? this.mapToDomain(doc) : null;
   }

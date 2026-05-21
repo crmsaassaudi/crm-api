@@ -55,29 +55,6 @@ export class ContactMapper {
     if ((raw as any).updatedBy) {
       domainEntity.updatedBy = UserMapper.toDomain((raw as any).updatedBy);
     }
-    if ((raw as any).contactStatus) {
-      const s = (raw as any).contactStatus;
-      domainEntity.contactStatus = {
-        id: s._id?.toString(),
-        label: s.label,
-        apiName: s.apiName,
-        color: s.color,
-      };
-    }
-    if ((raw as any).contactSource) {
-      const s = (raw as any).contactSource;
-      domainEntity.contactSource = { id: s._id?.toString(), name: s.name };
-    }
-    if ((raw as any).contactLifecycleStage) {
-      const s = (raw as any).contactLifecycleStage;
-      domainEntity.contactLifecycleStage = {
-        id: s._id?.toString(),
-        label: s.label,
-        apiName: s.apiName,
-        color: s.color,
-      };
-    }
-
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.lastActivityAt = raw.lastActivityAt || raw.updatedAt;

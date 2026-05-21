@@ -40,7 +40,6 @@ import { DealsModule } from './deals/deals.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { TicketSettingsModule } from './ticket-settings/ticket-settings.module';
-import { ContactSettingsModule } from './contact-settings/contact-settings.module';
 import { DealSettingsModule } from './deal-settings/deal-settings.module';
 import { AccountSettingsModule } from './account-settings/account-settings.module';
 import { TaskSettingsModule } from './task-settings/task-settings.module';
@@ -259,7 +258,6 @@ const envFilePath = [
     ContactsModule,
     TicketsModule,
     TicketSettingsModule,
-    ContactSettingsModule,
     DealSettingsModule,
     AccountSettingsModule,
     TaskSettingsModule,

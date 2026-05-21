@@ -29,19 +29,8 @@ export class Contact {
   @ApiProperty({ example: 'lead' })
   lifecycleStageId: string;
 
-  @ApiProperty()
-  contactLifecycleStage?: {
-    id: string;
-    label: string;
-    apiName: string;
-    color: string;
-  };
-
   @ApiProperty({ example: 'new' })
   statusId: string;
-
-  @ApiProperty()
-  contactStatus?: { id: string; label: string; apiName: string; color: string };
 
   @ApiProperty({ example: 'Acme Corp' })
   companyName?: string;
@@ -54,9 +43,6 @@ export class Contact {
 
   @ApiProperty({ example: '1' })
   sourceId?: string;
-
-  @ApiProperty()
-  contactSource?: { id: string; name: string };
 
   @ApiProperty({ example: 'CEO' })
   role?: string;

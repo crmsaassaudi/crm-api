@@ -18,7 +18,6 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { ContactExportStorageService } from './contact-export-storage.service';
 import { ContactScoringService } from './contact-scoring.service';
 import { isWorkerRuntime } from '../config/runtime-role';
-import { ContactSettingsModule } from '../contact-settings/contact-settings.module';
 
 const workerProviders = isWorkerRuntime() ? [ContactScoringService] : [];
 
@@ -35,7 +34,6 @@ const workerProviders = isWorkerRuntime() ? [ContactScoringService] : [];
     TasksModule,
     TicketsModule,
     AuditLogModule,
-    ContactSettingsModule,
   ],
   controllers: [ContactsController],
   providers: [
