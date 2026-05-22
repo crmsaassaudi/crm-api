@@ -38,7 +38,7 @@ export type AiVideoJobStatus =
   | 'BLOCKED_BY_POLICY'
   | 'BLOCKED_WAITING_APPROVAL';
 
-export type AiVideoSourceType = 'manual_upload' | 'url_import';
+export type AiVideoSourceType = 'manual_upload' | 'url_import' | 'script_production';
 
 export class AiVideoJob {
   @ApiProperty()
@@ -47,11 +47,14 @@ export class AiVideoJob {
   @ApiProperty()
   tenantId: string;
 
-  @ApiProperty({ enum: ['manual_upload', 'url_import'] })
+  @ApiProperty({ enum: ['manual_upload', 'url_import', 'script_production'] })
   sourceType: AiVideoSourceType;
 
   @ApiPropertyOptional()
   sourceUrl?: string;
+
+  @ApiPropertyOptional()
+  scriptText?: string;
 
   @ApiProperty()
   status: AiVideoJobStatus;

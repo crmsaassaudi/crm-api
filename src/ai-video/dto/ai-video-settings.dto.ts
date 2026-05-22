@@ -28,4 +28,19 @@ export class UpdateAiVideoSettingsDto {
   @IsOptional()
   @IsBoolean()
   autoCleanupTempFiles?: boolean;
+
+  @ApiPropertyOptional({ example: 'your-elevenlabs-key' })
+  @IsOptional()
+  @IsString()
+  elevenLabsApiKey?: string;
+
+  @ApiPropertyOptional({ example: '21m00Tcm4TlvDq8ikWAM' })
+  @IsOptional()
+  @IsString()
+  defaultVoiceId?: string;
+
+  @ApiPropertyOptional({ example: 0.15 })
+  @IsOptional()
+  @IsNumber()
+  bgmVolume?: number;
 }

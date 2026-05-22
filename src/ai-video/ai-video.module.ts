@@ -32,6 +32,8 @@ import { AiVideoJobService } from './services/ai-video-job.service';
 import { FacebookPublisherService } from './services/facebook-publisher.service';
 import { AiVideoSchedulerService } from './services/ai-video-scheduler.service';
 import { AiGeneratorService } from './services/ai-generator.service';
+import { VoiceSynthesisService } from './services/voice-synthesis.service';
+import { VideoCompositorService } from './services/video-compositor.service';
 
 // Repositories
 import { AiVideoJobRepository } from './repositories/ai-video-job.repository';
@@ -91,6 +93,8 @@ const workerProviders = isWorkerRuntime()
     FacebookPublisherService,
     AiVideoSchedulerService,
     AiGeneratorService,
+    VoiceSynthesisService,
+    VideoCompositorService,
 
     // ── Repositories ────────────────────────────────────────────────────
     AiVideoJobRepository,
@@ -106,6 +110,8 @@ const workerProviders = isWorkerRuntime()
     FacebookPublisherService,
     AiVideoSchedulerService,
     AiGeneratorService,
+    VoiceSynthesisService,
+    VideoCompositorService,
     AiVideoSettingsRepository,
   ],
 })

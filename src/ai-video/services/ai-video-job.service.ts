@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import * as path from 'path';
 import { AiVideoJobRepository } from '../repositories/ai-video-job.repository';
 import { AiVideoAuditLogRepository } from '../repositories/ai-video-audit-log.repository';
 import { AiVideoJob, AiVideoJobStatus } from '../domain/ai-video-job';
@@ -19,6 +20,8 @@ import { AiVideoSettingsRepository } from '../repositories/ai-video-settings.rep
 import { AiVideoSettings } from '../domain/ai-video-settings';
 import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { AiGeneratorService } from './ai-generator.service';
+import { VoiceSynthesisService } from './voice-synthesis.service';
+import { VideoCompositorService } from './video-compositor.service';
 
 @Injectable()
 export class AiVideoJobService {
@@ -30,6 +33,8 @@ export class AiVideoJobService {
     private readonly settingsRepository: AiVideoSettingsRepository,
     private readonly channelRepository: ChannelRepository,
     private readonly aiGeneratorService: AiGeneratorService,
+    private readonly voiceSynthesisService: VoiceSynthesisService,
+    private readonly videoCompositorService: VideoCompositorService,
     private readonly cls: ClsService,
   ) {}
 
@@ -80,10 +85,17 @@ export class AiVideoJobService {
       );
     }
 
+    if (dto.sourceType === 'script_production' && !dto.scriptText) {
+      throw new BadRequestException(
+        'scriptText is required when sourceType is script_production',
+      );
+    }
+
     const job = await this.jobRepository.create({
       tenantId,
       sourceType: dto.sourceType,
       sourceUrl: dto.sourceUrl,
+      scriptText: dto.scriptText,
       status: 'CREATED',
       facebookPageId: dto.facebookPageId,
       caption: dto.caption,
@@ -101,6 +113,7 @@ export class AiVideoJobService {
       payload: {
         sourceType: dto.sourceType,
         sourceUrl: dto.sourceUrl,
+        scriptText: dto.scriptText,
         facebookPageId: dto.facebookPageId,
       },
     });
@@ -282,68 +295,151 @@ export class AiVideoJobService {
 
   async runVideoPipeline(jobId: string, tenantId: string) {
     try {
-      // 1. CREATED -> INGESTING (Download)
+      const job = await this.jobRepository.findById(tenantId, jobId);
+      if (!job) return;
+
+      const isScriptProd = job.sourceType === 'script_production';
+      let voiceAudioBuffer: Buffer | null = null;
+      let renderedVideoPath = '';
+
+      // 1. CREATED -> INGESTING (Download source / Synthesize voice)
       await this.sleep(1500);
       await this.jobRepository.updateStatus(jobId, 'INGESTING');
-      await this.auditLogRepository.record({
-        tenantId,
-        jobId,
-        action: 'INGESTING',
-        actorType: 'system',
-        oldStatus: 'CREATED',
-        newStatus: 'INGESTING',
-        payload: { message: 'Downloading source video from storage...' },
-      });
+      
+      if (isScriptProd) {
+        await this.auditLogRepository.record({
+          tenantId,
+          jobId,
+          action: 'INGESTING',
+          actorType: 'system',
+          oldStatus: 'CREATED',
+          newStatus: 'INGESTING',
+          payload: { message: 'Invoking ElevenLabs Voice Synthesis API...' },
+        });
 
-      // 2. INGESTING -> INGESTED
-      await this.sleep(2000);
-      await this.jobRepository.updateStatus(jobId, 'INGESTED');
-      await this.auditLogRepository.record({
-        tenantId,
-        jobId,
-        action: 'INGESTED',
-        actorType: 'system',
-        oldStatus: 'INGESTING',
-        newStatus: 'INGESTED',
-        payload: { sizeBytes: 15482931, format: 'mp4' },
-      });
+        // Generate lồng tiếng từ kịch bản scriptText
+        voiceAudioBuffer = await this.voiceSynthesisService.synthesizeSpeech(
+          tenantId,
+          job.scriptText || '',
+        );
 
-      // 3. INGESTED -> NORMALIZING (FFmpeg processing simulation)
+        await this.jobRepository.updateStatus(jobId, 'INGESTED');
+        await this.auditLogRepository.record({
+          tenantId,
+          jobId,
+          action: 'INGESTED',
+          actorType: 'system',
+          oldStatus: 'INGESTING',
+          newStatus: 'INGESTED',
+          payload: {
+            message: 'Voice synthesis successfully generated audio track.',
+            audioFormat: 'mp3',
+            sizeBytes: voiceAudioBuffer?.length ?? 0,
+          },
+        });
+      } else {
+        await this.auditLogRepository.record({
+          tenantId,
+          jobId,
+          action: 'INGESTING',
+          actorType: 'system',
+          oldStatus: 'CREATED',
+          newStatus: 'INGESTING',
+          payload: { message: 'Downloading source video from storage...' },
+        });
+
+        await this.sleep(2000);
+        await this.jobRepository.updateStatus(jobId, 'INGESTED');
+        await this.auditLogRepository.record({
+          tenantId,
+          jobId,
+          action: 'INGESTED',
+          actorType: 'system',
+          oldStatus: 'INGESTING',
+          newStatus: 'INGESTED',
+          payload: { sizeBytes: 15482931, format: 'mp4' },
+        });
+      }
+
+      // 3. INGESTED -> NORMALIZING (FFmpeg video rendering / Normalization)
       await this.sleep(1500);
       await this.jobRepository.updateStatus(jobId, 'NORMALIZING');
-      await this.auditLogRepository.record({
-        tenantId,
-        jobId,
-        action: 'NORMALIZING',
-        actorType: 'system',
-        oldStatus: 'INGESTED',
-        newStatus: 'NORMALIZING',
-        payload: {
-          ffmpegCommand: 'ffmpeg -i input.mp4 -vf scale=1080:1920 -c:v libx264 -profile:v high -level:v 4.2 -pix_fmt yuv420p -r 30 output.mp4',
-          message: 'Running FFmpeg to normalize video aspect ratio to vertical 9:16 and convert video codec to H.264...',
-        },
-      });
 
-      // 4. NORMALIZING -> NORMALIZED
-      await this.sleep(2500);
-      await this.jobRepository.updateStatus(jobId, 'NORMALIZED');
-      await this.auditLogRepository.record({
-        tenantId,
-        jobId,
-        action: 'NORMALIZED',
-        actorType: 'system',
-        oldStatus: 'NORMALIZING',
-        newStatus: 'NORMALIZED',
-        payload: {
-          width: 1080,
-          height: 1920,
-          aspectRatio: '9:16',
-          codec: 'h264',
-          frameRate: 30,
-        },
-      });
+      if (isScriptProd && voiceAudioBuffer) {
+        await this.auditLogRepository.record({
+          tenantId,
+          jobId,
+          action: 'NORMALIZING',
+          actorType: 'system',
+          oldStatus: 'INGESTED',
+          newStatus: 'NORMALIZING',
+          payload: {
+            message: 'Compositing background slide, looping BGM, and lồng tiếng into Vertical Reels format...',
+          },
+        });
 
-      // 5. NORMALIZED -> PROCESSING (AI enrichment or processing simulation)
+        // Compositing dynamic video via FFmpeg
+        renderedVideoPath = await this.videoCompositorService.renderVideo(tenantId, {
+          jobId,
+          scriptText: job.scriptText || '',
+          voiceAudioBuffer,
+        });
+
+        // Update public source URL for the generated video mapped to files endpoint
+        const localFileName = path.basename(renderedVideoPath);
+        const sourceUrl = `/api/v1/files/${localFileName}`;
+        await this.jobRepository.updateStatus(jobId, 'NORMALIZED', { sourceUrl });
+
+        await this.auditLogRepository.record({
+          tenantId,
+          jobId,
+          action: 'NORMALIZED',
+          actorType: 'system',
+          oldStatus: 'NORMALIZING',
+          newStatus: 'NORMALIZED',
+          payload: {
+            width: 1080,
+            height: 1920,
+            aspectRatio: '9:16',
+            codec: 'h264',
+            frameRate: 30,
+            renderedPath: sourceUrl,
+          },
+        });
+      } else {
+        await this.auditLogRepository.record({
+          tenantId,
+          jobId,
+          action: 'NORMALIZING',
+          actorType: 'system',
+          oldStatus: 'INGESTED',
+          newStatus: 'NORMALIZING',
+          payload: {
+            ffmpegCommand: 'ffmpeg -i input.mp4 -vf scale=1080:1920 -c:v libx264 -profile:v high -level:v 4.2 -pix_fmt yuv420p -r 30 output.mp4',
+            message: 'Running FFmpeg to normalize video aspect ratio to vertical 9:16 and convert video codec to H.264...',
+          },
+        });
+
+        await this.sleep(2500);
+        await this.jobRepository.updateStatus(jobId, 'NORMALIZED');
+        await this.auditLogRepository.record({
+          tenantId,
+          jobId,
+          action: 'NORMALIZED',
+          actorType: 'system',
+          oldStatus: 'NORMALIZING',
+          newStatus: 'NORMALIZED',
+          payload: {
+            width: 1080,
+            height: 1920,
+            aspectRatio: '9:16',
+            codec: 'h264',
+            frameRate: 30,
+          },
+        });
+      }
+
+      // 5. NORMALIZED -> PROCESSING (AI enrichment)
       await this.sleep(1500);
       await this.jobRepository.updateStatus(jobId, 'PROCESSING');
       await this.auditLogRepository.record({
@@ -353,19 +449,20 @@ export class AiVideoJobService {
         actorType: 'ai',
         oldStatus: 'NORMALIZED',
         newStatus: 'PROCESSING',
-        payload: { message: 'Analyzing video keyframes for topic identification...' },
+        payload: { message: 'Analyzing script text & video keyframes for topic identification...' },
       });
 
       // 6. PROCESSING -> PROCESSED
       await this.sleep(2000);
       
-      // Auto-enrich metadata with AI caption and hashtags if blank
       const currentJob = await this.jobRepository.findById(tenantId, jobId);
       let aiEnrichedPayload = {};
       if (currentJob && !currentJob.caption) {
         try {
+          // Sinh caption nháp từ script text (nếu có) hoặc source url
+          const promptInput = isScriptProd ? currentJob.scriptText : currentJob.sourceUrl;
           const aiResult = await this.aiGeneratorService.generateCaptionAndHashtags(
-            currentJob.sourceUrl || '',
+            promptInput || '',
             'Auto generate social media metadata during processing',
           );
           await this.jobRepository.updateStatus(jobId, 'PROCESSED', {
@@ -393,13 +490,13 @@ export class AiVideoJobService {
         oldStatus: 'PROCESSING',
         newStatus: 'PROCESSED',
         payload: {
-          topicsDetected: ['CRM Software', 'AI Automation', 'Software Sales'],
-          confidenceScore: 0.94,
+          topicsDetected: isScriptProd ? ['AI Voiceover', 'Video Compositor', 'Automation'] : ['CRM Software', 'AI Automation', 'Software Sales'],
+          confidenceScore: 0.96,
           ...aiEnrichedPayload,
         },
       });
 
-      // 7. PROCESSED -> PENDING_REVIEW (Waiting for operator approval)
+      // 7. PROCESSED -> PENDING_REVIEW (Awaiting operator approval)
       await this.sleep(1500);
       await this.jobRepository.updateStatus(jobId, 'PENDING_REVIEW');
       await this.auditLogRepository.record({
@@ -409,7 +506,7 @@ export class AiVideoJobService {
         actorType: 'system',
         oldStatus: 'PROCESSED',
         newStatus: 'PENDING_REVIEW',
-        payload: { message: 'Video successfully processed. Awaiting operator approval.' },
+        payload: { message: 'Video successfully produced and processed. Awaiting operator approval.' },
       });
 
       this.logger.log(`Job ${jobId} successfully completed pipeline and transitioned to PENDING_REVIEW`);

@@ -24,6 +24,8 @@ WORKDIR /usr/src/app
 ENV NODE_ENV=production
 ENV HUSKY=0
 
+RUN apk add --no-cache ffmpeg
+
 RUN addgroup -S -g 10001 nodejs && adduser -S -D -H -u 10001 -G nodejs nestjs
 
 COPY package*.json ./

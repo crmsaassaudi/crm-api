@@ -1,6 +1,6 @@
 FROM node:22.21.1-alpine
 
-RUN apk add --no-cache bash
+RUN apk add --no-cache bash ffmpeg
 RUN npm i -g @nestjs/cli typescript ts-node
 
 COPY package*.json /tmp/app/

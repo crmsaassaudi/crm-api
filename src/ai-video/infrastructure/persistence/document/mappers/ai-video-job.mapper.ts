@@ -19,6 +19,7 @@ export class AiVideoJobMapper {
     entity.tenantId = raw.tenantId?.toString();
     entity.sourceType = raw.sourceType;
     entity.sourceUrl = raw.sourceUrl;
+    entity.scriptText = raw.scriptText;
     entity.status = raw.status as AiVideoJob['status'];
     entity.recipeId = raw.recipeId?.toString();
     entity.facebookPageId = raw.facebookPageId;

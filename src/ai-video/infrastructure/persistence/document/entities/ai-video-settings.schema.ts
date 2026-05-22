@@ -30,6 +30,15 @@ export class AiVideoSettingsSchemaClass extends EntityDocumentHelper {
 
   @Prop({ type: Boolean, default: true })
   autoCleanupTempFiles: boolean;
+
+  @Prop({ type: String, default: '' })
+  elevenLabsApiKey: string;
+
+  @Prop({ type: String, default: '21m00Tcm4TlvDq8ikWAM' }) // Default Vietnamese/English premium voice Rachel
+  defaultVoiceId: string;
+
+  @Prop({ type: Number, default: 0.15 })
+  bgmVolume: number;
 }
 
 export const AiVideoSettingsSchema =

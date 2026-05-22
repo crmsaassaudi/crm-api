@@ -19,10 +19,13 @@ export class AiVideoJobSchemaClass extends EntityDocumentHelper {
   tenantId: MongooseSchema.Types.ObjectId;
 
   @Prop({ type: String, required: true, immutable: true })
-  sourceType: 'manual_upload' | 'url_import';
+  sourceType: 'manual_upload' | 'url_import' | 'script_production';
 
   @Prop({ type: String })
   sourceUrl?: string;
+
+  @Prop({ type: String })
+  scriptText?: string;
 
   @Prop({ type: String, required: true, index: true, default: 'CREATED' })
   status: string;

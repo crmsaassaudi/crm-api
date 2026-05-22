@@ -19,6 +19,15 @@ export class AiVideoSettings {
   @ApiProperty()
   autoCleanupTempFiles: boolean;
 
+  @ApiProperty({ required: false })
+  elevenLabsApiKey?: string;
+
+  @ApiProperty({ required: false })
+  defaultVoiceId?: string;
+
+  @ApiProperty({ required: false })
+  bgmVolume?: number;
+
   @ApiProperty()
   createdAt: Date;
 
