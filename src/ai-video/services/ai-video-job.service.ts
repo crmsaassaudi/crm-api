@@ -512,6 +512,18 @@ export class AiVideoJobService {
       this.logger.log(`Job ${jobId} successfully completed pipeline and transitioned to PENDING_REVIEW`);
     } catch (error: any) {
       this.logger.error(`Error in video pipeline for job ${jobId}: ${error.message}`);
+      await this.jobRepository.updateStatus(jobId, 'PROCESS_FAILED', {
+        errorDetails: error.message,
+      });
+      await this.auditLogRepository.record({
+        jobId,
+        tenantId,
+        action: 'PROCESS_FAILED',
+        actorType: 'system',
+        oldStatus: 'PROCESSING',
+        newStatus: 'PROCESS_FAILED',
+        payload: { error: error.message },
+      });
     }
   }
 }

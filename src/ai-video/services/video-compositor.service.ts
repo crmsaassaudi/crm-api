@@ -33,11 +33,8 @@ export class VideoCompositorService {
     const settings = await this.settingsRepository.findByTenantId(tenantId);
     const bgmVolume = settings?.bgmVolume ?? 0.15;
 
-    // Define temporary directories inside workspace under writable 'files' volume
-    const tempDir = path.join(process.cwd(), 'files', 'crm-temp', 'render', tenantId);
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
+    const tempDir = path.join('/tmp', 'crm-render', tenantId);
+    fs.mkdirSync(tempDir, { recursive: true });
 
     const voiceAudioPath = path.join(tempDir, `${options.jobId}_voice.mp3`);
     const outputVideoPath = path.join(process.cwd(), 'files', `ai-video-${options.jobId}.mp4`);

@@ -26,16 +26,18 @@ ENV HUSKY=0
 
 RUN apk add --no-cache ffmpeg
 
-RUN addgroup -S -g 10001 nodejs && adduser -S -D -H -u 10001 -G nodejs nestjs
+ARG APP_UID=1000
+ARG APP_GID=1000
+RUN addgroup -S -g ${APP_GID} appgroup && adduser -S -D -H -u ${APP_UID} -G appgroup appuser
 
 COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts --legacy-peer-deps && npm cache clean --force
 
-COPY --chown=nestjs:nodejs --from=build /usr/src/app/dist ./dist
+COPY --chown=appuser:appgroup --from=build /usr/src/app/dist ./dist
 
-RUN mkdir -p /usr/src/app/files && chown nestjs:nodejs /usr/src/app/files
+RUN mkdir -p /usr/src/app/files && chown appuser:appgroup /usr/src/app/files
 
-USER nestjs
+USER appuser
 
 EXPOSE 3000
 
