@@ -37,7 +37,7 @@ export class AiVideoJobController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new AI Video Job' })
-  @RequirePermission('create', 'settings')
+  @RequirePermission('create', 'ai_video')
   async create(@Body() dto: CreateAiVideoJobDto): Promise<AiVideoJob> {
     return this.jobService.createJob(dto);
   }
@@ -48,7 +48,7 @@ export class AiVideoJobController {
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'status', required: false, type: String })
   @ApiQuery({ name: 'facebookPageId', required: false, type: String })
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'ai_video')
   async list(
     @Query('page') page = 1,
     @Query('limit') limit = 20,
@@ -65,14 +65,14 @@ export class AiVideoJobController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a Video Job by ID' })
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'ai_video')
   async findOne(@Param('id') id: string): Promise<AiVideoJob> {
     return this.jobService.findById(id);
   }
 
   @Get(':id/audit-log')
   @ApiOperation({ summary: 'Get the audit trail for a Video Job' })
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'ai_video')
   async getAuditLog(@Param('id') id: string) {
     return this.jobService.getAuditLog(id);
   }
@@ -82,7 +82,7 @@ export class AiVideoJobController {
   @Post(':id/approve')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Approve a video for scheduling/publishing' })
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('manage_system', 'ai_video')
   async approve(@Param('id') id: string): Promise<AiVideoJob> {
     return this.jobService.approve(id);
   }
@@ -90,7 +90,7 @@ export class AiVideoJobController {
   @Post(':id/reject')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject a video with a reason' })
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('manage_system', 'ai_video')
   async reject(
     @Param('id') id: string,
     @Body() dto: RejectJobDto,
@@ -101,7 +101,7 @@ export class AiVideoJobController {
   @Post(':id/generate-content')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Generate social media caption and hashtags using AI' })
-  @RequirePermission('edit', 'settings')
+  @RequirePermission('edit', 'ai_video')
   async generateContent(
     @Param('id') id: string,
     @Body() dto: GenerateContentDto,
@@ -117,7 +117,7 @@ export class AiVideoJobController {
   @ApiOperation({
     summary: 'Immediately publish a video to its target Facebook Page',
   })
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('manage_system', 'ai_video')
   async publishNow(
     @Param('id') id: string,
     @Body() dto: PublishNowDto,

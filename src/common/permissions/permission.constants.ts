@@ -9,7 +9,8 @@ export type PermissionResource =
   | 'users'
   | 'groups'
   | 'settings'
-  | 'tasks';
+  | 'tasks'
+  | 'ai_video';
 
 export type PermissionAction =
   | 'view'
@@ -113,6 +114,13 @@ export const PERMISSION_REGISTRY: Record<
     edit: 'tasks:edit',
     delete: 'tasks:delete',
   },
+  ai_video: {
+    view: 'ai_video:view',
+    create: 'ai_video:create',
+    edit: 'ai_video:edit',
+    delete: 'ai_video:delete',
+    manage_system: 'ai_video:manage_system',
+  },
 };
 
 /**
@@ -182,6 +190,12 @@ export const CORE_PERMISSIONS: string[] = [
   'settings:view',
   'settings:manage_billing',
   'settings:manage_system',
+  // AI Video
+  'ai_video:view',
+  'ai_video:create',
+  'ai_video:edit',
+  'ai_video:delete',
+  'ai_video:manage_system',
 ];
 
 /**
