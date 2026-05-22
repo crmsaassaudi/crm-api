@@ -9,14 +9,14 @@ export class Channel {
 
   @ApiProperty({
     enum: [
-      'Facebook',
-      'Zalo',
-      'WhatsApp',
-      'LiveChat',
-      'Instagram',
-      'TikTok',
-      'Shopee',
-      'Email',
+      'facebook',
+      'zalo',
+      'whatsapp',
+      'livechat',
+      'instagram',
+      'tiktok',
+      'shopee',
+      'email',
     ],
   })
   type: string;

@@ -9,14 +9,14 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 const CHANNEL_TYPES = [
-  'Facebook',
-  'Zalo',
-  'WhatsApp',
-  'LiveChat',
-  'Instagram',
-  'TikTok',
-  'Shopee',
-  'Email',
+  'facebook',
+  'zalo',
+  'whatsapp',
+  'livechat',
+  'instagram',
+  'tiktok',
+  'shopee',
+  'email',
 ] as const;
 
 export class CreateChannelDto {

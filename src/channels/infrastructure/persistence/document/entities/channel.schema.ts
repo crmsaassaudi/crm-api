@@ -6,14 +6,14 @@ import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.
 export type ChannelSchemaDocument = HydratedDocument<ChannelSchemaClass>;
 
 const CHANNEL_TYPES = [
-  'Facebook',
-  'Zalo',
-  'WhatsApp',
-  'LiveChat',
-  'Instagram',
-  'TikTok',
-  'Shopee',
-  'Email',
+  'facebook',
+  'zalo',
+  'whatsapp',
+  'livechat',
+  'instagram',
+  'tiktok',
+  'shopee',
+  'email',
 ];
 
 @Schema({

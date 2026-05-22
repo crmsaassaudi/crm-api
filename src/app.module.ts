@@ -63,6 +63,7 @@ import { OnboardingModule } from './tenants/onboarding.module';
 import { ObservabilityModule } from './observability/observability.module';
 import { NotesModule } from './notes/notes.module';
 import { SystemSettingsModule } from './system-settings/system-settings.module';
+import { AiVideoModule } from './ai-video/ai-video.module';
 
 import {
   KeycloakConnectModule,
@@ -281,6 +282,7 @@ const envFilePath = [
     ObservabilityModule,
     NotesModule,
     SystemSettingsModule,
+    AiVideoModule,
   ],
   providers: [
     {

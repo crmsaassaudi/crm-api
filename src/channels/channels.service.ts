@@ -33,7 +33,7 @@ type MetaAvailableChannel = {
   pageId?: string;
   name: string;
   category: string;
-  type: 'Facebook' | 'Instagram' | 'WhatsApp';
+  type: 'facebook' | 'instagram' | 'whatsapp';
   accessToken: string;
   tokenExpiry?: string | null;
   avatarUrl?: string;
@@ -271,7 +271,7 @@ export class ChannelsService {
     );
 
     if (
-      (dto.type === 'Facebook' || dto.type === 'Instagram') &&
+      (dto.type === 'facebook' || dto.type === 'instagram') &&
       dto.credentials?.accessToken
     ) {
       try {
@@ -296,7 +296,7 @@ export class ChannelsService {
         let avatarUrl = '';
         let webhookTargetId = dto.account; // ID dùng để subscribe webhook
 
-        if (dto.type === 'Facebook') {
+        if (dto.type === 'facebook') {
           // Match theo Facebook Page ID
           const matchedPage = pages.find((p) => p.id === dto.account);
           if (matchedPage) {
@@ -305,7 +305,7 @@ export class ChannelsService {
             avatarUrl = matchedPage.picture?.data?.url ?? '';
           }
           webhookTargetId = dto.account; // subscribe trực tiếp trên Page ID
-        } else if (dto.type === 'Instagram') {
+        } else if (dto.type === 'instagram') {
           // Tìm FB Page nào có instagram_business_account.id khớp với dto.account
           for (const page of pages) {
             const igAccount = page.instagram_business_account;
@@ -370,7 +370,7 @@ export class ChannelsService {
     if (!channel) throw new NotFoundException('Channel not found');
 
     if (
-      (channel.type === 'Facebook' || channel.type === 'Instagram') &&
+      (channel.type === 'facebook' || channel.type === 'instagram') &&
       channel.credentials?.accessToken
     ) {
       try {
@@ -444,7 +444,7 @@ export class ChannelsService {
     );
 
     try {
-      if (metaChannel.type === 'Facebook' || metaChannel.type === 'Instagram') {
+      if (metaChannel.type === 'facebook' || metaChannel.type === 'instagram') {
         await axios.post(
           `https://graph.facebook.com/v19.0/${
             metaChannel.pageId || metaChannel.accountId
@@ -626,7 +626,7 @@ export class ChannelsService {
           pageId: page.id,
           name: page.name,
           category: page.category || 'Facebook Page',
-          type: 'Facebook',
+          type: 'facebook',
           accessToken: page.access_token,
           tokenExpiry: '',
           avatarUrl: page.picture?.data?.url ?? '',
@@ -644,7 +644,7 @@ export class ChannelsService {
           pageId: page.id,
           name: igAccount.username || `${page.name} (IG)`,
           category: 'Instagram Business',
-          type: 'Instagram',
+          type: 'instagram',
           accessToken: page.access_token,
           tokenExpiry: '',
           avatarUrl: igAccount.profile_picture_url ?? '',
@@ -682,7 +682,7 @@ export class ChannelsService {
             accountId: phone.id,
             name: `${phone.display_phone_number} (${waba.name})`,
             category: 'WhatsApp Business',
-            type: 'WhatsApp',
+            type: 'whatsapp',
             accessToken,
             tokenExpiry: userTokenExpiry,
           });
