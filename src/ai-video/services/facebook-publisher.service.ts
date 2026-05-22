@@ -4,6 +4,9 @@ import { AiVideoPublishTaskRepository } from '../repositories/ai-video-publish-t
 import { AiVideoJobService } from './ai-video-job.service';
 import { AiVideoAuditLogRepository } from '../repositories/ai-video-audit-log.repository';
 import axios, { AxiosError } from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
+import FormData from 'form-data';
 
 const META_GRAPH_API_VERSION = 'v20.0';
 
@@ -93,17 +96,79 @@ export class FacebookPublisherService {
       payload: { facebookPageId, videoUrl },
     });
 
+    let filePath = '';
+    let isTempFile = false;
+
     try {
-      // 4. Upload via Meta Graph API Resumable Chunked Protocol
+      // 4. Resolve video file path
+      if (videoUrl.startsWith('/') || videoUrl.includes('/files/')) {
+        const fileName = path.basename(videoUrl);
+        filePath = path.join(process.cwd(), 'files', fileName);
+        if (!fs.existsSync(filePath)) {
+          filePath = path.join('/tmp', 'crm-render', tenantId, `ai-video-${jobId}.mp4`);
+        }
+      }
+
+      if (!filePath || !fs.existsSync(filePath)) {
+        if (videoUrl.startsWith('http')) {
+          const tempDir = path.join('/tmp', 'crm-render', tenantId);
+          fs.mkdirSync(tempDir, { recursive: true });
+          filePath = path.join(tempDir, `downloaded_${jobId}.mp4`);
+          
+          this.logger.log(`Downloading remote video from ${videoUrl} to ${filePath}...`);
+          const writer = fs.createWriteStream(filePath);
+          const downloadResponse = await axios({
+            method: 'get',
+            url: videoUrl,
+            responseType: 'stream',
+          });
+          
+          downloadResponse.data.pipe(writer);
+          await new Promise<void>((resolve, reject) => {
+            writer.on('finish', () => resolve());
+            writer.on('error', (err) => reject(err));
+          });
+          isTempFile = true;
+        } else {
+          throw new NotFoundException(`Could not resolve video file path for: ${videoUrl}`);
+        }
+      }
+
+      if (!fs.existsSync(filePath)) {
+        throw new NotFoundException(`Resolved video file does not exist: ${filePath}`);
+      }
+
+      const fileSize = fs.statSync(filePath).size;
       this.logger.log(
-        `Starting resumable chunked video upload to Facebook Page ${facebookPageId} for job ${jobId}`,
+        `Starting real resumable chunked video upload to Facebook Page ${facebookPageId} for job ${jobId}. File size: ${fileSize} bytes`,
       );
 
       // --- PHASE 1: INIT ---
       this.logger.log(`[ChunkUpload] Phase 1 - Initializing upload session for job ${jobId}...`);
-      const mockSessionId = `session_${Math.random().toString(36).substring(2, 15)}`;
-      const mockVideoId = `video_${Math.random().toString(36).substring(2, 15)}`;
       
+      const initResponse = await axios.post(
+        `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${facebookPageId}/videos`,
+        null,
+        {
+          params: {
+            upload_phase: 'start',
+            access_token: accessToken,
+            file_size: fileSize,
+          },
+        }
+      );
+
+      const {
+        upload_session_id: uploadSessionId,
+        video_id: platformVideoIdTemp,
+        start_offset: startOffsetStr,
+        end_offset: endOffsetStr,
+      } = initResponse.data;
+
+      this.logger.log(
+        `[ChunkUpload] Phase 1 Completed. Session ID: ${uploadSessionId}, Video ID: ${platformVideoIdTemp}, Start Offset: ${startOffsetStr}, End Offset: ${endOffsetStr}`,
+      );
+
       await this.auditLogRepository.record({
         tenantId,
         jobId,
@@ -113,58 +178,92 @@ export class FacebookPublisherService {
         newStatus: 'PUBLISHING',
         payload: {
           phase: 'INIT',
-          uploadSessionId: mockSessionId,
-          videoId: mockVideoId,
-          fileSizeEstimateBytes: 15482931,
+          uploadSessionId,
+          videoId: platformVideoIdTemp,
+          fileSizeEstimateBytes: fileSize,
         },
       });
 
       // --- PHASE 2: TRANSFER ---
-      const totalSize = 15482931; // ~15MB
-      const chunkSize = 4 * 1024 * 1024; // 4MB chunks
-      const totalChunks = Math.ceil(totalSize / chunkSize);
+      let startOffset = parseInt(startOffsetStr, 10);
+      let endOffset = parseInt(endOffsetStr, 10);
+      const fd = fs.openSync(filePath, 'r');
+      let chunkIdx = 0;
 
-      this.logger.log(`[ChunkUpload] Phase 2 - Starting transfer of ${totalChunks} chunks for session ${mockSessionId}...`);
+      try {
+        while (startOffset < fileSize && startOffset !== endOffset) {
+          const length = endOffset - startOffset;
+          const chunkBuffer = Buffer.alloc(length);
+          const bytesRead = fs.readSync(fd, chunkBuffer, 0, length, startOffset);
 
-      for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-        const startOffset = chunkIdx * chunkSize;
-        const endOffset = Math.min(startOffset + chunkSize, totalSize);
-        
-        this.logger.log(
-          `[ChunkUpload] Transferring chunk ${chunkIdx + 1}/${totalChunks}: bytes ${startOffset}-${endOffset}/${totalSize}...`
-        );
-        
-        await this.auditLogRepository.record({
-          tenantId,
-          jobId,
-          action: 'PUBLISH_CHUNK_TRANSFERRED',
-          actorType: 'system',
-          oldStatus: 'PUBLISHING',
-          newStatus: 'PUBLISHING',
-          payload: {
-            phase: 'TRANSFER',
-            chunkIndex: chunkIdx + 1,
-            totalChunks,
-            bytesSent: endOffset - startOffset,
-            startOffset,
-            endOffset,
-          },
-        });
-        
-        // Simulating network delay for each chunk
-        await new Promise((resolve) => setTimeout(resolve, 800));
+          this.logger.log(
+            `[ChunkUpload] Transferring chunk ${chunkIdx + 1}: bytes ${startOffset}-${endOffset}/${fileSize} (${bytesRead} read)...`,
+          );
+
+          const form = new FormData();
+          form.append('upload_phase', 'transfer');
+          form.append('access_token', accessToken);
+          form.append('upload_session_id', uploadSessionId);
+          form.append('start_offset', startOffset.toString());
+          form.append('video_file_chunk', chunkBuffer, {
+            filename: 'chunk.mp4',
+            contentType: 'video/mp4',
+          });
+
+          const transferResponse = await axios.post(
+            `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${facebookPageId}/videos`,
+            form,
+            {
+              headers: form.getHeaders(),
+              maxContentLength: Infinity,
+              maxBodyLength: Infinity,
+            }
+          );
+
+          const nextStartOffset = parseInt(transferResponse.data.start_offset, 10);
+          const nextEndOffset = parseInt(transferResponse.data.end_offset, 10);
+
+          await this.auditLogRepository.record({
+            tenantId,
+            jobId,
+            action: 'PUBLISH_CHUNK_TRANSFERRED',
+            actorType: 'system',
+            oldStatus: 'PUBLISHING',
+            newStatus: 'PUBLISHING',
+            payload: {
+              phase: 'TRANSFER',
+              chunkIndex: chunkIdx + 1,
+              bytesSent: length,
+              startOffset,
+              endOffset,
+            },
+          });
+
+          startOffset = nextStartOffset;
+          endOffset = nextEndOffset;
+          chunkIdx++;
+        }
+      } finally {
+        fs.closeSync(fd);
       }
 
       // --- PHASE 3: FINISH ---
       this.logger.log(`[ChunkUpload] Phase 3 - Finishing upload and registering Reels on page ${facebookPageId}...`);
-      
-      const mockResponseData = {
-        id: mockVideoId,
-        success: true,
-        session_id: mockSessionId,
-      };
 
-      const platformVideoId: string = mockResponseData.id;
+      const finishResponse = await axios.post(
+        `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${facebookPageId}/videos`,
+        null,
+        {
+          params: {
+            upload_phase: 'finish',
+            access_token: accessToken,
+            upload_session_id: uploadSessionId,
+            description: caption,
+          },
+        }
+      );
+
+      const platformVideoId = finishResponse.data.id;
 
       // 5. Update publish task and job as successful
       await this.publishTaskRepository.updateStatus(
@@ -172,7 +271,7 @@ export class FacebookPublisherService {
         'SUCCESS',
         {
           platformVideoId,
-          platformResponseRaw: mockResponseData,
+          platformResponseRaw: finishResponse.data,
         },
       );
 
@@ -188,7 +287,7 @@ export class FacebookPublisherService {
         payload: {
           platformVideoId,
           facebookPageId,
-          uploadSessionId: mockSessionId,
+          uploadSessionId,
         },
       });
 
@@ -236,6 +335,15 @@ export class FacebookPublisherService {
       });
 
       throw error;
+    } finally {
+      if (isTempFile && filePath && fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+          this.logger.log(`Cleaned up temporary downloaded video: ${filePath}`);
+        } catch (cleanupErr: any) {
+          this.logger.error(`Failed to clean up temporary video: ${cleanupErr.message}`);
+        }
+      }
     }
   }
 }
