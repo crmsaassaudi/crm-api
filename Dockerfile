@@ -26,18 +26,14 @@ ENV HUSKY=0
 
 RUN apk add --no-cache ffmpeg
 
-ARG APP_UID=1000
-ARG APP_GID=1000
-RUN addgroup -S -g ${APP_GID} appgroup && adduser -S -D -H -u ${APP_UID} -G appgroup appuser
-
 COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts --legacy-peer-deps && npm cache clean --force
 
-COPY --chown=appuser:appgroup --from=build /usr/src/app/dist ./dist
+COPY --chown=node:node --from=build /usr/src/app/dist ./dist
 
-RUN mkdir -p /usr/src/app/files && chown appuser:appgroup /usr/src/app/files
+RUN mkdir -p /usr/src/app/files && chown node:node /usr/src/app/files
 
-USER appuser
+USER node
 
 EXPOSE 3000
 

@@ -3,9 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        APP_UID: ${APP_UID:-1000}
-        APP_GID: ${APP_GID:-1000}
     container_name: crm-api
     restart: unless-stopped
     env_file:
@@ -52,9 +49,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        APP_UID: ${APP_UID:-1000}
-        APP_GID: ${APP_GID:-1000}
     container_name: crm-api-worker
     restart: unless-stopped
     env_file:
