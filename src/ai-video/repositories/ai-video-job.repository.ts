@@ -71,6 +71,26 @@ export class AiVideoJobRepository {
     return docs.map((doc) => AiVideoJobMapper.toDomain(doc));
   }
 
+  async findApprovedJobs(): Promise<AiVideoJob[]> {
+    const docs = await this.model
+      .find({ status: 'APPROVED' })
+      .sort({ createdAt: 1 })
+      .exec();
+    return docs.map((doc) => AiVideoJobMapper.toDomain(doc));
+  }
+
+  async isSlotBooked(tenantId: string, scheduledAt: Date): Promise<boolean> {
+    const count = await this.model
+      .countDocuments({
+        tenantId,
+        status: 'SCHEDULED',
+        scheduledAt,
+      })
+      .exec();
+    return count > 0;
+  }
+
+
   async updateStatus(
     id: string,
     status: string,

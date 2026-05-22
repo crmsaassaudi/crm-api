@@ -6,6 +6,7 @@ import { MailConfig } from '../mail/config/mail-config.type';
 import { QueueConfig } from '../queue/config/queue-config.type';
 import { RedisConfig } from '../redis/config/redis-config.type';
 import { KeycloakConfig } from '../auth/config/keycloak-config.type';
+import { AiConfig } from './ai-config.type';
 
 export type AllConfigType = {
   app: AppConfig;
@@ -16,4 +17,6 @@ export type AllConfigType = {
   queue: QueueConfig;
   redis: RedisConfig;
   keycloak: KeycloakConfig;
+  ai: AiConfig;
 };
+

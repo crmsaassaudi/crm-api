@@ -35,9 +35,9 @@ export class OmniRoutingProcessor extends BaseConsumer {
       const acquired = await client.set(
         dedupKey,
         '1',
-        'NX',
         'EX',
         OMNI_DEDUP_TTL_SECONDS,
+        'NX',
       );
 
       if (!acquired) {

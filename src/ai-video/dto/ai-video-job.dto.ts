@@ -54,3 +54,12 @@ export class RejectJobDto {
   @MaxLength(1000)
   reason: string;
 }
+
+export class GenerateContentDto {
+  @ApiPropertyOptional({ description: 'Optional instruction/prompt for AI' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  prompt?: string;
+}
+

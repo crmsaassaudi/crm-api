@@ -18,18 +18,26 @@ import {
   AiVideoPublishTaskSchemaClass,
   AiVideoPublishTaskSchema,
 } from './infrastructure/persistence/document/entities/ai-video-publish-task.schema';
+import {
+  AiVideoSettingsSchemaClass,
+  AiVideoSettingsSchema,
+} from './infrastructure/persistence/document/entities/ai-video-settings.schema';
 
 // Controllers
 import { AiVideoJobController } from './controllers/ai-video-job.controller';
+import { AiVideoSettingsController } from './controllers/ai-video-settings.controller';
 
 // Services
 import { AiVideoJobService } from './services/ai-video-job.service';
 import { FacebookPublisherService } from './services/facebook-publisher.service';
+import { AiVideoSchedulerService } from './services/ai-video-scheduler.service';
+import { AiGeneratorService } from './services/ai-generator.service';
 
 // Repositories
 import { AiVideoJobRepository } from './repositories/ai-video-job.repository';
 import { AiVideoAuditLogRepository } from './repositories/ai-video-audit-log.repository';
 import { AiVideoPublishTaskRepository } from './repositories/ai-video-publish-task.repository';
+import { AiVideoSettingsRepository } from './repositories/ai-video-settings.repository';
 
 // Queue
 import { AiVideoQueueModule } from './queue/ai-video-queue.module';
@@ -70,22 +78,35 @@ const workerProviders = isWorkerRuntime()
         name: AiVideoPublishTaskSchemaClass.name,
         schema: AiVideoPublishTaskSchema,
       },
+      {
+        name: AiVideoSettingsSchemaClass.name,
+        schema: AiVideoSettingsSchema,
+      },
     ]),
   ],
-  controllers: [AiVideoJobController],
+  controllers: [AiVideoJobController, AiVideoSettingsController],
   providers: [
     // ── Services ────────────────────────────────────────────────────────
     AiVideoJobService,
     FacebookPublisherService,
+    AiVideoSchedulerService,
+    AiGeneratorService,
 
     // ── Repositories ────────────────────────────────────────────────────
     AiVideoJobRepository,
     AiVideoAuditLogRepository,
     AiVideoPublishTaskRepository,
+    AiVideoSettingsRepository,
 
     // ── Queue Workers (only in worker runtime) ──────────────────────────
     ...workerProviders,
   ],
-  exports: [AiVideoJobService, FacebookPublisherService],
+  exports: [
+    AiVideoJobService,
+    FacebookPublisherService,
+    AiVideoSchedulerService,
+    AiGeneratorService,
+    AiVideoSettingsRepository,
+  ],
 })
 export class AiVideoModule {}

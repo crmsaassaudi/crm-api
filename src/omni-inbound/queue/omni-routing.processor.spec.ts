@@ -4,7 +4,16 @@ describe('OmniRoutingProcessor', () => {
   it('should emit omni.message.received inside tenant context', async () => {
     const eventEmitter = { emitAsync: jest.fn().mockResolvedValue([]) };
     const cls = { runWith: jest.fn((context, callback) => callback()) };
-    const processor = new OmniRoutingProcessor(eventEmitter as any, cls as any);
+    const redisService = {
+      getClient: () => ({
+        set: jest.fn().mockResolvedValue('OK'),
+      }),
+    };
+    const processor = new OmniRoutingProcessor(
+      eventEmitter as any,
+      cls as any,
+      redisService as any,
+    );
     const payload: any = {
       tenantId: 'tenant_1',
       channelType: 'facebook',

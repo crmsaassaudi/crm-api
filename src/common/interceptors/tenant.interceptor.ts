@@ -144,7 +144,7 @@ export class TenantInterceptor implements NestInterceptor {
           // Others use safe defaults for this request — cache populates within ms.
           const lockKey = `${tenantI18nKey}:lock`;
           const client = this.redisService.getClient();
-          const lockAcquired = await client.set(lockKey, '1', 'NX', 'EX', 5);
+          const lockAcquired = await client.set(lockKey, '1', 'EX', 5, 'NX');
           if (lockAcquired === 'OK') {
             try {
               const tenantRepo = this.moduleRef.get(TenantsRepository, {

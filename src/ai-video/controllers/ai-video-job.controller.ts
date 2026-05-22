@@ -15,6 +15,7 @@ import {
   CreateAiVideoJobDto,
   PublishNowDto,
   RejectJobDto,
+  GenerateContentDto,
 } from '../dto/ai-video-job.dto';
 import { AiVideoJob } from '../domain/ai-video-job';
 import { RequirePermission } from '../../common/permissions/permission.decorator';
@@ -96,6 +97,18 @@ export class AiVideoJobController {
   ): Promise<AiVideoJob> {
     return this.jobService.reject(id, dto);
   }
+
+  @Post(':id/generate-content')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Generate social media caption and hashtags using AI' })
+  @RequirePermission('edit', 'settings')
+  async generateContent(
+    @Param('id') id: string,
+    @Body() dto: GenerateContentDto,
+  ): Promise<AiVideoJob> {
+    return this.jobService.generateContent(id, dto);
+  }
+
 
   // ── Publishing ────────────────────────────────────────────────────────
 

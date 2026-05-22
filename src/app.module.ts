@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import databaseConfig from './database/config/database.config';
 import authConfig from './auth/config/auth.config';
 import appConfig from './config/app.config';
+import aiConfig from './config/ai.config';
 import mailConfig from './mail/config/mail.config';
 import fileConfig from './files/config/file.config';
 import queueConfig from './queue/config/queue.config';
@@ -112,6 +113,7 @@ const envFilePath = [
         databaseConfig,
         authConfig,
         appConfig,
+        aiConfig,
         mailConfig,
         fileConfig,
         queueConfig,
