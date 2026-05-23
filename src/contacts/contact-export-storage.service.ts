@@ -95,7 +95,7 @@ export class ContactExportStorageService {
     }
 
     const storageKey = ulid();
-    const exportDir = join(process.cwd(), 'tmp', 'exports', 'contacts');
+    const exportDir = join(process.cwd(), 'files', 'exports', 'contacts');
     const filePath = join(exportDir, `${storageKey}.csv`);
     const metadataPath = join(exportDir, `${storageKey}.json`);
     await mkdir(exportDir, { recursive: true });
@@ -165,7 +165,7 @@ export class ContactExportStorageService {
     }
 
     try {
-      const exportDir = join(process.cwd(), 'tmp', 'exports', 'contacts');
+      const exportDir = join(process.cwd(), 'files', 'exports', 'contacts');
       const raw = await readFile(join(exportDir, `${token}.json`), 'utf8');
       const metadata = JSON.parse(raw) as {
         filePath?: string;
