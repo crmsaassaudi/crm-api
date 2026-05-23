@@ -14,9 +14,13 @@ export interface SocialPostTaskEntity {
   id: string;
   tenantId: string;
   postId: string;
+  batchId: string;
   channelId: string;
   channelName: string;
   channelAccount: string;
+  postContent: string;
+  postMediaUrls: string[];
+  postMediaType: string;
   platform: SocialPostPlatform;
   status: SocialPostTaskStatus;
   scheduledAt?: Date;
@@ -36,6 +40,8 @@ export interface SocialPostTaskQuery {
   tenantId: string;
   status?: SocialPostTaskStatus;
   platform?: string;
+  from?: Date;
+  to?: Date;
 }
 
 @Injectable()
@@ -62,6 +68,10 @@ export class SocialPostTaskRepository {
     return this.createMany(data);
   }
 
+  async deleteForPost(tenantId: string, postId: string): Promise<void> {
+    await this.model.deleteMany({ tenantId, postId }).exec();
+  }
+
   async findById(
     tenantId: string,
     id: string,
@@ -81,6 +91,17 @@ export class SocialPostTaskRepository {
     return docs.map((doc) => this.toEntity(doc));
   }
 
+  async findByBatchId(
+    tenantId: string,
+    batchId: string,
+  ): Promise<SocialPostTaskEntity[]> {
+    const docs = await this.model
+      .find({ tenantId, batchId })
+      .sort({ createdAt: 1 })
+      .exec();
+    return docs.map((doc) => this.toEntity(doc));
+  }
+
   async findPaginated(
     query: SocialPostTaskQuery,
     page: number,
@@ -91,6 +112,11 @@ export class SocialPostTaskRepository {
     };
     if (query.status) filter.status = query.status;
     if (query.platform) filter.platform = query.platform;
+    if (query.from || query.to) {
+      filter.scheduledAt = {};
+      if (query.from) filter.scheduledAt.$gte = query.from;
+      if (query.to) filter.scheduledAt.$lte = query.to;
+    }
 
     const safePage = Math.max(1, page);
     const safeLimit = Math.max(1, Math.min(limit, 100));
@@ -177,9 +203,13 @@ export class SocialPostTaskRepository {
       id: obj._id?.toString() ?? obj.id,
       tenantId: obj.tenantId?.toString(),
       postId: obj.postId?.toString(),
+      batchId: obj.batchId,
       channelId: obj.channelId?.toString(),
       channelName: obj.channelName,
       channelAccount: obj.channelAccount,
+      postContent: obj.postContent ?? '',
+      postMediaUrls: obj.postMediaUrls ?? [],
+      postMediaType: obj.postMediaType ?? 'text',
       platform: obj.platform,
       status: obj.status,
       scheduledAt: obj.scheduledAt,

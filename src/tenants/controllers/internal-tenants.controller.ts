@@ -30,6 +30,7 @@ import {
   CORE_PERMISSIONS,
   FEATURE_PERMISSIONS,
 } from '../../common/permissions/permission.constants';
+import { AuthzPermissionCacheService } from '../../common/permissions/authz-permission-cache.service';
 
 import {
   InternalProvisionDto,
@@ -76,6 +77,7 @@ export class InternalTenantsController {
     private readonly provisioningJobRepository: ProvisioningJobRepository,
     private readonly configService: ConfigService<AllConfigType>,
     private readonly eventEmitter: EventEmitter2,
+    private readonly authzPermissionCache: AuthzPermissionCacheService,
   ) {}
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -322,6 +324,7 @@ export class InternalTenantsController {
       tenantId,
       body.permissions,
     );
+    await this.authzPermissionCache.invalidateTenant(tenantId);
     this.eventEmitter.emit('tenant.permissions.updated', { tenantId });
 
     this.logger.log(
@@ -363,6 +366,7 @@ export class InternalTenantsController {
       tenantId,
       body.permissions,
     );
+    await this.authzPermissionCache.invalidateTenant(tenantId);
     this.eventEmitter.emit('tenant.permissions.updated', { tenantId });
 
     this.logger.log(

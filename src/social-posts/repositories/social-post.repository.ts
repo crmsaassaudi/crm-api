@@ -94,6 +94,11 @@ export class SocialPostRepository {
     return this.update(tenantId, id, { status, ...extra });
   }
 
+  async delete(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
+    return result.deletedCount > 0;
+  }
+
   private buildFilter(
     query: SocialPostQuery,
   ): FilterQuery<SocialPostSchemaDocument> {

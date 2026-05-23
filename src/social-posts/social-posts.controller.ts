@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -15,8 +16,8 @@ import {
   CreateSocialPostDto,
   ListSocialPostTasksQueryDto,
   ListSocialPostsQueryDto,
+  PublishSocialPostDto,
   RejectSocialPostDto,
-  ScheduleSocialPostDto,
   UpdateSocialPostDto,
 } from './dto/social-post.dto';
 import { SocialPostsService } from './services/social-posts.service';
@@ -30,7 +31,7 @@ export class SocialPostsController {
   constructor(private readonly socialPostsService: SocialPostsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a social post draft or scheduled post' })
+  @ApiOperation({ summary: 'Create a reusable social post' })
   @RequirePermission('create', 'social_posts')
   async create(@Body() dto: CreateSocialPostDto) {
     return this.socialPostsService.create(dto);
@@ -41,9 +42,6 @@ export class SocialPostsController {
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'status', required: false, type: String })
-  @ApiQuery({ name: 'approvalStatus', required: false, type: String })
-  @ApiQuery({ name: 'from', required: false, type: String })
-  @ApiQuery({ name: 'to', required: false, type: String })
   @RequirePermission('view', 'social_posts')
   async list(@Query() query: ListSocialPostsQueryDto) {
     return this.socialPostsService.findPaginated(query);
@@ -51,6 +49,12 @@ export class SocialPostsController {
 
   @Get('tasks')
   @ApiOperation({ summary: 'List social post publish tasks' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, type: String })
+  @ApiQuery({ name: 'platform', required: false, type: String })
+  @ApiQuery({ name: 'from', required: false, type: String })
+  @ApiQuery({ name: 'to', required: false, type: String })
   @RequirePermission('view', 'social_posts')
   async listTasks(@Query() query: ListSocialPostTasksQueryDto) {
     return this.socialPostsService.listTasks(query);
@@ -72,13 +76,21 @@ export class SocialPostsController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update a social post draft or scheduled post' })
+  @ApiOperation({ summary: 'Update reusable social post content' })
   @RequirePermission('edit', 'social_posts')
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateSocialPostDto,
   ) {
     return this.socialPostsService.update(id, dto);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete a reusable social post' })
+  @RequirePermission('delete', 'social_posts')
+  async delete(@Param('id') id: string) {
+    await this.socialPostsService.delete(id);
   }
 
   @Post(':id/approve')
@@ -102,20 +114,36 @@ export class SocialPostsController {
 
   @Post(':id/schedule')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Schedule or reschedule a social post' })
+  @ApiOperation({ summary: 'Schedule a reusable post to selected channels' })
   @RequirePermission('edit', 'social_posts')
   async schedule(
     @Param('id') id: string,
-    @Body() dto: ScheduleSocialPostDto,
+    @Body() dto: PublishSocialPostDto,
   ) {
     return this.socialPostsService.schedule(id, dto);
   }
 
+  @Post(':id/publish')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Publish or schedule a reusable post to selected channels' })
+  @RequirePermission('manage_system', 'social_posts')
+  async publish(
+    @Param('id') id: string,
+    @Body() dto: PublishSocialPostDto,
+  ) {
+    return this.socialPostsService.publish(id, dto);
+  }
+
   @Post(':id/publish-now')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Immediately publish an approved social post' })
+  @ApiOperation({ summary: 'Immediately publish a reusable post to selected channels' })
   @RequirePermission('manage_system', 'social_posts')
-  async publishNow(@Param('id') id: string) {
-    return this.socialPostsService.publishNow(id);
+  async publishNow(
+    @Param('id') id: string,
+    @Body() dto?: PublishSocialPostDto,
+  ) {
+    return dto?.channelIds?.length
+      ? this.socialPostsService.publishNow(id, dto)
+      : this.socialPostsService.legacyPublishNow(id);
   }
 }

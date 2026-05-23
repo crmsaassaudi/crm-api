@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import { ulid } from 'ulid';
 import { AuditLogService } from '../../audit-log/audit-log.service';
 import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { Channel } from '../../channels/domain/channel';
@@ -12,8 +13,8 @@ import {
   CreateSocialPostDto,
   ListSocialPostTasksQueryDto,
   ListSocialPostsQueryDto,
+  PublishSocialPostDto,
   RejectSocialPostDto,
-  ScheduleSocialPostDto,
   UpdateSocialPostDto,
 } from '../dto/social-post.dto';
 import {
@@ -55,44 +56,25 @@ export class SocialPostsService {
   async create(dto: CreateSocialPostDto): Promise<SocialPostWithTasks> {
     const tenantId = this.requireTenantId();
     const userId = this.cls.get('userId');
-    const channels = await this.resolvePublishChannels(
-      tenantId,
-      dto.channelIds,
-    );
     const mediaUrls = dto.mediaUrls ?? [];
     const mediaType = dto.mediaType ?? this.inferMediaType(mediaUrls);
-    const scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : undefined;
-    const status: SocialPostStatus = scheduledAt ? 'SCHEDULED' : 'DRAFT';
 
     const post = await this.postRepository.create({
       tenantId,
       content: dto.content,
       mediaUrls,
       mediaType,
-      status,
-      scheduledAt,
-      approvalStatus: dto.approvalStatus ?? 'PENDING',
+      status: 'DRAFT',
+      approvalStatus: 'PENDING',
       createdById: userId,
     });
-
-    const tasks = await this.taskRepository.createMany(
-      this.buildTaskPayloads(tenantId, post, channels),
-    );
 
     await this.recordAudit(tenantId, post.id, 'SOCIAL_POST_CREATED', {
       actorId: userId,
       newStatus: post.status,
-      metadata: {
-        channelIds: channels.map((channel) => channel.id),
-        scheduledAt,
-      },
     });
 
-    if (post.status === 'SCHEDULED' && post.approvalStatus === 'APPROVED') {
-      await this.queueProducer.schedule(tenantId, post.id, scheduledAt!);
-    }
-
-    return { ...post, tasks };
+    return { ...post, tasks: [] };
   }
 
   async findPaginated(query: ListSocialPostsQueryDto) {
@@ -101,9 +83,6 @@ export class SocialPostsService {
       {
         tenantId,
         status: query.status,
-        approvalStatus: query.approvalStatus,
-        from: query.from ? new Date(query.from) : undefined,
-        to: query.to ? new Date(query.to) : undefined,
       },
       Number(query.page ?? 1),
       Number(query.limit ?? 20),
@@ -124,6 +103,8 @@ export class SocialPostsService {
         tenantId,
         status: query.status,
         platform: query.platform,
+        from: query.from ? new Date(query.from) : undefined,
+        to: query.to ? new Date(query.to) : undefined,
       },
       Number(query.page ?? 1),
       Number(query.limit ?? 20),
@@ -137,50 +118,15 @@ export class SocialPostsService {
     const tenantId = this.requireTenantId();
     const current = await this.findPostOrThrow(tenantId, id);
 
-    if (current.status === 'PUBLISHING' || current.status === 'COMPLETED') {
-      throw new BadRequestException(
-        `Cannot edit a post in ${current.status} status.`,
-      );
-    }
-
     const mediaUrls = dto.mediaUrls ?? current.mediaUrls;
     const update: Partial<SocialPostEntity> = {
       content: dto.content ?? current.content,
       mediaUrls,
       mediaType: dto.mediaType ?? this.inferMediaType(mediaUrls),
-      scheduledAt: dto.scheduledAt
-        ? new Date(dto.scheduledAt)
-        : current.scheduledAt,
     };
-
-    if (dto.scheduledAt) {
-      update.status = 'SCHEDULED';
-    }
 
     const post = await this.postRepository.update(tenantId, id, update as any);
     if (!post) throw new NotFoundException('Social post not found');
-
-    let tasks = await this.taskRepository.findByPostId(tenantId, id);
-    if (dto.channelIds) {
-      const channels = await this.resolvePublishChannels(
-        tenantId,
-        dto.channelIds,
-      );
-      tasks = await this.taskRepository.replaceForPost(
-        tenantId,
-        id,
-        this.buildTaskPayloads(tenantId, post, channels),
-      );
-    } else if (post.scheduledAt) {
-      await Promise.all(
-        tasks.map((task) =>
-          this.taskRepository.update(tenantId, task.id, {
-            scheduledAt: post.scheduledAt,
-          }),
-        ),
-      );
-      tasks = await this.taskRepository.findByPostId(tenantId, id);
-    }
 
     await this.recordAudit(tenantId, id, 'SOCIAL_POST_UPDATED', {
       actorId: this.cls.get('userId'),
@@ -188,10 +134,7 @@ export class SocialPostsService {
       newStatus: post.status,
     });
 
-    if (post.status === 'SCHEDULED' && post.approvalStatus === 'APPROVED') {
-      await this.queueProducer.schedule(tenantId, id, post.scheduledAt!);
-    }
-
+    const tasks = await this.taskRepository.findByPostId(tenantId, id);
     return { ...post, tasks };
   }
 
@@ -217,7 +160,13 @@ export class SocialPostsService {
     });
 
     if (post.status === 'SCHEDULED' && post.scheduledAt) {
-      await this.queueProducer.schedule(tenantId, id, post.scheduledAt);
+      const scheduledTasks = await this.taskRepository.findByPostId(tenantId, id);
+      const batchIds = [...new Set(scheduledTasks.map((task) => task.batchId))];
+      await Promise.all(
+        batchIds.map((batchId) =>
+          this.queueProducer.schedule(tenantId, id, batchId, post.scheduledAt!),
+        ),
+      );
     }
 
     return this.findById(id);
@@ -251,57 +200,102 @@ export class SocialPostsService {
     return this.findById(id);
   }
 
-  async schedule(
+  async delete(id: string): Promise<void> {
+    const tenantId = this.requireTenantId();
+    const current = await this.findPostOrThrow(tenantId, id);
+    const activeTasks = (await this.taskRepository.findByPostId(tenantId, id))
+      .filter((task) => task.status === 'PUBLISHING');
+    if (activeTasks.length > 0) {
+      throw new BadRequestException('Cannot delete a post while it is publishing.');
+    }
+
+    await this.taskRepository.deleteForPost(tenantId, id);
+    const deleted = await this.postRepository.delete(tenantId, id);
+    if (!deleted) throw new NotFoundException('Social post not found');
+
+    await this.recordAudit(tenantId, id, 'SOCIAL_POST_DELETED', {
+      actorId: this.cls.get('userId'),
+      oldStatus: current.status,
+    });
+  }
+
+  async publish(
     id: string,
-    dto: ScheduleSocialPostDto,
+    dto: PublishSocialPostDto,
   ): Promise<SocialPostWithTasks> {
     const tenantId = this.requireTenantId();
-    const scheduledAt = new Date(dto.scheduledAt);
-    if (Number.isNaN(scheduledAt.getTime())) {
+    const userId = this.cls.get('userId');
+    const current = await this.findPostOrThrow(tenantId, id);
+    if (!current.content.trim() && current.mediaUrls.length === 0) {
+      throw new BadRequestException('Add content or media before publishing.');
+    }
+
+    const scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : undefined;
+    if (dto.scheduledAt && Number.isNaN(scheduledAt?.getTime())) {
       throw new BadRequestException('scheduledAt must be a valid date.');
     }
 
-    const current = await this.findPostOrThrow(tenantId, id);
-    if (current.status === 'PUBLISHING' || current.status === 'COMPLETED') {
-      throw new BadRequestException(
-        `Cannot schedule a post in ${current.status} status.`,
-      );
-    }
-
-    const post = await this.postRepository.updateStatus(
-      tenantId,
-      id,
-      'SCHEDULED',
-      {
-        scheduledAt,
-      } as any,
+    const channels = await this.resolvePublishChannels(tenantId, dto.channelIds);
+    const batchId = ulid();
+    const tasks = await this.taskRepository.createMany(
+      this.buildTaskPayloads(tenantId, current, channels, batchId, scheduledAt),
     );
+
+    const post = await this.postRepository.update(tenantId, id, {
+      status: scheduledAt ? 'SCHEDULED' : 'DRAFT',
+      approvalStatus: 'APPROVED',
+      approvedById: userId,
+      approvedAt: new Date(),
+      scheduledAt,
+    } as any);
     if (!post) throw new NotFoundException('Social post not found');
 
-    const tasks = await this.taskRepository.findByPostId(tenantId, id);
-    await Promise.all(
-      tasks.map((task) =>
-        this.taskRepository.update(tenantId, task.id, { scheduledAt }),
-      ),
-    );
-
-    await this.recordAudit(tenantId, id, 'SOCIAL_POST_SCHEDULED', {
-      actorId: this.cls.get('userId'),
+    await this.recordAudit(tenantId, id, 'SOCIAL_POST_PUBLISH_REQUESTED', {
+      actorId: userId,
       oldStatus: current.status,
-      newStatus: 'SCHEDULED',
-      metadata: { scheduledAt },
+      newStatus: scheduledAt ? 'SCHEDULED' : 'PENDING',
+      metadata: {
+        batchId,
+        channelIds: channels.map((channel) => channel.id),
+        scheduledAt,
+      },
     });
 
-    if (post.approvalStatus === 'APPROVED') {
-      await this.queueProducer.schedule(tenantId, id, scheduledAt);
+    if (scheduledAt) {
+      await this.queueProducer.schedule(tenantId, id, batchId, scheduledAt);
+    } else {
+      await this.publishPostById(tenantId, id, batchId);
     }
 
     return this.findById(id);
   }
 
-  async publishNow(id: string): Promise<SocialPostWithTasks> {
+  async schedule(
+    id: string,
+    dto: PublishSocialPostDto,
+  ): Promise<SocialPostWithTasks> {
+    if (!dto.scheduledAt) {
+      throw new BadRequestException('scheduledAt is required.');
+    }
+    return this.publish(id, dto);
+  }
+
+  async publishNow(
+    id: string,
+    dto: PublishSocialPostDto,
+  ): Promise<SocialPostWithTasks> {
+    return this.publish(id, { ...dto, scheduledAt: undefined });
+  }
+
+  async legacyPublishNow(id: string): Promise<SocialPostWithTasks> {
     const tenantId = this.requireTenantId();
-    await this.publishPostById(tenantId, id);
+    const tasks = await this.taskRepository.findByPostId(tenantId, id);
+    if (tasks.length === 0) {
+      throw new BadRequestException(
+        'Select channels before publishing this post.',
+      );
+    }
+    await this.publishPostById(tenantId, id, tasks[0].batchId);
     return this.findById(id);
   }
 
@@ -313,13 +307,14 @@ export class SocialPostsService {
       throw new BadRequestException('Only failed tasks can be retried.');
     }
     await this.taskRepository.resetForRetry(tenantId, taskId);
-    await this.publishPostById(tenantId, task.postId, taskId);
+    await this.publishPostById(tenantId, task.postId, task.batchId, taskId);
     return this.findById(task.postId);
   }
 
   async publishPostById(
     tenantId: string,
     postId: string,
+    batchId: string,
     onlyTaskId?: string,
   ): Promise<void> {
     const post = await this.findPostOrThrow(tenantId, postId);
@@ -329,7 +324,7 @@ export class SocialPostsService {
       );
     }
 
-    const allTasks = await this.taskRepository.findByPostId(tenantId, postId);
+    const allTasks = await this.taskRepository.findByBatchId(tenantId, batchId);
     const tasksToRun = allTasks.filter((task) => {
       if (onlyTaskId) return task.id === onlyTaskId;
       return task.status !== 'SUCCESS';
@@ -347,7 +342,10 @@ export class SocialPostsService {
       tasksToRun.map((task) => this.publishTask(tenantId, post, task)),
     );
 
-    const finalTasks = await this.taskRepository.findByPostId(tenantId, postId);
+    const finalTasks = await this.taskRepository.findByBatchId(
+      tenantId,
+      batchId,
+    );
     const successCount = finalTasks.filter(
       (task) => task.status === 'SUCCESS',
     ).length;
@@ -403,7 +401,14 @@ export class SocialPostsService {
         );
       }
 
-      const result = await publisher.publish({ post, task, channel });
+      const postSnapshot: SocialPostEntity = {
+        ...post,
+        content: task.postContent ?? post.content,
+        mediaUrls: task.postMediaUrls ?? post.mediaUrls,
+        mediaType: task.postMediaType ?? post.mediaType,
+      };
+
+      const result = await publisher.publish({ post: postSnapshot, task, channel });
       await this.taskRepository.updateStatus(tenantId, task.id, 'SUCCESS', {
         publishedAt: new Date(),
         platformPostId: result.platformPostId,
@@ -497,16 +502,22 @@ export class SocialPostsService {
     tenantId: string,
     post: SocialPostEntity,
     channels: Channel[],
+    batchId: string,
+    scheduledAt?: Date,
   ) {
     return channels.map((channel) => ({
       tenantId,
       postId: post.id,
+      batchId,
       channelId: channel.id,
       channelName: channel.name,
       channelAccount: channel.account,
+      postContent: post.content,
+      postMediaUrls: post.mediaUrls,
+      postMediaType: post.mediaType,
       platform: channel.type as SocialPostPlatform,
       status: 'PENDING' as const,
-      scheduledAt: post.scheduledAt,
+      scheduledAt,
     }));
   }
 

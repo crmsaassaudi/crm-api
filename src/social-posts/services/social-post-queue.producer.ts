@@ -17,9 +17,10 @@ export class SocialPostQueueProducer {
   async schedule(
     tenantId: string,
     postId: string,
+    batchId: string,
     scheduledAt: Date,
   ): Promise<void> {
-    const jobId = socialPostPublishJobId(postId);
+    const jobId = socialPostPublishJobId(postId, batchId);
     const existing = await this.queue.getJob(jobId);
     if (existing) {
       await existing.remove();
@@ -28,7 +29,7 @@ export class SocialPostQueueProducer {
     const delay = Math.max(0, scheduledAt.getTime() - Date.now());
     await this.queue.add(
       'publish',
-      { tenantId, postId },
+      { tenantId, postId, batchId },
       {
         jobId,
         delay,
@@ -36,12 +37,16 @@ export class SocialPostQueueProducer {
     );
   }
 
-  async enqueueNow(tenantId: string, postId: string): Promise<void> {
-    const jobId = socialPostPublishJobId(postId);
+  async enqueueNow(
+    tenantId: string,
+    postId: string,
+    batchId: string,
+  ): Promise<void> {
+    const jobId = socialPostPublishJobId(postId, batchId);
     const existing = await this.queue.getJob(jobId);
     if (existing) {
       await existing.remove();
     }
-    await this.queue.add('publish', { tenantId, postId }, { jobId });
+    await this.queue.add('publish', { tenantId, postId, batchId }, { jobId });
   }
 }

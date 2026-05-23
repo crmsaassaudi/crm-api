@@ -19,10 +19,10 @@ export class SocialPostPublishProcessor extends WorkerHost {
   }
 
   async process(job: Job<SocialPostPublishJobData>): Promise<void> {
-    const { tenantId, postId } = job.data;
+    const { tenantId, postId, batchId } = job.data;
     this.logger.log(
-      `Publishing social post ${postId} for tenant ${tenantId} (attempt ${job.attemptsMade + 1}/${job.opts.attempts})`,
+      `Publishing social post ${postId} batch ${batchId} for tenant ${tenantId} (attempt ${job.attemptsMade + 1}/${job.opts.attempts})`,
     );
-    await this.socialPostsService.publishPostById(tenantId, postId);
+    await this.socialPostsService.publishPostById(tenantId, postId, batchId);
   }
 }

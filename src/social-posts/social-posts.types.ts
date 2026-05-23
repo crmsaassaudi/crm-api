@@ -43,4 +43,5 @@ export type SocialPostMediaType = (typeof SOCIAL_POST_MEDIA_TYPES)[number];
 export interface SocialPostPublishJobData {
   tenantId: string;
   postId: string;
+  batchId: string;
 }

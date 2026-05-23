@@ -36,6 +36,9 @@ export class SocialPostTaskSchemaClass extends EntityDocumentHelper {
   })
   postId: string;
 
+  @Prop({ type: String, required: true, index: true })
+  batchId: string;
+
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'ChannelSchemaClass',
@@ -49,6 +52,15 @@ export class SocialPostTaskSchemaClass extends EntityDocumentHelper {
 
   @Prop({ type: String, required: true })
   channelAccount: string;
+
+  @Prop({ type: String, required: true, default: '' })
+  postContent: string;
+
+  @Prop({ type: [String], default: [] })
+  postMediaUrls: string[];
+
+  @Prop({ type: String, required: true, default: 'text' })
+  postMediaType: string;
 
   @Prop({
     type: String,
@@ -101,8 +113,8 @@ export const SocialPostTaskSchema = SchemaFactory.createForClass(
 
 SocialPostTaskSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 SocialPostTaskSchema.index(
-  { tenantId: 1, postId: 1, channelId: 1 },
-  { name: 'tenant_post_channel_task_lookup', unique: true },
+  { tenantId: 1, batchId: 1, channelId: 1 },
+  { name: 'tenant_publish_batch_channel_task_lookup', unique: true },
 );
 SocialPostTaskSchema.index(
   { tenantId: 1, status: 1, scheduledAt: 1 },

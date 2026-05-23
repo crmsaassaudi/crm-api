@@ -4,17 +4,15 @@ import {
   IsArray,
   IsDateString,
   IsEnum,
-  IsNotEmpty,
   IsOptional,
   IsString,
   MaxLength,
 } from 'class-validator';
+import { PartialType } from '@nestjs/swagger';
 import {
-  SOCIAL_POST_APPROVAL_STATUSES,
   SOCIAL_POST_MEDIA_TYPES,
   SOCIAL_POST_STATUSES,
   SOCIAL_POST_TASK_STATUSES,
-  SocialPostApprovalStatus,
   SocialPostMediaType,
   SocialPostStatus,
   SocialPostTaskStatus,
@@ -35,6 +33,11 @@ export class CreateSocialPostDto {
   @IsEnum(SOCIAL_POST_MEDIA_TYPES)
   mediaType?: SocialPostMediaType;
 
+}
+
+export class UpdateSocialPostDto extends PartialType(CreateSocialPostDto) {}
+
+export class PublishSocialPostDto {
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(20)
@@ -44,44 +47,6 @@ export class CreateSocialPostDto {
   @IsOptional()
   @IsDateString()
   scheduledAt?: string;
-
-  @IsOptional()
-  @IsEnum(SOCIAL_POST_APPROVAL_STATUSES)
-  approvalStatus?: SocialPostApprovalStatus;
-}
-
-export class UpdateSocialPostDto {
-  @IsOptional()
-  @IsString()
-  @MaxLength(63206)
-  content?: string;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(20)
-  @IsString({ each: true })
-  mediaUrls?: string[];
-
-  @IsOptional()
-  @IsEnum(SOCIAL_POST_MEDIA_TYPES)
-  mediaType?: SocialPostMediaType;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(20)
-  @IsString({ each: true })
-  channelIds?: string[];
-
-  @IsOptional()
-  @IsDateString()
-  scheduledAt?: string;
-}
-
-export class ScheduleSocialPostDto {
-  @IsNotEmpty()
-  @IsDateString()
-  scheduledAt: string;
 }
 
 export class RejectSocialPostDto {
@@ -100,18 +65,6 @@ export class ListSocialPostsQueryDto {
   @IsOptional()
   @IsEnum(SOCIAL_POST_STATUSES)
   status?: SocialPostStatus;
-
-  @IsOptional()
-  @IsEnum(SOCIAL_POST_APPROVAL_STATUSES)
-  approvalStatus?: SocialPostApprovalStatus;
-
-  @IsOptional()
-  @IsDateString()
-  from?: string;
-
-  @IsOptional()
-  @IsDateString()
-  to?: string;
 }
 
 export class ListSocialPostTasksQueryDto {
@@ -128,4 +81,12 @@ export class ListSocialPostTasksQueryDto {
   @IsOptional()
   @IsString()
   platform?: string;
+
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @IsOptional()
+  @IsDateString()
+  to?: string;
 }
