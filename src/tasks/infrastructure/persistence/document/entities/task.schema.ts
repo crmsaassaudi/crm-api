@@ -39,7 +39,7 @@ export class TaskSchemaClass extends EntityDocumentHelper {
   statusId?: string;
 
   @Prop({ required: true, default: 'MEDIUM', index: true })
-  priority?: string;
+  priority!: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TaskCategorySchemaClass' })
   categoryId?: string;
@@ -81,10 +81,10 @@ export class TaskSchemaClass extends EntityDocumentHelper {
   updatedById!: string;
 
   @Prop({ default: now })
-  createdAt?: Date;
+  createdAt: Date;
 
   @Prop({ default: now })
-  updatedAt?: Date;
+  updatedAt: Date;
 
   @Prop()
   deletedAt?: Date;

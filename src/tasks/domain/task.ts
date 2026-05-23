@@ -17,7 +17,7 @@ export class Task {
   dueDate: Date;
 
   @ApiProperty({ example: 'not_started' })
-  statusId: string;
+  statusId?: string;
 
   @ApiProperty()
   taskStatus?: {
