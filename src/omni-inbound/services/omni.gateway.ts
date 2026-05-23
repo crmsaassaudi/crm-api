@@ -8,7 +8,7 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger, OnModuleInit } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { AgentPresenceService } from './agent-presence.service';
 import { AgentPresenceGateway } from './agent-presence.gateway';
@@ -23,6 +23,9 @@ import { ConfigService } from '@nestjs/config';
 import { AllConfigType } from '../../config/config.type';
 import { ConversationLockService } from './conversation-lock.service';
 import { ulid } from 'ulid';
+import Redis from 'ioredis';
+import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
+import { isWorkerRuntime } from '../../config/runtime-role';
 
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
@@ -44,7 +47,7 @@ import { ulid } from 'ulid';
   namespace: '/omni',
   cors: { origin: '*', credentials: true },
 })
-export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
   @WebSocketServer()
   server!: Server;
 
@@ -63,7 +66,37 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly usersService: UsersService,
     private readonly configService: ConfigService<AllConfigType>,
     private readonly conversationLockService: ConversationLockService,
+    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
+
+  /**
+   * Subscribe to Redis pub/sub channels for cross-process events.
+   * Worker processes publish events via Redis; the API process
+   * receives them here and broadcasts via Socket.IO.
+   */
+  onModuleInit() {
+    if (isWorkerRuntime()) return; // Only API process needs to subscribe
+
+    const sub = this.redis.duplicate();
+    sub.subscribe('socket:contact:export:completed', (err) => {
+      if (err) {
+        this.logger.error('Failed to subscribe to Redis export channel', err);
+      } else {
+        this.logger.log('Subscribed to Redis channel: socket:contact:export:completed');
+      }
+    });
+
+    sub.on('message', (channel: string, message: string) => {
+      if (channel === 'socket:contact:export:completed') {
+        try {
+          const event = JSON.parse(message);
+          this.handleContactExportCompleted(event);
+        } catch (err) {
+          this.logger.error('Failed to parse Redis export event', err);
+        }
+      }
+    });
+  }
 
   private readonly SYSTEM_SUBDOMAINS = ['api', 'admin', 'auth', 'www', 'mail'];
 
@@ -887,13 +920,11 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
-   * Listener for `contact.export.completed` domain event.
-   * Emitted by ContactExportProcessor when the background CSV export finishes.
-   * Pushes the download URL to the tenant room so the frontend can trigger
-   * download immediately instead of polling the export-status API.
+   * Broadcast contact export completion to the tenant room.
+   * Called from Redis pub/sub subscription (cross-process) or
+   * EventEmitter2 (same-process fallback).
    */
-  @OnEvent('contact.export.completed')
-  handleContactExportCompleted(event: {
+  private handleContactExportCompleted(event: {
     tenantId: string;
     userId: string;
     downloadUrl: string;

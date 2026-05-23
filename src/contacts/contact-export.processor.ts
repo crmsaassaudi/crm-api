@@ -1,8 +1,9 @@
 import { Processor } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import Redis from 'ioredis';
 import { CONTACT_EXPORT_QUEUE } from './contacts.constants';
 import { ContactRepository } from './infrastructure/persistence/document/repositories/contact.repository';
 import { ContactExportStorageService } from './contact-export-storage.service';
@@ -10,6 +11,7 @@ import {
   BaseTenantConsumer,
   TenantJobData,
 } from '../queue/base-tenant.consumer';
+import { IOREDIS_CLIENT } from '../redis/redis.tokens';
 
 export interface ContactExportJobData extends TenantJobData {
   ids?: string[];
@@ -39,6 +41,7 @@ export class ContactExportProcessor extends BaseTenantConsumer<ContactExportJobD
     private readonly storageService: ContactExportStorageService,
     cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
+    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {
     super();
     this.cls = cls;
@@ -96,15 +99,19 @@ export class ContactExportProcessor extends BaseTenantConsumer<ContactExportJobD
       },
     });
 
-    // ── Push export result to client via WebSocket ──
-    this.eventEmitter.emit('contact.export.completed', {
-      tenantId,
-      userId,
-      downloadUrl: exportFile.downloadUrl,
-      expiresAt: exportFile.expiresAt,
-      recordCount,
-      storageKey: exportFile.storageKey,
-    });
+    // ── Push export result to client via Redis pub/sub ──
+    // Worker process cannot emit Socket.IO events directly (no WS server).
+    // Publish to Redis channel → API process subscribes and broadcasts via OmniGateway.
+    await this.redis.publish(
+      'socket:contact:export:completed',
+      JSON.stringify({
+        tenantId,
+        userId,
+        downloadUrl: exportFile.downloadUrl,
+        expiresAt: exportFile.expiresAt,
+        recordCount,
+      }),
+    );
 
     this.logger.log(
       `Contact export job ${job.id} completed: ${recordCount} records`,
