@@ -43,7 +43,8 @@ export class ReadStateSyncProducer {
     // Use emailMessageId + targetState as jobId for deduplication.
     // If the same message is clicked read→unread→read within 5s,
     // only the final state is processed.
-    const jobId = `readstate-${data.emailMessageId}-${data.targetState}`.replace(/:/g, '-');
+    const jobId =
+      `readstate-${data.emailMessageId}-${data.targetState}`.replace(/:/g, '-');
 
     await this.queue.add('sync-read-state', data, {
       jobId,
@@ -66,7 +67,10 @@ export class ReadStateSyncProducer {
       name: 'sync-read-state',
       data,
       opts: {
-        jobId: `readstate-${data.emailMessageId}-${data.targetState}`.replace(/:/g, '-'),
+        jobId: `readstate-${data.emailMessageId}-${data.targetState}`.replace(
+          /:/g,
+          '-',
+        ),
         delay: 5000,
       },
     }));

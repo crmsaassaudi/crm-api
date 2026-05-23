@@ -35,6 +35,6 @@ jobs:
 
             test -f .env.production
 
-            docker compose -f docker-compose.yml build --pull api-service
-            docker compose -f docker-compose.yml up -d --remove-orphans api-service
+            docker compose -f docker-compose.yml build --pull api-service worker-service
+            docker compose -f docker-compose.yml up -d --remove-orphans api-service worker-service
             docker image prune -f
