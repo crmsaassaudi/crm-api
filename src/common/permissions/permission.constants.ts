@@ -10,7 +10,8 @@ export type PermissionResource =
   | 'groups'
   | 'settings'
   | 'tasks'
-  | 'ai_video';
+  | 'ai_video'
+  | 'social_posts';
 
 export type PermissionAction =
   | 'view'
@@ -121,6 +122,13 @@ export const PERMISSION_REGISTRY: Record<
     delete: 'ai_video:delete',
     manage_system: 'ai_video:manage_system',
   },
+  social_posts: {
+    view: 'social_posts:view',
+    create: 'social_posts:create',
+    edit: 'social_posts:edit',
+    delete: 'social_posts:delete',
+    manage_system: 'social_posts:manage_system',
+  },
 };
 
 /**
@@ -226,6 +234,12 @@ export const FEATURE_PERMISSIONS: string[] = [
   'campaigns:edit',
   'campaigns:delete',
   'campaigns:launch',
+  // Social Post Management
+  'social_posts:view',
+  'social_posts:create',
+  'social_posts:edit',
+  'social_posts:delete',
+  'social_posts:manage_system',
 ];
 
 export const getPermissionKey = (

@@ -65,6 +65,7 @@ import { ObservabilityModule } from './observability/observability.module';
 import { NotesModule } from './notes/notes.module';
 import { SystemSettingsModule } from './system-settings/system-settings.module';
 import { AiVideoModule } from './ai-video/ai-video.module';
+import { SocialPostsModule } from './social-posts/social-posts.module';
 
 import {
   KeycloakConnectModule,
@@ -285,6 +286,7 @@ const envFilePath = [
     NotesModule,
     SystemSettingsModule,
     AiVideoModule,
+    SocialPostsModule,
   ],
   providers: [
     {
