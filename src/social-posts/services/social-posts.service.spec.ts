@@ -25,6 +25,7 @@ describe('SocialContentAssetsService', () => {
     versionNumber: 1,
     content: 'Base copy',
     mediaUrls: [],
+    aiVideoJobIds: [],
     mediaType: 'text',
     approvalStatus: 'PENDING',
     savedById: userId,
@@ -46,6 +47,7 @@ describe('SocialContentAssetsService', () => {
     snapshot: {
       content: 'Snapshot copy',
       mediaUrls: [],
+      aiVideoJobIds: [],
       mediaType: 'text',
     },
     status: 'PENDING',
@@ -62,6 +64,7 @@ describe('SocialContentAssetsService', () => {
   let channelRepository: Record<string, jest.Mock>;
   let publisherRegistry: Record<string, jest.Mock>;
   let queueProducer: Record<string, jest.Mock>;
+  let aiVideoJobService: Record<string, jest.Mock>;
   let auditLogService: Record<string, jest.Mock>;
   let cls: Record<string, jest.Mock>;
   let service: SocialContentAssetsService;
@@ -103,6 +106,9 @@ describe('SocialContentAssetsService', () => {
       schedule: jest.fn(),
       cancel: jest.fn(),
     };
+    aiVideoJobService = {
+      resolveApprovedVideoUrls: jest.fn(),
+    };
     auditLogService = {
       record: jest.fn(),
     };
@@ -121,6 +127,7 @@ describe('SocialContentAssetsService', () => {
       channelRepository as any,
       publisherRegistry as any,
       queueProducer as any,
+      aiVideoJobService as any,
       auditLogService as any,
       cls as any,
     );
@@ -162,6 +169,7 @@ describe('SocialContentAssetsService', () => {
       snapshot: {
         content: 'Old locked copy',
         mediaUrls: [],
+        aiVideoJobIds: [],
         mediaType: 'text',
       },
     });

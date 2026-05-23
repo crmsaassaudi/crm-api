@@ -11,7 +11,6 @@ import { AiVideoJobMapper } from '../infrastructure/persistence/document/mappers
 export interface AiVideoJobQuery {
   tenantId: string;
   status?: string | string[];
-  facebookPageId?: string;
 }
 
 @Injectable()
@@ -52,41 +51,6 @@ export class AiVideoJobRepository {
     };
   }
 
-  /**
-   * Find jobs that are scheduled and due for publishing.
-   * Used by the publisher cron/worker to pick up ready tasks.
-   */
-  async findScheduledDueJobs(beforeDate: Date): Promise<AiVideoJob[]> {
-    const docs = await this.model
-      .find({
-        status: 'SCHEDULED',
-        scheduledAt: { $lte: beforeDate },
-      })
-      .sort({ scheduledAt: 1 })
-      .limit(50) // Process in batches
-      .exec();
-    return docs.map((doc) => AiVideoJobMapper.toDomain(doc));
-  }
-
-  async findApprovedJobs(): Promise<AiVideoJob[]> {
-    const docs = await this.model
-      .find({ status: 'APPROVED' })
-      .sort({ createdAt: 1 })
-      .exec();
-    return docs.map((doc) => AiVideoJobMapper.toDomain(doc));
-  }
-
-  async isSlotBooked(tenantId: string, scheduledAt: Date): Promise<boolean> {
-    const count = await this.model
-      .countDocuments({
-        tenantId,
-        status: 'SCHEDULED',
-        scheduledAt,
-      })
-      .exec();
-    return count > 0;
-  }
-
   async updateStatus(
     id: string,
     status: string,
@@ -123,9 +87,6 @@ export class AiVideoJobRepository {
       filter.status = Array.isArray(query.status)
         ? { $in: query.status }
         : query.status;
-    }
-    if (query.facebookPageId) {
-      filter.facebookPageId = query.facebookPageId;
     }
     return filter;
   }

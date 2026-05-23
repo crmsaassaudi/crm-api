@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AllConfigType } from '../../config/config.type';
 import { AiVideoSettingsRepository } from '../repositories/ai-video-settings.repository';
@@ -14,7 +14,7 @@ export class VoiceSynthesisService {
   ) {}
 
   /**
-   * Synthesizes script text to MP3 audio using ElevenLabs or OpenAI fallback.
+   * Synthesizes script text to MP3 audio using configured TTS providers.
    * Returns audio buffer.
    */
   async synthesizeSpeech(
@@ -23,8 +23,7 @@ export class VoiceSynthesisService {
     voiceIdOverride?: string,
   ): Promise<Buffer> {
     if (!text || text.trim() === '') {
-      this.logger.warn('Empty script text passed to voice synthesis.');
-      return this.generateSilentAudioBuffer();
+      throw new BadRequestException('Script text is required.');
     }
 
     // 1. Fetch Tenant Settings for ElevenLabs details
@@ -33,7 +32,6 @@ export class VoiceSynthesisService {
     const voiceId =
       voiceIdOverride || settings?.defaultVoiceId || '21m00Tcm4TlvDq8ikWAM'; // Rachel
 
-    // 2. Try ElevenLabs if API key is configured
     if (elevenLabsApiKey) {
       try {
         this.logger.log(
@@ -63,21 +61,16 @@ export class VoiceSynthesisService {
           return Buffer.from(response.data);
         }
       } catch (err: any) {
-        this.logger.error(
-          `ElevenLabs TTS failed: ${err.message}. Falling back...`,
-        );
+        this.logger.error(`ElevenLabs TTS failed: ${err.message}.`);
       }
     }
 
-    // 3. Try OpenAI TTS Fallback
     const openaiApiKey = this.configService.get('ai.openaiApiKey', {
       infer: true,
     });
     if (openaiApiKey) {
       try {
-        this.logger.log(
-          'OpenAI API Key detected. Invoking OpenAI TTS fallback...',
-        );
+        this.logger.log('OpenAI API Key detected. Invoking OpenAI TTS...');
         const response = await axios.post(
           'https://api.openai.com/v1/audio/speech',
           {
@@ -95,28 +88,16 @@ export class VoiceSynthesisService {
         );
 
         if (response.data) {
-          this.logger.log('OpenAI TTS fallback completed successfully.');
+          this.logger.log('OpenAI TTS completed successfully.');
           return Buffer.from(response.data);
         }
       } catch (err: any) {
-        this.logger.error(`OpenAI TTS fallback failed: ${err.message}.`);
+        this.logger.error(`OpenAI TTS failed: ${err.message}.`);
       }
     }
 
-    // 4. Ultimate Resilient Fallback: Return a realistic silent MP3 frame buffer
-    this.logger.warn(
-      'No TTS API keys available or all failed. Returning resilient fallback buffer.',
+    throw new BadRequestException(
+      'No working TTS provider is configured for AI video generation.',
     );
-    return this.generateSilentAudioBuffer();
-  }
-
-  /**
-   * Generates a 1-second silent MP3 buffer to prevent compositor failure.
-   */
-  private generateSilentAudioBuffer(): Buffer {
-    // 1-second MPEG frame representation (silent/header bytes)
-    return Buffer.from([
-      0xff, 0xfb, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ]);
   }
 }

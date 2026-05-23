@@ -76,6 +76,7 @@ export class PublicationInstanceSchemaClass extends EntityDocumentHelper {
     type: {
       content: { type: String, default: '' },
       mediaUrls: { type: [String], default: [] },
+      aiVideoJobIds: { type: [String], default: [] },
       mediaType: {
         type: String,
         enum: SOCIAL_CONTENT_MEDIA_TYPES,
@@ -89,6 +90,7 @@ export class PublicationInstanceSchemaClass extends EntityDocumentHelper {
   snapshot: {
     content: string;
     mediaUrls: string[];
+    aiVideoJobIds: string[];
     mediaType: SocialContentMediaType;
   };
 

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { ulid } from 'ulid';
+import { AiVideoJobService } from '../../ai-video/services/ai-video-job.service';
 import { AuditLogService } from '../../audit-log/audit-log.service';
 import { Channel } from '../../channels/domain/channel';
 import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
@@ -64,6 +65,7 @@ export class SocialContentAssetsService {
     private readonly channelRepository: ChannelRepository,
     private readonly publisherRegistry: SocialPublisherRegistry,
     private readonly queueProducer: PublicationQueueProducer,
+    private readonly aiVideoJobService: AiVideoJobService,
     private readonly auditLogService: AuditLogService,
     private readonly cls: ClsService,
   ) {}
@@ -73,7 +75,12 @@ export class SocialContentAssetsService {
   ): Promise<SocialContentAssetWithDetails> {
     const tenantId = this.requireTenantId();
     const userId = this.cls.get('userId');
-    const mediaUrls = dto.mediaUrls ?? [];
+    const aiVideoJobIds = dto.aiVideoJobIds ?? [];
+    const mediaUrls = await this.resolveMediaUrls(
+      tenantId,
+      dto.mediaUrls ?? [],
+      aiVideoJobIds,
+    );
     const mediaType = dto.mediaType ?? this.inferMediaType(mediaUrls);
     const title = this.resolveTitle(dto.title, dto.content, mediaUrls);
 
@@ -90,6 +97,7 @@ export class SocialContentAssetsService {
       versionNumber: 1,
       content: dto.content,
       mediaUrls,
+      aiVideoJobIds,
       mediaType,
       approvalStatus: 'PENDING',
       savedById: userId,
@@ -164,11 +172,19 @@ export class SocialContentAssetsService {
       throw new NotFoundException('Social content asset version not found.');
     }
 
-    const mediaUrls = dto.mediaUrls ?? latestVersion.mediaUrls;
+    const aiVideoJobIds = dto.aiVideoJobIds ?? latestVersion.aiVideoJobIds;
+    const requestedMediaUrls = aiVideoJobIds.length
+      ? (dto.mediaUrls ?? [])
+      : (dto.mediaUrls ?? latestVersion.mediaUrls);
+    const mediaUrls = await this.resolveMediaUrls(
+      tenantId,
+      requestedMediaUrls,
+      aiVideoJobIds,
+    );
     const content = dto.content ?? latestVersion.content;
     const mediaType =
       dto.mediaType ??
-      (dto.mediaUrls
+      (dto.mediaUrls || dto.aiVideoJobIds
         ? this.inferMediaType(mediaUrls)
         : latestVersion.mediaType);
     const nextVersionNumber = await this.versionRepository.getNextVersionNumber(
@@ -182,6 +198,7 @@ export class SocialContentAssetsService {
       versionNumber: nextVersionNumber,
       content,
       mediaUrls,
+      aiVideoJobIds,
       mediaType,
       approvalStatus: 'PENDING',
       savedById: userId,
@@ -339,25 +356,35 @@ export class SocialContentAssetsService {
     );
     const publicationGroupId = ulid();
 
-    const payloads = channels.map((channel) => {
-      const override = overridesByChannelId.get(channel.id);
-      const snapshot = this.buildPublicationSnapshot(version, override);
-      this.validateSnapshotForPlatform(channel.type, snapshot);
+    const payloads = await Promise.all(
+      channels.map(async (channel) => {
+        const override = overridesByChannelId.get(channel.id);
+        const snapshot = await this.buildPublicationSnapshot(
+          tenantId,
+          version,
+          override,
+        );
+        this.validateSnapshotForPlatform(channel.type, snapshot);
+        const snapshotForStorage = {
+          ...snapshot,
+          aiVideoJobIds: snapshot.aiVideoJobIds ?? [],
+        };
 
-      return {
-        tenantId,
-        assetId,
-        sourceVersionId: version.id,
-        publicationGroupId,
-        channelId: channel.id,
-        channelName: channel.name,
-        channelAccount: channel.account,
-        platform: channel.type as SocialContentPlatform,
-        snapshot,
-        status: 'PENDING' as const,
-        scheduledAt,
-      };
-    });
+        return {
+          tenantId,
+          assetId,
+          sourceVersionId: version.id,
+          publicationGroupId,
+          channelId: channel.id,
+          channelName: channel.name,
+          channelAccount: channel.account,
+          platform: channel.type as SocialContentPlatform,
+          snapshot: snapshotForStorage,
+          status: 'PENDING' as const,
+          scheduledAt,
+        };
+      }),
+    );
 
     const instances = await this.publicationRepository.createMany(payloads);
     await Promise.all(
@@ -407,13 +434,23 @@ export class SocialContentAssetsService {
       );
     }
 
-    const mediaUrls = dto.mediaUrls ?? instance.snapshot.mediaUrls;
+    const aiVideoJobIds =
+      dto.aiVideoJobIds ?? instance.snapshot.aiVideoJobIds ?? [];
+    const requestedMediaUrls = aiVideoJobIds.length
+      ? (dto.mediaUrls ?? [])
+      : (dto.mediaUrls ?? instance.snapshot.mediaUrls);
+    const mediaUrls = await this.resolveMediaUrls(
+      tenantId,
+      requestedMediaUrls,
+      aiVideoJobIds,
+    );
     const snapshot: PublicationSnapshot = {
       content: dto.content ?? instance.snapshot.content,
       mediaUrls,
+      aiVideoJobIds,
       mediaType:
         dto.mediaType ??
-        (dto.mediaUrls
+        (dto.mediaUrls || dto.aiVideoJobIds
           ? this.inferMediaType(mediaUrls)
           : instance.snapshot.mediaType),
     };
@@ -684,24 +721,66 @@ export class SocialContentAssetsService {
     };
   }
 
-  private buildPublicationSnapshot(
+  private async buildPublicationSnapshot(
+    tenantId: string,
     version: SocialContentAssetVersionEntity,
     override?: {
       content?: string;
       mediaUrls?: string[];
+      aiVideoJobIds?: string[];
       mediaType?: SocialContentMediaType;
     },
-  ): PublicationSnapshot {
-    const mediaUrls = override?.mediaUrls ?? version.mediaUrls;
+  ): Promise<PublicationSnapshot> {
+    const aiVideoJobIds =
+      override?.aiVideoJobIds ?? version.aiVideoJobIds ?? [];
+    const requestedMediaUrls = aiVideoJobIds.length
+      ? (override?.mediaUrls ?? [])
+      : (override?.mediaUrls ?? version.mediaUrls);
+    const mediaUrls = await this.resolveMediaUrls(
+      tenantId,
+      requestedMediaUrls,
+      aiVideoJobIds,
+    );
     return {
       content: override?.content ?? version.content,
       mediaUrls,
+      aiVideoJobIds,
       mediaType:
         override?.mediaType ??
-        (override?.mediaUrls
+        (override?.mediaUrls || override?.aiVideoJobIds
           ? this.inferMediaType(mediaUrls)
           : version.mediaType),
     };
+  }
+
+  private async resolveMediaUrls(
+    tenantId: string,
+    mediaUrls: string[],
+    aiVideoJobIds: string[],
+  ): Promise<string[]> {
+    if (aiVideoJobIds.length === 0) {
+      const hasDirectVideoUrl = mediaUrls.some((url) =>
+        /\.(m4v|mov|mp4|mpeg|webm)(\?.*)?$/i.test(url),
+      );
+      if (hasDirectVideoUrl) {
+        throw new BadRequestException(
+          'Video media must be selected from the AI Video library.',
+        );
+      }
+      return mediaUrls;
+    }
+    if (mediaUrls.length > 0) {
+      throw new BadRequestException(
+        'Choose either direct media URLs or one system video, not both.',
+      );
+    }
+    if (aiVideoJobIds.length > 1) {
+      throw new BadRequestException('Only one system video can be attached.');
+    }
+    return this.aiVideoJobService.resolveApprovedVideoUrls(
+      tenantId,
+      aiVideoJobIds,
+    );
   }
 
   private validateSnapshotForPlatform(

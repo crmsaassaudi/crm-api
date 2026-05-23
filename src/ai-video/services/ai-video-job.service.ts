@@ -17,7 +17,6 @@ import {
 import { UpdateAiVideoSettingsDto } from '../dto/ai-video-settings.dto';
 import { AiVideoSettingsRepository } from '../repositories/ai-video-settings.repository';
 import { AiVideoSettings } from '../domain/ai-video-settings';
-import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { AiGeneratorService } from './ai-generator.service';
 import { VoiceSynthesisService } from './voice-synthesis.service';
 import { VideoCompositorService } from './video-compositor.service';
@@ -30,7 +29,6 @@ export class AiVideoJobService {
     private readonly jobRepository: AiVideoJobRepository,
     private readonly auditLogRepository: AiVideoAuditLogRepository,
     private readonly settingsRepository: AiVideoSettingsRepository,
-    private readonly channelRepository: ChannelRepository,
     private readonly aiGeneratorService: AiGeneratorService,
     private readonly voiceSynthesisService: VoiceSynthesisService,
     private readonly videoCompositorService: VideoCompositorService,
@@ -44,7 +42,6 @@ export class AiVideoJobService {
     if (!settings) {
       settings = await this.settingsRepository.create({
         tenantId,
-        timeSlots: ['09:00', '12:00', '20:00'],
         retainOriginalDays: 30,
         retainProcessedDays: 180,
         autoCleanupTempFiles: true,
@@ -67,18 +64,6 @@ export class AiVideoJobService {
     const tenantId = this.cls.get('tenantId');
     const userId = this.cls.get('userId');
 
-    // Validate that the target Facebook page is connected for this tenant
-    const channel = await this.channelRepository.findByAccountWithCredentials(
-      tenantId,
-      'facebook',
-      dto.facebookPageId,
-    );
-    if (!channel) {
-      throw new BadRequestException(
-        `Facebook Page ${dto.facebookPageId} is not connected to this tenant or is not in Connected status.`,
-      );
-    }
-
     if (dto.sourceType === 'url_import' && !dto.sourceUrl) {
       throw new BadRequestException(
         'sourceUrl is required when sourceType is url_import',
@@ -97,7 +82,6 @@ export class AiVideoJobService {
       sourceUrl: dto.sourceUrl,
       scriptText: dto.scriptText,
       status: 'CREATED',
-      facebookPageId: dto.facebookPageId,
       caption: dto.caption,
       hashtags: dto.hashtags ?? [],
       createdById: userId,
@@ -114,7 +98,6 @@ export class AiVideoJobService {
         sourceType: dto.sourceType,
         sourceUrl: dto.sourceUrl,
         scriptText: dto.scriptText,
-        facebookPageId: dto.facebookPageId,
       },
     });
 
@@ -138,14 +121,9 @@ export class AiVideoJobService {
     page: number,
     limit: number,
     status?: string,
-    facebookPageId?: string,
   ): Promise<{ items: AiVideoJob[]; total: number }> {
     const tenantId = this.cls.get('tenantId');
-    return this.jobRepository.findPaginated(
-      { tenantId, status, facebookPageId },
-      page,
-      limit,
-    );
+    return this.jobRepository.findPaginated({ tenantId, status }, page, limit);
   }
 
   async getAuditLog(jobId: string) {
@@ -267,28 +245,30 @@ export class AiVideoJobService {
     return updated!;
   }
 
-  /**
-   * Mark a published job — called by the publisher worker/service.
-   */
-  async markAsPublished(
-    jobId: string,
-    platformVideoId: string,
-    platformPostId?: string,
-  ): Promise<void> {
-    await this.jobRepository.updateStatus(jobId, 'PUBLISHED', {
-      publishedAt: new Date(),
-      platformVideoId,
-      platformPostId,
-    });
-  }
+  async resolveApprovedVideoUrls(
+    tenantId: string,
+    jobIds: string[],
+  ): Promise<string[]> {
+    const uniqueIds = [...new Set(jobIds.filter(Boolean))];
+    const urls: string[] = [];
 
-  /**
-   * Mark a job as PUBLISH_FAILED — called by the publisher on error.
-   */
-  async markAsFailed(jobId: string, errorDetails: string): Promise<void> {
-    await this.jobRepository.updateStatus(jobId, 'PUBLISH_FAILED', {
-      errorDetails,
-    });
+    for (const jobId of uniqueIds) {
+      const job = await this.jobRepository.findById(tenantId, jobId);
+      if (!job) throw new NotFoundException('AI video job not found.');
+      if (job.status !== 'APPROVED') {
+        throw new BadRequestException(
+          'Only approved AI videos can be attached to social posts.',
+        );
+      }
+      if (!job.sourceUrl) {
+        throw new BadRequestException(
+          'Approved AI video does not have a usable video URL.',
+        );
+      }
+      urls.push(job.sourceUrl);
+    }
+
+    return urls;
   }
 
   private async sleep(ms: number) {

@@ -7,9 +7,6 @@ export class AiVideoSettings {
   @ApiProperty()
   tenantId: string;
 
-  @ApiProperty({ type: [String] })
-  timeSlots: string[];
-
   @ApiProperty()
   retainOriginalDays: number;
 

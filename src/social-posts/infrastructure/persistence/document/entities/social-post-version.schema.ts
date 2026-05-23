@@ -45,6 +45,9 @@ export class SocialContentAssetVersionSchemaClass extends EntityDocumentHelper {
   @Prop({ type: [String], default: [] })
   mediaUrls: string[];
 
+  @Prop({ type: [String], default: [] })
+  aiVideoJobIds: string[];
+
   @Prop({
     type: String,
     enum: SOCIAL_CONTENT_MEDIA_TYPES,

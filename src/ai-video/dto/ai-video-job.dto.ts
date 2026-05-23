@@ -1,17 +1,17 @@
 import {
-  IsString,
-  IsOptional,
   IsArray,
   IsEnum,
   IsNotEmpty,
+  IsOptional,
+  IsString,
   MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateAiVideoJobDto {
-  @ApiProperty({ enum: ['manual_upload', 'url_import', 'script_production'] })
-  @IsEnum(['manual_upload', 'url_import', 'script_production'])
-  sourceType: 'manual_upload' | 'url_import' | 'script_production';
+  @ApiProperty({ enum: ['url_import', 'script_production'] })
+  @IsEnum(['url_import', 'script_production'])
+  sourceType: 'url_import' | 'script_production';
 
   @ApiPropertyOptional({
     description: 'Public URL of the video (required for url_import)',
@@ -30,14 +30,9 @@ export class CreateAiVideoJobDto {
   @MaxLength(5000)
   scriptText?: string;
 
-  @ApiProperty({
-    description: 'Target Facebook Page ID from connected channels',
+  @ApiPropertyOptional({
+    description: 'Library caption/description for reuse in social-posts',
   })
-  @IsString()
-  @IsNotEmpty()
-  facebookPageId: string;
-
-  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   @MaxLength(5000)
@@ -48,16 +43,6 @@ export class CreateAiVideoJobDto {
   @IsArray()
   @IsString({ each: true })
   hashtags?: string[];
-}
-
-export class PublishNowDto {
-  @ApiPropertyOptional({
-    description: 'Override caption for immediate publishing',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(5000)
-  caption?: string;
 }
 
 export class RejectJobDto {

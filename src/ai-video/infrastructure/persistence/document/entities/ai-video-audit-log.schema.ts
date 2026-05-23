@@ -9,9 +9,8 @@ export type AiVideoAuditLogSchemaDocument =
  * Immutable audit trail for every state transition and significant action
  * within the AI Video pipeline.
  *
- * Actions include: VIDEO_CREATED, INGEST_STARTED, INGEST_COMPLETED,
- * PROCESSING_STARTED, AI_SUBTITLE_GENERATED, APPROVED, REJECTED,
- * SCHEDULED, PUBLISH_STARTED, PUBLISHED, PUBLISH_FAILED, RETRY_STARTED, etc.
+ * Actions include: VIDEO_CREATED, INGESTING, INGESTED, NORMALIZING,
+ * NORMALIZED, PROCESSING, PROCESSED, PENDING_REVIEW, APPROVED, REJECTED, etc.
  */
 @Schema({
   timestamps: true,

@@ -1,18 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
- * AI Video Job statuses — granular state machine.
+ * AI Video Job statuses.
  *
  * Happy path:
- *   CREATED → INGESTING → INGESTED → NORMALIZING → NORMALIZED
- *   → PROCESSING → PROCESSED → PENDING_REVIEW → APPROVED
- *   → SCHEDULED → PUBLISHING → PUBLISHED
+ *   CREATED -> INGESTING -> INGESTED -> NORMALIZING -> NORMALIZED
+ *   -> PROCESSING -> PROCESSED -> PENDING_REVIEW -> APPROVED
  *
- * Error states (one per pipeline stage):
- *   INGEST_FAILED, NORMALIZE_FAILED, PROCESS_FAILED, PUBLISH_FAILED
- *
- * Governance states:
- *   REJECTED, CANCELLED, BLOCKED_BY_POLICY, BLOCKED_WAITING_APPROVAL
+ * AI Video is the user's video library. Publishing and scheduling are owned by
+ * the social-posts module.
  */
 export type AiVideoJobStatus =
   | 'CREATED'
@@ -24,24 +20,13 @@ export type AiVideoJobStatus =
   | 'PROCESSED'
   | 'PENDING_REVIEW'
   | 'APPROVED'
-  | 'SCHEDULED'
-  | 'PUBLISHING'
-  | 'PUBLISHED'
   | 'REJECTED'
   | 'CANCELLED'
-  // Granular error states
   | 'INGEST_FAILED'
   | 'NORMALIZE_FAILED'
-  | 'PROCESS_FAILED'
-  | 'PUBLISH_FAILED'
-  // Governance blocks
-  | 'BLOCKED_BY_POLICY'
-  | 'BLOCKED_WAITING_APPROVAL';
+  | 'PROCESS_FAILED';
 
-export type AiVideoSourceType =
-  | 'manual_upload'
-  | 'url_import'
-  | 'script_production';
+export type AiVideoSourceType = 'url_import' | 'script_production';
 
 export class AiVideoJob {
   @ApiProperty()
@@ -50,7 +35,7 @@ export class AiVideoJob {
   @ApiProperty()
   tenantId: string;
 
-  @ApiProperty({ enum: ['manual_upload', 'url_import', 'script_production'] })
+  @ApiProperty({ enum: ['url_import', 'script_production'] })
   sourceType: AiVideoSourceType;
 
   @ApiPropertyOptional()
@@ -65,30 +50,11 @@ export class AiVideoJob {
   @ApiPropertyOptional()
   recipeId?: string;
 
-  @ApiPropertyOptional({
-    description: 'Target Facebook Page ID from connected channels',
-  })
-  facebookPageId?: string;
-
   @ApiPropertyOptional()
   caption?: string;
 
   @ApiProperty({ type: [String] })
   hashtags: string[];
-
-  @ApiPropertyOptional()
-  scheduledAt?: Date;
-
-  @ApiPropertyOptional()
-  publishedAt?: Date;
-
-  @ApiPropertyOptional({
-    description: 'Platform-specific video ID returned after publishing',
-  })
-  platformVideoId?: string;
-
-  @ApiPropertyOptional({ description: 'Platform-specific post ID' })
-  platformPostId?: string;
 
   @ApiPropertyOptional()
   errorDetails?: string;

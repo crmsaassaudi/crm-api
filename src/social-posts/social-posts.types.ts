@@ -40,6 +40,7 @@ export type SocialContentMediaType =
 export interface PublicationSnapshot {
   content: string;
   mediaUrls: string[];
+  aiVideoJobIds?: string[];
   mediaType: SocialContentMediaType;
 }
 

@@ -2,24 +2,21 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Query,
-  HttpCode,
-  HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
-import { AiVideoJobService } from '../services/ai-video-job.service';
-import { FacebookPublisherService } from '../services/facebook-publisher.service';
+import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { RequirePermission } from '../../common/permissions/permission.decorator';
+import { AiVideoJob } from '../domain/ai-video-job';
 import {
   CreateAiVideoJobDto,
-  PublishNowDto,
-  RejectJobDto,
   GenerateContentDto,
+  RejectJobDto,
 } from '../dto/ai-video-job.dto';
-import { AiVideoJob } from '../domain/ai-video-job';
-import { RequirePermission } from '../../common/permissions/permission.decorator';
-import { ClsService } from 'nestjs-cls';
+import { AiVideoJobService } from '../services/ai-video-job.service';
 
 @ApiTags('AI Video')
 @Controller({
@@ -27,61 +24,50 @@ import { ClsService } from 'nestjs-cls';
   version: '1',
 })
 export class AiVideoJobController {
-  constructor(
-    private readonly jobService: AiVideoJobService,
-    private readonly publisherService: FacebookPublisherService,
-    private readonly cls: ClsService,
-  ) {}
-
-  // ── CRUD ──────────────────────────────────────────────────────────────
+  constructor(private readonly jobService: AiVideoJobService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a new AI Video Job' })
+  @ApiOperation({ summary: 'Create a new AI Video library job' })
   @RequirePermission('create', 'ai_video')
   async create(@Body() dto: CreateAiVideoJobDto): Promise<AiVideoJob> {
     return this.jobService.createJob(dto);
   }
 
   @Get()
-  @ApiOperation({ summary: 'List all Video Jobs for the current tenant' })
+  @ApiOperation({ summary: 'List video jobs for the current tenant' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'status', required: false, type: String })
-  @ApiQuery({ name: 'facebookPageId', required: false, type: String })
   @RequirePermission('view', 'ai_video')
   async list(
     @Query('page') page = 1,
     @Query('limit') limit = 20,
     @Query('status') status?: string,
-    @Query('facebookPageId') facebookPageId?: string,
   ) {
     return this.jobService.findPaginated(
       Number(page),
       Math.min(Number(limit), 100),
       status,
-      facebookPageId,
     );
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a Video Job by ID' })
+  @ApiOperation({ summary: 'Get a video job by ID' })
   @RequirePermission('view', 'ai_video')
   async findOne(@Param('id') id: string): Promise<AiVideoJob> {
     return this.jobService.findById(id);
   }
 
   @Get(':id/audit-log')
-  @ApiOperation({ summary: 'Get the audit trail for a Video Job' })
+  @ApiOperation({ summary: 'Get the audit trail for a video job' })
   @RequirePermission('view', 'ai_video')
   async getAuditLog(@Param('id') id: string) {
     return this.jobService.getAuditLog(id);
   }
 
-  // ── Approval workflow ─────────────────────────────────────────────────
-
   @Post(':id/approve')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Approve a video for scheduling/publishing' })
+  @ApiOperation({ summary: 'Approve a video for reuse in social posts' })
   @RequirePermission('manage_system', 'ai_video')
   async approve(@Param('id') id: string): Promise<AiVideoJob> {
     return this.jobService.approve(id);
@@ -100,73 +86,12 @@ export class AiVideoJobController {
 
   @Post(':id/generate-content')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Generate social media caption and hashtags using AI',
-  })
+  @ApiOperation({ summary: 'Generate library caption and hashtags using AI' })
   @RequirePermission('edit', 'ai_video')
   async generateContent(
     @Param('id') id: string,
     @Body() dto: GenerateContentDto,
   ): Promise<AiVideoJob> {
     return this.jobService.generateContent(id, dto);
-  }
-
-  // ── Publishing ────────────────────────────────────────────────────────
-
-  @Post(':id/publish-now')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Immediately publish a video to its target Facebook Page',
-  })
-  @RequirePermission('manage_system', 'ai_video')
-  async publishNow(@Param('id') id: string, @Body() dto: PublishNowDto) {
-    const job = await this.jobService.findById(id);
-    const tenantId = this.cls.get('tenantId');
-
-    // Allow publish from: CREATED, APPROVED, PUBLISH_FAILED
-    const allowedStatuses = ['CREATED', 'APPROVED', 'PUBLISH_FAILED'];
-    if (!allowedStatuses.includes(job.status)) {
-      return {
-        success: false,
-        message: `Cannot publish a job in status "${job.status}". Allowed: ${allowedStatuses.join(', ')}`,
-      };
-    }
-
-    if (!job.sourceUrl) {
-      return {
-        success: false,
-        message: 'No video source URL available. Upload a video first.',
-      };
-    }
-
-    if (!job.facebookPageId) {
-      return {
-        success: false,
-        message: 'No target Facebook Page ID configured for this job.',
-      };
-    }
-
-    const caption = dto.caption ?? job.caption ?? '';
-
-    try {
-      const result = await this.publisherService.publishVideo(
-        tenantId,
-        job.id,
-        job.facebookPageId,
-        job.sourceUrl,
-        caption,
-      );
-
-      return {
-        success: true,
-        platformVideoId: result.platformVideoId,
-        platformPostId: result.platformPostId,
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        message: error.message || 'Publishing failed',
-      };
-    }
   }
 }

@@ -17,6 +17,7 @@ export interface SocialContentAssetVersionEntity {
   versionNumber: number;
   content: string;
   mediaUrls: string[];
+  aiVideoJobIds: string[];
   mediaType: SocialContentMediaType;
   approvalStatus: SocialContentApprovalStatus;
   savedById?: string;
@@ -104,6 +105,7 @@ export class SocialContentAssetVersionRepository {
       versionNumber: obj.versionNumber,
       content: obj.content ?? '',
       mediaUrls: obj.mediaUrls ?? [],
+      aiVideoJobIds: obj.aiVideoJobIds ?? [],
       mediaType: obj.mediaType ?? 'text',
       approvalStatus: obj.approvalStatus,
       savedById: obj.savedById?.toString(),

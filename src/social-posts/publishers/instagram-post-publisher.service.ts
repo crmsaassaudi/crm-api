@@ -36,7 +36,7 @@ export class InstagramPostPublisher extends BasePublisher {
     const accessToken = this.getAccessToken(context.channel);
     const instagramAccountId = context.channel.account;
     const { post } = context;
-    const mediaUrl = post.mediaUrls[0];
+    const mediaUrl = this.toPublicMediaUrl(post.mediaUrls[0]);
 
     const createResponse = await axios.post(
       `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${instagramAccountId}/media`,

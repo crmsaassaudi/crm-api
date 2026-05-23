@@ -1,4 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
+import appConfig from '../../config/app.config';
+import { AppConfig } from '../../config/app-config.type';
 import { Channel } from '../../channels/domain/channel';
 import { PublicationInstanceEntity } from '../repositories/social-post-task.repository';
 import {
@@ -39,5 +41,13 @@ export abstract class BasePublisher {
     if (!post.content.trim() && post.mediaUrls.length === 0) {
       throw new BadRequestException('Post content or media is required.');
     }
+  }
+
+  protected toPublicMediaUrl(mediaUrl: string): string {
+    if (/^https?:\/\//i.test(mediaUrl)) return mediaUrl;
+    if (!mediaUrl.startsWith('/')) return mediaUrl;
+
+    const { backendDomain } = appConfig() as AppConfig;
+    return `${backendDomain.replace(/\/$/, '')}${mediaUrl}`;
   }
 }

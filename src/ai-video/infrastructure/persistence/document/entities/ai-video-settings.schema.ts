@@ -20,9 +20,6 @@ export class AiVideoSettingsSchemaClass extends EntityDocumentHelper {
   })
   tenantId: MongooseSchema.Types.ObjectId;
 
-  @Prop({ type: [String], default: ['09:00', '12:00', '20:00'] })
-  timeSlots: string[];
-
   @Prop({ type: Number, default: 30 })
   retainOriginalDays: number;
 

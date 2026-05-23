@@ -19,7 +19,7 @@ export class AiVideoJobSchemaClass extends EntityDocumentHelper {
   tenantId: MongooseSchema.Types.ObjectId;
 
   @Prop({ type: String, required: true, immutable: true })
-  sourceType: 'manual_upload' | 'url_import' | 'script_production';
+  sourceType: 'url_import' | 'script_production';
 
   @Prop({ type: String })
   sourceUrl?: string;
@@ -34,25 +34,10 @@ export class AiVideoJobSchemaClass extends EntityDocumentHelper {
   recipeId?: MongooseSchema.Types.ObjectId;
 
   @Prop({ type: String })
-  facebookPageId?: string;
-
-  @Prop({ type: String })
   caption?: string;
 
   @Prop({ type: [String], default: [] })
   hashtags: string[];
-
-  @Prop({ type: Date })
-  scheduledAt?: Date;
-
-  @Prop({ type: Date })
-  publishedAt?: Date;
-
-  @Prop({ type: String })
-  platformVideoId?: string;
-
-  @Prop({ type: String })
-  platformPostId?: string;
 
   @Prop({ type: String })
   errorDetails?: string;
@@ -72,16 +57,11 @@ export const AiVideoJobSchema = SchemaFactory.createForClass(
   AiVideoJobSchemaClass,
 );
 
-// ── Compound indexes for dashboard queries & scheduler worker ──
 AiVideoJobSchema.index(
   { tenantId: 1, status: 1, createdAt: -1 },
   { name: 'tenant_status_created_lookup' },
 );
 AiVideoJobSchema.index(
-  { tenantId: 1, status: 1, scheduledAt: 1 },
-  { name: 'tenant_status_scheduled_lookup' },
-);
-AiVideoJobSchema.index(
-  { tenantId: 1, facebookPageId: 1, createdAt: -1 },
-  { name: 'tenant_page_created_lookup' },
+  { tenantId: 1, sourceType: 1, createdAt: -1 },
+  { name: 'tenant_source_created_lookup' },
 );

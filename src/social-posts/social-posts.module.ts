@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AiVideoModule } from '../ai-video/ai-video.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { ChannelsModule } from '../channels/channels.module';
 import { isWorkerRuntime } from '../config/runtime-role';
@@ -37,6 +38,7 @@ const workerProviders = isWorkerRuntime()
 
 @Module({
   imports: [
+    AiVideoModule,
     ChannelsModule,
     AuditLogModule,
     SocialPublicationQueueModule,

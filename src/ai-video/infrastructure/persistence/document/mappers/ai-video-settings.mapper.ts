@@ -5,7 +5,6 @@ export class AiVideoSettingsMapper {
     const entity = new AiVideoSettings();
     entity.id = raw._id.toString();
     entity.tenantId = raw.tenantId?.toString();
-    entity.timeSlots = raw.timeSlots ? [...raw.timeSlots] : [];
     entity.retainOriginalDays = raw.retainOriginalDays;
     entity.retainProcessedDays = raw.retainProcessedDays;
     entity.autoCleanupTempFiles = raw.autoCleanupTempFiles;

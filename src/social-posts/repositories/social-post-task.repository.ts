@@ -190,6 +190,7 @@ export class PublicationInstanceRepository {
       snapshot: {
         content: obj.snapshot?.content ?? '',
         mediaUrls: obj.snapshot?.mediaUrls ?? [],
+        aiVideoJobIds: obj.snapshot?.aiVideoJobIds ?? [],
         mediaType: obj.snapshot?.mediaType ?? 'text',
       },
       status: obj.status,

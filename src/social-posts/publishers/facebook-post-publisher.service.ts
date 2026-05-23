@@ -41,7 +41,7 @@ export class FacebookPostPublisher extends BasePublisher {
       return this.publishVideo(
         pageId,
         accessToken,
-        post.mediaUrls[0],
+        this.toPublicMediaUrl(post.mediaUrls[0]),
         post.content,
       );
     }
@@ -51,13 +51,13 @@ export class FacebookPostPublisher extends BasePublisher {
         ? this.publishSinglePhoto(
             pageId,
             accessToken,
-            post.mediaUrls[0],
+            this.toPublicMediaUrl(post.mediaUrls[0]),
             post.content,
           )
         : this.publishMultiPhoto(
             pageId,
             accessToken,
-            post.mediaUrls,
+            post.mediaUrls.map((url) => this.toPublicMediaUrl(url)),
             post.content,
           );
     }

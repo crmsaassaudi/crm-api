@@ -39,6 +39,12 @@ export class CreateSocialContentAssetDto {
   mediaUrls?: string[];
 
   @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1)
+  @IsString({ each: true })
+  aiVideoJobIds?: string[];
+
+  @IsOptional()
   @IsEnum(SOCIAL_CONTENT_MEDIA_TYPES)
   mediaType?: SocialContentMediaType;
 }
@@ -65,6 +71,12 @@ export class PublicationChannelOverrideDto {
   @ArrayMaxSize(20)
   @IsString({ each: true })
   mediaUrls?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1)
+  @IsString({ each: true })
+  aiVideoJobIds?: string[];
 
   @IsOptional()
   @IsEnum(SOCIAL_CONTENT_MEDIA_TYPES)
@@ -104,6 +116,12 @@ export class UpdatePublicationInstanceDto {
   @ArrayMaxSize(20)
   @IsString({ each: true })
   mediaUrls?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1)
+  @IsString({ each: true })
+  aiVideoJobIds?: string[];
 
   @IsOptional()
   @IsEnum(SOCIAL_CONTENT_MEDIA_TYPES)
