@@ -2,34 +2,42 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import {
-  SocialPostVersionSchemaClass,
-  SocialPostVersionSchemaDocument,
+  SocialContentAssetVersionSchemaClass,
+  SocialContentAssetVersionSchemaDocument,
 } from '../infrastructure/persistence/document/entities/social-post-version.schema';
+import {
+  SocialContentApprovalStatus,
+  SocialContentMediaType,
+} from '../social-posts.types';
 
-export interface SocialPostVersionEntity {
+export interface SocialContentAssetVersionEntity {
   id: string;
   tenantId: string;
-  postId: string;
+  assetId: string;
   versionNumber: number;
   content: string;
   mediaUrls: string[];
-  mediaType: string;
+  mediaType: SocialContentMediaType;
+  approvalStatus: SocialContentApprovalStatus;
   savedById?: string;
+  approvedById?: string;
+  approvedAt?: Date;
+  rejectionReason?: string;
   changeNote?: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
 @Injectable()
-export class SocialPostVersionRepository {
+export class SocialContentAssetVersionRepository {
   constructor(
-    @InjectModel(SocialPostVersionSchemaClass.name)
-    private readonly model: Model<SocialPostVersionSchemaDocument>,
+    @InjectModel(SocialContentAssetVersionSchemaClass.name)
+    private readonly model: Model<SocialContentAssetVersionSchemaDocument>,
   ) {}
 
   async create(
-    data: Partial<SocialPostVersionSchemaClass>,
-  ): Promise<SocialPostVersionEntity> {
+    data: Partial<SocialContentAssetVersionSchemaClass>,
+  ): Promise<SocialContentAssetVersionEntity> {
     const doc = await this.model.create(data);
     return this.toEntity(doc);
   }
@@ -37,28 +45,28 @@ export class SocialPostVersionRepository {
   async findById(
     tenantId: string,
     id: string,
-  ): Promise<SocialPostVersionEntity | null> {
+  ): Promise<SocialContentAssetVersionEntity | null> {
     const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? this.toEntity(doc) : null;
   }
 
-  async findByPostId(
+  async findByAssetId(
     tenantId: string,
-    postId: string,
-  ): Promise<SocialPostVersionEntity[]> {
+    assetId: string,
+  ): Promise<SocialContentAssetVersionEntity[]> {
     const docs = await this.model
-      .find({ tenantId, postId })
+      .find({ tenantId, assetId })
       .sort({ versionNumber: -1 })
       .exec();
     return docs.map((doc) => this.toEntity(doc));
   }
 
-  async findLatestByPostId(
+  async findLatestByAssetId(
     tenantId: string,
-    postId: string,
-  ): Promise<SocialPostVersionEntity | null> {
+    assetId: string,
+  ): Promise<SocialContentAssetVersionEntity | null> {
     const doc = await this.model
-      .findOne({ tenantId, postId })
+      .findOne({ tenantId, assetId })
       .sort({ versionNumber: -1 })
       .exec();
     return doc ? this.toEntity(doc) : null;
@@ -66,27 +74,42 @@ export class SocialPostVersionRepository {
 
   async getNextVersionNumber(
     tenantId: string,
-    postId: string,
+    assetId: string,
   ): Promise<number> {
     const doc = await this.model
-      .findOne({ tenantId, postId })
+      .findOne({ tenantId, assetId })
       .sort({ versionNumber: -1 })
       .select('versionNumber')
       .exec();
     return doc ? doc.versionNumber + 1 : 1;
   }
 
-  private toEntity(raw: any): SocialPostVersionEntity {
+  async update(
+    tenantId: string,
+    id: string,
+    data: Partial<SocialContentAssetVersionSchemaClass>,
+  ): Promise<SocialContentAssetVersionEntity | null> {
+    const doc = await this.model
+      .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
+      .exec();
+    return doc ? this.toEntity(doc) : null;
+  }
+
+  private toEntity(raw: any): SocialContentAssetVersionEntity {
     const obj = typeof raw.toObject === 'function' ? raw.toObject() : raw;
     return {
       id: obj._id?.toString() ?? obj.id,
       tenantId: obj.tenantId?.toString(),
-      postId: obj.postId?.toString(),
+      assetId: obj.assetId?.toString(),
       versionNumber: obj.versionNumber,
       content: obj.content ?? '',
       mediaUrls: obj.mediaUrls ?? [],
       mediaType: obj.mediaType ?? 'text',
+      approvalStatus: obj.approvalStatus,
       savedById: obj.savedById?.toString(),
+      approvedById: obj.approvedById?.toString(),
+      approvedAt: obj.approvedAt,
+      rejectionReason: obj.rejectionReason,
       changeNote: obj.changeNote,
       createdAt: obj.createdAt,
       updatedAt: obj.updatedAt,

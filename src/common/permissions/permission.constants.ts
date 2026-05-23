@@ -11,7 +11,8 @@ export type PermissionResource =
   | 'settings'
   | 'tasks'
   | 'ai_video'
-  | 'social_posts';
+  | 'social_content_assets'
+  | 'publication_instances';
 
 export type PermissionAction =
   | 'view'
@@ -28,7 +29,11 @@ export type PermissionAction =
   | 'manage_roles'
   | 'manage_members'
   | 'manage_billing'
-  | 'manage_system';
+  | 'manage_system'
+  | 'approve'
+  | 'cancel'
+  | 'retry'
+  | 'publish';
 
 export type PermissionRule = {
   action: PermissionAction;
@@ -122,12 +127,20 @@ export const PERMISSION_REGISTRY: Record<
     delete: 'ai_video:delete',
     manage_system: 'ai_video:manage_system',
   },
-  social_posts: {
-    view: 'social_posts:view',
-    create: 'social_posts:create',
-    edit: 'social_posts:edit',
-    delete: 'social_posts:delete',
-    manage_system: 'social_posts:manage_system',
+  social_content_assets: {
+    view: 'social_content_assets:view',
+    create: 'social_content_assets:create',
+    edit: 'social_content_assets:edit',
+    delete: 'social_content_assets:delete',
+    approve: 'social_content_assets:approve',
+  },
+  publication_instances: {
+    view: 'publication_instances:view',
+    create: 'publication_instances:create',
+    edit: 'publication_instances:edit',
+    cancel: 'publication_instances:cancel',
+    retry: 'publication_instances:retry',
+    publish: 'publication_instances:publish',
   },
 };
 
@@ -234,12 +247,18 @@ export const FEATURE_PERMISSIONS: string[] = [
   'campaigns:edit',
   'campaigns:delete',
   'campaigns:launch',
-  // Social Post Management
-  'social_posts:view',
-  'social_posts:create',
-  'social_posts:edit',
-  'social_posts:delete',
-  'social_posts:manage_system',
+  // Social Content Library
+  'social_content_assets:view',
+  'social_content_assets:create',
+  'social_content_assets:edit',
+  'social_content_assets:delete',
+  'social_content_assets:approve',
+  'publication_instances:view',
+  'publication_instances:create',
+  'publication_instances:edit',
+  'publication_instances:cancel',
+  'publication_instances:retry',
+  'publication_instances:publish',
 ];
 
 export const getPermissionKey = (

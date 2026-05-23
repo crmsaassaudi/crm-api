@@ -2,51 +2,37 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, SortOrder } from 'mongoose';
 import {
-  SocialPostSchemaClass,
-  SocialPostSchemaDocument,
+  SocialContentAssetSchemaClass,
+  SocialContentAssetSchemaDocument,
 } from '../infrastructure/persistence/document/entities/social-post.schema';
-import {
-  SocialPostApprovalStatus,
-  SocialPostStatus,
-} from '../social-posts.types';
+import { SocialContentAssetStatus } from '../social-posts.types';
 
-export interface SocialPostEntity {
+export interface SocialContentAssetEntity {
   id: string;
   tenantId: string;
-  content: string;
-  mediaUrls: string[];
-  mediaType: string;
-  status: SocialPostStatus;
-  approvalStatus: SocialPostApprovalStatus;
-  scheduledAt?: Date;
-  publishedAt?: Date;
-  errorSummary?: string;
+  title: string;
+  status: SocialContentAssetStatus;
   createdById?: string;
-  approvedById?: string;
-  approvedAt?: Date;
   latestVersionId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface SocialPostQuery {
+export interface SocialContentAssetQuery {
   tenantId: string;
-  status?: SocialPostStatus;
-  approvalStatus?: SocialPostApprovalStatus;
-  from?: Date;
-  to?: Date;
+  status?: SocialContentAssetStatus;
 }
 
 @Injectable()
-export class SocialPostRepository {
+export class SocialContentAssetRepository {
   constructor(
-    @InjectModel(SocialPostSchemaClass.name)
-    private readonly model: Model<SocialPostSchemaDocument>,
+    @InjectModel(SocialContentAssetSchemaClass.name)
+    private readonly model: Model<SocialContentAssetSchemaDocument>,
   ) {}
 
   async create(
-    data: Partial<SocialPostSchemaClass>,
-  ): Promise<SocialPostEntity> {
+    data: Partial<SocialContentAssetSchemaClass>,
+  ): Promise<SocialContentAssetEntity> {
     const doc = await this.model.create(data);
     return this.toEntity(doc);
   }
@@ -54,21 +40,21 @@ export class SocialPostRepository {
   async findById(
     tenantId: string,
     id: string,
-  ): Promise<SocialPostEntity | null> {
+  ): Promise<SocialContentAssetEntity | null> {
     const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? this.toEntity(doc) : null;
   }
 
   async findPaginated(
-    query: SocialPostQuery,
+    query: SocialContentAssetQuery,
     page: number,
     limit: number,
-  ): Promise<{ items: SocialPostEntity[]; total: number }> {
+  ): Promise<{ items: SocialContentAssetEntity[]; total: number }> {
     const filter = this.buildFilter(query);
     const safePage = Math.max(1, page);
     const safeLimit = Math.max(1, Math.min(limit, 100));
     const skip = (safePage - 1) * safeLimit;
-    const sort: Record<string, SortOrder> = { createdAt: -1 };
+    const sort: Record<string, SortOrder> = { updatedAt: -1 };
 
     const [docs, total] = await Promise.all([
       this.model.find(filter).sort(sort).skip(skip).limit(safeLimit).exec(),
@@ -81,60 +67,39 @@ export class SocialPostRepository {
   async update(
     tenantId: string,
     id: string,
-    data: Partial<SocialPostSchemaClass>,
-  ): Promise<SocialPostEntity | null> {
+    data: Partial<SocialContentAssetSchemaClass>,
+  ): Promise<SocialContentAssetEntity | null> {
     const doc = await this.model
       .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
       .exec();
     return doc ? this.toEntity(doc) : null;
   }
 
-  async updateStatus(
+  async archive(
     tenantId: string,
     id: string,
-    status: SocialPostStatus,
-    extra?: Partial<SocialPostSchemaClass>,
-  ): Promise<SocialPostEntity | null> {
-    return this.update(tenantId, id, { status, ...extra });
-  }
-
-  async delete(tenantId: string, id: string): Promise<boolean> {
-    const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
-    return result.deletedCount > 0;
+  ): Promise<SocialContentAssetEntity | null> {
+    return this.update(tenantId, id, { status: 'ARCHIVED' });
   }
 
   private buildFilter(
-    query: SocialPostQuery,
-  ): FilterQuery<SocialPostSchemaDocument> {
-    const filter: FilterQuery<SocialPostSchemaDocument> = {
+    query: SocialContentAssetQuery,
+  ): FilterQuery<SocialContentAssetSchemaDocument> {
+    const filter: FilterQuery<SocialContentAssetSchemaDocument> = {
       tenantId: query.tenantId,
     };
     if (query.status) filter.status = query.status;
-    if (query.approvalStatus) filter.approvalStatus = query.approvalStatus;
-    if (query.from || query.to) {
-      filter.scheduledAt = {};
-      if (query.from) filter.scheduledAt.$gte = query.from;
-      if (query.to) filter.scheduledAt.$lte = query.to;
-    }
     return filter;
   }
 
-  private toEntity(raw: any): SocialPostEntity {
+  private toEntity(raw: any): SocialContentAssetEntity {
     const obj = typeof raw.toObject === 'function' ? raw.toObject() : raw;
     return {
       id: obj._id?.toString() ?? obj.id,
       tenantId: obj.tenantId?.toString(),
-      content: obj.content ?? '',
-      mediaUrls: obj.mediaUrls ?? [],
-      mediaType: obj.mediaType ?? 'text',
+      title: obj.title ?? '',
       status: obj.status,
-      approvalStatus: obj.approvalStatus,
-      scheduledAt: obj.scheduledAt,
-      publishedAt: obj.publishedAt,
-      errorSummary: obj.errorSummary,
       createdById: obj.createdById?.toString(),
-      approvedById: obj.approvedById?.toString(),
-      approvedAt: obj.approvedAt,
       latestVersionId: obj.latestVersionId?.toString(),
       createdAt: obj.createdAt,
       updatedAt: obj.updatedAt,

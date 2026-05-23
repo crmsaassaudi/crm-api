@@ -7,105 +7,112 @@ import {
 import { ClsService } from 'nestjs-cls';
 import { ulid } from 'ulid';
 import { AuditLogService } from '../../audit-log/audit-log.service';
-import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { Channel } from '../../channels/domain/channel';
+import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
 import {
-  CreateSocialPostDto,
-  ListSocialPostTasksQueryDto,
-  ListSocialPostsQueryDto,
-  PublishSocialPostDto,
-  RejectSocialPostDto,
-  UpdateSocialPostDto,
+  CreatePublicationInstancesDto,
+  CreateSocialContentAssetDto,
+  ListPublicationInstancesQueryDto,
+  ListSocialContentAssetsQueryDto,
+  RejectSocialContentAssetVersionDto,
+  UpdatePublicationInstanceDto,
+  UpdateSocialContentAssetDto,
 } from '../dto/social-post.dto';
+import { normalizePublisherError } from '../publishers/publisher-error.util';
+import { SocialPublisherRegistry } from '../publishers/social-publisher-registry.service';
 import {
-  SocialPostEntity,
-  SocialPostRepository,
+  SocialContentAssetEntity,
+  SocialContentAssetRepository,
 } from '../repositories/social-post.repository';
 import {
-  SocialPostTaskEntity,
-  SocialPostTaskRepository,
+  PublicationInstanceEntity,
+  PublicationInstanceRepository,
 } from '../repositories/social-post-task.repository';
 import {
-  SocialPostVersionRepository,
-  SocialPostVersionEntity,
+  SocialContentAssetVersionEntity,
+  SocialContentAssetVersionRepository,
 } from '../repositories/social-post-version.repository';
-import { SocialPublisherRegistry } from '../publishers/social-publisher-registry.service';
-import { normalizePublisherError } from '../publishers/publisher-error.util';
 import {
-  SOCIAL_POST_PLATFORMS,
-  SocialPostMediaType,
-  SocialPostPlatform,
-  SocialPostStatus,
+  SOCIAL_CONTENT_PLATFORMS,
+  PublicationSnapshot,
+  SocialContentMediaType,
+  SocialContentPlatform,
 } from '../social-posts.types';
-import { SocialPostQueueProducer } from './social-post-queue.producer';
+import { PublicationQueueProducer } from './social-post-queue.producer';
 
-export interface SocialPostWithTasks extends SocialPostEntity {
-  tasks?: SocialPostTaskEntity[];
+export interface SocialContentAssetWithDetails
+  extends SocialContentAssetEntity {
+  latestVersion?: SocialContentAssetVersionEntity;
+  publicationCounts: {
+    pending: number;
+    publishing: number;
+    success: number;
+    failed: number;
+    canceled: number;
+  };
+  publications?: PublicationInstanceEntity[];
 }
 
 @Injectable()
-export class SocialPostsService {
-  private readonly logger = new Logger(SocialPostsService.name);
+export class SocialContentAssetsService {
+  private readonly logger = new Logger(SocialContentAssetsService.name);
 
   constructor(
-    private readonly postRepository: SocialPostRepository,
-    private readonly taskRepository: SocialPostTaskRepository,
-    private readonly versionRepository: SocialPostVersionRepository,
+    private readonly assetRepository: SocialContentAssetRepository,
+    private readonly publicationRepository: PublicationInstanceRepository,
+    private readonly versionRepository: SocialContentAssetVersionRepository,
     private readonly channelRepository: ChannelRepository,
     private readonly publisherRegistry: SocialPublisherRegistry,
-    private readonly queueProducer: SocialPostQueueProducer,
+    private readonly queueProducer: PublicationQueueProducer,
     private readonly auditLogService: AuditLogService,
     private readonly cls: ClsService,
   ) {}
 
-  async create(dto: CreateSocialPostDto): Promise<SocialPostWithTasks> {
+  async create(
+    dto: CreateSocialContentAssetDto,
+  ): Promise<SocialContentAssetWithDetails> {
     const tenantId = this.requireTenantId();
     const userId = this.cls.get('userId');
     const mediaUrls = dto.mediaUrls ?? [];
     const mediaType = dto.mediaType ?? this.inferMediaType(mediaUrls);
+    const title = this.resolveTitle(dto.title, dto.content, mediaUrls);
 
-    const post = await this.postRepository.create({
+    const asset = await this.assetRepository.create({
       tenantId,
-      content: dto.content,
-      mediaUrls,
-      mediaType,
-      status: 'DRAFT',
-      approvalStatus: 'PENDING',
+      title,
+      status: 'ACTIVE',
       createdById: userId,
     });
 
-    // Create SocialPostVersion v1
     const version = await this.versionRepository.create({
       tenantId,
-      postId: post.id,
+      assetId: asset.id,
       versionNumber: 1,
       content: dto.content,
       mediaUrls,
       mediaType,
+      approvalStatus: 'PENDING',
       savedById: userId,
     });
 
-    // Update SocialPost with latestVersionId
-    const updatedPost = await this.postRepository.update(tenantId, post.id, {
+    const updatedAsset = await this.assetRepository.update(tenantId, asset.id, {
       latestVersionId: version.id,
     } as any);
 
-    await this.recordAudit(tenantId, post.id, 'SOCIAL_POST_CREATED', {
-      actorId: userId,
-      newStatus: post.status,
-    });
-
-    await this.recordAudit(tenantId, post.id, 'SOCIAL_POST_VERSION_CREATED', {
+    await this.recordAssetAudit(tenantId, asset.id, 'SOCIAL_ASSET_CREATED', {
       actorId: userId,
       metadata: { versionId: version.id, versionNumber: 1 },
     });
 
-    return { ...updatedPost!, tasks: [] };
+    return this.decorateAsset(updatedAsset ?? asset, {
+      latestVersion: version,
+      includePublications: true,
+    });
   }
 
-  async findPaginated(query: ListSocialPostsQueryDto) {
+  async findPaginated(query: ListSocialContentAssetsQueryDto) {
     const tenantId = this.requireTenantId();
-    const result = await this.postRepository.findPaginated(
+    const result = await this.assetRepository.findPaginated(
       {
         tenantId,
         status: query.status,
@@ -114,28 +121,270 @@ export class SocialPostsService {
       Number(query.limit ?? 20),
     );
 
-    const items = await Promise.all(
-      result.items.map(async (post) => {
-        const tasks = await this.taskRepository.findByPostId(tenantId, post.id);
-        return { ...post, tasks };
-      }),
+    const decorated = await Promise.all(
+      result.items.map((asset) =>
+        this.decorateAsset(asset, { includePublications: false }),
+      ),
+    );
+    const items = query.approvalStatus
+      ? decorated.filter(
+          (asset) =>
+            asset.latestVersion?.approvalStatus === query.approvalStatus,
+        )
+      : decorated;
+
+    return {
+      items,
+      total: query.approvalStatus ? items.length : result.total,
+    };
+  }
+
+  async findById(id: string): Promise<SocialContentAssetWithDetails> {
+    const tenantId = this.requireTenantId();
+    const asset = await this.findAssetOrThrow(tenantId, id);
+    return this.decorateAsset(asset, { includePublications: true });
+  }
+
+  async update(
+    id: string,
+    dto: UpdateSocialContentAssetDto,
+  ): Promise<SocialContentAssetWithDetails> {
+    const tenantId = this.requireTenantId();
+    const userId = this.cls.get('userId');
+    const current = await this.findAssetOrThrow(tenantId, id);
+    if (current.status === 'ARCHIVED') {
+      throw new BadRequestException('Archived assets cannot be updated.');
+    }
+
+    const latestVersion = await this.versionRepository.findLatestByAssetId(
+      tenantId,
+      id,
+    );
+    if (!latestVersion) {
+      throw new NotFoundException('Social content asset version not found.');
+    }
+
+    const mediaUrls = dto.mediaUrls ?? latestVersion.mediaUrls;
+    const content = dto.content ?? latestVersion.content;
+    const mediaType =
+      dto.mediaType ??
+      (dto.mediaUrls
+        ? this.inferMediaType(mediaUrls)
+        : latestVersion.mediaType);
+    const nextVersionNumber = await this.versionRepository.getNextVersionNumber(
+      tenantId,
+      id,
     );
 
-    return { items, total: result.total };
+    const version = await this.versionRepository.create({
+      tenantId,
+      assetId: id,
+      versionNumber: nextVersionNumber,
+      content,
+      mediaUrls,
+      mediaType,
+      approvalStatus: 'PENDING',
+      savedById: userId,
+      changeNote: dto.changeNote,
+    });
+
+    const asset = await this.assetRepository.update(tenantId, id, {
+      title: dto.title ?? current.title,
+      latestVersionId: version.id,
+    } as any);
+    if (!asset) throw new NotFoundException('Social content asset not found');
+
+    await this.recordAssetAudit(tenantId, id, 'SOCIAL_ASSET_VERSION_CREATED', {
+      actorId: userId,
+      metadata: {
+        versionId: version.id,
+        versionNumber: nextVersionNumber,
+        changeNote: dto.changeNote,
+      },
+    });
+
+    return this.decorateAsset(asset, {
+      latestVersion: version,
+      includePublications: true,
+    });
   }
 
-  async findById(id: string): Promise<SocialPostWithTasks> {
+  async archive(id: string): Promise<void> {
     const tenantId = this.requireTenantId();
-    const post = await this.findPostOrThrow(tenantId, id);
-    const tasks = await this.taskRepository.findByPostId(tenantId, id);
-    return { ...post, tasks };
+    const current = await this.findAssetOrThrow(tenantId, id);
+    if (current.status === 'ARCHIVED') return;
+
+    const archived = await this.assetRepository.archive(tenantId, id);
+    if (!archived)
+      throw new NotFoundException('Social content asset not found');
+
+    await this.recordAssetAudit(tenantId, id, 'SOCIAL_ASSET_ARCHIVED', {
+      actorId: this.cls.get('userId'),
+    });
   }
 
-  async listTasks(query: ListSocialPostTasksQueryDto) {
+  async getVersions(id: string): Promise<SocialContentAssetVersionEntity[]> {
     const tenantId = this.requireTenantId();
-    return this.taskRepository.findPaginated(
+    await this.findAssetOrThrow(tenantId, id);
+    return this.versionRepository.findByAssetId(tenantId, id);
+  }
+
+  async approveVersion(
+    assetId: string,
+    versionId: string,
+  ): Promise<SocialContentAssetVersionEntity> {
+    const tenantId = this.requireTenantId();
+    const userId = this.cls.get('userId');
+    await this.findAssetOrThrow(tenantId, assetId);
+    const version = await this.findVersionForAssetOrThrow(
+      tenantId,
+      assetId,
+      versionId,
+    );
+
+    const approved = await this.versionRepository.update(tenantId, version.id, {
+      approvalStatus: 'APPROVED',
+      approvedById: userId,
+      approvedAt: new Date(),
+      rejectionReason: undefined,
+    } as any);
+    if (!approved) {
+      throw new NotFoundException('Social content asset version not found');
+    }
+
+    await this.recordAssetAudit(
+      tenantId,
+      assetId,
+      'SOCIAL_ASSET_VERSION_APPROVED',
+      {
+        actorId: userId,
+        metadata: { versionId, versionNumber: version.versionNumber },
+      },
+    );
+
+    return approved;
+  }
+
+  async rejectVersion(
+    assetId: string,
+    versionId: string,
+    dto: RejectSocialContentAssetVersionDto,
+  ): Promise<SocialContentAssetVersionEntity> {
+    const tenantId = this.requireTenantId();
+    const userId = this.cls.get('userId');
+    await this.findAssetOrThrow(tenantId, assetId);
+    const version = await this.findVersionForAssetOrThrow(
+      tenantId,
+      assetId,
+      versionId,
+    );
+
+    const rejected = await this.versionRepository.update(tenantId, version.id, {
+      approvalStatus: 'REJECTED',
+      approvedById: undefined,
+      approvedAt: undefined,
+      rejectionReason: dto.reason,
+    } as any);
+    if (!rejected) {
+      throw new NotFoundException('Social content asset version not found');
+    }
+
+    await this.recordAssetAudit(
+      tenantId,
+      assetId,
+      'SOCIAL_ASSET_VERSION_REJECTED',
+      {
+        actorId: userId,
+        metadata: {
+          versionId,
+          versionNumber: version.versionNumber,
+          reason: dto.reason,
+        },
+      },
+    );
+
+    return rejected;
+  }
+
+  async createPublications(
+    assetId: string,
+    dto: CreatePublicationInstancesDto,
+  ): Promise<PublicationInstanceEntity[]> {
+    const tenantId = this.requireTenantId();
+    const userId = this.cls.get('userId');
+    const asset = await this.findAssetOrThrow(tenantId, assetId);
+    if (asset.status === 'ARCHIVED') {
+      throw new BadRequestException('Archived assets cannot be published.');
+    }
+
+    const version = dto.versionId
+      ? await this.findVersionForAssetOrThrow(tenantId, assetId, dto.versionId)
+      : await this.versionRepository.findLatestByAssetId(tenantId, assetId);
+    if (!version) {
+      throw new NotFoundException('Approved content version not found.');
+    }
+    if (version.approvalStatus !== 'APPROVED') {
+      throw new BadRequestException(
+        'Content version must be approved before publishing.',
+      );
+    }
+
+    const scheduledAt = this.parseOptionalDate(dto.scheduledAt, 'scheduledAt');
+    const channels = await this.resolvePublishChannels(
+      tenantId,
+      dto.channelIds,
+    );
+    const overridesByChannelId = new Map(
+      (dto.overrides ?? []).map((override) => [override.channelId, override]),
+    );
+    const publicationGroupId = ulid();
+
+    const payloads = channels.map((channel) => {
+      const override = overridesByChannelId.get(channel.id);
+      const snapshot = this.buildPublicationSnapshot(version, override);
+      this.validateSnapshotForPlatform(channel.type, snapshot);
+
+      return {
+        tenantId,
+        assetId,
+        sourceVersionId: version.id,
+        publicationGroupId,
+        channelId: channel.id,
+        channelName: channel.name,
+        channelAccount: channel.account,
+        platform: channel.type as SocialContentPlatform,
+        snapshot,
+        status: 'PENDING' as const,
+        scheduledAt,
+      };
+    });
+
+    const instances = await this.publicationRepository.createMany(payloads);
+    await Promise.all(
+      instances.map((instance) =>
+        this.queueProducer.schedule(tenantId, instance.id, scheduledAt),
+      ),
+    );
+
+    await this.recordAssetAudit(tenantId, assetId, 'PUBLICATIONS_CREATED', {
+      actorId: userId,
+      metadata: {
+        publicationGroupId,
+        versionId: version.id,
+        scheduledAt,
+        channelIds: channels.map((channel) => channel.id),
+      },
+    });
+
+    return instances;
+  }
+
+  async listPublicationInstances(query: ListPublicationInstancesQueryDto) {
+    const tenantId = this.requireTenantId();
+    return this.publicationRepository.findPaginated(
       {
         tenantId,
+        assetId: query.assetId,
         status: query.status,
         platform: query.platform,
         from: query.from ? new Date(query.from) : undefined,
@@ -146,397 +395,326 @@ export class SocialPostsService {
     );
   }
 
-  async update(
-    id: string,
-    dto: UpdateSocialPostDto,
-  ): Promise<SocialPostWithTasks> {
+  async updatePublicationInstance(
+    instanceId: string,
+    dto: UpdatePublicationInstanceDto,
+  ): Promise<PublicationInstanceEntity> {
     const tenantId = this.requireTenantId();
-    const userId = this.cls.get('userId');
-    const current = await this.findPostOrThrow(tenantId, id);
+    const instance = await this.findPublicationOrThrow(tenantId, instanceId);
+    if (instance.status !== 'PENDING') {
+      throw new BadRequestException(
+        'Only pending publication instances can be edited.',
+      );
+    }
 
-    const mediaUrls = dto.mediaUrls ?? current.mediaUrls;
-    const newContent = dto.content ?? current.content;
-    const newMediaType = dto.mediaType ?? this.inferMediaType(mediaUrls);
-
-    // Save new version
-    const nextVersionNumber = await this.versionRepository.getNextVersionNumber(tenantId, id);
-    const version = await this.versionRepository.create({
-      tenantId,
-      postId: id,
-      versionNumber: nextVersionNumber,
-      content: newContent,
+    const mediaUrls = dto.mediaUrls ?? instance.snapshot.mediaUrls;
+    const snapshot: PublicationSnapshot = {
+      content: dto.content ?? instance.snapshot.content,
       mediaUrls,
-      mediaType: newMediaType,
-      savedById: userId,
-      changeNote: dto.changeNote,
-    });
-
-    const update: Partial<SocialPostEntity> = {
-      content: newContent,
-      mediaUrls,
-      mediaType: newMediaType,
-      latestVersionId: version.id,
+      mediaType:
+        dto.mediaType ??
+        (dto.mediaUrls
+          ? this.inferMediaType(mediaUrls)
+          : instance.snapshot.mediaType),
     };
+    this.validateSnapshotForPlatform(instance.platform, snapshot);
 
-    const post = await this.postRepository.update(tenantId, id, update as any);
-    if (!post) throw new NotFoundException('Social post not found');
-
-    await this.recordAudit(tenantId, id, 'SOCIAL_POST_UPDATED', {
-      actorId: userId,
-      oldStatus: current.status,
-      newStatus: post.status,
-    });
-
-    await this.recordAudit(tenantId, id, 'SOCIAL_POST_VERSION_CREATED', {
-      actorId: userId,
-      metadata: { versionId: version.id, versionNumber: nextVersionNumber },
-    });
-
-    const tasks = await this.taskRepository.findByPostId(tenantId, id);
-    return { ...post, tasks };
-  }
-
-  async approve(id: string): Promise<SocialPostWithTasks> {
-    const tenantId = this.requireTenantId();
-    const userId = this.cls.get('userId');
-    const current = await this.findPostOrThrow(tenantId, id);
-    if (current.approvalStatus === 'REJECTED') {
-      throw new BadRequestException('Rejected posts cannot be approved again.');
-    }
-
-    const post = await this.postRepository.update(tenantId, id, {
-      approvalStatus: 'APPROVED',
-      approvedById: userId,
-      approvedAt: new Date(),
-    } as any);
-    if (!post) throw new NotFoundException('Social post not found');
-
-    await this.recordAudit(tenantId, id, 'SOCIAL_POST_APPROVED', {
-      actorId: userId,
-      oldStatus: current.status,
-      newStatus: post.status,
-    });
-
-    if (post.status === 'SCHEDULED' && post.scheduledAt) {
-      const scheduledTasks = await this.taskRepository.findByPostId(
-        tenantId,
-        id,
-      );
-      const batchIds = [...new Set(scheduledTasks.map((task) => task.batchId))];
-      await Promise.all(
-        batchIds.map((batchId) =>
-          this.queueProducer.schedule(tenantId, id, batchId, post.scheduledAt!),
-        ),
-      );
-    }
-
-    return this.findById(id);
-  }
-
-  async reject(
-    id: string,
-    dto: RejectSocialPostDto,
-  ): Promise<SocialPostWithTasks> {
-    const tenantId = this.requireTenantId();
-    const current = await this.findPostOrThrow(tenantId, id);
-    if (current.status === 'PUBLISHING' || current.status === 'COMPLETED') {
-      throw new BadRequestException(
-        `Cannot reject a post in ${current.status} status.`,
-      );
-    }
-
-    const post = await this.postRepository.update(tenantId, id, {
-      approvalStatus: 'REJECTED',
-      errorSummary: dto.reason,
-    } as any);
-    if (!post) throw new NotFoundException('Social post not found');
-
-    await this.recordAudit(tenantId, id, 'SOCIAL_POST_REJECTED', {
-      actorId: this.cls.get('userId'),
-      oldStatus: current.status,
-      newStatus: post.status,
-      metadata: { reason: dto.reason },
-    });
-
-    return this.findById(id);
-  }
-
-  async delete(id: string): Promise<void> {
-    const tenantId = this.requireTenantId();
-    const current = await this.findPostOrThrow(tenantId, id);
-    const activeTasks = (
-      await this.taskRepository.findByPostId(tenantId, id)
-    ).filter((task) => task.status === 'PUBLISHING');
-    if (activeTasks.length > 0) {
-      throw new BadRequestException(
-        'Cannot delete a post while it is publishing.',
-      );
-    }
-
-    await this.taskRepository.deleteForPost(tenantId, id);
-    const deleted = await this.postRepository.delete(tenantId, id);
-    if (!deleted) throw new NotFoundException('Social post not found');
-
-    await this.recordAudit(tenantId, id, 'SOCIAL_POST_DELETED', {
-      actorId: this.cls.get('userId'),
-      oldStatus: current.status,
-    });
-  }
-
-  async publish(
-    id: string,
-    dto: PublishSocialPostDto,
-  ): Promise<SocialPostWithTasks> {
-    const tenantId = this.requireTenantId();
-    const userId = this.cls.get('userId');
-    const current = await this.findPostOrThrow(tenantId, id);
-    if (!current.content.trim() && current.mediaUrls.length === 0) {
-      throw new BadRequestException('Add content or media before publishing.');
-    }
-
-    const scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : undefined;
-    if (dto.scheduledAt && Number.isNaN(scheduledAt?.getTime())) {
-      throw new BadRequestException('scheduledAt must be a valid date.');
-    }
-
-    const channels = await this.resolvePublishChannels(
+    const scheduledAt = dto.scheduledAt
+      ? this.parseOptionalDate(dto.scheduledAt, 'scheduledAt')
+      : instance.scheduledAt;
+    const updated = await this.publicationRepository.update(
       tenantId,
-      dto.channelIds,
-    );
-    const latestVersion = await this.versionRepository.findLatestByPostId(tenantId, id);
-    if (!latestVersion) {
-      throw new NotFoundException('Social post version history not found.');
-    }
-    const batchId = ulid();
-    await this.taskRepository.createMany(
-      this.buildTaskPayloads(tenantId, current, latestVersion, channels, batchId, scheduledAt),
-    );
-
-    const post = await this.postRepository.update(tenantId, id, {
-      status: scheduledAt ? 'SCHEDULED' : 'DRAFT',
-      approvalStatus: 'APPROVED',
-      approvedById: userId,
-      approvedAt: new Date(),
-      scheduledAt,
-    } as any);
-    if (!post) throw new NotFoundException('Social post not found');
-
-    await this.recordAudit(tenantId, id, 'SOCIAL_POST_PUBLISH_REQUESTED', {
-      actorId: userId,
-      oldStatus: current.status,
-      newStatus: scheduledAt ? 'SCHEDULED' : 'PENDING',
-      metadata: {
-        batchId,
-        channelIds: channels.map((channel) => channel.id),
+      instanceId,
+      {
+        snapshot,
         scheduledAt,
-      },
-    });
-
-    if (scheduledAt) {
-      await this.queueProducer.schedule(tenantId, id, batchId, scheduledAt);
-    } else {
-      await this.publishPostById(tenantId, id, batchId);
-    }
-
-    return this.findById(id);
-  }
-
-  async schedule(
-    id: string,
-    dto: PublishSocialPostDto,
-  ): Promise<SocialPostWithTasks> {
-    if (!dto.scheduledAt) {
-      throw new BadRequestException('scheduledAt is required.');
-    }
-    return this.publish(id, dto);
-  }
-
-  async publishNow(
-    id: string,
-    dto: PublishSocialPostDto,
-  ): Promise<SocialPostWithTasks> {
-    return this.publish(id, { ...dto, scheduledAt: undefined });
-  }
-
-  async legacyPublishNow(id: string): Promise<SocialPostWithTasks> {
-    const tenantId = this.requireTenantId();
-    const tasks = await this.taskRepository.findByPostId(tenantId, id);
-    if (tasks.length === 0) {
-      throw new BadRequestException(
-        'Select channels before publishing this post.',
-      );
-    }
-    await this.publishPostById(tenantId, id, tasks[0].batchId);
-    return this.findById(id);
-  }
-
-  async retryTask(taskId: string): Promise<SocialPostWithTasks> {
-    const tenantId = this.requireTenantId();
-    const task = await this.taskRepository.findById(tenantId, taskId);
-    if (!task) throw new NotFoundException('Social post task not found');
-    if (task.status !== 'FAILED') {
-      throw new BadRequestException('Only failed tasks can be retried.');
-    }
-    await this.taskRepository.resetForRetry(tenantId, taskId);
-    await this.publishPostById(tenantId, task.postId, task.batchId, taskId);
-    return this.findById(task.postId);
-  }
-
-  async publishPostById(
-    tenantId: string,
-    postId: string,
-    batchId: string,
-    onlyTaskId?: string,
-  ): Promise<void> {
-    const post = await this.findPostOrThrow(tenantId, postId);
-    if (post.approvalStatus !== 'APPROVED') {
-      throw new BadRequestException(
-        'Social post must be approved before publishing.',
-      );
-    }
-
-    const allTasks = await this.taskRepository.findByBatchId(tenantId, batchId);
-    const tasksToRun = allTasks.filter((task) => {
-      if (onlyTaskId) return task.id === onlyTaskId;
-      return task.status !== 'SUCCESS';
-    });
-
-    if (tasksToRun.length === 0) return;
-
-    await this.postRepository.updateStatus(tenantId, postId, 'PUBLISHING');
-    await this.recordAudit(tenantId, postId, 'SOCIAL_POST_PUBLISH_STARTED', {
-      oldStatus: post.status,
-      newStatus: 'PUBLISHING',
-    });
-
-    await Promise.all(
-      tasksToRun.map((task) => this.publishTask(tenantId, post, task)),
+      } as any,
     );
+    if (!updated) throw new NotFoundException('Publication instance not found');
 
-    const finalTasks = await this.taskRepository.findByBatchId(
+    if (dto.scheduledAt) {
+      await this.queueProducer.schedule(tenantId, instanceId, scheduledAt);
+    }
+
+    await this.recordPublicationAudit(
       tenantId,
-      batchId,
-    );
-    const successCount = finalTasks.filter(
-      (task) => task.status === 'SUCCESS',
-    ).length;
-    const failedTasks = finalTasks.filter((task) => task.status === 'FAILED');
-    const nextStatus: SocialPostStatus =
-      successCount === finalTasks.length
-        ? 'COMPLETED'
-        : successCount > 0
-          ? 'PARTIALLY_FAILED'
-          : 'FAILED';
-
-    await this.postRepository.updateStatus(tenantId, postId, nextStatus, {
-      publishedAt: successCount > 0 ? new Date() : undefined,
-      errorSummary:
-        failedTasks.length > 0
-          ? failedTasks
-              .map((task) => `${task.channelName}: ${task.errorMessage}`)
-              .join('\n')
-          : undefined,
-    } as any);
-
-    await this.recordAudit(tenantId, postId, 'SOCIAL_POST_PUBLISH_FINISHED', {
-      oldStatus: 'PUBLISHING',
-      newStatus: nextStatus,
-      metadata: {
-        successCount,
-        failedCount: failedTasks.length,
+      instanceId,
+      'PUBLICATION_INSTANCE_UPDATED',
+      {
+        actorId: this.cls.get('userId'),
+        metadata: { assetId: instance.assetId, scheduledAt },
       },
-    });
+    );
+
+    return updated;
   }
 
-  private async publishTask(
+  async cancelPublicationInstance(
+    instanceId: string,
+  ): Promise<PublicationInstanceEntity> {
+    const tenantId = this.requireTenantId();
+    const instance = await this.findPublicationOrThrow(tenantId, instanceId);
+    if (instance.status !== 'PENDING') {
+      throw new BadRequestException(
+        'Only pending publication instances can be canceled.',
+      );
+    }
+
+    await this.queueProducer.cancel(instanceId);
+    const canceled = await this.publicationRepository.updateStatus(
+      tenantId,
+      instanceId,
+      'CANCELED',
+    );
+    if (!canceled)
+      throw new NotFoundException('Publication instance not found');
+
+    await this.recordPublicationAudit(
+      tenantId,
+      instanceId,
+      'PUBLICATION_INSTANCE_CANCELED',
+      {
+        actorId: this.cls.get('userId'),
+        metadata: { assetId: instance.assetId },
+      },
+    );
+
+    return canceled;
+  }
+
+  async retryPublicationInstance(
+    instanceId: string,
+  ): Promise<PublicationInstanceEntity> {
+    const tenantId = this.requireTenantId();
+    const instance = await this.findPublicationOrThrow(tenantId, instanceId);
+    if (instance.status !== 'FAILED') {
+      throw new BadRequestException(
+        'Only failed publication instances can be retried.',
+      );
+    }
+
+    const reset = await this.publicationRepository.resetForRetry(
+      tenantId,
+      instanceId,
+    );
+    if (!reset) throw new NotFoundException('Publication instance not found');
+    await this.queueProducer.schedule(tenantId, instanceId);
+
+    await this.recordPublicationAudit(
+      tenantId,
+      instanceId,
+      'PUBLICATION_INSTANCE_RETRIED',
+      {
+        actorId: this.cls.get('userId'),
+        metadata: { assetId: instance.assetId },
+      },
+    );
+
+    return reset;
+  }
+
+  async publishPublicationInstanceNow(
+    instanceId: string,
+  ): Promise<PublicationInstanceEntity> {
+    const tenantId = this.requireTenantId();
+    const instance = await this.findPublicationOrThrow(tenantId, instanceId);
+    if (instance.status !== 'PENDING') {
+      throw new BadRequestException(
+        'Only pending publication instances can be published now.',
+      );
+    }
+
+    const updated = await this.publicationRepository.update(
+      tenantId,
+      instanceId,
+      {
+        scheduledAt: new Date(),
+      } as any,
+    );
+    if (!updated) throw new NotFoundException('Publication instance not found');
+    await this.queueProducer.schedule(tenantId, instanceId);
+    return updated;
+  }
+
+  async publishPublicationInstanceById(
     tenantId: string,
-    post: SocialPostEntity,
-    task: SocialPostTaskEntity,
+    instanceId: string,
   ): Promise<void> {
-    await this.taskRepository.updateStatus(tenantId, task.id, 'PUBLISHING');
+    const instance = await this.publicationRepository.findById(
+      tenantId,
+      instanceId,
+    );
+    if (!instance)
+      throw new NotFoundException('Publication instance not found');
+    if (['CANCELED', 'SUCCESS', 'PUBLISHING'].includes(instance.status)) return;
+
+    await this.publicationRepository.updateStatus(
+      tenantId,
+      instanceId,
+      'PUBLISHING',
+    );
+
     try {
       const channel = await this.channelRepository.findByIdWithCredentials(
         tenantId,
-        task.channelId,
+        instance.channelId,
       );
       if (!channel || channel.status !== 'Connected') {
         throw new BadRequestException(
-          `${task.channelName} is not connected. Reconnect the channel and retry.`,
+          `${instance.channelName} is not connected. Reconnect the channel and retry.`,
         );
       }
 
-      const publisher = this.publisherRegistry.get(task.platform);
+      const publisher = this.publisherRegistry.get(instance.platform);
       if (!publisher) {
         throw new BadRequestException(
-          `No publisher strategy is registered for ${task.platform}.`,
+          `No publisher strategy is registered for ${instance.platform}.`,
         );
       }
 
-      const postSnapshot: SocialPostEntity = {
-        ...post,
-        content: task.snapshotAtSchedule.content,
-        mediaUrls: task.snapshotAtSchedule.mediaUrls,
-        mediaType: task.snapshotAtSchedule.mediaType,
-      };
-
+      publisher.validateContentLimits(instance.snapshot);
       const result = await publisher.publish({
-        post: postSnapshot,
-        task,
+        post: instance.snapshot,
+        instance,
         channel,
       });
       const publishedAt = new Date();
-      await this.taskRepository.updateStatus(tenantId, task.id, 'SUCCESS', {
-        publishedAt,
-        platformPostId: result.platformPostId,
-        platformMediaId: result.platformMediaId,
-        platformResponseRaw: result.raw,
-        errorCode: undefined,
-        errorMessage: undefined,
-        snapshotAtPublish: {
-          content: task.snapshotAtSchedule.content,
-          mediaUrls: task.snapshotAtSchedule.mediaUrls,
-          mediaType: task.snapshotAtSchedule.mediaType,
+      await this.publicationRepository.updateStatus(
+        tenantId,
+        instanceId,
+        'SUCCESS',
+        {
           publishedAt,
-        },
-      } as any);
-
-      await this.recordAudit(tenantId, post.id, 'SOCIAL_POST_TASK_SUCCEEDED', {
-        metadata: {
-          taskId: task.id,
-          channelId: task.channelId,
-          platform: task.platform,
           platformPostId: result.platformPostId,
+          platformMediaId: result.platformMediaId,
+          platformResponseRaw: result.raw,
+          errorCode: undefined,
+          errorMessage: undefined,
+        } as any,
+      );
+
+      await this.recordPublicationAudit(
+        tenantId,
+        instanceId,
+        'PUBLICATION_INSTANCE_SUCCEEDED',
+        {
+          metadata: {
+            assetId: instance.assetId,
+            channelId: instance.channelId,
+            platform: instance.platform,
+            platformPostId: result.platformPostId,
+          },
         },
-      });
+      );
     } catch (error) {
       const normalized = normalizePublisherError(error);
       this.logger.error(
-        `Social post task ${task.id} failed: [${normalized.code}] ${normalized.message}`,
+        `Publication instance ${instance.id} failed: [${normalized.code}] ${normalized.message}`,
       );
 
-      await this.taskRepository.incrementRetry(
+      await this.publicationRepository.incrementRetry(
         tenantId,
-        task.id,
+        instance.id,
         normalized.code,
         normalized.message,
       );
 
       if (normalized.isAuthError) {
-        await this.channelRepository.update(tenantId, task.channelId, {
+        await this.channelRepository.update(tenantId, instance.channelId, {
           status: 'Error',
         });
       }
 
-      await this.recordAudit(tenantId, post.id, 'SOCIAL_POST_TASK_FAILED', {
-        metadata: {
-          taskId: task.id,
-          channelId: task.channelId,
-          platform: task.platform,
-          errorCode: normalized.code,
-          errorMessage: normalized.message,
+      await this.recordPublicationAudit(
+        tenantId,
+        instanceId,
+        'PUBLICATION_INSTANCE_FAILED',
+        {
+          metadata: {
+            assetId: instance.assetId,
+            channelId: instance.channelId,
+            platform: instance.platform,
+            errorCode: normalized.code,
+            errorMessage: normalized.message,
+          },
         },
-      });
+      );
     }
+  }
+
+  private async decorateAsset(
+    asset: SocialContentAssetEntity,
+    options: {
+      latestVersion?: SocialContentAssetVersionEntity;
+      includePublications: boolean;
+    },
+  ): Promise<SocialContentAssetWithDetails> {
+    const [latestVersion, publications] = await Promise.all([
+      options.latestVersion
+        ? Promise.resolve(options.latestVersion)
+        : asset.latestVersionId
+          ? this.versionRepository.findById(
+              asset.tenantId,
+              asset.latestVersionId,
+            )
+          : this.versionRepository.findLatestByAssetId(
+              asset.tenantId,
+              asset.id,
+            ),
+      this.publicationRepository.findByAssetId(asset.tenantId, asset.id),
+    ]);
+
+    return {
+      ...asset,
+      latestVersion: latestVersion ?? undefined,
+      publicationCounts: this.countPublications(publications),
+      publications: options.includePublications ? publications : undefined,
+    };
+  }
+
+  private countPublications(publications: PublicationInstanceEntity[]) {
+    return {
+      pending: publications.filter((item) => item.status === 'PENDING').length,
+      publishing: publications.filter((item) => item.status === 'PUBLISHING')
+        .length,
+      success: publications.filter((item) => item.status === 'SUCCESS').length,
+      failed: publications.filter((item) => item.status === 'FAILED').length,
+      canceled: publications.filter((item) => item.status === 'CANCELED')
+        .length,
+    };
+  }
+
+  private buildPublicationSnapshot(
+    version: SocialContentAssetVersionEntity,
+    override?: {
+      content?: string;
+      mediaUrls?: string[];
+      mediaType?: SocialContentMediaType;
+    },
+  ): PublicationSnapshot {
+    const mediaUrls = override?.mediaUrls ?? version.mediaUrls;
+    return {
+      content: override?.content ?? version.content,
+      mediaUrls,
+      mediaType:
+        override?.mediaType ??
+        (override?.mediaUrls
+          ? this.inferMediaType(mediaUrls)
+          : version.mediaType),
+    };
+  }
+
+  private validateSnapshotForPlatform(
+    platform: string,
+    snapshot: PublicationSnapshot,
+  ) {
+    const publisher = this.publisherRegistry.get(platform);
+    if (!publisher) {
+      throw new BadRequestException(
+        `No publisher strategy is registered for ${platform}.`,
+      );
+    }
+    publisher.validateContentLimits(snapshot);
   }
 
   private async resolvePublishChannels(
@@ -569,48 +747,20 @@ export class SocialPostsService {
 
     const unsupported = resolved.find(
       (channel) =>
-        !SOCIAL_POST_PLATFORMS.includes(channel.type as SocialPostPlatform),
+        !SOCIAL_CONTENT_PLATFORMS.includes(
+          channel.type as SocialContentPlatform,
+        ),
     );
     if (unsupported) {
       throw new BadRequestException(
-        `${unsupported.type} is not supported by Social Post Management yet.`,
+        `${unsupported.type} is not supported by Social Content Library yet.`,
       );
     }
 
     return resolved;
   }
 
-  private buildTaskPayloads(
-    tenantId: string,
-    post: SocialPostEntity,
-    version: SocialPostVersionEntity,
-    channels: Channel[],
-    batchId: string,
-    scheduledAt?: Date,
-  ) {
-    const lockedAt = new Date();
-    return channels.map((channel) => ({
-      tenantId,
-      postId: post.id,
-      batchId,
-      channelId: channel.id,
-      channelName: channel.name,
-      channelAccount: channel.account,
-      snapshotAtSchedule: {
-        versionId: version.id,
-        versionNumber: version.versionNumber,
-        content: version.content,
-        mediaUrls: version.mediaUrls,
-        mediaType: version.mediaType,
-        lockedAt,
-      },
-      platform: channel.type as SocialPostPlatform,
-      status: 'PENDING' as const,
-      scheduledAt,
-    }));
-  }
-
-  private inferMediaType(mediaUrls: string[]): SocialPostMediaType {
+  private inferMediaType(mediaUrls: string[]): SocialContentMediaType {
     if (mediaUrls.length === 0) return 'text';
     const imageCount = mediaUrls.filter((url) =>
       /\.(apng|avif|gif|jpe?g|png|webp)(\?.*)?$/i.test(url),
@@ -623,142 +773,61 @@ export class SocialPostsService {
     return 'mixed';
   }
 
-  async getVersions(id: string): Promise<SocialPostVersionEntity[]> {
-    const tenantId = this.requireTenantId();
-    return this.versionRepository.findByPostId(tenantId, id);
+  private parseOptionalDate(value: string | undefined, field: string) {
+    if (!value) return undefined;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(`${field} must be a valid date.`);
+    }
+    return date;
   }
 
-  async getEditHistory(taskId: string) {
-    const tenantId = this.requireTenantId();
-    const task = await this.taskRepository.findById(tenantId, taskId);
-    if (!task) throw new NotFoundException('Social post task not found');
-    return task.editHistory ?? [];
+  private resolveTitle(
+    title: string | undefined,
+    content: string,
+    mediaUrls: string[],
+  ): string {
+    const trimmed = title?.trim();
+    if (trimmed) return trimmed;
+    const firstLine = content.trim().split('\n')[0]?.trim();
+    if (firstLine) return firstLine.slice(0, 80);
+    return mediaUrls.length > 0
+      ? `Media asset (${mediaUrls.length})`
+      : 'Untitled asset';
   }
 
-  async syncToScheduled(id: string, taskIds?: string[]): Promise<void> {
-    const tenantId = this.requireTenantId();
-    const userId = this.cls.get('userId');
-    const current = await this.findPostOrThrow(tenantId, id);
-
-    // Fetch the latest version
-    const latestVersion = await this.versionRepository.findLatestByPostId(tenantId, id);
-    if (!latestVersion) {
-      throw new NotFoundException('Social post version history not found.');
-    }
-
-    // Fetch tasks for this post
-    const allTasks = await this.taskRepository.findByPostId(tenantId, id);
-    const pendingTasks = allTasks.filter(
-      (task) =>
-        task.status === 'PENDING' &&
-        (!taskIds || taskIds.includes(task.id))
-    );
-
-    if (pendingTasks.length === 0) {
-      return;
-    }
-
-    await Promise.all(
-      pendingTasks.map(async (task) => {
-        await this.taskRepository.update(tenantId, task.id, {
-          snapshotAtSchedule: {
-            versionId: latestVersion.id,
-            versionNumber: latestVersion.versionNumber,
-            content: latestVersion.content,
-            mediaUrls: latestVersion.mediaUrls,
-            mediaType: latestVersion.mediaType,
-            lockedAt: new Date(),
-          },
-        } as any);
-
-        await this.recordAudit(tenantId, id, 'SOCIAL_POST_TASK_SNAPSHOT_RESYNCED', {
-          actorId: userId,
-          metadata: {
-            taskId: task.id,
-            versionId: latestVersion.id,
-            versionNumber: latestVersion.versionNumber,
-          },
-        });
-      })
-    );
-  }
-
-  async editLive(
-    taskId: string,
-    dto: { content: string; mediaUrls?: string[]; reason?: string },
-  ): Promise<SocialPostTaskEntity> {
-    const tenantId = this.requireTenantId();
-    const userId = this.cls.get('userId');
-    const task = await this.taskRepository.findById(tenantId, taskId);
-    if (!task) throw new NotFoundException('Social post task not found');
-    if (task.status !== 'SUCCESS') {
-      throw new BadRequestException('Only successfully published posts can be edited live.');
-    }
-
-    const channel = await this.channelRepository.findByIdWithCredentials(tenantId, task.channelId);
-    if (!channel || channel.status !== 'Connected') {
-      throw new BadRequestException(`${task.channelName} is not connected.`);
-    }
-
-    const publisher = this.publisherRegistry.get(task.platform);
-    if (!publisher) {
-      throw new BadRequestException(`No publisher strategy registered for ${task.platform}.`);
-    }
-
-    let platformSyncStatus: 'SUCCESS' | 'FAILED' | 'SKIPPED' = 'SUCCESS';
-    let platformSyncError: string | undefined;
-
-    try {
-      if (typeof (publisher as any).editPost === 'function') {
-        await (publisher as any).editPost({
-          task,
-          channel,
-          content: dto.content,
-          mediaUrls: dto.mediaUrls,
-        });
-      } else {
-        platformSyncStatus = 'SKIPPED';
-        platformSyncError = `API editing not supported on ${task.platform}`;
-      }
-    } catch (err: any) {
-      platformSyncStatus = 'FAILED';
-      platformSyncError = err.message || String(err);
-    }
-
-    const newHistoryItem = {
-      content: dto.content,
-      mediaUrls: dto.mediaUrls ?? [],
-      editedById: userId ?? '',
-      editedAt: new Date(),
-      platformSyncStatus,
-      platformSyncError,
-    };
-
-    const doc = await this.taskRepository.addEditHistoryItem(tenantId, taskId, newHistoryItem);
-    if (!doc) throw new NotFoundException('Social post task not found');
-
-    await this.recordAudit(tenantId, task.postId, 'SOCIAL_POST_TASK_LIVE_EDITED', {
-      actorId: userId,
-      metadata: {
-        taskId,
-        channelId: task.channelId,
-        platform: task.platform,
-        platformSyncStatus,
-        platformSyncError,
-        reason: dto.reason,
-      },
-    });
-
-    return doc;
-  }
-
-  private async findPostOrThrow(
+  private async findAssetOrThrow(
     tenantId: string,
-    postId: string,
-  ): Promise<SocialPostEntity> {
-    const post = await this.postRepository.findById(tenantId, postId);
-    if (!post) throw new NotFoundException('Social post not found');
-    return post;
+    assetId: string,
+  ): Promise<SocialContentAssetEntity> {
+    const asset = await this.assetRepository.findById(tenantId, assetId);
+    if (!asset) throw new NotFoundException('Social content asset not found');
+    return asset;
+  }
+
+  private async findVersionForAssetOrThrow(
+    tenantId: string,
+    assetId: string,
+    versionId: string,
+  ): Promise<SocialContentAssetVersionEntity> {
+    const version = await this.versionRepository.findById(tenantId, versionId);
+    if (!version || version.assetId !== assetId) {
+      throw new NotFoundException('Social content asset version not found');
+    }
+    return version;
+  }
+
+  private async findPublicationOrThrow(
+    tenantId: string,
+    instanceId: string,
+  ): Promise<PublicationInstanceEntity> {
+    const instance = await this.publicationRepository.findById(
+      tenantId,
+      instanceId,
+    );
+    if (!instance)
+      throw new NotFoundException('Publication instance not found');
+    return instance;
   }
 
   private requireTenantId(): string {
@@ -767,28 +836,41 @@ export class SocialPostsService {
     return tenantId;
   }
 
-  private async recordAudit(
+  private async recordAssetAudit(
     tenantId: string,
-    postId: string,
+    assetId: string,
     action: string,
     options: {
       actorId?: string;
-      oldStatus?: string;
-      newStatus?: string;
       metadata?: Record<string, any>;
     } = {},
   ): Promise<void> {
     await this.auditLogService.record({
       tenantId,
       action,
-      targetEntityType: 'social_post',
-      targetEntityId: postId,
+      targetEntityType: 'social_content_asset',
+      targetEntityId: assetId,
       actorId: options.actorId,
-      metadata: {
-        oldStatus: options.oldStatus,
-        newStatus: options.newStatus,
-        ...options.metadata,
-      },
+      metadata: options.metadata,
+    });
+  }
+
+  private async recordPublicationAudit(
+    tenantId: string,
+    instanceId: string,
+    action: string,
+    options: {
+      actorId?: string;
+      metadata?: Record<string, any>;
+    } = {},
+  ): Promise<void> {
+    await this.auditLogService.record({
+      tenantId,
+      action,
+      targetEntityType: 'publication_instance',
+      targetEntityId: instanceId,
+      actorId: options.actorId,
+      metadata: options.metadata,
     });
   }
 }

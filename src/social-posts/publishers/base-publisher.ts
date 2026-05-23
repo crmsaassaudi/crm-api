@@ -1,12 +1,14 @@
 import { BadRequestException } from '@nestjs/common';
 import { Channel } from '../../channels/domain/channel';
-import { SocialPostEntity } from '../repositories/social-post.repository';
-import { SocialPostTaskEntity } from '../repositories/social-post-task.repository';
-import { SocialPostPlatform } from '../social-posts.types';
+import { PublicationInstanceEntity } from '../repositories/social-post-task.repository';
+import {
+  PublicationSnapshot,
+  SocialContentPlatform,
+} from '../social-posts.types';
 
 export interface PublishContext {
-  post: SocialPostEntity;
-  task: SocialPostTaskEntity;
+  post: PublicationSnapshot;
+  instance: PublicationInstanceEntity;
   channel: Channel;
 }
 
@@ -17,11 +19,11 @@ export interface PublishResult {
 }
 
 export abstract class BasePublisher {
-  abstract readonly platform: SocialPostPlatform;
+  abstract readonly platform: SocialContentPlatform;
 
   abstract publish(context: PublishContext): Promise<PublishResult>;
 
-  abstract validateContentLimits(post: SocialPostEntity): void;
+  abstract validateContentLimits(post: PublicationSnapshot): void;
 
   protected getAccessToken(channel: Channel): string {
     const accessToken = channel.credentials?.accessToken;
@@ -33,7 +35,7 @@ export abstract class BasePublisher {
     return accessToken;
   }
 
-  protected ensureContentOrMedia(post: SocialPostEntity): void {
+  protected ensureContentOrMedia(post: PublicationSnapshot): void {
     if (!post.content.trim() && post.mediaUrls.length === 0) {
       throw new BadRequestException('Post content or media is required.');
     }

@@ -10,7 +10,7 @@ export class TikTokPostPublisher extends BasePublisher {
     mediaUrls,
     mediaType,
   }: PublishContext['post']): void {
-    this.ensureContentOrMedia({ content, mediaUrls } as any);
+    this.ensureContentOrMedia({ content, mediaUrls, mediaType });
     if (content.length > 2200) {
       throw new BadRequestException(
         'TikTok captions support up to 2,200 characters.',

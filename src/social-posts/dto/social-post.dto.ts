@@ -7,18 +7,27 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { PartialType } from '@nestjs/swagger';
 import {
-  SOCIAL_POST_MEDIA_TYPES,
-  SOCIAL_POST_STATUSES,
-  SOCIAL_POST_TASK_STATUSES,
-  SocialPostMediaType,
-  SocialPostStatus,
-  SocialPostTaskStatus,
+  PUBLICATION_INSTANCE_STATUSES,
+  SOCIAL_CONTENT_APPROVAL_STATUSES,
+  SOCIAL_CONTENT_ASSET_STATUSES,
+  SOCIAL_CONTENT_MEDIA_TYPES,
+  PublicationInstanceStatus,
+  SocialContentApprovalStatus,
+  SocialContentAssetStatus,
+  SocialContentMediaType,
 } from '../social-posts.types';
 
-export class CreateSocialPostDto {
+export class CreateSocialContentAssetDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  title?: string;
+
   @IsString()
   @MaxLength(63206)
   content: string;
@@ -30,17 +39,39 @@ export class CreateSocialPostDto {
   mediaUrls?: string[];
 
   @IsOptional()
-  @IsEnum(SOCIAL_POST_MEDIA_TYPES)
-  mediaType?: SocialPostMediaType;
+  @IsEnum(SOCIAL_CONTENT_MEDIA_TYPES)
+  mediaType?: SocialContentMediaType;
 }
 
-export class UpdateSocialPostDto extends PartialType(CreateSocialPostDto) {
+export class UpdateSocialContentAssetDto extends PartialType(
+  CreateSocialContentAssetDto,
+) {
   @IsOptional()
   @IsString()
   changeNote?: string;
 }
 
-export class PublishSocialPostDto {
+export class PublicationChannelOverrideDto {
+  @IsString()
+  channelId: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(63206)
+  content?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  mediaUrls?: string[];
+
+  @IsOptional()
+  @IsEnum(SOCIAL_CONTENT_MEDIA_TYPES)
+  mediaType?: SocialContentMediaType;
+}
+
+export class CreatePublicationInstancesDto {
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(20)
@@ -48,17 +79,48 @@ export class PublishSocialPostDto {
   channelIds: string[];
 
   @IsOptional()
+  @IsString()
+  versionId?: string;
+
+  @IsOptional()
+  @IsDateString()
+  scheduledAt?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PublicationChannelOverrideDto)
+  overrides?: PublicationChannelOverrideDto[];
+}
+
+export class UpdatePublicationInstanceDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(63206)
+  content?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  mediaUrls?: string[];
+
+  @IsOptional()
+  @IsEnum(SOCIAL_CONTENT_MEDIA_TYPES)
+  mediaType?: SocialContentMediaType;
+
+  @IsOptional()
   @IsDateString()
   scheduledAt?: string;
 }
 
-export class RejectSocialPostDto {
+export class RejectSocialContentAssetVersionDto {
   @IsString()
   @MaxLength(1000)
   reason: string;
 }
 
-export class ListSocialPostsQueryDto {
+export class ListSocialContentAssetsQueryDto {
   @IsOptional()
   page?: number;
 
@@ -66,11 +128,15 @@ export class ListSocialPostsQueryDto {
   limit?: number;
 
   @IsOptional()
-  @IsEnum(SOCIAL_POST_STATUSES)
-  status?: SocialPostStatus;
+  @IsEnum(SOCIAL_CONTENT_ASSET_STATUSES)
+  status?: SocialContentAssetStatus;
+
+  @IsOptional()
+  @IsEnum(SOCIAL_CONTENT_APPROVAL_STATUSES)
+  approvalStatus?: SocialContentApprovalStatus;
 }
 
-export class ListSocialPostTasksQueryDto {
+export class ListPublicationInstancesQueryDto {
   @IsOptional()
   page?: number;
 
@@ -78,12 +144,16 @@ export class ListSocialPostTasksQueryDto {
   limit?: number;
 
   @IsOptional()
-  @IsEnum(SOCIAL_POST_TASK_STATUSES)
-  status?: SocialPostTaskStatus;
+  @IsEnum(PUBLICATION_INSTANCE_STATUSES)
+  status?: PublicationInstanceStatus;
 
   @IsOptional()
   @IsString()
   platform?: string;
+
+  @IsOptional()
+  @IsString()
+  assetId?: string;
 
   @IsOptional()
   @IsDateString()

@@ -1,4 +1,6 @@
-export const SOCIAL_POST_PUBLISH_QUEUE = 'social-post-publish';
+export const PUBLICATION_INSTANCE_PUBLISH_QUEUE =
+  'publication-instance-publish';
 
-export const socialPostPublishJobId = (postId: string, batchId: string) =>
-  `social-post:${postId}:${batchId}`;
+export const publicationInstancePublishJobId = (
+  publicationInstanceId: string,
+) => `publication-instance:${publicationInstanceId}`;

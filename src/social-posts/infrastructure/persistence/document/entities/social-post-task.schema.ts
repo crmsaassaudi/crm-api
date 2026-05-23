@@ -3,21 +3,23 @@ import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import {
-  SOCIAL_POST_PLATFORMS,
-  SOCIAL_POST_TASK_STATUSES,
-  SocialPostPlatform,
-  SocialPostTaskStatus,
+  PUBLICATION_INSTANCE_STATUSES,
+  SOCIAL_CONTENT_MEDIA_TYPES,
+  SOCIAL_CONTENT_PLATFORMS,
+  PublicationInstanceStatus,
+  SocialContentMediaType,
+  SocialContentPlatform,
 } from '../../../../social-posts.types';
 
-export type SocialPostTaskSchemaDocument =
-  HydratedDocument<SocialPostTaskSchemaClass>;
+export type PublicationInstanceSchemaDocument =
+  HydratedDocument<PublicationInstanceSchemaClass>;
 
 @Schema({
   timestamps: true,
-  collection: 'social_post_tasks',
+  collection: 'publication_instances',
   toJSON: { virtuals: true, getters: true },
 })
-export class SocialPostTaskSchemaClass extends EntityDocumentHelper {
+export class PublicationInstanceSchemaClass extends EntityDocumentHelper {
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'TenantSchemaClass',
@@ -29,15 +31,24 @@ export class SocialPostTaskSchemaClass extends EntityDocumentHelper {
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
-    ref: 'SocialPostSchemaClass',
+    ref: 'SocialContentAssetSchemaClass',
     required: true,
     index: true,
     immutable: true,
   })
-  postId: string;
+  assetId: string;
 
-  @Prop({ type: String, required: true, index: true })
-  batchId: string;
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'SocialContentAssetVersionSchemaClass',
+    required: true,
+    index: true,
+    immutable: true,
+  })
+  sourceVersionId: string;
+
+  @Prop({ type: String, required: true, index: true, immutable: true })
+  publicationGroupId: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -54,81 +65,43 @@ export class SocialPostTaskSchemaClass extends EntityDocumentHelper {
   channelAccount: string;
 
   @Prop({
-    type: {
-      versionId: { type: MongooseSchema.Types.ObjectId, ref: 'SocialPostVersionSchemaClass' },
-      versionNumber: { type: Number, required: true },
-      content: String,
-      mediaUrls: [String],
-      mediaType: String,
-      lockedAt: Date,
-    },
-    _id: false,
-    required: true,
-  })
-  snapshotAtSchedule: {
-    versionId: string;
-    versionNumber: number;
-    content: string;
-    mediaUrls: string[];
-    mediaType: string;
-    lockedAt: Date;
-  };
-
-  @Prop({
-    type: {
-      content: String,
-      mediaUrls: [String],
-      mediaType: String,
-      publishedAt: Date,
-    },
-    _id: false,
-  })
-  snapshotAtPublish?: {
-    content: string;
-    mediaUrls: string[];
-    mediaType: string;
-    publishedAt: Date;
-  };
-
-  @Prop({
-    type: [{
-      content: String,
-      mediaUrls: [String],
-      editedById: MongooseSchema.Types.ObjectId,
-      editedAt: Date,
-      platformSyncStatus: { type: String, enum: ['SUCCESS', 'FAILED', 'SKIPPED'] },
-      platformSyncError: String,
-    }],
-    _id: false,
-    default: [],
-  })
-  editHistory: Array<{
-    content: string;
-    mediaUrls: string[];
-    editedById: string;
-    editedAt: Date;
-    platformSyncStatus: 'SUCCESS' | 'FAILED' | 'SKIPPED';
-    platformSyncError?: string;
-  }>;
-
-  @Prop({
     type: String,
-    enum: SOCIAL_POST_PLATFORMS,
+    enum: SOCIAL_CONTENT_PLATFORMS,
     required: true,
     index: true,
   })
-  platform: SocialPostPlatform;
+  platform: SocialContentPlatform;
+
+  @Prop({
+    type: {
+      content: { type: String, default: '' },
+      mediaUrls: { type: [String], default: [] },
+      mediaType: {
+        type: String,
+        enum: SOCIAL_CONTENT_MEDIA_TYPES,
+        required: true,
+        default: 'text',
+      },
+    },
+    _id: false,
+    required: true,
+  })
+  snapshot: {
+    content: string;
+    mediaUrls: string[];
+    mediaType: SocialContentMediaType;
+  };
 
   @Prop({
     type: String,
-    enum: SOCIAL_POST_TASK_STATUSES,
+    enum: PUBLICATION_INSTANCE_STATUSES,
     required: true,
     index: true,
     default: 'PENDING',
   })
-  status: SocialPostTaskStatus;
+  status: PublicationInstanceStatus;
 
-  @Prop({ type: Date })
+  @Prop({ type: Date, index: true })
   scheduledAt?: Date;
 
   @Prop({ type: Date })
@@ -156,16 +129,20 @@ export class SocialPostTaskSchemaClass extends EntityDocumentHelper {
   errorMessage?: string;
 }
 
-export const SocialPostTaskSchema = SchemaFactory.createForClass(
-  SocialPostTaskSchemaClass,
+export const PublicationInstanceSchema = SchemaFactory.createForClass(
+  PublicationInstanceSchemaClass,
 );
 
-SocialPostTaskSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
-SocialPostTaskSchema.index(
-  { tenantId: 1, batchId: 1, channelId: 1 },
-  { name: 'tenant_publish_batch_channel_task_lookup', unique: true },
+PublicationInstanceSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+PublicationInstanceSchema.index(
+  { tenantId: 1, publicationGroupId: 1, channelId: 1 },
+  { name: 'tenant_publication_group_channel_lookup', unique: true },
 );
-SocialPostTaskSchema.index(
+PublicationInstanceSchema.index(
   { tenantId: 1, status: 1, scheduledAt: 1 },
-  { name: 'tenant_task_schedule_lookup' },
+  { name: 'tenant_publication_schedule_lookup' },
+);
+PublicationInstanceSchema.index(
+  { tenantId: 1, assetId: 1, updatedAt: -1 },
+  { name: 'tenant_publication_asset_lookup' },
 );

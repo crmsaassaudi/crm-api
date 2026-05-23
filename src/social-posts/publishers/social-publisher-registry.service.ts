@@ -3,11 +3,11 @@ import { BasePublisher } from './base-publisher';
 import { FacebookPostPublisher } from './facebook-post-publisher.service';
 import { InstagramPostPublisher } from './instagram-post-publisher.service';
 import { TikTokPostPublisher } from './tiktok-post-publisher.service';
-import { SocialPostPlatform } from '../social-posts.types';
+import { SocialContentPlatform } from '../social-posts.types';
 
 @Injectable()
 export class SocialPublisherRegistry {
-  private readonly publishers = new Map<SocialPostPlatform, BasePublisher>();
+  private readonly publishers = new Map<SocialContentPlatform, BasePublisher>();
 
   constructor(
     facebook: FacebookPostPublisher,
@@ -20,6 +20,6 @@ export class SocialPublisherRegistry {
   }
 
   get(platform: string): BasePublisher | null {
-    return this.publishers.get(platform as SocialPostPlatform) ?? null;
+    return this.publishers.get(platform as SocialContentPlatform) ?? null;
   }
 }

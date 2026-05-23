@@ -2,34 +2,35 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import {
-  SOCIAL_POST_PUBLISH_QUEUE,
-  socialPostPublishJobId,
+  PUBLICATION_INSTANCE_PUBLISH_QUEUE,
+  publicationInstancePublishJobId,
 } from '../queue/social-post-queue.constants';
-import { SocialPostPublishJobData } from '../social-posts.types';
+import { PublicationPublishJobData } from '../social-posts.types';
 
 @Injectable()
-export class SocialPostQueueProducer {
+export class PublicationQueueProducer {
   constructor(
-    @InjectQueue(SOCIAL_POST_PUBLISH_QUEUE)
-    private readonly queue: Queue<SocialPostPublishJobData>,
+    @InjectQueue(PUBLICATION_INSTANCE_PUBLISH_QUEUE)
+    private readonly queue: Queue<PublicationPublishJobData>,
   ) {}
 
   async schedule(
     tenantId: string,
-    postId: string,
-    batchId: string,
-    scheduledAt: Date,
+    publicationInstanceId: string,
+    scheduledAt?: Date,
   ): Promise<void> {
-    const jobId = socialPostPublishJobId(postId, batchId);
+    const jobId = publicationInstancePublishJobId(publicationInstanceId);
     const existing = await this.queue.getJob(jobId);
     if (existing) {
       await existing.remove();
     }
 
-    const delay = Math.max(0, scheduledAt.getTime() - Date.now());
+    const delay = scheduledAt
+      ? Math.max(0, scheduledAt.getTime() - Date.now())
+      : 0;
     await this.queue.add(
       'publish',
-      { tenantId, postId, batchId },
+      { tenantId, publicationInstanceId },
       {
         jobId,
         delay,
@@ -37,16 +38,11 @@ export class SocialPostQueueProducer {
     );
   }
 
-  async enqueueNow(
-    tenantId: string,
-    postId: string,
-    batchId: string,
-  ): Promise<void> {
-    const jobId = socialPostPublishJobId(postId, batchId);
+  async cancel(publicationInstanceId: string): Promise<void> {
+    const jobId = publicationInstancePublishJobId(publicationInstanceId);
     const existing = await this.queue.getJob(jobId);
     if (existing) {
       await existing.remove();
     }
-    await this.queue.add('publish', { tenantId, postId, batchId }, { jobId });
   }
 }

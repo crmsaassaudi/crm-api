@@ -13,165 +13,164 @@ import {
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { RequirePermission } from '../common/permissions/permission.decorator';
 import {
-  CreateSocialPostDto,
-  ListSocialPostTasksQueryDto,
-  ListSocialPostsQueryDto,
-  PublishSocialPostDto,
-  RejectSocialPostDto,
-  UpdateSocialPostDto,
+  CreatePublicationInstancesDto,
+  CreateSocialContentAssetDto,
+  ListPublicationInstancesQueryDto,
+  ListSocialContentAssetsQueryDto,
+  RejectSocialContentAssetVersionDto,
+  UpdatePublicationInstanceDto,
+  UpdateSocialContentAssetDto,
 } from './dto/social-post.dto';
-import { SocialPostsService } from './services/social-posts.service';
+import { SocialContentAssetsService } from './services/social-posts.service';
 
-@ApiTags('Social Posts')
+@ApiTags('Social Content Assets')
 @Controller({
-  path: 'social-posts',
+  path: 'social-content-assets',
   version: '1',
 })
-export class SocialPostsController {
-  constructor(private readonly socialPostsService: SocialPostsService) {}
+export class SocialContentAssetsController {
+  constructor(private readonly service: SocialContentAssetsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a reusable social post' })
-  @RequirePermission('create', 'social_posts')
-  async create(@Body() dto: CreateSocialPostDto) {
-    return this.socialPostsService.create(dto);
+  @ApiOperation({ summary: 'Create a reusable social content asset' })
+  @RequirePermission('create', 'social_content_assets')
+  create(@Body() dto: CreateSocialContentAssetDto) {
+    return this.service.create(dto);
   }
 
   @Get()
-  @ApiOperation({ summary: 'List social posts for the current tenant' })
+  @ApiOperation({
+    summary: 'List social content assets for the current tenant',
+  })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'status', required: false, type: String })
-  @RequirePermission('view', 'social_posts')
-  async list(@Query() query: ListSocialPostsQueryDto) {
-    return this.socialPostsService.findPaginated(query);
+  @ApiQuery({ name: 'approvalStatus', required: false, type: String })
+  @RequirePermission('view', 'social_content_assets')
+  list(@Query() query: ListSocialContentAssetsQueryDto) {
+    return this.service.findPaginated(query);
   }
 
-  @Get('tasks')
-  @ApiOperation({ summary: 'List social post publish tasks' })
+  @Get(':assetId')
+  @ApiOperation({ summary: 'Get a social content asset with publications' })
+  @RequirePermission('view', 'social_content_assets')
+  findOne(@Param('assetId') assetId: string) {
+    return this.service.findById(assetId);
+  }
+
+  @Patch(':assetId')
+  @ApiOperation({ summary: 'Create a new content version for an asset' })
+  @RequirePermission('edit', 'social_content_assets')
+  update(
+    @Param('assetId') assetId: string,
+    @Body() dto: UpdateSocialContentAssetDto,
+  ) {
+    return this.service.update(assetId, dto);
+  }
+
+  @Delete(':assetId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Archive a social content asset' })
+  @RequirePermission('delete', 'social_content_assets')
+  async archive(@Param('assetId') assetId: string) {
+    await this.service.archive(assetId);
+  }
+
+  @Get(':assetId/versions')
+  @ApiOperation({ summary: 'Get social content asset version history' })
+  @RequirePermission('view', 'social_content_assets')
+  getVersions(@Param('assetId') assetId: string) {
+    return this.service.getVersions(assetId);
+  }
+
+  @Post(':assetId/versions/:versionId/approve')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Approve a social content asset version' })
+  @RequirePermission('approve', 'social_content_assets')
+  approveVersion(
+    @Param('assetId') assetId: string,
+    @Param('versionId') versionId: string,
+  ) {
+    return this.service.approveVersion(assetId, versionId);
+  }
+
+  @Post(':assetId/versions/:versionId/reject')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reject a social content asset version' })
+  @RequirePermission('approve', 'social_content_assets')
+  rejectVersion(
+    @Param('assetId') assetId: string,
+    @Param('versionId') versionId: string,
+    @Body() dto: RejectSocialContentAssetVersionDto,
+  ) {
+    return this.service.rejectVersion(assetId, versionId, dto);
+  }
+
+  @Post(':assetId/publications')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Create publication instances from an asset' })
+  @RequirePermission('create', 'publication_instances')
+  createPublications(
+    @Param('assetId') assetId: string,
+    @Body() dto: CreatePublicationInstancesDto,
+  ) {
+    return this.service.createPublications(assetId, dto);
+  }
+}
+
+@ApiTags('Publication Instances')
+@Controller({
+  path: 'publication-instances',
+  version: '1',
+})
+export class PublicationInstancesController {
+  constructor(private readonly service: SocialContentAssetsService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'List publication instances' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'status', required: false, type: String })
   @ApiQuery({ name: 'platform', required: false, type: String })
+  @ApiQuery({ name: 'assetId', required: false, type: String })
   @ApiQuery({ name: 'from', required: false, type: String })
   @ApiQuery({ name: 'to', required: false, type: String })
-  @RequirePermission('view', 'social_posts')
-  async listTasks(@Query() query: ListSocialPostTasksQueryDto) {
-    return this.socialPostsService.listTasks(query);
+  @RequirePermission('view', 'publication_instances')
+  list(@Query() query: ListPublicationInstancesQueryDto) {
+    return this.service.listPublicationInstances(query);
   }
 
-  @Post('tasks/:taskId/retry')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Retry a failed publish task' })
-  @RequirePermission('edit', 'social_posts')
-  async retryTask(@Param('taskId') taskId: string) {
-    return this.socialPostsService.retryTask(taskId);
-  }
-
-  @Post('tasks/:taskId/edit-live')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Edit a published post live on the platform' })
-  @RequirePermission('edit', 'social_posts')
-  async editLive(
-    @Param('taskId') taskId: string,
-    @Body() dto: { content: string; mediaUrls?: string[]; reason?: string },
+  @Patch(':instanceId')
+  @ApiOperation({ summary: 'Edit a pending publication snapshot or schedule' })
+  @RequirePermission('edit', 'publication_instances')
+  update(
+    @Param('instanceId') instanceId: string,
+    @Body() dto: UpdatePublicationInstanceDto,
   ) {
-    return this.socialPostsService.editLive(taskId, dto);
+    return this.service.updatePublicationInstance(instanceId, dto);
   }
 
-  @Get('tasks/:taskId/edit-history')
-  @ApiOperation({ summary: 'Get edit history for a published post task' })
-  @RequirePermission('view', 'social_posts')
-  async getEditHistory(@Param('taskId') taskId: string) {
-    return this.socialPostsService.getEditHistory(taskId);
-  }
-
-  @Get(':id')
-  @ApiOperation({ summary: 'Get a social post with channel tasks' })
-  @RequirePermission('view', 'social_posts')
-  async findOne(@Param('id') id: string) {
-    return this.socialPostsService.findById(id);
-  }
-
-  @Get(':id/versions')
-  @ApiOperation({ summary: 'Get social post version history' })
-  @RequirePermission('view', 'social_posts')
-  async getVersions(@Param('id') id: string) {
-    return this.socialPostsService.getVersions(id);
-  }
-
-  @Post(':id/sync-to-scheduled')
+  @Post(':instanceId/cancel')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Sync latest post version to pending scheduled tasks' })
-  @RequirePermission('edit', 'social_posts')
-  async syncToScheduled(
-    @Param('id') id: string,
-    @Body() dto: { taskIds?: string[] },
-  ) {
-    await this.socialPostsService.syncToScheduled(id, dto.taskIds);
+  @ApiOperation({ summary: 'Cancel a pending publication instance' })
+  @RequirePermission('cancel', 'publication_instances')
+  cancel(@Param('instanceId') instanceId: string) {
+    return this.service.cancelPublicationInstance(instanceId);
   }
 
-  @Patch(':id')
-  @ApiOperation({ summary: 'Update reusable social post content' })
-  @RequirePermission('edit', 'social_posts')
-  async update(@Param('id') id: string, @Body() dto: UpdateSocialPostDto) {
-    return this.socialPostsService.update(id, dto);
-  }
-
-  @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete a reusable social post' })
-  @RequirePermission('delete', 'social_posts')
-  async delete(@Param('id') id: string) {
-    await this.socialPostsService.delete(id);
-  }
-
-  @Post(':id/approve')
+  @Post(':instanceId/retry')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Approve a social post for publishing' })
-  @RequirePermission('manage_system', 'social_posts')
-  async approve(@Param('id') id: string) {
-    return this.socialPostsService.approve(id);
+  @ApiOperation({ summary: 'Retry a failed publication instance' })
+  @RequirePermission('retry', 'publication_instances')
+  retry(@Param('instanceId') instanceId: string) {
+    return this.service.retryPublicationInstance(instanceId);
   }
 
-  @Post(':id/reject')
+  @Post(':instanceId/publish-now')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Reject a social post' })
-  @RequirePermission('manage_system', 'social_posts')
-  async reject(@Param('id') id: string, @Body() dto: RejectSocialPostDto) {
-    return this.socialPostsService.reject(id, dto);
-  }
-
-  @Post(':id/schedule')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Schedule a reusable post to selected channels' })
-  @RequirePermission('edit', 'social_posts')
-  async schedule(@Param('id') id: string, @Body() dto: PublishSocialPostDto) {
-    return this.socialPostsService.schedule(id, dto);
-  }
-
-  @Post(':id/publish')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Publish or schedule a reusable post to selected channels',
-  })
-  @RequirePermission('manage_system', 'social_posts')
-  async publish(@Param('id') id: string, @Body() dto: PublishSocialPostDto) {
-    return this.socialPostsService.publish(id, dto);
-  }
-
-  @Post(':id/publish-now')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Immediately publish a reusable post to selected channels',
-  })
-  @RequirePermission('manage_system', 'social_posts')
-  async publishNow(
-    @Param('id') id: string,
-    @Body() dto?: PublishSocialPostDto,
-  ) {
-    return dto?.channelIds?.length
-      ? this.socialPostsService.publishNow(id, dto)
-      : this.socialPostsService.legacyPublishNow(id);
+  @ApiOperation({ summary: 'Publish a pending publication instance now' })
+  @RequirePermission('publish', 'publication_instances')
+  publishNow(@Param('instanceId') instanceId: string) {
+    return this.service.publishPublicationInstanceNow(instanceId);
   }
 }

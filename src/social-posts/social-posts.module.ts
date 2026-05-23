@@ -4,56 +4,70 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { ChannelsModule } from '../channels/channels.module';
 import { isWorkerRuntime } from '../config/runtime-role';
 import {
-  SocialPostSchema,
-  SocialPostSchemaClass,
+  SocialContentAssetSchema,
+  SocialContentAssetSchemaClass,
 } from './infrastructure/persistence/document/entities/social-post.schema';
 import {
-  SocialPostTaskSchema,
-  SocialPostTaskSchemaClass,
+  PublicationInstanceSchema,
+  PublicationInstanceSchemaClass,
 } from './infrastructure/persistence/document/entities/social-post-task.schema';
 import {
-  SocialPostVersionSchema,
-  SocialPostVersionSchemaClass,
+  SocialContentAssetVersionSchema,
+  SocialContentAssetVersionSchemaClass,
 } from './infrastructure/persistence/document/entities/social-post-version.schema';
 import { FacebookPostPublisher } from './publishers/facebook-post-publisher.service';
 import { InstagramPostPublisher } from './publishers/instagram-post-publisher.service';
 import { SocialPublisherRegistry } from './publishers/social-publisher-registry.service';
 import { TikTokPostPublisher } from './publishers/tiktok-post-publisher.service';
-import { SocialPostPublishProcessor } from './queue/processors/social-post-publish.processor';
-import { SocialPostQueueModule } from './queue/social-post-queue.module';
-import { SocialPostRepository } from './repositories/social-post.repository';
-import { SocialPostTaskRepository } from './repositories/social-post-task.repository';
-import { SocialPostVersionRepository } from './repositories/social-post-version.repository';
-import { SocialPostQueueProducer } from './services/social-post-queue.producer';
-import { SocialPostsService } from './services/social-posts.service';
-import { SocialPostsController } from './social-posts.controller';
+import { PublicationInstancePublishProcessor } from './queue/processors/social-post-publish.processor';
+import { SocialPublicationQueueModule } from './queue/social-post-queue.module';
+import { SocialContentAssetRepository } from './repositories/social-post.repository';
+import { PublicationInstanceRepository } from './repositories/social-post-task.repository';
+import { SocialContentAssetVersionRepository } from './repositories/social-post-version.repository';
+import { PublicationQueueProducer } from './services/social-post-queue.producer';
+import { SocialContentAssetsService } from './services/social-posts.service';
+import {
+  PublicationInstancesController,
+  SocialContentAssetsController,
+} from './social-posts.controller';
 
-const workerProviders = isWorkerRuntime() ? [SocialPostPublishProcessor] : [];
+const workerProviders = isWorkerRuntime()
+  ? [PublicationInstancePublishProcessor]
+  : [];
 
 @Module({
   imports: [
     ChannelsModule,
     AuditLogModule,
-    SocialPostQueueModule,
+    SocialPublicationQueueModule,
     MongooseModule.forFeature([
-      { name: SocialPostSchemaClass.name, schema: SocialPostSchema },
-      { name: SocialPostTaskSchemaClass.name, schema: SocialPostTaskSchema },
-      { name: SocialPostVersionSchemaClass.name, schema: SocialPostVersionSchema },
+      {
+        name: SocialContentAssetSchemaClass.name,
+        schema: SocialContentAssetSchema,
+      },
+      {
+        name: PublicationInstanceSchemaClass.name,
+        schema: PublicationInstanceSchema,
+      },
+      {
+        name: SocialContentAssetVersionSchemaClass.name,
+        schema: SocialContentAssetVersionSchema,
+      },
     ]),
   ],
-  controllers: [SocialPostsController],
+  controllers: [SocialContentAssetsController, PublicationInstancesController],
   providers: [
-    SocialPostsService,
-    SocialPostQueueProducer,
-    SocialPostRepository,
-    SocialPostTaskRepository,
-    SocialPostVersionRepository,
+    SocialContentAssetsService,
+    PublicationQueueProducer,
+    SocialContentAssetRepository,
+    PublicationInstanceRepository,
+    SocialContentAssetVersionRepository,
     FacebookPostPublisher,
     InstagramPostPublisher,
     TikTokPostPublisher,
     SocialPublisherRegistry,
     ...workerProviders,
   ],
-  exports: [SocialPostsService],
+  exports: [SocialContentAssetsService],
 })
-export class SocialPostsModule {}
+export class SocialContentModule {}

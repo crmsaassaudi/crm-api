@@ -3,18 +3,21 @@ import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import {
-  SOCIAL_POST_MEDIA_TYPES,
-  SocialPostMediaType,
+  SOCIAL_CONTENT_APPROVAL_STATUSES,
+  SOCIAL_CONTENT_MEDIA_TYPES,
+  SocialContentApprovalStatus,
+  SocialContentMediaType,
 } from '../../../../social-posts.types';
 
-export type SocialPostVersionSchemaDocument = HydratedDocument<SocialPostVersionSchemaClass>;
+export type SocialContentAssetVersionSchemaDocument =
+  HydratedDocument<SocialContentAssetVersionSchemaClass>;
 
 @Schema({
   timestamps: true,
-  collection: 'social_post_versions',
+  collection: 'social_content_asset_versions',
   toJSON: { virtuals: true, getters: true },
 })
-export class SocialPostVersionSchemaClass extends EntityDocumentHelper {
+export class SocialContentAssetVersionSchemaClass extends EntityDocumentHelper {
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'TenantSchemaClass',
@@ -26,15 +29,15 @@ export class SocialPostVersionSchemaClass extends EntityDocumentHelper {
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
-    ref: 'SocialPostSchemaClass',
+    ref: 'SocialContentAssetSchemaClass',
     required: true,
     immutable: true,
     index: true,
   })
-  postId: string;
+  assetId: string;
 
   @Prop({ type: Number, required: true })
-  versionNumber: number; // 1, 2, 3 ... auto-increment
+  versionNumber: number;
 
   @Prop({ type: String, trim: true, default: '' })
   content: string;
@@ -44,11 +47,20 @@ export class SocialPostVersionSchemaClass extends EntityDocumentHelper {
 
   @Prop({
     type: String,
-    enum: SOCIAL_POST_MEDIA_TYPES,
+    enum: SOCIAL_CONTENT_MEDIA_TYPES,
     required: true,
     default: 'text',
   })
-  mediaType: SocialPostMediaType;
+  mediaType: SocialContentMediaType;
+
+  @Prop({
+    type: String,
+    enum: SOCIAL_CONTENT_APPROVAL_STATUSES,
+    required: true,
+    index: true,
+    default: 'PENDING',
+  })
+  approvalStatus: SocialContentApprovalStatus;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -56,16 +68,34 @@ export class SocialPostVersionSchemaClass extends EntityDocumentHelper {
   })
   savedById?: string;
 
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+  })
+  approvedById?: string;
+
+  @Prop({ type: Date })
+  approvedAt?: Date;
+
+  @Prop({ type: String })
+  rejectionReason?: string;
+
   @Prop({ type: String })
   changeNote?: string;
 }
 
-export const SocialPostVersionSchema = SchemaFactory.createForClass(
-  SocialPostVersionSchemaClass,
+export const SocialContentAssetVersionSchema = SchemaFactory.createForClass(
+  SocialContentAssetVersionSchemaClass,
 );
 
-SocialPostVersionSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
-SocialPostVersionSchema.index(
-  { tenantId: 1, postId: 1, versionNumber: -1 },
-  { name: 'tenant_post_version_lookup', unique: true },
+SocialContentAssetVersionSchema.plugin(tenantFilterPlugin, {
+  field: 'tenantId',
+});
+SocialContentAssetVersionSchema.index(
+  { tenantId: 1, assetId: 1, versionNumber: -1 },
+  { name: 'tenant_asset_version_lookup', unique: true },
+);
+SocialContentAssetVersionSchema.index(
+  { tenantId: 1, assetId: 1, approvalStatus: 1 },
+  { name: 'tenant_asset_version_approval_lookup' },
 );

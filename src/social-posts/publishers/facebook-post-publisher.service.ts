@@ -13,7 +13,7 @@ export class FacebookPostPublisher extends BasePublisher {
     mediaUrls,
     mediaType,
   }: PublishContext['post']): void {
-    this.ensureContentOrMedia({ content, mediaUrls } as any);
+    this.ensureContentOrMedia({ content, mediaUrls, mediaType });
     if (content.length > 63206) {
       throw new BadRequestException(
         'Facebook posts support up to 63,206 characters.',
@@ -161,7 +161,7 @@ export class FacebookPostPublisher extends BasePublisher {
   ): Promise<PublishResult> {
     if (!/^https?:\/\//i.test(videoUrl)) {
       throw new BadRequestException(
-        'Facebook video publishing requires a public video URL for this social-posts MVP.',
+        'Facebook video publishing requires a public video URL.',
       );
     }
 
