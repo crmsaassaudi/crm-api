@@ -3,6 +3,7 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
+  StreamableFile,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
@@ -26,6 +27,9 @@ export class NormalizeIdInterceptor implements NestInterceptor {
 
     // Primitive
     if (typeof value !== 'object') return value;
+
+    // Binary / stream responses – must not be transformed
+    if (value instanceof StreamableFile || Buffer.isBuffer(value)) return value;
 
     // Date – keep as-is
     if (value instanceof Date) return value;
