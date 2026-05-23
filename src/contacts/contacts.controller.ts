@@ -10,7 +10,10 @@ import {
   UseInterceptors,
   UsePipes,
   StreamableFile,
+  Res,
+  Header,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ContactsService } from './contacts.service';
 import { Contact } from './domain/contact';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
@@ -109,12 +112,19 @@ export class ContactsController {
 
   @Get('export-download/:token')
   @RequirePermission('export', 'contacts')
-  async downloadExport(@Param('token') token: string) {
+  @Header('Cache-Control', 'no-store')
+  async downloadExport(
+    @Param('token') token: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const file = await this.service.getExportDownload(token);
-    return new StreamableFile(file.buffer, {
-      type: 'text/csv; charset=utf-8',
-      disposition: `attachment; filename="${file.filename}"`,
-    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${file.filename}"`,
+    );
+    res.setHeader('Content-Length', String(file.buffer.length));
+    return new StreamableFile(file.buffer);
   }
 
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
