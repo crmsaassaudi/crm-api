@@ -20,11 +20,9 @@ import { TicketsModule } from '../tickets/tickets.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { ContactExportStorageService } from './contact-export-storage.service';
 import { ContactExportProcessor } from './contact-export.processor';
-import { ContactExportNotificationListener } from './listeners/contact-export-notification.listener';
 import { ContactScoringService } from './contact-scoring.service';
 import { isWorkerRuntime } from '../config/runtime-role';
 import { CONTACT_EXPORT_QUEUE } from './contacts.constants';
-import { SocketModule } from '../modules/realtime/socket.module';
 
 const workerProviders = isWorkerRuntime()
   ? [ContactScoringService, ContactExportProcessor]
@@ -56,14 +54,12 @@ const workerProviders = isWorkerRuntime()
     TasksModule,
     TicketsModule,
     AuditLogModule,
-    SocketModule,
   ],
   controllers: [ContactsController],
   providers: [
     ContactsService,
     ContactRepository,
     ContactExportStorageService,
-    ContactExportNotificationListener,
     ...workerProviders,
   ],
   exports: [ContactsService, ContactRepository],

@@ -886,6 +886,32 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
+  /**
+   * Listener for `contact.export.completed` domain event.
+   * Emitted by ContactExportProcessor when the background CSV export finishes.
+   * Pushes the download URL to the tenant room so the frontend can trigger
+   * download immediately instead of polling the export-status API.
+   */
+  @OnEvent('contact.export.completed')
+  handleContactExportCompleted(event: {
+    tenantId: string;
+    userId: string;
+    downloadUrl: string;
+    expiresAt: string;
+    recordCount: number;
+  }) {
+    const room = `tenant:${event.tenantId}`;
+    this.logger.log(
+      `Broadcasting contact export completed to room=${room} (user=${event.userId}, records=${event.recordCount})`,
+    );
+    this.server.to(room).emit('contact:export:completed', {
+      userId: event.userId,
+      downloadUrl: event.downloadUrl,
+      expiresAt: event.expiresAt,
+      recordCount: event.recordCount,
+    });
+  }
+
   private standardEvent(eventName: string, payload: any) {
     return {
       eventId: ulid(),

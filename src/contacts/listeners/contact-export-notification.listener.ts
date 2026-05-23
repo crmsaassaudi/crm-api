@@ -1,14 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { SalesGateway } from '../../modules/realtime/gateways/sales.gateway';
+import { OmniGateway } from '../../omni-inbound/services/omni.gateway';
 
 /**
  * Listens for contact export completion events and pushes the result
- * to the user via WebSocket so the frontend can trigger download
- * immediately instead of polling the export-status API.
+ * to the tenant room via WebSocket (`/omni` namespace) so the frontend
+ * can trigger download immediately instead of polling the export-status API.
  *
  * Socket event: `contact:export:completed`
- * Room: `sale:{userId}` (the user who triggered the export)
+ * Room: `tenant:{tenantId}` (broadcast to all connected agents of the tenant)
+ *
+ * The frontend filters by `userId` to show notification only to the user
+ * who triggered the export.
  */
 @Injectable()
 export class ContactExportNotificationListener {
@@ -16,7 +19,7 @@ export class ContactExportNotificationListener {
     ContactExportNotificationListener.name,
   );
 
-  constructor(private readonly salesGateway: SalesGateway) {}
+  constructor(private readonly omniGateway: OmniGateway) {}
 
   @OnEvent('contact.export.completed')
   handleExportCompleted(event: {
@@ -27,21 +30,23 @@ export class ContactExportNotificationListener {
     recordCount: number;
     storageKey: string;
   }) {
-    if (!event.userId) {
+    if (!event.tenantId) {
       this.logger.warn(
-        'Contact export completed but no userId — cannot push via socket',
+        'Contact export completed but no tenantId — cannot push via socket',
       );
       return;
     }
 
-    this.salesGateway.emitToSale(event.userId, 'contact:export:completed', {
+    const room = `tenant:${event.tenantId}`;
+    this.omniGateway.server?.to(room).emit('contact:export:completed', {
+      userId: event.userId,
       downloadUrl: event.downloadUrl,
       expiresAt: event.expiresAt,
       recordCount: event.recordCount,
     });
 
     this.logger.log(
-      `Pushed export result to user ${event.userId}: ${event.recordCount} records, url=${event.downloadUrl}`,
+      `Pushed export result to room ${room} (user=${event.userId}): ${event.recordCount} records`,
     );
   }
 }
