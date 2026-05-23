@@ -96,6 +96,16 @@ export class ContactExportProcessor extends BaseTenantConsumer<ContactExportJobD
       },
     });
 
+    // ── Push export result to client via WebSocket ──
+    this.eventEmitter.emit('contact.export.completed', {
+      tenantId,
+      userId,
+      downloadUrl: exportFile.downloadUrl,
+      expiresAt: exportFile.expiresAt,
+      recordCount,
+      storageKey: exportFile.storageKey,
+    });
+
     this.logger.log(
       `Contact export job ${job.id} completed: ${recordCount} records`,
     );
