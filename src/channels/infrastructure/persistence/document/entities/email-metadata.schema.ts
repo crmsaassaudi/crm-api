@@ -47,7 +47,6 @@ export class EmailMetadataSchemaClass {
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     required: true,
-    index: true,
   })
   messageId: string;
 

@@ -36,7 +36,6 @@ export class EmailContentSchemaClass {
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     required: true,
-    index: true,
   })
   messageId: string;
 

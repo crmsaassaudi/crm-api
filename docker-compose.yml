@@ -45,6 +45,9 @@ services:
     networks:
       crm_api_net:
         ipv4_address: 172.25.0.10
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
 
   worker-service:
     build:
@@ -79,6 +82,9 @@ services:
     networks:
       crm_api_net:
         ipv4_address: 172.25.0.11
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
 
 networks:
   crm_api_net:

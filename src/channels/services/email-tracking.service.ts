@@ -86,7 +86,7 @@ export class EmailTrackingSchemaClass {
   })
   tenantId: string;
 
-  @Prop({ type: String, required: true, index: true })
+  @Prop({ type: String, required: true })
   trackingId: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, required: true })
