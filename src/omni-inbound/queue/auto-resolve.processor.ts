@@ -5,14 +5,15 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
-import { BaseConsumer } from '../../queue/base.consumer';
+import {
+  BaseTenantConsumer,
+  TenantJobData,
+} from '../../queue/base-tenant.consumer';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
-import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
-export interface AutoResolveJobData {
-  tenantId: string;
+export interface AutoResolveJobData extends TenantJobData {
   conversationId: string;
   /** 'warning' = send warning message first, 'resolve' = actually resolve */
   phase: 'warning' | 'resolve';
@@ -32,8 +33,9 @@ export interface AutoResolveJobData {
  *   Directly resolve the conversation.
  */
 @Processor(OMNI_AUTO_RESOLVE_QUEUE)
-export class AutoResolveProcessor extends BaseConsumer {
+export class AutoResolveProcessor extends BaseTenantConsumer<AutoResolveJobData> {
   protected readonly logger = new Logger(AutoResolveProcessor.name);
+  protected readonly cls: ClsService;
 
   /** Redis key prefix for tracking whether warning has been sent */
   private readonly WARN_KEY_PREFIX = 'omni:auto-warn';
@@ -43,60 +45,59 @@ export class AutoResolveProcessor extends BaseConsumer {
     private readonly settingsService: CrmSettingsService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
-    private readonly cls: ClsService,
+    cls: ClsService,
   ) {
     super();
+    this.cls = cls;
   }
 
-  async process(job: Job<AutoResolveJobData>): Promise<void> {
+  protected async handle(job: Job<AutoResolveJobData>): Promise<void> {
     const { tenantId, conversationId, phase } = job.data;
 
-    return runWithTenantContext(this.cls, tenantId, async () => {
+    this.logger.debug(
+      `Auto-resolve job [${phase}] for conversation ${conversationId}`,
+    );
+
+    // Verify conversation is still active
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
       this.logger.debug(
-        `Auto-resolve job [${phase}] for conversation ${conversationId}`,
+        `Conversation ${conversationId} not found — skipping auto-resolve`,
       );
+      return;
+    }
 
-      // Verify conversation is still active
-      const conversation = await this.conversationRepo.findById(conversationId);
-      if (!conversation) {
-        this.logger.debug(
-          `Conversation ${conversationId} not found — skipping auto-resolve`,
-        );
-        return;
-      }
+    if (conversation.status !== 'open' && conversation.status !== 'pending') {
+      this.logger.debug(
+        `Conversation ${conversationId} is ${conversation.status} — skipping auto-resolve`,
+      );
+      return;
+    }
 
-      if (conversation.status !== 'open' && conversation.status !== 'pending') {
-        this.logger.debug(
-          `Conversation ${conversationId} is ${conversation.status} — skipping auto-resolve`,
-        );
-        return;
-      }
+    // Load tenant config
+    const config = await this.getLifecycleConfig(tenantId);
+    if (!config.autoResolveEnabled) {
+      this.logger.debug(
+        `Auto-resolve disabled for tenant ${tenantId} — skipping`,
+      );
+      return;
+    }
 
-      // Load tenant config
-      const config = await this.getLifecycleConfig(tenantId);
-      if (!config.autoResolveEnabled) {
-        this.logger.debug(
-          `Auto-resolve disabled for tenant ${tenantId} — skipping`,
-        );
-        return;
-      }
-
-      if (phase === 'warning') {
-        await this.handleWarningPhase(
-          tenantId,
-          conversationId,
-          conversation,
-          config,
-        );
-      } else {
-        await this.handleResolvePhase(
-          tenantId,
-          conversationId,
-          conversation,
-          config,
-        );
-      }
-    });
+    if (phase === 'warning') {
+      await this.handleWarningPhase(
+        tenantId,
+        conversationId,
+        conversation,
+        config,
+      );
+    } else {
+      await this.handleResolvePhase(
+        tenantId,
+        conversationId,
+        conversation,
+        config,
+      );
+    }
   }
 
   /**

@@ -2,7 +2,10 @@ import { OnWorkerEvent, Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import { BaseConsumer } from '../../queue/base.consumer';
+import {
+  BaseTenantConsumer,
+  TenantJobData,
+} from '../../queue/base-tenant.consumer';
 import {
   AUTOMATION_DELAYED_QUEUE,
   AutomationDelayedJobData,
@@ -21,8 +24,9 @@ import { runWithTenantContext } from '../../common/tenancy/tenant-context';
  * BullMQ delayed jobs that may still exist in Redis.
  */
 @Processor(AUTOMATION_DELAYED_QUEUE)
-export class AutomationDelayedProcessor extends BaseConsumer {
+export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDelayedQueueJobData> {
   protected readonly logger = new Logger(AutomationDelayedProcessor.name);
+  protected readonly cls: ClsService;
 
   constructor(
     private readonly orchestrator: WorkflowOrchestratorService,
@@ -30,32 +34,37 @@ export class AutomationDelayedProcessor extends BaseConsumer {
     private readonly executionLogRepo: AutomationExecutionLogRepository,
     private readonly workflowRepo: AutomationWorkflowRepository,
     private readonly delayedJobRepo: AutomationDelayedJobRepository,
-    private readonly cls: ClsService,
+    cls: ClsService,
   ) {
     super();
+    this.cls = cls;
   }
 
-  async process(job: Job<AutomationDelayedQueueJobData>): Promise<void> {
-    return runWithTenantContext(this.cls, job.data.tenantId, async () => {
-      const data = await this.resolveJobData(job.data);
-      if (!data) return;
+  protected async handle(
+    job: Job<AutomationDelayedQueueJobData>,
+  ): Promise<void> {
+    const data = await this.resolveJobData(job.data);
+    if (!data) return;
 
-      try {
-        await this.resumeWorkflow(data);
+    try {
+      await this.resumeWorkflow(data);
 
-        if (job.data.delayedJobId) {
-          await this.delayedJobRepo.markCompleted(job.data.delayedJobId);
-        }
-      } catch (error: any) {
-        this.logger.error(
-          `[DelayedResume] Failed execution=${data.executionId}: ${error.message}`,
-          error.stack,
-        );
-        throw error;
+      if (job.data.delayedJobId) {
+        await this.delayedJobRepo.markCompleted(job.data.delayedJobId);
       }
-    });
+    } catch (error: any) {
+      this.logger.error(
+        `[DelayedResume] Failed execution=${data.executionId}: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
   }
 
+  /**
+   * onFailed override: uses runWithTenantContext because this runs
+   * OUTSIDE the process() CLS context (BullMQ event callback).
+   */
   @OnWorkerEvent('failed')
   override onFailed(job: Job<AutomationDelayedQueueJobData>, error: Error) {
     super.onFailed(job, error);

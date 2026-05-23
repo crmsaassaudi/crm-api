@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Processor } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { ClsService } from 'nestjs-cls';
@@ -6,18 +6,20 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CONTACT_EXPORT_QUEUE } from './contacts.constants';
 import { ContactRepository } from './infrastructure/persistence/document/repositories/contact.repository';
 import { ContactExportStorageService } from './contact-export-storage.service';
-import { runWithTenantContext } from '../common/tenancy/tenant-context';
+import {
+  BaseTenantConsumer,
+  TenantJobData,
+} from '../queue/base-tenant.consumer';
 
-export interface ContactExportJobData {
-  tenantId: string;
-  userId?: string;
+export interface ContactExportJobData extends TenantJobData {
   ids?: string[];
   filters?: any;
 }
 
 @Processor(CONTACT_EXPORT_QUEUE)
-export class ContactExportProcessor extends WorkerHost {
-  private readonly logger = new Logger(ContactExportProcessor.name);
+export class ContactExportProcessor extends BaseTenantConsumer<ContactExportJobData> {
+  protected readonly logger = new Logger(ContactExportProcessor.name);
+  protected readonly cls: ClsService;
 
   private readonly CSV_HEADERS = [
     'id',
@@ -35,13 +37,14 @@ export class ContactExportProcessor extends WorkerHost {
   constructor(
     private readonly repository: ContactRepository,
     private readonly storageService: ContactExportStorageService,
-    private readonly cls: ClsService,
+    cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
   ) {
     super();
+    this.cls = cls;
   }
 
-  async process(job: Job<ContactExportJobData>): Promise<{
+  protected async handle(job: Job<ContactExportJobData>): Promise<{
     downloadUrl: string;
     expiresAt: string;
     recordCount: number;
@@ -49,78 +52,61 @@ export class ContactExportProcessor extends WorkerHost {
   }> {
     const { tenantId, userId, ids, filters } = job.data;
 
-    return runWithTenantContext(this.cls, tenantId, async () => {
-      if (userId) {
-        this.cls.set('userId', userId);
-      }
+    const docs = await this.repository.findForExport({ ids, filters });
 
-      // ── Query documents INSIDE the CLS context ──
-      // This guarantees the Mongoose tenant-filter plugin can read
-      // activeTenantId from CLS. Previously an async generator was
-      // consumed by stream pipeline() which could lose the CLS store.
-      const docs = await this.repository.findForExport({
+    this.logger.log(
+      `Contact export job ${job.id}: tenantId=${tenantId}, ids=${ids?.length ?? 'all'}, docs=${docs.length}`,
+    );
+
+    await job.updateProgress(10);
+
+    const csvContent = this.buildCsv(docs);
+    const recordCount = docs.length;
+
+    await job.updateProgress(80);
+
+    const exportFile = await this.storageService.storeCsv(
+      csvContent,
+      `contacts-export-${new Date().toISOString().slice(0, 10)}.csv`,
+      5 * 60,
+    );
+
+    await job.updateProgress(100);
+
+    this.eventEmitter.emit('activity.create', {
+      tenantId,
+      actorId: userId,
+      targetType: 'contact',
+      targetId: 'export',
+      event: 'export',
+      payload: { recordCount, ids, filters },
+    });
+    this.eventEmitter.emit('audit.record', {
+      tenantId,
+      actorId: userId,
+      action: 'CONTACTS_EXPORTED',
+      targetEntityType: 'Contact',
+      targetEntityId: 'export',
+      metadata: {
+        recordCount,
         ids,
         filters,
-      });
-
-      this.logger.log(
-        `Contact export job ${job.id}: tenantId=${tenantId}, ids=${ids?.length ?? 'all'}, docs=${docs.length}`,
-      );
-
-      await job.updateProgress(10);
-
-      // ── Build CSV string in memory ──
-      const csvContent = this.buildCsv(docs);
-      const recordCount = docs.length;
-
-      await job.updateProgress(80);
-
-      const exportFile = await this.storageService.storeCsv(
-        csvContent,
-        `contacts-export-${new Date().toISOString().slice(0, 10)}.csv`,
-        5 * 60,
-      );
-
-      await job.updateProgress(100);
-
-      this.eventEmitter.emit('activity.create', {
-        tenantId,
-        actorId: userId,
-        targetType: 'contact',
-        targetId: 'export',
-        event: 'export',
-        payload: { recordCount, ids, filters },
-      });
-      this.eventEmitter.emit('audit.record', {
-        tenantId,
-        actorId: userId,
-        action: 'CONTACTS_EXPORTED',
-        targetEntityType: 'Contact',
-        targetEntityId: 'export',
-        metadata: {
-          recordCount,
-          ids,
-          filters,
-          storageKey: exportFile.storageKey,
-          expiresAt: exportFile.expiresAt,
-        },
-      });
-
-      this.logger.log(
-        `Contact export job ${job.id} completed: ${recordCount} records`,
-      );
-
-      return { ...exportFile, recordCount };
+        storageKey: exportFile.storageKey,
+        expiresAt: exportFile.expiresAt,
+      },
     });
+
+    this.logger.log(
+      `Contact export job ${job.id} completed: ${recordCount} records`,
+    );
+
+    return { ...exportFile, recordCount };
   }
 
   private buildCsv(docs: any[]): string {
     const lines: string[] = [];
-
-    // Header row
     lines.push(this.CSV_HEADERS.join(','));
 
-    // Data rows
     for (const doc of docs) {
       const row = this.CSV_HEADERS.map((key) =>
         this.csvCell(this.getValue(doc, key)),
@@ -149,4 +135,3 @@ export class ContactExportProcessor extends WorkerHost {
     return `"${normalized.replace(/"/g, '""')}"`;
   }
 }
-

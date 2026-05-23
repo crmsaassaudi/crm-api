@@ -3,8 +3,10 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
-import { BaseConsumer } from '../../queue/base.consumer';
-import { runWithTenantContext } from '../../common/tenancy/tenant-context';
+import {
+  BaseTenantConsumer,
+  TenantJobData,
+} from '../../queue/base-tenant.consumer';
 import { OutboundService } from '../../omni-outbound/outbound.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
@@ -22,11 +24,12 @@ class BotConversationLockBusyError extends Error {
 }
 
 @Processor(BOT_PROCESSING_QUEUE)
-export class BotProcessingProcessor extends BaseConsumer {
+export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobData> {
   protected readonly logger = new Logger(BotProcessingProcessor.name);
+  protected readonly cls: ClsService;
 
   constructor(
-    private readonly cls: ClsService,
+    cls: ClsService,
     private readonly conversationRepo: ConversationRepository,
     private readonly messageRepo: MessageRepository,
     private readonly botApi: BotApiService,
@@ -35,18 +38,10 @@ export class BotProcessingProcessor extends BaseConsumer {
     private readonly eventEmitter: EventEmitter2,
   ) {
     super();
+    this.cls = cls;
   }
 
-  async process(job: Job<BotProcessingJobData>): Promise<void> {
-    const { tenantId } = job.data;
-    return runWithTenantContext(this.cls, tenantId, async () =>
-      this.processWithTenant(job),
-    );
-  }
-
-  private async processWithTenant(
-    job: Job<BotProcessingJobData>,
-  ): Promise<void> {
+  protected async handle(job: Job<BotProcessingJobData>): Promise<void> {
     const { conversationId } = job.data;
     const lockKey = `lock:bot_conversation:${conversationId}`;
     const lockToken = await this.botLock.tryAcquire(lockKey, BOT_LOCK_TTL_MS);

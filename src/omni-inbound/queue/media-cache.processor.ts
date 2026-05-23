@@ -3,14 +3,15 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
-import { BaseConsumer } from '../../queue/base.consumer';
+import {
+  BaseTenantConsumer,
+  TenantJobData,
+} from '../../queue/base-tenant.consumer';
 import { MediaProxyService } from '../services/media-proxy.service';
 import { MessageRepository } from '../repositories/message.repository';
 import { OMNI_MEDIA_CACHE_QUEUE } from './omni-media-queue.constants';
-import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
-export interface MediaCacheJobData {
-  tenantId: string;
+export interface MediaCacheJobData extends TenantJobData {
   conversationId: string;
   messageId: string;
   mediaUrl: string;
@@ -38,19 +39,21 @@ export interface MediaCacheJobData {
  *   - Automatic retries via BullMQ (3 attempts, exponential backoff)
  */
 @Processor(OMNI_MEDIA_CACHE_QUEUE)
-export class MediaCacheProcessor extends BaseConsumer {
+export class MediaCacheProcessor extends BaseTenantConsumer<MediaCacheJobData> {
   protected readonly logger = new Logger(MediaCacheProcessor.name);
+  protected readonly cls: ClsService;
 
   constructor(
     private readonly mediaProxy: MediaProxyService,
     private readonly messageRepo: MessageRepository,
     private readonly eventEmitter: EventEmitter2,
-    private readonly cls: ClsService,
+    cls: ClsService,
   ) {
     super();
+    this.cls = cls;
   }
 
-  async process(job: Job<MediaCacheJobData>): Promise<void> {
+  protected async handle(job: Job<MediaCacheJobData>): Promise<void> {
     const {
       tenantId,
       conversationId,
@@ -61,51 +64,49 @@ export class MediaCacheProcessor extends BaseConsumer {
       accessToken,
     } = job.data;
 
-    return runWithTenantContext(this.cls, tenantId, async () => {
-      this.logger.log(
-        `Processing media cache job ${job.id} — ${channelType} media for message ${messageId}`,
+    this.logger.log(
+      `Processing media cache job ${job.id} — ${channelType} media for message ${messageId}`,
+    );
+
+    try {
+      // Step 1: Download and cache the media
+      const proxyUrl = await this.mediaProxy.cacheMedia(
+        tenantId,
+        channelType,
+        mediaUrl,
+        mediaId,
+        accessToken,
       );
 
-      try {
-        // Step 1: Download and cache the media
-        const proxyUrl = await this.mediaProxy.cacheMedia(
-          tenantId,
-          channelType,
-          mediaUrl,
-          mediaId,
-          accessToken,
+      // Step 2: If the proxy URL is the same as original, caching failed or was skipped
+      // (e.g. quota exceeded) — no need to update
+      if (proxyUrl === mediaUrl) {
+        this.logger.debug(
+          `Media cache returned original URL for message ${messageId} — skipping update`,
         );
-
-        // Step 2: If the proxy URL is the same as original, caching failed or was skipped
-        // (e.g. quota exceeded) — no need to update
-        if (proxyUrl === mediaUrl) {
-          this.logger.debug(
-            `Media cache returned original URL for message ${messageId} — skipping update`,
-          );
-          return;
-        }
-
-        // Step 3: Update the message record with the stable proxy URL
-        await this.messageRepo.updateMediaProxyUrl(messageId, proxyUrl);
-
-        // Step 4: Emit event for real-time frontend notification
-        this.eventEmitter.emit('omni.message.media_cached', {
-          tenantId,
-          conversationId,
-          messageId,
-          mediaProxyUrl: proxyUrl,
-        });
-
-        this.logger.log(
-          `Media cached successfully for message ${messageId}: ${proxyUrl}`,
-        );
-      } catch (error: any) {
-        this.logger.error(
-          `Failed to cache media for message ${messageId}: ${error.message}`,
-          error.stack,
-        );
-        throw error; // Re-throw so BullMQ retries
+        return;
       }
-    });
+
+      // Step 3: Update the message record with the stable proxy URL
+      await this.messageRepo.updateMediaProxyUrl(messageId, proxyUrl);
+
+      // Step 4: Emit event for real-time frontend notification
+      this.eventEmitter.emit('omni.message.media_cached', {
+        tenantId,
+        conversationId,
+        messageId,
+        mediaProxyUrl: proxyUrl,
+      });
+
+      this.logger.log(
+        `Media cached successfully for message ${messageId}: ${proxyUrl}`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to cache media for message ${messageId}: ${error.message}`,
+        error.stack,
+      );
+      throw error; // Re-throw so BullMQ retries
+    }
   }
 }

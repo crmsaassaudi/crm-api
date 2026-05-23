@@ -2,7 +2,10 @@ import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import { BaseConsumer } from '../../queue/base.consumer';
+import {
+  BaseTenantConsumer,
+  TenantJobData,
+} from '../../queue/base-tenant.consumer';
 import {
   AUTOMATION_ACTION_QUEUE,
   AUTOMATION_EMAIL_QUEUE,
@@ -22,11 +25,13 @@ import {
 } from '../engine/action-executors';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationDlqProducer } from './automation-dlq.producer';
-import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 /**
  * Shared action processing logic used by all typed queue processors.
  * Extracted to avoid code duplication across 4+ queue consumers.
+ *
+ * NOTE: CLS tenant context is now set by BaseTenantConsumer.process() —
+ * this mixin no longer wraps with runWithTenantContext.
  */
 export class ActionProcessorMixin {
   constructor(
@@ -34,7 +39,6 @@ export class ActionProcessorMixin {
     protected readonly executionLogRepo: AutomationExecutionLogRepository,
     protected readonly dlqProducer: AutomationDlqProducer,
     protected readonly logger: Logger,
-    protected readonly cls: ClsService,
   ) {}
 
   async processAction(job: Job<AutomationActionJobData>): Promise<void> {
@@ -54,9 +58,8 @@ export class ActionProcessorMixin {
       return;
     }
 
-    return runWithTenantContext(this.cls, data.tenantId, () =>
-      this.processActionInTenantContext(job),
-    );
+    // CLS tenant context is already set by BaseTenantConsumer.process()
+    return this.processActionInTenantContext(job);
   }
 
   private validateJobData(data: unknown): string | null {
@@ -266,8 +269,9 @@ export class ActionProcessorMixin {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Processor(AUTOMATION_ACTION_QUEUE)
-export class AutomationActionProcessor extends BaseConsumer {
+export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActionJobData> {
   protected readonly logger = new Logger(AutomationActionProcessor.name);
+  protected readonly cls: ClsService;
   private readonly mixin: ActionProcessorMixin;
 
   constructor(
@@ -281,6 +285,7 @@ export class AutomationActionProcessor extends BaseConsumer {
     cls: ClsService,
   ) {
     super();
+    this.cls = cls;
     const executors = new Map<string, ActionExecutor>([
       [sendEmail.actionType, sendEmail],
       [sendSms.actionType, sendSms],
@@ -293,7 +298,6 @@ export class AutomationActionProcessor extends BaseConsumer {
       executionLogRepo,
       dlqProducer,
       this.logger,
-      cls,
     );
   }
 
@@ -302,7 +306,7 @@ export class AutomationActionProcessor extends BaseConsumer {
     this.mixin.handleFailedJob(job, error);
   }
 
-  async process(job: Job<AutomationActionJobData>): Promise<void> {
+  protected async handle(job: Job<AutomationActionJobData>): Promise<void> {
     return this.mixin.processAction(job);
   }
 }
@@ -312,8 +316,9 @@ export class AutomationActionProcessor extends BaseConsumer {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Processor(AUTOMATION_EMAIL_QUEUE)
-export class AutomationEmailProcessor extends BaseConsumer {
+export class AutomationEmailProcessor extends BaseTenantConsumer<AutomationActionJobData> {
   protected readonly logger = new Logger(AutomationEmailProcessor.name);
+  protected readonly cls: ClsService;
   private readonly mixin: ActionProcessorMixin;
 
   constructor(
@@ -323,6 +328,7 @@ export class AutomationEmailProcessor extends BaseConsumer {
     cls: ClsService,
   ) {
     super();
+    this.cls = cls;
     const executors = new Map<string, ActionExecutor>([
       [sendEmail.actionType, sendEmail],
     ]);
@@ -331,7 +337,6 @@ export class AutomationEmailProcessor extends BaseConsumer {
       executionLogRepo,
       dlqProducer,
       this.logger,
-      cls,
     );
   }
 
@@ -340,7 +345,7 @@ export class AutomationEmailProcessor extends BaseConsumer {
     this.mixin.handleFailedJob(job, error);
   }
 
-  async process(job: Job<AutomationActionJobData>): Promise<void> {
+  protected async handle(job: Job<AutomationActionJobData>): Promise<void> {
     return this.mixin.processAction(job);
   }
 }
@@ -350,8 +355,9 @@ export class AutomationEmailProcessor extends BaseConsumer {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Processor(AUTOMATION_SMS_QUEUE)
-export class AutomationSmsProcessor extends BaseConsumer {
+export class AutomationSmsProcessor extends BaseTenantConsumer<AutomationActionJobData> {
   protected readonly logger = new Logger(AutomationSmsProcessor.name);
+  protected readonly cls: ClsService;
   private readonly mixin: ActionProcessorMixin;
 
   constructor(
@@ -361,6 +367,7 @@ export class AutomationSmsProcessor extends BaseConsumer {
     cls: ClsService,
   ) {
     super();
+    this.cls = cls;
     const executors = new Map<string, ActionExecutor>([
       [sendSms.actionType, sendSms],
     ]);
@@ -369,7 +376,6 @@ export class AutomationSmsProcessor extends BaseConsumer {
       executionLogRepo,
       dlqProducer,
       this.logger,
-      cls,
     );
   }
 
@@ -378,7 +384,7 @@ export class AutomationSmsProcessor extends BaseConsumer {
     this.mixin.handleFailedJob(job, error);
   }
 
-  async process(job: Job<AutomationActionJobData>): Promise<void> {
+  protected async handle(job: Job<AutomationActionJobData>): Promise<void> {
     return this.mixin.processAction(job);
   }
 }
@@ -388,8 +394,9 @@ export class AutomationSmsProcessor extends BaseConsumer {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Processor(AUTOMATION_INTERNAL_QUEUE)
-export class AutomationInternalProcessor extends BaseConsumer {
+export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationActionJobData> {
   protected readonly logger = new Logger(AutomationInternalProcessor.name);
+  protected readonly cls: ClsService;
   private readonly mixin: ActionProcessorMixin;
 
   constructor(
@@ -400,6 +407,7 @@ export class AutomationInternalProcessor extends BaseConsumer {
     cls: ClsService,
   ) {
     super();
+    this.cls = cls;
     const executors = new Map<string, ActionExecutor>([
       [updateField.actionType, updateField],
       [routeToTeam.actionType, routeToTeam],
@@ -409,7 +417,6 @@ export class AutomationInternalProcessor extends BaseConsumer {
       executionLogRepo,
       dlqProducer,
       this.logger,
-      cls,
     );
   }
 
@@ -418,7 +425,7 @@ export class AutomationInternalProcessor extends BaseConsumer {
     this.mixin.handleFailedJob(job, error);
   }
 
-  async process(job: Job<AutomationActionJobData>): Promise<void> {
+  protected async handle(job: Job<AutomationActionJobData>): Promise<void> {
     return this.mixin.processAction(job);
   }
 }
@@ -428,8 +435,9 @@ export class AutomationInternalProcessor extends BaseConsumer {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Processor(AUTOMATION_WEBHOOK_QUEUE)
-export class AutomationWebhookProcessor extends BaseConsumer {
+export class AutomationWebhookProcessor extends BaseTenantConsumer<AutomationActionJobData> {
   protected readonly logger = new Logger(AutomationWebhookProcessor.name);
+  protected readonly cls: ClsService;
   private readonly mixin: ActionProcessorMixin;
 
   constructor(
@@ -439,6 +447,7 @@ export class AutomationWebhookProcessor extends BaseConsumer {
     cls: ClsService,
   ) {
     super();
+    this.cls = cls;
     const executors = new Map<string, ActionExecutor>([
       [webhook.actionType, webhook],
     ]);
@@ -447,7 +456,6 @@ export class AutomationWebhookProcessor extends BaseConsumer {
       executionLogRepo,
       dlqProducer,
       this.logger,
-      cls,
     );
   }
 
@@ -456,7 +464,7 @@ export class AutomationWebhookProcessor extends BaseConsumer {
     this.mixin.handleFailedJob(job, error);
   }
 
-  async process(job: Job<AutomationActionJobData>): Promise<void> {
+  protected async handle(job: Job<AutomationActionJobData>): Promise<void> {
     return this.mixin.processAction(job);
   }
 }

@@ -3,15 +3,16 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
-import { BaseConsumer } from '../../queue/base.consumer';
+import {
+  BaseTenantConsumer,
+  TenantJobData,
+} from '../../queue/base-tenant.consumer';
 import { SLA_BREACH_QUEUE } from './sla-queue.constants';
 import { ConversationRepository } from '../../omni-inbound/repositories/conversation.repository';
-import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 export type SlaBreachType = 'frt' | 'resolution';
 
-export interface SlaBreachJobData {
-  tenantId: string;
+export interface SlaBreachJobData extends TenantJobData {
   conversationId: string;
   slaPolicyId: string;
   /** Which SLA type this job monitors */
@@ -31,23 +32,25 @@ export interface SlaBreachJobData {
  *   - Conversation resolved → cancel Resolution job (and FRT if still pending)
  */
 @Processor(SLA_BREACH_QUEUE)
-export class SlaBreachProcessor extends BaseConsumer {
+export class SlaBreachProcessor extends BaseTenantConsumer<SlaBreachJobData> {
   protected readonly logger = new Logger(SlaBreachProcessor.name);
+  protected readonly cls: ClsService;
 
   constructor(
     private readonly conversationRepository: ConversationRepository,
     private readonly eventEmitter: EventEmitter2,
-    private readonly cls: ClsService,
+    cls: ClsService,
   ) {
     super();
+    this.cls = cls;
   }
 
-  async process(job: Job<SlaBreachJobData>): Promise<void> {
+  protected async handle(job: Job<SlaBreachJobData>): Promise<void> {
     const { tenantId, conversationId, slaPolicyId, breachType } = job.data;
     const now = new Date();
 
     await this.withTimeout(
-      runWithTenantContext(this.cls, tenantId, async () => {
+      (async () => {
         this.logger.debug(
           `Processing SLA breach check [${breachType}] for conversation ${conversationId}`,
         );
@@ -94,7 +97,7 @@ export class SlaBreachProcessor extends BaseConsumer {
           `SLA [${breachType}] breached for conversation ${conversationId} ` +
             `(policy: ${slaPolicyId})`,
         );
-      }),
+      })(),
       job.data.timeoutMs ?? 30_000,
       `SLA breach job ${job.id} timed out`,
     );

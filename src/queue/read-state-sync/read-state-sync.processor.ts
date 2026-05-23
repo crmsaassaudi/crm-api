@@ -5,7 +5,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
 
-import { BaseConsumer } from '../base.consumer';
+import { BaseTenantConsumer } from '../base-tenant.consumer';
 import { ReadStateSyncJobData } from './read-state-sync.producer';
 import { ChannelConfigRepository } from '../../channels/infrastructure/persistence/document/repositories/channel-config.repository';
 import {
@@ -19,7 +19,6 @@ import {
   ErrorSeverity,
 } from '../../channels/domain/error-classifier';
 import { EmailMetadataSchemaClass } from '../../channels/infrastructure/persistence/document/entities/email-metadata.schema';
-import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 /**
  * ReadStateSyncProcessor — BullMQ worker for Two-Way Read State Sync.
@@ -36,8 +35,9 @@ import { runWithTenantContext } from '../../common/tenancy/tenant-context';
  *   - Sync status tracking: updates email_metadata.syncStatus for debugging
  */
 @Processor('read-state-sync')
-export class ReadStateSyncProcessor extends BaseConsumer {
+export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobData> {
   protected readonly logger = new Logger(ReadStateSyncProcessor.name);
+  protected readonly cls: ClsService;
 
   /** Redis lock TTL for per-message sync operations */
   private readonly LOCK_TTL_MS = 30_000; // 30 seconds
@@ -50,55 +50,54 @@ export class ReadStateSyncProcessor extends BaseConsumer {
     private readonly lockService: RedisLockService,
     @InjectModel(EmailMetadataSchemaClass.name)
     private readonly emailMetadataModel: Model<any>,
-    private readonly cls: ClsService,
+    cls: ClsService,
   ) {
     super();
+    this.cls = cls;
   }
 
-  async process(job: Job<ReadStateSyncJobData>): Promise<void> {
+  protected async handle(job: Job<ReadStateSyncJobData>): Promise<void> {
     const { emailMessageId, targetState } = job.data;
 
-    return runWithTenantContext(this.cls, job.data.tenantId, async () => {
-      this.logger.log(
-        `[ReadStateSync] Processing: ${emailMessageId} → ${targetState} (attempt ${job.attemptsMade + 1})`,
+    this.logger.log(
+      `[ReadStateSync] Processing: ${emailMessageId} → ${targetState} (attempt ${job.attemptsMade + 1})`,
+    );
+
+    // ── Step 1: Retrieve config & check opt-in ────────────────────────
+    const config = await this.configRepo.findByIdWithCredentialsNoTenant(
+      job.data.configId,
+    );
+    if (!config) {
+      this.logger.error(
+        `[ReadStateSync] Config ${job.data.configId} not found — dropping job`,
       );
+      return;
+    }
 
-      // ── Step 1: Retrieve config & check opt-in ────────────────────────
-      const config = await this.configRepo.findByIdWithCredentialsNoTenant(
-        job.data.configId,
+    const tenantReadStateEnabled =
+      await this.emailSettings.isSyncReadStateEnabled(job.data.tenantId);
+    const configReadStateEnabled =
+      config.publicSettings?.syncReadState !== false &&
+      config.publicSettings?.syncReadState !== 'false';
+    if (!tenantReadStateEnabled || !configReadStateEnabled) {
+      this.logger.debug(
+        `[ReadStateSync] Dropped: read-state sync disabled for tenant or config ${config.name}`,
       );
-      if (!config) {
-        this.logger.error(
-          `[ReadStateSync] Config ${job.data.configId} not found — dropping job`,
-        );
-        return;
-      }
+      return;
+    }
 
-      const tenantReadStateEnabled =
-        await this.emailSettings.isSyncReadStateEnabled(job.data.tenantId);
-      const configReadStateEnabled =
-        config.publicSettings?.syncReadState !== false &&
-        config.publicSettings?.syncReadState !== 'false';
-      if (!tenantReadStateEnabled || !configReadStateEnabled) {
-        this.logger.debug(
-          `[ReadStateSync] Dropped: read-state sync disabled for tenant or config ${config.name}`,
-        );
-        return;
-      }
+    // ── Step 2: Redis lock (prevent concurrent sync of same message) ──
+    const lockKey = `readstate:lock:${emailMessageId}`;
 
-      // ── Step 2: Redis lock (prevent concurrent sync of same message) ──
-      const lockKey = `readstate:lock:${emailMessageId}`;
-
-      await this.lockService.acquire(
-        lockKey,
-        this.LOCK_TTL_MS,
-        async () => {
-          await this.executeSync(job.data, config);
-        },
-        200, // retry delay
-        5, // max retries for lock
-      );
-    });
+    await this.lockService.acquire(
+      lockKey,
+      this.LOCK_TTL_MS,
+      async () => {
+        await this.executeSync(job.data, config);
+      },
+      200, // retry delay
+      5, // max retries for lock
+    );
   }
 
   /**

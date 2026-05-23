@@ -110,10 +110,7 @@ export class ContactsController {
 
   @Get('export-download/:token')
   @RequirePermission('export', 'contacts')
-  async downloadExport(
-    @Param('token') token: string,
-    @Res() res: Response,
-  ) {
+  async downloadExport(@Param('token') token: string, @Res() res: Response) {
     const file = await this.service.getExportDownload(token);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(

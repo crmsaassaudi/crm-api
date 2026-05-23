@@ -2,10 +2,12 @@ import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import { BaseConsumer } from '../../queue/base.consumer';
+import {
+  BaseTenantConsumer,
+  TenantJobData,
+} from '../../queue/base-tenant.consumer';
 import { AUTOMATION_BULK_QUEUE } from './automation-queue.constants';
 import { WorkflowOrchestratorService } from '../engine/workflow-orchestrator.service';
-import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 /**
  * AutomationBulkProcessor - consumes throttled automation events from the bulk queue.
@@ -18,30 +20,29 @@ import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 @Processor(AUTOMATION_BULK_QUEUE, {
   concurrency: parseInt(process.env.BULK_QUEUE_CONCURRENCY || '5', 10),
 })
-export class AutomationBulkProcessor extends BaseConsumer {
+export class AutomationBulkProcessor extends BaseTenantConsumer<TenantJobData> {
   protected readonly logger = new Logger(AutomationBulkProcessor.name);
+  protected readonly cls: ClsService;
 
   constructor(
     private readonly orchestrator: WorkflowOrchestratorService,
-    private readonly cls: ClsService,
+    cls: ClsService,
   ) {
     super();
+    this.cls = cls;
   }
 
-  async process(job: Job): Promise<void> {
-    const { workflow, payload } = job.data;
-    const tenantId = payload?.tenantId ?? workflow?.tenantId;
+  protected async handle(job: Job<TenantJobData>): Promise<void> {
+    const { workflow, payload } = job.data as any;
 
-    return runWithTenantContext(this.cls, tenantId, async () => {
-      this.logger.log(
-        `[Bulk Processor] Processing throttled event: job=${job.id} workflow=${workflow._id || workflow.name} record=${payload.recordId}`,
-      );
+    this.logger.log(
+      `[Bulk Processor] Processing throttled event: job=${job.id} workflow=${workflow._id || workflow.name} record=${payload.recordId}`,
+    );
 
-      await this.orchestrator.execute(workflow, payload);
+    await this.orchestrator.execute(workflow, payload);
 
-      this.logger.log(
-        `[Bulk Processor] Completed throttled event: job=${job.id}`,
-      );
-    });
+    this.logger.log(
+      `[Bulk Processor] Completed throttled event: job=${job.id}`,
+    );
   }
 }

@@ -5,16 +5,17 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
-import { BaseConsumer } from '../../queue/base.consumer';
+import {
+  BaseTenantConsumer,
+  TenantJobData,
+} from '../../queue/base-tenant.consumer';
 import { ESCALATION_QUEUE } from './escalation-queue.constants';
 import {
   OmniConversationSchemaClass,
   OmniConversationDocument,
 } from '../../omni-inbound/infrastructure/persistence/document/entities/omni-conversation.schema';
-import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
-export interface EscalationJobData {
-  tenantId: string;
+export interface EscalationJobData extends TenantJobData {
   conversationId: string;
   escalationPolicyId: string;
   /** The escalation level: 'warning' = red highlight, 'breach' = notify manager */
@@ -34,132 +35,132 @@ export interface EscalationJobData {
  *   - reassign: Emit event to reassign conversation to manager
  */
 @Processor(ESCALATION_QUEUE)
-export class EscalationProcessor extends BaseConsumer {
+export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
   protected readonly logger = new Logger(EscalationProcessor.name);
+  protected readonly cls: ClsService;
 
   constructor(
     @InjectModel(OmniConversationSchemaClass.name)
     private readonly conversationModel: Model<OmniConversationDocument>,
     private readonly eventEmitter: EventEmitter2,
-    private readonly cls: ClsService,
+    cls: ClsService,
   ) {
     super();
+    this.cls = cls;
   }
 
-  async process(job: Job<EscalationJobData>): Promise<void> {
+  protected async handle(job: Job<EscalationJobData>): Promise<void> {
     const { tenantId, conversationId, escalationPolicyId, level, actions } =
       job.data;
 
-    return runWithTenantContext(this.cls, tenantId, async () => {
+    this.logger.debug(
+      `Processing escalation [${level}] for conversation ${conversationId}`,
+    );
+
+    // Verify conversation is still active
+    const conversation = await this.conversationModel
+      .findOne({
+        _id: conversationId,
+        tenantId,
+        status: { $in: ['open', 'pending'] },
+      })
+      .lean()
+      .exec();
+
+    if (!conversation) {
       this.logger.debug(
-        `Processing escalation [${level}] for conversation ${conversationId}`,
+        `Conversation ${conversationId} no longer active — skipping escalation`,
       );
+      return;
+    }
 
-      // Verify conversation is still active
-      const conversation = await this.conversationModel
-        .findOne({
-          _id: conversationId,
-          tenantId,
-          status: { $in: ['open', 'pending'] },
-        })
-        .lean()
-        .exec();
+    const now = new Date();
 
-      if (!conversation) {
-        this.logger.debug(
-          `Conversation ${conversationId} no longer active — skipping escalation`,
-        );
-        return;
-      }
-
-      const now = new Date();
-
-      // ── Process each action ──────────────────────────────────────
-      for (const action of actions) {
-        switch (action.type) {
-          case 'color_red':
-          case 'escalate': {
-            // Visual escalation — mark conversation for red highlight
-            await this.conversationModel.updateOne(
-              { _id: conversationId },
-              {
-                $set: {
-                  escalationLevel: 'warning',
-                  escalatedAt: now,
-                },
+    // ── Process each action ──────────────────────────────────────
+    for (const action of actions) {
+      switch (action.type) {
+        case 'color_red':
+        case 'escalate': {
+          // Visual escalation — mark conversation for red highlight
+          await this.conversationModel.updateOne(
+            { _id: conversationId },
+            {
+              $set: {
+                escalationLevel: 'warning',
+                escalatedAt: now,
               },
-            );
+            },
+          );
 
-            this.eventEmitter.emit('omni.conversation.escalated', {
-              tenantId,
-              conversationId,
-              escalationLevel: 'warning',
-              escalationPolicyId,
-              escalatedAt: now,
-            });
+          this.eventEmitter.emit('omni.conversation.escalated', {
+            tenantId,
+            conversationId,
+            escalationLevel: 'warning',
+            escalationPolicyId,
+            escalatedAt: now,
+          });
 
-            this.logger.warn(
-              `Conversation ${conversationId} escalated to WARNING (red highlight)`,
-            );
-            break;
-          }
-
-          case 'notify': {
-            // Critical escalation — notify manager
-            await this.conversationModel.updateOne(
-              { _id: conversationId },
-              {
-                $set: {
-                  escalationLevel: 'critical',
-                  escalatedToId: action.value, // manager userId or group
-                  escalatedAt: now,
-                },
-              },
-            );
-
-            this.eventEmitter.emit('omni.conversation.escalated', {
-              tenantId,
-              conversationId,
-              escalationLevel: 'critical',
-              escalationPolicyId,
-              notifyTarget: action.value,
-              escalatedAt: now,
-            });
-
-            // Emit notification event for realtime websocket
-            this.eventEmitter.emit('omni.escalation.notify', {
-              tenantId,
-              conversationId,
-              targetUserId: action.value,
-              message: `SLA breached for conversation — your attention is needed`,
-              escalationPolicyId,
-            });
-
-            this.logger.warn(
-              `Conversation ${conversationId} escalated to CRITICAL — notified ${action.value}`,
-            );
-            break;
-          }
-
-          case 'reassign': {
-            // Reassign to manager/team lead
-            this.eventEmitter.emit('omni.escalation.reassign', {
-              tenantId,
-              conversationId,
-              targetUserId: action.value,
-              escalationPolicyId,
-            });
-
-            this.logger.warn(
-              `Conversation ${conversationId} reassigned to ${action.value} via escalation`,
-            );
-            break;
-          }
-
-          default:
-            this.logger.warn(`Unknown escalation action type: ${action.type}`);
+          this.logger.warn(
+            `Conversation ${conversationId} escalated to WARNING (red highlight)`,
+          );
+          break;
         }
+
+        case 'notify': {
+          // Critical escalation — notify manager
+          await this.conversationModel.updateOne(
+            { _id: conversationId },
+            {
+              $set: {
+                escalationLevel: 'critical',
+                escalatedToId: action.value, // manager userId or group
+                escalatedAt: now,
+              },
+            },
+          );
+
+          this.eventEmitter.emit('omni.conversation.escalated', {
+            tenantId,
+            conversationId,
+            escalationLevel: 'critical',
+            escalationPolicyId,
+            notifyTarget: action.value,
+            escalatedAt: now,
+          });
+
+          // Emit notification event for realtime websocket
+          this.eventEmitter.emit('omni.escalation.notify', {
+            tenantId,
+            conversationId,
+            targetUserId: action.value,
+            message: `SLA breached for conversation — your attention is needed`,
+            escalationPolicyId,
+          });
+
+          this.logger.warn(
+            `Conversation ${conversationId} escalated to CRITICAL — notified ${action.value}`,
+          );
+          break;
+        }
+
+        case 'reassign': {
+          // Reassign to manager/team lead
+          this.eventEmitter.emit('omni.escalation.reassign', {
+            tenantId,
+            conversationId,
+            targetUserId: action.value,
+            escalationPolicyId,
+          });
+
+          this.logger.warn(
+            `Conversation ${conversationId} reassigned to ${action.value} via escalation`,
+          );
+          break;
+        }
+
+        default:
+          this.logger.warn(`Unknown escalation action type: ${action.type}`);
       }
-    });
+    }
   }
 }

@@ -2,13 +2,14 @@ import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import { BaseConsumer } from '../../queue/base.consumer';
+import {
+  BaseTenantConsumer,
+  TenantJobData,
+} from '../../queue/base-tenant.consumer';
 import { AssignmentService } from '../services/assignment.service';
 import { OMNI_STICKY_RETRY_QUEUE } from './omni-sticky-queue.constants';
-import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
-export interface StickyRetryJobData {
-  tenantId: string;
+export interface StickyRetryJobData extends TenantJobData {
   conversationId: string;
   /** The sticky agent who was at-capacity when originally attempted */
   stickyAgentId: string;
@@ -25,48 +26,47 @@ export interface StickyRetryJobData {
  * expires and assigns the conversation via the fallback strategy.
  */
 @Processor(OMNI_STICKY_RETRY_QUEUE)
-export class StickyRetryProcessor extends BaseConsumer {
+export class StickyRetryProcessor extends BaseTenantConsumer<StickyRetryJobData> {
   protected readonly logger = new Logger(StickyRetryProcessor.name);
+  protected readonly cls: ClsService;
 
   constructor(
     private readonly assignmentService: AssignmentService,
-    private readonly cls: ClsService,
+    cls: ClsService,
   ) {
     super();
+    this.cls = cls;
   }
 
-  async process(job: Job<StickyRetryJobData>): Promise<void> {
+  protected async handle(job: Job<StickyRetryJobData>): Promise<void> {
     const { tenantId, conversationId, stickyAgentId, fallbackStrategy } =
       job.data;
 
-    return runWithTenantContext(this.cls, tenantId, async () => {
-      this.logger.log(
-        `Sticky wait-time expired for conversation ${conversationId} ` +
-          `(sticky agent: ${stickyAgentId}) — retrying with ${fallbackStrategy}`,
+    this.logger.log(
+      `Sticky wait-time expired for conversation ${conversationId} ` +
+        `(sticky agent: ${stickyAgentId}) — retrying with ${fallbackStrategy}`,
+    );
+
+    try {
+      const assignedAgentId = await this.assignmentService.assignConversation(
+        tenantId,
+        conversationId,
+        {
+          strategy: fallbackStrategy as any,
+          skipSticky: true,
+        },
       );
 
-      try {
-        const assignedAgentId = await this.assignmentService.assignConversation(
-          tenantId,
-          conversationId,
-          {
-            strategy: fallbackStrategy as any,
-            skipSticky: true,
-            // Exclude sticky routing — we already tried and waited
-          },
-        );
-
-        this.logger.log(
-          `Sticky retry: conversation ${conversationId} assigned to ` +
-            `${assignedAgentId ?? 'queue (no agents available)'}`,
-        );
-      } catch (error: any) {
-        this.logger.error(
-          `Sticky retry failed for conversation ${conversationId}: ${error.message}`,
-          error.stack,
-        );
-        throw error; // Re-throw so BullMQ retries
-      }
-    });
+      this.logger.log(
+        `Sticky retry: conversation ${conversationId} assigned to ` +
+          `${assignedAgentId ?? 'queue (no agents available)'}`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `Sticky retry failed for conversation ${conversationId}: ${error.message}`,
+        error.stack,
+      );
+      throw error; // Re-throw so BullMQ retries
+    }
   }
 }
