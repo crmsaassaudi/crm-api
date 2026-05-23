@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { BullModule } from '@nestjs/bullmq';
+import { BullBoardModule } from '@bull-board/nestjs';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { ContactsController } from './contacts.controller';
 import { ContactsService } from './contacts.service';
 import { ContactRepository } from './infrastructure/persistence/document/repositories/contact.repository';
@@ -16,16 +19,33 @@ import { TasksModule } from '../tasks/tasks.module';
 import { TicketsModule } from '../tickets/tickets.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { ContactExportStorageService } from './contact-export-storage.service';
+import { ContactExportProcessor } from './contact-export.processor';
 import { ContactScoringService } from './contact-scoring.service';
 import { isWorkerRuntime } from '../config/runtime-role';
+import { CONTACT_EXPORT_QUEUE } from './contacts.constants';
 
-const workerProviders = isWorkerRuntime() ? [ContactScoringService] : [];
+const workerProviders = isWorkerRuntime()
+  ? [ContactScoringService, ContactExportProcessor]
+  : [];
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: ContactSchemaClass.name, schema: ContactSchema },
     ]),
+    BullModule.registerQueue({
+      name: CONTACT_EXPORT_QUEUE,
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: 100,
+        removeOnFail: 500,
+      },
+    }),
+    BullBoardModule.forFeature({
+      name: CONTACT_EXPORT_QUEUE,
+      adapter: BullMQAdapter,
+    }),
     AccountsModule,
     DealsModule,
     ListViewsModule,

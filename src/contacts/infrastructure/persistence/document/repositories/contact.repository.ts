@@ -60,14 +60,15 @@ export class ContactRepository extends BaseDocumentRepository<
       deletedAt: { $exists: false },
     };
 
+    if (filterOptions?.__restrictToOwner) {
+      const currentUserId = filterOptions.__currentUserId;
+      if (currentUserId) {
+        where.ownerId = currentUserId;
+      }
+    }
+
     if (filterOptions?.search) {
-      const searchExpr = { $regex: filterOptions.search, $options: 'i' };
-      where.$or = [
-        { firstName: searchExpr },
-        { lastName: searchExpr },
-        { emails: searchExpr },
-        { companyName: searchExpr },
-      ];
+      where.$text = { $search: filterOptions.search };
     }
 
     // Filter by lifecycle stage (replaces the old isConverted filter)
@@ -302,19 +303,46 @@ export class ContactRepository extends BaseDocumentRepository<
     where: FilterQuery<ContactSchemaClass>,
     countLimit: number,
   ): Promise<{ totalItems: number; isExactCount: boolean }> {
-    const docs = await this.model
-      .find(where)
-      .select({ _id: 1 })
+    const count = await this.model
+      .countDocuments(where)
       .limit(countLimit + 1)
-      .lean()
       .exec();
-
-    const isExactCount = docs.length <= countLimit;
+    const isExactCount = count <= countLimit;
 
     return {
-      totalItems: isExactCount ? docs.length : countLimit,
+      totalItems: isExactCount ? count : countLimit,
       isExactCount,
     };
+  }
+
+  streamForExport(params: {
+    ids?: string[];
+    filters?: any;
+  }): AsyncIterable<ContactSchemaDocument> {
+    const where =
+      params.ids && params.ids.length > 0
+        ? ({
+            _id: { $in: params.ids },
+            deletedAt: { $exists: false },
+          } as FilterQuery<ContactSchemaClass>)
+        : this.buildListWhere(params.filters);
+    const scopedWhere = this.applyTenantFilter(where);
+    return this.model.find(scopedWhere).sort({ createdAt: -1 }).cursor();
+  }
+
+  async countForExport(params: {
+    ids?: string[];
+    filters?: any;
+  }): Promise<number> {
+    const where =
+      params.ids && params.ids.length > 0
+        ? ({
+            _id: { $in: params.ids },
+            deletedAt: { $exists: false },
+          } as FilterQuery<ContactSchemaClass>)
+        : this.buildListWhere(params.filters);
+    const scopedWhere = this.applyTenantFilter(where);
+    return this.model.countDocuments(scopedWhere).exec();
   }
 
   async findOne(
@@ -422,6 +450,29 @@ export class ContactRepository extends BaseDocumentRepository<
       matchedCount: result.matchedCount,
       modifiedCount: result.modifiedCount,
     };
+  }
+
+  async updateWithVersionCheck(
+    id: string,
+    version: number,
+    data: Partial<ContactSchemaClass>,
+  ): Promise<Contact | null> {
+    const scopedFilter = this.applyTenantFilter({ _id: id, __v: version });
+    const updatedById = this.cls.get('userId') || this.cls.get('user.id');
+    const doc = await this.model
+      .findOneAndUpdate(
+        scopedFilter,
+        {
+          $set: {
+            ...data,
+            ...(updatedById ? { updatedById } : {}),
+          },
+          $inc: { __v: 1 },
+        },
+        { new: true },
+      )
+      .exec();
+    return doc ? this.mapToDomain(doc) : null;
   }
 
   async recomputeScoresForAllTenants(

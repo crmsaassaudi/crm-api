@@ -8,10 +8,13 @@ import {
 } from './entities/audit-log.schema';
 
 export interface AuditLogRecordInput {
+  tenantId?: string;
   action: string;
   targetEntityType: string;
   targetEntityId: string;
   actorId?: string;
+  ipAddress?: string;
+  userAgent?: string;
   metadata?: Record<string, any>;
 }
 
@@ -24,7 +27,10 @@ export class AuditLogService {
   ) {}
 
   async record(input: AuditLogRecordInput): Promise<void> {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId =
+      input.tenantId ||
+      this.cls.get('activeTenantId') ||
+      this.cls.get('tenantId');
     const actorId =
       input.actorId || this.cls.get('userId') || this.cls.get('user.id');
 
@@ -35,8 +41,8 @@ export class AuditLogService {
       targetEntityType: input.targetEntityType,
       targetEntityId: input.targetEntityId,
       timestamp: new Date(),
-      ipAddress: this.cls.get('requestIp'),
-      userAgent: this.cls.get('userAgent'),
+      ipAddress: input.ipAddress || this.cls.get('requestIp'),
+      userAgent: input.userAgent || this.cls.get('userAgent'),
       metadata: input.metadata,
     });
   }

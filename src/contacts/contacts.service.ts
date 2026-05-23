@@ -2,7 +2,10 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { ContactRepository } from './infrastructure/persistence/document/repositories/contact.repository';
 import { Contact } from './domain/contact';
 import { CreateContactDto } from './dto/create-contact.dto';
@@ -21,9 +24,13 @@ import {
   clampPaginationLimit,
   resolvePaginationMode,
 } from '../utils/cursor-pagination';
-import { ActivityLogService } from '../activity-log/activity-log.service';
-import { AuditLogService } from '../audit-log/audit-log.service';
 import { ContactExportStorageService } from './contact-export-storage.service';
+import {
+  CONTACT_EXPORT_QUEUE,
+  DEFAULT_LIFECYCLE_STAGES,
+  MAX_BULK_TAG_SIZE,
+  UNMASK_TTL_SECONDS,
+} from './contacts.constants';
 
 @Injectable()
 export class ContactsService {
@@ -34,9 +41,9 @@ export class ContactsService {
     private readonly settingsService: CrmSettingsService,
     private readonly cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
-    private readonly activityLogService: ActivityLogService,
-    private readonly auditLogService: AuditLogService,
     private readonly exportStorageService: ContactExportStorageService,
+    @InjectQueue(CONTACT_EXPORT_QUEUE)
+    private readonly exportQueue: Queue,
   ) {}
 
   async create(data: CreateContactDto): Promise<Contact> {
@@ -62,10 +69,18 @@ export class ContactsService {
 
   async findAll(filter: any): Promise<any> {
     const limit = clampPaginationLimit(filter.limit);
+    const tenantConfig =
+      await this.settingsService.getSetting('data_access_policy');
+    const restrictToOwner = tenantConfig?.restrict_own_contacts ?? false;
+    const filterOptions = {
+      ...filter,
+      __restrictToOwner: restrictToOwner,
+      __currentUserId: this.getCurrentUserId(),
+    };
 
     if (resolvePaginationMode(filter) === 'cursor') {
       return this.repository.findManyWithCursorPagination({
-        filterOptions: filter,
+        filterOptions,
         paginationOptions: {
           limit,
           cursor: filter.cursor,
@@ -78,7 +93,7 @@ export class ContactsService {
     }
 
     return this.repository.findManyWithPagination({
-      filterOptions: filter,
+      filterOptions,
       paginationOptions: {
         page: Number(filter.page) || 1,
         limit,
@@ -130,7 +145,7 @@ export class ContactsService {
         ownerId !== undefined &&
         String(existingContact?.ownerId ?? '') !== String(ownerId ?? '')
       ) {
-        await this.auditLogService.record({
+        this.emitAuditLog({
           action: 'CONTACT_OWNER_CHANGED',
           targetEntityType: 'Contact',
           targetEntityId: id,
@@ -147,7 +162,7 @@ export class ContactsService {
 
   async remove(id: string): Promise<void> {
     await this.repository.remove(id);
-    await this.auditLogService.record({
+    this.emitAuditLog({
       action: 'CONTACT_DELETED',
       targetEntityType: 'Contact',
       targetEntityId: id,
@@ -248,16 +263,7 @@ export class ContactsService {
     const lifecycle =
       await this.settingsService.getSetting('contact_lifecycle');
     if (!lifecycle?.stages || !Array.isArray(lifecycle.stages)) {
-      // Fallback: default stage pipeline if no settings configured
-      return [
-        'subscriber',
-        'lead',
-        'mql',
-        'sql',
-        'opportunity',
-        'customer',
-        'evangelist',
-      ];
+      return [...DEFAULT_LIFECYCLE_STAGES];
     }
     return lifecycle.stages
       .sort((a: any, b: any) => a.sortOrder - b.sortOrder)
@@ -406,19 +412,46 @@ export class ContactsService {
     // Get the current user from CLS context for attribution
     const changedById = this.cls.get('user.id') || contact.updatedById;
 
-    // 1. Push stage history entry (atomic $push, no race conditions)
+    let finalAccountId = params?.accountId;
+
+    // 1. Optionally create account on stage transition
+    if (params?.createAccount && params?.accountData) {
+      const account = await this.accountsService.create(params.accountData);
+      finalAccountId = account.id;
+    }
+
+    // 2. Update stage (and optionally link to account) with optimistic locking
+    const sortedStatuses = this.sortBySortOrder<any>(stage.statuses ?? []);
+    const defaultStatus =
+      sortedStatuses.find((status: any) => status.isDefault) ??
+      sortedStatuses[0];
+    const updated = await this.repository.updateWithVersionCheck(
+      id,
+      contact.version ?? 0,
+      {
+        lifecycleStageId: stage.apiName,
+        ...(defaultStatus ? { statusId: defaultStatus.apiName } : {}),
+        ...(finalAccountId ? { accountId: finalAccountId } : {}),
+      } as any,
+    );
+    if (!updated) {
+      throw new ConflictException(
+        'Stage da duoc thay doi dong thoi boi nguoi dung khac. Vui long tai lai va thu lai.',
+      );
+    }
+
+    // 3. Record transition side effects after the versioned update succeeds.
+    const occurredAt = new Date();
     await this.repository.pushStageHistory(id, {
       fromStage: previousStageName,
       toStage: stage.apiName,
-      changedAt: new Date(),
+      changedAt: occurredAt,
       changedById,
       reason: params?.reason,
       direction,
       skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
     });
-
-    const occurredAt = new Date();
-    await this.activityLogService.create({
+    this.emitActivityLog({
       targetType: 'contact',
       targetId: id,
       event: 'stage_change',
@@ -432,7 +465,7 @@ export class ContactsService {
         skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
       },
     });
-    await this.auditLogService.record({
+    this.emitAuditLog({
       action: 'CONTACT_STAGE_CHANGED',
       targetEntityType: 'Contact',
       targetEntityId: id,
@@ -446,25 +479,6 @@ export class ContactsService {
       },
     });
     await this.repository.touchLastActivity(id, occurredAt);
-
-    let finalAccountId = params?.accountId;
-
-    // 2. Optionally create account on stage transition
-    if (params?.createAccount && params?.accountData) {
-      const account = await this.accountsService.create(params.accountData);
-      finalAccountId = account.id;
-    }
-
-    // 3. Update stage (and optionally link to account)
-    const sortedStatuses = this.sortBySortOrder<any>(stage.statuses ?? []);
-    const defaultStatus =
-      sortedStatuses.find((status: any) => status.isDefault) ??
-      sortedStatuses[0];
-    const updated = await this.repository.update(id, {
-      lifecycleStageId: stage.apiName,
-      ...(defaultStatus ? { statusId: defaultStatus.apiName } : {}),
-      ...(finalAccountId ? { accountId: finalAccountId } : {}),
-    } as any);
 
     // 4. Optionally create deal on stage transition
     let dealId: string | undefined;
@@ -506,9 +520,6 @@ export class ContactsService {
     requestedFields?: string[],
   ): Promise<{
     fields: Pick<Contact, 'emails' | 'phones'>;
-    token: string;
-    expiresAt: string;
-    ttlSeconds: number;
   }> {
     const contact = await this.repository.findOne({ _id: id });
     if (!contact) throw new NotFoundException('Contact not found');
@@ -523,9 +534,9 @@ export class ContactsService {
       emails: fieldsToReturn.includes('emails') ? contact.emails || [] : [],
       phones: fieldsToReturn.includes('phones') ? contact.phones || [] : [],
     };
-    const ttlSeconds = 30;
+    const ttlSeconds = UNMASK_TTL_SECONDS;
 
-    await this.auditLogService.record({
+    this.emitAuditLog({
       action: 'CONTACT_FIELDS_UNMASKED',
       targetEntityType: 'Contact',
       targetEntityId: id,
@@ -535,12 +546,7 @@ export class ContactsService {
       },
     });
 
-    return {
-      fields: rawFields,
-      token: `${id}:${Date.now()}`,
-      expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
-      ttlSeconds,
-    };
+    return { fields: rawFields };
   }
 
   async bulkTagContacts(params: {
@@ -561,12 +567,17 @@ export class ContactsService {
     if (contactIds.length === 0) {
       throw new BadRequestException('contactIds is required');
     }
+    if (contactIds.length > MAX_BULK_TAG_SIZE) {
+      throw new BadRequestException(
+        `Bulk operation exceeds maximum of ${MAX_BULK_TAG_SIZE} contacts per request. Received: ${contactIds.length}`,
+      );
+    }
     if (tags.length === 0) {
       throw new BadRequestException('tags is required');
     }
 
     const result = await this.repository.addTagsToContacts(contactIds, tags);
-    await this.auditLogService.record({
+    this.emitAuditLog({
       action: 'CONTACTS_BULK_TAGGED',
       targetEntityType: 'Contact',
       targetEntityId: 'bulk',
@@ -584,98 +595,64 @@ export class ContactsService {
     };
   }
 
-  async exportContacts(params: { ids?: string[]; filters?: any }): Promise<{
-    downloadUrl: string;
-    expiresAt: string;
-    recordCount: number;
-    storageKey: string;
+  async exportContacts(params: {
+    ids?: string[];
+    filters?: any;
+  }): Promise<{ jobId: string; status: 'queued' }> {
+    const tenantConfig =
+      await this.settingsService.getSetting('data_access_policy');
+    const job = await this.exportQueue.add('export', {
+      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
+      userId: this.getCurrentUserId(),
+      ids: params.ids,
+      filters: {
+        ...(params.filters || {}),
+        __restrictToOwner: tenantConfig?.restrict_own_contacts ?? false,
+        __currentUserId: this.getCurrentUserId(),
+      },
+    });
+
+    return { jobId: String(job.id), status: 'queued' };
+  }
+
+  async getExportStatus(jobId: string): Promise<{
+    status: string;
+    progress: unknown;
+    result: any;
+    failedReason?: string;
   }> {
-    const contacts =
-      params.ids && params.ids.length > 0
-        ? await this.repository.find({ _id: { $in: params.ids } } as any)
-        : (
-            await this.findAll({
-              ...(params.filters || {}),
-              paginationMode: 'offset',
-              page: 1,
-              limit: 5_000,
-            })
-          ).data;
+    const job = await this.exportQueue.getJob(jobId);
+    if (!job) {
+      throw new NotFoundException('Export job not found');
+    }
 
-    const header = [
-      'id',
-      'firstName',
-      'lastName',
-      'emails',
-      'phones',
-      'companyName',
-      'title',
-      'lifecycleStageId',
-      'statusId',
-      'lastActivityAt',
-    ];
-    const rows = contacts.map((contact: Contact) =>
-      header.map((key) => this.csvCell((contact as any)[key])).join(','),
-    );
-    const csv = [header.join(','), ...rows].join('\n');
-    const exportFile = await this.exportStorageService.storeCsv(
-      csv,
-      `contacts-export-${new Date().toISOString().slice(0, 10)}.csv`,
-      5 * 60,
-    );
-
-    await this.activityLogService.create({
-      targetType: 'contact',
-      targetId: 'export',
-      event: 'export',
-      payload: {
-        recordCount: contacts.length,
-        ids: params.ids,
-        filters: params.filters,
-      },
-    });
-    await this.auditLogService.record({
-      action: 'CONTACTS_EXPORTED',
-      targetEntityType: 'Contact',
-      targetEntityId: 'export',
-      metadata: {
-        recordCount: contacts.length,
-        ids: params.ids,
-        filters: params.filters,
-        storageKey: exportFile.storageKey,
-        expiresAt: exportFile.expiresAt,
-      },
-    });
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId();
+    if (
+      String(job.data?.tenantId ?? '') !== String(tenantId ?? '') ||
+      (job.data?.userId && String(job.data.userId) !== String(userId ?? ''))
+    ) {
+      throw new NotFoundException('Export job not found');
+    }
 
     return {
-      downloadUrl: exportFile.downloadUrl,
-      expiresAt: exportFile.expiresAt,
-      recordCount: contacts.length,
-      storageKey: exportFile.storageKey,
+      status: await job.getState(),
+      progress: job.progress,
+      result: job.returnvalue,
+      failedReason: job.failedReason,
     };
   }
 
   async getExportDownload(
     token: string,
   ): Promise<{ buffer: Buffer; filename: string }> {
-    await this.auditLogService.record({
+    this.emitAuditLog({
       action: 'CONTACT_EXPORT_DOWNLOADED',
       targetEntityType: 'Contact',
       targetEntityId: 'export',
       metadata: { token },
     });
     return this.exportStorageService.readLocalExport(token);
-  }
-
-  private csvCell(value: any): string {
-    const normalized = Array.isArray(value)
-      ? value.join('; ')
-      : value instanceof Date
-        ? value.toISOString()
-        : value == null
-          ? ''
-          : String(value);
-    return `"${normalized.replace(/"/g, '""')}"`;
   }
 
   async mergeContacts(
@@ -730,7 +707,7 @@ export class ContactsService {
       lastActivityAt: occurredAt,
     } as any);
 
-    await this.activityLogService.create({
+    this.emitActivityLog({
       targetType: 'contact',
       targetId: primaryId,
       event: 'merge',
@@ -741,7 +718,7 @@ export class ContactsService {
         phonesAdded: target.phones || [],
       },
     });
-    await this.auditLogService.record({
+    this.emitAuditLog({
       action: 'CONTACTS_MERGED',
       targetEntityType: 'Contact',
       targetEntityId: primaryId,
@@ -777,5 +754,40 @@ export class ContactsService {
 
     // Fire-and-forget — errors are caught by the listener
     this.eventEmitter.emit(buildAutomationEventName(event, 'Contact'), payload);
+  }
+
+  private emitAuditLog(input: {
+    action: string;
+    targetEntityType: string;
+    targetEntityId: string;
+    actorId?: string;
+    metadata?: Record<string, any>;
+  }): void {
+    this.eventEmitter.emit('audit.record', {
+      ...input,
+      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
+      actorId: input.actorId || this.getCurrentUserId(),
+      ipAddress: this.cls.get('requestIp'),
+      userAgent: this.cls.get('userAgent'),
+    });
+  }
+
+  private emitActivityLog(input: {
+    targetType: string;
+    targetId: string;
+    event: string;
+    actorId?: string;
+    payload?: Record<string, any>;
+    occurredAt?: Date;
+  }): void {
+    this.eventEmitter.emit('activity.create', {
+      ...input,
+      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
+      actorId: input.actorId || this.getCurrentUserId(),
+    });
+  }
+
+  private getCurrentUserId(): string | undefined {
+    return this.cls.get('userId') || this.cls.get('user.id');
   }
 }

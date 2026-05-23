@@ -40,6 +40,8 @@ export class ContactMapper {
       changedAt: entry.changedAt,
       changedById: entry.changedById?.toString(),
       reason: entry.reason,
+      direction: entry.direction,
+      skippedStages: entry.skippedStages ?? [],
     }));
 
     domainEntity.ownerId = raw.ownerId?.toString();
@@ -59,6 +61,7 @@ export class ContactMapper {
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.lastActivityAt = raw.lastActivityAt || raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
+    domainEntity.version = (raw as any).__v;
     return domainEntity;
   }
 
@@ -98,6 +101,9 @@ export class ContactMapper {
     persistenceEntity.lastActivityAt = domainEntity.lastActivityAt;
     persistenceEntity.deletedAt = domainEntity.deletedAt;
     persistenceEntity.stageHistory = domainEntity.stageHistory ?? [];
+    if (domainEntity.version !== undefined) {
+      (persistenceEntity as any).__v = domainEntity.version;
+    }
     return persistenceEntity;
   }
 }

@@ -22,8 +22,11 @@ import {
   ApiCreatedResponse,
   ApiOkResponse,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
+import { QueryContactDto } from './dto/query-contact.dto';
+import { CheckDuplicateContactDto } from './dto/check-duplicate-contact.dto';
 import { ListViewsService } from '../list-views/list-views.service';
 import { RequirePermission } from '../common/permissions';
 import { ActivityLogService } from '../activity-log/activity-log.service';
@@ -61,7 +64,7 @@ export class ContactsController {
   @Get()
   @RequirePermission('view', 'contacts')
   @MaskedResource('Contact')
-  async findAll(@Query() query: any) {
+  async findAll(@Query() query: QueryContactDto) {
     const result = await this.service.findAll(query);
 
     // Attach view metadata if viewId is provided
@@ -84,16 +87,24 @@ export class ContactsController {
     return result;
   }
 
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Get('check-duplicate')
   @RequirePermission('view', 'contacts')
-  checkDuplicate(@Query() query: any) {
+  checkDuplicate(@Query() query: CheckDuplicateContactDto) {
     return this.service.checkDuplicate(query);
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('export')
   @RequirePermission('export', 'contacts')
   exportContacts(@Body() body: { ids?: string[]; filters?: any }) {
     return this.service.exportContacts(body || {});
+  }
+
+  @Get('export-status/:jobId')
+  @RequirePermission('export', 'contacts')
+  getExportStatus(@Param('jobId') jobId: string) {
+    return this.service.getExportStatus(jobId);
   }
 
   @Get('export-download/:token')
@@ -106,6 +117,7 @@ export class ContactsController {
     });
   }
 
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('bulk-tag')
   @RequirePermission('edit', 'contacts')
   bulkTag(@Body() body: { contactIds: string[]; tags: string[] }) {
@@ -211,16 +223,6 @@ export class ContactsController {
   @RequirePermission('view', 'contacts')
   getStageHistory(@Param('id') id: string) {
     return this.service.getStageHistory(id);
-  }
-
-  /**
-   * @deprecated Use POST :id/change-stage instead.
-   * Kept for backward compatibility — delegates to changeStage.
-   */
-  @Post(':id/convert')
-  @RequirePermission('edit', 'contacts')
-  convertLead(@Param('id') id: string, @Body() body: any) {
-    return this.service.changeStage(id, body.stage || 'customer', body);
   }
 
   /**

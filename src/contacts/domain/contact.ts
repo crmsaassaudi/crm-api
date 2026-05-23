@@ -101,6 +101,9 @@ export class Contact {
   @ApiProperty()
   deletedAt?: Date;
 
+  @ApiProperty({ required: false })
+  version?: number;
+
   @ApiProperty({
     example: [{ channelType: 'Facebook', senderId: 'psid_123456' }],
   })
@@ -125,5 +128,7 @@ export class Contact {
     changedAt: Date;
     changedById: string;
     reason?: string;
+    direction?: 'forward' | 'backward' | 'lateral';
+    skippedStages?: string[];
   }>;
 }

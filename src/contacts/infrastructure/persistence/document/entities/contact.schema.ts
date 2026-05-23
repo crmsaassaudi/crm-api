@@ -159,6 +159,8 @@ export class ContactSchemaClass extends EntityDocumentHelper {
           ref: 'UserSchemaClass',
         },
         reason: { type: String },
+        direction: { type: String, enum: ['forward', 'backward', 'lateral'] },
+        skippedStages: { type: [String], default: [] },
       },
     ],
     default: [],
@@ -169,6 +171,8 @@ export class ContactSchemaClass extends EntityDocumentHelper {
     changedAt: Date;
     changedById: string;
     reason?: string;
+    direction?: 'forward' | 'backward' | 'lateral';
+    skippedStages?: string[];
   }>;
 }
 

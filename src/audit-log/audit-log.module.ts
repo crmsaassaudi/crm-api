@@ -5,6 +5,7 @@ import {
   AuditLogSchema,
   AuditLogSchemaClass,
 } from './entities/audit-log.schema';
+import { AuditLogListener } from './listeners/audit-log.listener';
 
 @Module({
   imports: [
@@ -12,7 +13,7 @@ import {
       { name: AuditLogSchemaClass.name, schema: AuditLogSchema },
     ]),
   ],
-  providers: [AuditLogService],
+  providers: [AuditLogService, AuditLogListener],
   exports: [AuditLogService],
 })
 export class AuditLogModule {}
