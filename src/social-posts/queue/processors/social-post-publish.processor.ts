@@ -1,7 +1,8 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Processor } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { ClsService } from 'nestjs-cls';
+import { BaseConsumer } from '../../../queue/base.consumer';
 import { PUBLICATION_INSTANCE_PUBLISH_QUEUE } from '../social-post-queue.constants';
 import { PublicationPublishJobData } from '../../social-posts.types';
 import { SocialContentAssetsService } from '../../services/social-posts.service';
@@ -13,8 +14,8 @@ import { runWithTenantContext } from '../../../common/tenancy/tenant-context';
     duration: 60_000,
   },
 })
-export class PublicationInstancePublishProcessor extends WorkerHost {
-  private readonly logger = new Logger(
+export class PublicationInstancePublishProcessor extends BaseConsumer {
+  protected override readonly logger = new Logger(
     PublicationInstancePublishProcessor.name,
   );
 
