@@ -8,7 +8,7 @@ import { PUBLICATION_INSTANCE_PUBLISH_QUEUE } from './social-post-queue.constant
       name: PUBLICATION_INSTANCE_PUBLISH_QUEUE,
       defaultJobOptions: {
         attempts: 3,
-        backoff: { type: 'exponential', delay: 300_000 },
+        backoff: { type: 'exponential', delay: 30_000 },
         removeOnComplete: 200,
         removeOnFail: 500,
       },
