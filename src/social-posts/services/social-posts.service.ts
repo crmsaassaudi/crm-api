@@ -25,6 +25,10 @@ import {
   SocialPostTaskEntity,
   SocialPostTaskRepository,
 } from '../repositories/social-post-task.repository';
+import {
+  SocialPostVersionRepository,
+  SocialPostVersionEntity,
+} from '../repositories/social-post-version.repository';
 import { SocialPublisherRegistry } from '../publishers/social-publisher-registry.service';
 import { normalizePublisherError } from '../publishers/publisher-error.util';
 import {
@@ -46,6 +50,7 @@ export class SocialPostsService {
   constructor(
     private readonly postRepository: SocialPostRepository,
     private readonly taskRepository: SocialPostTaskRepository,
+    private readonly versionRepository: SocialPostVersionRepository,
     private readonly channelRepository: ChannelRepository,
     private readonly publisherRegistry: SocialPublisherRegistry,
     private readonly queueProducer: SocialPostQueueProducer,
@@ -69,17 +74,38 @@ export class SocialPostsService {
       createdById: userId,
     });
 
+    // Create SocialPostVersion v1
+    const version = await this.versionRepository.create({
+      tenantId,
+      postId: post.id,
+      versionNumber: 1,
+      content: dto.content,
+      mediaUrls,
+      mediaType,
+      savedById: userId,
+    });
+
+    // Update SocialPost with latestVersionId
+    const updatedPost = await this.postRepository.update(tenantId, post.id, {
+      latestVersionId: version.id,
+    } as any);
+
     await this.recordAudit(tenantId, post.id, 'SOCIAL_POST_CREATED', {
       actorId: userId,
       newStatus: post.status,
     });
 
-    return { ...post, tasks: [] };
+    await this.recordAudit(tenantId, post.id, 'SOCIAL_POST_VERSION_CREATED', {
+      actorId: userId,
+      metadata: { versionId: version.id, versionNumber: 1 },
+    });
+
+    return { ...updatedPost!, tasks: [] };
   }
 
   async findPaginated(query: ListSocialPostsQueryDto) {
     const tenantId = this.requireTenantId();
-    return this.postRepository.findPaginated(
+    const result = await this.postRepository.findPaginated(
       {
         tenantId,
         status: query.status,
@@ -87,6 +113,15 @@ export class SocialPostsService {
       Number(query.page ?? 1),
       Number(query.limit ?? 20),
     );
+
+    const items = await Promise.all(
+      result.items.map(async (post) => {
+        const tasks = await this.taskRepository.findByPostId(tenantId, post.id);
+        return { ...post, tasks };
+      }),
+    );
+
+    return { items, total: result.total };
   }
 
   async findById(id: string): Promise<SocialPostWithTasks> {
@@ -116,22 +151,45 @@ export class SocialPostsService {
     dto: UpdateSocialPostDto,
   ): Promise<SocialPostWithTasks> {
     const tenantId = this.requireTenantId();
+    const userId = this.cls.get('userId');
     const current = await this.findPostOrThrow(tenantId, id);
 
     const mediaUrls = dto.mediaUrls ?? current.mediaUrls;
-    const update: Partial<SocialPostEntity> = {
-      content: dto.content ?? current.content,
+    const newContent = dto.content ?? current.content;
+    const newMediaType = dto.mediaType ?? this.inferMediaType(mediaUrls);
+
+    // Save new version
+    const nextVersionNumber = await this.versionRepository.getNextVersionNumber(tenantId, id);
+    const version = await this.versionRepository.create({
+      tenantId,
+      postId: id,
+      versionNumber: nextVersionNumber,
+      content: newContent,
       mediaUrls,
-      mediaType: dto.mediaType ?? this.inferMediaType(mediaUrls),
+      mediaType: newMediaType,
+      savedById: userId,
+      changeNote: dto.changeNote,
+    });
+
+    const update: Partial<SocialPostEntity> = {
+      content: newContent,
+      mediaUrls,
+      mediaType: newMediaType,
+      latestVersionId: version.id,
     };
 
     const post = await this.postRepository.update(tenantId, id, update as any);
     if (!post) throw new NotFoundException('Social post not found');
 
     await this.recordAudit(tenantId, id, 'SOCIAL_POST_UPDATED', {
-      actorId: this.cls.get('userId'),
+      actorId: userId,
       oldStatus: current.status,
       newStatus: post.status,
+    });
+
+    await this.recordAudit(tenantId, id, 'SOCIAL_POST_VERSION_CREATED', {
+      actorId: userId,
+      metadata: { versionId: version.id, versionNumber: nextVersionNumber },
     });
 
     const tasks = await this.taskRepository.findByPostId(tenantId, id);
@@ -245,9 +303,13 @@ export class SocialPostsService {
       tenantId,
       dto.channelIds,
     );
+    const latestVersion = await this.versionRepository.findLatestByPostId(tenantId, id);
+    if (!latestVersion) {
+      throw new NotFoundException('Social post version history not found.');
+    }
     const batchId = ulid();
     await this.taskRepository.createMany(
-      this.buildTaskPayloads(tenantId, current, channels, batchId, scheduledAt),
+      this.buildTaskPayloads(tenantId, current, latestVersion, channels, batchId, scheduledAt),
     );
 
     const post = await this.postRepository.update(tenantId, id, {
@@ -412,9 +474,9 @@ export class SocialPostsService {
 
       const postSnapshot: SocialPostEntity = {
         ...post,
-        content: task.postContent ?? post.content,
-        mediaUrls: task.postMediaUrls ?? post.mediaUrls,
-        mediaType: task.postMediaType ?? post.mediaType,
+        content: task.snapshotAtSchedule.content,
+        mediaUrls: task.snapshotAtSchedule.mediaUrls,
+        mediaType: task.snapshotAtSchedule.mediaType,
       };
 
       const result = await publisher.publish({
@@ -422,13 +484,20 @@ export class SocialPostsService {
         task,
         channel,
       });
+      const publishedAt = new Date();
       await this.taskRepository.updateStatus(tenantId, task.id, 'SUCCESS', {
-        publishedAt: new Date(),
+        publishedAt,
         platformPostId: result.platformPostId,
         platformMediaId: result.platformMediaId,
         platformResponseRaw: result.raw,
         errorCode: undefined,
         errorMessage: undefined,
+        snapshotAtPublish: {
+          content: task.snapshotAtSchedule.content,
+          mediaUrls: task.snapshotAtSchedule.mediaUrls,
+          mediaType: task.snapshotAtSchedule.mediaType,
+          publishedAt,
+        },
       } as any);
 
       await this.recordAudit(tenantId, post.id, 'SOCIAL_POST_TASK_SUCCEEDED', {
@@ -514,10 +583,12 @@ export class SocialPostsService {
   private buildTaskPayloads(
     tenantId: string,
     post: SocialPostEntity,
+    version: SocialPostVersionEntity,
     channels: Channel[],
     batchId: string,
     scheduledAt?: Date,
   ) {
+    const lockedAt = new Date();
     return channels.map((channel) => ({
       tenantId,
       postId: post.id,
@@ -525,9 +596,14 @@ export class SocialPostsService {
       channelId: channel.id,
       channelName: channel.name,
       channelAccount: channel.account,
-      postContent: post.content,
-      postMediaUrls: post.mediaUrls,
-      postMediaType: post.mediaType,
+      snapshotAtSchedule: {
+        versionId: version.id,
+        versionNumber: version.versionNumber,
+        content: version.content,
+        mediaUrls: version.mediaUrls,
+        mediaType: version.mediaType,
+        lockedAt,
+      },
       platform: channel.type as SocialPostPlatform,
       status: 'PENDING' as const,
       scheduledAt,
@@ -545,6 +621,135 @@ export class SocialPostsService {
     if (videoCount === mediaUrls.length) return 'video';
     if (imageCount === mediaUrls.length) return 'image';
     return 'mixed';
+  }
+
+  async getVersions(id: string): Promise<SocialPostVersionEntity[]> {
+    const tenantId = this.requireTenantId();
+    return this.versionRepository.findByPostId(tenantId, id);
+  }
+
+  async getEditHistory(taskId: string) {
+    const tenantId = this.requireTenantId();
+    const task = await this.taskRepository.findById(tenantId, taskId);
+    if (!task) throw new NotFoundException('Social post task not found');
+    return task.editHistory ?? [];
+  }
+
+  async syncToScheduled(id: string, taskIds?: string[]): Promise<void> {
+    const tenantId = this.requireTenantId();
+    const userId = this.cls.get('userId');
+    const current = await this.findPostOrThrow(tenantId, id);
+
+    // Fetch the latest version
+    const latestVersion = await this.versionRepository.findLatestByPostId(tenantId, id);
+    if (!latestVersion) {
+      throw new NotFoundException('Social post version history not found.');
+    }
+
+    // Fetch tasks for this post
+    const allTasks = await this.taskRepository.findByPostId(tenantId, id);
+    const pendingTasks = allTasks.filter(
+      (task) =>
+        task.status === 'PENDING' &&
+        (!taskIds || taskIds.includes(task.id))
+    );
+
+    if (pendingTasks.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      pendingTasks.map(async (task) => {
+        await this.taskRepository.update(tenantId, task.id, {
+          snapshotAtSchedule: {
+            versionId: latestVersion.id,
+            versionNumber: latestVersion.versionNumber,
+            content: latestVersion.content,
+            mediaUrls: latestVersion.mediaUrls,
+            mediaType: latestVersion.mediaType,
+            lockedAt: new Date(),
+          },
+        } as any);
+
+        await this.recordAudit(tenantId, id, 'SOCIAL_POST_TASK_SNAPSHOT_RESYNCED', {
+          actorId: userId,
+          metadata: {
+            taskId: task.id,
+            versionId: latestVersion.id,
+            versionNumber: latestVersion.versionNumber,
+          },
+        });
+      })
+    );
+  }
+
+  async editLive(
+    taskId: string,
+    dto: { content: string; mediaUrls?: string[]; reason?: string },
+  ): Promise<SocialPostTaskEntity> {
+    const tenantId = this.requireTenantId();
+    const userId = this.cls.get('userId');
+    const task = await this.taskRepository.findById(tenantId, taskId);
+    if (!task) throw new NotFoundException('Social post task not found');
+    if (task.status !== 'SUCCESS') {
+      throw new BadRequestException('Only successfully published posts can be edited live.');
+    }
+
+    const channel = await this.channelRepository.findByIdWithCredentials(tenantId, task.channelId);
+    if (!channel || channel.status !== 'Connected') {
+      throw new BadRequestException(`${task.channelName} is not connected.`);
+    }
+
+    const publisher = this.publisherRegistry.get(task.platform);
+    if (!publisher) {
+      throw new BadRequestException(`No publisher strategy registered for ${task.platform}.`);
+    }
+
+    let platformSyncStatus: 'SUCCESS' | 'FAILED' | 'SKIPPED' = 'SUCCESS';
+    let platformSyncError: string | undefined;
+
+    try {
+      if (typeof (publisher as any).editPost === 'function') {
+        await (publisher as any).editPost({
+          task,
+          channel,
+          content: dto.content,
+          mediaUrls: dto.mediaUrls,
+        });
+      } else {
+        platformSyncStatus = 'SKIPPED';
+        platformSyncError = `API editing not supported on ${task.platform}`;
+      }
+    } catch (err: any) {
+      platformSyncStatus = 'FAILED';
+      platformSyncError = err.message || String(err);
+    }
+
+    const newHistoryItem = {
+      content: dto.content,
+      mediaUrls: dto.mediaUrls ?? [],
+      editedById: userId ?? '',
+      editedAt: new Date(),
+      platformSyncStatus,
+      platformSyncError,
+    };
+
+    const doc = await this.taskRepository.addEditHistoryItem(tenantId, taskId, newHistoryItem);
+    if (!doc) throw new NotFoundException('Social post task not found');
+
+    await this.recordAudit(tenantId, task.postId, 'SOCIAL_POST_TASK_LIVE_EDITED', {
+      actorId: userId,
+      metadata: {
+        taskId,
+        channelId: task.channelId,
+        platform: task.platform,
+        platformSyncStatus,
+        platformSyncError,
+        reason: dto.reason,
+      },
+    });
+
+    return doc;
   }
 
   private async findPostOrThrow(

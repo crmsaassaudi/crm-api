@@ -11,6 +11,10 @@ import {
   SocialPostTaskSchema,
   SocialPostTaskSchemaClass,
 } from './infrastructure/persistence/document/entities/social-post-task.schema';
+import {
+  SocialPostVersionSchema,
+  SocialPostVersionSchemaClass,
+} from './infrastructure/persistence/document/entities/social-post-version.schema';
 import { FacebookPostPublisher } from './publishers/facebook-post-publisher.service';
 import { InstagramPostPublisher } from './publishers/instagram-post-publisher.service';
 import { SocialPublisherRegistry } from './publishers/social-publisher-registry.service';
@@ -19,6 +23,7 @@ import { SocialPostPublishProcessor } from './queue/processors/social-post-publi
 import { SocialPostQueueModule } from './queue/social-post-queue.module';
 import { SocialPostRepository } from './repositories/social-post.repository';
 import { SocialPostTaskRepository } from './repositories/social-post-task.repository';
+import { SocialPostVersionRepository } from './repositories/social-post-version.repository';
 import { SocialPostQueueProducer } from './services/social-post-queue.producer';
 import { SocialPostsService } from './services/social-posts.service';
 import { SocialPostsController } from './social-posts.controller';
@@ -33,6 +38,7 @@ const workerProviders = isWorkerRuntime() ? [SocialPostPublishProcessor] : [];
     MongooseModule.forFeature([
       { name: SocialPostSchemaClass.name, schema: SocialPostSchema },
       { name: SocialPostTaskSchemaClass.name, schema: SocialPostTaskSchema },
+      { name: SocialPostVersionSchemaClass.name, schema: SocialPostVersionSchema },
     ]),
   ],
   controllers: [SocialPostsController],
@@ -41,6 +47,7 @@ const workerProviders = isWorkerRuntime() ? [SocialPostPublishProcessor] : [];
     SocialPostQueueProducer,
     SocialPostRepository,
     SocialPostTaskRepository,
+    SocialPostVersionRepository,
     FacebookPostPublisher,
     InstagramPostPublisher,
     TikTokPostPublisher,

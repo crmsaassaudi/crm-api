@@ -24,6 +24,7 @@ export interface SocialPostEntity {
   createdById?: string;
   approvedById?: string;
   approvedAt?: Date;
+  latestVersionId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -134,6 +135,7 @@ export class SocialPostRepository {
       createdById: obj.createdById?.toString(),
       approvedById: obj.approvedById?.toString(),
       approvedAt: obj.approvedAt,
+      latestVersionId: obj.latestVersionId?.toString(),
       createdAt: obj.createdAt,
       updatedAt: obj.updatedAt,
     };

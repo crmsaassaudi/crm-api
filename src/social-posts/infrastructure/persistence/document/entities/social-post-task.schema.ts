@@ -53,14 +53,63 @@ export class SocialPostTaskSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, required: true })
   channelAccount: string;
 
-  @Prop({ type: String, default: '' })
-  postContent: string;
+  @Prop({
+    type: {
+      versionId: { type: MongooseSchema.Types.ObjectId, ref: 'SocialPostVersionSchemaClass' },
+      versionNumber: { type: Number, required: true },
+      content: String,
+      mediaUrls: [String],
+      mediaType: String,
+      lockedAt: Date,
+    },
+    _id: false,
+    required: true,
+  })
+  snapshotAtSchedule: {
+    versionId: string;
+    versionNumber: number;
+    content: string;
+    mediaUrls: string[];
+    mediaType: string;
+    lockedAt: Date;
+  };
 
-  @Prop({ type: [String], default: [] })
-  postMediaUrls: string[];
+  @Prop({
+    type: {
+      content: String,
+      mediaUrls: [String],
+      mediaType: String,
+      publishedAt: Date,
+    },
+    _id: false,
+  })
+  snapshotAtPublish?: {
+    content: string;
+    mediaUrls: string[];
+    mediaType: string;
+    publishedAt: Date;
+  };
 
-  @Prop({ type: String, required: true, default: 'text' })
-  postMediaType: string;
+  @Prop({
+    type: [{
+      content: String,
+      mediaUrls: [String],
+      editedById: MongooseSchema.Types.ObjectId,
+      editedAt: Date,
+      platformSyncStatus: { type: String, enum: ['SUCCESS', 'FAILED', 'SKIPPED'] },
+      platformSyncError: String,
+    }],
+    _id: false,
+    default: [],
+  })
+  editHistory: Array<{
+    content: string;
+    mediaUrls: string[];
+    editedById: string;
+    editedAt: Date;
+    platformSyncStatus: 'SUCCESS' | 'FAILED' | 'SKIPPED';
+    platformSyncError?: string;
+  }>;
 
   @Prop({
     type: String,

@@ -34,7 +34,11 @@ export class CreateSocialPostDto {
   mediaType?: SocialPostMediaType;
 }
 
-export class UpdateSocialPostDto extends PartialType(CreateSocialPostDto) {}
+export class UpdateSocialPostDto extends PartialType(CreateSocialPostDto) {
+  @IsOptional()
+  @IsString()
+  changeNote?: string;
+}
 
 export class PublishSocialPostDto {
   @IsArray()

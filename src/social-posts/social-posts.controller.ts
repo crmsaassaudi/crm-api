@@ -68,11 +68,47 @@ export class SocialPostsController {
     return this.socialPostsService.retryTask(taskId);
   }
 
+  @Post('tasks/:taskId/edit-live')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Edit a published post live on the platform' })
+  @RequirePermission('edit', 'social_posts')
+  async editLive(
+    @Param('taskId') taskId: string,
+    @Body() dto: { content: string; mediaUrls?: string[]; reason?: string },
+  ) {
+    return this.socialPostsService.editLive(taskId, dto);
+  }
+
+  @Get('tasks/:taskId/edit-history')
+  @ApiOperation({ summary: 'Get edit history for a published post task' })
+  @RequirePermission('view', 'social_posts')
+  async getEditHistory(@Param('taskId') taskId: string) {
+    return this.socialPostsService.getEditHistory(taskId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a social post with channel tasks' })
   @RequirePermission('view', 'social_posts')
   async findOne(@Param('id') id: string) {
     return this.socialPostsService.findById(id);
+  }
+
+  @Get(':id/versions')
+  @ApiOperation({ summary: 'Get social post version history' })
+  @RequirePermission('view', 'social_posts')
+  async getVersions(@Param('id') id: string) {
+    return this.socialPostsService.getVersions(id);
+  }
+
+  @Post(':id/sync-to-scheduled')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sync latest post version to pending scheduled tasks' })
+  @RequirePermission('edit', 'social_posts')
+  async syncToScheduled(
+    @Param('id') id: string,
+    @Body() dto: { taskIds?: string[] },
+  ) {
+    await this.socialPostsService.syncToScheduled(id, dto.taskIds);
   }
 
   @Patch(':id')

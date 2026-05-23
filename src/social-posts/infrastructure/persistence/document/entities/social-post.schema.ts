@@ -84,6 +84,12 @@ export class SocialPostSchemaClass extends EntityDocumentHelper {
 
   @Prop({ type: Date })
   approvedAt?: Date;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'SocialPostVersionSchemaClass',
+  })
+  latestVersionId?: string;
 }
 
 export const SocialPostSchema = SchemaFactory.createForClass(

@@ -18,9 +18,28 @@ export interface SocialPostTaskEntity {
   channelId: string;
   channelName: string;
   channelAccount: string;
-  postContent: string;
-  postMediaUrls: string[];
-  postMediaType: string;
+  snapshotAtSchedule: {
+    versionId: string;
+    versionNumber: number;
+    content: string;
+    mediaUrls: string[];
+    mediaType: string;
+    lockedAt: Date;
+  };
+  snapshotAtPublish?: {
+    content: string;
+    mediaUrls: string[];
+    mediaType: string;
+    publishedAt: Date;
+  };
+  editHistory?: Array<{
+    content: string;
+    mediaUrls: string[];
+    editedById: string;
+    editedAt: Date;
+    platformSyncStatus: 'SUCCESS' | 'FAILED' | 'SKIPPED';
+    platformSyncError?: string;
+  }>;
   platform: SocialPostPlatform;
   status: SocialPostTaskStatus;
   scheduledAt?: Date;
@@ -197,6 +216,28 @@ export class SocialPostTaskRepository {
     return doc ? this.toEntity(doc) : null;
   }
 
+  async addEditHistoryItem(
+    tenantId: string,
+    id: string,
+    item: {
+      content: string;
+      mediaUrls: string[];
+      editedById: string;
+      editedAt: Date;
+      platformSyncStatus: 'SUCCESS' | 'FAILED' | 'SKIPPED';
+      platformSyncError?: string;
+    },
+  ): Promise<SocialPostTaskEntity | null> {
+    const doc = await this.model
+      .findOneAndUpdate(
+        { _id: id, tenantId },
+        { $push: { editHistory: item } },
+        { new: true },
+      )
+      .exec();
+    return doc ? this.toEntity(doc) : null;
+  }
+
   private toEntity(raw: any): SocialPostTaskEntity {
     const obj = typeof raw.toObject === 'function' ? raw.toObject() : raw;
     return {
@@ -207,9 +248,34 @@ export class SocialPostTaskRepository {
       channelId: obj.channelId?.toString(),
       channelName: obj.channelName,
       channelAccount: obj.channelAccount,
-      postContent: obj.postContent ?? '',
-      postMediaUrls: obj.postMediaUrls ?? [],
-      postMediaType: obj.postMediaType ?? 'text',
+      snapshotAtSchedule: obj.snapshotAtSchedule
+        ? {
+            versionId: obj.snapshotAtSchedule.versionId?.toString(),
+            versionNumber: obj.snapshotAtSchedule.versionNumber,
+            content: obj.snapshotAtSchedule.content ?? '',
+            mediaUrls: obj.snapshotAtSchedule.mediaUrls ?? [],
+            mediaType: obj.snapshotAtSchedule.mediaType ?? 'text',
+            lockedAt: obj.snapshotAtSchedule.lockedAt,
+          }
+        : undefined!,
+      snapshotAtPublish: obj.snapshotAtPublish
+        ? {
+            content: obj.snapshotAtPublish.content ?? '',
+            mediaUrls: obj.snapshotAtPublish.mediaUrls ?? [],
+            mediaType: obj.snapshotAtPublish.mediaType ?? 'text',
+            publishedAt: obj.snapshotAtPublish.publishedAt,
+          }
+        : undefined,
+      editHistory: obj.editHistory
+        ? obj.editHistory.map((h: any) => ({
+            content: h.content ?? '',
+            mediaUrls: h.mediaUrls ?? [],
+            editedById: h.editedById?.toString(),
+            editedAt: h.editedAt,
+            platformSyncStatus: h.platformSyncStatus,
+            platformSyncError: h.platformSyncError,
+          }))
+        : [],
       platform: obj.platform,
       status: obj.status,
       scheduledAt: obj.scheduledAt,
