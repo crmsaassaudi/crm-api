@@ -28,13 +28,20 @@ npm run start:dev
 
 | Module | Docs | Source Path |
 |---|---|---|
-| Auth & RBAC | [01-auth.md](./docs/01-auth.md) | `src/auth/` |
+| Auth & RBAC | [01-auth.md](./docs/01-auth.md) | `src/auth/`, `src/common/permissions/` |
 | Channels | [02-channels.md](./docs/02-channels.md) | `src/channels/` |
 | Contacts | [03-contacts.md](./docs/03-contacts.md) | `src/contacts/` |
+| Accounts | [04-accounts.md](./docs/04-accounts.md) | `src/accounts/` |
+| Deals | [05-deals.md](./docs/05-deals.md) | `src/deals/`, `src/deal-settings/` |
+| Tickets | [06-tickets.md](./docs/06-tickets.md) | `src/tickets/`, `src/ticket-settings/` |
 | Social Posts | [07-social-posts.md](./docs/07-social-posts.md) | `src/social-posts/` |
 | AI Video | [08-ai-video.md](./docs/08-ai-video.md) | `src/ai-video/` |
-| Tenants | [11-tenants.md](./docs/11-tenants.md) | `src/tenants/` |
-| Queue | [12-queue.md](./docs/12-queue.md) | `src/queue/` |
+| Omni-channel Inbox | [09-omni-inbound.md](./docs/09-omni-inbound.md) | `src/omni-inbound/`, `src/omni-outbound/` |
+| Users, Groups & Tasks | [10-users-groups-tasks.md](./docs/10-users-groups-tasks.md) | `src/users/`, `src/groups/`, `src/tasks/` |
+| Tenants & Onboarding | [11-tenants.md](./docs/11-tenants.md) | `src/tenants/`, `src/crm-settings/` |
+| Queue & Workers | [12-queue.md](./docs/12-queue.md) | `src/queue/` |
+| Automation, Routing, SLA | [13-automation-routing-sla.md](./docs/13-automation-routing-sla.md) | `src/automation-rules/`, `src/routing-rules/`, `src/sla-policies/`, `src/canned-responses/`, `src/notes/` |
+| Observability & Infrastructure | [14-observability-infrastructure.md](./docs/14-observability-infrastructure.md) | `src/audit-log/`, `src/activity-log/`, `src/files/`, `src/custom-fields/`, `src/redis/`, `src/mail/` |
 
 ---
 
