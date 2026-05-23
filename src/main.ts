@@ -33,7 +33,11 @@ async function bootstrap() {
   const configService = app.get(ConfigService<AllConfigType>);
 
   // Security headers — must be before any route registration
-  app.use(helmet());
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+    }),
+  );
 
   const frontendDomain = configService.get('app.frontendDomain', {
     infer: true,

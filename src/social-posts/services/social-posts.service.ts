@@ -759,14 +759,6 @@ export class SocialContentAssetsService {
     aiVideoJobIds: string[],
   ): Promise<string[]> {
     if (aiVideoJobIds.length === 0) {
-      const hasDirectVideoUrl = mediaUrls.some((url) =>
-        /\.(m4v|mov|mp4|mpeg|webm)(\?.*)?$/i.test(url),
-      );
-      if (hasDirectVideoUrl) {
-        throw new BadRequestException(
-          'Video media must be selected from the AI Video library.',
-        );
-      }
       return mediaUrls;
     }
     if (mediaUrls.length > 0) {
