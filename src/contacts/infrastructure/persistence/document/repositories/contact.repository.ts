@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery } from 'mongoose';
+import { Model, FilterQuery, Types } from 'mongoose';
 import {
   ContactSchemaClass,
   ContactSchemaDocument,
@@ -322,7 +322,11 @@ export class ContactRepository extends BaseDocumentRepository<
     const where =
       params.ids && params.ids.length > 0
         ? ({
-            _id: { $in: params.ids },
+            _id: {
+              $in: params.ids
+                .filter((id) => Types.ObjectId.isValid(id))
+                .map((id) => new Types.ObjectId(id)),
+            },
             deletedAt: { $exists: false },
           } as FilterQuery<ContactSchemaClass>)
         : this.buildListWhere(params.filters);
@@ -337,7 +341,11 @@ export class ContactRepository extends BaseDocumentRepository<
     const where =
       params.ids && params.ids.length > 0
         ? ({
-            _id: { $in: params.ids },
+            _id: {
+              $in: params.ids
+                .filter((id) => Types.ObjectId.isValid(id))
+                .map((id) => new Types.ObjectId(id)),
+            },
             deletedAt: { $exists: false },
           } as FilterQuery<ContactSchemaClass>)
         : this.buildListWhere(params.filters);
