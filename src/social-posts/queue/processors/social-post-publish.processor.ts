@@ -1,9 +1,11 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { ClsService } from 'nestjs-cls';
 import { PUBLICATION_INSTANCE_PUBLISH_QUEUE } from '../social-post-queue.constants';
 import { PublicationPublishJobData } from '../../social-posts.types';
 import { SocialContentAssetsService } from '../../services/social-posts.service';
+import { runWithTenantContext } from '../../../common/tenancy/tenant-context';
 
 @Processor(PUBLICATION_INSTANCE_PUBLISH_QUEUE, {
   limiter: {
@@ -16,7 +18,10 @@ export class PublicationInstancePublishProcessor extends WorkerHost {
     PublicationInstancePublishProcessor.name,
   );
 
-  constructor(private readonly service: SocialContentAssetsService) {
+  constructor(
+    private readonly service: SocialContentAssetsService,
+    private readonly cls: ClsService,
+  ) {
     super();
   }
 
@@ -25,9 +30,11 @@ export class PublicationInstancePublishProcessor extends WorkerHost {
     this.logger.log(
       `Publishing publication instance ${publicationInstanceId} for tenant ${tenantId} (attempt ${job.attemptsMade + 1}/${job.opts.attempts})`,
     );
-    await this.service.publishPublicationInstanceById(
-      tenantId,
-      publicationInstanceId,
-    );
+    await runWithTenantContext(this.cls, tenantId, async () => {
+      await this.service.publishPublicationInstanceById(
+        tenantId,
+        publicationInstanceId,
+      );
+    });
   }
 }
