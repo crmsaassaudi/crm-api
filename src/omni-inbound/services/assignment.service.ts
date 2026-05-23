@@ -536,7 +536,7 @@ export class AssignmentService {
               fallbackStrategy,
             },
             {
-              jobId: `sticky-retry:${conversationId}`,
+              jobId: `sticky-retry-${conversationId}`,
               delay: stickyWaitMinutes * 60 * 1000,
             },
           );

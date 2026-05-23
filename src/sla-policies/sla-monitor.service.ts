@@ -127,7 +127,7 @@ export class SlaMonitorService {
     conversationId: string,
     breachType: SlaBreachType,
   ): string {
-    return `sla-breach:${breachType}:${conversationId}`;
+    return `sla-breach-${breachType}-${conversationId}`;
   }
 
   private async removeExistingJob(

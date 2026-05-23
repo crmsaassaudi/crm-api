@@ -169,7 +169,7 @@ export class AutoResolveService {
     conversationId: string,
     phase: 'warning' | 'resolve',
   ): string {
-    return `auto-resolve:${phase}:${conversationId}`;
+    return `auto-resolve-${phase}-${conversationId}`;
   }
 
   /**

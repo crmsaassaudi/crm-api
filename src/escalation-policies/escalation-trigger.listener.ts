@@ -65,7 +65,7 @@ export class EscalationTriggerListener {
             policy.escalateUnit,
           );
 
-          const jobId = `escalation:${policy.id}:${event.conversationId}`;
+          const jobId = `escalation-${policy.id}-${event.conversationId}`;
           const level: 'warning' | 'breach' =
             policy.breachType === 'breach' ? 'breach' : 'warning';
 

@@ -22,7 +22,7 @@ export class BotQueueService {
     }
 
     await this.botQueue.add('process-bot-message', data, {
-      jobId: `bot:${data.tenantId}:${data.messageId}`,
+      jobId: `bot-${data.tenantId}-${data.messageId}`,
     });
   }
 }

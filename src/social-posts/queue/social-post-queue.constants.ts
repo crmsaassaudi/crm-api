@@ -3,4 +3,4 @@ export const PUBLICATION_INSTANCE_PUBLISH_QUEUE =
 
 export const publicationInstancePublishJobId = (
   publicationInstanceId: string,
-) => `publication-instance:${publicationInstanceId}`;
+) => `publication-instance-${publicationInstanceId}`;
