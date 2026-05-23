@@ -1,6 +1,6 @@
 import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { Inject, Logger } from '@nestjs/common';
+import { Inject, Logger, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import Redis from 'ioredis';
 import { BaseConsumer } from '../../queue/base.consumer';
@@ -87,6 +87,13 @@ export class WebhookProcessor extends BaseConsumer {
         );
       });
     } catch (error: any) {
+      // NotFoundException = channel deleted/disconnected. Retry won't help.
+      if (error instanceof NotFoundException) {
+        this.logger.warn(
+          `Job ${job.id} failed with ${error.message} — channel no longer exists, skipping retry`,
+        );
+        return;
+      }
       // E11000 = MongoDB Duplicate Key - message was already persisted.
       // Acknowledge the job as completed to avoid BullMQ retries and log spam.
       if (error?.code === 11000) {
@@ -122,10 +129,8 @@ export class WebhookProcessor extends BaseConsumer {
       );
     }
 
-    const dbType =
-      data.channelType.charAt(0).toUpperCase() + data.channelType.slice(1);
     const channel = await this.channelsService.findAnyByAccount(
-      dbType,
+      data.channelType,
       accountId,
     );
 
