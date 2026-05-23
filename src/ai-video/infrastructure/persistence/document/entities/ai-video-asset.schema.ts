@@ -60,8 +60,9 @@ export class AiVideoAssetSchemaClass extends EntityDocumentHelper {
   metadata?: Record<string, any>;
 }
 
-export const AiVideoAssetSchema =
-  SchemaFactory.createForClass(AiVideoAssetSchemaClass);
+export const AiVideoAssetSchema = SchemaFactory.createForClass(
+  AiVideoAssetSchemaClass,
+);
 
 AiVideoAssetSchema.index(
   { tenantId: 1, jobId: 1, type: 1 },

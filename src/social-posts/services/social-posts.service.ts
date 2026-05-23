@@ -160,7 +160,10 @@ export class SocialPostsService {
     });
 
     if (post.status === 'SCHEDULED' && post.scheduledAt) {
-      const scheduledTasks = await this.taskRepository.findByPostId(tenantId, id);
+      const scheduledTasks = await this.taskRepository.findByPostId(
+        tenantId,
+        id,
+      );
       const batchIds = [...new Set(scheduledTasks.map((task) => task.batchId))];
       await Promise.all(
         batchIds.map((batchId) =>
@@ -203,10 +206,13 @@ export class SocialPostsService {
   async delete(id: string): Promise<void> {
     const tenantId = this.requireTenantId();
     const current = await this.findPostOrThrow(tenantId, id);
-    const activeTasks = (await this.taskRepository.findByPostId(tenantId, id))
-      .filter((task) => task.status === 'PUBLISHING');
+    const activeTasks = (
+      await this.taskRepository.findByPostId(tenantId, id)
+    ).filter((task) => task.status === 'PUBLISHING');
     if (activeTasks.length > 0) {
-      throw new BadRequestException('Cannot delete a post while it is publishing.');
+      throw new BadRequestException(
+        'Cannot delete a post while it is publishing.',
+      );
     }
 
     await this.taskRepository.deleteForPost(tenantId, id);
@@ -235,9 +241,12 @@ export class SocialPostsService {
       throw new BadRequestException('scheduledAt must be a valid date.');
     }
 
-    const channels = await this.resolvePublishChannels(tenantId, dto.channelIds);
+    const channels = await this.resolvePublishChannels(
+      tenantId,
+      dto.channelIds,
+    );
     const batchId = ulid();
-    const tasks = await this.taskRepository.createMany(
+    await this.taskRepository.createMany(
       this.buildTaskPayloads(tenantId, current, channels, batchId, scheduledAt),
     );
 
@@ -408,7 +417,11 @@ export class SocialPostsService {
         mediaType: task.postMediaType ?? post.mediaType,
       };
 
-      const result = await publisher.publish({ post: postSnapshot, task, channel });
+      const result = await publisher.publish({
+        post: postSnapshot,
+        task,
+        channel,
+      });
       await this.taskRepository.updateStatus(tenantId, task.id, 'SUCCESS', {
         publishedAt: new Date(),
         platformPostId: result.platformPostId,

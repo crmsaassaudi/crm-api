@@ -154,11 +154,7 @@ export class TenantInterceptor implements NestInterceptor {
               locale = tenant?.i18nSettings?.locale ?? 'en';
               timezone = tenant?.i18nSettings?.timezone ?? 'UTC';
               await this.redisService
-                .set(
-                  tenantI18nKey,
-                  { locale, timezone },
-                  TENANT_I18N_CACHE_TTL,
-                )
+                .set(tenantI18nKey, { locale, timezone }, TENANT_I18N_CACHE_TTL)
                 .catch(() => {
                   /* non-fatal */
                 });
@@ -428,17 +424,14 @@ export class TenantInterceptor implements NestInterceptor {
       const cached = await this.redisService.get<boolean>(cacheKey);
       if (cached === true) return;
       if (cached === false) {
-        throw new UnauthorizedException(
-          'User is not a member of this tenant',
-        );
+        throw new UnauthorizedException('User is not a member of this tenant');
       }
 
       const userRepo = this.moduleRef.get(UserRepository, { strict: false });
       const user = await userRepo.findById(userId);
       const isMember =
-        user?.tenants?.some(
-          (t: any) => t.tenantId?.toString() === tenantId,
-        ) ?? false;
+        user?.tenants?.some((t: any) => t.tenantId?.toString() === tenantId) ??
+        false;
 
       await this.redisService
         .set(cacheKey, isMember, USER_KEYCLOAK_CACHE_TTL)
@@ -447,9 +440,7 @@ export class TenantInterceptor implements NestInterceptor {
         });
 
       if (!isMember) {
-        throw new UnauthorizedException(
-          'User is not a member of this tenant',
-        );
+        throw new UnauthorizedException('User is not a member of this tenant');
       }
     } catch (err) {
       if (err instanceof UnauthorizedException) throw err;

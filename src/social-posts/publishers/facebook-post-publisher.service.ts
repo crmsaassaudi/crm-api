@@ -8,10 +8,16 @@ const META_GRAPH_API_VERSION = 'v20.0';
 export class FacebookPostPublisher extends BasePublisher {
   readonly platform = 'facebook' as const;
 
-  validateContentLimits({ content, mediaUrls, mediaType }: PublishContext['post']): void {
+  validateContentLimits({
+    content,
+    mediaUrls,
+    mediaType,
+  }: PublishContext['post']): void {
     this.ensureContentOrMedia({ content, mediaUrls } as any);
     if (content.length > 63206) {
-      throw new BadRequestException('Facebook posts support up to 63,206 characters.');
+      throw new BadRequestException(
+        'Facebook posts support up to 63,206 characters.',
+      );
     }
     if (mediaType === 'mixed') {
       throw new BadRequestException(
@@ -19,7 +25,9 @@ export class FacebookPostPublisher extends BasePublisher {
       );
     }
     if (mediaType === 'video' && mediaUrls.length !== 1) {
-      throw new BadRequestException('Facebook video posts require exactly one video URL.');
+      throw new BadRequestException(
+        'Facebook video posts require exactly one video URL.',
+      );
     }
   }
 
@@ -30,13 +38,28 @@ export class FacebookPostPublisher extends BasePublisher {
     const { post } = context;
 
     if (post.mediaType === 'video') {
-      return this.publishVideo(pageId, accessToken, post.mediaUrls[0], post.content);
+      return this.publishVideo(
+        pageId,
+        accessToken,
+        post.mediaUrls[0],
+        post.content,
+      );
     }
 
     if (post.mediaType === 'image' && post.mediaUrls.length > 0) {
       return post.mediaUrls.length === 1
-        ? this.publishSinglePhoto(pageId, accessToken, post.mediaUrls[0], post.content)
-        : this.publishMultiPhoto(pageId, accessToken, post.mediaUrls, post.content);
+        ? this.publishSinglePhoto(
+            pageId,
+            accessToken,
+            post.mediaUrls[0],
+            post.content,
+          )
+        : this.publishMultiPhoto(
+            pageId,
+            accessToken,
+            post.mediaUrls,
+            post.content,
+          );
     }
 
     const response = await axios.post(

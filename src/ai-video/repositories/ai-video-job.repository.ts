@@ -26,10 +26,7 @@ export class AiVideoJobRepository {
     return AiVideoJobMapper.toDomain(doc);
   }
 
-  async findById(
-    tenantId: string,
-    id: string,
-  ): Promise<AiVideoJob | null> {
+  async findById(tenantId: string, id: string): Promise<AiVideoJob | null> {
     const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? AiVideoJobMapper.toDomain(doc) : null;
   }
@@ -89,7 +86,6 @@ export class AiVideoJobRepository {
       .exec();
     return count > 0;
   }
-
 
   async updateStatus(
     id: string,

@@ -1,5 +1,4 @@
 import { AiVideoSettings } from '../../../../domain/ai-video-settings';
-import { AiVideoSettingsSchemaClass } from '../entities/ai-video-settings.schema';
 
 export class AiVideoSettingsMapper {
   static toDomain(raw: any): AiVideoSettings {

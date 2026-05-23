@@ -32,7 +32,6 @@ export class CreateSocialPostDto {
   @IsOptional()
   @IsEnum(SOCIAL_POST_MEDIA_TYPES)
   mediaType?: SocialPostMediaType;
-
 }
 
 export class UpdateSocialPostDto extends PartialType(CreateSocialPostDto) {}

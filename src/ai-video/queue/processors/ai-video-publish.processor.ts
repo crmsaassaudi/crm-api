@@ -22,9 +22,7 @@ export interface AiVideoPublishJobData {
 export class AiVideoPublishProcessor extends WorkerHost {
   private readonly logger = new Logger(AiVideoPublishProcessor.name);
 
-  constructor(
-    private readonly publisherService: FacebookPublisherService,
-  ) {
+  constructor(private readonly publisherService: FacebookPublisherService) {
     super();
   }
 

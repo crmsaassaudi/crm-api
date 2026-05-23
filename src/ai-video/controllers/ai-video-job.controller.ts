@@ -100,7 +100,9 @@ export class AiVideoJobController {
 
   @Post(':id/generate-content')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Generate social media caption and hashtags using AI' })
+  @ApiOperation({
+    summary: 'Generate social media caption and hashtags using AI',
+  })
   @RequirePermission('edit', 'ai_video')
   async generateContent(
     @Param('id') id: string,
@@ -108,7 +110,6 @@ export class AiVideoJobController {
   ): Promise<AiVideoJob> {
     return this.jobService.generateContent(id, dto);
   }
-
 
   // ── Publishing ────────────────────────────────────────────────────────
 
@@ -118,10 +119,7 @@ export class AiVideoJobController {
     summary: 'Immediately publish a video to its target Facebook Page',
   })
   @RequirePermission('manage_system', 'ai_video')
-  async publishNow(
-    @Param('id') id: string,
-    @Body() dto: PublishNowDto,
-  ) {
+  async publishNow(@Param('id') id: string, @Body() dto: PublishNowDto) {
     const job = await this.jobService.findById(id);
     const tenantId = this.cls.get('tenantId');
 

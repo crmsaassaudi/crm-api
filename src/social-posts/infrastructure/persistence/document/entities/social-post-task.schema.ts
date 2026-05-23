@@ -53,7 +53,7 @@ export class SocialPostTaskSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, required: true })
   channelAccount: string;
 
-  @Prop({ type: String, required: true, default: '' })
+  @Prop({ type: String, default: '' })
   postContent: string;
 
   @Prop({ type: [String], default: [] })

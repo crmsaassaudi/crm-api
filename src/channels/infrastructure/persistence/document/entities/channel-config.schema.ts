@@ -43,7 +43,7 @@ export class ChannelConfigSchemaClass extends EntityDocumentHelper {
    * NEVER returned in list API — use select: false.
    */
   @Prop({ type: String, select: false })
-  encryptedCredentials: string;
+  encryptedCredentials?: string;
 
   @Prop({ type: String, enum: AUTH_TYPES, default: 'app_password' })
   authType: string;

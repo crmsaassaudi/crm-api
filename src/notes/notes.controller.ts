@@ -16,6 +16,8 @@ export class NotesController {
   @Patch(':id')
   @RequirePermission('edit', 'contacts')
   update(@Param('id') _id: string, @Body() _data: CreateNoteDto) {
+    void _id;
+    void _data;
     // Versioned note editing is intentionally left out until product decides
     // whether notes require edit history.
     return { supported: false };

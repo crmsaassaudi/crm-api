@@ -19,4 +19,3 @@ export type AllConfigType = {
   keycloak: KeycloakConfig;
   ai: AiConfig;
 };
-

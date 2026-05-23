@@ -16,10 +16,16 @@ export class RedisIoAdapter extends IoAdapter {
   async connectToRedis(): Promise<void> {
     const configService = this.app.get(ConfigService);
     const redisOptions = {
-      host: configService.get<string>('redis.host') ?? 'localhost',
-      port: configService.get<number>('redis.port') ?? 6379,
-      password: configService.get<string>('redis.password') || undefined,
-      db: configService.get<number>('redis.db') ?? 0,
+      host:
+        configService.get<string>('redis.host', {
+          infer: true,
+        }) ?? 'localhost',
+      port: configService.get<number>('redis.port', { infer: true }) ?? 6379,
+      password:
+        configService.get<string>('redis.password', {
+          infer: true,
+        }) || undefined,
+      db: configService.get<number>('redis.db', { infer: true }) ?? 0,
     };
 
     const pubClient = new Redis(redisOptions);

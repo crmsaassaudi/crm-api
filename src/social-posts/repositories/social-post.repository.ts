@@ -5,7 +5,10 @@ import {
   SocialPostSchemaClass,
   SocialPostSchemaDocument,
 } from '../infrastructure/persistence/document/entities/social-post.schema';
-import { SocialPostApprovalStatus, SocialPostStatus } from '../social-posts.types';
+import {
+  SocialPostApprovalStatus,
+  SocialPostStatus,
+} from '../social-posts.types';
 
 export interface SocialPostEntity {
   id: string;

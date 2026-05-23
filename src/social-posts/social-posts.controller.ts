@@ -78,10 +78,7 @@ export class SocialPostsController {
   @Patch(':id')
   @ApiOperation({ summary: 'Update reusable social post content' })
   @RequirePermission('edit', 'social_posts')
-  async update(
-    @Param('id') id: string,
-    @Body() dto: UpdateSocialPostDto,
-  ) {
+  async update(@Param('id') id: string, @Body() dto: UpdateSocialPostDto) {
     return this.socialPostsService.update(id, dto);
   }
 
@@ -105,10 +102,7 @@ export class SocialPostsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject a social post' })
   @RequirePermission('manage_system', 'social_posts')
-  async reject(
-    @Param('id') id: string,
-    @Body() dto: RejectSocialPostDto,
-  ) {
+  async reject(@Param('id') id: string, @Body() dto: RejectSocialPostDto) {
     return this.socialPostsService.reject(id, dto);
   }
 
@@ -116,27 +110,25 @@ export class SocialPostsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Schedule a reusable post to selected channels' })
   @RequirePermission('edit', 'social_posts')
-  async schedule(
-    @Param('id') id: string,
-    @Body() dto: PublishSocialPostDto,
-  ) {
+  async schedule(@Param('id') id: string, @Body() dto: PublishSocialPostDto) {
     return this.socialPostsService.schedule(id, dto);
   }
 
   @Post(':id/publish')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Publish or schedule a reusable post to selected channels' })
+  @ApiOperation({
+    summary: 'Publish or schedule a reusable post to selected channels',
+  })
   @RequirePermission('manage_system', 'social_posts')
-  async publish(
-    @Param('id') id: string,
-    @Body() dto: PublishSocialPostDto,
-  ) {
+  async publish(@Param('id') id: string, @Body() dto: PublishSocialPostDto) {
     return this.socialPostsService.publish(id, dto);
   }
 
   @Post(':id/publish-now')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Immediately publish a reusable post to selected channels' })
+  @ApiOperation({
+    summary: 'Immediately publish a reusable post to selected channels',
+  })
   @RequirePermission('manage_system', 'social_posts')
   async publishNow(
     @Param('id') id: string,

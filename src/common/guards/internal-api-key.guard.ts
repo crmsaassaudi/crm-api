@@ -19,7 +19,9 @@ export class InternalApiKeyGuard implements CanActivate {
   constructor(private readonly configService: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const expectedKey = this.configService.get<string>('INTERNAL_API_KEY');
+    const expectedKey = this.configService.get<string>('INTERNAL_API_KEY', {
+      infer: true,
+    });
 
     if (!expectedKey) {
       if (process.env.NODE_ENV === 'production') {

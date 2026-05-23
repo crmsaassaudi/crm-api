@@ -17,7 +17,9 @@ export class AiVideoAsset {
   @ApiProperty()
   jobId: string;
 
-  @ApiProperty({ enum: ['original', 'normalized', 'processed', 'thumbnail', 'subtitle'] })
+  @ApiProperty({
+    enum: ['original', 'normalized', 'processed', 'thumbnail', 'subtitle'],
+  })
   type: AiVideoAssetType;
 
   @ApiPropertyOptional()

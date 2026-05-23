@@ -13,9 +13,7 @@ export class AiVideoPublishTaskRepository {
     private readonly model: Model<AiVideoPublishTaskSchemaDocument>,
   ) {}
 
-  async create(
-    data: Record<string, any>,
-  ): Promise<AiVideoPublishTaskSchemaClass> {
+  create(data: Record<string, any>): Promise<AiVideoPublishTaskSchemaClass> {
     return this.model.create(data) as any;
   }
 

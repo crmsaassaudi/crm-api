@@ -20,26 +20,26 @@ export class TaskSchemaClass extends EntityDocumentHelper {
     required: true,
     index: true,
   })
-  tenantId: string;
+  tenantId!: string;
 
   @Prop({ required: true, index: true })
-  title: string;
+  title!: string;
 
   @Prop()
   description?: string;
 
   @Prop({ required: true })
-  dueDate: Date;
+  dueDate!: Date;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'TaskStatusSchemaClass',
     index: true,
   })
-  statusId: string;
+  statusId?: string;
 
   @Prop({ required: true, default: 'MEDIUM', index: true })
-  priority: string;
+  priority?: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TaskCategorySchemaClass' })
   categoryId?: string;
@@ -71,20 +71,20 @@ export class TaskSchemaClass extends EntityDocumentHelper {
     ref: 'UserSchemaClass',
     required: true,
   })
-  createdById: string;
+  createdById!: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     required: true,
   })
-  updatedById: string;
+  updatedById!: string;
 
   @Prop({ default: now })
-  createdAt: Date;
+  createdAt?: Date;
 
   @Prop({ default: now })
-  updatedAt: Date;
+  updatedAt?: Date;
 
   @Prop()
   deletedAt?: Date;

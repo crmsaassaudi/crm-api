@@ -6,7 +6,9 @@ export interface NormalizedPublisherError {
   isAuthError: boolean;
 }
 
-export function normalizePublisherError(error: unknown): NormalizedPublisherError {
+export function normalizePublisherError(
+  error: unknown,
+): NormalizedPublisherError {
   const axiosError = error as AxiosError<any>;
   const apiError = axiosError.response?.data?.error;
   const code =

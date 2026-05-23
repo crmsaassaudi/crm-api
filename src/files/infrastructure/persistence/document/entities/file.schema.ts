@@ -28,7 +28,7 @@ export class FileSchemaClass extends EntityDocumentHelper {
   })
   tenantId: string;
 
-  @Prop()
+  @Prop({ required: true })
   path: string;
 }
 

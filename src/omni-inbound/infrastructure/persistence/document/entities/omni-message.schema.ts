@@ -53,11 +53,11 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
 
   /** Display name captured at send time for agent/API/bot attribution */
   @Prop()
-  senderName: string;
+  senderName?: string;
 
   /** Avatar captured at send time, if available */
   @Prop()
-  senderAvatarUrl: string;
+  senderAvatarUrl?: string;
 
   @Prop({ required: true, enum: SENDER_TYPES })
   senderType: string;
@@ -68,7 +68,7 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
 
   /** Business origin of the outbound message, e.g. agent_ui, crm_api, bot, job, automation */
   @Prop({ type: String, index: true })
-  source: string;
+  source?: string;
 
   @Prop({ required: true, enum: MESSAGE_TYPES })
   messageType: string;
@@ -78,11 +78,11 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
 
   /** Original media URL from the provider (may expire) */
   @Prop()
-  mediaUrl: string;
+  mediaUrl?: string;
 
   /** Our proxied/cached media URL (stable, long-lived) */
   @Prop()
-  mediaProxyUrl: string;
+  mediaProxyUrl?: string;
 
   @Prop({
     enum: MESSAGE_STATUSES,
@@ -96,7 +96,7 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
 
   /** The provider's message ID for deduplication */
   @Prop()
-  externalMessageId: string;
+  externalMessageId?: string;
 
   /**
    * Client-generated idempotency key for outbound agent messages.

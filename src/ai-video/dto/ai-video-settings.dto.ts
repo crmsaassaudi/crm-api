@@ -8,7 +8,7 @@ import {
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateAiVideoSettingsDto {
-  @ApiPropertyOptional({ type: [String], example: ["09:00", "12:00", "20:00"] })
+  @ApiPropertyOptional({ type: [String], example: ['09:00', '12:00', '20:00'] })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })

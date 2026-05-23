@@ -13,19 +13,26 @@ export class CreateAiVideoJobDto {
   @IsEnum(['manual_upload', 'url_import', 'script_production'])
   sourceType: 'manual_upload' | 'url_import' | 'script_production';
 
-  @ApiPropertyOptional({ description: 'Public URL of the video (required for url_import)' })
+  @ApiPropertyOptional({
+    description: 'Public URL of the video (required for url_import)',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(2048)
   sourceUrl?: string;
 
-  @ApiPropertyOptional({ description: 'Text script for TTS generation (required for script_production)' })
+  @ApiPropertyOptional({
+    description:
+      'Text script for TTS generation (required for script_production)',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(5000)
   scriptText?: string;
 
-  @ApiProperty({ description: 'Target Facebook Page ID from connected channels' })
+  @ApiProperty({
+    description: 'Target Facebook Page ID from connected channels',
+  })
   @IsString()
   @IsNotEmpty()
   facebookPageId: string;
@@ -68,4 +75,3 @@ export class GenerateContentDto {
   @MaxLength(1000)
   prompt?: string;
 }
-

@@ -20,7 +20,9 @@ export class AiVideoSettingsRepository {
     return doc ? AiVideoSettingsMapper.toDomain(doc) : null;
   }
 
-  async create(data: Partial<AiVideoSettingsSchemaClass>): Promise<AiVideoSettings> {
+  async create(
+    data: Partial<AiVideoSettingsSchemaClass>,
+  ): Promise<AiVideoSettings> {
     const doc = await this.model.create(data);
     return AiVideoSettingsMapper.toDomain(doc);
   }
@@ -30,7 +32,11 @@ export class AiVideoSettingsRepository {
     data: Partial<AiVideoSettingsSchemaClass>,
   ): Promise<AiVideoSettings | null> {
     const doc = await this.model
-      .findOneAndUpdate({ tenantId }, { $set: data }, { new: true, upsert: true })
+      .findOneAndUpdate(
+        { tenantId },
+        { $set: data },
+        { new: true, upsert: true },
+      )
       .exec();
     return doc ? AiVideoSettingsMapper.toDomain(doc) : null;
   }

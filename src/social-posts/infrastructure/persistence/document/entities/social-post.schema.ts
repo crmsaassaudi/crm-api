@@ -28,7 +28,7 @@ export class SocialPostSchemaClass extends EntityDocumentHelper {
   })
   tenantId: string;
 
-  @Prop({ type: String, required: true, trim: true, default: '' })
+  @Prop({ type: String, trim: true, default: '' })
   content: string;
 
   @Prop({ type: [String], default: [] })
@@ -86,8 +86,9 @@ export class SocialPostSchemaClass extends EntityDocumentHelper {
   approvedAt?: Date;
 }
 
-export const SocialPostSchema =
-  SchemaFactory.createForClass(SocialPostSchemaClass);
+export const SocialPostSchema = SchemaFactory.createForClass(
+  SocialPostSchemaClass,
+);
 
 SocialPostSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 SocialPostSchema.index(

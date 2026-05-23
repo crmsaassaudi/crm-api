@@ -38,7 +38,10 @@ export type AiVideoJobStatus =
   | 'BLOCKED_BY_POLICY'
   | 'BLOCKED_WAITING_APPROVAL';
 
-export type AiVideoSourceType = 'manual_upload' | 'url_import' | 'script_production';
+export type AiVideoSourceType =
+  | 'manual_upload'
+  | 'url_import'
+  | 'script_production';
 
 export class AiVideoJob {
   @ApiProperty()
@@ -62,7 +65,9 @@ export class AiVideoJob {
   @ApiPropertyOptional()
   recipeId?: string;
 
-  @ApiPropertyOptional({ description: 'Target Facebook Page ID from connected channels' })
+  @ApiPropertyOptional({
+    description: 'Target Facebook Page ID from connected channels',
+  })
   facebookPageId?: string;
 
   @ApiPropertyOptional()
@@ -77,7 +82,9 @@ export class AiVideoJob {
   @ApiPropertyOptional()
   publishedAt?: Date;
 
-  @ApiPropertyOptional({ description: 'Platform-specific video ID returned after publishing' })
+  @ApiPropertyOptional({
+    description: 'Platform-specific video ID returned after publishing',
+  })
   platformVideoId?: string;
 
   @ApiPropertyOptional({ description: 'Platform-specific post ID' })

@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Schema as MongooseSchema, now } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 
 export type AiVideoJobSchemaDocument = HydratedDocument<AiVideoJobSchemaClass>;
@@ -68,8 +68,9 @@ export class AiVideoJobSchemaClass extends EntityDocumentHelper {
   createdById?: MongooseSchema.Types.ObjectId;
 }
 
-export const AiVideoJobSchema =
-  SchemaFactory.createForClass(AiVideoJobSchemaClass);
+export const AiVideoJobSchema = SchemaFactory.createForClass(
+  AiVideoJobSchemaClass,
+);
 
 // ── Compound indexes for dashboard queries & scheduler worker ──
 AiVideoJobSchema.index(

@@ -8,13 +8,21 @@ const META_GRAPH_API_VERSION = 'v20.0';
 export class InstagramPostPublisher extends BasePublisher {
   readonly platform = 'instagram' as const;
 
-  validateContentLimits({ content, mediaUrls, mediaType }: PublishContext['post']): void {
+  validateContentLimits({
+    content,
+    mediaUrls,
+    mediaType,
+  }: PublishContext['post']): void {
     this.ensureContentOrMedia({ content, mediaUrls } as any);
     if (content.length > 2200) {
-      throw new BadRequestException('Instagram captions support up to 2,200 characters.');
+      throw new BadRequestException(
+        'Instagram captions support up to 2,200 characters.',
+      );
     }
     if (mediaType === 'text') {
-      throw new BadRequestException('Instagram publishing requires image or video media.');
+      throw new BadRequestException(
+        'Instagram publishing requires image or video media.',
+      );
     }
     if (mediaUrls.length !== 1) {
       throw new BadRequestException(

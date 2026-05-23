@@ -33,7 +33,9 @@ export class AiVideoSchedulerService {
         return;
       }
 
-      this.logger.log(`Found ${approvedJobs.length} approved job(s) pending scheduling.`);
+      this.logger.log(
+        `Found ${approvedJobs.length} approved job(s) pending scheduling.`,
+      );
 
       // Group jobs by tenantId
       const jobsByTenant: Record<string, AiVideoJob[]> = {};
@@ -63,7 +65,9 @@ export class AiVideoSchedulerService {
           };
         }
 
-        const slots = settings.timeSlots.length ? settings.timeSlots : ['09:00', '12:00', '20:00'];
+        const slots = settings.timeSlots.length
+          ? settings.timeSlots
+          : ['09:00', '12:00', '20:00'];
         // Sort time slots (e.g. "09:00", "12:00")
         slots.sort();
 
@@ -103,12 +107,17 @@ export class AiVideoSchedulerService {
               `Scheduled Job ${job.id} for Tenant ${tenantId} at ${scheduledDate.toISOString()}`,
             );
           } else {
-            this.logger.warn(`Could not find a scheduling slot for Job ${job.id}`);
+            this.logger.warn(
+              `Could not find a scheduling slot for Job ${job.id}`,
+            );
           }
         }
       }
     } catch (error: any) {
-      this.logger.error(`Error in handleAutoScheduling: ${error.message}`, error.stack);
+      this.logger.error(
+        `Error in handleAutoScheduling: ${error.message}`,
+        error.stack,
+      );
     } finally {
       this.isProcessing = false;
     }
@@ -131,7 +140,7 @@ export class AiVideoSchedulerService {
 
       for (const slot of slots) {
         const [hours, minutes] = slot.split(':').map(Number);
-        
+
         const slotDate = new Date(targetDate);
         slotDate.setHours(hours, minutes, 0, 0);
 
@@ -146,7 +155,10 @@ export class AiVideoSchedulerService {
         }
 
         // Check if slot is already booked in MongoDB
-        const isBooked = await this.jobRepository.isSlotBooked(tenantId, slotDate);
+        const isBooked = await this.jobRepository.isSlotBooked(
+          tenantId,
+          slotDate,
+        );
         if (!isBooked) {
           return slotDate;
         }

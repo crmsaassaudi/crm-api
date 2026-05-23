@@ -1,5 +1,4 @@
 import { AiVideoJob } from '../../../../domain/ai-video-job';
-import { AiVideoJobSchemaClass } from '../entities/ai-video-job.schema';
 
 /**
  * Maps Mongoose documents to plain domain objects.

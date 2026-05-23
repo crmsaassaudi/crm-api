@@ -16,7 +16,9 @@ export class TaskMapper {
     if (raw.relatedTo) {
       domainEntity.relatedTo = {
         type: raw.relatedTo.type,
-        id: raw.relatedTo._id?.toString() || (raw.relatedTo as any).id?.toString(),
+        id:
+          raw.relatedTo._id?.toString() ||
+          (raw.relatedTo as any).id?.toString(),
         name: raw.relatedTo.name,
       };
     }

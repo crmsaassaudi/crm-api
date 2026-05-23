@@ -49,9 +49,7 @@ import { AiVideoPublishProcessor } from './queue/processors/ai-video-publish.pro
 import { ChannelsModule } from '../channels/channels.module';
 import { isWorkerRuntime } from '../config/runtime-role';
 
-const workerProviders = isWorkerRuntime()
-  ? [AiVideoPublishProcessor]
-  : [];
+const workerProviders = isWorkerRuntime() ? [AiVideoPublishProcessor] : [];
 
 /**
  * AiVideoModule — AI Video Orchestrator for CRM.

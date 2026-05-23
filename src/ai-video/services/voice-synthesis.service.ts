@@ -30,12 +30,15 @@ export class VoiceSynthesisService {
     // 1. Fetch Tenant Settings for ElevenLabs details
     const settings = await this.settingsRepository.findByTenantId(tenantId);
     const elevenLabsApiKey = settings?.elevenLabsApiKey;
-    const voiceId = voiceIdOverride || settings?.defaultVoiceId || '21m00Tcm4TlvDq8ikWAM'; // Rachel
+    const voiceId =
+      voiceIdOverride || settings?.defaultVoiceId || '21m00Tcm4TlvDq8ikWAM'; // Rachel
 
     // 2. Try ElevenLabs if API key is configured
     if (elevenLabsApiKey) {
       try {
-        this.logger.log(`Invoking ElevenLabs TTS for tenant ${tenantId} using voice ${voiceId}...`);
+        this.logger.log(
+          `Invoking ElevenLabs TTS for tenant ${tenantId} using voice ${voiceId}...`,
+        );
         const response = await axios.post(
           `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
           {
@@ -60,15 +63,21 @@ export class VoiceSynthesisService {
           return Buffer.from(response.data);
         }
       } catch (err: any) {
-        this.logger.error(`ElevenLabs TTS failed: ${err.message}. Falling back...`);
+        this.logger.error(
+          `ElevenLabs TTS failed: ${err.message}. Falling back...`,
+        );
       }
     }
 
     // 3. Try OpenAI TTS Fallback
-    const openaiApiKey = this.configService.get('ai.openaiApiKey', { infer: true });
+    const openaiApiKey = this.configService.get('ai.openaiApiKey', {
+      infer: true,
+    });
     if (openaiApiKey) {
       try {
-        this.logger.log('OpenAI API Key detected. Invoking OpenAI TTS fallback...');
+        this.logger.log(
+          'OpenAI API Key detected. Invoking OpenAI TTS fallback...',
+        );
         const response = await axios.post(
           'https://api.openai.com/v1/audio/speech',
           {
@@ -95,7 +104,9 @@ export class VoiceSynthesisService {
     }
 
     // 4. Ultimate Resilient Fallback: Return a realistic silent MP3 frame buffer
-    this.logger.warn('No TTS API keys available or all failed. Returning resilient fallback buffer.');
+    this.logger.warn(
+      'No TTS API keys available or all failed. Returning resilient fallback buffer.',
+    );
     return this.generateSilentAudioBuffer();
   }
 

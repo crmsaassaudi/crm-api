@@ -11,7 +11,6 @@ import { AiVideoAuditLogRepository } from '../repositories/ai-video-audit-log.re
 import { AiVideoJob, AiVideoJobStatus } from '../domain/ai-video-job';
 import {
   CreateAiVideoJobDto,
-  PublishNowDto,
   RejectJobDto,
   GenerateContentDto,
 } from '../dto/ai-video-job.dto';
@@ -54,13 +53,14 @@ export class AiVideoJobService {
     return settings;
   }
 
-  async updateSettings(dto: UpdateAiVideoSettingsDto): Promise<AiVideoSettings> {
+  async updateSettings(
+    dto: UpdateAiVideoSettingsDto,
+  ): Promise<AiVideoSettings> {
     const tenantId = this.cls.get('tenantId');
     const updated = await this.settingsRepository.update(tenantId, dto);
     this.logger.log(`Settings updated for tenant ${tenantId}`);
     return updated!;
   }
-
 
   // ── Create ────────────────────────────────────────────────────────────
   async createJob(dto: CreateAiVideoJobDto): Promise<AiVideoJob> {
@@ -119,9 +119,9 @@ export class AiVideoJobService {
     });
 
     this.logger.log(`Video job ${job.id} created for tenant ${tenantId}`);
-    
+
     // Trigger video pipeline asynchronously (Task 1A.3 FFmpeg & pipeline automation)
-    this.runVideoPipeline(job.id, tenantId);
+    void this.runVideoPipeline(job.id, tenantId);
 
     return job;
   }
@@ -230,7 +230,10 @@ export class AiVideoJobService {
   /**
    * Generates caption and hashtags using AI and updates the video job.
    */
-  async generateContent(jobId: string, dto: GenerateContentDto): Promise<AiVideoJob> {
+  async generateContent(
+    jobId: string,
+    dto: GenerateContentDto,
+  ): Promise<AiVideoJob> {
     const tenantId = this.cls.get('tenantId');
     const userId = this.cls.get('userId');
     const job = await this.findById(jobId);
@@ -263,7 +266,6 @@ export class AiVideoJobService {
 
     return updated!;
   }
-
 
   /**
    * Mark a published job — called by the publisher worker/service.
@@ -305,7 +307,7 @@ export class AiVideoJobService {
       // 1. CREATED -> INGESTING (Download source / Synthesize voice)
       await this.sleep(1500);
       await this.jobRepository.updateStatus(jobId, 'INGESTING');
-      
+
       if (isScriptProd) {
         await this.auditLogRepository.record({
           tenantId,
@@ -374,21 +376,27 @@ export class AiVideoJobService {
           oldStatus: 'INGESTED',
           newStatus: 'NORMALIZING',
           payload: {
-            message: 'Compositing background slide, looping BGM, and lồng tiếng into Vertical Reels format...',
+            message:
+              'Compositing background slide, looping BGM, and lồng tiếng into Vertical Reels format...',
           },
         });
 
         // Compositing dynamic video via FFmpeg
-        renderedVideoPath = await this.videoCompositorService.renderVideo(tenantId, {
-          jobId,
-          scriptText: job.scriptText || '',
-          voiceAudioBuffer,
-        });
+        renderedVideoPath = await this.videoCompositorService.renderVideo(
+          tenantId,
+          {
+            jobId,
+            scriptText: job.scriptText || '',
+            voiceAudioBuffer,
+          },
+        );
 
         // Update public source URL for the generated video mapped to files endpoint
         const localFileName = path.basename(renderedVideoPath);
         const sourceUrl = `/api/v1/files/${localFileName}`;
-        await this.jobRepository.updateStatus(jobId, 'NORMALIZED', { sourceUrl });
+        await this.jobRepository.updateStatus(jobId, 'NORMALIZED', {
+          sourceUrl,
+        });
 
         await this.auditLogRepository.record({
           tenantId,
@@ -415,8 +423,10 @@ export class AiVideoJobService {
           oldStatus: 'INGESTED',
           newStatus: 'NORMALIZING',
           payload: {
-            ffmpegCommand: 'ffmpeg -i input.mp4 -vf scale=1080:1920 -c:v libx264 -profile:v high -level:v 4.2 -pix_fmt yuv420p -r 30 output.mp4',
-            message: 'Running FFmpeg to normalize video aspect ratio to vertical 9:16 and convert video codec to H.264...',
+            ffmpegCommand:
+              'ffmpeg -i input.mp4 -vf scale=1080:1920 -c:v libx264 -profile:v high -level:v 4.2 -pix_fmt yuv420p -r 30 output.mp4',
+            message:
+              'Running FFmpeg to normalize video aspect ratio to vertical 9:16 and convert video codec to H.264...',
           },
         });
 
@@ -449,22 +459,28 @@ export class AiVideoJobService {
         actorType: 'ai',
         oldStatus: 'NORMALIZED',
         newStatus: 'PROCESSING',
-        payload: { message: 'Analyzing script text & video keyframes for topic identification...' },
+        payload: {
+          message:
+            'Analyzing script text & video keyframes for topic identification...',
+        },
       });
 
       // 6. PROCESSING -> PROCESSED
       await this.sleep(2000);
-      
+
       const currentJob = await this.jobRepository.findById(tenantId, jobId);
       let aiEnrichedPayload = {};
       if (currentJob && !currentJob.caption) {
         try {
           // Sinh caption nháp từ script text (nếu có) hoặc source url
-          const promptInput = isScriptProd ? currentJob.scriptText : currentJob.sourceUrl;
-          const aiResult = await this.aiGeneratorService.generateCaptionAndHashtags(
-            promptInput || '',
-            'Auto generate social media metadata during processing',
-          );
+          const promptInput = isScriptProd
+            ? currentJob.scriptText
+            : currentJob.sourceUrl;
+          const aiResult =
+            await this.aiGeneratorService.generateCaptionAndHashtags(
+              promptInput || '',
+              'Auto generate social media metadata during processing',
+            );
           await this.jobRepository.updateStatus(jobId, 'PROCESSED', {
             caption: aiResult.caption,
             hashtags: aiResult.hashtags,
@@ -490,7 +506,9 @@ export class AiVideoJobService {
         oldStatus: 'PROCESSING',
         newStatus: 'PROCESSED',
         payload: {
-          topicsDetected: isScriptProd ? ['AI Voiceover', 'Video Compositor', 'Automation'] : ['CRM Software', 'AI Automation', 'Software Sales'],
+          topicsDetected: isScriptProd
+            ? ['AI Voiceover', 'Video Compositor', 'Automation']
+            : ['CRM Software', 'AI Automation', 'Software Sales'],
           confidenceScore: 0.96,
           ...aiEnrichedPayload,
         },
@@ -506,12 +524,19 @@ export class AiVideoJobService {
         actorType: 'system',
         oldStatus: 'PROCESSED',
         newStatus: 'PENDING_REVIEW',
-        payload: { message: 'Video successfully produced and processed. Awaiting operator approval.' },
+        payload: {
+          message:
+            'Video successfully produced and processed. Awaiting operator approval.',
+        },
       });
 
-      this.logger.log(`Job ${jobId} successfully completed pipeline and transitioned to PENDING_REVIEW`);
+      this.logger.log(
+        `Job ${jobId} successfully completed pipeline and transitioned to PENDING_REVIEW`,
+      );
     } catch (error: any) {
-      this.logger.error(`Error in video pipeline for job ${jobId}: ${error.message}`);
+      this.logger.error(
+        `Error in video pipeline for job ${jobId}: ${error.message}`,
+      );
       await this.jobRepository.updateStatus(jobId, 'PROCESS_FAILED', {
         errorDetails: error.message,
       });

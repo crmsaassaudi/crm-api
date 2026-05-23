@@ -47,12 +47,11 @@ export class FacebookPublisherService {
     caption: string,
   ): Promise<{ platformVideoId: string; platformPostId?: string }> {
     // 1. Fetch page access token from the channels integration
-    const channel =
-      await this.channelRepository.findByAccountWithCredentials(
-        tenantId,
-        'facebook',
-        facebookPageId,
-      );
+    const channel = await this.channelRepository.findByAccountWithCredentials(
+      tenantId,
+      'facebook',
+      facebookPageId,
+    );
 
     if (!channel?.credentials?.accessToken) {
       const errorMsg = `Facebook Page ${facebookPageId} is not connected or missing access token for tenant ${tenantId}`;
@@ -105,7 +104,12 @@ export class FacebookPublisherService {
         const fileName = path.basename(videoUrl);
         filePath = path.join(process.cwd(), 'files', fileName);
         if (!fs.existsSync(filePath)) {
-          filePath = path.join('/tmp', 'crm-render', tenantId, `ai-video-${jobId}.mp4`);
+          filePath = path.join(
+            '/tmp',
+            'crm-render',
+            tenantId,
+            `ai-video-${jobId}.mp4`,
+          );
         }
       }
 
@@ -114,15 +118,17 @@ export class FacebookPublisherService {
           const tempDir = path.join('/tmp', 'crm-render', tenantId);
           fs.mkdirSync(tempDir, { recursive: true });
           filePath = path.join(tempDir, `downloaded_${jobId}.mp4`);
-          
-          this.logger.log(`Downloading remote video from ${videoUrl} to ${filePath}...`);
+
+          this.logger.log(
+            `Downloading remote video from ${videoUrl} to ${filePath}...`,
+          );
           const writer = fs.createWriteStream(filePath);
           const downloadResponse = await axios({
             method: 'get',
             url: videoUrl,
             responseType: 'stream',
           });
-          
+
           downloadResponse.data.pipe(writer);
           await new Promise<void>((resolve, reject) => {
             writer.on('finish', () => resolve());
@@ -130,12 +136,16 @@ export class FacebookPublisherService {
           });
           isTempFile = true;
         } else {
-          throw new NotFoundException(`Could not resolve video file path for: ${videoUrl}`);
+          throw new NotFoundException(
+            `Could not resolve video file path for: ${videoUrl}`,
+          );
         }
       }
 
       if (!fs.existsSync(filePath)) {
-        throw new NotFoundException(`Resolved video file does not exist: ${filePath}`);
+        throw new NotFoundException(
+          `Resolved video file does not exist: ${filePath}`,
+        );
       }
 
       const fileSize = fs.statSync(filePath).size;
@@ -144,8 +154,10 @@ export class FacebookPublisherService {
       );
 
       // --- PHASE 1: INIT ---
-      this.logger.log(`[ChunkUpload] Phase 1 - Initializing upload session for job ${jobId}...`);
-      
+      this.logger.log(
+        `[ChunkUpload] Phase 1 - Initializing upload session for job ${jobId}...`,
+      );
+
       const initResponse = await axios.post(
         `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${facebookPageId}/videos`,
         null,
@@ -155,7 +167,7 @@ export class FacebookPublisherService {
             access_token: accessToken,
             file_size: fileSize,
           },
-        }
+        },
       );
 
       const {
@@ -194,7 +206,13 @@ export class FacebookPublisherService {
         while (startOffset < fileSize && startOffset !== endOffset) {
           const length = endOffset - startOffset;
           const chunkBuffer = Buffer.alloc(length);
-          const bytesRead = fs.readSync(fd, chunkBuffer, 0, length, startOffset);
+          const bytesRead = fs.readSync(
+            fd,
+            chunkBuffer,
+            0,
+            length,
+            startOffset,
+          );
 
           this.logger.log(
             `[ChunkUpload] Transferring chunk ${chunkIdx + 1}: bytes ${startOffset}-${endOffset}/${fileSize} (${bytesRead} read)...`,
@@ -217,10 +235,13 @@ export class FacebookPublisherService {
               headers: form.getHeaders(),
               maxContentLength: Infinity,
               maxBodyLength: Infinity,
-            }
+            },
           );
 
-          const nextStartOffset = parseInt(transferResponse.data.start_offset, 10);
+          const nextStartOffset = parseInt(
+            transferResponse.data.start_offset,
+            10,
+          );
           const nextEndOffset = parseInt(transferResponse.data.end_offset, 10);
 
           await this.auditLogRepository.record({
@@ -248,7 +269,9 @@ export class FacebookPublisherService {
       }
 
       // --- PHASE 3: FINISH ---
-      this.logger.log(`[ChunkUpload] Phase 3 - Finishing upload and registering Reels on page ${facebookPageId}...`);
+      this.logger.log(
+        `[ChunkUpload] Phase 3 - Finishing upload and registering Reels on page ${facebookPageId}...`,
+      );
 
       const finishResponse = await axios.post(
         `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${facebookPageId}/videos`,
@@ -260,7 +283,7 @@ export class FacebookPublisherService {
             upload_session_id: uploadSessionId,
             description: caption,
           },
-        }
+        },
       );
 
       const platformVideoId = finishResponse.data.id;
@@ -317,7 +340,10 @@ export class FacebookPublisherService {
       );
 
       // Update job status to PUBLISH_FAILED
-      await this.jobService.markAsFailed(jobId, `[${errorCode}] ${errorMessage}`);
+      await this.jobService.markAsFailed(
+        jobId,
+        `[${errorCode}] ${errorMessage}`,
+      );
 
       await this.auditLogRepository.record({
         tenantId,
@@ -341,7 +367,9 @@ export class FacebookPublisherService {
           fs.unlinkSync(filePath);
           this.logger.log(`Cleaned up temporary downloaded video: ${filePath}`);
         } catch (cleanupErr: any) {
-          this.logger.error(`Failed to clean up temporary video: ${cleanupErr.message}`);
+          this.logger.error(
+            `Failed to clean up temporary video: ${cleanupErr.message}`,
+          );
         }
       }
     }
