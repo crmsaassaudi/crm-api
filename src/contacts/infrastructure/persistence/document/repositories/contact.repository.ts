@@ -315,6 +315,25 @@ export class ContactRepository extends BaseDocumentRepository<
     };
   }
 
+  async findForExport(params: {
+    ids?: string[];
+    filters?: any;
+  }): Promise<ContactSchemaDocument[]> {
+    const where =
+      params.ids && params.ids.length > 0
+        ? ({
+            _id: {
+              $in: params.ids
+                .filter((id) => Types.ObjectId.isValid(id))
+                .map((id) => new Types.ObjectId(id)),
+            },
+            deletedAt: { $exists: false },
+          } as FilterQuery<ContactSchemaClass>)
+        : this.buildListWhere(params.filters);
+    const scopedWhere = this.applyTenantFilter(where);
+    return this.model.find(scopedWhere).sort({ createdAt: -1 }).exec();
+  }
+
   streamForExport(params: {
     ids?: string[];
     filters?: any;

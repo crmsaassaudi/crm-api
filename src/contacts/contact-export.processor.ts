@@ -19,6 +19,19 @@ export interface ContactExportJobData {
 export class ContactExportProcessor extends WorkerHost {
   private readonly logger = new Logger(ContactExportProcessor.name);
 
+  private readonly CSV_HEADERS = [
+    'id',
+    'firstName',
+    'lastName',
+    'emails',
+    'phones',
+    'companyName',
+    'title',
+    'lifecycleStageId',
+    'statusId',
+    'lastActivityAt',
+  ] as const;
+
   constructor(
     private readonly repository: ContactRepository,
     private readonly storageService: ContactExportStorageService,
@@ -41,17 +54,34 @@ export class ContactExportProcessor extends WorkerHost {
         this.cls.set('userId', userId);
       }
 
-      const totalCount = await this.repository.countForExport({ ids, filters });
-      let recordCount = 0;
-      const rows = this.createCsvRows(job, totalCount, () => {
-        recordCount += 1;
+      // ── Query documents INSIDE the CLS context ──
+      // This guarantees the Mongoose tenant-filter plugin can read
+      // activeTenantId from CLS. Previously an async generator was
+      // consumed by stream pipeline() which could lose the CLS store.
+      const docs = await this.repository.findForExport({
+        ids,
+        filters,
       });
 
-      const exportFile = await this.storageService.storeCsvStream(
-        rows,
+      this.logger.log(
+        `Contact export job ${job.id}: tenantId=${tenantId}, ids=${ids?.length ?? 'all'}, docs=${docs.length}`,
+      );
+
+      await job.updateProgress(10);
+
+      // ── Build CSV string in memory ──
+      const csvContent = this.buildCsv(docs);
+      const recordCount = docs.length;
+
+      await job.updateProgress(80);
+
+      const exportFile = await this.storageService.storeCsv(
+        csvContent,
         `contacts-export-${new Date().toISOString().slice(0, 10)}.csv`,
         5 * 60,
       );
+
+      await job.updateProgress(100);
 
       this.eventEmitter.emit('activity.create', {
         tenantId,
@@ -76,54 +106,29 @@ export class ContactExportProcessor extends WorkerHost {
         },
       });
 
+      this.logger.log(
+        `Contact export job ${job.id} completed: ${recordCount} records`,
+      );
+
       return { ...exportFile, recordCount };
     });
   }
 
-  private async *createCsvRows(
-    job: Job<ContactExportJobData>,
-    totalCount: number,
-    onRecord: () => void,
-  ): AsyncIterable<string> {
-    const header = [
-      'id',
-      'firstName',
-      'lastName',
-      'emails',
-      'phones',
-      'companyName',
-      'title',
-      'lifecycleStageId',
-      'statusId',
-      'lastActivityAt',
-    ];
-    yield `${header.join(',')}\n`;
+  private buildCsv(docs: any[]): string {
+    const lines: string[] = [];
 
-    const cursor = this.repository.streamForExport({
-      ids: job.data.ids,
-      filters: job.data.filters,
-    });
-    let processed = 0;
+    // Header row
+    lines.push(this.CSV_HEADERS.join(','));
 
-    for await (const doc of cursor) {
-      processed += 1;
-      onRecord();
-      const row = header
-        .map((key) => this.csvCell(this.getValue(doc, key)))
-        .join(',');
-      yield `${row}\n`;
-
-      if (processed % 500 === 0) {
-        await job.updateProgress(
-          totalCount > 0
-            ? Math.min(99, Math.floor((processed / totalCount) * 100))
-            : 0,
-        );
-      }
+    // Data rows
+    for (const doc of docs) {
+      const row = this.CSV_HEADERS.map((key) =>
+        this.csvCell(this.getValue(doc, key)),
+      ).join(',');
+      lines.push(row);
     }
 
-    await job.updateProgress(100);
-    this.logger.log(`Contact export job ${job.id} wrote ${processed} records`);
+    return lines.join('\n') + '\n';
   }
 
   private getValue(doc: any, key: string): any {
@@ -144,3 +149,4 @@ export class ContactExportProcessor extends WorkerHost {
     return `"${normalized.replace(/"/g, '""')}"`;
   }
 }
+
