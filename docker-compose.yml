@@ -30,8 +30,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 2g
-    cpus: '${CRM_API_CPUS:-1.0}'
+    mem_limit: 1g
+    cpus: '${CRM_API_CPUS:-0.5}'
     healthcheck:
       test:
         [
@@ -77,8 +77,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 2g
-    cpus: '${CRM_WORKER_CPUS:-1.0}'
+    mem_limit: 1g
+    cpus: '${CRM_WORKER_CPUS:-0.5}'
     networks:
       crm_api_net:
         ipv4_address: 172.25.0.11
@@ -115,8 +115,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 3g
-    cpus: '${CRM_OMNI_CPUS:-2.0}'
+    mem_limit: 1g
+    cpus: '${CRM_OMNI_CPUS:-0.5}'
     networks:
       crm_api_net:
         ipv4_address: 172.25.0.12
@@ -152,8 +152,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 1g
-    cpus: '${CRM_EMAIL_WORKER_CPUS:-0.5}'
+    mem_limit: 512m
+    cpus: '${CRM_EMAIL_WORKER_CPUS:-0.25}'
     networks:
       crm_api_net:
         ipv4_address: 172.25.0.13
