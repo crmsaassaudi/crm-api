@@ -8,8 +8,8 @@ export type ActivityFeedType =
   | 'email'
   | 'call'
   | 'task'
-  | 'ticket'
-  | 'stage_change';
+  | 'meeting'
+  | 'merge';
 
 @Injectable()
 export class ActivityLogService {

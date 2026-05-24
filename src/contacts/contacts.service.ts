@@ -165,11 +165,23 @@ export class ContactsService {
   }
 
   async remove(id: string): Promise<void> {
+    const existing = await this.repository.findOne({ _id: id });
     await this.repository.remove(id);
-    this.emitActivityLog({
-      targetType: 'contact',
-      targetId: id,
-      event: 'deleted',
+
+    // Compliance: record deletion in audit_logs
+    this.eventEmitter.emit('contact.updated', {
+      t: new Date(),
+      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
+      entityId: id,
+      entityType: 'CONTACT',
+      oldSnapshot: existing
+        ? JSON.parse(JSON.stringify(existing))
+        : {},
+      newSnapshot: { _deleted: true },
+      actorId: this.getCurrentUserId(),
+      src: this.cls.get('executionSource') || 'M',
+      ip: this.cls.get('requestIp'),
+      ua: this.cls.get('userAgent'),
     });
   }
 
@@ -455,20 +467,9 @@ export class ContactsService {
       direction,
       skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
     });
-    this.emitActivityLog({
-      targetType: 'contact',
-      targetId: id,
-      event: 'stage_change',
-      actorId: changedById,
-      occurredAt,
-      payload: {
-        fromStage: previousStageName,
-        toStage: stage.apiName,
-        reason: params?.reason,
-        direction,
-        skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
-      },
-    });
+    // Stage change is NOT written to Activity Log.
+    // Sales timeline uses Virtual Activity (pulled from stageHistory[]).
+    // Audit Trail captures field-level diff (lifecycleStageId) automatically.
 
     // Emit audit trail: field-level diff (lifecycleStageId, statusId)
     // AuditLogListener will compute old vs new snapshot → audit_logs
@@ -544,15 +545,7 @@ export class ContactsService {
     };
     const ttlSeconds = UNMASK_TTL_SECONDS;
 
-    this.emitActivityLog({
-      targetType: 'contact',
-      targetId: id,
-      event: 'fields_unmasked',
-      payload: {
-        fields: fieldsToReturn,
-        ttlSeconds,
-      },
-    });
+    // fields_unmasked is a compliance/system action — not written to Activity Log.
 
     return { fields: rawFields };
   }
@@ -585,17 +578,7 @@ export class ContactsService {
     }
 
     const result = await this.repository.addTagsToContacts(contactIds, tags);
-    this.emitActivityLog({
-      targetType: 'contact',
-      targetId: 'bulk',
-      event: 'bulk_tagged',
-      payload: {
-        contactIds,
-        tags,
-        matchedCount: result.matchedCount,
-        modifiedCount: result.modifiedCount,
-      },
-    });
+    // bulk_tagged: field-level diff (tags) already captured by audit_logs.
 
     return {
       success: true,
@@ -654,12 +637,7 @@ export class ContactsService {
   async getExportDownload(
     token: string,
   ): Promise<{ buffer: Buffer; filename: string }> {
-    this.emitActivityLog({
-      targetType: 'contact',
-      targetId: 'export',
-      event: 'export_downloaded',
-      payload: { token },
-    });
+    // export_downloaded: system action — not written to Activity Log.
     return this.exportStorageService.readLocalExport(token);
   }
 

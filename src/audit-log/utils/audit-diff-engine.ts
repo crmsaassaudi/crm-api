@@ -45,6 +45,7 @@ const TRACKED_FIELDS: Record<string, Set<string>> = {
     'tags',
     'isVIP',
     'customFields',
+    '_deleted',
   ]),
   DEAL: new Set([
     'title',

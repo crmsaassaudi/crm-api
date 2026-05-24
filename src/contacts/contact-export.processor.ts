@@ -76,14 +76,7 @@ export class ContactExportProcessor extends BaseTenantConsumer<ContactExportJobD
 
     await job.updateProgress(100);
 
-    this.eventEmitter.emit('activity.create', {
-      tenantId,
-      actorId: userId,
-      targetType: 'contact',
-      targetId: 'export',
-      event: 'export',
-      payload: { recordCount, ids, filters },
-    });
+    // Export is a system action — not written to Activity Log.
 
     // ── Push export result to client via Redis pub/sub ──
     // Worker process cannot emit Socket.IO events directly (no WS server).
