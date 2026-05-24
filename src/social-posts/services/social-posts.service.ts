@@ -7,7 +7,7 @@ import {
 import { ClsService } from 'nestjs-cls';
 import { ulid } from 'ulid';
 import { AiVideoJobService } from '../../ai-video/services/ai-video-job.service';
-import { AuditLogService } from '../../audit-log/audit-log.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Channel } from '../../channels/domain/channel';
 import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
 import {
@@ -66,7 +66,7 @@ export class SocialContentAssetsService {
     private readonly publisherRegistry: SocialPublisherRegistry,
     private readonly queueProducer: PublicationQueueProducer,
     private readonly aiVideoJobService: AiVideoJobService,
-    private readonly auditLogService: AuditLogService,
+    private readonly eventEmitter: EventEmitter2,
     private readonly cls: ClsService,
   ) {}
 
@@ -107,7 +107,7 @@ export class SocialContentAssetsService {
       latestVersionId: version.id,
     } as any);
 
-    await this.recordAssetAudit(tenantId, asset.id, 'SOCIAL_ASSET_CREATED', {
+    this.recordAssetAudit(tenantId, asset.id, 'SOCIAL_ASSET_CREATED', {
       actorId: userId,
       metadata: { versionId: version.id, versionNumber: 1 },
     });
@@ -211,7 +211,7 @@ export class SocialContentAssetsService {
     } as any);
     if (!asset) throw new NotFoundException('Social content asset not found');
 
-    await this.recordAssetAudit(tenantId, id, 'SOCIAL_ASSET_VERSION_CREATED', {
+    this.recordAssetAudit(tenantId, id, 'SOCIAL_ASSET_VERSION_CREATED', {
       actorId: userId,
       metadata: {
         versionId: version.id,
@@ -235,7 +235,7 @@ export class SocialContentAssetsService {
     if (!archived)
       throw new NotFoundException('Social content asset not found');
 
-    await this.recordAssetAudit(tenantId, id, 'SOCIAL_ASSET_ARCHIVED', {
+    this.recordAssetAudit(tenantId, id, 'SOCIAL_ASSET_ARCHIVED', {
       actorId: this.cls.get('userId'),
     });
   }
@@ -269,7 +269,7 @@ export class SocialContentAssetsService {
       throw new NotFoundException('Social content asset version not found');
     }
 
-    await this.recordAssetAudit(
+    this.recordAssetAudit(
       tenantId,
       assetId,
       'SOCIAL_ASSET_VERSION_APPROVED',
@@ -306,7 +306,7 @@ export class SocialContentAssetsService {
       throw new NotFoundException('Social content asset version not found');
     }
 
-    await this.recordAssetAudit(
+    this.recordAssetAudit(
       tenantId,
       assetId,
       'SOCIAL_ASSET_VERSION_REJECTED',
@@ -393,7 +393,7 @@ export class SocialContentAssetsService {
       ),
     );
 
-    await this.recordAssetAudit(tenantId, assetId, 'PUBLICATIONS_CREATED', {
+    this.recordAssetAudit(tenantId, assetId, 'PUBLICATIONS_CREATED', {
       actorId: userId,
       metadata: {
         publicationGroupId,
@@ -473,7 +473,7 @@ export class SocialContentAssetsService {
       await this.queueProducer.schedule(tenantId, instanceId, scheduledAt);
     }
 
-    await this.recordPublicationAudit(
+    this.recordPublicationAudit(
       tenantId,
       instanceId,
       'PUBLICATION_INSTANCE_UPDATED',
@@ -506,7 +506,7 @@ export class SocialContentAssetsService {
     if (!canceled)
       throw new NotFoundException('Publication instance not found');
 
-    await this.recordPublicationAudit(
+    this.recordPublicationAudit(
       tenantId,
       instanceId,
       'PUBLICATION_INSTANCE_CANCELED',
@@ -537,7 +537,7 @@ export class SocialContentAssetsService {
     if (!reset) throw new NotFoundException('Publication instance not found');
     await this.queueProducer.schedule(tenantId, instanceId);
 
-    await this.recordPublicationAudit(
+    this.recordPublicationAudit(
       tenantId,
       instanceId,
       'PUBLICATION_INSTANCE_RETRIED',
@@ -630,7 +630,7 @@ export class SocialContentAssetsService {
         } as any,
       );
 
-      await this.recordPublicationAudit(
+      this.recordPublicationAudit(
         tenantId,
         instanceId,
         'PUBLICATION_INSTANCE_SUCCEEDED',
@@ -662,7 +662,7 @@ export class SocialContentAssetsService {
         });
       }
 
-      await this.recordPublicationAudit(
+      this.recordPublicationAudit(
         tenantId,
         instanceId,
         'PUBLICATION_INSTANCE_FAILED',
@@ -907,7 +907,7 @@ export class SocialContentAssetsService {
     return tenantId;
   }
 
-  private async recordAssetAudit(
+  private recordAssetAudit(
     tenantId: string,
     assetId: string,
     action: string,
@@ -915,18 +915,18 @@ export class SocialContentAssetsService {
       actorId?: string;
       metadata?: Record<string, any>;
     } = {},
-  ): Promise<void> {
-    await this.auditLogService.record({
+  ): void {
+    this.eventEmitter.emit('activity.create', {
       tenantId,
-      action,
-      targetEntityType: 'social_content_asset',
-      targetEntityId: assetId,
+      targetType: 'social_content_asset',
+      targetId: assetId,
+      event: action,
       actorId: options.actorId,
-      metadata: options.metadata,
+      payload: options.metadata,
     });
   }
 
-  private async recordPublicationAudit(
+  private recordPublicationAudit(
     tenantId: string,
     instanceId: string,
     action: string,
@@ -934,14 +934,14 @@ export class SocialContentAssetsService {
       actorId?: string;
       metadata?: Record<string, any>;
     } = {},
-  ): Promise<void> {
-    await this.auditLogService.record({
+  ): void {
+    this.eventEmitter.emit('activity.create', {
       tenantId,
-      action,
-      targetEntityType: 'publication_instance',
-      targetEntityId: instanceId,
+      targetType: 'publication_instance',
+      targetId: instanceId,
+      event: action,
       actorId: options.actorId,
-      metadata: options.metadata,
+      payload: options.metadata,
     });
   }
 }

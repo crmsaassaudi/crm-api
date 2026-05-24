@@ -142,8 +142,7 @@ export class ContactsService {
       this.emitAutomationEvent('field_updated', updated, changedFields);
 
       // Emit audit trail event: field-level change tracking
-      // [PATCH P1] t = new Date() at request time, not at worker processing time
-      // [PATCH P2] Snapshots are plain objects — diff runs at AuditLogListener
+      // AuditLogListener diffs old vs new snapshot → audit_logs
       this.eventEmitter.emit('contact.updated', {
         t: new Date(),
         tenantId:
@@ -160,21 +159,6 @@ export class ContactsService {
         ip: this.cls.get('requestIp'),
         ua: this.cls.get('userAgent'),
       });
-
-      if (
-        ownerId !== undefined &&
-        String(existingContact?.ownerId ?? '') !== String(ownerId ?? '')
-      ) {
-        this.emitAuditLog({
-          action: 'CONTACT_OWNER_CHANGED',
-          targetEntityType: 'Contact',
-          targetEntityId: id,
-          metadata: {
-            previousOwnerId: existingContact?.ownerId,
-            nextOwnerId: ownerId,
-          },
-        });
-      }
     }
 
     return updated;
@@ -182,10 +166,10 @@ export class ContactsService {
 
   async remove(id: string): Promise<void> {
     await this.repository.remove(id);
-    this.emitAuditLog({
-      action: 'CONTACT_DELETED',
-      targetEntityType: 'Contact',
-      targetEntityId: id,
+    this.emitActivityLog({
+      targetType: 'contact',
+      targetId: id,
+      event: 'deleted',
     });
   }
 
@@ -485,19 +469,23 @@ export class ContactsService {
         skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
       },
     });
-    this.emitAuditLog({
-      action: 'CONTACT_STAGE_CHANGED',
-      targetEntityType: 'Contact',
-      targetEntityId: id,
+
+    // Emit audit trail: field-level diff (lifecycleStageId, statusId)
+    // AuditLogListener will compute old vs new snapshot → audit_logs
+    this.eventEmitter.emit('contact.updated', {
+      t: occurredAt,
+      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
+      entityId: id,
+      entityType: 'CONTACT',
+      oldSnapshot: JSON.parse(JSON.stringify(contact)),
+      newSnapshot: JSON.parse(JSON.stringify(updated)),
       actorId: changedById,
-      metadata: {
-        fromStage: previousStageName,
-        toStage: stage.apiName,
-        direction,
-        skippedStages,
-        reason: params?.reason,
-      },
+      src: this.cls.get('executionSource') || 'M',
+      ctx: this.cls.get('sourceContext'),
+      ip: this.cls.get('requestIp'),
+      ua: this.cls.get('userAgent'),
     });
+
     await this.repository.touchLastActivity(id, occurredAt);
 
     // 4. Optionally create deal on stage transition
@@ -556,11 +544,11 @@ export class ContactsService {
     };
     const ttlSeconds = UNMASK_TTL_SECONDS;
 
-    this.emitAuditLog({
-      action: 'CONTACT_FIELDS_UNMASKED',
-      targetEntityType: 'Contact',
-      targetEntityId: id,
-      metadata: {
+    this.emitActivityLog({
+      targetType: 'contact',
+      targetId: id,
+      event: 'fields_unmasked',
+      payload: {
         fields: fieldsToReturn,
         ttlSeconds,
       },
@@ -597,11 +585,11 @@ export class ContactsService {
     }
 
     const result = await this.repository.addTagsToContacts(contactIds, tags);
-    this.emitAuditLog({
-      action: 'CONTACTS_BULK_TAGGED',
-      targetEntityType: 'Contact',
-      targetEntityId: 'bulk',
-      metadata: {
+    this.emitActivityLog({
+      targetType: 'contact',
+      targetId: 'bulk',
+      event: 'bulk_tagged',
+      payload: {
         contactIds,
         tags,
         matchedCount: result.matchedCount,
@@ -666,11 +654,11 @@ export class ContactsService {
   async getExportDownload(
     token: string,
   ): Promise<{ buffer: Buffer; filename: string }> {
-    this.emitAuditLog({
-      action: 'CONTACT_EXPORT_DOWNLOADED',
-      targetEntityType: 'Contact',
-      targetEntityId: 'export',
-      metadata: { token },
+    this.emitActivityLog({
+      targetType: 'contact',
+      targetId: 'export',
+      event: 'export_downloaded',
+      payload: { token },
     });
     return this.exportStorageService.readLocalExport(token);
   }
@@ -738,14 +726,7 @@ export class ContactsService {
         phonesAdded: target.phones || [],
       },
     });
-    this.emitAuditLog({
-      action: 'CONTACTS_MERGED',
-      targetEntityType: 'Contact',
-      targetEntityId: primaryId,
-      metadata: {
-        mergedContactId: targetId,
-      },
-    });
+
 
     return {
       success: true,
@@ -776,21 +757,7 @@ export class ContactsService {
     this.eventEmitter.emit(buildAutomationEventName(event, 'Contact'), payload);
   }
 
-  private emitAuditLog(input: {
-    action: string;
-    targetEntityType: string;
-    targetEntityId: string;
-    actorId?: string;
-    metadata?: Record<string, any>;
-  }): void {
-    this.eventEmitter.emit('audit.record', {
-      ...input,
-      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
-      actorId: input.actorId || this.getCurrentUserId(),
-      ipAddress: this.cls.get('requestIp'),
-      userAgent: this.cls.get('userAgent'),
-    });
-  }
+
 
   private emitActivityLog(input: {
     targetType: string;

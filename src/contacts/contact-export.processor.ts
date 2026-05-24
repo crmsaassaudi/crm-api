@@ -84,20 +84,6 @@ export class ContactExportProcessor extends BaseTenantConsumer<ContactExportJobD
       event: 'export',
       payload: { recordCount, ids, filters },
     });
-    this.eventEmitter.emit('audit.record', {
-      tenantId,
-      actorId: userId,
-      action: 'CONTACTS_EXPORTED',
-      targetEntityType: 'Contact',
-      targetEntityId: 'export',
-      metadata: {
-        recordCount,
-        ids,
-        filters,
-        storageKey: exportFile.storageKey,
-        expiresAt: exportFile.expiresAt,
-      },
-    });
 
     // ── Push export result to client via Redis pub/sub ──
     // Worker process cannot emit Socket.IO events directly (no WS server).

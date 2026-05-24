@@ -3,13 +3,13 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { EnhancedAuditLogSchemaClass } from '../entities/enhanced-audit-log.schema';
+import { AuditLogSchemaClass } from '../entities/audit-log.schema';
 import { AuditQueueJobData } from '../types/audit-event.types';
 
 /**
  * BullMQ Worker that persists pre-computed audit diffs to MongoDB.
  *
- * [PATCH P1 + P2] This worker is intentionally simple:
+ * This worker is intentionally simple:
  * - Does NOT compute diffs (already done at AuditLogListener)
  * - Does NOT generate timestamps (uses `t` from payload)
  * - Only reads job payload and writes to MongoDB
@@ -24,8 +24,8 @@ export class AuditLogProcessor extends WorkerHost {
   private readonly logger = new Logger(AuditLogProcessor.name);
 
   constructor(
-    @InjectModel(EnhancedAuditLogSchemaClass.name, 'audit-log-db-connection')
-    private readonly model: Model<EnhancedAuditLogSchemaClass>,
+    @InjectModel(AuditLogSchemaClass.name, 'audit-log-db-connection')
+    private readonly model: Model<AuditLogSchemaClass>,
   ) {
     super();
   }
@@ -34,8 +34,8 @@ export class AuditLogProcessor extends WorkerHost {
     const { t, tenantId, entityType, entityId, actorId, src, ctx, ip, ua, changes } =
       job.data;
 
-    // [PATCH P1] t comes from payload (actual request time), NOT new Date()
-    // [PATCH P2] changes[] already computed at Listener — worker does NOT re-diff
+    // t comes from payload (actual request time), NOT new Date()
+    // changes[] already computed at Listener — worker only persists
     await this.model.create({
       t: new Date(t),
       tenantId,

@@ -9,10 +9,6 @@ import {
   AuditLogSchema,
   AuditLogSchemaClass,
 } from './entities/audit-log.schema';
-import {
-  EnhancedAuditLogSchema,
-  EnhancedAuditLogSchemaClass,
-} from './entities/enhanced-audit-log.schema';
 import { AuditLogListener } from './listeners/audit-log.listener';
 import { AuditLogController } from './audit-log.controller';
 import { AuditLogProcessor } from './processors/audit-log.processor';
@@ -23,12 +19,7 @@ import { isWorkerRuntime } from '../config/runtime-role';
 
 @Module({
   imports: [
-    // Legacy audit_logs collection (shared DB connection)
-    MongooseModule.forFeature([
-      { name: AuditLogSchemaClass.name, schema: AuditLogSchema },
-    ]),
-
-    // Isolated DB connection for enhanced audit logs.
+    // Isolated DB connection for audit logs.
     // Falls back to main DATABASE_URL if AUDIT_DATABASE_URL is not set.
     MongooseModule.forRootAsync({
       connectionName: 'audit-log-db-connection',
@@ -57,12 +48,12 @@ import { isWorkerRuntime } from '../config/runtime-role';
       inject: [ConfigService],
     }),
 
-    // Enhanced audit log schema on the isolated connection
+    // Audit log schema on the isolated connection
     MongooseModule.forFeature(
       [
         {
-          name: EnhancedAuditLogSchemaClass.name,
-          schema: EnhancedAuditLogSchema,
+          name: AuditLogSchemaClass.name,
+          schema: AuditLogSchema,
         },
       ],
       'audit-log-db-connection',
@@ -92,3 +83,4 @@ import { isWorkerRuntime } from '../config/runtime-role';
   exports: [AuditLogService],
 })
 export class AuditLogModule {}
+

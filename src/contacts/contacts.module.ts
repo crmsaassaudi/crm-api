@@ -17,7 +17,7 @@ import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { NotesModule } from '../notes/notes.module';
 import { TasksModule } from '../tasks/tasks.module';
 import { TicketsModule } from '../tickets/tickets.module';
-import { AuditLogModule } from '../audit-log/audit-log.module';
+
 import { ContactExportStorageService } from './contact-export-storage.service';
 import { ContactExportProcessor } from './contact-export.processor';
 import { ContactScoringService } from './contact-scoring.service';
@@ -53,7 +53,7 @@ const workerProviders = isWorkerRuntime()
     NotesModule,
     TasksModule,
     TicketsModule,
-    AuditLogModule,
+
   ],
   controllers: [ContactsController],
   providers: [

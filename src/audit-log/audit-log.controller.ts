@@ -33,7 +33,7 @@ export class AuditLogController {
     const tenantId =
       this.cls.get('activeTenantId') || this.cls.get('tenantId');
 
-    return this.auditLogService.getEnhancedAuditLogs({
+    return this.auditLogService.getAuditLogs({
       tenantId,
       entityType: entityType.toUpperCase(),
       entityId,

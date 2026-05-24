@@ -3,23 +3,103 @@
  *
  * Design decisions:
  * - Stateless / pure static utility — no DI, no side effects
- * - Runs at AuditLogListener (async, outside request thread) — [PATCH P2]
- * - Truncates long strings to cap each changes[] element at ~500 bytes — [PATCH R3]
+ * - Runs at AuditLogListener (async, outside request thread)
+ * - Uses WHITELIST approach: only explicitly listed fields are tracked
+ *   → prevents virtual getters (owner, createdBy) and internal fields (version, __v)
+ *   from leaking full user objects into audit storage
+ * - Truncates long strings to cap each changes[] element at ~500 bytes
  * - Normalizes primitive arrays (sort before compare) to avoid false positives
- * - Supports custom field label injection for schema drift prevention — [PATCH P3]
+ * - Supports custom field label injection for schema drift prevention
  */
 
-const IGNORED_FIELDS = new Set([
-  'createdAt',
-  'updatedAt',
-  '__v',
+/**
+ * Whitelist of fields tracked per entity type.
+ * Fields NOT listed here are silently excluded from audit diffs.
+ *
+ * Why whitelist instead of blacklist?
+ * - Virtual getters (owner, createdBy, updatedBy) serialize full User objects
+ *   via toJSON({ virtuals: true }) — blacklist is error-prone and leaks PII
+ * - New internal fields (e.g. scoring, shadow) won't pollute audit by default
+ * - Explicit list makes audit scope auditable and reviewable
+ */
+const TRACKED_FIELDS: Record<string, Set<string>> = {
+  CONTACT: new Set([
+    'firstName',
+    'lastName',
+    'emails',
+    'phones',
+    'companyName',
+    'title',
+    'role',
+    'address',
+    'birthday',
+    'lifecycleStageId',
+    'statusId',
+    'sourceId',
+    'accountId',
+    'ownerId',
+    'score',
+    'emailOptIn',
+    'smsOptIn',
+    'doNotCall',
+    'tags',
+    'isVIP',
+    'customFields',
+  ]),
+  DEAL: new Set([
+    'title',
+    'name',
+    'value',
+    'currency',
+    'closeDate',
+    'stageId',
+    'pipelineId',
+    'contactId',
+    'accountId',
+    'ownerId',
+    'probability',
+    'priority',
+    'tags',
+    'customFields',
+  ]),
+  TICKET: new Set([
+    'subject',
+    'description',
+    'priority',
+    'statusId',
+    'categoryId',
+    'contactId',
+    'accountId',
+    'assigneeId',
+    'tags',
+    'dueDate',
+    'customFields',
+  ]),
+};
+
+/**
+ * Fallback: fields that should NEVER be tracked regardless of entity type.
+ * Used when entity type is unknown (safety net).
+ */
+const ALWAYS_IGNORED = new Set([
   '_id',
   'id',
+  '__v',
   'tenantId',
+  'createdAt',
+  'updatedAt',
   'createdBy',
   'createdById',
   'updatedBy',
   'updatedById',
+  'version',
+  'owner',
+  'deletedAt',
+  'isShadow',
+  'stageHistory',
+  'omniIdentities',
+  'lastActivityAt',
+  'isConverted',
 ]);
 
 export class AuditDiffEngine {
@@ -40,25 +120,46 @@ export class AuditDiffEngine {
    * @param newDoc - Plain object snapshot (after update)
    * @param customFieldLabels - Map { field_key → display_label } at time of change.
    *   Example: { custom_field_101: 'Mã số thuế' }
-   *   [PATCH P3] Resolves Custom Field Schema Drift.
-   *   [PATCH R2] Resolved by AuditLogListener via CustomFieldsCacheService.
+   *   Resolved by AuditLogListener via CustomFieldsCacheService.
+   * @param entityType - Entity type for whitelist lookup (CONTACT, DEAL, TICKET)
    * @returns Array of change records, empty if no meaningful changes detected.
    */
   static computeDelta(
     oldDoc: any,
     newDoc: any,
     customFieldLabels?: Record<string, string>,
+    entityType?: string,
   ): Array<{ f: string; l?: string; o: any; n: any }> {
     const o = this.toPlain(oldDoc);
     const n = this.toPlain(newDoc);
     const allKeys = new Set([...Object.keys(o), ...Object.keys(n)]);
     const changes: Array<{ f: string; l?: string; o: any; n: any }> = [];
 
+    // Resolve the whitelist for this entity type
+    const tracked = entityType ? TRACKED_FIELDS[entityType] : undefined;
+
     for (const key of allKeys) {
-      if (IGNORED_FIELDS.has(key)) continue;
+      // Always skip internal/virtual fields
+      if (ALWAYS_IGNORED.has(key)) continue;
+
+      // If whitelist exists for this entity, skip fields not in it
+      // Exception: keys starting with 'custom_' are always allowed (custom fields)
+      if (tracked && !tracked.has(key) && !key.startsWith('custom_')) continue;
 
       const oldVal = o[key];
       const newVal = n[key];
+
+      // For ref fields (ownerId, accountId, etc.), extract just the ID string
+      // to prevent storing populated objects
+      const sanitized = (v: any) => {
+        if (v && typeof v === 'object' && !Array.isArray(v) && v._id) {
+          return String(v._id);
+        }
+        return v;
+      };
+
+      const sOld = sanitized(oldVal);
+      const sNew = sanitized(newVal);
 
       // Sort arrays of primitives before comparing to avoid false-positive diffs
       // caused by order differences (e.g. tags: ['a','b'] vs ['b','a'])
@@ -67,15 +168,14 @@ export class AuditDiffEngine {
           ? JSON.stringify([...v].sort())
           : JSON.stringify(v);
 
-      if (normalize(oldVal) !== normalize(newVal)) {
+      if (normalize(sOld) !== normalize(sNew)) {
         const change: { f: string; l?: string; o: any; n: any } = {
           f: key,
-          // [PATCH R3] Truncate long string values to prevent storage bloat
-          o: this.truncate(oldVal),
-          n: this.truncate(newVal),
+          o: this.truncate(sOld),
+          n: this.truncate(sNew),
         };
 
-        // [PATCH P3] Attach label snapshot if available
+        // Attach label snapshot if available
         const label = customFieldLabels?.[key];
         if (label) {
           change.l = label;
@@ -89,7 +189,7 @@ export class AuditDiffEngine {
   }
 
   /**
-   * [PATCH R3] Truncates string values exceeding MAX_STRING_LENGTH characters.
+   * Truncates string values exceeding MAX_STRING_LENGTH characters.
    * For long text fields (descriptions, notes), stores a summary instead of
    * the full content. Keeps each changes[] element under ~500 bytes.
    */
@@ -101,3 +201,4 @@ export class AuditDiffEngine {
     return `[Text Modified: ${value.length} chars] ${value.slice(0, 80)}...`;
   }
 }
+

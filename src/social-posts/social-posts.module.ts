@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AiVideoModule } from '../ai-video/ai-video.module';
-import { AuditLogModule } from '../audit-log/audit-log.module';
+
 import { ChannelsModule } from '../channels/channels.module';
 import { isWorkerRuntime } from '../config/runtime-role';
 import {
@@ -40,7 +40,7 @@ const workerProviders = isWorkerRuntime()
   imports: [
     AiVideoModule,
     ChannelsModule,
-    AuditLogModule,
+
     SocialPublicationQueueModule,
     MongooseModule.forFeature([
       {
