@@ -33,13 +33,27 @@ import { isWorkerRuntime } from '../config/runtime-role';
     MongooseModule.forRootAsync({
       connectionName: 'audit-log-db-connection',
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        uri:
-          configService.get<string>('AUDIT_DATABASE_URL') ||
-          configService.get<string>('DATABASE_URL'),
-        dbName:
-          configService.get<string>('AUDIT_DATABASE_NAME') || 'crm_audit_logs',
-      }),
+      useFactory: (configService: ConfigService) => {
+        const isProd = process.env.NODE_ENV === 'production';
+        return {
+          uri:
+            configService.get<string>('AUDIT_DATABASE_URL') ||
+            configService.get<string>('DATABASE_URL'),
+          dbName:
+            configService.get<string>('AUDIT_DATABASE_NAME') ||
+            'crm_audit_logs',
+
+          // ── Atlas Resilience (mirrors main connection) ────────────
+          serverSelectionTimeoutMS: 45_000,
+          socketTimeoutMS: 60_000,
+          heartbeatFrequencyMS: 5_000,
+          retryWrites: true,
+          retryReads: true,
+          maxPoolSize: isProd ? 20 : 5,
+          minPoolSize: isProd ? 2 : 1,
+          autoIndex: !isProd,
+        };
+      },
       inject: [ConfigService],
     }),
 
