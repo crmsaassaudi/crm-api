@@ -17,6 +17,7 @@ import { simpleParser, ParsedMail } from 'mailparser';
 import { OAuth2TokenManager } from './oauth2-token-manager.service';
 import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
+import { isEmailWorkerRuntime, isWorkerRuntime } from '../../config/runtime-role';
 
 type MailboxLabelContext = {
   crmFolder: string | null;
@@ -87,10 +88,14 @@ export class ImapPollerService implements OnModuleDestroy {
     @InjectModel(OmniMessageSchemaClass.name)
     private readonly omniMessageModel: Model<OmniMessageSchemaClass>,
   ) {
-    // Clean stale IMAP locks from previous instance (hot-reload / crash)
-    void this.cleanupStaleLocks();
-    // Start the master scheduler
-    this.startScheduler();
+    // Only start IMAP polling in email-worker (or legacy monolith worker) process.
+    // Prevents duplicate polling from api-service and omni-worker-service.
+    if (isEmailWorkerRuntime() || isWorkerRuntime()) {
+      void this.cleanupStaleLocks();
+      this.startScheduler();
+    } else {
+      this.logger.log('[ImapPoller] Skipped — not an email-worker process');
+    }
   }
 
   onModuleDestroy(): void {
