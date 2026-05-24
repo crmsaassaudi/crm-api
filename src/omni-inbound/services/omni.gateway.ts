@@ -47,11 +47,21 @@ import { isWorkerRuntime } from '../../config/runtime-role';
   namespace: '/omni',
   cors: { origin: '*', credentials: true },
 })
-export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
+export class OmniGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
+{
   @WebSocketServer()
   server!: Server;
 
   private readonly logger = new Logger(OmniGateway.name);
+  private readonly socketEventChannels = [
+    'socket:contact:export:completed',
+    'socket:omni:message:persisted',
+    'socket:omni:conversation:created',
+    'socket:omni:conversation:reopened',
+    'socket:omni:conversation:customer_updated',
+    'socket:omni:message:media_cached',
+  ] as const;
 
   /** In-memory map: conversationId → userId who is currently claiming it */
   private claimLocks = new Map<string, { userId: string; at: Date }>();
@@ -78,22 +88,44 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     if (isWorkerRuntime()) return; // Only API process needs to subscribe
 
     const sub = this.redis.duplicate();
-    sub.subscribe('socket:contact:export:completed', (err) => {
+    sub.subscribe(...this.socketEventChannels, (err) => {
       if (err) {
-        this.logger.error('Failed to subscribe to Redis export channel', err);
+        this.logger.error('Failed to subscribe to Redis socket channels', err);
       } else {
-        this.logger.log('Subscribed to Redis channel: socket:contact:export:completed');
+        this.logger.log(
+          `Subscribed to Redis socket channels: ${this.socketEventChannels.join(', ')}`,
+        );
       }
     });
 
     sub.on('message', (channel: string, message: string) => {
-      if (channel === 'socket:contact:export:completed') {
-        try {
-          const event = JSON.parse(message);
-          this.handleContactExportCompleted(event);
-        } catch (err) {
-          this.logger.error('Failed to parse Redis export event', err);
+      try {
+        const event = JSON.parse(message);
+        switch (channel) {
+          case 'socket:contact:export:completed':
+            this.handleContactExportCompleted(event);
+            break;
+          case 'socket:omni:message:persisted':
+            this.broadcastInboundMessage(event);
+            break;
+          case 'socket:omni:conversation:created':
+            this.broadcastConversationCreated(event);
+            break;
+          case 'socket:omni:conversation:reopened':
+            this.broadcastConversationReopened(event);
+            break;
+          case 'socket:omni:conversation:customer_updated':
+            this.broadcastCustomerUpdated(event);
+            break;
+          case 'socket:omni:message:media_cached':
+            this.broadcastMediaCached(event);
+            break;
         }
+      } catch (err) {
+        this.logger.error(
+          `Failed to handle Redis socket event ${channel}`,
+          err,
+        );
       }
     });
   }
@@ -390,7 +422,16 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect, On
    * Broadcasts the enriched message (with internal conversationId) to agents via Socket.IO.
    */
   @OnEvent('omni.message.persisted')
-  handleInboundMessage(payload: any) {
+  async handleInboundMessage(payload: any) {
+    if (isWorkerRuntime()) {
+      await this.publishSocketEvent('socket:omni:message:persisted', payload);
+      return;
+    }
+
+    this.broadcastInboundMessage(payload);
+  }
+
+  private broadcastInboundMessage(payload: any) {
     const room = `tenant:${payload.tenantId}`;
     this.logger.log(
       `Broadcasting persisted ${payload.channelType} message to room=${room}, ` +
@@ -410,7 +451,22 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect, On
    * list sidebar updates in real-time when a brand new customer sends their first message.
    */
   @OnEvent('omni.conversation.created')
-  handleConversationCreated(event: { tenantId: string; conversation: any }) {
+  async handleConversationCreated(event: {
+    tenantId: string;
+    conversation: any;
+  }) {
+    if (isWorkerRuntime()) {
+      await this.publishSocketEvent('socket:omni:conversation:created', event);
+      return;
+    }
+
+    this.broadcastConversationCreated(event);
+  }
+
+  private broadcastConversationCreated(event: {
+    tenantId: string;
+    conversation: any;
+  }) {
     const room = `tenant:${event.tenantId}`;
     this.logger.log(`Broadcasting new conversation to room=${room}`);
     this.server.to(room).emit('omni:conversation:new', event.conversation);
@@ -422,7 +478,22 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect, On
    * that was previously resolved/closed re-appears at the top of the list.
    */
   @OnEvent('omni.conversation.reopened')
-  handleConversationReopened(event: { tenantId: string; conversation: any }) {
+  async handleConversationReopened(event: {
+    tenantId: string;
+    conversation: any;
+  }) {
+    if (isWorkerRuntime()) {
+      await this.publishSocketEvent('socket:omni:conversation:reopened', event);
+      return;
+    }
+
+    this.broadcastConversationReopened(event);
+  }
+
+  private broadcastConversationReopened(event: {
+    tenantId: string;
+    conversation: any;
+  }) {
     const room = `tenant:${event.tenantId}`;
     this.logger.log(`Broadcasting reopened conversation to room=${room}`);
     this.server.to(room).emit('omni:conversation:reopened', event.conversation);
@@ -434,7 +505,23 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect, On
    * Broadcasts the real customer name/avatar to the tenant room.
    */
   @OnEvent('omni.conversation.customer_updated')
-  handleCustomerUpdated(event: {
+  async handleCustomerUpdated(event: {
+    tenantId: string;
+    conversationId: string;
+    customer: any;
+  }) {
+    if (isWorkerRuntime()) {
+      await this.publishSocketEvent(
+        'socket:omni:conversation:customer_updated',
+        event,
+      );
+      return;
+    }
+
+    this.broadcastCustomerUpdated(event);
+  }
+
+  private broadcastCustomerUpdated(event: {
     tenantId: string;
     conversationId: string;
     customer: any;
@@ -456,7 +543,21 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect, On
    * provider URL with the permanent cached version.
    */
   @OnEvent('omni.message.media_cached')
-  handleMediaCached(event: {
+  async handleMediaCached(event: {
+    tenantId: string;
+    conversationId: string;
+    messageId: string;
+    mediaProxyUrl: string;
+  }) {
+    if (isWorkerRuntime()) {
+      await this.publishSocketEvent('socket:omni:message:media_cached', event);
+      return;
+    }
+
+    this.broadcastMediaCached(event);
+  }
+
+  private broadcastMediaCached(event: {
     tenantId: string;
     conversationId: string;
     messageId: string;
@@ -952,6 +1053,10 @@ export class OmniGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       version: Date.now(),
       payload,
     };
+  }
+
+  private async publishSocketEvent(channel: string, payload: unknown) {
+    await this.redis.publish(channel, JSON.stringify(payload));
   }
 
   private normalizeHost(host?: string): string {
