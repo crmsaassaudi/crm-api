@@ -115,6 +115,11 @@ export class TenantInterceptor implements NestInterceptor {
       await this.resolveI18nContext(tenantId);
     }
 
+    // ── Step 7: Default execution source for audit trail ──
+    // 'M' = Manual (UI/HTTP request). Overridden by InternalApiKeyGuard ('A'),
+    // automation processors ('A_F'), and bot processor ('B').
+    this.cls.set('executionSource', 'M');
+
     this.logger.debug(
       `Context resolved → tenantId=${this.cls.get('tenantId')}, userId=${this.cls.get('userId')}, locale=${this.cls.get('tenantLocale') ?? 'en'}, tz=${this.cls.get('tenantTimezone') ?? 'UTC'}`,
     );

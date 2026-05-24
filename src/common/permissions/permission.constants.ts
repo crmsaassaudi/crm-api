@@ -12,7 +12,8 @@ export type PermissionResource =
   | 'tasks'
   | 'ai_video'
   | 'social_content_assets'
-  | 'publication_instances';
+  | 'publication_instances'
+  | 'audit_logs';
 
 export type PermissionAction =
   | 'view'
@@ -142,6 +143,9 @@ export const PERMISSION_REGISTRY: Record<
     retry: 'publication_instances:retry',
     publish: 'publication_instances:publish',
   },
+  audit_logs: {
+    view: 'audit_logs:view',
+  },
 };
 
 /**
@@ -217,6 +221,8 @@ export const CORE_PERMISSIONS: string[] = [
   'ai_video:edit',
   'ai_video:delete',
   'ai_video:manage_system',
+  // Audit Logs
+  'audit_logs:view',
 ];
 
 /**

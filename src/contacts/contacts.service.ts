@@ -141,6 +141,26 @@ export class ContactsService {
       const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
       this.emitAutomationEvent('field_updated', updated, changedFields);
 
+      // Emit audit trail event: field-level change tracking
+      // [PATCH P1] t = new Date() at request time, not at worker processing time
+      // [PATCH P2] Snapshots are plain objects — diff runs at AuditLogListener
+      this.eventEmitter.emit('contact.updated', {
+        t: new Date(),
+        tenantId:
+          this.cls.get('activeTenantId') || this.cls.get('tenantId'),
+        entityId: id,
+        entityType: 'CONTACT',
+        oldSnapshot: existingContact
+          ? JSON.parse(JSON.stringify(existingContact))
+          : {},
+        newSnapshot: JSON.parse(JSON.stringify(updated)),
+        actorId: this.getCurrentUserId(),
+        src: this.cls.get('executionSource') || 'M',
+        ctx: this.cls.get('sourceContext'),
+        ip: this.cls.get('requestIp'),
+        ua: this.cls.get('userAgent'),
+      });
+
       if (
         ownerId !== undefined &&
         String(existingContact?.ownerId ?? '') !== String(ownerId ?? '')

@@ -96,6 +96,10 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
       return;
     }
 
+    // Audit trail: mark as bot-initiated execution
+    this.cls.set('executionSource', 'B');
+    this.cls.set('sourceContext', { botId: bot.flowId || 'bot' });
+
     if (!bot.flowId) {
       await this.conversationRepo.updateBotState(data.conversationId, {
         lastError: 'Bot flowId is missing',

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
+import { ClsService } from 'nestjs-cls';
 
 /**
  * Guards endpoints that should only be called by internal services
@@ -16,7 +17,10 @@ import { Request } from 'express';
  */
 @Injectable()
 export class InternalApiKeyGuard implements CanActivate {
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly cls: ClsService,
+  ) {}
 
   canActivate(context: ExecutionContext): boolean {
     const expectedKey = this.configService.get<string>('INTERNAL_API_KEY', {
@@ -41,6 +45,11 @@ export class InternalApiKeyGuard implements CanActivate {
       throw new UnauthorizedException('Invalid or missing internal API key');
     }
 
+    // Audit trail: mark this request as API-key-initiated
+    this.cls.set('executionSource', 'A');
+    this.cls.set('sourceContext', { keyId: 'INTERNAL_API_KEY' });
+
     return true;
   }
 }
+

@@ -53,6 +53,9 @@ export class TicketsService {
   }
 
   async update(id: string, data: Partial<Ticket>): Promise<Ticket | null> {
+    // Snapshot before update for audit trail
+    const existingTicket = await this.repository.findOne({ _id: id });
+
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const groupId = data.groupId === '' ? undefined : data.groupId;
 
@@ -79,6 +82,24 @@ export class TicketsService {
     if (updated) {
       const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
       this.emitAutomationEvent('field_updated', updated, changedFields);
+
+      // Emit audit trail event: field-level change tracking
+      this.eventEmitter.emit('ticket.updated', {
+        t: new Date(),
+        tenantId:
+          this.cls.get('activeTenantId') || this.cls.get('tenantId'),
+        entityId: id,
+        entityType: 'TICKET',
+        oldSnapshot: existingTicket
+          ? JSON.parse(JSON.stringify(existingTicket))
+          : {},
+        newSnapshot: JSON.parse(JSON.stringify(updated)),
+        actorId: this.getCurrentUserId(),
+        src: this.cls.get('executionSource') || 'M',
+        ctx: this.cls.get('sourceContext'),
+        ip: this.cls.get('requestIp'),
+        ua: this.cls.get('userAgent'),
+      });
     }
 
     return updated;
@@ -109,5 +130,9 @@ export class TicketsService {
     };
 
     this.eventEmitter.emit(buildAutomationEventName(event, 'Ticket'), payload);
+  }
+
+  private getCurrentUserId(): string | undefined {
+    return this.cls.get('userId') || this.cls.get('user.id');
   }
 }

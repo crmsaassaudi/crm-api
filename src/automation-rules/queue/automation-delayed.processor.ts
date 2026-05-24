@@ -47,6 +47,10 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
     if (!data) return;
 
     try {
+      // Audit trail: mark as automation flow execution
+      this.cls.set('executionSource', 'A_F');
+      this.cls.set('sourceContext', { flowId: data.workflowId });
+
       await this.resumeWorkflow(data);
 
       if (job.data.delayedJobId) {
