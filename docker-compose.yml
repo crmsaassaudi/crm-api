@@ -86,6 +86,81 @@ services:
       - 8.8.8.8
       - 8.8.4.4
 
+  omni-worker-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crm-api-omni-worker
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      APP_RUNTIME: omni
+      NPM_CONFIG_CACHE: /tmp/.npm
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
+      REDIS_CACHE_DB: 0
+      REDIS_QUEUE_DB: 1
+    command: ['npm', 'run', 'start:omni-worker:prod']
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - ./files:/usr/src/app/files
+      - ${ASSETS_PATH:-/var/crm-assets}:/var/crm-assets:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 3g
+    cpus: '${CRM_OMNI_CPUS:-2.0}'
+    networks:
+      crm_api_net:
+        ipv4_address: 172.25.0.12
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+
+  email-worker-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crm-api-email-worker
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      APP_RUNTIME: email-worker
+      NPM_CONFIG_CACHE: /tmp/.npm
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
+      REDIS_CACHE_DB: 0
+      REDIS_QUEUE_DB: 1
+    command: ['npm', 'run', 'start:email-worker:prod']
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - ./files:/usr/src/app/files
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    cpus: '${CRM_EMAIL_WORKER_CPUS:-0.5}'
+    networks:
+      crm_api_net:
+        ipv4_address: 172.25.0.13
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+
 networks:
   crm_api_net:
     name: crm_api_net

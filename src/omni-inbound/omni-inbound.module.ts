@@ -96,9 +96,9 @@ import { AuthModule } from '../auth/auth.module';
 import { DealsModule } from '../deals/deals.module';
 import { TicketsModule } from '../tickets/tickets.module';
 import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
-import { isWorkerRuntime } from '../config/runtime-role';
+import { isWorkerRuntime, isOmniRuntime } from '../config/runtime-role';
 
-const workerProviders = isWorkerRuntime()
+const workerProviders = (isWorkerRuntime() || isOmniRuntime())
   ? [
       WebhookProcessor,
       OmniRoutingProcessor,

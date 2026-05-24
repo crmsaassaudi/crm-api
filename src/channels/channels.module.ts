@@ -98,7 +98,7 @@ import { AutomationRulesModule } from '../automation-rules/automation-rules.modu
 
 // -- Realtime (for WebSocket alerts) --
 import { SocketModule } from '../modules/realtime/socket.module';
-import { isWorkerRuntime } from '../config/runtime-role';
+import { isWorkerRuntime, isEmailWorkerRuntime } from '../config/runtime-role';
 
 @Module({
   imports: [
@@ -163,7 +163,7 @@ import { isWorkerRuntime } from '../config/runtime-role';
     AdapterRegistryService,
 
     // Phase 2: Health Check & Alert
-    ...(isWorkerRuntime() ? [ChannelHealthCheckService] : []),
+    ...((isWorkerRuntime() || isEmailWorkerRuntime()) ? [ChannelHealthCheckService] : []),
     ChannelAlertService,
 
     // Phase 3: Transport Pool (LRU cache for decrypted credentials)
