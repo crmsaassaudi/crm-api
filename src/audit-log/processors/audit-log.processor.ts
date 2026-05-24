@@ -59,6 +59,6 @@ export class AuditLogProcessor extends WorkerHost {
 
   @OnWorkerEvent('completed')
   onCompleted(job: Job) {
-    this.logger.debug(`[AuditQueue] Job ${job.id} completed`);
+    this.logger.log(`[AuditQueue] Job ${job.id} completed — ${job.data?.entityType}:${job.data?.entityId}`);
   }
 }

@@ -98,6 +98,12 @@ export abstract class BaseDocumentRepository<
 
   /**
    * Auto-enriches payload with updatedBy from CLS if not already set.
+   *
+   * IMPORTANT — true PATCH semantics:
+   * Only the keys present in the incoming `payload` are written to the DB.
+   * `toPersistence()` produces a full schema-class instance whose unset
+   * fields may carry defaults (e.g. `emails ?? []`).  We use the original
+   * payload keys as a whitelist so those defaults never overwrite real data.
    */
   async update(
     id: string,
@@ -113,6 +119,20 @@ export abstract class BaseDocumentRepository<
     const version = persistenceData.__v;
     delete persistenceData.__v;
 
+    // Build a whitelist of keys the caller actually intended to update.
+    // This prevents toPersistence() default values (e.g. phones ?? [])
+    // from overwriting existing DB data during a partial PATCH.
+    const payloadKeys = new Set(Object.keys(enriched as any));
+    // Always allow internal bookkeeping fields
+    payloadKeys.add('updatedById');
+
+    const $set: Record<string, any> = {};
+    for (const [key, value] of Object.entries(persistenceData)) {
+      if (payloadKeys.has(key) && value !== undefined) {
+        $set[key] = value;
+      }
+    }
+
     const filter: any = { _id: id };
 
     // Apply tenant filter
@@ -125,7 +145,7 @@ export abstract class BaseDocumentRepository<
     const updated = (await this.model.findOneAndUpdate(
       scopedFilter,
       {
-        ...persistenceData,
+        $set,
         $inc: { __v: 1 },
       },
       { new: true, session: session || null },

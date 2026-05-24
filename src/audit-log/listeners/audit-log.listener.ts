@@ -72,7 +72,12 @@ export class AuditLogListener {
       );
 
       // Skip if no meaningful changes detected (e.g. only updatedAt changed)
-      if (changes.length === 0) return;
+      if (changes.length === 0) {
+        this.logger.log(
+          `[AuditLog] ${payload.entityType}:${payload.entityId} — no meaningful changes, skipping`,
+        );
+        return;
+      }
 
       // Enqueue compact job payload — Worker just persists, no diff
       await this.auditQueue.add(
@@ -95,6 +100,10 @@ export class AuditLogListener {
           removeOnComplete: true,
           removeOnFail: 100,
         },
+      );
+
+      this.logger.log(
+        `[AuditLog] Enqueued ${payload.entityType}:${payload.entityId} — ${changes.length} change(s)`,
       );
     } catch (error) {
       // Non-blocking: audit failures must NEVER crash the API
