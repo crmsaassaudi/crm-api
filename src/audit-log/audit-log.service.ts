@@ -5,12 +5,15 @@ import {
   AuditLogSchemaClass,
   AuditLogDocument,
 } from './entities/audit-log.schema';
+import { UserSchemaClass } from '../users/infrastructure/persistence/document/entities/user.schema';
 
 @Injectable()
 export class AuditLogService {
   constructor(
     @InjectModel(AuditLogSchemaClass.name, 'audit-log-db-connection')
     private readonly model: Model<AuditLogDocument>,
+    @InjectModel(UserSchemaClass.name)
+    private readonly userModel: Model<any>,
   ) {}
 
   /**
@@ -64,8 +67,57 @@ export class AuditLogService {
           ).toString('base64')
         : null;
 
-    return { data: page, nextCursor, hasMore };
+    // ── Populate actor info (batch lookup) ──────────────────────
+    const actorIds = [
+      ...new Set(
+        page
+          .map((d: any) => d.actorId)
+          .filter((id: string) => id && id !== 'system'),
+      ),
+    ];
+
+    let actorMap: Record<string, { firstName?: string; lastName?: string; email?: string; photo?: any }> = {};
+    if (actorIds.length > 0) {
+      try {
+        const validIds = actorIds
+          .filter((id) => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id));
+
+        if (validIds.length > 0) {
+          const users = await this.userModel
+            .find({ _id: { $in: validIds } }, { firstName: 1, lastName: 1, email: 1, photo: 1 })
+            .lean() as Array<{ _id: any; firstName?: string; lastName?: string; email?: string; photo?: any }>;
+          for (const u of users) {
+            actorMap[u._id.toString()] = {
+              firstName: u.firstName,
+              lastName: u.lastName,
+              email: u.email,
+              photo: u.photo,
+            };
+          }
+        }
+      } catch {
+        // Non-critical — proceed without actor info
+      }
+    }
+
+    const enriched = page.map((entry: any) => {
+      const actor = actorMap[entry.actorId];
+      return {
+        ...entry,
+        _id: entry._id?.toString?.() ?? entry._id,
+        actor: actor
+          ? {
+              name: [actor.firstName, actor.lastName].filter(Boolean).join(' ') || actor.email || null,
+              email: actor.email || null,
+              photo: actor.photo?.url ?? actor.photo ?? null,
+            }
+          : entry.actorId === 'system'
+            ? { name: 'System', email: null, photo: null }
+            : null,
+      };
+    });
+
+    return { data: enriched, nextCursor, hasMore };
   }
 }
-
-
