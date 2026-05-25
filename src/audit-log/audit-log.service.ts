@@ -80,13 +80,14 @@ export class AuditLogService {
     if (actorIds.length > 0) {
       try {
         const validIds = actorIds
-          .filter((id) => Types.ObjectId.isValid(id))
-          .map((id) => new Types.ObjectId(id));
+          .filter((id) => Types.ObjectId.isValid(id as string))
+          .map((id) => new Types.ObjectId(id as string));
 
         if (validIds.length > 0) {
           const users = await this.userModel
             .find({ _id: { $in: validIds } }, { firstName: 1, lastName: 1, email: 1, photo: 1 })
             .lean() as Array<{ _id: any; firstName?: string; lastName?: string; email?: string; photo?: any }>;
+
           for (const u of users) {
             actorMap[u._id.toString()] = {
               firstName: u.firstName,
@@ -96,16 +97,20 @@ export class AuditLogService {
             };
           }
         }
-      } catch {
-        // Non-critical — proceed without actor info
+      } catch (err) {
+        console.error('[AuditLogService] Actor lookup failed:', err?.message);
       }
     }
 
     const enriched = page.map((entry: any) => {
       const actor = actorMap[entry.actorId];
+      // Destructure to separate _id and __v from rest to avoid ObjectId serialization issues
+      const { _id, __v, ...rest } = entry;
+      const idStr = typeof _id === 'string' ? _id : String(_id);
+
       return {
-        ...entry,
-        _id: entry._id?.toString?.() ?? entry._id,
+        ...rest,
+        _id: idStr,
         actor: actor
           ? {
               name: [actor.firstName, actor.lastName].filter(Boolean).join(' ') || actor.email || null,
@@ -114,7 +119,7 @@ export class AuditLogService {
             }
           : entry.actorId === 'system'
             ? { name: 'System', email: null, photo: null }
-            : null,
+            : { name: null, email: null, photo: null },
       };
     });
 

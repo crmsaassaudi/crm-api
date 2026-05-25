@@ -50,7 +50,7 @@ export function tenantFilterPlugin(
 
   for (const hook of hooks) {
     schema.pre(hook as any, function () {
-      applyTenantFilter(this, tenantField);
+      applyTenantFilter(this, tenantField, schema);
       if (protectTenantWrites) {
         protectTenantMutation(this, tenantField);
       }
@@ -91,7 +91,7 @@ export function tenantFilterPlugin(
  *
  * Missing tenant context throws to avoid fail-open cross-tenant reads.
  */
-function applyTenantFilter(query: any, tenantField: string) {
+function applyTenantFilter(query: any, tenantField: string, schema?: Schema) {
   // Guard: prevent infinite recursion.
   // setQuery() re-triggers the pre hook; bail out if we already applied the filter.
   if (query.__tenantFiltered) {
@@ -124,6 +124,12 @@ function applyTenantFilter(query: any, tenantField: string) {
     throwMissingTenantContext(query, tenantField, 'activeTenantId is missing');
   }
 
+  // Cast string tenantId to ObjectId when schema field type requires it.
+  // Without this, string-vs-ObjectId comparison silently returns no results.
+  const tenantValue = schema
+    ? castTenantForQuery(schema, tenantField, activeTenantId)
+    : activeTenantId;
+
   const currentFilter = query.getFilter?.() ?? {};
 
   // SECURITY: Always force the tenant filter.
@@ -133,8 +139,8 @@ function applyTenantFilter(query: any, tenantField: string) {
 
   const hasOtherConditions = Object.keys(sanitizedFilter).length > 0;
   const finalQuery = hasOtherConditions
-    ? { $and: [sanitizedFilter, { [tenantField]: activeTenantId }] }
-    : { [tenantField]: activeTenantId };
+    ? { $and: [sanitizedFilter, { [tenantField]: tenantValue }] }
+    : { [tenantField]: tenantValue };
 
   query.__tenantFiltered = true;
   query.setQuery(finalQuery);
@@ -314,6 +320,52 @@ function getActiveTenantId(target: any, tenantField: string): string {
   }
 
   return String(activeTenantId);
+}
+
+/**
+ * Cast tenantId string to the correct type for regular queries.
+ * Handles both flat fields (tenantId) and nested dot-paths (tenants.tenantId)
+ * by resolving the schema path type.
+ */
+function castTenantForQuery(
+  schema: Schema,
+  tenantField: string,
+  activeTenantId: string,
+) {
+  // schema.path() works for top-level and nested dot-notation paths
+  const schemaPath = schema.path(tenantField);
+
+  if (
+    schemaPath?.instance === 'ObjectId' &&
+    Types.ObjectId.isValid(activeTenantId)
+  ) {
+    return new Types.ObjectId(activeTenantId);
+  }
+
+  // For array sub-document fields like 'tenants.tenantId',
+  // schema.path() may return the parent array. Try to resolve via nested path.
+  if (!schemaPath && tenantField.includes('.')) {
+    const parts = tenantField.split('.');
+    let currentSchema: any = schema;
+    for (const part of parts) {
+      const pathInfo = currentSchema?.path?.(part);
+      if (!pathInfo) break;
+      if (pathInfo.schema) {
+        currentSchema = pathInfo.schema;
+      } else if (
+        pathInfo.instance === 'ObjectId' &&
+        Types.ObjectId.isValid(activeTenantId)
+      ) {
+        return new Types.ObjectId(activeTenantId);
+      } else if (pathInfo.caster?.instance === 'ObjectId') {
+        return new Types.ObjectId(activeTenantId);
+      } else {
+        currentSchema = pathInfo;
+      }
+    }
+  }
+
+  return activeTenantId;
 }
 
 function castTenantForAggregate(
