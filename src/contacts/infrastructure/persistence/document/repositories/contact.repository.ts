@@ -635,9 +635,20 @@ export class ContactRepository extends BaseDocumentRepository<
       .exec();
     if (!doc) return [];
     const history = (doc.stageHistory || []) as any[];
-    return history.sort(
-      (a: any, b: any) =>
-        new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime(),
-    );
+    return history
+      .map((entry: any) => ({
+        id: entry._id?.toString?.() ?? String(entry._id),
+        fromStage: entry.fromStage ?? null,
+        toStage: entry.toStage,
+        changedAt: entry.changedAt,
+        changedById: entry.changedById?.toString?.() ?? String(entry.changedById),
+        reason: entry.reason,
+        direction: entry.direction,
+        skippedStages: entry.skippedStages ?? [],
+      }))
+      .sort(
+        (a: any, b: any) =>
+          new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime(),
+      );
   }
 }
