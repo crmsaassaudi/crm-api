@@ -66,6 +66,7 @@ import { NotesModule } from './notes/notes.module';
 import { SystemSettingsModule } from './system-settings/system-settings.module';
 import { AiVideoModule } from './ai-video/ai-video.module';
 import { SocialContentModule } from './social-posts/social-posts.module';
+import { ReportsModule } from './reports/reports.module';
 
 import {
   KeycloakConnectModule,
@@ -287,6 +288,7 @@ const envFilePath = [
     SystemSettingsModule,
     AiVideoModule,
     SocialContentModule,
+    ReportsModule,
   ],
   providers: [
     {

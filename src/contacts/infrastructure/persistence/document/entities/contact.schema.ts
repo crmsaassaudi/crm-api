@@ -214,6 +214,11 @@ ContactSchema.index(
   { name: 'tenant_vip_created_lookup' },
 );
 ContactSchema.index(
+  { tenantId: 1, lastActivityAt: 1 },
+  { name: 'tenant_last_activity' },
+);
+ContactSchema.index({ tenantId: 1, score: 1 }, { name: 'tenant_score' });
+ContactSchema.index(
   { firstName: 'text', lastName: 'text', emails: 'text' },
   {
     name: 'contact_text_search',

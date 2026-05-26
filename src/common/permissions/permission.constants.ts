@@ -6,6 +6,9 @@ export type PermissionResource =
   | 'campaigns'
   | 'tickets'
   | 'reports'
+  | 'contact_reports'
+  | 'deal_reports'
+  | 'ticket_reports'
   | 'users'
   | 'groups'
   | 'settings'
@@ -95,6 +98,18 @@ export const PERMISSION_REGISTRY: Record<
     view: 'reports:view',
     create: 'reports:create',
     export: 'reports:export',
+  },
+  contact_reports: {
+    view: 'reports:contact:view',
+    export: 'reports:contact:export',
+  },
+  deal_reports: {
+    view: 'reports:deal:view',
+    export: 'reports:deal:export',
+  },
+  ticket_reports: {
+    view: 'reports:ticket:view',
+    export: 'reports:ticket:export',
   },
   users: {
     view: 'users:view',
@@ -200,6 +215,9 @@ export const CORE_PERMISSIONS: string[] = [
   'tasks:delete',
   // Reports (view only by default)
   'reports:view',
+  'reports:contact:view',
+  'reports:deal:view',
+  'reports:ticket:view',
   // Users & Groups management
   'users:view',
   'users:create',
@@ -247,6 +265,9 @@ export const FEATURE_PERMISSIONS: string[] = [
   // Reports advanced
   'reports:create',
   'reports:export',
+  'reports:contact:export',
+  'reports:deal:export',
+  'reports:ticket:export',
   // Campaigns — gated feature
   'campaigns:view',
   'campaigns:create',
