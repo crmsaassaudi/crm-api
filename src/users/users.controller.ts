@@ -140,7 +140,7 @@ export class UsersController {
     }
 
     const tenantId = this.usersService.getTenantId();
-    const search = (query as any).search; // Handle search if provided
+    const search = query?.search; // Search by name/email
 
     // If tenantId is present and user is NOT a super admin, filter by tenant
     // For now, if tenantId is present, we prioritize the tenant-based list for users

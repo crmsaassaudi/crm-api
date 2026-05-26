@@ -41,6 +41,11 @@ export class QueryUserDto {
   @IsOptional()
   limit?: number;
 
+  @ApiPropertyOptional({ description: 'Search by name or email' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
   @ApiPropertyOptional({ type: String })
   @IsOptional()
   @Transform(({ value }) =>
