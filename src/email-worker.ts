@@ -16,4 +16,7 @@ async function bootstrapEmailWorker() {
   Logger.log('CRM email-worker service started', 'EmailWorkerBootstrap');
 }
 
-void bootstrapEmailWorker();
+bootstrapEmailWorker().catch((err) => {
+  console.error('[EmailWorkerBootstrap] Fatal: failed to start email-worker', err);
+  process.exit(1);
+});

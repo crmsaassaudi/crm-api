@@ -16,4 +16,7 @@ async function bootstrapOmniWorker() {
   Logger.log('CRM omni-worker service started', 'OmniWorkerBootstrap');
 }
 
-void bootstrapOmniWorker();
+bootstrapOmniWorker().catch((err) => {
+  console.error('[OmniWorkerBootstrap] Fatal: failed to start omni-worker', err);
+  process.exit(1);
+});

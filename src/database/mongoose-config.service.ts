@@ -27,6 +27,10 @@ export class MongooseConfigService implements MongooseOptionsFactory {
       // Socket-level timeout — guards against hung connections.
       socketTimeoutMS: 60_000,
 
+      // Fail-fast when pool is exhausted — prevents request queuing
+      // indefinitely. Callers get a clear error instead of a timeout.
+      connectTimeoutMS: 10_000,
+
       // Faster health checks so the driver detects recovery sooner.
       heartbeatFrequencyMS: 5_000,
 
@@ -34,10 +38,11 @@ export class MongooseConfigService implements MongooseOptionsFactory {
       retryWrites: true,
       retryReads: true,
 
-      // Connection pooling: keeps warm connections to avoid cold-start
-      // latency on traffic spikes.
-      maxPoolSize: isProd ? 50 : 10,
-      minPoolSize: isProd ? 5 : 2,
+      // Connection pooling: reduced from 50 → 20 to prevent connection
+      // exhaustion when running multiple service replicas concurrently.
+      // With 4 services × 20 = 80 max connections (well within Atlas limits).
+      maxPoolSize: isProd ? 20 : 5,
+      minPoolSize: isProd ? 3 : 1,
 
       // Only build indexes in dev; in prod they should be managed via
       // migration scripts to avoid unexpected blocking operations.

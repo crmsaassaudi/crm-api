@@ -112,5 +112,24 @@ async function bootstrap() {
   SwaggerModule.setup('docs', app, document);
 
   await app.listen(configService.getOrThrow('app.port', { infer: true }));
+
+  const port = configService.getOrThrow('app.port', { infer: true });
+  Logger.log(`🚀 CRM API is running on port ${port}`, 'Bootstrap');
+  Logger.log(`📖 Swagger docs: http://localhost:${port}/docs`, 'Bootstrap');
 }
-void bootstrap();
+
+bootstrap().catch((err) => {
+  console.error('[Bootstrap] Fatal: failed to start API server', err);
+  process.exit(1);
+});
+
+// Catch unhandled promise rejections that escape NestJS error boundaries
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Process] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Catch synchronous exceptions thrown outside of async context
+process.on('uncaughtException', (err) => {
+  console.error('[Process] Uncaught Exception:', err);
+  process.exit(1);
+});

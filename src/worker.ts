@@ -16,4 +16,7 @@ async function bootstrapWorker() {
   Logger.log('CRM worker service started', 'WorkerBootstrap');
 }
 
-void bootstrapWorker();
+bootstrapWorker().catch((err) => {
+  console.error('[WorkerBootstrap] Fatal: failed to start worker', err);
+  process.exit(1);
+});

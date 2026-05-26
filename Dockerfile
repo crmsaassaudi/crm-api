@@ -37,4 +37,6 @@ USER node
 
 EXPOSE 3000
 
-CMD ["npm", "run", "start:prod"]
+# Run node directly so Docker SIGTERM is forwarded to NestJS shutdown hooks
+# NODE_ENV=production is already set via ENV directive above
+CMD ["node", "dist/main"]
