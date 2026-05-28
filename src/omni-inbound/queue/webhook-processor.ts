@@ -150,7 +150,7 @@ export class WebhookProcessor extends BaseConsumer {
       case 'whatsapp':
         return event?.metadata?.phone_number_id ?? '';
       case 'zalo':
-        return event?.recipient?.id ?? event?.oa_id ?? '';
+        return event?.oa_id ?? event?.recipient?.id ?? '';
       default:
         return '';
     }

@@ -1,5 +1,6 @@
 services:
   api-service:
+    image: crm-api:production
     build:
       context: .
       dockerfile: Dockerfile
@@ -52,6 +53,7 @@ services:
       - 8.8.4.4
 
   worker-service:
+    image: crm-api:production
     build:
       context: .
       dockerfile: Dockerfile
@@ -97,6 +99,7 @@ services:
       - 8.8.4.4
 
   omni-worker-service:
+    image: crm-api:production
     build:
       context: .
       dockerfile: Dockerfile
@@ -143,6 +146,7 @@ services:
       - 8.8.4.4
 
   email-worker-service:
+    image: crm-api:production
     build:
       context: .
       dockerfile: Dockerfile

@@ -15,8 +15,16 @@ export class RedisService {
     return this.cacheManager.get<T>(key);
   }
 
-  async set(key: string, value: any, ttl?: number): Promise<void> {
-    await this.cacheManager.set(key, value, ttl);
+  /**
+   * Store a value in cache.
+   * @param key   Cache key
+   * @param value Value to cache (will be serialized by cache-manager)
+   * @param ttlSeconds  Time-to-live in **seconds**. Internally converted to
+   *                    milliseconds for cache-manager v5+/v7 compatibility.
+   */
+  async set(key: string, value: any, ttlSeconds?: number): Promise<void> {
+    const ttlMs = ttlSeconds != null ? ttlSeconds * 1000 : undefined;
+    await this.cacheManager.set(key, value, ttlMs);
   }
 
   async del(key: string): Promise<void> {
