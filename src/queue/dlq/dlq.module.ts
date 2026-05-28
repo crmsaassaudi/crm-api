@@ -2,8 +2,7 @@ import { Module, Global } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { DlqService } from './dlq.service';
 import { DlqProcessor } from './dlq.processor';
-
-export const CRM_DLQ_QUEUE = 'crm-dlq';
+import { CRM_DLQ_QUEUE } from './dlq.constants';
 
 /**
  * Global Dead Letter Queue module.

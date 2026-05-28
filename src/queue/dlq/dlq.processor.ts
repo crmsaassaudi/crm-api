@@ -2,7 +2,7 @@ import { Processor } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { WorkerHost } from '@nestjs/bullmq';
-import { CRM_DLQ_QUEUE } from './dlq.module';
+import { CRM_DLQ_QUEUE } from './dlq.constants';
 import { DlqJobData } from './dlq.service';
 
 /**

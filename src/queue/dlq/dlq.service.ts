@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue, Job } from 'bullmq';
-import { CRM_DLQ_QUEUE } from './dlq.module';
+import { CRM_DLQ_QUEUE } from './dlq.constants';
 
 export interface DlqJobData {
   sourceQueue: string;
