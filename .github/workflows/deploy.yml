@@ -23,6 +23,7 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || '22' }}
+          command_timeout: 20m
           script_stop: true
           script: |
             set -e
@@ -35,6 +36,7 @@ jobs:
 
             test -f .env.production
 
-            docker compose -f docker-compose.yml build --pull api-service worker-service omni-worker-service email-worker-service
+            # Build image once — all 4 services share the same Dockerfile
+            docker compose -f docker-compose.yml build --pull api-service
             docker compose -f docker-compose.yml up -d --remove-orphans api-service worker-service omni-worker-service email-worker-service
             docker image prune -f

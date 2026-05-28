@@ -23,3 +23,11 @@ pnpm-debug.log*
 eslint-output*.txt
 eslint-output*.json
 tsc-check.txt
+tsc-output.txt
+system_improvement_plan.csv
+
+scratch
+docs
+test
+*.md
+!README.md

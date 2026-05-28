@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM node:22.21.1-alpine AS deps
 
 WORKDIR /usr/src/app
@@ -5,7 +7,8 @@ WORKDIR /usr/src/app
 ENV HUSKY=0
 
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --legacy-peer-deps
 
 FROM node:22.21.1-alpine AS build
 
@@ -27,7 +30,8 @@ ENV HUSKY=0
 RUN apk add --no-cache ffmpeg
 
 COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts --legacy-peer-deps && npm cache clean --force
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev --ignore-scripts --legacy-peer-deps
 
 COPY --chown=node:node --from=build /usr/src/app/dist ./dist
 
