@@ -21,10 +21,10 @@ class RelatedToDto {
   @IsNotEmpty()
   id: string;
 
-  @ApiPropertyOptional({ example: 'John Doe' })
+  @ApiProperty({ example: 'John Doe' })
   @IsString()
-  @IsOptional()
-  name?: string;
+  @IsNotEmpty()
+  name: string;
 }
 
 export class CreateTaskDto {
