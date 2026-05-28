@@ -2,8 +2,7 @@ import {
   IsString,
   IsNotEmpty,
   IsOptional,
-  IsDateString,
-  IsEnum,
+  IsDate,
   IsArray,
   IsObject,
   ValidateNested,
@@ -40,8 +39,9 @@ export class CreateTaskDto {
   description?: string;
 
   @ApiProperty({ example: '2026-03-15T10:00:00Z' })
-  @IsDateString()
-  dueDate: string;
+  @IsDate()
+  @Type(() => Date)
+  dueDate: Date;
 
   @ApiPropertyOptional({ example: '60d0fe4f5311236168a109cf' })
   @IsString()
@@ -77,9 +77,10 @@ export class CreateTaskDto {
   tags?: string[];
 
   @ApiPropertyOptional({ example: '2026-03-14T09:00:00Z' })
-  @IsDateString()
+  @IsDate()
+  @Type(() => Date)
   @IsOptional()
-  reminderAt?: string;
+  reminderAt?: Date;
 
   @ApiPropertyOptional({ example: 'manual' })
   @IsString()

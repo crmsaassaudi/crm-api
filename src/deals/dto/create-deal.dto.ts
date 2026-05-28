@@ -3,10 +3,11 @@ import {
   IsNotEmpty,
   IsOptional,
   IsNumber,
-  IsDateString,
+  IsDate,
   IsArray,
   IsObject,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateDealDto {
@@ -77,9 +78,10 @@ export class CreateDealDto {
   tags?: string[];
 
   @ApiPropertyOptional({ example: '2026-06-30T00:00:00Z' })
-  @IsDateString()
+  @IsDate()
+  @Type(() => Date)
   @IsOptional()
-  closeDate?: string;
+  closeDate?: Date;
 
   @ApiPropertyOptional()
   @IsObject()

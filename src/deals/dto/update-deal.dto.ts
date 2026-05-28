@@ -1,7 +1,8 @@
 import { PartialType } from '@nestjs/swagger';
 import { CreateDealDto } from './create-deal.dto';
-import { IsDateString, IsOptional, IsString } from 'class-validator';
+import { IsDate, IsOptional, IsString } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 
 export class UpdateDealDto extends PartialType(CreateDealDto) {
   @ApiPropertyOptional({ example: 'Budget constraint' })
@@ -10,12 +11,14 @@ export class UpdateDealDto extends PartialType(CreateDealDto) {
   lostReason?: string;
 
   @ApiPropertyOptional({ example: '2026-06-15T00:00:00Z' })
-  @IsDateString()
+  @IsDate()
+  @Type(() => Date)
   @IsOptional()
-  wonAt?: string;
+  wonAt?: Date;
 
   @ApiPropertyOptional({ example: '2026-06-15T00:00:00Z' })
-  @IsDateString()
+  @IsDate()
+  @Type(() => Date)
   @IsOptional()
-  lostAt?: string;
+  lostAt?: Date;
 }
