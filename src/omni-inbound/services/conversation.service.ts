@@ -711,6 +711,10 @@ export class ConversationService {
         {
           // Use messageId as jobId for deduplication
           jobId: `media-${message.id}`,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+          removeOnComplete: { count: 200 },
+          removeOnFail: { count: 500 },
         },
       );
       this.logger.debug(`Enqueued media cache job for message ${message.id}`);
@@ -1023,24 +1027,14 @@ export class ConversationService {
   }
 
   /**
-   * Resolve group IDs to member user IDs from MongoDB.
+   * Resolve group IDs to member user IDs.
+   * Delegates to AssignmentService to eliminate code duplication (DUP-03).
    */
   private async resolveGroupMembersForAssignment(
     groupIds: string[],
   ): Promise<string[]> {
     if (groupIds.length === 0) return [];
-    try {
-      const groups = await this.groupModel
-        .find({ _id: { $in: groupIds } })
-        .lean()
-        .exec();
-      return groups.flatMap((g: any) =>
-        (g.memberIds ?? g.members ?? []).map(String),
-      );
-    } catch (err: any) {
-      this.logger.warn(`Failed to resolve group members: ${err.message}`);
-      return [];
-    }
+    return this.assignmentService.resolveGroupMembers(groupIds);
   }
 
   /**
@@ -1336,7 +1330,10 @@ export class ConversationService {
         'omni_session_lifecycle',
       );
       return config ? { ...defaults, ...config } : defaults;
-    } catch {
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to load omni_session_lifecycle settings: ${err.message}`,
+      );
       return defaults;
     }
   }
@@ -1367,7 +1364,10 @@ export class ConversationService {
         tenantId,
       );
       return config ? { ...defaults, ...config } : defaults;
-    } catch {
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to load omni_identity_resolution settings: ${err.message}`,
+      );
       return defaults;
     }
   }

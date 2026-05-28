@@ -219,6 +219,14 @@ ContactSchema.index(
 );
 ContactSchema.index({ tenantId: 1, score: 1 }, { name: 'tenant_score' });
 ContactSchema.index(
+  { tenantId: 1, phones: 1 },
+  { name: 'tenant_phone_lookup' },
+);
+ContactSchema.index(
+  { tenantId: 1, deletedAt: 1, createdAt: -1 },
+  { name: 'tenant_active_list' },
+);
+ContactSchema.index(
   { firstName: 'text', lastName: 'text', emails: 'text' },
   {
     name: 'contact_text_search',

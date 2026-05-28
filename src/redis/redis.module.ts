@@ -20,7 +20,7 @@ import { IOREDIS_CLIENT } from './redis.tokens';
         host: configService.get<string>('redis.host'),
         port: configService.get<number>('redis.port'),
         password: configService.get<string>('redis.password'),
-        db: configService.get<number>('redis.db'),
+        db: configService.get<number>('redis.cacheDb'), // Separate DB for cache (default 2)
         ttl: configService.get<number>('redis.ttl'),
       }),
     }),

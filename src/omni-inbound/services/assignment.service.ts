@@ -536,8 +536,12 @@ export class AssignmentService {
               fallbackStrategy,
             },
             {
-              jobId: `sticky-retry-${conversationId}`,
+              jobId: `sticky-retry-${conversationId}-${Date.now()}`,
               delay: stickyWaitMinutes * 60 * 1000,
+              removeOnComplete: true,
+              removeOnFail: { count: 100 },
+              attempts: 2,
+              backoff: { type: 'fixed', delay: 5000 },
             },
           );
         } catch (err: any) {
@@ -646,17 +650,21 @@ export class AssignmentService {
 
   /**
    * Least-busy: pick the agent with the fewest open/pending conversations.
+   * Uses a single aggregation pipeline instead of per-agent queries.
    */
   private async leastBusy(
     tenantId: string,
     agents: string[],
   ): Promise<{ agentId: string; openChats: number }> {
-    const counts = await Promise.all(
-      agents.map(async (agentId) => ({
-        agentId,
-        count: await this.conversationRepo.countOpenByAgent(tenantId, agentId),
-      })),
+    const countMap = await this.conversationRepo.countOpenByAgents(
+      tenantId,
+      agents,
     );
+
+    const counts = agents.map((agentId) => ({
+      agentId,
+      count: countMap.get(agentId) ?? 0,
+    }));
 
     counts.sort((a, b) => a.count - b.count);
     return { agentId: counts[0].agentId, openChats: counts[0].count };
@@ -666,6 +674,7 @@ export class AssignmentService {
    * Capacity-based: like least-busy, but rejects agents who have reached
    * their maximum concurrent chat capacity (dynamic per-agent).
    *
+   * Uses a single aggregation pipeline for counts instead of per-agent queries.
    * If ALL agents are at max capacity, returns null → conversation goes to queue.
    */
   private async capacityBased(
@@ -678,6 +687,14 @@ export class AssignmentService {
     agentCapacity: number;
     allLoads: Array<{ agentId: string; count: number; capacity: number }>;
   }> {
+    // Batch: single aggregation for all agent counts
+    const countMap = await this.conversationRepo.countOpenByAgents(
+      tenantId,
+      agents,
+    );
+
+    // Resolve capacities (still per-agent due to Redis presence check,
+    // but these are cheap in-memory lookups, not DB queries)
     const counts = await Promise.all(
       agents.map(async (agentId) => {
         const capacity = await this.resolveAgentCapacity(
@@ -687,10 +704,7 @@ export class AssignmentService {
         );
         return {
           agentId,
-          count: await this.conversationRepo.countOpenByAgent(
-            tenantId,
-            agentId,
-          ),
+          count: countMap.get(agentId) ?? 0,
           capacity,
         };
       }),

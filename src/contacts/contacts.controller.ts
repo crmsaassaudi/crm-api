@@ -28,6 +28,9 @@ import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { QueryContactDto } from './dto/query-contact.dto';
 import { CheckDuplicateContactDto } from './dto/check-duplicate-contact.dto';
+import { ExportContactsDto } from './dto/export-contacts.dto';
+import { ChangeStageDto } from './dto/change-stage.dto';
+import { SubResourceQueryDto } from './dto/sub-resource-query.dto';
 import { ListViewsService } from '../list-views/list-views.service';
 import { RequirePermission } from '../common/permissions';
 import { ActivityLogService } from '../activity-log/activity-log.service';
@@ -98,7 +101,7 @@ export class ContactsController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('export')
   @RequirePermission('export', 'contacts')
-  exportContacts(@Body() body: { ids?: string[]; filters?: any }) {
+  exportContacts(@Body() body: ExportContactsDto) {
     return this.service.exportContacts(body || {});
   }
 
@@ -112,10 +115,12 @@ export class ContactsController {
   @RequirePermission('export', 'contacts')
   async downloadExport(@Param('token') token: string, @Res() res: Response) {
     const file = await this.service.getExportDownload(token);
+    // Sanitize filename to prevent header injection (RFC 5987)
+    const safeFilename = file.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${file.filename}"`,
+      `attachment; filename="${safeFilename}"`,
     );
     res.setHeader('Content-Length', String(file.buffer.length));
     res.setHeader('Cache-Control', 'no-store');
@@ -143,11 +148,11 @@ export class ContactsController {
 
   @Get(':id/activities')
   @RequirePermission('view', 'contacts')
-  getActivities(@Param('id') id: string, @Query() query: any) {
+  getActivities(@Param('id') id: string, @Query() query: SubResourceQueryDto) {
     return this.activityLogService.getFeed({
       targetType: 'contact',
       targetId: id,
-      type: query?.type,
+      type: query?.type as any,
       limit: query?.limit,
       cursor: query?.cursor,
     });
@@ -155,7 +160,7 @@ export class ContactsController {
 
   @Get(':id/notes')
   @RequirePermission('view', 'contacts')
-  getNotes(@Param('id') id: string, @Query() query: any) {
+  getNotes(@Param('id') id: string, @Query() query: SubResourceQueryDto) {
     return this.notesService.findByContact(id, query);
   }
 
@@ -173,13 +178,13 @@ export class ContactsController {
 
   @Get(':id/tasks')
   @RequirePermission('view', 'tasks')
-  getTasks(@Param('id') id: string, @Query() query: any) {
+  getTasks(@Param('id') id: string, @Query() query: SubResourceQueryDto) {
     return this.tasksService.findAll({ ...query, contactId: id });
   }
 
   @Get(':id/tickets')
   @RequirePermission('view', 'tickets')
-  getTickets(@Param('id') id: string, @Query() query: any) {
+  getTickets(@Param('id') id: string, @Query() query: SubResourceQueryDto) {
     return this.ticketsService.findAll({ ...query, contactId: id });
   }
 
@@ -210,15 +215,7 @@ export class ContactsController {
   @RequirePermission('edit', 'contacts')
   changeStage(
     @Param('id') id: string,
-    @Body()
-    body: {
-      stage: string;
-      createAccount?: boolean;
-      accountId?: string;
-      accountData?: any;
-      dealData?: any;
-      reason?: string;
-    },
+    @Body() body: ChangeStageDto,
   ) {
     return this.service.changeStage(id, body.stage, body);
   }

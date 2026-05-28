@@ -188,7 +188,7 @@ export class OmniController {
       };
     });
 
-    console.log(`[DEBUG] listConversations: found ${result.data.length} items`);
+    this.logger.debug(`listConversations: found ${result.data.length} items`);
     return {
       ...result,
       data: enrichedData,

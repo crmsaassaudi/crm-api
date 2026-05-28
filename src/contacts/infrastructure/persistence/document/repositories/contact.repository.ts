@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery, Types } from 'mongoose';
 import {
@@ -55,6 +55,32 @@ export class ContactRepository extends BaseDocumentRepository<
     return ContactMapper.toPersistence(domain);
   }
 
+  /**
+   * Whitelist of fields allowed in user-submitted filter expressions.
+   * Prevents arbitrary field injection into MongoDB queries.
+   */
+  private readonly ALLOWED_FILTER_FIELDS = new Set([
+    'lifecycleStageId',
+    'statusId',
+    'sourceId',
+    'owner',
+    'createdBy',
+    'updatedBy',
+    'companyName',
+    'title',
+    'role',
+    'isVIP',
+    'isShadow',
+    'tags',
+  ]);
+
+  /**
+   * Escape special regex metacharacters in user input to prevent ReDoS.
+   */
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   private buildListWhere(filterOptions?: any | null) {
     const where: FilterQuery<ContactSchemaClass> = {
       deletedAt: { $exists: false },
@@ -84,31 +110,42 @@ export class ContactRepository extends BaseDocumentRepository<
             : filterOptions.filters;
         if (Array.isArray(parsedFilters)) {
           parsedFilters.forEach((f: any) => {
-            if (f.id && f.value) {
-              if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
-                where[f.id] = f.value;
-              } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
-                // Map virtual field names to actual DB field names
-                const fieldMap: Record<string, string> = {
-                  owner: 'ownerId',
-                  createdBy: 'createdById',
-                  updatedBy: 'updatedById',
-                };
-                const dbField = fieldMap[f.id] || f.id;
-                where[dbField] = Array.isArray(f.value)
-                  ? { $in: f.value }
-                  : f.value;
-              } else if (Array.isArray(f.value)) {
-                // Any other array value: use $in
-                where[f.id] = { $in: f.value };
-              } else {
-                where[f.id] = { $regex: f.value, $options: 'i' };
-              }
+            if (!f.id || !f.value) return;
+
+            // Block fields that are not in the whitelist
+            if (!this.ALLOWED_FILTER_FIELDS.has(f.id)) return;
+
+            if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
+              where[f.id] = f.value;
+            } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
+              // Map virtual field names to actual DB field names
+              const fieldMap: Record<string, string> = {
+                owner: 'ownerId',
+                createdBy: 'createdById',
+                updatedBy: 'updatedById',
+              };
+              const dbField = fieldMap[f.id] || f.id;
+              where[dbField] = Array.isArray(f.value)
+                ? { $in: f.value }
+                : f.value;
+            } else if (Array.isArray(f.value)) {
+              // Any other array value: use $in
+              where[f.id] = { $in: f.value };
+            } else {
+              // Escape regex metacharacters to prevent ReDoS attacks
+              where[f.id] = {
+                $regex: this.escapeRegex(String(f.value)),
+                $options: 'i',
+              };
             }
           });
         }
-      } catch {
-        // ignore parse errors
+      } catch (err) {
+        // Log malformed filter JSON so issues are discoverable
+        const logger = new Logger(ContactRepository.name);
+        logger.warn(
+          `Malformed filter JSON ignored: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -315,10 +352,14 @@ export class ContactRepository extends BaseDocumentRepository<
     };
   }
 
-  async findForExport(params: {
+  /**
+   * Build a scoped filter for export operations.
+   * Shared by findForExport, streamForExport, and countForExport (DUP-04).
+   */
+  private buildExportFilter(params: {
     ids?: string[];
     filters?: any;
-  }): Promise<ContactSchemaDocument[]> {
+  }): FilterQuery<ContactSchemaClass> {
     const where =
       params.ids && params.ids.length > 0
         ? ({
@@ -330,46 +371,34 @@ export class ContactRepository extends BaseDocumentRepository<
             deletedAt: { $exists: false },
           } as FilterQuery<ContactSchemaClass>)
         : this.buildListWhere(params.filters);
-    const scopedWhere = this.applyTenantFilter(where);
-    return this.model.find(scopedWhere).sort({ createdAt: -1 }).exec();
+    return this.applyTenantFilter(where);
+  }
+
+  async findForExport(params: {
+    ids?: string[];
+    filters?: any;
+  }): Promise<ContactSchemaDocument[]> {
+    return this.model
+      .find(this.buildExportFilter(params))
+      .sort({ createdAt: -1 })
+      .exec();
   }
 
   streamForExport(params: {
     ids?: string[];
     filters?: any;
   }): AsyncIterable<ContactSchemaDocument> {
-    const where =
-      params.ids && params.ids.length > 0
-        ? ({
-            _id: {
-              $in: params.ids
-                .filter((id) => Types.ObjectId.isValid(id))
-                .map((id) => new Types.ObjectId(id)),
-            },
-            deletedAt: { $exists: false },
-          } as FilterQuery<ContactSchemaClass>)
-        : this.buildListWhere(params.filters);
-    const scopedWhere = this.applyTenantFilter(where);
-    return this.model.find(scopedWhere).sort({ createdAt: -1 }).cursor();
+    return this.model
+      .find(this.buildExportFilter(params))
+      .sort({ createdAt: -1 })
+      .cursor();
   }
 
   async countForExport(params: {
     ids?: string[];
     filters?: any;
   }): Promise<number> {
-    const where =
-      params.ids && params.ids.length > 0
-        ? ({
-            _id: {
-              $in: params.ids
-                .filter((id) => Types.ObjectId.isValid(id))
-                .map((id) => new Types.ObjectId(id)),
-            },
-            deletedAt: { $exists: false },
-          } as FilterQuery<ContactSchemaClass>)
-        : this.buildListWhere(params.filters);
-    const scopedWhere = this.applyTenantFilter(where);
-    return this.model.countDocuments(scopedWhere).exec();
+    return this.model.countDocuments(this.buildExportFilter(params)).exec();
   }
 
   async findOne(

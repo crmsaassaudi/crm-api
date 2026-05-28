@@ -112,6 +112,33 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, options);
   SwaggerModule.setup('docs', app, document);
 
+  // ── Production Startup Guards ──────────────────────────────────
+  if (isProduction) {
+    const jwtSecret = process.env.AUTH_JWT_SECRET || process.env.JWT_SECRET;
+    if (!jwtSecret || jwtSecret === 'secret') {
+      Logger.error(
+        '🚫 FATAL: AUTH_JWT_SECRET is not set or is using the insecure default "secret". ' +
+          'Set a cryptographically random 256-bit secret before deploying to production.',
+        'Bootstrap',
+      );
+      process.exit(1);
+    }
+
+    if (!process.env.REDIS_PASSWORD) {
+      Logger.warn(
+        '⚠️  REDIS_PASSWORD is empty in production — Redis is accessible without authentication!',
+        'Bootstrap',
+      );
+    }
+
+    if (!process.env.FRONTEND_DOMAIN) {
+      Logger.warn(
+        '⚠️  FRONTEND_DOMAIN is not set — CORS will deny ALL cross-origin requests in production.',
+        'Bootstrap',
+      );
+    }
+  }
+
   await app.listen(configService.getOrThrow('app.port', { infer: true }));
 
   const port = configService.getOrThrow('app.port', { infer: true });

@@ -47,20 +47,29 @@ export class SendGridEmailProvider implements EmailProviderService {
     this.fromName = process.env.SENDGRID_FROM_NAME || 'CRM Automation';
     this.isDryRun = !apiKey;
 
+    if (
+      !this.isDryRun &&
+      this.fromEmail === 'noreply@crm.local'
+    ) {
+      this.logger.error(
+        '[EmailProvider] SENDGRID_FROM_EMAIL is not configured — emails will fail DKIM/DMARC validation!',
+      );
+    }
+
     if (this.isDryRun) {
       this.logger.warn(
         '[EmailProvider] No SENDGRID_API_KEY found — running in DRY-RUN mode (log only)',
       );
-      // Create a dummy transporter for dry-run
+      // Create a dummy transporter for dry-run (local dev: MailDev has no valid cert)
       this.transporter = nodemailer.createTransport({
         host: 'localhost',
         port: 1025,
         ignoreTLS: true,
-        // Dev troubleshooting: bypass certificate validation
         tls: { rejectUnauthorized: false },
       });
     } else {
       // SendGrid SMTP relay configuration
+      const isProduction = process.env.NODE_ENV === 'production';
       this.transporter = nodemailer.createTransport({
         host: 'smtp.sendgrid.net',
         port: 587,
@@ -69,8 +78,8 @@ export class SendGridEmailProvider implements EmailProviderService {
           user: 'apikey', // SendGrid requires literal "apikey" as the user
           pass: apiKey,
         },
-        // Dev/troubleshooting: bypass certificate validation for non-prod
-        tls: { rejectUnauthorized: false },
+        // Enable TLS verification in production to prevent MITM attacks
+        tls: { rejectUnauthorized: isProduction },
       });
       this.logger.log('[EmailProvider] SendGrid SMTP configured successfully');
     }

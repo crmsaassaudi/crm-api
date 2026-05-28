@@ -37,6 +37,9 @@ USER node
 
 EXPOSE 3000
 
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -qO- http://localhost:3000/api/v1/health || exit 1
+
 # Run node directly so Docker SIGTERM is forwarded to NestJS shutdown hooks
 # NODE_ENV=production is already set via ENV directive above
 CMD ["node", "dist/main"]

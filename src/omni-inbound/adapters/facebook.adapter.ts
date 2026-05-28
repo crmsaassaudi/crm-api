@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 import axios from 'axios';
@@ -138,14 +139,47 @@ export class FacebookAdapter implements ChannelAdapter {
     };
   }
 
-  validateWebhook(headers: Record<string, string>, body: any): boolean {
-    void body;
-    // In production, verify X-Hub-Signature-256 header with app secret.
-    // Stub: always true for now — implement HMAC verification when app secret is configured.
+  /**
+   * Verify the X-Hub-Signature-256 HMAC signature on incoming webhooks.
+   *
+   * Facebook signs every webhook payload with HMAC-SHA256 using the App Secret.
+   * We must verify this to ensure the request is genuinely from Facebook.
+   *
+   * @see https://developers.facebook.com/docs/messenger-platform/webhooks#validate-payloads
+   */
+  validateWebhook(
+    headers: Record<string, string>,
+    body: any,
+    rawBody?: Buffer,
+  ): boolean {
     const signature = headers['x-hub-signature-256'];
-    if (!signature) return false;
-    // TODO: crypto.timingSafeEqual(computedHmac, providedHmac)
-    return true;
+    if (!signature) {
+      this.logger.warn('Facebook webhook missing X-Hub-Signature-256 header');
+      return false;
+    }
+
+    const appSecret =
+      process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET;
+    if (!appSecret) {
+      this.logger.error(
+        'FACEBOOK_APP_SECRET is not configured — cannot verify webhook signature',
+      );
+      return false;
+    }
+
+    const payload = rawBody ?? Buffer.from(JSON.stringify(body));
+    const expectedSignature =
+      'sha256=' + createHmac('sha256', appSecret).update(payload).digest('hex');
+
+    try {
+      return timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(expectedSignature),
+      );
+    } catch {
+      // timingSafeEqual throws if buffers have different lengths
+      return false;
+    }
   }
 
   private resolveMessageType(message: any): MessageType {
@@ -211,7 +245,9 @@ export class FacebookAdapter implements ChannelAdapter {
       return { message_id: response.data.message_id };
     } catch (err: any) {
       const errorData = err?.response?.data || err.message;
-      console.error('[Facebook Adapter Error]', errorData);
+      this.logger.error(
+        `Failed to send message via Facebook: ${JSON.stringify(errorData)}`,
+      );
       throw new Error(
         `Failed to send message via Facebook: ${JSON.stringify(errorData)}`,
       );

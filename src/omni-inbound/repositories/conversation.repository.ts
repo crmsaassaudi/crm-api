@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery, SortOrder, Types } from 'mongoose';
 import {
@@ -45,6 +45,8 @@ export interface ThreadIdentity {
 
 @Injectable()
 export class ConversationRepository {
+  private readonly logger = new Logger(ConversationRepository.name);
+
   constructor(
     @InjectModel(OmniConversationSchemaClass.name)
     private readonly model: Model<OmniConversationDocument>,
@@ -55,8 +57,9 @@ export class ConversationRepository {
       .findById(id)
       .populate('assignedAgent')
       .populate('resolvedByAgent')
+      .lean()
       .exec();
-    return doc ? OmniConversationMapper.toDomain(doc) : null;
+    return doc ? OmniConversationMapper.toDomain(doc as any) : null;
   }
 
   async findByIds(
@@ -72,9 +75,10 @@ export class ConversationRepository {
       .find({ _id: { $in: safeIds }, tenantId })
       .populate('assignedAgent')
       .populate('resolvedByAgent')
+      .lean()
       .exec();
 
-    return docs.map((doc) => OmniConversationMapper.toDomain(doc));
+    return docs.map((doc) => OmniConversationMapper.toDomain(doc as any));
   }
 
   /**
@@ -97,8 +101,9 @@ export class ConversationRepository {
         status: { $in: ['open', 'pending'] },
       })
       .sort({ createdAt: -1 }) // latest active session
+      .lean()
       .exec();
-    return doc ? OmniConversationMapper.toDomain(doc) : null;
+    return doc ? OmniConversationMapper.toDomain(doc as any) : null;
   }
 
   async create(
@@ -131,12 +136,13 @@ export class ConversationRepository {
         .limit(limit)
         .populate('assignedAgent')
         .populate('resolvedByAgent')
+        .lean()
         .exec(),
       this.model.countDocuments(filter).exec(),
     ]);
 
     const mappedItems = items.map((doc) =>
-      OmniConversationMapper.toDomain(doc),
+      OmniConversationMapper.toDomain(doc as any),
     );
 
     return pagination(mappedItems, total, { page: safePage, limit });
@@ -158,13 +164,14 @@ export class ConversationRepository {
       .limit(safeLimit + 1)
       .populate('assignedAgent')
       .populate('resolvedByAgent')
+      .lean()
       .exec();
 
     const hasNextPage = items.length > safeLimit;
     const pageItems = hasNextPage ? items.slice(0, safeLimit) : items;
 
     const mappedItems = pageItems.map((doc) =>
-      OmniConversationMapper.toDomain(doc),
+      OmniConversationMapper.toDomain(doc as any),
     );
 
     const nextCursor =
@@ -361,8 +368,9 @@ export class ConversationRepository {
         externalId,
       })
       .sort({ createdAt: -1 })
+      .lean()
       .exec();
-    return doc ? OmniConversationMapper.toDomain(doc) : null;
+    return doc ? OmniConversationMapper.toDomain(doc as any) : null;
   }
 
   async updateLastMessage(
@@ -528,14 +536,26 @@ export class ConversationRepository {
     channelType: string,
     channelAccount: string,
     externalId: string,
+    limit = 100,
   ): Promise<OmniConversation[]> {
     const docs = await this.model
       .find({ tenantId, channelType, channelAccount, externalId })
       .sort({ createdAt: 1 })
+      .limit(limit + 1)
       .populate('assignedAgent')
       .populate('resolvedByAgent')
+      .lean()
       .exec();
-    return docs.map((doc) => OmniConversationMapper.toDomain(doc));
+
+    if (docs.length > limit) {
+      this.logger.warn(
+        `findAllByExternalId truncated: ${docs.length} sessions for ` +
+          `${channelType}/${externalId} (limit=${limit})`,
+      );
+      docs.length = limit; // truncate in-place
+    }
+
+    return docs.map((doc) => OmniConversationMapper.toDomain(doc as any));
   }
 
   async findThreadSessionsAroundAnchor(params: {
@@ -661,6 +681,46 @@ export class ConversationRepository {
   }
 
   /**
+   * Batch-count open/pending conversations for multiple agents in a single
+   * aggregation pipeline. Eliminates N+1 queries in assignment strategies.
+   *
+   * Returns a Map<agentId, count>. Agents with zero open conversations
+   * will NOT appear in the map — callers should default to 0.
+   */
+  async countOpenByAgents(
+    tenantId: string,
+    agentIds: string[],
+  ): Promise<Map<string, number>> {
+    const validIds = agentIds.filter((id) => Types.ObjectId.isValid(id));
+    if (validIds.length === 0) return new Map();
+
+    const results = await this.model.aggregate<{
+      _id: string;
+      count: number;
+    }>([
+      {
+        $match: {
+          tenantId: new Types.ObjectId(tenantId),
+          assignedAgentId: { $in: validIds.map((id) => new Types.ObjectId(id)) },
+          status: { $in: ['open', 'pending'] },
+        },
+      },
+      {
+        $group: {
+          _id: '$assignedAgentId',
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const map = new Map<string, number>();
+    for (const row of results) {
+      map.set(row._id.toString(), row.count);
+    }
+    return map;
+  }
+
+  /**
    * Reopen a resolved/closed conversation: set status back to 'open',
    * increment reopenCount, and clear resolve metadata.
    */
@@ -703,8 +763,9 @@ export class ConversationRepository {
         assignedAgentId: { $ne: null },
       })
       .sort({ resolvedAt: -1, updatedAt: -1 })
+      .lean()
       .exec();
-    return doc ? OmniConversationMapper.toDomain(doc) : null;
+    return doc ? OmniConversationMapper.toDomain(doc as any) : null;
   }
 
   /**
@@ -723,8 +784,9 @@ export class ConversationRepository {
         assignedAgentId: { $ne: null },
       })
       .sort({ resolvedAt: -1, updatedAt: -1 })
+      .lean()
       .exec();
-    return doc ? OmniConversationMapper.toDomain(doc) : null;
+    return doc ? OmniConversationMapper.toDomain(doc as any) : null;
   }
 
   /**
@@ -743,8 +805,9 @@ export class ConversationRepository {
         status: { $in: ['open', 'pending'] },
       })
       .sort({ lastMessageAt: -1 })
+      .lean()
       .exec();
-    return docs.map((doc) => OmniConversationMapper.toDomain(doc));
+    return docs.map((doc) => OmniConversationMapper.toDomain(doc as any));
   }
 
   private buildDirectionalCursorFilter(

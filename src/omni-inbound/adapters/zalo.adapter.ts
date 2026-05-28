@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 
@@ -27,6 +28,7 @@ import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 @Injectable()
 export class ZaloAdapter implements ChannelAdapter {
   readonly channelType: ChannelType = 'zalo';
+  private readonly logger = new Logger(ZaloAdapter.name);
 
   normalize(
     rawPayload: any,
@@ -65,13 +67,46 @@ export class ZaloAdapter implements ChannelAdapter {
     };
   }
 
+  /**
+   * Verify the Zalo webhook MAC signature.
+   *
+   * Zalo OA signs webhook payloads using HMAC-SHA256 with the OA Secret Key.
+   * The `mac` field in the body contains the computed signature.
+   *
+   * @see https://developers.zalo.me/docs/official-account/webhook/webhook-security
+   */
   validateWebhook(headers: Record<string, string>, body: any): boolean {
-    // Zalo uses OA secret key + MAC to verify.
-    // Stub: validate `mac` field against computed HMAC.
+    void headers;
     const mac = body?.mac;
-    if (!mac) return false;
-    // TODO: implement HMAC verification with OA secret key
-    return true;
+    if (!mac) {
+      this.logger.warn('Zalo webhook missing mac field');
+      return false;
+    }
+
+    const oaSecretKey =
+      process.env.ZALO_OA_SECRET_KEY || process.env.ZALO_WEBHOOK_SECRET;
+    if (!oaSecretKey) {
+      this.logger.error(
+        'ZALO_OA_SECRET_KEY is not configured — cannot verify Zalo webhook',
+      );
+      return false;
+    }
+
+    // Zalo MAC is computed over specific payload fields (excluding the `mac` field itself)
+    const { mac: _mac, ...payloadWithoutMac } = body;
+    const dataToSign = JSON.stringify(payloadWithoutMac);
+    const expectedMac = createHmac('sha256', oaSecretKey)
+      .update(dataToSign)
+      .digest('hex');
+
+    try {
+      return timingSafeEqual(
+        Buffer.from(mac),
+        Buffer.from(expectedMac),
+      );
+    } catch {
+      return false;
+    }
   }
 
   private resolveMessageType(eventName: string, message: any): MessageType {
@@ -129,7 +164,10 @@ export class ZaloAdapter implements ChannelAdapter {
   ): Promise<any> {
     void channelConfig;
     // TODO: implement Zalo OA API call
-    console.log(`[Zalo] Sending ${messageType} to ${recipientId}: ${content}`);
+    this.logger.log(
+      `[Zalo] Sending ${messageType} to ${recipientId}: ${content}`,
+    );
     return Promise.resolve({ message_id: `zalo_out_${Date.now()}` });
   }
 }
+

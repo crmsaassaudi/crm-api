@@ -55,18 +55,34 @@ export class ContactExportProcessor extends BaseTenantConsumer<ContactExportJobD
   }> {
     const { tenantId, userId, ids, filters } = job.data;
 
-    const docs = await this.repository.findForExport({ ids, filters });
+    // Stream documents instead of loading all into memory to prevent OOM
+    const stream = this.repository.streamForExport({ ids, filters });
+
+    const lines: string[] = [this.CSV_HEADERS.join(',')];
+    let recordCount = 0;
+
+    for await (const doc of stream) {
+      const row = this.CSV_HEADERS.map((key) =>
+        this.csvCell(this.getValue(doc, key)),
+      ).join(',');
+      lines.push(row);
+      recordCount++;
+
+      // Report progress periodically
+      if (recordCount % 500 === 0) {
+        await job.updateProgress(
+          Math.min(80, Math.floor((recordCount / Math.max(recordCount + 100, 1)) * 80)),
+        );
+      }
+    }
 
     this.logger.log(
-      `Contact export job ${job.id}: tenantId=${tenantId}, ids=${ids?.length ?? 'all'}, docs=${docs.length}`,
+      `Contact export job ${job.id}: tenantId=${tenantId}, ids=${ids?.length ?? 'all'}, docs=${recordCount}`,
     );
 
-    await job.updateProgress(10);
-
-    const csvContent = this.buildCsv(docs);
-    const recordCount = docs.length;
-
     await job.updateProgress(80);
+
+    const csvContent = lines.join('\n') + '\n';
 
     const exportFile = await this.storageService.storeCsv(
       csvContent,
@@ -96,7 +112,7 @@ export class ContactExportProcessor extends BaseTenantConsumer<ContactExportJobD
       `Contact export job ${job.id} completed: ${recordCount} records`,
     );
 
-    return { ...exportFile, recordCount };
+    return { ...exportFile, recordCount, storageKey: exportFile.storageKey };
   }
 
   private buildCsv(docs: any[]): string {

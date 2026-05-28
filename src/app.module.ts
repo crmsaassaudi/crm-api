@@ -28,6 +28,7 @@ import { MailerModule } from './mailer/mailer.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MongooseConfigService } from './database/mongoose-config.service';
 import { RedisModule } from './redis/redis.module';
+import { DlqModule } from './queue/dlq/dlq.module';
 import { QueueModule } from './queue/queue.module';
 import { MailQueueModule } from './queue/mail/mail-queue.module';
 import { ActivityLogModule } from './activity-log/activity-log.module';
@@ -67,6 +68,7 @@ import { SystemSettingsModule } from './system-settings/system-settings.module';
 import { AiVideoModule } from './ai-video/ai-video.module';
 import { SocialContentModule } from './social-posts/social-posts.module';
 import { ReportsModule } from './reports/reports.module';
+import { HealthModule } from './health/health.module';
 
 import {
   KeycloakConnectModule,
@@ -256,7 +258,9 @@ const envFilePath = [
     MailModule,
     MailerModule,
     HomeModule,
+    HealthModule,
     RedisModule,
+    DlqModule,
     QueueModule,
     MailQueueModule,
     ActivityLogModule,

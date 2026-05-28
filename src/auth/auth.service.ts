@@ -206,8 +206,11 @@ export class AuthService {
     let idTokenPayload: any;
     try {
       idTokenPayload = this.decodeJwt(tokens.id_token);
+      const maskedEmail = idTokenPayload?.email
+        ? idTokenPayload.email.replace(/^(.{3}).*@/, '$1***@')
+        : 'N/A';
       this.logger.log(
-        `[handleCallback] Step 3: id_token decoded. sub=${idTokenPayload?.sub} email=${idTokenPayload?.email}`,
+        `[handleCallback] Step 3: id_token decoded. sub=${idTokenPayload?.sub} email=${maskedEmail}`,
       );
     } catch (e) {
       this.logger.error(

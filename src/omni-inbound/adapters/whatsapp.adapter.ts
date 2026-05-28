@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 
@@ -30,6 +31,7 @@ import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 @Injectable()
 export class WhatsAppAdapter implements ChannelAdapter {
   readonly channelType: ChannelType = 'whatsapp';
+  private readonly logger = new Logger(WhatsAppAdapter.name);
 
   normalize(
     rawPayload: any,
@@ -72,13 +74,46 @@ export class WhatsAppAdapter implements ChannelAdapter {
     };
   }
 
-  validateWebhook(headers: Record<string, string>, body: any): boolean {
-    void body;
-    // WhatsApp Cloud API uses the same X-Hub-Signature-256 as Facebook.
+  /**
+   * Verify the X-Hub-Signature-256 HMAC signature on incoming webhooks.
+   *
+   * WhatsApp Cloud API uses the same HMAC-SHA256 mechanism as Facebook Messenger.
+   * The signature is computed using the Facebook App Secret.
+   *
+   * @see https://developers.facebook.com/docs/graph-api/webhooks/getting-started#verification-requests
+   */
+  validateWebhook(
+    headers: Record<string, string>,
+    body: any,
+    rawBody?: Buffer,
+  ): boolean {
     const signature = headers['x-hub-signature-256'];
-    if (!signature) return false;
-    // TODO: verify HMAC with app secret
-    return true;
+    if (!signature) {
+      this.logger.warn('WhatsApp webhook missing X-Hub-Signature-256 header');
+      return false;
+    }
+
+    const appSecret =
+      process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET;
+    if (!appSecret) {
+      this.logger.error(
+        'FACEBOOK_APP_SECRET is not configured — cannot verify WhatsApp webhook signature',
+      );
+      return false;
+    }
+
+    const payload = rawBody ?? Buffer.from(JSON.stringify(body));
+    const expectedSignature =
+      'sha256=' + createHmac('sha256', appSecret).update(payload).digest('hex');
+
+    try {
+      return timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(expectedSignature),
+      );
+    } catch {
+      return false;
+    }
   }
 
   private resolveMessageType(waType: string): MessageType {
@@ -131,9 +166,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
   ): Promise<any> {
     void channelConfig;
     // TODO: implement WA Cloud API call
-    console.log(
+    this.logger.log(
       `[WhatsApp] Sending ${messageType} to ${recipientId}: ${content}`,
     );
     return Promise.resolve({ message_id: `wa_out_${Date.now()}` });
   }
 }
+

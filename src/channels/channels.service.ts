@@ -17,9 +17,15 @@ import {
 } from './dto/channel.dto';
 import { RedisService } from '../redis/redis.service';
 import { AllConfigType } from '../config/config.type';
-import axios from 'axios';
+import axiosLib from 'axios';
+
+/** Pre-configured axios instance with timeout for Meta Graph API calls */
+const axios = axiosLib.create({ timeout: 10_000 });
 
 type MetaConnectionType = 'fb' | 'ig' | 'wa' | 'fb_ig';
+
+/** Facebook Graph API version. Centralized to ease upgrades. */
+const META_GRAPH_VERSION = 'v19.0';
 
 type MetaOAuthStatePayload = {
   type: MetaConnectionType;
@@ -142,7 +148,7 @@ export class ChannelsService {
     }
 
     return {
-      url: `https://www.facebook.com/v19.0/dialog/oauth?${params.toString()}`,
+      url: `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?${params.toString()}`,
     };
   }
 
@@ -242,9 +248,25 @@ export class ChannelsService {
       throw new BadRequestException('Selected channels were not found');
     }
 
+    const results = await Promise.allSettled(
+      selected.map((channel) => this.connectMetaChannel(channel)),
+    );
+
     const connected: Channel[] = [];
-    for (const channel of selected) {
-      connected.push(await this.connectMetaChannel(channel));
+    for (const [i, result] of results.entries()) {
+      if (result.status === 'fulfilled') {
+        connected.push(result.value);
+      } else {
+        this.logger.warn(
+          `Failed to connect Meta channel ${selected[i].accountId} (${selected[i].name}): ${result.reason?.message}`,
+        );
+      }
+    }
+
+    if (connected.length === 0) {
+      throw new BadRequestException(
+        'All selected channels failed to connect. Check logs for details.',
+      );
     }
 
     await this.redisService
@@ -279,7 +301,7 @@ export class ChannelsService {
 
         // Fetch tất cả Facebook Pages của user (kèm IG business account nếu có)
         const pagesResponse = await axios.get(
-          'https://graph.facebook.com/v19.0/me/accounts',
+          `https://graph.facebook.com/${META_GRAPH_VERSION}/me/accounts`,
           {
             params: {
               access_token: userToken,
@@ -321,7 +343,7 @@ export class ChannelsService {
 
         // Subscribe app webhooks
         await axios.post(
-          `https://graph.facebook.com/v19.0/${webhookTargetId}/subscribed_apps`,
+          `https://graph.facebook.com/${META_GRAPH_VERSION}/${webhookTargetId}/subscribed_apps`,
           {
             subscribed_fields: [
               'messages',
@@ -345,9 +367,8 @@ export class ChannelsService {
         channel.config = { ...dto.config, avatarUrl };
       } catch (error) {
         const err = error as any;
-        console.error(
-          'Failed to automated Meta channel setup:',
-          err?.response?.data || err?.message,
+        this.logger.error(
+          `Failed to automate Meta channel setup: ${JSON.stringify(err?.response?.data || err?.message)}`,
         );
         await this.repository.update(tenantId, channel.id, { status: 'Error' });
         channel.status = 'Error';
@@ -375,7 +396,7 @@ export class ChannelsService {
     ) {
       try {
         await axios.delete(
-          `https://graph.facebook.com/v19.0/${channel.account}/subscribed_apps`,
+          `https://graph.facebook.com/${META_GRAPH_VERSION}/${channel.account}/subscribed_apps`,
           {
             params: { access_token: channel.credentials.accessToken },
           },
@@ -446,7 +467,7 @@ export class ChannelsService {
     try {
       if (metaChannel.type === 'facebook' || metaChannel.type === 'instagram') {
         await axios.post(
-          `https://graph.facebook.com/v19.0/${
+          `https://graph.facebook.com/${META_GRAPH_VERSION}/${
             metaChannel.pageId || metaChannel.accountId
           }/subscribed_apps`,
           {
@@ -554,7 +575,7 @@ export class ChannelsService {
     code: string,
   ): Promise<{ accessToken: string; expiresIn?: number }> {
     const response = await axios.get(
-      'https://graph.facebook.com/v19.0/oauth/access_token',
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`,
       {
         params: {
           client_id: this.getMetaAppId(),
@@ -579,7 +600,7 @@ export class ChannelsService {
     accessToken: string,
   ): Promise<{ accessToken?: string; expiresIn?: number }> {
     const response = await axios.get(
-      'https://graph.facebook.com/v19.0/oauth/access_token',
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`,
       {
         params: {
           grant_type: 'fb_exchange_token',
@@ -606,7 +627,7 @@ export class ChannelsService {
     }
 
     const response = await axios.get(
-      'https://graph.facebook.com/v19.0/me/accounts',
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/me/accounts`,
       {
         params: {
           access_token: accessToken,
@@ -660,7 +681,7 @@ export class ChannelsService {
     userTokenExpiry: string | null,
   ): Promise<MetaAvailableChannel[]> {
     const response = await axios.get(
-      'https://graph.facebook.com/v19.0/me/businesses',
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/me/businesses`,
       {
         params: {
           access_token: accessToken,
@@ -713,11 +734,15 @@ export class ChannelsService {
 
   private getWhatsAppConfigId(type: MetaConnectionType): string | undefined {
     if (type !== 'wa') return undefined;
-    return (
+    const configId =
       process.env.FACEBOOK_WHATSAPP_CONFIG_ID ||
-      process.env.META_WHATSAPP_CONFIG_ID ||
-      '1328567121984336'
-    );
+      process.env.META_WHATSAPP_CONFIG_ID;
+    if (!configId) {
+      this.logger.error(
+        'FACEBOOK_WHATSAPP_CONFIG_ID is not configured — WhatsApp connection will fail',
+      );
+    }
+    return configId;
   }
 
   private getMetaAppId(): string {
@@ -782,7 +807,18 @@ export class ChannelsService {
       infer: true,
     });
     const firstDomain = frontendDomain?.split(',')[0]?.trim();
-    return firstDomain || 'http://localhost:4200';
+    if (!firstDomain) {
+      const isProd =
+        this.configService.get('app.nodeEnv', { infer: true }) === 'production';
+      if (isProd) {
+        this.logger.error(
+          'FRONTEND_DOMAIN is not configured in production — Meta OAuth redirect will fail',
+        );
+        return '';
+      }
+      return 'http://localhost:4200';
+    }
+    return firstDomain;
   }
 
   private renderMetaPopupMessage(

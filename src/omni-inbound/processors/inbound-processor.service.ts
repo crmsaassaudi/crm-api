@@ -75,6 +75,8 @@ export class InboundProcessorService {
     await this.routingQueue.add('omni.route', normalized, {
       jobId: this.buildRoutingJobId(normalized),
       priority: PRIORITY_NORMAL,
+      removeOnComplete: { count: 500 },
+      removeOnFail: { count: 2000 },
     });
 
     return normalized;

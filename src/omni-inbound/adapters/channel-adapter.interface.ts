@@ -30,7 +30,11 @@ export interface ChannelAdapter {
    * (e.g. verify HMAC signature for FB, or token for Zalo).
    * Returns `true` if the request is legit.
    */
-  validateWebhook(headers: Record<string, string>, body: any): boolean;
+  validateWebhook(
+    headers: Record<string, string>,
+    body: any,
+    rawBody?: Buffer,
+  ): boolean;
 
   /**
    * Send an outbound message to the provider's API.

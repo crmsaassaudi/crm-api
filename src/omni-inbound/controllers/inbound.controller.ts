@@ -56,9 +56,17 @@ export class InboundController {
     @Query('hub.verify_token') verifyToken: string,
     @Query('hub.challenge') challenge: string,
   ) {
-    const expectedToken =
-      this.configService.get('OMNI_VERIFY_TOKEN', { infer: true }) ||
-      'crm_omni_2026';
+    const expectedToken = this.configService.get<string>(
+      'OMNI_VERIFY_TOKEN',
+      { infer: true },
+    );
+
+    if (!expectedToken) {
+      this.logger.error(
+        'OMNI_VERIFY_TOKEN env var is not configured — webhook verification will fail',
+      );
+      return 'forbidden';
+    }
 
     if (mode === 'subscribe' && verifyToken === expectedToken) {
       this.logger.log(`Webhook verification for ${channelType}: SUCCESS`);
@@ -107,6 +115,8 @@ export class InboundController {
           index,
         ),
         priority: PRIORITY_NORMAL,
+        removeOnComplete: { count: 1000 },
+        removeOnFail: { count: 5000 },
       },
     }));
 

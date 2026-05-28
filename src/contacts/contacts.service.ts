@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -31,9 +32,12 @@ import {
   MAX_BULK_TAG_SIZE,
   UNMASK_TTL_SECONDS,
 } from './contacts.constants';
+import { RedisLockService } from '../redis/redis-lock.service';
 
 @Injectable()
 export class ContactsService {
+  private readonly logger = new Logger(ContactsService.name);
+
   constructor(
     private readonly repository: ContactRepository,
     private readonly accountsService: AccountsService,
@@ -42,6 +46,7 @@ export class ContactsService {
     private readonly cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
     private readonly exportStorageService: ContactExportStorageService,
+    private readonly lockService: RedisLockService,
     @InjectQueue(CONTACT_EXPORT_QUEUE)
     private readonly exportQueue: Queue,
   ) {}
@@ -452,7 +457,7 @@ export class ContactsService {
     );
     if (!updated) {
       throw new ConflictException(
-        'Stage da duoc thay doi dong thoi boi nguoi dung khac. Vui long tai lai va thu lai.',
+        'Stage was updated concurrently by another user. Please reload and try again.',
       );
     }
 
@@ -648,6 +653,20 @@ export class ContactsService {
     if (primaryId === targetId) {
       throw new BadRequestException('Cannot merge a contact into itself');
     }
+
+    // Sorted lock key prevents deadlocks — always same order regardless of caller
+    const [a, b] = [primaryId, targetId].sort();
+    const lockKey = `lock:contact:merge:${a}:${b}`;
+
+    return this.lockService.acquire(lockKey, 10_000, async () => {
+      return this.executeMerge(primaryId, targetId);
+    });
+  }
+
+  private async executeMerge(
+    primaryId: string,
+    targetId: string,
+  ): Promise<{ success: true; contact: Contact; mergedContactId: string }> {
 
     const [primary, target] = await Promise.all([
       this.repository.findOne({ _id: primaryId }),
