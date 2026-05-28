@@ -6,6 +6,7 @@ import { Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
 import { EmailContentDocument } from './infrastructure/persistence/document/entities/email-content.schema';
 import { EmailMetadataDocument } from './infrastructure/persistence/document/entities/email-metadata.schema';
+import { RequirePermission } from '../common/permissions';
 
 /**
  * EmailContentController — Serves full email content & metadata to the frontend.
@@ -32,6 +33,7 @@ export class EmailContentController {
   @ApiOperation({
     summary: 'Get full HTML content and metadata for an email message',
   })
+  @RequirePermission('view', 'email_settings')
   async getEmailContent(@Param('messageId') messageId: string) {
     const tenantId = this.clsService.get('tenantId');
     const userId = this.clsService.get('userId');

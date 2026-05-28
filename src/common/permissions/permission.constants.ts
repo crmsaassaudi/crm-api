@@ -16,7 +16,12 @@ export type PermissionResource =
   | 'ai_video'
   | 'social_content_assets'
   | 'publication_instances'
-  | 'audit_logs';
+  | 'audit_logs'
+  | 'email_settings'
+  | 'email_integrations'
+  | 'automation_rules'
+  | 'automation_logs'
+  | 'integration_monitoring';
 
 export type PermissionAction =
   | 'view'
@@ -161,6 +166,31 @@ export const PERMISSION_REGISTRY: Record<
   audit_logs: {
     view: 'audit_logs:view',
   },
+  email_settings: {
+    view: 'email_settings:view',
+    edit: 'email_settings:edit',
+    delete: 'email_settings:delete',
+    manage_system: 'email_settings:manage_system',
+  },
+  email_integrations: {
+    view: 'email_integrations:view',
+    create: 'email_integrations:create',
+    edit: 'email_integrations:edit',
+    manage_system: 'email_integrations:manage_system',
+  },
+  automation_rules: {
+    view: 'automation_rules:view',
+    create: 'automation_rules:create',
+    edit: 'automation_rules:edit',
+    delete: 'automation_rules:delete',
+  },
+  automation_logs: {
+    view: 'automation_logs:view',
+    retry: 'automation_logs:retry',
+  },
+  integration_monitoring: {
+    view: 'integration_monitoring:view',
+  },
 };
 
 /**
@@ -241,6 +271,24 @@ export const CORE_PERMISSIONS: string[] = [
   'ai_video:manage_system',
   // Audit Logs
   'audit_logs:view',
+  // Email Settings & Integrations
+  'email_settings:view',
+  'email_settings:edit',
+  'email_settings:delete',
+  'email_settings:manage_system',
+  'email_integrations:view',
+  'email_integrations:create',
+  'email_integrations:edit',
+  'email_integrations:manage_system',
+  // Automation Rules & Logs
+  'automation_rules:view',
+  'automation_rules:create',
+  'automation_rules:edit',
+  'automation_rules:delete',
+  'automation_logs:view',
+  'automation_logs:retry',
+  // Integration Monitoring
+  'integration_monitoring:view',
 ];
 
 /**

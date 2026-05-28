@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { EmailLabelService } from './services/email-label.service';
+import { RequirePermission } from '../common/permissions';
 
 @ApiTags('Mailbox Labels')
 @ApiBearerAuth()
@@ -17,6 +18,7 @@ export class EmailLabelController {
   constructor(private readonly labels: EmailLabelService) {}
 
   @Get('mailboxes/:id/labels')
+  @RequirePermission('view', 'email_settings')
   listLabels(
     @Param('id') id: string,
     @Query('search') search?: string,
@@ -36,6 +38,7 @@ export class EmailLabelController {
 
   @Post('mailboxes/:id/labels/reconcile')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('manage_system', 'email_settings')
   reconcile(@Param('id') id: string) {
     return this.labels.reconcile(id);
   }

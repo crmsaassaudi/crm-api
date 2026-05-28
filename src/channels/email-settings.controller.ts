@@ -16,6 +16,7 @@ import {
 } from './services/email-channel-settings.service';
 import { GdprEmailService } from './services/gdpr-email.service';
 import { ClsService } from 'nestjs-cls';
+import { RequirePermission } from '../common/permissions';
 
 /**
  * EmailSettingsController — Tenant-level email configuration & GDPR.
@@ -46,12 +47,14 @@ export class EmailSettingsController {
 
   @Get('email-settings')
   @ApiOperation({ summary: 'Get tenant email settings' })
+  @RequirePermission('view', 'email_settings')
   async getSettings(): Promise<EmailSettings> {
     return this.emailSettings.getSettings(this.getTenantId());
   }
 
   @Put('email-settings')
   @ApiOperation({ summary: 'Update tenant email settings' })
+  @RequirePermission('edit', 'email_settings')
   async updateSettings(
     @Body() updates: Partial<EmailSettings>,
   ): Promise<EmailSettings> {
@@ -62,6 +65,7 @@ export class EmailSettingsController {
 
   @Get('gdpr/contact/:contactId/emails')
   @ApiOperation({ summary: 'GDPR: Export contact email metadata' })
+  @RequirePermission('view', 'email_settings')
   async exportContactEmails(@Param('contactId') contactId: string) {
     return this.gdprService.exportContactEmailMetadata(
       contactId,
@@ -72,6 +76,7 @@ export class EmailSettingsController {
   @Delete('gdpr/contact/:contactId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'GDPR: Remove contact from all emails' })
+  @RequirePermission('delete', 'email_settings')
   async removeContactEmailData(@Param('contactId') contactId: string) {
     this.logger.warn(
       `[GDPR] Contact deletion requested: ${contactId} by tenant ${this.getTenantId()}`,

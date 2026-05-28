@@ -123,9 +123,21 @@ export class TicketRepository extends BaseDocumentRepository<
 
   async generateTicketNumber(): Promise<string> {
     const tenantId = this.cls.get('tenantId');
-    const count = await this.model
-      .countDocuments(tenantId ? { tenantId: tenantId } : {})
-      .exec();
-    return `TKT-${(count + 1).toString().padStart(5, '0')}`;
+    if (!tenantId) {
+      throw new Error('Tenant context is required to generate ticket number');
+    }
+
+    // Use an atomic counter via findOneAndUpdate to prevent race conditions.
+    // The counters collection stores per-tenant sequence numbers.
+    const counterResult = await this.model.db
+      .collection('counters')
+      .findOneAndUpdate(
+        { _id: `ticket_seq:${tenantId}` } as any,
+        { $inc: { seq: 1 } },
+        { upsert: true, returnDocument: 'after' },
+      );
+
+    const seq = (counterResult as any)?.seq ?? 1;
+    return `TKT-${seq.toString().padStart(5, '0')}`;
   }
 }

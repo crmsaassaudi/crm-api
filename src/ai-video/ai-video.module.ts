@@ -25,9 +25,11 @@ import { AiGeneratorService } from './services/ai-generator.service';
 import { AiVideoJobService } from './services/ai-video-job.service';
 import { VideoCompositorService } from './services/video-compositor.service';
 import { VoiceSynthesisService } from './services/voice-synthesis.service';
+import { HttpResilienceModule } from '../common/http/http-resilience.module';
 
 @Module({
   imports: [
+    HttpResilienceModule,
     MongooseModule.forFeature([
       { name: AiVideoJobSchemaClass.name, schema: AiVideoJobSchema },
       { name: AiVideoAssetSchemaClass.name, schema: AiVideoAssetSchema },

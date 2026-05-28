@@ -21,6 +21,7 @@ import {
 } from './dto/email-integration.dto';
 import { EmailIntegrationService } from './services/email-integration.service';
 import { OAuth2TokenManager } from './services/oauth2-token-manager.service';
+import { RequirePermission } from '../common/permissions';
 
 @ApiTags('Email Integrations')
 @ApiBearerAuth()
@@ -34,23 +35,27 @@ export class EmailIntegrationController {
 
   @Post('oauth2/auth-url')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('create', 'email_integrations')
   getOAuth2AuthUrl(@Body() dto: OAuth2AuthUrlDto) {
     return this.oauth2TokenManager.generateAuthUrl(dto);
   }
 
   @Post('oauth2/callback')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('create', 'email_integrations')
   handleOAuth2Callback(@Req() req: Request, @Body() dto: OAuth2CallbackDto) {
     this.setRequestContext(req);
     return this.oauth2TokenManager.exchangeCodeAndSave(dto);
   }
 
   @Get(':id/health')
+  @RequirePermission('view', 'email_integrations')
   getHealth(@Param('id') id: string) {
     return this.service.getHealth(id);
   }
 
   @Patch(':id/settings')
+  @RequirePermission('edit', 'email_integrations')
   updateSettings(
     @Req() req: Request,
     @Param('id') id: string,
@@ -62,6 +67,7 @@ export class EmailIntegrationController {
 
   @Post(':id/reconnect')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('manage_system', 'email_integrations')
   reconnect(
     @Req() req: Request,
     @Param('id') id: string,
@@ -73,6 +79,7 @@ export class EmailIntegrationController {
 
   @Post(':id/test-sync')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('manage_system', 'email_integrations')
   testSync(@Param('id') id: string, @Body() dto: TestEmailSyncDto) {
     return this.service.testSync(id, dto);
   }

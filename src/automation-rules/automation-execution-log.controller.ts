@@ -18,6 +18,7 @@ import { ClsService } from 'nestjs-cls';
 import { AutomationExecutionLogRepository } from './infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationActionProducer } from './queue/automation-action.producer';
 import { RetryStepDto } from './dto/workflow.dto';
+import { RequirePermission } from '../common/permissions';
 
 /**
  * AutomationExecutionLogController — REST API for querying execution logs.
@@ -41,6 +42,7 @@ export class AutomationExecutionLogController {
 
   @Get()
   @ApiOperation({ summary: 'List execution logs with filters' })
+  @RequirePermission('view', 'automation_logs')
   @ApiQuery({ name: 'workflowId', required: false })
   @ApiQuery({
     name: 'status',
@@ -96,12 +98,14 @@ export class AutomationExecutionLogController {
 
   @Get('stats/:workflowId')
   @ApiOperation({ summary: 'Get execution stats for a workflow' })
+  @RequirePermission('view', 'automation_logs')
   async getStats(@Param('workflowId') workflowId: string) {
     return this.repo.getWorkflowStats(this.tenantId, workflowId);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get execution log detail with step trace' })
+  @RequirePermission('view', 'automation_logs')
   async findById(@Param('id') id: string) {
     return this.repo.findByIdWithSteps(this.tenantId, id);
   }
@@ -113,6 +117,7 @@ export class AutomationExecutionLogController {
     summary:
       'Retry a failed/DLQ step — re-dispatch the action to the main queue',
   })
+  @RequirePermission('retry', 'automation_logs')
   async retryStep(@Param('id') id: string, @Body() dto: RetryStepDto) {
     // 1. Verify execution log exists
     const log = await this.repo.findByIdWithSteps(this.tenantId, id);

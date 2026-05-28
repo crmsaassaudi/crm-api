@@ -116,11 +116,24 @@ export class ImapPollerService implements OnModuleDestroy {
   private async cleanupStaleLocks(): Promise<void> {
     try {
       const client = this.redisService.getClient();
-      const keys = await client.keys('imap:lock:*');
-      if (keys.length > 0) {
-        await client.del(...keys);
+      let cursor = '0';
+      let totalCleaned = 0;
+
+      // Use SCAN instead of KEYS to avoid blocking the Redis event loop.
+      // SCAN is O(1) per iteration and safe for production use.
+      do {
+        const reply = await client.scan(cursor, 'MATCH', 'imap:lock:*', 'COUNT', 100);
+        cursor = reply[0];
+        const keys = reply[1];
+        if (keys.length > 0) {
+          await client.del(...keys);
+          totalCleaned += keys.length;
+        }
+      } while (cursor !== '0');
+
+      if (totalCleaned > 0) {
         this.logger.warn(
-          `[ImapPoller] Cleaned up ${keys.length} stale lock(s) from previous instance`,
+          `[ImapPoller] Cleaned up ${totalCleaned} stale lock(s) from previous instance`,
         );
       }
     } catch (err: any) {

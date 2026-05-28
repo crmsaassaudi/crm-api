@@ -130,7 +130,7 @@ export const DealSchema = SchemaFactory.createForClass(DealSchemaClass);
 
 DealSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
-DealSchema.index({ omniConversationId: 1 }, { name: 'deal_omni_conversation' });
+DealSchema.index({ tenantId: 1, omniConversationId: 1 }, { name: 'deal_omni_conversation' });
 DealSchema.index({ tenantId: 1, ownerId: 1 }, { name: 'tenant_owner_lookup' });
 DealSchema.index({ tenantId: 1, stageId: 1 }, { name: 'tenant_stage_lookup' });
 DealSchema.index(

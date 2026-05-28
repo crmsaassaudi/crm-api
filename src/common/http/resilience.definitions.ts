@@ -4,6 +4,16 @@ export const RESILIENCE_POLICIES = {
     breakerThreshold: 3,
     timeout: 5000,
   },
+  gemini: {
+    retries: 2,
+    breakerThreshold: 3,
+    timeout: 30000,
+  },
+  openai: {
+    retries: 2,
+    breakerThreshold: 3,
+    timeout: 30000,
+  },
   generic: {
     retries: 2,
     breakerThreshold: 5,

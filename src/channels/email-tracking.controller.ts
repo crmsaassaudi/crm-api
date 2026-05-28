@@ -2,6 +2,7 @@ import { Controller, Get, Param, Req, Res, Logger } from '@nestjs/common';
 import { ApiTags, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { EmailTrackingService } from './services/email-tracking.service';
+import { Unprotected } from 'nest-keycloak-connect';
 
 /**
  * Email Tracking Controller — Serves the 1x1 tracking pixel.
@@ -27,6 +28,7 @@ export class EmailTrackingController {
    * GET /v1/t/:trackingId.png
    */
   @Get(':trackingId.png')
+  @Unprotected()
   @ApiExcludeEndpoint() // Hide from Swagger — this is not a user-facing API
   servePixel(
     @Param('trackingId') trackingId: string,

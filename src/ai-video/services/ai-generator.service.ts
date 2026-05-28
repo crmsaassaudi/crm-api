@@ -1,13 +1,16 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
 import { AllConfigType } from '../../config/config.type';
+import { ResilienceHttpService } from '../../common/http/resilience-http.service';
 
 @Injectable()
 export class AiGeneratorService {
   private readonly logger = new Logger(AiGeneratorService.name);
 
-  constructor(private readonly configService: ConfigService<AllConfigType>) {}
+  constructor(
+    private readonly configService: ConfigService<AllConfigType>,
+    private readonly http: ResilienceHttpService,
+  ) {}
 
   async generateCaptionAndHashtags(
     videoUrl: string,
@@ -29,7 +32,7 @@ export class AiGeneratorService {
     if (geminiApiKey) {
       try {
         this.logger.log('Gemini API key detected. Generating metadata...');
-        const response = await axios.post(
+        const response = await this.http.post<any>(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
           {
             contents: [
@@ -42,6 +45,8 @@ export class AiGeneratorService {
               },
             ],
           },
+          { timeout: 30_000 },
+          { resilience: { service: 'gemini' } },
         );
 
         const responseText =
@@ -59,7 +64,7 @@ export class AiGeneratorService {
     if (openaiApiKey) {
       try {
         this.logger.log('OpenAI API key detected. Generating metadata...');
-        const response = await axios.post(
+        const response = await this.http.post<any>(
           'https://api.openai.com/v1/chat/completions',
           {
             model: 'gpt-4o-mini',
@@ -77,11 +82,13 @@ export class AiGeneratorService {
             response_format: { type: 'json_object' },
           },
           {
+            timeout: 30_000,
             headers: {
               Authorization: `Bearer ${openaiApiKey}`,
               'Content-Type': 'application/json',
             },
           },
+          { resilience: { service: 'openai' } },
         );
 
         const responseText = response.data?.choices?.[0]?.message?.content;

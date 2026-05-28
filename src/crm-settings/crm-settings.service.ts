@@ -42,6 +42,12 @@ const LIFECYCLE_STATUS_MUTABLE_FIELDS = new Set([
 
 @Injectable()
 export class CrmSettingsService {
+  private readonly settingsCache = new Map<
+    string,
+    { value: any; expiresAt: number }
+  >();
+  private static readonly CACHE_TTL_MS = 30_000; // 30 seconds
+
   constructor(
     private readonly repository: CrmSettingRepository,
     private readonly cls: ClsService,
@@ -61,14 +67,33 @@ export class CrmSettingsService {
 
   async getSetting(key: string, tenantId?: string): Promise<any> {
     const tid = this.resolveTenantId(tenantId);
+    const cacheKey = `${tid}:${key}`;
+
+    // Check in-memory cache first to avoid a MongoDB round-trip on every request.
+    // This is critical for hot-path settings like 'layout_settings' which are
+    // read by DataMaskingInterceptor on every single HTTP response.
+    const cached = this.settingsCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
     const setting = await this.repository.findOne(tid, key);
 
     if (!setting) {
       // Lazy-seed: existing tenants that predate a new module deployment
       // will receive the default value on their first GET.
-      return this.seeding.lazySeed(tid, key);
+      const seeded = await this.seeding.lazySeed(tid, key);
+      this.settingsCache.set(cacheKey, {
+        value: seeded,
+        expiresAt: Date.now() + CrmSettingsService.CACHE_TTL_MS,
+      });
+      return seeded;
     }
 
+    this.settingsCache.set(cacheKey, {
+      value: setting.value,
+      expiresAt: Date.now() + CrmSettingsService.CACHE_TTL_MS,
+    });
     return setting.value;
   }
 
@@ -78,6 +103,10 @@ export class CrmSettingsService {
     tenantId?: string,
   ): Promise<CrmSetting> {
     const tid = this.resolveTenantId(tenantId);
+
+    // Invalidate cache on write so the next read fetches fresh data.
+    this.settingsCache.delete(`${tid}:${key}`);
+
     return this.repository.update(tid, key, value);
   }
 
