@@ -11,7 +11,8 @@ import {
   UsePipes,
 } from '@nestjs/common';
 import { DealsService } from './deals.service';
-import { Deal } from './domain/deal';
+import { CreateDealDto } from './dto/create-deal.dto';
+import { UpdateDealDto } from './dto/update-deal.dto';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
@@ -31,7 +32,7 @@ export class DealsController {
 
   @Post()
   @RequirePermission('create', 'deals')
-  create(@Body() data: Partial<Deal>) {
+  create(@Body() data: CreateDealDto) {
     return this.service.create(data);
   }
 
@@ -50,7 +51,7 @@ export class DealsController {
   @Patch(':id')
   @RequirePermission('edit', 'deals')
   @UsePipes(new SanitizeMaskedInputPipe())
-  update(@Param('id') id: string, @Body() data: Partial<Deal>) {
+  update(@Param('id') id: string, @Body() data: UpdateDealDto) {
     return this.service.update(id, data);
   }
 

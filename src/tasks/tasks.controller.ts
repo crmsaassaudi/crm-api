@@ -11,7 +11,8 @@ import {
   UsePipes,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
-import { Task } from './domain/task';
+import { CreateTaskDto } from './dto/create-task.dto';
+import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
@@ -31,7 +32,7 @@ export class TasksController {
 
   @Post()
   @RequirePermission('create', 'tasks')
-  create(@Body() data: Partial<Task>) {
+  create(@Body() data: CreateTaskDto) {
     return this.service.create(data);
   }
 
@@ -50,7 +51,7 @@ export class TasksController {
   @Patch(':id')
   @RequirePermission('edit', 'tasks')
   @UsePipes(new SanitizeMaskedInputPipe())
-  update(@Param('id') id: string, @Body() data: Partial<Task>) {
+  update(@Param('id') id: string, @Body() data: UpdateTaskDto) {
     return this.service.update(id, data);
   }
 
