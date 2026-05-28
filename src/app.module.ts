@@ -1,5 +1,6 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { TenantThrottlerGuard } from './common/throttler/tenant-throttler.guard';
 import { UsersModule } from './users/users.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { FilesModule } from './files/files.module';
@@ -29,6 +30,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { MongooseConfigService } from './database/mongoose-config.service';
 import { RedisModule } from './redis/redis.module';
 import { DlqModule } from './queue/dlq/dlq.module';
+import { EntityAuditModule } from './common/audit/entity-audit.module';
 import { QueueModule } from './queue/queue.module';
 import { MailQueueModule } from './queue/mail/mail-queue.module';
 import { ActivityLogModule } from './activity-log/activity-log.module';
@@ -108,6 +110,36 @@ const envFilePath = [
   '.env',
 ];
 
+/**
+ * Build the basic-auth middleware that protects /queues (bull-board).
+ * Production must set both env vars; otherwise the endpoint is refused
+ * outright to prevent accidental public exposure of queue internals.
+ */
+function bullBoardBasicAuth() {
+  const user = process.env.BULL_BOARD_USER;
+  const pass = process.env.BULL_BOARD_PASSWORD;
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  return (req: any, res: any, next: any) => {
+    if (isProduction && (!user || !pass)) {
+      res.status(503).send('Bull-board credentials not configured');
+      return;
+    }
+    if (!user || !pass) {
+      // Dev convenience: allow when not configured.
+      return next();
+    }
+    const header = req.headers['authorization'] || '';
+    const expected =
+      'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+    if (header === expected) {
+      return next();
+    }
+    res.setHeader('WWW-Authenticate', 'Basic realm="bull-board"');
+    res.status(401).send('Authentication required');
+  };
+}
+
 @Module({
   imports: [
     DatabaseModule,
@@ -155,6 +187,10 @@ const envFilePath = [
     BullBoardModule.forRoot({
       route: '/queues',
       adapter: ExpressAdapter,
+      // Basic-auth gate so /queues isn't exposed unauthenticated. In dev
+      // the default creds are placeholders; in prod both must be set or
+      // the middleware refuses access entirely.
+      middleware: bullBoardBasicAuth(),
     }),
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
@@ -260,6 +296,7 @@ const envFilePath = [
     HomeModule,
     HealthModule,
     RedisModule,
+    EntityAuditModule,
     DlqModule,
     QueueModule,
     MailQueueModule,
@@ -307,8 +344,11 @@ const envFilePath = [
       useClass: MaintenanceModeGuard,
     },
     {
+      // TenantThrottlerGuard keys throttle by tenantId+userId so one noisy
+      // tenant cannot exhaust another tenant's budget; falls back to IP
+      // for unauthenticated paths.
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: TenantThrottlerGuard,
     },
     {
       provide: APP_GUARD,

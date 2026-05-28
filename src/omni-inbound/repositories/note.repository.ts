@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { ClsService } from 'nestjs-cls';
 import {
   OmniNoteSchemaClass,
   OmniNoteDocument,
@@ -28,7 +29,19 @@ export class NoteRepository {
   constructor(
     @InjectModel(OmniNoteSchemaClass.name)
     private readonly model: Model<OmniNoteDocument>,
+    private readonly cls: ClsService,
   ) {}
+
+  private getTenantId(): string {
+    const tenantId =
+      this.cls.get<string>('activeTenantId') || this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new Error(
+        'NoteRepository: missing tenant context — refusing to query',
+      );
+    }
+    return tenantId;
+  }
 
   private toDomain(doc: OmniNoteSchemaClass): OmniNote {
     let authorName: string | undefined;
@@ -86,11 +99,12 @@ export class NoteRepository {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
+        .lean()
         .exec(),
       this.model.countDocuments({ conversationId }).exec(),
     ]);
 
-    const mappedItems = items.map((doc) => this.toDomain(doc));
+    const mappedItems = items.map((doc) => this.toDomain(doc as any));
     return pagination(mappedItems, total, { page: safePage, limit });
   }
 
@@ -138,16 +152,25 @@ export class NoteRepository {
   /**
    * Unpin all previously pinned notes for a conversation, then pin the given note.
    * Ensures only one Handover Note is active at a time.
+   *
+   * Defence-in-depth: explicit tenantId filter in addition to tenantFilterPlugin.
+   * Uses bulkWrite so the unpin + pin pair runs in a single round trip.
    */
   async setPinnedNote(conversationId: string, noteId: string): Promise<void> {
-    await this.model
-      .updateMany(
-        { conversationId, isPinned: true },
-        { $set: { isPinned: false } },
-      )
-      .exec();
-    await this.model
-      .findByIdAndUpdate(noteId, { $set: { isPinned: true } })
-      .exec();
+    const tenantId = this.getTenantId();
+    await this.model.bulkWrite([
+      {
+        updateMany: {
+          filter: { tenantId, conversationId, isPinned: true },
+          update: { $set: { isPinned: false } },
+        },
+      },
+      {
+        updateOne: {
+          filter: { _id: noteId, tenantId, conversationId },
+          update: { $set: { isPinned: true } },
+        },
+      },
+    ]);
   }
 }

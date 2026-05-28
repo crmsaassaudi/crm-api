@@ -21,7 +21,11 @@ export type PermissionResource =
   | 'email_integrations'
   | 'automation_rules'
   | 'automation_logs'
-  | 'integration_monitoring';
+  | 'integration_monitoring'
+  | 'channels'
+  | 'tags'
+  | 'sla_policies'
+  | 'routing_rules';
 
 export type PermissionAction =
   | 'view'
@@ -191,6 +195,31 @@ export const PERMISSION_REGISTRY: Record<
   integration_monitoring: {
     view: 'integration_monitoring:view',
   },
+  channels: {
+    view: 'channels:view',
+    create: 'channels:create',
+    edit: 'channels:edit',
+    delete: 'channels:delete',
+    manage_system: 'channels:manage_system',
+  },
+  tags: {
+    view: 'tags:view',
+    create: 'tags:create',
+    edit: 'tags:edit',
+    delete: 'tags:delete',
+  },
+  sla_policies: {
+    view: 'sla_policies:view',
+    create: 'sla_policies:create',
+    edit: 'sla_policies:edit',
+    delete: 'sla_policies:delete',
+  },
+  routing_rules: {
+    view: 'routing_rules:view',
+    create: 'routing_rules:create',
+    edit: 'routing_rules:edit',
+    delete: 'routing_rules:delete',
+  },
 };
 
 /**
@@ -289,6 +318,27 @@ export const CORE_PERMISSIONS: string[] = [
   'automation_logs:retry',
   // Integration Monitoring
   'integration_monitoring:view',
+  // Channels (Omni messaging providers)
+  'channels:view',
+  'channels:create',
+  'channels:edit',
+  'channels:delete',
+  'channels:manage_system',
+  // Tags
+  'tags:view',
+  'tags:create',
+  'tags:edit',
+  'tags:delete',
+  // SLA Policies
+  'sla_policies:view',
+  'sla_policies:create',
+  'sla_policies:edit',
+  'sla_policies:delete',
+  // Routing Rules
+  'routing_rules:view',
+  'routing_rules:create',
+  'routing_rules:edit',
+  'routing_rules:delete',
 ];
 
 /**

@@ -3,6 +3,24 @@ import { ConfigService } from '@nestjs/config';
 import { TenantsService } from '../../tenants/tenants.service';
 
 /**
+ * `fetch` with a hard timeout via AbortController. Node's global fetch has
+ * no default timeout, so a hung provider can pin a worker forever.
+ */
+async function fetchWithTimeout(
+  url: string | URL,
+  init: RequestInit = {},
+  timeoutMs = 30_000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Service for proxying and caching media files from messaging providers.
  *
  * Problem:
@@ -122,21 +140,26 @@ export class MediaProxyService {
       // WA: media ID → Graph API → download URL
       // GET https://graph.facebook.com/v18.0/{media_id}
       // Response: { url: '<download_url>' }
-      const graphResponse = await fetch(
+      const graphResponse = await fetchWithTimeout(
         `https://graph.facebook.com/v18.0/${mediaId}`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
         },
+        10_000,
       );
       const graphData = await graphResponse.json();
       downloadUrl = graphData.url;
     }
 
-    const response = await fetch(downloadUrl, {
-      headers: accessToken
-        ? { Authorization: `Bearer ${accessToken}` }
-        : undefined,
-    });
+    const response = await fetchWithTimeout(
+      downloadUrl,
+      {
+        headers: accessToken
+          ? { Authorization: `Bearer ${accessToken}` }
+          : undefined,
+      },
+      30_000,
+    );
 
     if (!response.ok) {
       throw new Error(

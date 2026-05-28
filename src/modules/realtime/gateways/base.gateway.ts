@@ -60,6 +60,23 @@ export class BaseGateway
   }
 
   handleDisconnect(client: Socket) {
+    // Explicitly leave every room and drop every listener. Socket.IO does
+    // most of this on its own, but explicit cleanup keeps Node's
+    // EventEmitter from accumulating stale references when the socket
+    // object is held by application code.
+    try {
+      const rooms = Array.from(client.rooms ?? []);
+      for (const room of rooms) {
+        if (room !== client.id) {
+          void client.leave(room);
+        }
+      }
+      client.removeAllListeners();
+    } catch (err: any) {
+      this.logger.warn(
+        `Cleanup failed for client ${client.id}: ${err?.message ?? err}`,
+      );
+    }
     this.logger.log(`Client ${client.id} disconnected`);
   }
 

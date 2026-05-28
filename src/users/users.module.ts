@@ -7,6 +7,7 @@ import {
 import { UsersController } from './users.controller';
 
 import { UsersService } from './users.service';
+import { UserKeycloakSyncService } from './services/user-keycloak-sync.service';
 import { DocumentUserPersistenceModule } from './infrastructure/persistence/document/document-persistence.module';
 import { FilesModule } from '../files/files.module';
 import { AuthModule } from '../auth/auth.module';
@@ -25,7 +26,11 @@ const infrastructurePersistenceModule = DocumentUserPersistenceModule;
     forwardRef(() => GroupsModule),
   ],
   controllers: [UsersController],
-  providers: [UsersService],
-  exports: [UsersService, infrastructurePersistenceModule],
+  providers: [UsersService, UserKeycloakSyncService],
+  exports: [
+    UsersService,
+    UserKeycloakSyncService,
+    infrastructurePersistenceModule,
+  ],
 })
 export class UsersModule {}

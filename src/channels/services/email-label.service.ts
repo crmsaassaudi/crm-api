@@ -17,6 +17,7 @@ import {
   EmailProviderLabelSchemaClass,
 } from '../infrastructure/persistence/document/entities/email-provider-label.schema';
 import { CRYPTO_SERVICE_TOKEN, ICryptoService } from '../domain/crypto.service';
+import { softDeleteUpdate } from '../../common/database/soft-delete.helper';
 
 type ObservedLabel = {
   id: string;
@@ -200,7 +201,9 @@ export class EmailLabelService {
             ? { providerLabelId: { $nin: observedIds } }
             : {}),
         },
-        { $set: { isDeleted: true } },
+        // Soft-delete: keep both `isDeleted` (legacy filter) and `deletedAt`
+        // (canonical timestamp) in sync. Helper centralizes the shape.
+        { $set: softDeleteUpdate('isDeleted') },
       )
       .exec();
 

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { TicketRepository } from './infrastructure/persistence/document/repositories/ticket.repository';
 import { Ticket } from './domain/ticket';
 import { TicketSettingsService } from '../ticket-settings/ticket-settings.service';
@@ -8,6 +8,7 @@ import {
   AutomationEventPayload,
   buildAutomationEventName,
 } from '../automation-rules/events/automation-event.payload';
+import { EntityAuditService } from '../common/audit/entity-audit.service';
 
 @Injectable()
 export class TicketsService {
@@ -16,6 +17,7 @@ export class TicketsService {
     private readonly ticketSettingsService: TicketSettingsService,
     private readonly eventEmitter: EventEmitter2,
     private readonly cls: ClsService,
+    private readonly entityAudit: EntityAuditService,
   ) {}
 
   async create(data: Partial<Ticket>): Promise<Ticket> {
@@ -61,18 +63,44 @@ export class TicketsService {
 
     const updateData: any = { ...data, ownerId, groupId };
 
-    // Auto-set timestamps based on terminal status
-    if (data.statusId) {
+    // Status transition guard. Custom per-tenant status names mean we can't
+    // hard-code an allow-list, but we CAN refuse the one transition that's
+    // never intended: leaving a terminal status without an explicit
+    // reopen signal. Without this guard, a stale FE state can silently
+    // unresolve a closed ticket.
+    if (
+      data.statusId &&
+      existingTicket &&
+      (existingTicket as any).statusId &&
+      String((existingTicket as any).statusId) !== String(data.statusId)
+    ) {
+      const [oldStatus, newStatus] = await Promise.all([
+        this.ticketSettingsService.findStatusById(
+          String((existingTicket as any).statusId),
+        ),
+        this.ticketSettingsService.findStatusById(data.statusId),
+      ]);
+      if (oldStatus?.isTerminal && !newStatus?.isTerminal) {
+        const allowReopen = (data as any).allowReopen === true;
+        if (!allowReopen) {
+          throw new BadRequestException(
+            `Ticket is in terminal status "${oldStatus.name}". Reopening requires allowReopen=true.`,
+          );
+        }
+      }
+      if (newStatus?.isTerminal) {
+        if (!data.resolvedAt) updateData.resolvedAt = new Date();
+        if (!data.closedAt) updateData.closedAt = new Date();
+      }
+    } else if (data.statusId) {
+      // Status set on a ticket that had no prior status (first transition)
+      // — still honour the terminal auto-stamp.
       const status = await this.ticketSettingsService.findStatusById(
         data.statusId,
       );
       if (status?.isTerminal) {
-        if (!data.resolvedAt) {
-          updateData.resolvedAt = new Date();
-        }
-        if (!data.closedAt) {
-          updateData.closedAt = new Date();
-        }
+        if (!data.resolvedAt) updateData.resolvedAt = new Date();
+        if (!data.closedAt) updateData.closedAt = new Date();
       }
     }
 
@@ -84,21 +112,13 @@ export class TicketsService {
       this.emitAutomationEvent('field_updated', updated, changedFields);
 
       // Emit audit trail event: field-level change tracking
-      this.eventEmitter.emit('ticket.updated', {
-        t: new Date(),
-        tenantId:
-          this.cls.get('activeTenantId') || this.cls.get('tenantId'),
-        entityId: id,
+      this.entityAudit.emit({
+        entity: 'ticket',
         entityType: 'TICKET',
-        oldSnapshot: existingTicket
-          ? JSON.parse(JSON.stringify(existingTicket))
-          : {},
-        newSnapshot: JSON.parse(JSON.stringify(updated)),
-        actorId: this.getCurrentUserId(),
-        src: this.cls.get('executionSource') || 'M',
-        ctx: this.cls.get('sourceContext'),
-        ip: this.cls.get('requestIp'),
-        ua: this.cls.get('userAgent'),
+        entityId: id,
+        kind: 'updated',
+        oldSnapshot: existingTicket ?? {},
+        newSnapshot: updated,
       });
     }
 

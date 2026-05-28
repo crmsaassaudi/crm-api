@@ -89,10 +89,11 @@ export class InboundProcessorService {
     channelType: ChannelType,
     headers: Record<string, string>,
     body: any,
+    rawBody?: Buffer,
   ): boolean {
     const adapter = this.adapters.get(channelType);
     if (!adapter) return false;
-    return adapter.validateWebhook(headers, body);
+    return adapter.validateWebhook(headers, body, rawBody);
   }
 
   private buildRoutingJobId(payload: OmniPayload): string {

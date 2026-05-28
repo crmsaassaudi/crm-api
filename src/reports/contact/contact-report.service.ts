@@ -67,52 +67,62 @@ export class ContactReportService {
     const format = getMongoDateFormat(context.resolvedGranularity);
     const baseMatch = this.buildBaseMatch(dto, { skipSoftDelete: true });
 
-    const [created, deleted] = await Promise.all([
-      this.contactModel
-        .aggregate([
-          {
-            $match: {
-              ...baseMatch,
-              createdAt: { $gte: context.from, $lte: context.to },
-            },
-          },
-          {
-            $group: {
-              _id: {
-                $dateToString: {
-                  format,
-                  date: '$createdAt',
-                  timezone: context.timezone,
+    // Single aggregation with $facet: one collection scan handles both the
+    // created-bucket and the deleted-bucket. Old impl issued two parallel
+    // aggregates which each scanned the contact collection independently.
+    const facetMatchOr: any[] = [
+      { createdAt: { $gte: context.from, $lte: context.to } },
+      { deletedAt: { $gte: context.from, $lte: context.to } },
+    ];
+    const [facetResult] = await this.contactModel
+      .aggregate([
+        { $match: { ...baseMatch, $or: facetMatchOr } },
+        {
+          $facet: {
+            created: [
+              {
+                $match: {
+                  createdAt: { $gte: context.from, $lte: context.to },
                 },
               },
-              count: { $sum: 1 },
-            },
-          },
-        ])
-        .exec(),
-      this.contactModel
-        .aggregate([
-          {
-            $match: {
-              ...baseMatch,
-              deletedAt: { $gte: context.from, $lte: context.to },
-            },
-          },
-          {
-            $group: {
-              _id: {
-                $dateToString: {
-                  format,
-                  date: '$deletedAt',
-                  timezone: context.timezone,
+              {
+                $group: {
+                  _id: {
+                    $dateToString: {
+                      format,
+                      date: '$createdAt',
+                      timezone: context.timezone,
+                    },
+                  },
+                  count: { $sum: 1 },
                 },
               },
-              count: { $sum: 1 },
-            },
+            ],
+            deleted: [
+              {
+                $match: {
+                  deletedAt: { $gte: context.from, $lte: context.to },
+                },
+              },
+              {
+                $group: {
+                  _id: {
+                    $dateToString: {
+                      format,
+                      date: '$deletedAt',
+                      timezone: context.timezone,
+                    },
+                  },
+                  count: { $sum: 1 },
+                },
+              },
+            ],
           },
-        ])
-        .exec(),
-    ]);
+        },
+      ])
+      .exec();
+    const created = facetResult?.created ?? [];
+    const deleted = facetResult?.deleted ?? [];
 
     const data = mergeGrowthBuckets(
       context.from,
@@ -145,17 +155,33 @@ export class ContactReportService {
     const match = this.buildBaseMatch(dto, {
       createdBetween: { from: context.from, to: context.to },
     });
-    const [total, rows, sourceMap] = await Promise.all([
-      this.contactModel.countDocuments(match).exec(),
+    // Combine countDocuments + group-by into a single pipeline. The old
+    // version scanned the contact collection twice for the same filter.
+    const [facetResult, sourceMap] = await Promise.all([
       this.contactModel
         .aggregate([
           { $match: match },
-          { $group: { _id: { $ifNull: ['$sourceId', null] }, count: { $sum: 1 } } },
-          { $sort: { count: -1 } },
+          {
+            $facet: {
+              total: [{ $count: 'count' }],
+              rows: [
+                {
+                  $group: {
+                    _id: { $ifNull: ['$sourceId', null] },
+                    count: { $sum: 1 },
+                  },
+                },
+                { $sort: { count: -1 } },
+              ],
+            },
+          },
         ])
-        .exec(),
+        .exec()
+        .then((res) => res?.[0] ?? { total: [], rows: [] }),
       this.getSourceMap(),
     ]);
+    const total: number = facetResult.total?.[0]?.count ?? 0;
+    const rows: any[] = facetResult.rows ?? [];
     const data = rows.map((row) => {
       const sourceId = row._id ?? null;
 
@@ -184,25 +210,38 @@ export class ContactReportService {
     const match = this.buildBaseMatch(dto, {
       createdBetween: { from: context.from, to: context.to },
     });
-    const [total, rows] = await Promise.all([
-      this.contactModel.countDocuments(match).exec(),
-      this.contactModel
-        .aggregate([
-          { $match: match },
-          { $group: { _id: { $ifNull: ['$ownerId', null] }, count: { $sum: 1 } } },
-          {
-            $lookup: {
-              from: 'users',
-              localField: '_id',
-              foreignField: '_id',
-              as: 'owner',
-            },
+    // Combine count + group/lookup into one pipeline so the contact
+    // collection is scanned a single time.
+    const [facetResult] = await this.contactModel
+      .aggregate([
+        { $match: match },
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            rows: [
+              {
+                $group: {
+                  _id: { $ifNull: ['$ownerId', null] },
+                  count: { $sum: 1 },
+                },
+              },
+              {
+                $lookup: {
+                  from: 'users',
+                  localField: '_id',
+                  foreignField: '_id',
+                  as: 'owner',
+                },
+              },
+              { $unwind: { path: '$owner', preserveNullAndEmptyArrays: true } },
+              { $sort: { count: -1 } },
+            ],
           },
-          { $unwind: { path: '$owner', preserveNullAndEmptyArrays: true } },
-          { $sort: { count: -1 } },
-        ])
-        .exec(),
-    ]);
+        },
+      ])
+      .exec();
+    const total: number = facetResult?.total?.[0]?.count ?? 0;
+    const rows: any[] = facetResult?.rows ?? [];
     const data = rows.map((row) => {
       const ownerName = [row.owner?.firstName, row.owner?.lastName]
         .filter(Boolean)
@@ -337,29 +376,37 @@ export class ContactReportService {
     const match = this.buildBaseMatch(dto, {
       createdBetween: { from: context.from, to: context.to },
     });
-    const [total, rows] = await Promise.all([
-      this.contactModel.countDocuments(match).exec(),
-      this.contactModel
-        .aggregate([
-          { $match: match },
-          {
-            $project: {
-              score: {
-                $min: [100, { $max: [0, { $ifNull: ['$score', 0] }] }],
+    // Single aggregation: $facet so count and bucket pipeline both
+    // re-use one collection scan via the shared $match stage above.
+    const [facetResult] = await this.contactModel
+      .aggregate([
+        { $match: match },
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            buckets: [
+              {
+                $project: {
+                  score: {
+                    $min: [100, { $max: [0, { $ifNull: ['$score', 0] }] }],
+                  },
+                },
               },
-            },
+              {
+                $bucket: {
+                  groupBy: '$score',
+                  boundaries: [0, 21, 41, 61, 81, 101],
+                  default: 'other',
+                  output: { count: { $sum: 1 } },
+                },
+              },
+            ],
           },
-          {
-            $bucket: {
-              groupBy: '$score',
-              boundaries: [0, 21, 41, 61, 81, 101],
-              default: 'other',
-              output: { count: { $sum: 1 } },
-            },
-          },
-        ])
-        .exec(),
-    ]);
+        },
+      ])
+      .exec();
+    const total: number = facetResult?.total?.[0]?.count ?? 0;
+    const rows: any[] = facetResult?.buckets ?? [];
     const labels: Record<string, Pick<ScoreBucket, 'range' | 'label'>> = {
       '0': { range: '0-20', label: 'Low' },
       '21': { range: '21-40', label: 'Fair' },

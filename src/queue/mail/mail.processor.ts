@@ -1,11 +1,21 @@
 import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { BaseConsumer } from '../base.consumer';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
+import Redis from 'ioredis';
+import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
+
+const SENT_KEY_TTL_SECONDS = 86_400 * 7; // 7 days dedup window
 
 @Processor('mail')
 export class MailProcessor extends BaseConsumer {
   protected readonly logger = new Logger(MailProcessor.name);
+
+  constructor(
+    @Optional() @Inject(IOREDIS_CLIENT) private readonly redis?: Redis,
+  ) {
+    super();
+  }
 
   async process(job: Job<any, any, string>): Promise<any> {
     switch (job.name) {
@@ -18,20 +28,36 @@ export class MailProcessor extends BaseConsumer {
   }
 
   private async sendWelcomeEmail(job: Job) {
-    // Idempotency check: Ensure email hasn't been sent already
-    // In a real scenario, check a 'SentEmails' collection or Redis key
-    // const isSent = await this.checkIfEmailSent(job.id);
-    // if (isSent) return;
+    const dedupKey = `mail:sent:welcome:${job.id}`;
 
-    this.logger.log(`Sending welcome email to ${job.data.email}...`);
-    // Simulate email sending delay
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // Simulate random failure for testing retry
-    if (Math.random() < 0.1) {
-      throw new Error('Random email sending failure');
+    // Idempotency: SET NX so a retried/duplicated job is a no-op.
+    if (this.redis) {
+      const acquired = await this.redis.set(
+        dedupKey,
+        '1',
+        'EX',
+        SENT_KEY_TTL_SECONDS,
+        'NX',
+      );
+      if (acquired !== 'OK') {
+        this.logger.warn(
+          `Welcome email already sent for job ${job.id} — skipping duplicate`,
+        );
+        return;
+      }
     }
 
-    this.logger.log(`Welcome email sent to ${job.data.email}`);
+    this.logger.log(`Sending welcome email to ${job.data.email}...`);
+    try {
+      // TODO: replace with real mailer call (MailerService.sendWelcomeEmail).
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      this.logger.log(`Welcome email sent to ${job.data.email}`);
+    } catch (err) {
+      // Roll back dedup key so retry can re-attempt.
+      if (this.redis) {
+        await this.redis.del(dedupKey).catch(() => undefined);
+      }
+      throw err;
+    }
   }
 }

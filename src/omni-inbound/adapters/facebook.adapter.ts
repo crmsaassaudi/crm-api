@@ -50,11 +50,13 @@ export class FacebookAdapter implements ChannelAdapter {
       const response = await axios.get(
         `https://graph.facebook.com/v19.0/${psid}`,
         {
+          // Token in Authorization header — query params end up in upstream
+          // proxy/CDN access logs, which we don't control.
+          headers: { Authorization: `Bearer ${accessToken}` },
           params: {
             // `picture` field is part of public_profile permission.
             // Use `picture{url}` to get the URL nested under `picture.data.url`.
             fields: 'name,first_name,last_name,picture{url}',
-            access_token: accessToken,
           },
           timeout: 5000,
         },
@@ -76,7 +78,7 @@ export class FacebookAdapter implements ChannelAdapter {
 
       return { name, avatarUrl };
     } catch (err: any) {
-      const errorData = err.response?.data || err.message;
+      const errorData = sanitizeFbError(err.response?.data || err.message);
       this.logger.warn(
         `Failed to enrich Facebook profile for PSID ${psid}: ${JSON.stringify(errorData)}`,
       );
@@ -167,9 +169,15 @@ export class FacebookAdapter implements ChannelAdapter {
       return false;
     }
 
-    const payload = rawBody ?? Buffer.from(JSON.stringify(body));
+    if (!rawBody) {
+      this.logger.error(
+        'Facebook webhook missing rawBody — cannot HMAC-verify a re-serialized JSON payload. ' +
+          'Check that express json() middleware exposes req.rawBody.',
+      );
+      return false;
+    }
     const expectedSignature =
-      'sha256=' + createHmac('sha256', appSecret).update(payload).digest('hex');
+      'sha256=' + createHmac('sha256', appSecret).update(rawBody).digest('hex');
 
     try {
       return timingSafeEqual(
@@ -237,14 +245,22 @@ export class FacebookAdapter implements ChannelAdapter {
     };
 
     try {
+      // 10s timeout: a Graph API call that hangs blocks the agent reply
+      // path and ties up worker concurrency. Default axios timeout is 0
+      // (unlimited) which is unsafe for any external HTTP.
       const response = await axios.post(
         `https://graph.facebook.com/v19.0/${pageId}/messages`,
         payload,
-        { params: { access_token: accessToken } },
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          timeout: 10_000,
+        },
       );
       return { message_id: response.data.message_id };
     } catch (err: any) {
-      const errorData = err?.response?.data || err.message;
+      // Strip the access token from any logged error body before it hits
+      // log aggregators. Graph error JSON often quotes the token back.
+      const errorData = sanitizeFbError(err?.response?.data ?? err.message);
       this.logger.error(
         `Failed to send message via Facebook: ${JSON.stringify(errorData)}`,
       );
@@ -253,4 +269,17 @@ export class FacebookAdapter implements ChannelAdapter {
       );
     }
   }
+}
+
+function sanitizeFbError(value: any): any {
+  if (value == null || typeof value !== 'object') return value;
+  const clone: Record<string, any> = Array.isArray(value) ? [] : {};
+  for (const [k, v] of Object.entries(value)) {
+    if (/token|secret|access/i.test(k)) {
+      clone[k] = '[REDACTED]';
+    } else {
+      clone[k] = sanitizeFbError(v);
+    }
+  }
+  return clone;
 }

@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1
 
-FROM node:22.21.1-alpine AS deps
+FROM node:22.21.1-alpine AS base
 
 WORKDIR /usr/src/app
 
 ENV HUSKY=0
+
+FROM base AS deps
 
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm \
@@ -15,21 +17,16 @@ FROM deps AS build
 COPY . .
 RUN npm run build
 
-FROM deps AS production-deps
-
-RUN npm prune --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --fund=false
-
-FROM node:22.21.1-alpine AS production
-
-WORKDIR /usr/src/app
+FROM base AS production
 
 ENV NODE_ENV=production
-ENV HUSKY=0
 
 RUN apk add --no-cache ffmpeg
 
 COPY package*.json ./
-COPY --from=production-deps /usr/src/app/node_modules ./node_modules
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev --legacy-peer-deps --no-audit --fund=false
+
 COPY --chown=node:node --from=build /usr/src/app/dist ./dist
 
 RUN mkdir -p /usr/src/app/files && chown node:node /usr/src/app/files

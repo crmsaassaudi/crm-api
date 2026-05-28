@@ -55,6 +55,12 @@ export class ImapPollerService implements OnModuleDestroy {
   private pollTimer: NodeJS.Timeout | null = null;
   /** Graceful shutdown flag — stops in-flight polling loops */
   private destroying = false;
+  /**
+   * Track in-flight poll promises so onModuleDestroy can wait for active
+   * IMAP sessions to drain before the process exits. Without this, SIGTERM
+   * during a poll leaves the mailbox lock held in Redis for LOCK_TTL_MS.
+   */
+  private readonly inFlightPolls = new Set<Promise<unknown>>();
 
   /** Active interval (within business hours + recent activity) */
   private readonly ACTIVE_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
@@ -98,13 +104,35 @@ export class ImapPollerService implements OnModuleDestroy {
     }
   }
 
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
     this.destroying = true;
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+
+    if (this.inFlightPolls.size > 0) {
+      this.logger.log(
+        `[ImapPoller] Waiting for ${this.inFlightPolls.size} in-flight poll(s) to finish…`,
+      );
+      // Cap the drain to 25s so k8s SIGKILL doesn't overlap.
+      await Promise.race([
+        Promise.allSettled(Array.from(this.inFlightPolls)),
+        new Promise((resolve) => setTimeout(resolve, 25_000).unref()),
+      ]);
+    }
+
     this.logger.log('[ImapPoller] Destroyed — scheduler stopped');
+  }
+
+  /**
+   * Wrap a poll task so it auto-registers / deregisters in inFlightPolls.
+   * Use this around any async work that should be drained on shutdown.
+   */
+  private track<T>(task: Promise<T>): Promise<T> {
+    this.inFlightPolls.add(task);
+    task.finally(() => this.inFlightPolls.delete(task));
+    return task;
   }
 
   // ── Stale Lock Cleanup (hot-reload / crash recovery) ─────────────────────
@@ -233,8 +261,10 @@ export class ImapPollerService implements OnModuleDestroy {
           this.logger.log(
             `[ImapPoller] ${config.name}: Lock acquired — starting pollMailbox`,
           );
-          await runWithTenantContext(this.cls, config.tenantId, () =>
-            this.pollMailbox(config),
+          await this.track(
+            runWithTenantContext(this.cls, config.tenantId, () =>
+              this.pollMailbox(config),
+            ),
           );
           // Record poll time
           await client.set(cacheKey, Date.now().toString(), 'PX', interval * 2);
@@ -371,7 +401,12 @@ export class ImapPollerService implements OnModuleDestroy {
       secure: imapPort === 993,
       auth,
       logger: false, // Suppress noisy IMAP protocol logs
-    });
+      // Network safety: without these, a half-open IMAP socket can hold the
+      // mailbox lock indefinitely and the poller never recovers until
+      // process restart.
+      socketTimeout: 30_000,
+      greetingTimeout: 15_000,
+    } as any);
 
     try {
       await client.connect();
@@ -571,11 +606,23 @@ export class ImapPollerService implements OnModuleDestroy {
     }
 
     this.logger.log(`[ImapPoller] UID=${msg.uid}: Parsing (${rawSize} bytes)`);
-    const parsed: ParsedMail = await simpleParser(rawSource, {
+    // simpleParser has no internal timeout — a malformed MIME or a
+    // pathological boundary section can hang the worker. Race it against a
+    // 30s timer so a single bad message does not stall the mailbox lock.
+    const parsePromise = simpleParser(rawSource, {
       skipImageLinks: true,
       skipHtmlToText: false,
       skipTextToHtml: false,
     });
+    const parsed: ParsedMail = await Promise.race([
+      parsePromise,
+      new Promise<ParsedMail>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('simpleParser timed out after 30s')),
+          30_000,
+        ).unref(),
+      ),
+    ]);
     this.logger.log(
       `[ImapPoller] UID=${msg.uid}: Parsed OK — subject="${parsed.subject || '(none)'}"`,
     );

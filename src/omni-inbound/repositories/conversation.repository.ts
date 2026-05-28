@@ -9,6 +9,7 @@ import { OmniConversation } from '../domain/omni-conversation';
 import { OmniConversationMapper } from '../infrastructure/persistence/document/mappers/omni-conversation.mapper';
 import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
 import { pagination } from '../../utils/pagination';
+import { cappedCount } from '../../utils/capped-count';
 
 export interface ConversationQuery {
   tenantId: string;
@@ -128,7 +129,7 @@ export class ConversationRepository {
     const safePage = Math.max(1, page);
     const skip = (safePage - 1) * limit;
 
-    const [items, total] = await Promise.all([
+    const [items, { totalItems: total }] = await Promise.all([
       this.model
         .find(filter)
         .sort(sort)
@@ -138,7 +139,7 @@ export class ConversationRepository {
         .populate('resolvedByAgent')
         .lean()
         .exec(),
-      this.model.countDocuments(filter).exec(),
+      cappedCount(this.model, filter),
     ]);
 
     const mappedItems = items.map((doc) =>

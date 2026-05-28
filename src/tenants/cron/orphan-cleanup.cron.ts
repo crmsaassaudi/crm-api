@@ -32,9 +32,13 @@ export class OrphanCleanupCron {
   @Cron(CronExpression.EVERY_6_HOURS)
   async handleOrphanCleanup(): Promise<void> {
     try {
+      // TTL must cover at least one full cleanup run. The job processes
+      // batches of 100 users with KC + Mongo IO each, so worst case can take
+      // tens of minutes. Lock for nearly the full cron interval to guarantee
+      // only one instance runs at a time across the cluster.
       await this.lockService.acquire(
         'cron:tenant-onboarding:orphan-cleanup',
-        30 * 60 * 1000,
+        5 * 60 * 60 * 1000, // 5h (< 6h cron)
         () => this.runCleanup(),
         0,
         1,

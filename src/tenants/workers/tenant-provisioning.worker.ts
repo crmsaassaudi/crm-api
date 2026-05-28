@@ -1,5 +1,5 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
@@ -50,8 +50,19 @@ const STEP_LABELS: Record<number, string> = {
 };
 
 @Processor(TENANT_PROVISIONING_QUEUE)
-export class TenantProvisioningWorker extends WorkerHost {
+export class TenantProvisioningWorker
+  extends WorkerHost
+  implements OnModuleDestroy
+{
   private readonly logger = new Logger(TenantProvisioningWorker.name);
+  /**
+   * Provisioning jobs run a multi-step saga (Keycloak + Mongo + bot
+   * workspace) that can take 30s+. We hold a reference to each in-flight
+   * job so SIGTERM can drain them instead of leaving half-provisioned
+   * tenants in PROVISIONING status.
+   */
+  private readonly inFlight = new Set<Promise<unknown>>();
+  private destroying = false;
 
   constructor(
     private readonly tenantsRepository: TenantsRepository,
@@ -74,6 +85,37 @@ export class TenantProvisioningWorker extends WorkerHost {
   // ─────────────────────────────────────────────────────────────────────────────
 
   async process(job: Job<TenantProvisioningJobData>): Promise<void> {
+    const task = this.runJob(job);
+    this.inFlight.add(task);
+    task.finally(() => this.inFlight.delete(task));
+    return task;
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.destroying) return;
+    this.destroying = true;
+    if (this.inFlight.size > 0) {
+      this.logger.log(
+        `[TenantProvisioningWorker] Waiting for ${this.inFlight.size} in-flight job(s) to finish…`,
+      );
+      // 25s drain budget — long enough for the saga to either commit step N
+      // or trigger compensating rollbacks. After that k8s will SIGKILL.
+      await Promise.race([
+        Promise.allSettled(Array.from(this.inFlight)),
+        new Promise((resolve) => setTimeout(resolve, 25_000).unref()),
+      ]);
+    }
+    // BullMQ WorkerHost exposes a `worker` instance — close it so it stops
+    // pulling new jobs while we wait for the drain above.
+    try {
+      await (this as any).worker?.close?.();
+    } catch {
+      /* ignore */
+    }
+    this.logger.log('[TenantProvisioningWorker] Drained');
+  }
+
+  private async runJob(job: Job<TenantProvisioningJobData>): Promise<void> {
     const data = job.data;
     const { provisioningId, source } = data;
 

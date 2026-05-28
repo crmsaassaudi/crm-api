@@ -1,26 +1,129 @@
-import { Controller, Get, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Optional,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { InjectConnection } from '@nestjs/mongoose';
+import { Connection } from 'mongoose';
 import { Public } from 'nest-keycloak-connect';
+import { RedisService } from '../redis/redis.service';
+
+type ComponentStatus = 'ok' | 'degraded' | 'down';
+
+interface ComponentReport {
+  status: ComponentStatus;
+  latencyMs?: number;
+  detail?: string;
+}
 
 /**
- * Health Check controller for Kubernetes liveness/readiness probes.
+ * Health Check controller.
  *
- * Exposed at GET /api/v1/health — bypasses all auth guards.
- * Returns basic service uptime and timestamp for monitoring dashboards.
+ * - `GET /health` — fast liveness probe, doesn't touch dependencies. Used
+ *   by k8s livenessProbe so a slow Mongo/Redis doesn't trigger pod kill.
+ * - `GET /health/ready` — readiness probe, pings Mongo + Redis. Pod is
+ *   removed from the service when this returns 503.
+ * - `GET /health/deep` — operator-facing, includes per-dependency latency.
  */
 @Controller({ path: 'health', version: '1' })
 @Public()
 export class HealthController {
   private readonly startedAt = new Date();
 
+  constructor(
+    @Optional() @InjectConnection() private readonly mongo?: Connection,
+    @Optional() private readonly redisService?: RedisService,
+  ) {}
+
   @Get()
   @HttpCode(HttpStatus.OK)
   check() {
     return {
       status: 'ok',
-      uptime: Math.floor(
-        (Date.now() - this.startedAt.getTime()) / 1000,
-      ),
+      uptime: Math.floor((Date.now() - this.startedAt.getTime()) / 1000),
       timestamp: new Date().toISOString(),
     };
+  }
+
+  @Get('ready')
+  async ready() {
+    const report = await this.collect();
+    const overall: ComponentStatus = Object.values(report).some(
+      (c) => c.status === 'down',
+    )
+      ? 'down'
+      : Object.values(report).some((c) => c.status === 'degraded')
+        ? 'degraded'
+        : 'ok';
+
+    if (overall === 'down') {
+      throw new ServiceUnavailableException({
+        status: 'down',
+        components: report,
+      });
+    }
+    return { status: overall, components: report };
+  }
+
+  @Get('deep')
+  async deep() {
+    const report = await this.collect();
+    return {
+      status: Object.values(report).every((c) => c.status === 'ok')
+        ? 'ok'
+        : 'degraded',
+      uptime: Math.floor((Date.now() - this.startedAt.getTime()) / 1000),
+      timestamp: new Date().toISOString(),
+      components: report,
+    };
+  }
+
+  private async collect(): Promise<Record<string, ComponentReport>> {
+    const [mongo, redis] = await Promise.all([
+      this.checkMongo(),
+      this.checkRedis(),
+    ]);
+    return { mongo, redis };
+  }
+
+  private async checkMongo(): Promise<ComponentReport> {
+    if (!this.mongo) return { status: 'down', detail: 'no connection' };
+    const t0 = Date.now();
+    try {
+      const db = this.mongo.db;
+      if (!db) return { status: 'down', detail: 'db handle missing' };
+      // ping is cheap and exercises actual driver round-trip.
+      await db.admin().ping();
+      return { status: 'ok', latencyMs: Date.now() - t0 };
+    } catch (err: any) {
+      return {
+        status: 'down',
+        latencyMs: Date.now() - t0,
+        detail: err?.message ?? 'ping failed',
+      };
+    }
+  }
+
+  private async checkRedis(): Promise<ComponentReport> {
+    if (!this.redisService) return { status: 'down', detail: 'no service' };
+    const t0 = Date.now();
+    try {
+      const client = this.redisService.getClient();
+      const reply = await client.ping();
+      const latencyMs = Date.now() - t0;
+      if (reply !== 'PONG') {
+        return { status: 'degraded', latencyMs, detail: `reply=${reply}` };
+      }
+      return { status: 'ok', latencyMs };
+    } catch (err: any) {
+      return {
+        status: 'down',
+        latencyMs: Date.now() - t0,
+        detail: err?.message ?? 'ping failed',
+      };
+    }
   }
 }

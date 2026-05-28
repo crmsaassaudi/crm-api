@@ -162,7 +162,7 @@ export class ContactRepository extends BaseDocumentRepository<
     const where = this.buildListWhere(filterOptions);
     const scopedWhere = this.applyTenantFilter(where);
 
-    const [docs, totalItems] = await Promise.all([
+    const [docs, countResult] = await Promise.all([
       this.model
         .find(scopedWhere)
         .sort({ createdAt: -1 })
@@ -171,13 +171,14 @@ export class ContactRepository extends BaseDocumentRepository<
         .populate('owner')
         .populate('createdBy')
         .populate('updatedBy')
+        .lean()
         .exec(),
-      this.model.countDocuments(scopedWhere).exec(),
+      this.countDocumentsWithCap(scopedWhere, 10_000),
     ]);
 
     return pagination(
-      docs.map((doc) => this.mapToDomain(doc)),
-      totalItems,
+      docs.map((doc) => this.mapToDomain(doc as any)),
+      countResult.totalItems,
       paginationOptions,
     );
   }

@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ListViewsService } from './list-views.service';
+import { CreateListViewDto, UpdateListViewDto } from './dto/list-view.dto';
 
 @ApiTags('List Views')
 @ApiBearerAuth()
@@ -58,13 +59,13 @@ export class ListViewsController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new list view' })
-  createView(@Body() body: any) {
+  createView(@Body() body: CreateListViewDto) {
     return this.service.createView(body);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update an existing list view' })
-  updateView(@Param('id') id: string, @Body() body: any) {
+  updateView(@Param('id') id: string, @Body() body: UpdateListViewDto) {
     return this.service.updateView(id, body);
   }
 

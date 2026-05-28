@@ -10,7 +10,9 @@ import {
   BadRequestException,
   Get,
   Query,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -88,10 +90,21 @@ export class InboundController {
     @Param('channelType') channelType: ChannelType,
     @Headers() headers: Record<string, string>,
     @Body() body: any,
+    @Req() req: Request,
   ) {
     this.logger.log(`Received ${channelType} webhook`);
 
-    const isValid = this.processor.validateWebhook(channelType, headers, body);
+    // rawBody is populated by the express.json verify hook in main.ts.
+    // We forward the original bytes to the adapter so HMAC verification
+    // cannot be bypassed by JSON re-serialization quirks.
+    const rawBody = (req as any).rawBody as Buffer | undefined;
+
+    const isValid = this.processor.validateWebhook(
+      channelType,
+      headers,
+      body,
+      rawBody,
+    );
     if (!isValid) {
       this.logger.warn(`Invalid webhook signature for ${channelType}`);
       throw new BadRequestException('Invalid webhook signature');
@@ -115,8 +128,10 @@ export class InboundController {
           index,
         ),
         priority: PRIORITY_NORMAL,
-        removeOnComplete: { count: 1000 },
-        removeOnFail: { count: 5000 },
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: { count: 1000, age: 60 * 60 * 6 },
+        removeOnFail: { count: 5000, age: 60 * 60 * 24 * 7 },
       },
     }));
 

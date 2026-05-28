@@ -33,6 +33,7 @@ import {
   UNMASK_TTL_SECONDS,
 } from './contacts.constants';
 import { RedisLockService } from '../redis/redis-lock.service';
+import { EntityAuditService } from '../common/audit/entity-audit.service';
 
 @Injectable()
 export class ContactsService {
@@ -47,6 +48,7 @@ export class ContactsService {
     private readonly eventEmitter: EventEmitter2,
     private readonly exportStorageService: ContactExportStorageService,
     private readonly lockService: RedisLockService,
+    private readonly entityAudit: EntityAuditService,
     @InjectQueue(CONTACT_EXPORT_QUEUE)
     private readonly exportQueue: Queue,
   ) {}
@@ -148,21 +150,13 @@ export class ContactsService {
 
       // Emit audit trail event: field-level change tracking
       // AuditLogListener diffs old vs new snapshot → audit_logs
-      this.eventEmitter.emit('contact.updated', {
-        t: new Date(),
-        tenantId:
-          this.cls.get('activeTenantId') || this.cls.get('tenantId'),
-        entityId: id,
+      this.entityAudit.emit({
+        entity: 'contact',
         entityType: 'CONTACT',
-        oldSnapshot: existingContact
-          ? JSON.parse(JSON.stringify(existingContact))
-          : {},
-        newSnapshot: JSON.parse(JSON.stringify(updated)),
-        actorId: this.getCurrentUserId(),
-        src: this.cls.get('executionSource') || 'M',
-        ctx: this.cls.get('sourceContext'),
-        ip: this.cls.get('requestIp'),
-        ua: this.cls.get('userAgent'),
+        entityId: id,
+        kind: 'updated',
+        oldSnapshot: existingContact ?? {},
+        newSnapshot: updated,
       });
     }
 
@@ -174,19 +168,15 @@ export class ContactsService {
     await this.repository.remove(id);
 
     // Compliance: record deletion in audit_logs
-    this.eventEmitter.emit('contact.updated', {
-      t: new Date(),
-      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
-      entityId: id,
+    // Emit `contact.updated` (not `.deleted`) for AuditLogListener compat;
+    // AuditDiffEngine treats `_deleted: true` newSnapshot as a soft-delete.
+    this.entityAudit.emit({
+      entity: 'contact',
       entityType: 'CONTACT',
-      oldSnapshot: existing
-        ? JSON.parse(JSON.stringify(existing))
-        : {},
-      newSnapshot: { _deleted: true },
-      actorId: this.getCurrentUserId(),
-      src: this.cls.get('executionSource') || 'M',
-      ip: this.cls.get('requestIp'),
-      ua: this.cls.get('userAgent'),
+      entityId: id,
+      kind: 'updated',
+      oldSnapshot: existing ?? {},
+      newSnapshot: { _deleted: true } as any,
     });
   }
 
@@ -478,18 +468,13 @@ export class ContactsService {
 
     // Emit audit trail: field-level diff (lifecycleStageId, statusId)
     // AuditLogListener will compute old vs new snapshot → audit_logs
-    this.eventEmitter.emit('contact.updated', {
-      t: occurredAt,
-      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
-      entityId: id,
+    this.entityAudit.emit({
+      entity: 'contact',
       entityType: 'CONTACT',
-      oldSnapshot: JSON.parse(JSON.stringify(contact)),
-      newSnapshot: JSON.parse(JSON.stringify(updated)),
-      actorId: changedById,
-      src: this.cls.get('executionSource') || 'M',
-      ctx: this.cls.get('sourceContext'),
-      ip: this.cls.get('requestIp'),
-      ua: this.cls.get('userAgent'),
+      entityId: id,
+      kind: 'updated',
+      oldSnapshot: contact,
+      newSnapshot: updated,
     });
 
     await this.repository.touchLastActivity(id, occurredAt);
@@ -667,7 +652,10 @@ export class ContactsService {
     primaryId: string,
     targetId: string,
   ): Promise<{ success: true; contact: Contact; mergedContactId: string }> {
-
+    // Reads must happen INSIDE the merge lock so that a concurrent delete
+    // of either contact between acquire and read is caught by the deletedAt
+    // guard below. We use Promise.all so latency stays low — the lock
+    // already serializes us against other merges of the same pair.
     const [primary, target] = await Promise.all([
       this.repository.findOne({ _id: primaryId }),
       this.repository.findOne({ _id: targetId }),
@@ -693,6 +681,23 @@ export class ContactsService {
     });
 
     const occurredAt = new Date();
+
+    // Re-check both contacts immediately before mutation. A long-running
+    // merge could be preempted (heartbeat lost, GC pause), and another
+    // operation might have deleted the target in between. Without this
+    // re-check we could silently overwrite primary with stale data drawn
+    // from a target that is now gone.
+    const [primaryNow, targetNow] = await Promise.all([
+      this.repository.findOne({ _id: primaryId }),
+      this.repository.findOne({ _id: targetId }),
+    ]);
+    if (!primaryNow || primaryNow.deletedAt) {
+      throw new NotFoundException('Primary contact was deleted during merge');
+    }
+    if (!targetNow || targetNow.deletedAt) {
+      throw new NotFoundException('Target contact was deleted during merge');
+    }
+
     const merged = await this.repository.update(primaryId, {
       emails: unionByValue(primary.emails, target.emails),
       phones: unionByValue(primary.phones, target.phones),

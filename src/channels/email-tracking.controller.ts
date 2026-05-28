@@ -3,6 +3,7 @@ import { ApiTags, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { EmailTrackingService } from './services/email-tracking.service';
 import { Unprotected } from 'nest-keycloak-connect';
+import { Throttle } from '@nestjs/throttler';
 
 /**
  * Email Tracking Controller — Serves the 1x1 tracking pixel.
@@ -30,11 +31,24 @@ export class EmailTrackingController {
   @Get(':trackingId.png')
   @Unprotected()
   @ApiExcludeEndpoint() // Hide from Swagger — this is not a user-facing API
+  // Per-IP throttle so a scanner can't enumerate tracking IDs at line rate.
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   servePixel(
     @Param('trackingId') trackingId: string,
     @Req() req: Request,
     @Res() res: Response,
   ): void {
+    // Validate trackingId format. Tracking IDs from EmailTrackingService are
+    // ULID-like (base32 26 chars) or hex. Reject anything outside that to stop
+    // path-style probing without paying the DB lookup.
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(trackingId)) {
+      const pixel = this.trackingService.getPixelBuffer();
+      res
+        .status(200)
+        .set({ 'Content-Type': 'image/png' })
+        .end(pixel);
+      return;
+    }
     // Extract fingerprint data for bot detection
     const userAgent = req.headers['user-agent'] || null;
     const ipAddress =

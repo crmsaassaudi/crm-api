@@ -2,6 +2,7 @@ import { Module, Global } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { DlqService } from './dlq.service';
 import { DlqProcessor } from './dlq.processor';
+import { DlqAlertListener } from './dlq-alert.listener';
 import { CRM_DLQ_QUEUE } from './dlq.constants';
 
 /**
@@ -22,7 +23,7 @@ import { CRM_DLQ_QUEUE } from './dlq.constants';
       },
     }),
   ],
-  providers: [DlqService, DlqProcessor],
+  providers: [DlqService, DlqProcessor, DlqAlertListener],
   exports: [DlqService],
 })
 export class DlqModule {}

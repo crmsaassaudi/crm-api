@@ -23,6 +23,8 @@ import {
   normalizeCursorDirection,
   normalizeSortOrder,
 } from '../../../../../utils/cursor-pagination';
+import { escapeRegex } from '../../../../../utils/escape-regex';
+import { cappedCount } from '../../../../../utils/capped-count';
 
 @Injectable()
 export class AccountRepository extends BaseDocumentRepository<
@@ -58,7 +60,10 @@ export class AccountRepository extends BaseDocumentRepository<
     const where: FilterQuery<AccountSchemaClass> = {};
 
     if (filterOptions?.search) {
-      const searchExpr = { $regex: filterOptions.search, $options: 'i' };
+      const searchExpr = {
+        $regex: escapeRegex(filterOptions.search),
+        $options: 'i',
+      };
       where.$or = [
         { name: searchExpr },
         { industry: searchExpr },
@@ -91,7 +96,10 @@ export class AccountRepository extends BaseDocumentRepository<
               } else if (Array.isArray(f.value)) {
                 where[f.id] = { $in: f.value };
               } else {
-                where[f.id] = { $regex: f.value, $options: 'i' };
+                where[f.id] = {
+                  $regex: escapeRegex(String(f.value)),
+                  $options: 'i',
+                };
               }
             }
           });
@@ -115,7 +123,7 @@ export class AccountRepository extends BaseDocumentRepository<
 
     const scopedWhere = this.applyTenantFilter(where);
 
-    const [docs, totalItems] = await Promise.all([
+    const [docs, { totalItems }] = await Promise.all([
       this.model
         .find(scopedWhere)
         .sort({ createdAt: -1 })
@@ -124,12 +132,13 @@ export class AccountRepository extends BaseDocumentRepository<
         .populate('owner')
         .populate('accountStatus')
         .populate('accountType')
+        .lean()
         .exec(),
-      this.model.countDocuments(scopedWhere).exec(),
+      cappedCount(this.model, scopedWhere),
     ]);
 
     return pagination(
-      docs.map((doc) => this.mapToDomain(doc)),
+      docs.map((doc) => this.mapToDomain(doc as any)),
       totalItems,
       paginationOptions,
     );

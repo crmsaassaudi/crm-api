@@ -12,6 +12,7 @@ import validationOptions from './utils/validation-options';
 import { AllConfigType } from './config/config.type';
 import { ResolvePromisesInterceptor } from './utils/serializer.interceptor';
 import { NormalizeIdInterceptor } from './common/interceptors/normalize-id.interceptor';
+import { CorrelationIdInterceptor } from './common/interceptors/correlation-id.interceptor';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { ClsService } from 'nestjs-cls';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
@@ -19,9 +20,16 @@ import cookieParser from 'cookie-parser';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { RedisIoAdapter } from './modules/realtime/redis-io.adapter';
 import helmet from 'helmet';
+import { json, urlencoded } from 'express';
 
 async function bootstrap() {
   process.env.APP_RUNTIME = 'api';
+  // Best-effort Sentry init BEFORE AppModule loads so we capture
+  // exceptions thrown during DI bootstrap.
+  const { initSentryIfConfigured } = await import(
+    './common/observability/sentry.bootstrap'
+  );
+  await initSentryIfConfigured();
   const { AppModule } = await import('./app.module');
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.set('trust proxy', 1);
@@ -67,6 +75,21 @@ async function bootstrap() {
   // Enable cookie parsing for HttpOnly session cookies (BFF pattern)
   app.use(cookieParser());
 
+  // Capture rawBody for webhook signature verification. Adapters
+  // (Facebook/WhatsApp/Zalo) HMAC the exact bytes the provider sent — JSON
+  // re-serialization would change whitespace/key order and invalidate the
+  // signature. Without this, a stripped signature check could silently
+  // succeed on attacker-controlled payloads.
+  app.use(
+    json({
+      limit: '10mb',
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
+  app.use(urlencoded({ extended: true, limit: '10mb' }));
+
   // Use Winston Logger
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
 
@@ -87,6 +110,9 @@ async function bootstrap() {
   });
   app.useGlobalPipes(new ValidationPipe(validationOptions));
   app.useGlobalInterceptors(
+    // CorrelationIdInterceptor must run first so subsequent interceptors,
+    // services and the global exception filter see the request ID in CLS.
+    new CorrelationIdInterceptor(clsService),
     // ResolvePromisesInterceptor is used to resolve promises in responses because class-transformer can't do it
     // https://github.com/typestack/class-transformer/issues/549
     new NormalizeIdInterceptor(),

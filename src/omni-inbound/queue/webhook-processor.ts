@@ -45,11 +45,13 @@ export class WebhookProcessor extends BaseConsumer {
   async process(job: Job<WebhookJobData>): Promise<void> {
     const { channelType, event } = job.data;
     const accountId = job.data.accountId || this.extractAccountId(job.data);
+    // Dedup ONLY by provider message ID. A BullMQ retry gets a fresh job.id,
+    // so falling back to job.id (the previous behaviour) silently allowed
+    // duplicates when the same webhook was re-delivered later.
     const idempotencyKey = this.buildIdempotencyKey(
       channelType,
       accountId,
       event,
-      job.id,
     );
     const acquired = idempotencyKey
       ? await this.redis.set(
@@ -172,14 +174,15 @@ export class WebhookProcessor extends BaseConsumer {
     channelType: ChannelType,
     accountId?: string,
     event?: any,
-    fallbackJobId?: string | number,
   ): string | null {
     const providerMessageId = this.extractProviderMessageId(event);
-    if (!providerMessageId && fallbackJobId === undefined) return null;
+    // If the provider didn't give us a stable message ID, skip dedup rather
+    // than fall back to a transient BullMQ job ID (which changes on retry).
+    if (!providerMessageId) return null;
 
-    return `processed:webhook:${channelType}:${accountId || 'unknown'}:${
-      providerMessageId ?? fallbackJobId
-    }`;
+    return `processed:webhook:${channelType}:${
+      accountId || 'unknown'
+    }:${providerMessageId}`;
   }
 
   private extractSenderIds(channelType: ChannelType, event: any): string[] {

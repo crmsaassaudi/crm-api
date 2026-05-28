@@ -462,10 +462,18 @@ export class OAuth2TokenManager {
   }
 
   private async decryptStoredToken(value: string): Promise<string> {
+    // SECURITY: never fall back to returning the ciphertext (or anything that
+    // looks like one) on decrypt failure. A failed decrypt means either the
+    // KMS key rotated, the record was corrupted, or the value is actually
+    // plaintext — all of which require re-authentication, not silent reuse.
     try {
       return await this.crypto.decrypt(value);
-    } catch {
-      return value;
+    } catch (err: any) {
+      throw new BadRequestException(
+        `Stored OAuth2 token could not be decrypted (${
+          err?.message ?? 'unknown'
+        }). The channel must be re-authenticated.`,
+      );
     }
   }
 

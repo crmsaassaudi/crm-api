@@ -271,6 +271,16 @@ export class AuthService {
       this.refreshInflight.delete(sid);
     });
     this.refreshInflight.set(sid, refreshPromise);
+
+    // Safety net: even if .finally never runs (e.g. promise never settles
+    // because Keycloak hangs and the awaiter is GC'd), forcibly clear the
+    // entry after 60s so we don't grow this Map unbounded under flaky upstreams.
+    setTimeout(() => {
+      if (this.refreshInflight.get(sid) === refreshPromise) {
+        this.refreshInflight.delete(sid);
+      }
+    }, 60_000).unref();
+
     return refreshPromise;
   }
 

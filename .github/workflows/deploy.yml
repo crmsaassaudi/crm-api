@@ -23,7 +23,7 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || '22' }}
-          command_timeout: 45m
+          command_timeout: 60m
           script: |
             set -e
 
@@ -35,7 +35,10 @@ jobs:
 
             test -f .env.production
 
-            # Build image once; all 4 services share the same image tag
-            docker compose -f docker-compose.yml build --pull api-service
-            docker compose -f docker-compose.yml up -d --remove-orphans api-service worker-service omni-worker-service email-worker-service
+            export DOCKER_BUILDKIT=1
+            export COMPOSE_BAKE=false
+
+            # Build image once; all 4 services share the same image tag.
+            docker build --pull -t crm-api:production .
+            docker compose -f docker-compose.yml up -d --no-build --remove-orphans api-service worker-service omni-worker-service email-worker-service
             docker image prune -f

@@ -59,6 +59,16 @@ export default [
             'CallExpression[callee.name=it][arguments.0.value!=/^should/]',
           message: '"it" should start with "should"',
         },
+        {
+          // Catch unbounded Mongo bulk operations. Every updateMany/deleteMany
+          // MUST run inside a function or have an explicit safety filter —
+          // tenantFilterPlugin will inject tenantId at runtime, but lint
+          // helps spot the pattern at review time.
+          selector:
+            "CallExpression[callee.property.name=/^(updateMany|deleteMany)$/][arguments.0.type=ObjectExpression][arguments.0.properties.length=0]",
+          message:
+            'Refusing updateMany/deleteMany with an empty filter. Add at least a tenantId or business key to the filter.',
+        },
       ],
     },
   },

@@ -7,6 +7,7 @@ import {
 } from '../entities/group.schema';
 import { Group } from '../../../../domain/group';
 import { GroupMapper } from '../mappers/group.mapper';
+import { escapeRegex } from '../../../../../utils/escape-regex';
 
 @Injectable()
 export class GroupRepository {
@@ -26,9 +27,10 @@ export class GroupRepository {
     const filter: FilterQuery<GroupSchemaClass> = { tenantId };
 
     if (query?.search) {
+      const safeSearch = escapeRegex(query.search);
       filter.$or = [
-        { name: { $regex: query.search, $options: 'i' } },
-        { description: { $regex: query.search, $options: 'i' } },
+        { name: { $regex: safeSearch, $options: 'i' } },
+        { description: { $regex: safeSearch, $options: 'i' } },
       ];
     }
     if (query?.isActive !== undefined) {

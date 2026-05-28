@@ -12,6 +12,8 @@ import { BaseDocumentRepository } from '../../../../../utils/persistence/documen
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
 import { pagination } from '../../../../../utils/pagination';
+import { escapeRegex } from '../../../../../utils/escape-regex';
+import { cappedCount } from '../../../../../utils/capped-count';
 
 @Injectable()
 export class TicketRepository extends BaseDocumentRepository<
@@ -59,7 +61,10 @@ export class TicketRepository extends BaseDocumentRepository<
     const where: FilterQuery<TicketSchemaClass> = {};
 
     if (filterOptions?.search) {
-      const searchExpr = { $regex: filterOptions.search, $options: 'i' };
+      const searchExpr = {
+        $regex: escapeRegex(filterOptions.search),
+        $options: 'i',
+      };
       where.$or = [
         { subject: searchExpr },
         { ticketNumber: searchExpr },
@@ -93,19 +98,22 @@ export class TicketRepository extends BaseDocumentRepository<
 
     const scopedWhere = this.applyTenantFilter(where);
 
-    const [docs, totalItems] = await Promise.all([
+    // .lean() skips Mongoose hydration which roughly halves RAM/CPU on large
+    // pages with 7+ populated refs. Mapper accepts plain objects.
+    const [docs, { totalItems }] = await Promise.all([
       this.populateRefs(
         this.model
           .find(scopedWhere)
           .sort({ createdAt: -1 })
           .skip((paginationOptions.page - 1) * paginationOptions.limit)
-          .limit(paginationOptions.limit),
+          .limit(paginationOptions.limit)
+          .lean(),
       ).exec(),
-      this.model.countDocuments(scopedWhere).exec(),
+      cappedCount(this.model, scopedWhere),
     ]);
 
     return pagination(
-      docs.map((doc) => this.mapToDomain(doc)),
+      docs.map((doc) => this.mapToDomain(doc as any)),
       totalItems,
       paginationOptions,
     );

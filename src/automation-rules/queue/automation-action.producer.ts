@@ -10,6 +10,7 @@ import {
   AutomationJobName,
   AutomationActionJobData,
 } from './automation-queue.constants';
+import { DEFAULT_JOB_OPTIONS } from '../../queue/config/default-job-options';
 
 /**
  * AutomationActionProducer — dispatches action jobs to typed BullMQ queues.
@@ -56,6 +57,7 @@ export class AutomationActionProducer {
     const queue = this.queueMap.get(data.actionType) || this.mainQueue;
 
     const job = await queue.add(jobName, data, {
+      ...DEFAULT_JOB_OPTIONS,
       // Priority: email/sms are higher priority than update-field
       priority: this.resolvePriority(data.actionType),
     });

@@ -17,6 +17,7 @@ import {
   UpdateRoutingRuleDto,
   ReorderRoutingRulesDto,
 } from './dto/routing-rule.dto';
+import { RequirePermission } from '../common/permissions/permission.decorator';
 
 @ApiTags('Routing Rules')
 @ApiBearerAuth()
@@ -25,32 +26,38 @@ export class RoutingRulesController {
   constructor(private readonly service: RoutingRulesService) {}
 
   @Get()
+  @RequirePermission('view', 'routing_rules')
   findAll() {
     return this.service.findAll();
   }
 
   @Get(':id')
+  @RequirePermission('view', 'routing_rules')
   findById(@Param('id') id: string) {
     return this.service.findById(id);
   }
 
   @Post()
+  @RequirePermission('create', 'routing_rules')
   create(@Body() dto: CreateRoutingRuleDto) {
     return this.service.create(dto);
   }
 
   @Patch(':id')
+  @RequirePermission('edit', 'routing_rules')
   update(@Param('id') id: string, @Body() dto: UpdateRoutingRuleDto) {
     return this.service.update(id, dto);
   }
 
   @Put('reorder')
+  @RequirePermission('edit', 'routing_rules')
   reorder(@Body() dto: ReorderRoutingRulesDto) {
     return this.service.reorder(dto.orderedIds);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission('delete', 'routing_rules')
   delete(@Param('id') id: string) {
     return this.service.delete(id);
   }

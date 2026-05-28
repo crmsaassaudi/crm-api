@@ -3,6 +3,7 @@ import { DealRepository } from './infrastructure/persistence/document/repositori
 import { Deal } from './domain/deal';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EntityAuditService } from '../common/audit/entity-audit.service';
 
 @Injectable()
 export class DealsService {
@@ -10,6 +11,7 @@ export class DealsService {
     private readonly repository: DealRepository,
     private readonly cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly entityAudit: EntityAuditService,
   ) {}
 
   async create(data: Partial<Deal>): Promise<Deal> {
@@ -48,21 +50,13 @@ export class DealsService {
 
     // Emit audit trail event: field-level change tracking
     if (updated) {
-      this.eventEmitter.emit('deal.updated', {
-        t: new Date(),
-        tenantId:
-          this.cls.get('activeTenantId') || this.cls.get('tenantId'),
-        entityId: id,
+      this.entityAudit.emit({
+        entity: 'deal',
         entityType: 'DEAL',
-        oldSnapshot: existingDeal
-          ? JSON.parse(JSON.stringify(existingDeal))
-          : {},
-        newSnapshot: JSON.parse(JSON.stringify(updated)),
-        actorId: this.getCurrentUserId(),
-        src: this.cls.get('executionSource') || 'M',
-        ctx: this.cls.get('sourceContext'),
-        ip: this.cls.get('requestIp'),
-        ua: this.cls.get('userAgent'),
+        entityId: id,
+        kind: 'updated',
+        oldSnapshot: existingDeal ?? {},
+        newSnapshot: updated,
       });
     }
 

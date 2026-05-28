@@ -21,6 +21,7 @@ import {
   MetaAuthUrlQueryDto,
   UpdateChannelDto,
 } from './dto/channel.dto';
+import { RequirePermission } from '../common/permissions/permission.decorator';
 
 @ApiTags('Channels')
 @ApiBearerAuth()
@@ -29,21 +30,25 @@ export class ChannelsController {
   constructor(private readonly service: ChannelsService) {}
 
   @Get()
+  @RequirePermission('view', 'channels')
   findAll() {
     return this.service.findAll();
   }
 
   @Get(':id')
+  @RequirePermission('view', 'channels')
   findById(@Param('id') id: string) {
     return this.service.findById(id);
   }
 
   @Post()
+  @RequirePermission('create', 'channels')
   create(@Body() dto: CreateChannelDto) {
     return this.service.create(dto);
   }
 
   @Get('meta/auth-url')
+  @RequirePermission('create', 'channels')
   getMetaAuthUrl(@Query() query: MetaAuthUrlQueryDto) {
     return this.service.buildMetaAuthUrl(query.type, query.openerOrigin);
   }
@@ -67,28 +72,33 @@ export class ChannelsController {
   }
 
   @Get('meta/oauth-result/:resultId')
+  @RequirePermission('view', 'channels')
   getMetaOAuthResult(@Param('resultId') resultId: string) {
     return this.service.getMetaOAuthResult(resultId);
   }
 
   @Post('meta/connect')
+  @RequirePermission('create', 'channels')
   connectMetaChannels(@Body() dto: ConnectMetaChannelsDto) {
     return this.service.connectMetaChannels(dto);
   }
 
   @Patch(':id')
+  @RequirePermission('edit', 'channels')
   update(@Param('id') id: string, @Body() dto: UpdateChannelDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission('delete', 'channels')
   delete(@Param('id') id: string) {
     return this.service.delete(id);
   }
 
   @Post(':id/disconnect')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('edit', 'channels')
   disconnect(@Param('id') id: string) {
     return this.service.disconnect(id);
   }

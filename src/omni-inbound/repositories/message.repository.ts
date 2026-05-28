@@ -91,13 +91,15 @@ export class MessageRepository {
     const skip = (safePage - 1) * limit;
 
     const [items, total] = await Promise.all([
-      this.model.find(filter).sort(sort).skip(skip).limit(limit).exec(),
+      this.model.find(filter).sort(sort).skip(skip).limit(limit).lean().exec(),
       this.model.countDocuments(filter).exec(),
     ]);
 
     // Reverse so oldest first for display
     const reversed = items.reverse();
-    const mappedItems = reversed.map((doc) => OmniMessageMapper.toDomain(doc));
+    const mappedItems = reversed.map((doc) =>
+      OmniMessageMapper.toDomain(doc as any),
+    );
 
     return pagination(mappedItems, total, { page: safePage, limit });
   }

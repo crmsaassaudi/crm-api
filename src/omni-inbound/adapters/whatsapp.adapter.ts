@@ -102,9 +102,14 @@ export class WhatsAppAdapter implements ChannelAdapter {
       return false;
     }
 
-    const payload = rawBody ?? Buffer.from(JSON.stringify(body));
+    if (!rawBody) {
+      this.logger.error(
+        'WhatsApp webhook missing rawBody — refusing to validate against a re-serialized payload',
+      );
+      return false;
+    }
     const expectedSignature =
-      'sha256=' + createHmac('sha256', appSecret).update(payload).digest('hex');
+      'sha256=' + createHmac('sha256', appSecret).update(rawBody).digest('hex');
 
     try {
       return timingSafeEqual(

@@ -4,6 +4,7 @@ import { Model, FilterQuery } from 'mongoose';
 import { TagSchemaClass, TagSchemaDocument } from '../entities/tag.schema';
 import { Tag } from '../../../../domain/tag';
 import { TagMapper } from '../mappers/tag.mapper';
+import { escapeRegex } from '../../../../../utils/escape-regex';
 
 @Injectable()
 export class TagRepository {
@@ -19,7 +20,7 @@ export class TagRepository {
     const filter: FilterQuery<TagSchemaClass> = { tenantId };
     if (query?.scope) filter.scope = query.scope;
     if (query?.search) {
-      filter.name = { $regex: query.search, $options: 'i' };
+      filter.name = { $regex: escapeRegex(query.search), $options: 'i' };
     }
     const docs = await this.model.find(filter).sort({ name: 1 }).exec();
     return docs.map(TagMapper.toDomain);

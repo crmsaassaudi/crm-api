@@ -4,6 +4,28 @@ import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 
 /**
+ * Deterministic JSON serializer. Sorts object keys recursively so two payloads
+ * with identical content but different key insertion orders produce identical
+ * bytes — necessary for HMAC signature verification to be stable.
+ */
+function stringifyCanonical(value: any): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return '[' + value.map((v) => stringifyCanonical(v)).join(',') + ']';
+  }
+  const keys = Object.keys(value).sort();
+  return (
+    '{' +
+    keys
+      .map((k) => JSON.stringify(k) + ':' + stringifyCanonical(value[k]))
+      .join(',') +
+    '}'
+  );
+}
+
+/**
  * Zalo OA webhook → OmniPayload adapter.
  *
  * Reference: https://developers.zalo.me/docs/official-account/webhook
@@ -75,8 +97,13 @@ export class ZaloAdapter implements ChannelAdapter {
    *
    * @see https://developers.zalo.me/docs/official-account/webhook/webhook-security
    */
-  validateWebhook(headers: Record<string, string>, body: any): boolean {
+  validateWebhook(
+    headers: Record<string, string>,
+    body: any,
+    _rawBody?: Buffer,
+  ): boolean {
     void headers;
+    void _rawBody;
     const mac = body?.mac;
     if (!mac) {
       this.logger.warn('Zalo webhook missing mac field');
@@ -92,9 +119,11 @@ export class ZaloAdapter implements ChannelAdapter {
       return false;
     }
 
-    // Zalo MAC is computed over specific payload fields (excluding the `mac` field itself)
+    // Zalo MAC is computed over specific payload fields (excluding the `mac` field itself).
+    // Use a canonical (sorted-key) JSON serializer so the signature is stable
+    // regardless of how the JSON parser ordered keys.
     const { mac: _mac, ...payloadWithoutMac } = body;
-    const dataToSign = JSON.stringify(payloadWithoutMac);
+    const dataToSign = stringifyCanonical(payloadWithoutMac);
     const expectedMac = createHmac('sha256', oaSecretKey)
       .update(dataToSign)
       .digest('hex');

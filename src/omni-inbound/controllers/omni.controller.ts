@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Throttle } from '@nestjs/throttler';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
 import { OutboundService } from '../../omni-outbound/outbound.service';
@@ -527,6 +528,11 @@ export class OmniController {
   }
 
   @Post('conversations/:id/messages')
+  // Per-tenant cap: 60 outbound messages / minute / user. Prevents one
+  // agent (or compromised session) from spam-sending across providers
+  // and tripping provider-side rate limits that would block the whole
+  // tenant.
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @RequirePermission('edit', 'contacts')
   @HttpCode(HttpStatus.CREATED)
   async sendMessage(
@@ -569,6 +575,7 @@ export class OmniController {
   }
 
   @Post('conversations/:id/email-reply')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @RequirePermission('edit', 'contacts')
   @HttpCode(HttpStatus.CREATED)
   async emailReply(
