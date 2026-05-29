@@ -37,7 +37,8 @@ jobs:
 
             export DOCKER_BUILDKIT=0
 
-            # Build image once; all 4 services share the same image tag.
-            docker build --pull -t crm-api:production .
-            docker compose -f docker-compose.yml up -d --no-build --remove-orphans api-service worker-service omni-worker-service email-worker-service
+            # Build image once, then run single all-in-one container.
+            # To scale: switch to docker-compose.scaled.yml
+            docker build --pull --progress=plain -t crm-api:production .
+            docker compose -f docker-compose.yml up -d --no-build --remove-orphans crm-api
             docker image prune -f
