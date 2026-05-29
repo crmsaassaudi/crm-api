@@ -41,4 +41,5 @@ jobs:
             # To scale: switch to docker-compose.scaled.yml
             docker build --pull -t crm-api:production .
             docker compose -f docker-compose.yml up -d --no-build --remove-orphans crm-api
+            docker container prune -f
             docker image prune -f

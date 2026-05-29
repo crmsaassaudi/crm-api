@@ -1,5 +1,10 @@
 import { Injectable, Optional } from '@nestjs/common';
-import { ThrottlerGuard, ThrottlerModuleOptions } from '@nestjs/throttler';
+import { Reflector } from '@nestjs/core';
+import {
+  ThrottlerGuard,
+  ThrottlerModuleOptions,
+  ThrottlerStorage,
+} from '@nestjs/throttler';
 import { ClsService } from 'nestjs-cls';
 
 /**
@@ -15,8 +20,8 @@ import { ClsService } from 'nestjs-cls';
 export class TenantThrottlerGuard extends ThrottlerGuard {
   constructor(
     options: ThrottlerModuleOptions,
-    storageService: any,
-    reflector: any,
+    storageService: ThrottlerStorage,
+    reflector: Reflector,
     @Optional() private readonly cls?: ClsService,
   ) {
     super(options, storageService, reflector);
