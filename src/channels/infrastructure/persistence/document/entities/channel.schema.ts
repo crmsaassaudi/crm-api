@@ -30,7 +30,8 @@ export class ChannelSchemaClass extends EntityDocumentHelper {
   })
   tenantId: string;
 
-  @Prop({ required: true, enum: CHANNEL_TYPES })
+  @Prop({
+    type: String, required: true, enum: CHANNEL_TYPES })
   type: string;
 
   @Prop({ required: true })
@@ -40,6 +41,7 @@ export class ChannelSchemaClass extends EntityDocumentHelper {
   account: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['Connected', 'Disconnected', 'Error', 'Pending'],
     default: 'Pending',

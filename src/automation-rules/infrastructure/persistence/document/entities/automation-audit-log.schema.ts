@@ -50,6 +50,7 @@ export class AutomationAuditLogSchemaClass {
   workflowName: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: [
       'created',

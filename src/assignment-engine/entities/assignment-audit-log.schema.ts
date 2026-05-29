@@ -19,7 +19,8 @@ export class AssignmentAuditLogSchemaClass {
   })
   tenantId: string;
 
-  @Prop({ required: true, enum: ['Contact', 'Ticket', 'Task', 'Deal'] })
+  @Prop({
+    type: String, required: true, enum: ['Contact', 'Ticket', 'Task', 'Deal'] })
   module: string;
 
   @Prop({ required: true })

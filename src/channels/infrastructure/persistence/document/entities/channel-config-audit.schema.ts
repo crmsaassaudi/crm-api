@@ -62,7 +62,8 @@ export class ChannelConfigAuditSchemaClass extends EntityDocumentHelper {
   })
   configId: string;
 
-  @Prop({ required: true, enum: AUDIT_ACTIONS })
+  @Prop({
+    type: String, required: true, enum: AUDIT_ACTIONS })
   action: string;
 
   /** Config name at time of action (preserved even after deletion) */

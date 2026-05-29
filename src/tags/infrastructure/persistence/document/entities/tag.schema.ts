@@ -26,6 +26,7 @@ export class TagSchemaClass extends EntityDocumentHelper {
   color: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['Contact', 'Account', 'Deal', 'Ticket', 'Conversation', 'Task'],
   })

@@ -21,6 +21,7 @@ export class AssignmentSettingSchemaClass extends EntityDocumentHelper {
   tenantId: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['Contact', 'Ticket', 'Task', 'Deal'],
   })
@@ -31,6 +32,7 @@ export class AssignmentSettingSchemaClass extends EntityDocumentHelper {
   autoAssignEnabled: boolean;
 
   @Prop({
+    type: String,
     default: 'round-robin',
     enum: ['round-robin', 'least-busy', 'manual'],
   })

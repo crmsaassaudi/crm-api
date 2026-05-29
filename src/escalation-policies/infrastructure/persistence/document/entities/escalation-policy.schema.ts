@@ -23,6 +23,7 @@ export class EscalationPolicySchemaClass extends EntityDocumentHelper {
   slaId: Types.ObjectId;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['warning', 'breach'],
   })
@@ -36,6 +37,7 @@ export class EscalationPolicySchemaClass extends EntityDocumentHelper {
   escalateAfter: number;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['minutes', 'hours'],
     default: 'minutes',

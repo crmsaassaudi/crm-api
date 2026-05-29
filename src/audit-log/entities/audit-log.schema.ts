@@ -47,7 +47,8 @@ export class AuditLogSchemaClass {
    *   B   = Bot
    *   S   = System (migration, script)
    */
-  @Prop({ required: true, enum: ['M', 'A', 'A_F', 'B', 'S'] })
+  @Prop({
+    type: String, required: true, enum: ['M', 'A', 'A_F', 'B', 'S'] })
   src: string;
 
   @Prop({ type: MongooseSchema.Types.Mixed })

@@ -20,10 +20,12 @@ export class ProvisioningJobSchemaClass {
   @Prop({ required: true, unique: true, index: true })
   provisioningId: string;
 
-  @Prop({ required: true, enum: ['PLG', 'SLG'] })
+  @Prop({
+    type: String, required: true, enum: ['PLG', 'SLG'] })
   source: 'PLG' | 'SLG';
 
   @Prop({
+    type: String,
     required: true,
     enum: ['QUEUED', 'PROVISIONING', 'READY', 'FAILED'],
     index: true,

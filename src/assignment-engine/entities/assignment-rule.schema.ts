@@ -21,6 +21,7 @@ export class AssignmentRuleSchemaClass extends EntityDocumentHelper {
   tenantId: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['Contact', 'Ticket', 'Task', 'Deal'],
   })
@@ -32,7 +33,8 @@ export class AssignmentRuleSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, default: 0 })
   priority: number;
 
-  @Prop({ required: true, enum: ['all', 'any'], default: 'all' })
+  @Prop({
+    type: String, required: true, enum: ['all', 'any'], default: 'all' })
   matchType: string;
 
   @Prop({

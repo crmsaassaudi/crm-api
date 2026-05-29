@@ -47,6 +47,7 @@ export class AssignmentAuditLogSchemaClass extends EntityDocumentHelper {
   assignedAgentId: string | null;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['round-robin', 'least-busy', 'capacity-based', 'manual', 'queue'],
   })
@@ -64,7 +65,8 @@ export class AssignmentAuditLogSchemaClass extends EntityDocumentHelper {
   metadata: Record<string, any>;
 
   /** Whether the assignment was successful or the conversation went to queue */
-  @Prop({ required: true, enum: ['assigned', 'queued', 'failed'] })
+  @Prop({
+    type: String, required: true, enum: ['assigned', 'queued', 'failed'] })
   outcome: string;
 }
 

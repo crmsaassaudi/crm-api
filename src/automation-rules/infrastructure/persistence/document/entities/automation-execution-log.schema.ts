@@ -59,12 +59,14 @@ export class AutomationExecutionLogSchemaClass {
   recordId: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'],
   })
   recordType: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: [
       'running',

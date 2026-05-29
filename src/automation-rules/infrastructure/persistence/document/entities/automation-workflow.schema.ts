@@ -60,6 +60,7 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
   description: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['draft', 'active', 'paused'],
     default: 'draft',

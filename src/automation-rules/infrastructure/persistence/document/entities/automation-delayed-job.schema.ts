@@ -32,6 +32,7 @@ export class AutomationDelayedJobSchemaClass {
   jobKey: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: [
       'pending',
@@ -68,6 +69,7 @@ export class AutomationDelayedJobSchemaClass {
   recordId: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'],
   })

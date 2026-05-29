@@ -23,6 +23,7 @@ export class SlaPolicySchemaClass extends EntityDocumentHelper {
   name: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['first_response', 'resolution', 'next_response'],
   })

@@ -50,7 +50,8 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, index: true })
   channelAccount: string;
 
-  @Prop({ required: true, enum: CHANNEL_TYPES })
+  @Prop({
+    type: String, required: true, enum: CHANNEL_TYPES })
   channelType: string;
 
   /**
@@ -112,6 +113,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
    * - 'closed': permanently archived
    */
   @Prop({
+    type: String,
     required: true,
     enum: CONVERSATION_STATUSES,
     default: 'open',
