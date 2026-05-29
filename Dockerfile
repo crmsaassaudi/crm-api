@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1
+# NOTE: If buildx is unavailable, remove the syntax directive above
+# and the --mount flags below, then set DOCKER_BUILDKIT=0.
 
 FROM node:22.21.1-alpine AS base
 
@@ -9,8 +11,7 @@ ENV HUSKY=0
 FROM base AS deps
 
 COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --legacy-peer-deps --no-audit --fund=false
+RUN npm ci --legacy-peer-deps --no-audit --fund=false
 
 FROM deps AS build
 
@@ -24,8 +25,7 @@ ENV NODE_ENV=production
 RUN apk add --no-cache ffmpeg
 
 COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev --legacy-peer-deps --no-audit --fund=false
+RUN npm ci --omit=dev --legacy-peer-deps --no-audit --fund=false
 
 COPY --chown=node:node --from=build /usr/src/app/dist ./dist
 
