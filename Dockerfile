@@ -17,10 +17,12 @@ COPY . .
 RUN npm run build
 
 # ── Stage 3: Prune dev-dependencies in-place ─────────────────────────
-#    Re-uses the node_modules from 'deps' stage instead of running
-#    a second npm ci, which was the main cause of the 45-min build.
-FROM deps AS prod-deps
+#    Copies node_modules from 'deps' stage instead of FROM deps (which
+#    can fail with "No such image" when Docker GCs the intermediate layer).
+FROM base AS prod-deps
 
+COPY --from=deps /usr/src/app/node_modules ./node_modules
+COPY --from=deps /usr/src/app/package*.json ./
 RUN npm prune --omit=dev --legacy-peer-deps
 
 # ── Stage 4: Production image ────────────────────────────────────────
