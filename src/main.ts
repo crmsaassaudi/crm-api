@@ -23,7 +23,10 @@ import helmet from 'helmet';
 import { json, urlencoded } from 'express';
 
 async function bootstrap() {
-  process.env.APP_RUNTIME = 'api';
+  // In scaled mode, docker-compose sets APP_RUNTIME=api explicitly.
+  // In all-in-one mode (docker-compose.yml), APP_RUNTIME is intentionally
+  // UNSET so runtime-role.ts detects 'all-in-one' and registers ALL
+  // BullMQ processors in this single process.
   // Best-effort Sentry init BEFORE AppModule loads so we capture
   // exceptions thrown during DI bootstrap.
   const { initSentryIfConfigured } = await import(

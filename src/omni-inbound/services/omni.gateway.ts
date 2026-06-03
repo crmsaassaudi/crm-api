@@ -25,7 +25,7 @@ import { ConversationLockService } from './conversation-lock.service';
 import { ulid } from 'ulid';
 import Redis from 'ioredis';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
-import { isAnyWorkerRuntime } from '../../config/runtime-role';
+import { isDedicatedWorkerProcess } from '../../config/runtime-role';
 
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
@@ -86,7 +86,7 @@ export class OmniGateway
    * receives them here and broadcasts via Socket.IO.
    */
   onModuleInit() {
-    if (isAnyWorkerRuntime()) return; // Only API process needs to subscribe
+    if (isDedicatedWorkerProcess()) return; // Only API/all-in-one process needs to subscribe
 
     const sub = this.redis.duplicate();
     sub.subscribe(...this.socketEventChannels, (err) => {
@@ -427,7 +427,7 @@ export class OmniGateway
    */
   @OnEvent('omni.message.persisted')
   async handleInboundMessage(payload: any) {
-    if (isAnyWorkerRuntime()) {
+    if (isDedicatedWorkerProcess()) {
       await this.publishSocketEvent('socket:omni:message:persisted', payload);
       return;
     }
@@ -459,7 +459,7 @@ export class OmniGateway
     tenantId: string;
     conversation: any;
   }) {
-    if (isAnyWorkerRuntime()) {
+    if (isDedicatedWorkerProcess()) {
       await this.publishSocketEvent('socket:omni:conversation:created', event);
       return;
     }
@@ -486,7 +486,7 @@ export class OmniGateway
     tenantId: string;
     conversation: any;
   }) {
-    if (isAnyWorkerRuntime()) {
+    if (isDedicatedWorkerProcess()) {
       await this.publishSocketEvent('socket:omni:conversation:reopened', event);
       return;
     }
@@ -514,7 +514,7 @@ export class OmniGateway
     conversationId: string;
     customer: any;
   }) {
-    if (isAnyWorkerRuntime()) {
+    if (isDedicatedWorkerProcess()) {
       await this.publishSocketEvent(
         'socket:omni:conversation:customer_updated',
         event,
@@ -553,7 +553,7 @@ export class OmniGateway
     messageId: string;
     mediaProxyUrl: string;
   }) {
-    if (isAnyWorkerRuntime()) {
+    if (isDedicatedWorkerProcess()) {
       await this.publishSocketEvent('socket:omni:message:media_cached', event);
       return;
     }
