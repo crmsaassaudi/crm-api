@@ -60,12 +60,17 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   senderAvatarUrl?: string;
 
   @Prop({
-    type: String, required: true, enum: SENDER_TYPES })
+    type: String,
+    required: true,
+    enum: SENDER_TYPES,
+  })
   senderType: string;
 
   /** Message traffic direction. Set by application logic for new records. */
   @Prop({
-    type: String, enum: MESSAGE_DIRECTIONS })
+    type: String,
+    enum: MESSAGE_DIRECTIONS,
+  })
   direction?: string;
 
   /** Business origin of the outbound message, e.g. agent_ui, crm_api, bot, job, automation */
@@ -73,7 +78,10 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   source?: string;
 
   @Prop({
-    type: String, required: true, enum: MESSAGE_TYPES })
+    type: String,
+    required: true,
+    enum: MESSAGE_TYPES,
+  })
   messageType: string;
 
   @Prop({ default: '' })

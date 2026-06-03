@@ -178,11 +178,11 @@ function bullBoardBasicAuth() {
     infrastructureDatabaseModule,
     ThrottlerModule.forRoot([
       // Burst protection: block aggressive bots hammering in quick succession
-      { name: 'burst',  ttl: 1_000,    limit: 10  },
+      { name: 'burst', ttl: 1_000, limit: 10 },
       // Standard: 100 requests per minute per IP (existing behaviour)
-      { name: 'medium', ttl: 60_000,   limit: 100 },
+      { name: 'medium', ttl: 60_000, limit: 100 },
       // Long-term: prevent sustained low-rate abuse (e.g., credential stuffing)
-      { name: 'long',   ttl: 900_000,  limit: 500 },
+      { name: 'long', ttl: 900_000, limit: 500 },
     ]),
     BullBoardModule.forRoot({
       route: '/queues',

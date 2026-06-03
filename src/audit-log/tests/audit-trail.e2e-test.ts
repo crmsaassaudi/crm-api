@@ -124,16 +124,8 @@ async function testContactUpdateAudit() {
     const latest = entries[0];
 
     // Verify fields
-    assert(
-      'Has timestamp (t)',
-      !!latest.t,
-      `t = ${latest.t}`,
-    );
-    assert(
-      'Has execution source (src)',
-      !!latest.src,
-      `src = ${latest.src}`,
-    );
+    assert('Has timestamp (t)', !!latest.t, `t = ${latest.t}`);
+    assert('Has execution source (src)', !!latest.src, `src = ${latest.src}`);
     assert(
       'Source is Manual (M)',
       latest.src === 'M',
@@ -151,7 +143,9 @@ async function testContactUpdateAudit() {
     );
 
     // Verify field-level diff
-    const firstNameChange = latest.changes.find((c: any) => c.f === 'firstName');
+    const firstNameChange = latest.changes.find(
+      (c: any) => c.f === 'firstName',
+    );
     assert(
       'firstName change detected',
       !!firstNameChange,
@@ -296,10 +290,14 @@ async function testLongTextTruncation() {
 
   const entries = auditRes.data?.data || [];
   if (entries.length > 0) {
-    const addressChange = entries[0].changes.find((c: any) => c.f === 'address');
+    const addressChange = entries[0].changes.find(
+      (c: any) => c.f === 'address',
+    );
     assert(
       'Long text is truncated',
-      !!addressChange && typeof addressChange.n === 'string' && addressChange.n.startsWith('[Text Modified:'),
+      !!addressChange &&
+        typeof addressChange.n === 'string' &&
+        addressChange.n.startsWith('[Text Modified:'),
       addressChange
         ? `Truncated to: ${addressChange.n.slice(0, 60)}...`
         : 'address change not found',
@@ -320,7 +318,9 @@ async function main() {
   console.log('╚════════════════════════════════════════════════╝');
 
   if (!AUTH_COOKIE) {
-    console.log('\n⚠️  WARNING: AUTH_COOKIE not set. Auth-required tests will fail.');
+    console.log(
+      '\n⚠️  WARNING: AUTH_COOKIE not set. Auth-required tests will fail.',
+    );
     console.log('   Set: $env:AUTH_COOKIE = "sid=<value>"');
   }
 
@@ -335,7 +335,9 @@ async function main() {
   const total = results.length;
 
   console.log('\n╔════════════════════════════════════════════════╗');
-  console.log(`║   RESULTS: ${passed}/${total} passed, ${failed} failed`.padEnd(49) + '║');
+  console.log(
+    `║   RESULTS: ${passed}/${total} passed, ${failed} failed`.padEnd(49) + '║',
+  );
   console.log('╚════════════════════════════════════════════════╝');
 
   if (failed > 0) {

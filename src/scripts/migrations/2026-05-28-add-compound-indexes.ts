@@ -117,9 +117,7 @@ async function main() {
       const existing = await db.collection(spec.collection).indexes();
       const conflict = existing.find((idx) => idx.name === spec.name);
       if (conflict) {
-        console.log(
-          `[skip] ${spec.collection}.${spec.name} already exists`,
-        );
+        console.log(`[skip] ${spec.collection}.${spec.name} already exists`);
         skipped++;
         continue;
       }

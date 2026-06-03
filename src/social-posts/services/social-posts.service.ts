@@ -269,15 +269,10 @@ export class SocialContentAssetsService {
       throw new NotFoundException('Social content asset version not found');
     }
 
-    this.recordAssetAudit(
-      tenantId,
-      assetId,
-      'SOCIAL_ASSET_VERSION_APPROVED',
-      {
-        actorId: userId,
-        metadata: { versionId, versionNumber: version.versionNumber },
-      },
-    );
+    this.recordAssetAudit(tenantId, assetId, 'SOCIAL_ASSET_VERSION_APPROVED', {
+      actorId: userId,
+      metadata: { versionId, versionNumber: version.versionNumber },
+    });
 
     return approved;
   }
@@ -306,19 +301,14 @@ export class SocialContentAssetsService {
       throw new NotFoundException('Social content asset version not found');
     }
 
-    this.recordAssetAudit(
-      tenantId,
-      assetId,
-      'SOCIAL_ASSET_VERSION_REJECTED',
-      {
-        actorId: userId,
-        metadata: {
-          versionId,
-          versionNumber: version.versionNumber,
-          reason: dto.reason,
-        },
+    this.recordAssetAudit(tenantId, assetId, 'SOCIAL_ASSET_VERSION_REJECTED', {
+      actorId: userId,
+      metadata: {
+        versionId,
+        versionNumber: version.versionNumber,
+        reason: dto.reason,
       },
-    );
+    });
 
     return rejected;
   }

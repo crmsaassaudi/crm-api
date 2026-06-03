@@ -10,7 +10,10 @@ import {
   UseInterceptors,
   UsePipes,
   Res,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import type { Response } from 'express';
 import { ContactsService } from './contacts.service';
 import { Contact } from './domain/contact';
@@ -29,6 +32,8 @@ import { UpdateContactDto } from './dto/update-contact.dto';
 import { QueryContactDto } from './dto/query-contact.dto';
 import { CheckDuplicateContactDto } from './dto/check-duplicate-contact.dto';
 import { ExportContactsDto } from './dto/export-contacts.dto';
+import { StartImportDto } from './dto/start-import.dto';
+import { IMPORT_MAX_FILE_BYTES } from './contacts.constants';
 import { ChangeStageDto } from './dto/change-stage.dto';
 import { SubResourceQueryDto } from './dto/sub-resource-query.dto';
 import { ListViewsService } from '../list-views/list-views.service';
@@ -127,6 +132,53 @@ export class ContactsController {
     res.end(file.buffer);
   }
 
+  // ──────────────────────────── CONTACT IMPORT ────────────────────────────
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('import-upload')
+  @RequirePermission('create', 'contacts')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: IMPORT_MAX_FILE_BYTES },
+    }),
+  )
+  uploadImportFile(@UploadedFile() file: Express.Multer.File) {
+    return this.service.uploadImportFile(file);
+  }
+
+  // Tighter than export (limit:10) — a single import job is far heavier.
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post('import')
+  @RequirePermission('create', 'contacts')
+  startImport(@Body() body: StartImportDto) {
+    return this.service.startImport(body);
+  }
+
+  @Get('import-status/:jobId')
+  @RequirePermission('create', 'contacts')
+  getImportStatus(@Param('jobId') jobId: string) {
+    return this.service.getImportStatus(jobId);
+  }
+
+  @Get('import-report/:token')
+  @RequirePermission('create', 'contacts')
+  async downloadImportReport(
+    @Param('token') token: string,
+    @Res() res: Response,
+  ) {
+    const file = await this.service.getImportReport(token);
+    const safeFilename = file.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${safeFilename}"`,
+    );
+    res.setHeader('Content-Length', String(file.buffer.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(file.buffer);
+  }
+
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('bulk-tag')
   @RequirePermission('edit', 'contacts')
@@ -213,10 +265,7 @@ export class ContactsController {
 
   @Post(':id/change-stage')
   @RequirePermission('edit', 'contacts')
-  changeStage(
-    @Param('id') id: string,
-    @Body() body: ChangeStageDto,
-  ) {
+  changeStage(@Param('id') id: string, @Body() body: ChangeStageDto) {
     return this.service.changeStage(id, body.stage, body);
   }
 

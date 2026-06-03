@@ -15,9 +15,7 @@ import { CustomFieldsCacheService } from '../services/custom-fields-cache.servic
  */
 @Injectable()
 export class CustomFieldsCacheInvalidationListener {
-  constructor(
-    private readonly customFieldsCache: CustomFieldsCacheService,
-  ) {}
+  constructor(private readonly customFieldsCache: CustomFieldsCacheService) {}
 
   @OnEvent('custom_field.config_updated', { async: true })
   async handleConfigUpdated(payload: {

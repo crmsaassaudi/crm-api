@@ -34,7 +34,8 @@ export class NoteRepository {
 
   private getTenantId(): string {
     const tenantId =
-      this.cls.get<string>('activeTenantId') || this.cls.get<string>('tenantId');
+      this.cls.get<string>('activeTenantId') ||
+      this.cls.get<string>('tenantId');
     if (!tenantId) {
       throw new Error(
         'NoteRepository: missing tenant context — refusing to query',

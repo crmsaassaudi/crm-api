@@ -73,9 +73,7 @@ export class UserKeycloakSyncService {
   async rollbackUser(keycloakUserId: string): Promise<void> {
     try {
       await this.kcAdmin.deleteUser(keycloakUserId);
-      this.logger.warn(
-        `[UserKcSync] Rolled back KC user ${keycloakUserId}`,
-      );
+      this.logger.warn(`[UserKcSync] Rolled back KC user ${keycloakUserId}`);
     } catch (err: any) {
       this.logger.error(
         `[UserKcSync] Rollback failed for ${keycloakUserId}: ${err?.message ?? err}`,

@@ -70,7 +70,10 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
    * OUTSIDE the process() CLS context (BullMQ event callback).
    */
   @OnWorkerEvent('failed')
-  override async onFailed(job: Job<AutomationDelayedQueueJobData>, error: Error) {
+  override async onFailed(
+    job: Job<AutomationDelayedQueueJobData>,
+    error: Error,
+  ) {
     await super.onFailed(job, error);
 
     const attemptsRemaining = (job.opts?.attempts ?? 1) - job.attemptsMade;

@@ -45,10 +45,7 @@ export default registerAs<RedisConfig>('redis', () => {
     host: parsed.host || process.env.REDIS_HOST || 'localhost',
     port: parsed.port ?? parseInt(process.env.REDIS_PORT || '6379', 10),
     password: parsed.password || process.env.REDIS_PASSWORD || undefined,
-    db:
-      parsed.db ??
-      parseOptionalInt(process.env.REDIS_DB) ??
-      0,
+    db: parsed.db ?? parseOptionalInt(process.env.REDIS_DB) ?? 0,
     cacheDb: parseOptionalInt(process.env.REDIS_CACHE_DB) ?? 2,
     ttl: process.env.REDIS_TTL ? parseInt(process.env.REDIS_TTL, 10) : 86400, // 24 hours default
   };

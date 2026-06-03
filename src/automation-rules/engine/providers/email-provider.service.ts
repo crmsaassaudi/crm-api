@@ -47,10 +47,7 @@ export class SendGridEmailProvider implements EmailProviderService {
     this.fromName = process.env.SENDGRID_FROM_NAME || 'CRM Automation';
     this.isDryRun = !apiKey;
 
-    if (
-      !this.isDryRun &&
-      this.fromEmail === 'noreply@crm.local'
-    ) {
+    if (!this.isDryRun && this.fromEmail === 'noreply@crm.local') {
       this.logger.error(
         '[EmailProvider] SENDGRID_FROM_EMAIL is not configured — emails will fail DKIM/DMARC validation!',
       );

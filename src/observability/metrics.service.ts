@@ -69,10 +69,7 @@ export class MetricsService {
     const key = JSON.stringify(labels);
     const existing = this.httpMetrics.get(key);
 
-    if (
-      !existing &&
-      this.httpMetrics.size >= MAX_METRIC_CARDINALITY
-    ) {
+    if (!existing && this.httpMetrics.size >= MAX_METRIC_CARDINALITY) {
       if (!this.overflowWarned) {
         this.logger.warn(
           `MetricsService cardinality cap hit (${MAX_METRIC_CARDINALITY}); ` +

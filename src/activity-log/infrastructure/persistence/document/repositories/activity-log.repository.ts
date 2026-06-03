@@ -51,7 +51,16 @@ export class ActivityLogRepository extends BaseDocumentRepository<
       targetId: params.targetId,
       // Exclude legacy system events that were incorrectly stored as activities.
       // These records remain in DB for historical reference but are filtered from UI.
-      event: { $nin: ['stage_change', 'deleted', 'fields_unmasked', 'bulk_tagged', 'export_downloaded', 'export'] },
+      event: {
+        $nin: [
+          'stage_change',
+          'deleted',
+          'fields_unmasked',
+          'bulk_tagged',
+          'export_downloaded',
+          'export',
+        ],
+      },
     };
 
     if (params.event) {

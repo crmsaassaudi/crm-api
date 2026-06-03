@@ -21,7 +21,10 @@ export class ProvisioningJobSchemaClass {
   provisioningId: string;
 
   @Prop({
-    type: String, required: true, enum: ['PLG', 'SLG'] })
+    type: String,
+    required: true,
+    enum: ['PLG', 'SLG'],
+  })
   source: 'PLG' | 'SLG';
 
   @Prop({

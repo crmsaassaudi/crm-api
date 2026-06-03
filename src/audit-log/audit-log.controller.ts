@@ -1,5 +1,11 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { ClsService } from 'nestjs-cls';
 import { RequirePermission } from '../common/permissions/permission.decorator';
 import { AuditLogService } from './audit-log.service';
@@ -30,8 +36,7 @@ export class AuditLogController {
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
   ) {
-    const tenantId =
-      this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
 
     return this.auditLogService.getAuditLogs({
       tenantId,

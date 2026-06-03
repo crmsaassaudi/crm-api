@@ -177,4 +177,3 @@ export class WhatsAppAdapter implements ChannelAdapter {
     return Promise.resolve({ message_id: `wa_out_${Date.now()}` });
   }
 }
-

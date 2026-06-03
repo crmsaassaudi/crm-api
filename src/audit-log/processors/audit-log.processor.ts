@@ -31,8 +31,18 @@ export class AuditLogProcessor extends WorkerHost {
   }
 
   async process(job: Job<AuditQueueJobData>): Promise<void> {
-    const { t, tenantId, entityType, entityId, actorId, src, ctx, ip, ua, changes } =
-      job.data;
+    const {
+      t,
+      tenantId,
+      entityType,
+      entityId,
+      actorId,
+      src,
+      ctx,
+      ip,
+      ua,
+      changes,
+    } = job.data;
 
     // t comes from payload (actual request time), NOT new Date()
     // changes[] already computed at Listener — worker only persists
@@ -52,13 +62,13 @@ export class AuditLogProcessor extends WorkerHost {
 
   @OnWorkerEvent('failed')
   onFailed(job: Job, error: Error) {
-    this.logger.error(
-      `[AuditQueue] Job ${job.id} failed: ${error.message}`,
-    );
+    this.logger.error(`[AuditQueue] Job ${job.id} failed: ${error.message}`);
   }
 
   @OnWorkerEvent('completed')
   onCompleted(job: Job) {
-    this.logger.log(`[AuditQueue] Job ${job.id} completed — ${job.data?.entityType}:${job.data?.entityId}`);
+    this.logger.log(
+      `[AuditQueue] Job ${job.id} completed — ${job.data?.entityType}:${job.data?.entityId}`,
+    );
   }
 }

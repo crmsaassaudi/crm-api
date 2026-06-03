@@ -163,7 +163,9 @@ import { isWorkerRuntime, isEmailWorkerRuntime } from '../config/runtime-role';
     AdapterRegistryService,
 
     // Phase 2: Health Check & Alert
-    ...((isWorkerRuntime() || isEmailWorkerRuntime()) ? [ChannelHealthCheckService] : []),
+    ...(isWorkerRuntime() || isEmailWorkerRuntime()
+      ? [ChannelHealthCheckService]
+      : []),
     ChannelAlertService,
 
     // Phase 3: Transport Pool (LRU cache for decrypted credentials)

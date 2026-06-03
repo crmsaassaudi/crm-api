@@ -35,9 +35,7 @@ export class AuditLogService {
 
     if (cursor) {
       try {
-        const { t, _id } = JSON.parse(
-          Buffer.from(cursor, 'base64').toString(),
-        );
+        const { t, _id } = JSON.parse(Buffer.from(cursor, 'base64').toString());
         const objectId = new Types.ObjectId(_id);
         where.$or = [
           { t: { $lt: new Date(t) } },
@@ -76,7 +74,10 @@ export class AuditLogService {
       ),
     ];
 
-    let actorMap: Record<string, { firstName?: string; lastName?: string; email?: string; photo?: any }> = {};
+    let actorMap: Record<
+      string,
+      { firstName?: string; lastName?: string; email?: string; photo?: any }
+    > = {};
     if (actorIds.length > 0) {
       try {
         const validIds = actorIds
@@ -84,9 +85,18 @@ export class AuditLogService {
           .map((id) => new Types.ObjectId(id as string));
 
         if (validIds.length > 0) {
-          const users = await this.userModel
-            .find({ _id: { $in: validIds } }, { firstName: 1, lastName: 1, email: 1, photo: 1 })
-            .lean() as Array<{ _id: any; firstName?: string; lastName?: string; email?: string; photo?: any }>;
+          const users = (await this.userModel
+            .find(
+              { _id: { $in: validIds } },
+              { firstName: 1, lastName: 1, email: 1, photo: 1 },
+            )
+            .lean()) as Array<{
+            _id: any;
+            firstName?: string;
+            lastName?: string;
+            email?: string;
+            photo?: any;
+          }>;
 
           for (const u of users) {
             actorMap[u._id.toString()] = {
@@ -113,7 +123,10 @@ export class AuditLogService {
         _id: idStr,
         actor: actor
           ? {
-              name: [actor.firstName, actor.lastName].filter(Boolean).join(' ') || actor.email || null,
+              name:
+                [actor.firstName, actor.lastName].filter(Boolean).join(' ') ||
+                actor.email ||
+                null,
               email: actor.email || null,
               photo: actor.photo?.url ?? actor.photo ?? null,
             }

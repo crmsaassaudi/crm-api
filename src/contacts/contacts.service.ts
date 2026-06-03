@@ -28,12 +28,18 @@ import {
 import { ContactExportStorageService } from './contact-export-storage.service';
 import {
   CONTACT_EXPORT_QUEUE,
+  CONTACT_IMPORT_QUEUE,
   DEFAULT_LIFECYCLE_STAGES,
+  IMPORT_MAX_FILE_BYTES,
   MAX_BULK_TAG_SIZE,
   UNMASK_TTL_SECONDS,
 } from './contacts.constants';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { EntityAuditService } from '../common/audit/entity-audit.service';
+import { StartImportDto } from './dto/start-import.dto';
+import { createParser, detectFormat } from './import/import-parser.factory';
+import { ImportTenantSettings } from './contact-import.processor';
+import { Readable } from 'stream';
 
 @Injectable()
 export class ContactsService {
@@ -51,6 +57,8 @@ export class ContactsService {
     private readonly entityAudit: EntityAuditService,
     @InjectQueue(CONTACT_EXPORT_QUEUE)
     private readonly exportQueue: Queue,
+    @InjectQueue(CONTACT_IMPORT_QUEUE)
+    private readonly importQueue: Queue,
   ) {}
 
   async create(data: CreateContactDto): Promise<Contact> {
@@ -631,6 +639,147 @@ export class ContactsService {
     return this.exportStorageService.readLocalExport(token);
   }
 
+  // ──────────────────────────── CONTACT IMPORT ────────────────────────────
+
+  /**
+   * Store an uploaded .csv/.xlsx and return its storage key plus the parsed
+   * header row so the client can build the field-mapping UI.
+   */
+  async uploadImportFile(file: {
+    buffer: Buffer;
+    originalname: string;
+    size: number;
+  }): Promise<{ fileKey: string; format: string; headers: string[] }> {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+    if (file.size > IMPORT_MAX_FILE_BYTES) {
+      throw new BadRequestException(
+        `File exceeds the ${IMPORT_MAX_FILE_BYTES / (1024 * 1024)}MB limit`,
+      );
+    }
+    const format = detectFormat(file.originalname);
+
+    // Parse just the header row before persisting so we fail fast on garbage.
+    const parser = createParser(format);
+    const headers = await parser.readHeaders(Readable.from(file.buffer));
+    if (headers.length === 0) {
+      throw new BadRequestException('File has no header row');
+    }
+
+    const { fileKey } = await this.exportStorageService.storeImportFile({
+      buffer: file.buffer,
+      originalname: file.originalname,
+    });
+
+    return { fileKey, format, headers };
+  }
+
+  async startImport(
+    dto: StartImportDto,
+  ): Promise<{ jobId: string; status: 'queued' }> {
+    // 1. Required-field mapping: schema marks firstName + lastName required.
+    const mappedFields = new Set(Object.values(dto.mapping ?? {}));
+    if (!mappedFields.has('firstName') || !mappedFields.has('lastName')) {
+      throw new BadRequestException(
+        'mapping must include both firstName and lastName',
+      );
+    }
+
+    // 2. Dedup matching fields must be index-backed (emails / phones only).
+    if (dto.deduplication) {
+      const allowed = new Set(['emails', 'phones']);
+      const bad = dto.deduplication.matchingFields.filter(
+        (f) => !allowed.has(f),
+      );
+      if (bad.length) {
+        throw new BadRequestException(
+          `Unsupported dedup matchingFields: ${bad.join(', ')}`,
+        );
+      }
+      // A dedup field is meaningless unless some column maps onto it.
+      const missing = dto.deduplication.matchingFields.filter(
+        (f) => !mappedFields.has(f),
+      );
+      if (missing.length) {
+        throw new BadRequestException(
+          `Dedup field(s) [${missing.join(', ')}] are not present in the column mapping`,
+        );
+      }
+    }
+
+    // 3. The uploaded file must still exist in storage.
+    const exists = await this.exportStorageService.importFileExists(
+      dto.fileKey,
+    );
+    if (!exists) {
+      throw new BadRequestException(
+        'fileKey not found in storage — upload the file again',
+      );
+    }
+
+    // 4. Snapshot tenant identity settings AT ENQUEUE TIME so the worker never
+    //    queries crm_settings inside its hot loop (latency + consistency).
+    const identity =
+      (await this.settingsService.getSetting('contact_identity')) ?? {};
+    const tenantSettings: ImportTenantSettings = {
+      uniqueEmail: identity.uniqueEmail ?? true,
+      uniquePhone: identity.uniquePhone ?? true,
+      multipleEmailsAllowed: identity.multipleEmailsAllowed ?? false,
+      multiplePhonesAllowed: identity.multiplePhonesAllowed ?? false,
+    };
+
+    const job = await this.importQueue.add('import', {
+      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
+      userId: this.getCurrentUserId(),
+      fileKey: dto.fileKey,
+      mapping: dto.mapping,
+      deduplication: dto.deduplication,
+      dryRun: dto.dryRun ?? false,
+      triggerAutomations: dto.triggerAutomations ?? false,
+      estimatedRows: dto.estimatedRows,
+      tenantSettings,
+    });
+
+    return { jobId: String(job.id), status: 'queued' };
+  }
+
+  async getImportStatus(jobId: string): Promise<{
+    status: string;
+    progress: unknown;
+    result: any;
+    failedReason?: string;
+  }> {
+    const job = await this.importQueue.getJob(jobId);
+    if (!job) {
+      throw new NotFoundException('Import job not found');
+    }
+
+    // Same ownership guard as export: a job is only visible to the tenant +
+    // user that created it.
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId();
+    if (
+      String(job.data?.tenantId ?? '') !== String(tenantId ?? '') ||
+      (job.data?.userId && String(job.data.userId) !== String(userId ?? ''))
+    ) {
+      throw new NotFoundException('Import job not found');
+    }
+
+    return {
+      status: await job.getState(),
+      progress: job.progress,
+      result: job.returnvalue,
+      failedReason: job.failedReason,
+    };
+  }
+
+  getImportReport(
+    token: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    return this.exportStorageService.readLocalReport(token);
+  }
+
   async mergeContacts(
     primaryId: string,
     targetId: string,
@@ -729,7 +878,6 @@ export class ContactsService {
       },
     });
 
-
     return {
       success: true,
       contact: merged!,
@@ -758,8 +906,6 @@ export class ContactsService {
     // Fire-and-forget — errors are caught by the listener
     this.eventEmitter.emit(buildAutomationEventName(event, 'Contact'), payload);
   }
-
-
 
   private emitActivityLog(input: {
     targetType: string;

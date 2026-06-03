@@ -14,7 +14,10 @@ import { AuditLogController } from './audit-log.controller';
 import { AuditLogProcessor } from './processors/audit-log.processor';
 import { CustomFieldsCacheService } from './services/custom-fields-cache.service';
 import { CustomFieldsCacheInvalidationListener } from './listeners/custom-fields-cache-invalidation.listener';
-import { UserSchemaClass, UserSchema } from '../users/infrastructure/persistence/document/entities/user.schema';
+import {
+  UserSchemaClass,
+  UserSchema,
+} from '../users/infrastructure/persistence/document/entities/user.schema';
 import { RedisModule } from '../redis/redis.module';
 import { isWorkerRuntime } from '../config/runtime-role';
 
@@ -89,4 +92,3 @@ import { isWorkerRuntime } from '../config/runtime-role';
   exports: [AuditLogService],
 })
 export class AuditLogModule {}
-

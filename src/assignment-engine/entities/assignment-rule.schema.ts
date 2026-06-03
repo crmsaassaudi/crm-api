@@ -34,7 +34,11 @@ export class AssignmentRuleSchemaClass extends EntityDocumentHelper {
   priority: number;
 
   @Prop({
-    type: String, required: true, enum: ['all', 'any'], default: 'all' })
+    type: String,
+    required: true,
+    enum: ['all', 'any'],
+    default: 'all',
+  })
   matchType: string;
 
   @Prop({

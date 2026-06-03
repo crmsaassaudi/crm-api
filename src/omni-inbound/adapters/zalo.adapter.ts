@@ -129,10 +129,7 @@ export class ZaloAdapter implements ChannelAdapter {
       .digest('hex');
 
     try {
-      return timingSafeEqual(
-        Buffer.from(mac),
-        Buffer.from(expectedMac),
-      );
+      return timingSafeEqual(Buffer.from(mac), Buffer.from(expectedMac));
     } catch {
       return false;
     }
@@ -199,4 +196,3 @@ export class ZaloAdapter implements ChannelAdapter {
     return Promise.resolve({ message_id: `zalo_out_${Date.now()}` });
   }
 }
-

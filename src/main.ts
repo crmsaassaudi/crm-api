@@ -179,7 +179,12 @@ bootstrap().catch((err) => {
 
 // Catch unhandled promise rejections that escape NestJS error boundaries
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('[Process] Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error(
+    '[Process] Unhandled Rejection at:',
+    promise,
+    'reason:',
+    reason,
+  );
 });
 
 // Catch synchronous exceptions thrown outside of async context

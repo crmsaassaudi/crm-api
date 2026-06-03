@@ -51,7 +51,10 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   channelAccount: string;
 
   @Prop({
-    type: String, required: true, enum: CHANNEL_TYPES })
+    type: String,
+    required: true,
+    enum: CHANNEL_TYPES,
+  })
   channelType: string;
 
   /**

@@ -30,7 +30,10 @@ export class CannedResponseSchemaClass extends EntityDocumentHelper {
   category: string;
 
   @Prop({
-    type: String, required: true, enum: ['Public', 'Private', 'Team'] })
+    type: String,
+    required: true,
+    enum: ['Public', 'Private', 'Team'],
+  })
   scope: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })

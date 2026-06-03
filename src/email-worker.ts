@@ -17,6 +17,9 @@ async function bootstrapEmailWorker() {
 }
 
 bootstrapEmailWorker().catch((err) => {
-  console.error('[EmailWorkerBootstrap] Fatal: failed to start email-worker', err);
+  console.error(
+    '[EmailWorkerBootstrap] Fatal: failed to start email-worker',
+    err,
+  );
   process.exit(1);
 });

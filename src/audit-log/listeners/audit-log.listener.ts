@@ -23,9 +23,7 @@ export class AuditLogListener {
   @OnEvent('contact.updated', { async: true })
   @OnEvent('deal.updated', { async: true })
   @OnEvent('ticket.updated', { async: true })
-  async handleEntityUpdated(
-    payload: AuditEntityUpdatedEvent,
-  ): Promise<void> {
+  async handleEntityUpdated(payload: AuditEntityUpdatedEvent): Promise<void> {
     try {
       // Self-resolve labels map from cache
       // Fail-open: if cache/DB errors, labels = {} — log still records, just without l
@@ -84,4 +82,3 @@ export class AuditLogListener {
     }
   }
 }
-

@@ -311,31 +311,31 @@ Cursor is the MongoDB `_id` of the last item. Uses `_id` comparison with the sor
 
 ## 10. API Endpoints
 
-| Method | Path | Permission | Description |
-|---|---|---|---|
-| `GET` | `/api/v1/contacts` | `contacts:view` | Paginated list with filters |
-| `POST` | `/api/v1/contacts` | `contacts:create` | Create contact (dedup check) |
-| `GET` | `/api/v1/contacts/:id` | `contacts:view` | Get contact |
-| `PATCH` | `/api/v1/contacts/:id` | `contacts:edit` | Update contact |
-| `DELETE` | `/api/v1/contacts/:id` | `contacts:delete` | Soft delete |
-| `POST` | `/api/v1/contacts/:id/change-stage` | `contacts:edit` | Change lifecycle stage |
-| `GET` | `/api/v1/contacts/:id/stage-history` | `contacts:view` | Stage history |
-| `POST` | `/api/v1/contacts/:id/merge-identity` | `contacts:edit` | Add omni identity |
-| `POST` | `/api/v1/contacts/:id/unmask` | `contacts:unmask` | Get PII fields |
-| `POST` | `/api/v1/contacts/check-duplicate` | `contacts:view` | Dedup check |
-| `POST` | `/api/v1/contacts/bulk-tag` | `contacts:edit` | Bulk tag |
-| `POST` | `/api/v1/contacts/:primaryId/merge/:targetId` | `contacts:delete` | Merge contacts |
-| `POST` | `/api/v1/contacts/export` | `contacts:export` | Start export job |
-| `GET` | `/api/v1/contacts/export/:jobId/status` | `contacts:export` | Export status |
-| `GET` | `/api/v1/contacts/export/download` | `contacts:export` | Download CSV |
+| Method   | Path                                          | Permission        | Description                  |
+| -------- | --------------------------------------------- | ----------------- | ---------------------------- |
+| `GET`    | `/api/v1/contacts`                            | `contacts:view`   | Paginated list with filters  |
+| `POST`   | `/api/v1/contacts`                            | `contacts:create` | Create contact (dedup check) |
+| `GET`    | `/api/v1/contacts/:id`                        | `contacts:view`   | Get contact                  |
+| `PATCH`  | `/api/v1/contacts/:id`                        | `contacts:edit`   | Update contact               |
+| `DELETE` | `/api/v1/contacts/:id`                        | `contacts:delete` | Soft delete                  |
+| `POST`   | `/api/v1/contacts/:id/change-stage`           | `contacts:edit`   | Change lifecycle stage       |
+| `GET`    | `/api/v1/contacts/:id/stage-history`          | `contacts:view`   | Stage history                |
+| `POST`   | `/api/v1/contacts/:id/merge-identity`         | `contacts:edit`   | Add omni identity            |
+| `POST`   | `/api/v1/contacts/:id/unmask`                 | `contacts:unmask` | Get PII fields               |
+| `POST`   | `/api/v1/contacts/check-duplicate`            | `contacts:view`   | Dedup check                  |
+| `POST`   | `/api/v1/contacts/bulk-tag`                   | `contacts:edit`   | Bulk tag                     |
+| `POST`   | `/api/v1/contacts/:primaryId/merge/:targetId` | `contacts:delete` | Merge contacts               |
+| `POST`   | `/api/v1/contacts/export`                     | `contacts:export` | Start export job             |
+| `GET`    | `/api/v1/contacts/export/:jobId/status`       | `contacts:export` | Export status                |
+| `GET`    | `/api/v1/contacts/export/download`            | `contacts:export` | Download CSV                 |
 
 ---
 
 ## 11. Events Emitted
 
-| Event | Payload | Consumer |
-|---|---|---|
-| `record_created.Contact` | `{ contact, tenantId, userId }` | AutomationRuleListener |
-| `field_updated.Contact` | `{ contact, changes, tenantId }` | AutomationRuleListener |
-| `activity.create` | `{ type, targetId, actorId, ... }` | ActivityLogService |
-| `audit.record` | `{ action, targetId, metadata }` | AuditLogService |
+| Event                    | Payload                            | Consumer               |
+| ------------------------ | ---------------------------------- | ---------------------- |
+| `record_created.Contact` | `{ contact, tenantId, userId }`    | AutomationRuleListener |
+| `field_updated.Contact`  | `{ contact, changes, tenantId }`   | AutomationRuleListener |
+| `activity.create`        | `{ type, targetId, actorId, ... }` | ActivityLogService     |
+| `audit.record`           | `{ action, targetId, metadata }`   | AuditLogService        |

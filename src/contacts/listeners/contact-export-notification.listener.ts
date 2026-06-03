@@ -15,9 +15,7 @@ import { OmniGateway } from '../../omni-inbound/services/omni.gateway';
  */
 @Injectable()
 export class ContactExportNotificationListener {
-  private readonly logger = new Logger(
-    ContactExportNotificationListener.name,
-  );
+  private readonly logger = new Logger(ContactExportNotificationListener.name);
 
   constructor(private readonly omniGateway: OmniGateway) {}
 

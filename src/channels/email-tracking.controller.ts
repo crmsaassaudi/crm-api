@@ -43,10 +43,7 @@ export class EmailTrackingController {
     // path-style probing without paying the DB lookup.
     if (!/^[A-Za-z0-9_-]{16,64}$/.test(trackingId)) {
       const pixel = this.trackingService.getPixelBuffer();
-      res
-        .status(200)
-        .set({ 'Content-Type': 'image/png' })
-        .end(pixel);
+      res.status(200).set({ 'Content-Type': 'image/png' }).end(pixel);
       return;
     }
     // Extract fingerprint data for bot detection

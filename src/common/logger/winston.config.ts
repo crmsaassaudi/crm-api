@@ -47,8 +47,7 @@ function contextFields(clsService: ClsService) {
         (clsService.get && clsService.get<string>('correlationId')) ||
         clsService.getId?.() ||
         'N/A';
-      tenantId =
-        (clsService.get && clsService.get<string>('tenantId')) || '-';
+      tenantId = (clsService.get && clsService.get<string>('tenantId')) || '-';
       userId = (clsService.get && clsService.get<string>('userId')) || '-';
     } catch {
       /* CLS not bound (e.g. boot-time logs) — leave defaults */
@@ -87,9 +86,7 @@ export const winstonConfig = (clsService: ClsService): WinstonModuleOptions => {
     winston.format.printf(
       ({ context, level, timestamp, message, ms, ...meta }) => {
         const ctx = getContext();
-        const metaString = Object.keys(meta).length
-          ? JSON.stringify(meta)
-          : '';
+        const metaString = Object.keys(meta).length ? JSON.stringify(meta) : '';
         return `[${timestamp}] [${ctx.correlationId}] [tenant=${ctx.tenantId} user=${ctx.userId}] ${level} [${context}] : ${message} ${ms} ${metaString}`;
       },
     ),

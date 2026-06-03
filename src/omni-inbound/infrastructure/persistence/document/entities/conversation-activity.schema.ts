@@ -60,7 +60,10 @@ export class ConversationActivitySchemaClass extends EntityDocumentHelper {
   conversationId: string;
 
   @Prop({
-    type: String, required: true, enum: ACTOR_TYPES })
+    type: String,
+    required: true,
+    enum: ACTOR_TYPES,
+  })
   actorType: string;
 
   /** null for system-generated activities */
@@ -72,7 +75,10 @@ export class ConversationActivitySchemaClass extends EntityDocumentHelper {
   actorId: string | null;
 
   @Prop({
-    type: String, required: true, enum: ACTIVITY_ACTIONS })
+    type: String,
+    required: true,
+    enum: ACTIVITY_ACTIONS,
+  })
   action: string;
 
   /** Previous value (for status/assignment changes) */

@@ -20,12 +20,22 @@ import { TicketsModule } from '../tickets/tickets.module';
 
 import { ContactExportStorageService } from './contact-export-storage.service';
 import { ContactExportProcessor } from './contact-export.processor';
+import { ContactImportProcessor } from './contact-import.processor';
+import { ContactImportReportService } from './contact-import-report.service';
 import { ContactScoringService } from './contact-scoring.service';
 import { isWorkerRuntime } from '../config/runtime-role';
-import { CONTACT_EXPORT_QUEUE } from './contacts.constants';
+import {
+  CONTACT_EXPORT_QUEUE,
+  CONTACT_IMPORT_QUEUE,
+} from './contacts.constants';
 
 const workerProviders = isWorkerRuntime()
-  ? [ContactScoringService, ContactExportProcessor]
+  ? [
+      ContactScoringService,
+      ContactExportProcessor,
+      ContactImportProcessor,
+      ContactImportReportService,
+    ]
   : [];
 
 @Module({
@@ -46,6 +56,19 @@ const workerProviders = isWorkerRuntime()
       name: CONTACT_EXPORT_QUEUE,
       adapter: BullMQAdapter,
     }),
+    BullModule.registerQueue({
+      name: CONTACT_IMPORT_QUEUE,
+      defaultJobOptions: {
+        // No retry: import is not idempotent — a retry would re-insert rows.
+        attempts: 1,
+        removeOnComplete: 50,
+        removeOnFail: 200,
+      },
+    }),
+    BullBoardModule.forFeature({
+      name: CONTACT_IMPORT_QUEUE,
+      adapter: BullMQAdapter,
+    }),
     AccountsModule,
     DealsModule,
     ListViewsModule,
@@ -53,7 +76,6 @@ const workerProviders = isWorkerRuntime()
     NotesModule,
     TasksModule,
     TicketsModule,
-
   ],
   controllers: [ContactsController],
   providers: [

@@ -702,7 +702,9 @@ export class ConversationRepository {
       {
         $match: {
           tenantId: new Types.ObjectId(tenantId),
-          assignedAgentId: { $in: validIds.map((id) => new Types.ObjectId(id)) },
+          assignedAgentId: {
+            $in: validIds.map((id) => new Types.ObjectId(id)),
+          },
           status: { $in: ['open', 'pending'] },
         },
       },

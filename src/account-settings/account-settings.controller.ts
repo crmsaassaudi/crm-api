@@ -39,10 +39,7 @@ export class AccountSettingsController {
 
   @Patch('statuses/:id')
   @RequirePermission('manage_system', 'settings')
-  updateStatus(
-    @Param('id') id: string,
-    @Body() body: UpdateAccountStatusDto,
-  ) {
+  updateStatus(@Param('id') id: string, @Body() body: UpdateAccountStatusDto) {
     return this.service.updateStatus(id, body);
   }
 

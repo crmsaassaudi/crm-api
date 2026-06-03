@@ -56,6 +56,7 @@ export class OmniGateway
   private readonly logger = new Logger(OmniGateway.name);
   private readonly socketEventChannels = [
     'socket:contact:export:completed',
+    'socket:contact:import:completed',
     'socket:omni:message:persisted',
     'socket:omni:conversation:created',
     'socket:omni:conversation:reopened',
@@ -104,6 +105,9 @@ export class OmniGateway
         switch (channel) {
           case 'socket:contact:export:completed':
             this.handleContactExportCompleted(event);
+            break;
+          case 'socket:contact:import:completed':
+            this.handleContactImportCompleted(event);
             break;
           case 'socket:omni:message:persisted':
             this.broadcastInboundMessage(event);
@@ -1041,6 +1045,35 @@ export class OmniGateway
       downloadUrl: event.downloadUrl,
       expiresAt: event.expiresAt,
       recordCount: event.recordCount,
+    });
+  }
+
+  /**
+   * Broadcast contact import completion to the user who triggered it.
+   * Unlike export (tenant-wide), import results are only meaningful to the
+   * initiating user, so we emit to the `agent:${userId}` room.
+   */
+  private handleContactImportCompleted(event: {
+    tenantId: string;
+    userId: string;
+    jobId: string;
+    summary: {
+      total: number;
+      inserted: number;
+      updated: number;
+      skipped: number;
+      errors: number;
+    };
+    reportUrl?: string;
+  }) {
+    const room = `agent:${event.userId}`;
+    this.logger.log(
+      `Broadcasting contact import completed to room=${room}, jobId=${event.jobId}`,
+    );
+    this.server.to(room).emit('contact:import:completed', {
+      jobId: event.jobId,
+      summary: event.summary,
+      reportUrl: event.reportUrl,
     });
   }
 

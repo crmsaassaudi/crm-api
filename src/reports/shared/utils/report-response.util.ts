@@ -4,10 +4,7 @@ import {
   ReportResponse,
 } from '../interfaces/report-response.interface';
 
-interface BuildReportResponseParams<
-  TData,
-  TMeta extends BaseReportMeta,
-> {
+interface BuildReportResponseParams<TData, TMeta extends BaseReportMeta> {
   report: string;
   dto: BaseReportFilterDto;
   data: TData;

@@ -671,7 +671,8 @@ export class ContactRepository extends BaseDocumentRepository<
         fromStage: entry.fromStage ?? null,
         toStage: entry.toStage,
         changedAt: entry.changedAt,
-        changedById: entry.changedById?.toString?.() ?? String(entry.changedById),
+        changedById:
+          entry.changedById?.toString?.() ?? String(entry.changedById),
         reason: entry.reason,
         direction: entry.direction,
         skippedStages: entry.skippedStages ?? [],

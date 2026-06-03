@@ -66,7 +66,10 @@ export class AssignmentAuditLogSchemaClass extends EntityDocumentHelper {
 
   /** Whether the assignment was successful or the conversation went to queue */
   @Prop({
-    type: String, required: true, enum: ['assigned', 'queued', 'failed'] })
+    type: String,
+    required: true,
+    enum: ['assigned', 'queued', 'failed'],
+  })
   outcome: string;
 }
 

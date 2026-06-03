@@ -71,7 +71,10 @@ export class ContactExportProcessor extends BaseTenantConsumer<ContactExportJobD
       // Report progress periodically
       if (recordCount % 500 === 0) {
         await job.updateProgress(
-          Math.min(80, Math.floor((recordCount / Math.max(recordCount + 100, 1)) * 80)),
+          Math.min(
+            80,
+            Math.floor((recordCount / Math.max(recordCount + 100, 1)) * 80),
+          ),
         );
       }
     }

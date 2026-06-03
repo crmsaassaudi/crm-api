@@ -15,7 +15,9 @@ import { ClsService } from 'nestjs-cls';
 
 export function getTenantId(cls: ClsService): string | undefined {
   return (
-    cls.get<string>('activeTenantId') || cls.get<string>('tenantId') || undefined
+    cls.get<string>('activeTenantId') ||
+    cls.get<string>('tenantId') ||
+    undefined
   );
 }
 
@@ -30,9 +32,7 @@ export function requireTenantId(cls: ClsService, source: string): string {
 }
 
 export function getUserId(cls: ClsService): string | undefined {
-  return (
-    cls.get<string>('userId') || cls.get<any>('user.id') || undefined
-  );
+  return cls.get<string>('userId') || cls.get<any>('user.id') || undefined;
 }
 
 export function getCorrelationId(cls: ClsService): string | undefined {

@@ -20,7 +20,10 @@ export class AssignmentAuditLogSchemaClass {
   tenantId: string;
 
   @Prop({
-    type: String, required: true, enum: ['Contact', 'Ticket', 'Task', 'Deal'] })
+    type: String,
+    required: true,
+    enum: ['Contact', 'Ticket', 'Task', 'Deal'],
+  })
   module: string;
 
   @Prop({ required: true })

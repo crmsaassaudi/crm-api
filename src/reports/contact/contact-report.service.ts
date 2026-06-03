@@ -187,7 +187,9 @@ export class ContactReportService {
 
       return {
         sourceId,
-        sourceName: sourceId ? sourceMap.get(sourceId) ?? 'Unknown' : 'Unknown',
+        sourceName: sourceId
+          ? (sourceMap.get(sourceId) ?? 'Unknown')
+          : 'Unknown',
         count: row.count,
         percentage: safePercent(row.count, total),
       };
@@ -342,7 +344,10 @@ export class ContactReportService {
       .exec();
     const row = rows[0] ?? {};
     const totalStale =
-      (row.days30 ?? 0) + (row.days60 ?? 0) + (row.days90 ?? 0) + (row.days180 ?? 0);
+      (row.days30 ?? 0) +
+      (row.days60 ?? 0) +
+      (row.days90 ?? 0) +
+      (row.days180 ?? 0);
     const total = totalStale + (row.active ?? 0);
     const buckets = [
       { days: 30, label: '30-59 days', count: row.days30 ?? 0 },
@@ -451,12 +456,20 @@ export class ContactReportService {
             total: { $sum: 1 },
             emailOptOut: {
               $sum: {
-                $cond: [{ $ne: [{ $ifNull: ['$emailOptIn', false] }, true] }, 1, 0],
+                $cond: [
+                  { $ne: [{ $ifNull: ['$emailOptIn', false] }, true] },
+                  1,
+                  0,
+                ],
               },
             },
             smsOptOut: {
               $sum: {
-                $cond: [{ $ne: [{ $ifNull: ['$smsOptIn', false] }, true] }, 1, 0],
+                $cond: [
+                  { $ne: [{ $ifNull: ['$smsOptIn', false] }, true] },
+                  1,
+                  0,
+                ],
               },
             },
             doNotCall: {
@@ -466,7 +479,12 @@ export class ContactReportService {
         },
       ])
       .exec();
-    const row = rows[0] ?? { total: 0, emailOptOut: 0, smsOptOut: 0, doNotCall: 0 };
+    const row = rows[0] ?? {
+      total: 0,
+      emailOptOut: 0,
+      smsOptOut: 0,
+      doNotCall: 0,
+    };
     const data = {
       emailOptOut: {
         count: row.emailOptOut,
@@ -502,10 +520,7 @@ export class ContactReportService {
     const match = this.buildBaseMatch(dto, {
       createdBetween: { from: context.from, to: context.to },
     });
-    const pipeline: any[] = [
-      { $match: match },
-      { $unwind: '$omniIdentities' },
-    ];
+    const pipeline: any[] = [{ $match: match }, { $unwind: '$omniIdentities' }];
 
     if (dto.channel) {
       pipeline.push({ $match: { 'omniIdentities.channelType': dto.channel } });
@@ -694,7 +709,9 @@ export class ContactReportService {
       data,
       totalRecords: contacts.length,
       startedAt,
-      meta: { stageHistoryCoverage: coverage.coverage } as Partial<FunnelReportMeta>,
+      meta: {
+        stageHistoryCoverage: coverage.coverage,
+      } as Partial<FunnelReportMeta>,
       warnings: coverage.warnings,
     });
   }
@@ -757,12 +774,16 @@ export class ContactReportService {
       data,
       totalRecords: contacts.length,
       startedAt,
-      meta: { stageHistoryCoverage: coverage.coverage } as Partial<FunnelReportMeta>,
+      meta: {
+        stageHistoryCoverage: coverage.coverage,
+      } as Partial<FunnelReportMeta>,
       warnings: coverage.warnings,
     });
   }
 
-  private async resolveDateContext(dto: BaseReportFilterDto): Promise<DateContext> {
+  private async resolveDateContext(
+    dto: BaseReportFilterDto,
+  ): Promise<DateContext> {
     const { from, to } = parseReportDateRange(dto.fromDate, dto.toDate);
     if (
       Number.isNaN(from.getTime()) ||
@@ -799,7 +820,9 @@ export class ContactReportService {
 
   private async resolveTimezone(dto: BaseReportFilterDto): Promise<string> {
     if (dto.timezone) return dto.timezone;
-    const localization = await this.settingsService.getSetting('general_localization');
+    const localization = await this.settingsService.getSetting(
+      'general_localization',
+    );
     return localization?.timezone || 'UTC';
   }
 
@@ -876,7 +899,8 @@ export class ContactReportService {
   }
 
   private async getSourceMap(): Promise<Map<string, string>> {
-    const sourceSettings = await this.settingsService.getSetting('contact_source');
+    const sourceSettings =
+      await this.settingsService.getSetting('contact_source');
     const sources = Array.isArray(sourceSettings?.sources)
       ? sourceSettings.sources
       : [];
@@ -889,7 +913,8 @@ export class ContactReportService {
   }
 
   private async getStageMap(): Promise<Map<string, string>> {
-    const lifecycle = await this.settingsService.getSetting('contact_lifecycle');
+    const lifecycle =
+      await this.settingsService.getSetting('contact_lifecycle');
     const stages = Array.isArray(lifecycle?.stages) ? lifecycle.stages : [];
     const map = new Map<string, string>();
 
@@ -913,7 +938,12 @@ export class ContactReportService {
           .aggregate([
             { $match: { ...match, 'stageHistory.0': { $exists: true } } },
             { $unwind: '$stageHistory' },
-            { $group: { _id: null, reliableFrom: { $min: '$stageHistory.changedAt' } } },
+            {
+              $group: {
+                _id: null,
+                reliableFrom: { $min: '$stageHistory.changedAt' },
+              },
+            },
           ])
           .exec(),
       ]);

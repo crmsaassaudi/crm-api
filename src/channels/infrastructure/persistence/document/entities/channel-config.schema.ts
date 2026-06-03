@@ -26,7 +26,10 @@ export class ChannelConfigSchemaClass extends EntityDocumentHelper {
   tenantId: string;
 
   @Prop({
-    type: String, required: true, enum: PROVIDER_TYPES })
+    type: String,
+    required: true,
+    enum: PROVIDER_TYPES,
+  })
   providerType: string;
 
   @Prop({ type: Number, default: 1 })

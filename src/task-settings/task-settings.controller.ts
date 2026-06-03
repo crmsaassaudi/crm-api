@@ -65,10 +65,7 @@ export class TaskSettingsController {
 
   @Patch('categories/:id')
   @RequirePermission('manage_system', 'settings')
-  updateCategory(
-    @Param('id') id: string,
-    @Body() body: UpdateTaskCategoryDto,
-  ) {
+  updateCategory(@Param('id') id: string, @Body() body: UpdateTaskCategoryDto) {
     return this.service.updateCategory(id, body);
   }
 

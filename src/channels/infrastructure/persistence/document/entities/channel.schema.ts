@@ -31,7 +31,10 @@ export class ChannelSchemaClass extends EntityDocumentHelper {
   tenantId: string;
 
   @Prop({
-    type: String, required: true, enum: CHANNEL_TYPES })
+    type: String,
+    required: true,
+    enum: CHANNEL_TYPES,
+  })
   type: string;
 
   @Prop({ required: true })

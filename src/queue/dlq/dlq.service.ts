@@ -43,11 +43,7 @@ export class DlqService {
    * - Emits `dlq.recorded` so the observability / alerting layer can fan
    *   the event out to Slack/PagerDuty without coupling DLQ to those.
    */
-  async sendToDlq(
-    sourceQueue: string,
-    job: Job,
-    error: Error,
-  ): Promise<void> {
+  async sendToDlq(sourceQueue: string, job: Job, error: Error): Promise<void> {
     try {
       const dlqData: DlqJobData = {
         sourceQueue,

@@ -17,7 +17,10 @@ import { simpleParser, ParsedMail } from 'mailparser';
 import { OAuth2TokenManager } from './oauth2-token-manager.service';
 import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
-import { isEmailWorkerRuntime, isWorkerRuntime } from '../../config/runtime-role';
+import {
+  isEmailWorkerRuntime,
+  isWorkerRuntime,
+} from '../../config/runtime-role';
 
 type MailboxLabelContext = {
   crmFolder: string | null;
@@ -150,7 +153,13 @@ export class ImapPollerService implements OnModuleDestroy {
       // Use SCAN instead of KEYS to avoid blocking the Redis event loop.
       // SCAN is O(1) per iteration and safe for production use.
       do {
-        const reply = await client.scan(cursor, 'MATCH', 'imap:lock:*', 'COUNT', 100);
+        const reply = await client.scan(
+          cursor,
+          'MATCH',
+          'imap:lock:*',
+          'COUNT',
+          100,
+        );
         cursor = reply[0];
         const keys = reply[1];
         if (keys.length > 0) {

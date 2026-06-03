@@ -17,6 +17,9 @@ async function bootstrapOmniWorker() {
 }
 
 bootstrapOmniWorker().catch((err) => {
-  console.error('[OmniWorkerBootstrap] Fatal: failed to start omni-worker', err);
+  console.error(
+    '[OmniWorkerBootstrap] Fatal: failed to start omni-worker',
+    err,
+  );
   process.exit(1);
 });

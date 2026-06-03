@@ -71,4 +71,3 @@ export class DealsService {
     return this.cls.get('userId') || this.cls.get('user.id');
   }
 }
-

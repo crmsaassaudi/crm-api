@@ -58,10 +58,9 @@ export class InboundController {
     @Query('hub.verify_token') verifyToken: string,
     @Query('hub.challenge') challenge: string,
   ) {
-    const expectedToken = this.configService.get<string>(
-      'OMNI_VERIFY_TOKEN',
-      { infer: true },
-    );
+    const expectedToken = this.configService.get<string>('OMNI_VERIFY_TOKEN', {
+      infer: true,
+    });
 
     if (!expectedToken) {
       this.logger.error(

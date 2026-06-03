@@ -98,16 +98,17 @@ import { TicketsModule } from '../tickets/tickets.module';
 import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
 import { isWorkerRuntime, isOmniRuntime } from '../config/runtime-role';
 
-const workerProviders = (isWorkerRuntime() || isOmniRuntime())
-  ? [
-      WebhookProcessor,
-      OmniRoutingProcessor,
-      MediaCacheProcessor,
-      StickyRetryProcessor,
-      AutoResolveProcessor,
-      BotProcessingProcessor,
-    ]
-  : [];
+const workerProviders =
+  isWorkerRuntime() || isOmniRuntime()
+    ? [
+        WebhookProcessor,
+        OmniRoutingProcessor,
+        MediaCacheProcessor,
+        StickyRetryProcessor,
+        AutoResolveProcessor,
+        BotProcessingProcessor,
+      ]
+    : [];
 
 /**
  * OmniInboundModule — the complete omni-channel backend.

@@ -48,7 +48,10 @@ export class AuditLogSchemaClass {
    *   S   = System (migration, script)
    */
   @Prop({
-    type: String, required: true, enum: ['M', 'A', 'A_F', 'B', 'S'] })
+    type: String,
+    required: true,
+    enum: ['M', 'A', 'A_F', 'B', 'S'],
+  })
   src: string;
 
   @Prop({ type: MongooseSchema.Types.Mixed })
@@ -84,9 +87,7 @@ export class AuditLogSchemaClass {
   changes: Array<{ f: string; l?: string; o: any; n: any }>;
 }
 
-export const AuditLogSchema = SchemaFactory.createForClass(
-  AuditLogSchemaClass,
-);
+export const AuditLogSchema = SchemaFactory.createForClass(AuditLogSchemaClass);
 
 /**
  * Composite cursor index for O(1) pagination.
