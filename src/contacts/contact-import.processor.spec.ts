@@ -40,6 +40,7 @@ function makeProcessor(model: any) {
     {} as any,
     { set: jest.fn(), get: jest.fn(), runWith: jest.fn() } as any,
     {} as any,
+    { updateOne: jest.fn(async () => ({})) } as any,
   );
 }
 

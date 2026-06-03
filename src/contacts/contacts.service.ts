@@ -6,7 +6,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { InjectModel } from '@nestjs/mongoose';
 import { Queue } from 'bullmq';
+import { Model } from 'mongoose';
 import { ContactRepository } from './infrastructure/persistence/document/repositories/contact.repository';
 import { Contact } from './domain/contact';
 import { CreateContactDto } from './dto/create-contact.dto';
@@ -40,6 +42,10 @@ import { StartImportDto } from './dto/start-import.dto';
 import { createParser, detectFormat } from './import/import-parser.factory';
 import { ImportTenantSettings } from './contact-import.processor';
 import { Readable } from 'stream';
+import {
+  ImportJobSchemaClass,
+  ImportJobDocument,
+} from './infrastructure/persistence/document/entities/import-job.schema';
 
 @Injectable()
 export class ContactsService {
@@ -59,6 +65,8 @@ export class ContactsService {
     private readonly exportQueue: Queue,
     @InjectQueue(CONTACT_IMPORT_QUEUE)
     private readonly importQueue: Queue,
+    @InjectModel(ImportJobSchemaClass.name)
+    private readonly importJobModel: Model<ImportJobDocument>,
   ) {}
 
   async create(data: CreateContactDto): Promise<Contact> {
@@ -741,7 +749,116 @@ export class ContactsService {
       tenantSettings,
     });
 
+    // Persist to MongoDB for import history
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId();
+    try {
+      await this.importJobModel.create({
+        tenantId,
+        userId,
+        fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
+        fileFormat: dto.fileFormat || (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv'),
+        rowCount: dto.estimatedRows ?? 0,
+        status: 'queued',
+        bullJobId: String(job.id),
+        dryRun: dto.dryRun ?? false,
+        mapping: dto.mapping,
+        deduplication: dto.deduplication,
+        triggerAutomations: dto.triggerAutomations ?? false,
+        startedAt: new Date(),
+      });
+    } catch (err) {
+      // Non-critical: don't fail the import if history record fails
+      this.logger.warn(`Failed to persist import history record: ${(err as Error).message}`);
+    }
+
     return { jobId: String(job.id), status: 'queued' };
+  }
+
+  // ─────────────────────── IMPORT HISTORY ───────────────────────────
+
+  async listImportJobs(options: {
+    page?: number;
+    limit?: number;
+    status?: string;
+  }): Promise<{
+    data: any[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId();
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(50, Math.max(1, options.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const filter: Record<string, any> = { tenantId, userId };
+    if (
+      options.status &&
+      ['queued', 'active', 'completed', 'failed'].includes(options.status)
+    ) {
+      filter.status = options.status;
+    }
+
+    const [data, total] = await Promise.all([
+      this.importJobModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.importJobModel.countDocuments(filter).exec(),
+    ]);
+
+    // For active/queued jobs, enrich with real-time BullMQ progress
+    for (const doc of data) {
+      if (doc.status === 'active' || doc.status === 'queued') {
+        try {
+          const bullJob = await this.importQueue.getJob(doc.bullJobId);
+          if (bullJob) {
+            const state = await bullJob.getState();
+            (doc as any).status = state;
+            if (bullJob.progress && typeof bullJob.progress === 'object') {
+              (doc as any).progress = bullJob.progress;
+            }
+          }
+        } catch {
+          // BullMQ job may have been cleaned up — keep MongoDB status
+        }
+      }
+    }
+
+    return { data, total, page, limit };
+  }
+
+  async getImportJobDetail(id: string) {
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId();
+
+    const doc = await this.importJobModel
+      .findOne({ _id: id, tenantId, userId })
+      .lean()
+      .exec();
+    if (!doc) throw new NotFoundException('Import job not found');
+
+    // Enrich active jobs with real-time progress from BullMQ
+    if (doc.status === 'active' || doc.status === 'queued') {
+      try {
+        const bullJob = await this.importQueue.getJob(doc.bullJobId);
+        if (bullJob) {
+          (doc as any).status = await bullJob.getState();
+          if (bullJob.progress && typeof bullJob.progress === 'object') {
+            (doc as any).progress = bullJob.progress;
+          }
+        }
+      } catch {
+        // BullMQ job cleaned up
+      }
+    }
+
+    return doc;
   }
 
   async getImportStatus(jobId: string): Promise<{

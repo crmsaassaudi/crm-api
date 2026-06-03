@@ -1,4 +1,4 @@
-import { Processor } from '@nestjs/bullmq';
+import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
 import { Inject, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Job } from 'bullmq';
@@ -34,6 +34,10 @@ import {
 import { DedupMatchingField, DedupPolicy } from './dto/start-import.dto';
 import { createParser, detectFormat } from './import/import-parser.factory';
 import { buildAutomationEventName } from '../automation-rules/events/automation-event.payload';
+import {
+  ImportJobSchemaClass,
+  ImportJobDocument,
+} from './infrastructure/persistence/document/entities/import-job.schema';
 
 export interface ImportTenantSettings {
   uniqueEmail: boolean;
@@ -99,9 +103,22 @@ export class ContactImportProcessor extends BaseTenantConsumer<
     private readonly eventEmitter: EventEmitter2,
     cls: ClsService,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    @InjectModel(ImportJobSchemaClass.name)
+    private readonly importJobModel: Model<ImportJobDocument>,
   ) {
     super();
     this.cls = cls;
+  }
+
+  /** Update MongoDB history when a job fails (overrides BaseConsumer.onFailed). */
+  @OnWorkerEvent('failed')
+  async onFailed(job: Job, error: Error) {
+    super.onFailed(job, error);
+    await this.updateImportJob(String(job.id), {
+      status: 'failed',
+      failedReason: error.message,
+      completedAt: new Date(),
+    });
   }
 
   protected async handle(
@@ -129,6 +146,9 @@ export class ContactImportProcessor extends BaseTenantConsumer<
       String(job.id),
       data.tenantId,
     );
+
+    // Mark as active in MongoDB history
+    await this.updateImportJob(String(job.id), { status: 'active' });
 
     const summary: ImportSummary = {
       total: 0,
@@ -203,6 +223,13 @@ export class ContactImportProcessor extends BaseTenantConsumer<
         total: summary.total,
         pct: 100,
       });
+      // Update MongoDB for dry-run completion
+      await this.updateImportJob(String(job.id), {
+        status: 'completed',
+        preview,
+        progress: { processed: summary.total, total: summary.total, pct: 100 },
+        completedAt: new Date(),
+      });
       return { jobId: String(job.id), dryRun: true, preview };
     }
 
@@ -233,6 +260,15 @@ export class ContactImportProcessor extends BaseTenantConsumer<
 
     // Best-effort cleanup of the uploaded source file.
     await this.storage.deleteImportFile(data.fileKey);
+
+    // Update MongoDB for real import completion
+    await this.updateImportJob(String(job.id), {
+      status: 'completed',
+      summary,
+      reportUrl: finalized?.reportUrl,
+      progress: { processed: summary.total, total: summary.total, pct: 100 },
+      completedAt: new Date(),
+    });
 
     return {
       jobId: String(job.id),
@@ -670,6 +706,24 @@ export class ContactImportProcessor extends BaseTenantConsumer<
       ? Math.min(99, Math.floor((processed / total) * 100))
       : null;
     await job.updateProgress({ processed, total: total ?? null, pct });
+    // Update MongoDB progress (batched — this runs once per IMPORT_BATCH_SIZE)
+    await this.updateImportJob(String(job.id), {
+      progress: { processed, total: total ?? null, pct },
+    });
+  }
+
+  /** Best-effort update of the MongoDB import job record. */
+  private async updateImportJob(
+    bullJobId: string,
+    update: Record<string, any>,
+  ): Promise<void> {
+    try {
+      await this.importJobModel.updateOne({ bullJobId }, { $set: update });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to update import history (bullJobId=${bullJobId}): ${(err as Error).message}`,
+      );
+    }
   }
 
   private delay(ms: number): Promise<void> {

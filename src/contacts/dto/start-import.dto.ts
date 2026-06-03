@@ -79,4 +79,19 @@ export class StartImportDto {
   })
   @IsOptional()
   estimatedRows?: number;
+
+  @ApiPropertyOptional({
+    description: 'Original file name for display in import history.',
+  })
+  @IsOptional()
+  @IsString()
+  fileName?: string;
+
+  @ApiPropertyOptional({
+    description: 'File format detected during upload.',
+    enum: ['csv', 'xlsx'],
+  })
+  @IsOptional()
+  @IsString()
+  fileFormat?: string;
 }

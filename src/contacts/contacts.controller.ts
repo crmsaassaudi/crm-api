@@ -161,6 +161,26 @@ export class ContactsController {
     return this.service.getImportStatus(jobId);
   }
 
+  @Get('import-jobs')
+  @RequirePermission('create', 'contacts')
+  listImportJobs(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.service.listImportJobs({
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      status,
+    });
+  }
+
+  @Get('import-jobs/:id')
+  @RequirePermission('create', 'contacts')
+  getImportJobDetail(@Param('id') id: string) {
+    return this.service.getImportJobDetail(id);
+  }
+
   @Get('import-report/:token')
   @RequirePermission('create', 'contacts')
   async downloadImportReport(
