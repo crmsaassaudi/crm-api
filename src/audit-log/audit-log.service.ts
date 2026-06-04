@@ -75,10 +75,18 @@ export class AuditLogService {
       if (entry.changes && Array.isArray(entry.changes)) {
         for (const change of entry.changes) {
           if (change.f === 'ownerId' || change.f === 'assigneeId') {
-            if (change.o && typeof change.o === 'string' && change.o !== 'system') {
+            if (
+              change.o &&
+              typeof change.o === 'string' &&
+              change.o !== 'system'
+            ) {
               referencedUserIds.push(change.o);
             }
-            if (change.n && typeof change.n === 'string' && change.n !== 'system') {
+            if (
+              change.n &&
+              typeof change.n === 'string' &&
+              change.n !== 'system'
+            ) {
               referencedUserIds.push(change.n);
             }
           }
@@ -142,10 +150,14 @@ export class AuditLogService {
           return {
             ...change,
             o: oldUser
-              ? [oldUser.firstName, oldUser.lastName].filter(Boolean).join(' ') || oldUser.email
+              ? [oldUser.firstName, oldUser.lastName]
+                  .filter(Boolean)
+                  .join(' ') || oldUser.email
               : change.o,
             n: newUser
-              ? [newUser.firstName, newUser.lastName].filter(Boolean).join(' ') || newUser.email
+              ? [newUser.firstName, newUser.lastName]
+                  .filter(Boolean)
+                  .join(' ') || newUser.email
               : change.n,
           };
         }

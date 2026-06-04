@@ -758,7 +758,8 @@ export class ContactsService {
         tenantId,
         userId,
         fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
-        fileFormat: dto.fileFormat || (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv'),
+        fileFormat:
+          dto.fileFormat || (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv'),
         rowCount: dto.estimatedRows ?? 0,
         status: 'queued',
         bullJobId: String(job.id),
@@ -770,7 +771,9 @@ export class ContactsService {
       });
     } catch (err) {
       // Non-critical: don't fail the import if history record fails
-      this.logger.warn(`Failed to persist import history record: ${(err as Error).message}`);
+      this.logger.warn(
+        `Failed to persist import history record: ${(err as Error).message}`,
+      );
     }
 
     return { jobId: String(job.id), status: 'queued' };

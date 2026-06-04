@@ -1,4 +1,9 @@
-export type RuntimeRole = 'api' | 'worker' | 'omni' | 'email-worker' | 'all-in-one';
+export type RuntimeRole =
+  | 'api'
+  | 'worker'
+  | 'omni'
+  | 'email-worker'
+  | 'all-in-one';
 
 export function getRuntimeRole(): RuntimeRole {
   const runtime = process.env.APP_RUNTIME;

@@ -1,4 +1,14 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { Model } from 'mongoose';
+import { Readable } from 'stream';
 import { TicketRepository } from './infrastructure/persistence/document/repositories/ticket.repository';
 import { Ticket } from './domain/ticket';
 import { TicketSettingsService } from '../ticket-settings/ticket-settings.service';
@@ -9,16 +19,40 @@ import {
   buildAutomationEventName,
 } from '../automation-rules/events/automation-event.payload';
 import { EntityAuditService } from '../common/audit/entity-audit.service';
+import {
+  ImportStorageService,
+  ImportStorageFactory,
+  ImportJobSchemaClass,
+  ImportJobDocument,
+  detectFormat,
+  createParser,
+} from '../common/import';
+import {
+  TICKET_IMPORT_QUEUE,
+  TICKET_IMPORT_MAX_FILE_BYTES,
+  TICKET_IMPORT_MAPPABLE_FIELDS,
+} from './tickets.constants';
+import { StartTicketImportDto } from './dto/start-ticket-import.dto';
 
 @Injectable()
 export class TicketsService {
+  private readonly logger = new Logger(TicketsService.name);
+  private readonly importStorage: ImportStorageService;
+
   constructor(
     private readonly repository: TicketRepository,
     private readonly ticketSettingsService: TicketSettingsService,
     private readonly eventEmitter: EventEmitter2,
     private readonly cls: ClsService,
     private readonly entityAudit: EntityAuditService,
-  ) {}
+    private readonly storageFactory: ImportStorageFactory,
+    @InjectQueue(TICKET_IMPORT_QUEUE)
+    private readonly importQueue: Queue,
+    @InjectModel(ImportJobSchemaClass.name)
+    private readonly importJobModel: Model<ImportJobDocument>,
+  ) {
+    this.importStorage = this.storageFactory.create('tickets');
+  }
 
   async create(data: Partial<Ticket>): Promise<Ticket> {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
@@ -84,7 +118,7 @@ export class TicketsService {
         const allowReopen = (data as any).allowReopen === true;
         if (!allowReopen) {
           throw new BadRequestException(
-            `Ticket is in terminal status "${oldStatus.name}". Reopening requires allowReopen=true.`,
+            `Ticket is in terminal status "${oldStatus.label}". Reopening requires allowReopen=true.`,
           );
         }
       }
@@ -154,5 +188,187 @@ export class TicketsService {
 
   private getCurrentUserId(): string | undefined {
     return this.cls.get('userId') || this.cls.get('user.id');
+  }
+
+  // ──────────────────────────── TICKET IMPORT ────────────────────────────
+
+  async uploadImportFile(file: {
+    buffer: Buffer;
+    originalname: string;
+    size: number;
+  }): Promise<{ fileKey: string; format: string; headers: string[] }> {
+    if (!file) throw new BadRequestException('No file uploaded');
+    if (file.size > TICKET_IMPORT_MAX_FILE_BYTES) {
+      throw new BadRequestException(
+        `File exceeds the ${TICKET_IMPORT_MAX_FILE_BYTES / (1024 * 1024)}MB limit`,
+      );
+    }
+    const format = detectFormat(file.originalname);
+    const parser = createParser(format);
+    const headers = await parser.readHeaders(Readable.from(file.buffer));
+    if (headers.length === 0) {
+      throw new BadRequestException('File has no header row');
+    }
+    const { fileKey } = await this.importStorage.storeImportFile({
+      buffer: file.buffer,
+      originalname: file.originalname,
+    });
+    return { fileKey, format, headers };
+  }
+
+  async startImport(
+    dto: StartTicketImportDto,
+  ): Promise<{ jobId: string; status: 'queued' }> {
+    const mappedFields = new Set(Object.values(dto.mapping ?? {}));
+    if (!mappedFields.has('subject')) {
+      throw new BadRequestException('mapping must include subject');
+    }
+
+    const validFields = new Set<string>(TICKET_IMPORT_MAPPABLE_FIELDS);
+    const unmapped = Object.values(dto.mapping).filter(
+      (f) => !validFields.has(f),
+    );
+    if (unmapped.length) {
+      throw new BadRequestException(
+        `Invalid mapping target(s): ${unmapped.join(', ')}`,
+      );
+    }
+
+    const exists = await this.importStorage.importFileExists(dto.fileKey);
+    if (!exists) {
+      throw new BadRequestException(
+        'fileKey not found in storage — upload the file again',
+      );
+    }
+
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId() ?? 'system';
+
+    const job = await this.importQueue.add('import', {
+      tenantId,
+      userId,
+      fileKey: dto.fileKey,
+      mapping: dto.mapping,
+      deduplication: dto.deduplication,
+      dryRun: dto.dryRun ?? false,
+      triggerAutomations: dto.triggerAutomations ?? false,
+      estimatedRows: dto.estimatedRows,
+      fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
+    });
+
+    try {
+      await this.importJobModel.create({
+        tenantId,
+        userId,
+        entityType: 'ticket',
+        fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
+        fileFormat:
+          dto.fileFormat || (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv'),
+        rowCount: dto.estimatedRows ?? 0,
+        status: 'queued',
+        bullJobId: String(job.id),
+        dryRun: dto.dryRun ?? false,
+        mapping: dto.mapping,
+        deduplication: dto.deduplication,
+        triggerAutomations: dto.triggerAutomations ?? false,
+        startedAt: new Date(),
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to persist ticket import history: ${(err as Error).message}`,
+      );
+    }
+
+    return { jobId: String(job.id), status: 'queued' };
+  }
+
+  async listImportJobs(options: {
+    page?: number;
+    limit?: number;
+    status?: string;
+  }) {
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId() ?? 'system';
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(50, Math.max(1, options.limit ?? 10));
+    const skip = (page - 1) * limit;
+    const filter: Record<string, any> = {
+      tenantId,
+      userId,
+      entityType: 'ticket',
+    };
+    if (
+      options.status &&
+      ['queued', 'active', 'completed', 'failed'].includes(options.status)
+    )
+      filter.status = options.status;
+
+    const [data, total] = await Promise.all([
+      this.importJobModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.importJobModel.countDocuments(filter).exec(),
+    ]);
+
+    for (const doc of data) {
+      if (doc.status === 'active' || doc.status === 'queued') {
+        try {
+          const bullJob = await this.importQueue.getJob(doc.bullJobId);
+          if (bullJob) {
+            (doc as any).status = await bullJob.getState();
+            if (bullJob.progress && typeof bullJob.progress === 'object')
+              (doc as any).progress = bullJob.progress;
+          }
+        } catch {}
+      }
+    }
+    return { data, total, page, limit };
+  }
+
+  async getImportJobDetail(id: string) {
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId() ?? 'system';
+    const doc = await this.importJobModel
+      .findOne({ _id: id, tenantId, userId, entityType: 'ticket' })
+      .lean()
+      .exec();
+    if (!doc) throw new NotFoundException('Import job not found');
+    if (doc.status === 'active' || doc.status === 'queued') {
+      try {
+        const bullJob = await this.importQueue.getJob(doc.bullJobId);
+        if (bullJob) {
+          (doc as any).status = await bullJob.getState();
+          if (bullJob.progress && typeof bullJob.progress === 'object')
+            (doc as any).progress = bullJob.progress;
+        }
+      } catch {}
+    }
+    return doc;
+  }
+
+  async getImportStatus(jobId: string) {
+    const job = await this.importQueue.getJob(jobId);
+    if (!job) throw new NotFoundException('Import job not found');
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId() ?? 'system';
+    if (
+      String(job.data?.tenantId ?? '') !== String(tenantId ?? '') ||
+      (job.data?.userId && String(job.data.userId) !== String(userId ?? ''))
+    )
+      throw new NotFoundException('Import job not found');
+    return {
+      status: await job.getState(),
+      progress: job.progress,
+      result: job.returnvalue,
+      failedReason: job.failedReason,
+    };
+  }
+
+  getImportReport(token: string) {
+    return this.importStorage.readLocalReport(token);
   }
 }

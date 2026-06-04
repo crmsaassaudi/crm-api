@@ -57,6 +57,9 @@ export class OmniGateway
   private readonly socketEventChannels = [
     'socket:contact:export:completed',
     'socket:contact:import:completed',
+    'socket:account:import:completed',
+    'socket:deal:import:completed',
+    'socket:ticket:import:completed',
     'socket:omni:message:persisted',
     'socket:omni:conversation:created',
     'socket:omni:conversation:reopened',
@@ -108,6 +111,15 @@ export class OmniGateway
             break;
           case 'socket:contact:import:completed':
             this.handleContactImportCompleted(event);
+            break;
+          case 'socket:account:import:completed':
+            this.handleModuleImportCompleted('account', event);
+            break;
+          case 'socket:deal:import:completed':
+            this.handleModuleImportCompleted('deal', event);
+            break;
+          case 'socket:ticket:import:completed':
+            this.handleModuleImportCompleted('ticket', event);
             break;
           case 'socket:omni:message:persisted':
             this.broadcastInboundMessage(event);
@@ -1072,6 +1084,39 @@ export class OmniGateway
       `Broadcasting contact import completed to room=${room}, jobId=${event.jobId}`,
     );
     this.server.to(room).emit('contact:import:completed', {
+      jobId: event.jobId,
+      fileName: event.fileName,
+      summary: event.summary,
+      reportUrl: event.reportUrl,
+    });
+  }
+
+  /**
+   * Generic handler for account/deal/ticket import completion events.
+   * Emits to the agent:${userId} room with module-prefixed event name.
+   */
+  private handleModuleImportCompleted(
+    module: 'account' | 'deal' | 'ticket',
+    event: {
+      tenantId: string;
+      userId: string;
+      jobId: string;
+      fileName?: string;
+      summary: {
+        total: number;
+        inserted: number;
+        updated: number;
+        skipped: number;
+        errors: number;
+      };
+      reportUrl?: string;
+    },
+  ) {
+    const room = `agent:${event.userId}`;
+    this.logger.log(
+      `Broadcasting ${module} import completed to room=${room}, jobId=${event.jobId}`,
+    );
+    this.server.to(room).emit(`${module}:import:completed`, {
       jobId: event.jobId,
       fileName: event.fileName,
       summary: event.summary,

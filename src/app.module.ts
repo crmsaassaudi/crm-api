@@ -71,6 +71,7 @@ import { AiVideoModule } from './ai-video/ai-video.module';
 import { SocialContentModule } from './social-posts/social-posts.module';
 import { ReportsModule } from './reports/reports.module';
 import { HealthModule } from './health/health.module';
+import { SharedImportModule } from './common/import/import.module';
 
 import {
   KeycloakConnectModule,
@@ -337,6 +338,7 @@ function bullBoardBasicAuth() {
     AiVideoModule,
     SocialContentModule,
     ReportsModule,
+    SharedImportModule,
   ],
   providers: [
     {

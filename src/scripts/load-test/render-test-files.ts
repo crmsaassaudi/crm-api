@@ -23,7 +23,8 @@ import { statSync } from 'fs';
 import { join } from 'path';
 import { generateCsv } from '../generate-import-test-data';
 
-const OUT_DIR = process.env.OUT_DIR ?? join(process.cwd(), 'files', 'tmp', 'loadtest');
+const OUT_DIR =
+  process.env.OUT_DIR ?? join(process.cwd(), 'files', 'tmp', 'loadtest');
 const A_ROWS = Number(process.env.A_ROWS ?? 100_000);
 const B_ROWS = Number(process.env.B_ROWS ?? 100_000);
 const B_DUP = Number(process.env.B_DUP ?? 50);

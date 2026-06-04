@@ -7,17 +7,22 @@ import {
   Param,
   Delete,
   Query,
+  Res,
   UseInterceptors,
   UsePipes,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
 import { DealsService } from './deals.service';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { UpdateDealDto } from './dto/update-deal.dto';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
 import { RequirePermission } from '../common/permissions';
+import { StartDealImportDto } from './dto/start-deal-import.dto';
 
 @ApiTags('Deals')
 @ApiBearerAuth()
@@ -59,5 +64,62 @@ export class DealsController {
   @RequirePermission('delete', 'deals')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
+  }
+
+  // ──────────────────────────── IMPORT ────────────────────────────
+
+  @Post('import-upload')
+  @RequirePermission('create', 'deals')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  uploadImportFile(@UploadedFile() file: Express.Multer.File) {
+    return this.service.uploadImportFile(file);
+  }
+
+  @Post('import')
+  @RequirePermission('create', 'deals')
+  startImport(@Body() dto: StartDealImportDto) {
+    return this.service.startImport(dto);
+  }
+
+  @Get('import-status/:jobId')
+  @RequirePermission('view', 'deals')
+  getImportStatus(@Param('jobId') jobId: string) {
+    return this.service.getImportStatus(jobId);
+  }
+
+  @Get('import-jobs')
+  @RequirePermission('view', 'deals')
+  listImportJobs(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.service.listImportJobs({
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      status,
+    });
+  }
+
+  @Get('import-jobs/:id')
+  @RequirePermission('view', 'deals')
+  getImportJobDetail(@Param('id') id: string) {
+    return this.service.getImportJobDetail(id);
+  }
+
+  @Get('import-report/:token')
+  @RequirePermission('view', 'deals')
+  async getImportReport(@Param('token') token: string, @Res() res: Response) {
+    const { buffer, filename } = await this.service.getImportReport(token);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.send(buffer);
   }
 }

@@ -1,12 +1,19 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, now } from 'mongoose';
-import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+import { tenantFilterPlugin } from '../plugins/tenant-filter.plugin';
 
 export type ImportJobDocument = HydratedDocument<ImportJobSchemaClass>;
 
+/**
+ * Generic import job schema shared by ALL import modules.
+ *
+ * The `entityType` field distinguishes between contacts, accounts, deals,
+ * tickets, etc. All modules share the same `import_jobs` collection so
+ * cross-module import history can be queried in one place.
+ */
 @Schema({
   timestamps: true,
-  collection: 'contact_import_jobs',
+  collection: 'import_jobs',
   toJSON: {
     virtuals: true,
     getters: true,
@@ -32,6 +39,10 @@ export class ImportJobSchemaClass {
     index: true,
   })
   userId: string;
+
+  /** Module identifier: 'contact', 'account', 'deal', 'ticket', etc. */
+  @Prop({ required: true, index: true })
+  entityType: string;
 
   @Prop({ required: true })
   fileName: string;
@@ -124,16 +135,16 @@ export const ImportJobSchema =
 
 ImportJobSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
-// List jobs newest-first per tenant
+// List jobs newest-first per tenant + entity type
 ImportJobSchema.index(
-  { tenantId: 1, createdAt: -1 },
-  { name: 'tenant_import_history' },
+  { tenantId: 1, entityType: 1, createdAt: -1 },
+  { name: 'tenant_entity_import_history' },
 );
 
 // Filter by status
 ImportJobSchema.index(
-  { tenantId: 1, status: 1, createdAt: -1 },
-  { name: 'tenant_import_status' },
+  { tenantId: 1, entityType: 1, status: 1, createdAt: -1 },
+  { name: 'tenant_entity_import_status' },
 );
 
 // TTL: auto-delete documents after 90 days
