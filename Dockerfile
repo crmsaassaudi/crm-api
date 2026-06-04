@@ -12,6 +12,14 @@ COPY package*.json ./
 RUN npm ci --legacy-peer-deps --no-audit --fund=false \
     && rm -rf /tmp/* /root/.npm
 
+# ── Stage 1b: Archive node_modules ───────────────────────────────────
+#    Docker COPY --from fails on deeply-nested paths in node_modules
+#    (e.g. @angular-devkit/core/node_modules/rxjs/dist/types/...).
+#    Packing into a tarball sidesteps the overlayfs path issue.
+FROM deps AS deps-archive
+
+RUN tar cf /tmp/node_modules.tar -C /usr/src/app node_modules
+
 # ── Stage 2: Build with SWC ──────────────────────────────────────────
 FROM deps AS build
 
@@ -19,13 +27,13 @@ COPY . .
 RUN npm run build
 
 # ── Stage 3: Prune dev-dependencies in-place ─────────────────────────
-#    Copies node_modules from 'deps' stage instead of FROM deps (which
-#    can fail with "No such image" when Docker GCs the intermediate layer).
 FROM base AS prod-deps
 
-COPY --from=deps /usr/src/app/node_modules ./node_modules
+COPY --from=deps-archive /tmp/node_modules.tar /tmp/node_modules.tar
 COPY --from=deps /usr/src/app/package*.json ./
-RUN npm prune --omit=dev --legacy-peer-deps
+RUN tar xf /tmp/node_modules.tar -C /usr/src/app \
+    && rm /tmp/node_modules.tar \
+    && npm prune --omit=dev --legacy-peer-deps
 
 # ── Stage 4: Production image ────────────────────────────────────────
 FROM base AS production
