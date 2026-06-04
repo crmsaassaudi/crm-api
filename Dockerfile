@@ -4,21 +4,12 @@ WORKDIR /usr/src/app
 
 ENV HUSKY=0
 
-# ── Stage 1: Install ALL deps (dev + prod) ───────────────────────────
+# ── Stage 1: Install ALL deps (dev + prod) for building ──────────────
 FROM base AS deps
 
 COPY package*.json ./
-# Single-layer install avoids containerd overlayfs symlink bug in .bin/
 RUN npm ci --legacy-peer-deps --no-audit --fund=false \
     && rm -rf /tmp/* /root/.npm
-
-# ── Stage 1b: Archive node_modules ───────────────────────────────────
-#    Docker COPY --from fails on deeply-nested paths in node_modules
-#    (e.g. @angular-devkit/core/node_modules/rxjs/dist/types/...).
-#    Packing into a tarball sidesteps the overlayfs path issue.
-FROM deps AS deps-archive
-
-RUN tar cf /tmp/node_modules.tar -C /usr/src/app node_modules
 
 # ── Stage 2: Build with SWC ──────────────────────────────────────────
 FROM deps AS build
@@ -26,14 +17,14 @@ FROM deps AS build
 COPY . .
 RUN npm run build
 
-# ── Stage 3: Prune dev-dependencies in-place ─────────────────────────
+# ── Stage 3: Production deps only (clean install, no cross-stage COPY)
+#    Avoids containerd/overlayfs bugs by NOT copying node_modules
+#    between stages. A fresh npm ci is more reliable than COPY + prune.
 FROM base AS prod-deps
 
-COPY --from=deps-archive /tmp/node_modules.tar /tmp/node_modules.tar
-COPY --from=deps /usr/src/app/package*.json ./
-RUN tar xf /tmp/node_modules.tar -C /usr/src/app \
-    && rm /tmp/node_modules.tar \
-    && npm prune --omit=dev --legacy-peer-deps
+COPY package*.json ./
+RUN npm ci --omit=dev --legacy-peer-deps --no-audit --fund=false \
+    && rm -rf /tmp/* /root/.npm
 
 # ── Stage 4: Production image ────────────────────────────────────────
 FROM base AS production
@@ -42,7 +33,7 @@ ENV NODE_ENV=production
 
 RUN apk add --no-cache ffmpeg
 
-# Copy pruned node_modules — no second npm ci needed
+# Copy production-only node_modules (clean install, no devDeps)
 COPY --from=prod-deps /usr/src/app/node_modules ./node_modules
 COPY --from=prod-deps /usr/src/app/package*.json ./
 COPY --chown=node:node --from=build /usr/src/app/dist ./dist
