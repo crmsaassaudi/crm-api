@@ -8,7 +8,9 @@ ENV HUSKY=0
 FROM base AS deps
 
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps --no-audit --fund=false
+# Single-layer install avoids containerd overlayfs symlink bug in .bin/
+RUN npm ci --legacy-peer-deps --no-audit --fund=false \
+    && rm -rf /tmp/* /root/.npm
 
 # ── Stage 2: Build with SWC ──────────────────────────────────────────
 FROM deps AS build
