@@ -13,6 +13,10 @@ import {
 import { AccountImportProcessor } from './import/account-import.processor';
 import { isWorkerRuntime } from '../config/runtime-role';
 import { ACCOUNT_IMPORT_QUEUE } from './accounts.constants';
+import {
+  ImportJobSchema,
+  ImportJobSchemaClass,
+} from '../common/import/import-job.schema';
 
 const workerProviders = isWorkerRuntime() ? [AccountImportProcessor] : [];
 
@@ -20,6 +24,7 @@ const workerProviders = isWorkerRuntime() ? [AccountImportProcessor] : [];
   imports: [
     MongooseModule.forFeature([
       { name: AccountSchemaClass.name, schema: AccountSchema },
+      { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
     ]),
     BullModule.registerQueue({
       name: ACCOUNT_IMPORT_QUEUE,

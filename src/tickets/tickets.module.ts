@@ -14,6 +14,10 @@ import { TicketSettingsModule } from '../ticket-settings/ticket-settings.module'
 import { TicketImportProcessor } from './import/ticket-import.processor';
 import { isWorkerRuntime } from '../config/runtime-role';
 import { TICKET_IMPORT_QUEUE } from './tickets.constants';
+import {
+  ImportJobSchema,
+  ImportJobSchemaClass,
+} from '../common/import/import-job.schema';
 
 const workerProviders = isWorkerRuntime() ? [TicketImportProcessor] : [];
 
@@ -21,6 +25,7 @@ const workerProviders = isWorkerRuntime() ? [TicketImportProcessor] : [];
   imports: [
     MongooseModule.forFeature([
       { name: TicketSchemaClass.name, schema: TicketSchema },
+      { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
     ]),
     BullModule.registerQueue({
       name: TICKET_IMPORT_QUEUE,

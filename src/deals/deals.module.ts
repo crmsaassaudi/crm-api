@@ -13,6 +13,10 @@ import {
 import { DealImportProcessor } from './import/deal-import.processor';
 import { isWorkerRuntime } from '../config/runtime-role';
 import { DEAL_IMPORT_QUEUE } from './deals.constants';
+import {
+  ImportJobSchema,
+  ImportJobSchemaClass,
+} from '../common/import/import-job.schema';
 
 const workerProviders = isWorkerRuntime() ? [DealImportProcessor] : [];
 
@@ -20,6 +24,7 @@ const workerProviders = isWorkerRuntime() ? [DealImportProcessor] : [];
   imports: [
     MongooseModule.forFeature([
       { name: DealSchemaClass.name, schema: DealSchema },
+      { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
     ]),
     BullModule.registerQueue({
       name: DEAL_IMPORT_QUEUE,
