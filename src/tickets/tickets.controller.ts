@@ -46,12 +46,6 @@ export class TicketsController {
     return this.service.findAll(query);
   }
 
-  @Get(':id')
-  @RequirePermission('view', 'tickets')
-  findOne(@Param('id') id: string) {
-    return this.service.findOne(id);
-  }
-
   @Patch(':id')
   @RequirePermission('edit', 'tickets')
   @UsePipes(new SanitizeMaskedInputPipe())
@@ -120,5 +114,11 @@ export class TicketsController {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.send(buffer);
+  }
+
+  @Get(':id')
+  @RequirePermission('view', 'tickets')
+  findOne(@Param('id') id: string) {
+    return this.service.findOne(id);
   }
 }

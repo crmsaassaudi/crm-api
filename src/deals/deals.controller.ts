@@ -47,12 +47,6 @@ export class DealsController {
     return this.service.findAll(query);
   }
 
-  @Get(':id')
-  @RequirePermission('view', 'deals')
-  findOne(@Param('id') id: string) {
-    return this.service.findOne(id);
-  }
-
   @Patch(':id')
   @RequirePermission('edit', 'deals')
   @UsePipes(new SanitizeMaskedInputPipe())
@@ -121,5 +115,11 @@ export class DealsController {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.send(buffer);
+  }
+
+  @Get(':id')
+  @RequirePermission('view', 'deals')
+  findOne(@Param('id') id: string) {
+    return this.service.findOne(id);
   }
 }

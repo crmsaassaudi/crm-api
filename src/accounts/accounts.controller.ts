@@ -46,12 +46,6 @@ export class AccountsController {
     return this.service.findAll(query);
   }
 
-  @Get(':id')
-  @RequirePermission('view', 'accounts')
-  findOne(@Param('id') id: string) {
-    return this.service.findOne(id);
-  }
-
   @Patch(':id')
   @RequirePermission('edit', 'accounts')
   @UsePipes(new SanitizeMaskedInputPipe())
@@ -120,5 +114,11 @@ export class AccountsController {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.send(buffer);
+  }
+
+  @Get(':id')
+  @RequirePermission('view', 'accounts')
+  findOne(@Param('id') id: string) {
+    return this.service.findOne(id);
   }
 }
