@@ -65,22 +65,38 @@ export class AuditLogService {
           ).toString('base64')
         : null;
 
-    // ── Populate actor info (batch lookup) ──────────────────────
-    const actorIds = [
-      ...new Set(
-        page
-          .map((d: any) => d.actorId)
-          .filter((id: string) => id && id !== 'system'),
-      ),
-    ];
+    // ── Populate actor and referenced user info (batch lookup) ──────────────────────
+    const actorIds = page
+      .map((d: any) => d.actorId)
+      .filter((id: string) => id && id !== 'system');
 
-    let actorMap: Record<
+    const referencedUserIds: string[] = [];
+    for (const entry of page) {
+      if (entry.changes && Array.isArray(entry.changes)) {
+        for (const change of entry.changes) {
+          if (change.f === 'ownerId' || change.f === 'assigneeId') {
+            if (change.o && typeof change.o === 'string' && change.o !== 'system') {
+              referencedUserIds.push(change.o);
+            }
+            if (change.n && typeof change.n === 'string' && change.n !== 'system') {
+              referencedUserIds.push(change.n);
+            }
+          }
+        }
+      }
+    }
+
+    const allUserIds = [...actorIds, ...referencedUserIds].filter(
+      (value, index, self) => self.indexOf(value) === index,
+    );
+
+    let userMap: Record<
       string,
       { firstName?: string; lastName?: string; email?: string; photo?: any }
     > = {};
-    if (actorIds.length > 0) {
+    if (allUserIds.length > 0) {
       try {
-        const validIds = actorIds
+        const validIds = allUserIds
           .filter((id) => Types.ObjectId.isValid(id as string))
           .map((id) => new Types.ObjectId(id as string));
 
@@ -99,7 +115,7 @@ export class AuditLogService {
           }>;
 
           for (const u of users) {
-            actorMap[u._id.toString()] = {
+            userMap[u._id.toString()] = {
               firstName: u.firstName,
               lastName: u.lastName,
               email: u.email,
@@ -108,19 +124,38 @@ export class AuditLogService {
           }
         }
       } catch (err) {
-        console.error('[AuditLogService] Actor lookup failed:', err?.message);
+        console.error('[AuditLogService] User lookup failed:', err?.message);
       }
     }
 
     const enriched = page.map((entry: any) => {
-      const actor = actorMap[entry.actorId];
+      const actor = userMap[entry.actorId];
       // Destructure to separate _id and __v from rest to avoid ObjectId serialization issues
-      const { _id, __v, ...rest } = entry;
+      const { _id, __v, changes, ...rest } = entry;
       const idStr = typeof _id === 'string' ? _id : String(_id);
+
+      const enrichedChanges = (changes || []).map((change: any) => {
+        if (change.f === 'ownerId' || change.f === 'assigneeId') {
+          const oldUser = change.o ? userMap[String(change.o)] : null;
+          const newUser = change.n ? userMap[String(change.n)] : null;
+
+          return {
+            ...change,
+            o: oldUser
+              ? [oldUser.firstName, oldUser.lastName].filter(Boolean).join(' ') || oldUser.email
+              : change.o,
+            n: newUser
+              ? [newUser.firstName, newUser.lastName].filter(Boolean).join(' ') || newUser.email
+              : change.n,
+          };
+        }
+        return change;
+      });
 
       return {
         ...rest,
         _id: idStr,
+        changes: enrichedChanges,
         actor: actor
           ? {
               name:

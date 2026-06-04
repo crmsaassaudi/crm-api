@@ -1057,6 +1057,7 @@ export class OmniGateway
     tenantId: string;
     userId: string;
     jobId: string;
+    fileName?: string;
     summary: {
       total: number;
       inserted: number;
@@ -1072,6 +1073,7 @@ export class OmniGateway
     );
     this.server.to(room).emit('contact:import:completed', {
       jobId: event.jobId,
+      fileName: event.fileName,
       summary: event.summary,
       reportUrl: event.reportUrl,
     });

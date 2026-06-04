@@ -746,6 +746,7 @@ export class ContactsService {
       dryRun: dto.dryRun ?? false,
       triggerAutomations: dto.triggerAutomations ?? false,
       estimatedRows: dto.estimatedRows,
+      fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
       tenantSettings,
     });
 

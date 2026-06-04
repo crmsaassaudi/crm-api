@@ -56,6 +56,7 @@ export interface ContactImportJobData extends TenantJobData {
   dryRun?: boolean;
   triggerAutomations?: boolean;
   estimatedRows?: number;
+  fileName?: string;
   tenantSettings: ImportTenantSettings;
 }
 
@@ -248,6 +249,7 @@ export class ContactImportProcessor extends BaseTenantConsumer<
         tenantId: data.tenantId,
         userId: data.userId,
         jobId: String(job.id),
+        fileName: data.fileName,
         summary,
         reportUrl: finalized?.reportUrl,
       }),
