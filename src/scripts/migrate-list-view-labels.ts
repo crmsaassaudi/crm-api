@@ -1,26 +1,48 @@
 /**
- * Migration Script: Strip hardcoded labels from list_views columns.
+ * Migration Script: Clean list_views data.
  *
- * WHY:
- * List view column labels were previously hardcoded in English (e.g. "Name", "Owner").
- * The frontend now resolves labels via i18n at render time using the column `key`.
- * Storing labels in the DB is redundant and breaks multi-language support.
+ * Fixes TWO issues:
+ * 1. Strips hardcoded English `label` from columns (labels are now i18n on frontend)
+ * 2. Fixes localized module names (e.g. "Liên hệ" → "Contact") — a frontend bug
+ *    previously sent the localized name instead of the system key.
  *
- * WHAT IT DOES:
- * 1. Finds all crm_settings documents with key = 'list_views'
- * 2. For each tenant's views, removes the `label` field from every column
- * 3. Writes back the cleaned data
- *
- * IDEMPOTENT: Safe to run multiple times. If no labels found, nothing changes.
+ * IDEMPOTENT: Safe to run multiple times.
  *
  * USAGE:
- *   DATABASE_URL=mongodb://... npx ts-node src/scripts/migrate-list-view-labels.ts
+ *   npm run migrate:list-view-labels
  */
 
 import 'dotenv/config';
 import { MongoClient } from 'mongodb';
 
-async function migrateListViewLabels() {
+const VALID_MODULES = ['Contact', 'Account', 'Deal', 'Ticket', 'Task'];
+
+/**
+ * Reverse lookup: localized module name → system key.
+ * Add more translations as needed for other locales.
+ */
+const LOCALIZED_MODULE_MAP: Record<string, string> = {
+  // Vietnamese
+  'liên hệ': 'Contact',
+  'tài khoản': 'Account',
+  'giao dịch': 'Deal',
+  'phiếu hỗ trợ': 'Ticket',
+  'công việc': 'Task',
+  // Arabic
+  'جهة اتصال': 'Contact',
+  'حساب': 'Account',
+  'صفقة': 'Deal',
+  'تذكرة': 'Ticket',
+  'مهمة': 'Task',
+};
+
+function resolveModule(module: string): string | null {
+  if (VALID_MODULES.includes(module)) return module;
+  const resolved = LOCALIZED_MODULE_MAP[module.toLowerCase()];
+  return resolved || null;
+}
+
+async function migrateListViews() {
   const uri = process.env.DATABASE_URL;
   if (!uri) {
     console.error('DATABASE_URL environment variable is required');
@@ -31,20 +53,19 @@ async function migrateListViewLabels() {
 
   try {
     await client.connect();
-    console.log('Connected to MongoDB');
+    console.log('✅ Connected to MongoDB');
 
     const db = client.db();
     const collection = db.collection('crm_settings');
 
-    // Find all list_views settings across all tenants
-    const docs = await collection
-      .find({ key: 'list_views' })
-      .toArray();
-
-    console.log(`Found ${docs.length} tenant(s) with list_views settings`);
+    const docs = await collection.find({ key: 'list_views' }).toArray();
+    console.log(`Found ${docs.length} tenant(s) with list_views settings\n`);
 
     let totalTenantsUpdated = 0;
     let totalLabelsStripped = 0;
+    let totalModulesFixed = 0;
+    let totalViewsDeleted = 0;
+    let totalDuplicatesRemoved = 0;
 
     for (const doc of docs) {
       const views = doc.value?.views;
@@ -53,38 +74,89 @@ async function migrateListViewLabels() {
         continue;
       }
 
-      let labelsInThisTenant = 0;
+      let labelsStripped = 0;
+      let modulesFixed = 0;
+      let viewsDeleted = 0;
+      let duplicatesRemoved = 0;
+      let dirty = false;
 
-      for (const view of views) {
-        if (!Array.isArray(view.columns)) continue;
+      // Process views in reverse so splicing doesn't break indices
+      for (let i = views.length - 1; i >= 0; i--) {
+        const view = views[i];
 
-        for (const column of view.columns) {
-          if (column.label !== undefined) {
-            delete column.label;
-            labelsInThisTenant++;
+        // Fix module name
+        const resolved = resolveModule(view.module);
+        if (!resolved) {
+          console.log(
+            `    ⚠ Deleting orphaned view "${view.name}" with unknown module "${view.module}"`,
+          );
+          views.splice(i, 1);
+          viewsDeleted++;
+          dirty = true;
+          continue;
+        }
+        if (resolved !== view.module) {
+          console.log(
+            `    → Fixed module: "${view.module}" → "${resolved}" (view: "${view.name}")`,
+          );
+          view.module = resolved;
+          modulesFixed++;
+          dirty = true;
+        }
+
+        // Strip labels from columns
+        if (Array.isArray(view.columns)) {
+          for (const column of view.columns) {
+            if (column.label !== undefined) {
+              delete column.label;
+              labelsStripped++;
+              dirty = true;
+            }
           }
         }
       }
 
-      if (labelsInThisTenant > 0) {
+      // Deduplicate: keep the FIRST view per module+name (case-insensitive)
+      const seen = new Set<string>();
+      for (let i = views.length - 1; i >= 0; i--) {
+        const key = `${views[i].module.toLowerCase()}::${views[i].name.toLowerCase()}`;
+        if (seen.has(key)) {
+          console.log(
+            `    ✂ Removing duplicate view "${views[i].name}" (module: ${views[i].module}, id: ${views[i].id})`,
+          );
+          views.splice(i, 1);
+          duplicatesRemoved++;
+          dirty = true;
+        } else {
+          seen.add(key);
+        }
+      }
+
+      if (dirty) {
         await collection.updateOne(
           { _id: doc._id },
           { $set: { 'value.views': views } },
         );
         totalTenantsUpdated++;
-        totalLabelsStripped += labelsInThisTenant;
+        totalLabelsStripped += labelsStripped;
+        totalModulesFixed += modulesFixed;
+        totalViewsDeleted += viewsDeleted;
+        totalDuplicatesRemoved += duplicatesRemoved;
         console.log(
-          `  Tenant ${doc.tenantId}: stripped ${labelsInThisTenant} labels from ${views.length} views`,
+          `  Tenant ${doc.tenantId}: labels=${labelsStripped}, modules_fixed=${modulesFixed}, deleted=${viewsDeleted}, duplicates=${duplicatesRemoved}`,
         );
       } else {
-        console.log(`  Tenant ${doc.tenantId}: no labels to strip (already clean)`);
+        console.log(`  Tenant ${doc.tenantId}: already clean`);
       }
     }
 
     console.log('\n=== Migration Complete ===');
     console.log(`Tenants processed: ${docs.length}`);
     console.log(`Tenants updated: ${totalTenantsUpdated}`);
-    console.log(`Total labels stripped: ${totalLabelsStripped}`);
+    console.log(`Labels stripped: ${totalLabelsStripped}`);
+    console.log(`Modules fixed: ${totalModulesFixed}`);
+    console.log(`Orphaned views deleted: ${totalViewsDeleted}`);
+    console.log(`Duplicates removed: ${totalDuplicatesRemoved}`);
   } catch (error) {
     console.error(
       'Migration failed:',
@@ -96,7 +168,7 @@ async function migrateListViewLabels() {
   }
 }
 
-migrateListViewLabels().catch((error) => {
+migrateListViews().catch((error) => {
   console.error('Unexpected error:', error);
   process.exit(1);
 });

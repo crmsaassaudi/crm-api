@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 import { GroupsService } from '../groups/groups.service';
 import { ClsService } from 'nestjs-cls';
@@ -207,16 +212,34 @@ export class ListViewsService {
   // ── Write (Admin only) ──────────────────────────────────────────────────
 
   async createView(
-    data: Omit<ListViewDefinition, 'id' | 'createdBy' | 'isSystemDefault'>,
+    data: Pick<ListViewDefinition, 'name' | 'module'> &
+      Partial<Pick<ListViewDefinition, 'columns' | 'assignedGroupIds' | 'excludedUserIds'>>,
   ): Promise<ListViewDefinition> {
     const settings = await this.getSettings();
+
+    // Prevent duplicate view names within the same module
+    const duplicate = settings.views.find(
+      (v) =>
+        v.module.toLowerCase() === data.module.toLowerCase() &&
+        v.name.toLowerCase() === data.name.toLowerCase(),
+    );
+    if (duplicate) {
+      throw new ConflictException(
+        `A view named "${data.name}" already exists for module "${data.module}"`,
+      );
+    }
+
     const userId = this.cls.get('userId') || 'system';
 
     const newView: ListViewDefinition = {
-      ...data,
       id: this.generateId(),
+      name: data.name,
+      module: data.module,
       createdBy: userId,
       isSystemDefault: false,
+      columns: data.columns ?? [],
+      assignedGroupIds: data.assignedGroupIds ?? [],
+      excludedUserIds: data.excludedUserIds ?? [],
     };
 
     settings.views.push(newView);
@@ -234,6 +257,23 @@ export class ListViewsService {
     const index = settings.views.findIndex((v) => v.id === id);
     if (index === -1)
       throw new NotFoundException(`List view "${id}" not found`);
+
+    // If renaming, check for duplicate name within the same module
+    const targetModule = (
+      data.module ?? settings.views[index].module
+    ).toLowerCase();
+    const targetName = (data.name ?? settings.views[index].name).toLowerCase();
+    const duplicate = settings.views.find(
+      (v, i) =>
+        i !== index &&
+        v.module.toLowerCase() === targetModule &&
+        v.name.toLowerCase() === targetName,
+    );
+    if (duplicate) {
+      throw new ConflictException(
+        `A view named "${data.name ?? settings.views[index].name}" already exists for module "${data.module ?? settings.views[index].module}"`,
+      );
+    }
 
     settings.views[index] = { ...settings.views[index], ...data };
     await this.saveSettings(settings);
