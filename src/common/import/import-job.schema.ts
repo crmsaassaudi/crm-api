@@ -81,6 +81,14 @@ export class ImportJobSchemaClass {
   @Prop({ default: false })
   triggerAutomations: boolean;
 
+  // ── Audit context (who triggered the import) ──────────────────────
+
+  @Prop()
+  ip?: string;
+
+  @Prop()
+  userAgent?: string;
+
   // ── Result (populated on completion) ──────────────────────────────
 
   @Prop({ type: MongooseSchema.Types.Mixed })

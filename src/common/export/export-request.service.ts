@@ -213,6 +213,7 @@ export class ExportRequestService {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
+        .populate('userId', 'firstName lastName email avatar')
         .lean()
         .exec(),
       this.jobModel.countDocuments(filter).exec(),
@@ -241,7 +242,7 @@ export class ExportRequestService {
     return { data: sanitized, total, page, limit };
   }
 
-  /** Convert raw ObjectId fields from .lean() to plain strings. */
+  /** Convert raw ObjectId fields from .lean() to plain strings and extract populated user. */
   private sanitizeLeanDoc(doc: any): any {
     const result = { ...doc };
     // _id → id (string), remove raw _id
@@ -250,7 +251,18 @@ export class ExportRequestService {
     delete result.__v;
     // ObjectId ref fields
     if (doc.tenantId) result.tenantId = String(doc.tenantId);
-    if (doc.userId) result.userId = String(doc.userId);
+    // Extract populated user object if present
+    if (doc.userId && typeof doc.userId === 'object' && doc.userId.firstName) {
+      result.user = {
+        firstName: doc.userId.firstName,
+        lastName: doc.userId.lastName,
+        email: doc.userId.email,
+        avatar: doc.userId.avatar,
+      };
+      result.userId = String(doc.userId._id);
+    } else if (doc.userId) {
+      result.userId = String(doc.userId);
+    }
     return result;
   }
 

@@ -301,6 +301,8 @@ export class AccountsService {
         mapping: dto.mapping,
         deduplication: dto.deduplication,
         triggerAutomations: dto.triggerAutomations ?? false,
+        ip: this.cls.get('requestIp'),
+        userAgent: this.cls.get('userAgent'),
         startedAt: new Date(),
       });
     } catch (err) {
@@ -348,6 +350,7 @@ export class AccountsService {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
+        .populate('userId', 'firstName lastName email avatar')
         .lean()
         .exec(),
       this.importJobModel.countDocuments(filter).exec(),
@@ -368,6 +371,16 @@ export class AccountsService {
         } catch {
           // BullMQ job may have been cleaned up — keep MongoDB status
         }
+      }
+      // Extract populated user object
+      if ((doc as any).userId && typeof (doc as any).userId === 'object' && (doc as any).userId.firstName) {
+        (doc as any).user = {
+          firstName: (doc as any).userId.firstName,
+          lastName: (doc as any).userId.lastName,
+          email: (doc as any).userId.email,
+          avatar: (doc as any).userId.avatar,
+        };
+        (doc as any).userId = String((doc as any).userId._id);
       }
     }
 

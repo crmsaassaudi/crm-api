@@ -800,6 +800,7 @@ export class ContactsService {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
+        .populate('userId', 'firstName lastName email avatar')
         .lean()
         .exec(),
       this.exportJobModel.countDocuments(filter).exec(),
@@ -830,7 +831,18 @@ export class ContactsService {
       delete out._id;
       delete out.__v;
       if (doc.tenantId) out.tenantId = String(doc.tenantId);
-      if (doc.userId) out.userId = String(doc.userId);
+      // Preserve populated user object; stringify only if it's still an ObjectId
+      if (doc.userId && typeof doc.userId === 'object' && doc.userId.firstName) {
+        out.user = {
+          firstName: doc.userId.firstName,
+          lastName: doc.userId.lastName,
+          email: doc.userId.email,
+          avatar: doc.userId.avatar,
+        };
+        out.userId = String(doc.userId._id);
+      } else if (doc.userId) {
+        out.userId = String(doc.userId);
+      }
       return out;
     });
 
@@ -964,6 +976,8 @@ export class ContactsService {
         mapping: dto.mapping,
         deduplication: dto.deduplication,
         triggerAutomations: dto.triggerAutomations ?? false,
+        ip: this.cls.get('requestIp'),
+        userAgent: this.cls.get('userAgent'),
         startedAt: new Date(),
       });
     } catch (err) {
@@ -1008,6 +1022,7 @@ export class ContactsService {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
+        .populate('userId', 'firstName lastName email avatar')
         .lean()
         .exec(),
       this.importJobModel.countDocuments(filter).exec(),
@@ -1028,6 +1043,16 @@ export class ContactsService {
         } catch {
           // BullMQ job may have been cleaned up — keep MongoDB status
         }
+      }
+      // Extract populated user object
+      if ((doc as any).userId && typeof (doc as any).userId === 'object' && (doc as any).userId.firstName) {
+        (doc as any).user = {
+          firstName: (doc as any).userId.firstName,
+          lastName: (doc as any).userId.lastName,
+          email: (doc as any).userId.email,
+          avatar: (doc as any).userId.avatar,
+        };
+        (doc as any).userId = String((doc as any).userId._id);
       }
     }
 
