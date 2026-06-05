@@ -822,7 +822,19 @@ export class ContactsService {
       }
     }
 
-    return { data, total, page, limit };
+    // .lean() strips Mongoose virtuals/transforms, so ObjectId fields remain
+    // as raw buffer objects. Sanitize them to plain strings for the API.
+    const sanitized = data.map((doc: any) => {
+      const out = { ...doc };
+      out.id = String(doc._id);
+      delete out._id;
+      delete out.__v;
+      if (doc.tenantId) out.tenantId = String(doc.tenantId);
+      if (doc.userId) out.userId = String(doc.userId);
+      return out;
+    });
+
+    return { data: sanitized, total, page, limit };
   }
 
   async getExportDownload(

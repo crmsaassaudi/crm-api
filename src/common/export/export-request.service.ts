@@ -234,7 +234,24 @@ export class ExportRequestService {
       }
     }
 
-    return { data, total, page, limit };
+    // .lean() strips Mongoose virtuals/transforms, so ObjectId fields remain
+    // as raw buffer objects. Sanitize them to plain strings for the API.
+    const sanitized = data.map((doc) => this.sanitizeLeanDoc(doc));
+
+    return { data: sanitized, total, page, limit };
+  }
+
+  /** Convert raw ObjectId fields from .lean() to plain strings. */
+  private sanitizeLeanDoc(doc: any): any {
+    const result = { ...doc };
+    // _id → id (string), remove raw _id
+    result.id = String(doc._id);
+    delete result._id;
+    delete result.__v;
+    // ObjectId ref fields
+    if (doc.tenantId) result.tenantId = String(doc.tenantId);
+    if (doc.userId) result.userId = String(doc.userId);
+    return result;
   }
 
   download(
