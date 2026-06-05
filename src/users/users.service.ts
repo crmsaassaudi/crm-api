@@ -268,6 +268,7 @@ export class UsersService {
       version: updateUserDto.version,
       omniMaxCapacity: updateUserDto.omniMaxCapacity,
       skills: updateUserDto.skills,
+      reportsToId: updateUserDto.reportsToId,
     });
     if (updated) this.emitUserPermissionsUpdated(updated);
     return updated;

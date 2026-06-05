@@ -82,6 +82,14 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
   skills?: string[];
 
   @ApiPropertyOptional({
+    example: '507f1f77bcf86cd799439011',
+    description: 'ID of the manager this user reports to (for role hierarchy)',
+  })
+  @IsOptional()
+  @IsString()
+  reportsToId?: string | null;
+
+  @ApiPropertyOptional({
     description:
       'User-level i18n overrides. Set fields to null to inherit from tenant defaults.',
     example: { locale: 'vi', timezone: 'Asia/Ho_Chi_Minh' },
