@@ -17,6 +17,7 @@ RUN npm ci --legacy-peer-deps --no-audit --fund=false
 COPY . .
 RUN npm run build \
     && npm prune --omit=dev --legacy-peer-deps \
+    && find node_modules -xtype l -delete 2>/dev/null || true \
     && rm -rf /tmp/* /root/.npm
 
 # ── Stage 2: Production image ────────────────────────────────────────
