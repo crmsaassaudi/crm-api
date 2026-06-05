@@ -109,7 +109,7 @@ export async function generateCsv(
     const first = pick(FIRST, id);
     const last = pick(LAST, Math.floor(id / FIRST.length));
     const email = `user${id}@example.com`;
-    const phone = `+849${String(10_000_000 + (id % 90_000_000)).padStart(8, '0')}`;
+    const phone = `09${String(10_000_000 + (id % 90_000_000)).padStart(8, '0')}`;
     const company = pick(COMPANIES, id);
     await write(`${first},${last},${email},${phone},${company}\n`);
     written++;

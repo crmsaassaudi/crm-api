@@ -77,7 +77,7 @@ export class CreateContactDto {
   @IsEmail({}, { each: true })
   emails?: string[];
 
-  @ApiProperty({ example: ['0123456789'] })
+  @ApiProperty({ example: ['0911019999'] })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
