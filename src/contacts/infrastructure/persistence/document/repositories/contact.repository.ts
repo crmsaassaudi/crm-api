@@ -72,6 +72,8 @@ export class ContactRepository extends BaseDocumentRepository<
     'isVIP',
     'isShadow',
     'tags',
+    'emails',
+    'phones',
   ]);
 
   /**
@@ -94,7 +96,20 @@ export class ContactRepository extends BaseDocumentRepository<
     }
 
     if (filterOptions?.search) {
-      where.$text = { $search: filterOptions.search };
+      const searchTerm = filterOptions.search.trim();
+      // MongoDB $text tokenizes by punctuation, so emails like
+      // "user@example.com" get split into ["user", "example", "com"].
+      // When the search term looks like an email, use a regex fallback
+      // on the emails array for exact substring matching.
+      if (searchTerm.includes('@')) {
+        const escaped = this.escapeRegex(searchTerm);
+        where.$or = [
+          { emails: { $regex: escaped, $options: 'i' } },
+          { $text: { $search: searchTerm } },
+        ];
+      } else {
+        where.$text = { $search: searchTerm };
+      }
     }
 
     // Filter by lifecycle stage (replaces the old isConverted filter)
@@ -115,7 +130,14 @@ export class ContactRepository extends BaseDocumentRepository<
             // Block fields that are not in the whitelist
             if (!this.ALLOWED_FILTER_FIELDS.has(f.id)) return;
 
-            if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
+            // Array fields: emails[] and phones[] need special matching
+            if (['emails', 'phones'].includes(f.id)) {
+              // Case-insensitive match within the array
+              where[f.id] = {
+                $regex: `^${this.escapeRegex(String(f.value))}$`,
+                $options: 'i',
+              };
+            } else if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
               where[f.id] = f.value;
             } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
               // Map virtual field names to actual DB field names
