@@ -1,7 +1,0 @@
-﻿src/common/interceptors/tenant.interceptor.ts(147,63): error TS2769: No overload matches this call.
-  The last overload gave the following error.
-    Argument of type '"NX"' is not assignable to parameter of type '"KEEPTTL"'.
-src/omni-inbound/queue/omni-routing.processor.spec.ts(7,23): error TS2554: Expected 3 arguments, but got 2.
-src/omni-inbound/queue/omni-routing.processor.ts(38,9): error TS2769: No overload matches this call.
-  The last overload gave the following error.
-    Argument of type '"NX"' is not assignable to parameter of type '"KEEPTTL"'.

@@ -4,10 +4,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
-  IsIn,
   IsInt,
-  IsMongoId,
-  IsObject,
   IsOptional,
   IsString,
   Length,
@@ -17,12 +14,12 @@ import {
 } from 'class-validator';
 
 export class ListViewColumnDto {
-  @ApiProperty()
+  @ApiProperty({ description: 'Field key matching the column registry' })
   @IsString()
   @Length(1, 80)
-  field: string;
+  key: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, description: 'Display label (optional fallback — frontend resolves via i18n)' })
   @IsOptional()
   @IsString()
   @Length(1, 120)
@@ -35,10 +32,15 @@ export class ListViewColumnDto {
   @Max(2_000)
   width?: number;
 
-  @ApiProperty({ required: false })
-  @IsOptional()
+  @ApiProperty({ description: 'Whether this column is visible in the table' })
   @IsBoolean()
-  visible?: boolean;
+  isVisible: boolean;
+
+  @ApiProperty({ description: 'Display order (1-based)' })
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  sortOrder: number;
 }
 
 export class CreateListViewDto {
@@ -60,32 +62,19 @@ export class CreateListViewDto {
   @Type(() => ListViewColumnDto)
   columns?: ListViewColumnDto[];
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, description: 'Group IDs this view is assigned to' })
   @IsOptional()
-  @IsObject()
-  filters?: Record<string, unknown>;
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  assignedGroupIds?: string[];
 
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsObject()
-  sort?: Record<string, 'asc' | 'desc'>;
-
-  @ApiProperty({ required: false, enum: ['private', 'shared', 'system'] })
-  @IsOptional()
-  @IsIn(['private', 'shared', 'system'])
-  visibility?: 'private' | 'shared' | 'system';
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsBoolean()
-  isDefault?: boolean;
-
-  @ApiProperty({ required: false, type: [String] })
+  @ApiProperty({ required: false, description: 'User IDs excluded from this view' })
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(500)
-  @IsMongoId({ each: true })
-  sharedWithUserIds?: string[];
+  @IsString({ each: true })
+  excludedUserIds?: string[];
 }
 
 export class UpdateListViewDto extends PartialType(CreateListViewDto) {}
