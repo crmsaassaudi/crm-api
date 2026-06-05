@@ -29,10 +29,12 @@ import {
 } from '../common/import';
 import {
   TICKET_IMPORT_QUEUE,
+  TICKET_EXPORT_QUEUE,
   TICKET_IMPORT_MAX_FILE_BYTES,
   TICKET_IMPORT_MAPPABLE_FIELDS,
 } from './tickets.constants';
 import { StartTicketImportDto } from './dto/start-ticket-import.dto';
+import { ExportRequestService, ExportRequestDto } from '../common/export';
 
 @Injectable()
 export class TicketsService {
@@ -48,10 +50,44 @@ export class TicketsService {
     private readonly storageFactory: ImportStorageFactory,
     @InjectQueue(TICKET_IMPORT_QUEUE)
     private readonly importQueue: Queue,
+    @InjectQueue(TICKET_EXPORT_QUEUE)
+    private readonly exportQueue: Queue,
     @InjectModel(ImportJobSchemaClass.name)
     private readonly importJobModel: Model<ImportJobDocument>,
+    private readonly exportRequest: ExportRequestService,
   ) {
     this.importStorage = this.storageFactory.create('tickets');
+  }
+
+  // ─────────────────────────── EXPORT ───────────────────────────
+
+  exportTickets(
+    dto: ExportRequestDto,
+  ): Promise<{ jobId: string; status: 'queued' }> {
+    return this.exportRequest.enqueue({
+      entityType: 'ticket',
+      queue: this.exportQueue,
+      format: dto.format,
+      ids: dto.ids,
+      columns: dto.columns,
+      filterSnapshot: { ids: dto.ids },
+    });
+  }
+
+  getExportStatus(jobId: string) {
+    return this.exportRequest.status(this.exportQueue, jobId);
+  }
+
+  cancelExport(jobId: string) {
+    return this.exportRequest.cancel('ticket', jobId);
+  }
+
+  listExportJobs(options: { page?: number; limit?: number; status?: string }) {
+    return this.exportRequest.list('ticket', this.exportQueue, options);
+  }
+
+  getExportDownload(token: string) {
+    return this.exportRequest.download('tickets', token);
   }
 
   async create(data: Partial<Ticket>): Promise<Ticket> {

@@ -116,6 +116,26 @@ export class ContactsController {
     return this.service.getExportStatus(jobId);
   }
 
+  @Get('export-jobs')
+  @RequirePermission('export', 'contacts')
+  listExportJobs(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.service.listExportJobs({
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      status,
+    });
+  }
+
+  @Post('export-jobs/:jobId/cancel')
+  @RequirePermission('export', 'contacts')
+  cancelExport(@Param('jobId') jobId: string) {
+    return this.service.cancelExport(jobId);
+  }
+
   @Get('export-download/:token')
   @RequirePermission('export', 'contacts')
   async downloadExport(@Param('token') token: string, @Res() res: Response) {

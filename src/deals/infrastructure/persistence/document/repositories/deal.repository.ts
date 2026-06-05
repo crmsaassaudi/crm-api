@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery } from 'mongoose';
+import { Model, FilterQuery, Types } from 'mongoose';
 import { DealSchemaClass, DealSchemaDocument } from '../entities/deal.schema';
 import { Deal } from '../../../../domain/deal';
 import { DealMapper } from '../mappers/deal.mapper';
@@ -31,6 +31,53 @@ export class DealRepository extends BaseDocumentRepository<
 
   protected toPersistence(domain: Deal): DealSchemaClass {
     return DealMapper.toPersistence(domain);
+  }
+
+  // ─────────────────────────── EXPORT ───────────────────────────
+
+  private buildExportFilter(params: {
+    ids?: string[];
+  }): FilterQuery<DealSchemaClass> {
+    const base: FilterQuery<DealSchemaClass> =
+      params.ids && params.ids.length > 0
+        ? {
+            _id: {
+              $in: params.ids
+                .filter((id) => Types.ObjectId.isValid(id))
+                .map((id) => new Types.ObjectId(id)),
+            },
+          }
+        : {};
+    return this.applyTenantFilter({
+      ...base,
+      deletedAt: { $exists: false },
+    } as FilterQuery<DealSchemaClass>);
+  }
+
+  streamForExport(
+    params: { ids?: string[]; filters?: any },
+    opts?: {
+      projection?: Record<string, 1>;
+      readPreference?: string;
+      batchSize?: number;
+    },
+  ): AsyncIterable<any> & { close(): Promise<void> } {
+    const query = this.model
+      .find(this.buildExportFilter(params))
+      .sort({ createdAt: -1 })
+      .lean();
+    if (opts?.projection) query.select(opts.projection);
+    if (opts?.readPreference) query.read(opts.readPreference as any);
+    return query.batchSize(opts?.batchSize ?? 1000).cursor();
+  }
+
+  async countForExport(
+    params: { ids?: string[]; filters?: any },
+    maxTimeMS?: number,
+  ): Promise<number> {
+    const query = this.model.countDocuments(this.buildExportFilter(params));
+    if (maxTimeMS) query.maxTimeMS(maxTimeMS);
+    return query.exec();
   }
 
   async findManyWithPagination({

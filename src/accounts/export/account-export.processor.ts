@@ -19,60 +19,56 @@ import {
   ExportJobDocument,
   EXPORT_WORKER_OPTIONS,
   DEFAULT_EXPORT_HARD_CAP,
-} from '../common/export';
-import { CONTACT_EXPORT_QUEUE } from './contacts.constants';
-import { ContactRepository } from './infrastructure/persistence/document/repositories/contact.repository';
-import { IOREDIS_CLIENT } from '../redis/redis.tokens';
-import { RedisLockService } from '../redis/redis-lock.service';
+} from '../../common/export';
+import { ACCOUNT_EXPORT_QUEUE } from '../accounts.constants';
+import { AccountRepository } from '../infrastructure/persistence/document/repositories/account.repository';
+import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
+import { RedisLockService } from '../../redis/redis-lock.service';
 
-// ── Columns ─────────────────────────────────────────────────────────
-// Order/semantics preserved from the previous CSV_HEADERS for backward compat.
-const CONTACT_EXPORT_COLUMNS: readonly ExportColumn[] = [
+const ACCOUNT_EXPORT_COLUMNS: readonly ExportColumn[] = [
   { header: 'id', path: 'id' },
-  { header: 'firstName', path: 'firstName' },
-  { header: 'lastName', path: 'lastName' },
+  { header: 'name', path: 'name' },
+  { header: 'website', path: 'website' },
+  { header: 'industry', path: 'industry' },
   { header: 'emails', path: 'emails' },
   { header: 'phones', path: 'phones' },
-  { header: 'companyName', path: 'companyName' },
-  { header: 'title', path: 'title' },
-  { header: 'lifecycleStageId', path: 'lifecycleStageId' },
+  { header: 'taxId', path: 'taxId' },
+  { header: 'annualRevenue', path: 'annualRevenue' },
+  { header: 'numberOfEmployees', path: 'numberOfEmployees' },
+  { header: 'tags', path: 'tags' },
   { header: 'statusId', path: 'statusId' },
-  { header: 'lastActivityAt', path: 'lastActivityAt' },
+  { header: 'typeId', path: 'typeId' },
+  { header: 'ownerId', path: 'ownerId' },
+  { header: 'createdAt', path: 'createdAt' },
 ] as const;
 
-const CONTACT_EXPORT_CONFIG: ExportModuleConfig = {
-  module: 'contact',
-  displayName: 'Contact',
-  maskingResource: 'Contact',
-  columns: CONTACT_EXPORT_COLUMNS,
-  selectableColumns: new Set(CONTACT_EXPORT_COLUMNS.map((c) => c.path)),
+const ACCOUNT_EXPORT_CONFIG: ExportModuleConfig = {
+  module: 'account',
+  displayName: 'Account',
+  maskingResource: 'Account',
+  columns: ACCOUNT_EXPORT_COLUMNS,
+  selectableColumns: new Set(ACCOUNT_EXPORT_COLUMNS.map((c) => c.path)),
   batchSize: 1_000,
   hardCap: DEFAULT_EXPORT_HARD_CAP,
   throttleMs: 50,
-  // Keep plain `.csv` downloads for backward-compatibility (gzip available).
   gzipCsv: false,
-  completionChannel: 'socket:contact:export:completed',
-  queueName: CONTACT_EXPORT_QUEUE,
+  completionChannel: 'socket:account:export:completed',
+  queueName: ACCOUNT_EXPORT_QUEUE,
 };
 
-/**
- * Contact export job data. `ids` / `legacyFilters` feed the repository's
- * existing export filter; `filter` (from BaseExportJobData) is the typed
- * snapshot persisted for history/audit.
- */
-export interface ContactExportJobData extends BaseExportJobData {
+export interface AccountExportJobData extends BaseExportJobData {
   ids?: string[];
   legacyFilters?: Record<string, any>;
 }
 
-@Processor(CONTACT_EXPORT_QUEUE, EXPORT_WORKER_OPTIONS)
-export class ContactExportProcessor extends BaseExportProcessor<ContactExportJobData> {
-  protected readonly logger = new Logger(ContactExportProcessor.name);
+@Processor(ACCOUNT_EXPORT_QUEUE, EXPORT_WORKER_OPTIONS)
+export class AccountExportProcessor extends BaseExportProcessor<AccountExportJobData> {
+  protected readonly logger = new Logger(AccountExportProcessor.name);
   protected readonly cls: ClsService;
   private readonly storage: ExportStorageService;
 
   constructor(
-    private readonly repository: ContactRepository,
+    private readonly repository: AccountRepository,
     storageFactory: ExportStorageFactory,
     private readonly lockService: RedisLockService,
     private readonly maskingService: ExportMaskingService,
@@ -84,11 +80,11 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
   ) {
     super();
     this.cls = cls;
-    this.storage = storageFactory.create('contacts');
+    this.storage = storageFactory.create('accounts');
   }
 
   protected getModuleConfig(): ExportModuleConfig {
-    return CONTACT_EXPORT_CONFIG;
+    return ACCOUNT_EXPORT_CONFIG;
   }
   protected getStorage(): ExportStorageService {
     return this.storage;
@@ -110,7 +106,7 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
   }
 
   protected openCursor(
-    data: ContactExportJobData,
+    data: AccountExportJobData,
     opts: ExportQueryOptions,
   ): ExportCursor {
     return this.repository.streamForExport(
@@ -120,7 +116,7 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
   }
 
   protected countForProgress(
-    data: ContactExportJobData,
+    data: AccountExportJobData,
     maxTimeMS: number,
   ): Promise<number> {
     return this.repository.countForExport(

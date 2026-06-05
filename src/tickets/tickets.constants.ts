@@ -1,6 +1,9 @@
 /** BullMQ queue name for ticket imports. */
 export const TICKET_IMPORT_QUEUE = 'ticket-import';
 
+/** BullMQ queue name for ticket exports. */
+export const TICKET_EXPORT_QUEUE = 'ticket-export';
+
 /** Batch size for stream-import bulkWrite. */
 export const TICKET_IMPORT_BATCH_SIZE = 1_000;
 

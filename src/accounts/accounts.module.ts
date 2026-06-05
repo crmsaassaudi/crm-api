@@ -11,14 +11,20 @@ import {
   AccountSchemaClass,
 } from './infrastructure/persistence/document/entities/account.schema';
 import { AccountImportProcessor } from './import/account-import.processor';
+import { AccountExportProcessor } from './export/account-export.processor';
 import { isWorkerRuntime } from '../config/runtime-role';
-import { ACCOUNT_IMPORT_QUEUE } from './accounts.constants';
+import {
+  ACCOUNT_IMPORT_QUEUE,
+  ACCOUNT_EXPORT_QUEUE,
+} from './accounts.constants';
 import {
   ImportJobSchema,
   ImportJobSchemaClass,
 } from '../common/import/import-job.schema';
 
-const workerProviders = isWorkerRuntime() ? [AccountImportProcessor] : [];
+const workerProviders = isWorkerRuntime()
+  ? [AccountImportProcessor, AccountExportProcessor]
+  : [];
 
 @Module({
   imports: [
@@ -37,6 +43,19 @@ const workerProviders = isWorkerRuntime() ? [AccountImportProcessor] : [];
     }),
     BullBoardModule.forFeature({
       name: ACCOUNT_IMPORT_QUEUE,
+      adapter: BullMQAdapter,
+    }),
+    BullModule.registerQueue({
+      name: ACCOUNT_EXPORT_QUEUE,
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: 100,
+        removeOnFail: 500,
+      },
+    }),
+    BullBoardModule.forFeature({
+      name: ACCOUNT_EXPORT_QUEUE,
       adapter: BullMQAdapter,
     }),
   ],

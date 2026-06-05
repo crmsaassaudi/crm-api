@@ -56,6 +56,9 @@ export class OmniGateway
   private readonly logger = new Logger(OmniGateway.name);
   private readonly socketEventChannels = [
     'socket:contact:export:completed',
+    'socket:account:export:completed',
+    'socket:deal:export:completed',
+    'socket:ticket:export:completed',
     'socket:contact:import:completed',
     'socket:account:import:completed',
     'socket:deal:import:completed',
@@ -92,7 +95,7 @@ export class OmniGateway
     if (isDedicatedWorkerProcess()) return; // Only API/all-in-one process needs to subscribe
 
     const sub = this.redis.duplicate();
-    sub.subscribe(...this.socketEventChannels, (err) => {
+    void sub.subscribe(...this.socketEventChannels, (err) => {
       if (err) {
         this.logger.error('Failed to subscribe to Redis socket channels', err);
       } else {
@@ -108,6 +111,15 @@ export class OmniGateway
         switch (channel) {
           case 'socket:contact:export:completed':
             this.handleContactExportCompleted(event);
+            break;
+          case 'socket:account:export:completed':
+            this.handleModuleExportCompleted('account', event);
+            break;
+          case 'socket:deal:export:completed':
+            this.handleModuleExportCompleted('deal', event);
+            break;
+          case 'socket:ticket:export:completed':
+            this.handleModuleExportCompleted('ticket', event);
             break;
           case 'socket:contact:import:completed':
             this.handleContactImportCompleted(event);
@@ -1053,6 +1065,33 @@ export class OmniGateway
       `Broadcasting contact export completed to room=${room} (user=${event.userId}, records=${event.recordCount})`,
     );
     this.server.to(room).emit('contact:export:completed', {
+      userId: event.userId,
+      downloadUrl: event.downloadUrl,
+      expiresAt: event.expiresAt,
+      recordCount: event.recordCount,
+    });
+  }
+
+  /**
+   * Generic handler for account/deal/ticket export completion events.
+   * Mirrors contact export: broadcast to the tenant room with a module-prefixed
+   * event name; the client filters by userId.
+   */
+  private handleModuleExportCompleted(
+    module: 'account' | 'deal' | 'ticket',
+    event: {
+      tenantId: string;
+      userId: string;
+      downloadUrl: string;
+      expiresAt: string;
+      recordCount: number;
+    },
+  ) {
+    const room = `tenant:${event.tenantId}`;
+    this.logger.log(
+      `Broadcasting ${module} export completed to room=${room} (user=${event.userId}, records=${event.recordCount})`,
+    );
+    this.server.to(room).emit(`${module}:export:completed`, {
       userId: event.userId,
       downloadUrl: event.downloadUrl,
       expiresAt: event.expiresAt,

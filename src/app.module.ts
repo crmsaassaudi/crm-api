@@ -72,6 +72,7 @@ import { SocialContentModule } from './social-posts/social-posts.module';
 import { ReportsModule } from './reports/reports.module';
 import { HealthModule } from './health/health.module';
 import { SharedImportModule } from './common/import/import.module';
+import { SharedExportModule } from './common/export/export.module';
 
 import {
   KeycloakConnectModule,
@@ -339,6 +340,7 @@ function bullBoardBasicAuth() {
     SocialContentModule,
     ReportsModule,
     SharedImportModule,
+    SharedExportModule,
   ],
   providers: [
     {

@@ -24,10 +24,12 @@ import {
 } from '../common/import';
 import {
   DEAL_IMPORT_QUEUE,
+  DEAL_EXPORT_QUEUE,
   DEAL_IMPORT_MAX_FILE_BYTES,
   DEAL_IMPORT_MAPPABLE_FIELDS,
 } from './deals.constants';
 import { StartDealImportDto } from './dto/start-deal-import.dto';
+import { ExportRequestService, ExportRequestDto } from '../common/export';
 
 @Injectable()
 export class DealsService {
@@ -42,10 +44,44 @@ export class DealsService {
     private readonly storageFactory: ImportStorageFactory,
     @InjectQueue(DEAL_IMPORT_QUEUE)
     private readonly importQueue: Queue,
+    @InjectQueue(DEAL_EXPORT_QUEUE)
+    private readonly exportQueue: Queue,
     @InjectModel(ImportJobSchemaClass.name)
     private readonly importJobModel: Model<ImportJobDocument>,
+    private readonly exportRequest: ExportRequestService,
   ) {
     this.importStorage = this.storageFactory.create('deals');
+  }
+
+  // ─────────────────────────── EXPORT ───────────────────────────
+
+  exportDeals(
+    dto: ExportRequestDto,
+  ): Promise<{ jobId: string; status: 'queued' }> {
+    return this.exportRequest.enqueue({
+      entityType: 'deal',
+      queue: this.exportQueue,
+      format: dto.format,
+      ids: dto.ids,
+      columns: dto.columns,
+      filterSnapshot: { ids: dto.ids },
+    });
+  }
+
+  getExportStatus(jobId: string) {
+    return this.exportRequest.status(this.exportQueue, jobId);
+  }
+
+  cancelExport(jobId: string) {
+    return this.exportRequest.cancel('deal', jobId);
+  }
+
+  listExportJobs(options: { page?: number; limit?: number; status?: string }) {
+    return this.exportRequest.list('deal', this.exportQueue, options);
+  }
+
+  getExportDownload(token: string) {
+    return this.exportRequest.download('deals', token);
   }
 
   private getCurrentUserId(): string | undefined {

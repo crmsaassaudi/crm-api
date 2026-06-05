@@ -1,6 +1,9 @@
 /** BullMQ queue name for account imports. */
 export const ACCOUNT_IMPORT_QUEUE = 'account-import';
 
+/** BullMQ queue name for account exports. */
+export const ACCOUNT_EXPORT_QUEUE = 'account-export';
+
 /** Batch size for stream-import bulkWrite. Balances memory vs round-trips. */
 export const ACCOUNT_IMPORT_BATCH_SIZE = 1_000;
 

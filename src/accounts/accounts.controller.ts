@@ -22,6 +22,7 @@ import { MaskedResource } from '../common/decorators/masked-resource.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
 import { RequirePermission } from '../common/permissions';
 import { StartAccountImportDto } from './dto/start-account-import.dto';
+import { ExportRequestDto } from '../common/export';
 
 @ApiTags('Accounts')
 @ApiBearerAuth()
@@ -114,6 +115,62 @@ export class AccountsController {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.send(buffer);
+  }
+
+  // ──────────────────────────── EXPORT ────────────────────────────
+
+  @Post('export')
+  @RequirePermission('export', 'accounts')
+  exportAccounts(@Body() body: ExportRequestDto) {
+    return this.service.exportAccounts(body || {});
+  }
+
+  @Get('export-status/:jobId')
+  @RequirePermission('export', 'accounts')
+  getExportStatus(@Param('jobId') jobId: string) {
+    return this.service.getExportStatus(jobId);
+  }
+
+  @Get('export-jobs')
+  @RequirePermission('export', 'accounts')
+  listExportJobs(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.service.listExportJobs({
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      status,
+    });
+  }
+
+  @Post('export-jobs/:jobId/cancel')
+  @RequirePermission('export', 'accounts')
+  cancelExport(@Param('jobId') jobId: string) {
+    return this.service.cancelExport(jobId);
+  }
+
+  @Get('export-download/:token')
+  @RequirePermission('export', 'accounts')
+  async downloadExport(@Param('token') token: string, @Res() res: Response) {
+    const file = await this.service.getExportDownload(token);
+    const safeFilename = file.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const ext = safeFilename.split('.').pop()?.toLowerCase();
+    const contentType =
+      ext === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : ext === 'gz'
+          ? 'application/gzip'
+          : 'text/csv; charset=utf-8';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${safeFilename}"`,
+    );
+    res.setHeader('Content-Length', String(file.buffer.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(file.buffer);
   }
 
   @Get(':id')

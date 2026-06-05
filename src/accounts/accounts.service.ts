@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Queue, Job } from 'bullmq';
+import { Queue } from 'bullmq';
 import { Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
 import { Readable } from 'stream';
@@ -28,10 +28,12 @@ import {
 } from '../common/import';
 import {
   ACCOUNT_IMPORT_QUEUE,
+  ACCOUNT_EXPORT_QUEUE,
   ACCOUNT_IMPORT_MAX_FILE_BYTES,
   ACCOUNT_IMPORT_MAPPABLE_FIELDS,
 } from './accounts.constants';
 import { StartAccountImportDto } from './dto/start-account-import.dto';
+import { ExportRequestService, ExportRequestDto } from '../common/export';
 
 @Injectable()
 export class AccountsService {
@@ -45,10 +47,44 @@ export class AccountsService {
     private readonly storageFactory: ImportStorageFactory,
     @InjectQueue(ACCOUNT_IMPORT_QUEUE)
     private readonly importQueue: Queue,
+    @InjectQueue(ACCOUNT_EXPORT_QUEUE)
+    private readonly exportQueue: Queue,
     @InjectModel(ImportJobSchemaClass.name)
     private readonly importJobModel: Model<ImportJobDocument>,
+    private readonly exportRequest: ExportRequestService,
   ) {
     this.importStorage = this.storageFactory.create('accounts');
+  }
+
+  // ─────────────────────────── EXPORT ───────────────────────────
+
+  exportAccounts(
+    dto: ExportRequestDto,
+  ): Promise<{ jobId: string; status: 'queued' }> {
+    return this.exportRequest.enqueue({
+      entityType: 'account',
+      queue: this.exportQueue,
+      format: dto.format,
+      ids: dto.ids,
+      columns: dto.columns,
+      filterSnapshot: { ids: dto.ids },
+    });
+  }
+
+  getExportStatus(jobId: string) {
+    return this.exportRequest.status(this.exportQueue, jobId);
+  }
+
+  cancelExport(jobId: string) {
+    return this.exportRequest.cancel('account', jobId);
+  }
+
+  listExportJobs(options: { page?: number; limit?: number; status?: string }) {
+    return this.exportRequest.list('account', this.exportQueue, options);
+  }
+
+  getExportDownload(token: string) {
+    return this.exportRequest.download('accounts', token);
   }
 
   private getCurrentUserId(): string {

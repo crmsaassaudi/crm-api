@@ -2,6 +2,7 @@ import {
   IsOptional,
   IsArray,
   IsString,
+  IsIn,
   ValidateNested,
   IsBoolean,
 } from 'class-validator';
@@ -33,6 +34,20 @@ export class ExportContactsDto {
   @IsArray()
   @IsString({ each: true })
   ids?: string[];
+
+  @ApiPropertyOptional({ description: 'Output format', enum: ['csv', 'xlsx'] })
+  @IsOptional()
+  @IsIn(['csv', 'xlsx'])
+  format?: 'csv' | 'xlsx';
+
+  @ApiPropertyOptional({
+    description: 'Subset of column keys to export. Omit for all columns.',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  columns?: string[];
 
   @ApiPropertyOptional({
     description: 'Filter criteria for the export',

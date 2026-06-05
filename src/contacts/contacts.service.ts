@@ -3,9 +3,13 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
+  Inject,
   Logger,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import Redis from 'ioredis';
 import { InjectModel } from '@nestjs/mongoose';
 import { Queue } from 'bullmq';
 import { Model } from 'mongoose';
@@ -38,6 +42,16 @@ import {
 } from './contacts.constants';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { EntityAuditService } from '../common/audit/entity-audit.service';
+import { IOREDIS_CLIENT } from '../redis/redis.tokens';
+import { ActivityLogService } from '../activity-log/activity-log.service';
+import { ExportContactsDto } from './dto/export-contacts.dto';
+import {
+  ExportProgressTracker,
+  ExportStorageFactory,
+  ExportStorageService,
+  ExportJobSchemaClass,
+  ExportJobDocument,
+} from '../common/export';
 import { StartImportDto } from './dto/start-import.dto';
 import { createParser, detectFormat } from './import/import-parser.factory';
 import { ImportTenantSettings } from './contact-import.processor';
@@ -61,13 +75,24 @@ export class ContactsService {
     private readonly exportStorageService: ContactExportStorageService,
     private readonly lockService: RedisLockService,
     private readonly entityAudit: EntityAuditService,
+    private readonly activityLog: ActivityLogService,
+    private readonly exportStorageFactory: ExportStorageFactory,
+    @Inject(IOREDIS_CLIENT)
+    private readonly redis: Redis,
     @InjectQueue(CONTACT_EXPORT_QUEUE)
     private readonly exportQueue: Queue,
     @InjectQueue(CONTACT_IMPORT_QUEUE)
     private readonly importQueue: Queue,
     @InjectModel(ImportJobSchemaClass.name)
     private readonly importJobModel: Model<ImportJobDocument>,
-  ) {}
+    @InjectModel(ExportJobSchemaClass.name)
+    private readonly exportJobModel: Model<ExportJobDocument>,
+  ) {
+    this.exportStorage = this.exportStorageFactory.create('contacts');
+  }
+
+  /** Dual-mode storage for export downloads (matches the worker's namespace). */
+  private readonly exportStorage: ExportStorageService;
 
   async create(data: CreateContactDto): Promise<Contact> {
     const normalizedLifecycle = await this.normalizeLifecycleFields(data);
@@ -592,24 +617,104 @@ export class ContactsService {
     };
   }
 
-  async exportContacts(params: {
-    ids?: string[];
-    filters?: any;
-  }): Promise<{ jobId: string; status: 'queued' }> {
+  async exportContacts(
+    params: ExportContactsDto,
+  ): Promise<{ jobId: string; status: 'queued' }> {
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId();
+
+    await this.enforceExportQuota(userId);
+
     const tenantConfig =
       await this.settingsService.getSetting('data_access_policy');
-    const job = await this.exportQueue.add('export', {
-      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
-      userId: this.getCurrentUserId(),
+    const restrictToOwner = tenantConfig?.restrict_own_contacts ?? false;
+
+    // Preserve the existing repository filter shape (incl. the legacy magic
+    // keys the export filter builder understands).
+    const legacyFilters: Record<string, any> = {
+      ...((params.filters as unknown as Record<string, any>) || {}),
+      __restrictToOwner: restrictToOwner,
+      __currentUserId: userId,
+    };
+
+    const filterSnapshot = {
       ids: params.ids,
-      filters: {
-        ...(params.filters || {}),
-        __restrictToOwner: tenantConfig?.restrict_own_contacts ?? false,
-        __currentUserId: this.getCurrentUserId(),
-      },
+      search: params.search,
+      lifecycleStage: params.lifecycleStage,
+      restrictToOwner,
+    };
+
+    const format = params.format ?? 'csv';
+    const job = await this.exportQueue.add('export', {
+      tenantId,
+      userId,
+      userGroupId: this.cls.get('userGroupId'),
+      format,
+      columns: params.columns,
+      filter: { ids: params.ids, restrictToOwner, currentUserId: userId },
+      ids: params.ids,
+      legacyFilters,
+    });
+
+    // Persist the export_jobs document — this doubles as the audit record.
+    await this.exportJobModel.create({
+      tenantId,
+      userId,
+      userGroupId: this.cls.get('userGroupId'),
+      entityType: 'contact',
+      format,
+      status: 'queued',
+      bullJobId: String(job.id),
+      filterSnapshot,
+      selectedColumns: params.columns,
+      ip: this.cls.get('requestIp'),
+      userAgent: this.cls.get('userAgent'),
+    });
+
+    // Bulk export is a data-exfiltration action → always audited.
+    await this.activityLog.create({
+      targetType: 'Export',
+      targetId: String(job.id),
+      event: 'export',
+      actorId: userId,
+      payload: { module: 'contact', filter: filterSnapshot },
     });
 
     return { jobId: String(job.id), status: 'queued' };
+  }
+
+  /**
+   * Throttle exports per tenant (concurrent) and per user (hourly) to stop one
+   * tenant from monopolising export workers via sequential spam.
+   */
+  private async enforceExportQuota(userId: string | undefined): Promise<void> {
+    const maxQueued = Number(process.env.EXPORT_MAX_QUEUED_PER_TENANT ?? 3);
+    const maxPerHour = Number(process.env.EXPORT_MAX_PER_USER_PER_HOUR ?? 5);
+
+    // Both queries run in the request's CLS context → auto-scoped to tenant.
+    const inFlight = await this.exportJobModel.countDocuments({
+      entityType: 'contact',
+      status: { $in: ['queued', 'active'] },
+    });
+    if (inFlight >= maxQueued) {
+      throw new HttpException(
+        'Too many exports in progress for this workspace. Please wait for one to finish.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const since = new Date(Date.now() - 60 * 60 * 1000);
+    const recent = await this.exportJobModel.countDocuments({
+      entityType: 'contact',
+      userId,
+      createdAt: { $gte: since },
+    });
+    if (recent >= maxPerHour) {
+      throw new HttpException(
+        'Export rate limit reached. Please try again later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
   }
 
   async getExportStatus(jobId: string): Promise<{
@@ -640,11 +745,91 @@ export class ContactsService {
     };
   }
 
+  /** Request cancellation of a running export (worker checks each batch). */
+  async cancelExport(jobId: string): Promise<{ status: string }> {
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId();
+
+    const doc = await this.exportJobModel
+      .findOne({ bullJobId: jobId })
+      .lean()
+      .exec();
+    if (
+      !doc ||
+      String(doc.tenantId) !== String(tenantId) ||
+      String(doc.userId) !== String(userId)
+    ) {
+      throw new NotFoundException('Export job not found');
+    }
+    if (['completed', 'failed', 'cancelled'].includes(doc.status)) {
+      return { status: doc.status };
+    }
+
+    await ExportProgressTracker.requestCancel(this.redis, jobId);
+    return { status: 'cancelling' };
+  }
+
+  async listExportJobs(options: {
+    page?: number;
+    limit?: number;
+    status?: string;
+  }): Promise<{ data: any[]; total: number; page: number; limit: number }> {
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const userId = this.getCurrentUserId();
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(50, Math.max(1, options.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const filter: Record<string, any> = {
+      tenantId,
+      userId,
+      entityType: 'contact',
+    };
+    if (
+      options.status &&
+      ['queued', 'active', 'completed', 'failed', 'cancelled'].includes(
+        options.status,
+      )
+    ) {
+      filter.status = options.status;
+    }
+
+    const [data, total] = await Promise.all([
+      this.exportJobModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.exportJobModel.countDocuments(filter).exec(),
+    ]);
+
+    // Enrich active/queued jobs with real-time BullMQ progress.
+    for (const doc of data) {
+      if (doc.status === 'active' || doc.status === 'queued') {
+        try {
+          const bullJob = await this.exportQueue.getJob(doc.bullJobId);
+          if (bullJob) {
+            (doc as any).status = await bullJob.getState();
+            if (bullJob.progress && typeof bullJob.progress === 'object') {
+              (doc as any).progress = bullJob.progress;
+            }
+          }
+        } catch {
+          // BullMQ job cleaned up — keep MongoDB status
+        }
+      }
+    }
+
+    return { data, total, page, limit };
+  }
+
   async getExportDownload(
     token: string,
   ): Promise<{ buffer: Buffer; filename: string }> {
     // export_downloaded: system action — not written to Activity Log.
-    return this.exportStorageService.readLocalExport(token);
+    return this.exportStorage.readLocalExport(token);
   }
 
   // ──────────────────────────── CONTACT IMPORT ────────────────────────────

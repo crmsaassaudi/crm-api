@@ -12,14 +12,17 @@ import {
 } from './infrastructure/persistence/document/entities/ticket.schema';
 import { TicketSettingsModule } from '../ticket-settings/ticket-settings.module';
 import { TicketImportProcessor } from './import/ticket-import.processor';
+import { TicketExportProcessor } from './export/ticket-export.processor';
 import { isWorkerRuntime } from '../config/runtime-role';
-import { TICKET_IMPORT_QUEUE } from './tickets.constants';
+import { TICKET_IMPORT_QUEUE, TICKET_EXPORT_QUEUE } from './tickets.constants';
 import {
   ImportJobSchema,
   ImportJobSchemaClass,
 } from '../common/import/import-job.schema';
 
-const workerProviders = isWorkerRuntime() ? [TicketImportProcessor] : [];
+const workerProviders = isWorkerRuntime()
+  ? [TicketImportProcessor, TicketExportProcessor]
+  : [];
 
 @Module({
   imports: [
@@ -37,6 +40,19 @@ const workerProviders = isWorkerRuntime() ? [TicketImportProcessor] : [];
     }),
     BullBoardModule.forFeature({
       name: TICKET_IMPORT_QUEUE,
+      adapter: BullMQAdapter,
+    }),
+    BullModule.registerQueue({
+      name: TICKET_EXPORT_QUEUE,
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: 100,
+        removeOnFail: 500,
+      },
+    }),
+    BullBoardModule.forFeature({
+      name: TICKET_EXPORT_QUEUE,
       adapter: BullMQAdapter,
     }),
     TicketSettingsModule,

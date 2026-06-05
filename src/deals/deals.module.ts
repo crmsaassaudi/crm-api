@@ -11,14 +11,17 @@ import {
   DealSchemaClass,
 } from './infrastructure/persistence/document/entities/deal.schema';
 import { DealImportProcessor } from './import/deal-import.processor';
+import { DealExportProcessor } from './export/deal-export.processor';
 import { isWorkerRuntime } from '../config/runtime-role';
-import { DEAL_IMPORT_QUEUE } from './deals.constants';
+import { DEAL_IMPORT_QUEUE, DEAL_EXPORT_QUEUE } from './deals.constants';
 import {
   ImportJobSchema,
   ImportJobSchemaClass,
 } from '../common/import/import-job.schema';
 
-const workerProviders = isWorkerRuntime() ? [DealImportProcessor] : [];
+const workerProviders = isWorkerRuntime()
+  ? [DealImportProcessor, DealExportProcessor]
+  : [];
 
 @Module({
   imports: [
@@ -36,6 +39,19 @@ const workerProviders = isWorkerRuntime() ? [DealImportProcessor] : [];
     }),
     BullBoardModule.forFeature({
       name: DEAL_IMPORT_QUEUE,
+      adapter: BullMQAdapter,
+    }),
+    BullModule.registerQueue({
+      name: DEAL_EXPORT_QUEUE,
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: 100,
+        removeOnFail: 500,
+      },
+    }),
+    BullBoardModule.forFeature({
+      name: DEAL_EXPORT_QUEUE,
       adapter: BullMQAdapter,
     }),
   ],

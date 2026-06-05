@@ -385,21 +385,41 @@ export class ContactRepository extends BaseDocumentRepository<
       .exec();
   }
 
-  streamForExport(params: {
-    ids?: string[];
-    filters?: any;
-  }): AsyncIterable<ContactSchemaDocument> {
-    return this.model
+  /**
+   * Stream contacts for export. Lean + projection + read-preference + batchSize
+   * keep memory flat and shift the scan to a secondary so the primary OLTP path
+   * (and other tenants) are not impacted.
+   */
+  streamForExport(
+    params: {
+      ids?: string[];
+      filters?: any;
+    },
+    opts?: {
+      projection?: Record<string, 1>;
+      readPreference?: string;
+      batchSize?: number;
+    },
+  ): AsyncIterable<any> & { close(): Promise<void> } {
+    const query = this.model
       .find(this.buildExportFilter(params))
       .sort({ createdAt: -1 })
-      .cursor();
+      .lean();
+    if (opts?.projection) query.select(opts.projection);
+    if (opts?.readPreference) query.read(opts.readPreference as any);
+    return query.batchSize(opts?.batchSize ?? 1000).cursor();
   }
 
-  async countForExport(params: {
-    ids?: string[];
-    filters?: any;
-  }): Promise<number> {
-    return this.model.countDocuments(this.buildExportFilter(params)).exec();
+  async countForExport(
+    params: {
+      ids?: string[];
+      filters?: any;
+    },
+    maxTimeMS?: number,
+  ): Promise<number> {
+    const query = this.model.countDocuments(this.buildExportFilter(params));
+    if (maxTimeMS) query.maxTimeMS(maxTimeMS);
+    return query.exec();
   }
 
   async findOne(

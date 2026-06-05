@@ -1,6 +1,9 @@
 /** BullMQ queue name for deal imports. */
 export const DEAL_IMPORT_QUEUE = 'deal-import';
 
+/** BullMQ queue name for deal exports. */
+export const DEAL_EXPORT_QUEUE = 'deal-export';
+
 /** Batch size for stream-import bulkWrite. */
 export const DEAL_IMPORT_BATCH_SIZE = 1_000;
 
