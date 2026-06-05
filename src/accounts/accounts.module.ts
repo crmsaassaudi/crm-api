@@ -21,6 +21,18 @@ import {
   ImportJobSchema,
   ImportJobSchemaClass,
 } from '../common/import/import-job.schema';
+import {
+  UserSchema,
+  UserSchemaClass,
+} from '../users/infrastructure/persistence/document/entities/user.schema';
+import {
+  AccountStatusSchema,
+  AccountStatusSchemaClass,
+} from '../account-settings/entities/account-status.schema';
+import {
+  AccountTypeSchema,
+  AccountTypeSchemaClass,
+} from '../account-settings/entities/account-type.schema';
 
 const workerProviders = isWorkerRuntime()
   ? [AccountImportProcessor, AccountExportProcessor]
@@ -31,6 +43,9 @@ const workerProviders = isWorkerRuntime()
     MongooseModule.forFeature([
       { name: AccountSchemaClass.name, schema: AccountSchema },
       { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
+      { name: UserSchemaClass.name, schema: UserSchema },
+      { name: AccountStatusSchemaClass.name, schema: AccountStatusSchema },
+      { name: AccountTypeSchemaClass.name, schema: AccountTypeSchema },
     ]),
     BullModule.registerQueue({
       name: ACCOUNT_IMPORT_QUEUE,

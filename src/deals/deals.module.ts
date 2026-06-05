@@ -18,7 +18,22 @@ import {
   ImportJobSchema,
   ImportJobSchemaClass,
 } from '../common/import/import-job.schema';
-
+import {
+  UserSchema,
+  UserSchemaClass,
+} from '../users/infrastructure/persistence/document/entities/user.schema';
+import {
+  DealStageSchema,
+  DealStageSchemaClass,
+} from '../deal-settings/entities/deal-stage.schema';
+import {
+  DealSourceSchema,
+  DealSourceSchemaClass,
+} from '../deal-settings/entities/deal-source.schema';
+import {
+  AccountSchema,
+  AccountSchemaClass,
+} from '../accounts/infrastructure/persistence/document/entities/account.schema';
 const workerProviders = isWorkerRuntime()
   ? [DealImportProcessor, DealExportProcessor]
   : [];
@@ -28,6 +43,10 @@ const workerProviders = isWorkerRuntime()
     MongooseModule.forFeature([
       { name: DealSchemaClass.name, schema: DealSchema },
       { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
+      { name: UserSchemaClass.name, schema: UserSchema },
+      { name: DealStageSchemaClass.name, schema: DealStageSchema },
+      { name: DealSourceSchemaClass.name, schema: DealSourceSchema },
+      { name: AccountSchemaClass.name, schema: AccountSchema },
     ]),
     BullModule.registerQueue({
       name: DEAL_IMPORT_QUEUE,

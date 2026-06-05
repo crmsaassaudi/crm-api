@@ -78,6 +78,18 @@ export abstract class BaseExportProcessor<
     maxTimeMS: number,
   ): Promise<number>;
 
+  /**
+   * Optional lifecycle hook called once per job, after masking / progress setup
+   * but before the streaming cursor opens. Subclasses override this to pre-load
+   * lookup maps (users, stages, statuses, etc.) so that `ExportColumn.format`
+   * functions can resolve ObjectId references to human-readable values.
+   *
+   * The default implementation is a no-op.
+   */
+  protected async beforeExport(_data: TJobData): Promise<void> {
+    // no-op — subclasses may override
+  }
+
   // ─────────────────────── LIFECYCLE HOOKS ───────────────────────
 
   @OnWorkerEvent('failed')
@@ -129,6 +141,8 @@ export abstract class BaseExportProcessor<
       data.userGroupId,
       cfg.maskingResource,
     );
+
+    await this.beforeExport(data);
 
     const estimatedTotal = await this.safeCount(data);
 

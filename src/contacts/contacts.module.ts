@@ -14,6 +14,10 @@ import {
   ImportJobSchema,
   ImportJobSchemaClass,
 } from './infrastructure/persistence/document/entities/import-job.schema';
+import {
+  UserSchema,
+  UserSchemaClass,
+} from '../users/infrastructure/persistence/document/entities/user.schema';
 import { AccountsModule } from '../accounts/accounts.module';
 import { DealsModule } from '../deals/deals.module';
 import { ListViewsModule } from '../list-views/list-views.module';
@@ -47,6 +51,7 @@ const workerProviders = isWorkerRuntime()
     MongooseModule.forFeature([
       { name: ContactSchemaClass.name, schema: ContactSchema },
       { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
+      { name: UserSchemaClass.name, schema: UserSchema },
     ]),
     BullModule.registerQueue({
       name: CONTACT_EXPORT_QUEUE,

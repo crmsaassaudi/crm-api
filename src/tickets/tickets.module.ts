@@ -19,6 +19,26 @@ import {
   ImportJobSchema,
   ImportJobSchemaClass,
 } from '../common/import/import-job.schema';
+import {
+  UserSchema,
+  UserSchemaClass,
+} from '../users/infrastructure/persistence/document/entities/user.schema';
+import {
+  TicketStatusSchema,
+  TicketStatusSchemaClass,
+} from '../ticket-settings/entities/ticket-status.schema';
+import {
+  TicketTypeSchema,
+  TicketTypeSchemaClass,
+} from '../ticket-settings/entities/ticket-type.schema';
+import {
+  TicketSourceSchema,
+  TicketSourceSchemaClass,
+} from '../ticket-settings/entities/ticket-source.schema';
+import {
+  GroupSchema,
+  GroupSchemaClass,
+} from '../groups/infrastructure/persistence/document/entities/group.schema';
 
 const workerProviders = isWorkerRuntime()
   ? [TicketImportProcessor, TicketExportProcessor]
@@ -29,6 +49,11 @@ const workerProviders = isWorkerRuntime()
     MongooseModule.forFeature([
       { name: TicketSchemaClass.name, schema: TicketSchema },
       { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
+      { name: UserSchemaClass.name, schema: UserSchema },
+      { name: TicketStatusSchemaClass.name, schema: TicketStatusSchema },
+      { name: TicketTypeSchemaClass.name, schema: TicketTypeSchema },
+      { name: TicketSourceSchemaClass.name, schema: TicketSourceSchema },
+      { name: GroupSchemaClass.name, schema: GroupSchema },
     ]),
     BullModule.registerQueue({
       name: TICKET_IMPORT_QUEUE,
