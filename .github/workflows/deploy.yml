@@ -35,11 +35,11 @@ jobs:
 
             test -f .env.production
 
-            export DOCKER_BUILDKIT=1
+            export DOCKER_BUILDKIT=0
 
             # Build image once, then run single all-in-one container.
             # To scale: switch to docker-compose.scaled.yml
-            # --no-cache avoids stale layer cache; BuildKit handles multi-stage refs safely
+            # --no-cache avoids stale layer cache
             docker build --pull --no-cache -t crm-api:production .
             docker compose -f docker-compose.yml up -d --no-build --remove-orphans crm-api
             docker container prune -f
