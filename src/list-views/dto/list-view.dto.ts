@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -12,6 +13,19 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+
+/**
+ * Valid CRM module keys.
+ * Must match the system module identifiers used throughout the platform.
+ * NEVER accept localized names (e.g. "Liên hệ") — only system keys.
+ */
+export const VALID_MODULES = [
+  'Contact',
+  'Account',
+  'Deal',
+  'Ticket',
+  'Task',
+] as const;
 
 export class ListViewColumnDto {
   @ApiProperty({ description: 'Field key matching the column registry' })
@@ -49,9 +63,13 @@ export class CreateListViewDto {
   @Length(1, 120)
   name: string;
 
-  @ApiProperty({ description: 'CRM module this view belongs to' })
-  @IsString()
-  @Length(1, 60)
+  @ApiProperty({
+    description: 'CRM module this view belongs to',
+    enum: VALID_MODULES,
+  })
+  @IsIn(VALID_MODULES, {
+    message: `module must be one of: ${VALID_MODULES.join(', ')}`,
+  })
   module: string;
 
   @ApiProperty({ type: [ListViewColumnDto], required: false })
