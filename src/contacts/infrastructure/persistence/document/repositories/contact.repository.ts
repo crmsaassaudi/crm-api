@@ -138,7 +138,7 @@ export class ContactRepository extends BaseDocumentRepository<
                 $options: 'i',
               };
             } else if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
-              where[f.id] = f.value;
+              where[f.id] = Array.isArray(f.value) ? { $in: f.value } : f.value;
             } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
               // Map virtual field names to actual DB field names
               const fieldMap: Record<string, string> = {

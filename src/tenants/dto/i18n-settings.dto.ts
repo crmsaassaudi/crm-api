@@ -27,6 +27,8 @@ const SUPPORTED_CURRENCIES = [
   'CNY',
   'KRW',
   'THB',
+  'SAR',
+  'AED',
 ] as const;
 
 /**
