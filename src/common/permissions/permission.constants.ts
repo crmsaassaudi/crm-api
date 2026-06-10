@@ -25,7 +25,9 @@ export type PermissionResource =
   | 'channels'
   | 'tags'
   | 'sla_policies'
-  | 'routing_rules';
+  | 'routing_rules'
+  | 'files'
+  | 'storage';
 
 export type PermissionAction =
   | 'view'
@@ -220,6 +222,16 @@ export const PERMISSION_REGISTRY: Record<
     edit: 'routing_rules:edit',
     delete: 'routing_rules:delete',
   },
+  files: {
+    view: 'files:view',
+    create: 'files:create',
+    edit: 'files:edit',
+    delete: 'files:delete',
+  },
+  storage: {
+    view: 'storage:view',
+    manage_system: 'storage:manage_system',
+  },
 };
 
 /**
@@ -339,6 +351,13 @@ export const CORE_PERMISSIONS: string[] = [
   'routing_rules:create',
   'routing_rules:edit',
   'routing_rules:delete',
+  // Files / Cloud Drive
+  'files:view',
+  'files:create',
+  'files:edit',
+  'files:delete',
+  // Storage (OWNER dashboard — view-only by default)
+  'storage:view',
 ];
 
 /**

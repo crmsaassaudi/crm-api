@@ -95,7 +95,7 @@ export class FileManagementController {
   // ── Upload ────────────────────────────────────────────────────────
 
   @Post('upload')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('create', 'files')
   @UseInterceptors(FileInterceptor('file'))
   @HttpCode(HttpStatus.CREATED)
   async uploadFile(
@@ -269,7 +269,7 @@ export class FileManagementController {
   // ── List ──────────────────────────────────────────────────────────
 
   @Get()
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'files')
   async listFiles(@Query() query: ListFilesQueryDto) {
     const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
@@ -292,7 +292,7 @@ export class FileManagementController {
   // ── Detail ────────────────────────────────────────────────────────
 
   @Get(':id')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'files')
   async getFile(@Param('id') id: string) {
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
@@ -321,7 +321,7 @@ export class FileManagementController {
   // ── Download URL ──────────────────────────────────────────────────
 
   @Get(':id/download')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'files')
   async getDownloadUrl(@Param('id') id: string) {
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
@@ -339,7 +339,7 @@ export class FileManagementController {
   // ── Update Access ─────────────────────────────────────────────────
 
   @Patch(':id/access')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
   async updateAccess(
     @Param('id') id: string,
@@ -360,7 +360,7 @@ export class FileManagementController {
   // ── Soft Delete ───────────────────────────────────────────────────
 
   @Delete(':id')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('delete', 'files')
   @HttpCode(HttpStatus.OK)
   async softDeleteFile(@Param('id') id: string) {
     const userId = this.cls.get<string>('userId');
@@ -394,7 +394,7 @@ export class FileManagementController {
   // ── Storage Overview ──────────────────────────────────────────────
 
   @Get('/storage/usage')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'storage')
   async getStorageUsage() {
     const tenantId = this.cls.get<string>('tenantId');
     const result = await this.tenantsService.getStorageBreakdown(tenantId);
@@ -439,7 +439,7 @@ export class FileManagementController {
   // ── Cloud Drive Extensions ────────────────────────────────────────
 
   @Patch(':id/rename')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
   async renameFile(
     @Param('id') id: string,
@@ -451,7 +451,7 @@ export class FileManagementController {
   }
 
   @Patch(':id/move')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
   async moveFile(
     @Param('id') id: string,
@@ -463,7 +463,7 @@ export class FileManagementController {
   }
 
   @Post('bulk/move')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
   async bulkMove(@Body() dto: BulkMoveDto) {
     const tenantId = this.cls.get<string>('tenantId');
@@ -476,7 +476,7 @@ export class FileManagementController {
   }
 
   @Post('bulk/delete')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('delete', 'files')
   @HttpCode(HttpStatus.OK)
   async bulkDelete(@Body() dto: BulkDeleteDto) {
     const tenantId = this.cls.get<string>('tenantId');
@@ -492,7 +492,7 @@ export class FileManagementController {
   }
 
   @Post(':id/restore')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
   async restoreFile(@Param('id') id: string) {
     const userId = this.cls.get<string>('userId');
@@ -501,7 +501,7 @@ export class FileManagementController {
   }
 
   @Get('trash')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'files')
   async listTrash(
     @Query('page') page?: number,
     @Query('limit') limit?: number,
@@ -514,7 +514,7 @@ export class FileManagementController {
   }
 
   @Get('search')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'files')
   async searchFiles(
     @Query('q') q?: string,
     @Query('page') page?: number,

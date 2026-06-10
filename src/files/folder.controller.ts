@@ -49,7 +49,7 @@ export class FolderController {
   // ── Create ────────────────────────────────────────────────────────
 
   @Post()
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.CREATED)
   async create(@Body() dto: CreateFolderDto) {
     const tenantId = this.cls.get<string>('tenantId');
@@ -67,7 +67,7 @@ export class FolderController {
   // ── List all (flat for client-side tree assembly) ──────────────────
 
   @Get()
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'files')
   async listAll() {
     const tenantId = this.cls.get<string>('tenantId');
     return this.folderService.listAll(tenantId);
@@ -76,7 +76,7 @@ export class FolderController {
   // ── Detail ────────────────────────────────────────────────────────
 
   @Get(':id')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'files')
   async findById(@Param('id') id: string) {
     return this.folderService.findById(id);
   }
@@ -84,7 +84,7 @@ export class FolderController {
   // ── Update (rename, move, change color) ───────────────────────────
 
   @Patch(':id')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
   async update(
     @Param('id') id: string,
@@ -135,7 +135,7 @@ export class FolderController {
   // ── Soft Delete ───────────────────────────────────────────────────
 
   @Delete(':id')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
   async softDelete(@Param('id') id: string) {
     const tenantId = this.cls.get<string>('tenantId');
@@ -148,7 +148,7 @@ export class FolderController {
   // ── Restore ───────────────────────────────────────────────────────
 
   @Post(':id/restore')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
   async restore(@Param('id') id: string) {
     const tenantId = this.cls.get<string>('tenantId');
