@@ -40,7 +40,19 @@ jobs:
             # Build image once, then run single all-in-one container.
             # To scale: switch to docker-compose.scaled.yml
             # --no-cache avoids stale layer cache
-            docker build --pull --no-cache -t crm-api:production .
+            for build_attempt in 1 2; do
+              if docker build --pull --no-cache -t crm-api:production .; then
+                break
+              fi
+
+              if [ "$build_attempt" -eq 2 ]; then
+                exit 1
+              fi
+
+              echo "docker build failed on attempt $build_attempt of 2, pruning builder cache and retrying..."
+              docker builder prune -af || true
+              sleep 5
+            done
             docker compose -f docker-compose.yml up -d --no-build --remove-orphans crm-api
             docker container prune -f
             docker image prune -f
