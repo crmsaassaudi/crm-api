@@ -233,6 +233,7 @@ export class FileManagementController {
           accessLevel: dto.accessLevel ?? 'tenant',
           allowedUserIds: [],
           conversationId: dto.conversationId,
+          folderId: dto.folderId ?? undefined,
           thumbnailKey,
           imageMetadata:
             imageWidth || imageHeight

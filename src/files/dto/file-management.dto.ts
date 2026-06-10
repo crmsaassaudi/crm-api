@@ -28,6 +28,11 @@ export class UploadFileDto {
   @IsString()
   conversationId?: string;
 
+  @ApiPropertyOptional({ description: 'Target folder ID. Omit or null for root.' })
+  @IsOptional()
+  @IsString()
+  folderId?: string;
+
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()
