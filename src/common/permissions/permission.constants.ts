@@ -27,7 +27,8 @@ export type PermissionResource =
   | 'sla_policies'
   | 'routing_rules'
   | 'files'
-  | 'storage';
+  | 'storage'
+  | 'omni_channel';
 
 export type PermissionAction =
   | 'view'
@@ -232,6 +233,9 @@ export const PERMISSION_REGISTRY: Record<
     view: 'storage:view',
     manage_system: 'storage:manage_system',
   },
+  omni_channel: {
+    view: 'omni_channel:view',
+  },
 };
 
 /**
@@ -358,6 +362,8 @@ export const CORE_PERMISSIONS: string[] = [
   'files:delete',
   // Storage (OWNER dashboard — view-only by default)
   'storage:view',
+  // Omni-Channel page access
+  'omni_channel:view',
 ];
 
 /**

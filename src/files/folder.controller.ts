@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { IsString, IsOptional, MinLength } from 'class-validator';
 import { ClsService } from 'nestjs-cls';
 import { FolderService } from './folder.service';
 import { RequirePermission } from '../common/permissions';
@@ -16,14 +17,31 @@ import { RequirePermission } from '../common/permissions';
 // ── DTOs ──────────────────────────────────────────────────────────
 
 class CreateFolderDto {
+  @IsString()
+  @MinLength(1)
   name: string;
+
+  @IsString()
+  @IsOptional()
   parentId?: string | null;
+
+  @IsString()
+  @IsOptional()
   color?: string;
 }
 
 class UpdateFolderDto {
+  @IsString()
+  @MinLength(1)
+  @IsOptional()
   name?: string;
+
+  @IsString()
+  @IsOptional()
   parentId?: string | null;
+
+  @IsString()
+  @IsOptional()
   color?: string;
 }
 
