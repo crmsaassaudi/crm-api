@@ -38,7 +38,7 @@ export class MediaProxyController {
    * Redirect to a presigned S3 URL for the media file.
    * This is the preferred approach — S3/CDN handles the bandwidth.
    */
-  @Get('redirect/:storageKey(*)')
+  @Get('redirect/*storageKey')
   @Public()
   async redirectToMedia(
     @Param('storageKey') storageKey: string,
@@ -60,7 +60,7 @@ export class MediaProxyController {
    * Stream the media file through the backend.
    * Used as a fallback or for specific security requirements.
    */
-  @Get(':storageKey(*)')
+  @Get('*storageKey')
   @Public() // Media endpoint — can be secured via signed URLs later
   async getMedia(
     @Param('storageKey') storageKey: string,
