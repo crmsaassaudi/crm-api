@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
+import { WhatsAppTemplateRepository } from '../../message-templates/infrastructure/persistence/document/repositories/whatsapp-template.repository';
 
 /**
  * WhatsApp Cloud API webhook → OmniPayload adapter.
@@ -33,15 +34,30 @@ export class WhatsAppAdapter implements ChannelAdapter {
   readonly channelType: ChannelType = 'whatsapp';
   private readonly logger = new Logger(WhatsAppAdapter.name);
 
+  constructor(private readonly waTemplateRepo: WhatsAppTemplateRepository) {}
+
   normalize(
     rawPayload: any,
     tenantId: string,
     channelId: string,
     channelConfig?: any,
-  ): OmniPayload {
+  ): OmniPayload | null {
+    if (rawPayload.event === 'message_template_status_update') {
+      this.logger.log(`Received template status update: ${rawPayload.message_template_name} -> ${rawPayload.current_status}`);
+      
+      this.waTemplateRepo.updateByName(tenantId, rawPayload.message_template_name, {
+        status: rawPayload.current_status,
+      }).catch(err => {
+        this.logger.error(`Failed to update template status for ${rawPayload.message_template_name}: ${err.message}`);
+      });
+      
+      return null;
+    }
+
     const msg = rawPayload.messages?.[0];
     if (!msg) {
-      throw new Error('WhatsApp webhook has no messages');
+      this.logger.debug('WhatsApp webhook change value has no messages, skipping');
+      return null;
     }
 
     const contact = rawPayload.contacts?.[0];

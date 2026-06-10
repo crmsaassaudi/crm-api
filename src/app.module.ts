@@ -73,6 +73,8 @@ import { ReportsModule } from './reports/reports.module';
 import { HealthModule } from './health/health.module';
 import { SharedImportModule } from './common/import/import.module';
 import { SharedExportModule } from './common/export/export.module';
+import { MessageTemplatesModule } from './message-templates/message-templates.module';
+
 
 import {
   KeycloakConnectModule,
@@ -341,6 +343,7 @@ function bullBoardBasicAuth() {
     ReportsModule,
     SharedImportModule,
     SharedExportModule,
+    MessageTemplatesModule,
   ],
   providers: [
     {
