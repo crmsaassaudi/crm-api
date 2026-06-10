@@ -96,6 +96,7 @@ import { AuthModule } from '../auth/auth.module';
 import { DealsModule } from '../deals/deals.module';
 import { TicketsModule } from '../tickets/tickets.module';
 import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
+import { FilesModule } from '../files/files.module';
 import { isWorkerRuntime, isOmniRuntime } from '../config/runtime-role';
 
 const workerProviders =
@@ -139,6 +140,7 @@ const workerProviders =
     DealsModule,
     TicketsModule,
     RoutingRulesModule,
+    FilesModule,
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,

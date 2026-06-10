@@ -10,5 +10,10 @@ export type FileConfig = {
   secretAccessKey?: string;
   awsDefaultS3Bucket?: string;
   awsS3Region?: string;
+  /** Custom S3-compatible endpoint (e.g. DigitalOcean Spaces) */
+  awsS3Endpoint?: string;
+  /** Max file size in bytes (default 25 MB) */
   maxFileSize: number;
+  /** Max video file size in bytes (default 100 MB) */
+  maxVideoSize: number;
 };

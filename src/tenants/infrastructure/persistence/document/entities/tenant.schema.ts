@@ -90,14 +90,47 @@ export class TenantSchemaClass extends EntityDocumentHelper {
 
   @Prop({
     type: {
-      limitMB: { type: Number, default: 1024 },
-      usedMB: { type: Number, default: 0 },
+      limitBytes: { type: Number, default: 1073741824 }, // 1 GB
+      usedBytes: { type: Number, default: 0 },
+      warnThresholdPercent: { type: Number, default: 80 },
+      lastRecalculatedAt: { type: Date, default: null },
     },
-    default: () => ({ limitMB: 1024, usedMB: 0 }),
+    default: () => ({
+      limitBytes: 1073741824,
+      usedBytes: 0,
+      warnThresholdPercent: 80,
+    }),
   })
   storageQuota: {
-    limitMB: number;
-    usedMB: number;
+    limitBytes: number;
+    usedBytes: number;
+    warnThresholdPercent: number;
+    lastRecalculatedAt?: Date;
+  };
+
+  @Prop({
+    type: {
+      omni_media: {
+        type: { count: Number, sizeBytes: Number },
+        default: { count: 0, sizeBytes: 0 },
+      },
+      ticket_attachment: {
+        type: { count: Number, sizeBytes: Number },
+        default: { count: 0, sizeBytes: 0 },
+      },
+      general: {
+        type: { count: Number, sizeBytes: Number },
+        default: { count: 0, sizeBytes: 0 },
+      },
+      lastCalculatedAt: { type: Date, default: null },
+    },
+    default: null,
+  })
+  storageBreakdown?: {
+    omni_media: { count: number; sizeBytes: number };
+    ticket_attachment: { count: number; sizeBytes: number };
+    general: { count: number; sizeBytes: number };
+    lastCalculatedAt?: Date;
   };
 
   @Prop({

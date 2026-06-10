@@ -32,6 +32,11 @@ export class FilesS3PresignedService {
   ) {
     this.s3 = new S3Client({
       region: configService.get('file.awsS3Region', { infer: true }),
+      endpoint:
+        configService.get('file.awsS3Endpoint', { infer: true }) || undefined,
+      forcePathStyle: !!configService.get('file.awsS3Endpoint', {
+        infer: true,
+      }),
       credentials: {
         accessKeyId: configService.getOrThrow('file.accessKeyId', {
           infer: true,

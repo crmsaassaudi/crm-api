@@ -444,6 +444,99 @@ export class OmniGateway
   }
 
   /**
+   * Socket event: agent sends a media message.
+   *
+   * The frontend uploads the file via REST first (POST /files/upload),
+   * then sends the fileId here for dispatch to the channel.
+   */
+  @SubscribeMessage('omni:message:send-media')
+  async handleSendMedia(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      conversationId: string;
+      fileId: string;
+      caption?: string;
+      mimeType?: string;
+      fileName?: string;
+      tempId?: string;
+      idempotencyKey?: string;
+      clientMessageId?: string;
+    },
+  ) {
+    const user = client.data.user;
+    if (!user) return { ok: false, error: 'Unauthenticated' };
+
+    const userId = client.data.userId ?? user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    if (!tenantId) return { ok: false, error: 'No tenant context' };
+
+    if (!data?.conversationId || !data?.fileId) {
+      return { ok: false, error: 'conversationId and fileId are required' };
+    }
+
+    this.logger.log(
+      `Agent ${userId} sends media (fileId=${data.fileId}) to conversation ${data.conversationId}`,
+    );
+
+    try {
+      const result = await this.outboundService.sendAgentMedia({
+        tenantId,
+        conversationId: data.conversationId,
+        agentId: userId,
+        media: {
+          fileId: data.fileId,
+          mimeType: data.mimeType || 'application/octet-stream',
+          fileName: data.fileName || 'file',
+          size: 0, // will be resolved from DB
+        },
+        caption: data.caption,
+        idempotencyKey: data.idempotencyKey,
+        clientMessageId: data.clientMessageId ?? data.tempId,
+        source: 'agent_ui',
+        transport: 'socket',
+      });
+
+      const ack = {
+        ok: true,
+        tempId: data.tempId,
+        messageId: result.messageId,
+        idempotencyKey: result.idempotencyKey ?? data.idempotencyKey,
+        clientMessageId:
+          result.clientMessageId ?? data.clientMessageId ?? data.tempId,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Broadcast to other agents watching this conversation
+      if (!result.reused) {
+        client
+          .to(`conversation:${data.conversationId}`)
+          .emit('omni:message:new', {
+            conversationId: data.conversationId,
+            senderId: result.senderId ?? userId,
+            senderName: result.senderName,
+            senderType: 'agent',
+            source: result.source ?? 'agent_ui',
+            messageType: result.messageType ?? 'file',
+            content: data.caption || `📎 ${data.fileName || 'file'}`,
+            messageId: ack.messageId,
+            idempotencyKey: ack.idempotencyKey,
+            clientMessageId: ack.clientMessageId,
+            timestamp: ack.timestamp,
+            metadata: { media: { fileId: data.fileId } },
+          });
+      }
+
+      return ack;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`SendMedia error: ${errorMessage}`);
+      return { ok: false, error: errorMessage };
+    }
+  }
+
+  /**
    * Listener for the `omni.message.persisted` domain event,
    * emitted by ConversationService AFTER the message is saved to DB.
    *

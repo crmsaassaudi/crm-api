@@ -491,48 +491,90 @@ export class TenantsService {
 
   /**
    * Check whether a tenant is within their storage quota.
-   * Returns { allowed, usedMB, limitMB }.
-   * A limitMB of -1 means unlimited.
+   * Returns { allowed, usedBytes, limitBytes, usagePercent }.
+   * A limitBytes of -1 means unlimited.
    */
   async checkStorageQuota(
     tenantId: string,
-  ): Promise<{ allowed: boolean; usedMB: number; limitMB: number }> {
+  ): Promise<{
+    allowed: boolean;
+    usedBytes: number;
+    limitBytes: number;
+    usagePercent: number;
+  }> {
     const tenant = await this.tenantsRepository.findById(tenantId);
-    const quota = tenant?.storageQuota ?? { limitMB: 1024, usedMB: 0 };
+    const quota = tenant?.storageQuota ?? {
+      limitBytes: 1073741824,
+      usedBytes: 0,
+      warnThresholdPercent: 80,
+    };
 
-    // -1 = unlimited
-    if (quota.limitMB === -1) {
-      return { allowed: true, usedMB: quota.usedMB, limitMB: -1 };
+    if (quota.limitBytes === -1) {
+      return { allowed: true, usedBytes: quota.usedBytes, limitBytes: -1, usagePercent: 0 };
     }
 
+    const usagePercent =
+      quota.limitBytes > 0
+        ? Math.round((quota.usedBytes / quota.limitBytes) * 100)
+        : 0;
+
     return {
-      allowed: quota.usedMB < quota.limitMB,
-      usedMB: quota.usedMB,
-      limitMB: quota.limitMB,
+      allowed: quota.usedBytes < quota.limitBytes,
+      usedBytes: quota.usedBytes,
+      limitBytes: quota.limitBytes,
+      usagePercent,
     };
   }
 
   /**
-   * Atomically increment the tenant's storage usage after a media file is cached.
-   * @param tenantId  Tenant ID
-   * @param sizeInBytes  File size in bytes (converted to MB internally)
+   * Atomically increment the tenant's storage usage with quota guard.
+   * Returns true if within quota and increment succeeded, false if over quota.
    */
   async incrementStorageUsage(
     tenantId: string,
     sizeInBytes: number,
-  ): Promise<void> {
-    const sizeInMB = sizeInBytes / (1024 * 1024);
-    await this.tenantsRepository.incrementStorageUsage(tenantId, sizeInMB);
+  ): Promise<boolean> {
+    return this.tenantsRepository.atomicIncrementStorage(tenantId, sizeInBytes);
   }
 
   /**
-   * Update the tenant's storage limit (admin operation / upsell).
+   * Atomically decrement the tenant's storage usage (hard-delete / rollback).
+   */
+  async decrementStorageUsage(
+    tenantId: string,
+    sizeInBytes: number,
+  ): Promise<void> {
+    await this.tenantsRepository.atomicDecrementStorage(tenantId, sizeInBytes);
+  }
+
+  /**
+   * Update the tenant's storage limit (SUPER_ADMIN operation).
    */
   async updateStorageQuota(
     tenantId: string,
-    limitMB: number,
+    limitBytes: number,
+    warnThresholdPercent?: number,
   ): Promise<Tenant | null> {
-    return this.tenantsRepository.updateStorageQuota(tenantId, limitMB);
+    return this.tenantsRepository.updateStorageQuota(
+      tenantId,
+      limitBytes,
+      warnThresholdPercent,
+    );
+  }
+
+  /**
+   * Get cached storage breakdown for a tenant.
+   */
+  async getStorageBreakdown(tenantId: string) {
+    const tenant = await this.tenantsRepository.findById(tenantId);
+    return {
+      quota: tenant?.storageQuota ?? {
+        limitBytes: 1073741824,
+        usedBytes: 0,
+        warnThresholdPercent: 80,
+      },
+      breakdown: tenant?.storageBreakdown ?? null,
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

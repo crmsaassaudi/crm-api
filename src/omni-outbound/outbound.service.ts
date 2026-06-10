@@ -8,6 +8,10 @@ import {
   CHANNEL_ADAPTERS,
 } from '../omni-inbound/adapters/channel-adapter.interface';
 import { ChannelType } from '../omni-inbound/domain/omni-payload';
+import { OutboundMedia } from './types/outbound-media.type';
+import { FilesService } from '../files/files.service';
+import { ImageProcessingService } from '../files/image-processing.service';
+import { PLATFORM_LIMITS } from '../files/config/platform-limits.config';
 
 import { ChannelRepository } from '../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { ReplyWindowExpiredException } from './exceptions/reply-window-expired.exception';
@@ -75,6 +79,8 @@ export class OutboundService {
     @InjectModel('EmailMetadataSchemaClass')
     private readonly emailMetadataModel: Model<EmailMetadataDocument>,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    private readonly filesService: FilesService,
+    private readonly imageProcessingService: ImageProcessingService,
   ) {}
 
   /**
@@ -347,6 +353,267 @@ export class OutboundService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Send a media message from an agent to a customer.
+   *
+   * Flow:
+   * 1. Resolve file (from fileId → S3 download, or from buffer)
+   * 2. ACL check (if fileId)
+   * 3. Validate against platform limits
+   * 4. Compress for platform if image
+   * 5. Persist message with status 'sending'
+   * 6. Call adapter.sendMedia() → update status
+   * 7. Create outbound file record
+   * 8. Emit events
+   */
+  async sendAgentMedia(params: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    media: OutboundMedia;
+    caption?: string;
+    source?: string;
+    transport?: 'http' | 'socket';
+    idempotencyKey?: string;
+    clientMessageId?: string;
+  }): Promise<any> {
+    const {
+      tenantId,
+      conversationId,
+      agentId,
+      media,
+      caption = '',
+      source: rawSource = 'crm_api',
+      transport = 'http',
+      idempotencyKey,
+      clientMessageId,
+    } = params;
+
+    const source = normalizeOutboundSource(rawSource);
+    const senderContext = await this.resolveSenderContext(agentId);
+
+    // 1. Resolve conversation + channel
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new Error(`Conversation ${conversationId} not found`);
+    }
+
+    let channel = await this.channelRepo.findByIdWithCredentials(
+      tenantId,
+      conversation.channelId.toString(),
+    );
+    if (!channel && (conversation as any).channelAccount) {
+      channel = await this.channelRepo.findByAccountWithCredentials(
+        tenantId,
+        conversation.channelType,
+        (conversation as any).channelAccount,
+      );
+    }
+    if (!channel) {
+      throw new Error(
+        `Channel for conversation ${conversationId} not found or disconnected`,
+      );
+    }
+
+    this.enforceReplyWindow(conversation);
+
+    // 2. Resolve media buffer
+    let mediaBuffer: Buffer;
+    if (media.fileId) {
+      // Resolve from existing file
+      const file = await this.filesService.findById(media.fileId);
+      if (!file) throw new Error(`File ${media.fileId} not found`);
+      if (!this.filesService.checkAccess(file, agentId, 'AGENT')) {
+        throw new Error('No access to this file');
+      }
+      // Download from S3
+      const downloadUrl = await this.filesService.getPresignedDownloadUrl(
+        file.path,
+        300,
+      );
+      const response = await fetch(downloadUrl);
+      if (!response.ok) throw new Error('Failed to download file from S3');
+      mediaBuffer = Buffer.from(await response.arrayBuffer());
+      media.mimeType = media.mimeType || file.mimeType || 'application/octet-stream';
+      media.fileName = media.fileName || file.fileName || 'file';
+      media.size = mediaBuffer.length;
+    } else if (media.buffer) {
+      mediaBuffer = media.buffer;
+    } else {
+      throw new Error('Either fileId or buffer must be provided');
+    }
+
+    // 3. Validate against platform limits
+    const channelKey = conversation.channelType.toLowerCase() as ChannelType;
+    const platformLimits = PLATFORM_LIMITS[channelKey];
+    if (platformLimits) {
+      const isImage = media.mimeType.startsWith('image/');
+      const limit = isImage ? platformLimits.image : platformLimits.file;
+      if (limit && mediaBuffer.length > limit.maxBytes) {
+        throw new Error(
+          `File size ${(mediaBuffer.length / (1024 * 1024)).toFixed(1)}MB exceeds ${channelKey} limit of ${(limit.maxBytes / (1024 * 1024)).toFixed(0)}MB`,
+        );
+      }
+    }
+
+    // 4. Compress for platform if image
+    let sendBuffer = mediaBuffer;
+    if (
+      media.mimeType.startsWith('image/') &&
+      this.imageProcessingService.isProcessableImage(media.mimeType)
+    ) {
+      try {
+        const compressed =
+          await this.imageProcessingService.compressForPlatform(
+            mediaBuffer,
+            channelKey,
+          );
+        sendBuffer = compressed.buffer;
+        this.logger.log(
+          `Compressed image for ${channelKey}: ${(mediaBuffer.length / 1024).toFixed(0)}KB → ${(sendBuffer.length / 1024).toFixed(0)}KB`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Platform compression failed, using original: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // 5. Determine message type
+    const messageType = this.getMediaMessageType(media.mimeType);
+
+    // 6. Persist message
+    const message = await this.messageRepo.create({
+      tenantId,
+      conversationId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? undefined,
+      senderType: 'agent',
+      direction: 'outbound',
+      source,
+      messageType,
+      content: caption || `[${messageType}] ${media.fileName}`,
+      status: 'sending',
+      idempotencyKey,
+      clientMessageId,
+      metadata: {
+        sender: {
+          id: agentId,
+          name: senderContext.name,
+          avatarUrl: senderContext.avatarUrl ?? null,
+          type: 'agent',
+        },
+        source,
+        transport,
+        media: {
+          fileName: media.fileName,
+          mimeType: media.mimeType,
+          size: sendBuffer.length,
+          fileId: media.fileId,
+        },
+      },
+    });
+
+    // Update conversation last message
+    await this.conversationRepo.updateLastMessage(
+      conversationId,
+      caption || `📎 ${media.fileName}`,
+      new Date(),
+      'agent',
+    );
+
+    // 7. Send via adapter
+    try {
+      const adapter = this.adapters.get(channelKey);
+      let externalId: string | undefined;
+
+      if (adapter?.sendMedia) {
+        // Adapter supports media sending
+        const sendMediaPayload: OutboundMedia = {
+          ...media,
+          buffer: sendBuffer,
+          size: sendBuffer.length,
+          caption,
+        };
+        const result = await adapter.sendMedia(
+          conversation.customer.externalId,
+          sendMediaPayload,
+          { credentials: channel.credentials, account: channel.account },
+        );
+        externalId = result.externalMessageId;
+        if (!result.success) {
+          throw new Error(result.error || 'Adapter sendMedia failed');
+        }
+      } else if (adapter) {
+        // Fallback: send as text with download link
+        const downloadUrl = media.fileId
+          ? await this.filesService.getPresignedDownloadUrl(
+              media.storageKey || '',
+              3600,
+            )
+          : '';
+        const fallbackContent =
+          caption || `📎 ${media.fileName}${downloadUrl ? '\n' + downloadUrl : ''}`;
+        const adapterResponse = await adapter.send(
+          conversation.customer.externalId,
+          fallbackContent,
+          'text',
+          { credentials: channel.credentials, account: channel.account },
+        );
+        externalId =
+          (adapterResponse as any)?.message_id ||
+          (adapterResponse as any)?.id;
+      }
+
+      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
+
+      this.eventEmitter.emit('omni.message.sent', {
+        tenantId,
+        conversationId,
+        senderId: agentId,
+        senderName: senderContext.name,
+        senderAvatarUrl: senderContext.avatarUrl ?? null,
+        senderType: 'agent',
+        messageType,
+        content: caption || `[${messageType}] ${media.fileName}`,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        clientMessageId,
+        timestamp: new Date().toISOString(),
+        source,
+        transport,
+      });
+
+      return {
+        ok: true,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        clientMessageId,
+        senderId: agentId,
+        senderName: senderContext.name,
+        source,
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to send media via provider: ${errorMessage}`);
+      await this.messageRepo.updateStatus(message.id, 'failed');
+      throw error;
+    }
+  }
+
+  private getMediaMessageType(mimeType: string): string {
+    if (mimeType.startsWith('image/')) return 'image';
+    if (mimeType.startsWith('video/')) return 'video';
+    if (mimeType.startsWith('audio/')) return 'audio';
+    return 'file';
   }
 
   /**

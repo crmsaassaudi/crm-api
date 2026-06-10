@@ -28,15 +28,17 @@ export interface MediaCacheJobData extends TenantJobData {
  *
  * This processor:
  *   1. Downloads the media file from the provider
- *   2. Stores it in local/S3 storage via MediaProxyService
- *   3. Updates the message record with the stable proxy URL
- *   4. Emits a WebSocket event so the frontend can swap the URL in real-time
+ *   2. Compresses images and generates thumbnails
+ *   3. Stores in S3 via MediaProxyService (idempotent by messageId)
+ *   4. Updates the message record with the stable presigned URL
+ *   5. Emits a WebSocket event so the frontend can swap the URL in real-time
  *
  * Benefits:
  *   - Messages appear instantly (no download delay)
  *   - The distributed lock (per-sender) is released immediately
  *   - Large files and slow networks don't block the inbound pipeline
  *   - Automatic retries via BullMQ (3 attempts, exponential backoff)
+ *   - Idempotent: re-processing the same messageId is safe (upsert)
  */
 @Processor(OMNI_MEDIA_CACHE_QUEUE)
 export class MediaCacheProcessor extends BaseTenantConsumer<MediaCacheJobData> {
@@ -69,12 +71,14 @@ export class MediaCacheProcessor extends BaseTenantConsumer<MediaCacheJobData> {
     );
 
     try {
-      // Step 1: Download and cache the media
-      const proxyUrl = await this.mediaProxy.cacheMedia(
+      // Step 1: Download, compress, store, and create file record
+      const { proxyUrl, fileId } = await this.mediaProxy.cacheMedia(
         tenantId,
         channelType,
         mediaUrl,
         mediaId,
+        conversationId,
+        messageId,
         accessToken,
       );
 
@@ -96,16 +100,35 @@ export class MediaCacheProcessor extends BaseTenantConsumer<MediaCacheJobData> {
         conversationId,
         messageId,
         mediaProxyUrl: proxyUrl,
+        fileId,
       });
 
       this.logger.log(
-        `Media cached successfully for message ${messageId}: ${proxyUrl}`,
+        `Media cached successfully for message ${messageId}: ${fileId ?? 'no-file-id'}`,
       );
     } catch (error: any) {
-      this.logger.error(
-        `Failed to cache media for message ${messageId}: ${error.message}`,
-        error.stack,
-      );
+      // Check if this is the last attempt
+      const isLastAttempt = job.attemptsMade >= (job.opts?.attempts ?? 3) - 1;
+
+      if (isLastAttempt) {
+        this.logger.error(
+          `Final attempt failed to cache media for message ${messageId}: ${error.message}`,
+          error.stack,
+        );
+
+        // Emit event so frontend can show "Media unavailable"
+        this.eventEmitter.emit('omni.message.media_cache_failed', {
+          tenantId,
+          conversationId,
+          messageId,
+          error: error.message,
+        });
+      } else {
+        this.logger.warn(
+          `Attempt ${job.attemptsMade + 1} failed to cache media for message ${messageId}: ${error.message}`,
+        );
+      }
+
       throw error; // Re-throw so BullMQ retries
     }
   }

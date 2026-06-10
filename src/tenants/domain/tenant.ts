@@ -72,12 +72,26 @@ export class Tenant {
     resolveNoteMode: 'disabled' | 'optional' | 'required';
   };
 
-  @ApiProperty({ description: 'Storage quota for media files (MB)' })
+  @ApiProperty({ description: 'Storage quota for tenant files' })
   storageQuota: {
-    /** Maximum storage in MB. -1 = unlimited */
-    limitMB: number;
-    /** Currently used storage in MB */
-    usedMB: number;
+    /** Maximum storage in bytes. -1 = unlimited */
+    limitBytes: number;
+    /** Currently used storage in bytes (atomic $inc) */
+    usedBytes: number;
+    /** Alert threshold percentage (default 80) */
+    warnThresholdPercent: number;
+    /** Last time usedBytes was recalculated by cron */
+    lastRecalculatedAt?: Date;
+  };
+
+  @ApiProperty({
+    description: 'Cached storage breakdown by category (daily cron)',
+  })
+  storageBreakdown?: {
+    omni_media: { count: number; sizeBytes: number };
+    ticket_attachment: { count: number; sizeBytes: number };
+    general: { count: number; sizeBytes: number };
+    lastCalculatedAt?: Date;
   };
 
   @ApiProperty({ description: 'Tenant-level i18n defaults' })

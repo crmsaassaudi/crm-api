@@ -88,34 +88,92 @@ export class TenantsRepository {
   }
 
   /**
-   * Atomically increment the tenant's storage usage.
-   * Uses $inc for safe concurrent updates.
+   * Atomically increment storage usage WITH quota guard.
+   * Returns true if increment succeeded (within quota), false if over quota.
+   * Uses $expr + $lte to ensure usedBytes + increment <= limitBytes.
    */
-  async incrementStorageUsage(
+  async atomicIncrementStorage(
     tenantId: string,
-    sizeInMB: number,
+    bytes: number,
+  ): Promise<boolean> {
+    const result = await this.tenantsModel.updateOne(
+      {
+        _id: tenantId,
+        $or: [
+          { 'storageQuota.limitBytes': -1 }, // unlimited
+          {
+            $expr: {
+              $lte: [
+                { $add: ['$storageQuota.usedBytes', bytes] },
+                '$storageQuota.limitBytes',
+              ],
+            },
+          },
+        ],
+      },
+      { $inc: { 'storageQuota.usedBytes': bytes } },
+    );
+    return result.modifiedCount > 0;
+  }
+
+  /**
+   * Atomically decrement storage usage (for rollback / hard-delete).
+   */
+  async atomicDecrementStorage(
+    tenantId: string,
+    bytes: number,
   ): Promise<void> {
     await this.tenantsModel.updateOne(
       { _id: tenantId },
-      { $inc: { 'storageQuota.usedMB': sizeInMB } },
+      { $inc: { 'storageQuota.usedBytes': -bytes } },
     );
   }
 
   /**
-   * Update the tenant's storage quota limit (admin operation).
+   * Update the tenant's storage quota limit (SUPER_ADMIN operation).
    */
   async updateStorageQuota(
     tenantId: string,
-    limitMB: number,
+    limitBytes: number,
+    warnThresholdPercent?: number,
   ): Promise<Tenant | null> {
+    const setFields: Record<string, unknown> = {
+      'storageQuota.limitBytes': limitBytes,
+    };
+    if (warnThresholdPercent !== undefined) {
+      setFields['storageQuota.warnThresholdPercent'] = warnThresholdPercent;
+    }
     const updated = await this.tenantsModel
-      .findByIdAndUpdate(
-        tenantId,
-        { $set: { 'storageQuota.limitMB': limitMB } },
-        { new: true },
-      )
+      .findByIdAndUpdate(tenantId, { $set: setFields }, { new: true })
       .exec();
     return updated ? TenantMapper.toDomain(updated) : null;
+  }
+
+  /**
+   * Recalculate usedBytes + update storageBreakdown (daily cron).
+   */
+  async reconcileStorageUsage(
+    tenantId: string,
+    usedBytes: number,
+    breakdown: {
+      omni_media: { count: number; sizeBytes: number };
+      ticket_attachment: { count: number; sizeBytes: number };
+      general: { count: number; sizeBytes: number };
+    },
+  ): Promise<void> {
+    await this.tenantsModel.updateOne(
+      { _id: tenantId },
+      {
+        $set: {
+          'storageQuota.usedBytes': usedBytes,
+          'storageQuota.lastRecalculatedAt': new Date(),
+          storageBreakdown: {
+            ...breakdown,
+            lastCalculatedAt: new Date(),
+          },
+        },
+      },
+    );
   }
 
   /**

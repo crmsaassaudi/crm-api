@@ -1,4 +1,8 @@
 import { OmniPayload, ChannelType } from '../domain/omni-payload';
+import {
+  OutboundMedia,
+  MediaSendResult,
+} from '../../omni-outbound/types/outbound-media.type';
 
 /**
  * Strategy interface for channel-specific data normalization.
@@ -37,7 +41,7 @@ export interface ChannelAdapter {
   ): boolean;
 
   /**
-   * Send an outbound message to the provider's API.
+   * Send an outbound text message to the provider's API.
    *
    * @param recipientId  The provider's user ID (e.g. PSID, Zalo User ID)
    * @param content      Message text or media payload
@@ -50,6 +54,21 @@ export interface ChannelAdapter {
     messageType: string,
     channelConfig: any,
   ): Promise<any>;
+
+  /**
+   * Send an outbound media message to the provider's API.
+   * Optional — if not implemented, OutboundService will fall back to
+   * sending a text message with a download link.
+   *
+   * @param recipientId   The provider's user ID
+   * @param media         Media buffer + metadata
+   * @param channelConfig Credentials/config for this specific channel
+   */
+  sendMedia?(
+    recipientId: string,
+    media: OutboundMedia,
+    channelConfig: any,
+  ): Promise<MediaSendResult>;
 }
 
 /** DI token for the adapter map */

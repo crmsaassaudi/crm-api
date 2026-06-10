@@ -1,6 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PutObjectCommand, GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { randomStringGenerator } from '@nestjs/common/utils/random-string-generator.util';
+import * as crypto from 'crypto';
+
 import { TenantsService } from '../../tenants/tenants.service';
+import { FilesService } from '../../files/files.service';
+import { ImageProcessingService } from '../../files/image-processing.service';
+import { detectMimeFromBuffer } from '../../files/file-upload-security.util';
+import { AllConfigType } from '../../config/config.type';
+import { ChannelType } from '../domain/omni-payload';
 
 /**
  * `fetch` with a hard timeout via AbortController. Node's global fetch has
@@ -30,34 +40,70 @@ async function fetchWithTimeout(
  *
  * Solution:
  * - On receiving a media message, download the file immediately
- * - Store in local/S3 storage
- * - Return a stable proxy URL that never expires
+ * - Compress images with ImageProcessingService
+ * - Store in S3 (DigitalOcean Spaces) with tenant-isolated paths
+ * - Create idempotent file record via upsertByMessageId
+ * - Return a presigned URL that the frontend can use
  */
 @Injectable()
 export class MediaProxyService {
   private readonly logger = new Logger(MediaProxyService.name);
+  private readonly s3: S3Client;
+  private readonly bucket: string;
 
   constructor(
-    private readonly configService: ConfigService,
+    private readonly configService: ConfigService<AllConfigType>,
     private readonly tenantsService: TenantsService,
-  ) {}
+    private readonly filesService: FilesService,
+    private readonly imageProcessingService: ImageProcessingService,
+  ) {
+    this.bucket =
+      configService.get('file.awsDefaultS3Bucket', { infer: true }) ?? '';
+    this.s3 = new S3Client({
+      region: configService.get('file.awsS3Region', { infer: true }),
+      endpoint:
+        configService.get('file.awsS3Endpoint', { infer: true }) || undefined,
+      forcePathStyle: !!configService.get('file.awsS3Endpoint', {
+        infer: true,
+      }),
+      credentials: {
+        accessKeyId:
+          configService.get('file.accessKeyId', { infer: true }) ?? '',
+        secretAccessKey:
+          configService.get('file.secretAccessKey', { infer: true }) ?? '',
+      },
+      maxAttempts: 3,
+    });
+  }
 
   /**
    * Download and cache a media file from a provider.
-   * Returns our internal stable URL.
    *
-   * If the tenant's storage quota is exceeded, returns the original
-   * URL as a fallback (file is not cached).
+   * Flow:
+   * 1. Quota check (fast fail)
+   * 2. Download from provider
+   * 3. Detect MIME type from magic bytes
+   * 4. Compress if image
+   * 5. Upload to S3 with tenant-isolated key
+   * 6. Generate thumbnail (images only)
+   * 7. Upsert file record (idempotent by messageId)
+   * 8. Increment quota (only on NEW records)
+   * 9. Return presigned URL
+   *
+   * If quota is exceeded, returns the original URL (file not cached).
+   * If any step fails, returns the original URL as fallback.
    */
   async cacheMedia(
     tenantId: string,
     channelType: string,
     originalUrl: string,
     mediaId: string,
+    conversationId: string,
+    messageId: string,
     accessToken?: string,
-  ): Promise<string> {
+  ): Promise<{ proxyUrl: string; fileId?: string }> {
     this.logger.log(
-      `Caching media: ${channelType} / ${mediaId} from ${originalUrl}`,
+      `Caching media: ${channelType} / ${mediaId} for message ${messageId}`,
     );
 
     // ── Quota check ────────────────────────────────────────────────
@@ -66,18 +112,18 @@ export class MediaProxyService {
       if (!quota.allowed) {
         this.logger.warn(
           `Tenant ${tenantId} storage quota exceeded ` +
-            `(${quota.usedMB.toFixed(1)}/${quota.limitMB} MB) — returning original URL`,
+            `(${(quota.usedBytes / (1024 * 1024)).toFixed(1)}/${quota.limitBytes === -1 ? 'unlimited' : (quota.limitBytes / (1024 * 1024)).toFixed(0)} MB) — returning original URL`,
         );
-        return originalUrl;
+        return { proxyUrl: originalUrl };
       }
     } catch (err) {
       this.logger.warn(
-        `Quota check failed for tenant ${tenantId}: ${err.message} — proceeding with cache`,
+        `Quota check failed for tenant ${tenantId}: ${(err as Error).message} — proceeding with cache`,
       );
     }
 
     try {
-      // Step 1: Download from provider
+      // ── Step 1: Download from provider ────────────────────────────
       const buffer = await this.downloadFromProvider(
         channelType,
         originalUrl,
@@ -85,43 +131,183 @@ export class MediaProxyService {
         accessToken,
       );
 
-      // Step 2: Store locally or in S3
-      const storedPath = await this.store(mediaId, buffer);
+      // ── Step 2: Detect MIME from magic bytes ──────────────────────
+      const detectedMime =
+        detectMimeFromBuffer(buffer) || 'application/octet-stream';
+      const isImage = detectedMime.startsWith('image/');
 
-      // Step 3: Increment tenant storage usage
-      try {
-        await this.tenantsService.incrementStorageUsage(
-          tenantId,
-          buffer.length,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Failed to increment storage usage for tenant ${tenantId}: ${err.message}`,
-        );
+      // ── Step 3: Compress if image ─────────────────────────────────
+      let uploadBuffer = buffer;
+      let uploadMimeType = detectedMime;
+      let imageWidth: number | undefined;
+      let imageHeight: number | undefined;
+      let originalMimeType: string | undefined;
+      let originalSize: number | undefined;
+
+      if (isImage && this.imageProcessingService.isProcessableImage(detectedMime)) {
+        try {
+          const compressed =
+            await this.imageProcessingService.compressForStorage(
+              buffer,
+              detectedMime,
+            );
+          uploadBuffer = compressed.buffer;
+          uploadMimeType = compressed.mimeType;
+          imageWidth = compressed.width;
+          imageHeight = compressed.height;
+          originalMimeType = detectedMime;
+          originalSize = buffer.length;
+        } catch (err) {
+          this.logger.warn(
+            `Image compression failed, using original: ${(err as Error).message}`,
+          );
+        }
       }
 
-      // Step 4: Return the proxy URL
-      const baseUrl = this.configService.get('app.backendDomain', {
-        infer: true,
-      });
-      return `${baseUrl}/omni/media/${storedPath}`;
+      // ── Step 4: Upload to S3 ──────────────────────────────────────
+      const ext = this.getExtensionFromMime(uploadMimeType);
+      const storageKey = `${tenantId}/omni-media/${randomStringGenerator()}.${ext}`;
+
+      await this.s3.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: storageKey,
+          Body: uploadBuffer,
+          ContentType: uploadMimeType,
+          Metadata: {
+            tenantId,
+            messageId,
+            channelType,
+            originalMediaId: mediaId,
+          },
+        }),
+      );
+
+      // ── Step 5: Generate thumbnail (images only) ──────────────────
+      let thumbnailKey: string | undefined;
+      if (isImage && this.imageProcessingService.isProcessableImage(detectedMime)) {
+        try {
+          const thumbBuffer =
+            await this.imageProcessingService.generateThumbnail(buffer);
+          thumbnailKey = `${tenantId}/omni-media/thumbs/${randomStringGenerator()}.webp`;
+          await this.s3.send(
+            new PutObjectCommand({
+              Bucket: this.bucket,
+              Key: thumbnailKey,
+              Body: thumbBuffer,
+              ContentType: 'image/webp',
+              Metadata: { tenantId },
+            }),
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Thumbnail generation failed: ${(err as Error).message}`,
+          );
+        }
+      }
+
+      // ── Step 6: Checksum ──────────────────────────────────────────
+      const checksum = crypto
+        .createHash('sha256')
+        .update(uploadBuffer)
+        .digest('hex');
+
+      // ── Step 7: Upsert file record (idempotent by messageId) ──────
+      const { file, isNew } = await this.filesService.upsertByMessageId(
+        tenantId,
+        messageId,
+        {
+          path: storageKey,
+          fileName: `${mediaId}.${ext}`,
+          mimeType: uploadMimeType,
+          fileSize: uploadBuffer.length,
+          checksum,
+          category: 'omni_media',
+          source: 'omni_inbound',
+          status: 'ready',
+          accessLevel: 'tenant',
+          conversationId,
+          messageId,
+          thumbnailKey,
+          imageMetadata:
+            imageWidth || imageHeight
+              ? {
+                  width: imageWidth,
+                  height: imageHeight,
+                  originalMimeType,
+                  originalSize,
+                }
+              : undefined,
+          tags: [channelType],
+        },
+      );
+
+      // ── Step 8: Increment quota (only on new records) ─────────────
+      if (isNew) {
+        try {
+          const withinQuota = await this.tenantsService.incrementStorageUsage(
+            tenantId,
+            uploadBuffer.length,
+          );
+          if (!withinQuota) {
+            this.logger.warn(
+              `Quota increment rejected for tenant ${tenantId} — file stored but quota not updated`,
+            );
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Failed to increment storage for tenant ${tenantId}: ${(err as Error).message}`,
+          );
+        }
+      }
+
+      // ── Step 9: Generate presigned URL ────────────────────────────
+      const proxyUrl = await this.getPresignedUrl(storageKey);
+
+      this.logger.log(
+        `Media cached: ${channelType}/${mediaId} → ${storageKey} (${(uploadBuffer.length / 1024).toFixed(0)}KB, ${isNew ? 'new' : 'dedup'})`,
+      );
+
+      return { proxyUrl, fileId: file.id };
     } catch (error) {
       this.logger.error(
-        `Failed to cache media ${mediaId}: ${error.message}`,
-        error.stack,
+        `Failed to cache media ${mediaId}: ${(error as Error).message}`,
+        (error as Error).stack,
       );
-      // Return the original URL as fallback (may expire)
-      return originalUrl;
+      return { proxyUrl: originalUrl };
     }
   }
 
   /**
-   * Retrieve a cached media file by its stored path.
+   * Generate a presigned download URL for a stored media file.
    */
-  getMedia(mediaPath: string): Promise<Buffer | null> {
-    // TODO: implement actual retrieval from storage
-    this.logger.log(`Retrieving media: ${mediaPath}`);
-    return Promise.resolve(null);
+  async getPresignedUrl(storageKey: string, ttlSeconds = 3600): Promise<string> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: storageKey,
+    });
+    return getSignedUrl(this.s3, command, { expiresIn: ttlSeconds });
+  }
+
+  /**
+   * Get the stored media file as a buffer (for proxy endpoint fallback).
+   */
+  async getMedia(storageKey: string): Promise<Buffer | null> {
+    try {
+      const response = await this.s3.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: storageKey,
+        }),
+      );
+      if (!response.Body) return null;
+      return Buffer.from(await response.Body.transformToByteArray());
+    } catch (err) {
+      this.logger.warn(
+        `Failed to retrieve media ${storageKey}: ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   /**
@@ -138,8 +324,6 @@ export class MediaProxyService {
 
     if (channelType === 'whatsapp' && accessToken) {
       // WA: media ID → Graph API → download URL
-      // GET https://graph.facebook.com/v18.0/{media_id}
-      // Response: { url: '<download_url>' }
       const graphResponse = await fetchWithTimeout(
         `https://graph.facebook.com/v18.0/${mediaId}`,
         {
@@ -171,12 +355,25 @@ export class MediaProxyService {
   }
 
   /**
-   * Store a media buffer and return a storage key.
+   * Map MIME type to a safe file extension.
    */
-  private store(mediaId: string, buffer: Buffer): Promise<string> {
-    // TODO: implement actual file storage (local disk / S3)
-    // For now, log the action and return a placeholder path
-    this.logger.log(`Storing media ${mediaId} (${buffer.length} bytes)`);
-    return Promise.resolve(mediaId);
+  private getExtensionFromMime(mimeType: string): string {
+    const map: Record<string, string> = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+      'video/mp4': 'mp4',
+      'video/webm': 'webm',
+      'audio/mpeg': 'mp3',
+      'audio/mp3': 'mp3',
+      'audio/ogg': 'ogg',
+      'audio/wav': 'wav',
+      'audio/aac': 'aac',
+      'audio/amr': 'amr',
+      'audio/mp4': 'm4a',
+      'application/pdf': 'pdf',
+    };
+    return map[mimeType.toLowerCase()] || 'bin';
   }
 }

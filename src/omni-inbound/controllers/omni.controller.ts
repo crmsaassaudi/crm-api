@@ -30,6 +30,7 @@ import { CreateTicketFromConversationDto } from '../dto/create-ticket-from-conve
 import { LinkMessagesDto } from '../dto/link-messages.dto';
 import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
+import { FilesService } from '../../files/files.service';
 import { RequirePermission } from '../../common/permissions';
 
 /**
@@ -63,6 +64,7 @@ export class OmniController {
     private readonly eventEmitter: EventEmitter2,
     private readonly usersService: UsersService,
     private readonly tenantsService: TenantsService,
+    private readonly filesService: FilesService,
   ) {}
 
   // ─── Conversations ────────────────────────────────────────────
@@ -1156,26 +1158,152 @@ export class OmniController {
   async getStorageQuota() {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) throw new BadRequestException('Tenant context not found');
-    return this.tenantsService.checkStorageQuota(tenantId);
+    const result = await this.tenantsService.getStorageBreakdown(tenantId);
+    return {
+      ...result.quota,
+      usedMB: Math.round(result.quota.usedBytes / (1024 * 1024)),
+      limitMB:
+        result.quota.limitBytes === -1
+          ? -1
+          : Math.round(result.quota.limitBytes / (1024 * 1024)),
+      usagePercent:
+        result.quota.limitBytes > 0 && result.quota.limitBytes !== -1
+          ? Math.round(
+              (result.quota.usedBytes / result.quota.limitBytes) * 100,
+            )
+          : 0,
+      breakdown: result.breakdown,
+    };
   }
 
   /**
    * PATCH /omni/settings/storage-quota
    * Update the tenant's storage limit (admin).
+   * Accepts limitBytes or limitMB for backward compat.
    */
   @Patch('settings/storage-quota')
-  async updateStorageQuota(@Body('limitMB') limitMB: number) {
+  async updateStorageQuota(
+    @Body('limitBytes') limitBytes?: number,
+    @Body('limitMB') limitMB?: number,
+  ) {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) throw new BadRequestException('Tenant context not found');
 
-    if (typeof limitMB !== 'number' || (limitMB < 0 && limitMB !== -1)) {
+    // Support both limitBytes and limitMB (backward compat)
+    let finalBytes: number;
+    if (limitBytes !== undefined) {
+      finalBytes = limitBytes;
+    } else if (limitMB !== undefined) {
+      finalBytes = limitMB === -1 ? -1 : limitMB * 1024 * 1024;
+    } else {
+      throw new BadRequestException('limitBytes or limitMB is required');
+    }
+
+    if (typeof finalBytes !== 'number' || (finalBytes < 0 && finalBytes !== -1)) {
       throw new BadRequestException(
-        'limitMB must be a positive number or -1 (unlimited)',
+        'Limit must be a positive number or -1 (unlimited)',
       );
     }
 
-    await this.tenantsService.updateStorageQuota(tenantId, limitMB);
-    return { limitMB };
+    await this.tenantsService.updateStorageQuota(tenantId, finalBytes);
+    return {
+      limitBytes: finalBytes,
+      limitMB: finalBytes === -1 ? -1 : Math.round(finalBytes / (1024 * 1024)),
+    };
+  }
+
+  // ─── Conversation File History ─────────────────────────────────
+
+  /**
+   * GET /omni/conversations/:id/files
+   * List all files associated with a conversation.
+   * Returns paginated list with presigned URLs (never exposes storageKey).
+   */
+  @Get('conversations/:id/files')
+  @RequirePermission('view', 'contacts')
+  async getConversationFiles(
+    @Param('id') conversationId: string,
+    @Query('type') type?: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '20',
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    const result = await this.filesService.listConversationFiles(
+      tenantId,
+      conversationId,
+      { mimeTypePrefix: type },
+      {
+        page: Math.max(1, parseInt(page, 10)),
+        limit: Math.min(parseInt(limit, 10), 100),
+      },
+    );
+
+    // Generate presigned URLs for each file — never expose storageKey
+    const enrichedData = await Promise.all(
+      result.data.map(async (file) => {
+        const downloadUrl = file.path
+          ? await this.filesService
+              .getPresignedDownloadUrl(file.path)
+              .catch(() => undefined)
+          : undefined;
+        const thumbnailUrl = file.thumbnailKey
+          ? await this.filesService
+              .getPresignedDownloadUrl(file.thumbnailKey)
+              .catch(() => undefined)
+          : undefined;
+
+        return {
+          id: file.id,
+          fileName: file.fileName,
+          mimeType: file.mimeType,
+          fileSize: file.fileSize,
+          category: file.category,
+          source: file.source,
+          messageId: file.messageId,
+          uploadedBy: file.uploadedBy,
+          imageMetadata: file.imageMetadata,
+          tags: file.tags,
+          createdAt: file.createdAt,
+          downloadUrl,
+          thumbnailUrl,
+        };
+      }),
+    );
+
+    return {
+      data: enrichedData,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+    };
+  }
+
+  /**
+   * GET /omni/conversations/:id/files/images
+   * Image gallery shortcut — only returns image files.
+   */
+  @Get('conversations/:id/files/images')
+  @RequirePermission('view', 'contacts')
+  async getConversationImages(
+    @Param('id') conversationId: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '50',
+  ) {
+    return this.getConversationFiles(
+      conversationId,
+      'image/',
+      page,
+      limit,
+    );
   }
 
   // ─── Conversion Engine (Deal / Ticket from Conversation) ──────
