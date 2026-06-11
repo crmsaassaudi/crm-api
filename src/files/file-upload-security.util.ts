@@ -4,6 +4,7 @@ import { FileCategory } from './domain/file';
 const ALLOWED_IMAGE_EXTENSIONS = new Set([
   'jpg',
   'jpeg',
+  'jfif',
   'png',
   'gif',
   'webp',
