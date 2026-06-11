@@ -6,7 +6,7 @@ export class FileMapper {
     const domainEntity = new FileType();
     domainEntity.id = raw._id.toString();
     domainEntity.path = raw.path;
-    domainEntity.tenantId = raw.tenantId;
+    domainEntity.tenantId = raw.tenantId?.toString();
     domainEntity.version = raw.__v;
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
@@ -24,15 +24,15 @@ export class FileMapper {
     domainEntity.uploadedBy = raw.uploadedBy;
     domainEntity.accessLevel =
       (raw.accessLevel as FileType['accessLevel']) ?? 'tenant';
-    domainEntity.allowedUserIds = raw.allowedUserIds ?? [];
+    domainEntity.allowedUserIds = (raw.allowedUserIds ?? []).map((id) => id?.toString());
 
-    domainEntity.conversationId = raw.conversationId;
+    domainEntity.conversationId = raw.conversationId?.toString();
     domainEntity.messageId = raw.messageId;
 
     domainEntity.thumbnailKey = raw.thumbnailKey;
     domainEntity.imageMetadata = raw.imageMetadata;
     domainEntity.tags = raw.tags ?? [];
-    domainEntity.folderId = raw.folderId;
+    domainEntity.folderId = raw.folderId?.toString();
 
     domainEntity.isDeleted = raw.isDeleted ?? false;
     domainEntity.deletedAt = raw.deletedAt;

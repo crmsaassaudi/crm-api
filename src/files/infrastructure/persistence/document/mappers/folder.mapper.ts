@@ -5,7 +5,7 @@ export class FolderMapper {
   static toDomain(raw: FolderSchemaClass): FolderType {
     const folder = new FolderType();
     folder.id = raw._id.toString();
-    folder.tenantId = raw.tenantId;
+    folder.tenantId = raw.tenantId?.toString();
     folder.name = raw.name;
     folder.parentId = raw.parentId ? raw.parentId.toString() : null;
     folder.path = raw.path;
