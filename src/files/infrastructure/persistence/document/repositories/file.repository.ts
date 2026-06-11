@@ -201,6 +201,7 @@ export class FileDocumentRepository
           accessLevel: data.accessLevel ?? 'tenant',
           allowedUserIds: data.allowedUserIds ?? [],
           tags: data.tags ?? [],
+          folderId: data.folderId ?? null,
           isDeleted: false,
         },
         $set: {
