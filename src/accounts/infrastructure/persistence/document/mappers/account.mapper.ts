@@ -6,7 +6,7 @@ export class AccountMapper {
   static toDomain(raw: AccountSchemaClass): Account {
     const domainEntity = new Account();
     domainEntity.id = raw._id.toString();
-    domainEntity.tenantId = raw.tenantId;
+    domainEntity.tenantId = raw.tenantId?.toString();
     domainEntity.name = raw.name;
     domainEntity.website = raw.website;
     domainEntity.industry = raw.industry;

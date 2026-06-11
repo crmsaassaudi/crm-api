@@ -10,7 +10,7 @@ export class CannedResponseMapper {
     entity.content = raw.content;
     entity.category = raw.category;
     entity.scope = raw.scope;
-    entity.createdById = raw.createdById;
+    entity.createdById = raw.createdById?.toString();
     entity.attachments = raw.attachments;
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;

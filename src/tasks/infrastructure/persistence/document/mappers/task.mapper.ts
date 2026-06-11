@@ -5,7 +5,7 @@ export class TaskMapper {
   static toDomain(raw: TaskSchemaClass): Task {
     const domainEntity = new Task();
     domainEntity.id = raw._id.toString();
-    domainEntity.tenantId = raw.tenantId;
+    domainEntity.tenantId = raw.tenantId?.toString();
     domainEntity.title = raw.title;
     domainEntity.description = raw.description;
     domainEntity.dueDate = raw.dueDate;
