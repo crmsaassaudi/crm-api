@@ -403,10 +403,11 @@ export class FileDocumentRepository
   }
 
   async sumFileSizes(tenantId: string): Promise<number> {
+    const { Types } = await import('mongoose');
     const result = await this.model.aggregate([
       {
         $match: {
-          tenantId,
+          tenantId: new Types.ObjectId(tenantId),
           isDeleted: { $ne: true },
         },
       },
