@@ -401,4 +401,23 @@ export class FileDocumentRepository
       createdAt: { $gte: since },
     }).exec();
   }
+
+  async sumFileSizes(tenantId: string): Promise<number> {
+    const result = await this.model.aggregate([
+      {
+        $match: {
+          tenantId,
+          isDeleted: { $ne: true },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalSize: { $sum: '$fileSize' },
+        },
+      },
+    ]).exec();
+
+    return result.length > 0 ? result[0].totalSize : 0;
+  }
 }

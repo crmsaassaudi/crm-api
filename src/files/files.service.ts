@@ -361,4 +361,8 @@ export class FilesService {
     since.setDate(since.getDate() - days);
     return this.fileRepository.countRecentUploads(tenantId, since);
   }
+
+  async sumFileSizes(tenantId: string): Promise<number> {
+    return this.fileRepository.sumFileSizes(tenantId);
+  }
 }

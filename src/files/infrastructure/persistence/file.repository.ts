@@ -127,4 +127,7 @@ export abstract class FileRepository {
     tenantId: string,
     since: Date,
   ): Promise<number>;
+
+  /** Sum total file sizes (bytes) for a tenant */
+  abstract sumFileSizes(tenantId: string): Promise<number>;
 }
