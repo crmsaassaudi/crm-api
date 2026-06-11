@@ -25,7 +25,8 @@
 | 11 | [11-tenants.md](./11-tenants.md) | Multi-tenancy, Onboarding, CRM Settings | `src/tenants/`, `src/crm-settings/` |
 | 12 | [12-queue.md](./12-queue.md) | BullMQ Queue Registry, Worker Mode | `src/queue/` |
 | 13 | [13-automation-routing-sla.md](./13-automation-routing-sla.md) | Automation Rules, Routing Rules, SLA, Escalation, Canned Responses, Notes | `src/automation-rules/`, `src/routing-rules/`, `src/sla-policies/`, `src/escalation-policies/`, `src/canned-responses/`, `src/notes/` |
-| 14 | [14-observability-infrastructure.md](./14-observability-infrastructure.md) | Audit Log, Activity Log, Files, Custom Fields, Tags, List Views, Redis, Mail, i18n | `src/audit-log/`, `src/activity-log/`, `src/files/`, `src/custom-fields/`, `src/tags/`, `src/list-views/`, `src/redis/`, `src/mail/` |
+| 14 | [14-observability-infrastructure.md](./14-observability-infrastructure.md) | Audit Log, Activity Log, Custom Fields, Tags, List Views, Redis, Mail, i18n | `src/audit-log/`, `src/activity-log/`, `src/custom-fields/`, `src/tags/`, `src/list-views/`, `src/redis/`, `src/mail/` |
+| 18 | [18-cloud-drive.md](./18-cloud-drive.md) | Cloud Drive, Folder Hierarchy, File Upload, Image Processing, Storage Quota | `src/files/` |
 
 ---
 
@@ -132,7 +133,7 @@ src/
 ├── deal-settings/          Deal pipeline configuration
 ├── deals/                  Deal / opportunity management
 ├── escalation-policies/    SLA escalation workflows
-├── files/                  File upload and static serving
+├── files/                  Cloud Drive: file upload, folders, ACL, image processing, storage quota
 ├── groups/                 Agent groups with permission grants
 ├── i18n/                   Internationalization
 ├── list-views/             Saved filter/column views

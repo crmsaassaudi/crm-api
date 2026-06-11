@@ -41,7 +41,8 @@ npm run start:dev
 | Tenants & Onboarding | [11-tenants.md](./docs/11-tenants.md) | `src/tenants/`, `src/crm-settings/` |
 | Queue & Workers | [12-queue.md](./docs/12-queue.md) | `src/queue/` |
 | Automation, Routing, SLA | [13-automation-routing-sla.md](./docs/13-automation-routing-sla.md) | `src/automation-rules/`, `src/routing-rules/`, `src/sla-policies/`, `src/canned-responses/`, `src/notes/` |
-| Observability & Infrastructure | [14-observability-infrastructure.md](./docs/14-observability-infrastructure.md) | `src/audit-log/`, `src/activity-log/`, `src/files/`, `src/custom-fields/`, `src/redis/`, `src/mail/` |
+| Observability & Infrastructure | [14-observability-infrastructure.md](./docs/14-observability-infrastructure.md) | `src/audit-log/`, `src/activity-log/`, `src/custom-fields/`, `src/redis/`, `src/mail/` |
+| Cloud Drive & File Management | [18-cloud-drive.md](./docs/18-cloud-drive.md) | `src/files/` |
 
 ---
 
