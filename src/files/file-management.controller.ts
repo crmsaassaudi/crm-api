@@ -400,11 +400,12 @@ export class FileManagementController {
     const tenantId = this.cls.get<string>('tenantId');
     const result = await this.tenantsService.getStorageBreakdown(tenantId);
 
-    const [topFiles, totalFilesCount, recentUploadsCount, actualUsedBytes] = await Promise.all([
+    const [topFiles, totalFilesCount, recentUploadsCount, actualUsedBytes, categoryBreakdown] = await Promise.all([
       this.filesService.getTopFiles(tenantId, 10),
       this.filesService.countFiles(tenantId),
       this.filesService.countRecentUploads(tenantId, 7),
       this.filesService.sumFileSizes(tenantId),
+      this.filesService.getCategoryBreakdown(tenantId),
     ]);
 
     const limitBytes = result.quota.limitBytes;
@@ -424,7 +425,7 @@ export class FileManagementController {
             : Math.round(limitBytes / (1024 * 1024)),
         usedMB: Math.round(actualUsedBytes / (1024 * 1024)),
       },
-      breakdown: result.breakdown,
+      breakdown: categoryBreakdown,
       topFiles: topFiles.map((f) => ({
         id: f.id,
         fileName: f.fileName,

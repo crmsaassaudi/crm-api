@@ -130,4 +130,9 @@ export abstract class FileRepository {
 
   /** Sum total file sizes (bytes) for a tenant */
   abstract sumFileSizes(tenantId: string): Promise<number>;
+
+  /** Get file count and total size grouped by category */
+  abstract getCategoryBreakdown(
+    tenantId: string,
+  ): Promise<Record<string, { count: number; sizeBytes: number }>>;
 }

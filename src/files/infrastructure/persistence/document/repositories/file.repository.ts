@@ -421,4 +421,34 @@ export class FileDocumentRepository
 
     return result.length > 0 ? result[0].totalSize : 0;
   }
+
+  async getCategoryBreakdown(
+    tenantId: string,
+  ): Promise<Record<string, { count: number; sizeBytes: number }>> {
+    const { Types } = await import('mongoose');
+    const result = await this.model.aggregate([
+      {
+        $match: {
+          tenantId: new Types.ObjectId(tenantId),
+          isDeleted: { $ne: true },
+        },
+      },
+      {
+        $group: {
+          _id: { $ifNull: ['$category', 'general'] },
+          count: { $sum: 1 },
+          sizeBytes: { $sum: '$fileSize' },
+        },
+      },
+    ]).exec();
+
+    const breakdown: Record<string, { count: number; sizeBytes: number }> = {};
+    for (const item of result) {
+      breakdown[item._id] = {
+        count: item.count,
+        sizeBytes: item.sizeBytes,
+      };
+    }
+    return breakdown;
+  }
 }

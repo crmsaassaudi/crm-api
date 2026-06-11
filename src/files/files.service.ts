@@ -365,4 +365,10 @@ export class FilesService {
   async sumFileSizes(tenantId: string): Promise<number> {
     return this.fileRepository.sumFileSizes(tenantId);
   }
+
+  async getCategoryBreakdown(
+    tenantId: string,
+  ): Promise<Record<string, { count: number; sizeBytes: number }>> {
+    return this.fileRepository.getCategoryBreakdown(tenantId);
+  }
 }
