@@ -28,7 +28,8 @@ export type PermissionResource =
   | 'routing_rules'
   | 'files'
   | 'storage'
-  | 'omni_channel';
+  | 'omni_channel'
+  | 'omni_reports';
 
 export type PermissionAction =
   | 'view'
@@ -236,6 +237,10 @@ export const PERMISSION_REGISTRY: Record<
   omni_channel: {
     view: 'omni_channel:view',
   },
+  omni_reports: {
+    view: 'omni_reports:view',
+    export: 'omni_reports:export',
+  },
 };
 
 /**
@@ -364,6 +369,8 @@ export const CORE_PERMISSIONS: string[] = [
   'storage:view',
   // Omni-Channel page access
   'omni_channel:view',
+  // Omni-Channel Reports
+  'omni_reports:view',
 ];
 
 /**
