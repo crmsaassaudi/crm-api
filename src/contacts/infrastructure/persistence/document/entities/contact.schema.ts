@@ -126,6 +126,7 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop({
     type: [
       {
+        _id: false,
         channelType: { type: String, required: true },
         senderId: { type: String, required: true },
       },

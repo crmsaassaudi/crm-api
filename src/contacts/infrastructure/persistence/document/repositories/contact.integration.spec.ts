@@ -176,21 +176,11 @@ describe('Contact Schema — real MongoDB', () => {
   // OMNI IDENTITY — atomic $addToSet
   // ═══════════════════════════════════════════════════════════════════
   describe('omniIdentities', () => {
-    it('$addToSet with subdocuments: KNOWN BUG — auto _id causes dedup failure', async () => {
+    it('$addToSet correctly deduplicates identical omni identities (_id: false)', async () => {
       /**
-       * 🐛 REAL BUG FOUND BY INTEGRATION TEST
-       *
-       * $addToSet checks object equality. But Mongoose auto-assigns _id to
-       * each subdocument, making every insert unique — so $addToSet cannot
-       * deduplicate.
-       *
-       * FIX: Either disable _id on omniIdentities subdocs in schema:
-       *   { _id: false, channelType: ..., senderId: ... }
-       * Or use a manual dedup query:
-       *   { $addToSet: { omniIdentities: { $each: [...] } } }
-       *   with a pre-check findOne({ 'omniIdentities.senderId': ... })
-       *
-       * For now, this test documents the actual (buggy) behavior.
+       * ✅ BUG FIXED: Added _id: false to omniIdentities subdocument schema.
+       * Now $addToSet can correctly compare subdocuments by value equality,
+       * preventing duplicate channelType+senderId entries.
        */
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
@@ -202,7 +192,7 @@ describe('Contact Schema — real MongoDB', () => {
         docId = doc._id.toString();
       });
 
-      // Add same identity again — $addToSet SHOULD prevent this but doesn't
+      // Add same identity again — $addToSet should now correctly prevent duplicate
       await runWithTenant(TENANT_A, async () => {
         await Contact.findOneAndUpdate(
           { _id: docId! },
@@ -214,9 +204,8 @@ describe('Contact Schema — real MongoDB', () => {
       const updated = await runWithTenant(TENANT_A, () =>
         Contact.findOne({ _id: docId! }),
       );
-      // BUG: length is 2 instead of 1 because auto-_id makes each subdoc unique
-      // When this bug is fixed, change to toHaveLength(1)
-      expect(updated.omniIdentities).toHaveLength(2);
+      // FIXED: dedup works now — still 1, not 2
+      expect(updated.omniIdentities).toHaveLength(1);
     });
 
     it('adding DIFFERENT identity correctly appends', async () => {

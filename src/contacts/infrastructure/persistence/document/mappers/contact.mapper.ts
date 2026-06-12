@@ -73,8 +73,8 @@ export class ContactMapper {
     persistenceEntity.tenantId = domainEntity.tenantId;
     persistenceEntity.firstName = domainEntity.firstName;
     persistenceEntity.lastName = domainEntity.lastName;
-    persistenceEntity.emails = domainEntity.emails ?? [];
-    persistenceEntity.phones = domainEntity.phones ?? [];
+    if (domainEntity.emails !== undefined) persistenceEntity.emails = domainEntity.emails;
+    if (domainEntity.phones !== undefined) persistenceEntity.phones = domainEntity.phones;
     persistenceEntity.isConverted = domainEntity.isConverted;
     persistenceEntity.lifecycleStageId = domainEntity.lifecycleStageId;
     persistenceEntity.statusId = domainEntity.statusId;
@@ -90,8 +90,8 @@ export class ContactMapper {
     persistenceEntity.emailOptIn = domainEntity.emailOptIn;
     persistenceEntity.smsOptIn = domainEntity.smsOptIn;
     persistenceEntity.doNotCall = domainEntity.doNotCall;
-    persistenceEntity.tags = domainEntity.tags ?? [];
-    persistenceEntity.omniIdentities = domainEntity.omniIdentities ?? [];
+    if (domainEntity.tags !== undefined) persistenceEntity.tags = domainEntity.tags;
+    if (domainEntity.omniIdentities !== undefined) persistenceEntity.omniIdentities = domainEntity.omniIdentities;
     if (domainEntity.isShadow !== undefined) {
       persistenceEntity.isShadow = domainEntity.isShadow;
     }
@@ -100,7 +100,7 @@ export class ContactMapper {
     persistenceEntity.updatedById = domainEntity.updatedById;
     persistenceEntity.lastActivityAt = domainEntity.lastActivityAt;
     persistenceEntity.deletedAt = domainEntity.deletedAt;
-    persistenceEntity.stageHistory = domainEntity.stageHistory ?? [];
+    if (domainEntity.stageHistory !== undefined) persistenceEntity.stageHistory = domainEntity.stageHistory;
     if (domainEntity.version !== undefined) {
       (persistenceEntity as any).__v = domainEntity.version;
     }
