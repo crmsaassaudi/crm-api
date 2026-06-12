@@ -70,7 +70,7 @@ describe('WebhookProcessor', () => {
     );
   });
 
-  it('should fall back to job id when provider message id is missing', async () => {
+  it('should skip Redis dedup when provider message id is missing', async () => {
     await processor.process({
       id: 'job_123',
       data: {
@@ -80,13 +80,11 @@ describe('WebhookProcessor', () => {
       },
     } as any);
 
-    expect(redis.set).toHaveBeenCalledWith(
-      'processed:webhook:facebook:page_1:job_123',
-      '1',
-      'EX',
-      86400,
-      'NX',
-    );
+    // When no provider message ID exists, dedup is skipped entirely
+    // (falling back to job.id would silently allow duplicates on retry)
+    expect(redis.set).not.toHaveBeenCalled();
+    // But message should still be processed
+    expect(processorService.process).toHaveBeenCalled();
   });
 
   function createJob(accountId: string): { id: string; data: WebhookJobData } {

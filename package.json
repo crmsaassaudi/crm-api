@@ -32,10 +32,12 @@
     "start:api:prod": "node dist/main",
     "start:worker:prod": "node dist/worker",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:cov": "jest --coverage",
-    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+    "test": "jest --maxWorkers=50%",
+    "test:unit": "jest --maxWorkers=50% --testPathIgnorePatterns=e2e",
+    "test:watch": "jest --watch --maxWorkers=50%",
+    "test:cov": "jest --maxWorkers=2 --coverage",
+    "test:ci": "jest --maxWorkers=2 --ci --coverage",
+    "test:debug": "jest --runInBand --detectOpenHandles",
     "test:e2e": "env-cmd jest --config ./test/jest-e2e.json",
     "ops:verify-indexes": "ts-node -r tsconfig-paths/register ./src/scripts/verify-operational-indexes.ts",
     "migrate:list-view-labels": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-list-view-labels.ts",
@@ -172,7 +174,7 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": ["ts-jest", { "isolatedModules": true }]
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"
