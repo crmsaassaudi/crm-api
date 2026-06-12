@@ -16,7 +16,7 @@ export function createContact(overrides: Partial<Contact> = {}): Contact {
     lastName: 'Doe',
     emails: ['john@example.com'],
     phones: ['+15551234567'],
-    isConverted: false,
+
     lifecycleStageId: 'lead',
     statusId: 'new',
     createdById: 'user_1',

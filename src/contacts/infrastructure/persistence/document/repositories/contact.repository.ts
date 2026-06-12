@@ -112,7 +112,7 @@ export class ContactRepository extends BaseDocumentRepository<
       }
     }
 
-    // Filter by lifecycle stage (replaces the old isConverted filter)
+    // Filter by lifecycle stage
     if (filterOptions?.lifecycleStage) {
       where.lifecycleStageId = filterOptions.lifecycleStage;
     }

@@ -22,7 +22,7 @@ const LIFECYCLE_STAGE_MUTABLE_FIELDS = new Set([
   'sortOrder',
   'color',
   'description',
-  'isConverted',
+
   'isTerminal',
   'mandatoryFields',
   'triggerDealCreation',
@@ -190,7 +190,7 @@ export class CrmSettingsService {
           : stages.length + 1,
       color: payload.color ?? '#3b82f6',
       description: payload.description,
-      isConverted: payload.isConverted ?? false,
+
       isTerminal: payload.isTerminal ?? false,
       mandatoryFields: payload.mandatoryFields ?? [],
       triggerDealCreation: payload.triggerDealCreation ?? false,

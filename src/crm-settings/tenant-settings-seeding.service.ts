@@ -400,7 +400,6 @@ const DEFAULT_CONTACT_LIFECYCLE = {
       apiName: 'customer',
       sortOrder: 6,
       color: '#10b981',
-      isConverted: true,
       statuses: [
         {
           id: 'onboarding',

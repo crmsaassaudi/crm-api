@@ -83,11 +83,6 @@ export class CreateContactDto {
   @IsString({ each: true })
   phones?: string[];
 
-  @ApiProperty({ example: false })
-  @IsOptional()
-  @IsBoolean()
-  isConverted?: boolean;
-
   @ApiProperty({ example: true })
   @IsOptional()
   @IsBoolean()

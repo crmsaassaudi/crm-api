@@ -100,7 +100,6 @@ const ALWAYS_IGNORED = new Set([
   'stageHistory',
   'omniIdentities',
   'lastActivityAt',
-  'isConverted',
 ]);
 
 export class AuditDiffEngine {

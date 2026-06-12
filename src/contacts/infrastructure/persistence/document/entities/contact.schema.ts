@@ -39,9 +39,6 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop({ type: [String], default: [] })
   phones: string[];
 
-  @Prop({ default: false })
-  isConverted: boolean;
-
   @Prop({ index: true })
   lifecycleStageId: string;
 

@@ -19,13 +19,6 @@ export class Contact {
   @ApiProperty({ example: ['+15551234567'] })
   phones: string[];
 
-  /**
-   * @deprecated Use `lifecycleStage` instead. Kept for backward compatibility.
-   * Will be removed in a future version.
-   */
-  @ApiProperty({ example: false, deprecated: true })
-  isConverted: boolean;
-
   @ApiProperty({ example: 'lead' })
   lifecycleStageId: string;
 

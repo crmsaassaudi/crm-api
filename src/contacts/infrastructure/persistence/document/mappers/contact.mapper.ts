@@ -11,7 +11,6 @@ export class ContactMapper {
     domainEntity.lastName = raw.lastName;
     domainEntity.emails = raw.emails ?? [];
     domainEntity.phones = raw.phones ?? [];
-    domainEntity.isConverted = raw.isConverted;
     domainEntity.lifecycleStageId = raw.lifecycleStageId?.toString();
     domainEntity.statusId = raw.statusId?.toString();
     domainEntity.companyName = raw.companyName;
@@ -75,7 +74,6 @@ export class ContactMapper {
     persistenceEntity.lastName = domainEntity.lastName;
     if (domainEntity.emails !== undefined) persistenceEntity.emails = domainEntity.emails;
     if (domainEntity.phones !== undefined) persistenceEntity.phones = domainEntity.phones;
-    persistenceEntity.isConverted = domainEntity.isConverted;
     persistenceEntity.lifecycleStageId = domainEntity.lifecycleStageId;
     persistenceEntity.statusId = domainEntity.statusId;
     persistenceEntity.companyName = domainEntity.companyName;

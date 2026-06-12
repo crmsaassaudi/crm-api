@@ -117,11 +117,6 @@ export class LifecycleStageDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsBoolean()
-  isConverted?: boolean;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsBoolean()
   isTerminal?: boolean;
 
   @ApiProperty({ required: false, type: [String] })
