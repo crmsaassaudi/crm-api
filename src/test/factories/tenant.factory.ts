@@ -1,6 +1,15 @@
+import { Tenant } from '../../tenants/domain/tenant';
+
 let counter = 0;
 
-export function createTenant(overrides: Record<string, any> = {}) {
+/**
+ * Factory for creating test Tenant objects.
+ *
+ * Uses Partial<Tenant> for type-safety:
+ * If production Tenant adds a required field, TypeScript
+ * will flag this factory at compile time.
+ */
+export function createTenant(overrides: Partial<Tenant> = {}): Tenant {
   counter++;
   const id = overrides.id ?? `tenant_${counter}`;
   return {
@@ -23,5 +32,5 @@ export function createTenant(overrides: Record<string, any> = {}) {
     createdAt: new Date('2026-01-01T00:00:00Z'),
     updatedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
-  };
+  } as Tenant;
 }
