@@ -35,12 +35,39 @@ jobs:
 
             test -f .env.production
 
-            export DOCKER_BUILDKIT=0
+            # ── Build with BuildKit (faster, more reliable layer handling) ──
+            export DOCKER_BUILDKIT=1
 
             # Build image once, then run single all-in-one container.
-            # To scale: switch to docker-compose.scaled.yml
-            # --no-cache avoids stale layer cache
-            docker build --pull --no-cache -t crm-api:production .
+            # --pull ensures base image is fresh; BuildKit layer cache avoids
+            # full rebuilds when only source files change.
+            docker build --pull -t crm-api:production .
+
+            # ── Deploy: stop old → start new → then prune ──────────────────
+            # Wait for old containers to fully stop before pruning to avoid
+            # the overlayfs race condition where prune removes snapshot layers
+            # that containerd still references.
             docker compose -f docker-compose.yml up -d --no-build --remove-orphans crm-api
+
+            # Give the new container time to fully start and attach to layers
+            echo "Waiting for container to stabilize..."
+            sleep 10
+
+            # Health check: wait up to 60s for the API to respond
+            for i in $(seq 1 12); do
+              if docker compose -f docker-compose.yml exec -T crm-api wget -qO- http://localhost:3000/api/v1/health > /dev/null 2>&1; then
+                echo "Health check passed on attempt $i"
+                break
+              fi
+              if [ "$i" -eq 12 ]; then
+                echo "Health check failed after 60s"
+                docker compose -f docker-compose.yml logs --tail=50 crm-api
+                exit 1
+              fi
+              echo "Waiting for API to start... (attempt $i/12)"
+              sleep 5
+            done
+
+            # ── Cleanup: safe to prune now that new container is healthy ───
             docker container prune -f
             docker image prune -f
