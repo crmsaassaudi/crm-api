@@ -1,4 +1,4 @@
-import mongoose, { Schema, Model, Connection } from 'mongoose';
+import mongoose, { Model, Connection } from 'mongoose';
 import {
   setupTestDatabase,
   clearDatabase,
@@ -7,76 +7,24 @@ import {
 import {
   runWithTenant,
 } from '../../../../../test/helpers/cls-context.helper';
-import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+import {
+  ContactSchema,
+  ContactSchemaClass,
+} from '../entities/contact.schema';
 
 /**
  * Contact Schema — INTEGRATION TESTS with real MongoDB
  *
- * Tests the REAL Contact schema with tenant-filter plugin, indexes, and constraints.
- * This catches bugs that mocks can never find:
+ * ⚠️ IMPORTANT: Uses the REAL ContactSchema from production code.
+ * If schema changes, tests automatically reflect the change.
+ * No schema duplication = no maintenance burden.
+ *
+ * Tests real MongoDB behavior:
  *   - Tenant isolation across CRUD
  *   - Unique constraint enforcement
- *   - Compound index behavior
  *   - Atomic operations ($addToSet, $push, version checks)
  *   - Filter injection / field whitelist
  */
-
-// Replicate the real Contact schema
-const ContactSchema = new Schema(
-  {
-    tenantId: { type: Schema.Types.ObjectId, required: true, index: true },
-    firstName: { type: String, required: true, index: true },
-    lastName: { type: String, required: true, index: true },
-    emails: { type: [String], default: [] },
-    phones: { type: [String], default: [] },
-    isConverted: { type: Boolean, default: false },
-    lifecycleStageId: { type: String, index: true },
-    statusId: { type: String, index: true },
-    companyName: String,
-    accountId: { type: Schema.Types.ObjectId },
-    title: String,
-    sourceId: { type: String, index: true },
-    role: String,
-    address: String,
-    score: { type: Number, default: 0 },
-    isVIP: { type: Boolean, default: false, index: true },
-    isShadow: { type: Boolean, default: false },
-    ownerId: { type: Schema.Types.ObjectId },
-    createdById: { type: Schema.Types.ObjectId, required: true },
-    updatedById: { type: Schema.Types.ObjectId, required: true },
-    tags: { type: [String], default: [] },
-    deletedAt: Date,
-    lastActivityAt: Date,
-    customFields: { type: Schema.Types.Mixed },
-    omniIdentities: {
-      type: [
-        {
-          channelType: { type: String, required: true },
-          senderId: { type: String, required: true },
-        },
-      ],
-      default: [],
-    },
-    stageHistory: {
-      type: [
-        {
-          fromStage: { type: String, default: null },
-          toStage: { type: String, required: true },
-          changedAt: { type: Date, required: true, default: Date.now },
-          changedById: { type: Schema.Types.ObjectId },
-          reason: String,
-          direction: { type: String, enum: ['forward', 'backward', 'lateral'] },
-          skippedStages: { type: [String], default: [] },
-        },
-      ],
-      default: [],
-    },
-  },
-  { timestamps: true },
-);
-
-ContactSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
-// Only essential indexes for test behavior; skip heavy indexes to avoid disk space issues
 
 let connection: Connection;
 let Contact: Model<any>;
