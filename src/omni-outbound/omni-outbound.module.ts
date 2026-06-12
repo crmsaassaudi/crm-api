@@ -12,6 +12,7 @@ import replyWindowConfig from './config/reply-window.config';
 import { FacebookAdapter } from '../omni-inbound/adapters/facebook.adapter';
 import { ZaloAdapter } from '../omni-inbound/adapters/zalo.adapter';
 import { WhatsAppAdapter } from '../omni-inbound/adapters/whatsapp.adapter';
+import { InstagramAdapter } from '../omni-inbound/adapters/instagram.adapter';
 import {
   CHANNEL_ADAPTERS,
   ChannelAdapter,
@@ -74,20 +75,23 @@ import {
     FacebookAdapter,
     ZaloAdapter,
     WhatsAppAdapter,
+    InstagramAdapter,
     {
       provide: CHANNEL_ADAPTERS,
       useFactory: (
         fb: FacebookAdapter,
         zalo: ZaloAdapter,
         wa: WhatsAppAdapter,
+        ig: InstagramAdapter,
       ) => {
         const map = new Map<ChannelType, ChannelAdapter>();
         map.set('facebook', fb);
         map.set('zalo', zalo);
         map.set('whatsapp', wa);
+        map.set('instagram', ig);
         return map;
       },
-      inject: [FacebookAdapter, ZaloAdapter, WhatsAppAdapter],
+      inject: [FacebookAdapter, ZaloAdapter, WhatsAppAdapter, InstagramAdapter],
     },
 
     // Repositories

@@ -5,6 +5,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { FacebookAdapter } from './adapters/facebook.adapter';
 import { ZaloAdapter } from './adapters/zalo.adapter';
 import { WhatsAppAdapter } from './adapters/whatsapp.adapter';
+import { InstagramAdapter } from './adapters/instagram.adapter';
 import { CHANNEL_ADAPTERS } from './adapters/channel-adapter.interface';
 import { ChannelType } from './domain/omni-payload';
 import { ChannelAdapter } from './adapters/channel-adapter.interface';
@@ -177,20 +178,23 @@ const workerProviders =
     FacebookAdapter,
     ZaloAdapter,
     WhatsAppAdapter,
+    InstagramAdapter,
     {
       provide: CHANNEL_ADAPTERS,
       useFactory: (
         fb: FacebookAdapter,
         zalo: ZaloAdapter,
         wa: WhatsAppAdapter,
+        ig: InstagramAdapter,
       ) => {
         const map = new Map<ChannelType, ChannelAdapter>();
         map.set('facebook', fb);
         map.set('zalo', zalo);
         map.set('whatsapp', wa);
+        map.set('instagram', ig);
         return map;
       },
-      inject: [FacebookAdapter, ZaloAdapter, WhatsAppAdapter],
+      inject: [FacebookAdapter, ZaloAdapter, WhatsAppAdapter, InstagramAdapter],
     },
     InboundProcessorService,
     MediaProxyService,

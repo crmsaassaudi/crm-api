@@ -69,6 +69,36 @@ export interface ChannelAdapter {
     media: OutboundMedia,
     channelConfig: any,
   ): Promise<MediaSendResult>;
+
+  /**
+   * Fetch the sender's profile from the provider for identity enrichment.
+   * Optional — only implemented by adapters whose platform provides a profile API.
+   *
+   * @param externalId   The provider's user ID (PSID, IGSID, etc.)
+   * @param accessToken  Channel-specific access token
+   */
+  enrichProfile?(
+    externalId: string,
+    accessToken: string,
+  ): Promise<{ name?: string; avatarUrl?: string; phone?: string }>;
+
+  /**
+   * Send a pre-approved template message to the provider's API.
+   * Optional — only supported by WhatsApp (template messages bypass the reply window).
+   *
+   * @param recipientId    The provider's user ID
+   * @param templateName   Template name as registered on the provider
+   * @param languageCode   Language code (e.g. 'vi', 'en_US')
+   * @param components     Template parameter values (header, body, buttons)
+   * @param channelConfig  Credentials/config for this specific channel
+   */
+  sendTemplate?(
+    recipientId: string,
+    templateName: string,
+    languageCode: string,
+    components: any[],
+    channelConfig: any,
+  ): Promise<any>;
 }
 
 /** DI token for the adapter map */

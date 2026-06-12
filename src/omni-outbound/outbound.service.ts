@@ -356,6 +356,215 @@ export class OutboundService {
   }
 
   /**
+   * Send a WhatsApp template message from an agent to a customer.
+   *
+   * Template messages are special: they **bypass the 24-hour reply window**
+   * because they are pre-approved by Meta. This is the only way to re-engage
+   * a customer after the reply window expires.
+   *
+   * Flow:
+   * 1. Validate template exists and is APPROVED
+   * 2. Resolve conversation + channel
+   * 3. Persist message with type 'template'
+   * 4. Call adapter.sendTemplate() → WhatsApp Cloud API
+   * 5. Update status and emit events
+   */
+  async sendAgentTemplate(params: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    templateName: string;
+    languageCode: string;
+    components?: any[];
+    source?: string;
+    transport?: 'http' | 'socket';
+    idempotencyKey?: string;
+    clientMessageId?: string;
+  }): Promise<any> {
+    const {
+      tenantId,
+      conversationId,
+      agentId,
+      templateName,
+      languageCode,
+      components = [],
+      source: rawSource = 'crm_api',
+      transport = 'http',
+      idempotencyKey,
+      clientMessageId,
+    } = params;
+
+    const source = normalizeOutboundSource(rawSource);
+    const senderContext = await this.resolveSenderContext(agentId);
+
+    // ── Idempotency check ──────────────────────────────────────────
+    if (idempotencyKey) {
+      const existing = await this.messageRepo.findByIdempotencyKey(
+        tenantId,
+        idempotencyKey,
+      );
+      if (existing && existing.status !== 'failed') {
+        return {
+          ok: true,
+          messageId: existing.id,
+          externalMessageId: existing.externalMessageId,
+          status: existing.status,
+          idempotencyKey,
+          clientMessageId: existing.clientMessageId,
+          senderId: existing.senderId,
+          senderName: existing.senderName ?? senderContext.name,
+          senderAvatarUrl:
+            existing.senderAvatarUrl ?? senderContext.avatarUrl ?? null,
+          source: existing.source ?? source,
+          reused: true,
+        };
+      }
+    }
+
+    // 1. Resolve conversation + channel
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new Error(`Conversation ${conversationId} not found`);
+    }
+
+    if (conversation.channelType !== 'whatsapp') {
+      throw new Error(
+        `Template messages are only supported for WhatsApp channels (got ${conversation.channelType})`,
+      );
+    }
+
+    let channel = await this.channelRepo.findByIdWithCredentials(
+      tenantId,
+      conversation.channelId.toString(),
+    );
+    if (!channel && (conversation as any).channelAccount) {
+      channel = await this.channelRepo.findByAccountWithCredentials(
+        tenantId,
+        conversation.channelType,
+        (conversation as any).channelAccount,
+      );
+    }
+    if (!channel) {
+      throw new Error(
+        `Channel for conversation ${conversationId} not found or disconnected`,
+      );
+    }
+
+    // NOTE: Template messages deliberately SKIP enforceReplyWindow().
+    // WhatsApp templates are pre-approved by Meta and are the only
+    // message type allowed outside the 24-hour customer reply window.
+
+    // 2. Build content summary for display in conversation timeline
+    const contentSummary = `📋 Template: ${templateName}`;
+
+    this.logger.log(
+      `Agent ${agentId} sending template '${templateName}' to conversation ${conversationId}`,
+    );
+
+    // 3. Persist message with type 'template'
+    const message = await this.messageRepo.create({
+      tenantId,
+      conversationId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? undefined,
+      senderType: 'agent',
+      direction: 'outbound',
+      source,
+      messageType: 'template',
+      content: contentSummary,
+      status: 'sending',
+      idempotencyKey,
+      clientMessageId,
+      metadata: {
+        sender: {
+          id: agentId,
+          name: senderContext.name,
+          avatarUrl: senderContext.avatarUrl ?? null,
+          type: 'agent',
+        },
+        source,
+        transport,
+        template: {
+          name: templateName,
+          language: languageCode,
+          components,
+        },
+      },
+    });
+
+    // 4. Update conversation last message summary
+    await this.conversationRepo.updateLastMessage(
+      conversationId,
+      contentSummary.substring(0, 200),
+      new Date(),
+      'agent',
+    );
+
+    // 5. Send via WhatsApp adapter
+    try {
+      const adapter = this.adapters.get('whatsapp');
+      if (!adapter || !adapter.sendTemplate) {
+        throw new Error('WhatsApp adapter or sendTemplate method not available');
+      }
+
+      const adapterResponse = await adapter.sendTemplate(
+        conversation.customer.externalId,
+        templateName,
+        languageCode,
+        components,
+        { credentials: channel.credentials, account: channel.account },
+      );
+
+      const externalId = adapterResponse?.message_id || adapterResponse?.id;
+      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
+
+      this.eventEmitter.emit('omni.message.sent', {
+        tenantId,
+        conversationId,
+        senderId: agentId,
+        senderName: senderContext.name,
+        senderAvatarUrl: senderContext.avatarUrl ?? null,
+        senderType: 'agent',
+        direction: 'outbound',
+        source,
+        messageType: 'template',
+        content: contentSummary,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        clientMessageId,
+        transport,
+        timestamp: new Date().toISOString(),
+        createdAt: message.createdAt,
+        metadata: message.metadata,
+      });
+
+      return {
+        ok: true,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        clientMessageId,
+        senderId: agentId,
+        senderName: senderContext.name,
+        senderAvatarUrl: senderContext.avatarUrl ?? null,
+        source,
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to send WhatsApp template '${templateName}': ${errorMessage}`,
+      );
+      await this.messageRepo.updateStatus(message.id, 'failed');
+      throw error;
+    }
+  }
+
+  /**
    * Send a media message from an agent to a customer.
    *
    * Flow:

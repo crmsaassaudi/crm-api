@@ -546,6 +546,106 @@ export class OmniGateway
   }
 
   /**
+   * Socket event: agent sends a WhatsApp template message.
+   *
+   * Template messages bypass the 24-hour reply window and are the only
+   * way to re-engage a WhatsApp customer after the window expires.
+   * The frontend sends the template name, language, and component parameters.
+   */
+  @SubscribeMessage('omni:message:send-template')
+  async handleSendTemplate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      conversationId: string;
+      templateName: string;
+      languageCode: string;
+      components?: any[];
+      tempId?: string;
+      idempotencyKey?: string;
+      clientMessageId?: string;
+    },
+  ) {
+    const user = client.data.user;
+    if (!user) return { ok: false, error: 'Unauthenticated' };
+
+    const userId = client.data.userId ?? user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    if (!tenantId) return { ok: false, error: 'No tenant context' };
+
+    if (!data?.conversationId || !data?.templateName || !data?.languageCode) {
+      return {
+        ok: false,
+        error: 'conversationId, templateName, and languageCode are required',
+      };
+    }
+
+    this.logger.log(
+      `Agent ${userId} sends template '${data.templateName}' to conversation ${data.conversationId}`,
+    );
+
+    try {
+      const result = await this.outboundService.sendAgentTemplate({
+        tenantId,
+        conversationId: data.conversationId,
+        agentId: userId,
+        templateName: data.templateName,
+        languageCode: data.languageCode,
+        components: data.components,
+        idempotencyKey: data.idempotencyKey,
+        clientMessageId: data.clientMessageId ?? data.tempId,
+        source: 'agent_ui',
+        transport: 'socket',
+      });
+
+      const ack = {
+        ok: true,
+        tempId: data.tempId,
+        messageId: result.messageId,
+        idempotencyKey: result.idempotencyKey ?? data.idempotencyKey,
+        clientMessageId:
+          result.clientMessageId ?? data.clientMessageId ?? data.tempId,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Broadcast to other agents watching this conversation
+      if (!result.reused) {
+        client
+          .to(
+            `tenant:${client.data.tenantId}:conversation:${data.conversationId}`,
+          )
+          .emit('omni:message:new', {
+            conversationId: data.conversationId,
+            senderId: result.senderId ?? userId,
+            senderName: result.senderName,
+            senderType: 'agent',
+            source: result.source ?? 'agent_ui',
+            messageType: 'template',
+            content: `📋 Template: ${data.templateName}`,
+            messageId: ack.messageId,
+            idempotencyKey: ack.idempotencyKey,
+            clientMessageId: ack.clientMessageId,
+            timestamp: ack.timestamp,
+            metadata: {
+              template: {
+                name: data.templateName,
+                language: data.languageCode,
+                components: data.components,
+              },
+            },
+          });
+      }
+
+      return ack;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`SendTemplate error: ${errorMessage}`);
+      return { ok: false, error: errorMessage };
+    }
+  }
+
+  /**
    * Listener for the `omni.message.persisted` domain event,
    * emitted by ConversationService AFTER the message is saved to DB.
    *

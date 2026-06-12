@@ -407,10 +407,14 @@ export class MediaProxyService {
       'graph.facebook.com',
       '.fbcdn.net',
       '.whatsapp.net',
+      '.whatsapp.biz',
       '.xx.fbcdn.net',
       '.zalo.me',
       '.zadn.vn',
       '.zdn.vn',
+      // Instagram CDN domains
+      '.cdninstagram.com',
+      '.instagram.com',
     ];
 
     const hostname = parsed.hostname.toLowerCase();

@@ -22,6 +22,7 @@ import { IdentityService } from './identity.service';
 import { RedisLockService } from '../../redis/redis-lock.service';
 import { ContactsService } from '../../contacts/contacts.service';
 import { FacebookAdapter } from '../adapters/facebook.adapter';
+import { InstagramAdapter } from '../adapters/instagram.adapter';
 import { TenantsService } from '../../tenants/tenants.service';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { BusinessHoursService } from './business-hours.service';
@@ -73,6 +74,7 @@ export class ConversationService {
     private readonly lockService: RedisLockService,
     private readonly contactsService: ContactsService,
     private readonly facebookAdapter: FacebookAdapter,
+    private readonly instagramAdapter: InstagramAdapter,
     private readonly tenantsService: TenantsService,
     private readonly settingsService: CrmSettingsService,
     private readonly businessHoursService: BusinessHoursService,
@@ -541,19 +543,55 @@ export class ConversationService {
           if (profile.name && profile.name !== payload.senderId) {
             enrichedProfile = profile;
             this.logger.log(
-              `Pre-enriched profile for ${payload.senderId}: ${profile.name}`,
+              `Pre-enriched Facebook profile for ${payload.senderId}: ${profile.name}`,
             );
           }
         } catch (err) {
           this.logger.warn(
-            `Profile pre-enrichment skipped: ${
+            `Facebook profile pre-enrichment skipped: ${
               err instanceof Error ? err.message : String(err)
             }`,
           );
         }
+      } else if (
+        identityResConfig.autoEnrichProfile &&
+        payload.channelType === 'instagram' &&
+        payload.metadata?.accessToken
+      ) {
+        try {
+          const profile = await this.instagramAdapter.enrichProfile(
+            payload.senderId,
+            payload.metadata.accessToken,
+          );
+          if (profile.name && profile.name !== payload.senderId) {
+            enrichedProfile = profile;
+            this.logger.log(
+              `Pre-enriched Instagram profile for ${payload.senderId}: ${profile.name}`,
+            );
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Instagram profile pre-enrichment skipped: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      } else if (
+        identityResConfig.autoEnrichProfile &&
+        payload.channelType === 'whatsapp'
+      ) {
+        // WhatsApp provides contact name directly in the webhook payload.
+        // No additional API call is needed for profile enrichment.
+        const contactName = payload.metadata?.contactName;
+        if (contactName && contactName !== payload.senderId) {
+          enrichedProfile = { name: contactName };
+          this.logger.log(
+            `Pre-enriched WhatsApp profile for ${payload.senderId}: ${contactName}`,
+          );
+        }
       } else if (!identityResConfig.autoEnrichProfile) {
         this.logger.debug(
-          `Auto-enrich profile disabled for tenant ${payload.tenantId} — skipping Facebook profile fetch`,
+          `Auto-enrich profile disabled for tenant ${payload.tenantId} — skipping profile fetch`,
         );
       }
 

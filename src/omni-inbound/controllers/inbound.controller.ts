@@ -143,6 +143,8 @@ export class InboundController {
   private unwrapEvents(channelType: ChannelType, body: any): any[] {
     switch (channelType) {
       case 'facebook':
+      case 'instagram':
+        // Instagram uses the same entry[].messaging[] structure as Facebook
         return (body.entry ?? []).flatMap(
           (entry: any) => entry.messaging ?? [],
         );
