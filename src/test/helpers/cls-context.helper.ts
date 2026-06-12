@@ -1,4 +1,8 @@
 import { ClsServiceManager } from 'nestjs-cls';
+import { Types } from 'mongoose';
+
+/** Stable default userId for tests (valid ObjectId format) */
+const DEFAULT_USER_ID = new Types.ObjectId().toString();
 
 /**
  * Get the real global CLS service used by Mongoose plugins.
@@ -18,7 +22,7 @@ export function getGlobalClsService() {
 export async function runWithTenant<T>(
   tenantId: string,
   callback: () => Promise<T>,
-  userId = 'test_user_1',
+  userId = DEFAULT_USER_ID,
 ): Promise<T> {
   const cls = getGlobalClsService();
   return new Promise<T>((resolve, reject) => {
