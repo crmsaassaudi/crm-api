@@ -9,6 +9,7 @@ import { GroupsService } from '../groups/groups.service';
 import { ClsService } from 'nestjs-cls';
 import { UsersService } from '../users/users.service';
 import { DEFAULTS_MAP } from '../crm-settings/tenant-settings-seeding.service';
+import { ulid } from 'ulid';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -215,19 +216,9 @@ export class ListViewsService {
     data: Pick<ListViewDefinition, 'name' | 'module'> &
       Partial<Pick<ListViewDefinition, 'columns' | 'assignedGroupIds' | 'excludedUserIds'>>,
   ): Promise<ListViewDefinition> {
-    const settings = await this.getSettings();
-
-    // Prevent duplicate view names within the same module
-    const duplicate = settings.views.find(
-      (v) =>
-        v.module.toLowerCase() === data.module.toLowerCase() &&
-        v.name.toLowerCase() === data.name.toLowerCase(),
-    );
-    if (duplicate) {
-      throw new ConflictException(
-        `A view named "${data.name}" already exists for module "${data.module}"`,
-      );
-    }
+    // Run migration on the write path so a freshly-shipped module's defaults
+    // exist before we append a custom view (and so reads never write).
+    await this.migrateMissingDefaults();
 
     const userId = this.cls.get('userId') || 'system';
 
@@ -242,8 +233,18 @@ export class ListViewsService {
       excludedUserIds: data.excludedUserIds ?? [],
     };
 
-    settings.views.push(newView);
-    await this.saveSettings(settings);
+    // Atomic conditional push: the repository query refuses to push when a
+    // view with the same (module, name) already exists, so concurrent creates
+    // can no longer clobber each other via read-modify-write.
+    const result = await this.settingsService.pushListView(
+      this.SETTINGS_KEY,
+      newView,
+    );
+    if (!result) {
+      throw new ConflictException(
+        `A view named "${data.name}" already exists for module "${data.module}"`,
+      );
+    }
     return newView;
   }
 
@@ -254,45 +255,47 @@ export class ListViewsService {
     >,
   ): Promise<ListViewDefinition> {
     const settings = await this.getSettings();
-    const index = settings.views.findIndex((v) => v.id === id);
-    if (index === -1)
-      throw new NotFoundException(`List view "${id}" not found`);
+    const existing = settings.views.find((v) => v.id === id);
+    if (!existing) throw new NotFoundException(`List view "${id}" not found`);
 
-    // If renaming, check for duplicate name within the same module
-    const targetModule = (
-      data.module ?? settings.views[index].module
-    ).toLowerCase();
-    const targetName = (data.name ?? settings.views[index].name).toLowerCase();
+    // If renaming, check for duplicate name within the same module.
+    const targetModule = (data.module ?? existing.module).toLowerCase();
+    const targetName = (data.name ?? existing.name).toLowerCase();
     const duplicate = settings.views.find(
-      (v, i) =>
-        i !== index &&
+      (v) =>
+        v.id !== id &&
         v.module.toLowerCase() === targetModule &&
         v.name.toLowerCase() === targetName,
     );
     if (duplicate) {
       throw new ConflictException(
-        `A view named "${data.name ?? settings.views[index].name}" already exists for module "${data.module ?? settings.views[index].module}"`,
+        `A view named "${data.name ?? existing.name}" already exists for module "${data.module ?? existing.module}"`,
       );
     }
 
-    settings.views[index] = { ...settings.views[index], ...data };
-    await this.saveSettings(settings);
-    return settings.views[index];
+    // Atomic positional $set on the matched view only — never rewrites siblings.
+    const result = await this.settingsService.updateListView(
+      this.SETTINGS_KEY,
+      id,
+      data as Record<string, any>,
+    );
+    if (!result) throw new NotFoundException(`List view "${id}" not found`);
+
+    return { ...existing, ...data };
   }
 
   async deleteView(id: string): Promise<void> {
     const settings = await this.getSettings();
-    const index = settings.views.findIndex((v) => v.id === id);
-    if (index === -1)
-      throw new NotFoundException(`List view "${id}" not found`);
+    const existing = settings.views.find((v) => v.id === id);
+    if (!existing) throw new NotFoundException(`List view "${id}" not found`);
 
     // Prevent deleting system defaults
-    if (settings.views[index].isSystemDefault) {
+    if (existing.isSystemDefault) {
       throw new NotFoundException('Cannot delete a system default view');
     }
 
-    settings.views.splice(index, 1);
-    await this.saveSettings(settings);
+    // Atomic $pull — removes only the targeted view.
+    await this.settingsService.pullListView(this.SETTINGS_KEY, id);
   }
 
   // ── Internal Helpers ────────────────────────────────────────────────────
@@ -343,30 +346,59 @@ export class ListViewsService {
   private async getSettings(): Promise<ListViewsSettings> {
     const raw = await this.settingsService.getSetting(this.SETTINGS_KEY);
     if (raw && typeof raw === 'object' && Array.isArray(raw.views)) {
-      const settings = raw as ListViewsSettings;
-
-      // Auto-migrate: merge in default views for modules that don't have any views yet
-      const defaultListViews = DEFAULTS_MAP['list_views'] as
-        | ListViewsSettings
-        | undefined;
-      if (defaultListViews?.views) {
-        const existingModules = new Set(settings.views.map((v) => v.module));
-        const missingViews = defaultListViews.views.filter(
-          (dv) => !existingModules.has(dv.module),
-        );
-        if (missingViews.length > 0) {
-          settings.views.push(...(missingViews as ListViewDefinition[]));
-          // Persist so migration happens only once
-          await this.saveSettings(settings);
-          this.logger.log(
-            `[ListViews] Auto-migrated ${missingViews.length} default views for modules: ${[...new Set(missingViews.map((v) => v.module))].join(', ')}`,
-          );
-        }
-      }
-
-      return settings;
+      // HIGH-08: merge default views in memory ONLY — the read path must never
+      // write to the DB. Persistence is handled by migrateMissingDefaults()
+      // on write paths.
+      return this.mergeDefaults(raw as ListViewsSettings).merged;
     }
     return { views: [] };
+  }
+
+  /**
+   * Compute the set of default views for modules that have none yet, returning
+   * both the in-memory merged view list and the missing defaults (so callers
+   * can decide whether to persist).
+   */
+  private mergeDefaults(settings: ListViewsSettings): {
+    merged: ListViewsSettings;
+    missing: ListViewDefinition[];
+  } {
+    const defaultListViews = DEFAULTS_MAP['list_views'] as
+      | ListViewsSettings
+      | undefined;
+    const missing: ListViewDefinition[] = [];
+    if (defaultListViews?.views) {
+      const existingModules = new Set(settings.views.map((v) => v.module));
+      missing.push(
+        ...(defaultListViews.views.filter(
+          (dv) => !existingModules.has(dv.module),
+        ) as ListViewDefinition[]),
+      );
+    }
+    return {
+      merged: { ...settings, views: [...settings.views, ...missing] },
+      missing,
+    };
+  }
+
+  /**
+   * Persist default views for modules that don't have any yet. Invoked from
+   * write paths so reads never trigger a DB write (HIGH-08). Idempotent.
+   */
+  private async migrateMissingDefaults(): Promise<void> {
+    const raw = await this.settingsService.getSetting(this.SETTINGS_KEY);
+    const settings: ListViewsSettings =
+      raw && typeof raw === 'object' && Array.isArray(raw.views)
+        ? (raw as ListViewsSettings)
+        : { views: [] };
+    const { missing } = this.mergeDefaults(settings);
+    if (missing.length > 0) {
+      settings.views.push(...missing);
+      await this.saveSettings(settings);
+      this.logger.log(
+        `[ListViews] Migrated ${missing.length} default views for modules: ${[...new Set(missing.map((v) => v.module))].join(', ')}`,
+      );
+    }
   }
 
   private async saveSettings(settings: ListViewsSettings): Promise<void> {
@@ -374,6 +406,8 @@ export class ListViewsService {
   }
 
   private generateId(): string {
-    return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
+    // LOW-05: ULID — monotonic, collision-resistant, sortable (replaces the
+    // previous Date.now()+Math.random() ad-hoc id).
+    return ulid();
   }
 }

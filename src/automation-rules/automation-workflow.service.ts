@@ -352,6 +352,54 @@ export class AutomationWorkflowService {
         );
       }
     }
+
+    // CRIT-04: reject cyclic graphs. The workflow builder is a DAG (trigger →
+    // condition/action → …); a back-edge is a user error that would make the
+    // runtime traversal recurse until the Redis strict-loop guard (or stack)
+    // stops it. Catching it at save time is cheaper and clearer.
+    this.assertNoCycle(nodes, edges);
+  }
+
+  /**
+   * DFS-based cycle detection over workflow edges. Throws BadRequestException
+   * naming a node on the offending cycle. O(V + E).
+   */
+  private assertNoCycle(
+    nodes: { id: string }[],
+    edges: { source: string; target: string }[],
+  ): void {
+    const adjacency = new Map<string, string[]>();
+    for (const n of nodes) adjacency.set(n.id, []);
+    for (const e of edges) adjacency.get(e.source)?.push(e.target);
+
+    // 0 = unvisited, 1 = in current DFS stack, 2 = fully explored
+    const state = new Map<string, number>();
+
+    const visit = (nodeId: string): string | null => {
+      state.set(nodeId, 1);
+      for (const next of adjacency.get(nodeId) ?? []) {
+        const s = state.get(next) ?? 0;
+        if (s === 1) return next; // back-edge → cycle
+        if (s === 0) {
+          const found = visit(next);
+          if (found) return found;
+        }
+      }
+      state.set(nodeId, 2);
+      return null;
+    };
+
+    for (const n of nodes) {
+      if ((state.get(n.id) ?? 0) === 0) {
+        const cycleNode = visit(n.id);
+        if (cycleNode) {
+          throw new BadRequestException(
+            `Workflow contains a cycle (back-edge into node "${cycleNode}"). ` +
+              `Automation workflows must be acyclic.`,
+          );
+        }
+      }
+    }
   }
 
   private async migrateWebhookHeadersAtRest(workflow: any): Promise<any> {

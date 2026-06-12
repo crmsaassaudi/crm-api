@@ -51,6 +51,16 @@ export class CustomFieldsService {
 
   async remove(id: string): Promise<void> {
     const tenantId = this.cls.get('tenantId');
-    await this.repository.delete(tenantId, id);
+    // Soft-delete: flip isActive=false instead of hard-removing the document.
+    // Hard delete orphaned per-record customField values and freed the unique
+    // internalKey for reuse, which silently re-bound stale data. The unique
+    // index on (tenantId, internalKey, module) intentionally still covers
+    // soft-deleted rows, so a retired key cannot be recreated.
+    const updated = await this.repository.update(tenantId, id, {
+      isActive: false,
+    });
+    if (!updated) {
+      throw new NotFoundException(`Custom field ${id} not found`);
+    }
   }
 }

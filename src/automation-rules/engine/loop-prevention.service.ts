@@ -177,18 +177,38 @@ export class LoopPreventionService {
   /**
    * Clear all loop prevention keys for a tenant.
    * Used in integration tests only.
+   *
+   * MED-05: refuses to run in production (KEYS/SCAN over a shared keyspace is a
+   * footgun there) and uses a non-blocking SCAN cursor instead of the
+   * O(N)-blocking KEYS command.
    */
   async clearTenantKeys(tenantId: string): Promise<void> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'clearTenantKeys() is a test-only helper and must not run in production',
+      );
+    }
+
     const patterns = [
       `automation:loop:${tenantId}:*`,
       `automation:runonce:${tenantId}:*`,
     ];
 
     for (const pattern of patterns) {
-      const keys = await this.redis.keys(pattern);
-      if (keys.length > 0) {
-        await this.redis.del(...keys);
-      }
+      let cursor = '0';
+      do {
+        const [next, keys] = await this.redis.scan(
+          cursor,
+          'MATCH',
+          pattern,
+          'COUNT',
+          100,
+        );
+        cursor = next;
+        if (keys.length > 0) {
+          await this.redis.del(...keys);
+        }
+      } while (cursor !== '0');
     }
   }
 }

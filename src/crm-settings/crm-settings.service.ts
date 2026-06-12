@@ -110,6 +110,51 @@ export class CrmSettingsService {
     return this.repository.update(tid, key, value);
   }
 
+  // ── List Views (atomic array ops, cache-invalidating) ────────────────────
+  // These delegate to the repository's atomic $push/$set/$pull operators so
+  // ListViewsService never has to read-modify-write the whole views array.
+
+  async pushListView(
+    key: string,
+    view: Record<string, any>,
+    tenantId?: string,
+  ): Promise<CrmSetting | null> {
+    const tid = this.resolveTenantId(tenantId);
+    this.settingsCache.delete(`${tid}:${key}`);
+    return this.repository.pushListView(tid, key, view);
+  }
+
+  async updateListView(
+    key: string,
+    viewId: string,
+    updates: Record<string, any>,
+    tenantId?: string,
+  ): Promise<CrmSetting | null> {
+    const tid = this.resolveTenantId(tenantId);
+    this.settingsCache.delete(`${tid}:${key}`);
+    return this.repository.updateListView(tid, key, viewId, updates);
+  }
+
+  async pullListView(
+    key: string,
+    viewId: string,
+    tenantId?: string,
+  ): Promise<CrmSetting | null> {
+    const tid = this.resolveTenantId(tenantId);
+    this.settingsCache.delete(`${tid}:${key}`);
+    return this.repository.pullListView(tid, key, viewId);
+  }
+
+  async pushManyListViews(
+    key: string,
+    views: Record<string, any>[],
+    tenantId?: string,
+  ): Promise<CrmSetting | null> {
+    const tid = this.resolveTenantId(tenantId);
+    this.settingsCache.delete(`${tid}:${key}`);
+    return this.repository.pushManyListViews(tid, key, views);
+  }
+
   async createLifecycleStage(
     objectId: string,
     payload: Record<string, any>,

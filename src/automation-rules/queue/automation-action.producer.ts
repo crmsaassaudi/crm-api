@@ -51,13 +51,28 @@ export class AutomationActionProducer {
 
   /**
    * Dispatch an action job to the appropriate typed queue.
+   *
+   * A deterministic `jobId` of `${executionId}:${nodeId}` is used so that
+   * re-dispatching the same step within the same execution is idempotent —
+   * BullMQ rejects a duplicate jobId, preventing the same action node from
+   * being enqueued twice for one execution (CRIT-02).
+   *
+   * Manual retries (DLQ → main queue) must NOT be deduped against the
+   * original failed job, so callers may pass an explicit `jobId` override
+   * (e.g. with a retry suffix) via `opts`.
    */
-  async dispatch(data: AutomationActionJobData): Promise<string | undefined> {
+  async dispatch(
+    data: AutomationActionJobData,
+    opts?: { jobId?: string },
+  ): Promise<string | undefined> {
     const jobName = this.resolveJobName(data.actionType);
     const queue = this.queueMap.get(data.actionType) || this.mainQueue;
 
+    const jobId = opts?.jobId ?? `${data.executionId}:${data.nodeId}`;
+
     const job = await queue.add(jobName, data, {
       ...DEFAULT_JOB_OPTIONS,
+      jobId,
       // Priority: email/sms are higher priority than update-field
       priority: this.resolvePriority(data.actionType),
     });

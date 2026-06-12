@@ -10,7 +10,6 @@ import {
   AssignmentSettingSchemaClass,
   AssignmentSettingDocument,
 } from './entities/assignment-setting.schema';
-import { AssignmentAuditLogSchemaClass } from './entities/assignment-audit-log.schema';
 import {
   AssignmentSkillSchemaClass,
   AssignmentSkillDocument,
@@ -18,6 +17,8 @@ import {
 import { CapacityFilterService } from './services/capacity-filter.service';
 import { StrategyExecutorService } from './services/strategy-executor.service';
 import { FallbackResolverService } from './services/fallback-resolver.service';
+import { RuleEvaluatorService } from './services/rule-evaluator.service';
+import { AssignmentAuditService } from './services/assignment-audit.service';
 import {
   CreateAssignmentRuleDto,
   UpdateAssignmentRuleDto,
@@ -36,6 +37,18 @@ export interface AssignmentContext {
   manualOwnerId?: string;
   currentOwnerHint?: string;
   bypassAssignmentEngine?: boolean;
+  /**
+   * When true, assign() simulates the decision WITHOUT side effects: no audit
+   * log is written and no Redis reservation (round-robin cursor / least-busy
+   * ZINCRBY) is mutated. Used by dryRun() (CRIT-06).
+   */
+  dryRun?: boolean;
+  /**
+   * Internal: suppress audit writing inside assign() when it is invoked from
+   * reassign(), which writes its own enriched re-assignment audit entry. Avoids
+   * the duplicate audit row (MED-08).
+   */
+  suppressAudit?: boolean;
 }
 
 export interface ReassignContext extends AssignmentContext {
@@ -62,8 +75,6 @@ export class AssignmentEngineService {
     private readonly ruleModel: Model<AssignmentRuleDocument>,
     @InjectModel(AssignmentSettingSchemaClass.name)
     private readonly settingModel: Model<AssignmentSettingDocument>,
-    @InjectModel(AssignmentAuditLogSchemaClass.name)
-    private readonly auditLogModel: Model<any>,
     @InjectModel(AssignmentSkillSchemaClass.name)
     private readonly skillModel: Model<AssignmentSkillDocument>,
     @InjectModel('GroupSchemaClass')
@@ -71,6 +82,8 @@ export class AssignmentEngineService {
     private readonly capacityFilter: CapacityFilterService,
     private readonly strategyExecutor: StrategyExecutorService,
     private readonly fallbackResolver: FallbackResolverService,
+    private readonly ruleEvaluator: RuleEvaluatorService,
+    private readonly audit: AssignmentAuditService,
     private readonly cls: ClsService,
   ) {}
 
@@ -95,12 +108,14 @@ export class AssignmentEngineService {
 
     // Step 1: Manual override
     if (context.manualOwnerId) {
-      await this.writeAuditLog(context, {
-        assignedUserId: context.manualOwnerId,
-        strategy: 'manual',
-        reason: 'Manual override — ownerId provided by caller',
-        isFallback: false,
-      });
+      if (!context.dryRun) {
+        await this.audit.write(context, {
+          assignedUserId: context.manualOwnerId,
+          strategy: 'manual',
+          reason: 'Manual override — ownerId provided by caller',
+          isFallback: false,
+        });
+      }
       return {
         ownerId: context.manualOwnerId,
         strategy: 'manual',
@@ -138,7 +153,7 @@ export class AssignmentEngineService {
 
     let matchedRule: any = null;
     for (const rule of rules) {
-      if (this.evaluateRule(rule, context.attributes)) {
+      if (this.ruleEvaluator.evaluateRule(rule, context.attributes)) {
         matchedRule = rule;
         break; // First match wins
       }
@@ -165,14 +180,16 @@ export class AssignmentEngineService {
           reason: `Rule "${matchedRule.name}" matched — direct user assignment`,
           fallback: false,
         };
-        await this.writeAuditLog(context, {
-          assignedUserId: result.ownerId ?? undefined,
-          ruleId: matchedRule._id.toString(),
-          ruleName: matchedRule.name,
-          strategy: 'direct',
-          reason: result.reason,
-          isFallback: false,
-        });
+        if (!context.dryRun) {
+          await this.audit.write(context, {
+            assignedUserId: result.ownerId ?? undefined,
+            ruleId: matchedRule._id.toString(),
+            ruleName: matchedRule.name,
+            strategy: 'direct',
+            reason: result.reason,
+            isFallback: false,
+          });
+        }
         return result;
       }
       if (matchedRule.actions.assignToTeamId) {
@@ -192,15 +209,18 @@ export class AssignmentEngineService {
       return this.handleFallback(context, matchedRule, strategy);
     }
 
-    // Step 6: Filter candidates (capacity + skills)
+    // Step 6: Filter candidates (capacity + skills).
+    // filterEligible also returns the loadMap it computed, so the least-busy
+    // strategy below can reuse it instead of re-querying Mongo (HIGH-04).
     const maxCapacity = settings.defaultMaxCapacity || 50;
-    const eligible = await this.capacityFilter.filterEligible(
-      context.tenantId,
-      context.module,
-      candidatePool,
-      maxCapacity,
-      requiredSkills.length > 0 ? requiredSkills : undefined,
-    );
+    const { eligible, loadMap: eligibleLoadMap } =
+      await this.capacityFilter.filterEligible(
+        context.tenantId,
+        context.module,
+        candidatePool,
+        maxCapacity,
+        requiredSkills.length > 0 ? requiredSkills : undefined,
+      );
 
     // Sticky hint: boost current owner if in eligible pool
     if (
@@ -220,16 +240,18 @@ export class AssignmentEngineService {
         reason: 'Sticky: prioritized current owner from Omni-Channel',
         fallback: false,
       };
-      await this.writeAuditLog(context, {
-        assignedUserId: result.ownerId ?? undefined,
-        ruleId: matchedRule?._id?.toString(),
-        ruleName: matchedRule?.name,
-        strategy: 'sticky',
-        reason: result.reason,
-        candidatesEvaluated: candidatePool.length,
-        candidatesFiltered: eligible.length,
-        isFallback: false,
-      });
+      if (!context.dryRun) {
+        await this.audit.write(context, {
+          assignedUserId: result.ownerId ?? undefined,
+          ruleId: matchedRule?._id?.toString(),
+          ruleName: matchedRule?.name,
+          strategy: 'sticky',
+          reason: result.reason,
+          candidatesEvaluated: candidatePool.length,
+          candidatesFiltered: eligible.length,
+          isFallback: false,
+        });
+      }
       return result;
     }
 
@@ -240,26 +262,43 @@ export class AssignmentEngineService {
       return this.handleFallback(context, matchedRule, strategy);
     }
 
-    // Step 7: Apply strategy
-    let selectedId: string;
+    // Step 7: Apply strategy.
+    // dry-run runs read-only: do not reserve the Redis cursor / load counter.
+    const reserve = !context.dryRun;
+    let selectedId: string | null;
     const rrScope = `${context.tenantId}:${context.module}:${teamId || 'default'}`;
 
     if (strategy === 'least-busy') {
-      const loadMap = await this.capacityFilter.getActiveLoads(
-        context.tenantId,
-        context.module,
-        eligible,
+      // Reuse the loadMap from filterEligible, narrowed to the still-eligible
+      // candidates — avoids a second getActiveLoads() round-trip (HIGH-04).
+      const loadMap = new Map(
+        eligible.map((id) => [id, eligibleLoadMap.get(id) ?? 0]),
       );
       const result = await this.strategyExecutor.leastBusyAtomic(
         rrScope,
         loadMap,
+        undefined,
+        reserve,
       );
-      selectedId = result.candidateId;
+      selectedId = result?.candidateId ?? null;
     } else if (strategy === 'manual') {
       return this.handleFallback(context, matchedRule, 'manual');
     } else {
       // Default: round-robin
-      selectedId = await this.strategyExecutor.roundRobin(rrScope, eligible);
+      selectedId = await this.strategyExecutor.roundRobin(
+        rrScope,
+        eligible,
+        reserve,
+      );
+    }
+
+    // CRIT-08: the strategy executors now return null on an empty/unresolvable
+    // pool instead of throwing — fall back gracefully rather than 500.
+    if (!selectedId) {
+      this.logger.warn(
+        `Strategy ${strategy} could not select a candidate for ${context.module} — fallback`,
+      );
+      return this.handleFallback(context, matchedRule, strategy);
     }
 
     const result: AssignmentResult = {
@@ -274,17 +313,19 @@ export class AssignmentEngineService {
       fallback: false,
     };
 
-    // Step 9: Write audit log
-    await this.writeAuditLog(context, {
-      assignedUserId: selectedId,
-      ruleId: matchedRule?._id?.toString(),
-      ruleName: matchedRule?.name,
-      strategy,
-      reason: result.reason,
-      candidatesEvaluated: candidatePool.length,
-      candidatesFiltered: eligible.length,
-      isFallback: false,
-    });
+    // Step 9: Write audit log (skipped for dry-run — CRIT-06)
+    if (!context.dryRun) {
+      await this.audit.write(context, {
+        assignedUserId: selectedId,
+        ruleId: matchedRule?._id?.toString(),
+        ruleName: matchedRule?.name,
+        strategy,
+        reason: result.reason,
+        candidatesEvaluated: candidatePool.length,
+        candidatesFiltered: eligible.length,
+        isFallback: false,
+      });
+    }
 
     this.logger.log(
       `Assigned ${context.module}${context.entityId ? ` (${context.entityId})` : ''} → ${selectedId} via ${strategy}`,
@@ -331,21 +372,54 @@ export class AssignmentEngineService {
       `Re-evaluating ${context.module} ${context.entityId}: trigger fields [${overlap.join(',')}] changed`,
     );
 
-    const result = await this.assign(context);
+    // Suppress assign()'s own audit write — reassign emits a single enriched
+    // re-assignment entry below instead of two rows (MED-08).
+    const result = await this.assign({ ...context, suppressAudit: true });
 
     if (result.ownerId) {
-      await this.writeAuditLog(context, {
-        assignedUserId: result.ownerId ?? undefined,
-        previousOwnerId: context.currentOwnerId,
-        strategy: result.strategy,
-        reason: `Re-evaluated: ${overlap.join(',')} changed. ${result.reason}`,
-        isReassignment: true,
-        triggerField: overlap.join(','),
-        isFallback: result.fallback,
-      });
+      // Re-enable auditing for this explicit reassignment record.
+      await this.audit.write(
+        { ...context, suppressAudit: false },
+        {
+          assignedUserId: result.ownerId ?? undefined,
+          previousOwnerId: context.currentOwnerId,
+          strategy: result.strategy,
+          reason: `Re-evaluated: ${overlap.join(',')} changed. ${result.reason}`,
+          isReassignment: true,
+          triggerField: overlap.join(','),
+          isFallback: result.fallback,
+        },
+      );
     }
 
     return result;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  COMPENSATE — roll back a reservation when persistence fails (CRIT-05)
+  // ════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Callers that reserve a candidate via assign() and then fail to persist the
+   * resulting ownerId MUST call this to roll back the Redis reservation,
+   * otherwise the round-robin cursor / least-busy counter drifts.
+   *
+   * The scope mirrors the one assign() builds internally:
+   * `${tenantId}:${module}:${teamId || 'default'}`.
+   */
+  async compensate(params: {
+    tenantId: string;
+    module: string;
+    candidateId: string;
+    strategy: string;
+    teamId?: string | null;
+  }): Promise<void> {
+    const scope = `${params.tenantId}:${params.module}:${params.teamId || 'default'}`;
+    await this.strategyExecutor.release(
+      scope,
+      params.candidateId,
+      params.strategy,
+    );
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -358,14 +432,12 @@ export class AssignmentEngineService {
       module: dto.module as any,
       tenantId,
       attributes: dto.attributes,
+      // CRIT-06: side-effect-free — assign() skips audit writes and Redis
+      // reservations when this flag is set.
+      dryRun: true,
     };
 
-    // Run the full assign flow but capture the result
     const result = await this.assign(context);
-
-    // Delete the audit log entry created by assign (dry-run should be side-effect free)
-    // In production, we'd want a proper dry-run flag that skips audit writing
-    // For now, we'll mark it in the response
 
     return {
       ...result,
@@ -481,15 +553,7 @@ export class AssignmentEngineService {
   // ════════════════════════════════════════════════════════════════════════
 
   async getAuditLog(module?: string, entityId?: string) {
-    const filter: any = { tenantId: this.tenantId };
-    if (module) filter.module = module;
-    if (entityId) filter.entityId = entityId;
-    return this.auditLogModel
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .lean()
-      .exec();
+    return this.audit.getAuditLog(module, entityId);
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -525,62 +589,6 @@ export class AssignmentEngineService {
   /**
    * Evaluate a single rule against entity attributes.
    */
-  private evaluateRule(rule: any, attributes: Record<string, any>): boolean {
-    if (!rule.conditions || rule.conditions.length === 0) {
-      return true; // Catch-all rule
-    }
-
-    const results = rule.conditions.map((cond: any) =>
-      this.evaluateCondition(cond, attributes),
-    );
-
-    if (rule.matchType === 'any') {
-      return results.some(Boolean);
-    }
-    return results.every(Boolean); // 'all' (default)
-  }
-
-  private evaluateCondition(
-    condition: { field: string; operator: string; value: string },
-    attributes: Record<string, any>,
-  ): boolean {
-    const attrValue = attributes[condition.field];
-    const condValue = condition.value;
-
-    if (condValue === '' || condValue === undefined) return false;
-    if (attrValue === undefined || attrValue === null) return false;
-
-    const av = String(attrValue).toLowerCase();
-    const cv = condValue.toLowerCase();
-
-    switch (condition.operator) {
-      case 'eq':
-        return av === cv;
-      case 'neq':
-        return av !== cv;
-      case 'contains':
-        return av.includes(cv);
-      case 'in': {
-        const items = cv.split(',').map((s) => s.trim());
-        return items.includes(av);
-      }
-      case 'gt':
-        return parseFloat(attrValue) > parseFloat(condValue);
-      case 'lt':
-        return parseFloat(attrValue) < parseFloat(condValue);
-      case 'between': {
-        const [min, max] = condValue
-          .split(',')
-          .map((s) => parseFloat(s.trim()));
-        const val = parseFloat(attrValue);
-        return val >= min && val <= max;
-      }
-      default:
-        this.logger.warn(`Unknown operator: ${condition.operator}`);
-        return false;
-    }
-  }
-
   private async handleFallback(
     context: AssignmentContext,
     matchedRule: any,
@@ -603,14 +611,16 @@ export class AssignmentEngineService {
       fallback: true,
     };
 
-    await this.writeAuditLog(context, {
-      assignedUserId: fallbackId ?? undefined,
-      ruleId: matchedRule?._id?.toString(),
-      ruleName: matchedRule?.name,
-      strategy: result.strategy,
-      reason: result.reason,
-      isFallback: true,
-    });
+    if (!context.dryRun) {
+      await this.audit.write(context, {
+        assignedUserId: fallbackId ?? undefined,
+        ruleId: matchedRule?._id?.toString(),
+        ruleName: matchedRule?.name,
+        strategy: result.strategy,
+        reason: result.reason,
+        isFallback: true,
+      });
+    }
 
     return result;
   }
@@ -627,23 +637,4 @@ export class AssignmentEngineService {
     }
   }
 
-  private async writeAuditLog(
-    context: AssignmentContext | ReassignContext,
-    data: Partial<AssignmentAuditLogSchemaClass>,
-  ): Promise<void> {
-    try {
-      await this.auditLogModel.create({
-        tenantId: context.tenantId,
-        module: context.module,
-        entityId: context.entityId || 'pre-create',
-        ...data,
-        metadata: {
-          attributes: context.attributes,
-          ...((data as any).metadata || {}),
-        },
-      });
-    } catch (err: any) {
-      this.logger.error(`Failed to write audit log: ${err.message}`);
-    }
-  }
 }

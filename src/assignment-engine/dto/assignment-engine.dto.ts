@@ -131,6 +131,8 @@ export class UpdateAssignmentSettingDto {
   @IsString()
   fallbackOwnerId?: string;
 
+  // NOT YET ENFORCED — accepted/persisted but the engine does not yet gate
+  // assignments by working hours. Kept for API/forward compatibility.
   @ApiPropertyOptional()
   @IsOptional()
   @IsBoolean()

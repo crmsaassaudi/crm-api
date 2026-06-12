@@ -17,6 +17,7 @@ import {
 import { ClsService } from 'nestjs-cls';
 import { AutomationExecutionLogRepository } from './infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationActionProducer } from './queue/automation-action.producer';
+import { CrmRecordUpdateService } from './engine/crm-record-update.service';
 import { RetryStepDto } from './dto/workflow.dto';
 import { RequirePermission } from '../common/permissions';
 
@@ -34,6 +35,7 @@ export class AutomationExecutionLogController {
     private readonly repo: AutomationExecutionLogRepository,
     private readonly cls: ClsService,
     private readonly actionProducer: AutomationActionProducer,
+    private readonly crmRecordUpdate: CrmRecordUpdateService,
   ) {}
 
   private get tenantId(): string {
@@ -139,22 +141,49 @@ export class AutomationExecutionLogController {
       );
     }
 
-    // 4. Re-dispatch the action job using original data from the step
+    // 4. Re-dispatch the action job using original data from the step.
+    //    CRIT-03: re-fetch the latest record so the action (e.g. template
+    //    interpolation / recipient resolution) has real data instead of an
+    //    empty object. Fall back to the recordData captured on the step input
+    //    if the record was deleted / can't be re-fetched.
     const { step, executionLog } = stepData;
-    await this.actionProducer.dispatch({
-      executionId: id,
-      workflowId: executionLog.workflowId?.toString() || '',
-      tenantId: this.tenantId,
-      nodeId: dto.nodeId,
-      nodeName: step.nodeName,
-      actionType: step.input?.actionType || 'send_email',
-      actionConfig: step.input?.config || {},
-      recordId: executionLog.recordId,
-      recordType: executionLog.recordType,
-      recordData: {},
-      automationDepth: executionLog.automationDepth || 0,
-      sourceWorkflowId: executionLog.workflowId?.toString() || '',
-    });
+
+    let recordData: Record<string, any> =
+      step.input?.recordData && typeof step.input.recordData === 'object'
+        ? step.input.recordData
+        : {};
+
+    if (executionLog.recordType && executionLog.recordId) {
+      try {
+        const fresh = await this.crmRecordUpdate.fetchRecord(
+          executionLog.recordType,
+          executionLog.recordId,
+        );
+        if (fresh) recordData = fresh;
+      } catch {
+        // keep fallback recordData from the step input
+      }
+    }
+
+    await this.actionProducer.dispatch(
+      {
+        executionId: id,
+        workflowId: executionLog.workflowId?.toString() || '',
+        tenantId: this.tenantId,
+        nodeId: dto.nodeId,
+        nodeName: step.nodeName,
+        actionType: step.input?.actionType || 'send_email',
+        actionConfig: step.input?.config || {},
+        recordId: executionLog.recordId,
+        recordType: executionLog.recordType,
+        recordData,
+        automationDepth: executionLog.automationDepth || 0,
+        sourceWorkflowId: executionLog.workflowId?.toString() || '',
+      },
+      // Unique jobId so the manual retry is not deduped against the original
+      // failed job (CRIT-02 idempotency uses a deterministic jobId).
+      { jobId: `${id}:${dto.nodeId}:retry:${Date.now()}` },
+    );
 
     return {
       message: 'Step retry dispatched successfully',

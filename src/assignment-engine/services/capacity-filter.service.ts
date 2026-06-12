@@ -17,19 +17,49 @@ import { Connection, Types } from 'mongoose';
 export class CapacityFilterService {
   private readonly logger = new Logger(CapacityFilterService.name);
 
-  // Module → Mongoose collection name mapping
-  private static readonly MODULE_COLLECTION_MAP: Record<string, string> = {
-    Contact: 'contacts',
-    Ticket: 'tickets',
-    Task: 'tasks',
-    Deal: 'deals',
+  // Module → { collection name, optional activeFilter } mapping.
+  //
+  // activeFilter excludes already-closed entities so capacity reflects *open*
+  // work only (HIGH-03). Without it, an agent who closed 1000 tickets would be
+  // counted as fully loaded forever.
+  //
+  // NOTE: status field names/values below are best-effort for the common CRM
+  // schema. Ticket statuses (closed/resolved) are the most reliable; deal/task
+  // filters are conservative and may need tuning if a tenant uses custom
+  // pipelines. Where unsure we leave activeFilter undefined (count everything),
+  // which preserves the previous behaviour for that module.
+  private static readonly MODULE_COLLECTION_MAP: Record<
+    string,
+    { collection: string; activeFilter?: Record<string, any> }
+  > = {
+    Contact: { collection: 'contacts' },
+    Ticket: {
+      collection: 'tickets',
+      // Exclude terminal ticket states.
+      activeFilter: { status: { $nin: ['closed', 'resolved'] } },
+    },
+    Task: {
+      collection: 'tasks',
+      // Exclude completed tasks.
+      activeFilter: { status: { $nin: ['done', 'completed'] } },
+    },
+    Deal: {
+      collection: 'deals',
+      // Exclude won/lost deals if the schema tracks a coarse stage status.
+      // `stage` is free-form per pipeline, so we filter on a normalized
+      // `status`/`isClosed` style field when present and otherwise count all.
+      activeFilter: { status: { $nin: ['won', 'lost', 'closed'] } },
+    },
   };
 
   constructor(@InjectConnection() private readonly connection: Connection) {}
 
   /**
    * Filter candidates by capacity, skills, and availability.
-   * Returns list of user IDs that are eligible for assignment.
+   *
+   * Returns the eligible user IDs together with the `loadMap` computed during
+   * the capacity check, so the caller (least-busy strategy) can reuse it
+   * instead of querying Mongo a second time (HIGH-04).
    */
   async filterEligible(
     tenantId: string,
@@ -37,8 +67,10 @@ export class CapacityFilterService {
     candidateIds: string[],
     maxCapacity: number,
     requiredSkills?: string[],
-  ): Promise<string[]> {
-    if (candidateIds.length === 0) return [];
+  ): Promise<{ eligible: string[]; loadMap: Map<string, number> }> {
+    if (candidateIds.length === 0) {
+      return { eligible: [], loadMap: new Map() };
+    }
 
     // 1. Check capacity: count active entities per candidate
     const loadMap = await this.getActiveLoads(tenantId, module, candidateIds);
@@ -80,7 +112,7 @@ export class CapacityFilterService {
       );
     }
 
-    return eligible;
+    return { eligible, loadMap };
   }
 
   /**
@@ -99,14 +131,14 @@ export class CapacityFilterService {
       loadMap.set(id, 0);
     }
 
-    const collName = CapacityFilterService.MODULE_COLLECTION_MAP[module];
-    if (!collName) {
+    const moduleConfig = CapacityFilterService.MODULE_COLLECTION_MAP[module];
+    if (!moduleConfig) {
       this.logger.warn(`Unknown module for capacity check: ${module}`);
       return loadMap;
     }
 
     try {
-      const collection = this.connection.collection(collName);
+      const collection = this.connection.collection(moduleConfig.collection);
       const objectIds = userIds.map((id) => this.toObjectId(id));
 
       const results = await collection
@@ -115,6 +147,8 @@ export class CapacityFilterService {
             $match: {
               tenantId: this.toObjectId(tenantId),
               ownerId: { $in: objectIds },
+              // HIGH-03: count only OPEN work, not lifetime-owned entities.
+              ...(moduleConfig.activeFilter ?? {}),
             },
           },
           { $group: { _id: '$ownerId', count: { $sum: 1 } } },

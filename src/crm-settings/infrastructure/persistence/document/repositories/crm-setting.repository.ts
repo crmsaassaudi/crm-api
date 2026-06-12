@@ -220,4 +220,129 @@ export class CrmSettingRepository {
 
     return doc ? CrmSettingMapper.toDomain(doc) : null;
   }
+
+  // ── List Views (atomic array ops on value.views) ─────────────────────────
+
+  /**
+   * Atomically append a view. Upserts the setting document and guards against
+   * a duplicate (module, name) pair in a single round-trip.
+   * Returns null when a same-module/name view already exists (lost the race).
+   */
+  async pushListView(
+    tenantId: string,
+    key: string,
+    view: Record<string, any>,
+  ): Promise<CrmSetting | null> {
+    // Ensure the document and the views array exist first (no-op if present).
+    await this.model
+      .findOneAndUpdate(
+        { tenantId, key, 'value.views': { $exists: false } },
+        { $set: { 'value.views': [] } },
+        { upsert: true },
+      )
+      .exec();
+
+    const doc = await this.model
+      .findOneAndUpdate(
+        {
+          tenantId,
+          key,
+          'value.views': {
+            $not: {
+              $elemMatch: { module: view.module, name: view.name },
+            },
+          },
+        },
+        { $push: { 'value.views': view } },
+        { new: true },
+      )
+      .exec();
+
+    return doc ? CrmSettingMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Atomically apply field updates to a single view matched by id.
+   * Returns null when no matching view exists.
+   */
+  async updateListView(
+    tenantId: string,
+    key: string,
+    viewId: string,
+    updates: Record<string, any>,
+  ): Promise<CrmSetting | null> {
+    const set: Record<string, any> = {};
+    for (const [field, value] of Object.entries(updates)) {
+      if (value !== undefined) {
+        set[`value.views.$.${field}`] = value;
+      }
+    }
+
+    if (Object.keys(set).length === 0) {
+      const doc = await this.model.findOne({ tenantId, key }).exec();
+      return doc ? CrmSettingMapper.toDomain(doc) : null;
+    }
+
+    const doc = await this.model
+      .findOneAndUpdate(
+        { tenantId, key, 'value.views.id': viewId },
+        { $set: set },
+        { new: true },
+      )
+      .exec();
+
+    return doc ? CrmSettingMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Atomically remove a view by id. Returns null when no matching view exists.
+   */
+  async pullListView(
+    tenantId: string,
+    key: string,
+    viewId: string,
+  ): Promise<CrmSetting | null> {
+    const doc = await this.model
+      .findOneAndUpdate(
+        { tenantId, key, 'value.views.id': viewId },
+        { $pull: { 'value.views': { id: viewId } } },
+        { new: true },
+      )
+      .exec();
+
+    return doc ? CrmSettingMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Atomically append several default views for modules that are missing.
+   * Used by the list-views auto-migration on the WRITE path only.
+   */
+  async pushManyListViews(
+    tenantId: string,
+    key: string,
+    views: Record<string, any>[],
+  ): Promise<CrmSetting | null> {
+    if (views.length === 0) {
+      const doc = await this.model.findOne({ tenantId, key }).exec();
+      return doc ? CrmSettingMapper.toDomain(doc) : null;
+    }
+
+    await this.model
+      .findOneAndUpdate(
+        { tenantId, key, 'value.views': { $exists: false } },
+        { $set: { 'value.views': [] } },
+        { upsert: true },
+      )
+      .exec();
+
+    const doc = await this.model
+      .findOneAndUpdate(
+        { tenantId, key },
+        { $push: { 'value.views': { $each: views } } },
+        { new: true },
+      )
+      .exec();
+
+    return doc ? CrmSettingMapper.toDomain(doc) : null;
+  }
 }

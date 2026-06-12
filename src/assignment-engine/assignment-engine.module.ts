@@ -8,6 +8,8 @@ import { AssignmentEngineService } from './assignment-engine.service';
 import { CapacityFilterService } from './services/capacity-filter.service';
 import { StrategyExecutorService } from './services/strategy-executor.service';
 import { FallbackResolverService } from './services/fallback-resolver.service';
+import { RuleEvaluatorService } from './services/rule-evaluator.service';
+import { AssignmentAuditService } from './services/assignment-audit.service';
 
 // Schemas
 import {
@@ -55,6 +57,8 @@ import {
     CapacityFilterService,
     StrategyExecutorService,
     FallbackResolverService,
+    RuleEvaluatorService,
+    AssignmentAuditService,
   ],
   exports: [AssignmentEngineService],
 })

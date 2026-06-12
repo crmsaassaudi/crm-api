@@ -63,6 +63,8 @@ export const CustomFieldSchema = SchemaFactory.createForClass(
 
 CustomFieldSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 CustomFieldSchema.index({ tenantId: 1, module: 1 });
+// Covers the findByTenant/findByModule sort on orderIndex without an in-memory sort.
+CustomFieldSchema.index({ tenantId: 1, module: 1, orderIndex: 1 });
 CustomFieldSchema.index(
   { tenantId: 1, internalKey: 1, module: 1 },
   { unique: true },

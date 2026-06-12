@@ -25,6 +25,22 @@ import {
 export class CrmRecordUpdateService {
   private readonly logger = new Logger(CrmRecordUpdateService.name);
 
+  /**
+   * System / ownership / audit fields that automation `update_field` actions
+   * must never write (MED-01). Setting these could escalate tenant scope,
+   * corrupt identity, or rewrite ownership.
+   */
+  private static readonly PROTECTED_FIELDS = new Set<string>([
+    '_id',
+    'id',
+    'tenantId',
+    'ownerId',
+    'createdAt',
+    'updatedAt',
+    'createdBy',
+    '__v',
+  ]);
+
   constructor(
     private readonly contactsService: ContactsService,
     private readonly ticketsService: TicketsService,
@@ -65,6 +81,22 @@ export class CrmRecordUpdateService {
     this.logger.log(
       `[CrmUpdate] ${recordType}(${recordId}).${field} = "${params.value}" | tenant=${tenantId}`,
     );
+
+    // MED-01: never let an automation action overwrite system/ownership fields.
+    // targetField comes from workflow config (admin-authored, but workflows can
+    // be imported), so an allow-by-default + explicit blocklist guards against
+    // tenant takeover / privilege escalation / id corruption.
+    if (CrmRecordUpdateService.PROTECTED_FIELDS.has(field)) {
+      this.logger.warn(
+        `[CrmUpdate] Blocked attempt to set protected field "${field}" on ${recordType}(${recordId})`,
+      );
+      return {
+        success: false,
+        previousValue: undefined,
+        newValue: params.value,
+        error: `Field "${field}" is protected and cannot be set by automation`,
+      };
+    }
 
     try {
       // ── Get service for the module ────────────────────────────────────

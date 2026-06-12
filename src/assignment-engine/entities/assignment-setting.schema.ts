@@ -58,6 +58,8 @@ export class AssignmentSettingSchemaClass extends EntityDocumentHelper {
   fallbackOwnerId?: string;
 
   // Working Hours
+  // NOT YET ENFORCED — persisted for forward compatibility, but the
+  // assignment engine does not currently gate candidates by working hours.
   @Prop({ default: false })
   respectWorkingHours: boolean;
 }

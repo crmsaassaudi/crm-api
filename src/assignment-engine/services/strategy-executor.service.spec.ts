@@ -61,9 +61,9 @@ describe('StrategyExecutorService', () => {
     );
   });
 
-  it('should reject empty least-busy pools', async () => {
+  it('should return null for empty least-busy pools (no uncontrolled throw)', async () => {
     await expect(
       service.leastBusyAtomic('tenant_1:Ticket:team_1', new Map()),
-    ).rejects.toThrow('Least-busy called with empty load map');
+    ).resolves.toBeNull();
   });
 });

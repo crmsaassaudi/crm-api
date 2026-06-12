@@ -16,8 +16,10 @@ export class CustomFieldRepository {
   ) {}
 
   async findByTenant(tenantId: string): Promise<CustomField[]> {
+    // Exclude soft-deleted fields (isActive === false). `$ne: false` keeps
+    // legacy documents that predate the isActive flag (undefined → treated active).
     const docs = await this.model
-      .find({ tenantId })
+      .find({ tenantId, isActive: { $ne: false } })
       .sort({ orderIndex: 1 })
       .exec();
     return docs.map(CustomFieldMapper.toDomain);
@@ -25,7 +27,7 @@ export class CustomFieldRepository {
 
   async findByModule(tenantId: string, module: string): Promise<CustomField[]> {
     const docs = await this.model
-      .find({ tenantId, module })
+      .find({ tenantId, module, isActive: { $ne: false } })
       .sort({ orderIndex: 1 })
       .exec();
     return docs.map(CustomFieldMapper.toDomain);

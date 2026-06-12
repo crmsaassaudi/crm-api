@@ -16,6 +16,31 @@ import {
   AutomationDelayedJobData,
 } from '../queue/automation-queue.constants';
 import { WebhookHeaderCryptoService } from './webhook-header-crypto.service';
+import {
+  WorkflowNode,
+  WorkflowEdge,
+} from '../infrastructure/persistence/document/entities/automation-workflow.schema';
+
+/** Hard cap on wait-node delays — 90 days in milliseconds (MED-04). */
+export const MAX_WAIT_DELAY_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Fields preserved when slimming a record before it is queued / logged.
+ * Keeps just what templates and recipient-resolution need, dropping the
+ * rest of the record to avoid persisting unnecessary PII (HIGH-07).
+ */
+const SLIM_RECORD_FIELDS = [
+  'id',
+  '_id',
+  'email',
+  'phone',
+  'phoneNumber',
+  'mobile',
+  'firstName',
+  'lastName',
+  'fullName',
+  'name',
+] as const;
 
 /**
  * Wait/Delay node configuration schema.
@@ -297,6 +322,17 @@ export class WorkflowOrchestratorService {
   ): Promise<boolean> {
     const node = nodes.find((n: any) => n.id === nodeId);
     if (!node) return false;
+
+    // ── Layer 0: hard step ceiling (CRIT-04 defense-in-depth) ────────────
+    // Independent of Redis: bounds total work in a single execution so a cyclic
+    // graph that slipped past validation (or a Redis outage disabling the
+    // strict-loop guard) can never recurse into a stack overflow.
+    const MAX_TOTAL_STEPS = 1000;
+    if (stepLogs.length > MAX_TOTAL_STEPS) {
+      throw new Error(
+        `MAX_STEPS_EXCEEDED: execution processed more than ${MAX_TOTAL_STEPS} steps (possible cycle)`,
+      );
+    }
 
     const stepStart = new Date();
 
