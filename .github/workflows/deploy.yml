@@ -35,13 +35,12 @@ jobs:
 
             test -f .env.production
 
-            # ── Build with BuildKit (faster, more reliable layer handling) ──
-            export DOCKER_BUILDKIT=1
+            # ── Build with legacy builder (VPS lacks buildx) ──────────────
+            export DOCKER_BUILDKIT=0
 
             # Build image once, then run single all-in-one container.
-            # --pull ensures base image is fresh; BuildKit layer cache avoids
-            # full rebuilds when only source files change.
-            docker build --pull -t crm-api:production .
+            # --no-cache ensures no stale layer cache with legacy builder.
+            docker build --pull --no-cache -t crm-api:production .
 
             # ── Deploy: stop old → start new → then prune ──────────────────
             # Wait for old containers to fully stop before pruning to avoid
