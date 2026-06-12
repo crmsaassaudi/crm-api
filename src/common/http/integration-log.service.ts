@@ -37,9 +37,15 @@ export class IntegrationLogService {
     });
   }
 
-  async getAggregatedMetrics() {
-    // Aggregation pipeline to calculate metrics per service
+  async getAggregatedMetrics(windowHours = 24) {
+    // MED-06: Time-bound the aggregation to prevent unbounded collection scan.
+    // Without this, the pipeline scans every log entry ever created.
+    const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+
     const metrics = await this.integrationLogModel.aggregate([
+      {
+        $match: { createdAt: { $gte: since } },
+      },
       {
         $group: {
           _id: '$service',

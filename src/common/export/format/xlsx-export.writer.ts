@@ -1,6 +1,7 @@
 import * as ExcelJS from 'exceljs';
 import { Writable } from 'stream';
 import { ExportFormatWriter } from './export-format.interface';
+import { sanitizeCellValue } from './sanitize-cell';
 
 // Excel hard limit is 1,048,576 rows per sheet (incl. header). Roll a little
 // before that so we never trip the limit. Configurable for testing.
@@ -43,7 +44,9 @@ export class XlsxExportWriter implements ExportFormatWriter {
     if (this.rowsInSheet >= ROWS_PER_SHEET) {
       await this.rollover();
     }
-    this.sheet.addRow(cells).commit();
+    // HIGH-03: Neutralize formula injection (=, +, -, @, tab, CR)
+    const safeCells = cells.map((c) => sanitizeCellValue(c));
+    this.sheet.addRow(safeCells).commit();
     this.rowsInSheet++;
   }
 

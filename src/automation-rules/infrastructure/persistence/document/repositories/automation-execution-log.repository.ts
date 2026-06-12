@@ -99,22 +99,30 @@ export class AutomationExecutionLogRepository {
    * Returns counts per status and average duration.
    */
   async getWorkflowStats(tenantId: string, workflowId: string) {
-    const [statusCounts, avgDuration] = await Promise.all([
-      this.model.aggregate([
-        { $match: { tenantId, workflowId } },
-        { $group: { _id: '$status', count: { $sum: 1 } } },
-      ]),
-      this.model.aggregate([
-        { $match: { tenantId, workflowId, status: 'success' } },
-        {
-          $group: {
-            _id: null,
-            avgDuration: { $avg: '$duration' },
-            total: { $sum: 1 },
-          },
+    // MED-10: Single $facet replaces two parallel aggregation scans.
+    const [result] = await this.model.aggregate([
+      { $match: { tenantId, workflowId } },
+      {
+        $facet: {
+          statusCounts: [
+            { $group: { _id: '$status', count: { $sum: 1 } } },
+          ],
+          avgDuration: [
+            { $match: { status: 'success' } },
+            {
+              $group: {
+                _id: null,
+                avgDuration: { $avg: '$duration' },
+                total: { $sum: 1 },
+              },
+            },
+          ],
         },
-      ]),
+      },
     ]);
+
+    const statusCounts = result?.statusCounts ?? [];
+    const avgDuration = result?.avgDuration ?? [];
 
     const stats: Record<string, number> = {
       total: 0,

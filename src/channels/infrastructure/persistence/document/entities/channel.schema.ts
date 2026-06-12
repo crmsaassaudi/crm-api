@@ -63,3 +63,7 @@ export const ChannelSchema = SchemaFactory.createForClass(ChannelSchemaClass);
 
 ChannelSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 ChannelSchema.index({ tenantId: 1, type: 1, account: 1 }, { unique: true });
+// CRIT-03: Enforce global uniqueness — same provider account cannot be
+// connected to multiple tenants. Application guard exists in
+// assertChannelAccountAvailable, but DB uniqueness provides defense-in-depth.
+ChannelSchema.index({ type: 1, account: 1 }, { unique: true });

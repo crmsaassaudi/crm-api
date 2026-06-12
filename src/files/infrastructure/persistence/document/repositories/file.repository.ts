@@ -20,6 +20,7 @@ import { NullableType } from '../../../../../utils/types/nullable.type';
 
 import { ClsService } from 'nestjs-cls';
 import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
+import { escapeRegex } from '../../../../../utils/escape-regex';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -95,7 +96,7 @@ export class FileDocumentRepository
     };
 
     if (filters?.mimeTypePrefix) {
-      query.mimeType = { $regex: `^${filters.mimeTypePrefix}` };
+      query.mimeType = { $regex: `^${escapeRegex(filters.mimeTypePrefix)}` };
     }
 
     const [data, total] = await Promise.all([
@@ -147,10 +148,11 @@ export class FileDocumentRepository
     if (filters?.status) query.status = filters.status;
     if (filters?.uploadedBy) query.uploadedBy = filters.uploadedBy;
     if (filters?.mimeTypePrefix) {
-      query.mimeType = { $regex: `^${filters.mimeTypePrefix}` };
+      query.mimeType = { $regex: `^${escapeRegex(filters.mimeTypePrefix)}` };
     }
     if (filters?.search) {
-      query.fileName = { $regex: filters.search, $options: 'i' };
+      // MED-07: Escape user input to prevent ReDoS
+      query.fileName = { $regex: escapeRegex(filters.search), $options: 'i' };
     }
     if (filters?.folderId !== undefined) {
       query.folderId = filters.folderId === null

@@ -20,14 +20,15 @@ export class CapacityFilterService {
   // Module → { collection name, optional activeFilter } mapping.
   //
   // activeFilter excludes already-closed entities so capacity reflects *open*
-  // work only (HIGH-03). Without it, an agent who closed 1000 tickets would be
+  // work only. Without it, an agent who closed 1000 tickets would be
   // counted as fully loaded forever.
   //
-  // NOTE: status field names/values below are best-effort for the common CRM
-  // schema. Ticket statuses (closed/resolved) are the most reliable; deal/task
-  // filters are conservative and may need tuning if a tenant uses custom
-  // pipelines. Where unsure we leave activeFilter undefined (count everything),
-  // which preserves the previous behaviour for that module.
+  // CRIT-09: Previous filters used a non-existent `status` string field.
+  // Tickets/Tasks use `statusId` (ObjectId ref), Deals use `stageId`/`wonAt`/`lostAt`.
+  // The old `{ status: { $nin: [...] } }` matched EVERY document (field didn't exist),
+  // making capacity = lifetime-owned count → auto-assignment permanently broken.
+  //
+  // Fix: Use real schema fields — exclude soft-deleted + closed entities.
   private static readonly MODULE_COLLECTION_MAP: Record<
     string,
     { collection: string; activeFilter?: Record<string, any> }
@@ -35,20 +36,30 @@ export class CapacityFilterService {
     Contact: { collection: 'contacts' },
     Ticket: {
       collection: 'tickets',
-      // Exclude terminal ticket states.
-      activeFilter: { status: { $nin: ['closed', 'resolved'] } },
+      // Exclude soft-deleted tickets; isClosed denormalized flag or
+      // filter by deletedAt as the reliable closed indicator.
+      activeFilter: {
+        deletedAt: { $exists: false },
+        isClosed: { $ne: true },
+      },
     },
     Task: {
       collection: 'tasks',
-      // Exclude completed tasks.
-      activeFilter: { status: { $nin: ['done', 'completed'] } },
+      // Exclude soft-deleted and completed tasks.
+      activeFilter: {
+        deletedAt: { $exists: false },
+        isClosed: { $ne: true },
+      },
     },
     Deal: {
       collection: 'deals',
-      // Exclude won/lost deals if the schema tracks a coarse stage status.
-      // `stage` is free-form per pipeline, so we filter on a normalized
-      // `status`/`isClosed` style field when present and otherwise count all.
-      activeFilter: { status: { $nin: ['won', 'lost', 'closed'] } },
+      // Exclude won/lost deals — these have `wonAt` or `lostAt` set.
+      // `stageId` is pipeline-specific so we can't filter by it generically.
+      activeFilter: {
+        wonAt: { $exists: false },
+        lostAt: { $exists: false },
+        deletedAt: { $exists: false },
+      },
     },
   };
 

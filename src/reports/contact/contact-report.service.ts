@@ -650,10 +650,20 @@ export class ContactReportService {
       ...this.buildBaseMatch(dto, { createdBeforeOrOn: context.to }),
       'stageHistory.0': { $exists: true },
     };
+    // MED-09: Limit to 50k contacts to prevent OOM on large tenants.
+    // Funnel reports load full stageHistory into memory for analysis.
+    const FUNNEL_LIMIT = 50_000;
     const contacts = await this.contactModel
       .find(match, { createdAt: 1, stageHistory: 1 })
+      .sort({ createdAt: -1 })
+      .limit(FUNNEL_LIMIT)
       .lean()
       .exec();
+    if (contacts.length >= FUNNEL_LIMIT) {
+      context.warnings.push(
+        `Results limited to ${FUNNEL_LIMIT.toLocaleString()} most recent contacts`,
+      );
+    }
     const transitions = new Map<string, number[]>();
 
     for (const contact of contacts) {
@@ -726,10 +736,19 @@ export class ContactReportService {
       ...this.buildBaseMatch(dto, { createdBeforeOrOn: context.to }),
       'stageHistory.0': { $exists: true },
     };
+    // MED-09: Limit to 50k contacts to prevent OOM on large tenants.
+    const FUNNEL_LIMIT = 50_000;
     const contacts = await this.contactModel
       .find(match, { stageHistory: 1 })
+      .sort({ createdAt: -1 })
+      .limit(FUNNEL_LIMIT)
       .lean()
       .exec();
+    if (contacts.length >= FUNNEL_LIMIT) {
+      context.warnings.push(
+        `Results limited to ${FUNNEL_LIMIT.toLocaleString()} most recent contacts`,
+      );
+    }
     const leakage = new Map<string, FunnelLeakageItem>();
 
     for (const contact of contacts) {

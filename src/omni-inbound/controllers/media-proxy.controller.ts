@@ -3,13 +3,13 @@ import {
   Get,
   Param,
   Res,
-  Redirect,
   HttpStatus,
   Logger,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
-import { Public } from 'nest-keycloak-connect';
 import { Response } from 'express';
+import { ClsService } from 'nestjs-cls';
 import { MediaProxyService } from '../services/media-proxy.service';
 import { FilesService } from '../../files/files.service';
 
@@ -24,6 +24,10 @@ import { FilesService } from '../../files/files.service';
  *
  * This gives agents a stable URL to view images and files
  * even after the provider's original URL has expired (Zalo).
+ *
+ * CRIT-02: Auth required + tenant-prefix validation.
+ * Previously @Public() — any unauthenticated request could sign/stream
+ * any S3 object in the shared bucket, including cross-tenant PII exports.
  */
 @Controller({ path: 'omni/media', version: '1' })
 export class MediaProxyController {
@@ -32,6 +36,7 @@ export class MediaProxyController {
   constructor(
     private readonly mediaProxyService: MediaProxyService,
     private readonly filesService: FilesService,
+    private readonly cls: ClsService,
   ) {}
 
   /**
@@ -39,11 +44,12 @@ export class MediaProxyController {
    * This is the preferred approach — S3/CDN handles the bandwidth.
    */
   @Get('redirect/*storageKey')
-  @Public()
   async redirectToMedia(
     @Param('storageKey') storageKey: string,
     @Res() res: Response,
   ) {
+    this.assertTenantOwnsKey(storageKey);
+
     try {
       const presignedUrl =
         await this.mediaProxyService.getPresignedUrl(storageKey);
@@ -61,11 +67,12 @@ export class MediaProxyController {
    * Used as a fallback or for specific security requirements.
    */
   @Get('*storageKey')
-  @Public() // Media endpoint — can be secured via signed URLs later
   async getMedia(
     @Param('storageKey') storageKey: string,
     @Res() res: Response,
   ) {
+    this.assertTenantOwnsKey(storageKey);
+
     this.logger.debug(`Serving media: ${storageKey}`);
 
     const buffer = await this.mediaProxyService.getMedia(storageKey);
@@ -82,7 +89,32 @@ export class MediaProxyController {
       .header('Content-Length', String(buffer.length))
       .header('Cache-Control', 'public, max-age=86400, immutable')
       .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Disposition', 'attachment')
       .send(buffer);
+  }
+
+  /**
+   * CRIT-02: Validate that the authenticated user's tenant owns the
+   * requested storage key. S3 keys are structured as:
+   *   ${tenantId}/omni-media/${randomId}.${ext}
+   *
+   * Without this check, any authenticated user could access another
+   * tenant's media by guessing/learning a storage key.
+   */
+  private assertTenantOwnsKey(storageKey: string): void {
+    const tenantId = this.cls.get('tenantId');
+    if (!tenantId) {
+      throw new ForbiddenException('Authentication required');
+    }
+
+    // The storage key must start with the caller's tenantId
+    const keyTenantId = storageKey.split('/')[0];
+    if (keyTenantId !== tenantId) {
+      this.logger.warn(
+        `[CRIT-02] Cross-tenant media access blocked: tenant=${tenantId} tried key=${storageKey}`,
+      );
+      throw new ForbiddenException('Access denied');
+    }
   }
 
   private getContentType(key: string): string {

@@ -9,6 +9,7 @@ import { BaseDocumentRepository } from '../../../../../utils/persistence/documen
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
 import { pagination } from '../../../../../utils/pagination';
+import { escapeRegex } from '../../../../../utils/escape-regex';
 
 @Injectable()
 export class TaskRepository extends BaseDocumentRepository<
@@ -38,10 +39,14 @@ export class TaskRepository extends BaseDocumentRepository<
     filterOptions?: any;
     paginationOptions: IPaginationOptions;
   }): Promise<PaginationResponseDto<Task>> {
-    const where: FilterQuery<TaskSchemaClass> = {};
+    // MED-08: Exclude soft-deleted tasks from list queries
+    const where: FilterQuery<TaskSchemaClass> = {
+      deletedAt: { $exists: false },
+    };
 
     if (filterOptions?.search) {
-      const searchExpr = { $regex: filterOptions.search, $options: 'i' };
+      // MED-07: Escape user input to prevent ReDoS
+      const searchExpr = { $regex: escapeRegex(filterOptions.search), $options: 'i' };
       where.$or = [{ title: searchExpr }, { description: searchExpr }];
     }
 

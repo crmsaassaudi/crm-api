@@ -31,7 +31,16 @@ import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
  *  - agent:status:changed  (server → client)  Broadcast when a peer's status changes
  *  - agent:list            (client → server)  Request all agents for the tenant
  */
-@WebSocketGateway({ namespace: '/omni', cors: { origin: '*' } })
+// MED-08b: CORS origin from env
+@WebSocketGateway({
+  namespace: '/omni',
+  cors: {
+    origin: process.env.FRONTEND_DOMAIN
+      ? process.env.FRONTEND_DOMAIN.split(',').map((s) => s.trim())
+      : ['http://localhost:3000'],
+    credentials: true,
+  },
+})
 export class AgentPresenceGateway {
   @WebSocketServer()
   server: Server;

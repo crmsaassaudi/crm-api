@@ -188,11 +188,9 @@ export class ZaloAdapter implements ChannelAdapter {
     messageType: string,
     channelConfig: any,
   ): Promise<any> {
-    void channelConfig;
-    // TODO: implement Zalo OA API call
-    this.logger.log(
-      `[Zalo] Sending ${messageType} to ${recipientId}: ${content}`,
+    // HIGH-08: Fail loudly instead of returning a fake success.
+    throw new Error(
+      `Zalo OA API send not implemented — cannot deliver ${messageType} to ${recipientId}`,
     );
-    return Promise.resolve({ message_id: `zalo_out_${Date.now()}` });
   }
 }

@@ -106,6 +106,17 @@ export class FacebookAdapter implements ChannelAdapter {
       return null; // Signal to caller: nothing to process
     }
 
+    // ── CRIT-05: Skip echo messages ────────────────────────────────
+    // Facebook echoes every outbound message the CRM sends as an inbound
+    // webhook with is_echo=true. The outbound message is already stored by
+    // OutboundService, so processing the echo creates a duplicate entry.
+    if (rawPayload.message?.is_echo) {
+      this.logger.debug(
+        `Skipping Facebook echo message mid=${rawPayload.message?.mid}`,
+      );
+      return null;
+    }
+
     // FB batches events — we normalise the first messaging entry.
     // The controller should iterate `entry[].messaging[]` and call this once per event.
     const messaging = rawPayload;

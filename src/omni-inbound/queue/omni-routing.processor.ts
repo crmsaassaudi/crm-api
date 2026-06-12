@@ -53,6 +53,15 @@ export class OmniRoutingProcessor extends BaseTenantConsumer<OmniRoutingJobData>
     this.logger.log(
       `Routing omni message ${payload.externalMessageId} for tenant ${payload.tenantId}`,
     );
-    await this.eventEmitter.emitAsync('omni.message.received', payload);
+
+    // CRIT-07: Roll back the dedup key on failure so BullMQ retries can
+    // re-process the message. Without this, a transient downstream failure
+    // permanently suppresses the message for the 24h TTL window.
+    try {
+      await this.eventEmitter.emitAsync('omni.message.received', payload);
+    } catch (error) {
+      await client.del(dedupKey).catch(() => undefined);
+      throw error;
+    }
   }
 }

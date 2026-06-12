@@ -85,8 +85,12 @@ export class EmailInboundListener {
 
       externalMessageId: event.threadInfo.messageId || event.generatedMessageId,
 
+      // CRIT-04: Use references[0] as the thread key — it's the root
+      // Message-ID and is constant across the entire email thread.
+      // inReplyTo differs for every reply, which scattered threads
+      // across multiple conversations.
       externalConversationId:
-        event.threadInfo.inReplyTo ||
+        event.threadInfo.references?.[0] ||
         event.threadInfo.messageId ||
         `email:${event.from}:${event.configId}`,
 

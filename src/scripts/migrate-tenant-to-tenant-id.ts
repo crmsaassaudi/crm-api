@@ -56,18 +56,22 @@ async function migrateTenantToTenantId() {
 }
 
 async function migrateCollection(collection: any, collectionName: string) {
-  const docs = await collection
+  const BATCH_SIZE = 1000;
+  let migrated = 0;
+  let skipped = 0;
+
+  // LOW-08: Use cursor-based batching to avoid loading all docs into memory
+  const cursor = collection
     .find({
       tenant: { $exists: true, $ne: null },
       tenantId: { $exists: false },
     })
     .project({ _id: 1, tenant: 1 })
-    .toArray();
+    .batchSize(BATCH_SIZE);
 
-  const bulkOps: any[] = [];
-  let skipped = 0;
+  let bulkOps: any[] = [];
 
-  for (const doc of docs) {
+  for await (const doc of cursor) {
     const tenantId = normalizeTenantId(doc.tenant);
     if (!tenantId) {
       skipped += 1;
@@ -83,12 +87,23 @@ async function migrateCollection(collection: any, collectionName: string) {
         update: { $set: { tenantId }, $unset: { tenant: '' } },
       },
     });
+
+    // Flush batch when it reaches BATCH_SIZE
+    if (bulkOps.length >= BATCH_SIZE) {
+      const result = await collection.bulkWrite(bulkOps, { ordered: false });
+      migrated += result.modifiedCount;
+      console.log(
+        `${collectionName}: batch flushed — ${result.modifiedCount} migrated (total: ${migrated})`,
+      );
+      bulkOps = [];
+    }
   }
 
-  const migrated =
-    bulkOps.length > 0
-      ? (await collection.bulkWrite(bulkOps, { ordered: false })).modifiedCount
-      : 0;
+  // Flush remaining
+  if (bulkOps.length > 0) {
+    const result = await collection.bulkWrite(bulkOps, { ordered: false });
+    migrated += result.modifiedCount;
+  }
 
   const cleanupResult = await collection.updateMany(
     {

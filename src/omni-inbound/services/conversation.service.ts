@@ -345,9 +345,18 @@ export class ConversationService {
         const lifecycleConfig = await this.getSessionLifecycleConfig();
         const reopenWindowHours = lifecycleConfig.reopenWindowHours ?? 24;
 
-        // Check if the conversation was resolved within the reopen window
+        // MED-04: resolvedAt fallback chain — closedAt > updatedAt.
+        // updatedAt can be bumped by unrelated writes (tag, note, assignment),
+        // causing the reopen window to be inaccurately extended.
         const resolvedAt =
-          (existing as any).resolvedAt ?? (existing as any).updatedAt;
+          (existing as any).resolvedAt ??
+          (existing as any).closedAt ??
+          (existing as any).updatedAt;
+        if (!(existing as any).resolvedAt) {
+          this.logger.warn(
+            `Conversation ${conversationId} has no resolvedAt — using ${(existing as any).closedAt ? 'closedAt' : 'updatedAt'} as fallback`,
+          );
+        }
         const hoursSinceResolved = resolvedAt
           ? (Date.now() - new Date(resolvedAt).getTime()) / (1000 * 60 * 60)
           : Infinity;
@@ -487,7 +496,7 @@ export class ConversationService {
       ) {
         const assignedAgent = existing.assignedAgentId;
         if (!assignedAgent) {
-          this.logger.warn(
+          this.logger.debug(
             `[AUTO-ASSIGN DEBUG] Existing conversation ${conversationId} is ${existing.status} but has NO agent — retrying auto-assignment`,
           );
           await this.triggerAutoAssignment(
@@ -865,13 +874,13 @@ export class ConversationService {
     enrichedProfile?: { name?: string; avatarUrl?: string; phone?: string },
   ): Promise<void> {
     try {
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG] ═══════════════════════════════════════════════`,
       );
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG] triggerAutoAssignment called for conversation=${conversationId}, reason=${reason}`,
       );
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG] tenantId=${payload.tenantId}, channelType=${payload.channelType}, channelAccount=${payload.channelAccount}`,
       );
 
@@ -882,16 +891,16 @@ export class ConversationService {
           this.toSchemaChannelType(payload.channelType),
           payload.channelAccount,
         );
-        this.logger.warn(
+        this.logger.debug(
           `[AUTO-ASSIGN DEBUG] Channel lookup result: ${channel ? `found (id=${channel.id})` : 'NOT FOUND'}`,
         );
-        this.logger.warn(
+        this.logger.debug(
           `[AUTO-ASSIGN DEBUG] Channel full config: ${JSON.stringify(channel?.config ?? {}, null, 2)}`,
         );
         channelConfig = channel?.config ?? {};
       } catch (channelErr: any) {
         // Channel not found in DB — use defaults (assign from all agents)
-        this.logger.warn(
+        this.logger.debug(
           `[AUTO-ASSIGN DEBUG] Channel lookup EXCEPTION: ${channelErr.message}`,
         );
         this.logger.debug(
@@ -904,12 +913,12 @@ export class ConversationService {
       //    - true   → ALWAYS assign (channel override ON, bypasses global)
       //    - undefined → defer to global toggle (handled by AssignmentService)
       const channelAutoAssign = channelConfig.autoAssignmentEnabled;
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG] channelConfig.autoAssignmentEnabled = ${JSON.stringify(channelAutoAssign)} (type: ${typeof channelAutoAssign})`,
       );
 
       if (channelAutoAssign === false) {
-        this.logger.warn(
+        this.logger.debug(
           `[AUTO-ASSIGN DEBUG] ❌ EARLY EXIT: Channel auto-assign is explicitly FALSE — skipping assignment`,
         );
         this.logger.log(
@@ -921,7 +930,7 @@ export class ConversationService {
       // 3. Build agent pool from channel's support config
       const supportUserIds: string[] = channelConfig.supportUserIds ?? [];
       const supportGroupIds: string[] = channelConfig.supportGroupIds ?? [];
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG] supportUserIds=${JSON.stringify(supportUserIds)}, supportGroupIds=${JSON.stringify(supportGroupIds)}`,
       );
 
@@ -929,7 +938,7 @@ export class ConversationService {
       if (supportUserIds.length > 0 || supportGroupIds.length > 0) {
         const groupMemberIds =
           await this.resolveGroupMembersForAssignment(supportGroupIds);
-        this.logger.warn(
+        this.logger.debug(
           `[AUTO-ASSIGN DEBUG] Resolved group members: ${JSON.stringify(groupMemberIds)}`,
         );
         const allSupportIds = [
@@ -937,11 +946,11 @@ export class ConversationService {
         ];
         agentPool = allSupportIds.length > 0 ? allSupportIds : undefined;
 
-        this.logger.warn(
+        this.logger.debug(
           `[AUTO-ASSIGN DEBUG] Final agent pool: ${JSON.stringify(agentPool)} (${allSupportIds.length} unique)`,
         );
       } else {
-        this.logger.warn(
+        this.logger.debug(
           `[AUTO-ASSIGN DEBUG] No support users/groups configured — agent pool is UNDEFINED (all online agents)`,
         );
       }
@@ -961,19 +970,19 @@ export class ConversationService {
         time: this.getCurrentTimeHHmm(),
         segment: undefined,
       };
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG] Calling AssignmentService.assignConversation with:`,
       );
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG]   channelAutoAssignOverride=${JSON.stringify(channelAutoAssign)}`,
       );
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG]   agentPool=${JSON.stringify(agentPool)}`,
       );
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG]   contactId=${contactId}, senderId=${payload.senderId}`,
       );
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG]   routingContext=${JSON.stringify(routingContext)}`,
       );
 
@@ -992,7 +1001,7 @@ export class ConversationService {
 
       // 6. Emit assignment event for real-time broadcast
       if (assignedAgentId) {
-        this.logger.warn(
+        this.logger.debug(
           `[AUTO-ASSIGN DEBUG] ✅ SUCCESS: conversation ${conversationId} assigned to agent ${assignedAgentId}`,
         );
         this.eventEmitter.emit('omni.conversation.assigned', {
@@ -1007,14 +1016,14 @@ export class ConversationService {
           `Auto-assigned conversation ${conversationId} → agent ${assignedAgentId} (reason: ${reason})`,
         );
       } else {
-        this.logger.warn(
+        this.logger.debug(
           `[AUTO-ASSIGN DEBUG] ⚠️ NO ASSIGNMENT: conversation ${conversationId} goes to queue (reason: ${reason})`,
         );
         this.logger.log(
           `Conversation ${conversationId} goes to queue — no available agent (reason: ${reason})`,
         );
       }
-      this.logger.warn(
+      this.logger.debug(
         `[AUTO-ASSIGN DEBUG] ═══════════════════════════════════════════════`,
       );
     } catch (err: any) {

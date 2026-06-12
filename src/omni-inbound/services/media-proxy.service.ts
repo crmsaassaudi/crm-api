@@ -335,6 +335,12 @@ export class MediaProxyService {
       downloadUrl = graphData.url;
     }
 
+    // HIGH-12: SSRF guard — validate URL before fetching.
+    // A crafted webhook payload could supply a media URL pointing to internal
+    // services (e.g., http://169.254.169.254/latest/meta-data/) allowing cloud
+    // credential exfiltration via the CRM's server-side fetch.
+    this.validateDownloadUrl(downloadUrl);
+
     const response = await fetchWithTimeout(
       downloadUrl,
       {
@@ -375,5 +381,50 @@ export class MediaProxyService {
       'application/pdf': 'pdf',
     };
     return map[mimeType.toLowerCase()] || 'bin';
+  }
+
+  /**
+   * HIGH-12: Validate a download URL to prevent SSRF attacks.
+   * Only allows HTTPS URLs from known media provider domains.
+   */
+  private validateDownloadUrl(url: string): void {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error(`Invalid media URL: ${url}`);
+    }
+
+    // Enforce HTTPS only
+    if (parsed.protocol !== 'https:') {
+      throw new Error(
+        `SSRF blocked: media URL must use HTTPS (got ${parsed.protocol})`,
+      );
+    }
+
+    // Known provider CDN domains — extend as needed
+    const ALLOWED_HOSTS = [
+      'graph.facebook.com',
+      '.fbcdn.net',
+      '.whatsapp.net',
+      '.xx.fbcdn.net',
+      '.zalo.me',
+      '.zadn.vn',
+      '.zdn.vn',
+    ];
+
+    const hostname = parsed.hostname.toLowerCase();
+    const isAllowed = ALLOWED_HOSTS.some(
+      (h) =>
+        hostname === h ||
+        (h.startsWith('.') && hostname.endsWith(h)),
+    );
+
+    if (!isAllowed) {
+      this.logger.warn(
+        `[HIGH-12] SSRF blocked: media download from non-allowlisted host: ${hostname}`,
+      );
+      throw new Error(`SSRF blocked: host ${hostname} not in allowlist`);
+    }
   }
 }

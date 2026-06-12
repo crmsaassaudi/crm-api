@@ -38,12 +38,27 @@ export class ChannelRepository {
     type: string,
     account: string,
   ): Promise<Channel | null> {
-    const doc = await this.model
-      .findOne({ type, account })
-      .select('+credentials') // Include credentials so adapters can use the access token
+    // CRIT-03: Fetch up to 2 matches to detect ambiguous multi-tenant state.
+    // If the same (type, account) exists in multiple tenants, we must not
+    // silently pick one — that would route webhooks to the wrong tenant.
+    const docs = await this.model
+      .find({ type, account })
+      .select('+credentials')
       .setOptions({ isPlatformQuery: true } as any)
+      .limit(2)
       .exec();
-    return doc ? ChannelMapper.toDomain(doc) : null;
+
+    if (docs.length > 1) {
+      // This should never happen if assertChannelAccountAvailable is enforced,
+      // but if it does, refuse to resolve rather than route to the wrong tenant.
+      const tenantIds = docs.map((d) => d.tenantId?.toString());
+      throw new Error(
+        `Ambiguous channel account: (${type}, ${account}) found in tenants [${tenantIds.join(', ')}]. ` +
+          'Cannot determine webhook target. Remove the duplicate.',
+      );
+    }
+
+    return docs[0] ? ChannelMapper.toDomain(docs[0]) : null;
   }
 
   async findByAccountWithCredentials(

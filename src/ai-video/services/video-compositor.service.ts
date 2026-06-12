@@ -1,11 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 import { AiVideoSettingsRepository } from '../repositories/ai-video-settings.repository';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface RenderOptions {
   jobId: string;
@@ -40,13 +40,39 @@ export class VideoCompositorService {
     const bgImagePath = this.resolveBackgroundImage(tempDir);
     const bgmPath = this.resolveBgmPath();
 
-    await execAsync('ffmpeg -version');
-    const cmd = bgmPath
-      ? `ffmpeg -y -loop 1 -i "${bgImagePath}" -i "${voiceAudioPath}" -stream_loop -1 -i "${bgmPath}" -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[v];[1:a]volume=1.0[voice];[2:a]volume=${bgmVolume}[bgm];[voice][bgm]amix=inputs=2:duration=first[a]" -map "[v]" -map "[a]" -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "${outputVideoPath}"`
-      : `ffmpeg -y -loop 1 -i "${bgImagePath}" -i "${voiceAudioPath}" -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[v]" -map "[v]" -map 1:a -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "${outputVideoPath}"`;
+    // LOW-13: Use execFile instead of exec to prevent shell injection.
+    // exec() spawns a shell — a filename containing `;rm -rf /` would execute.
+    await execFileAsync('ffmpeg', ['-version']);
+
+    const baseArgs = [
+      '-y', '-loop', '1', '-i', bgImagePath,
+      '-i', voiceAudioPath,
+    ];
+
+    let ffmpegArgs: string[];
+    if (bgmPath) {
+      ffmpegArgs = [
+        ...baseArgs,
+        '-stream_loop', '-1', '-i', bgmPath,
+        '-filter_complex',
+        `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[v];[1:a]volume=1.0[voice];[2:a]volume=${bgmVolume}[bgm];[voice][bgm]amix=inputs=2:duration=first[a]`,
+        '-map', '[v]', '-map', '[a]',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-shortest', outputVideoPath,
+      ];
+    } else {
+      ffmpegArgs = [
+        ...baseArgs,
+        '-filter_complex',
+        '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[v]',
+        '-map', '[v]', '-map', '1:a',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-shortest', outputVideoPath,
+      ];
+    }
 
     this.logger.log(`Executing FFmpeg render for AI video ${options.jobId}`);
-    await execAsync(cmd);
+    await execFileAsync('ffmpeg', ffmpegArgs);
     return outputVideoPath;
   }
 

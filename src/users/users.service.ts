@@ -241,15 +241,25 @@ export class UsersService {
       photo = null;
     }
 
+    // ── CRIT-01: Only SUPER_ADMIN may change platformRole or status ──
+    // The create endpoint (POST /users) is already gated by @Roles(SUPER_ADMIN).
+    // Without this guard, any tenant admin with 'edit:users' permission could
+    // PATCH themselves to SUPER_ADMIN, gaining full cross-tenant platform access.
+    const callerUser = await this.usersRepository.findById(
+      this.cls.get('userId'),
+    );
+    const isSuperAdmin =
+      callerUser?.platformRole?.id === PlatformRoleEnum.SUPER_ADMIN;
+
     let platformRole: Role | undefined = undefined;
 
-    if (updateUserDto.platformRole?.id) {
+    if (updateUserDto.platformRole?.id && isSuperAdmin) {
       platformRole = { id: updateUserDto.platformRole.id as PlatformRoleEnum };
     }
 
     let status: Status | undefined = undefined;
 
-    if (updateUserDto.status?.id) {
+    if (updateUserDto.status?.id && isSuperAdmin) {
       status = { id: updateUserDto.status.id as StatusEnum };
     }
 
@@ -263,8 +273,8 @@ export class UsersService {
       photo,
       platformRole,
       status,
-      provider: updateUserDto.provider,
-      keycloakId: updateUserDto.keycloakId,
+      provider: isSuperAdmin ? updateUserDto.provider : undefined,
+      keycloakId: isSuperAdmin ? updateUserDto.keycloakId : undefined,
       version: updateUserDto.version,
       omniMaxCapacity: updateUserDto.omniMaxCapacity,
       skills: updateUserDto.skills,

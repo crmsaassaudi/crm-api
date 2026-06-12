@@ -7,6 +7,7 @@ import {
 } from '../entities/canned-response.schema';
 import { CannedResponse } from '../../../../domain/canned-response';
 import { CannedResponseMapper } from '../mappers/canned-response.mapper';
+import { escapeRegex } from '../../../../../utils/escape-regex';
 
 @Injectable()
 export class CannedResponseRepository {
@@ -30,7 +31,8 @@ export class CannedResponseRepository {
     };
     if (query?.category) filter.category = query.category;
     if (query?.search) {
-      filter.shortcut = { $regex: query.search, $options: 'i' };
+      // MED-07: Escape user input to prevent ReDoS
+      filter.shortcut = { $regex: escapeRegex(query.search), $options: 'i' };
     }
     const docs = await this.model.find(filter).sort({ shortcut: 1 }).exec();
     return docs.map(CannedResponseMapper.toDomain);

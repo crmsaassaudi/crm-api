@@ -153,6 +153,39 @@ async function bootstrap() {
       process.exit(1);
     }
 
+    // HIGH-14: Validate refresh token secret is not default/empty
+    const refreshSecret = process.env.AUTH_REFRESH_SECRET;
+    if (!refreshSecret || refreshSecret.length < 32) {
+      Logger.error(
+        '🚫 FATAL: AUTH_REFRESH_SECRET is not set or too short (min 32 chars). ' +
+          'Attackers can forge refresh tokens.',
+        'Bootstrap',
+      );
+      process.exit(1);
+    }
+
+    // HIGH-14: Validate S3 credentials when FILE_DRIVER=s3
+    if (
+      (process.env.FILE_DRIVER === 's3' ||
+        process.env.FILE_DRIVER === 's3-presigned') &&
+      (!process.env.ACCESS_KEY_ID || !process.env.SECRET_ACCESS_KEY)
+    ) {
+      Logger.error(
+        '🚫 FATAL: FILE_DRIVER is s3 but ACCESS_KEY_ID or SECRET_ACCESS_KEY is empty. ' +
+          'File uploads will silently fail.',
+        'Bootstrap',
+      );
+      process.exit(1);
+    }
+
+    // HIGH-14: Validate internal API key is set
+    if (!process.env.INTERNAL_API_KEY || process.env.INTERNAL_API_KEY.length < 16) {
+      Logger.warn(
+        '⚠️  INTERNAL_API_KEY is not set or too short — inter-service auth is weakened.',
+        'Bootstrap',
+      );
+    }
+
     if (!process.env.REDIS_PASSWORD) {
       Logger.warn(
         '⚠️  REDIS_PASSWORD is empty in production — Redis is accessible without authentication!',

@@ -477,7 +477,8 @@ export class ContactRepository extends BaseDocumentRepository<
     }
 
     const scopedWhere = this.applyTenantFilter(where);
-    const docs = await this.model.find(scopedWhere).exec();
+    // LOW-07: Cap results to prevent unbounded scans on large tenants
+    const docs = await this.model.find(scopedWhere).limit(50).exec();
     return docs.map((doc) => this.mapToDomain(doc));
   }
 

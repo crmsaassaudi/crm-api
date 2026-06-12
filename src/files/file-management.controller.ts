@@ -38,6 +38,7 @@ import {
   isAllowedFileName,
   isAllowedMimeType,
   getFileCategory,
+  detectMimeFromBuffer,
 } from './file-upload-security.util';
 
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -117,6 +118,17 @@ export class FileManagementController {
     }
     if (file.mimetype && !isAllowedMimeType(file.mimetype)) {
       throw new BadRequestException(`MIME type ${file.mimetype} not allowed`);
+    }
+
+    // HIGH-11: Verify magic bytes match the declared MIME type.
+    // Client-supplied Content-Type is trivially forged. An attacker can rename
+    // malware.exe → resume.pdf and send Content-Type: application/pdf.
+    // The extension check passes, but magic bytes reveal the real format.
+    const detectedMime = detectMimeFromBuffer(file.buffer);
+    if (detectedMime && !isAllowedMimeType(detectedMime)) {
+      throw new BadRequestException(
+        `File content does not match an allowed type (detected: ${detectedMime})`,
+      );
     }
 
     const maxFileSize =

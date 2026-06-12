@@ -45,7 +45,15 @@ import { isDedicatedWorkerProcess } from '../../config/runtime-role';
  */
 @WebSocketGateway({
   namespace: '/omni',
-  cors: { origin: '*', credentials: true },
+  // MED-08b: Replace origin: '*' with an env-driven allowlist.
+  // origin: '*' + credentials: true allows any site to open a socket with
+  // the user's cookies, enabling session hijacking and cross-site data exfil.
+  cors: {
+    origin: process.env.FRONTEND_DOMAIN
+      ? process.env.FRONTEND_DOMAIN.split(',').map((s) => s.trim())
+      : ['http://localhost:3000'],
+    credentials: true,
+  },
 })
 export class OmniGateway
   implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
@@ -70,8 +78,9 @@ export class OmniGateway
     'socket:omni:message:media_cached',
   ] as const;
 
-  /** In-memory map: conversationId → userId who is currently claiming it */
-  private claimLocks = new Map<string, { userId: string; at: Date }>();
+  // HIGH-06: Claim lock TTL in seconds. Redis-backed claim locks auto-expire
+  // so stale claims from crashed pods are cleaned up automatically.
+  private static readonly CLAIM_LOCK_TTL_SECONDS = 300; // 5 minutes
 
   constructor(
     private readonly presenceService: AgentPresenceService,
@@ -415,7 +424,7 @@ export class OmniGateway
       if (!result.reused) {
         // Broadcast the message to other agents watching this conversation
         client
-          .to(`conversation:${data.conversationId}`)
+          .to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`)
           .emit('omni:message:new', {
             conversationId: data.conversationId,
             senderId: result.senderId ?? userId,
@@ -510,7 +519,7 @@ export class OmniGateway
       // Broadcast to other agents watching this conversation
       if (!result.reused) {
         client
-          .to(`conversation:${data.conversationId}`)
+          .to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`)
           .emit('omni:message:new', {
             conversationId: data.conversationId,
             senderId: result.senderId ?? userId,
@@ -705,7 +714,7 @@ export class OmniGateway
         `Broadcasting HTTP-sent message to conversation ${payload.conversationId}`,
       );
       this.server
-        .to(`conversation:${payload.conversationId}`)
+        .to(`tenant:${payload.tenantId}:conversation:${payload.conversationId}`)
         .emit('omni:message:new', {
           conversationId: payload.conversationId,
           senderId: payload.senderId,
@@ -738,8 +747,17 @@ export class OmniGateway
       return { ok: false, error: 'conversationId is required' };
     }
 
-    await client.join(`conversation:${data.conversationId}`);
-    return { ok: true, room: `conversation:${data.conversationId}` };
+    // HIGH-04: Tenant-scope the room to prevent cross-tenant realtime leaks.
+    // Without this, a tenant-A socket that learns a tenant-B conversationId
+    // can join its room and receive live messages/typing/lock events.
+    const tenantId = client.data.tenantId;
+    if (!tenantId) {
+      return { ok: false, error: 'No tenant context' };
+    }
+
+    const room = `tenant:${tenantId}:conversation:${data.conversationId}`;
+    await client.join(room);
+    return { ok: true, room };
   }
 
   @SubscribeMessage('conversation.unsubscribe')
@@ -752,8 +770,14 @@ export class OmniGateway
       return { ok: false, error: 'conversationId is required' };
     }
 
-    await client.leave(`conversation:${data.conversationId}`);
-    return { ok: true, room: `conversation:${data.conversationId}` };
+    const tenantId = client.data.tenantId;
+    if (!tenantId) {
+      return { ok: false, error: 'No tenant context' };
+    }
+
+    const room = `tenant:${tenantId}:conversation:${data.conversationId}`;
+    await client.leave(room);
+    return { ok: true, room };
   }
 
   // ─── Typing indicators ─────────────────────────────────────────────
@@ -793,7 +817,7 @@ export class OmniGateway
       }
     }
 
-    client.to(`conversation:${data.conversationId}`).emit('omni:typing:start', {
+    client.to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`).emit('omni:typing:start', {
       conversationId: data.conversationId,
       userId,
       userName: user.name ?? 'Agent',
@@ -808,7 +832,7 @@ export class OmniGateway
     const user = client.data.user;
     if (!user) return;
 
-    client.to(`conversation:${data.conversationId}`).emit('omni:typing:stop', {
+    client.to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`).emit('omni:typing:stop', {
       conversationId: data.conversationId,
       userId: client.data.userId ?? user.id ?? user.sub,
     });
@@ -829,38 +853,45 @@ export class OmniGateway
     if (!tenantId) return { ok: false, error: 'No tenant context' };
     const { conversationId } = data;
 
-    // Check for existing claim
-    const existingClaim = this.claimLocks.get(conversationId);
-    if (existingClaim && existingClaim.userId !== userId) {
+    // HIGH-06: Redis-backed claim locks instead of in-memory Map.
+    // In-memory Map fails in multi-process/pod: two agents on different pods
+    // could claim the same conversation simultaneously.
+    const claimKey = `omni:claim:${tenantId}:${conversationId}`;
+    const existingClaim = await this.redis.get(claimKey);
+
+    if (existingClaim && existingClaim !== userId) {
       // Collision! Another agent already claimed this conversation
-      const timeSinceClaim = Date.now() - existingClaim.at.getTime();
-      const STALE_CLAIM_MS = 5 * 60 * 1000; // 5 minutes
+      client.emit('omni:collision', {
+        conversationId,
+        claimedBy: existingClaim,
+        message: 'This conversation is already claimed by another agent.',
+      });
 
-      if (timeSinceClaim < STALE_CLAIM_MS) {
-        // Active claim exists → notify the new agent about collision
-        client.emit('omni:collision', {
-          conversationId,
-          claimedBy: existingClaim.userId,
-          claimedAt: existingClaim.at.toISOString(),
-          message: 'This conversation is already claimed by another agent.',
-        });
+      this.logger.warn(
+        `Collision: Agent ${userId} tried to claim conversation ` +
+          `${conversationId} already claimed by ${existingClaim}`,
+      );
 
-        this.logger.warn(
-          `Collision: Agent ${userId} tried to claim conversation ` +
-            `${conversationId} already claimed by ${existingClaim.userId}`,
-        );
-
-        return {
-          ok: false,
-          error: 'Already claimed',
-          claimedBy: existingClaim.userId,
-        };
-      }
-      // Stale claim → allow override
+      return {
+        ok: false,
+        error: 'Already claimed',
+        claimedBy: existingClaim,
+      };
     }
 
-    // Set the claim
-    this.claimLocks.set(conversationId, { userId, at: new Date() });
+    // Atomically set the claim — NX ensures only one agent wins the race
+    const acquired = await this.redis.set(
+      claimKey,
+      userId,
+      'EX',
+      OmniGateway.CLAIM_LOCK_TTL_SECONDS,
+      'NX',
+    );
+
+    // If NX returns null, another pod won the race between our GET and SET
+    if (!acquired && !existingClaim) {
+      return { ok: false, error: 'Already claimed (race)' };
+    }
 
     // Try to assign the conversation capacity to this agent
     const assigned = await this.presenceService.assignConversation(
@@ -869,7 +900,7 @@ export class OmniGateway
     );
 
     if (!assigned) {
-      this.claimLocks.delete(conversationId);
+      await this.redis.del(claimKey).catch(() => undefined);
       return { ok: false, error: 'Agent at capacity' };
     }
 
@@ -892,7 +923,7 @@ export class OmniGateway
           ? (error as { response?: { lock?: unknown } }).response?.lock
           : undefined;
 
-      this.claimLocks.delete(conversationId);
+      await this.redis.del(claimKey).catch(() => undefined);
       await this.presenceService.releaseConversation(tenantId, userId);
       client.emit('omni:collision', {
         conversationId,
@@ -907,7 +938,7 @@ export class OmniGateway
     }
 
     // Join the conversation room for targeted events
-    await client.join(`conversation:${conversationId}`);
+    await client.join(`tenant:${tenantId}:conversation:${conversationId}`);
 
     // Broadcast to the whole tenant that this conversation is claimed
     this.server.to(`tenant:${tenantId}`).emit('omni:conversation:claimed', {
@@ -1036,7 +1067,7 @@ export class OmniGateway
   handleLockAcquired(event: any) {
     const payload = this.standardEvent('conversation.lock_acquired', event);
     this.server
-      .to(`conversation:${event.conversationId}`)
+      .to(`tenant:${event.tenantId}:conversation:${event.conversationId}`)
       .emit('conversation.lock_acquired', payload);
     this.server
       .to(`tenant:${event.tenantId}`)
@@ -1052,7 +1083,7 @@ export class OmniGateway
   handleLockReleased(event: any) {
     const payload = this.standardEvent('conversation.lock_released', event);
     this.server
-      .to(`conversation:${event.conversationId}`)
+      .to(`tenant:${event.tenantId}:conversation:${event.conversationId}`)
       .emit('conversation.lock_released', payload);
     this.server
       .to(`tenant:${event.tenantId}`)
@@ -1067,7 +1098,7 @@ export class OmniGateway
   handleTakeover(event: any) {
     const payload = this.standardEvent('conversation.takeover', event);
     this.server
-      .to(`conversation:${event.conversationId}`)
+      .to(`tenant:${event.tenantId}:conversation:${event.conversationId}`)
       .emit('conversation.takeover', payload);
 
     if (event.previousAgentId) {

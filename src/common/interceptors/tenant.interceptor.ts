@@ -449,8 +449,14 @@ export class TenantInterceptor implements NestInterceptor {
       }
     } catch (err) {
       if (err instanceof UnauthorizedException) throw err;
-      this.logger.warn(
-        `[TenantInterceptor] Membership check failed (fail-open): ${(err as Error).message}`,
+      // HIGH-02: Fail CLOSED on transient errors. The previous behavior
+      // logged a warning and allowed the request through (fail-open),
+      // which could permit cross-tenant access during a DB/Redis blip.
+      this.logger.error(
+        `[TenantInterceptor] Membership check failed (fail-closed): ${(err as Error).message}`,
+      );
+      throw new UnauthorizedException(
+        'Tenant membership verification temporarily unavailable',
       );
     }
   }

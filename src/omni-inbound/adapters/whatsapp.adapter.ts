@@ -185,11 +185,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
     messageType: string,
     channelConfig: any,
   ): Promise<any> {
-    void channelConfig;
-    // TODO: implement WA Cloud API call
-    this.logger.log(
-      `[WhatsApp] Sending ${messageType} to ${recipientId}: ${content}`,
+    // HIGH-08: Fail loudly instead of returning a fake success.
+    // A silent stub causes callers to believe the message was delivered,
+    // leading to phantom "sent" status in the conversation timeline.
+    throw new Error(
+      `WhatsApp Cloud API send not implemented — cannot deliver ${messageType} to ${recipientId}`,
     );
-    return Promise.resolve({ message_id: `wa_out_${Date.now()}` });
   }
 }

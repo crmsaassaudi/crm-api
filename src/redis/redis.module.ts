@@ -32,14 +32,29 @@ import { IOREDIS_CLIENT } from './redis.tokens';
     {
       // Dedicated raw ioredis client — avoids cache-manager v7 store abstraction issues.
       provide: IOREDIS_CLIENT,
-      useFactory: (configService: ConfigService) =>
-        new Redis({
+      useFactory: (configService: ConfigService) => {
+        const client = new Redis({
           host: configService.get<string>('redis.host') ?? 'localhost',
           port: configService.get<number>('redis.port') ?? 6379,
           password: configService.get<string>('redis.password') || undefined,
           db: configService.get<number>('redis.db') ?? 0,
           lazyConnect: false,
-        }),
+          // CRIT-06: Required for BullMQ blocking commands
+          maxRetriesPerRequest: null,
+          enableReadyCheck: false,
+          // MED-13: Resilient reconnection on Redis blip
+          retryStrategy: (times: number) => Math.min(times * 200, 5000),
+          reconnectOnError: (err: Error) =>
+            err.message.includes('READONLY') ||
+            err.message.includes('LOADING'),
+        });
+        // Persistent error listener — prevents uncaught 'error' event crash
+        client.on('error', (err) => {
+          // eslint-disable-next-line no-console
+          console.error('[IOREDIS_CLIENT] Redis error:', err.message);
+        });
+        return client;
+      },
       inject: [ConfigService],
     },
   ],

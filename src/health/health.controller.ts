@@ -126,4 +126,70 @@ export class HealthController {
       };
     }
   }
+
+  // ── MED-12: Queue backlog metrics ──────────────────────────────────────
+
+  /** Critical queue names to monitor. */
+  private static readonly MONITORED_QUEUES = [
+    'omni-webhooks',
+    'omni-routing',
+    'automation-actions',
+    'automation-actions-email',
+    'automation-actions-sms',
+    'automation-actions-internal',
+    'automation-actions-webhook',
+    'automation-actions-dlq',
+    'automation-delayed-resume',
+  ];
+
+  /**
+   * `GET /health/queues` — report backlog sizes for all critical BullMQ queues.
+   *
+   * Uses raw Redis commands against BullMQ's internal key structure:
+   *   - `bull:<name>:wait` (list)  → waiting jobs
+   *   - `bull:<name>:active` (list) → in-progress jobs
+   *   - `bull:<name>:delayed` (sorted set) → scheduled jobs
+   *   - `bull:<name>:failed` (sorted set) → failed jobs
+   */
+  @Get('queues')
+  async queues() {
+    if (!this.redisService) {
+      throw new ServiceUnavailableException('Redis not available');
+    }
+
+    const client = this.redisService.getClient();
+    const prefix = 'bull';
+    const results: Record<
+      string,
+      { waiting: number; active: number; delayed: number; failed: number }
+    > = {};
+
+    await Promise.all(
+      HealthController.MONITORED_QUEUES.map(async (name) => {
+        const [waiting, active, delayed, failed] = await Promise.all([
+          client.llen(`${prefix}:${name}:wait`),
+          client.llen(`${prefix}:${name}:active`),
+          client.zcard(`${prefix}:${name}:delayed`),
+          client.zcard(`${prefix}:${name}:failed`),
+        ]);
+        results[name] = { waiting, active, delayed, failed };
+      }),
+    );
+
+    const totalWaiting = Object.values(results).reduce(
+      (sum, q) => sum + q.waiting,
+      0,
+    );
+    const totalFailed = Object.values(results).reduce(
+      (sum, q) => sum + q.failed,
+      0,
+    );
+
+    return {
+      status: totalFailed > 100 ? 'degraded' : 'ok',
+      totalWaiting,
+      totalFailed,
+      queues: results,
+    };
+  }
 }

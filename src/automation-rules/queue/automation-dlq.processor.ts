@@ -1,13 +1,15 @@
 import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import Redis from 'ioredis';
 import {
   BaseTenantConsumer,
   TenantJobData,
 } from '../../queue/base-tenant.consumer';
 import { AUTOMATION_ACTION_DLQ } from './automation-queue.constants';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
+import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 
 /**
  * AutomationDlqProcessor — consumes dead-lettered automation jobs.
@@ -25,6 +27,7 @@ export class AutomationDlqProcessor extends BaseTenantConsumer<TenantJobData> {
 
   constructor(
     private readonly executionLogRepo: AutomationExecutionLogRepository,
+    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     cls: ClsService,
   ) {
     super();
@@ -37,6 +40,18 @@ export class AutomationDlqProcessor extends BaseTenantConsumer<TenantJobData> {
     this.logger.warn(
       `[DLQ Processor] Dead-lettered job: action=${data.actionType} workflow=${data.workflowId} node=${data.nodeId} reason=${data.failedReason}`,
     );
+
+    // MED-14: Increment per-tenant DLQ counter for alerting.
+    // Operators can poll `dlq:counter:{tenantId}` to detect high-failure tenants.
+    const counterKey = `dlq:counter:${data.tenantId}`;
+    await this.redis
+      .multi()
+      .incr(counterKey)
+      .expire(counterKey, 86400) // 24h TTL — auto-reset daily
+      .exec()
+      .catch((err) =>
+        this.logger.warn(`[DLQ Processor] Failed to increment DLQ counter: ${err.message}`),
+      );
 
     // Mark the step as 'dlq' in the execution log
     try {

@@ -1,6 +1,7 @@
 import { once } from 'events';
 import { Writable } from 'stream';
 import { ExportFormatWriter } from './export-format.interface';
+import { sanitizeCellValue } from './sanitize-cell';
 
 /**
  * Streaming CSV writer (RFC 4180 quoting). Writes directly to the provided
@@ -29,6 +30,8 @@ export class CsvExportWriter implements ExportFormatWriter {
   }
 
   private escape(value: string): string {
-    return `"${(value ?? '').replace(/"/g, '""')}"`;
+    // HIGH-03: Neutralize formula injection before RFC 4180 quoting
+    const safe = sanitizeCellValue(value ?? '');
+    return `"${safe.replace(/"/g, '""')}"`;
   }
 }
