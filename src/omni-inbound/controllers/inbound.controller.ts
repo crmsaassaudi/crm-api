@@ -42,7 +42,9 @@ import { WebhookJobData } from '../queue/webhook-processor';
 // burst from a small pool of addresses; IP-based throttling would 429 valid
 // deliveries and cause provider retries / message loss. Signature validation
 // (HMAC / mac) is the real gate here, so skip the global rate limiter.
-@SkipThrottle()
+// Throttlers are named (burst/medium/long), so a bare @SkipThrottle() —
+// which targets a throttler named "default" — would be a no-op; skip each.
+@SkipThrottle({ burst: true, medium: true, long: true })
 export class InboundController {
   private readonly logger = new Logger(InboundController.name);
 
