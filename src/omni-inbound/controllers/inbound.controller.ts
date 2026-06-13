@@ -15,6 +15,7 @@ import {
 import type { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
+import { SkipThrottle } from '@nestjs/throttler';
 import { Queue } from 'bullmq';
 import { createHash } from 'crypto';
 import { Public } from 'nest-keycloak-connect';
@@ -37,6 +38,11 @@ import { WebhookJobData } from '../queue/webhook-processor';
  */
 @Controller({ path: 'omni/webhook', version: '1' })
 @Public()
+// Webhooks arrive from provider egress IPs (Meta/Zalo) which can legitimately
+// burst from a small pool of addresses; IP-based throttling would 429 valid
+// deliveries and cause provider retries / message loss. Signature validation
+// (HMAC / mac) is the real gate here, so skip the global rate limiter.
+@SkipThrottle()
 export class InboundController {
   private readonly logger = new Logger(InboundController.name);
 
