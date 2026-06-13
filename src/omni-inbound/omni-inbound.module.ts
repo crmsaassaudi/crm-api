@@ -75,8 +75,8 @@ import {
   ConversationActivitySchema,
 } from './infrastructure/persistence/document/entities/conversation-activity.schema';
 import {
-  AssignmentAuditLogSchemaClass,
-  AssignmentAuditLogSchema,
+  OmniAssignmentAuditLogSchemaClass,
+  OmniAssignmentAuditLogSchema,
 } from './infrastructure/persistence/document/entities/assignment-audit-log.schema';
 import {
   GroupSchemaClass,
@@ -154,8 +154,8 @@ const workerProviders =
         schema: ConversationActivitySchema,
       },
       {
-        name: AssignmentAuditLogSchemaClass.name,
-        schema: AssignmentAuditLogSchema,
+        name: OmniAssignmentAuditLogSchemaClass.name,
+        schema: OmniAssignmentAuditLogSchema,
       },
       {
         name: GroupSchemaClass.name,

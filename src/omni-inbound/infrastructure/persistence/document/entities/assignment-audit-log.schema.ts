@@ -3,8 +3,8 @@ import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
-export type AssignmentAuditLogDocument =
-  HydratedDocument<AssignmentAuditLogSchemaClass>;
+export type OmniAssignmentAuditLogDocument =
+  HydratedDocument<OmniAssignmentAuditLogSchemaClass>;
 
 /**
  * Audit log for every assignment decision.
@@ -19,10 +19,15 @@ export type AssignmentAuditLogDocument =
  */
 @Schema({
   timestamps: true,
-  collection: 'assignment_audit_logs',
+  // Dedicated collection. The CRM-entity assignment engine
+  // (src/assignment-engine) has its OWN AssignmentAuditLog with an
+  // incompatible shape (module/entityId). Sharing a collection — and, worse,
+  // a Mongoose model name — caused omni audit writes to be validated against
+  // the engine schema and silently dropped. Keep them fully separate.
+  collection: 'omni_assignment_audit_logs',
   toJSON: { virtuals: true, getters: true },
 })
-export class AssignmentAuditLogSchemaClass extends EntityDocumentHelper {
+export class OmniAssignmentAuditLogSchemaClass extends EntityDocumentHelper {
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'TenantSchemaClass',
@@ -73,17 +78,17 @@ export class AssignmentAuditLogSchemaClass extends EntityDocumentHelper {
   outcome: string;
 }
 
-export const AssignmentAuditLogSchema = SchemaFactory.createForClass(
-  AssignmentAuditLogSchemaClass,
+export const OmniAssignmentAuditLogSchema = SchemaFactory.createForClass(
+  OmniAssignmentAuditLogSchemaClass,
 );
 
-AssignmentAuditLogSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+OmniAssignmentAuditLogSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
-AssignmentAuditLogSchema.index(
+OmniAssignmentAuditLogSchema.index(
   { tenantId: 1, createdAt: -1 },
   { name: 'audit_log_timeline' },
 );
-AssignmentAuditLogSchema.index(
+OmniAssignmentAuditLogSchema.index(
   { tenantId: 1, assignedAgentId: 1, createdAt: -1 },
   { name: 'audit_by_agent' },
 );

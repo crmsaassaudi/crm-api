@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import {
-  AssignmentAuditLogSchemaClass,
-  AssignmentAuditLogDocument,
+  OmniAssignmentAuditLogSchemaClass,
+  OmniAssignmentAuditLogDocument,
 } from '../infrastructure/persistence/document/entities/assignment-audit-log.schema';
 
 export interface CreateAuditLogDto {
@@ -19,8 +19,8 @@ export interface CreateAuditLogDto {
 @Injectable()
 export class AssignmentAuditLogRepository {
   constructor(
-    @InjectModel(AssignmentAuditLogSchemaClass.name)
-    private readonly model: Model<AssignmentAuditLogDocument>,
+    @InjectModel(OmniAssignmentAuditLogSchemaClass.name)
+    private readonly model: Model<OmniAssignmentAuditLogDocument>,
   ) {}
 
   async create(dto: CreateAuditLogDto): Promise<void> {
@@ -33,7 +33,7 @@ export class AssignmentAuditLogRepository {
   async findByTenant(
     tenantId: string,
     limit = 50,
-  ): Promise<AssignmentAuditLogDocument[]> {
+  ): Promise<OmniAssignmentAuditLogDocument[]> {
     return this.model
       .find({ tenantId })
       .sort({ createdAt: -1 })
@@ -48,7 +48,7 @@ export class AssignmentAuditLogRepository {
     tenantId: string,
     agentId: string,
     limit = 50,
-  ): Promise<AssignmentAuditLogDocument[]> {
+  ): Promise<OmniAssignmentAuditLogDocument[]> {
     return this.model
       .find({ tenantId, assignedAgentId: agentId })
       .sort({ createdAt: -1 })

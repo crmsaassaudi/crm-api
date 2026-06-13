@@ -1191,6 +1191,10 @@ export class ConversationService {
           `Skipping shadow contact creation for sender ${payload.senderId}: ` +
             `tenant ${payload.tenantId} has no ownerId`,
         );
+        // Contact requires createdById/updatedById. Without a tenant owner we
+        // cannot satisfy that, so bail out instead of falling through to a
+        // guaranteed ContactSchemaClass validation error.
+        return null;
       }
 
       // ── Auto-merge check: does this sender match an existing contact? ──
