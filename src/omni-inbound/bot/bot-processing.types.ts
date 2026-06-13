@@ -12,7 +12,6 @@ export interface BotProcessingJobData {
 export interface BotReplyRequest {
   org: string;
   conversationId: string;
-  flowId: string;
   inboundMessageId: string;
   text: string;
   channel: ChannelType;

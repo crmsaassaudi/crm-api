@@ -650,7 +650,11 @@ export class ConversationService {
         lastMessageAt: payload.timestamp,
         previousConversationId,
         reopenCount,
-        bot: this.resolveInitialBotState(payload.metadata?.bot),
+        bot: await this.resolveInitialBotState(
+          payload.tenantId,
+          this.toSchemaChannelType(payload.channelType),
+          payload.channelAccount,
+        ),
       } as any);
 
       conversationId = conversation.id;
@@ -847,18 +851,73 @@ export class ConversationService {
     return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
   }
 
-  private resolveInitialBotState(
-    botConfig: Record<string, any> | undefined,
-  ): ConversationBotState {
+  /**
+   * Resolve initial bot state for a new conversation.
+   * Reads bot enabled flag from the channel's config.
+   * CRM only controls ON/OFF — crm-bot decides which flow to run.
+   */
+  private async resolveInitialBotState(
+    tenantId: string,
+    channelType: string,
+    channelAccount: string,
+  ): Promise<ConversationBotState> {
+    const botConfig = await this.getChannelBotConfig(
+      tenantId,
+      channelType,
+      channelAccount,
+    );
+
     return {
       enabled: Boolean(botConfig?.enabled),
       provider: botConfig?.provider ?? 'typebot',
-      flowId: botConfig?.flowId ?? botConfig?.publicId ?? null,
+      flowId: null, // resolved by crm-bot at runtime
       sessionId: null,
       status: 'active',
       lastError: null,
       lockedAt: null,
     };
+  }
+
+  /**
+   * Read bot enabled flag from channel config.
+   * CRM only stores enabled + provider. Flow selection is crm-bot's responsibility.
+   */
+  private async getChannelBotConfig(
+    tenantId: string,
+    channelType: string,
+    channelAccount: string,
+  ): Promise<{ enabled: boolean; provider: string } | undefined> {
+    try {
+      const channel = await this.channelsService.findAnyByAccount(
+        channelType,
+        channelAccount,
+      );
+
+      if (!channel?.config) return undefined;
+
+      // Validate tenant ownership (defense-in-depth)
+      if (channel.tenantId !== tenantId) {
+        this.logger.warn(
+          `Bot config tenant mismatch: channel ${channel.id} belongs to ${channel.tenantId}, not ${tenantId}`,
+        );
+        return undefined;
+      }
+
+      const config = channel.config;
+      if (!config.botEnabled) return undefined;
+
+      return {
+        enabled: Boolean(config.botEnabled),
+        provider: config.botProvider ?? 'typebot',
+      };
+    } catch (err) {
+      this.logger.debug(
+        `Channel bot config lookup failed for ${channelType}/${channelAccount}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return undefined;
+    }
   }
 
   private async enqueueBotProcessingIfNeeded(
@@ -869,7 +928,16 @@ export class ConversationService {
     if (payload.senderType !== 'customer') return;
     if (payload.messageType !== 'text') return;
 
+    // Check if the conversation has bot enabled before enqueuing
     try {
+      const conversation = await this.conversationRepo.findById(conversationId);
+      if (!conversation?.bot?.enabled) {
+        this.logger.debug(
+          `Bot not enabled for conversation ${conversationId} — skipping bot queue`,
+        );
+        return;
+      }
+
       await this.botQueueService.enqueueInboundMessage({
         tenantId: payload.tenantId,
         org: payload.tenantId,

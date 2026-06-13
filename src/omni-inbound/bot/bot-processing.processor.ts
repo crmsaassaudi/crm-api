@@ -98,15 +98,7 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
 
     // Audit trail: mark as bot-initiated execution
     this.cls.set('executionSource', 'B');
-    this.cls.set('sourceContext', { botId: bot.flowId || 'bot' });
-
-    if (!bot.flowId) {
-      await this.conversationRepo.updateBotState(data.conversationId, {
-        lastError: 'Bot flowId is missing',
-      });
-      this.logger.warn(`Bot flowId is missing for ${data.conversationId}`);
-      return;
-    }
+    this.cls.set('sourceContext', { botProvider: bot.provider || 'typebot' });
 
     try {
       await this.conversationRepo.updateBotState(data.conversationId, {
@@ -117,7 +109,6 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
       const response = await this.botApi.reply({
         org: data.org,
         conversationId: data.conversationId,
-        flowId: bot.flowId,
         sessionId: bot.sessionId,
         inboundMessageId: data.messageId,
         text: data.text,
