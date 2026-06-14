@@ -557,3 +557,51 @@ User giám sát Mongo: `mongodb_exporter` (roles `clusterMonitor@admin` + `read@
 6 rule (folder Infrastructure): High CPU/Memory (crit, >80/85%), Disk Low (warn >85%), Container High CPU/Memory (warn), Redis Memory High (crit >80%). Định tuyến theo `severity` → contact `crm-ops-email` → SMTP Gmail → `admin@crmsaudi.dev`. Sửa rule = sửa `alerting.yml` rồi recreate grafana (rule provisioned **read-only** trên UI).
 
 > ⚠️ **Lưu ý vận hành:** alert `container_*` chỉ phủ container **trên Node C** (cadvisor chạy ở Node C). Muốn theo dõi container crm-api (Node A) cần cài thêm cadvisor trên Node A.
+
+---
+
+## 12. crm-bot (Typebot fork) — deploy trên Node C
+
+> Dựng 2026-06-13. crm-bot là service chatbot multi-tenant (fork Typebot v3.16.1, monorepo Bun + Next.js).
+> Luồng: crm-api (Node A) nhận message omnichannel → BullMQ → `POST {CRM_BOT_URL}/api/bot/typebot/reply`
+> trên **viewer** crm-bot → trả `{messages, status}` → crm-api gửi reply về khách. Bot là worker thuần,
+> KHÔNG truy cập Mongo CRM, KHÔNG gọi Meta API. crm-api là orchestrator.
+
+### 12.0. Topology
+```
+Node A crm-api ──(VPC HTTP)──▶ 10.104.0.4:4203  viewer  /api/bot/typebot/reply
+                              10.104.0.4:4202  builder (UI tạo flow, SSO Keycloak)
+                              10.104.0.4:3002  workflows (Bun, export/onboarding RPC)
+Public:  https://bot.crmsaudi.dev → builder · https://chat.crmsaudi.dev → viewer  (nginx 443 + LE)
+Datastore (self-contained trên Node C, network crm_bot_net):
+  crm-bot-db (postgres:16) · crm-bot-redis (redis:7, requirepass) · crm-bot-minio (S3)
+```
+
+### 12.1. Source & build
+- Deploy dir: `/home/deploy/crm-bot` (rsync từ local `e:/CRM/crm-bot`, exclude node_modules/.next/.git/.nx/.tanstack/dist).
+- Compose: `docker-compose.prod.yml` (6 service) + `.env.prod` (từ `.env.prod.example`, **không commit**).
+- builder/viewer build từ Dockerfile gốc qua `ARG SCOPE` (+ `scripts/{scope}-entrypoint.sh`); builder entrypoint tự chạy `prisma migrate deploy`. workflows build từ `apps/workflows/Dockerfile` (Bun).
+- **Swap bắt buộc**: Node C chỉ 3.8GB RAM → thêm swapfile 4GB (`/swapfile`, trong `/etc/fstab`) trước khi build, nếu không build Next.js sẽ OOM. Build **tuần tự từng service** để giảm peak RAM.
+- Chạy: `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d`.
+
+### 12.2. Env (.env.prod) — điểm chính
+- `ENCRYPTION_SECRET` phải **đúng 32 ký tự**. `CRM_BOT_INTERNAL_SECRET` **phải khớp** giá trị trên Node A.
+- `NEXTAUTH_URL=https://bot.crmsaudi.dev`, `NEXT_PUBLIC_VIEWER_URL=https://chat.crmsaudi.dev` (khớp redirect URI Keycloak).
+- Keycloak: client `crm-bot`, `KEYCLOAK_ISSUER=https://auth.crmsaudi.dev/realms/crm-saas`, `CRM_BOT_SSO_LOCKDOWN=true`.
+- DB/Redis/S3 trỏ service nội bộ: `crm-bot-db:5432`, `crm-bot-redis:6379/0`, `crm-bot-minio:9000` (bucket `typebot`, prefix `/public` để public).
+
+### 12.3. UFW + nginx + TLS
+- UFW: `allow from 10.104.0.0/20 to any port 4202,4203,3002 proto tcp` (cho Node A + nội bộ). KHÔNG mở public trực tiếp — đi qua nginx.
+- nginx vhost (reuse pattern grafana.crmsaudi.dev): `bot.crmsaudi.dev`→`10.104.0.4:4202`, `chat.crmsaudi.dev`→`10.104.0.4:4203`. `certbot --nginx -d bot.crmsaudi.dev -d chat.crmsaudi.dev`.
+
+### 12.4. Đấu nối Node A (crm-api)
+- `/var/www/crm-api/.env.production`: thêm `CRM_BOT_URL=http://10.104.0.4:4203` + `CRM_BOT_INTERNAL_SECRET=<đồng bộ>`. Resolver: `crm-api/src/omni-inbound/bot/bot-api.service.ts` (`CRM_BOT_URL` → `BOT_SERVICE_URL` → fallback `localhost:4203`). Redeploy crm-api.
+
+> ⚠️ **Lưu ý vận hành:** crm-bot chạy **cùng Node C** với load generator + observability → tổng RAM rất chật (~3.8GB). Theo dõi `docker stats`; nếu load-test nặng cân nhắc tách bot sang node riêng để không nhiễu kết quả đo.
+
+### 12.5. Build gotchas (gặp khi deploy lần đầu 2026-06-13 — đã fix trong source)
+1. **nx out-of-sync**: `nx build` báo "workspace is out of sync" và **fail** ở chế độ non-interactive (Docker). Fix: thêm `RUN bunx nx sync` trước `nx build` trong `Dockerfile`.
+2. **Type error production build**: thay đổi multi-tenant làm `isWriteTypebotForbidden(typebot, user)` yêu cầu `user: Pick<User,"id"|"email">`. Production build chạy `tsc` (dev bỏ qua) → fail ở `handleDeleteResults.ts` và `generateUploadUrl.ts` (truyền user thiếu `email`). Đã fix 2 caller; 6 caller khác truyền `user` từ context orpc (đã có email).
+3. **CRLF entrypoint**: `scripts/{builder,viewer}-entrypoint.sh` nếu có CRLF (checkout/copy từ Windows) → container `exit 127` "`./entrypoint.sh: not found`" (shebang `/bin/bash\r`). Fix: `Dockerfile` strip CRLF (`sed -i 's/\r$//'`) trước `chmod +x`; `.gitattributes` ép `*.sh eol=lf`. workflows không dính (dùng `ENTRYPOINT ["bun",...]`).
+4. **workflows cần SMTP**: nodemailer layer của workflows **bắt buộc** `SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD/NEXT_PUBLIC_SMTP_FROM` (Config.string, không default) → thiếu sẽ crash `ConfigError SMTP_HOST`. Đã thêm vào `.env.prod` (reuse Gmail creds từ crm-test/.env, port 587, secure=false).
+5. **Build chậm + cache**: builder/viewer images ~6GB (release copy full node_modules). Build tuần tự trên Node C ~12'/app (có swap). **Sửa file trong build context bust cache `COPY . .` → rebuild full.** Để vá nhanh 1 file đã build (vd entrypoint) mà không rebuild: `docker build -t <image> -` từ FROM image cũ + `RUN sed/tr` (layer vài giây).
