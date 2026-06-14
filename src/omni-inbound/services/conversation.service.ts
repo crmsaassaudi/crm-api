@@ -941,6 +941,7 @@ export class ConversationService {
       await this.botQueueService.enqueueInboundMessage({
         tenantId: payload.tenantId,
         org: payload.tenantId,
+        channelId: payload.channelId,
         conversationId,
         messageId: inboundMessageId,
         text: payload.content,

@@ -75,6 +75,7 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
 
       const result = await this.botApi.dispatch({
         org: data.org,
+        channelId: data.channelId,
         conversationId: data.conversationId,
         sessionId: bot.sessionId,
         inboundMessageId: data.messageId,

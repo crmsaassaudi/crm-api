@@ -48,6 +48,7 @@ import { BotProcessingProcessor } from './bot/bot-processing.processor';
 import { BotApiService } from './bot/bot-api.service';
 import { BotQueueService } from './bot/bot-queue.service';
 import { BotCallbackController } from './bot/bot-callback.controller';
+import { InternalChannelsController } from './bot/internal-channels.controller';
 
 // Repositories
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -173,6 +174,7 @@ const workerProviders =
     OmniController,
     AgentStatusAuditController,
     BotCallbackController,
+    InternalChannelsController,
   ],
   providers: [
     // ── Pillar 1: Data Normalization ───────────────────────────────

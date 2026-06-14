@@ -3,6 +3,7 @@ import { ChannelType } from '../domain/omni-payload';
 export interface BotProcessingJobData {
   tenantId: string;
   org: string;
+  channelId: string;
   conversationId: string;
   messageId: string;
   text: string;
@@ -11,6 +12,8 @@ export interface BotProcessingJobData {
 
 export interface BotReplyRequest {
   org: string;
+  /** CRM Channel document _id — bot resolves flow per channel */
+  channelId: string;
   conversationId: string;
   inboundMessageId: string;
   text: string;
