@@ -8,6 +8,10 @@ export interface BotProcessingJobData {
   messageId: string;
   text: string;
   channel: ChannelType;
+  /** Button/interactive reply ID — for exact bot branch matching */
+  replyId?: string;
+  /** Original message type (text, image, video, etc.) */
+  messageType?: string;
 }
 
 export interface BotReplyRequest {
@@ -21,6 +25,10 @@ export interface BotReplyRequest {
   sessionId?: string | null;
   /** CRM-API callback URL for bot to POST results */
   callbackUrl: string;
+  /** Button reply ID — Typebot item.id for exact branch matching */
+  replyId?: string;
+  /** Original message type (text, image, video, etc.) */
+  messageType?: string;
 }
 
 /** Immediate response from bot — just acceptance */
@@ -37,8 +45,13 @@ export interface BotReplyButton {
 }
 
 export interface BotReplyMessage {
-  type: 'text';
-  text: string;
+  type: 'text' | 'image' | 'video' | 'audio' | 'file';
+  /** Text content (for type=text) or caption (for media types) */
+  text?: string;
+  /** Media URL (for image/video/audio/file types) */
+  url?: string;
+  /** MIME type of the media (e.g., "image/png", "video/mp4") */
+  mimeType?: string;
   buttons?: BotReplyButton[];
   raw?: unknown;
 }

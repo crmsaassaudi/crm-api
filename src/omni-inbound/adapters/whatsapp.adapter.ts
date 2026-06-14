@@ -98,13 +98,19 @@ export class WhatsAppAdapter implements ChannelAdapter {
   ): OmniPayload | null {
     // ── Template status webhook ─────────────────────────────────────
     if (rawPayload.event === 'message_template_status_update') {
-      this.logger.log(`Received template status update: ${rawPayload.message_template_name} -> ${rawPayload.current_status}`);
+      this.logger.log(
+        `Received template status update: ${rawPayload.message_template_name} -> ${rawPayload.current_status}`,
+      );
 
-      this.waTemplateRepo.updateByName(tenantId, rawPayload.message_template_name, {
-        status: rawPayload.current_status,
-      }).catch(err => {
-        this.logger.error(`Failed to update template status for ${rawPayload.message_template_name}: ${err.message}`);
-      });
+      this.waTemplateRepo
+        .updateByName(tenantId, rawPayload.message_template_name, {
+          status: rawPayload.current_status,
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Failed to update template status for ${rawPayload.message_template_name}: ${err.message}`,
+          );
+        });
 
       return null;
     }
@@ -122,13 +128,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     const msg = rawPayload.messages?.[0];
     if (!msg) {
-      this.logger.debug('WhatsApp webhook change value has no messages, skipping');
+      this.logger.debug(
+        'WhatsApp webhook change value has no messages, skipping',
+      );
       return null;
     }
 
     // ── Skip reaction events (emoji reactions on messages) ─────────
     if (msg.type === 'reaction') {
-      this.logger.debug(`WhatsApp reaction ${msg.reaction?.emoji} on ${msg.reaction?.message_id}, skipping`);
+      this.logger.debug(
+        `WhatsApp reaction ${msg.reaction?.emoji} on ${msg.reaction?.message_id}, skipping`,
+      );
       return null;
     }
 
@@ -157,6 +167,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
         // download media that requires authentication.
         accessToken: channelConfig?.credentials?.accessToken,
         bot: this.resolveBotConfig(channelConfig),
+        // Interactive button/list reply ID for exact bot branch matching
+        replyId:
+          msg.interactive?.button_reply?.id ??
+          msg.interactive?.list_reply?.id ??
+          undefined,
       },
       externalMessageId: msg.id,
       externalConversationId: `${msg.from}_${rawPayload.metadata?.phone_number_id}`,
@@ -235,7 +250,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     const phoneNumberId = channelConfig?.account;
     if (!phoneNumberId) {
-      throw new Error('WhatsApp adapter lacks phone_number_id (channel account)');
+      throw new Error(
+        'WhatsApp adapter lacks phone_number_id (channel account)',
+      );
     }
 
     const payload = {
@@ -298,7 +315,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     const phoneNumberId = channelConfig?.account;
     if (!phoneNumberId) {
-      return { success: false, error: 'WhatsApp adapter lacks phone_number_id' };
+      return {
+        success: false,
+        error: 'WhatsApp adapter lacks phone_number_id',
+      };
     }
 
     if (!media.buffer) {
@@ -320,7 +340,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
       const mediaPayload: Record<string, any> = { id: mediaId };
 
       // Add caption for image/video (documents use filename instead)
-      if (media.caption && (waMediaType === 'image' || waMediaType === 'video')) {
+      if (
+        media.caption &&
+        (waMediaType === 'image' || waMediaType === 'video')
+      ) {
         mediaPayload.caption = media.caption;
       }
       // Documents should include the filename
@@ -409,7 +432,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     const mediaId = response.data?.id;
     if (!mediaId) {
-      throw new Error('WhatsApp media upload succeeded but no media ID returned');
+      throw new Error(
+        'WhatsApp media upload succeeded but no media ID returned',
+      );
     }
 
     this.logger.log(
@@ -481,12 +506,30 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   private extractMediaId(msg: any): string | null {
-    if (msg.type === 'text' || msg.type === 'location' || msg.type === 'button' || msg.type === 'interactive' || msg.type === 'contacts' || msg.type === 'order' || msg.type === 'reaction') return null;
+    if (
+      msg.type === 'text' ||
+      msg.type === 'location' ||
+      msg.type === 'button' ||
+      msg.type === 'interactive' ||
+      msg.type === 'contacts' ||
+      msg.type === 'order' ||
+      msg.type === 'reaction'
+    )
+      return null;
     return msg[msg.type]?.id ?? null;
   }
 
   private extractMimeType(msg: any): string | null {
-    if (msg.type === 'text' || msg.type === 'location' || msg.type === 'button' || msg.type === 'interactive' || msg.type === 'contacts' || msg.type === 'order' || msg.type === 'reaction') return null;
+    if (
+      msg.type === 'text' ||
+      msg.type === 'location' ||
+      msg.type === 'button' ||
+      msg.type === 'interactive' ||
+      msg.type === 'contacts' ||
+      msg.type === 'order' ||
+      msg.type === 'reaction'
+    )
+      return null;
     return msg[msg.type]?.mime_type ?? null;
   }
 
@@ -525,7 +568,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     const phoneNumberId = channelConfig?.account;
     if (!phoneNumberId) {
-      throw new Error('WhatsApp adapter lacks phone_number_id (channel account)');
+      throw new Error(
+        'WhatsApp adapter lacks phone_number_id (channel account)',
+      );
     }
 
     const payload = {
@@ -567,6 +612,84 @@ export class WhatsAppAdapter implements ChannelAdapter {
       );
       throw new Error(
         `Failed to send WhatsApp template [${errorCategory}]: ${JSON.stringify(errorData)}`,
+      );
+    }
+  }
+
+  /**
+   * Send an interactive message with reply buttons via WhatsApp Cloud API.
+   *
+   * WhatsApp supports max 3 reply buttons per interactive message.
+   * Each button title is limited to 20 characters.
+   *
+   * @see https://developers.facebook.com/docs/whatsapp/cloud-api/messages/interactive-reply-buttons-messages
+   */
+  async sendInteractive(
+    recipientId: string,
+    body: string,
+    buttons: Array<{ id: string; title: string }>,
+    channelConfig: any,
+  ): Promise<any> {
+    const accessToken = channelConfig?.credentials?.accessToken;
+    if (!accessToken) {
+      throw new Error(
+        'WhatsApp adapter lacks access token to send interactive',
+      );
+    }
+
+    const phoneNumberId = channelConfig?.account;
+    if (!phoneNumberId) {
+      throw new Error('WhatsApp adapter lacks phone_number_id for interactive');
+    }
+
+    // WhatsApp allows max 3 reply buttons
+    const replyButtons = buttons.slice(0, 3).map((btn) => ({
+      type: 'reply' as const,
+      reply: {
+        id: btn.id.substring(0, 256),
+        title: btn.title.substring(0, 20),
+      },
+    }));
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: recipientId,
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        body: { text: body.substring(0, 1024) },
+        action: { buttons: replyButtons },
+      },
+    };
+
+    try {
+      const response = await axios.post(
+        `https://graph.facebook.com/${WA_GRAPH_VERSION}/${phoneNumberId}/messages`,
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 10_000,
+        },
+      );
+
+      const waMessageId = response.data?.messages?.[0]?.id;
+      this.logger.log(
+        `WhatsApp interactive sent to ${recipientId}: messageId=${waMessageId}, buttons=${replyButtons.length}`,
+      );
+      return { message_id: waMessageId };
+    } catch (err: any) {
+      const errorData = sanitizeWaError(err?.response?.data ?? err.message);
+      const errorCode = err?.response?.data?.error?.code;
+      const errorCategory = classifyWaError(errorCode);
+      this.logger.error(
+        `Failed to send WhatsApp interactive [${errorCategory}]: ${JSON.stringify(errorData)}`,
+      );
+      throw new Error(
+        `Failed to send WhatsApp interactive [${errorCategory}]: ${JSON.stringify(errorData)}`,
       );
     }
   }

@@ -14,7 +14,10 @@ export class BotQueueService {
   ) {}
 
   async enqueueInboundMessage(data: BotProcessingJobData): Promise<void> {
-    if (!data.text?.trim()) {
+    // Media messages may have empty text (caption) — allow them through
+    const hasContent =
+      data.text?.trim() || (data.messageType && data.messageType !== 'text');
+    if (!hasContent) {
       this.logger.debug(
         `Skipping bot queue for empty inbound message ${data.messageId}`,
       );

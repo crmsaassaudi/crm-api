@@ -2,10 +2,7 @@ import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import {
-  BaseTenantConsumer,
-  TenantJobData,
-} from '../../queue/base-tenant.consumer';
+import { BaseTenantConsumer } from '../../queue/base-tenant.consumer';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { BOT_PROCESSING_QUEUE } from '../queue/bot-processing-queue.constants';
 import { BotApiService } from './bot-api.service';
@@ -82,6 +79,8 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
         text: data.text,
         channel: data.channel,
         callbackUrl,
+        replyId: data.replyId,
+        messageType: data.messageType,
       });
 
       if (result.duplicate) {

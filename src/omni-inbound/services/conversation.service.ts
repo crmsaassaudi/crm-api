@@ -926,7 +926,22 @@ export class ConversationService {
     inboundMessageId: string,
   ): Promise<void> {
     if (payload.senderType !== 'customer') return;
-    if (payload.messageType !== 'text') return;
+
+    // Bot-processable message types:
+    // - text: normal text input
+    // - interactive button/list replies: customer tapped a bot button
+    // - media: image/video/audio/file with optional caption
+    const botProcessableTypes = new Set([
+      'text',
+      'image',
+      'video',
+      'audio',
+      'file',
+      'document',
+      'sticker',
+    ]);
+    const isInteractive = !!payload.metadata?.replyId;
+    if (!botProcessableTypes.has(payload.messageType) && !isInteractive) return;
 
     // Check if the conversation has bot enabled before enqueuing
     try {
@@ -938,14 +953,22 @@ export class ConversationService {
         return;
       }
 
+      // For media messages without text, provide a fallback description
+      let text = payload.content;
+      if (!text?.trim() && payload.messageType !== 'text') {
+        text = `[${payload.messageType}]`;
+      }
+
       await this.botQueueService.enqueueInboundMessage({
         tenantId: payload.tenantId,
         org: payload.tenantId,
         channelId: payload.channelId,
         conversationId,
         messageId: inboundMessageId,
-        text: payload.content,
+        text: text || '',
         channel: payload.channelType,
+        replyId: payload.metadata?.replyId,
+        messageType: payload.messageType,
       });
     } catch (error) {
       this.logger.error(

@@ -505,7 +505,9 @@ export class OutboundService {
     try {
       const adapter = this.adapters.get('whatsapp');
       if (!adapter || !adapter.sendTemplate) {
-        throw new Error('WhatsApp adapter or sendTemplate method not available');
+        throw new Error(
+          'WhatsApp adapter or sendTemplate method not available',
+        );
       }
 
       const adapterResponse = await adapter.sendTemplate(
@@ -645,7 +647,8 @@ export class OutboundService {
       const response = await fetch(downloadUrl);
       if (!response.ok) throw new Error('Failed to download file from S3');
       mediaBuffer = Buffer.from(await response.arrayBuffer());
-      media.mimeType = media.mimeType || file.mimeType || 'application/octet-stream';
+      media.mimeType =
+        media.mimeType || file.mimeType || 'application/octet-stream';
       media.fileName = media.fileName || file.fileName || 'file';
       media.size = mediaBuffer.length;
     } else if (media.buffer) {
@@ -765,7 +768,8 @@ export class OutboundService {
             )
           : '';
         const fallbackContent =
-          caption || `📎 ${media.fileName}${downloadUrl ? '\n' + downloadUrl : ''}`;
+          caption ||
+          `📎 ${media.fileName}${downloadUrl ? '\n' + downloadUrl : ''}`;
         const adapterResponse = await adapter.send(
           conversation.customer.externalId,
           fallbackContent,
@@ -773,8 +777,7 @@ export class OutboundService {
           { credentials: channel.credentials, account: channel.account },
         );
         externalId =
-          (adapterResponse as any)?.message_id ||
-          (adapterResponse as any)?.id;
+          (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
       }
 
       await this.messageRepo.updateStatus(message.id, 'sent', externalId);
@@ -952,12 +955,29 @@ export class OutboundService {
         conversation.channelType.toLowerCase() as ChannelType,
       );
       if (adapter) {
-        adapterResponse = await adapter.send(
-          conversation.customer.externalId,
-          content,
-          messageType,
-          { credentials: channel.credentials, account: channel.account },
-        );
+        // If message has buttons and adapter supports interactive, use interactive
+        if (buttons?.length && adapter.sendInteractive) {
+          adapterResponse = await adapter.sendInteractive(
+            conversation.customer.externalId,
+            content,
+            buttons.map((b) => ({
+              id: b.id || b.value || b.label,
+              title: b.label,
+            })),
+            { credentials: channel.credentials, account: channel.account },
+          );
+        } else {
+          // Plain text (or adapter doesn't support interactive)
+          const sendContent = buttons?.length
+            ? `${content}\n\n${buttons.map((b, i) => `${i + 1}. ${b.label}`).join('\n')}`
+            : content;
+          adapterResponse = await adapter.send(
+            conversation.customer.externalId,
+            sendContent,
+            messageType,
+            { credentials: channel.credentials, account: channel.account },
+          );
+        }
       }
 
       const externalId =
@@ -997,6 +1017,208 @@ export class OutboundService {
         error instanceof Error ? error.message : String(error);
       this.logger.error(
         `Failed to send bot message via provider: ${errorMessage}`,
+      );
+      await this.messageRepo.updateStatus(message.id, 'failed');
+      throw error;
+    }
+  }
+
+  /**
+   * Send a bot media message (image, video, audio, file) to the customer.
+   *
+   * Downloads media from the bot-provided URL and forwards it via the
+   * channel adapter's sendMedia method. Falls back to text link if
+   * the adapter doesn't support media.
+   */
+  async sendBotMedia(params: {
+    tenantId: string;
+    conversationId: string;
+    mediaUrl: string;
+    mediaType: string;
+    mimeType?: string;
+    caption?: string;
+    idempotencyKey?: string;
+  }): Promise<any> {
+    const {
+      tenantId,
+      conversationId,
+      mediaUrl,
+      mimeType: rawMimeType,
+      caption = '',
+      idempotencyKey,
+    } = params;
+
+    if (idempotencyKey) {
+      const existing = await this.messageRepo.findByIdempotencyKey(
+        tenantId,
+        idempotencyKey,
+      );
+      if (existing && existing.status !== 'failed') {
+        return { ok: true, messageId: existing.id, reused: true };
+      }
+    }
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new Error(`Conversation ${conversationId} not found`);
+    }
+
+    let channel = await this.channelRepo.findByIdWithCredentials(
+      tenantId,
+      conversation.channelId.toString(),
+    );
+    if (!channel && (conversation as any).channelAccount) {
+      channel = await this.channelRepo.findByAccountWithCredentials(
+        tenantId,
+        conversation.channelType,
+        (conversation as any).channelAccount,
+      );
+    }
+    if (!channel) {
+      throw new Error(
+        `Channel for conversation ${conversationId} not found or disconnected`,
+      );
+    }
+
+    this.enforceReplyWindow(conversation);
+
+    // Download media from bot URL
+    let mediaBuffer: Buffer;
+    let mimeType = rawMimeType || 'application/octet-stream';
+    let fileName = 'bot-media';
+
+    try {
+      const response = await fetch(mediaUrl, {
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to download: ${response.status}`);
+      }
+      mediaBuffer = Buffer.from(await response.arrayBuffer());
+
+      // Infer mime type from response if not provided
+      const contentType = response.headers.get('content-type');
+      if (contentType && mimeType === 'application/octet-stream') {
+        mimeType = contentType.split(';')[0].trim();
+      }
+
+      // Extract filename from URL
+      try {
+        const pathname = new URL(mediaUrl).pathname;
+        const basename = pathname.split('/').pop();
+        if (basename && basename.includes('.')) fileName = basename;
+      } catch {
+        /* ignore */
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Bot media download failed for ${mediaUrl}: ${error instanceof Error ? error.message : error}. Falling back to link.`,
+      );
+      // Fallback: send URL as text
+      return this.sendBotMessage({
+        tenantId,
+        conversationId,
+        content: caption ? `${caption}\n${mediaUrl}` : mediaUrl,
+        messageType: 'text',
+        idempotencyKey,
+      });
+    }
+
+    const resolvedMessageType = this.getMediaMessageType(mimeType);
+
+    // Persist message
+    const message = await this.messageRepo.create({
+      tenantId,
+      conversationId,
+      senderId: 'bot:typebot',
+      senderName: 'Bot',
+      senderType: 'bot',
+      direction: 'outbound',
+      source: 'bot',
+      messageType: resolvedMessageType,
+      content: caption || `[${resolvedMessageType}] ${fileName}`,
+      status: 'sending',
+      idempotencyKey,
+      metadata: {
+        sender: {
+          id: 'bot:typebot',
+          name: 'Bot',
+          avatarUrl: null,
+          type: 'bot',
+        },
+        source: 'bot',
+        provider: 'typebot',
+        media: { fileName, mimeType, size: mediaBuffer.length },
+      },
+    });
+
+    await this.conversationRepo.updateLastMessage(
+      conversationId,
+      caption || `📎 ${fileName}`,
+      new Date(),
+      'bot',
+    );
+
+    try {
+      const channelKey = conversation.channelType.toLowerCase() as ChannelType;
+      const adapter = this.adapters.get(channelKey);
+      let externalId: string | undefined;
+
+      if (adapter?.sendMedia) {
+        const result = await adapter.sendMedia(
+          conversation.customer.externalId,
+          {
+            buffer: mediaBuffer,
+            mimeType,
+            fileName,
+            size: mediaBuffer.length,
+            caption,
+          },
+          { credentials: channel.credentials, account: channel.account },
+        );
+        externalId = result.externalMessageId;
+        if (!result.success) {
+          throw new Error(result.error || 'Adapter sendMedia failed');
+        }
+      } else if (adapter) {
+        // Fallback: send as text with media URL
+        const fallbackContent = caption
+          ? `${caption}\n${mediaUrl}`
+          : `📎 ${fileName}\n${mediaUrl}`;
+        const resp = await adapter.send(
+          conversation.customer.externalId,
+          fallbackContent,
+          'text',
+          { credentials: channel.credentials, account: channel.account },
+        );
+        externalId = resp?.message_id || resp?.id;
+      }
+
+      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
+
+      this.eventEmitter.emit('omni.message.sent', {
+        tenantId,
+        conversationId,
+        senderId: 'bot:typebot',
+        senderName: 'Bot',
+        senderAvatarUrl: null,
+        senderType: 'bot',
+        direction: 'outbound',
+        messageType: resolvedMessageType,
+        content: caption || `[${resolvedMessageType}] ${fileName}`,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        timestamp: new Date().toISOString(),
+        source: 'bot',
+        transport: 'http',
+      });
+
+      return { ok: true, messageId: message.id, status: 'sent' };
+    } catch (error) {
+      this.logger.error(
+        `Failed to send bot media: ${error instanceof Error ? error.message : error}`,
       );
       await this.messageRepo.updateStatus(message.id, 'failed');
       throw error;

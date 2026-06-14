@@ -99,6 +99,23 @@ export interface ChannelAdapter {
     components: any[],
     channelConfig: any,
   ): Promise<any>;
+
+  /**
+   * Send an interactive message with buttons or list options.
+   * Optional — only supported by WhatsApp (interactive messages) and
+   * Facebook Messenger (quick replies).
+   *
+   * @param recipientId    The provider's user ID
+   * @param body           Message body text
+   * @param buttons        Array of button options with id and title
+   * @param channelConfig  Credentials/config for this specific channel
+   */
+  sendInteractive?(
+    recipientId: string,
+    body: string,
+    buttons: Array<{ id: string; title: string }>,
+    channelConfig: any,
+  ): Promise<any>;
 }
 
 /** DI token for the adapter map */

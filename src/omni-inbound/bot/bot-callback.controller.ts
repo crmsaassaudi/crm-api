@@ -54,8 +54,7 @@ export class BotCallbackController {
     // Wrap in tenant context — Mongoose tenant-filter plugin needs activeTenantId in CLS
     return runWithTenantContext(this.cls, org, async () => {
       // 1. Validate conversation exists and belongs to tenant
-      const conversation =
-        await this.conversationRepo.findById(conversationId);
+      const conversation = await this.conversationRepo.findById(conversationId);
       if (!conversation) {
         this.logger.warn(`Callback: conversation ${conversationId} not found`);
         return { ok: true, ignored: true };
@@ -65,7 +64,10 @@ export class BotCallbackController {
       }
 
       // 2. Update bot state (sessionId, status)
-      if (payload.sessionId && payload.sessionId !== conversation.bot?.sessionId) {
+      if (
+        payload.sessionId &&
+        payload.sessionId !== conversation.bot?.sessionId
+      ) {
         await this.conversationRepo.updateBotState(conversationId, {
           sessionId: payload.sessionId,
           status: payload.status ?? 'active',
@@ -104,10 +106,9 @@ export class BotCallbackController {
   }
 
   private validateInternalSecret(secret: string): void {
-    const expected = this.configService.get<string>(
-      'CRM_BOT_INTERNAL_SECRET',
-      { infer: true },
-    );
+    const expected = this.configService.get<string>('CRM_BOT_INTERNAL_SECRET', {
+      infer: true,
+    });
     if (!expected) {
       this.logger.warn(
         'CRM_BOT_INTERNAL_SECRET not configured — skipping validation',
@@ -126,17 +127,59 @@ export class BotCallbackController {
     message: BotReplyMessage,
     index: number,
   ): Promise<void> {
-    const content = message.text?.trim();
-    if (!content) return;
+    const idempotencyKey = `bot:${inboundMessageId}:${index}`;
 
-    await this.outboundService.sendBotMessage({
-      tenantId,
-      conversationId,
-      content,
-      messageType: 'text',
-      buttons: message.buttons,
-      idempotencyKey: `bot:${inboundMessageId}:${index}`,
-    });
+    switch (message.type) {
+      case 'text': {
+        // Text message — may include interactive buttons.
+        //
+        // Typebot attaches choice-input buttons to the LAST text bubble,
+        // so buttons always arrive on a type="text" message.
+        // outbound.sendBotMessage() detects buttons and auto-routes:
+        //   buttons present + adapter.sendInteractive → WhatsApp interactive buttons
+        //   buttons present + no sendInteractive      → numbered text fallback
+        //   no buttons                                → plain text
+        const content = message.text?.trim();
+        if (!content) return;
+
+        await this.outboundService.sendBotMessage({
+          tenantId,
+          conversationId,
+          content,
+          messageType: 'text',
+          buttons: message.buttons,
+          idempotencyKey,
+        });
+        break;
+      }
+
+      case 'image':
+      case 'video':
+      case 'audio':
+      case 'file': {
+        // Media message — download from bot URL → upload via channel adapter
+        if (!message.url) {
+          this.logger.warn(`Bot ${message.type} message has no URL — skipping`);
+          return;
+        }
+
+        await this.outboundService.sendBotMedia({
+          tenantId,
+          conversationId,
+          mediaUrl: message.url,
+          mediaType: message.type,
+          mimeType: message.mimeType,
+          caption: message.text?.trim(),
+          idempotencyKey,
+        });
+        break;
+      }
+
+      default:
+        this.logger.warn(
+          `Unknown bot message type="${message.type}" — skipping`,
+        );
+    }
   }
 
   private async handleHandoff(

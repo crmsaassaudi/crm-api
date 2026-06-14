@@ -124,8 +124,11 @@ export class FacebookAdapter implements ChannelAdapter {
     const pageId = isEcho ? messaging.sender.id : messaging.recipient.id;
     const consumerId = isEcho ? messaging.recipient.id : messaging.sender.id;
 
+    // For quick replies, use the quick reply title as content
+    const quickReplyPayload = messaging.message?.quick_reply?.payload;
     const messageType = this.resolveMessageType(messaging.message);
     const mediaUrl = this.extractMediaUrl(messaging.message);
+    const content = messaging.message?.text ?? '';
 
     return {
       tenantId,
@@ -135,7 +138,7 @@ export class FacebookAdapter implements ChannelAdapter {
       senderId: messaging.sender.id,
       senderType: isEcho ? 'agent' : 'customer',
       messageType,
-      content: messaging.message?.text ?? '',
+      content,
       mediaUrl: mediaUrl ?? undefined,
       metadata: {
         mid: messaging.message?.mid,
@@ -144,6 +147,8 @@ export class FacebookAdapter implements ChannelAdapter {
         isEcho,
         accessToken: channelConfig?.credentials?.accessToken,
         bot: this.resolveBotConfig(channelConfig),
+        // Quick reply payload for exact bot branch matching
+        replyId: quickReplyPayload ?? undefined,
       },
       externalMessageId: messaging.message?.mid ?? '',
       externalConversationId: `${consumerId}_${pageId}`,

@@ -1,5 +1,6 @@
 # crm-api — Core Backend API
 
+> **Last updated:** 2026-06-14  
 > **Stack:** NestJS 10 · MongoDB 7 (Mongoose) · Redis 7 (ioredis) · Keycloak 26 · BullMQ · Socket.IO  
 > **Runtime:** Node.js 20+  
 > **Port:** 3000 (default)
