@@ -10,6 +10,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Unprotected } from 'nest-keycloak-connect';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ClsService } from 'nestjs-cls';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
 import { OutboundService } from '../../omni-outbound/outbound.service';
@@ -28,6 +30,7 @@ export class BotCallbackController {
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly cls: ClsService,
     private readonly conversationRepo: ConversationRepository,
     private readonly messageRepo: MessageRepository,
     private readonly outboundService: OutboundService,
@@ -48,53 +51,56 @@ export class BotCallbackController {
       `Bot callback received for conversation ${conversationId}, message ${payload.inboundMessageId}`,
     );
 
-    // 1. Validate conversation exists and belongs to tenant
-    const conversation =
-      await this.conversationRepo.findById(conversationId);
-    if (!conversation) {
-      this.logger.warn(`Callback: conversation ${conversationId} not found`);
-      return { ok: true, ignored: true };
-    }
-    if (conversation.tenantId !== org) {
-      throw new ForbiddenException('Tenant mismatch');
-    }
+    // Wrap in tenant context — Mongoose tenant-filter plugin needs activeTenantId in CLS
+    return runWithTenantContext(this.cls, org, async () => {
+      // 1. Validate conversation exists and belongs to tenant
+      const conversation =
+        await this.conversationRepo.findById(conversationId);
+      if (!conversation) {
+        this.logger.warn(`Callback: conversation ${conversationId} not found`);
+        return { ok: true, ignored: true };
+      }
+      if (conversation.tenantId !== org) {
+        throw new ForbiddenException('Tenant mismatch');
+      }
 
-    // 2. Update bot state (sessionId, status)
-    if (payload.sessionId && payload.sessionId !== conversation.bot?.sessionId) {
-      await this.conversationRepo.updateBotState(conversationId, {
-        sessionId: payload.sessionId,
-        status: payload.status ?? 'active',
-        lastError: null,
-      });
-    } else if (payload.status) {
-      await this.conversationRepo.updateBotState(conversationId, {
-        status: payload.status,
-        lastError: null,
-      });
-    }
+      // 2. Update bot state (sessionId, status)
+      if (payload.sessionId && payload.sessionId !== conversation.bot?.sessionId) {
+        await this.conversationRepo.updateBotState(conversationId, {
+          sessionId: payload.sessionId,
+          status: payload.status ?? 'active',
+          lastError: null,
+        });
+      } else if (payload.status) {
+        await this.conversationRepo.updateBotState(conversationId, {
+          status: payload.status,
+          lastError: null,
+        });
+      }
 
-    // 3. Send bot messages to customer
-    for (const [index, message] of (payload.messages ?? []).entries()) {
-      await this.sendBotMessage(
-        org,
-        conversationId,
-        payload.inboundMessageId,
-        message,
-        index,
-      );
-    }
+      // 3. Send bot messages to customer
+      for (const [index, message] of (payload.messages ?? []).entries()) {
+        await this.sendBotMessage(
+          org,
+          conversationId,
+          payload.inboundMessageId,
+          message,
+          index,
+        );
+      }
 
-    // 4. Handle handoff / ended
-    if (payload.handoff || payload.status === 'handoff') {
-      await this.handleHandoff(org, conversationId);
-    } else if (payload.status === 'ended') {
-      await this.conversationRepo.updateBotState(conversationId, {
-        enabled: false,
-        status: 'ended',
-      });
-    }
+      // 4. Handle handoff / ended
+      if (payload.handoff || payload.status === 'handoff') {
+        await this.handleHandoff(org, conversationId);
+      } else if (payload.status === 'ended') {
+        await this.conversationRepo.updateBotState(conversationId, {
+          enabled: false,
+          status: 'ended',
+        });
+      }
 
-    return { ok: true };
+      return { ok: true };
+    });
   }
 
   private validateInternalSecret(secret: string): void {
