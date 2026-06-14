@@ -36,8 +36,10 @@ export class BotApiService {
     const raw =
       this.configService.get<string>('CRM_API_PUBLIC_URL', { infer: true }) ||
       this.configService.get<string>('API_BASE_URL', { infer: true }) ||
-      'http://localhost:3002';
-    return `${raw.replace(/\/+$/, '')}/v1/bot-callback/reply`;
+      'http://localhost:3000';
+    const apiPrefix =
+      this.configService.get<string>('API_PREFIX', { infer: true }) || 'api';
+    return `${raw.replace(/\/+$/, '')}/${apiPrefix}/v1/bot-callback/reply`;
   }
 
   private resolveBotBaseUrl(): string {
