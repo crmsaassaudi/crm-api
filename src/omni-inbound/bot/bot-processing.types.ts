@@ -16,6 +16,15 @@ export interface BotReplyRequest {
   text: string;
   channel: ChannelType;
   sessionId?: string | null;
+  /** CRM-API callback URL for bot to POST results */
+  callbackUrl: string;
+}
+
+/** Immediate response from bot — just acceptance */
+export interface BotAcceptResponse {
+  accepted: boolean;
+  duplicate?: boolean;
+  error?: string;
 }
 
 export interface BotReplyButton {
@@ -31,11 +40,13 @@ export interface BotReplyMessage {
   raw?: unknown;
 }
 
-export interface BotReplyResponse {
-  ok?: boolean;
-  duplicate?: boolean;
+/** Callback payload received from bot after async processing */
+export interface BotCallbackPayload {
+  org: string;
+  conversationId: string;
+  inboundMessageId: string;
   sessionId?: string;
-  status?: 'active' | 'handoff' | 'ended';
-  handoff?: boolean;
-  messages?: BotReplyMessage[];
+  status: 'active' | 'handoff' | 'ended';
+  handoff: boolean;
+  messages: BotReplyMessage[];
 }

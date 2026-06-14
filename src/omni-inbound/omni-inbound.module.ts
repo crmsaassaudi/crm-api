@@ -46,8 +46,8 @@ import { StickyRetryProcessor } from './queue/sticky-retry.processor';
 import { AutoResolveProcessor } from './queue/auto-resolve.processor';
 import { BotProcessingProcessor } from './bot/bot-processing.processor';
 import { BotApiService } from './bot/bot-api.service';
-import { BotConversationLockService } from './bot/bot-conversation-lock.service';
 import { BotQueueService } from './bot/bot-queue.service';
+import { BotCallbackController } from './bot/bot-callback.controller';
 
 // Repositories
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -172,6 +172,7 @@ const workerProviders =
     MediaProxyController,
     OmniController,
     AgentStatusAuditController,
+    BotCallbackController,
   ],
   providers: [
     // ── Pillar 1: Data Normalization ───────────────────────────────
@@ -211,7 +212,6 @@ const workerProviders =
     ...workerProviders,
     BotQueueService,
     BotApiService,
-    BotConversationLockService,
 
     // ── Pillar 5: Persistence ─────────────────────────────────────
     ConversationRepository,

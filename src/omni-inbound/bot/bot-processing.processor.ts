@@ -1,28 +1,25 @@
 import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import {
   BaseTenantConsumer,
   TenantJobData,
 } from '../../queue/base-tenant.consumer';
-import { OutboundService } from '../../omni-outbound/outbound.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
-import { MessageRepository } from '../repositories/message.repository';
 import { BOT_PROCESSING_QUEUE } from '../queue/bot-processing-queue.constants';
 import { BotApiService } from './bot-api.service';
-import { BotConversationLockService } from './bot-conversation-lock.service';
-import { BotProcessingJobData, BotReplyMessage } from './bot-processing.types';
+import { BotProcessingJobData } from './bot-processing.types';
 
-const BOT_LOCK_TTL_MS = 10_000;
-
-class BotConversationLockBusyError extends Error {
-  constructor(conversationId: string) {
-    super(`Bot conversation ${conversationId} is locked by another worker`);
-  }
-}
-
+/**
+ * BullMQ processor — fire-and-forget to crm-bot.
+ *
+ * Flow:
+ * 1. Pick job from queue
+ * 2. Validate conversation bot state
+ * 3. Dispatch to crm-bot (returns 200 immediately)
+ * 4. Done — bot will callback to /v1/bot-callback/reply async
+ */
 @Processor(BOT_PROCESSING_QUEUE)
 export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobData> {
   protected readonly logger = new Logger(BotProcessingProcessor.name);
@@ -31,44 +28,16 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
   constructor(
     cls: ClsService,
     private readonly conversationRepo: ConversationRepository,
-    private readonly messageRepo: MessageRepository,
     private readonly botApi: BotApiService,
-    private readonly botLock: BotConversationLockService,
-    private readonly outboundService: OutboundService,
-    private readonly eventEmitter: EventEmitter2,
   ) {
     super();
     this.cls = cls;
   }
 
   protected async handle(job: Job<BotProcessingJobData>): Promise<void> {
-    const { conversationId } = job.data;
-    const lockKey = `lock:bot_conversation:${conversationId}`;
-    const lockToken = await this.botLock.tryAcquire(lockKey, BOT_LOCK_TTL_MS);
+    const data = job.data;
 
-    if (!lockToken) {
-      throw new BotConversationLockBusyError(conversationId);
-    }
-
-    let lockedAtTracked = false;
-    try {
-      await this.handleBotReply(job.data, () => {
-        lockedAtTracked = true;
-      });
-    } finally {
-      if (lockedAtTracked) {
-        await this.conversationRepo.updateBotState(conversationId, {
-          lockedAt: null,
-        });
-      }
-      await this.botLock.release(lockKey, lockToken);
-    }
-  }
-
-  private async handleBotReply(
-    data: BotProcessingJobData,
-    trackLockedAt: () => void,
-  ): Promise<void> {
+    // 1. Validate conversation state
     const conversation = await this.conversationRepo.findById(
       data.conversationId,
     );
@@ -96,54 +65,34 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
       return;
     }
 
-    // Audit trail: mark as bot-initiated execution
+    // 2. Audit trail
     this.cls.set('executionSource', 'B');
     this.cls.set('sourceContext', { botProvider: bot.provider || 'typebot' });
 
+    // 3. Fire-and-forget to crm-bot
     try {
-      await this.conversationRepo.updateBotState(data.conversationId, {
-        lockedAt: new Date(),
-      });
-      trackLockedAt();
+      const callbackUrl = this.botApi.resolveCallbackUrl();
 
-      const response = await this.botApi.reply({
+      const result = await this.botApi.dispatch({
         org: data.org,
         conversationId: data.conversationId,
         sessionId: bot.sessionId,
         inboundMessageId: data.messageId,
         text: data.text,
         channel: data.channel,
+        callbackUrl,
       });
 
-      if (response.sessionId && response.sessionId !== bot.sessionId) {
-        await this.conversationRepo.updateBotState(data.conversationId, {
-          sessionId: response.sessionId,
-          status: response.status ?? 'active',
-          lastError: null,
-        });
-      } else if (response.status) {
-        await this.conversationRepo.updateBotState(data.conversationId, {
-          status: response.status,
-          lastError: null,
-        });
-      } else {
-        await this.conversationRepo.updateBotState(data.conversationId, {
-          lastError: null,
-        });
+      if (result.duplicate) {
+        this.logger.debug(
+          `Bot reported duplicate for message ${data.messageId} — skipping`,
+        );
+        return;
       }
 
-      for (const [index, message] of (response.messages ?? []).entries()) {
-        await this.sendBotMessage(data, message, index);
-      }
-
-      if (response.handoff || response.status === 'handoff') {
-        await this.handleHandoff(data);
-      } else if (response.status === 'ended') {
-        await this.conversationRepo.updateBotState(data.conversationId, {
-          enabled: false,
-          status: 'ended',
-        });
-      }
+      this.logger.debug(
+        `Bot accepted request for conversation ${data.conversationId}`,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.conversationRepo.updateBotState(data.conversationId, {
@@ -151,68 +100,5 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
       });
       throw error;
     }
-  }
-
-  private async sendBotMessage(
-    data: BotProcessingJobData,
-    message: BotReplyMessage,
-    index: number,
-  ): Promise<void> {
-    const content = message.text?.trim();
-    if (!content) return;
-
-    await this.outboundService.sendBotMessage({
-      tenantId: data.tenantId,
-      conversationId: data.conversationId,
-      content,
-      messageType: 'text',
-      buttons: message.buttons,
-      idempotencyKey: `bot:${data.messageId}:${index}`,
-    });
-  }
-
-  private async handleHandoff(data: BotProcessingJobData): Promise<void> {
-    await this.conversationRepo.markBotHandoff(data.conversationId);
-
-    const systemMessage = await this.messageRepo.create({
-      tenantId: data.tenantId,
-      conversationId: data.conversationId,
-      senderId: 'system',
-      senderName: 'System',
-      senderType: 'system',
-      direction: 'internal',
-      source: 'bot',
-      messageType: 'text',
-      content: '\u0110ang chuy\u1ec3n t\u01b0 v\u1ea5n vi\u00ean',
-      status: 'delivered',
-      metadata: {
-        event: 'bot_handoff',
-        provider: 'typebot',
-      },
-    });
-
-    await this.conversationRepo.updateLastMessage(
-      data.conversationId,
-      systemMessage.content,
-      new Date(),
-      'system',
-    );
-
-    this.eventEmitter.emit('omni.message.sent', {
-      tenantId: data.tenantId,
-      conversationId: data.conversationId,
-      senderId: 'system',
-      senderName: 'System',
-      senderType: 'system',
-      direction: 'internal',
-      source: 'bot',
-      messageType: 'text',
-      content: systemMessage.content,
-      messageId: systemMessage.id,
-      status: 'delivered',
-      timestamp: new Date().toISOString(),
-      transport: 'http',
-      metadata: systemMessage.metadata,
-    });
   }
 }
