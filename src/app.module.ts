@@ -136,7 +136,15 @@ function bullBoardBasicAuth() {
     const header = req.headers['authorization'] || '';
     const expected =
       'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
-    if (header === expected) {
+    // Use constant-time comparison to prevent timing attacks that could
+    // leak credential material byte-by-byte via response latency.
+    if (
+      header.length === expected.length &&
+      require('crypto').timingSafeEqual(
+        Buffer.from(header),
+        Buffer.from(expected),
+      )
+    ) {
       return next();
     }
     res.setHeader('WWW-Authenticate', 'Basic realm="bull-board"');

@@ -23,7 +23,12 @@ export class VideoCompositorService {
 
   async renderVideo(tenantId: string, options: RenderOptions): Promise<string> {
     const settings = await this.settingsRepository.findByTenantId(tenantId);
-    const bgmVolume = settings?.bgmVolume ?? 0.15;
+    // Validate bgmVolume is a finite number in [0, 1] to prevent FFmpeg
+    // filter-graph injection via crafted database values (e.g. "0[bgm];[voice]anull[a]").
+    const rawVolume = Number(settings?.bgmVolume ?? 0.15);
+    const bgmVolume = Number.isFinite(rawVolume)
+      ? Math.max(0, Math.min(1, rawVolume))
+      : 0.15;
     const tempDir = path.join('/tmp', 'crm-render', tenantId);
     fs.mkdirSync(tempDir, { recursive: true });
     fs.mkdirSync(path.join(process.cwd(), 'files'), { recursive: true });
