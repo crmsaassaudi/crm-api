@@ -152,14 +152,20 @@ export class ConversionService {
       subject: dto.subject,
       description: contextDescription,
       priority: dto.priority ?? 'MEDIUM',
-      status: 'new',
       channel: 'omni-channel',
-      source: 'omni-channel',
       contactId: conversation.contactId ?? undefined,
       omniConversationId: conversationId,
       linkedMessageIds: dto.linkedMessageIds ?? [],
       createdById: agentId,
       updatedById: agentId,
+      // Pass through settings-driven fields from DTO (frontend sends these from settings)
+      ...(dto.typeId ? { typeId: dto.typeId } : {}),
+      ...(dto.statusId ? { statusId: dto.statusId } : {}),
+      ...(dto.sourceId ? { sourceId: dto.sourceId } : {}),
+      ...(dto.categoryPath?.length ? { categoryPath: dto.categoryPath } : {}),
+      ...(dto.groupId ? { groupId: dto.groupId } : {}),
+      ...(dto.ownerId ? { ownerId: dto.ownerId } : {}),
+      ...(dto.customFields ? { customFields: dto.customFields } : {}),
     } as Partial<Ticket>);
 
     this.logger.log(
