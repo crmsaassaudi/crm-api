@@ -35,6 +35,7 @@ export class Ticket {
   @ApiProperty()
   relatedTo?: {
     type: string;
+    id: string;
     _id: string;
     name: string;
   };

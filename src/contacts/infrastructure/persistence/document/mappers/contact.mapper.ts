@@ -9,6 +9,7 @@ export class ContactMapper {
     domainEntity.tenantId = raw.tenantId?.toString();
     domainEntity.firstName = raw.firstName;
     domainEntity.lastName = raw.lastName;
+    domainEntity.name = [raw.firstName, raw.lastName].filter(Boolean).join(' ');
     domainEntity.emails = raw.emails ?? [];
     domainEntity.phones = raw.phones ?? [];
     domainEntity.lifecycleStageId = raw.lifecycleStageId?.toString();

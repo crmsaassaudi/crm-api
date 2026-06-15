@@ -105,6 +105,11 @@ export class DealRepository extends BaseDocumentRepository<
       where.stageId = filterOptions.stage;
     }
 
+    // Precise contact lookup — used by Omni-Channel CustomerContext sidebar
+    if (filterOptions?.contactId) {
+      where.contactIds = filterOptions.contactId; // MongoDB array-contains match
+    }
+
     if (filterOptions?.filters) {
       try {
         const parsedFilters =
@@ -158,7 +163,7 @@ export class DealRepository extends BaseDocumentRepository<
         .populate('dealSource')
         .lean()
         .exec(),
-      cappedCount(this.model, scopedWhere),
+      cappedCount(this.model as Model<any>, scopedWhere),
     ]);
 
     return pagination(

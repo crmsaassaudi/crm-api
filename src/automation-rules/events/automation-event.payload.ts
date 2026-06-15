@@ -7,7 +7,9 @@ export type AutomationCrmModule =
   | 'Ticket'
   | 'Deal'
   | 'Account'
-  | 'Task';
+  | 'Task'
+  | 'Conversation'
+  | 'Message';
 
 /**
  * Automation Event Payload — the contract between CRM Core services

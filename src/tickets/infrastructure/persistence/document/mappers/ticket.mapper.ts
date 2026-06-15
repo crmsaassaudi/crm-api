@@ -16,7 +16,14 @@ export class TicketMapper {
     domainEntity.accountId = raw.accountId?.toString();
     domainEntity.omniConversationId = raw.omniConversationId?.toString();
     domainEntity.linkedMessageIds = raw.linkedMessageIds;
-    domainEntity.relatedTo = raw.relatedTo;
+    domainEntity.relatedTo = raw.relatedTo
+      ? {
+          type: raw.relatedTo.type,
+          id: raw.relatedTo._id?.toString(),
+          _id: raw.relatedTo._id?.toString(),
+          name: raw.relatedTo.name,
+        }
+      : undefined;
 
     // Classification & Routing
     domainEntity.typeId = raw.typeId?.toString();

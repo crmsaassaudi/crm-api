@@ -139,7 +139,7 @@ export class ConversationRepository {
         .populate('resolvedByAgent')
         .lean()
         .exec(),
-      cappedCount(this.model, filter),
+      cappedCount(this.model as Model<any>, filter),
     ]);
 
     const mappedItems = items.map((doc) =>
@@ -937,5 +937,45 @@ export class ConversationRepository {
       .limit(100) // Process in batches to avoid memory issues
       .exec();
     return docs.map(OmniConversationMapper.toDomain);
+  }
+
+  /**
+   * Find all conversations linked to a specific CRM contact.
+   * Used by Contact Detail → "Conversations" tab to show omni history.
+   */
+  async findByContactId(
+    tenantId: string,
+    contactId: string,
+    page: number,
+    limit: number,
+  ): Promise<PaginationResponseDto<OmniConversation>> {
+    const filter: FilterQuery<OmniConversationDocument> = {
+      tenantId,
+      contactId,
+    };
+    const sort: Record<string, SortOrder> = { lastMessageAt: -1 };
+
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.min(Math.max(1, limit), 50);
+    const skip = (safePage - 1) * safeLimit;
+
+    const [items, { totalItems: total }] = await Promise.all([
+      this.model
+        .find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(safeLimit)
+        .populate('assignedAgent')
+        .populate('resolvedByAgent')
+        .lean()
+        .exec(),
+      cappedCount(this.model as Model<any>, filter),
+    ]);
+
+    const mappedItems = items.map((doc) =>
+      OmniConversationMapper.toDomain(doc as any),
+    );
+
+    return pagination(mappedItems, total, { page: safePage, limit: safeLimit });
   }
 }

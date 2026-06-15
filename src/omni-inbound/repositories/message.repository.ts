@@ -260,4 +260,23 @@ export class MessageRepository {
         : null,
     };
   }
+
+  /**
+   * Fetch messages by an array of IDs.
+   * Used by LinkedMessagesPanel to display chat messages linked to a Deal or Ticket.
+   */
+  async findByIds(ids: string[]): Promise<OmniMessage[]> {
+    const safeIds = Array.from(new Set(ids)).filter((id) =>
+      Types.ObjectId.isValid(id),
+    );
+    if (safeIds.length === 0) return [];
+
+    const docs = await this.model
+      .find({ _id: { $in: safeIds } })
+      .sort({ createdAt: 1 })
+      .lean()
+      .exec();
+
+    return docs.map((doc) => OmniMessageMapper.toDomain(doc as any));
+  }
 }

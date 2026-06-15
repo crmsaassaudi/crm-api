@@ -40,6 +40,7 @@ import { AutomationAuditService } from './automation-audit.service';
 
 // ── Engine ───────────────────────────────────────────────────────────────
 import { AutomationEventListenerService } from './events/automation-event-listener.service';
+import { OmniAutomationBridgeService } from './events/omni-automation-bridge.service';
 import { ConditionEvaluatorService } from './engine/condition-evaluator.service';
 import { LoopPreventionService } from './engine/loop-prevention.service';
 import { WorkflowOrchestratorService } from './engine/workflow-orchestrator.service';
@@ -158,6 +159,7 @@ const workerProviders = isWorkerRuntime()
     AutomationDelayedJobRepository,
     // Engine — core
     AutomationEventListenerService,
+    OmniAutomationBridgeService,
     ConditionEvaluatorService,
     LoopPreventionService,
     WorkflowOrchestratorService,

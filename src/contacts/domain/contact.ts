@@ -14,6 +14,9 @@ export class Contact {
   @ApiProperty({ example: 'Doe' })
   lastName: string;
 
+  @ApiProperty({ example: 'John Doe', description: 'Computed from firstName + lastName' })
+  name?: string;
+
   emails: string[];
 
   @ApiProperty({ example: ['+15551234567'] })

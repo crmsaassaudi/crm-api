@@ -86,11 +86,23 @@ export class OmniController {
     @Query('isVip') isVip?: string,
     @Query('hasUnread') hasUnread?: string,
     @Query('search') search?: string,
+    @Query('contactId') contactId?: string,
+    @Query('page') page?: string,
   ) {
     const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
     if (!tenantId) {
       throw new BadRequestException('Tenant context not found');
+    }
+
+    // ── contactId shortcut: return paginated conversations for a CRM contact ──
+    if (contactId) {
+      return this.conversationRepo.findByContactId(
+        tenantId,
+        contactId,
+        page ? parseInt(page, 10) : 1,
+        Math.min(parseInt(limit, 10), 50),
+      );
     }
 
     const statusFilter = status ? status.split(',') : ['open', 'pending'];
@@ -196,6 +208,28 @@ export class OmniController {
       ...result,
       data: enrichedData,
     };
+  }
+
+  // ─── Batch Messages (cross-module) ──────────────────────────────
+
+  /**
+   * Fetch messages by an array of IDs.
+   * Used by Deal/Ticket detail pages to display linked chat messages.
+   */
+  @Get('messages/batch')
+  @RequirePermission('view', 'contacts')
+  async getMessagesBatch(@Query('ids') ids?: string) {
+    if (!ids) {
+      throw new BadRequestException('ids query parameter is required');
+    }
+
+    const idArray = ids.split(',').filter(Boolean).slice(0, 50);
+    if (idArray.length === 0) {
+      return { data: [] };
+    }
+
+    const messages = await this.messageRepo.findByIds(idArray);
+    return { data: messages };
   }
 
   /**
