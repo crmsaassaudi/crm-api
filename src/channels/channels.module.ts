@@ -89,6 +89,8 @@ import { EmailLabelController } from './email-label.controller';
 import { EmailIntegrationService } from './services/email-integration.service';
 import { EmailLabelService } from './services/email-label.service';
 import { OAuth2TokenManager } from './services/oauth2-token-manager.service';
+import { EmailSendController } from './email-send.controller';
+import { SmsSendController } from './sms-send.controller';
 
 // -- CRM Settings Module (for EmailChannelSettingsService) --
 import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
@@ -137,6 +139,8 @@ import { isWorkerRuntime, isEmailWorkerRuntime } from '../config/runtime-role';
     EmailSettingsController,
     EmailIntegrationController,
     EmailLabelController,
+    EmailSendController,
+    SmsSendController,
   ],
   providers: [
     // Existing
