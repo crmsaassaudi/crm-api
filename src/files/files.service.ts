@@ -3,7 +3,6 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
-  PayloadTooLargeException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ClsService } from 'nestjs-cls';
@@ -20,12 +19,7 @@ import {
   PaginationOptions,
   FileListFilters,
 } from './infrastructure/persistence/file.repository';
-import {
-  FileType,
-  FileAccessLevel,
-  FileCategory,
-  FileStatus,
-} from './domain/file';
+import { FileType, FileAccessLevel, FileStatus } from './domain/file';
 import { NullableType } from '../utils/types/nullable.type';
 import { AllConfigType } from '../config/config.type';
 

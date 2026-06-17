@@ -5,7 +5,7 @@ import {
   teardownTestDatabase,
 } from '../../../../../test/integration-setup';
 import { runWithTenant } from '../../../../../test/helpers/cls-context.helper';
-import { ContactSchema, ContactSchemaClass } from '../entities/contact.schema';
+import { ContactSchema } from '../entities/contact.schema';
 
 /**
  * Contact Schema — INTEGRATION TESTS with real MongoDB
@@ -407,8 +407,9 @@ describe('Contact Schema — real MongoDB', () => {
       });
 
       // Tenant A tries updateMany with empty filter (should only affect own docs)
-      // eslint-disable-next-line no-restricted-syntax
+
       const result = await runWithTenant(TENANT_A, () =>
+        // eslint-disable-next-line no-restricted-syntax
         Contact.updateMany({}, { $set: { score: 0 } }),
       );
 

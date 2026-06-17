@@ -33,7 +33,7 @@ import {
   BulkMoveDto,
   BulkDeleteDto,
 } from './dto/file-management.dto';
-import { FileAccessLevel } from './domain/file';
+
 import {
   isAllowedFileName,
   isAllowedMimeType,

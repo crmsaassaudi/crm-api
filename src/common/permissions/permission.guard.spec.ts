@@ -1,5 +1,5 @@
 import { PermissionGuard } from './permission.guard';
-import { PERMISSION_RULE_METADATA } from './permission.decorator';
+
 import { PlatformRoleEnum } from '../../roles/platform-role.enum';
 import { createClsMock } from '../../test/mocks/cls.mock';
 

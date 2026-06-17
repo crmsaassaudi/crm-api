@@ -135,7 +135,7 @@ export class AutomationWorkflowService {
     }
 
     // Strip updatedAt from the payload — Mongoose timestamps: true handles it
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     const { updatedAt: _clientTs, ...updateData } = dto;
     const [existingDraftNodes, existingPublishedNodes] = await Promise.all([
       this.webhookHeaderCrypto.encryptNodes((existing as any).nodes || []),

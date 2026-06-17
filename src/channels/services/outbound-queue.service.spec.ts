@@ -7,7 +7,7 @@ import { OutboundQueueService } from './outbound-queue.service';
 function createMockRedisClient() {
   const store = new Map<string, string>();
 
-  /* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
+  /* eslint-disable @typescript-eslint/require-await */
   return {
     get: jest.fn(async (key: string) => store.get(key) ?? null),
     set: jest.fn(
@@ -24,7 +24,7 @@ function createMockRedisClient() {
     }),
     expire: jest.fn(async () => 1),
     exists: jest.fn(async (key: string) => (store.has(key) ? 1 : 0)),
-    /* eslint-enable @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
+    /* eslint-enable @typescript-eslint/require-await */
     // Helpers for test setup
     _store: store,
     _setKey: (key: string, value: string) => store.set(key, value),

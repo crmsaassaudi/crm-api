@@ -179,8 +179,8 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
   }
 
   protected validateRow(
-    mapped: MappedRow,
-    data: DealImportJobData,
+    _mapped: MappedRow,
+    _data: DealImportJobData,
   ): ImportRowError[] {
     return [];
   }

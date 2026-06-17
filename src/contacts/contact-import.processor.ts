@@ -186,8 +186,8 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
   // ── Row validation ──
 
   protected validateRow(
-    mapped: MappedRow,
-    data: ContactImportJobData,
+    _mapped: MappedRow,
+    _data: ContactImportJobData,
   ): ImportRowError[] {
     return [];
   }

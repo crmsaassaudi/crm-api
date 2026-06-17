@@ -2,10 +2,7 @@ import { Processor } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { ClsService } from 'nestjs-cls';
-import {
-  BaseTenantConsumer,
-  TenantJobData,
-} from '../../../queue/base-tenant.consumer';
+import { BaseTenantConsumer } from '../../../queue/base-tenant.consumer';
 import { PUBLICATION_INSTANCE_PUBLISH_QUEUE } from '../social-post-queue.constants';
 import { PublicationPublishJobData } from '../../social-posts.types';
 import { SocialContentAssetsService } from '../../services/social-posts.service';

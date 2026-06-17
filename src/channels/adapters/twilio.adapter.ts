@@ -17,7 +17,7 @@ export class TwilioAdapter implements ConnectionAdapter {
 
   async verifyConnection(
     credentials: Record<string, any>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     _settings: Record<string, any>,
   ): Promise<ConnectionVerifyResult> {
     const accountSid = credentials.accountSid;

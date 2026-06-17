@@ -14,7 +14,6 @@ import { FilesService } from '../../files/files.service';
 import { ImageProcessingService } from '../../files/image-processing.service';
 import { detectMimeFromBuffer } from '../../files/file-upload-security.util';
 import { AllConfigType } from '../../config/config.type';
-import { ChannelType } from '../domain/omni-payload';
 
 /**
  * `fetch` with a hard timeout via AbortController. Node's global fetch has

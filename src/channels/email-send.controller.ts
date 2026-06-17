@@ -57,7 +57,6 @@ export class EmailSendController {
   @ApiOperation({ summary: 'Send standalone email (no conversation required)' })
   async sendEmail(@Body() dto: SendEmailDto) {
     const tenantId = this.cls.get('tenantId');
-    const agentId = this.cls.get('userId') || 'system';
 
     if (!tenantId) {
       throw new BadRequestException('Missing tenant context');

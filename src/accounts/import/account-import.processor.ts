@@ -199,8 +199,8 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
   // ── Row validation ──
 
   protected validateRow(
-    mapped: MappedRow,
-    data: AccountImportJobData,
+    _mapped: MappedRow,
+    _data: AccountImportJobData,
   ): ImportRowError[] {
     // Account has minimal validation beyond required fields.
     // Email/phone format validation could be added here.

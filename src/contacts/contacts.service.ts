@@ -38,7 +38,6 @@ import {
   DEFAULT_LIFECYCLE_STAGES,
   IMPORT_MAX_FILE_BYTES,
   MAX_BULK_TAG_SIZE,
-  UNMASK_TTL_SECONDS,
 } from './contacts.constants';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { EntityAuditService } from '../common/audit/entity-audit.service';
@@ -574,7 +573,6 @@ export class ContactsService {
       emails: fieldsToReturn.includes('emails') ? contact.emails || [] : [],
       phones: fieldsToReturn.includes('phones') ? contact.phones || [] : [],
     };
-    const ttlSeconds = UNMASK_TTL_SECONDS;
 
     // fields_unmasked is a compliance/system action — not written to Activity Log.
 

@@ -157,8 +157,8 @@ export abstract class BaseImportProcessor<
    */
 
   protected async afterBatchWrite(
-    affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
-    data: TJobData,
+    _affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
+    _data: TJobData,
   ): Promise<void> {
     // Default: no-op. Override in subclass if needed.
   }

@@ -16,10 +16,6 @@ import {
   AutomationDelayedJobData,
 } from '../queue/automation-queue.constants';
 import { WebhookHeaderCryptoService } from './webhook-header-crypto.service';
-import {
-  WorkflowNode,
-  WorkflowEdge,
-} from '../infrastructure/persistence/document/entities/automation-workflow.schema';
 
 /** Hard cap on wait-node delays — 90 days in milliseconds (MED-04). */
 export const MAX_WAIT_DELAY_MS = 90 * 24 * 60 * 60 * 1000;
@@ -29,19 +25,6 @@ export const MAX_WAIT_DELAY_MS = 90 * 24 * 60 * 60 * 1000;
  * Keeps just what templates and recipient-resolution need, dropping the
  * rest of the record to avoid persisting unnecessary PII (HIGH-07).
  */
-const SLIM_RECORD_FIELDS = [
-  'id',
-  '_id',
-  'email',
-  'phone',
-  'phoneNumber',
-  'mobile',
-  'firstName',
-  'lastName',
-  'fullName',
-  'name',
-] as const;
-
 /**
  * Wait/Delay node configuration schema.
  */

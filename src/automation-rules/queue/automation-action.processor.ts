@@ -2,10 +2,7 @@ import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import {
-  BaseTenantConsumer,
-  TenantJobData,
-} from '../../queue/base-tenant.consumer';
+import { BaseTenantConsumer } from '../../queue/base-tenant.consumer';
 import {
   AUTOMATION_ACTION_QUEUE,
   AUTOMATION_EMAIL_QUEUE,

@@ -142,7 +142,7 @@ export class AttachmentSecurityService {
   scanAttachment(
     fileName: string,
     sizeBytes: number,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     _buffer?: Buffer,
   ): AttachmentScanResult {
     // Step 1: Extension blocklist (instant, zero-cost)
@@ -180,7 +180,7 @@ export class AttachmentSecurityService {
    *   - Parse response: "stream: OK" vs "stream: {virus_name} FOUND"
    *   - If infected: move to quarantine S3 bucket, log, alert admin
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   scanWithClamAV(_buffer: Buffer): AttachmentScanResult {
     // TODO: Integrate with ClamAV daemon when deployed
     // For now, pass-through (extension blocklist provides P0 protection)

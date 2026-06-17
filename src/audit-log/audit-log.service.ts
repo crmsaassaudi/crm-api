@@ -139,7 +139,7 @@ export class AuditLogService {
     const enriched = page.map((entry: any) => {
       const actor = userMap[entry.actorId];
       // Destructure to separate _id and __v from rest to avoid ObjectId serialization issues
-      const { _id, __v, changes, ...rest } = entry;
+      const { _id, __v: _ignored, changes, ...rest } = entry;
       const idStr = typeof _id === 'string' ? _id : String(_id);
 
       const enrichedChanges = (changes || []).map((change: any) => {

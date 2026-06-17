@@ -1,5 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-import { WebhookProcessor, WebhookJobData } from './webhook-processor';
+import { WebhookProcessor } from './webhook-processor';
 
 /**
  * WebhookProcessor — Phase 2 comprehensive tests

@@ -6,8 +6,6 @@ import { UsersService } from './users.service';
 import { createUser } from '../test/factories/user.factory';
 import { createClsMock } from '../test/mocks/cls.mock';
 import { createEventBusMock } from '../test/mocks/event-bus.mock';
-import { PlatformRoleEnum } from '../roles/platform-role.enum';
-import { StatusEnum } from '../statuses/statuses.enum';
 
 /**
  * UsersService — Phase 3 unit tests
@@ -184,7 +182,7 @@ describe('UsersService', () => {
         }),
       );
 
-      const result = await service.invite({ email: 'existing@test.com' });
+      await service.invite({ email: 'existing@test.com' });
 
       // Should NOT create new Keycloak user
       expect(keycloakAdminService.createUser).not.toHaveBeenCalled();

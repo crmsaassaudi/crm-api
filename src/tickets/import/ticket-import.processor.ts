@@ -190,8 +190,8 @@ export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobDa
   }
 
   protected validateRow(
-    mapped: MappedRow,
-    data: TicketImportJobData,
+    _mapped: MappedRow,
+    _data: TicketImportJobData,
   ): ImportRowError[] {
     return [];
   }

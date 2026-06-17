@@ -186,7 +186,7 @@ export class ZaloAdapter implements ChannelAdapter {
     recipientId: string,
     content: string,
     messageType: string,
-    channelConfig: any,
+    _channelConfig: any,
   ): Promise<any> {
     // HIGH-08: Fail loudly instead of returning a fake success.
     throw new Error(

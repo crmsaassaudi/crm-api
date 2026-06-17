@@ -3,10 +3,7 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
-import {
-  BaseTenantConsumer,
-  TenantJobData,
-} from '../../queue/base-tenant.consumer';
+import { BaseTenantConsumer } from '../../queue/base-tenant.consumer';
 import { OmniPayload } from '../domain/omni-payload';
 import { OMNI_ROUTING_QUEUE } from './omni-queue.constants';
 import { RedisService } from '../../redis/redis.service';
