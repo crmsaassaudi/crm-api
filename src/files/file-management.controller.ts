@@ -412,7 +412,13 @@ export class FileManagementController {
     const tenantId = this.cls.get<string>('tenantId');
     const result = await this.tenantsService.getStorageBreakdown(tenantId);
 
-    const [topFiles, totalFilesCount, recentUploadsCount, actualUsedBytes, categoryBreakdown] = await Promise.all([
+    const [
+      topFiles,
+      totalFilesCount,
+      recentUploadsCount,
+      actualUsedBytes,
+      categoryBreakdown,
+    ] = await Promise.all([
       this.filesService.getTopFiles(tenantId, 10),
       this.filesService.countFiles(tenantId),
       this.filesService.countRecentUploads(tenantId, 7),
@@ -432,9 +438,7 @@ export class FileManagementController {
             : 0,
         unlimited: limitBytes === -1,
         limitMB:
-          limitBytes === -1
-            ? -1
-            : Math.round(limitBytes / (1024 * 1024)),
+          limitBytes === -1 ? -1 : Math.round(limitBytes / (1024 * 1024)),
         usedMB: Math.round(actualUsedBytes / (1024 * 1024)),
       },
       breakdown: categoryBreakdown,
@@ -456,10 +460,7 @@ export class FileManagementController {
   @Patch(':id/rename')
   @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
-  async renameFile(
-    @Param('id') id: string,
-    @Body() dto: RenameFileDto,
-  ) {
+  async renameFile(@Param('id') id: string, @Body() dto: RenameFileDto) {
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
     return this.filesService.renameFile(id, userId, userRole, dto.name);
@@ -468,13 +469,15 @@ export class FileManagementController {
   @Patch(':id/move')
   @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
-  async moveFile(
-    @Param('id') id: string,
-    @Body() dto: MoveFileDto,
-  ) {
+  async moveFile(@Param('id') id: string, @Body() dto: MoveFileDto) {
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
-    return this.filesService.moveFile(id, userId, userRole, dto.folderId ?? null);
+    return this.filesService.moveFile(
+      id,
+      userId,
+      userRole,
+      dto.folderId ?? null,
+    );
   }
 
   @Post('bulk/move')

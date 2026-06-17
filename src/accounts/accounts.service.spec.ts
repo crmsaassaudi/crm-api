@@ -22,15 +22,21 @@ describe('AccountsService', () => {
 
   beforeEach(() => {
     repository = {
-      create: jest.fn().mockImplementation((data) =>
-        Promise.resolve({ id: 'acc_new', ...data }),
-      ),
+      create: jest
+        .fn()
+        .mockImplementation((data) =>
+          Promise.resolve({ id: 'acc_new', ...data }),
+        ),
       findOne: jest.fn().mockResolvedValue(null),
-      findManyWithPagination: jest.fn().mockResolvedValue({ data: [], hasNextPage: false }),
-      findManyWithCursorPagination: jest.fn().mockResolvedValue({ data: [], nextCursor: null }),
-      update: jest.fn().mockImplementation((id, data) =>
-        Promise.resolve({ id, ...data }),
-      ),
+      findManyWithPagination: jest
+        .fn()
+        .mockResolvedValue({ data: [], hasNextPage: false }),
+      findManyWithCursorPagination: jest
+        .fn()
+        .mockResolvedValue({ data: [], nextCursor: null }),
+      update: jest
+        .fn()
+        .mockImplementation((id, data) => Promise.resolve({ id, ...data })),
       remove: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -38,7 +44,9 @@ describe('AccountsService', () => {
     cls = createClsMock();
 
     importStorage = {
-      storeImportFile: jest.fn().mockResolvedValue({ fileKey: 'accounts/test.csv' }),
+      storeImportFile: jest
+        .fn()
+        .mockResolvedValue({ fileKey: 'accounts/test.csv' }),
       importFileExists: jest.fn().mockResolvedValue(true),
     };
 

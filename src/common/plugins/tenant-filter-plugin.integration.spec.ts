@@ -30,16 +30,16 @@ let TestItem: Model<any>;
 const TENANT_A = new mongoose.Types.ObjectId().toString();
 const TENANT_B = new mongoose.Types.ObjectId().toString();
 
-beforeAll(async () => {
+beforeAll(() => {
   connection = await setupTestDatabase();
   TestItem = connection.model('TestItem', TestItemSchema);
 }, 30000);
 
-afterEach(async () => {
+afterEach(() => {
   await clearDatabase();
 });
 
-afterAll(async () => {
+afterAll(() => {
   await teardownTestDatabase();
 }, 10000);
 
@@ -59,19 +59,24 @@ describe('tenantFilterPlugin — real MongoDB', () => {
   // READ ISOLATION
   // ═══════════════════════════════════════════════════════════════════
   describe('read isolation', () => {
-    it('find() returns ONLY documents of the active tenant', async () => {
+    it('should find() returns ONLY documents of the active tenant', async () => {
       await seedTwoTenants();
 
       const results = await runWithTenant(TENANT_A, () => TestItem.find({}));
 
       expect(results).toHaveLength(2);
-      expect(results.every((r: any) => r.tenantId.toString() === TENANT_A)).toBe(true);
+      expect(
+        results.every((r: any) => r.tenantId.toString() === TENANT_A),
+      ).toBe(true);
     });
 
-    it('findOne() by _id cannot read another tenant\'s document', async () => {
+    it("should findOne() by _id cannot read another tenant's document", async () => {
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
-        const doc = await new TestItem({ tenantId: TENANT_A, name: 'secret' }).save();
+        const doc = await new TestItem({
+          tenantId: TENANT_A,
+          name: 'secret',
+        }).save();
         docId = doc._id.toString();
       });
 
@@ -82,11 +87,15 @@ describe('tenantFilterPlugin — real MongoDB', () => {
       expect(result).toBeNull();
     });
 
-    it('countDocuments() scoped per tenant', async () => {
+    it('should countDocuments() scoped per tenant', async () => {
       await seedTwoTenants();
 
-      const countA = await runWithTenant(TENANT_A, () => TestItem.countDocuments({}));
-      const countB = await runWithTenant(TENANT_B, () => TestItem.countDocuments({}));
+      const countA = await runWithTenant(TENANT_A, () =>
+        TestItem.countDocuments({}),
+      );
+      const countB = await runWithTenant(TENANT_B, () =>
+        TestItem.countDocuments({}),
+      );
 
       expect(countA).toBe(2);
       expect(countB).toBe(1);
@@ -97,7 +106,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
   // WRITE ISOLATION
   // ═══════════════════════════════════════════════════════════════════
   describe('write isolation', () => {
-    it('updateOne() from tenant B cannot modify tenant A\'s document', async () => {
+    it("should updateOne() from tenant B cannot modify tenant A's document", async () => {
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
         const doc = await new TestItem({
@@ -120,7 +129,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
       expect(doc.value).toBe(100);
     });
 
-    it('deleteOne() from tenant B cannot delete tenant A\'s document', async () => {
+    it("should deleteOne() from tenant B cannot delete tenant A's document", async () => {
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
         const doc = await new TestItem({
@@ -130,9 +139,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
         docId = doc._id.toString();
       });
 
-      await runWithTenant(TENANT_B, () =>
-        TestItem.deleteOne({ _id: docId! }),
-      );
+      await runWithTenant(TENANT_B, () => TestItem.deleteOne({ _id: docId! }));
 
       const stillExists = await runWithTenant(TENANT_A, () =>
         TestItem.findOne({ _id: docId! }),
@@ -140,7 +147,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
       expect(stillExists).not.toBeNull();
     });
 
-    it('findOneAndUpdate() returns null for cross-tenant attempt', async () => {
+    it('should findOneAndUpdate() returns null for cross-tenant attempt', async () => {
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
         const doc = await new TestItem({
@@ -166,24 +173,27 @@ describe('tenantFilterPlugin — real MongoDB', () => {
   // SAVE — auto-enrichment & cross-tenant protection
   // ═══════════════════════════════════════════════════════════════════
   describe('save behavior', () => {
-    it('save with matching tenantId succeeds (BaseDocumentRepository enriches before save)', async () => {
+    it('should save with matching tenantId succeeds (BaseDocumentRepository enriches before save)', async () => {
       // REAL BEHAVIOR: When tenantId is required:true, Mongoose validates BEFORE
       // the pre-save hook runs. In production, BaseDocumentRepository.create()
       // enriches data.tenantId from CLS BEFORE calling .save().
       // The plugin's pre-save hook serves as a GUARD (cross-tenant check), not an enricher.
       const saved = await runWithTenant(TENANT_A, async () => {
-        const doc = new TestItem({ tenantId: TENANT_A, name: 'explicit-tenant' });
-        return doc.save();
+        const doc = new TestItem({
+          tenantId: TENANT_A,
+          name: 'explicit-tenant',
+        });
+        return await doc.save();
       });
 
       expect(saved.tenantId.toString()).toBe(TENANT_A);
     });
 
-    it('throws on save if tenantId mismatches CLS (cross-tenant write)', async () => {
+    it('should throws on save if tenantId mismatches CLS (cross-tenant write)', async () => {
       await expect(
         runWithTenant(TENANT_A, async () => {
           const doc = new TestItem({ tenantId: TENANT_B, name: 'cross-write' });
-          return doc.save();
+          return await doc.save();
         }),
       ).rejects.toThrow(/Cross-tenant write/);
     });
@@ -193,10 +203,13 @@ describe('tenantFilterPlugin — real MongoDB', () => {
   // TENANT MUTATION PROTECTION
   // ═══════════════════════════════════════════════════════════════════
   describe('mutation protection', () => {
-    it('blocks $set of tenantId to different value', async () => {
+    it('should blocks $set of tenantId to different value', async () => {
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
-        const doc = await new TestItem({ tenantId: TENANT_A, name: 'item' }).save();
+        const doc = await new TestItem({
+          tenantId: TENANT_A,
+          name: 'item',
+        }).save();
         docId = doc._id.toString();
       });
 
@@ -212,10 +225,10 @@ describe('tenantFilterPlugin — real MongoDB', () => {
   // FAIL-CLOSED — no context = error, not silent data leak
   // ═══════════════════════════════════════════════════════════════════
   describe('fail-closed', () => {
-    it('throws CRITICAL error when CLS has no tenantId', async () => {
-      await expect(
-        runWithoutTenant(() => TestItem.find({})),
-      ).rejects.toThrow(/Missing activeTenantId/);
+    it('should throws CRITICAL error when CLS has no tenantId', async () => {
+      await expect(runWithoutTenant(() => TestItem.find({}))).rejects.toThrow(
+        /Missing activeTenantId/,
+      );
     });
   });
 
@@ -223,7 +236,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
   // PLATFORM BYPASS
   // ═══════════════════════════════════════════════════════════════════
   describe('isPlatformQuery bypass', () => {
-    it('isPlatformQuery: true reads all tenants', async () => {
+    it('should isPlatformQuery: true reads all tenants', async () => {
       await seedTwoTenants();
 
       const allDocs = await runWithTenant(TENANT_A, () =>
@@ -237,7 +250,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
   // FAULT INJECTION — proves tests catch real bugs
   // ═══════════════════════════════════════════════════════════════════
   describe('FAULT INJECTION', () => {
-    it('user-injected tenantId in filter is stripped — CLS always wins', async () => {
+    it('should user-injected tenantId in filter is stripped — CLS always wins', async () => {
       await seedTwoTenants();
 
       // Attacker passes tenantId: TENANT_A in query filter while context is TENANT_B
@@ -250,7 +263,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
       expect(results[0].tenantId.toString()).toBe(TENANT_B);
     });
 
-    it('concurrent tenant contexts are isolated (no context bleed)', async () => {
+    it('should concurrent tenant contexts are isolated (no context bleed)', async () => {
       await seedTwoTenants();
 
       // Run two tenant queries concurrently
@@ -262,8 +275,12 @@ describe('tenantFilterPlugin — real MongoDB', () => {
       // Each should see ONLY their own data
       expect(resultsA).toHaveLength(2);
       expect(resultsB).toHaveLength(1);
-      expect(resultsA.every((r: any) => r.tenantId.toString() === TENANT_A)).toBe(true);
-      expect(resultsB.every((r: any) => r.tenantId.toString() === TENANT_B)).toBe(true);
+      expect(
+        resultsA.every((r: any) => r.tenantId.toString() === TENANT_A),
+      ).toBe(true);
+      expect(
+        resultsB.every((r: any) => r.tenantId.toString() === TENANT_B),
+      ).toBe(true);
     });
   });
 });

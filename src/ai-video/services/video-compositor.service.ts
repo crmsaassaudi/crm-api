@@ -50,29 +50,55 @@ export class VideoCompositorService {
     await execFileAsync('ffmpeg', ['-version']);
 
     const baseArgs = [
-      '-y', '-loop', '1', '-i', bgImagePath,
-      '-i', voiceAudioPath,
+      '-y',
+      '-loop',
+      '1',
+      '-i',
+      bgImagePath,
+      '-i',
+      voiceAudioPath,
     ];
 
     let ffmpegArgs: string[];
     if (bgmPath) {
       ffmpegArgs = [
         ...baseArgs,
-        '-stream_loop', '-1', '-i', bgmPath,
+        '-stream_loop',
+        '-1',
+        '-i',
+        bgmPath,
         '-filter_complex',
         `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[v];[1:a]volume=1.0[voice];[2:a]volume=${bgmVolume}[bgm];[voice][bgm]amix=inputs=2:duration=first[a]`,
-        '-map', '[v]', '-map', '[a]',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac', '-shortest', outputVideoPath,
+        '-map',
+        '[v]',
+        '-map',
+        '[a]',
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-shortest',
+        outputVideoPath,
       ];
     } else {
       ffmpegArgs = [
         ...baseArgs,
         '-filter_complex',
         '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[v]',
-        '-map', '[v]', '-map', '1:a',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac', '-shortest', outputVideoPath,
+        '-map',
+        '[v]',
+        '-map',
+        '1:a',
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-shortest',
+        outputVideoPath,
       ];
     }
 

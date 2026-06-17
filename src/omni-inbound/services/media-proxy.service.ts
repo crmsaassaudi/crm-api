@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PutObjectCommand, GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  PutObjectCommand,
+  GetObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomStringGenerator } from '@nestjs/common/utils/random-string-generator.util';
 import * as crypto from 'crypto';
@@ -144,7 +148,10 @@ export class MediaProxyService {
       let originalMimeType: string | undefined;
       let originalSize: number | undefined;
 
-      if (isImage && this.imageProcessingService.isProcessableImage(detectedMime)) {
+      if (
+        isImage &&
+        this.imageProcessingService.isProcessableImage(detectedMime)
+      ) {
         try {
           const compressed =
             await this.imageProcessingService.compressForStorage(
@@ -185,7 +192,10 @@ export class MediaProxyService {
 
       // ── Step 5: Generate thumbnail (images only) ──────────────────
       let thumbnailKey: string | undefined;
-      if (isImage && this.imageProcessingService.isProcessableImage(detectedMime)) {
+      if (
+        isImage &&
+        this.imageProcessingService.isProcessableImage(detectedMime)
+      ) {
         try {
           const thumbBuffer =
             await this.imageProcessingService.generateThumbnail(buffer);
@@ -281,7 +291,10 @@ export class MediaProxyService {
   /**
    * Generate a presigned download URL for a stored media file.
    */
-  async getPresignedUrl(storageKey: string, ttlSeconds = 3600): Promise<string> {
+  async getPresignedUrl(
+    storageKey: string,
+    ttlSeconds = 3600,
+  ): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: storageKey,
@@ -419,9 +432,7 @@ export class MediaProxyService {
 
     const hostname = parsed.hostname.toLowerCase();
     const isAllowed = ALLOWED_HOSTS.some(
-      (h) =>
-        hostname === h ||
-        (h.startsWith('.') && hostname.endsWith(h)),
+      (h) => hostname === h || (h.startsWith('.') && hostname.endsWith(h)),
     );
 
     if (!isAllowed) {

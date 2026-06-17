@@ -1,4 +1,7 @@
-import { UnprocessableEntityException, NotFoundException } from '@nestjs/common';
+import {
+  UnprocessableEntityException,
+  NotFoundException,
+} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { createUser } from '../test/factories/user.factory';
 import { createClsMock } from '../test/mocks/cls.mock';
@@ -26,26 +29,34 @@ describe('UsersService', () => {
 
   beforeEach(() => {
     usersRepository = {
-      create: jest.fn().mockImplementation((data) =>
-        Promise.resolve({ id: 'user_new', ...data }),
-      ),
+      create: jest
+        .fn()
+        .mockImplementation((data) =>
+          Promise.resolve({ id: 'user_new', ...data }),
+        ),
       findById: jest.fn().mockResolvedValue(null),
       findByIds: jest.fn().mockResolvedValue([]),
       findByIdsGlobal: jest.fn().mockResolvedValue([]),
       findByEmail: jest.fn().mockResolvedValue(null),
       findByKeycloakIdAndProvider: jest.fn().mockResolvedValue(null),
       findManyByTenant: jest.fn().mockResolvedValue([]),
-      findManyWithPagination: jest.fn().mockResolvedValue({ data: [], hasNextPage: false }),
-      update: jest.fn().mockImplementation((id, data) =>
-        Promise.resolve({ id, ...data, tenants: [] }),
-      ),
+      findManyWithPagination: jest
+        .fn()
+        .mockResolvedValue({ data: [], hasNextPage: false }),
+      update: jest
+        .fn()
+        .mockImplementation((id, data) =>
+          Promise.resolve({ id, ...data, tenants: [] }),
+        ),
       remove: jest.fn().mockResolvedValue(undefined),
-      upsertWithTenants: jest.fn().mockImplementation((_kcId, _email, _data, tenants) =>
-        Promise.resolve({ id: 'user_existing', tenants }),
-      ),
-      removeTenantMembership: jest.fn().mockResolvedValue(
-        createUser({ tenants: [] }),
-      ),
+      upsertWithTenants: jest
+        .fn()
+        .mockImplementation((_kcId, _email, _data, tenants) =>
+          Promise.resolve({ id: 'user_existing', tenants }),
+        ),
+      removeTenantMembership: jest
+        .fn()
+        .mockResolvedValue(createUser({ tenants: [] })),
     };
 
     filesService = {
@@ -56,7 +67,9 @@ describe('UsersService', () => {
 
     keycloakAdminService = {
       findUserByEmail: jest.fn().mockResolvedValue(null),
-      createUser: jest.fn().mockResolvedValue({ id: 'kc_new', email: 'new@test.com' }),
+      createUser: jest
+        .fn()
+        .mockResolvedValue({ id: 'kc_new', email: 'new@test.com' }),
       addUserToOrganization: jest.fn().mockResolvedValue(undefined),
       resetPassword: jest.fn().mockResolvedValue(undefined),
       deleteUser: jest.fn().mockResolvedValue(undefined),
@@ -121,7 +134,11 @@ describe('UsersService', () => {
       );
 
       await expect(
-        service.create({ email: 'dupe@test.com', firstName: 'A', lastName: 'B' }),
+        service.create({
+          email: 'dupe@test.com',
+          firstName: 'A',
+          lastName: 'B',
+        }),
       ).rejects.toThrow(UnprocessableEntityException);
     });
 
@@ -142,7 +159,11 @@ describe('UsersService', () => {
     });
 
     it('should create with empty tenants when no tenantId', async () => {
-      await service.create({ email: 'new@test.com', firstName: 'A', lastName: 'B' });
+      await service.create({
+        email: 'new@test.com',
+        firstName: 'A',
+        lastName: 'B',
+      });
 
       expect(usersRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({ tenants: [] }),
@@ -189,13 +210,17 @@ describe('UsersService', () => {
     });
 
     it('should create new user in Keycloak and DB', async () => {
-      await service.invite({ email: 'brand-new@test.com', tenantRole: 'ADMIN' });
+      await service.invite({
+        email: 'brand-new@test.com',
+        tenantRole: 'ADMIN',
+      });
 
       // Keycloak user created
       expect(keycloakAdminService.createUser).toHaveBeenCalled();
       // Added to KC org
       expect(keycloakAdminService.addUserToOrganization).toHaveBeenCalledWith(
-        'org_1', 'kc_new',
+        'org_1',
+        'kc_new',
       );
       // Password reset sent
       expect(keycloakAdminService.resetPassword).toHaveBeenCalledWith('kc_new');
@@ -215,7 +240,9 @@ describe('UsersService', () => {
     });
 
     it('should rollback Keycloak user when DB create fails', async () => {
-      usersRepository.create.mockRejectedValueOnce(new Error('DB write failed'));
+      usersRepository.create.mockRejectedValueOnce(
+        new Error('DB write failed'),
+      );
 
       await expect(
         service.invite({ email: 'rollback@test.com' }),
@@ -228,13 +255,14 @@ describe('UsersService', () => {
     it('should NOT rollback Keycloak when KC user already existed', async () => {
       // KC user already existed → findUserByEmail returns existing
       keycloakAdminService.findUserByEmail.mockResolvedValueOnce({
-        id: 'kc_pre_existing', email: 'pre@test.com',
+        id: 'kc_pre_existing',
+        email: 'pre@test.com',
       });
       usersRepository.create.mockRejectedValueOnce(new Error('DB error'));
 
-      await expect(
-        service.invite({ email: 'pre@test.com' }),
-      ).rejects.toThrow('DB error');
+      await expect(service.invite({ email: 'pre@test.com' })).rejects.toThrow(
+        'DB error',
+      );
 
       // Should NOT delete pre-existing Keycloak user
       expect(keycloakAdminService.deleteUser).not.toHaveBeenCalled();
@@ -314,14 +342,19 @@ describe('UsersService', () => {
 
       // Should remove from each group
       expect(groupRepository.removeMember).toHaveBeenCalledWith(
-        'tenant_1', 'group_1', 'user_to_remove',
+        'tenant_1',
+        'group_1',
+        'user_to_remove',
       );
       expect(groupRepository.removeMember).toHaveBeenCalledWith(
-        'tenant_1', 'group_2', 'user_to_remove',
+        'tenant_1',
+        'group_2',
+        'user_to_remove',
       );
       // Then remove membership
       expect(usersRepository.removeTenantMembership).toHaveBeenCalledWith(
-        'user_to_remove', 'tenant_1',
+        'user_to_remove',
+        'tenant_1',
       );
     });
 

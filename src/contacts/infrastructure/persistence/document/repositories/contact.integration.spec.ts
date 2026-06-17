@@ -4,13 +4,8 @@ import {
   clearDatabase,
   teardownTestDatabase,
 } from '../../../../../test/integration-setup';
-import {
-  runWithTenant,
-} from '../../../../../test/helpers/cls-context.helper';
-import {
-  ContactSchema,
-  ContactSchemaClass,
-} from '../entities/contact.schema';
+import { runWithTenant } from '../../../../../test/helpers/cls-context.helper';
+import { ContactSchema, ContactSchemaClass } from '../entities/contact.schema';
 
 /**
  * Contact Schema — INTEGRATION TESTS with real MongoDB
@@ -44,16 +39,16 @@ const makeContact = (overrides: Partial<any> = {}) => ({
   ...overrides,
 });
 
-beforeAll(async () => {
+beforeAll(() => {
   connection = await setupTestDatabase();
   Contact = connection.model('Contact', ContactSchema);
 }, 30000);
 
-afterEach(async () => {
+afterEach(() => {
   await clearDatabase();
 });
 
-afterAll(async () => {
+afterAll(() => {
   await teardownTestDatabase();
 }, 10000);
 
@@ -62,10 +57,10 @@ describe('Contact Schema — real MongoDB', () => {
   // TENANT ISOLATION — CRUD
   // ═══════════════════════════════════════════════════════════════════
   describe('tenant-isolated CRUD', () => {
-    it('create enriches tenantId and only same tenant can read', async () => {
+    it('should create enriches tenantId and only same tenant can read', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
         const doc = new Contact({ ...makeContact(), tenantId: TENANT_A });
-        return doc.save();
+        return await doc.save();
       });
 
       expect(created.tenantId.toString()).toBe(TENANT_A);
@@ -84,7 +79,7 @@ describe('Contact Schema — real MongoDB', () => {
       expect(notFound).toBeNull();
     });
 
-    it('update from different tenant silently fails (0 matched)', async () => {
+    it('should update from different tenant silently fails (0 matched)', async () => {
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
         const doc = await new Contact({
@@ -108,7 +103,7 @@ describe('Contact Schema — real MongoDB', () => {
       expect(original.score).toBe(50);
     });
 
-    it('delete from different tenant has no effect', async () => {
+    it('should delete from different tenant has no effect', async () => {
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
         const doc = await new Contact({
@@ -129,7 +124,7 @@ describe('Contact Schema — real MongoDB', () => {
   // DUPLICATE CHECK — email/phone within tenant
   // ═══════════════════════════════════════════════════════════════════
   describe('duplicate detection', () => {
-    it('same email in different tenants → no conflict', async () => {
+    it('should same email in different tenants → no conflict', async () => {
       await runWithTenant(TENANT_A, async () => {
         await new Contact({
           ...makeContact({ emails: ['shared@test.com'] }),
@@ -139,7 +134,7 @@ describe('Contact Schema — real MongoDB', () => {
 
       // Same email in tenant B should work fine
       const doc = await runWithTenant(TENANT_B, async () => {
-        return new Contact({
+        return await new Contact({
           ...makeContact({ emails: ['shared@test.com'] }),
           tenantId: TENANT_B,
         }).save();
@@ -147,7 +142,7 @@ describe('Contact Schema — real MongoDB', () => {
       expect(doc).toBeDefined();
     });
 
-    it('can find duplicate emails within same tenant', async () => {
+    it('should can find duplicate emails within same tenant', async () => {
       await runWithTenant(TENANT_A, async () => {
         await new Contact({
           ...makeContact({
@@ -176,7 +171,7 @@ describe('Contact Schema — real MongoDB', () => {
   // OMNI IDENTITY — atomic $addToSet
   // ═══════════════════════════════════════════════════════════════════
   describe('omniIdentities', () => {
-    it('$addToSet correctly deduplicates identical omni identities (_id: false)', async () => {
+    it('should $addToSet correctly deduplicates identical omni identities (_id: false)', async () => {
       /**
        * ✅ BUG FIXED: Added _id: false to omniIdentities subdocument schema.
        * Now $addToSet can correctly compare subdocuments by value equality,
@@ -196,7 +191,11 @@ describe('Contact Schema — real MongoDB', () => {
       await runWithTenant(TENANT_A, async () => {
         await Contact.findOneAndUpdate(
           { _id: docId! },
-          { $addToSet: { omniIdentities: { channelType: 'facebook', senderId: 'FB123' } } },
+          {
+            $addToSet: {
+              omniIdentities: { channelType: 'facebook', senderId: 'FB123' },
+            },
+          },
           { new: true },
         );
       });
@@ -208,7 +207,7 @@ describe('Contact Schema — real MongoDB', () => {
       expect(updated.omniIdentities).toHaveLength(1);
     });
 
-    it('adding DIFFERENT identity correctly appends', async () => {
+    it('should adding DIFFERENT identity correctly appends', async () => {
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
         const doc = await new Contact({
@@ -222,7 +221,11 @@ describe('Contact Schema — real MongoDB', () => {
       await runWithTenant(TENANT_A, async () => {
         await Contact.findOneAndUpdate(
           { _id: docId! },
-          { $addToSet: { omniIdentities: { channelType: 'zalo', senderId: 'ZL456' } } },
+          {
+            $addToSet: {
+              omniIdentities: { channelType: 'zalo', senderId: 'ZL456' },
+            },
+          },
           { new: true },
         );
       });
@@ -233,7 +236,7 @@ describe('Contact Schema — real MongoDB', () => {
       expect(withTwo.omniIdentities).toHaveLength(2); // correctly has 2 different identities
     });
 
-    it('VIP lookup scoped to tenant', async () => {
+    it('should VIP lookup scoped to tenant', async () => {
       await runWithTenant(TENANT_A, async () => {
         await new Contact({
           ...makeContact(),
@@ -267,7 +270,7 @@ describe('Contact Schema — real MongoDB', () => {
   // VERSION CHECK — optimistic locking
   // ═══════════════════════════════════════════════════════════════════
   describe('optimistic locking (__v)', () => {
-    it('concurrent updates with version check — second one fails', async () => {
+    it('should concurrent updates with version check — second one fails', async () => {
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
         const doc = await new Contact({
@@ -314,7 +317,7 @@ describe('Contact Schema — real MongoDB', () => {
   // STAGE HISTORY — atomic $push
   // ═══════════════════════════════════════════════════════════════════
   describe('stageHistory', () => {
-    it('$push atomically appends stage transition', async () => {
+    it('should $push atomically appends stage transition', async () => {
       let docId: string;
       await runWithTenant(TENANT_A, async () => {
         const doc = await new Contact({
@@ -369,7 +372,7 @@ describe('Contact Schema — real MongoDB', () => {
   // FAULT INJECTION
   // ═══════════════════════════════════════════════════════════════════
   describe('FAULT INJECTION', () => {
-    it('query with $where operator is not possible through tenant filter', async () => {
+    it('should query with $where operator is not possible through tenant filter', async () => {
       await runWithTenant(TENANT_A, async () => {
         await new Contact({ ...makeContact(), tenantId: TENANT_A }).save();
       });
@@ -382,16 +385,29 @@ describe('Contact Schema — real MongoDB', () => {
       expect(results).toHaveLength(0);
     });
 
-    it('mass-update across tenants is prevented', async () => {
+    it('should mass-update across tenants is prevented', async () => {
       await runWithTenant(TENANT_A, async () => {
-        await new Contact({ ...makeContact(), tenantId: TENANT_A, score: 10 }).save();
-        await new Contact({ ...makeContact({ firstName: 'Jane' }), tenantId: TENANT_A, score: 20 }).save();
+        await new Contact({
+          ...makeContact(),
+          tenantId: TENANT_A,
+          score: 10,
+        }).save();
+        await new Contact({
+          ...makeContact({ firstName: 'Jane' }),
+          tenantId: TENANT_A,
+          score: 20,
+        }).save();
       });
       await runWithTenant(TENANT_B, async () => {
-        await new Contact({ ...makeContact(), tenantId: TENANT_B, score: 30 }).save();
+        await new Contact({
+          ...makeContact(),
+          tenantId: TENANT_B,
+          score: 30,
+        }).save();
       });
 
       // Tenant A tries updateMany with empty filter (should only affect own docs)
+      // eslint-disable-next-line no-restricted-syntax
       const result = await runWithTenant(TENANT_A, () =>
         Contact.updateMany({}, { $set: { score: 0 } }),
       );

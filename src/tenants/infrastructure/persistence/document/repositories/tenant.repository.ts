@@ -119,10 +119,7 @@ export class TenantsRepository {
   /**
    * Atomically decrement storage usage (for rollback / hard-delete).
    */
-  async atomicDecrementStorage(
-    tenantId: string,
-    bytes: number,
-  ): Promise<void> {
+  async atomicDecrementStorage(tenantId: string, bytes: number): Promise<void> {
     await this.tenantsModel.updateOne(
       { _id: tenantId },
       { $inc: { 'storageQuota.usedBytes': -bytes } },

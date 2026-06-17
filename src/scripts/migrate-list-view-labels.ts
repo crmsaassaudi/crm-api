@@ -30,10 +30,10 @@ const LOCALIZED_MODULE_MAP: Record<string, string> = {
   'công việc': 'Task',
   // Arabic
   'جهة اتصال': 'Contact',
-  'حساب': 'Account',
-  'صفقة': 'Deal',
-  'تذكرة': 'Ticket',
-  'مهمة': 'Task',
+  حساب: 'Account',
+  صفقة: 'Deal',
+  تذكرة: 'Ticket',
+  مهمة: 'Task',
 };
 
 function resolveModule(module: string): string | null {

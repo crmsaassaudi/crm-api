@@ -77,11 +77,7 @@ export class FilesService {
    * - private: only uploadedBy or allowedUserIds
    * - public: everyone
    */
-  checkAccess(
-    file: FileType,
-    userId: string,
-    userRole: string,
-  ): boolean {
+  checkAccess(file: FileType, userId: string, userRole: string): boolean {
     if (!file) return false;
     if (file.isDeleted && file.status === 'deleted') return false;
 
@@ -199,7 +195,9 @@ export class FilesService {
         );
       }
     } catch (err) {
-      this.logger.warn(`S3 delete failed for ${file.path}: ${(err as Error).message}`);
+      this.logger.warn(
+        `S3 delete failed for ${file.path}: ${(err as Error).message}`,
+      );
     }
 
     // Delete DB record
@@ -225,7 +223,9 @@ export class FilesService {
       file.uploadedBy !== userId &&
       !['OWNER', 'ADMIN'].includes(userRole?.toUpperCase())
     ) {
-      throw new ForbiddenException('Only file owner or admin can change access');
+      throw new ForbiddenException(
+        'Only file owner or admin can change access',
+      );
     }
 
     const updated = await this.fileRepository.updateAccessLevel(

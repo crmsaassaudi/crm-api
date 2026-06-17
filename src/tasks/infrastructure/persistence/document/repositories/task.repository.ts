@@ -46,7 +46,10 @@ export class TaskRepository extends BaseDocumentRepository<
 
     if (filterOptions?.search) {
       // MED-07: Escape user input to prevent ReDoS
-      const searchExpr = { $regex: escapeRegex(filterOptions.search), $options: 'i' };
+      const searchExpr = {
+        $regex: escapeRegex(filterOptions.search),
+        $options: 'i',
+      };
       where.$or = [{ title: searchExpr }, { description: searchExpr }];
     }
 

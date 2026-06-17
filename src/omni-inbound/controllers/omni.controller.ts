@@ -1202,9 +1202,7 @@ export class OmniController {
           : Math.round(result.quota.limitBytes / (1024 * 1024)),
       usagePercent:
         result.quota.limitBytes > 0 && result.quota.limitBytes !== -1
-          ? Math.round(
-              (result.quota.usedBytes / result.quota.limitBytes) * 100,
-            )
+          ? Math.round((result.quota.usedBytes / result.quota.limitBytes) * 100)
           : 0,
       breakdown: result.breakdown,
     };
@@ -1233,7 +1231,10 @@ export class OmniController {
       throw new BadRequestException('limitBytes or limitMB is required');
     }
 
-    if (typeof finalBytes !== 'number' || (finalBytes < 0 && finalBytes !== -1)) {
+    if (
+      typeof finalBytes !== 'number' ||
+      (finalBytes < 0 && finalBytes !== -1)
+    ) {
       throw new BadRequestException(
         'Limit must be a positive number or -1 (unlimited)',
       );
@@ -1332,12 +1333,7 @@ export class OmniController {
     @Query('page') page = '1',
     @Query('limit') limit = '50',
   ) {
-    return this.getConversationFiles(
-      conversationId,
-      'image/',
-      page,
-      limit,
-    );
+    return this.getConversationFiles(conversationId, 'image/', page, limit);
   }
 
   // ─── Conversion Engine (Deal / Ticket from Conversation) ──────

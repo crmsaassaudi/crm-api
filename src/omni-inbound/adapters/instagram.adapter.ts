@@ -286,7 +286,8 @@ export class InstagramAdapter implements ChannelAdapter {
       // Instagram requires a public URL, not a direct buffer upload.
       return {
         success: false,
-        error: 'Instagram requires a public URL for media. Buffer-only upload is not supported.',
+        error:
+          'Instagram requires a public URL for media. Buffer-only upload is not supported.',
       };
     }
 

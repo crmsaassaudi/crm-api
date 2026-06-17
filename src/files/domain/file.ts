@@ -68,8 +68,7 @@ export class FileType {
         const s3 = new S3Client({
           region: (fileConfig() as FileConfig).awsS3Region ?? '',
           endpoint: (fileConfig() as FileConfig).awsS3Endpoint || undefined,
-          forcePathStyle:
-            !!(fileConfig() as FileConfig).awsS3Endpoint,
+          forcePathStyle: !!(fileConfig() as FileConfig).awsS3Endpoint,
           credentials: {
             accessKeyId: (fileConfig() as FileConfig).accessKeyId ?? '',
             secretAccessKey: (fileConfig() as FileConfig).secretAccessKey ?? '',
@@ -190,7 +189,10 @@ export class FileType {
   tags?: string[];
 
   // ── Folder Linking ────────────────────────────────────────────
-  @ApiProperty({ description: 'Folder ID for Cloud Drive organization. null/undefined = root.' })
+  @ApiProperty({
+    description:
+      'Folder ID for Cloud Drive organization. null/undefined = root.',
+  })
   @IsOptional()
   folderId?: string;
 

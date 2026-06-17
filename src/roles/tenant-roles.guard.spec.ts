@@ -10,7 +10,10 @@ describe('TenantRolesGuard', () => {
   let usersService: any;
   let cls: ReturnType<typeof createClsMock>;
 
-  const createContext = (roles: TenantRoleEnum[], userPayload: any = { sub: 'kc_user_1' }) => {
+  const createContext = (
+    roles: TenantRoleEnum[],
+    userPayload: any = { sub: 'kc_user_1' },
+  ) => {
     const request: any = { user: userPayload };
     const context = {
       switchToHttp: () => ({
@@ -20,7 +23,9 @@ describe('TenantRolesGuard', () => {
       getHandler: () => ({ name: 'testMethod' }),
     } as any;
 
-    reflector.getAllAndOverride.mockReturnValue(roles.length > 0 ? roles : undefined);
+    reflector.getAllAndOverride.mockReturnValue(
+      roles.length > 0 ? roles : undefined,
+    );
     return context;
   };
 
@@ -54,7 +59,9 @@ describe('TenantRolesGuard', () => {
   });
 
   it('should deny access when user payload has no sub', async () => {
-    const context = createContext([TenantRoleEnum.ADMIN], { email: 'test@test.com' });
+    const context = createContext([TenantRoleEnum.ADMIN], {
+      email: 'test@test.com',
+    });
     const result = await guard.canActivate(context);
     expect(result).toBe(false);
   });
@@ -134,7 +141,10 @@ describe('TenantRolesGuard', () => {
         tenants: [{ tenantId: 'tenant_1', roles: ['MEMBER'] }],
       }),
     );
-    const context = createContext([TenantRoleEnum.ADMIN, TenantRoleEnum.MEMBER]);
+    const context = createContext([
+      TenantRoleEnum.ADMIN,
+      TenantRoleEnum.MEMBER,
+    ]);
     const result = await guard.canActivate(context);
     expect(result).toBe(true);
   });

@@ -45,12 +45,10 @@ import { IOREDIS_CLIENT } from './redis.tokens';
           // MED-13: Resilient reconnection on Redis blip
           retryStrategy: (times: number) => Math.min(times * 200, 5000),
           reconnectOnError: (err: Error) =>
-            err.message.includes('READONLY') ||
-            err.message.includes('LOADING'),
+            err.message.includes('READONLY') || err.message.includes('LOADING'),
         });
         // Persistent error listener — prevents uncaught 'error' event crash
         client.on('error', (err) => {
-          // eslint-disable-next-line no-console
           console.error('[IOREDIS_CLIENT] Redis error:', err.message);
         });
         return client;

@@ -28,7 +28,9 @@ export class UploadFileDto {
   @IsString()
   conversationId?: string;
 
-  @ApiPropertyOptional({ description: 'Target folder ID. Omit or null for root.' })
+  @ApiPropertyOptional({
+    description: 'Target folder ID. Omit or null for root.',
+  })
   @IsOptional()
   @IsString()
   folderId?: string;
@@ -57,7 +59,9 @@ export class ListFilesQueryDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ description: 'Folder ID. "root" = root level, undefined = all.' })
+  @ApiPropertyOptional({
+    description: 'Folder ID. "root" = root level, undefined = all.',
+  })
   @IsOptional()
   @IsString()
   folderId?: string;

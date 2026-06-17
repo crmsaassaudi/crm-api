@@ -832,7 +832,11 @@ export class ContactsService {
       delete out.__v;
       if (doc.tenantId) out.tenantId = String(doc.tenantId);
       // Preserve populated user object; stringify only if it's still an ObjectId
-      if (doc.userId && typeof doc.userId === 'object' && doc.userId.firstName) {
+      if (
+        doc.userId &&
+        typeof doc.userId === 'object' &&
+        doc.userId.firstName
+      ) {
         out.user = {
           firstName: doc.userId.firstName,
           lastName: doc.userId.lastName,
@@ -1045,7 +1049,11 @@ export class ContactsService {
         }
       }
       // Extract populated user object
-      if ((doc as any).userId && typeof (doc as any).userId === 'object' && (doc as any).userId.firstName) {
+      if (
+        (doc as any).userId &&
+        typeof (doc as any).userId === 'object' &&
+        (doc as any).userId.firstName
+      ) {
         (doc as any).user = {
           firstName: (doc as any).userId.firstName,
           lastName: (doc as any).userId.lastName,

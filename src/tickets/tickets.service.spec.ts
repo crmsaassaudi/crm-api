@@ -1,5 +1,8 @@
 import { TicketsService } from './tickets.service';
-import { createTicket, createTicketDto } from '../test/factories/ticket.factory';
+import {
+  createTicket,
+  createTicketDto,
+} from '../test/factories/ticket.factory';
 import { createClsMock } from '../test/mocks/cls.mock';
 import { createEventBusMock } from '../test/mocks/event-bus.mock';
 import { createQueueMock } from '../test/mocks/queue.mock';
@@ -36,11 +39,23 @@ describe('TicketsService', () => {
       eventEmitter as any,
       cls as any,
       { emit: jest.fn() } as any, // entityAudit
-      { create: jest.fn().mockReturnValue({ storeImportFile: jest.fn(), importFileExists: jest.fn(), readLocalReport: jest.fn() }) } as any, // storageFactory
+      {
+        create: jest.fn().mockReturnValue({
+          storeImportFile: jest.fn(),
+          importFileExists: jest.fn(),
+          readLocalReport: jest.fn(),
+        }),
+      } as any, // storageFactory
       createQueueMock() as any, // importQueue
       createQueueMock() as any, // exportQueue
       createMongooseModelMock() as any, // importJobModel
-      { enqueue: jest.fn(), status: jest.fn(), cancel: jest.fn(), list: jest.fn(), download: jest.fn() } as any, // exportRequest
+      {
+        enqueue: jest.fn(),
+        status: jest.fn(),
+        cancel: jest.fn(),
+        list: jest.fn(),
+        download: jest.fn(),
+      } as any, // exportRequest
     );
   });
 
@@ -123,7 +138,10 @@ describe('TicketsService', () => {
 
   describe('findAll', () => {
     it('should apply pagination defaults', async () => {
-      repository.findManyWithPagination.mockResolvedValue({ data: [], totalItems: 0 });
+      repository.findManyWithPagination.mockResolvedValue({
+        data: [],
+        totalItems: 0,
+      });
 
       await service.findAll({ page: 1, limit: 10 });
 
@@ -157,7 +175,9 @@ describe('TicketsService', () => {
       repository.findOne.mockResolvedValue(existing);
       repository.update.mockResolvedValue(updated);
 
-      const result = await service.update('ticket_1', { subject: 'Updated subject' } as any);
+      const result = await service.update('ticket_1', {
+        subject: 'Updated subject',
+      } as any);
 
       expect(result?.subject).toBe('Updated subject');
     });
@@ -166,8 +186,8 @@ describe('TicketsService', () => {
       const existing = createTicket({ statusId: 'resolved' });
       repository.findOne.mockResolvedValue(existing);
       ticketSettingsService.findStatusById
-        .mockResolvedValueOnce({ isTerminal: true, label: 'Resolved' })  // old
-        .mockResolvedValueOnce({ isTerminal: false, label: 'Open' });    // new
+        .mockResolvedValueOnce({ isTerminal: true, label: 'Resolved' }) // old
+        .mockResolvedValueOnce({ isTerminal: false, label: 'Open' }); // new
 
       await expect(
         service.update('ticket_1', { statusId: 'open' } as any),
@@ -241,9 +261,9 @@ describe('TicketsService', () => {
   // ═══════════════════════════════════════════════════════════════════
   describe('uploadImportFile', () => {
     it('should throw when no file provided', async () => {
-      await expect(
-        service.uploadImportFile(null as any),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.uploadImportFile(null as any)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should throw when file exceeds size limit', async () => {

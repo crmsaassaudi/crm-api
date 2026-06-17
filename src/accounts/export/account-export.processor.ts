@@ -24,15 +24,9 @@ import { ACCOUNT_EXPORT_QUEUE } from '../accounts.constants';
 import { AccountRepository } from '../infrastructure/persistence/document/repositories/account.repository';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import { RedisLockService } from '../../redis/redis-lock.service';
-import {
-  UserSchemaClass,
-} from '../../users/infrastructure/persistence/document/entities/user.schema';
-import {
-  AccountStatusSchemaClass,
-} from '../../account-settings/entities/account-status.schema';
-import {
-  AccountTypeSchemaClass,
-} from '../../account-settings/entities/account-type.schema';
+import { UserSchemaClass } from '../../users/infrastructure/persistence/document/entities/user.schema';
+import { AccountStatusSchemaClass } from '../../account-settings/entities/account-status.schema';
+import { AccountTypeSchemaClass } from '../../account-settings/entities/account-type.schema';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -192,7 +186,8 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
       module: 'account',
       displayName: 'Account',
       maskingResource: 'Account',
-      columns: this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
+      columns:
+        this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
       selectableColumns: new Set(STATIC_COLUMNS.map((c) => c.path)),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,

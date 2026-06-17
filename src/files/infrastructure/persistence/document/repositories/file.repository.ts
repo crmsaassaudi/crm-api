@@ -9,11 +9,7 @@ import {
 import { FileSchemaClass, FileSchemaDocument } from '../entities/file.schema';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery } from 'mongoose';
-import {
-  FileType,
-  FileAccessLevel,
-  FileStatus,
-} from '../../../../domain/file';
+import { FileType, FileAccessLevel, FileStatus } from '../../../../domain/file';
 
 import { FileMapper } from '../mappers/file.mapper';
 import { NullableType } from '../../../../../utils/types/nullable.type';
@@ -155,9 +151,10 @@ export class FileDocumentRepository
       query.fileName = { $regex: escapeRegex(filters.search), $options: 'i' };
     }
     if (filters?.folderId !== undefined) {
-      query.folderId = filters.folderId === null
-        ? { $in: [null, undefined] }
-        : filters.folderId;
+      query.folderId =
+        filters.folderId === null
+          ? { $in: [null, undefined] }
+          : filters.folderId;
     }
 
     const [data, total] = await Promise.all([
@@ -368,10 +365,7 @@ export class FileDocumentRepository
     };
   }
 
-  async findTopBySize(
-    tenantId: string,
-    limit = 10,
-  ): Promise<FileType[]> {
+  async findTopBySize(tenantId: string, limit = 10): Promise<FileType[]> {
     const docs = await this.model
       .find({
         tenantId,
@@ -387,39 +381,42 @@ export class FileDocumentRepository
   }
 
   async countByTenant(tenantId: string): Promise<number> {
-    return this.model.countDocuments({
-      tenantId,
-      isDeleted: { $ne: true },
-    }).exec();
+    return this.model
+      .countDocuments({
+        tenantId,
+        isDeleted: { $ne: true },
+      })
+      .exec();
   }
 
-  async countRecentUploads(
-    tenantId: string,
-    since: Date,
-  ): Promise<number> {
-    return this.model.countDocuments({
-      tenantId,
-      isDeleted: { $ne: true },
-      createdAt: { $gte: since },
-    }).exec();
+  async countRecentUploads(tenantId: string, since: Date): Promise<number> {
+    return this.model
+      .countDocuments({
+        tenantId,
+        isDeleted: { $ne: true },
+        createdAt: { $gte: since },
+      })
+      .exec();
   }
 
   async sumFileSizes(tenantId: string): Promise<number> {
     const { Types } = await import('mongoose');
-    const result = await this.model.aggregate([
-      {
-        $match: {
-          tenantId: new Types.ObjectId(tenantId),
-          isDeleted: { $ne: true },
+    const result = await this.model
+      .aggregate([
+        {
+          $match: {
+            tenantId: new Types.ObjectId(tenantId),
+            isDeleted: { $ne: true },
+          },
         },
-      },
-      {
-        $group: {
-          _id: null,
-          totalSize: { $sum: '$fileSize' },
+        {
+          $group: {
+            _id: null,
+            totalSize: { $sum: '$fileSize' },
+          },
         },
-      },
-    ]).exec();
+      ])
+      .exec();
 
     return result.length > 0 ? result[0].totalSize : 0;
   }
@@ -428,21 +425,23 @@ export class FileDocumentRepository
     tenantId: string,
   ): Promise<Record<string, { count: number; sizeBytes: number }>> {
     const { Types } = await import('mongoose');
-    const result = await this.model.aggregate([
-      {
-        $match: {
-          tenantId: new Types.ObjectId(tenantId),
-          isDeleted: { $ne: true },
+    const result = await this.model
+      .aggregate([
+        {
+          $match: {
+            tenantId: new Types.ObjectId(tenantId),
+            isDeleted: { $ne: true },
+          },
         },
-      },
-      {
-        $group: {
-          _id: { $ifNull: ['$category', 'general'] },
-          count: { $sum: 1 },
-          sizeBytes: { $sum: '$fileSize' },
+        {
+          $group: {
+            _id: { $ifNull: ['$category', 'general'] },
+            count: { $sum: 1 },
+            sizeBytes: { $sum: '$fileSize' },
+          },
         },
-      },
-    ]).exec();
+      ])
+      .exec();
 
     const breakdown: Record<string, { count: number; sizeBytes: number }> = {};
     for (const item of result) {

@@ -1,5 +1,8 @@
 import { ContactsService } from './contacts.service';
-import { createContact, createContactDto } from '../test/factories/contact.factory';
+import {
+  createContact,
+  createContactDto,
+} from '../test/factories/contact.factory';
 import { createClsMock } from '../test/mocks/cls.mock';
 import { createEventBusMock } from '../test/mocks/event-bus.mock';
 import { createQueueMock } from '../test/mocks/queue.mock';
@@ -159,7 +162,9 @@ describe('ContactsService', () => {
       repository.findOne.mockResolvedValue(existing);
       repository.update.mockResolvedValue(updated);
 
-      const result = await service.update('contact_1', { firstName: 'Updated' } as any);
+      const result = await service.update('contact_1', {
+        firstName: 'Updated',
+      } as any);
 
       expect(repository.update).toHaveBeenCalledWith(
         'contact_1',
@@ -188,7 +193,9 @@ describe('ContactsService', () => {
       repository.findOne.mockResolvedValue(shadow);
       repository.update.mockResolvedValue(createContact({ isShadow: false }));
 
-      await service.update('contact_1', { emails: ['real@example.com'] } as any);
+      await service.update('contact_1', {
+        emails: ['real@example.com'],
+      } as any);
 
       expect(repository.update).toHaveBeenCalledWith(
         'contact_1',

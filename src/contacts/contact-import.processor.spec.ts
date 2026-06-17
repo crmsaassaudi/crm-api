@@ -8,9 +8,9 @@ import { ImportSummary } from './contact-import-report.service';
 function makeReport() {
   const errors: any[] = [];
   return {
-    appendErrors: jest.fn(async (e: any[]) => errors.push(...e)),
-    discard: jest.fn(async () => undefined),
-    finalize: jest.fn(async () => null),
+    appendErrors: jest.fn((e: any[]) => errors.push(...e)),
+    discard: jest.fn(() => undefined),
+    finalize: jest.fn(() => null),
     get count() {
       return errors.length;
     },
@@ -22,11 +22,11 @@ function makeModel(existingDocs: any[] = []) {
   const chain: any = {
     select: () => chain,
     lean: () => chain,
-    exec: async () => existingDocs,
+    exec: () => existingDocs,
   };
   return {
     find: jest.fn(() => chain),
-    bulkWrite: jest.fn(async () => ({ insertedCount: 0, modifiedCount: 0 })),
+    bulkWrite: jest.fn(() => ({ insertedCount: 0, modifiedCount: 0 })),
   };
 }
 
@@ -40,7 +40,7 @@ function makeProcessor(model: any) {
     {} as any,
     { set: jest.fn(), get: jest.fn(), runWith: jest.fn() } as any,
     {} as any,
-    { updateOne: jest.fn(async () => ({})) } as any,
+    { updateOne: jest.fn(() => ({})) } as any,
   );
 }
 
@@ -76,7 +76,7 @@ const emptySummary = (): ImportSummary => ({
 describe('ContactImportProcessor — mapping', () => {
   const proc: any = makeProcessor(makeModel());
 
-  it('maps scalar + array fields and normalizes', () => {
+  it('should maps scalar + array fields and normalizes', () => {
     const m = proc.mapRow(
       {
         'First Name': 'Alice',
@@ -92,7 +92,7 @@ describe('ContactImportProcessor — mapping', () => {
     expect(m.phones).toEqual(['0901234567']);
   });
 
-  it('keeps a leading + on phone numbers', () => {
+  it('should keeps a leading + on phone numbers', () => {
     const m = proc.mapRow(
       { 'First Name': 'A', 'Last Name': 'B', Phone: '+84 90 111 2222' },
       baseData().mapping,
@@ -105,7 +105,7 @@ describe('ContactImportProcessor — mapping', () => {
 describe('ContactImportProcessor — buildMerge', () => {
   const proc: any = makeProcessor(makeModel());
 
-  it('fills only empty scalar fields', () => {
+  it('should fills only empty scalar fields', () => {
     const m = proc.mapRow(
       { 'First Name': 'New', 'Last Name': 'Name', Email: 'x@x.com' },
       { 'First Name': 'firstName', 'Last Name': 'lastName', Email: 'emails' },
@@ -125,7 +125,7 @@ describe('ContactImportProcessor — buildMerge', () => {
     expect(update.$set.emails).toEqual(['x@x.com']);
   });
 
-  it('warns on conflicting email when multiple disabled', () => {
+  it('should warns on conflicting email when multiple disabled', () => {
     const m = proc.mapRow(
       { 'First Name': 'A', 'Last Name': 'B', Email: 'new@x.com' },
       { 'First Name': 'firstName', 'Last Name': 'lastName', Email: 'emails' },
@@ -143,7 +143,7 @@ describe('ContactImportProcessor — buildMerge', () => {
     expect(update?.$addToSet).toBeUndefined();
   });
 
-  it('appends new emails via $addToSet when multiple allowed', () => {
+  it('should appends new emails via $addToSet when multiple allowed', () => {
     const m = proc.mapRow(
       { 'First Name': 'A', 'Last Name': 'B', Email: 'new@x.com' },
       { 'First Name': 'firstName', 'Last Name': 'lastName', Email: 'emails' },
@@ -177,7 +177,7 @@ describe('ContactImportProcessor — processBatch', () => {
     ),
   ];
 
-  it('inserts new contacts with createdById/updatedById populated', async () => {
+  it('should inserts new contacts with createdById/updatedById populated', async () => {
     const model = makeModel([]);
     const proc: any = makeProcessor(model);
     const summary = emptySummary();
@@ -200,7 +200,7 @@ describe('ContactImportProcessor — processBatch', () => {
     expect(call[1]).toEqual({ ordered: false });
   });
 
-  it('skips duplicates under the skip policy', async () => {
+  it('should skips duplicates under the skip policy', async () => {
     const model = makeModel([{ _id: '1', emails: ['a@x.com'] }]);
     const proc: any = makeProcessor(model);
     const summary = emptySummary();
@@ -219,7 +219,7 @@ describe('ContactImportProcessor — processBatch', () => {
     expect(summary.inserted).toBe(1);
   });
 
-  it('dry-run performs zero writes', async () => {
+  it('should dry-run performs zero writes', async () => {
     const model = makeModel([]);
     const proc: any = makeProcessor(model);
     const summary = emptySummary();
@@ -237,7 +237,7 @@ describe('ContactImportProcessor — processBatch', () => {
     expect(summary.inserted).toBe(2);
   });
 
-  it('flags rows missing required fields and excludes them', async () => {
+  it('should flags rows missing required fields and excludes them', async () => {
     const model = makeModel([]);
     const proc: any = makeProcessor(model);
     const summary = emptySummary();
@@ -264,7 +264,7 @@ describe('ContactImportProcessor — processBatch', () => {
     expect(report.errors[0]).toMatchObject({ row: 1 });
   });
 
-  it('de-duplicates rows within the same file', async () => {
+  it('should de-duplicates rows within the same file', async () => {
     const model = makeModel([]);
     const proc: any = makeProcessor(model);
     const summary = emptySummary();

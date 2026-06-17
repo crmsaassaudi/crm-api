@@ -32,10 +32,10 @@ import { isWorkerRuntime } from '../config/runtime-role';
         const isProd = process.env.NODE_ENV === 'production';
         return {
           uri:
-            configService.get<string>('AUDIT_DATABASE_URL') ||
-            configService.get<string>('DATABASE_URL'),
+            configService.get<string>('AUDIT_DATABASE_URL', { infer: true }) ||
+            configService.get<string>('DATABASE_URL', { infer: true }),
           dbName:
-            configService.get<string>('AUDIT_DATABASE_NAME') ||
+            configService.get<string>('AUDIT_DATABASE_NAME', { infer: true }) ||
             'crm_audit_logs',
 
           // ── Atlas Resilience (mirrors main connection) ────────────

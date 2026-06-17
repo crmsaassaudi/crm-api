@@ -53,7 +53,17 @@ export const PLATFORM_LIMITS: Record<ChannelType, PlatformMediaLimit> = {
     },
     file: {
       maxBytes: 25 * 1024 * 1024,
-      formats: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'txt'],
+      formats: [
+        'pdf',
+        'doc',
+        'docx',
+        'xls',
+        'xlsx',
+        'ppt',
+        'pptx',
+        'csv',
+        'txt',
+      ],
       mimeTypes: [
         'application/pdf',
         'application/msword',
@@ -120,7 +130,17 @@ export const PLATFORM_LIMITS: Record<ChannelType, PlatformMediaLimit> = {
     },
     file: {
       maxBytes: 64 * 1024 * 1024,
-      formats: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'txt'],
+      formats: [
+        'pdf',
+        'doc',
+        'docx',
+        'xls',
+        'xlsx',
+        'ppt',
+        'pptx',
+        'csv',
+        'txt',
+      ],
       mimeTypes: [
         'application/pdf',
         'application/msword',
@@ -153,7 +173,17 @@ export const PLATFORM_LIMITS: Record<ChannelType, PlatformMediaLimit> = {
     },
     file: {
       maxBytes: 25 * 1024 * 1024,
-      formats: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'txt'],
+      formats: [
+        'pdf',
+        'doc',
+        'docx',
+        'xls',
+        'xlsx',
+        'ppt',
+        'pptx',
+        'csv',
+        'txt',
+      ],
       mimeTypes: [
         'application/pdf',
         'application/msword',
@@ -186,7 +216,18 @@ export const PLATFORM_LIMITS: Record<ChannelType, PlatformMediaLimit> = {
     },
     file: {
       maxBytes: 25 * 1024 * 1024,
-      formats: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'txt', 'zip'],
+      formats: [
+        'pdf',
+        'doc',
+        'docx',
+        'xls',
+        'xlsx',
+        'ppt',
+        'pptx',
+        'csv',
+        'txt',
+        'zip',
+      ],
       mimeTypes: [
         'application/pdf',
         'application/msword',

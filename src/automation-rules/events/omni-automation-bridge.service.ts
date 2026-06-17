@@ -30,13 +30,13 @@ export class OmniAutomationBridgeService {
    * When a new conversation is created, emit as automation record_created.
    */
   @OnEvent('omni.conversation.created')
-  async onConversationCreated(payload: {
+  onConversationCreated(payload: {
     tenantId: string;
     conversationId: string;
     channelType: string;
     senderId: string;
     conversation?: any;
-  }): Promise<void> {
+  }): void {
     if (!payload.tenantId || !payload.conversationId) return;
 
     const data = payload.conversation ?? {
@@ -75,7 +75,7 @@ export class OmniAutomationBridgeService {
    * emit as automation field_updated.
    */
   @OnEvent('omni.conversation.status_changed')
-  async onConversationStatusChanged(payload: {
+  onConversationStatusChanged(payload: {
     tenantId: string;
     conversationId: string;
     status: string;
@@ -83,7 +83,7 @@ export class OmniAutomationBridgeService {
     agentId: string | null;
     reason?: string;
     channelType?: string;
-  }): Promise<void> {
+  }): void {
     if (!payload.tenantId || !payload.conversationId) return;
 
     this.logger.log(
@@ -113,7 +113,7 @@ export class OmniAutomationBridgeService {
    * This enables keyword-based triggers (e.g. "if message contains 'urgent' → create ticket").
    */
   @OnEvent('omni.message.persisted')
-  async onMessagePersisted(payload: {
+  onMessagePersisted(payload: {
     tenantId: string;
     conversationId: string;
     messageId?: string;
@@ -123,7 +123,7 @@ export class OmniAutomationBridgeService {
     senderType?: string;
     senderId?: string;
     channelType?: string;
-  }): Promise<void> {
+  }): void {
     if (!payload.tenantId || !payload.conversationId) return;
 
     // Only trigger automations for customer messages (not agent replies)

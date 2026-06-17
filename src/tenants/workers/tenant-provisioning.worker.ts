@@ -87,7 +87,7 @@ export class TenantProvisioningWorker
   async process(job: Job<TenantProvisioningJobData>): Promise<void> {
     const task = this.runJob(job);
     this.inFlight.add(task);
-    task.finally(() => this.inFlight.delete(task));
+    void task.finally(() => this.inFlight.delete(task));
     return task;
   }
 

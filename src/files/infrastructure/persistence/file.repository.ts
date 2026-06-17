@@ -114,19 +114,13 @@ export abstract class FileRepository {
   ): Promise<PaginatedResult<FileType>>;
 
   /** Get top N files by size */
-  abstract findTopBySize(
-    tenantId: string,
-    limit?: number,
-  ): Promise<FileType[]>;
+  abstract findTopBySize(tenantId: string, limit?: number): Promise<FileType[]>;
 
   /** Count total non-deleted files */
   abstract countByTenant(tenantId: string): Promise<number>;
 
   /** Count files uploaded in date range */
-  abstract countRecentUploads(
-    tenantId: string,
-    since: Date,
-  ): Promise<number>;
+  abstract countRecentUploads(tenantId: string, since: Date): Promise<number>;
 
   /** Sum total file sizes (bytes) for a tenant */
   abstract sumFileSizes(tenantId: string): Promise<number>;

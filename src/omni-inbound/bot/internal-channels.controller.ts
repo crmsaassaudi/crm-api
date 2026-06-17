@@ -56,10 +56,9 @@ export class InternalChannelsController {
   }
 
   private validateInternalSecret(secret: string): void {
-    const expected = this.configService.get<string>(
-      'CRM_BOT_INTERNAL_SECRET',
-      { infer: true },
-    );
+    const expected = this.configService.get<string>('CRM_BOT_INTERNAL_SECRET', {
+      infer: true,
+    });
     if (!expected) {
       this.logger.warn(
         'CRM_BOT_INTERNAL_SECRET not configured — skipping validation',

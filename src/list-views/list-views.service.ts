@@ -214,7 +214,12 @@ export class ListViewsService {
 
   async createView(
     data: Pick<ListViewDefinition, 'name' | 'module'> &
-      Partial<Pick<ListViewDefinition, 'columns' | 'assignedGroupIds' | 'excludedUserIds'>>,
+      Partial<
+        Pick<
+          ListViewDefinition,
+          'columns' | 'assignedGroupIds' | 'excludedUserIds'
+        >
+      >,
   ): Promise<ListViewDefinition> {
     // Run migration on the write path so a freshly-shipped module's defaults
     // exist before we append a custom view (and so reads never write).

@@ -73,8 +73,10 @@ export class ContactMapper {
     persistenceEntity.tenantId = domainEntity.tenantId;
     persistenceEntity.firstName = domainEntity.firstName;
     persistenceEntity.lastName = domainEntity.lastName;
-    if (domainEntity.emails !== undefined) persistenceEntity.emails = domainEntity.emails;
-    if (domainEntity.phones !== undefined) persistenceEntity.phones = domainEntity.phones;
+    if (domainEntity.emails !== undefined)
+      persistenceEntity.emails = domainEntity.emails;
+    if (domainEntity.phones !== undefined)
+      persistenceEntity.phones = domainEntity.phones;
     persistenceEntity.lifecycleStageId = domainEntity.lifecycleStageId;
     persistenceEntity.statusId = domainEntity.statusId;
     persistenceEntity.companyName = domainEntity.companyName;
@@ -89,8 +91,10 @@ export class ContactMapper {
     persistenceEntity.emailOptIn = domainEntity.emailOptIn;
     persistenceEntity.smsOptIn = domainEntity.smsOptIn;
     persistenceEntity.doNotCall = domainEntity.doNotCall;
-    if (domainEntity.tags !== undefined) persistenceEntity.tags = domainEntity.tags;
-    if (domainEntity.omniIdentities !== undefined) persistenceEntity.omniIdentities = domainEntity.omniIdentities;
+    if (domainEntity.tags !== undefined)
+      persistenceEntity.tags = domainEntity.tags;
+    if (domainEntity.omniIdentities !== undefined)
+      persistenceEntity.omniIdentities = domainEntity.omniIdentities;
     if (domainEntity.isShadow !== undefined) {
       persistenceEntity.isShadow = domainEntity.isShadow;
     }
@@ -99,7 +103,8 @@ export class ContactMapper {
     persistenceEntity.updatedById = domainEntity.updatedById;
     persistenceEntity.lastActivityAt = domainEntity.lastActivityAt;
     persistenceEntity.deletedAt = domainEntity.deletedAt;
-    if (domainEntity.stageHistory !== undefined) persistenceEntity.stageHistory = domainEntity.stageHistory;
+    if (domainEntity.stageHistory !== undefined)
+      persistenceEntity.stageHistory = domainEntity.stageHistory;
     if (domainEntity.version !== undefined) {
       (persistenceEntity as any).__v = domainEntity.version;
     }

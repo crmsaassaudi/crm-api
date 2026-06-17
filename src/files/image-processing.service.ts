@@ -273,9 +273,7 @@ export class ImageProcessingService {
         .webp({ quality: THUMBNAIL_QUALITY, effort: 6 })
         .toBuffer();
     } catch (error) {
-      this.logger.warn(
-        `generateThumbnail failed: ${(error as Error).message}`,
-      );
+      this.logger.warn(`generateThumbnail failed: ${(error as Error).message}`);
       // Return a 1×1 transparent pixel as fallback
       return sharp({
         create: {

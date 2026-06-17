@@ -111,7 +111,7 @@ describe('OutboundQueueService', () => {
   describe('checkSendAllowed() — Daily Quota', () => {
     it('should BLOCK when daily quota would be exceeded', async () => {
       // Seed Redis with 1999 sent emails for Gmail (limit: 2000)
-      const dateKey = new Date().toISOString().split('T')[0];
+      const dateKey = new Date().toISOString().split('should T')[0];
       const dailyKey = `outbound:daily:${TEST_TENANT}:${TEST_CONFIG}:${dateKey}`;
       mockRedisClient._setKey(dailyKey, '1999');
 
@@ -129,7 +129,7 @@ describe('OutboundQueueService', () => {
     });
 
     it('should ALLOW when within daily quota', async () => {
-      const dateKey = new Date().toISOString().split('T')[0];
+      const dateKey = new Date().toISOString().split('should T')[0];
       const dailyKey = `outbound:daily:${TEST_TENANT}:${TEST_CONFIG}:${dateKey}`;
       mockRedisClient._setKey(dailyKey, '100');
 
@@ -146,7 +146,7 @@ describe('OutboundQueueService', () => {
     });
 
     it('should ALLOW the last email at exactly the limit', async () => {
-      const dateKey = new Date().toISOString().split('T')[0];
+      const dateKey = new Date().toISOString().split('should T')[0];
       const dailyKey = `outbound:daily:${TEST_TENANT}:${TEST_CONFIG}:${dateKey}`;
       mockRedisClient._setKey(dailyKey, '1999');
 
@@ -242,7 +242,7 @@ describe('OutboundQueueService', () => {
   describe('checkSendAllowed() — Priority Order', () => {
     it('should check bulk guard BEFORE daily quota', async () => {
       // Even with quota exceeded, bulk guard takes priority
-      const dateKey = new Date().toISOString().split('T')[0];
+      const dateKey = new Date().toISOString().split('should T')[0];
       const dailyKey = `outbound:daily:${TEST_TENANT}:${TEST_CONFIG}:${dateKey}`;
       mockRedisClient._setKey(dailyKey, '9999');
 
@@ -307,7 +307,7 @@ describe('OutboundQueueService', () => {
   // ────────────────────────────────────────────────────────────────────────
   describe('getDailyStats()', () => {
     it('should return correct sent, limit, and remaining', async () => {
-      const dateKey = new Date().toISOString().split('T')[0];
+      const dateKey = new Date().toISOString().split('should T')[0];
       const dailyKey = `outbound:daily:${TEST_TENANT}:${TEST_CONFIG}:${dateKey}`;
       mockRedisClient._setKey(dailyKey, '150');
 
@@ -334,7 +334,7 @@ describe('OutboundQueueService', () => {
     });
 
     it('should cap remaining at 0 when over quota', async () => {
-      const dateKey = new Date().toISOString().split('T')[0];
+      const dateKey = new Date().toISOString().split('should T')[0];
       const dailyKey = `outbound:daily:${TEST_TENANT}:${TEST_CONFIG}:${dateKey}`;
       mockRedisClient._setKey(dailyKey, '2500');
 

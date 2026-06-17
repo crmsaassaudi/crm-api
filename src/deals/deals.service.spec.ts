@@ -24,14 +24,18 @@ describe('DealsService', () => {
 
   beforeEach(() => {
     repository = {
-      create: jest.fn().mockImplementation((data) =>
-        Promise.resolve({ id: 'deal_new', ...data }),
-      ),
+      create: jest
+        .fn()
+        .mockImplementation((data) =>
+          Promise.resolve({ id: 'deal_new', ...data }),
+        ),
       findOne: jest.fn().mockResolvedValue(null),
-      findManyWithPagination: jest.fn().mockResolvedValue({ data: [], hasNextPage: false }),
-      update: jest.fn().mockImplementation((id, data) =>
-        Promise.resolve({ id, ...data }),
-      ),
+      findManyWithPagination: jest
+        .fn()
+        .mockResolvedValue({ data: [], hasNextPage: false }),
+      update: jest
+        .fn()
+        .mockImplementation((id, data) => Promise.resolve({ id, ...data })),
       remove: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -43,7 +47,9 @@ describe('DealsService', () => {
     };
 
     importStorage = {
-      storeImportFile: jest.fn().mockResolvedValue({ fileKey: 'deals/test.csv' }),
+      storeImportFile: jest
+        .fn()
+        .mockResolvedValue({ fileKey: 'deals/test.csv' }),
       importFileExists: jest.fn().mockResolvedValue(true),
     };
 
@@ -65,7 +71,9 @@ describe('DealsService', () => {
     };
 
     exportRequest = {
-      enqueue: jest.fn().mockResolvedValue({ jobId: 'exp_1', status: 'queued' }),
+      enqueue: jest
+        .fn()
+        .mockResolvedValue({ jobId: 'exp_1', status: 'queued' }),
       status: jest.fn(),
       cancel: jest.fn(),
       list: jest.fn(),
@@ -155,9 +163,9 @@ describe('DealsService', () => {
   // ═══════════════════════════════════════════════════════════════════
   describe('uploadImportFile', () => {
     it('should throw when no file provided', async () => {
-      await expect(
-        service.uploadImportFile(null as any),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.uploadImportFile(null as any)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should throw when file exceeds size limit', async () => {

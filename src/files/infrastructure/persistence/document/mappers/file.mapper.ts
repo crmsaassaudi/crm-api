@@ -24,7 +24,9 @@ export class FileMapper {
     domainEntity.uploadedBy = raw.uploadedBy;
     domainEntity.accessLevel =
       (raw.accessLevel as FileType['accessLevel']) ?? 'tenant';
-    domainEntity.allowedUserIds = (raw.allowedUserIds ?? []).map((id) => id?.toString());
+    domainEntity.allowedUserIds = (raw.allowedUserIds ?? []).map((id) =>
+      id?.toString(),
+    );
 
     domainEntity.conversationId = raw.conversationId?.toString();
     domainEntity.messageId = raw.messageId;

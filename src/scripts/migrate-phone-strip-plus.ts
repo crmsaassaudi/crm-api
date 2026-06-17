@@ -74,7 +74,9 @@ async function migratePhones() {
         // Flush batch when full
         if (batch.length >= BATCH_SIZE) {
           await collection.bulkWrite(batch, { ordered: false });
-          console.log(`    ↳ flushed batch of ${batch.length} (${totalDocs} total so far)`);
+          console.log(
+            `    ↳ flushed batch of ${batch.length} (${totalDocs} total so far)`,
+          );
           batch = [];
         }
       }
@@ -84,7 +86,9 @@ async function migratePhones() {
         await collection.bulkWrite(batch, { ordered: false });
       }
 
-      console.log(`  ${collName}: ${totalDocs} documents updated, ${totalPhones} phones cleaned`);
+      console.log(
+        `  ${collName}: ${totalDocs} documents updated, ${totalPhones} phones cleaned`,
+      );
     }
 
     console.log('\n=== Migration Complete ===');

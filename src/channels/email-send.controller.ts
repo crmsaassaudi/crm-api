@@ -148,8 +148,7 @@ export class EmailSendController {
         tenantId,
         mailboxId: dto.configId,
         messageId: generatedMessageId,
-        emailMessageId:
-          result.messageId || `<${generatedMessageId}@crm.local>`,
+        emailMessageId: result.messageId || `<${generatedMessageId}@crm.local>`,
         from: fromEmail || user,
         to: dto.to,
         cc: dto.cc || [],
@@ -164,10 +163,7 @@ export class EmailSendController {
         generatedMessageId: generatedMessageId.toString(),
       };
     } catch (error: any) {
-      this.logger.error(
-        `[EmailSend] ❌ Failed: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`[EmailSend] ❌ Failed: ${error.message}`, error.stack);
       throw new BadRequestException(`Failed to send email: ${error.message}`);
     }
   }

@@ -24,21 +24,11 @@ import { TICKET_EXPORT_QUEUE } from '../tickets.constants';
 import { TicketRepository } from '../infrastructure/persistence/document/repositories/ticket.repository';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import { RedisLockService } from '../../redis/redis-lock.service';
-import {
-  UserSchemaClass,
-} from '../../users/infrastructure/persistence/document/entities/user.schema';
-import {
-  TicketStatusSchemaClass,
-} from '../../ticket-settings/entities/ticket-status.schema';
-import {
-  TicketTypeSchemaClass,
-} from '../../ticket-settings/entities/ticket-type.schema';
-import {
-  TicketSourceSchemaClass,
-} from '../../ticket-settings/entities/ticket-source.schema';
-import {
-  GroupSchemaClass,
-} from '../../groups/infrastructure/persistence/document/entities/group.schema';
+import { UserSchemaClass } from '../../users/infrastructure/persistence/document/entities/user.schema';
+import { TicketStatusSchemaClass } from '../../ticket-settings/entities/ticket-status.schema';
+import { TicketTypeSchemaClass } from '../../ticket-settings/entities/ticket-type.schema';
+import { TicketSourceSchemaClass } from '../../ticket-settings/entities/ticket-source.schema';
+import { GroupSchemaClass } from '../../groups/infrastructure/persistence/document/entities/group.schema';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -234,7 +224,8 @@ export class TicketExportProcessor extends BaseExportProcessor<TicketExportJobDa
       module: 'ticket',
       displayName: 'Ticket',
       maskingResource: 'Ticket',
-      columns: this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
+      columns:
+        this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
       selectableColumns: new Set(STATIC_COLUMNS.map((c) => c.path)),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,

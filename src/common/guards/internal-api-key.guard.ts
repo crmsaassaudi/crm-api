@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { ClsService } from 'nestjs-cls';
+import * as crypto from 'crypto';
 
 /**
  * Guards endpoints that should only be called by internal services
@@ -46,10 +47,7 @@ export class InternalApiKeyGuard implements CanActivate {
     if (
       !key ||
       key.length !== expectedKey.length ||
-      !require('crypto').timingSafeEqual(
-        Buffer.from(key),
-        Buffer.from(expectedKey),
-      )
+      !crypto.timingSafeEqual(Buffer.from(key), Buffer.from(expectedKey))
     ) {
       throw new UnauthorizedException('Invalid or missing internal API key');
     }

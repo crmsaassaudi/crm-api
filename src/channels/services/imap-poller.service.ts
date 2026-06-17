@@ -134,7 +134,7 @@ export class ImapPollerService implements OnModuleDestroy {
    */
   private track<T>(task: Promise<T>): Promise<T> {
     this.inFlightPolls.add(task);
-    task.finally(() => this.inFlightPolls.delete(task));
+    void task.finally(() => this.inFlightPolls.delete(task));
     return task;
   }
 

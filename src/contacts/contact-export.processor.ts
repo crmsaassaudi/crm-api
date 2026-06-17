@@ -24,9 +24,7 @@ import { CONTACT_EXPORT_QUEUE } from './contacts.constants';
 import { ContactRepository } from './infrastructure/persistence/document/repositories/contact.repository';
 import { IOREDIS_CLIENT } from '../redis/redis.tokens';
 import { RedisLockService } from '../redis/redis-lock.service';
-import {
-  UserSchemaClass,
-} from '../users/infrastructure/persistence/document/entities/user.schema';
+import { UserSchemaClass } from '../users/infrastructure/persistence/document/entities/user.schema';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -162,12 +160,15 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
       const stages = Array.isArray(setting?.stages) ? setting.stages : [];
       for (const stage of stages) {
         if (stage.id) this.stageMap.set(stage.id, stage.name ?? stage.apiName);
-        if (stage.apiName) this.stageMap.set(stage.apiName, stage.name ?? stage.apiName);
+        if (stage.apiName)
+          this.stageMap.set(stage.apiName, stage.name ?? stage.apiName);
         // Flatten statuses within each stage
         const statuses = Array.isArray(stage.statuses) ? stage.statuses : [];
         for (const status of statuses) {
-          if (status.id) this.statusMap.set(status.id, status.label ?? status.apiName);
-          if (status.apiName) this.statusMap.set(status.apiName, status.label ?? status.apiName);
+          if (status.id)
+            this.statusMap.set(status.id, status.label ?? status.apiName);
+          if (status.apiName)
+            this.statusMap.set(status.apiName, status.label ?? status.apiName);
         }
       }
     } catch {
@@ -182,7 +183,8 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
       module: 'contact',
       displayName: 'Contact',
       maskingResource: 'Contact',
-      columns: this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
+      columns:
+        this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
       selectableColumns: new Set(STATIC_COLUMNS.map((c) => c.path)),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,

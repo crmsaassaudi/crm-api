@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsOptional, IsString, IsArray, IsObject } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsArray,
+  IsObject,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
@@ -29,17 +35,24 @@ export class CreateTicketFromConversationDto {
   @IsString()
   typeId?: string;
 
-  @ApiPropertyOptional({ description: 'Ticket Status ID (from ticket-settings)' })
+  @ApiPropertyOptional({
+    description: 'Ticket Status ID (from ticket-settings)',
+  })
   @IsOptional()
   @IsString()
   statusId?: string;
 
-  @ApiPropertyOptional({ description: 'Ticket Source ID (from ticket-settings)' })
+  @ApiPropertyOptional({
+    description: 'Ticket Source ID (from ticket-settings)',
+  })
   @IsOptional()
   @IsString()
   sourceId?: string;
 
-  @ApiPropertyOptional({ description: 'N-level category path (array of node IDs)', type: [String] })
+  @ApiPropertyOptional({
+    description: 'N-level category path (array of node IDs)',
+    type: [String],
+  })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
@@ -69,4 +82,3 @@ export class CreateTicketFromConversationDto {
   @IsString({ each: true })
   linkedMessageIds?: string[];
 }
-

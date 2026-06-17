@@ -104,10 +104,7 @@ export class FolderController {
   @Patch(':id')
   @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
-  async update(
-    @Param('id') id: string,
-    @Body() dto: UpdateFolderDto,
-  ) {
+  async update(@Param('id') id: string, @Body() dto: UpdateFolderDto) {
     const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';

@@ -24,18 +24,10 @@ import { DEAL_EXPORT_QUEUE } from '../deals.constants';
 import { DealRepository } from '../infrastructure/persistence/document/repositories/deal.repository';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import { RedisLockService } from '../../redis/redis-lock.service';
-import {
-  UserSchemaClass,
-} from '../../users/infrastructure/persistence/document/entities/user.schema';
-import {
-  DealStageSchemaClass,
-} from '../../deal-settings/entities/deal-stage.schema';
-import {
-  DealSourceSchemaClass,
-} from '../../deal-settings/entities/deal-source.schema';
-import {
-  AccountSchemaClass,
-} from '../../accounts/infrastructure/persistence/document/entities/account.schema';
+import { UserSchemaClass } from '../../users/infrastructure/persistence/document/entities/user.schema';
+import { DealStageSchemaClass } from '../../deal-settings/entities/deal-stage.schema';
+import { DealSourceSchemaClass } from '../../deal-settings/entities/deal-source.schema';
+import { AccountSchemaClass } from '../../accounts/infrastructure/persistence/document/entities/account.schema';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -216,7 +208,8 @@ export class DealExportProcessor extends BaseExportProcessor<DealExportJobData> 
       module: 'deal',
       displayName: 'Deal',
       maskingResource: 'Deal',
-      columns: this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
+      columns:
+        this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
       selectableColumns: new Set(STATIC_COLUMNS.map((c) => c.path)),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,

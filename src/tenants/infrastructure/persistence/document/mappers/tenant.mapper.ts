@@ -51,8 +51,16 @@ export class TenantMapper {
     const rawQuota = raw.storageQuota as any;
     tenant.storageQuota = rawQuota
       ? {
-          limitBytes: rawQuota.limitBytes ?? (rawQuota.limitMB != null ? rawQuota.limitMB * 1024 * 1024 : 1073741824),
-          usedBytes: rawQuota.usedBytes ?? (rawQuota.usedMB != null ? Math.round(rawQuota.usedMB * 1024 * 1024) : 0),
+          limitBytes:
+            rawQuota.limitBytes ??
+            (rawQuota.limitMB != null
+              ? rawQuota.limitMB * 1024 * 1024
+              : 1073741824),
+          usedBytes:
+            rawQuota.usedBytes ??
+            (rawQuota.usedMB != null
+              ? Math.round(rawQuota.usedMB * 1024 * 1024)
+              : 0),
           warnThresholdPercent: rawQuota.warnThresholdPercent ?? 80,
           lastRecalculatedAt: rawQuota.lastRecalculatedAt,
         }

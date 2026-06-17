@@ -16,6 +16,7 @@ import redisConfig from './redis/config/redis.config';
 import keycloakConfig from './auth/config/keycloak.config';
 import path from 'path';
 import { existsSync } from 'fs';
+import * as crypto from 'crypto';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
@@ -74,7 +75,6 @@ import { HealthModule } from './health/health.module';
 import { SharedImportModule } from './common/import/import.module';
 import { SharedExportModule } from './common/export/export.module';
 import { MessageTemplatesModule } from './message-templates/message-templates.module';
-
 
 import {
   KeycloakConnectModule,
@@ -140,10 +140,7 @@ function bullBoardBasicAuth() {
     // leak credential material byte-by-byte via response latency.
     if (
       header.length === expected.length &&
-      require('crypto').timingSafeEqual(
-        Buffer.from(header),
-        Buffer.from(expected),
-      )
+      crypto.timingSafeEqual(Buffer.from(header), Buffer.from(expected))
     ) {
       return next();
     }

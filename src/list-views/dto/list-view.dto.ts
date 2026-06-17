@@ -33,7 +33,11 @@ export class ListViewColumnDto {
   @Length(1, 80)
   key: string;
 
-  @ApiProperty({ required: false, description: 'Display label (optional fallback — frontend resolves via i18n)' })
+  @ApiProperty({
+    required: false,
+    description:
+      'Display label (optional fallback — frontend resolves via i18n)',
+  })
   @IsOptional()
   @IsString()
   @Length(1, 120)
@@ -80,14 +84,20 @@ export class CreateListViewDto {
   @Type(() => ListViewColumnDto)
   columns?: ListViewColumnDto[];
 
-  @ApiProperty({ required: false, description: 'Group IDs this view is assigned to' })
+  @ApiProperty({
+    required: false,
+    description: 'Group IDs this view is assigned to',
+  })
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(100)
   @IsString({ each: true })
   assignedGroupIds?: string[];
 
-  @ApiProperty({ required: false, description: 'User IDs excluded from this view' })
+  @ApiProperty({
+    required: false,
+    description: 'User IDs excluded from this view',
+  })
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(500)

@@ -179,7 +179,10 @@ async function bootstrap() {
     }
 
     // HIGH-14: Validate internal API key is set
-    if (!process.env.INTERNAL_API_KEY || process.env.INTERNAL_API_KEY.length < 16) {
+    if (
+      !process.env.INTERNAL_API_KEY ||
+      process.env.INTERNAL_API_KEY.length < 16
+    ) {
       Logger.warn(
         '⚠️  INTERNAL_API_KEY is not set or too short — inter-service auth is weakened.',
         'Bootstrap',

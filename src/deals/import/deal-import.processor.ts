@@ -178,7 +178,6 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
     return { row, fields, arrayFields };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   protected validateRow(
     mapped: MappedRow,
     data: DealImportJobData,

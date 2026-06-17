@@ -59,4 +59,3 @@ export default registerAs<FileConfig>('file', () => {
     maxVideoSize: 104_857_600, // 100 MB
   };
 });
-

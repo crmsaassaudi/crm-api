@@ -32,5 +32,6 @@ export class DlqProcessor extends WorkerHost {
     );
 
     // Future: persist to MongoDB audit collection, send alert, etc.
+    return Promise.resolve();
   }
 }

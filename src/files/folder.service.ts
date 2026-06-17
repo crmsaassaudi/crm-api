@@ -15,9 +15,7 @@ const MAX_DEPTH = 5;
 export class FolderService {
   private readonly logger = new Logger(FolderService.name);
 
-  constructor(
-    private readonly folderRepository: FolderDocumentRepository,
-  ) {}
+  constructor(private readonly folderRepository: FolderDocumentRepository) {}
 
   // ── Create ────────────────────────────────────────────────────────
 
@@ -30,9 +28,7 @@ export class FolderService {
   ): Promise<FolderType> {
     const trimmedName = name.trim();
     if (!trimmedName || trimmedName.length > 100) {
-      throw new BadRequestException(
-        'Folder name must be 1-100 characters',
-      );
+      throw new BadRequestException('Folder name must be 1-100 characters');
     }
 
     // Check duplicate name under same parent
@@ -56,7 +52,9 @@ export class FolderService {
         throw new NotFoundException('Parent folder not found');
       }
       if (parent.isDeleted) {
-        throw new BadRequestException('Cannot create folder inside a deleted folder');
+        throw new BadRequestException(
+          'Cannot create folder inside a deleted folder',
+        );
       }
       parentPath = parent.path;
       depth = parent.depth + 1;
@@ -81,7 +79,9 @@ export class FolderService {
     });
 
     // Update path with actual ID
-    const actualPath = parentPath ? `${parentPath}/${folder.id}` : `/${folder.id}`;
+    const actualPath = parentPath
+      ? `${parentPath}/${folder.id}`
+      : `/${folder.id}`;
     const updated = await this.folderRepository.move(
       folder.id,
       parentId,
@@ -297,9 +297,7 @@ export class FolderService {
     userRole: string,
   ): Promise<void> {
     if (!['OWNER'].includes(userRole?.toUpperCase())) {
-      throw new ForbiddenException(
-        'Only OWNER can permanently delete folders',
-      );
+      throw new ForbiddenException('Only OWNER can permanently delete folders');
     }
 
     const folder = await this.folderRepository.findById(folderId);

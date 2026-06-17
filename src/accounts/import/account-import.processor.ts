@@ -198,7 +198,6 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
 
   // ── Row validation ──
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   protected validateRow(
     mapped: MappedRow,
     data: AccountImportJobData,

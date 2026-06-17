@@ -123,10 +123,7 @@ export class SmsSendController {
       };
     } catch (error: any) {
       if (error instanceof BadRequestException) throw error;
-      this.logger.error(
-        `[SmsSend] ❌ Failed: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`[SmsSend] ❌ Failed: ${error.message}`, error.stack);
       throw new BadRequestException(`Failed to send SMS: ${error.message}`);
     }
   }

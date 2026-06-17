@@ -5,9 +5,7 @@ import {
   clearDatabase,
   teardownTestDatabase,
 } from './integration-setup';
-import {
-  runWithTenant,
-} from './helpers/cls-context.helper';
+import { runWithTenant } from './helpers/cls-context.helper';
 import { tenantFilterPlugin } from '../common/plugins/tenant-filter.plugin';
 import { BaseDocumentRepository } from '../utils/persistence/document-repository.abstract';
 import { ClsServiceManager } from 'nestjs-cls';
@@ -68,7 +66,10 @@ type TestEntityDocument = Document & {
 
 // ─── Concrete repository for testing ────────────────────────────
 
-class TestEntityRepository extends BaseDocumentRepository<TestEntityDocument, TestEntity> {
+class TestEntityRepository extends BaseDocumentRepository<
+  TestEntityDocument,
+  TestEntity
+> {
   protected mapToDomain(doc: any): TestEntity {
     return {
       id: doc._id?.toString(),
@@ -88,8 +89,8 @@ class TestEntityRepository extends BaseDocumentRepository<TestEntityDocument, Te
     return {
       tenantId: domain.tenantId,
       name: domain.name,
-      emails: domain.emails ?? [],   // THIS is the dangerous default
-      phones: domain.phones ?? [],   // THIS is the dangerous default
+      emails: domain.emails ?? [], // THIS is the dangerous default
+      phones: domain.phones ?? [], // THIS is the dangerous default
       score: domain.score ?? 0,
       ownerId: domain.ownerId,
       createdById: domain.createdById,
@@ -126,7 +127,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
   // PATCH SEMANTICS — the #1 data corruption risk
   // ═══════════════════════════════════════════════════════════════════
   describe('PATCH semantics (update only submitted fields)', () => {
-    it('updating name should NOT overwrite existing emails/phones with empty arrays', async () => {
+    it('should updating name should NOT overwrite existing emails/phones with empty arrays', async () => {
       // Create entity with real data
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
@@ -148,12 +149,15 @@ describe('BaseDocumentRepository — real MongoDB', () => {
 
       expect(updated!.name).toBe('Jane Doe');
       // CRITICAL: these must NOT be overwritten to empty defaults
-      expect(updated!.emails).toEqual(['john@example.com', 'john2@example.com']);
+      expect(updated!.emails).toEqual([
+        'john@example.com',
+        'john2@example.com',
+      ]);
       expect(updated!.phones).toEqual(['+84901234567']);
       expect(updated!.score).toBe(85);
     });
 
-    it('updating score should NOT touch name or emails', async () => {
+    it('should updating score should NOT touch name or emails', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
         repo = new TestEntityRepository(TestModel, cls);
@@ -180,7 +184,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
   // VERSION CONFLICT — concurrent edit detection
   // ═══════════════════════════════════════════════════════════════════
   describe('optimistic locking (version conflict)', () => {
-    it('concurrent update with stale version throws ConflictException', async () => {
+    it('should concurrent update with stale version throws ConflictException', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
         repo = new TestEntityRepository(TestModel, cls);
@@ -215,7 +219,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
   // TENANT ENRICHMENT — auto-set from CLS
   // ═══════════════════════════════════════════════════════════════════
   describe('tenant auto-enrichment', () => {
-    it('create() auto-sets tenantId, createdById, ownerId from CLS', async () => {
+    it('should create() auto-sets tenantId, createdById, ownerId from CLS', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
         cls.set('userId', USER_1);
@@ -230,7 +234,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
       expect(created.ownerId).toBe(USER_1);
     });
 
-    it('create() does NOT overwrite explicitly set tenantId', async () => {
+    it('should create() does NOT overwrite explicitly set tenantId', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
         repo = new TestEntityRepository(TestModel, cls);
@@ -243,7 +247,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
       expect(created.tenantId).toBe(TENANT_A);
     });
 
-    it('update() auto-enriches updatedById from CLS', async () => {
+    it('should update() auto-enriches updatedById from CLS', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
         cls.set('userId', USER_1);
@@ -268,7 +272,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
   // CROSS-TENANT UPDATE/DELETE PROTECTION
   // ═══════════════════════════════════════════════════════════════════
   describe('cross-tenant protection', () => {
-    it('update() from different tenant returns null (no match)', async () => {
+    it('should update() from different tenant returns null (no match)', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
         repo = new TestEntityRepository(TestModel, cls);
@@ -292,7 +296,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
       expect(original!.name).toBe('TenantA Data');
     });
 
-    it('remove() from different tenant has no effect', async () => {
+    it('should remove() from different tenant has no effect', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
         repo = new TestEntityRepository(TestModel, cls);
@@ -318,7 +322,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
   // FAULT INJECTION
   // ═══════════════════════════════════════════════════════════════════
   describe('FAULT INJECTION', () => {
-    it('PROVES: if PATCH whitelist is removed, update({ name }) would destroy emails/phones', async () => {
+    it('should PROVES: if PATCH whitelist is removed, update({ name }) would destroy emails/phones', async () => {
       /**
        * Without the payloadKeys whitelist in update(), toPersistence()
        * would produce { emails: [], phones: [] } from defaults,

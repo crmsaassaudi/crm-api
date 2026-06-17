@@ -48,11 +48,7 @@ export class FolderDocumentRepository {
       query.isDeleted = { $ne: true };
     }
 
-    const docs = await this.model
-      .find(query)
-      .sort({ name: 1 })
-      .lean()
-      .exec();
+    const docs = await this.model.find(query).sort({ name: 1 }).lean().exec();
     return docs.map((doc) => FolderMapper.toDomain(doc as any));
   }
 
@@ -65,11 +61,7 @@ export class FolderDocumentRepository {
       query.isDeleted = { $ne: true };
     }
 
-    const docs = await this.model
-      .find(query)
-      .sort({ path: 1 })
-      .lean()
-      .exec();
+    const docs = await this.model.find(query).sort({ path: 1 }).lean().exec();
     return docs.map((doc) => FolderMapper.toDomain(doc as any));
   }
 

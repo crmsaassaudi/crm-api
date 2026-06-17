@@ -79,7 +79,9 @@ describe('OutboundService', () => {
 
     const facebookAdapter = {
       send: jest.fn().mockResolvedValue({ message_id: 'ext_mid_1' }),
-      sendMedia: jest.fn().mockResolvedValue({ success: true, externalMessageId: 'ext_mid_1' }),
+      sendMedia: jest
+        .fn()
+        .mockResolvedValue({ success: true, externalMessageId: 'ext_mid_1' }),
     };
     adapters = new Map([['facebook', facebookAdapter]]);
 
@@ -90,7 +92,12 @@ describe('OutboundService', () => {
 
     usersService = {
       findByIdsGlobal: jest.fn().mockResolvedValue([
-        { firstName: 'John', lastName: 'Agent', email: 'agent@test.com', photo: null },
+        {
+          firstName: 'John',
+          lastName: 'Agent',
+          email: 'agent@test.com',
+          photo: null,
+        },
       ]),
     };
 
@@ -140,7 +147,9 @@ describe('OutboundService', () => {
       );
       // 3. Status updated to 'sent' with external ID
       expect(messageRepo.updateStatus).toHaveBeenCalledWith(
-        'msg_new', 'sent', 'ext_mid_1',
+        'msg_new',
+        'sent',
+        'ext_mid_1',
       );
       // 4. Event emitted
       expect(eventEmitter.emit).toHaveBeenCalledWith(
@@ -220,7 +229,10 @@ describe('OutboundService', () => {
       // Should NOT create a new message (reuse existing)
       expect(messageRepo.create).not.toHaveBeenCalled();
       // Should update status to 'sending' for the retry
-      expect(messageRepo.updateStatus).toHaveBeenCalledWith('msg_failed', 'sending');
+      expect(messageRepo.updateStatus).toHaveBeenCalledWith(
+        'msg_failed',
+        'sending',
+      );
       // Should call adapter (actual send)
       expect(adapters.get('facebook')!.send).toHaveBeenCalled();
       // Should update to 'sent'
@@ -255,7 +267,8 @@ describe('OutboundService', () => {
       messageRepo.create.mockRejectedValueOnce(duplicateError);
       messageRepo.findByIdempotencyKey
         .mockResolvedValueOnce(null) // first check
-        .mockResolvedValueOnce({     // recovery check after 11000
+        .mockResolvedValueOnce({
+          // recovery check after 11000
           id: 'msg_concurrent_winner',
           status: 'sent',
           senderId: 'agent_1',
@@ -285,9 +298,9 @@ describe('OutboundService', () => {
         lastCustomerMessageAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
       });
 
-      await expect(
-        service.sendAgentMessage(baseSendParams),
-      ).rejects.toThrow(ReplyWindowExpiredException);
+      await expect(service.sendAgentMessage(baseSendParams)).rejects.toThrow(
+        ReplyWindowExpiredException,
+      );
 
       // Should NOT persist or send
       expect(messageRepo.create).not.toHaveBeenCalled();
@@ -358,24 +371,27 @@ describe('OutboundService', () => {
   // ═══════════════════════════════════════════════════════════════════
   describe('sendAgentMessage — provider failure', () => {
     it('should mark message as failed when adapter throws', async () => {
-      adapters.get('facebook')!.send.mockRejectedValueOnce(
-        new Error('Facebook API error 190'),
-      );
+      adapters
+        .get('facebook')!
+        .send.mockRejectedValueOnce(new Error('Facebook API error 190'));
 
-      await expect(
-        service.sendAgentMessage(baseSendParams),
-      ).rejects.toThrow('Facebook API error 190');
+      await expect(service.sendAgentMessage(baseSendParams)).rejects.toThrow(
+        'Facebook API error 190',
+      );
 
       // Message was created, then marked failed
       expect(messageRepo.create).toHaveBeenCalled();
-      expect(messageRepo.updateStatus).toHaveBeenCalledWith('msg_new', 'failed');
+      expect(messageRepo.updateStatus).toHaveBeenCalledWith(
+        'msg_new',
+        'failed',
+      );
     });
 
     it('should release Redis idempotency lock when adapter fails', async () => {
       redis.set.mockResolvedValueOnce('OK'); // Lock acquired
-      adapters.get('facebook')!.send.mockRejectedValueOnce(
-        new Error('Network timeout'),
-      );
+      adapters
+        .get('facebook')!
+        .send.mockRejectedValueOnce(new Error('Network timeout'));
 
       await expect(
         service.sendAgentMessage({
@@ -391,9 +407,9 @@ describe('OutboundService', () => {
     });
 
     it('should NOT emit omni.message.sent event when adapter fails', async () => {
-      adapters.get('facebook')!.send.mockRejectedValueOnce(
-        new Error('API down'),
-      );
+      adapters
+        .get('facebook')!
+        .send.mockRejectedValueOnce(new Error('API down'));
 
       try {
         await service.sendAgentMessage(baseSendParams);
@@ -413,17 +429,17 @@ describe('OutboundService', () => {
     it('should throw when conversation not found', async () => {
       conversationRepo.findById.mockResolvedValueOnce(null);
 
-      await expect(
-        service.sendAgentMessage(baseSendParams),
-      ).rejects.toThrow('Conversation conv_1 not found');
+      await expect(service.sendAgentMessage(baseSendParams)).rejects.toThrow(
+        'Conversation conv_1 not found',
+      );
     });
 
     it('should throw when channel not found', async () => {
       channelRepo.findByIdWithCredentials.mockResolvedValueOnce(null);
 
-      await expect(
-        service.sendAgentMessage(baseSendParams),
-      ).rejects.toThrow(/not found or disconnected/);
+      await expect(service.sendAgentMessage(baseSendParams)).rejects.toThrow(
+        /not found or disconnected/,
+      );
     });
   });
 
@@ -457,7 +473,8 @@ describe('OutboundService', () => {
       messageRepo.create.mockRejectedValueOnce(duplicateError);
       messageRepo.findByIdempotencyKey
         .mockResolvedValueOnce(null) // first check
-        .mockResolvedValueOnce({     // recovery
+        .mockResolvedValueOnce({
+          // recovery
           id: 'bot_msg_winner',
           status: 'sending',
         });
@@ -507,22 +524,43 @@ describe('normalizeOutboundSource (via sendAgentMessage)', () => {
     };
     channelRepo = {
       findByIdWithCredentials: jest.fn().mockResolvedValue({
-        id: 'ch', credentials: {}, account: 'acc',
+        id: 'ch',
+        credentials: {},
+        account: 'acc',
       }),
       findByAccountWithCredentials: jest.fn().mockResolvedValue(null),
     };
     redis = { set: jest.fn().mockResolvedValue('OK'), del: jest.fn() };
     const usersService = {
-      findByIdsGlobal: jest.fn().mockResolvedValue([{ firstName: 'A', lastName: 'B', email: 'a@b.c' }]),
+      findByIdsGlobal: jest
+        .fn()
+        .mockResolvedValue([{ firstName: 'A', lastName: 'B', email: 'a@b.c' }]),
     };
 
     service = new OutboundService(
-      messageRepo, conversationRepo, channelRepo,
+      messageRepo,
+      conversationRepo,
+      channelRepo,
       createEventBusMock() as any,
-      new Map([['livechat', { send: jest.fn().mockResolvedValue({ id: 'ext' }) }]]) as any,
-      { facebook: 24, zalo: 24, whatsapp: 24, instagram: 24, livechat: 0 } as any,
-      {} as any, {} as any, {} as any, usersService,
-      {} as any, {} as any, redis, {} as any, {} as any,
+      new Map([
+        ['livechat', { send: jest.fn().mockResolvedValue({ id: 'ext' }) }],
+      ]) as any,
+      {
+        facebook: 24,
+        zalo: 24,
+        whatsapp: 24,
+        instagram: 24,
+        livechat: 0,
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      usersService,
+      {} as any,
+      {} as any,
+      redis,
+      {} as any,
+      {} as any,
     );
   });
 

@@ -2,9 +2,7 @@
  * Standard ClsService mock for unit tests.
  * CLS (Continuation Local Storage) holds request-scoped context like tenantId, userId.
  */
-export function createClsMock(
-  overrides: Record<string, any> = {},
-) {
+export function createClsMock(overrides: Record<string, any> = {}) {
   const store: Record<string, any> = {
     tenantId: 'tenant_1',
     activeTenantId: 'tenant_1',

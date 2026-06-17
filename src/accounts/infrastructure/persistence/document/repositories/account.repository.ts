@@ -130,7 +130,9 @@ export class AccountRepository extends BaseDocumentRepository<
           parsedFilters.forEach((f: any) => {
             if (f.id && f.value) {
               if (['industry', 'statusId'].includes(f.id)) {
-                where[f.id] = Array.isArray(f.value) ? { $in: f.value } : f.value;
+                where[f.id] = Array.isArray(f.value)
+                  ? { $in: f.value }
+                  : f.value;
               } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
                 const fieldMap: Record<string, string> = {
                   owner: 'ownerId',

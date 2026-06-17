@@ -199,9 +199,7 @@ export class StrategyExecutorService {
     await pipeline.exec();
 
     const result = await this.redis.eval(
-      reserve
-        ? this.leastBusyReservationScript
-        : this.leastBusyReadOnlyScript,
+      reserve ? this.leastBusyReservationScript : this.leastBusyReadOnlyScript,
       1,
       key,
       candidates.length.toString(),

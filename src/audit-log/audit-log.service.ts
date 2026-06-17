@@ -98,7 +98,7 @@ export class AuditLogService {
       (value, index, self) => self.indexOf(value) === index,
     );
 
-    let userMap: Record<
+    const userMap: Record<
       string,
       { firstName?: string; lastName?: string; email?: string; photo?: any }
     > = {};

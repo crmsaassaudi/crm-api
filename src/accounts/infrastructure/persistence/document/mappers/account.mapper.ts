@@ -65,8 +65,10 @@ export class AccountMapper {
     persistenceEntity.website = domainEntity.website;
     persistenceEntity.industry = domainEntity.industry;
     persistenceEntity.typeId = domainEntity.typeId;
-    if (domainEntity.emails !== undefined) persistenceEntity.emails = domainEntity.emails;
-    if (domainEntity.phones !== undefined) persistenceEntity.phones = domainEntity.phones;
+    if (domainEntity.emails !== undefined)
+      persistenceEntity.emails = domainEntity.emails;
+    if (domainEntity.phones !== undefined)
+      persistenceEntity.phones = domainEntity.phones;
     persistenceEntity.taxId = domainEntity.taxId;
     persistenceEntity.annualRevenue = domainEntity.annualRevenue;
     persistenceEntity.numberOfEmployees = domainEntity.numberOfEmployees;

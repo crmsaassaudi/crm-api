@@ -104,9 +104,7 @@ export class AutomationExecutionLogRepository {
       { $match: { tenantId, workflowId } },
       {
         $facet: {
-          statusCounts: [
-            { $group: { _id: '$status', count: { $sum: 1 } } },
-          ],
+          statusCounts: [{ $group: { _id: '$status', count: { $sum: 1 } } }],
           avgDuration: [
             { $match: { status: 'success' } },
             {
@@ -154,7 +152,15 @@ export class AutomationExecutionLogRepository {
     workflowId: string;
     workflowName: string;
     recordId: string;
-    recordType: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task' | 'Conversation' | 'Message';
+    recordType:
+      | 'Lead'
+      | 'Contact'
+      | 'Ticket'
+      | 'Deal'
+      | 'Account'
+      | 'Task'
+      | 'Conversation'
+      | 'Message';
     automationDepth: number;
   }) {
     const now = new Date();

@@ -108,9 +108,9 @@ describe('WebhookProcessor — error handling & edge cases', () => {
         new Error('Adapter timeout'),
       );
 
-      await expect(
-        processor.process(createFacebookJob()),
-      ).rejects.toThrow('Adapter timeout');
+      await expect(processor.process(createFacebookJob())).rejects.toThrow(
+        'Adapter timeout',
+      );
     });
 
     it('should release Redis lock on unexpected error (allows retry dedup)', async () => {

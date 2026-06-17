@@ -222,7 +222,8 @@ describe('PermissionGuard', () => {
     });
 
     const context = createContext({ sub: 'user_1' });
-    context.switchToHttp().getRequest().headers['x-tenant-id'] = 'tenant_from_header';
+    context.switchToHttp().getRequest().headers['x-tenant-id'] =
+      'tenant_from_header';
 
     await guard.canActivate(context);
 

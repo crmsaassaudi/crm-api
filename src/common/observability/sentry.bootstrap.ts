@@ -42,10 +42,9 @@ export async function initSentryIfConfigured(): Promise<void> {
       // We do our own secret masking in the logger; Sentry's beforeSend
       // applies the same maskSecrets so anything that escapes a logger call
       // (e.g. uncaught throw) is still scrubbed before leaving the process.
-      beforeSend(event: any) {
+      async beforeSend(event: any) {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { maskSecrets } = require('../logger/secret-masker');
+          const { maskSecrets } = await import('../logger/secret-masker');
           return maskSecrets(event);
         } catch {
           return event;

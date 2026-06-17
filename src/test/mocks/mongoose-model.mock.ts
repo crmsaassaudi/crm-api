@@ -14,7 +14,10 @@ export function createMongooseModelMock(defaults: Record<string, any> = {}) {
   };
 
   return {
-    find: jest.fn().mockReturnValue({ ...chainable, exec: jest.fn().mockResolvedValue(defaults.findResult ?? []) }),
+    find: jest.fn().mockReturnValue({
+      ...chainable,
+      exec: jest.fn().mockResolvedValue(defaults.findResult ?? []),
+    }),
     findOne: jest.fn().mockReturnValue(chainable),
     findById: jest.fn().mockReturnValue(chainable),
     create: jest.fn().mockResolvedValue(defaults.createResult ?? {}),
@@ -25,7 +28,9 @@ export function createMongooseModelMock(defaults: Record<string, any> = {}) {
     countDocuments: jest.fn().mockReturnValue({
       exec: jest.fn().mockResolvedValue(defaults.count ?? 0),
     }),
-    bulkWrite: jest.fn().mockResolvedValue({ insertedCount: 0, modifiedCount: 0 }),
+    bulkWrite: jest
+      .fn()
+      .mockResolvedValue({ insertedCount: 0, modifiedCount: 0 }),
     aggregate: jest.fn().mockResolvedValue([]),
   };
 }

@@ -137,7 +137,9 @@ export class ContactRepository extends BaseDocumentRepository<
                 $regex: `^${this.escapeRegex(String(f.value))}$`,
                 $options: 'i',
               };
-            } else if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
+            } else if (
+              ['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)
+            ) {
               where[f.id] = Array.isArray(f.value) ? { $in: f.value } : f.value;
             } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
               // Map virtual field names to actual DB field names

@@ -50,7 +50,9 @@ export class AutomationDlqProcessor extends BaseTenantConsumer<TenantJobData> {
       .expire(counterKey, 86400) // 24h TTL — auto-reset daily
       .exec()
       .catch((err) =>
-        this.logger.warn(`[DLQ Processor] Failed to increment DLQ counter: ${err.message}`),
+        this.logger.warn(
+          `[DLQ Processor] Failed to increment DLQ counter: ${err.message}`,
+        ),
       );
 
     // Mark the step as 'dlq' in the execution log

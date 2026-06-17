@@ -636,5 +636,4 @@ export class AssignmentEngineService {
       return [];
     }
   }
-
 }

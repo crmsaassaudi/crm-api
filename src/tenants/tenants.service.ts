@@ -494,9 +494,7 @@ export class TenantsService {
    * Returns { allowed, usedBytes, limitBytes, usagePercent }.
    * A limitBytes of -1 means unlimited.
    */
-  async checkStorageQuota(
-    tenantId: string,
-  ): Promise<{
+  async checkStorageQuota(tenantId: string): Promise<{
     allowed: boolean;
     usedBytes: number;
     limitBytes: number;
@@ -510,7 +508,12 @@ export class TenantsService {
     };
 
     if (quota.limitBytes === -1) {
-      return { allowed: true, usedBytes: quota.usedBytes, limitBytes: -1, usagePercent: 0 };
+      return {
+        allowed: true,
+        usedBytes: quota.usedBytes,
+        limitBytes: -1,
+        usagePercent: 0,
+      };
     }
 
     const usagePercent =

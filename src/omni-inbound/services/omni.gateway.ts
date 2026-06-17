@@ -424,7 +424,9 @@ export class OmniGateway
       if (!result.reused) {
         // Broadcast the message to other agents watching this conversation
         client
-          .to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`)
+          .to(
+            `tenant:${client.data.tenantId}:conversation:${data.conversationId}`,
+          )
           .emit('omni:message:new', {
             conversationId: data.conversationId,
             senderId: result.senderId ?? userId,
@@ -519,7 +521,9 @@ export class OmniGateway
       // Broadcast to other agents watching this conversation
       if (!result.reused) {
         client
-          .to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`)
+          .to(
+            `tenant:${client.data.tenantId}:conversation:${data.conversationId}`,
+          )
           .emit('omni:message:new', {
             conversationId: data.conversationId,
             senderId: result.senderId ?? userId,
@@ -917,11 +921,13 @@ export class OmniGateway
       }
     }
 
-    client.to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`).emit('omni:typing:start', {
-      conversationId: data.conversationId,
-      userId,
-      userName: user.name ?? 'Agent',
-    });
+    client
+      .to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`)
+      .emit('omni:typing:start', {
+        conversationId: data.conversationId,
+        userId,
+        userName: user.name ?? 'Agent',
+      });
   }
 
   @SubscribeMessage('omni:typing:stop')
@@ -932,10 +938,12 @@ export class OmniGateway
     const user = client.data.user;
     if (!user) return;
 
-    client.to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`).emit('omni:typing:stop', {
-      conversationId: data.conversationId,
-      userId: client.data.userId ?? user.id ?? user.sub,
-    });
+    client
+      .to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`)
+      .emit('omni:typing:stop', {
+        conversationId: data.conversationId,
+        userId: client.data.userId ?? user.id ?? user.sub,
+      });
   }
 
   // ─── Collision detection ────────────────────────────────────────────

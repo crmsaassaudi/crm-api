@@ -365,7 +365,11 @@ export class TicketsService {
         } catch {}
       }
       // Extract populated user object
-      if ((doc as any).userId && typeof (doc as any).userId === 'object' && (doc as any).userId.firstName) {
+      if (
+        (doc as any).userId &&
+        typeof (doc as any).userId === 'object' &&
+        (doc as any).userId.firstName
+      ) {
         (doc as any).user = {
           firstName: (doc as any).userId.firstName,
           lastName: (doc as any).userId.lastName,

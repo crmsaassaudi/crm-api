@@ -26,7 +26,7 @@ export async function runWithTenant<T>(
 ): Promise<T> {
   const cls = getGlobalClsService();
   return new Promise<T>((resolve, reject) => {
-    cls.run(async () => {
+    void cls.run(async () => {
       cls.set('tenantId', tenantId);
       cls.set('activeTenantId', tenantId);
       cls.set('userId', userId);
@@ -49,7 +49,7 @@ export async function runWithoutTenant<T>(
 ): Promise<T> {
   const cls = getGlobalClsService();
   return new Promise<T>((resolve, reject) => {
-    cls.run(async () => {
+    void cls.run(async () => {
       // Intentionally do NOT set tenantId/activeTenantId
       try {
         const result = await callback();
