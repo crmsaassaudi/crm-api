@@ -58,7 +58,7 @@ export class OmniReportService {
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<ConversationVolumePoint[]>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const format = getMongoDateFormat(context.resolvedGranularity);
     const baseMatch = this.buildBaseMatch(dto);
 
@@ -156,7 +156,7 @@ export class OmniReportService {
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<ChannelDistributionItem[]>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const match = {
       ...this.buildBaseMatch(dto),
       createdAt: { $gte: context.from, $lte: context.to },
@@ -200,7 +200,7 @@ export class OmniReportService {
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<AgentPerformanceItem[]>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const match = {
       ...this.buildBaseMatch(dto),
       status: { $in: ['resolved', 'closed'] },
@@ -255,10 +255,7 @@ export class OmniReportService {
         avgResolutionMs: Math.round(row.avgResolutionMs ?? 0),
         avgResolutionFormatted: this.formatDuration(row.avgResolutionMs ?? 0),
         frtBreachCount: row.frtBreachCount,
-        frtBreachRate: safePercent(
-          row.frtBreachCount,
-          row.totalConversations,
-        ),
+        frtBreachRate: safePercent(row.frtBreachCount, row.totalConversations),
         resolutionBreachCount: row.resolutionBreachCount,
         resolutionBreachRate: safePercent(
           row.resolutionBreachCount,
@@ -286,7 +283,7 @@ export class OmniReportService {
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<ResponseTimeData>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const match = {
       ...this.buildBaseMatch(dto),
       status: { $in: ['resolved', 'closed'] },
@@ -354,7 +351,7 @@ export class OmniReportService {
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<ResolutionSummaryData>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const baseMatch = {
       ...this.buildBaseMatch(dto),
       createdAt: { $gte: context.from, $lte: context.to },
@@ -447,7 +444,7 @@ export class OmniReportService {
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<MessageVolumeData>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const baseMatch: any = {
       tenantId: this.tenantObjectId(),
       createdAt: { $gte: context.from, $lte: context.to },
@@ -511,7 +508,7 @@ export class OmniReportService {
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<BotPerformanceData>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const match = {
       ...this.buildBaseMatch(dto),
       createdAt: { $gte: context.from, $lte: context.to },
@@ -572,7 +569,7 @@ export class OmniReportService {
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<PeakHoursCell[]>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const match = {
       ...this.buildBaseMatch(dto),
       createdAt: { $gte: context.from, $lte: context.to },
@@ -623,7 +620,7 @@ export class OmniReportService {
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<TagAnalyticsItem[]>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const match = {
       ...this.buildBaseMatch(dto),
       createdAt: { $gte: context.from, $lte: context.to },
@@ -671,7 +668,7 @@ export class OmniReportService {
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<ReopenRateData>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const format = getMongoDateFormat(context.resolvedGranularity);
     const match = {
       ...this.buildBaseMatch(dto),
@@ -765,9 +762,7 @@ export class OmniReportService {
     return new Types.ObjectId(tenantId);
   }
 
-  private async resolveDateContext(
-    dto: BaseReportFilterDto,
-  ): Promise<DateContext> {
+  private resolveDateContext(dto: BaseReportFilterDto): DateContext {
     const { from, to } = parseReportDateRange(dto.fromDate, dto.toDate);
     const timezone = dto.timezone || 'UTC';
     const resolvedGranularity = BaseReportFilterDto.resolveGranularity(
@@ -777,10 +772,7 @@ export class OmniReportService {
     );
     const warnings: string[] = [];
 
-    if (
-      dto.granularity &&
-      dto.granularity !== resolvedGranularity
-    ) {
+    if (dto.granularity && dto.granularity !== resolvedGranularity) {
       warnings.push(
         `Granularity auto-adjusted from "${dto.granularity}" to "${resolvedGranularity}" for the selected date range.`,
       );

@@ -19,16 +19,23 @@ import { ContactReportRateLimitGuard } from './contact/contact-report-rate-limit
 import { ContactReportService } from './contact/contact-report.service';
 import { OmniReportController } from './omni/omni-report.controller';
 import { OmniReportService } from './omni/omni-report.service';
+import { DealReportModule } from './deal/deal-report.module';
+import { TicketReportModule } from './ticket/ticket-report.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: ContactSchemaClass.name, schema: ContactSchema },
-      { name: OmniConversationSchemaClass.name, schema: OmniConversationSchema },
+      {
+        name: OmniConversationSchemaClass.name,
+        schema: OmniConversationSchema,
+      },
       { name: OmniMessageSchemaClass.name, schema: OmniMessageSchema },
     ]),
     CrmSettingsModule,
     RedisModule,
+    DealReportModule,
+    TicketReportModule,
   ],
   controllers: [ContactReportController, OmniReportController],
   providers: [
