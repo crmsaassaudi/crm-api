@@ -8,8 +8,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ClsService } from 'nestjs-cls';
-import { ChannelConfigRepository } from '../infrastructure/persistence/document/repositories/channel-config.repository';
-import { CRYPTO_SERVICE_TOKEN, ICryptoService } from '../domain/crypto.service';
+import { ChannelConfigRepository } from './infrastructure/persistence/document/repositories/channel-config.repository';
+import { CRYPTO_SERVICE_TOKEN, ICryptoService } from './domain/crypto.service';
 
 class SendSmsDto {
   configId: string;
