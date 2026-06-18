@@ -1,6 +1,6 @@
 import { Controller, Post, Body, HttpCode } from '@nestjs/common';
 import { ReportDigestService } from './report-digest.service';
-import { RequirePermission } from '../../common/permissions/require-permission.decorator';
+import { RequirePermission } from '../../common/permissions/permission.decorator';
 
 /**
  * Admin endpoint to trigger the weekly digest on demand.

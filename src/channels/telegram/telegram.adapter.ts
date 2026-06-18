@@ -1,15 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
-import { ChannelAdapter } from '../omni-inbound/adapters/channel-adapter.interface';
+import { ChannelAdapter } from '../../omni-inbound/adapters/channel-adapter.interface';
 import {
   OmniPayload,
   ChannelType,
   MessageType,
-} from '../omni-inbound/domain/omni-payload';
+} from '../../omni-inbound/domain/omni-payload';
 import {
   OutboundMedia,
   MediaSendResult,
-} from '../omni-outbound/types/outbound-media.type';
+} from '../../omni-outbound/types/outbound-media.type';
 
 const TG_API = (token: string) => `https://api.telegram.org/bot${token}`;
 
@@ -163,7 +163,7 @@ export class TelegramAdapter implements ChannelAdapter {
 
       // Use Blob for browser-compatible FormData
       if (media.buffer) {
-        const blob = new Blob([media.buffer], { type: media.mimeType });
+        const blob = new Blob([new Uint8Array(media.buffer)], { type: media.mimeType });
         const fileKey =
           method === 'sendPhoto'
             ? 'photo'
@@ -199,7 +199,7 @@ export class TelegramAdapter implements ChannelAdapter {
   ): Promise<{ name?: string; avatarUrl?: string }> {
     // Telegram does not provide a user profile API for bots beyond what comes
     // in the webhook update. Return empty — the name is already in normalize().
-    return {};
+    return Promise.resolve({});
   }
 
   // ── PRIVATE HELPERS ────────────────────────────────────────────────────────

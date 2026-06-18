@@ -2,8 +2,8 @@ import { Controller, Get, Param, Res, NotFoundException } from '@nestjs/common';
 import { Response } from 'express';
 import { join } from 'path';
 import { existsSync } from 'fs';
-import { Public } from '../../auth/decorators/public.decorator';
-import { ChannelConfigService } from '../../channels/channel-config.service';
+import { Public } from '../auth/decorators/public.decorator';
+import { ChannelConfigService } from '../channels/channel-config.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 
 /**
@@ -94,7 +94,7 @@ export class LivechatEmbedController {
   previewPage(
     @Param('channelId') channelId: string,
     @Res() res: Response,
-  ): Promise<void> {
+  ): void {
     const apiUrl = process.env.APP_URL ?? '';
     const html = `<!DOCTYPE html>
 <html lang="en">
