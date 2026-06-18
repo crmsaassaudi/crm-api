@@ -8,12 +8,12 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ClsService } from 'nestjs-cls';
-import { TransportPoolService } from '../transport-pool.service';
+import { TransportPoolService } from './transport-pool.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { EmailContentSchemaClass } from '../infrastructure/persistence/document/entities/email-content.schema';
-import { EmailMetadataSchemaClass } from '../infrastructure/persistence/document/entities/email-metadata.schema';
-import { OutboundQueueService } from '../services/outbound-queue.service';
+import { EmailContentSchemaClass } from './infrastructure/persistence/document/entities/email-content.schema';
+import { EmailMetadataSchemaClass } from './infrastructure/persistence/document/entities/email-metadata.schema';
+import { OutboundQueueService } from './services/outbound-queue.service';
 import nodemailer from 'nodemailer';
 
 class SendEmailDto {
