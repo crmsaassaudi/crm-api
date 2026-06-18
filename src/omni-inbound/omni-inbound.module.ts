@@ -53,7 +53,7 @@ import { BotQueueService } from './bot/bot-queue.service';
 import { BotCallbackController } from './bot/bot-callback.controller';
 import { InternalChannelsController } from './bot/internal-channels.controller';
 import { CsatModule } from './csat/csat.module';
-import { CsatService } from './csat/csat.service';
+
 
 // Repositories
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -287,7 +287,7 @@ const workerProviders =
     AgentStatusAuditService,
     ConversationLockService,
     BotQueueService,
-    CsatService,
+    CsatModule,
   ],
 })
 export class OmniInboundModule {}
