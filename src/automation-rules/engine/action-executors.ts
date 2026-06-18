@@ -24,6 +24,8 @@ import {
 import { TransportPoolService } from '../../channels/transport-pool.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WebhookHeaderCryptoService } from './webhook-header-crypto.service';
+import { TasksService } from '../../tasks/tasks.service';
+import { TicketsService } from '../../tickets/tickets.service';
 
 /**
  * Base interface for all action executors.
@@ -800,5 +802,241 @@ export class WebhookExecutor implements ActionExecutor {
         },
       };
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Create Task Executor
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class CreateTaskExecutor implements ActionExecutor {
+  readonly actionType = 'create_task';
+  private readonly logger = new Logger(CreateTaskExecutor.name);
+
+  constructor(
+    private readonly tasksService: TasksService,
+    private readonly templateEngine: TemplateInterpolationService,
+  ) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { recordId, recordType, actionConfig, tenantId, recordData } = job;
+
+    const title = this.templateEngine.interpolate(
+      actionConfig.title || 'Follow up',
+      recordData,
+      { fallbackMap: { firstName: 'Customer', Name: 'Customer' } },
+    );
+
+    const dueDateRaw = actionConfig.dueDateOffsetDays
+      ? new Date(
+          Date.now() + Number(actionConfig.dueDateOffsetDays) * 86_400_000,
+        )
+      : actionConfig.dueDate
+        ? new Date(actionConfig.dueDate)
+        : new Date(Date.now() + 86_400_000); // default: tomorrow
+
+    this.logger.log(
+      `[CreateTask] tenant=${tenantId} title="${title}" dueDate=${dueDateRaw.toISOString()} triggeredBy=${recordType}(${recordId})`,
+    );
+
+    try {
+      const task = await this.tasksService.create({
+        title,
+        description: actionConfig.description
+          ? this.templateEngine.interpolate(
+              actionConfig.description,
+              recordData,
+            )
+          : undefined,
+        dueDate: dueDateRaw,
+        priority: actionConfig.priority || 'MEDIUM',
+        ownerId: actionConfig.assigneeId || recordData.ownerId,
+        categoryId: actionConfig.categoryId,
+        relatedTo: {
+          type: recordType,
+          id: recordId,
+          name:
+            recordData.name ||
+            recordData.title ||
+            recordData.subject ||
+            recordData.firstName ||
+            recordId,
+        },
+        tags: actionConfig.tags,
+      } as any);
+
+      this.logger.log(
+        `[CreateTask] ✅ Created task ${task.id} linked to ${recordType}(${recordId})`,
+      );
+
+      return {
+        success: true,
+        output: { taskId: task.id, title: task.title },
+      };
+    } catch (err: any) {
+      this.logger.error(`[CreateTask] Failed: ${err.message}`, err.stack);
+      return {
+        success: false,
+        error: { code: 'CREATE_TASK_FAILED', message: err.message },
+      };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Create Ticket Executor
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class CreateTicketExecutor implements ActionExecutor {
+  readonly actionType = 'create_ticket';
+  private readonly logger = new Logger(CreateTicketExecutor.name);
+
+  constructor(
+    private readonly ticketsService: TicketsService,
+    private readonly templateEngine: TemplateInterpolationService,
+  ) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { recordId, recordType, actionConfig, tenantId, recordData } = job;
+
+    const subject = this.templateEngine.interpolate(
+      actionConfig.subject || 'Support Request',
+      recordData,
+      { fallbackMap: { firstName: 'Customer', Name: 'Customer' } },
+    );
+
+    // Resolve contactId from trigger record
+    const contactId =
+      actionConfig.contactId ||
+      (recordType === 'Contact' ? recordId : recordData.contactId) ||
+      undefined;
+
+    // Resolve omniConversationId if triggered from a Conversation
+    const omniConversationId =
+      actionConfig.omniConversationId ||
+      (recordType === 'Conversation'
+        ? recordId
+        : recordData.omniConversationId) ||
+      undefined;
+
+    this.logger.log(
+      `[CreateTicket] tenant=${tenantId} subject="${subject}" contactId=${contactId} triggeredBy=${recordType}(${recordId})`,
+    );
+
+    try {
+      const ticket = await this.ticketsService.create({
+        subject,
+        description: actionConfig.description
+          ? this.templateEngine.interpolate(
+              actionConfig.description,
+              recordData,
+            )
+          : undefined,
+        priority: actionConfig.priority || 'MEDIUM',
+        statusId: actionConfig.statusId,
+        typeId: actionConfig.typeId,
+        sourceId: actionConfig.sourceId,
+        ownerId: actionConfig.assigneeId || recordData.ownerId,
+        groupId: actionConfig.groupId,
+        contactId,
+        accountId: recordData.accountId,
+        omniConversationId,
+        tags: actionConfig.tags,
+      } as any);
+
+      this.logger.log(
+        `[CreateTicket] ✅ Created ticket ${ticket.id} (${ticket.ticketNumber}) for contact=${contactId}`,
+      );
+
+      return {
+        success: true,
+        output: {
+          ticketId: ticket.id,
+          ticketNumber: ticket.ticketNumber,
+          subject: ticket.subject,
+        },
+      };
+    } catch (err: any) {
+      this.logger.error(`[CreateTicket] Failed: ${err.message}`, err.stack);
+      return {
+        success: false,
+        error: { code: 'CREATE_TICKET_FAILED', message: err.message },
+      };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Add Tag Executor
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class AddTagExecutor implements ActionExecutor {
+  readonly actionType = 'add_tag';
+  private readonly logger = new Logger(AddTagExecutor.name);
+
+  constructor(private readonly crmUpdate: CrmRecordUpdateService) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { recordId, recordType, actionConfig, tenantId, recordData } = job;
+
+    const rawTags: string[] = Array.isArray(actionConfig.tags)
+      ? actionConfig.tags
+      : typeof actionConfig.tags === 'string'
+        ? actionConfig.tags
+            .split(',')
+            .map((t: string) => t.trim())
+            .filter(Boolean)
+        : [];
+
+    if (rawTags.length === 0) {
+      return {
+        success: false,
+        error: { code: 'NO_TAGS', message: 'actionConfig.tags is required' },
+      };
+    }
+
+    this.logger.log(
+      `[AddTag] tenant=${tenantId} ${recordType}(${recordId}) += [${rawTags.join(', ')}]`,
+    );
+
+    // Merge new tags with existing tags (deduplication)
+    const existingTags: string[] = Array.isArray(recordData.tags)
+      ? recordData.tags
+      : [];
+    const mergedTags = Array.from(new Set([...existingTags, ...rawTags]));
+
+    const result = await this.crmUpdate.updateField({
+      tenantId,
+      recordType: recordType as any,
+      recordId,
+      field: 'tags',
+      value: mergedTags,
+      sourceWorkflowId: job.sourceWorkflowId,
+      automationDepth: job.automationDepth,
+      automationBreadcrumbs: job.automationBreadcrumbs,
+    });
+
+    if (!result.success) {
+      return {
+        success: false,
+        error: {
+          code: 'ADD_TAG_FAILED',
+          message:
+            result.error || `Failed to add tags to ${recordType}(${recordId})`,
+        },
+      };
+    }
+
+    this.logger.log(
+      `[AddTag] ✅ Tags added to ${recordType}(${recordId}): [${rawTags.join(', ')}]`,
+    );
+
+    return {
+      success: true,
+      output: { addedTags: rawTags, mergedTags },
+    };
   }
 }

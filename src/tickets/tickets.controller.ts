@@ -60,6 +60,69 @@ export class TicketsController {
     return this.service.remove(id);
   }
 
+  @Post(':id/merge')
+  @RequirePermission('edit', 'tickets')
+  mergeTickets(
+    @Param('id') targetId: string,
+    @Body() body: { sourceId: string },
+  ) {
+    return this.service.mergeTickets(targetId, body.sourceId);
+  }
+
+  // ──────────────────────────── SLA PAUSE / RESUME ────────────────────────────
+
+  @Post(':id/sla/pause')
+  @RequirePermission('edit', 'tickets')
+  pauseSla(@Param('id') id: string) {
+    return this.service.pauseSla(id);
+  }
+
+  @Post(':id/sla/resume')
+  @RequirePermission('edit', 'tickets')
+  resumeSla(@Param('id') id: string) {
+    return this.service.resumeSla(id);
+  }
+
+  // ──────────────────────────── DEAL LINK ────────────────────────────
+
+  @Patch(':id/link-deal')
+  @RequirePermission('edit', 'tickets')
+  linkDeal(@Param('id') id: string, @Body() body: { dealId: string }) {
+    return this.service.linkDeal(id, body.dealId);
+  }
+
+  @Delete(':id/unlink-deal')
+  @RequirePermission('edit', 'tickets')
+  unlinkDeal(@Param('id') id: string) {
+    return this.service.unlinkDeal(id);
+  }
+
+  @Get('by-deal/:dealId')
+  @RequirePermission('view', 'tickets')
+  findByDeal(@Param('dealId') dealId: string) {
+    return this.service.findByDeal(dealId);
+  }
+
+  // ──────────────────────────── PARENT/CHILD HIERARCHY ─────────────────────
+
+  @Patch(':id/set-parent')
+  @RequirePermission('edit', 'tickets')
+  setParent(@Param('id') id: string, @Body() body: { parentTicketId: string }) {
+    return this.service.setParent(id, body.parentTicketId);
+  }
+
+  @Delete(':id/remove-parent')
+  @RequirePermission('edit', 'tickets')
+  removeParent(@Param('id') id: string) {
+    return this.service.removeParent(id);
+  }
+
+  @Get(':id/children')
+  @RequirePermission('view', 'tickets')
+  getChildren(@Param('id') id: string) {
+    return this.service.getChildren(id);
+  }
+
   // ──────────────────────────── IMPORT ────────────────────────────
 
   @Post('import-upload')

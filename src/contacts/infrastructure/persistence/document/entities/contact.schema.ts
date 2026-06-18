@@ -172,6 +172,26 @@ export class ContactSchemaClass extends EntityDocumentHelper {
     direction?: 'forward' | 'backward' | 'lateral';
     skippedStages?: string[];
   }>;
+
+  // ──────────────────── SOCIAL PROFILES ────────────────────
+
+  @Prop()
+  linkedinUrl?: string;
+
+  @Prop()
+  twitterUrl?: string;
+
+  @Prop()
+  instagramUrl?: string;
+
+  @Prop()
+  tiktokUrl?: string;
+
+  @Prop()
+  youtubeUrl?: string;
+
+  @Prop()
+  githubUrl?: string;
 }
 
 export const ContactSchema = SchemaFactory.createForClass(ContactSchemaClass);

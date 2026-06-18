@@ -18,6 +18,7 @@ import { ChannelsService } from './channels.service';
 import {
   ConnectMetaChannelsDto,
   CreateChannelDto,
+  CreateLivechatChannelDto,
   MetaAuthUrlQueryDto,
   UpdateChannelDto,
 } from './dto/channel.dto';
@@ -45,6 +46,20 @@ export class ChannelsController {
   @RequirePermission('create', 'channels')
   create(@Body() dto: CreateChannelDto) {
     return this.service.create(dto);
+  }
+
+  /** Create a Livechat channel — no OAuth required, auto-Connected */
+  @Post('livechat')
+  @RequirePermission('create', 'channels')
+  createLivechat(@Body() dto: CreateLivechatChannelDto) {
+    return this.service.createLivechatChannel(dto);
+  }
+
+  /** Public endpoint — widget fetches its config (greeting, color, etc.) */
+  @Get('livechat/:id/public-config')
+  @Unprotected()
+  getLivechatPublicConfig(@Param('id') id: string) {
+    return this.service.getLivechatPublicConfig(id);
   }
 
   @Get('meta/auth-url')

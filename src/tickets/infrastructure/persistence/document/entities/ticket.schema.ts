@@ -143,6 +143,18 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ default: false, index: true })
   isSlaBreached: boolean;
 
+  /** Set when SLA timer is manually paused (e.g., waiting for customer) */
+  @Prop()
+  slaPausedAt?: Date;
+
+  /** Set when SLA is resumed after being paused */
+  @Prop()
+  slaResumedAt?: Date;
+
+  /** Cumulative seconds the SLA has been on pause (used by breach calculator) */
+  @Prop({ default: 0 })
+  slaPausedSeconds?: number;
+
   // ── 6. METRICS & RESOLUTION ───────────────────────────────────────────
   @Prop({
     type: MongooseSchema.Types.ObjectId,

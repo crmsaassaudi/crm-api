@@ -291,6 +291,31 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
    */
   @Prop({ type: Date, default: null, index: true })
   lastCustomerMessageAt: Date | null;
+
+  // ── CSAT (Customer Satisfaction) ──────────────────────────────
+
+  /**
+   * Satisfaction score submitted by the customer (1 = terrible, 5 = excellent).
+   * null = survey not yet submitted or not sent.
+   */
+  @Prop({ type: Number, min: 1, max: 5, default: null })
+  csatScore: number | null;
+
+  /** Optional free-text comment from the customer with the CSAT survey */
+  @Prop({ type: String, default: null })
+  csatComment: string | null;
+
+  /** When the customer submitted the CSAT survey */
+  @Prop({ type: Date, default: null })
+  csatSubmittedAt: Date | null;
+
+  /**
+   * One-time token included in the survey link.
+   * Used to authenticate the public CSAT submission endpoint
+   * without requiring the customer to log in.
+   */
+  @Prop({ type: String, default: null, index: true, sparse: true })
+  csatToken: string | null;
 }
 
 export const OmniConversationSchema = SchemaFactory.createForClass(

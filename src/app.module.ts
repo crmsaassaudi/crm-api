@@ -48,6 +48,8 @@ import { TicketSettingsModule } from './ticket-settings/ticket-settings.module';
 import { DealSettingsModule } from './deal-settings/deal-settings.module';
 import { AccountSettingsModule } from './account-settings/account-settings.module';
 import { TaskSettingsModule } from './task-settings/task-settings.module';
+import { LeadScoringModule } from './lead-scoring/lead-scoring.module';
+
 import { TasksModule } from './tasks/tasks.module';
 import { CustomFieldsModule } from './custom-fields/custom-fields.module';
 import { TagsModule } from './tags/tags.module';
@@ -75,6 +77,10 @@ import { HealthModule } from './health/health.module';
 import { SharedImportModule } from './common/import/import.module';
 import { SharedExportModule } from './common/export/export.module';
 import { MessageTemplatesModule } from './message-templates/message-templates.module';
+import { ObjectAclModule } from './common/permissions/object-acl.module';
+import { LivechatModule } from './livechat/livechat.module';
+import { TelegramModule } from './channels/telegram/telegram.module';
+import { DashboardsModule } from './dashboards/dashboards.module';
 
 import {
   KeycloakConnectModule,
@@ -319,6 +325,7 @@ function bullBoardBasicAuth() {
     DealsModule,
     ContactsModule,
     TicketsModule,
+    LeadScoringModule,
     TicketSettingsModule,
     DealSettingsModule,
     AccountSettingsModule,
@@ -349,6 +356,10 @@ function bullBoardBasicAuth() {
     SharedImportModule,
     SharedExportModule,
     MessageTemplatesModule,
+    ObjectAclModule,
+    LivechatModule,
+    TelegramModule,
+    DashboardsModule,
   ],
   providers: [
     {

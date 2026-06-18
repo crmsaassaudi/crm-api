@@ -19,6 +19,9 @@ import {
   UpdateFieldExecutor,
   RouteToTeamExecutor,
   WebhookExecutor,
+  CreateTaskExecutor,
+  CreateTicketExecutor,
+  AddTagExecutor,
 } from '../engine/action-executors';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationDlqProducer } from './automation-dlq.producer';
@@ -92,6 +95,9 @@ export class ActionProcessorMixin {
       'update_field',
       'route_to_team',
       'webhook',
+      'create_task',
+      'create_ticket',
+      'add_tag',
     ]);
     if (!validActions.has(data.actionType as string)) {
       return `unknown actionType "${data.actionType}"`;
@@ -279,6 +285,9 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
     updateField: UpdateFieldExecutor,
     routeToTeam: RouteToTeamExecutor,
     webhook: WebhookExecutor,
+    createTask: CreateTaskExecutor,
+    createTicket: CreateTicketExecutor,
+    addTag: AddTagExecutor,
     cls: ClsService,
   ) {
     super();
@@ -289,6 +298,9 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
       [updateField.actionType, updateField],
       [routeToTeam.actionType, routeToTeam],
       [webhook.actionType, webhook],
+      [createTask.actionType, createTask],
+      [createTicket.actionType, createTicket],
+      [addTag.actionType, addTag],
     ]);
     this.mixin = new ActionProcessorMixin(
       executors,
@@ -407,6 +419,9 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
     dlqProducer: AutomationDlqProducer,
     updateField: UpdateFieldExecutor,
     routeToTeam: RouteToTeamExecutor,
+    createTask: CreateTaskExecutor,
+    createTicket: CreateTicketExecutor,
+    addTag: AddTagExecutor,
     cls: ClsService,
   ) {
     super();
@@ -414,6 +429,9 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
     const executors = new Map<string, ActionExecutor>([
       [updateField.actionType, updateField],
       [routeToTeam.actionType, routeToTeam],
+      [createTask.actionType, createTask],
+      [createTicket.actionType, createTicket],
+      [addTag.actionType, addTag],
     ]);
     this.mixin = new ActionProcessorMixin(
       executors,

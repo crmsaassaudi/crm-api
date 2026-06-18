@@ -32,6 +32,17 @@ export class Ticket {
   @ApiProperty({ description: 'Linked message IDs from the omni-conversation' })
   linkedMessageIds?: string[];
 
+  @ApiProperty({ description: 'Deal linked to this ticket' })
+  dealId?: string;
+
+  @ApiProperty({ description: 'Parent ticket ID (for sub-tickets)' })
+  parentTicketId?: string;
+
+  @ApiProperty({
+    description: 'Child ticket IDs (sub-tickets under this ticket)',
+  })
+  childTicketIds?: string[];
+
   @ApiProperty()
   relatedTo?: {
     type: string;

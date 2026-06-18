@@ -111,6 +111,12 @@ export class ContactsService {
     // Emit automation event: record_created.Contact
     this.emitAutomationEvent('record_created', contact);
 
+    // Emit lead-scoring event
+    this.eventEmitter.emit('contact.created', {
+      tenantId: (contact as any).tenantId,
+      contactId: contact.id,
+    });
+
     return contact;
   }
 
@@ -188,8 +194,6 @@ export class ContactsService {
       const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
       this.emitAutomationEvent('field_updated', updated, changedFields);
 
-      // Emit audit trail event: field-level change tracking
-      // AuditLogListener diffs old vs new snapshot → audit_logs
       this.entityAudit.emit({
         entity: 'contact',
         entityType: 'CONTACT',
@@ -197,6 +201,12 @@ export class ContactsService {
         kind: 'updated',
         oldSnapshot: existingContact ?? {},
         newSnapshot: updated,
+      });
+
+      // Emit lead-scoring event
+      this.eventEmitter.emit('contact.updated', {
+        tenantId: (updated as any).tenantId,
+        contactId: updated.id,
       });
     }
 

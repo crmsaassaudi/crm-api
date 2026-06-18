@@ -62,7 +62,10 @@ export interface AutomationActionJobData {
     | 'send_sms'
     | 'update_field'
     | 'route_to_team'
-    | 'webhook';
+    | 'webhook'
+    | 'create_task'
+    | 'create_ticket'
+    | 'add_tag';
 
   /** Action-specific config set by the admin in the Visual Builder */
   actionConfig: Record<string, any>;
@@ -143,6 +146,9 @@ export function resolveQueueForAction(actionType: string): string {
       return AUTOMATION_SMS_QUEUE;
     case 'update_field':
     case 'route_to_team':
+    case 'create_task':
+    case 'create_ticket':
+    case 'add_tag':
       return AUTOMATION_INTERNAL_QUEUE;
     case 'webhook':
       return AUTOMATION_WEBHOOK_QUEUE;

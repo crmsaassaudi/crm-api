@@ -1413,4 +1413,45 @@ export class OmniGateway
   private normalizeHost(host?: string): string {
     return (host ?? '').toLowerCase().replace(/\.$/, '');
   }
+
+  /**
+   * Broadcasts CSAT submission to the agent who handled the conversation.
+   * Emitted by CsatService when a customer submits their satisfaction rating.
+   *
+   * Socket events:
+   *   - `omni:csat:received` → tenant room (dashboard widgets)
+   *   - `omni:csat:received` → agent:${agentId} room (personal notification)
+   */
+  @OnEvent('csat.submitted')
+  handleCsatSubmitted(event: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string | null;
+    score: number;
+    comment?: string;
+    submittedAt: Date;
+  }) {
+    this.logger.log(
+      `CSAT received: conversation=${event.conversationId} score=${event.score}`,
+    );
+
+    const payload = {
+      conversationId: event.conversationId,
+      score: event.score,
+      comment: event.comment ?? null,
+      submittedAt: event.submittedAt.toISOString(),
+    };
+
+    // Broadcast to entire tenant (for dashboard live updates)
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:csat:received', payload);
+
+    // Also notify the specific agent for personal alert
+    if (event.agentId) {
+      this.server
+        .to(`agent:${event.agentId}`)
+        .emit('omni:csat:received', payload);
+    }
+  }
 }

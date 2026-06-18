@@ -102,4 +102,7 @@ export class Deal {
 
   @ApiProperty({ description: 'Linked message IDs from the omni-conversation' })
   linkedMessageIds?: string[];
+
+  @ApiProperty({ description: 'Tickets linked to this deal' })
+  ticketIds?: string[];
 }

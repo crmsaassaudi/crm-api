@@ -141,6 +141,43 @@ export class DealsService {
     return this.repository.remove(id);
   }
 
+  /**
+   * Get all tickets linked to this deal (via ticket.dealId).
+   * Delegates to the tickets endpoint filter rather than a direct repo call
+   * to avoid a circular module dependency between Deals ↔ Tickets.
+   */
+  async getLinkedTickets(
+    dealId: string,
+  ): Promise<{ data: any[]; total: number }> {
+    // The tickets collection stores dealId as a field — query it directly
+    // through this service's own DB connection by casting to any.
+    const ticketCollection = (this.repository as any).model?.db?.collection
+      ? (this.repository as any).model.db.collection('tickets')
+      : null;
+
+    if (!ticketCollection) {
+      return { data: [], total: 0 };
+    }
+
+    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const { Types } = await import('mongoose');
+
+    const filter: any = { dealId: dealId, deletedAt: null };
+    if (tenantId) {
+      try {
+        filter.tenantId = new Types.ObjectId(tenantId);
+      } catch {
+        filter.tenantId = tenantId;
+      }
+    }
+
+    const [data, total] = await Promise.all([
+      ticketCollection.find(filter).sort({ createdAt: -1 }).limit(50).toArray(),
+      ticketCollection.countDocuments(filter),
+    ]);
+
+    return { data, total };
+  }
   // ──────────────────────────── DEAL IMPORT ────────────────────────────
 
   async uploadImportFile(file: {

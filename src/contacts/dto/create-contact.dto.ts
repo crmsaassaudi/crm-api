@@ -115,4 +115,36 @@ export class CreateContactDto {
   @IsOptional()
   @IsBoolean()
   isShadow?: boolean;
+
+  // ────────────────── SOCIAL PROFILES ──────────────────
+
+  @ApiProperty({ example: 'https://linkedin.com/in/johndoe' })
+  @IsOptional()
+  @IsString()
+  linkedinUrl?: string;
+
+  @ApiProperty({ example: 'https://x.com/johndoe' })
+  @IsOptional()
+  @IsString()
+  twitterUrl?: string;
+
+  @ApiProperty({ example: 'https://instagram.com/johndoe' })
+  @IsOptional()
+  @IsString()
+  instagramUrl?: string;
+
+  @ApiProperty({ example: 'https://tiktok.com/@johndoe' })
+  @IsOptional()
+  @IsString()
+  tiktokUrl?: string;
+
+  @ApiProperty({ example: 'https://youtube.com/@johndoe' })
+  @IsOptional()
+  @IsString()
+  youtubeUrl?: string;
+
+  @ApiProperty({ example: 'https://github.com/johndoe' })
+  @IsOptional()
+  @IsString()
+  githubUrl?: string;
 }

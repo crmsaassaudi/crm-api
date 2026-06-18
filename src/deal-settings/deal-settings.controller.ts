@@ -73,4 +73,61 @@ export class DealSettingsController {
   async deleteSource(@Param('id') id: string): Promise<void> {
     await this.service.deleteSource(id);
   }
+
+  // ── Pipelines ──────────────────────────────────────────────────────────
+
+  @Get('pipelines')
+  @RequirePermission('view', 'settings')
+  findAllPipelines() {
+    return this.service.findAllPipelines();
+  }
+
+  @Get('pipelines/:id')
+  @RequirePermission('view', 'settings')
+  findPipelineById(@Param('id') id: string) {
+    return this.service.findPipelineById(id);
+  }
+
+  @Post('pipelines')
+  @RequirePermission('manage_system', 'settings')
+  createPipeline(
+    @Body()
+    body: {
+      name: string;
+      description?: string;
+      color?: string;
+      isDefault?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    return this.service.createPipeline(body);
+  }
+
+  @Patch('pipelines/:id')
+  @RequirePermission('manage_system', 'settings')
+  updatePipeline(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name?: string;
+      description?: string;
+      color?: string;
+      sortOrder?: number;
+      isDefault?: boolean;
+    },
+  ) {
+    return this.service.updatePipeline(id, body);
+  }
+
+  @Delete('pipelines/:id')
+  @RequirePermission('manage_system', 'settings')
+  async archivePipeline(@Param('id') id: string): Promise<void> {
+    await this.service.archivePipeline(id);
+  }
+
+  @Post('pipelines/:id/set-default')
+  @RequirePermission('manage_system', 'settings')
+  setDefaultPipeline(@Param('id') id: string) {
+    return this.service.updatePipeline(id, { isDefault: true });
+  }
 }

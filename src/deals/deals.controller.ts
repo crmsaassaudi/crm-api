@@ -24,6 +24,27 @@ import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.p
 import { RequirePermission } from '../common/permissions';
 import { StartDealImportDto } from './dto/start-deal-import.dto';
 import { ExportRequestDto } from '../common/export';
+import { ActivityLogService } from '../activity-log/activity-log.service';
+import { IsString, IsOptional, IsEnum } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+class CreateDealActivityDto {
+  @ApiProperty({
+    enum: ['note', 'call', 'meeting', 'email', 'task'],
+    example: 'note',
+  })
+  @IsEnum(['note', 'call', 'meeting', 'email', 'task'])
+  type: string;
+
+  @ApiPropertyOptional({ example: 'Had discovery call, very interested.' })
+  @IsString()
+  @IsOptional()
+  content?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  metadata?: Record<string, any>;
+}
 
 @ApiTags('Deals')
 @ApiBearerAuth()
@@ -34,7 +55,10 @@ import { ExportRequestDto } from '../common/export';
   version: '1',
 })
 export class DealsController {
-  constructor(private readonly service: DealsService) {}
+  constructor(
+    private readonly service: DealsService,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
   @Post()
   @RequirePermission('create', 'deals')
@@ -59,6 +83,14 @@ export class DealsController {
   @RequirePermission('delete', 'deals')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
+  }
+
+  // ──────────────────────────── TICKET LINK ────────────────────────────
+
+  @Get(':id/tickets')
+  @RequirePermission('view', 'deals')
+  getLinkedTickets(@Param('id') id: string) {
+    return this.service.getLinkedTickets(id);
   }
 
   // ──────────────────────────── IMPORT ────────────────────────────
@@ -178,5 +210,41 @@ export class DealsController {
   @RequirePermission('view', 'deals')
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
+  }
+
+  // ── Deal Activity Feed ─────────────────────────────────────────────────
+
+  @Get(':id/activities')
+  @RequirePermission('view', 'deals')
+  async getActivities(
+    @Param('id') id: string,
+    @Query('type') type?: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.activityLog.getFeed({
+      targetType: 'Deal',
+      targetId: id,
+      type: type as any,
+      limit: limit ? Number(limit) : 20,
+      cursor,
+    });
+  }
+
+  @Post(':id/activities')
+  @RequirePermission('view', 'deals')
+  async createActivity(
+    @Param('id') id: string,
+    @Body() dto: CreateDealActivityDto,
+  ) {
+    return this.activityLog.create({
+      targetType: 'Deal',
+      targetId: id,
+      event: dto.type,
+      payload: {
+        content: dto.content,
+        ...(dto.metadata ?? {}),
+      },
+    });
   }
 }

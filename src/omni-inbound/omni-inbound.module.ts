@@ -6,6 +6,9 @@ import { FacebookAdapter } from './adapters/facebook.adapter';
 import { ZaloAdapter } from './adapters/zalo.adapter';
 import { WhatsAppAdapter } from './adapters/whatsapp.adapter';
 import { InstagramAdapter } from './adapters/instagram.adapter';
+import { LivechatAdapter } from './adapters/livechat.adapter';
+import { TelegramAdapter } from '../channels/telegram/telegram.adapter';
+import { TikTokAdapter } from './adapters/tiktok.adapter';
 import { CHANNEL_ADAPTERS } from './adapters/channel-adapter.interface';
 import { ChannelType } from './domain/omni-payload';
 import { ChannelAdapter } from './adapters/channel-adapter.interface';
@@ -49,6 +52,8 @@ import { BotApiService } from './bot/bot-api.service';
 import { BotQueueService } from './bot/bot-queue.service';
 import { BotCallbackController } from './bot/bot-callback.controller';
 import { InternalChannelsController } from './bot/internal-channels.controller';
+import { CsatModule } from './csat/csat.module';
+import { CsatService } from './csat/csat.service';
 
 // Repositories
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -143,6 +148,7 @@ const workerProviders =
     TicketsModule,
     RoutingRulesModule,
     FilesModule,
+    CsatModule,
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,
@@ -182,6 +188,9 @@ const workerProviders =
     ZaloAdapter,
     WhatsAppAdapter,
     InstagramAdapter,
+    LivechatAdapter,
+    TelegramAdapter,
+    TikTokAdapter,
     {
       provide: CHANNEL_ADAPTERS,
       useFactory: (
@@ -189,15 +198,29 @@ const workerProviders =
         zalo: ZaloAdapter,
         wa: WhatsAppAdapter,
         ig: InstagramAdapter,
+        lc: LivechatAdapter,
+        tg: TelegramAdapter,
+        tt: TikTokAdapter,
       ) => {
         const map = new Map<ChannelType, ChannelAdapter>();
         map.set('facebook', fb);
         map.set('zalo', zalo);
         map.set('whatsapp', wa);
         map.set('instagram', ig);
+        map.set('livechat', lc);
+        map.set('telegram' as ChannelType, tg);
+        map.set('tiktok' as ChannelType, tt);
         return map;
       },
-      inject: [FacebookAdapter, ZaloAdapter, WhatsAppAdapter, InstagramAdapter],
+      inject: [
+        FacebookAdapter,
+        ZaloAdapter,
+        WhatsAppAdapter,
+        InstagramAdapter,
+        LivechatAdapter,
+        TelegramAdapter,
+        TikTokAdapter,
+      ],
     },
     InboundProcessorService,
     MediaProxyService,
@@ -264,6 +287,7 @@ const workerProviders =
     AgentStatusAuditService,
     ConversationLockService,
     BotQueueService,
+    CsatService,
   ],
 })
 export class OmniInboundModule {}

@@ -49,12 +49,16 @@ import { TemplateInterpolationService } from './engine/template-interpolation.se
 import { CrmRecordUpdateService } from './engine/crm-record-update.service';
 import { SsrfGuardService } from './engine/ssrf-guard.service';
 import { WebhookHeaderCryptoService } from './engine/webhook-header-crypto.service';
+import { ScheduledTriggerService } from './engine/scheduled-trigger.service';
 import {
   SendEmailExecutor,
   SendSmsExecutor,
   UpdateFieldExecutor,
   RouteToTeamExecutor,
   WebhookExecutor,
+  CreateTaskExecutor,
+  CreateTicketExecutor,
+  AddTagExecutor,
 } from './engine/action-executors';
 
 // ── Providers (Email + SMS) ─────────────────────────────────────────────
@@ -94,6 +98,14 @@ import { TasksModule } from '../tasks/tasks.module';
 import { AssignmentEngineModule } from '../assignment-engine/assignment-engine.module';
 import { ChannelsModule } from '../channels/channels.module';
 import { isWorkerRuntime } from '../config/runtime-role';
+import {
+  TicketSchemaClass,
+  TicketSchema,
+} from '../tickets/infrastructure/persistence/document/entities/ticket.schema';
+import {
+  DealSchemaClass,
+  DealSchema,
+} from '../deals/infrastructure/persistence/document/entities/deal.schema';
 
 const workerProviders = isWorkerRuntime()
   ? [
@@ -129,6 +141,8 @@ const workerProviders = isWorkerRuntime()
         name: AutomationDelayedJobSchemaClass.name,
         schema: AutomationDelayedJobSchema,
       },
+      { name: TicketSchemaClass.name, schema: TicketSchema },
+      { name: DealSchemaClass.name, schema: DealSchema },
     ]),
     AutomationQueueModule,
     // CRM modules — needed by CrmRecordUpdateService for real DB updates
@@ -169,12 +183,15 @@ const workerProviders = isWorkerRuntime()
     CrmRecordUpdateService,
     SsrfGuardService,
     WebhookHeaderCryptoService,
-    // Action Executors (all 5 types)
+    // Action Executors (all 8 types)
     SendEmailExecutor,
     SendSmsExecutor,
     UpdateFieldExecutor,
     RouteToTeamExecutor,
     WebhookExecutor,
+    CreateTaskExecutor,
+    CreateTicketExecutor,
+    AddTagExecutor,
     // Email Provider (SendGrid — dry-run if no API key)
     {
       provide: EMAIL_PROVIDER_TOKEN,
@@ -191,6 +208,8 @@ const workerProviders = isWorkerRuntime()
     AutomationBulkProducer,
     AutomationDelayedProducer,
     ...workerProviders,
+    // Time-based automation trigger (cron)
+    ScheduledTriggerService,
   ],
   exports: [
     AutomationRulesService,

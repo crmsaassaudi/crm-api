@@ -13,8 +13,10 @@ import { Channel } from './domain/channel';
 import {
   ConnectMetaChannelsDto,
   CreateChannelDto,
+  CreateLivechatChannelDto,
   UpdateChannelDto,
 } from './dto/channel.dto';
+
 import { RedisService } from '../redis/redis.service';
 import { AllConfigType } from '../config/config.type';
 import axiosLib from 'axios';
@@ -101,6 +103,69 @@ export class ChannelsService {
     const channel = await this.repository.findAnyByAccount(type, account);
     if (!channel) throw new NotFoundException('Channel not found');
     return channel;
+  }
+
+  /**
+   * Create a Livechat channel — no OAuth needed.
+   * Automatically sets status=Connected and generates a stable widget account ID.
+   */
+  async createLivechatChannel(dto: CreateLivechatChannelDto): Promise<Channel> {
+    const tenantId = this.cls.get('tenantId');
+    const account = `lc_${ulid().toLowerCase()}`; // unique widget identifier
+
+    const { channel } = await this.repository.upsert(
+      tenantId,
+      'livechat',
+      account,
+      {
+        tenantId,
+        type: 'livechat',
+        name: dto.name,
+        account,
+        status: 'Connected',
+        config: {
+          greeting: dto.greeting ?? 'Hi there 👋 How can we help you today?',
+          brandColor: dto.brandColor ?? '#6366f1',
+          agentName: dto.agentName ?? 'Support Team',
+          agentAvatar: dto.agentAvatar ?? null,
+          position: dto.position ?? 'bottom-right',
+          allowedOrigins: dto.allowedOrigins ?? [],
+          offlineMessage:
+            dto.offlineMessage ?? 'We are offline. Leave a message!',
+          businessHoursOverride: false,
+          autoReplyMessage: '',
+          webhookStatus: 'Active',
+        },
+        credentials: {},
+      },
+    );
+
+    return channel;
+  }
+
+  /**
+   * Public endpoint — returns widget display config without sensitive data.
+   * Called by the livechat widget on init to auto-configure itself.
+   */
+  async getLivechatPublicConfig(
+    channelId: string,
+  ): Promise<Record<string, any>> {
+    // No tenant filter — widget doesn't know tenantId yet, resolves by channelId
+    const channel = await this.repository.findByIdNoTenant(channelId);
+    if (!channel || channel.type !== 'livechat') {
+      throw new NotFoundException('Livechat channel not found');
+    }
+    const cfg = channel.config ?? {};
+    return {
+      channelId: channel.id,
+      tenantId: channel.tenantId,
+      greeting: cfg.greeting,
+      brandColor: cfg.brandColor,
+      agentName: cfg.agentName,
+      agentAvatar: cfg.agentAvatar,
+      position: cfg.position,
+      offlineMessage: cfg.offlineMessage,
+    };
   }
 
   async buildMetaAuthUrl(

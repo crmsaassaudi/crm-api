@@ -84,6 +84,15 @@ export class ChannelRepository {
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
+  /** Used by public widget config endpoint — no tenant filter */
+  async findByIdNoTenant(id: string): Promise<Channel | null> {
+    const doc = await this.model
+      .findById(id)
+      .setOptions({ isPlatformQuery: true } as any)
+      .exec();
+    return doc ? ChannelMapper.toDomain(doc) : null;
+  }
+
   async create(data: Partial<Channel>): Promise<Channel> {
     const doc = await this.model.create(data);
     return ChannelMapper.toDomain(doc);

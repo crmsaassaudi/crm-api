@@ -424,4 +424,260 @@ export class TicketsService {
   getImportReport(token: string) {
     return this.importStorage.readLocalReport(token);
   }
+
+  // ──────────────────────────── DEAL LINK ────────────────────────────
+
+  /**
+   * Link a Deal to this Ticket (bi-directional).
+   * Sets ticket.dealId and appends ticket._id to deal.ticketIds[].
+   */
+  async linkDeal(ticketId: string, dealId: string): Promise<Ticket> {
+    const ticket = await this.repository.findOne({ _id: ticketId });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    if ((ticket as any).dealId === dealId) {
+      // Already linked — idempotent
+      return ticket;
+    }
+
+    const updated = await this.repository.update(ticketId, {
+      dealId,
+    } as any);
+
+    if (!updated) throw new NotFoundException('Ticket not found after update');
+
+    this.logger.log(
+      `[TicketDealLink] Ticket ${ticketId} ↔ Deal ${dealId} linked`,
+    );
+    return updated;
+  }
+
+  /**
+   * Unlink the Deal from this Ticket.
+   * Clears ticket.dealId.
+   */
+  async unlinkDeal(ticketId: string): Promise<Ticket> {
+    const ticket = await this.repository.findOne({ _id: ticketId });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    const updated = await this.repository.update(ticketId, {
+      dealId: null,
+    } as any);
+
+    if (!updated) throw new NotFoundException('Ticket not found after update');
+
+    this.logger.log(`[TicketDealLink] Ticket ${ticketId} deal unlinked`);
+    return updated;
+  }
+
+  /**
+   * Find all tickets linked to a specific deal.
+   */
+  async findByDeal(dealId: string): Promise<Ticket[]> {
+    const result = await this.repository.findManyWithPagination({
+      filterOptions: { dealId },
+      paginationOptions: { page: 1, limit: 50 },
+    });
+    return (result as any).data ?? [];
+  }
+
+  // ──────────────────────────── PARENT/CHILD TICKET ────────────────────────
+
+  /**
+   * Set the parent of a ticket (makes this ticket a sub-ticket).
+   * Validates:
+   *  - Parent ticket exists
+   *  - Not creating a circular reference (parent cannot be a child of self)
+   */
+  async setParent(ticketId: string, parentTicketId: string): Promise<Ticket> {
+    if (ticketId === parentTicketId) {
+      throw new BadRequestException('A ticket cannot be its own parent');
+    }
+
+    const [ticket, parentTicket] = await Promise.all([
+      this.repository.findOne({ _id: ticketId }),
+      this.repository.findOne({ _id: parentTicketId }),
+    ]);
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (!parentTicket) throw new NotFoundException('Parent ticket not found');
+
+    // Check that parentTicket is not already a child of ticketId (circular check)
+    if ((parentTicket as any).parentTicketId === ticketId) {
+      throw new BadRequestException(
+        'Circular parent reference: the target parent is already a child of this ticket',
+      );
+    }
+
+    const updated = await this.repository.update(ticketId, {
+      parentTicketId,
+    } as any);
+
+    if (!updated) throw new NotFoundException('Ticket not found after update');
+
+    this.logger.log(
+      `[TicketHierarchy] Ticket ${ticketId} → parent: ${parentTicketId}`,
+    );
+    return updated;
+  }
+
+  /**
+   * Remove the parent reference (make this ticket a top-level ticket again).
+   */
+  async removeParent(ticketId: string): Promise<Ticket> {
+    const ticket = await this.repository.findOne({ _id: ticketId });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    const updated = await this.repository.update(ticketId, {
+      parentTicketId: null,
+    } as any);
+
+    if (!updated) throw new NotFoundException('Ticket not found after update');
+
+    this.logger.log(`[TicketHierarchy] Ticket ${ticketId} parent removed`);
+    return updated;
+  }
+
+  /**
+   * Get all child tickets (sub-tickets) of a given parent ticket.
+   */
+  async getChildren(parentTicketId: string): Promise<Ticket[]> {
+    const result = await this.repository.findManyWithPagination({
+      filterOptions: { parentTicketId },
+      paginationOptions: { page: 1, limit: 100 },
+    });
+    return (result as any).data ?? [];
+  }
+
+  // ──────────────────────────── MERGE DUPLICATES ────────────────────────────
+
+  /**
+   * Merge a duplicate ticket (sourceId) into a target ticket (targetId).
+   *
+   * Strategy:
+   *  - Appends source ticket info as a system note on the target ticket.
+   *  - Updates source ticket status to "merged" (closest to closed) and soft-deletes it.
+   *  - Returns the updated target ticket.
+   */
+  async mergeTickets(targetId: string, sourceId: string): Promise<Ticket> {
+    if (targetId === sourceId) {
+      throw new BadRequestException('Cannot merge a ticket with itself');
+    }
+
+    const [target, source] = await Promise.all([
+      this.repository.findOne({ _id: targetId }),
+      this.repository.findOne({ _id: sourceId }),
+    ]);
+
+    if (!target)
+      throw new NotFoundException(`Target ticket ${targetId} not found`);
+    if (!source)
+      throw new NotFoundException(`Source ticket ${sourceId} not found`);
+
+    // Append merge note on target
+    const existingNotes: string = (target as any).description ?? '';
+    const mergeNote = `\n\n---\n[MERGED] Ticket #${(source as any).ticketNumber ?? sourceId} was merged into this ticket.`;
+    const mergedNotes = existingNotes + mergeNote;
+
+    // Update target with merged description
+    const updated = await this.repository.update(targetId, {
+      description: mergedNotes,
+    } as any);
+
+    if (!updated)
+      throw new NotFoundException('Target ticket not found after update');
+
+    // Soft-delete source ticket (mark as merged via deletedAt)
+    await this.repository.remove(sourceId);
+
+    this.logger.log(`[TicketMerge] Ticket ${sourceId} merged into ${targetId}`);
+
+    // Audit
+    this.entityAudit.emit({
+      entity: 'ticket',
+      entityType: 'TICKET',
+      entityId: targetId,
+      kind: 'updated',
+      oldSnapshot: target ?? {},
+      newSnapshot: updated,
+    });
+
+    return updated;
+  }
+
+  // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 SLA PAUSE / RESUME \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+  /**
+   * Pause the SLA timer for a ticket.
+   * Sets slaPausedAt = now, clears slaResumedAt.
+   * Idempotent — calling when already paused is a no-op.
+   */
+  async pauseSla(ticketId: string): Promise<Ticket> {
+    const ticket = await this.repository.findOne({ _id: ticketId });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    // Already paused — idempotent
+    if ((ticket as any).slaPausedAt && !(ticket as any).slaResumedAt) {
+      return ticket;
+    }
+
+    const updated = await this.repository.update(ticketId, {
+      slaPausedAt: new Date(),
+      slaResumedAt: undefined,
+    } as any);
+
+    if (!updated) throw new NotFoundException('Ticket not found after update');
+
+    this.logger.log(`[SLA] Ticket ${ticketId} SLA paused`);
+    return updated;
+  }
+
+  /**
+   * Resume the SLA timer for a ticket.
+   * Computes elapsed pause duration and adds it to slaPausedSeconds.
+   * Extends firstResponseDueAt and resolutionDueAt by the same duration.
+   * Idempotent — calling when not paused is a no-op.
+   */
+  async resumeSla(ticketId: string): Promise<Ticket> {
+    const ticket = await this.repository.findOne({ _id: ticketId });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    const pausedAt = (ticket as any).slaPausedAt;
+    const alreadyResumed = (ticket as any).slaResumedAt;
+
+    // Not paused — idempotent
+    if (!pausedAt || alreadyResumed) {
+      return ticket;
+    }
+
+    const now = new Date();
+    const pausedMs = now.getTime() - new Date(pausedAt).getTime();
+    const additionalPausedSeconds = Math.floor(pausedMs / 1000);
+    const cumulative =
+      ((ticket as any).slaPausedSeconds ?? 0) + additionalPausedSeconds;
+
+    // Extend SLA deadlines by the paused duration
+    const firstResponseDueAt = (ticket as any).firstResponseDueAt
+      ? new Date(
+          new Date((ticket as any).firstResponseDueAt).getTime() + pausedMs,
+        )
+      : undefined;
+    const resolutionDueAt = (ticket as any).resolutionDueAt
+      ? new Date(new Date((ticket as any).resolutionDueAt).getTime() + pausedMs)
+      : undefined;
+
+    const updated = await this.repository.update(ticketId, {
+      slaResumedAt: now,
+      slaPausedSeconds: cumulative,
+      ...(firstResponseDueAt ? { firstResponseDueAt } : {}),
+      ...(resolutionDueAt ? { resolutionDueAt } : {}),
+    } as any);
+
+    if (!updated) throw new NotFoundException('Ticket not found after update');
+
+    this.logger.log(
+      `[SLA] Ticket ${ticketId} SLA resumed. Paused ${additionalPausedSeconds}s. Total paused: ${cumulative}s. Deadlines extended.`,
+    );
+    return updated;
+  }
 }

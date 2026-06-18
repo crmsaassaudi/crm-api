@@ -45,6 +45,51 @@ export class CreateChannelDto {
   credentials?: Record<string, any>;
 }
 
+export class CreateLivechatChannelDto {
+  @ApiProperty({ example: 'Website Support' })
+  @IsString()
+  @MinLength(1)
+  name: string;
+
+  @ApiPropertyOptional({ example: 'Hi there 👋 How can we help?' })
+  @IsString()
+  @IsOptional()
+  greeting?: string;
+
+  @ApiPropertyOptional({ example: '#6366f1' })
+  @IsString()
+  @IsOptional()
+  brandColor?: string;
+
+  @ApiPropertyOptional({ example: 'Support Team' })
+  @IsString()
+  @IsOptional()
+  agentName?: string;
+
+  @ApiPropertyOptional({ example: 'https://cdn.example.com/avatar.png' })
+  @IsString()
+  @IsOptional()
+  agentAvatar?: string;
+
+  @ApiPropertyOptional({ example: 'bottom-right' })
+  @IsString()
+  @IsOptional()
+  position?: string;
+
+  @ApiPropertyOptional({ type: [String], example: ['https://mysite.com'] })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  allowedOrigins?: string[];
+
+  @ApiPropertyOptional({
+    example: 'We are offline right now. Leave a message!',
+  })
+  @IsString()
+  @IsOptional()
+  offlineMessage?: string;
+}
+
 export class UpdateChannelDto {
   @ApiPropertyOptional()
   @IsString()

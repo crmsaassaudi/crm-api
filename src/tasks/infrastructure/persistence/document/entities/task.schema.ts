@@ -88,6 +88,35 @@ export class TaskSchemaClass extends EntityDocumentHelper {
 
   @Prop()
   deletedAt?: Date;
+
+  // ──────────────────── RECURRENCE ────────────────────
+
+  /** Whether this is a template task that auto-spawns children */
+  @Prop({ default: false, index: true })
+  isRecurring?: boolean;
+
+  /** Recurrence rule: none / daily / weekly / monthly / yearly */
+  @Prop({
+    enum: ['none', 'daily', 'weekly', 'monthly', 'yearly'],
+    default: 'none',
+  })
+  recurrenceRule?: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+  /** How many units between occurrences (e.g., 2 = every 2 weeks) */
+  @Prop({ default: 1 })
+  recurrenceInterval?: number;
+
+  /** Date after which no more occurrences should be created */
+  @Prop()
+  recurrenceEndsAt?: Date;
+
+  /** Next scheduled occurrence date (maintained by the cron job) */
+  @Prop({ index: true })
+  nextOccurrenceAt?: Date;
+
+  /** If this task was auto-created by a recurrence, its parent template ID */
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TaskSchemaClass' })
+  parentTaskId?: string;
 }
 
 export const TaskSchema = SchemaFactory.createForClass(TaskSchemaClass);
@@ -96,6 +125,10 @@ TaskSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 TaskSchema.index({ tenantId: 1, status: 1 });
 TaskSchema.index({ tenantId: 1, dueDate: 1 });
 TaskSchema.index({ tenantId: 1, ownerId: 1 }, { name: 'tenant_owner_lookup' });
+TaskSchema.index(
+  { isRecurring: 1, nextOccurrenceAt: 1, deletedAt: 1 },
+  { name: 'recurring_tasks_cron', sparse: true },
+);
 
 TaskSchema.virtual('owner', {
   ref: 'UserSchemaClass',
