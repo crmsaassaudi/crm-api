@@ -6,7 +6,7 @@ import { addDays, addWeeks, addMonths, addYears } from 'date-fns';
 import {
   TaskSchemaClass,
   TaskSchemaDocument,
-} from '../infrastructure/persistence/document/entities/task.schema';
+} from './infrastructure/persistence/document/entities/task.schema';
 
 /**
  * RecurringTaskService
@@ -57,7 +57,7 @@ export class RecurringTaskService {
   }
 
   private async processTemplate(
-    template: TaskSchemaDocument,
+    template: TaskSchemaClass & { _id: string },
     now: Date,
   ): Promise<void> {
     const {
