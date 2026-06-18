@@ -6,13 +6,14 @@ import { LivechatGateway } from './livechat.gateway';
 import { LivechatInboundBridge } from './livechat-inbound.bridge';
 import { LivechatAdapter } from '../omni-inbound/adapters/livechat.adapter';
 import { LivechatEmbedController } from './livechat-embed.controller';
-import { ChannelConfigService } from '../channels/channel-config.service';
+import { ChannelsModule } from '../channels/channels.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: VisitorSession.name, schema: VisitorSessionSchema },
     ]),
+    ChannelsModule,
   ],
   controllers: [LivechatEmbedController],
   providers: [
@@ -20,8 +21,8 @@ import { ChannelConfigService } from '../channels/channel-config.service';
     LivechatGateway,
     LivechatInboundBridge,
     LivechatAdapter,
-    ChannelConfigService,
   ],
   exports: [VisitorSessionService, LivechatGateway, LivechatAdapter],
 })
 export class LivechatModule {}
+
