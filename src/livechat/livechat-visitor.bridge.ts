@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { ClsService } from 'nestjs-cls';
 import { LivechatGateway } from './livechat.gateway';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 import { UsersService } from '../users/users.service';
 import { FilesService } from '../files/files.service';
+import { runWithTenantContext } from '../common/tenancy/tenant-context';
 
 /**
  * LivechatVisitorBridge — bridges agent-side events đến visitor WebSocket.
@@ -25,6 +27,7 @@ export class LivechatVisitorBridge {
     private readonly conversationRepo: ConversationRepository,
     private readonly usersService: UsersService,
     private readonly filesService: FilesService,
+    private readonly cls: ClsService,
   ) {}
 
   // ── Assignment: notify visitor khi agent join ───────────────────────────
@@ -43,7 +46,9 @@ export class LivechatVisitorBridge {
     if (!event.agentId) return; // unassignment
 
     try {
-      const conv = await this.conversationRepo.findById(event.conversationId);
+      const conv = await runWithTenantContext(this.cls, event.tenantId, () =>
+        this.conversationRepo.findById(event.conversationId),
+      );
       if (!conv || conv.channelType !== 'livechat') return; // không phải livechat
 
       const visitorId = conv.externalConversationId; // externalConversationId = visitorId for livechat
@@ -114,7 +119,14 @@ export class LivechatVisitorBridge {
 
       // Nếu không có visitorId (emit từ OmniGateway), lookup từ conversation
       if (!visitorId) {
-        const conv = await this.conversationRepo.findById(event.conversationId);
+        const tenantId = (event as any).tenantId;
+        if (!tenantId) {
+          this.logger.warn('[Bridge] handleAgentTyping: no tenantId in event, cannot resolve visitorId');
+          return;
+        }
+        const conv = await runWithTenantContext(this.cls, tenantId, () =>
+          this.conversationRepo.findById(event.conversationId),
+        );
         if (!conv || conv.channelType !== 'livechat') return;
         visitorId = conv.externalConversationId;
       }
@@ -156,8 +168,9 @@ export class LivechatVisitorBridge {
       // FIX: Prefer visitorId from event payload — avoids unnecessary DB query.
       const visitorId =
         event.externalConversationId ??
-        (await this.conversationRepo.findById(event.conversationId))
-          ?.externalConversationId;
+        (await runWithTenantContext(this.cls, event.tenantId, () =>
+          this.conversationRepo.findById(event.conversationId),
+        ))?.externalConversationId;
 
       if (!visitorId) return;
 
@@ -192,7 +205,9 @@ export class LivechatVisitorBridge {
     csatToken: string;
   }): Promise<void> {
     try {
-      const conv = await this.conversationRepo.findById(event.conversationId);
+      const conv = await runWithTenantContext(this.cls, event.tenantId, () =>
+        this.conversationRepo.findById(event.conversationId),
+      );
       if (!conv || conv.channelType !== 'livechat') return;
 
       const visitorId = conv.externalConversationId;

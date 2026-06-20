@@ -13,12 +13,14 @@ import { join } from 'path';
 import { existsSync } from 'fs';
 import { Public } from '../auth/decorators/public.decorator';
 import { Throttle } from '@nestjs/throttler';
+import { ClsService } from 'nestjs-cls';
 import { ChannelConfigService } from '../channels/channel-config.service';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 import { MessageRepository } from '../omni-inbound/repositories/message.repository';
 import { FilesService } from '../files/files.service';
 import { LivechatWidgetService } from './livechat-widget.service';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { runWithTenantContext } from '../common/tenancy/tenant-context';
 
 /**
  * LivechatEmbedController — public endpoints for widget distribution.
@@ -37,6 +39,7 @@ export class LivechatEmbedController {
     private readonly messageRepo: MessageRepository,
     private readonly filesService: FilesService,
     private readonly widgetService: LivechatWidgetService,
+    private readonly cls: ClsService,
   ) {}
 
   // ── Public widget config (loaded by embed JS) ───────────────────────────
@@ -265,12 +268,15 @@ export class LivechatEmbedController {
 
     const limit = Math.min(parseInt(limitStr, 10) || 30, 50);
 
-    // Find most recent conversation for this visitor (any status)
-    const conv = await this.conversationRepo.findLastByExternalId(
-      tenantId,
-      'livechat',
-      channelId, // channelAccount = channelId for livechat
-      visitorId, // externalId = visitorId
+    // Public endpoint — no auth/interceptor sets CLS.
+    // Set CLS manually so Mongoose tenant filter plugin works.
+    const conv = await runWithTenantContext(this.cls, tenantId, () =>
+      this.conversationRepo.findLastByExternalId(
+        tenantId,
+        'livechat',
+        channelId,
+        visitorId,
+      ),
     );
 
     if (!conv) {
@@ -279,7 +285,9 @@ export class LivechatEmbedController {
     }
 
     // Fetch last `limit` messages, oldest-first for display
-    const result = await this.messageRepo.findByConversation(conv.id, 1, limit);
+    const result = await runWithTenantContext(this.cls, tenantId, () =>
+      this.messageRepo.findByConversation(conv.id, 1, limit),
+    );
 
     // Resolve presigned URLs for media messages so widget can render them
     const messages = await Promise.all(

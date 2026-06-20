@@ -944,8 +944,9 @@ export class OmniGateway
 
     // Bridge to livechat visitor (LivechatVisitorBridge picks this up)
     this.eventEmitter.emit('omni.agent.typing.livechat', {
+      tenantId,
       conversationId: data.conversationId,
-      visitorId: null, // Bridge resolves via VisitorSessionService
+      visitorId: null, // Bridge resolves via conversation lookup
       isTyping: true,
       agentName: user.name ?? 'Agent',
     });
@@ -968,6 +969,7 @@ export class OmniGateway
 
     // Bridge typing stop to livechat visitor
     this.eventEmitter.emit('omni.agent.typing.livechat', {
+      tenantId: client.data.tenantId,
       conversationId: data.conversationId,
       visitorId: null,
       isTyping: false,
