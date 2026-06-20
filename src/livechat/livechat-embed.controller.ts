@@ -153,15 +153,32 @@ export class LivechatEmbedController {
   // ── Admin preview page ───────────────────────────────────────────────────
 
   @Public()
-  @Get('preview/:channelId')
-  @ApiOperation({ summary: 'Admin preview page for livechat widget' })
-  previewPage(
-    @Param('channelId') channelId: string,
+  @Get('preview/:widgetId')
+  @ApiOperation({ summary: 'Admin preview page for livechat widget (by widgetId)' })
+  async previewPage(
+    @Param('widgetId') widgetId: string,
     @Res() res: Response,
-  ): void {
+  ): Promise<void> {
     const apiUrl = process.env.APP_URL ?? '';
-    const widgetUrl = process.env.LIVECHAT_WIDGET_URL
-      ?? 'https://livechat.crmsaudi.dev/widget/livechat.iife.js';
+    const widgetUrl =
+      process.env.LIVECHAT_WIDGET_URL ??
+      'https://livechat.crmsaudi.dev/widget/livechat.iife.js';
+
+    // Try to load widget config for richer preview
+    let widgetConfig: Record<string, any> = {};
+    try {
+      const cfg = await this.widgetService.getPublicConfig(widgetId);
+      if (cfg) widgetConfig = cfg as any;
+    } catch {
+      /* widget may not exist yet — still render preview shell */
+    }
+
+    const initConfig = JSON.stringify({
+      widgetId,
+      apiUrl,
+      ...widgetConfig,
+    });
+
     const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -178,21 +195,28 @@ export class LivechatEmbedController {
 </head>
 <body>
   <div class="demo">
-    <h2>🗨️ Widget Preview</h2>
+    <h2>\uD83D\uDDE8\uFE0F Widget Preview</h2>
     <p>The chat bubble appears in the bottom-right corner.</p>
-    <p style="font-size:0.75rem;color:#94a3b8;">channelId: ${channelId}</p>
+    <p style="font-size:0.75rem;color:#94a3b8;">widgetId: ${widgetId}</p>
   </div>
   <script>
-    window.CRMWidget = {
-      channelId: "${channelId}",
-      tenantId:  "preview",
-      apiUrl:    "${apiUrl}",
-      greeting:  "Hi there 👋 How can we help?",
-    };
+    window.CRMWidget = ${initConfig};
+    // Listen for config updates from parent (settings panel)
+    window.addEventListener('message', function(e) {
+      if (e.data && e.data.type === 'CRM_WIDGET_CONFIG_UPDATE') {
+        window.CRMWidget = Object.assign(window.CRMWidget || {}, e.data.config);
+        if (window.CRMWidgetInstance && window.CRMWidgetInstance.updateConfig) {
+          window.CRMWidgetInstance.updateConfig(e.data.config);
+        }
+      }
+    });
   </script>
   <script src="${widgetUrl}" async></script>
 </body>
 </html>`;
+    // Allow iframe embedding from any origin (admin preview)
+    res.removeHeader('X-Frame-Options');
+    res.setHeader('Content-Security-Policy', "frame-ancestors *");
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   }
