@@ -4,6 +4,7 @@ import {
   Param,
   Query,
   Res,
+  Req,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
@@ -46,15 +47,28 @@ export class LivechatEmbedController {
   @ApiOperation({ summary: 'Get public widget config by widgetId' })
   async getWidgetConfig(
     @Param('widgetId') widgetId: string,
+    @Req() req: any,
     @Res() res: Response,
   ): Promise<void> {
+    // Domain whitelist enforcement
+    const origin = req.headers?.origin || req.headers?.referer;
+    const allowed = await this.widgetService.isDomainAllowed(widgetId, origin);
+    if (!allowed) {
+      res.status(403).json({
+        statusCode: 403,
+        message: 'Domain not allowed for this widget',
+      });
+      return;
+    }
+
     const config = await this.widgetService.getPublicConfig(widgetId);
     if (!config) {
       throw new NotFoundException('Widget not found or paused');
     }
 
-    // Allow cross-origin loading from any website
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // Set CORS to the requesting origin (not wildcard) when whitelist is active
+    const corsOrigin = origin ? new URL(origin).origin : '*';
+    res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.json(config);

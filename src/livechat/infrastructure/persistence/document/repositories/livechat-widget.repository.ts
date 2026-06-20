@@ -24,6 +24,14 @@ export class LivechatWidgetRepository {
     return doc ? this.toDomain(doc) : null;
   }
 
+  async findByWidgetIdWithTenant(
+    widgetId: string,
+    tenantId: string,
+  ): Promise<LivechatWidget | null> {
+    const doc = await this.model.findOne({ widgetId, tenantId }).exec();
+    return doc ? this.toDomain(doc) : null;
+  }
+
   async findByTenantId(tenantId: string): Promise<LivechatWidget[]> {
     const docs = await this.model
       .find({ tenantId })

@@ -11,6 +11,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
+import { LivechatWidgetService } from './livechat-widget.service';
 
 /**
  * LivechatGateway — Socket.IO namespace for livechat visitors.
@@ -69,6 +70,7 @@ export class LivechatGateway
   constructor(
     private readonly conversationRepo: ConversationRepository,
     private readonly eventEmitter: EventEmitter2,
+    private readonly widgetService: LivechatWidgetService,
   ) {}
 
   // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -104,10 +106,12 @@ export class LivechatGateway
       visitorId: string;
       tenantId: string;
       channelId: string;
+      widgetId?: string;
       pageUrl?: string;
+      userHash?: string;
     },
   ) {
-    const { visitorId, tenantId, channelId } = data;
+    const { visitorId, tenantId, channelId, widgetId } = data;
     if (!visitorId || !tenantId || !channelId) {
       client.emit('error', {
         message: 'Missing required fields: visitorId, tenantId, channelId',
@@ -115,10 +119,47 @@ export class LivechatGateway
       return;
     }
 
+    // Domain whitelist enforcement (check Origin header from handshake)
+    if (widgetId) {
+      const origin =
+        client.handshake?.headers?.origin ||
+        client.handshake?.headers?.referer;
+      const allowed = await this.widgetService.isDomainAllowed(
+        widgetId,
+        origin as string | undefined,
+      );
+      if (!allowed) {
+        this.logger.warn(
+          `Domain blocked for widget ${widgetId}: ${origin}`,
+        );
+        client.emit('error', { message: 'Domain not allowed' });
+        client.disconnect(true);
+        return;
+      }
+    }
+
+    // HMAC identity verification (if widget requires it)
+    if (widgetId && data.userHash) {
+      const result = await this.widgetService.verifyIdentity(
+        widgetId,
+        visitorId,
+        data.userHash,
+      );
+      if (!result.valid) {
+        this.logger.warn(
+          `HMAC verification failed for visitor ${visitorId} on widget ${widgetId}`,
+        );
+        client.emit('error', { message: 'Identity verification failed' });
+        client.disconnect(true);
+        return;
+      }
+    }
+
     // Store context in socket.data — no DB write needed
     client.data.visitorId = visitorId;
     client.data.tenantId = tenantId;
     client.data.channelId = channelId;
+    if (widgetId) client.data.widgetId = widgetId;
 
     // Join visitor room — used for all server→visitor pushes
     await client.join(`visitor:${visitorId}`);
@@ -126,14 +167,13 @@ export class LivechatGateway
     await client.join(`tenant:${tenantId}:livechat`);
 
     // Lookup any existing active conversation for this visitor
-    // externalId = visitorId in livechat channel (same as senderId in other channels)
     let conversationId: string | null = null;
     try {
       const conv = await this.conversationRepo.findActiveByExternalId(
         tenantId,
         'livechat',
-        channelId, // channelAccount = channelId for livechat
-        visitorId, // externalId = visitorId
+        channelId,
+        visitorId,
       );
       conversationId = conv?.id ?? null;
       if (conversationId) {

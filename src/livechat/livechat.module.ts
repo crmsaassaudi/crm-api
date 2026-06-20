@@ -13,6 +13,12 @@ import {
   LivechatWidgetSchemaClass,
   LivechatWidgetSchema,
 } from './infrastructure/persistence/document/entities/livechat-widget.schema';
+import {
+  WidgetEventSchemaClass,
+  WidgetEventSchema,
+} from './infrastructure/persistence/document/entities/widget-event.schema';
+import { WidgetEventRepository } from './infrastructure/persistence/document/repositories/widget-event.repository';
+import { LivechatAnalyticsController } from './livechat-analytics.controller';
 import { ChannelsModule } from '../channels/channels.module';
 import { UsersModule } from '../users/users.module';
 import { FilesModule } from '../files/files.module';
@@ -37,12 +43,13 @@ import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
     forwardRef(() => OmniInboundModule), // forwardRef to break circular: OmniInbound ↔ Livechat
     MongooseModule.forFeature([
       { name: LivechatWidgetSchemaClass.name, schema: LivechatWidgetSchema },
+      { name: WidgetEventSchemaClass.name, schema: WidgetEventSchema },
     ]),
     ChannelsModule,
     UsersModule,
     FilesModule, // for LivechatAdapter.sendMedia() + LivechatVisitorBridge (avatar presign)
   ],
-  controllers: [LivechatEmbedController, LivechatWidgetController],
+  controllers: [LivechatEmbedController, LivechatWidgetController, LivechatAnalyticsController],
   providers: [
     LivechatGateway,
     LivechatInboundBridge,
@@ -51,6 +58,7 @@ import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
     VisitorUploadService,
     LivechatWidgetService,
     LivechatWidgetRepository,
+    WidgetEventRepository,
   ],
   exports: [LivechatGateway, LivechatAdapter, LivechatWidgetService],
 })

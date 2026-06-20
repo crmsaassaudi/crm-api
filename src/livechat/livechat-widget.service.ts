@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { LivechatWidgetRepository } from './infrastructure/persistence/document/repositories/livechat-widget.repository';
 import { LivechatWidget } from './domain/livechat-widget';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHmac } from 'crypto';
 
 /**
  * Service for managing livechat widgets.
@@ -211,5 +211,97 @@ export class LivechatWidgetService {
 
       // NOTE: security.hmacSecret, routing, automation are NOT exposed.
     };
+  }
+
+  // ── Domain Whitelist ──────────────────────────────────────────────────────
+
+  /**
+   * Check if the given origin is allowed by the widget's domain whitelist.
+   * Returns true if:
+   *  - allowedDomains is empty/undefined (allow all)
+   *  - origin matches an exact domain entry
+   *  - origin matches a wildcard entry (e.g. *.example.com)
+   */
+  async isDomainAllowed(
+    widgetId: string,
+    origin: string | undefined,
+  ): Promise<boolean> {
+    const widget = await this.repo.findByWidgetId(widgetId);
+    if (!widget || widget.status !== 'active') return false;
+
+    const allowedDomains: string[] = widget.security?.allowedDomains ?? [];
+    if (allowedDomains.length === 0) return true; // No restriction
+
+    if (!origin) return false; // No origin header + whitelist active → block
+
+    // Extract hostname from origin (e.g. "https://app.example.com" → "app.example.com")
+    let hostname: string;
+    try {
+      hostname = new URL(origin).hostname;
+    } catch {
+      hostname = origin; // Fallback: treat as raw hostname
+    }
+
+    return allowedDomains.some((pattern) => {
+      const p = pattern.toLowerCase().trim();
+      const h = hostname.toLowerCase();
+      if (p.startsWith('*.')) {
+        // Wildcard: *.example.com matches sub.example.com, a.b.example.com
+        const suffix = p.slice(2); // "example.com"
+        return h === suffix || h.endsWith('.' + suffix);
+      }
+      return h === p;
+    });
+  }
+
+  // ── HMAC Identity Verification ────────────────────────────────────────────
+
+  /**
+   * Verify visitor identity using HMAC-SHA256.
+   * The website server generates: HMAC-SHA256(secret, identifier)
+   * We re-compute and compare.
+   */
+  async verifyIdentity(
+    widgetId: string,
+    identifier: string,
+    userHash: string,
+  ): Promise<{ valid: boolean; required: boolean }> {
+    const widget = await this.repo.findByWidgetId(widgetId);
+    if (!widget) return { valid: false, required: false };
+
+    const required = widget.security?.identityVerification === true;
+    if (!required) return { valid: true, required: false };
+
+    const secret = widget.security?.hmacSecret;
+    if (!secret) return { valid: true, required: false }; // No secret configured
+
+    if (!userHash || !identifier) return { valid: false, required: true };
+
+    const expected = createHmac('sha256', secret)
+      .update(identifier)
+      .digest('hex');
+
+    return { valid: expected === userHash, required: true };
+  }
+
+  /**
+   * Regenerate HMAC secret for a widget. Returns the new secret.
+   */
+  async regenerateHmacSecret(
+    tenantId: string,
+    widgetId: string,
+  ): Promise<string> {
+    const widget = await this.repo.findByWidgetIdWithTenant(widgetId, tenantId);
+    if (!widget) throw new NotFoundException('Widget not found');
+
+    const newSecret = randomBytes(32).toString('hex');
+    await this.repo.update(tenantId, widget.id, {
+      security: {
+        ...(widget.security ?? {}),
+        hmacSecret: newSecret,
+      },
+    } as any);
+
+    return newSecret;
   }
 }
