@@ -8,10 +8,17 @@ import {
   Body,
   Query,
   Req,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { LivechatWidgetService } from './livechat-widget.service';
 import { LivechatWidget } from './domain/livechat-widget';
+
+function extractTenantId(req: any): string {
+  const tenantId = req.user?.tenantId ?? req.tenantId;
+  if (!tenantId) throw new UnauthorizedException('Tenant context not found');
+  return tenantId;
+}
 
 /**
  * Admin CRUD controller for livechat widgets.
@@ -28,7 +35,7 @@ export class LivechatWidgetController {
     @Body() body: Partial<LivechatWidget>,
     @Req() req: any,
   ): Promise<LivechatWidget> {
-    const tenantId = req.user?.tenantId ?? req.tenantId;
+    const tenantId = extractTenantId(req);
     return this.service.create(tenantId, body);
   }
 
@@ -39,7 +46,7 @@ export class LivechatWidgetController {
     @Req() req: any,
     @Query('channelId') channelId?: string,
   ): Promise<LivechatWidget[]> {
-    const tenantId = req.user?.tenantId ?? req.tenantId;
+    const tenantId = extractTenantId(req);
     if (channelId) {
       return this.service.findByChannel(tenantId, channelId);
     }
@@ -52,7 +59,7 @@ export class LivechatWidgetController {
     @Param('id') id: string,
     @Req() req: any,
   ): Promise<LivechatWidget> {
-    const tenantId = req.user?.tenantId ?? req.tenantId;
+    const tenantId = extractTenantId(req);
     return this.service.findById(tenantId, id);
   }
 
@@ -63,7 +70,7 @@ export class LivechatWidgetController {
     @Body() body: Partial<LivechatWidget>,
     @Req() req: any,
   ): Promise<LivechatWidget> {
-    const tenantId = req.user?.tenantId ?? req.tenantId;
+    const tenantId = extractTenantId(req);
     return this.service.update(tenantId, id, body);
   }
 
@@ -73,7 +80,7 @@ export class LivechatWidgetController {
     @Param('id') id: string,
     @Req() req: any,
   ): Promise<{ deleted: boolean }> {
-    const tenantId = req.user?.tenantId ?? req.tenantId;
+    const tenantId = extractTenantId(req);
     await this.service.delete(tenantId, id);
     return { deleted: true };
   }
