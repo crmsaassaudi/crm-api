@@ -61,8 +61,11 @@ export class LivechatEmbedController {
       );
     }
 
+    // Widget is embedded on external websites — override helmet's same-origin defaults
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.sendFile(filePath);
   }
 
