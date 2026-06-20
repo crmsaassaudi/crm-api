@@ -8,11 +8,16 @@ import {
   TaskSchema,
   TaskSchemaClass,
 } from './infrastructure/persistence/document/entities/task.schema';
+import {
+  TaskStatusSchema,
+  TaskStatusSchemaClass,
+} from '../task-settings/entities/task-status.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: TaskSchemaClass.name, schema: TaskSchema },
+      { name: TaskStatusSchemaClass.name, schema: TaskStatusSchema },
     ]),
   ],
   controllers: [TasksController],

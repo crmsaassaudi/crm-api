@@ -45,7 +45,7 @@ export class LivechatWidgetService {
       status: 'active',
       branding: data.branding ?? {},
       theme: data.theme ?? { primaryColor: '#6366f1' },
-      layout: data.layout ?? { position: 'bottom-right', launcherSize: 'medium' },
+      layout: data.layout ?? { position: 'bottom-right', launcherSize: 'medium', offsetX: 20, offsetY: 20 },
       welcome: data.welcome ?? {},
       conversationStarters: data.conversationStarters ?? [],
       offline: data.offline ?? {},
@@ -54,7 +54,7 @@ export class LivechatWidgetService {
       automation: data.automation ?? {},
       proactiveChat: data.proactiveChat ?? { enabled: false, rules: [] },
       security: data.security ?? { allowedDomains: [] },
-      localization: data.localization ?? { locale: 'en' },
+      localization: data.localization ?? { locale: 'en', autoDetect: true },
       advanced: data.advanced ?? {
         enableSoundNotification: true,
         enableFileUpload: true,
@@ -148,11 +148,15 @@ export class LivechatWidgetService {
         position: widget.layout?.position ?? 'bottom-right',
         launcherType: widget.layout?.launcherType ?? 'circle',
         launcherIcon: widget.layout?.launcherIcon,
+        launcherText: widget.layout?.launcherText,
         launcherSize: widget.layout?.launcherSize ?? 'medium',
         widgetWidth: widget.layout?.widgetWidth ?? 380,
         widgetHeight: widget.layout?.widgetHeight ?? 550,
+        offsetX: widget.layout?.offsetX ?? 20,
+        offsetY: widget.layout?.offsetY ?? 20,
         hideMobile: widget.layout?.hideMobile ?? false,
         zIndex: widget.layout?.zIndex ?? 2147483640,
+        attentionGrabber: widget.layout?.attentionGrabber,
       },
 
       // Welcome
@@ -162,6 +166,10 @@ export class LivechatWidgetService {
         replyTimeText: widget.welcome?.replyTimeText,
         showGreetingBubble: widget.welcome?.showGreetingBubble ?? false,
         autoOpenDelay: widget.welcome?.autoOpenDelay ?? 0,
+        awayGreeting: widget.welcome?.awayGreeting,
+        awaySubtitle: widget.welcome?.awaySubtitle,
+        offlineGreeting: widget.welcome?.offlineGreeting,
+        offlineSubtitle: widget.welcome?.offlineSubtitle,
       },
 
       // Conversation starters
@@ -179,7 +187,16 @@ export class LivechatWidgetService {
       // Pre-chat form
       preChatForm: {
         enabled: widget.preChatForm?.enabled ?? false,
+        showOnlyOffline: widget.preChatForm?.showOnlyOffline ?? false,
         fields: widget.preChatForm?.fields ?? [],
+      },
+
+      // Routing (public subset — department selector only)
+      routing: {
+        enableDepartmentSelector: widget.routing?.enableDepartmentSelector ?? false,
+        departments: widget.routing?.departments ?? [],
+        showQueuePosition: widget.routing?.showQueuePosition ?? false,
+        queueMessage: widget.routing?.queueMessage ?? 'You are #{position} in queue',
       },
 
       // Proactive chat
@@ -191,6 +208,13 @@ export class LivechatWidgetService {
       // Localization
       localization: {
         locale: widget.localization?.locale ?? 'en',
+        autoDetect: widget.localization?.autoDetect ?? true,
+        rtl: (() => {
+          const rtlSetting = widget.localization?.rtl ?? 'auto';
+          if (rtlSetting !== 'auto') return rtlSetting;
+          const RTL_LOCALES = ['ar', 'he', 'fa', 'ur'];
+          return RTL_LOCALES.includes(widget.localization?.locale ?? 'en') ? 'rtl' : 'ltr';
+        })(),
         translations: widget.localization?.translations ?? {},
       },
 
@@ -207,6 +231,8 @@ export class LivechatWidgetService {
       // CSAT
       csat: {
         enabled: widget.csat?.enabled ?? false,
+        question: widget.csat?.question,
+        thankYouMessage: widget.csat?.thankYouMessage,
       },
 
       // NOTE: security.hmacSecret, routing, automation are NOT exposed.

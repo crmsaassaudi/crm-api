@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery } from 'mongoose';
 import { TaskSchemaClass, TaskSchemaDocument } from '../entities/task.schema';
+import { TaskStatusSchemaClass } from '../../../../../task-settings/entities/task-status.schema';
 import { Task } from '../../../../domain/task';
 import { TaskMapper } from '../mappers/task.mapper';
 import { ClsService } from 'nestjs-cls';
@@ -19,6 +20,8 @@ export class TaskRepository extends BaseDocumentRepository<
   constructor(
     @InjectModel(TaskSchemaClass.name)
     taskModel: Model<TaskSchemaDocument>,
+    @InjectModel(TaskStatusSchemaClass.name)
+    private readonly statusModel: Model<any>,
     cls: ClsService,
   ) {
     super(taskModel, cls);
@@ -54,7 +57,27 @@ export class TaskRepository extends BaseDocumentRepository<
     }
 
     if (filterOptions?.status) {
-      where.statusId = filterOptions.status;
+      // Status param can be comma-separated apiNames (e.g. 'pending,in_progress')
+      const statusNames = String(filterOptions.status)
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+
+      // Resolve apiNames to ObjectIds
+      const statusDocs = await this.statusModel
+        .find({ apiName: { $in: statusNames } })
+        .select('_id')
+        .lean()
+        .exec();
+
+      const statusIds = statusDocs.map((d: any) => d._id);
+      if (statusIds.length > 0) {
+        where.statusId =
+          statusIds.length === 1 ? statusIds[0] : { $in: statusIds };
+      } else {
+        // No matching statuses found — return empty result
+        where.statusId = { $in: [] };
+      }
     }
 
     if (filterOptions?.priority) {

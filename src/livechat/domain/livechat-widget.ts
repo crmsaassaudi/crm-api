@@ -58,11 +58,20 @@ export class LivechatWidget {
     position?: 'bottom-right' | 'bottom-left';
     launcherType?: 'circle' | 'pill' | 'custom';
     launcherIcon?: string;
+    launcherText?: string;
     launcherSize?: 'small' | 'medium' | 'large';
     widgetWidth?: number;
     widgetHeight?: number;
+    offsetX?: number;
+    offsetY?: number;
     hideMobile?: boolean;
     zIndex?: number;
+    attentionGrabber?: {
+      enabled: boolean;
+      text?: string;
+      delay?: number;     // seconds before showing
+      hideAfter?: number; // seconds before auto-hide (0 = never)
+    };
   };
 
   // ── 4. Welcome Experience ───────────────────────────────────────────────
@@ -74,6 +83,11 @@ export class LivechatWidget {
     replyTimeText?: string;
     showGreetingBubble?: boolean;
     autoOpenDelay?: number;
+    // State-based messages (Online/Away/Offline)
+    awayGreeting?: string;
+    awaySubtitle?: string;
+    offlineGreeting?: string;
+    offlineSubtitle?: string;
   };
 
   // ── 5. Conversation Starters ────────────────────────────────────────────
@@ -91,7 +105,12 @@ export class LivechatWidget {
   offline: {
     enabled?: boolean;
     timezone?: string;
-    businessHours?: Record<string, any>;
+    businessHours?: Array<{
+      day: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+      enabled: boolean;
+      start: string; // HH:mm
+      end: string;   // HH:mm
+    }>;
     offlineMessage?: string;
     captureLeadWhenOffline?: boolean;
   };
@@ -101,12 +120,16 @@ export class LivechatWidget {
   @ApiPropertyOptional()
   preChatForm: {
     enabled?: boolean;
+    showOnlyOffline?: boolean;
     fields?: Array<{
       key: string;
       label: string;
-      type: 'text' | 'email' | 'tel' | 'select';
+      type: 'text' | 'email' | 'tel' | 'select' | 'consent';
+      placeholder?: string;
       required: boolean;
       options?: string[];
+      consentText?: string;  // GDPR message (when type='consent')
+      consentLink?: string;  // Privacy policy URL (when type='consent')
     }>;
   };
 
@@ -118,6 +141,17 @@ export class LivechatWidget {
     routingRuleId?: string;
     roundRobin?: boolean;
     skillBased?: boolean;
+    // Department selector (visitor picks before chat)
+    enableDepartmentSelector?: boolean;
+    departments?: Array<{ id: string; label: string }>;
+    // URL-based routing rules
+    urlRules?: Array<{ pattern: string; teamId: string; priority: number }>;
+    // Capacity-based auto-assignment
+    capacityBased?: boolean;
+    maxConversationsPerAgent?: number;
+    // Queue position
+    showQueuePosition?: boolean;
+    queueMessage?: string; // template: "You are #{position} in queue"
   };
 
   // ── 9. Automation ───────────────────────────────────────────────────────
@@ -139,6 +173,11 @@ export class LivechatWidget {
       page: string;
       delay: number;
       message: string;
+      showOnce?: boolean;
+      trigger?: {
+        type: 'page' | 'scroll' | 'exit_intent' | 'idle' | 'visit_count';
+        value?: number; // scroll %, idle seconds, visit count threshold
+      };
     }>;
   };
 
@@ -156,6 +195,8 @@ export class LivechatWidget {
   @ApiPropertyOptional()
   localization: {
     locale?: string;
+    autoDetect?: boolean;
+    rtl?: 'auto' | 'ltr' | 'rtl';
     translations?: Record<string, string>;
   };
 
@@ -168,6 +209,10 @@ export class LivechatWidget {
     enableFileUpload?: boolean;
     maxFileSize?: number;
     allowedFileTypes?: string[];
+    // Webhook
+    webhookUrl?: string;
+    webhookEvents?: string[]; // e.g. ['conversation.started', 'message.sent', 'csat.submitted']
+    webhookSecret?: string;
   };
 
   // ── CSAT ────────────────────────────────────────────────────────────────
@@ -176,6 +221,8 @@ export class LivechatWidget {
   csat: {
     enabled?: boolean;
     delay?: number;
+    question?: string;         // custom question text
+    thankYouMessage?: string;  // shown after submission
   };
 
   @ApiProperty()

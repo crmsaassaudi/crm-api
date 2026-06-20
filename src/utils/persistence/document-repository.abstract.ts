@@ -3,7 +3,7 @@ import { ClsService } from 'nestjs-cls';
 import { ClientSession, Model, Document, FilterQuery } from 'mongoose';
 
 export abstract class BaseDocumentRepository<
-  TSchema extends Document,
+  TSchema extends Document<any>,
   TDomain,
 > {
   protected readonly logger = new Logger(this.constructor.name);

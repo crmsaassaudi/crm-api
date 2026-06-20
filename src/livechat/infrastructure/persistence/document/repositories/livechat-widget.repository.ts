@@ -102,7 +102,7 @@ export class LivechatWidgetRepository {
     w.theme = raw.theme || {};
     w.layout = raw.layout || {};
     w.welcome = raw.welcome || {};
-    w.conversationStarters = raw.conversationStarters || [];
+    w.conversationStarters = (raw.conversationStarters || []) as LivechatWidget['conversationStarters'];
     w.offline = raw.offline || {};
     w.preChatForm = raw.preChatForm || {};
     w.routing = raw.routing || {};
