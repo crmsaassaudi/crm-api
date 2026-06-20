@@ -24,9 +24,9 @@ Môi trường load-test tách biệt khỏi production, gồm **3 droplet** cù
    │            │ webhook (HMAC) :3000                                   │
    │            │                                                        │
    │   ┌────────┴────────────┐                                          │
-   │   │ Node C — crm-loadtest│                                         │
+   │   │ Node C — crm-monitoring                                       │
    │   │ 10.104.0.4 (private) │   k6 + simulators                       │
-   │   │ 159.89.199.112 (pub) │   Prometheus :9090 / Grafana :3001      │
+   │   │ 168.144.128.121 (pub)│   Prometheus :9090 / Grafana :3001      │
    │   └─────────────────────┘   redis-exporter :9121                   │
    │                                                                    │
    └──────────────────────────────────────────────────────────────────┘
@@ -41,7 +41,7 @@ Môi trường load-test tách biệt khỏi production, gồm **3 droplet** cù
 |---|---|---|---|---|---|
 | A | crm-service | `10.104.0.2` | `167.172.77.62` | 2 vCPU / 8 GB | CRM API + BullMQ workers (SUT) |
 | B | crm-db | `10.104.0.3` | `165.232.173.192` | 2 vCPU / 4 GB | MongoDB (replica set) + Redis |
-| C | crm-loadtest | `10.104.0.4` | `159.89.199.112` | 2 vCPU / 4 GB | k6/simulator + Prometheus/Grafana |
+| C | crm-monitoring | `10.104.0.4` | `168.144.128.121` | 2 vCPU / 4 GB | Monitoring + Observability |
 
 - **OS**: Ubuntu 24.04 LTS (noble), tất cả.
 - **Droplet type**: Premium AMD (NVMe SSD, dedicated-ish CPU) khuyến nghị để P95/P99 ổn định.
@@ -352,11 +352,11 @@ ssh ... root@167.172.77.62 "cd /var/www/crm-api && docker compose start crm-api"
 
 ---
 
-## 6. Node C — Load generator + Observability (`10.104.0.4`)
+## 6. Node C — Monitoring + Observability (`10.104.0.4`)
 
 ### 6.1. Cài Docker
 ```bash
-ssh -i ~/.ssh/crm_nodeb deploy@159.89.199.112 bash -s <<'EOF'
+ssh -i ~/.ssh/crm_nodeb deploy@168.144.128.121 bash -s <<'EOF'
 command -v docker || (curl -fsSL https://get.docker.com | sudo sh)
 sudo usermod -aG docker deploy
 sudo systemctl enable --now docker
@@ -368,8 +368,8 @@ EOF
 # từ máy có source (loại trừ node_modules/logs/test-result)
 tar czf /tmp/crm-test.tgz --exclude=node_modules --exclude=.git \
   --exclude=test-result --exclude=logs -C <path> crm-test
-scp -i ~/.ssh/crm_nodeb /tmp/crm-test.tgz deploy@159.89.199.112:/home/deploy/
-ssh -i ~/.ssh/crm_nodeb deploy@159.89.199.112 \
+scp -i ~/.ssh/crm_nodeb /tmp/crm-test.tgz deploy@168.144.128.121:/home/deploy/
+ssh -i ~/.ssh/crm_nodeb deploy@168.144.128.121 \
   "cd /home/deploy && tar xzf crm-test.tgz && rm crm-test.tgz"
 ```
 
@@ -405,7 +405,7 @@ sudo ufw --force enable
 docker compose -f docker-compose.test.yml up -d prometheus grafana redis-exporter
 ```
 - Prometheus scrape `redis-exporter:9121` (kết nối Redis Node B) + `crm-api` (10.104.0.2:3000, sửa target trong `prometheus/prometheus.yml`).
-- Grafana: `http://159.89.199.112:3001` (admin/admin, anonymous bật sẵn).
+- Grafana: `http://168.144.128.121:3001` (admin/admin, anonymous bật sẵn).
 - `mongodb-exporter` **tắt** (bản M0/Atlas cũ không cho `clusterMonitor`); với Mongo self-host RS này có thể bật lại nếu cần.
 
 ---
@@ -413,7 +413,7 @@ docker compose -f docker-compose.test.yml up -d prometheus grafana redis-exporte
 ## 7. Chạy load test
 
 ```bash
-ssh -i ~/.ssh/crm_nodeb deploy@159.89.199.112
+ssh -i ~/.ssh/crm_nodeb deploy@168.144.128.121
 cd crm-test
 # k6 ramp (lưu ý threshold k6 v0.53: dùng p(95) không phải p95)
 docker compose -f docker-compose.test.yml run --rm k6 run /scripts/load.js

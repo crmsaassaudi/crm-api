@@ -24,7 +24,7 @@ interface ILivechatGateway {
           fileSize?: number;
           thumbnailUrl?: string;
         },
-  ): Promise<void>;
+  ): void;
 }
 
 /**

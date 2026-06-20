@@ -1,4 +1,4 @@
-import { Logger, Module, OnModuleInit } from '@nestjs/common';
+import { Logger, Module, OnModuleInit, forwardRef } from '@nestjs/common';
 import { LivechatGateway } from './livechat.gateway';
 import { LivechatInboundBridge } from './livechat-inbound.bridge';
 import { LivechatAdapter } from '../omni-inbound/adapters/livechat.adapter';
@@ -26,7 +26,7 @@ import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
  */
 @Module({
   imports: [
-    OmniInboundModule, // exports ConversationRepository
+    forwardRef(() => OmniInboundModule), // forwardRef to break circular: OmniInbound ↔ Livechat
     ChannelsModule,
     UsersModule,
     FilesModule, // for LivechatAdapter.sendMedia() + LivechatVisitorBridge (avatar presign)

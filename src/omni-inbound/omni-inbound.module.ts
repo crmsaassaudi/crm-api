@@ -152,7 +152,7 @@ const workerProviders =
     FilesModule,
     CsatModule,
     // F3 fix: LivechatModule provides the single LivechatAdapter instance (gateway-wired)
-    LivechatModule,
+    forwardRef(() => LivechatModule),
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,
