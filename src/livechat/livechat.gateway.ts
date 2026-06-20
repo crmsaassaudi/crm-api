@@ -363,7 +363,14 @@ export class LivechatGateway
       | { type: 'carousel'; content?: string; cards: any[] }
       | { type: 'interactive'; content: string; buttons: any[] },
   ): void {
-    this.server.to(`visitor:${visitorId}`).emit('agent:message', payload);
+    const room = `visitor:${visitorId}`;
+    const sockets = this.server.in(room).fetchSockets();
+    sockets.then((s) => {
+      this.logger.log(
+        `[sendToVisitor] room="${room}" → ${s.length} socket(s) connected. Payload type=${payload.type}`,
+      );
+    }).catch(() => {});
+    this.server.to(room).emit('agent:message', payload);
   }
 
   /** P2.4: emit agent:joined with both name and avatar URL */
