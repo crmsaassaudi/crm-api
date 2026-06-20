@@ -37,13 +37,15 @@ export class LivechatEmbedController {
   ) {}
 
   // ── Widget bundle ────────────────────────────────────────────────────────
+  // NOTE: Widget JS is served from Node E (livechat.crmsaudi.dev), NOT from
+  // this API server. The serveWidget endpoint below is kept only as a
+  // development fallback. In production, the script src in embed snippets
+  // points to LIVECHAT_WIDGET_URL.
 
   @Public()
-  // Task D: Allow 60 req/min (supports many page loads). The widget.js also
-  // has Cache-Control: max-age=3600 so browser hits are minimal in practice.
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Get('widget.js')
-  @ApiOperation({ summary: 'Serve the livechat widget bundle' })
+  @ApiOperation({ summary: 'Serve the livechat widget bundle (dev fallback)' })
   serveWidget(@Res() res: Response): void {
     const widgetPath = join(
       process.cwd(),
@@ -57,7 +59,7 @@ export class LivechatEmbedController {
 
     if (!existsSync(filePath)) {
       throw new NotFoundException(
-        'Widget bundle not found. Run `npm run build` in livechat-widget/ first.',
+        'Widget bundle not found. In production, use LIVECHAT_WIDGET_URL instead.',
       );
     }
 
@@ -81,6 +83,8 @@ export class LivechatEmbedController {
     if (!channel) throw new NotFoundException('Channel not found');
 
     const apiUrl = process.env.APP_URL ?? 'https://api.yourcrm.com';
+    const widgetUrl = process.env.LIVECHAT_WIDGET_URL
+      ?? 'https://livechat.crmsaudi.dev/widget/livechat.iife.js';
     const tenantId = (channel as any).tenantId ?? '';
 
     // FIX: Settings are stored in channel.config (JSONB), NOT top-level fields.
@@ -101,7 +105,7 @@ export class LivechatEmbedController {
     agentName:    "${agentName}",
   };
 </script>
-<script src="${apiUrl}/livechat/widget.js" async defer></script>
+<script src="${widgetUrl}" async defer></script>
 <!-- End CRM Livechat Widget -->`;
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -118,6 +122,8 @@ export class LivechatEmbedController {
     @Res() res: Response,
   ): void {
     const apiUrl = process.env.APP_URL ?? '';
+    const widgetUrl = process.env.LIVECHAT_WIDGET_URL
+      ?? 'https://livechat.crmsaudi.dev/widget/livechat.iife.js';
     const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -146,7 +152,7 @@ export class LivechatEmbedController {
       greeting:  "Hi there 👋 How can we help?",
     };
   </script>
-  <script src="${apiUrl}/livechat/widget.js" async></script>
+  <script src="${widgetUrl}" async></script>
 </body>
 </html>`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
