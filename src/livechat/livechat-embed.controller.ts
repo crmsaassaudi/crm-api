@@ -1,28 +1,47 @@
-import { Controller, Get, Param, Res, NotFoundException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  Res,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { Public } from '../auth/decorators/public.decorator';
+import { Throttle } from '@nestjs/throttler';
 import { ChannelConfigService } from '../channels/channel-config.service';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
+import { MessageRepository } from '../omni-inbound/repositories/message.repository';
+import { FilesService } from '../files/files.service';
+import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 
 /**
  * LivechatEmbedController — public endpoints for widget distribution.
  *
- * GET /livechat/widget.js            → serve built widget JS (from public/widget/)
- * GET /livechat/embed/:channelId     → generate embed snippet for a channel
- * GET /livechat/preview/:channelId   → HTML preview page for admin settings
+ * GET /livechat/widget.js               → serve built widget JS
+ * GET /livechat/embed/:channelId        → embed snippet for admin
+ * GET /livechat/preview/:channelId      → HTML preview page
+ * GET /livechat/history/:channelId      → message history for visitor (public, P1.3)
  */
 @ApiTags('Livechat Widget')
 @Controller('livechat')
 export class LivechatEmbedController {
-  constructor(private readonly channelConfigService: ChannelConfigService) {}
+  constructor(
+    private readonly channelConfigService: ChannelConfigService,
+    private readonly conversationRepo: ConversationRepository,
+    private readonly messageRepo: MessageRepository,
+    private readonly filesService: FilesService,
+  ) {}
 
-  /**
-   * Serve the built widget JS file.
-   * Cached aggressively in production (versioned by channelId query param).
-   */
+  // ── Widget bundle ────────────────────────────────────────────────────────
+
   @Public()
+  // Task D: Allow 60 req/min (supports many page loads). The widget.js also
+  // has Cache-Control: max-age=3600 so browser hits are minimal in practice.
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Get('widget.js')
   @ApiOperation({ summary: 'Serve the livechat widget bundle' })
   serveWidget(@Res() res: Response): void {
@@ -47,10 +66,8 @@ export class LivechatEmbedController {
     res.sendFile(filePath);
   }
 
-  /**
-   * Returns the embed snippet for a specific channel.
-   * Used by the admin Settings → Channels → Livechat page.
-   */
+  // ── Embed snippet ────────────────────────────────────────────────────────
+
   @Get('embed/:channelId')
   @ApiOperation({ summary: 'Get embed snippet for a livechat channel' })
   async getEmbedSnippet(
@@ -62,10 +79,13 @@ export class LivechatEmbedController {
 
     const apiUrl = process.env.APP_URL ?? 'https://api.yourcrm.com';
     const tenantId = (channel as any).tenantId ?? '';
-    const color = (channel as any).brandColor ?? '#6366f1';
-    const greeting =
-      (channel as any).greeting ?? 'Hi there 👋 How can we help you today?';
-    const agentName = (channel as any).agentName ?? 'Support Team';
+
+    // FIX: Settings are stored in channel.config (JSONB), NOT top-level fields.
+    // Reading top-level always returned undefined → defaults were used every time.
+    const cfg = (channel as any).config ?? {};
+    const color = cfg.brandColor ?? '#6366f1';
+    const greeting = cfg.greeting ?? 'Hi there 👋 How can we help you today?';
+    const agentName = cfg.agentName ?? 'Support Team';
 
     const snippet = `<!-- CRM Livechat Widget -->
 <script>
@@ -85,9 +105,8 @@ export class LivechatEmbedController {
     res.send(snippet);
   }
 
-  /**
-   * Preview page — iframed in the admin channel settings for visual preview.
-   */
+  // ── Admin preview page ───────────────────────────────────────────────────
+
   @Public()
   @Get('preview/:channelId')
   @ApiOperation({ summary: 'Admin preview page for livechat widget' })
@@ -129,5 +148,93 @@ export class LivechatEmbedController {
 </html>`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
+  }
+
+  // ── P1.3: Message history for widget (public, visitorId-scoped) ──────────
+
+  /**
+   * GET /livechat/history/:channelId?visitorId=&tenantId=&limit=
+   *
+   * Returns the last N messages from the visitor's active (or most recent)
+   * conversation. This endpoint is public — visitor identity is proven by
+   * knowing (visitorId + channelId + tenantId) which are stored in the
+   * widget's localStorage.
+   *
+   * Security: these IDs are not guessable (visitorId = random UUID generated
+   * client-side and stored in localStorage). The endpoint returns at most
+   * `limit` messages and no sensitive agent data beyond display name.
+   *
+   * Used by widget on reconnect to restore chat history without requiring
+   * agent authentication.
+   */
+  @Public()
+  // Task C: Rate-limit to prevent conversation enumeration.
+  // visitorId is a UUID (not guessable), but throttling adds defence-in-depth.
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('history/:channelId')
+  @ApiOperation({
+    summary: 'Get message history for a livechat visitor (widget use only)',
+  })
+  @ApiQuery({ name: 'visitorId', required: true })
+  @ApiQuery({ name: 'tenantId', required: true })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Max 50, default 30',
+  })
+  async getVisitorHistory(
+    @Param('channelId') channelId: string,
+    @Query('visitorId') visitorId: string,
+    @Query('tenantId') tenantId: string,
+    @Query('limit') limitStr = '30',
+  ) {
+    if (!visitorId || !tenantId) {
+      throw new BadRequestException('visitorId and tenantId are required');
+    }
+
+    const limit = Math.min(parseInt(limitStr, 10) || 30, 50);
+
+    // Find most recent conversation for this visitor (any status)
+    const conv = await this.conversationRepo.findLastByExternalId(
+      tenantId,
+      'livechat',
+      channelId, // channelAccount = channelId for livechat
+      visitorId, // externalId = visitorId
+    );
+
+    if (!conv) {
+      // No conversation yet — return empty (visitor just opened widget for first time)
+      return { conversationId: null, messages: [] };
+    }
+
+    // Fetch last `limit` messages, oldest-first for display
+    const result = await this.messageRepo.findByConversation(conv.id, 1, limit);
+
+    // Resolve presigned URLs for media messages so widget can render them
+    const messages = await Promise.all(
+      result.data.map(async (msg: any) => {
+        if (msg.fileId) {
+          try {
+            const file = await this.filesService.findById(msg.fileId);
+            if (file?.path) {
+              const url = await this.filesService.getPresignedDownloadUrl(
+                file.path,
+                3600,
+              );
+              return { ...msg, mediaUrl: url };
+            }
+          } catch {
+            /* skip — message still returned without url */
+          }
+        }
+        return msg;
+      }),
+    );
+
+    return {
+      conversationId: conv.id,
+      status: conv.status,
+      messages,
+    };
   }
 }

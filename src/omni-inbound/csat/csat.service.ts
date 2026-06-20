@@ -7,7 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { randomUUID } from 'crypto';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   OmniConversationSchemaClass,
   OmniConversationDocument,
@@ -72,6 +72,44 @@ export class CsatService {
 
     this.logger.log(`CSAT token generated for conversation ${conversationId}`);
     return token;
+  }
+
+  /**
+   * P3.1: Auto-generate CSAT token when a conversation is resolved.
+   * Triggered by the `omni.conversation.status_changed` event emitted by OmniController.
+   * Also re-emits the token on the omni socket so the widget can receive it.
+   */
+  @OnEvent('omni.conversation.status_changed', { async: true })
+  async handleConversationResolved(payload: {
+    tenantId: string;
+    conversationId: string;
+    status: string;
+    agentId?: string;
+  }): Promise<void> {
+    if (payload.status !== 'resolved') return;
+
+    try {
+      const token = await this.generateToken(
+        payload.conversationId,
+        payload.tenantId,
+      );
+
+      // Broadcast to agent room so ChatWindow can display the CSAT score later
+      this.eventEmitter.emit('omni.csat.token_generated', {
+        tenantId: payload.tenantId,
+        conversationId: payload.conversationId,
+        csatToken: token,
+      });
+
+      this.logger.log(
+        `[CSAT] Auto-generated token for resolved conversation ${payload.conversationId}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `[CSAT] Failed to auto-generate token for ${payload.conversationId}:`,
+        err,
+      );
+    }
   }
 
   /**

@@ -6,6 +6,7 @@ import { FacebookAdapter } from './adapters/facebook.adapter';
 import { ZaloAdapter } from './adapters/zalo.adapter';
 import { WhatsAppAdapter } from './adapters/whatsapp.adapter';
 import { InstagramAdapter } from './adapters/instagram.adapter';
+// LivechatAdapter is provided & exported by LivechatModule (F3 fix — single instance)
 import { LivechatAdapter } from './adapters/livechat.adapter';
 import { TelegramAdapter } from '../channels/telegram/telegram.adapter';
 import { TikTokAdapter } from './adapters/tiktok.adapter';
@@ -53,7 +54,6 @@ import { BotQueueService } from './bot/bot-queue.service';
 import { BotCallbackController } from './bot/bot-callback.controller';
 import { InternalChannelsController } from './bot/internal-channels.controller';
 import { CsatModule } from './csat/csat.module';
-
 
 // Repositories
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -105,6 +105,8 @@ import { TicketsModule } from '../tickets/tickets.module';
 import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
 import { FilesModule } from '../files/files.module';
 import { isWorkerRuntime, isOmniRuntime } from '../config/runtime-role';
+// F3 fix: import LivechatModule so its LivechatAdapter instance (with gateway wired) is shared
+import { LivechatModule } from '../livechat/livechat.module';
 
 const workerProviders =
   isWorkerRuntime() || isOmniRuntime()
@@ -149,6 +151,8 @@ const workerProviders =
     RoutingRulesModule,
     FilesModule,
     CsatModule,
+    // F3 fix: LivechatModule provides the single LivechatAdapter instance (gateway-wired)
+    LivechatModule,
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,
@@ -188,7 +192,8 @@ const workerProviders =
     ZaloAdapter,
     WhatsAppAdapter,
     InstagramAdapter,
-    LivechatAdapter,
+    // LivechatAdapter is NOT listed here — it is provided by LivechatModule (F3 fix)
+    // so the same instance that has setGateway() called is registered in CHANNEL_ADAPTERS
     TelegramAdapter,
     TikTokAdapter,
     {

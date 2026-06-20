@@ -123,23 +123,28 @@ async function bootstrap() {
     new ClassSerializerInterceptor(app.get(Reflector)),
   );
 
-  const options = new DocumentBuilder()
-    .setTitle('API')
-    .setDescription('API docs')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .addGlobalParameters({
-      in: 'header',
-      required: false,
-      name: process.env.APP_HEADER_LANGUAGE || 'x-custom-lang',
-      schema: {
-        example: 'en',
-      },
-    })
-    .build();
-
-  const document = SwaggerModule.createDocument(app, options);
-  SwaggerModule.setup('docs', app, document);
+  // Task A: Only expose Swagger docs in non-production environments.
+  // Swagger in production leaks full API surface, route patterns, and DTO structure.
+  if (!isProduction) {
+    const options = new DocumentBuilder()
+      .setTitle('API')
+      .setDescription('API docs')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .addGlobalParameters({
+        in: 'header',
+        required: false,
+        name: process.env.APP_HEADER_LANGUAGE || 'x-custom-lang',
+        schema: { example: 'en' },
+      })
+      .build();
+    const document = SwaggerModule.createDocument(app, options);
+    SwaggerModule.setup('docs', app, document);
+    Logger.log(
+      `📖 Swagger docs: http://localhost:${configService.getOrThrow('app.port', { infer: true })}/docs`,
+      'Bootstrap',
+    );
+  }
 
   // ── Production Startup Guards ──────────────────────────────────
   if (isProduction) {
@@ -208,7 +213,6 @@ async function bootstrap() {
 
   const port = configService.getOrThrow('app.port', { infer: true });
   Logger.log(`🚀 CRM API is running on port ${port}`, 'Bootstrap');
-  Logger.log(`📖 Swagger docs: http://localhost:${port}/docs`, 'Bootstrap');
 }
 
 bootstrap().catch((err) => {

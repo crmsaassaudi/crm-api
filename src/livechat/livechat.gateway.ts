@@ -10,50 +10,55 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { VisitorSessionService } from './visitor-session.service';
-
-interface VisitorHandshake {
-  visitorId: string;
-  tenantId: string;
-  channelId: string;
-  pageUrl?: string;
-}
-
-interface VisitorMessage {
-  visitorId: string;
-  tenantId: string;
-  text: string;
-  timestamp?: string;
-}
-
-interface VisitorIdentify {
-  visitorId: string;
-  tenantId: string;
-  email?: string;
-  name?: string;
-}
+import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 
 /**
  * LivechatGateway — Socket.IO namespace for livechat visitors.
  *
  * Namespace: /livechat  (public — no JWT required)
  *
- * Widget connects to: wss://api.crm.example.com/livechat
+ * Livechat là một channel omni như Facebook, WhatsApp, Zalo.
+ * Không có session riêng — mọi dữ liệu đều lưu trong OmniConversation.
  *
- * Flow:
- *   1. Widget emits `visitor:connect` with visitorId (fingerprint) + tenantId
- *   2. Gateway upserts VisitorSession and joins visitor to room `visitor:{visitorId}`
- *   3. Widget emits `visitor:message` → Gateway emits OmniInbound webhook event
- *   4. Agent sends reply → Gateway emits `agent:message` to visitor room
+ *   externalId      = visitorId (browser fingerprint)
+ *   channelAccount  = channelId (livechat channel config id)
+ *   channelType     = 'livechat'
  *
- * Rooms:
- *   - `visitor:{visitorId}` — visitor-specific room (one socket per tab)
- *   - `tenant:{tenantId}:livechat` — all livechat sessions for this tenant (agent monitoring)
+ * Socket routing: visitor joins room `visitor:{visitorId}`.
+ * Gửi message về visitor chỉ cần emit vào room đó — không cần socketId.
+ *
+ * Event table (Client → Server):
+ * ┌────────────────────┬───────────────────────────────────────────────────┐
+ * │ visitor:connect    │ Handshake — join room, lưu context vào socket.data │
+ * │ visitor:message    │ Text → OmniInbound pipeline                       │
+ * │ visitor:upload     │ File (base64) → OmniInbound media pipeline        │
+ * │ visitor:typing     │ Typing indicator → forward đến agent CRM          │
+ * │ visitor:identify   │ Enrich customer.email / customer.name / phone     │
+ * └────────────────────┴───────────────────────────────────────────────────┘
+ *
+ * Event table (Server → Client):
+ * ┌────────────────────┬───────────────────────────────────────────────────┐
+ * │ visitor:connected  │ Ack với conversationId (nếu có session cũ)        │
+ * │ agent:message      │ Text hoặc media từ agent                          │
+ * │ agent:joined       │ Agent được phân công → visitor thấy tên           │
+ * │ agent:typing       │ Agent đang / ngừng gõ                             │
+ * └────────────────────┴───────────────────────────────────────────────────┘
  */
 @WebSocketGateway({
   namespace: '/livechat',
-  cors: { origin: '*', credentials: false }, // Widget is cross-origin
+  // FIX: Restrict CORS to configured allowed origins (not wildcard in production).
+  // LIVECHAT_CORS_ORIGINS env var: comma-separated list, e.g. "https://mysite.com,https://app.mysite.com"
+  // Falls back to '*' only when not set (local dev convenience).
+  cors: {
+    origin: process.env.LIVECHAT_CORS_ORIGINS
+      ? process.env.LIVECHAT_CORS_ORIGINS.split(',')
+      : '*',
+    credentials: false,
+  },
   transports: ['websocket', 'polling'],
+  // FIX: Hard-cap at 30 MB at the transport layer so oversized payloads are
+  // rejected before they enter the event handler (prevents OOM on 20MB guard check).
+  maxHttpBufferSize: 30 * 1024 * 1024,
 })
 export class LivechatGateway
   implements OnGatewayConnection, OnGatewayDisconnect
@@ -62,21 +67,30 @@ export class LivechatGateway
   private readonly logger = new Logger(LivechatGateway.name);
 
   constructor(
-    private readonly visitorSessionService: VisitorSessionService,
+    private readonly conversationRepo: ConversationRepository,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ── Lifecycle ───────────────────────────────────────────────────────────
 
   handleConnection(client: Socket) {
-    this.logger.debug(`Visitor connected: ${client.id}`);
+    this.logger.debug(`Visitor socket connected: ${client.id}`);
   }
 
-  async handleDisconnect(client: Socket) {
-    // Mark session as disconnected (best-effort)
-    const session = await this.visitorSessionService.getBySocketId(client.id);
-    if (session) {
-      this.logger.debug(`Visitor ${session.visitorId} disconnected`);
+  handleDisconnect(client: Socket) {
+    const { visitorId, conversationId, tenantId } = client.data ?? {};
+    if (!visitorId) return;
+
+    this.logger.debug(`Visitor ${visitorId} disconnected`);
+
+    // Forward typing=false so agent UI clears the typing bubble
+    if (conversationId && tenantId) {
+      this.eventEmitter.emit('omni.visitor.typing.livechat', {
+        conversationId,
+        visitorId,
+        tenantId,
+        isTyping: false,
+      });
     }
   }
 
@@ -85,9 +99,15 @@ export class LivechatGateway
   @SubscribeMessage('visitor:connect')
   async onVisitorConnect(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: VisitorHandshake,
+    @MessageBody()
+    data: {
+      visitorId: string;
+      tenantId: string;
+      channelId: string;
+      pageUrl?: string;
+    },
   ) {
-    const { visitorId, tenantId, channelId, pageUrl } = data;
+    const { visitorId, tenantId, channelId } = data;
     if (!visitorId || !tenantId || !channelId) {
       client.emit('error', {
         message: 'Missing required fields: visitorId, tenantId, channelId',
@@ -95,95 +115,227 @@ export class LivechatGateway
       return;
     }
 
-    // Upsert session
-    const session = await this.visitorSessionService.upsert({
-      visitorId,
-      tenantId,
-      channelId,
-      socketId: client.id,
-      pageUrl,
-      userAgent: client.handshake.headers['user-agent'],
-    });
+    // Store context in socket.data — no DB write needed
+    client.data.visitorId = visitorId;
+    client.data.tenantId = tenantId;
+    client.data.channelId = channelId;
 
-    // Join visitor room
+    // Join visitor room — used for all server→visitor pushes
     await client.join(`visitor:${visitorId}`);
-    // Join tenant livechat room (for agent monitoring)
+    // Join tenant monitoring room (agent can watch all livechat sessions)
     await client.join(`tenant:${tenantId}:livechat`);
 
-    client.emit('visitor:connected', {
-      visitorId,
-      conversationId: session.conversationId ?? null,
-    });
+    // Lookup any existing active conversation for this visitor
+    // externalId = visitorId in livechat channel (same as senderId in other channels)
+    let conversationId: string | null = null;
+    try {
+      const conv = await this.conversationRepo.findActiveByExternalId(
+        tenantId,
+        'livechat',
+        channelId, // channelAccount = channelId for livechat
+        visitorId, // externalId = visitorId
+      );
+      conversationId = conv?.id ?? null;
+      if (conversationId) {
+        client.data.conversationId = conversationId;
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Could not resolve conversation for visitor ${visitorId}: ${err?.message}`,
+      );
+    }
 
-    this.logger.log(`Visitor ${visitorId} joined tenant ${tenantId}`);
+    client.emit('visitor:connected', { visitorId, conversationId });
+    this.logger.log(`Visitor ${visitorId} connected to tenant ${tenantId}`);
   }
 
   @SubscribeMessage('visitor:message')
-  async onVisitorMessage(
-    @ConnectedSocket() _client: Socket,
-    @MessageBody() data: VisitorMessage,
+  onVisitorMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      visitorId?: string;
+      tenantId?: string;
+      channelId?: string;
+      text: string;
+      timestamp?: string;
+    },
   ) {
-    const { visitorId, tenantId, text, timestamp } = data;
-    if (!visitorId || !tenantId || !text) return;
+    // Prefer socket.data context (set at connect) over per-message fields
+    const visitorId = data.visitorId ?? client.data.visitorId;
+    const tenantId = data.tenantId ?? client.data.tenantId;
+    const channelId = data.channelId ?? client.data.channelId;
 
-    const session = await this.visitorSessionService.getByVisitor(
-      visitorId,
-      tenantId,
-    );
-    if (!session) return;
+    if (!visitorId || !tenantId || !data.text) return;
 
-    // Emit into inbound pipeline via EventEmitter
     this.eventEmitter.emit('livechat.message.inbound', {
       visitorId,
       tenantId,
-      channelId: session.channelId,
-      text,
-      timestamp: timestamp ?? new Date().toISOString(),
-      visitorName: session.name ?? 'Visitor',
+      channelId,
+      text: data.text,
+      timestamp: data.timestamp ?? new Date().toISOString(),
+      visitorName: 'Visitor',
+    });
+  }
+
+  /**
+   * Visitor file upload via base64.
+   * Size guard: reject files > 20 MB.
+   */
+  @SubscribeMessage('visitor:upload')
+  onVisitorUpload(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      fileName: string;
+      mimeType: string;
+      fileSize?: number;
+      base64: string;
+      timestamp?: string;
+    },
+  ) {
+    const visitorId = client.data.visitorId;
+    const tenantId = client.data.tenantId;
+    const channelId = client.data.channelId;
+
+    if (!visitorId || !tenantId || !data.base64 || !data.fileName) {
+      client.emit('upload:error', {
+        message: 'Missing required upload fields',
+      });
+      return;
+    }
+
+    const MAX_BASE64_LEN = 28_000_000; // ~20 MB raw
+    if (data.base64.length > MAX_BASE64_LEN) {
+      client.emit('upload:error', { message: 'File too large (max 20 MB)' });
+      return;
+    }
+
+    this.logger.log(
+      `Visitor ${visitorId} uploading "${data.fileName}" (${data.mimeType})`,
+    );
+
+    this.eventEmitter.emit('livechat.media.inbound', {
+      visitorId,
+      tenantId,
+      channelId,
+      fileName: data.fileName,
+      mimeType: data.mimeType,
+      fileSize: data.fileSize ?? 0,
+      base64: data.base64,
+      timestamp: data.timestamp ?? new Date().toISOString(),
+      visitorName: 'Visitor',
+    });
+
+    client.emit('upload:ack', {
+      fileName: data.fileName,
+      mimeType: data.mimeType,
+    });
+  }
+
+  /**
+   * Visitor typing indicator — forwarded to agent CRM via EventEmitter.
+   */
+  @SubscribeMessage('visitor:typing')
+  onVisitorTyping(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { isTyping: boolean; conversationId?: string },
+  ) {
+    const visitorId = client.data.visitorId;
+    const tenantId = client.data.tenantId;
+    const conversationId = data.conversationId ?? client.data.conversationId;
+
+    if (!visitorId || !tenantId || !conversationId) return;
+
+    // Cache conversationId so disconnect can clear typing
+    if (!client.data.conversationId) {
+      client.data.conversationId = conversationId;
+    }
+
+    this.eventEmitter.emit('omni.visitor.typing.livechat', {
+      conversationId,
+      visitorId,
+      tenantId,
+      isTyping: data.isTyping,
     });
   }
 
   @SubscribeMessage('visitor:identify')
   async onVisitorIdentify(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: VisitorIdentify,
+    @MessageBody() data: { email?: string; name?: string; phone?: string },
   ) {
-    const { visitorId, tenantId, email, name } = data;
+    const visitorId = client.data.visitorId;
+    const tenantId = client.data.tenantId;
     if (!visitorId || !tenantId) return;
 
-    await this.visitorSessionService.enrich(visitorId, tenantId, {
-      email,
-      name,
+    // FIX: Use cached conversationId from socket.data instead of a redundant
+    // DB query. visitor:connect already resolved it on handshake.
+    const conversationId: string | undefined = client.data.conversationId;
+
+    if (conversationId) {
+      try {
+        await this.conversationRepo.updateCustomerInfo(conversationId, {
+          email: data.email,
+          name: data.name,
+          // phone stored via generic customer update — updateCustomerInfo accepts extra fields
+          ...(data.phone ? { phone: data.phone } : {}),
+        });
+      } catch (err: any) {
+        this.logger.warn(
+          `identify update failed for ${visitorId}: ${err?.message}`,
+        );
+      }
+    } else {
+      // No active conversation yet (visitor identified before first message).
+      // Store on socket.data so handleTextInbound can include it in visitorName.
+      if (data.name) client.data.visitorName = data.name;
+      if (data.email) client.data.visitorEmail = data.email;
+      if (data.phone) client.data.visitorPhone = data.phone;
+    }
+
+    client.emit('visitor:identified', {
+      email: data.email,
+      name: data.name,
+      phone: data.phone,
     });
-    client.emit('visitor:identified', { email, name });
   }
 
   // ── Server → Visitor ────────────────────────────────────────────────────
 
   /**
-   * Send a message from the agent to the visitor.
-   * Called by LivechatAdapter.send().
+   * Send text or media from agent to visitor.
+   * Routing via Socket.IO room — no socketId lookup needed.
    */
   sendToVisitor(
     visitorId: string,
     payload:
       | { type: 'text'; content: string }
-      | { type: 'media'; url: string; mimeType: string },
-  ): Promise<void> {
+      | {
+          type: 'media';
+          url?: string;
+          mimeType: string;
+          fileName: string;
+          fileSize?: number;
+          thumbnailUrl?: string;
+        },
+  ): void {
     this.server.to(`visitor:${visitorId}`).emit('agent:message', payload);
   }
 
-  /**
-   * Notify the visitor that an agent joined the conversation.
-   */
-  notifyAgentJoined(visitorId: string, agentName: string): Promise<void> {
-    this.server.to(`visitor:${visitorId}`).emit('agent:joined', { agentName });
+  /** P2.4: emit agent:joined with both name and avatar URL */
+  notifyAgentJoined(
+    visitorId: string,
+    agentName: string,
+    agentAvatarUrl?: string | null,
+  ): void {
+    this.server.to(`visitor:${visitorId}`).emit('agent:joined', {
+      agentName,
+      agentAvatarUrl: agentAvatarUrl ?? null,
+    });
   }
 
-  /**
-   * Send typing indicator to the visitor.
-   */
-  sendTypingIndicator(visitorId: string, isTyping: boolean): Promise<void> {
+  sendTypingIndicator(visitorId: string, isTyping: boolean): void {
     this.server.to(`visitor:${visitorId}`).emit('agent:typing', { isTyping });
   }
 }

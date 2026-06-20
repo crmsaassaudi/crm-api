@@ -1,22 +1,34 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { LivechatGateway } from './livechat.gateway';
+import { VisitorUploadService } from './visitor-upload.service';
 
 /**
- * LivechatInboundBridge — listens to `livechat.message.inbound` events
- * from LivechatGateway and routes them into the OmniInbound pipeline
- * by emitting `omni.inbound.webhook` with a livechat-normalized payload.
+ * LivechatInboundBridge — routes visitor messages into the OmniInbound pipeline
+ * and propagates conversation lifecycle events back to the visitor widget.
  *
- * This keeps LivechatGateway decoupled from OmniInboundModule.
+ * Decouples LivechatGateway from OmniInboundModule via EventEmitter.
+ *
+ * Events consumed:
+ *  - livechat.message.inbound  : text message from visitor → omni.inbound.webhook
+ *  - livechat.media.inbound    : file upload from visitor → omni.inbound.webhook
+ *  - omni.message.persisted    : after InboundProcessor saves → push conversationId to widget
  */
 @Injectable()
 export class LivechatInboundBridge {
   private readonly logger = new Logger(LivechatInboundBridge.name);
 
-  constructor(private readonly eventEmitter: EventEmitter2) {}
+  constructor(
+    private readonly eventEmitter: EventEmitter2,
+    private readonly livechatGateway: LivechatGateway,
+    private readonly visitorUploadService: VisitorUploadService,
+  ) {}
+
+  // ── P1.2 FIX: handle text messages ─────────────────────────────────────
 
   @OnEvent('livechat.message.inbound')
-  handleInbound(payload: {
+  handleTextInbound(payload: {
     visitorId: string;
     tenantId: string;
     channelId: string;
@@ -24,10 +36,10 @@ export class LivechatInboundBridge {
     timestamp: string;
     visitorName: string;
   }) {
-    this.logger.debug(`Livechat inbound from visitor ${payload.visitorId}`);
+    this.logger.debug(
+      `Livechat text inbound from visitor ${payload.visitorId}`,
+    );
 
-    // Emit into OmniInbound pipeline
-    // The webhook-processor picks this up and calls LivechatAdapter.normalize()
     this.eventEmitter.emit('omni.inbound.webhook', {
       channelType: 'livechat',
       channelId: payload.channelId,
@@ -39,5 +51,125 @@ export class LivechatInboundBridge {
         timestamp: payload.timestamp,
       },
     });
+  }
+
+  @OnEvent('livechat.media.inbound')
+  async handleMediaInbound(payload: {
+    visitorId: string;
+    tenantId: string;
+    channelId: string;
+    fileName: string;
+    mimeType: string;
+    fileSize: number;
+    base64: string;
+    timestamp: string;
+    visitorName: string;
+  }) {
+    this.logger.log(
+      `Livechat media inbound from visitor ${payload.visitorId}: "${payload.fileName}" (${payload.mimeType})`,
+    );
+
+    // ── P1.4 FIX: Upload base64 → S3 BEFORE entering pipeline ──────────────
+    // ConversationService does not handle base64. We resolve it here so
+    // the OmniPayload has fileId (not raw base64) when saved to MongoDB.
+    const dedupeKey = `${payload.tenantId}:${payload.visitorId}:${payload.timestamp}:${payload.fileName}`;
+    let fileId: string | undefined;
+    let storageKey: string | undefined;
+
+    try {
+      const result = await this.visitorUploadService.uploadFromBase64({
+        tenantId: payload.tenantId,
+        visitorId: payload.visitorId,
+        fileName: payload.fileName,
+        mimeType: payload.mimeType,
+        fileSize: payload.fileSize,
+        base64: payload.base64,
+        dedupeKey,
+      });
+      fileId = result.fileId;
+      storageKey = result.storageKey;
+    } catch (err: any) {
+      this.logger.error(
+        `Visitor upload failed for ${payload.visitorId}: ${err?.message}. Skipping media message.`,
+      );
+      return; // do not push broken payload into pipeline
+    }
+
+    // Determine message type from MIME
+    const messageType = this.mimeToMessageType(payload.mimeType);
+
+    // Emit into OmniInbound pipeline with fileId — no base64 in DB
+    this.eventEmitter.emit('omni.inbound.webhook', {
+      channelType: 'livechat',
+      channelId: payload.channelId,
+      tenantId: payload.tenantId,
+      rawPayload: {
+        visitorId: payload.visitorId,
+        visitorName: payload.visitorName,
+        channelId: payload.channelId,
+        messageType,
+        fileName: payload.fileName,
+        mimeType: payload.mimeType,
+        fileSize: payload.fileSize,
+        fileId,
+        storageKey,
+        timestamp: payload.timestamp,
+      },
+    });
+  }
+
+  /** Map MIME type to OmniPayload messageType */
+  private mimeToMessageType(
+    mimeType: string,
+  ): 'image' | 'video' | 'audio' | 'file' {
+    if (mimeType.startsWith('image/')) return 'image';
+    if (mimeType.startsWith('video/')) return 'video';
+    if (mimeType.startsWith('audio/')) return 'audio';
+    return 'file';
+  }
+
+  // ── P1.1 FIX: push conversationId back to visitor widget ─────────────
+
+  /**
+   * After InboundProcessor saves the first message for a livechat visitor,
+   * an OmniConversation record is created/reused. We then push the
+   * conversationId back to the visitor widget so that:
+   *
+   * 1. visitor:typing events carry the correct conversationId
+   * 2. Widget can fetch message history on reconnect
+   * 3. LivechatVisitorBridge can route agent events correctly
+   *
+   * The event payload is the OmniPayload spread + conversationId + messageId.
+   * For livechat: payload.senderId = visitorId, payload.channelType = 'livechat'.
+   */
+  @OnEvent('omni.message.persisted')
+  handleMessagePersisted(payload: {
+    channelType: string;
+    channelId: string;
+    tenantId: string;
+    senderId: string; // = visitorId for livechat
+    senderType: string;
+    conversationId: string;
+    messageId: string;
+    internalMessageId: string;
+  }) {
+    // Only handle livechat inbound messages from visitor
+    if (payload.channelType !== 'livechat') return;
+    if (payload.senderType !== 'customer') return; // skip agent messages
+
+    const visitorId = payload.senderId;
+
+    this.logger.debug(
+      `[Bridge] Push conversation:linked → visitor ${visitorId}, conv ${payload.conversationId}`,
+    );
+
+    // Emit to visitor room — widget updates socket.data.conversationId
+    // and can now include it in visitor:typing events
+    this.livechatGateway.server
+      ?.to(`visitor:${visitorId}`)
+      .emit('conversation:linked', {
+        conversationId: payload.conversationId,
+        visitorId,
+      });
   }
 }

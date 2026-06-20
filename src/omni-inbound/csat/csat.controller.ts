@@ -5,6 +5,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CsatService, CsatSubmitDto } from './csat.service';
 import { RequirePermission } from '../../common/permissions';
 import { Public } from '../../auth/decorators/public.decorator';
@@ -23,8 +24,13 @@ export class CsatController {
    * Customer submits their CSAT rating via survey link:
    *   GET  /survey?token=xxx            → renders survey page (handled by frontend)
    *   POST /v1/csat/submit/:token       → submits the rating
+   *
+   * Task B: Throttle to 5 requests/min to prevent spam scoring.
+   * Token is a 32-char hex UUID — not brute-forceable, but rate limiting
+   * prevents flood submission from bots or duplicate form submits.
    */
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('submit/:token')
   @ApiOperation({ summary: 'Submit CSAT rating (public, no auth)' })
   submitCsat(@Param('token') token: string, @Body() dto: CsatSubmitDto) {

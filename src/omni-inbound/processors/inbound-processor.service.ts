@@ -2,6 +2,7 @@ import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { createHash } from 'crypto';
+import { OnEvent } from '@nestjs/event-emitter';
 import {
   ChannelAdapter,
   CHANNEL_ADAPTERS,
@@ -18,8 +19,10 @@ import {
  * Responsibilities:
  * 1. Resolve the correct adapter for the channel type
  * 2. Normalize the raw payload into OmniPayload
- * 3. Emit a domain event so listeners (persistence, realtime gateway, etc.)
- *    can react — no if-else anywhere downstream.
+ * 3. Push normalized payload to OMNI_ROUTING_QUEUE for async processing.
+ *
+ * Also listens for the `omni.inbound.webhook` EventEmitter event emitted
+ * by LivechatInboundBridge (F1 fix — bridges WS-based livechat into this pipeline).
  */
 @Injectable()
 export class InboundProcessorService {
@@ -80,6 +83,40 @@ export class InboundProcessorService {
     });
 
     return normalized;
+  }
+
+  /**
+   * F1 Fix — Livechat inbound bridge.
+   *
+   * LivechatInboundBridge emits `omni.inbound.webhook` via EventEmitter2.
+   * This handler receives it and routes it through the same normalize → queue
+   * pipeline used by all other channel types.
+   *
+   * Note: channelConfig is optional for livechat (LivechatAdapter ignores it).
+   */
+  @OnEvent('omni.inbound.webhook')
+  async handleLivechatInboundEvent(data: {
+    channelType: ChannelType;
+    channelId: string;
+    tenantId: string;
+    rawPayload: any;
+  }): Promise<void> {
+    this.logger.debug(
+      `[livechat] omni.inbound.webhook received — channelId=${data.channelId}, tenant=${data.tenantId}`,
+    );
+    try {
+      await this.process(
+        data.channelType,
+        data.rawPayload,
+        data.tenantId,
+        data.channelId,
+        // channelConfig not required — LivechatAdapter ignores it
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `[livechat] Failed to process inbound event: ${error?.message ?? String(error)}`,
+      );
+    }
   }
 
   /**

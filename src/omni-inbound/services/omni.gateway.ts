@@ -10,6 +10,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Inject, Logger, OnModuleInit } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AgentPresenceService } from './agent-presence.service';
 import { AgentPresenceGateway } from './agent-presence.gateway';
 import { AgentFallbackService } from './agent-fallback.service';
@@ -92,6 +93,7 @@ export class OmniGateway
     private readonly usersService: UsersService,
     private readonly configService: ConfigService<AllConfigType>,
     private readonly conversationLockService: ConversationLockService,
+    private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -928,6 +930,14 @@ export class OmniGateway
         userId,
         userName: user.name ?? 'Agent',
       });
+
+    // Bridge to livechat visitor (LivechatVisitorBridge picks this up)
+    this.eventEmitter.emit('omni.agent.typing.livechat', {
+      conversationId: data.conversationId,
+      visitorId: null, // Bridge resolves via VisitorSessionService
+      isTyping: true,
+      agentName: user.name ?? 'Agent',
+    });
   }
 
   @SubscribeMessage('omni:typing:stop')
@@ -944,6 +954,40 @@ export class OmniGateway
         conversationId: data.conversationId,
         userId: client.data.userId ?? user.id ?? user.sub,
       });
+
+    // Bridge typing stop to livechat visitor
+    this.eventEmitter.emit('omni.agent.typing.livechat', {
+      conversationId: data.conversationId,
+      visitorId: null,
+      isTyping: false,
+    });
+  }
+
+  /**
+   * G3 FIX — Forward visitor typing indicator to agents.
+   *
+   * Emitted by LivechatGateway when a visitor types or stops typing.
+   * Broadcasts `omni:visitor:typing` to all agents in the conversation room
+   * so agent UI can show a typing bubble for the visitor.
+   *
+   * Note: This is the reverse of agent→visitor (which goes via LivechatVisitorBridge).
+   */
+  @OnEvent('omni.visitor.typing.livechat')
+  handleVisitorTyping(event: {
+    conversationId: string;
+    visitorId: string;
+    tenantId: string;
+    isTyping: boolean;
+  }) {
+    const room = `tenant:${event.tenantId}:conversation:${event.conversationId}`;
+    this.server.to(room).emit('omni:visitor:typing', {
+      conversationId: event.conversationId,
+      visitorId: event.visitorId,
+      isTyping: event.isTyping,
+    });
+    this.logger.debug(
+      `Visitor ${event.visitorId} typing=${event.isTyping} → room ${room}`,
+    );
   }
 
   // ─── Collision detection ────────────────────────────────────────────

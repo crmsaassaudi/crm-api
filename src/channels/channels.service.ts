@@ -124,14 +124,31 @@ export class ChannelsService {
         account,
         status: 'Connected',
         config: {
+          // Content
           greeting: dto.greeting ?? 'Hi there 👋 How can we help you today?',
-          brandColor: dto.brandColor ?? '#6366f1',
           agentName: dto.agentName ?? 'Support Team',
           agentAvatar: dto.agentAvatar ?? null,
-          position: dto.position ?? 'bottom-right',
-          allowedOrigins: dto.allowedOrigins ?? [],
+          launcherIconUrl: dto.launcherIconUrl ?? null,
           offlineMessage:
             dto.offlineMessage ?? 'We are offline. Leave a message!',
+          // Colors
+          brandColor: dto.brandColor ?? '#6366f1',
+          launcherColor: dto.launcherColor ?? null,
+          agentBubbleColor: dto.agentBubbleColor ?? null,
+          agentTextColor: dto.agentTextColor ?? null,
+          // Typography / Shape
+          fontFamily: dto.fontFamily ?? null,
+          borderRadius: dto.borderRadius ?? 16,
+          launcherSize: dto.launcherSize ?? 56,
+          // Behavior
+          position: dto.position ?? 'bottom-right',
+          allowedOrigins: dto.allowedOrigins ?? [],
+          autoOpen: dto.autoOpen ?? false,
+          autoOpenDelay: dto.autoOpenDelay ?? 3000,
+          showBranding: dto.showBranding ?? true,
+          // Advanced
+          customCSS: dto.customCSS ?? null,
+          // Internal
           businessHoursOverride: false,
           autoReplyMessage: '',
           webhookStatus: 'Active',
@@ -150,7 +167,6 @@ export class ChannelsService {
   async getLivechatPublicConfig(
     channelId: string,
   ): Promise<Record<string, any>> {
-    // No tenant filter — widget doesn't know tenantId yet, resolves by channelId
     const channel = await this.repository.findByIdNoTenant(channelId);
     if (!channel || channel.type !== 'livechat') {
       throw new NotFoundException('Livechat channel not found');
@@ -159,12 +175,34 @@ export class ChannelsService {
     return {
       channelId: channel.id,
       tenantId: channel.tenantId,
+      // Content
       greeting: cfg.greeting,
-      brandColor: cfg.brandColor,
       agentName: cfg.agentName,
       agentAvatar: cfg.agentAvatar,
-      position: cfg.position,
+      launcherIconUrl: cfg.launcherIconUrl ?? null,
       offlineMessage: cfg.offlineMessage,
+      // Colors
+      brandColor: cfg.brandColor,
+      launcherColor: cfg.launcherColor ?? null,
+      agentBubbleColor: cfg.agentBubbleColor ?? null,
+      agentTextColor: cfg.agentTextColor ?? null,
+      // Typography / Shape
+      fontFamily: cfg.fontFamily ?? null,
+      borderRadius: cfg.borderRadius ?? 16,
+      launcherSize: cfg.launcherSize ?? 56,
+      // Behavior
+      position: cfg.position,
+      autoOpen: cfg.autoOpen ?? false,
+      autoOpenDelay: cfg.autoOpenDelay ?? 3000,
+      showBranding: cfg.showBranding ?? true,
+      // Advanced
+      customCSS: cfg.customCSS ?? null,
+      // P2.5: Business hours (per-day schedule) + tenant timezone
+      businessHours: cfg.businessHours ?? null,
+      timezone: cfg.timezone ?? null,
+      // Task E: Pre-chat form configuration — widget shows/hides form based on this.
+      // Structure: { enabled: boolean, fields: Array<'name'|'email'|'phone'|'message'>, required: string[] }
+      preChatForm: cfg.preChatForm ?? null,
     };
   }
 

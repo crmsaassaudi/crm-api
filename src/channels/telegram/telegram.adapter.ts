@@ -163,7 +163,9 @@ export class TelegramAdapter implements ChannelAdapter {
 
       // Use Blob for browser-compatible FormData
       if (media.buffer) {
-        const blob = new Blob([new Uint8Array(media.buffer)], { type: media.mimeType });
+        const blob = new Blob([new Uint8Array(media.buffer)], {
+          type: media.mimeType,
+        });
         const fileKey =
           method === 'sendPhoto'
             ? 'photo'
