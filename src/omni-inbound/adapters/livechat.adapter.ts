@@ -23,7 +23,9 @@ interface ILivechatGateway {
           fileName: string;
           fileSize?: number;
           thumbnailUrl?: string;
-        },
+        }
+      | { type: 'carousel'; content?: string; cards: any[] }
+      | { type: 'interactive'; content: string; buttons: any[] },
   ): void;
 }
 
@@ -67,7 +69,7 @@ export class LivechatAdapter implements ChannelAdapter {
         senderType: 'customer',
         messageType: 'text',
         content: rawPayload.text,
-        metadata: {},
+        metadata: { ...(rawPayload.metadata ?? {}) },
         externalMessageId: `lc_${rawPayload.visitorId}_${Date.now()}`,
         externalConversationId: rawPayload.visitorId,
         timestamp: rawPayload.timestamp
@@ -215,5 +217,47 @@ export class LivechatAdapter implements ChannelAdapter {
     if (mimeType.startsWith('video/')) return 'video';
     if (mimeType.startsWith('audio/')) return 'audio';
     return 'file';
+  }
+
+  /**
+   * Send an interactive button message to the visitor widget.
+   * Used by OutboundService when bot sends buttons.
+   */
+  async sendInteractive(
+    recipientId: string,
+    body: string,
+    buttons: Array<{ id: string; title: string }>,
+    _channelConfig: any,
+  ): Promise<any> {
+    if (!this.gateway) {
+      this.logger.warn('LivechatGateway not set — cannot send interactive');
+      return;
+    }
+    await this.gateway.sendToVisitor(recipientId, {
+      type: 'interactive',
+      content: body,
+      buttons,
+    });
+    return { status: 'sent' };
+  }
+
+  /**
+   * Send a carousel message to the visitor widget.
+   */
+  async sendCarousel(
+    recipientId: string,
+    content: string | undefined,
+    cards: any[],
+  ): Promise<any> {
+    if (!this.gateway) {
+      this.logger.warn('LivechatGateway not set — cannot send carousel');
+      return;
+    }
+    await this.gateway.sendToVisitor(recipientId, {
+      type: 'carousel',
+      content,
+      cards,
+    });
+    return { status: 'sent' };
   }
 }

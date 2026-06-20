@@ -16,6 +16,8 @@ const MESSAGE_TYPES = [
   'location',
   'sticker',
   'template',
+  'carousel',
+  'interactive',
 ];
 const MESSAGE_STATUSES = ['sending', 'sent', 'delivered', 'read', 'failed'];
 
@@ -138,6 +140,18 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
    */
   @Prop({ type: Date, index: true })
   providerTimestamp: Date;
+
+  /** Quote reply: reference to the message being replied to */
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'OmniMessageSchemaClass' })
+  replyToMessageId?: string;
+
+  /** Preview of the quoted message content (denormalized for display) */
+  @Prop({ type: String })
+  replyToPreview?: string;
+
+  /** Sender of the quoted message (denormalized for display) */
+  @Prop({ type: String })
+  replyToSender?: string;
 }
 
 export const OmniMessageSchema = SchemaFactory.createForClass(

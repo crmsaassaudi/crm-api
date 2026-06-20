@@ -35,6 +35,7 @@ export class LivechatInboundBridge {
     text: string;
     timestamp: string;
     visitorName: string;
+    metadata?: Record<string, any>;
   }) {
     this.logger.debug(
       `Livechat text inbound from visitor ${payload.visitorId}`,
@@ -49,6 +50,7 @@ export class LivechatInboundBridge {
         visitorName: payload.visitorName,
         text: payload.text,
         timestamp: payload.timestamp,
+        metadata: payload.metadata,
       },
     });
   }

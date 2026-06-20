@@ -199,6 +199,7 @@ export class LivechatGateway
       channelId?: string;
       text: string;
       timestamp?: string;
+      metadata?: Record<string, any>;
     },
   ) {
     // Prefer socket.data context (set at connect) over per-message fields
@@ -215,6 +216,7 @@ export class LivechatGateway
       text: data.text,
       timestamp: data.timestamp ?? new Date().toISOString(),
       visitorName: 'Visitor',
+      metadata: data.metadata,
     });
   }
 
@@ -358,7 +360,9 @@ export class LivechatGateway
           fileName: string;
           fileSize?: number;
           thumbnailUrl?: string;
-        },
+        }
+      | { type: 'carousel'; content?: string; cards: any[] }
+      | { type: 'interactive'; content: string; buttons: any[] },
   ): void {
     this.server.to(`visitor:${visitorId}`).emit('agent:message', payload);
   }
