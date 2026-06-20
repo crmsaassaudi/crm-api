@@ -261,12 +261,20 @@ export class LivechatEmbedController {
     @Query('visitorId') visitorId: string,
     @Query('tenantId') tenantId: string,
     @Query('limit') limitStr = '30',
+    @Req() req: any,
+    @Res() res: Response,
   ) {
     if (!visitorId || !tenantId) {
       throw new BadRequestException('visitorId and tenantId are required');
     }
 
     const limit = Math.min(parseInt(limitStr, 10) || 30, 50);
+
+    // CORS — widget is embedded on external websites
+    const origin = req.headers?.origin || req.headers?.referer;
+    const corsOrigin = origin ? new URL(origin).origin : '*';
+    res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
     // Public endpoint — no auth/interceptor sets CLS.
     // Set CLS manually so Mongoose tenant filter plugin works.
@@ -281,7 +289,8 @@ export class LivechatEmbedController {
 
     if (!conv) {
       // No conversation yet — return empty (visitor just opened widget for first time)
-      return { conversationId: null, messages: [] };
+      res.json({ conversationId: null, messages: [] });
+      return;
     }
 
     // Fetch last `limit` messages, oldest-first for display
@@ -310,10 +319,10 @@ export class LivechatEmbedController {
       }),
     );
 
-    return {
+    res.json({
       conversationId: conv.id,
       status: conv.status,
       messages,
-    };
+    });
   }
 }
