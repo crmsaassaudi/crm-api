@@ -45,11 +45,17 @@ async function bootstrap() {
   const configService = app.get(ConfigService<AllConfigType>);
 
   // Security headers — must be before any route registration
-  app.use(
-    helmet({
-      contentSecurityPolicy: false,
-    }),
-  );
+  // Disable frameguard for livechat preview routes (admin iframe embedding)
+  const helmetMiddleware = helmet({
+    contentSecurityPolicy: false,
+  });
+  app.use((req: any, res: any, next: any) => {
+    // Skip X-Frame-Options for preview endpoints (iframe in admin panel)
+    if (req.url?.includes('/livechat/preview/')) {
+      return next();
+    }
+    return helmetMiddleware(req, res, next);
+  });
 
   const frontendDomain = configService.get('app.frontendDomain', {
     infer: true,
