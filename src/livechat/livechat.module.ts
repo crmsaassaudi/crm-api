@@ -1,10 +1,18 @@
 import { Logger, Module, OnModuleInit, forwardRef } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
 import { LivechatGateway } from './livechat.gateway';
 import { LivechatInboundBridge } from './livechat-inbound.bridge';
 import { LivechatAdapter } from '../omni-inbound/adapters/livechat.adapter';
 import { LivechatEmbedController } from './livechat-embed.controller';
+import { LivechatWidgetController } from './livechat-widget.controller';
 import { LivechatVisitorBridge } from './livechat-visitor.bridge';
 import { VisitorUploadService } from './visitor-upload.service';
+import { LivechatWidgetService } from './livechat-widget.service';
+import { LivechatWidgetRepository } from './infrastructure/persistence/document/repositories/livechat-widget.repository';
+import {
+  LivechatWidgetSchemaClass,
+  LivechatWidgetSchema,
+} from './infrastructure/persistence/document/entities/livechat-widget.schema';
 import { ChannelsModule } from '../channels/channels.module';
 import { UsersModule } from '../users/users.module';
 import { FilesModule } from '../files/files.module';
@@ -27,19 +35,24 @@ import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
 @Module({
   imports: [
     forwardRef(() => OmniInboundModule), // forwardRef to break circular: OmniInbound ↔ Livechat
+    MongooseModule.forFeature([
+      { name: LivechatWidgetSchemaClass.name, schema: LivechatWidgetSchema },
+    ]),
     ChannelsModule,
     UsersModule,
     FilesModule, // for LivechatAdapter.sendMedia() + LivechatVisitorBridge (avatar presign)
   ],
-  controllers: [LivechatEmbedController],
+  controllers: [LivechatEmbedController, LivechatWidgetController],
   providers: [
     LivechatGateway,
     LivechatInboundBridge,
     LivechatAdapter,
     LivechatVisitorBridge,
     VisitorUploadService,
+    LivechatWidgetService,
+    LivechatWidgetRepository,
   ],
-  exports: [LivechatGateway, LivechatAdapter],
+  exports: [LivechatGateway, LivechatAdapter, LivechatWidgetService],
 })
 export class LivechatModule implements OnModuleInit {
   private readonly logger = new Logger(LivechatModule.name);

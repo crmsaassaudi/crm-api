@@ -16,6 +16,7 @@ import { ChannelConfigService } from '../channels/channel-config.service';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 import { MessageRepository } from '../omni-inbound/repositories/message.repository';
 import { FilesService } from '../files/files.service';
+import { LivechatWidgetService } from './livechat-widget.service';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 
 /**
@@ -34,7 +35,30 @@ export class LivechatEmbedController {
     private readonly conversationRepo: ConversationRepository,
     private readonly messageRepo: MessageRepository,
     private readonly filesService: FilesService,
+    private readonly widgetService: LivechatWidgetService,
   ) {}
+
+  // ── Public widget config (loaded by embed JS) ───────────────────────────
+
+  @Public()
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @Get('config/:widgetId')
+  @ApiOperation({ summary: 'Get public widget config by widgetId' })
+  async getWidgetConfig(
+    @Param('widgetId') widgetId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const config = await this.widgetService.getPublicConfig(widgetId);
+    if (!config) {
+      throw new NotFoundException('Widget not found or paused');
+    }
+
+    // Allow cross-origin loading from any website
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json(config);
+  }
 
   // ── Widget bundle ────────────────────────────────────────────────────────
   // NOTE: Widget JS is served from Node E (livechat.crmsaudi.dev), NOT from
