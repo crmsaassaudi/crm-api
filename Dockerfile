@@ -31,6 +31,7 @@ RUN apk add --no-cache ffmpeg
 COPY --from=build /usr/src/app/node_modules ./node_modules
 COPY --from=build /usr/src/app/package*.json ./
 COPY --chown=node:node --from=build /usr/src/app/dist ./dist
+COPY --chown=node:node --from=build /usr/src/app/public ./public
 
 RUN mkdir -p /usr/src/app/files && chown node:node /usr/src/app/files
 
