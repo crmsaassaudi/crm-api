@@ -15,7 +15,7 @@ import { WidgetEventRepository } from './infrastructure/persistence/document/rep
 import { LivechatWidgetService } from './livechat-widget.service';
 
 @ApiTags('Livechat Analytics')
-@Controller('livechat/analytics')
+@Controller({ path: 'livechat/analytics', version: '1' })
 export class LivechatAnalyticsController {
   constructor(
     private readonly eventRepo: WidgetEventRepository,
