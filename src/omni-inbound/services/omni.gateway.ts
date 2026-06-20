@@ -819,6 +819,32 @@ export class OmniGateway
     });
   }
 
+  // ── Message Status (delivery receipts) ───────────────────────────────
+
+  /**
+   * Listener for 'livechat.message.status' domain event.
+   * Emitted by MessageStatusService when visitor acks (delivered) or reads messages.
+   * Broadcasts 'omni:message:status' to the agent tenant room.
+   */
+  @OnEvent('livechat.message.status')
+  handleMessageStatus(payload: {
+    tenantId: string;
+    conversationId: string;
+    messageIds: string[];
+    status: 'delivered' | 'read';
+  }) {
+    const room = `tenant:${payload.tenantId}`;
+    this.logger.debug(
+      `Broadcasting message status '${payload.status}' for ${payload.messageIds.length} msg(s) ` +
+        `in conversation ${payload.conversationId} to room=${room}`,
+    );
+    this.server.to(room).emit('omni:message:status', {
+      conversationId: payload.conversationId,
+      messageIds: payload.messageIds,
+      status: payload.status,
+    });
+  }
+
   // ── Reactions (unified across all channels) ────────────────────────────
 
   /**

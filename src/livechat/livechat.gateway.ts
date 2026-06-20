@@ -12,6 +12,7 @@ import { Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 import { LivechatWidgetService } from './livechat-widget.service';
+import { MessageStatusService } from './services/message-status.service';
 
 /**
  * LivechatGateway — Socket.IO namespace for livechat visitors.
@@ -36,6 +37,8 @@ import { LivechatWidgetService } from './livechat-widget.service';
  * │ visitor:typing     │ Typing indicator → forward đến agent CRM          │
  * │ visitor:identify   │ Enrich customer.email / customer.name / phone     │
  * │ visitor:reaction   │ Emoji reaction → unified reaction pipeline        │
+ * │ visitor:ack        │ Delivery receipt → mark messages as delivered      │
+ * │ visitor:read       │ Read receipt → mark messages as read               │
  * └────────────────────┴───────────────────────────────────────────────────┘
  *
  * Event table (Server → Client):
@@ -45,6 +48,7 @@ import { LivechatWidgetService } from './livechat-widget.service';
  * │ agent:joined       │ Agent được phân công → visitor thấy tên           │
  * │ agent:typing       │ Agent đang / ngừng gõ                             │
  * │ agent:reaction     │ Reaction update broadcast to widget               │
+ * │ message:status     │ Status update (delivered/read) for visitor msgs   │
  * └────────────────────┴───────────────────────────────────────────────────┘
  */
 @WebSocketGateway({
@@ -73,6 +77,7 @@ export class LivechatGateway
     private readonly conversationRepo: ConversationRepository,
     private readonly eventEmitter: EventEmitter2,
     private readonly widgetService: LivechatWidgetService,
+    private readonly messageStatusService: MessageStatusService,
   ) {}
 
   // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -365,11 +370,13 @@ export class LivechatGateway
   ): void {
     const room = `visitor:${visitorId}`;
     const sockets = this.server.in(room).fetchSockets();
-    sockets.then((s) => {
-      this.logger.log(
-        `[sendToVisitor] room="${room}" → ${s.length} socket(s) connected. Payload type=${payload.type}`,
-      );
-    }).catch(() => {});
+    sockets
+      .then((s) => {
+        this.logger.log(
+          `[sendToVisitor] room="${room}" → ${s.length} socket(s) connected. Payload type=${payload.type}`,
+        );
+      })
+      .catch(() => {});
     this.server.to(room).emit('agent:message', payload);
   }
 
@@ -387,6 +394,57 @@ export class LivechatGateway
 
   sendTypingIndicator(visitorId: string, isTyping: boolean): void {
     this.server.to(`visitor:${visitorId}`).emit('agent:typing', { isTyping });
+  }
+
+  // ── Delivery / Read Receipts ─────────────────────────────────────────────
+
+  /**
+   * Visitor acknowledges receipt of agent messages (auto-ack on receive).
+   * Advances status: sent → delivered.
+   */
+  @SubscribeMessage('visitor:ack')
+  async handleVisitorAck(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { messageIds: string[] },
+  ) {
+    const tenantId = client.data?.tenantId;
+    if (!tenantId || !data?.messageIds?.length) return;
+
+    this.logger.debug(
+      `Visitor ${client.data.visitorId} ack'd ${data.messageIds.length} message(s)`,
+    );
+
+    await this.messageStatusService.markDelivered(tenantId, data.messageIds);
+  }
+
+  /**
+   * Visitor has scrolled agent messages into viewport (read receipt).
+   * Advances status: sent/delivered → read.
+   */
+  @SubscribeMessage('visitor:read')
+  async handleVisitorRead(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { messageIds: string[] },
+  ) {
+    const tenantId = client.data?.tenantId;
+    if (!tenantId || !data?.messageIds?.length) return;
+
+    this.logger.debug(
+      `Visitor ${client.data.visitorId} read ${data.messageIds.length} message(s)`,
+    );
+
+    await this.messageStatusService.markRead(tenantId, data.messageIds);
+  }
+
+  /**
+   * Push message status updates to the visitor widget.
+   * Used when agent reads visitor messages → visitor sees blue ticks.
+   */
+  sendStatusToVisitor(
+    visitorId: string,
+    payload: { messageIds: string[]; status: string },
+  ): void {
+    this.server.to(`visitor:${visitorId}`).emit('message:status', payload);
   }
 
   // ── Visitor Reactions ────────────────────────────────────────────────────

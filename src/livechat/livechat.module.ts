@@ -8,6 +8,7 @@ import { LivechatWidgetController } from './livechat-widget.controller';
 import { LivechatVisitorBridge } from './livechat-visitor.bridge';
 import { VisitorUploadService } from './visitor-upload.service';
 import { LivechatWidgetService } from './livechat-widget.service';
+import { MessageStatusService } from './services/message-status.service';
 import { LivechatWidgetRepository } from './infrastructure/persistence/document/repositories/livechat-widget.repository';
 import {
   LivechatWidgetSchemaClass,
@@ -23,6 +24,10 @@ import { ChannelsModule } from '../channels/channels.module';
 import { UsersModule } from '../users/users.module';
 import { FilesModule } from '../files/files.module';
 import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
+import {
+  OmniMessageSchemaClass,
+  OmniMessageSchema,
+} from '../omni-inbound/infrastructure/persistence/document/entities/omni-message.schema';
 
 /**
  * LivechatModule
@@ -44,12 +49,17 @@ import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
     MongooseModule.forFeature([
       { name: LivechatWidgetSchemaClass.name, schema: LivechatWidgetSchema },
       { name: WidgetEventSchemaClass.name, schema: WidgetEventSchema },
+      { name: OmniMessageSchemaClass.name, schema: OmniMessageSchema },
     ]),
     ChannelsModule,
     UsersModule,
     FilesModule, // for LivechatAdapter.sendMedia() + LivechatVisitorBridge (avatar presign)
   ],
-  controllers: [LivechatEmbedController, LivechatWidgetController, LivechatAnalyticsController],
+  controllers: [
+    LivechatEmbedController,
+    LivechatWidgetController,
+    LivechatAnalyticsController,
+  ],
   providers: [
     LivechatGateway,
     LivechatInboundBridge,
@@ -59,6 +69,7 @@ import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
     LivechatWidgetService,
     LivechatWidgetRepository,
     WidgetEventRepository,
+    MessageStatusService,
   ],
   exports: [LivechatGateway, LivechatAdapter, LivechatWidgetService],
 })
