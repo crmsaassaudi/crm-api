@@ -27,7 +27,7 @@ import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
  * GET /livechat/history/:channelId      → message history for visitor (public, P1.3)
  */
 @ApiTags('Livechat Widget')
-@Controller('livechat')
+@Controller({ path: 'livechat', version: '1' })
 export class LivechatEmbedController {
   constructor(
     private readonly channelConfigService: ChannelConfigService,
