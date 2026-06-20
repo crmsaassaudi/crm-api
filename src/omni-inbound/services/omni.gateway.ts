@@ -9,6 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Inject, Logger, OnModuleInit } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
 import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AgentPresenceService } from './agent-presence.service';
@@ -27,6 +28,7 @@ import { ulid } from 'ulid';
 import Redis from 'ioredis';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import { isDedicatedWorkerProcess } from '../../config/runtime-role';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
@@ -95,6 +97,7 @@ export class OmniGateway
     private readonly conversationLockService: ConversationLockService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    private readonly cls: ClsService,
   ) {}
 
   /**
@@ -398,18 +401,22 @@ export class OmniGateway
     );
 
     try {
-      // Persist and send (outbound logic)
-      const result = await this.outboundService.sendAgentMessage({
-        tenantId,
-        conversationId: data.conversationId,
-        agentId: userId,
-        content: data.content,
-        messageType: data.messageType,
-        idempotencyKey: data.idempotencyKey,
-        clientMessageId: data.clientMessageId ?? data.tempId,
-        source: data.source ?? 'agent_ui',
-        transport: 'socket',
-      });
+      // Wrap in tenant CLS context — WebSocket handlers don't have HTTP
+      // interceptor pipeline, so CLS is empty. Mongoose tenant filter
+      // plugin requires activeTenantId in CLS for all DB operations.
+      const result = await runWithTenantContext(this.cls, tenantId, () =>
+        this.outboundService.sendAgentMessage({
+          tenantId,
+          conversationId: data.conversationId,
+          agentId: userId,
+          content: data.content,
+          messageType: data.messageType,
+          idempotencyKey: data.idempotencyKey,
+          clientMessageId: data.clientMessageId ?? data.tempId,
+          source: data.source ?? 'agent_ui',
+          transport: 'socket',
+        }),
+      );
 
       const ack = {
         ok: true,
@@ -493,22 +500,24 @@ export class OmniGateway
     );
 
     try {
-      const result = await this.outboundService.sendAgentMedia({
-        tenantId,
-        conversationId: data.conversationId,
-        agentId: userId,
-        media: {
-          fileId: data.fileId,
-          mimeType: data.mimeType || 'application/octet-stream',
-          fileName: data.fileName || 'file',
-          size: 0, // will be resolved from DB
-        },
-        caption: data.caption,
-        idempotencyKey: data.idempotencyKey,
-        clientMessageId: data.clientMessageId ?? data.tempId,
-        source: 'agent_ui',
-        transport: 'socket',
-      });
+      const result = await runWithTenantContext(this.cls, tenantId, () =>
+        this.outboundService.sendAgentMedia({
+          tenantId,
+          conversationId: data.conversationId,
+          agentId: userId,
+          media: {
+            fileId: data.fileId,
+            mimeType: data.mimeType || 'application/octet-stream',
+            fileName: data.fileName || 'file',
+            size: 0, // will be resolved from DB
+          },
+          caption: data.caption,
+          idempotencyKey: data.idempotencyKey,
+          clientMessageId: data.clientMessageId ?? data.tempId,
+          source: 'agent_ui',
+          transport: 'socket',
+        }),
+      );
 
       const ack = {
         ok: true,
@@ -591,18 +600,20 @@ export class OmniGateway
     );
 
     try {
-      const result = await this.outboundService.sendAgentTemplate({
-        tenantId,
-        conversationId: data.conversationId,
-        agentId: userId,
-        templateName: data.templateName,
-        languageCode: data.languageCode,
-        components: data.components,
-        idempotencyKey: data.idempotencyKey,
-        clientMessageId: data.clientMessageId ?? data.tempId,
-        source: 'agent_ui',
-        transport: 'socket',
-      });
+      const result = await runWithTenantContext(this.cls, tenantId, () =>
+        this.outboundService.sendAgentTemplate({
+          tenantId,
+          conversationId: data.conversationId,
+          agentId: userId,
+          templateName: data.templateName,
+          languageCode: data.languageCode,
+          components: data.components,
+          idempotencyKey: data.idempotencyKey,
+          clientMessageId: data.clientMessageId ?? data.tempId,
+          source: 'agent_ui',
+          transport: 'socket',
+        }),
+      );
 
       const ack = {
         ok: true,
