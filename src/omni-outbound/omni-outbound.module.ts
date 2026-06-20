@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 
@@ -13,11 +13,13 @@ import { FacebookAdapter } from '../omni-inbound/adapters/facebook.adapter';
 import { ZaloAdapter } from '../omni-inbound/adapters/zalo.adapter';
 import { WhatsAppAdapter } from '../omni-inbound/adapters/whatsapp.adapter';
 import { InstagramAdapter } from '../omni-inbound/adapters/instagram.adapter';
+import { LivechatAdapter } from '../omni-inbound/adapters/livechat.adapter';
 import {
   CHANNEL_ADAPTERS,
   ChannelAdapter,
 } from '../omni-inbound/adapters/channel-adapter.interface';
 import { ChannelType } from '../omni-inbound/domain/omni-payload';
+import { LivechatModule } from '../livechat/livechat.module';
 
 // Repositories (from omni-inbound — need to be imported via OmniInboundModule)
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
@@ -60,6 +62,7 @@ import {
     ChannelsModule,
     UsersModule,
     FilesModule,
+    forwardRef(() => LivechatModule), // LivechatAdapter (wired with gateway)
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,
@@ -76,6 +79,7 @@ import {
     ZaloAdapter,
     WhatsAppAdapter,
     InstagramAdapter,
+    // LivechatAdapter provided by LivechatModule — same instance with gateway wired
     {
       provide: CHANNEL_ADAPTERS,
       useFactory: (
@@ -83,15 +87,17 @@ import {
         zalo: ZaloAdapter,
         wa: WhatsAppAdapter,
         ig: InstagramAdapter,
+        lc: LivechatAdapter,
       ) => {
         const map = new Map<ChannelType, ChannelAdapter>();
         map.set('facebook', fb);
         map.set('zalo', zalo);
         map.set('whatsapp', wa);
         map.set('instagram', ig);
+        map.set('livechat', lc);
         return map;
       },
-      inject: [FacebookAdapter, ZaloAdapter, WhatsAppAdapter, InstagramAdapter],
+      inject: [FacebookAdapter, ZaloAdapter, WhatsAppAdapter, InstagramAdapter, LivechatAdapter],
     },
 
     // Repositories
