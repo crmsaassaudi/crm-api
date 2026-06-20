@@ -4,6 +4,7 @@ import axios from 'axios';
 import FormData from 'form-data';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
+import { OmniReactionPayload } from '../domain/omni-reaction-payload';
 import {
   OutboundMedia,
   MediaSendResult,
@@ -134,10 +135,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
       return null;
     }
 
-    // ── Skip reaction events (emoji reactions on messages) ─────────
+    // ── Reaction events → handled by normalizeReaction() ──────────
     if (msg.type === 'reaction') {
       this.logger.debug(
-        `WhatsApp reaction ${msg.reaction?.emoji} on ${msg.reaction?.message_id}, skipping`,
+        `WhatsApp reaction ${msg.reaction?.emoji} on ${msg.reaction?.message_id} — delegating to normalizeReaction()`,
       );
       return null;
     }
@@ -538,6 +539,34 @@ export class WhatsAppAdapter implements ChannelAdapter {
   ): Record<string, any> | undefined {
     const config = channelConfig?.config ?? {};
     return config.bot ?? config.typebot ?? undefined;
+  }
+
+  /**
+   * Extract a reaction event from a WhatsApp webhook payload.
+   *
+   * WhatsApp sends reactions as msg.type === 'reaction' with:
+   *   { reaction: { message_id, emoji } }
+   * An empty emoji string means the reaction was removed (unreact).
+   */
+  normalizeReaction(
+    rawPayload: any,
+    tenantId: string,
+    channelId: string,
+  ): OmniReactionPayload | null {
+    const msg = rawPayload.messages?.[0];
+    if (!msg || msg.type !== 'reaction' || !msg.reaction) return null;
+
+    return {
+      tenantId,
+      channelId,
+      channelType: 'whatsapp',
+      externalMessageId: msg.reaction.message_id,
+      senderId: msg.from,
+      senderType: 'customer',
+      emoji: msg.reaction.emoji || '',
+      action: msg.reaction.emoji ? 'react' : 'unreact',
+      timestamp: new Date(Number(msg.timestamp) * 1000),
+    };
   }
 
   /**

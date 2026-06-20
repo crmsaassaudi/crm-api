@@ -35,6 +35,7 @@ import { LivechatWidgetService } from './livechat-widget.service';
  * │ visitor:upload     │ File (base64) → OmniInbound media pipeline        │
  * │ visitor:typing     │ Typing indicator → forward đến agent CRM          │
  * │ visitor:identify   │ Enrich customer.email / customer.name / phone     │
+ * │ visitor:reaction   │ Emoji reaction → unified reaction pipeline        │
  * └────────────────────┴───────────────────────────────────────────────────┘
  *
  * Event table (Server → Client):
@@ -43,6 +44,7 @@ import { LivechatWidgetService } from './livechat-widget.service';
  * │ agent:message      │ Text hoặc media từ agent                          │
  * │ agent:joined       │ Agent được phân công → visitor thấy tên           │
  * │ agent:typing       │ Agent đang / ngừng gõ                             │
+ * │ agent:reaction     │ Reaction update broadcast to widget               │
  * └────────────────────┴───────────────────────────────────────────────────┘
  */
 @WebSocketGateway({
@@ -122,16 +124,13 @@ export class LivechatGateway
     // Domain whitelist enforcement (check Origin header from handshake)
     if (widgetId) {
       const origin =
-        client.handshake?.headers?.origin ||
-        client.handshake?.headers?.referer;
+        client.handshake?.headers?.origin || client.handshake?.headers?.referer;
       const allowed = await this.widgetService.isDomainAllowed(
         widgetId,
         origin as string | undefined,
       );
       if (!allowed) {
-        this.logger.warn(
-          `Domain blocked for widget ${widgetId}: ${origin}`,
-        );
+        this.logger.warn(`Domain blocked for widget ${widgetId}: ${origin}`);
         client.emit('error', { message: 'Domain not allowed' });
         client.disconnect(true);
         return;
@@ -381,5 +380,55 @@ export class LivechatGateway
 
   sendTypingIndicator(visitorId: string, isTyping: boolean): void {
     this.server.to(`visitor:${visitorId}`).emit('agent:typing', { isTyping });
+  }
+
+  // ── Visitor Reactions ────────────────────────────────────────────────────
+
+  /**
+   * Handle visitor emoji reaction from the widget.
+   * Emits 'omni.reaction.inbound' into the unified reaction pipeline.
+   */
+  @SubscribeMessage('visitor:reaction')
+  handleVisitorReaction(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { messageId: string; emoji: string; action?: string },
+  ) {
+    const visitorId = client.data?.visitorId;
+    const tenantId = client.data?.tenantId;
+    const channelId = client.data?.channelId;
+
+    if (!visitorId || !tenantId || !data?.messageId || !data?.emoji) {
+      return;
+    }
+
+    this.logger.debug(
+      `Visitor ${visitorId} reacted ${data.emoji} on message ${data.messageId}`,
+    );
+
+    this.eventEmitter.emit('omni.reaction.inbound', {
+      tenantId,
+      channelType: 'livechat',
+      channelId: channelId ?? '',
+      externalMessageId: data.messageId,
+      senderId: visitorId,
+      senderType: 'customer',
+      emoji: data.emoji,
+      action: data.action ?? 'react',
+      timestamp: new Date(),
+    });
+  }
+
+  /**
+   * Broadcast a reaction update to a visitor's widget.
+   * Called by OmniGateway when 'omni.reaction.persisted' is emitted.
+   */
+  sendReactionToVisitor(
+    visitorId: string,
+    payload: {
+      messageId: string;
+      reactions: Array<{ emoji: string; senderId: string; senderType: string }>;
+    },
+  ): void {
+    this.server.to(`visitor:${visitorId}`).emit('agent:reaction', payload);
   }
 }

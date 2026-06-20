@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import axios from 'axios';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
+import { OmniReactionPayload } from '../domain/omni-reaction-payload';
 import {
   OutboundMedia,
   MediaSendResult,
@@ -59,7 +60,7 @@ function sanitizeIgError(value: any): any {
  * Limitations (as of Graph API v19.0):
  * - Outbound: Only text and images are supported (no documents, audio, video)
  * - 24-hour customer reply window applies (same as Messenger)
- * - No reaction message handling
+ * - Reactions: handled by normalizeReaction() (unified reaction pipeline)
  */
 @Injectable()
 export class InstagramAdapter implements ChannelAdapter {
@@ -82,7 +83,7 @@ export class InstagramAdapter implements ChannelAdapter {
   ): OmniPayload | null {
     // ── Skip non-message events ──────────────────────────────────
     // Instagram sends delivery receipts, read receipts, reactions via
-    // the same webhook URL. We only care about actual messages.
+    // the same webhook URL. Reactions are handled by normalizeReaction().
     if (
       rawPayload.delivery ||
       rawPayload.read ||
@@ -415,5 +416,30 @@ export class InstagramAdapter implements ChannelAdapter {
   ): Record<string, any> | undefined {
     const config = channelConfig?.config ?? {};
     return config.bot ?? config.typebot ?? undefined;
+  }
+
+  /**
+   * Extract a reaction event from an Instagram webhook payload.
+   * Same format as Facebook (shared Meta platform).
+   */
+  normalizeReaction(
+    rawPayload: any,
+    tenantId: string,
+    channelId: string,
+  ): OmniReactionPayload | null {
+    if (!rawPayload.reaction) return null;
+
+    const r = rawPayload.reaction;
+    return {
+      tenantId,
+      channelId,
+      channelType: 'instagram',
+      externalMessageId: r.mid,
+      senderId: rawPayload.sender?.id,
+      senderType: 'customer',
+      emoji: r.emoji || '',
+      action: r.action === 'unreact' ? 'unreact' : 'react',
+      timestamp: new Date(rawPayload.timestamp),
+    };
   }
 }

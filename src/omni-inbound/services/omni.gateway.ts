@@ -819,6 +819,92 @@ export class OmniGateway
     });
   }
 
+  // ── Reactions (unified across all channels) ────────────────────────────
+
+  /**
+   * Listener for 'omni.reaction.persisted' domain event.
+   * Emitted by ReactionService after a reaction is saved to DB.
+   * Broadcasts 'omni:reaction:update' to the agent tenant room.
+   */
+  @OnEvent('omni.reaction.persisted')
+  handleReactionPersisted(payload: {
+    tenantId: string;
+    conversationId: string;
+    messageId: string;
+    reactions: Array<{
+      emoji: string;
+      senderId: string;
+      senderType: string;
+      createdAt: Date;
+    }>;
+    trigger: {
+      emoji: string;
+      senderId: string;
+      senderType: string;
+      action: string;
+    };
+  }) {
+    const room = `tenant:${payload.tenantId}`;
+    this.logger.debug(
+      `Broadcasting reaction update on message ${payload.messageId} to room=${room}`,
+    );
+    this.server.to(room).emit('omni:reaction:update', {
+      conversationId: payload.conversationId,
+      messageId: payload.messageId,
+      reactions: payload.reactions,
+      trigger: payload.trigger,
+    });
+  }
+
+  /**
+   * Socket event: agent sends an emoji reaction from the CRM UI.
+   * Emits into the unified reaction pipeline so it's persisted and broadcast.
+   */
+  @SubscribeMessage('omni:reaction:send')
+  handleAgentReaction(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      conversationId: string;
+      messageId: string;
+      emoji: string;
+      action?: 'react' | 'unreact';
+    },
+  ) {
+    const user = client.data.user;
+    if (!user) return { ok: false, error: 'Unauthenticated' };
+
+    const userId = client.data.userId ?? user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    if (!tenantId) return { ok: false, error: 'No tenant context' };
+
+    if (!data?.conversationId || !data?.messageId || !data?.emoji) {
+      return {
+        ok: false,
+        error: 'conversationId, messageId, and emoji are required',
+      };
+    }
+
+    this.logger.debug(
+      `Agent ${userId} reacted ${data.emoji} on message ${data.messageId}`,
+    );
+
+    this.eventEmitter.emit('omni.reaction.inbound', {
+      tenantId,
+      channelType: 'livechat', // Agent reactions are always internal
+      channelId: '',
+      messageId: data.messageId,
+      externalMessageId: data.messageId,
+      senderId: userId,
+      senderType: 'agent',
+      emoji: data.emoji,
+      action: data.action ?? 'react',
+      timestamp: new Date(),
+    });
+
+    return { ok: true };
+  }
+
   /**
 
    * Only broadcasts to the room if the message was sent via REST (HTTP).

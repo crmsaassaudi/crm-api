@@ -40,6 +40,7 @@ import { AutoResolveService } from './services/auto-resolve.service';
 import { BusinessHoursService } from './services/business-hours.service';
 import { AgentStatusAuditService } from './services/agent-status-audit.service';
 import { ConversationLockService } from './services/conversation-lock.service';
+import { ReactionService } from './services/reaction.service';
 
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
@@ -230,6 +231,9 @@ const workerProviders =
     InboundProcessorService,
     MediaProxyService,
 
+    // ── Pillar 1b: Reactions (unified across all channels) ─────────
+    ReactionService,
+
     // ── Pillar 2: Agent System ────────────────────────────────────
     AgentPresenceService,
     AgentPresenceGateway,
@@ -292,6 +296,7 @@ const workerProviders =
     AgentStatusAuditService,
     ConversationLockService,
     BotQueueService,
+    ReactionService,
     CsatModule,
   ],
 })

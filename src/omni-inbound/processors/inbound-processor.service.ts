@@ -2,7 +2,7 @@ import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { createHash } from 'crypto';
-import { OnEvent } from '@nestjs/event-emitter';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import {
   ChannelAdapter,
   CHANNEL_ADAPTERS,
@@ -33,6 +33,7 @@ export class InboundProcessorService {
     private readonly adapters: Map<ChannelType, ChannelAdapter>,
     @InjectQueue(OMNI_ROUTING_QUEUE)
     private readonly routingQueue: Queue<OmniPayload>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -64,8 +65,21 @@ export class InboundProcessorService {
 
     // Adapter returns null for non-message events (delivery receipts, read receipts, etc.)
     if (normalized === null) {
+      // Try as a reaction event before discarding
+      const handled = await this.processReaction(
+        channelType,
+        rawPayload,
+        tenantId,
+        channelId,
+        channelConfig,
+      );
+      if (handled) {
+        this.logger.debug(`Processed ${channelType} reaction event`);
+        return null;
+      }
+
       this.logger.debug(
-        `Skipping non-message ${channelType} event (delivery/read/reaction/referral)`,
+        `Skipping non-message ${channelType} event (delivery/read/referral)`,
       );
       return null;
     }
@@ -146,5 +160,32 @@ export class InboundProcessorService {
           .join('|'),
       )
       .digest('hex');
+  }
+
+  /**
+   * Attempt to process a raw webhook payload as a reaction event.
+   * Returns true if the payload was a valid reaction and was emitted.
+   */
+  processReaction(
+    channelType: ChannelType,
+    rawPayload: any,
+    tenantId: string,
+    channelId: string,
+    channelConfig?: any,
+  ): boolean {
+    const adapter = this.adapters.get(channelType);
+    if (!adapter?.normalizeReaction) return false;
+
+    const reaction = adapter.normalizeReaction(
+      rawPayload,
+      tenantId,
+      channelId,
+      channelConfig,
+    );
+    if (!reaction) return false;
+
+    // Emit unified event → ReactionService picks it up
+    this.eventEmitter.emit('omni.reaction.inbound', reaction);
+    return true;
   }
 }

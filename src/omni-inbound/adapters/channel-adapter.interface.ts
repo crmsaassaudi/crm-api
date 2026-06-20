@@ -1,4 +1,5 @@
 import { OmniPayload, ChannelType } from '../domain/omni-payload';
+import { OmniReactionPayload } from '../domain/omni-reaction-payload';
 import {
   OutboundMedia,
   MediaSendResult,
@@ -28,6 +29,18 @@ export interface ChannelAdapter {
     channelId: string,
     channelConfig?: any,
   ): OmniPayload | null;
+
+  /**
+   * Extract a reaction event from a raw provider webhook body.
+   * Returns `null` if the payload is not a reaction event.
+   * Optional — only implemented by adapters whose platform supports reactions.
+   */
+  normalizeReaction?(
+    rawPayload: any,
+    tenantId: string,
+    channelId: string,
+    channelConfig?: any,
+  ): OmniReactionPayload | null;
 
   /**
    * Validate the authenticity of an incoming webhook request

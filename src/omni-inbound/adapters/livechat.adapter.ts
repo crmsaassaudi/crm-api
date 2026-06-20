@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OmniPayload, ChannelType } from '../domain/omni-payload';
+import { OmniReactionPayload } from '../domain/omni-reaction-payload';
 import {
   OutboundMedia,
   MediaSendResult,
@@ -217,6 +218,30 @@ export class LivechatAdapter implements ChannelAdapter {
     if (mimeType.startsWith('video/')) return 'video';
     if (mimeType.startsWith('audio/')) return 'audio';
     return 'file';
+  }
+
+  /**
+   * Extract a reaction event from a livechat widget payload.
+   * The widget emits { messageId, emoji, visitorId, action? }.
+   */
+  normalizeReaction(
+    rawPayload: any,
+    tenantId: string,
+    channelId: string,
+  ): OmniReactionPayload | null {
+    if (!rawPayload.messageId || !rawPayload.emoji) return null;
+
+    return {
+      tenantId,
+      channelId,
+      channelType: 'livechat',
+      externalMessageId: rawPayload.messageId,
+      senderId: rawPayload.visitorId ?? rawPayload.senderId ?? 'visitor',
+      senderType: rawPayload.senderType ?? 'customer',
+      emoji: rawPayload.emoji,
+      action: rawPayload.action ?? 'react',
+      timestamp: new Date(),
+    };
   }
 
   /**

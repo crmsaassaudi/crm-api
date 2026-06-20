@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
+import { OmniReactionPayload } from '../domain/omni-reaction-payload';
 import axios from 'axios';
 
 export interface FacebookProfile {
@@ -94,7 +95,8 @@ export class FacebookAdapter implements ChannelAdapter {
   ): OmniPayload | null {
     // ── Skip non-message events ──────────────────────────────────
     // Facebook sends delivery receipts, read receipts, reactions, and
-    // referrals via the same webhook URL. We only care about actual messages.
+    // referrals via the same webhook URL. Reactions are handled by
+    // normalizeReaction(); other non-message events are silently skipped.
     if (
       rawPayload.delivery ||
       rawPayload.read ||
@@ -239,6 +241,33 @@ export class FacebookAdapter implements ChannelAdapter {
   ): Record<string, any> | undefined {
     const config = channelConfig?.config ?? {};
     return config.bot ?? config.typebot ?? undefined;
+  }
+
+  /**
+   * Extract a reaction event from a Facebook Messenger webhook payload.
+   *
+   * Facebook sends reactions as rawPayload.reaction with:
+   *   { reaction: 'smile', emoji: '😄', action: 'react'|'unreact', mid: '<MID>' }
+   */
+  normalizeReaction(
+    rawPayload: any,
+    tenantId: string,
+    channelId: string,
+  ): OmniReactionPayload | null {
+    if (!rawPayload.reaction) return null;
+
+    const r = rawPayload.reaction;
+    return {
+      tenantId,
+      channelId,
+      channelType: 'facebook',
+      externalMessageId: r.mid,
+      senderId: rawPayload.sender?.id,
+      senderType: 'customer',
+      emoji: r.emoji || '',
+      action: r.action === 'unreact' ? 'unreact' : 'react',
+      timestamp: new Date(rawPayload.timestamp),
+    };
   }
 
   async send(

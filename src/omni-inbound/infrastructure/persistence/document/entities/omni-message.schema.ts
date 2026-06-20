@@ -152,6 +152,29 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   /** Sender of the quoted message (denormalized for display) */
   @Prop({ type: String })
   replyToSender?: string;
+
+  /** Emoji reactions on this message — unified across all channels */
+  @Prop({
+    type: [
+      {
+        emoji: { type: String, required: true },
+        senderId: { type: String, required: true },
+        senderType: {
+          type: String,
+          enum: SENDER_TYPES,
+          required: true,
+        },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+    default: [],
+  })
+  reactions: Array<{
+    emoji: string;
+    senderId: string;
+    senderType: string;
+    createdAt: Date;
+  }>;
 }
 
 export const OmniMessageSchema = SchemaFactory.createForClass(
