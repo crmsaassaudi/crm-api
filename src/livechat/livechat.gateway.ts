@@ -10,9 +10,11 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ClsService } from 'nestjs-cls';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 import { LivechatWidgetService } from './livechat-widget.service';
 import { MessageStatusService } from './services/message-status.service';
+import { runWithTenantContext } from '../common/tenancy/tenant-context';
 
 /**
  * LivechatGateway — Socket.IO namespace for livechat visitors.
@@ -78,6 +80,7 @@ export class LivechatGateway
     private readonly eventEmitter: EventEmitter2,
     private readonly widgetService: LivechatWidgetService,
     private readonly messageStatusService: MessageStatusService,
+    private readonly cls: ClsService,
   ) {}
 
   // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -170,14 +173,18 @@ export class LivechatGateway
     // Join tenant monitoring room (agent can watch all livechat sessions)
     await client.join(`tenant:${tenantId}:livechat`);
 
-    // Lookup any existing active conversation for this visitor
+    // Lookup any existing active conversation for this visitor.
+    // Must run inside runWithTenantContext — WS handlers have no HTTP middleware
+    // so CLS activeTenantId is never set automatically.
     let conversationId: string | null = null;
     try {
-      const conv = await this.conversationRepo.findActiveByExternalId(
-        tenantId,
-        'livechat',
-        channelId,
-        visitorId,
+      const conv = await runWithTenantContext(this.cls, tenantId, () =>
+        this.conversationRepo.findActiveByExternalId(
+          tenantId,
+          'livechat',
+          channelId,
+          visitorId,
+        ),
       );
       conversationId = conv?.id ?? null;
       if (conversationId) {
@@ -418,7 +425,10 @@ export class LivechatGateway
       `Visitor ${client.data.visitorId} ack'd ${data.messageIds.length} message(s)`,
     );
 
-    await this.messageStatusService.markDelivered(tenantId, data.messageIds);
+    // Wrap with tenant context — WS handlers bypass HTTP middleware so CLS is empty.
+    await runWithTenantContext(this.cls, tenantId, () =>
+      this.messageStatusService.markDelivered(tenantId, data.messageIds),
+    );
   }
 
   /**
@@ -437,7 +447,10 @@ export class LivechatGateway
       `Visitor ${client.data.visitorId} read ${data.messageIds.length} message(s)`,
     );
 
-    await this.messageStatusService.markRead(tenantId, data.messageIds);
+    // Wrap with tenant context — WS handlers bypass HTTP middleware so CLS is empty.
+    await runWithTenantContext(this.cls, tenantId, () =>
+      this.messageStatusService.markRead(tenantId, data.messageIds),
+    );
   }
 
   /**

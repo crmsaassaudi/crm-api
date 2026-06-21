@@ -1099,6 +1099,16 @@ export class OmniGateway
       agentName: user.name ?? 'Agent',
     });
 
+    // Mark all visitor messages as read when agent starts typing.
+    // UX rationale: if the agent is composing a reply, they have obviously
+    // read the previous messages. This triggers the blue ticks immediately
+    // without waiting for the agent to open/click the conversation.
+    this.eventEmitter.emit('livechat.agent.read', {
+      tenantId,
+      conversationId: data.conversationId,
+      externalConversationId: null, // Bridge resolves via DB lookup
+    });
+
     // Heartbeat for conversation lock (collision detection)
     if (tenantId && data?.conversationId) {
       try {
