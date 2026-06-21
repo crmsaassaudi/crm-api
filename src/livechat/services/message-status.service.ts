@@ -186,16 +186,11 @@ export class MessageStatusService {
         `for conversation ${conversationId}, tenant ${tenantId}`,
     );
 
-    // FIX: Emit 'livechat.message.status' so OmniGateway can broadcast
-    // 'omni:message:status' to the agent CRM UI in real-time.
-    // Without this, the CRM never receives a socket event to update
-    // message status when the agent marks messages as read.
-    this.eventEmitter.emit('livechat.message.status', {
-      tenantId,
-      conversationId,
-      messageIds: updatedStringIds,
-      status: 'read',
-    });
+    // NOTE: We intentionally do NOT emit 'livechat.message.status' here.
+    // markReadByAgent updates INBOUND messages (visitor → agent) — the agent CRM
+    // does not display status ticks on inbound messages, so the broadcast would be
+    // wasted. The visitor widget receives the read receipt via
+    // LivechatVisitorBridge.sendStatusToVisitor(markAll=true).
 
     return updatedStringIds;
   }

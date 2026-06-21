@@ -1099,15 +1099,11 @@ export class OmniGateway
       agentName: user.name ?? 'Agent',
     });
 
-    // Mark all visitor messages as read when agent starts typing.
-    // UX rationale: if the agent is composing a reply, they have obviously
-    // read the previous messages. This triggers the blue ticks immediately
-    // without waiting for the agent to open/click the conversation.
-    this.eventEmitter.emit('livechat.agent.read', {
-      tenantId,
-      conversationId: data.conversationId,
-      externalConversationId: null, // Bridge resolves via DB lookup
-    });
+    // NOTE: We do NOT emit 'livechat.agent.read' here.
+    // The agent opening/selecting the conversation already triggers markAsRead()
+    // via OmniController, which emits livechat.agent.read. Emitting it again on
+    // every typing event would cause redundant DB queries (markReadByAgent)
+    // with no benefit — by the time the agent is typing, markAsRead has already run.
 
     // Heartbeat for conversation lock (collision detection)
     if (tenantId && data?.conversationId) {
