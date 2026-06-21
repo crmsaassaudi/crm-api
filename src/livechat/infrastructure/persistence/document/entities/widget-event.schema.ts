@@ -41,10 +41,15 @@ export class WidgetEventSchemaClass {
   createdAt: Date;
 }
 
-export const WidgetEventSchema = SchemaFactory.createForClass(WidgetEventSchemaClass);
+export const WidgetEventSchema = SchemaFactory.createForClass(
+  WidgetEventSchemaClass,
+);
 
 // TTL index — auto-delete events older than 30 days
-WidgetEventSchema.index({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 });
+WidgetEventSchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: 30 * 24 * 60 * 60 },
+);
 
 // Compound indexes for analytics queries
 WidgetEventSchema.index({ widgetId: 1, event: 1, createdAt: -1 });

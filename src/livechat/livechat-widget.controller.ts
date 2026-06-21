@@ -76,4 +76,3 @@ export class LivechatWidgetController {
     return { deleted: true };
   }
 }
-

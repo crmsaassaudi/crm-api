@@ -97,7 +97,13 @@ import {
         map.set('livechat', lc);
         return map;
       },
-      inject: [FacebookAdapter, ZaloAdapter, WhatsAppAdapter, InstagramAdapter, LivechatAdapter],
+      inject: [
+        FacebookAdapter,
+        ZaloAdapter,
+        WhatsAppAdapter,
+        InstagramAdapter,
+        LivechatAdapter,
+      ],
     },
 
     // Repositories

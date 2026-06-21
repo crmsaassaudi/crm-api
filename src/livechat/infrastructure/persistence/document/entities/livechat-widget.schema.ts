@@ -103,10 +103,7 @@ export const LivechatWidgetSchema = SchemaFactory.createForClass(
 LivechatWidgetSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
 // One widget name per channel
-LivechatWidgetSchema.index(
-  { channelId: 1, name: 1 },
-  { unique: true },
-);
+LivechatWidgetSchema.index({ channelId: 1, name: 1 }, { unique: true });
 
 // Fast lookup by tenant
 LivechatWidgetSchema.index({ tenantId: 1, status: 1 });

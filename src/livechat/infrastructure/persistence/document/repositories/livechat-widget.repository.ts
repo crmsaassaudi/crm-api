@@ -51,10 +51,7 @@ export class LivechatWidgetRepository {
     return docs.map((d) => this.toDomain(d));
   }
 
-  async findById(
-    tenantId: string,
-    id: string,
-  ): Promise<LivechatWidget | null> {
+  async findById(tenantId: string, id: string): Promise<LivechatWidget | null> {
     const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? this.toDomain(doc) : null;
   }
@@ -72,11 +69,7 @@ export class LivechatWidgetRepository {
     data: Partial<LivechatWidget>,
   ): Promise<LivechatWidget | null> {
     const doc = await this.model
-      .findOneAndUpdate(
-        { _id: id, tenantId },
-        { $set: data },
-        { new: true },
-      )
+      .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
       .exec();
     return doc ? this.toDomain(doc) : null;
   }
@@ -102,7 +95,8 @@ export class LivechatWidgetRepository {
     w.theme = raw.theme || {};
     w.layout = raw.layout || {};
     w.welcome = raw.welcome || {};
-    w.conversationStarters = (raw.conversationStarters || []) as LivechatWidget['conversationStarters'];
+    w.conversationStarters = (raw.conversationStarters ||
+      []) as LivechatWidget['conversationStarters'];
     w.offline = raw.offline || {};
     w.preChatForm = raw.preChatForm || {};
     w.routing = raw.routing || {};

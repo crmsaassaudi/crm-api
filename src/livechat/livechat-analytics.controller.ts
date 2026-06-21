@@ -50,7 +50,11 @@ export class LivechatAnalyticsController {
     // Extract domain from origin
     const origin = req.headers?.origin || req.headers?.referer;
     let domain: string | undefined;
-    try { domain = new URL(origin).hostname; } catch { /* ignore */ }
+    try {
+      domain = new URL(origin).hostname;
+    } catch {
+      /* ignore */
+    }
 
     const isMobile = /Mobile|Android|iPhone/i.test(
       req.headers?.['user-agent'] || '',
@@ -94,7 +98,11 @@ export class LivechatAnalyticsController {
 
     const origin = req.headers?.origin || req.headers?.referer;
     let domain: string | undefined;
-    try { domain = new URL(origin).hostname; } catch { /* ignore */ }
+    try {
+      domain = new URL(origin).hostname;
+    } catch {
+      /* ignore */
+    }
     const isMobile = /Mobile|Android|iPhone/i.test(
       req.headers?.['user-agent'] || '',
     );
@@ -130,7 +138,10 @@ export class LivechatAnalyticsController {
         this.eventRepo.getSummary(widgetId, { from, to }),
         this.eventRepo.dailyCounts(widgetId, 'widget.impression', { from, to }),
         this.eventRepo.dailyCounts(widgetId, 'widget.open', { from, to }),
-        this.eventRepo.dailyCounts(widgetId, 'widget.conversation_started', { from, to }),
+        this.eventRepo.dailyCounts(widgetId, 'widget.conversation_started', {
+          from,
+          to,
+        }),
         this.eventRepo.topPages(widgetId, { from, to }),
       ]);
 
@@ -147,8 +158,8 @@ export class LivechatAnalyticsController {
         csatSubmitted: summary['widget.csat_submitted'] ?? 0,
       },
       rates: {
-        clickRate: impressions ? +(opens / impressions * 100).toFixed(1) : 0,
-        engagementRate: opens ? +(chats / opens * 100).toFixed(1) : 0,
+        clickRate: impressions ? +((opens / impressions) * 100).toFixed(1) : 0,
+        engagementRate: opens ? +((chats / opens) * 100).toFixed(1) : 0,
       },
       daily: {
         impressions: dailyImpressions,

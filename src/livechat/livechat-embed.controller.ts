@@ -124,8 +124,9 @@ export class LivechatEmbedController {
     if (!channel) throw new NotFoundException('Channel not found');
 
     const apiUrl = process.env.APP_URL ?? 'https://api.yourcrm.com';
-    const widgetUrl = process.env.LIVECHAT_WIDGET_URL
-      ?? 'https://livechat.crmsaudi.dev/widget/livechat.iife.js';
+    const widgetUrl =
+      process.env.LIVECHAT_WIDGET_URL ??
+      'https://livechat.crmsaudi.dev/widget/livechat.iife.js';
     const tenantId = (channel as any).tenantId ?? '';
 
     // FIX: Settings are stored in channel.config (JSONB), NOT top-level fields.
@@ -157,7 +158,9 @@ export class LivechatEmbedController {
 
   @Public()
   @Get('preview/:widgetId')
-  @ApiOperation({ summary: 'Admin preview page for livechat widget (by widgetId)' })
+  @ApiOperation({
+    summary: 'Admin preview page for livechat widget (by widgetId)',
+  })
   async previewPage(
     @Param('widgetId') widgetId: string,
     @Res() res: Response,
@@ -198,7 +201,7 @@ export class LivechatEmbedController {
 </head>
 <body>
   <div class="demo">
-    <h2>\uD83D\uDDE8\uFE0F Widget Preview</h2>
+    <h2>&#x1F4E8; Widget Preview</h2>
     <p>The chat bubble appears in the bottom-right corner.</p>
     <p style="font-size:0.75rem;color:#94a3b8;">widgetId: ${widgetId}</p>
   </div>
@@ -219,8 +222,177 @@ export class LivechatEmbedController {
 </html>`;
     // Allow iframe embedding from any origin (admin preview)
     res.removeHeader('X-Frame-Options');
-    res.setHeader('Content-Security-Policy', "frame-ancestors *");
+    res.setHeader('Content-Security-Policy', 'frame-ancestors *');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  }
+
+  // ── Standalone chat page (direct URL access) ─────────────────────────────
+
+  /**
+   * GET /livechat/chat/:widgetId
+   *
+   * A public, standalone HTML page that renders the livechat widget fullscreen.
+   * Visitors can access this URL directly — no website embedding required.
+   *
+   * The widget auto-opens immediately on page load (autoOpen = true).
+   *
+   * Use cases:
+   *  - Share a direct chat link via email / QR code
+   *  - WhatsApp "Chat with us" button pointing here
+   *  - Mobile shortcut / PWA-like experience
+   */
+  @Public()
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @Get('chat/:widgetId')
+  @ApiOperation({
+    summary: 'Standalone fullscreen chat page for direct URL sharing',
+  })
+  async standaloneChatPage(
+    @Param('widgetId') widgetId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const apiUrl = process.env.APP_URL ?? '';
+    const widgetUrl =
+      process.env.LIVECHAT_WIDGET_URL ??
+      'https://livechat.crmsaudi.dev/widget/livechat.iife.js';
+
+    // Load widget config for branding (company name, colors, etc.)
+    let widgetConfig: Record<string, any> = {};
+    try {
+      const cfg = await this.widgetService.getPublicConfig(widgetId);
+      if (cfg) widgetConfig = cfg as any;
+    } catch {
+      /* render generic page if widget not found */
+    }
+
+    const companyName: string =
+      widgetConfig?.branding?.companyName ?? 'Support';
+    const primaryColor: string = widgetConfig?.theme?.primaryColor ?? '#6366f1';
+    const greeting: string =
+      widgetConfig?.welcome?.greeting ?? 'Hi there 👋 How can we help?';
+    const logoUrl: string = widgetConfig?.branding?.logo ?? '';
+
+    // Pass widgetId + autoOpen so widget opens immediately
+    const initConfig = JSON.stringify({
+      widgetId,
+      apiUrl,
+      ...widgetConfig,
+      // Force widget open on load — override any saved state
+      welcome: {
+        ...(widgetConfig?.welcome ?? {}),
+        autoOpenDelay: 1,
+      },
+    });
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="${primaryColor}" />
+  <title>Chat with ${companyName}</title>
+  <meta name="description" content="Start a live chat with ${companyName} support team." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100dvh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, ${primaryColor}18 0%, #f8fafc 60%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      padding: 24px;
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      text-align: center;
+      animation: fadeUp 0.5s ease both;
+    }
+
+    .brand-logo {
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      object-fit: cover;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+
+    .brand-logo-placeholder {
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      background: ${primaryColor};
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      box-shadow: 0 4px 16px ${primaryColor}40;
+    }
+
+    .brand-name {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .brand-greeting {
+      font-size: 0.95rem;
+      color: #64748b;
+      max-width: 320px;
+      line-height: 1.5;
+    }
+
+    .hint {
+      font-size: 0.78rem;
+      color: #94a3b8;
+      animation: fadeUp 0.5s 0.3s ease both;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="brand">
+    ${
+      logoUrl
+        ? `<img src="${logoUrl}" alt="${companyName}" class="brand-logo" />`
+        : `<div class="brand-logo-placeholder">💬</div>`
+    }
+    <div class="brand-name">${companyName}</div>
+    <div class="brand-greeting">${greeting}</div>
+  </div>
+  <p class="hint">Opening chat…</p>
+
+  <script>
+    window.CRMWidget = ${initConfig};
+  </script>
+  <script src="${widgetUrl}" async></script>
+  <script>
+    // Auto-open widget once SDK is ready
+    (function waitForWidget() {
+      if (window.CRMWidget && typeof window.CRMWidget.open === 'function') {
+        window.CRMWidget.open();
+      } else {
+        setTimeout(waitForWidget, 100);
+      }
+    })();
+  </script>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
     res.send(html);
   }
 

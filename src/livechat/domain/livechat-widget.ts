@@ -69,7 +69,7 @@ export class LivechatWidget {
     attentionGrabber?: {
       enabled: boolean;
       text?: string;
-      delay?: number;     // seconds before showing
+      delay?: number; // seconds before showing
       hideAfter?: number; // seconds before auto-hide (0 = never)
     };
   };
@@ -109,7 +109,7 @@ export class LivechatWidget {
       day: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
       enabled: boolean;
       start: string; // HH:mm
-      end: string;   // HH:mm
+      end: string; // HH:mm
     }>;
     offlineMessage?: string;
     captureLeadWhenOffline?: boolean;
@@ -120,6 +120,10 @@ export class LivechatWidget {
   @ApiPropertyOptional()
   preChatForm: {
     enabled?: boolean;
+    /** When to show the form. Default: 'before_chat' */
+    trigger?: 'before_chat' | 'after_first_message' | 'offline_only';
+    /** Skip form if visitor already identified via CRMWidget.identify() */
+    skipIfKnownVisitor?: boolean;
     showOnlyOffline?: boolean;
     fields?: Array<{
       key: string;
@@ -128,8 +132,8 @@ export class LivechatWidget {
       placeholder?: string;
       required: boolean;
       options?: string[];
-      consentText?: string;  // GDPR message (when type='consent')
-      consentLink?: string;  // Privacy policy URL (when type='consent')
+      consentText?: string; // GDPR message (when type='consent')
+      consentLink?: string; // Privacy policy URL (when type='consent')
     }>;
   };
 
@@ -197,6 +201,10 @@ export class LivechatWidget {
     locale?: string;
     autoDetect?: boolean;
     rtl?: 'auto' | 'ltr' | 'rtl';
+    /** Fallback locale when autoDetect finds unsupported language. Default: 'en' */
+    fallbackLocale?: string;
+    /** List of locales the tenant supports (used with autoDetect) */
+    supportedLocales?: string[];
     translations?: Record<string, string>;
   };
 
@@ -209,10 +217,76 @@ export class LivechatWidget {
     enableFileUpload?: boolean;
     maxFileSize?: number;
     allowedFileTypes?: string[];
+    /** Show inline image preview in the input area before sending */
+    imagePreview?: boolean;
+    /** Allow visitors to drag & drop files into the widget */
+    dragDrop?: boolean;
+    /** Show camera capture button on mobile (<input capture>) */
+    cameraCapture?: boolean;
+    /** Maximum number of files per message. Default: 1 */
+    maxFilesPerMessage?: number;
     // Webhook
     webhookUrl?: string;
     webhookEvents?: string[]; // e.g. ['conversation.started', 'message.sent', 'csat.submitted']
     webhookSecret?: string;
+  };
+
+  // ── 14. Mobile Behavior ─────────────────────────────────────────────────
+
+  @ApiPropertyOptional()
+  mobile: {
+    /** false = hide widget on mobile. Supersedes layout.hideMobile (deprecated). Default: true */
+    enabled?: boolean;
+    /** Expand widget to full screen on mobile viewports */
+    fullscreen?: boolean;
+    /** Distance from bottom of viewport for the launcher button (px). Default: 16 */
+    launcherBottomOffset?: number;
+  };
+
+  // ── 15. Display Rules ────────────────────────────────────────────────────
+
+  @ApiPropertyOptional()
+  displayRules: {
+    /** Glob patterns — widget only shows on matching pages. Empty = all pages. */
+    includePages?: string[];
+    /** Glob patterns — widget is hidden on matching pages. */
+    excludePages?: string[];
+    /** Device types to show the widget on. Default: all devices. */
+    devices?: ('desktop' | 'mobile' | 'tablet')[];
+    /** Only show widget to visitors identified via CRMWidget.identify(). */
+    loggedInOnly?: boolean;
+  };
+
+  // ── 16. Launcher ────────────────────────────────────────────────────────
+
+  @ApiPropertyOptional()
+  launcher: {
+    /** Optional text label shown beside the launcher bubble */
+    label?: string;
+    /** Show unread message count badge. Default: true */
+    showUnreadBadge?: boolean;
+    /** Animate a pulsing ring when there are unread messages. Default: false */
+    pulseAnimation?: boolean;
+  };
+
+  // ── 17. Notifications ───────────────────────────────────────────────────
+
+  @ApiPropertyOptional()
+  notifications: {
+    /** Play a sound when a new agent message arrives. Migrated from advanced.enableSoundNotification. */
+    sound?: boolean;
+    /** Trigger device vibration on mobile when a new message arrives (navigator.vibrate). */
+    vibration?: boolean;
+  };
+
+  // ── 18. State Persistence ────────────────────────────────────────────────
+
+  @ApiPropertyOptional()
+  statePersistence: {
+    /** Remember whether widget was open/closed within the same browser tab (sessionStorage). */
+    rememberOpenState?: boolean;
+    /** Persist the visitor's draft message across page refreshes (localStorage). Default: true */
+    rememberDraftMessage?: boolean;
   };
 
   // ── CSAT ────────────────────────────────────────────────────────────────
@@ -221,8 +295,8 @@ export class LivechatWidget {
   csat: {
     enabled?: boolean;
     delay?: number;
-    question?: string;         // custom question text
-    thankYouMessage?: string;  // shown after submission
+    question?: string; // custom question text
+    thankYouMessage?: string; // shown after submission
   };
 
   @ApiProperty()

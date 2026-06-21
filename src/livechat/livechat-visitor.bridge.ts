@@ -33,7 +33,6 @@ export class LivechatVisitorBridge {
     private readonly cls: ClsService,
   ) {}
 
-
   // ── Assignment: notify visitor khi agent join ───────────────────────────
 
   /**
@@ -125,7 +124,9 @@ export class LivechatVisitorBridge {
       // Nếu không có visitorId (emit từ OmniGateway), lookup từ conversation
       if (!visitorId) {
         if (!event.tenantId) {
-          this.logger.warn('[Bridge] handleAgentTyping: no tenantId in event, cannot resolve visitorId');
+          this.logger.warn(
+            '[Bridge] handleAgentTyping: no tenantId in event, cannot resolve visitorId',
+          );
           return;
         }
         const conv = await runWithTenantContext(this.cls, event.tenantId, () =>
@@ -152,10 +153,7 @@ export class LivechatVisitorBridge {
         `[Bridge] Agent typing=${event.isTyping} → visitor ${visitorId}`,
       );
 
-      this.livechatGateway.sendTypingIndicator(
-        visitorId,
-        event.isTyping,
-      );
+      this.livechatGateway.sendTypingIndicator(visitorId, event.isTyping);
     } catch (err: any) {
       this.logger.error(
         `[Bridge] handleAgentTyping failed for ${event.conversationId}: ${err?.message}`,
@@ -185,9 +183,11 @@ export class LivechatVisitorBridge {
       // FIX: Prefer visitorId from event payload — avoids unnecessary DB query.
       const visitorId =
         event.externalConversationId ??
-        (await runWithTenantContext(this.cls, event.tenantId, () =>
-          this.conversationRepo.findById(event.conversationId),
-        ))?.externalConversationId;
+        (
+          await runWithTenantContext(this.cls, event.tenantId, () =>
+            this.conversationRepo.findById(event.conversationId),
+          )
+        )?.externalConversationId;
 
       if (!visitorId) return;
 

@@ -838,10 +838,7 @@ export class OmniGateway
     status: 'delivered' | 'read';
   }) {
     if (isDedicatedWorkerProcess()) {
-      await this.publishSocketEvent(
-        'socket:livechat:message:status',
-        payload,
-      );
+      await this.publishSocketEvent('socket:livechat:message:status', payload);
       return;
     }
 

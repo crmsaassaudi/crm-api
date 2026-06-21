@@ -45,22 +45,54 @@ export class LivechatWidgetService {
       status: 'active',
       branding: data.branding ?? {},
       theme: data.theme ?? { primaryColor: '#6366f1' },
-      layout: data.layout ?? { position: 'bottom-right', launcherSize: 'medium', offsetX: 20, offsetY: 20 },
+      layout: data.layout ?? {
+        position: 'bottom-right',
+        launcherSize: 'medium',
+        offsetX: 20,
+        offsetY: 20,
+      },
       welcome: data.welcome ?? {},
       conversationStarters: data.conversationStarters ?? [],
       offline: data.offline ?? {},
-      preChatForm: data.preChatForm ?? {},
+      preChatForm: data.preChatForm ?? {
+        trigger: 'before_chat',
+        skipIfKnownVisitor: false,
+      },
       routing: data.routing ?? {},
       automation: data.automation ?? {},
       proactiveChat: data.proactiveChat ?? { enabled: false, rules: [] },
       security: data.security ?? { allowedDomains: [] },
-      localization: data.localization ?? { locale: 'en', autoDetect: true },
+      localization: data.localization ?? {
+        locale: 'en',
+        autoDetect: true,
+        fallbackLocale: 'en',
+      },
       advanced: data.advanced ?? {
         enableSoundNotification: true,
         enableFileUpload: true,
         maxFileSize: 25,
+        imagePreview: true,
+        dragDrop: false,
+        cameraCapture: false,
+        maxFilesPerMessage: 1,
       },
       csat: data.csat ?? { enabled: false },
+      // New sections
+      mobile: data.mobile ?? {
+        enabled: true,
+        fullscreen: false,
+        launcherBottomOffset: 16,
+      },
+      displayRules: data.displayRules ?? {},
+      launcher: data.launcher ?? {
+        showUnreadBadge: true,
+        pulseAnimation: false,
+      },
+      notifications: data.notifications ?? { sound: true, vibration: false },
+      statePersistence: data.statePersistence ?? {
+        rememberOpenState: false,
+        rememberDraftMessage: true,
+      },
     });
   }
 
@@ -75,10 +107,7 @@ export class LivechatWidgetService {
     return this.repo.findByChannelId(tenantId, channelId);
   }
 
-  async findById(
-    tenantId: string,
-    id: string,
-  ): Promise<LivechatWidget> {
+  async findById(tenantId: string, id: string): Promise<LivechatWidget> {
     const widget = await this.repo.findById(tenantId, id);
     if (!widget) throw new NotFoundException('Widget not found');
     return widget;
@@ -110,9 +139,7 @@ export class LivechatWidgetService {
    * Strips sensitive fields (hmacSecret, routing internals).
    * This is called from a PUBLIC endpoint (no auth).
    */
-  async getPublicConfig(
-    widgetId: string,
-  ): Promise<Record<string, any> | null> {
+  async getPublicConfig(widgetId: string): Promise<Record<string, any> | null> {
     const widget = await this.repo.findByWidgetId(widgetId);
     if (!widget || widget.status !== 'active') return null;
 
@@ -187,16 +214,20 @@ export class LivechatWidgetService {
       // Pre-chat form
       preChatForm: {
         enabled: widget.preChatForm?.enabled ?? false,
+        trigger: widget.preChatForm?.trigger ?? 'before_chat',
+        skipIfKnownVisitor: widget.preChatForm?.skipIfKnownVisitor ?? false,
         showOnlyOffline: widget.preChatForm?.showOnlyOffline ?? false,
         fields: widget.preChatForm?.fields ?? [],
       },
 
       // Routing (public subset — department selector only)
       routing: {
-        enableDepartmentSelector: widget.routing?.enableDepartmentSelector ?? false,
+        enableDepartmentSelector:
+          widget.routing?.enableDepartmentSelector ?? false,
         departments: widget.routing?.departments ?? [],
         showQueuePosition: widget.routing?.showQueuePosition ?? false,
-        queueMessage: widget.routing?.queueMessage ?? 'You are #{position} in queue',
+        queueMessage:
+          widget.routing?.queueMessage ?? 'You are #{position} in queue',
       },
 
       // Proactive chat
@@ -209,11 +240,15 @@ export class LivechatWidgetService {
       localization: {
         locale: widget.localization?.locale ?? 'en',
         autoDetect: widget.localization?.autoDetect ?? true,
+        fallbackLocale: widget.localization?.fallbackLocale ?? 'en',
+        supportedLocales: widget.localization?.supportedLocales ?? [],
         rtl: (() => {
           const rtlSetting = widget.localization?.rtl ?? 'auto';
           if (rtlSetting !== 'auto') return rtlSetting;
           const RTL_LOCALES = ['ar', 'he', 'fa', 'ur'];
-          return RTL_LOCALES.includes(widget.localization?.locale ?? 'en') ? 'rtl' : 'ltr';
+          return RTL_LOCALES.includes(widget.localization?.locale ?? 'en')
+            ? 'rtl'
+            : 'ltr';
         })(),
         translations: widget.localization?.translations ?? {},
       },
@@ -226,6 +261,10 @@ export class LivechatWidgetService {
         enableFileUpload: widget.advanced?.enableFileUpload ?? true,
         maxFileSize: widget.advanced?.maxFileSize ?? 25,
         allowedFileTypes: widget.advanced?.allowedFileTypes,
+        imagePreview: widget.advanced?.imagePreview ?? true,
+        dragDrop: widget.advanced?.dragDrop ?? false,
+        cameraCapture: widget.advanced?.cameraCapture ?? false,
+        maxFilesPerMessage: widget.advanced?.maxFilesPerMessage ?? 1,
       },
 
       // CSAT
@@ -235,7 +274,49 @@ export class LivechatWidgetService {
         thankYouMessage: widget.csat?.thankYouMessage,
       },
 
-      // NOTE: security.hmacSecret, routing, automation are NOT exposed.
+      // Mobile behavior
+      mobile: {
+        enabled: widget.mobile?.enabled ?? true,
+        fullscreen: widget.mobile?.fullscreen ?? false,
+        launcherBottomOffset: widget.mobile?.launcherBottomOffset ?? 16,
+      },
+
+      // Display rules (client-side targeting)
+      displayRules: {
+        includePages: widget.displayRules?.includePages ?? [],
+        excludePages: widget.displayRules?.excludePages ?? [],
+        devices: widget.displayRules?.devices ?? [
+          'desktop',
+          'mobile',
+          'tablet',
+        ],
+        loggedInOnly: widget.displayRules?.loggedInOnly ?? false,
+      },
+
+      // Launcher customisation
+      launcher: {
+        label: widget.launcher?.label,
+        showUnreadBadge: widget.launcher?.showUnreadBadge ?? true,
+        pulseAnimation: widget.launcher?.pulseAnimation ?? false,
+      },
+
+      // Notifications (sound migrated from advanced; browser push is Phase 2)
+      notifications: {
+        sound:
+          widget.notifications?.sound ??
+          widget.advanced?.enableSoundNotification ??
+          true,
+        vibration: widget.notifications?.vibration ?? false,
+      },
+
+      // State persistence
+      statePersistence: {
+        rememberOpenState: widget.statePersistence?.rememberOpenState ?? false,
+        rememberDraftMessage:
+          widget.statePersistence?.rememberDraftMessage ?? true,
+      },
+
+      // NOTE: security.hmacSecret, routing internals, automation are NOT exposed.
     };
   }
 
