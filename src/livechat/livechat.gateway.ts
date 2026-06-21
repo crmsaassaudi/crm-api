@@ -363,7 +363,7 @@ export class LivechatGateway
   sendToVisitor(
     visitorId: string,
     payload:
-      | { type: 'text'; content: string }
+      | { type: 'text'; content: string; messageId?: string }
       | {
           type: 'media';
           url?: string;
@@ -371,9 +371,15 @@ export class LivechatGateway
           fileName: string;
           fileSize?: number;
           thumbnailUrl?: string;
+          messageId?: string;
         }
-      | { type: 'carousel'; content?: string; cards: any[] }
-      | { type: 'interactive'; content: string; buttons: any[] },
+      | { type: 'carousel'; content?: string; cards: any[]; messageId?: string }
+      | {
+          type: 'interactive';
+          content: string;
+          buttons: any[];
+          messageId?: string;
+        },
   ): void {
     const room = `visitor:${visitorId}`;
     const sockets = this.server.in(room).fetchSockets();
@@ -384,7 +390,14 @@ export class LivechatGateway
         );
       })
       .catch(() => {});
-    this.server.to(room).emit('agent:message', payload);
+    this.server.to(room).emit('agent:message', {
+      ...payload,
+      // Expose internal messageId so the widget can track serverMessageId
+      // and send read receipts (visitor:read) back to the server.
+      ...(payload.messageId
+        ? { messageId: payload.messageId, id: payload.messageId }
+        : {}),
+    });
   }
 
   /** P2.4: emit agent:joined with both name and avatar URL */

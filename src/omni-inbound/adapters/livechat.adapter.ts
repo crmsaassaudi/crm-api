@@ -16,7 +16,7 @@ interface ILivechatGateway {
   sendToVisitor(
     visitorId: string,
     payload:
-      | { type: 'text'; content: string }
+      | { type: 'text'; content: string; messageId?: string }
       | {
           type: 'media';
           url?: string;
@@ -24,9 +24,15 @@ interface ILivechatGateway {
           fileName: string;
           fileSize?: number;
           thumbnailUrl?: string;
+          messageId?: string;
         }
-      | { type: 'carousel'; content?: string; cards: any[] }
-      | { type: 'interactive'; content: string; buttons: any[] },
+      | { type: 'carousel'; content?: string; cards: any[]; messageId?: string }
+      | {
+          type: 'interactive';
+          content: string;
+          buttons: any[];
+          messageId?: string;
+        },
   ): void;
 }
 
@@ -134,7 +140,7 @@ export class LivechatAdapter implements ChannelAdapter {
     recipientId: string,
     content: string,
     _messageType: string,
-    _channelConfig: any,
+    channelConfig: any,
   ): Promise<any> {
     if (!this.gateway) {
       this.logger.warn(
@@ -142,7 +148,11 @@ export class LivechatAdapter implements ChannelAdapter {
       );
       return;
     }
-    await this.gateway.sendToVisitor(recipientId, { type: 'text', content });
+    await this.gateway.sendToVisitor(recipientId, {
+      type: 'text',
+      content,
+      messageId: channelConfig?.messageId,
+    });
     return { status: 'sent' };
   }
 
@@ -156,7 +166,7 @@ export class LivechatAdapter implements ChannelAdapter {
   async sendMedia(
     recipientId: string,
     media: OutboundMedia,
-    _channelConfig: any,
+    channelConfig: any,
   ): Promise<MediaSendResult> {
     if (!this.gateway) return { success: false, error: 'Gateway not set' };
 
@@ -206,6 +216,7 @@ export class LivechatAdapter implements ChannelAdapter {
       fileName: media.fileName,
       fileSize: media.size,
       thumbnailUrl,
+      messageId: channelConfig?.messageId,
     });
 
     return { success: true };
@@ -252,7 +263,7 @@ export class LivechatAdapter implements ChannelAdapter {
     recipientId: string,
     body: string,
     buttons: Array<{ id: string; title: string }>,
-    _channelConfig: any,
+    channelConfig: any,
   ): Promise<any> {
     if (!this.gateway) {
       this.logger.warn('LivechatGateway not set — cannot send interactive');
@@ -262,6 +273,7 @@ export class LivechatAdapter implements ChannelAdapter {
       type: 'interactive',
       content: body,
       buttons,
+      messageId: channelConfig?.messageId,
     });
     return { status: 'sent' };
   }

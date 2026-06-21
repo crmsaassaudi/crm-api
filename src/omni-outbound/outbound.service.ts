@@ -303,7 +303,11 @@ export class OutboundService {
           conversation.customer.externalId,
           content,
           messageType,
-          { credentials: channel.credentials, account: channel.account },
+          {
+            credentials: channel.credentials,
+            account: channel.account,
+            messageId: message.id,
+          },
         );
       }
 
@@ -753,7 +757,11 @@ export class OutboundService {
         const result = await adapter.sendMedia(
           conversation.customer.externalId,
           sendMediaPayload,
-          { credentials: channel.credentials, account: channel.account },
+          {
+            credentials: channel.credentials,
+            account: channel.account,
+            messageId: message.id,
+          },
         );
         externalId = result.externalMessageId;
         if (!result.success) {
@@ -774,7 +782,11 @@ export class OutboundService {
           conversation.customer.externalId,
           fallbackContent,
           'text',
-          { credentials: channel.credentials, account: channel.account },
+          {
+            credentials: channel.credentials,
+            account: channel.account,
+            messageId: message.id,
+          },
         );
         externalId =
           (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
@@ -964,7 +976,11 @@ export class OutboundService {
               id: b.id || b.value || b.label,
               title: b.label,
             })),
-            { credentials: channel.credentials, account: channel.account },
+            {
+              credentials: channel.credentials,
+              account: channel.account,
+              messageId: message.id,
+            },
           );
         } else {
           // Plain text (or adapter doesn't support interactive)
@@ -975,7 +991,11 @@ export class OutboundService {
             conversation.customer.externalId,
             sendContent,
             messageType,
-            { credentials: channel.credentials, account: channel.account },
+            {
+              credentials: channel.credentials,
+              account: channel.account,
+              messageId: message.id,
+            },
           );
         }
       }
@@ -1174,7 +1194,11 @@ export class OutboundService {
             size: mediaBuffer.length,
             caption,
           },
-          { credentials: channel.credentials, account: channel.account },
+          {
+            credentials: channel.credentials,
+            account: channel.account,
+            messageId: message.id,
+          },
         );
         externalId = result.externalMessageId;
         if (!result.success) {
@@ -1189,7 +1213,11 @@ export class OutboundService {
           conversation.customer.externalId,
           fallbackContent,
           'text',
-          { credentials: channel.credentials, account: channel.account },
+          {
+            credentials: channel.credentials,
+            account: channel.account,
+            messageId: message.id,
+          },
         );
         externalId = resp?.message_id || resp?.id;
       }
