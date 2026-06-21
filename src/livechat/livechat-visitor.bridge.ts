@@ -287,10 +287,14 @@ export class LivechatVisitorBridge {
 
       if (!visitorId) return;
 
-      // Push read receipt to visitor widget
+      // Push read receipt to visitor widget.
+      // Use markAll=true because the widget only has local random IDs for visitor
+      // messages — it cannot match MongoDB ObjectIds. Since markReadByAgent() marks
+      // ALL unread visitor messages in this conversation, markAll is semantically correct.
       this.livechatGateway.sendStatusToVisitor(visitorId, {
         messageIds: updatedIds,
         status: 'read',
+        markAll: true,
       });
 
       this.logger.log(

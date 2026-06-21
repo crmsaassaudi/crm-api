@@ -443,10 +443,13 @@ export class LivechatGateway
   /**
    * Push message status updates to the visitor widget.
    * Used when agent reads visitor messages → visitor sees blue ticks.
+   *
+   * The `markAll` flag tells the widget to mark ALL its visitor-sent messages
+   * as `read`, since the widget does not know MongoDB IDs of its own messages.
    */
   sendStatusToVisitor(
     visitorId: string,
-    payload: { messageIds: string[]; status: string },
+    payload: { messageIds: string[]; status: string; markAll?: boolean },
   ): void {
     this.server.to(`visitor:${visitorId}`).emit('message:status', payload);
   }

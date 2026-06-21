@@ -179,11 +179,24 @@ export class MessageStatusService {
       { $set: { status: 'read' } },
     );
 
+    const updatedStringIds = idsToUpdate.map((id) => id.toString());
+
     this.logger.debug(
       `Agent read: advanced ${idsToUpdate.length} inbound message(s) to 'read' ` +
         `for conversation ${conversationId}, tenant ${tenantId}`,
     );
 
-    return idsToUpdate.map((id) => id.toString());
+    // FIX: Emit 'livechat.message.status' so OmniGateway can broadcast
+    // 'omni:message:status' to the agent CRM UI in real-time.
+    // Without this, the CRM never receives a socket event to update
+    // message status when the agent marks messages as read.
+    this.eventEmitter.emit('livechat.message.status', {
+      tenantId,
+      conversationId,
+      messageIds: updatedStringIds,
+      status: 'read',
+    });
+
+    return updatedStringIds;
   }
 }

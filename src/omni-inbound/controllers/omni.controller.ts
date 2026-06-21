@@ -1135,6 +1135,15 @@ export class OmniController {
     const conversation = await this.conversationRepo.findById(id);
     await this.conversationRepo.resetUnreadCount(id);
 
+    // FIX: Broadcast unread count reset to all agents in the tenant room
+    // so the conversation list sidebar updates in real-time for all tabs/agents.
+    if (conversation?.tenantId) {
+      this.eventEmitter.emit('omni.conversation.unread_reset', {
+        tenantId: conversation.tenantId,
+        conversationId: id,
+      });
+    }
+
     // Livechat: Mark all unread visitor messages as 'read' by agent
     // and push read receipt to visitor widget so they see blue ticks in real-time.
     if (conversation?.channelType === 'livechat') {

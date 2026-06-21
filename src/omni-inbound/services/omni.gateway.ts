@@ -80,6 +80,7 @@ export class OmniGateway
     'socket:omni:conversation:customer_updated',
     'socket:omni:message:media_cached',
     'socket:livechat:message:status',
+    'socket:omni:conversation:unread_reset',
   ] as const;
 
   // HIGH-06: Claim lock TTL in seconds. Redis-backed claim locks auto-expire
@@ -165,6 +166,9 @@ export class OmniGateway
             break;
           case 'socket:livechat:message:status':
             this.broadcastMessageStatus(event);
+            break;
+          case 'socket:omni:conversation:unread_reset':
+            this.broadcastUnreadReset(event);
             break;
         }
       } catch (err) {
@@ -860,6 +864,41 @@ export class OmniGateway
       conversationId: payload.conversationId,
       messageIds: payload.messageIds,
       status: payload.status,
+    });
+  }
+
+  /**
+   * Listener for 'omni.conversation.unread_reset' domain event.
+   * Emitted by OmniController.markAsRead() after DB unread count is reset.
+   * Broadcasts 'omni:conversation:unread_reset' to all agents in the tenant room
+   * so the sidebar conversation list updates in real-time.
+   */
+  @OnEvent('omni.conversation.unread_reset')
+  async handleUnreadReset(payload: {
+    tenantId: string;
+    conversationId: string;
+  }) {
+    if (isDedicatedWorkerProcess()) {
+      await this.publishSocketEvent(
+        'socket:omni:conversation:unread_reset',
+        payload,
+      );
+      return;
+    }
+
+    this.broadcastUnreadReset(payload);
+  }
+
+  private broadcastUnreadReset(payload: {
+    tenantId: string;
+    conversationId: string;
+  }) {
+    const room = `tenant:${payload.tenantId}`;
+    this.logger.debug(
+      `Broadcasting unread_reset for conversation ${payload.conversationId} to room=${room}`,
+    );
+    this.server.to(room).emit('omni:conversation:unread_reset', {
+      conversationId: payload.conversationId,
     });
   }
 
