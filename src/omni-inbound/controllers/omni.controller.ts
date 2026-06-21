@@ -1135,6 +1135,16 @@ export class OmniController {
     const conversation = await this.conversationRepo.findById(id);
     await this.conversationRepo.resetUnreadCount(id);
 
+    // Livechat: Mark all unread visitor messages as 'read' by agent
+    // and push read receipt to visitor widget so they see blue ticks in real-time.
+    if (conversation?.channelType === 'livechat') {
+      this.eventEmitter.emit('livechat.agent.read', {
+        tenantId: conversation.tenantId,
+        conversationId: id,
+        externalConversationId: conversation.externalConversationId,
+      });
+    }
+
     // Two-Way Read State Sync: trigger background IMAP \Seen flag update
     // for email conversations when the agent reads them in the CRM UI.
     // The sync worker checks the opt-in flag (syncReadState) before processing.

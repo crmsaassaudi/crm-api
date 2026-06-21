@@ -141,4 +141,49 @@ export class MessageStatusService {
 
     return idsToUpdate.map((id) => id.toString());
   }
+
+  /**
+   * Mark all unread **inbound** (visitor → agent) messages in a conversation
+   * as 'read'. Called when the agent opens/views a livechat conversation.
+   *
+   * Unlike `markRead()` which operates on specific messageIds from the visitor,
+   * this method finds ALL eligible messages in the conversation.
+   *
+   * @returns Array of messageIds that were actually updated
+   */
+  async markReadByAgent(
+    tenantId: string,
+    conversationId: string,
+  ): Promise<string[]> {
+    // Find all inbound messages in this conversation that are not yet 'read'
+    const docs = await this.messageModel
+      .find(
+        {
+          tenantId,
+          conversationId,
+          direction: 'inbound',
+          status: { $in: ['sent', 'delivered'] },
+        },
+        { _id: 1, status: 1 },
+      )
+      .lean()
+      .exec();
+
+    if (docs.length === 0) return [];
+
+    const idsToUpdate = docs.map((d) => d._id);
+
+    // Bulk update to 'read'
+    await this.messageModel.updateMany(
+      { _id: { $in: idsToUpdate } },
+      { $set: { status: 'read' } },
+    );
+
+    this.logger.debug(
+      `Agent read: advanced ${idsToUpdate.length} inbound message(s) to 'read' ` +
+        `for conversation ${conversationId}, tenant ${tenantId}`,
+    );
+
+    return idsToUpdate.map((id) => id.toString());
+  }
 }

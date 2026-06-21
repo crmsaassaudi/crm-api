@@ -5,6 +5,7 @@ import { LivechatGateway } from './livechat.gateway';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 import { UsersService } from '../users/users.service';
 import { FilesService } from '../files/files.service';
+import { MessageStatusService } from './services/message-status.service';
 import { runWithTenantContext } from '../common/tenancy/tenant-context';
 
 /**
@@ -17,6 +18,7 @@ import { runWithTenantContext } from '../common/tenancy/tenant-context';
  *  - omni.conversation.assigned     → notifyAgentJoined (visitor thấy "Agent X đã tham gia")
  *  - omni.agent.typing.livechat     → sendTypingIndicator đến visitor
  *  - omni.conversation.status_changed (resolved) → thông báo visitor cuộc hội thoại kết thúc
+ *  - livechat.agent.read            → push read receipt đến visitor widget
  */
 @Injectable()
 export class LivechatVisitorBridge {
@@ -27,8 +29,10 @@ export class LivechatVisitorBridge {
     private readonly conversationRepo: ConversationRepository,
     private readonly usersService: UsersService,
     private readonly filesService: FilesService,
+    private readonly messageStatusService: MessageStatusService,
     private readonly cls: ClsService,
   ) {}
+
 
   // ── Assignment: notify visitor khi agent join ───────────────────────────
 
@@ -109,6 +113,7 @@ export class LivechatVisitorBridge {
    */
   @OnEvent('omni.agent.typing.livechat')
   async handleAgentTyping(event: {
+    tenantId: string;
     conversationId: string;
     visitorId: string | null; // null khi emit từ OmniGateway
     isTyping: boolean;
@@ -119,24 +124,36 @@ export class LivechatVisitorBridge {
 
       // Nếu không có visitorId (emit từ OmniGateway), lookup từ conversation
       if (!visitorId) {
-        const tenantId = (event as any).tenantId;
-        if (!tenantId) {
+        if (!event.tenantId) {
           this.logger.warn('[Bridge] handleAgentTyping: no tenantId in event, cannot resolve visitorId');
           return;
         }
-        const conv = await runWithTenantContext(this.cls, tenantId, () =>
+        const conv = await runWithTenantContext(this.cls, event.tenantId, () =>
           this.conversationRepo.findById(event.conversationId),
         );
-        if (!conv || conv.channelType !== 'livechat') return;
+        if (!conv) {
+          this.logger.debug(
+            `[Bridge] handleAgentTyping: conversation ${event.conversationId} not found, skipping`,
+          );
+          return;
+        }
+        if (conv.channelType !== 'livechat') return; // silently skip non-livechat
         visitorId = conv.externalConversationId;
+      }
+
+      if (!visitorId) {
+        this.logger.warn(
+          `[Bridge] handleAgentTyping: could not resolve visitorId for conversation ${event.conversationId}`,
+        );
+        return;
       }
 
       this.logger.debug(
         `[Bridge] Agent typing=${event.isTyping} → visitor ${visitorId}`,
       );
 
-      await this.livechatGateway.sendTypingIndicator(
-        visitorId as string,
+      this.livechatGateway.sendTypingIndicator(
+        visitorId,
         event.isTyping,
       );
     } catch (err: any) {
@@ -226,6 +243,63 @@ export class LivechatVisitorBridge {
     } catch (err: any) {
       this.logger.error(
         `[Bridge] handleCsatTokenGenerated failed for ${event.conversationId}: ${err?.message}`,
+      );
+    }
+  }
+
+  // ── Agent read: push read receipt to visitor widget ──────────────────────
+
+  /**
+   * When the agent opens/views a livechat conversation (markAsRead),
+   * mark all inbound (visitor → agent) messages as 'read' in DB,
+   * then push the status update to the visitor widget so they see blue ticks.
+   *
+   * Event payload comes from OmniController.markAsRead().
+   */
+  @OnEvent('livechat.agent.read')
+  async handleAgentRead(event: {
+    tenantId: string;
+    conversationId: string;
+    externalConversationId?: string; // = visitorId for livechat
+  }): Promise<void> {
+    try {
+      // Mark visitor messages as read in DB
+      const updatedIds = await runWithTenantContext(
+        this.cls,
+        event.tenantId,
+        () =>
+          this.messageStatusService.markReadByAgent(
+            event.tenantId,
+            event.conversationId,
+          ),
+      );
+
+      if (updatedIds.length === 0) return; // Nothing to notify
+
+      // Resolve visitorId — prefer from event payload to avoid DB roundtrip
+      const visitorId =
+        event.externalConversationId ??
+        (
+          await runWithTenantContext(this.cls, event.tenantId, () =>
+            this.conversationRepo.findById(event.conversationId),
+          )
+        )?.externalConversationId;
+
+      if (!visitorId) return;
+
+      // Push read receipt to visitor widget
+      this.livechatGateway.sendStatusToVisitor(visitorId, {
+        messageIds: updatedIds,
+        status: 'read',
+      });
+
+      this.logger.log(
+        `[Bridge] Agent read: pushed read receipt for ${updatedIds.length} message(s) ` +
+          `to visitor ${visitorId} (conv ${event.conversationId})`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `[Bridge] handleAgentRead failed for ${event.conversationId}: ${err?.message}`,
       );
     }
   }

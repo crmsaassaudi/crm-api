@@ -79,6 +79,7 @@ export class OmniGateway
     'socket:omni:conversation:reopened',
     'socket:omni:conversation:customer_updated',
     'socket:omni:message:media_cached',
+    'socket:livechat:message:status',
   ] as const;
 
   // HIGH-06: Claim lock TTL in seconds. Redis-backed claim locks auto-expire
@@ -161,6 +162,9 @@ export class OmniGateway
             break;
           case 'socket:omni:message:media_cached':
             this.broadcastMediaCached(event);
+            break;
+          case 'socket:livechat:message:status':
+            this.broadcastMessageStatus(event);
             break;
         }
       } catch (err) {
@@ -827,11 +831,28 @@ export class OmniGateway
    * Broadcasts 'omni:message:status' to the agent tenant room.
    */
   @OnEvent('livechat.message.status')
-  handleMessageStatus(payload: {
+  async handleMessageStatus(payload: {
     tenantId: string;
     conversationId: string;
     messageIds: string[];
     status: 'delivered' | 'read';
+  }) {
+    if (isDedicatedWorkerProcess()) {
+      await this.publishSocketEvent(
+        'socket:livechat:message:status',
+        payload,
+      );
+      return;
+    }
+
+    this.broadcastMessageStatus(payload);
+  }
+
+  private broadcastMessageStatus(payload: {
+    tenantId: string;
+    conversationId: string;
+    messageIds: string[];
+    status: string;
   }) {
     const room = `tenant:${payload.tenantId}`;
     this.logger.debug(
@@ -1021,6 +1042,28 @@ export class OmniGateway
 
     const userId = client.data.userId ?? user.id ?? user.sub;
     const tenantId = client.data.tenantId;
+
+    // Broadcast to other agents in the conversation room
+    client
+      .to(`tenant:${tenantId}:conversation:${data.conversationId}`)
+      .emit('omni:typing:start', {
+        conversationId: data.conversationId,
+        userId,
+        userName: user.name ?? 'Agent',
+      });
+
+    // Bridge to livechat visitor (LivechatVisitorBridge picks this up).
+    // Emit BEFORE heartbeat so that the visitor always sees typing,
+    // even if the conversation lock heartbeat fails.
+    this.eventEmitter.emit('omni.agent.typing.livechat', {
+      tenantId,
+      conversationId: data.conversationId,
+      visitorId: null, // Bridge resolves via conversation lookup
+      isTyping: true,
+      agentName: user.name ?? 'Agent',
+    });
+
+    // Heartbeat for conversation lock (collision detection)
     if (tenantId && data?.conversationId) {
       try {
         await this.conversationLockService.heartbeat({
@@ -1042,26 +1085,8 @@ export class OmniGateway
           message,
           lock: (error as any)?.response?.lock,
         });
-        return;
       }
     }
-
-    client
-      .to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`)
-      .emit('omni:typing:start', {
-        conversationId: data.conversationId,
-        userId,
-        userName: user.name ?? 'Agent',
-      });
-
-    // Bridge to livechat visitor (LivechatVisitorBridge picks this up)
-    this.eventEmitter.emit('omni.agent.typing.livechat', {
-      tenantId,
-      conversationId: data.conversationId,
-      visitorId: null, // Bridge resolves via conversation lookup
-      isTyping: true,
-      agentName: user.name ?? 'Agent',
-    });
   }
 
   @SubscribeMessage('omni:typing:stop')

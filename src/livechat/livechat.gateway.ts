@@ -393,7 +393,11 @@ export class LivechatGateway
   }
 
   sendTypingIndicator(visitorId: string, isTyping: boolean): void {
-    this.server.to(`visitor:${visitorId}`).emit('agent:typing', { isTyping });
+    const room = `visitor:${visitorId}`;
+    this.logger.debug(
+      `sendTypingIndicator: isTyping=${isTyping} → room=${room}`,
+    );
+    this.server.to(room).emit('agent:typing', { isTyping });
   }
 
   // ── Delivery / Read Receipts ─────────────────────────────────────────────
