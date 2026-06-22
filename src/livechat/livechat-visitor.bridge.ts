@@ -24,6 +24,11 @@ import { runWithTenantContext } from '../common/tenancy/tenant-context';
 export class LivechatVisitorBridge {
   private readonly logger = new Logger(LivechatVisitorBridge.name);
 
+  // PERF FIX #3: Cache conversationId → visitorId mapping.
+  // This mapping never changes for a given conversation. Without cache,
+  // handleAgentTyping hits the DB on every agent keystroke (~3-5/sec).
+  private readonly visitorIdCache = new Map<string, string>();
+
   constructor(
     private readonly livechatGateway: LivechatGateway,
     private readonly conversationRepo: ConversationRepository,
@@ -55,6 +60,11 @@ export class LivechatVisitorBridge {
       if (!conv || conv.channelType !== 'livechat') return; // không phải livechat
 
       const visitorId = conv.externalConversationId; // externalConversationId = visitorId for livechat
+
+      // PERF FIX #3: Populate cache for future typing lookups
+      if (visitorId) {
+        this.visitorIdCache.set(event.conversationId, visitorId);
+      }
 
       // Resolve agent display name and avatar
       let agentName = 'Support Agent';
@@ -121,25 +131,36 @@ export class LivechatVisitorBridge {
     try {
       let visitorId = event.visitorId;
 
-      // Nếu không có visitorId (emit từ OmniGateway), lookup từ conversation
+      // PERF FIX #3: Check cache before DB lookup
       if (!visitorId) {
-        if (!event.tenantId) {
-          this.logger.warn(
-            '[Bridge] handleAgentTyping: no tenantId in event, cannot resolve visitorId',
+        const cached = this.visitorIdCache.get(event.conversationId);
+        if (cached) {
+          visitorId = cached;
+        } else {
+          if (!event.tenantId) {
+            this.logger.warn(
+              '[Bridge] handleAgentTyping: no tenantId in event, cannot resolve visitorId',
+            );
+            return;
+          }
+          const conv = await runWithTenantContext(
+            this.cls,
+            event.tenantId,
+            () => this.conversationRepo.findById(event.conversationId),
           );
-          return;
+          if (!conv) {
+            this.logger.debug(
+              `[Bridge] handleAgentTyping: conversation ${event.conversationId} not found, skipping`,
+            );
+            return;
+          }
+          if (conv.channelType !== 'livechat') return; // silently skip non-livechat
+          visitorId = conv.externalConversationId;
+          // Populate cache for future lookups
+          if (visitorId) {
+            this.visitorIdCache.set(event.conversationId, visitorId);
+          }
         }
-        const conv = await runWithTenantContext(this.cls, event.tenantId, () =>
-          this.conversationRepo.findById(event.conversationId),
-        );
-        if (!conv) {
-          this.logger.debug(
-            `[Bridge] handleAgentTyping: conversation ${event.conversationId} not found, skipping`,
-          );
-          return;
-        }
-        if (conv.channelType !== 'livechat') return; // silently skip non-livechat
-        visitorId = conv.externalConversationId;
       }
 
       if (!visitorId) {

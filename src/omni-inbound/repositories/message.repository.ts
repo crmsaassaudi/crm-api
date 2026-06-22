@@ -105,6 +105,32 @@ export class MessageRepository {
   }
 
   /**
+   * PERF FIX #7: Fetch recent messages WITHOUT running countDocuments.
+   * Used by the widget history endpoint which doesn't need pagination metadata.
+   * Saves ~5-15ms per call by eliminating the count query.
+   */
+  async findRecentByConversation(
+    conversationId: string,
+    limit: number,
+  ): Promise<{ data: OmniMessage[] }> {
+    const filter = { conversationId };
+    const sort: Record<string, SortOrder> = { createdAt: -1 };
+
+    const items = await this.model
+      .find(filter)
+      .sort(sort)
+      .limit(Math.max(1, limit))
+      .lean()
+      .exec();
+
+    // Reverse so oldest first for display
+    const reversed = items.reverse();
+    const data = reversed.map((doc) => OmniMessageMapper.toDomain(doc as any));
+
+    return { data };
+  }
+
+  /**
    * Check if a message with a given external ID already exists (deduplication).
    */
   async existsByExternalId(

@@ -90,38 +90,40 @@ export class MessageStatusService {
 
     const targetWeight = STATUS_WEIGHT[targetStatus];
 
-    // Fetch current status for all candidate messages
-    const docs = await this.messageModel
+    // PERF FIX #10: Single atomic updateMany with status filter instead of
+    // separate find + updateMany (2 DB roundtrips → 1 write + 1 read).
+    // The filter ensures we only advance forward (sent → delivered, etc.)
+    const statusesBelowTarget = Object.entries(STATUS_WEIGHT)
+      .filter(([, w]) => w >= 0 && w < targetWeight)
+      .map(([s]) => s);
+
+    const updateResult = await this.messageModel.updateMany(
+      {
+        _id: { $in: messageIds },
+        tenantId,
+        status: { $in: statusesBelowTarget },
+      },
+      { $set: { status: targetStatus } },
+    );
+
+    if (updateResult.modifiedCount === 0) return [];
+
+    // Read back only the updated documents to get conversationIds for events
+    const updatedDocs = await this.messageModel
       .find(
-        { _id: { $in: messageIds }, tenantId },
-        { _id: 1, status: 1, conversationId: 1 },
+        { _id: { $in: messageIds }, tenantId, status: targetStatus },
+        { _id: 1, conversationId: 1 },
       )
       .lean()
       .exec();
 
-    // Filter: only advance forward (e.g. sent → delivered, delivered → read)
-    const toUpdate = docs.filter((doc) => {
-      const currentWeight = STATUS_WEIGHT[doc.status] ?? 0;
-      return currentWeight < targetWeight && currentWeight >= 0; // skip failed
-    });
-
-    if (toUpdate.length === 0) return [];
-
-    const idsToUpdate = toUpdate.map((d) => d._id);
-
-    // Bulk update
-    await this.messageModel.updateMany(
-      { _id: { $in: idsToUpdate } },
-      { $set: { status: targetStatus } },
-    );
-
     this.logger.debug(
-      `Advanced ${idsToUpdate.length} message(s) to '${targetStatus}' for tenant ${tenantId}`,
+      `Advanced ${updateResult.modifiedCount} message(s) to '${targetStatus}' for tenant ${tenantId}`,
     );
 
     // Group by conversationId for efficient event emission
     const byConversation = new Map<string, string[]>();
-    for (const doc of toUpdate) {
+    for (const doc of updatedDocs) {
       const convId = doc.conversationId?.toString();
       if (!convId) continue;
       const list = byConversation.get(convId) ?? [];
@@ -139,7 +141,7 @@ export class MessageStatusService {
       });
     }
 
-    return idsToUpdate.map((id) => id.toString());
+    return updatedDocs.map((d) => d._id.toString());
   }
 
   /**

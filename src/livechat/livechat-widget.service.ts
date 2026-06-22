@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { LivechatWidgetRepository } from './infrastructure/persistence/document/repositories/livechat-widget.repository';
 import { LivechatWidget } from './domain/livechat-widget';
@@ -15,6 +16,18 @@ import { randomBytes, createHmac } from 'crypto';
  */
 @Injectable()
 export class LivechatWidgetService {
+  private readonly logger = new Logger(LivechatWidgetService.name);
+
+  // ── PERF FIX #2: In-memory TTL cache for widget lookups ────────────────
+  // Widget configs are written rarely (admin updates) but read on every
+  // visitor socket connect + config request. Cache eliminates ~5-15ms
+  // DB hit per read. TTL = 5 min, invalidated on update/delete.
+  private readonly widgetCache = new Map<
+    string,
+    { widget: LivechatWidget | null; expiresAt: number }
+  >();
+  private static readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
   constructor(private readonly repo: LivechatWidgetRepository) {}
 
   // ── Admin CRUD ───────────────────────────────────────────────────────────
@@ -124,12 +137,21 @@ export class LivechatWidgetService {
 
     const updated = await this.repo.update(tenantId, id, data);
     if (!updated) throw new NotFoundException('Widget not found');
+
+    // PERF FIX #2: Invalidate cache on update
+    if (updated.widgetId) this.widgetCache.delete(updated.widgetId);
+
     return updated;
   }
 
   async delete(tenantId: string, id: string): Promise<void> {
+    // Pre-load to get widgetId for cache invalidation
+    const widget = await this.repo.findById(tenantId, id);
     const deleted = await this.repo.delete(tenantId, id);
     if (!deleted) throw new NotFoundException('Widget not found');
+
+    // PERF FIX #2: Invalidate cache on delete
+    if (widget?.widgetId) this.widgetCache.delete(widget.widgetId);
   }
 
   // ── Public config (for widget JS) ────────────────────────────────────────
@@ -138,12 +160,17 @@ export class LivechatWidgetService {
    * Returns the full widget configuration for the embed JS.
    * Strips sensitive fields (hmacSecret, routing internals).
    * This is called from a PUBLIC endpoint (no auth).
+   * Uses cached widget lookup (PERF FIX #2).
    */
   async getPublicConfig(widgetId: string): Promise<Record<string, any> | null> {
-    const widget = await this.repo.findByWidgetId(widgetId);
+    const widget = await this.getCachedWidget(widgetId);
     if (!widget || widget.status !== 'active') return null;
 
-    // Build sanitized public config
+    return this.buildPublicConfig(widget);
+  }
+
+  /** Build sanitized public config from a pre-loaded widget entity. */
+  private buildPublicConfig(widget: LivechatWidget): Record<string, any> {
     return {
       widgetId: widget.widgetId,
       channelId: widget.channelId,
@@ -333,32 +360,81 @@ export class LivechatWidgetService {
     widgetId: string,
     origin: string | undefined,
   ): Promise<boolean> {
-    const widget = await this.repo.findByWidgetId(widgetId);
+    const widget = await this.getCachedWidget(widgetId);
+    return this.checkDomainAllowed(widget, origin);
+  }
+
+  /**
+   * PERF FIX #8: Combined domain check + config generation with single DB load.
+   * Used by getWidgetConfig endpoint which previously did 2 separate DB queries.
+   */
+  async getDomainCheckAndConfig(
+    widgetId: string,
+    origin: string | undefined,
+  ): Promise<{ allowed: boolean; config: Record<string, any> | null }> {
+    const widget = await this.getCachedWidget(widgetId);
+    const allowed = this.checkDomainAllowed(widget, origin);
+    if (!allowed) return { allowed: false, config: null };
+
+    if (!widget || widget.status !== 'active') {
+      return { allowed: true, config: null };
+    }
+
+    const config = this.buildPublicConfig(widget);
+    return { allowed: true, config };
+  }
+
+  /**
+   * Domain whitelist check against a preloaded widget entity.
+   */
+  private checkDomainAllowed(
+    widget: LivechatWidget | null,
+    origin: string | undefined,
+  ): boolean {
     if (!widget || widget.status !== 'active') return false;
 
     const allowedDomains: string[] = widget.security?.allowedDomains ?? [];
-    if (allowedDomains.length === 0) return true; // No restriction
+    if (allowedDomains.length === 0) return true;
 
-    if (!origin) return false; // No origin header + whitelist active → block
+    if (!origin) return false;
 
-    // Extract hostname from origin (e.g. "https://app.example.com" → "app.example.com")
     let hostname: string;
     try {
       hostname = new URL(origin).hostname;
     } catch {
-      hostname = origin; // Fallback: treat as raw hostname
+      hostname = origin;
     }
 
     return allowedDomains.some((pattern) => {
       const p = pattern.toLowerCase().trim();
       const h = hostname.toLowerCase();
       if (p.startsWith('*.')) {
-        // Wildcard: *.example.com matches sub.example.com, a.b.example.com
-        const suffix = p.slice(2); // "example.com"
+        const suffix = p.slice(2);
         return h === suffix || h.endsWith('.' + suffix);
       }
       return h === p;
     });
+  }
+
+  /**
+   * PERF FIX #2: Cached widget lookup with TTL.
+   * Widget configs change rarely — caching saves a DB query on every
+   * socket connect and config request.
+   */
+  private async getCachedWidget(
+    widgetId: string,
+  ): Promise<LivechatWidget | null> {
+    const cached = this.widgetCache.get(widgetId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.widget;
+    }
+
+    const widget = await this.repo.findByWidgetId(widgetId);
+    this.widgetCache.set(widgetId, {
+      widget,
+      expiresAt: Date.now() + LivechatWidgetService.CACHE_TTL_MS,
+    });
+    return widget;
   }
 
   // ── HMAC Identity Verification ────────────────────────────────────────────
@@ -373,7 +449,7 @@ export class LivechatWidgetService {
     identifier: string,
     userHash: string,
   ): Promise<{ valid: boolean; required: boolean }> {
-    const widget = await this.repo.findByWidgetId(widgetId);
+    const widget = await this.getCachedWidget(widgetId);
     if (!widget) return { valid: false, required: false };
 
     const required = widget.security?.identityVerification === true;

@@ -53,9 +53,13 @@ export class LivechatEmbedController {
     @Req() req: any,
     @Res() res: Response,
   ): Promise<void> {
-    // Domain whitelist enforcement
+    // PERF FIX #8: Load widget once — isDomainAllowed and getPublicConfig
+    // both called repo.findByWidgetId separately (2 identical DB queries).
+    // Now we load once and pass the preloaded entity to both methods.
     const origin = req.headers?.origin || req.headers?.referer;
-    const allowed = await this.widgetService.isDomainAllowed(widgetId, origin);
+    const { allowed, config } =
+      await this.widgetService.getDomainCheckAndConfig(widgetId, origin);
+
     if (!allowed) {
       res.status(403).json({
         statusCode: 403,
@@ -64,7 +68,6 @@ export class LivechatEmbedController {
       return;
     }
 
-    const config = await this.widgetService.getPublicConfig(widgetId);
     if (!config) {
       throw new NotFoundException('Widget not found or paused');
     }
@@ -492,28 +495,47 @@ export class LivechatEmbedController {
       );
       rawMessages = cursorResult.data;
     } else {
-      // Full fetch (first load)
+      // Full fetch (first load) — PERF FIX #7: use findRecentByConversation
+      // which skips countDocuments (widget doesn't need total count)
       const result = await runWithTenantContext(this.cls, tenantId, () =>
-        this.messageRepo.findByConversation(conv.id, 1, limit),
+        this.messageRepo.findRecentByConversation(conv.id, limit),
       );
       rawMessages = result.data;
     }
 
-    // Resolve presigned URLs for media messages so widget can render them
+    // PERF FIX #1: Batch-load files instead of N individual findById calls.
+    // Previously each media message triggered findById + getPresignedDownloadUrl
+    // sequentially (N+1 problem). Now we batch-load all files in one query.
+    const fileIds = rawMessages
+      .map((msg: any) => msg.fileId)
+      .filter(Boolean) as string[];
+
+    const fileMap = new Map<string, { path?: string }>();
+    if (fileIds.length > 0) {
+      try {
+        const files = await this.filesService.findByIds(fileIds);
+        for (const f of files) {
+          if (f?.id) fileMap.set(f.id.toString(), f);
+        }
+      } catch {
+        /* non-fatal — messages still returned without URLs */
+      }
+    }
+
     const messages = await Promise.all(
       rawMessages.map(async (msg: any) => {
         if (msg.fileId) {
-          try {
-            const file = await this.filesService.findById(msg.fileId);
-            if (file?.path) {
+          const file = fileMap.get(msg.fileId.toString?.() ?? msg.fileId);
+          if (file?.path) {
+            try {
               const url = await this.filesService.getPresignedDownloadUrl(
                 file.path,
                 3600,
               );
               return { ...msg, mediaUrl: url };
+            } catch {
+              /* skip — message still returned without url */
             }
-          } catch {
-            /* skip — message still returned without url */
           }
         }
         return msg;
