@@ -50,7 +50,10 @@ export class LivechatAdapter implements ChannelAdapter {
         senderType: 'customer',
         messageType: 'text',
         content: rawPayload.text,
-        metadata: { ...(rawPayload.metadata ?? {}) },
+        metadata: {
+          ...(rawPayload.metadata ?? {}),
+          contactName: rawPayload.visitorName || undefined,
+        },
         externalMessageId: `lc_${rawPayload.visitorId}_${Date.now()}`,
         externalConversationId: rawPayload.visitorId,
         timestamp: rawPayload.timestamp
@@ -92,6 +95,7 @@ export class LivechatAdapter implements ChannelAdapter {
           fileId: rawPayload.fileId,
           storageKey: rawPayload.storageKey,
           isVisitorUpload: true,
+          contactName: rawPayload.visitorName || undefined,
         },
         externalMessageId: `lc_media_${rawPayload.visitorId}_${ts.getTime()}`,
         externalConversationId: rawPayload.visitorId,

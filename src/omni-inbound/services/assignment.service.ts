@@ -73,6 +73,15 @@ export interface AssignmentOptions {
 export class AssignmentService {
   private readonly logger = new Logger(AssignmentService.name);
 
+  /** In-memory cache: tenantId → { config, expiresAt } for routing settings */
+  private readonly routingConfigCache = new Map<
+    string,
+    { config: any; expiresAt: number }
+  >();
+
+  /** Config cache TTL — 5 minutes */
+  private readonly CONFIG_CACHE_TTL_MS = 5 * 60_000;
+
   constructor(
     private readonly conversationRepo: ConversationRepository,
     private readonly presenceService: AgentPresenceService,
@@ -286,7 +295,12 @@ export class AssignmentService {
 
     let selectedAgent: string | null = null;
     let reason = '';
-    let metadata: Record<string, any> = {};
+    let metadata: Record<string, any> = {
+      routingContext: options.routingContext ?? null,
+      matchedRule: ruleMatch
+        ? { ruleId: ruleMatch.ruleId, ruleName: ruleMatch.ruleName }
+        : null,
+    };
 
     // ── Filter by required skills if present ──────────────────────────
     let eligibleAgents = availableAgents;
@@ -314,6 +328,7 @@ export class AssignmentService {
         const orderedAgents = await this.roundRobinOrder(
           tenantId,
           eligibleAgents,
+          ruleMatch?.teamId,
         );
         selectedAgent = await this.reserveCandidate(
           tenantId,
@@ -361,7 +376,7 @@ export class AssignmentService {
           assignedAgentId: null,
           strategy: 'manual',
           reason,
-          metadata: {},
+          metadata,
           outcome: 'queued',
         });
         return null;
@@ -637,8 +652,13 @@ export class AssignmentService {
   private async roundRobinOrder(
     tenantId: string,
     agents: string[],
+    teamId?: string,
   ): Promise<string[]> {
-    const key = `omni:rr:${tenantId}`;
+    // Per-team counter ensures fair distribution within each team pool.
+    // Falls back to tenant-level counter when no team is specified.
+    const key = teamId
+      ? `omni:rr:${tenantId}:${teamId}`
+      : `omni:rr:${tenantId}`;
     const counter = await this.redis.incr(key);
     // Set TTL on first creation (24h)
     if (counter === 1) {
@@ -824,14 +844,30 @@ export class AssignmentService {
   /**
    * Get tenant routing configuration from CRM settings.
    * Falls back to sensible defaults if settings not found.
+   *
+   * Cached per-tenant with a 5-minute TTL to avoid hitting DB on every
+   * assignment call. Config is admin-edited (very rarely) vs read on every
+   * inbound message.
    */
   private async getRoutingConfig(tenantId: string): Promise<any> {
+    const now = Date.now();
+    const cached = this.routingConfigCache.get(tenantId);
+
+    if (cached && cached.expiresAt > now) {
+      return cached.config;
+    }
+
     try {
       const config = await this.settingsService.getSetting(
         'omni_routing',
         tenantId,
       );
-      return config ?? {};
+      const result = config ?? {};
+      this.routingConfigCache.set(tenantId, {
+        config: result,
+        expiresAt: now + this.CONFIG_CACHE_TTL_MS,
+      });
+      return result;
     } catch {
       return {};
     }

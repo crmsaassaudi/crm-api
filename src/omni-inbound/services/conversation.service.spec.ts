@@ -92,9 +92,7 @@ describe('ConversationService Concurrency', () => {
 
     // Mock ShadowContactService (replaces ContactsService, TenantsService)
     shadowContactMock = {
-      createShadowContact: jest
-        .fn()
-        .mockResolvedValue('contact_123'),
+      createShadowContact: jest.fn().mockResolvedValue('contact_123'),
       getIdentityResolutionConfig: jest.fn().mockResolvedValue({
         autoCreateShadowContact: true,
         autoEnrichProfile: true,
@@ -210,9 +208,11 @@ describe('ConversationService Concurrency', () => {
 
     await service.handleInboundMessage(payload);
 
-    expect(
-      orchestrationMock.enqueueBotProcessingIfNeeded,
-    ).toHaveBeenCalledWith(payload, 'conv_123', 'msg_123');
+    expect(orchestrationMock.enqueueBotProcessingIfNeeded).toHaveBeenCalledWith(
+      payload,
+      'conv_123',
+      'msg_123',
+    );
   });
 
   it('should delegate to orchestration for business hours check', async () => {

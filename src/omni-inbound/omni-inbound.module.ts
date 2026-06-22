@@ -50,6 +50,7 @@ import { WebhookProcessor } from './queue/webhook-processor';
 import { OmniRoutingProcessor } from './queue/omni-routing.processor';
 import { MediaCacheProcessor } from './queue/media-cache.processor';
 import { StickyRetryProcessor } from './queue/sticky-retry.processor';
+import { FallbackReassignProcessor } from './queue/fallback-reassign.processor';
 import { AutoResolveProcessor } from './queue/auto-resolve.processor';
 import { BotProcessingProcessor } from './bot/bot-processing.processor';
 import { BotApiService } from './bot/bot-api.service';
@@ -118,6 +119,7 @@ const workerProviders =
         OmniRoutingProcessor,
         MediaCacheProcessor,
         StickyRetryProcessor,
+        FallbackReassignProcessor,
         AutoResolveProcessor,
         BotProcessingProcessor,
       ]

@@ -32,6 +32,7 @@ import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
 import { FilesService } from '../../files/files.service';
 import { RequirePermission } from '../../common/permissions';
+import { AssignmentAuditLogRepository } from '../repositories/assignment-audit-log.repository';
 
 /**
  * REST API for omni-channel conversations and messages.
@@ -65,7 +66,85 @@ export class OmniController {
     private readonly usersService: UsersService,
     private readonly tenantsService: TenantsService,
     private readonly filesService: FilesService,
+    private readonly auditLogRepo: AssignmentAuditLogRepository,
   ) {}
+
+  // ─── Routing Trace (production debugging) ────────────────────
+
+  /**
+   * GET /omni/conversations/:id/routing-trace
+   *
+   * Returns the assignment audit log for a specific conversation.
+   * Shows every routing decision (assign, queue, fail) in chronological
+   * order — the primary tool for debugging routing issues in production
+   * without reading logs or code.
+   */
+  @Get('conversations/:id/routing-trace')
+  @RequirePermission('view', 'contacts')
+  async getRoutingTrace(
+    @Param('id') conversationId: string,
+    @Query('limit') limit = '20',
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    const entries = await this.auditLogRepo.findByConversation(
+      tenantId,
+      conversationId,
+      Math.min(parseInt(limit, 10), 50),
+    );
+
+    return {
+      conversationId,
+      entries,
+      total: entries.length,
+    };
+  }
+
+  /**
+   * GET /omni/routing-history
+   *
+   * Global routing audit log search across all conversations.
+   * Supports query filtering by conversationId (partial match),
+   * outcome (assigned/queued/failed), and limit.
+   *
+   * Powers the global Routing History page for production debugging
+   * when a customer reports an issue and you need to trace without
+   * knowing the exact conversation.
+   */
+  @Get('routing-history')
+  @RequirePermission('view', 'contacts')
+  async getRoutingHistory(
+    @Query('search') search?: string,
+    @Query('outcome') outcome?: 'assigned' | 'queued' | 'failed',
+    @Query('limit') limit = '50',
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+
+    const entries = await this.auditLogRepo.search(
+      tenantId,
+      {
+        conversationId: search || undefined,
+        outcome: outcome || undefined,
+      },
+      Math.min(parseInt(limit, 10), 100),
+    );
+
+    return {
+      entries,
+      total: entries.length,
+    };
+  }
 
   // ─── Conversations ────────────────────────────────────────────
 

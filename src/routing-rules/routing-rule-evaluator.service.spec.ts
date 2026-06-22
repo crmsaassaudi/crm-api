@@ -381,6 +381,9 @@ describe('RoutingRuleEvaluatorService', () => {
         }),
       ]);
 
+      // Invalidate cache so the new mock data is picked up
+      service.invalidateCache('tenant_1');
+
       const result2 = await service.evaluateForTenant('tenant_1', {
         channel: 'facebook',
       });

@@ -416,6 +416,8 @@ export const FEATURE_PERMISSIONS: string[] = [
   'publication_instances:cancel',
   'publication_instances:retry',
   'publication_instances:publish',
+  // Omni-Channel Reports export
+  'omni_reports:export',
 ];
 
 export const getPermissionKey = (

@@ -54,7 +54,14 @@ export class OmniAssignmentAuditLogSchemaClass extends EntityDocumentHelper {
   @Prop({
     type: String,
     required: true,
-    enum: ['round-robin', 'least-busy', 'capacity-based', 'manual', 'queue'],
+    enum: [
+      'round-robin',
+      'least-busy',
+      'capacity-based',
+      'sticky',
+      'manual',
+      'queue',
+    ],
   })
   strategy: string;
 
@@ -91,4 +98,8 @@ OmniAssignmentAuditLogSchema.index(
 OmniAssignmentAuditLogSchema.index(
   { tenantId: 1, assignedAgentId: 1, createdAt: -1 },
   { name: 'audit_by_agent' },
+);
+OmniAssignmentAuditLogSchema.index(
+  { tenantId: 1, conversationId: 1, createdAt: 1 },
+  { name: 'audit_by_conversation' },
 );

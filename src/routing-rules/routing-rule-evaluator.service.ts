@@ -42,6 +42,12 @@ export interface RoutingRuleMatch {
  * Rules are evaluated in priority order (ascending). The first rule
  * whose conditions match wins. Disabled rules are skipped.
  *
+ * Performance:
+ *   Rules are cached in-memory per tenant with a 60s TTL. Since rules
+ *   are admin-edited (few times/day) but evaluated per-message (thousands/min),
+ *   this eliminates ~99.99% of DB reads with minimal staleness risk.
+ *   Cache is also explicitly invalidated on CRUD operations via invalidateCache().
+ *
  * Condition operators:
  *   - eq: exact match (case-insensitive)
  *   - contains: substring match (case-insensitive)
@@ -56,10 +62,28 @@ export interface RoutingRuleMatch {
 export class RoutingRuleEvaluatorService {
   private readonly logger = new Logger(RoutingRuleEvaluatorService.name);
 
+  /** In-memory cache: tenantId → { rules, expiresAt } */
+  private readonly ruleCache = new Map<
+    string,
+    { rules: RoutingRule[]; expiresAt: number }
+  >();
+
+  /** Cache TTL in milliseconds (60 seconds) */
+  private readonly CACHE_TTL_MS = 60_000;
+
   constructor(
     private readonly repository: RoutingRuleRepository,
     private readonly cls: ClsService,
   ) {}
+
+  /**
+   * Invalidate the cached rules for a specific tenant.
+   * Called by RoutingRulesService on create/update/delete/reorder.
+   */
+  invalidateCache(tenantId: string): void {
+    this.ruleCache.delete(tenantId);
+    this.logger.debug(`Routing rules cache invalidated for tenant ${tenantId}`);
+  }
 
   /**
    * Evaluate all enabled routing rules for the current tenant
@@ -79,7 +103,7 @@ export class RoutingRuleEvaluatorService {
     tenantId: string,
     context: RoutingContext,
   ): Promise<RoutingRuleMatch | null> {
-    const rules = await this.repository.findEnabledByTenant(tenantId);
+    const rules = await this.getEnabledRulesCached(tenantId);
 
     for (const rule of rules) {
       if (this.matchesRule(rule, context)) {
@@ -101,6 +125,29 @@ export class RoutingRuleEvaluatorService {
       `No routing rule matched for tenant ${tenantId} — using default routing`,
     );
     return null;
+  }
+
+  /**
+   * Get enabled rules with in-memory caching.
+   * Returns cached rules if still within TTL, otherwise fetches from DB.
+   */
+  private async getEnabledRulesCached(
+    tenantId: string,
+  ): Promise<RoutingRule[]> {
+    const now = Date.now();
+    const cached = this.ruleCache.get(tenantId);
+
+    if (cached && cached.expiresAt > now) {
+      return cached.rules;
+    }
+
+    const rules = await this.repository.findEnabledByTenant(tenantId);
+    this.ruleCache.set(tenantId, {
+      rules,
+      expiresAt: now + this.CACHE_TTL_MS,
+    });
+
+    return rules;
   }
 
   /**

@@ -4,6 +4,7 @@ import { OMNI_ROUTING_QUEUE, OMNI_WEBHOOK_QUEUE } from './omni-queue.constants';
 import { OMNI_MEDIA_CACHE_QUEUE } from './omni-media-queue.constants';
 import { OMNI_STICKY_RETRY_QUEUE } from './omni-sticky-queue.constants';
 import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
+import { OMNI_FALLBACK_QUEUE } from './omni-fallback-queue.constants';
 import { BOT_PROCESSING_QUEUE } from './bot-processing-queue.constants';
 
 /**
@@ -65,6 +66,15 @@ import { BOT_PROCESSING_QUEUE } from './bot-processing-queue.constants';
           backoff: { type: 'exponential', delay: 10000 },
           removeOnComplete: 100,
           removeOnFail: 500,
+        },
+      },
+      {
+        name: OMNI_FALLBACK_QUEUE,
+        defaultJobOptions: {
+          attempts: 2,
+          backoff: { type: 'exponential', delay: 5000 },
+          removeOnComplete: 50,
+          removeOnFail: 200,
         },
       },
       {
