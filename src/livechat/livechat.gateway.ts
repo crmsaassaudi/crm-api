@@ -382,14 +382,9 @@ export class LivechatGateway
         },
   ): void {
     const room = `visitor:${visitorId}`;
-    const sockets = this.server.in(room).fetchSockets();
-    sockets
-      .then((s) => {
-        this.logger.log(
-          `[sendToVisitor] room="${room}" → ${s.length} socket(s) connected. Payload type=${payload.type}`,
-        );
-      })
-      .catch(() => {});
+    this.logger.debug(
+      `[sendToVisitor] room="${room}" payload.type=${payload.type}`,
+    );
     this.server.to(room).emit('agent:message', {
       ...payload,
       // Expose internal messageId so the widget can track serverMessageId

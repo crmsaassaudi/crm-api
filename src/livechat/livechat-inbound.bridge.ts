@@ -3,6 +3,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { LivechatGateway } from './livechat.gateway';
 import { VisitorUploadService } from './visitor-upload.service';
+import { mimeToMessageType } from '../common/utils/mime.util';
 
 /**
  * LivechatInboundBridge — routes visitor messages into the OmniInbound pipeline
@@ -97,8 +98,7 @@ export class LivechatInboundBridge {
       return; // do not push broken payload into pipeline
     }
 
-    // Determine message type from MIME
-    const messageType = this.mimeToMessageType(payload.mimeType);
+    const messageType = mimeToMessageType(payload.mimeType);
 
     // Emit into OmniInbound pipeline with fileId — no base64 in DB
     this.eventEmitter.emit('omni.inbound.webhook', {
@@ -118,16 +118,6 @@ export class LivechatInboundBridge {
         timestamp: payload.timestamp,
       },
     });
-  }
-
-  /** Map MIME type to OmniPayload messageType */
-  private mimeToMessageType(
-    mimeType: string,
-  ): 'image' | 'video' | 'audio' | 'file' {
-    if (mimeType.startsWith('image/')) return 'image';
-    if (mimeType.startsWith('video/')) return 'video';
-    if (mimeType.startsWith('audio/')) return 'audio';
-    return 'file';
   }
 
   // ── P1.1 FIX: push conversationId back to visitor widget ─────────────

@@ -12,6 +12,7 @@ import { OutboundMedia } from './types/outbound-media.type';
 import { FilesService } from '../files/files.service';
 import { ImageProcessingService } from '../files/image-processing.service';
 import { PLATFORM_LIMITS } from '../files/config/platform-limits.config';
+import { mimeToMessageType } from '../common/utils/mime.util';
 
 import { ChannelRepository } from '../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { ReplyWindowExpiredException } from './exceptions/reply-window-expired.exception';
@@ -698,7 +699,7 @@ export class OutboundService {
     }
 
     // 5. Determine message type
-    const messageType = this.getMediaMessageType(media.mimeType);
+    const messageType = mimeToMessageType(media.mimeType);
 
     // 6. Persist message
     const message = await this.messageRepo.create({
@@ -831,13 +832,6 @@ export class OutboundService {
       await this.messageRepo.updateStatus(message.id, 'failed');
       throw error;
     }
-  }
-
-  private getMediaMessageType(mimeType: string): string {
-    if (mimeType.startsWith('image/')) return 'image';
-    if (mimeType.startsWith('video/')) return 'video';
-    if (mimeType.startsWith('audio/')) return 'audio';
-    return 'file';
   }
 
   /**
@@ -1144,7 +1138,7 @@ export class OutboundService {
       });
     }
 
-    const resolvedMessageType = this.getMediaMessageType(mimeType);
+    const resolvedMessageType = mimeToMessageType(mimeType);
 
     // Persist message
     const message = await this.messageRepo.create({

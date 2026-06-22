@@ -428,6 +428,12 @@ export class LivechatEmbedController {
     required: false,
     description: 'Max 50, default 30',
   })
+  @ApiQuery({
+    name: 'after',
+    required: false,
+    description:
+      'ISO timestamp — return only messages after this time (cursor-based incremental fetch)',
+  })
   async getVisitorHistory(
     @Param('channelId') channelId: string,
     @Query('visitorId') visitorId: string,
@@ -435,6 +441,7 @@ export class LivechatEmbedController {
     @Query('limit') limitStr = '30',
     @Req() req: any,
     @Res() res: Response,
+    @Query('after') afterStr?: string,
   ) {
     if (!visitorId || !tenantId) {
       throw new BadRequestException('visitorId and tenantId are required');
@@ -465,14 +472,36 @@ export class LivechatEmbedController {
       return;
     }
 
-    // Fetch last `limit` messages, oldest-first for display
-    const result = await runWithTenantContext(this.cls, tenantId, () =>
-      this.messageRepo.findByConversation(conv.id, 1, limit),
-    );
+    // Parse `after` cursor for incremental fetch (reconnect optimization).
+    // When provided, only messages created AFTER this timestamp are returned,
+    // preventing full history reload on every reconnect.
+    const afterDate = afterStr ? new Date(afterStr) : null;
+    const useIncremental = afterDate && !isNaN(afterDate.getTime());
+
+    let rawMessages: any[];
+
+    if (useIncremental) {
+      // Cursor-based: fetch only messages newer than `after`
+      const cursorResult = await runWithTenantContext(this.cls, tenantId, () =>
+        this.messageRepo.findByConversationIdWithCursor({
+          conversationId: conv.id,
+          limit,
+          direction: 'future',
+          cursor: { createdAt: afterDate, id: '' },
+        }),
+      );
+      rawMessages = cursorResult.data;
+    } else {
+      // Full fetch (first load)
+      const result = await runWithTenantContext(this.cls, tenantId, () =>
+        this.messageRepo.findByConversation(conv.id, 1, limit),
+      );
+      rawMessages = result.data;
+    }
 
     // Resolve presigned URLs for media messages so widget can render them
     const messages = await Promise.all(
-      result.data.map(async (msg: any) => {
+      rawMessages.map(async (msg: any) => {
         if (msg.fileId) {
           try {
             const file = await this.filesService.findById(msg.fileId);
