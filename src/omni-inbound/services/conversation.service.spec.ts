@@ -1,26 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { getQueueToken } from '@nestjs/bullmq';
-import { getModelToken } from '@nestjs/mongoose';
 import { ConversationService } from './conversation.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
 import { MediaProxyService } from './media-proxy.service';
 import { IdentityService } from './identity.service';
 import { RedisLockService } from '../../redis/redis-lock.service';
-import { ContactsService } from '../../contacts/contacts.service';
-import { FacebookAdapter } from '../adapters/facebook.adapter';
+import { CHANNEL_ADAPTERS } from '../adapters/channel-adapter.interface';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
-import { TenantsService } from '../../tenants/tenants.service';
 import { OmniPayload } from '../domain/omni-payload';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
-import { BusinessHoursService } from './business-hours.service';
-import { AutoResolveService } from './auto-resolve.service';
-import { AssignmentService } from './assignment.service';
-import { AgentPresenceService } from './agent-presence.service';
-import { ChannelsService } from '../../channels/channels.service';
 import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
-import { BotQueueService } from '../bot/bot-queue.service';
+import { InboundOrchestrationService } from './inbound-orchestration.service';
+import { ShadowContactService } from './shadow-contact.service';
 
 describe('ConversationService Concurrency', () => {
   let service: ConversationService;
@@ -29,7 +22,8 @@ describe('ConversationService Concurrency', () => {
   let identityServiceMock: any;
   let conversationRepoMock: any;
   let messageRepoMock: any;
-  let contactsServiceMock: any;
+  let orchestrationMock: any;
+  let shadowContactMock: any;
 
   beforeEach(async () => {
     // Mock Redis for idempotency check
@@ -55,6 +49,7 @@ describe('ConversationService Concurrency', () => {
         conversationId: null,
       }),
       updateIdentity: jest.fn().mockResolvedValue(undefined),
+      invalidateIdentity: jest.fn().mockResolvedValue(undefined),
     };
 
     // Mock Repositories
@@ -64,6 +59,7 @@ describe('ConversationService Concurrency', () => {
       updateLastCustomerMessageAt: jest.fn().mockResolvedValue(undefined),
       findLastByExternalId: jest.fn().mockResolvedValue(null),
       findById: jest.fn().mockResolvedValue(null),
+      updateContactId: jest.fn().mockResolvedValue(undefined),
     };
 
     messageRepoMock = {
@@ -73,8 +69,39 @@ describe('ConversationService Concurrency', () => {
       }),
     };
 
-    contactsServiceMock = {
-      create: jest.fn().mockResolvedValue({ id: 'contact_123' }),
+    // Mock InboundOrchestrationService (replaces AssignmentService, BotQueueService,
+    // BusinessHoursService, AutoResolveService, AgentPresenceService)
+    orchestrationMock = {
+      triggerAutoAssignment: jest.fn().mockResolvedValue(undefined),
+      checkAndReassignIfNeeded: jest.fn().mockResolvedValue(undefined),
+      resolveInitialBotState: jest.fn().mockResolvedValue({
+        enabled: false,
+        provider: 'typebot',
+        flowId: null,
+        sessionId: null,
+        status: 'active',
+        lastError: null,
+        lockedAt: null,
+      }),
+      enqueueBotProcessingIfNeeded: jest.fn().mockResolvedValue(undefined),
+      handleBusinessHoursCheck: jest.fn().mockResolvedValue(undefined),
+      rescheduleAutoResolve: jest.fn().mockResolvedValue(undefined),
+      cancelAutoResolve: jest.fn().mockResolvedValue(undefined),
+      releaseConversation: jest.fn().mockResolvedValue(undefined),
+    };
+
+    // Mock ShadowContactService (replaces ContactsService, TenantsService)
+    shadowContactMock = {
+      createShadowContact: jest
+        .fn()
+        .mockResolvedValue('contact_123'),
+      getIdentityResolutionConfig: jest.fn().mockResolvedValue({
+        autoCreateShadowContact: true,
+        autoEnrichProfile: true,
+        enrichmentDisclaimer: '',
+        autoMergeShadowContact: true,
+        autoMergeStrategy: 'phone_email_match',
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -85,18 +112,9 @@ describe('ConversationService Concurrency', () => {
         { provide: MediaProxyService, useValue: {} },
         { provide: IdentityService, useValue: identityServiceMock },
         { provide: RedisLockService, useValue: lockServiceMock },
-        { provide: ContactsService, useValue: contactsServiceMock },
         {
-          provide: FacebookAdapter,
-          useValue: {
-            enrichProfile: jest.fn().mockResolvedValue({ name: 'Test User' }),
-          },
-        },
-        {
-          provide: TenantsService,
-          useValue: {
-            findById: jest.fn().mockResolvedValue({ ownerId: 'owner_1' }),
-          },
+          provide: CHANNEL_ADAPTERS,
+          useValue: new Map(),
         },
         {
           provide: CrmSettingsService,
@@ -105,62 +123,18 @@ describe('ConversationService Concurrency', () => {
           },
         },
         {
-          provide: BusinessHoursService,
-          useValue: {
-            isWithinBusinessHours: jest.fn().mockResolvedValue(true),
-            getOOOConfig: jest.fn().mockResolvedValue({
-              oooAutoReplyEnabled: false,
-            }),
-            getChannelOOOMessage: jest.fn().mockReturnValue(''),
-          },
+          provide: InboundOrchestrationService,
+          useValue: orchestrationMock,
         },
         {
-          provide: AutoResolveService,
-          useValue: {
-            scheduleAutoResolve: jest.fn().mockResolvedValue(undefined),
-            rescheduleAutoResolve: jest.fn().mockResolvedValue(undefined),
-            cancelAutoResolve: jest.fn().mockResolvedValue(undefined),
-          },
-        },
-        {
-          provide: AssignmentService,
-          useValue: {
-            assignConversation: jest.fn().mockResolvedValue(undefined),
-          },
-        },
-        {
-          provide: AgentPresenceService,
-          useValue: {
-            getPresence: jest.fn().mockResolvedValue({ status: 'available' }),
-          },
-        },
-        {
-          provide: ChannelsService,
-          useValue: {
-            findAnyByAccount: jest.fn().mockResolvedValue(null),
-          },
-        },
-        {
-          provide: BotQueueService,
-          useValue: {
-            enqueueInboundMessage: jest.fn().mockResolvedValue(undefined),
-          },
+          provide: ShadowContactService,
+          useValue: shadowContactMock,
         },
         { provide: IOREDIS_CLIENT, useValue: redisMock },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
         {
           provide: getQueueToken(OMNI_MEDIA_CACHE_QUEUE),
           useValue: { add: jest.fn().mockResolvedValue({}) },
-        },
-        {
-          provide: getModelToken('GroupSchemaClass'),
-          useValue: {
-            find: jest.fn().mockReturnValue({
-              lean: jest
-                .fn()
-                .mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }),
-            }),
-          },
         },
       ],
     }).compile();
@@ -217,6 +191,61 @@ describe('ConversationService Concurrency', () => {
     );
   });
 
+  it('should delegate to orchestration for auto-assignment on new conversation', async () => {
+    const payload = createPayload('msg_003');
+
+    await service.handleInboundMessage(payload);
+
+    expect(orchestrationMock.triggerAutoAssignment).toHaveBeenCalledWith(
+      payload,
+      'conv_123',
+      'contact_123',
+      'new_conversation',
+      expect.any(Object),
+    );
+  });
+
+  it('should delegate to orchestration for bot processing', async () => {
+    const payload = createPayload('msg_004');
+
+    await service.handleInboundMessage(payload);
+
+    expect(
+      orchestrationMock.enqueueBotProcessingIfNeeded,
+    ).toHaveBeenCalledWith(payload, 'conv_123', 'msg_123');
+  });
+
+  it('should delegate to orchestration for business hours check', async () => {
+    const payload = createPayload('msg_005');
+
+    await service.handleInboundMessage(payload);
+
+    expect(orchestrationMock.handleBusinessHoursCheck).toHaveBeenCalledWith(
+      payload,
+      'conv_123',
+    );
+  });
+
+  it('should delegate to orchestration for auto-resolve scheduling', async () => {
+    const payload = createPayload('msg_006');
+
+    await service.handleInboundMessage(payload);
+
+    // Called twice: once for new conversation schedule, once for message reschedule
+    expect(orchestrationMock.rescheduleAutoResolve).toHaveBeenCalledTimes(2);
+  });
+
+  it('should delegate to shadowContactService for contact creation', async () => {
+    const payload = createPayload('msg_007');
+
+    await service.handleInboundMessage(payload);
+
+    expect(shadowContactMock.createShadowContact).toHaveBeenCalledWith(
+      payload,
+      expect.any(Object),
+    );
+  });
+
   it('should skip processing if idempotency check returns true in Redis', async () => {
     redisMock.set.mockResolvedValueOnce(null); // already processed
 
@@ -267,6 +296,7 @@ describe('ConversationService Concurrency', () => {
       tenantId: 'tenant_1',
       status: 'open',
       contactId: 'user_1',
+      assignedAgentId: 'agent_1',
     });
 
     const payload = createPayload('msg_002');
