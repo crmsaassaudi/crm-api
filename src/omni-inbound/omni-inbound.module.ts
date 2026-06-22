@@ -41,6 +41,8 @@ import { BusinessHoursService } from './services/business-hours.service';
 import { AgentStatusAuditService } from './services/agent-status-audit.service';
 import { ConversationLockService } from './services/conversation-lock.service';
 import { ReactionService } from './services/reaction.service';
+import { InboundOrchestrationService } from './services/inbound-orchestration.service';
+import { ShadowContactService } from './services/shadow-contact.service';
 
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
@@ -214,8 +216,8 @@ const workerProviders =
         map.set('whatsapp', wa);
         map.set('instagram', ig);
         map.set('livechat', lc);
-        map.set('telegram' as ChannelType, tg);
-        map.set('tiktok' as ChannelType, tt);
+        map.set('telegram', tg);
+        map.set('tiktok', tt);
         return map;
       },
       inject: [
@@ -251,6 +253,8 @@ const workerProviders =
     ConversationRepository,
     MessageRepository,
     ConversationService,
+    InboundOrchestrationService,
+    ShadowContactService,
     ConversionService,
     IdentityService,
 

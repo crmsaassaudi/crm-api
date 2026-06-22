@@ -20,7 +20,7 @@ import type { ILivechatGateway } from '../../livechat/interfaces/livechat-gatewa
  */
 @Injectable()
 export class LivechatAdapter implements ChannelAdapter {
-  readonly channelType: ChannelType = 'livechat' as ChannelType;
+  readonly channelType: ChannelType = 'livechat';
   private readonly logger = new Logger(LivechatAdapter.name);
   private gateway: ILivechatGateway | null = null;
 
@@ -42,7 +42,7 @@ export class LivechatAdapter implements ChannelAdapter {
     // ── Text message ────────────────────────────────────────────────────
     if (rawPayload?.visitorId && rawPayload?.text) {
       return {
-        channelType: 'livechat' as ChannelType,
+        channelType: 'livechat',
         channelId,
         tenantId,
         channelAccount: channelId,
@@ -77,7 +77,7 @@ export class LivechatAdapter implements ChannelAdapter {
         : new Date();
 
       return {
-        channelType: 'livechat' as ChannelType,
+        channelType: 'livechat',
         channelId: rawPayload.channelId ?? channelId,
         tenantId,
         channelAccount: channelId,

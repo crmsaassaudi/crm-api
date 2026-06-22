@@ -23,7 +23,7 @@ const TG_API = (token: string) => `https://api.telegram.org/bot${token}`;
  */
 @Injectable()
 export class TelegramAdapter implements ChannelAdapter {
-  readonly channelType: ChannelType = 'telegram' as ChannelType;
+  readonly channelType: ChannelType = 'telegram';
   private readonly logger = new Logger(TelegramAdapter.name);
 
   // ── normalize ─────────────────────────────────────────────────────────────

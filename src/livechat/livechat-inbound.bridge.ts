@@ -4,6 +4,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { LivechatGateway } from './livechat.gateway';
 import { VisitorUploadService } from './visitor-upload.service';
 import { mimeToMessageType } from '../common/utils/mime.util';
+import { OmniEvents, LivechatEvents } from '../omni-inbound/domain/omni-events';
 
 /**
  * LivechatInboundBridge — routes visitor messages into the OmniInbound pipeline
@@ -28,7 +29,7 @@ export class LivechatInboundBridge {
 
   // ── P1.2 FIX: handle text messages ─────────────────────────────────────
 
-  @OnEvent('livechat.message.inbound')
+  @OnEvent(LivechatEvents.MESSAGE_INBOUND)
   handleTextInbound(payload: {
     visitorId: string;
     tenantId: string;
@@ -42,7 +43,7 @@ export class LivechatInboundBridge {
       `Livechat text inbound from visitor ${payload.visitorId}`,
     );
 
-    this.eventEmitter.emit('omni.inbound.webhook', {
+    this.eventEmitter.emit(OmniEvents.INBOUND_WEBHOOK, {
       channelType: 'livechat',
       channelId: payload.channelId,
       tenantId: payload.tenantId,
@@ -56,7 +57,7 @@ export class LivechatInboundBridge {
     });
   }
 
-  @OnEvent('livechat.media.inbound')
+  @OnEvent(LivechatEvents.MEDIA_INBOUND)
   async handleMediaInbound(payload: {
     visitorId: string;
     tenantId: string;
@@ -101,7 +102,7 @@ export class LivechatInboundBridge {
     const messageType = mimeToMessageType(payload.mimeType);
 
     // Emit into OmniInbound pipeline with fileId — no base64 in DB
-    this.eventEmitter.emit('omni.inbound.webhook', {
+    this.eventEmitter.emit(OmniEvents.INBOUND_WEBHOOK, {
       channelType: 'livechat',
       channelId: payload.channelId,
       tenantId: payload.tenantId,
@@ -134,7 +135,7 @@ export class LivechatInboundBridge {
    * The event payload is the OmniPayload spread + conversationId + messageId.
    * For livechat: payload.senderId = visitorId, payload.channelType = 'livechat'.
    */
-  @OnEvent('omni.message.persisted')
+  @OnEvent(OmniEvents.MESSAGE_PERSISTED)
   handleMessagePersisted(payload: {
     channelType: string;
     channelId: string;

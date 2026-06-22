@@ -1,10 +1,37 @@
-export type ChannelType =
-  | 'facebook'
-  | 'instagram'
-  | 'zalo'
-  | 'whatsapp'
-  | 'livechat'
-  | 'email';
+/**
+ * ChannelType — extensible channel identifier.
+ *
+ * Previously a closed union type that required `as ChannelType` casts for
+ * new channels (telegram, tiktok). Now a branded string so any channel
+ * can be registered without modifying this file.
+ *
+ * Use `isKnownChannel()` when you need to narrow to a known channel.
+ */
+export type ChannelType = string & { readonly __brand?: 'ChannelType' };
+
+/** All channel types currently supported by the platform. */
+export const KNOWN_CHANNELS = [
+  'facebook',
+  'instagram',
+  'zalo',
+  'whatsapp',
+  'livechat',
+  'email',
+  'telegram',
+  'tiktok',
+  'sms',
+  'voice',
+  'shopee',
+] as const;
+
+/** Narrow a string to a known channel type (compile-time guard). */
+export type KnownChannelType = (typeof KNOWN_CHANNELS)[number];
+
+/** Runtime check: is this string a known channel? */
+export function isKnownChannel(type: string): type is KnownChannelType {
+  return (KNOWN_CHANNELS as readonly string[]).includes(type);
+}
+
 export type SenderType = 'customer' | 'agent' | 'system' | 'bot';
 export type MessageType =
   | 'text'
@@ -73,16 +100,13 @@ export interface OmniPayload {
 }
 
 /**
- * Persisted message entity — extends OmniPayload with our internal IDs
- * and delivery-status tracking for optimistic UI.
+ * OmniMessage — re-exported from the canonical definition.
+ *
+ * The full persisted message interface (with direction, senderName,
+ * createdAt, updatedAt, etc.) lives in ./omni-message.ts.
+ * This re-export preserves backward compatibility for any consumer
+ * that imported OmniMessage from this file.
+ *
+ * @see ./omni-message.ts for the canonical definition.
  */
-export interface OmniMessage extends OmniPayload {
-  /** Internal Mongo ObjectId */
-  id: string;
-
-  /** Conversation ID in our system (not the external one) */
-  conversationId: string;
-
-  /** Delivery status for optimistic send */
-  status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
-}
+export type { OmniMessage } from './omni-message';

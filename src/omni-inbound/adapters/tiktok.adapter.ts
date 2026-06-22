@@ -39,7 +39,7 @@ import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
  */
 @Injectable()
 export class TikTokAdapter implements ChannelAdapter {
-  readonly channelType = 'tiktok' as ChannelType;
+  readonly channelType: ChannelType = 'tiktok';
   private readonly logger = new Logger(TikTokAdapter.name);
 
   normalize(

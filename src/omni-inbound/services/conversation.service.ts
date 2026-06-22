@@ -9,48 +9,43 @@ import { createHash } from 'crypto';
 import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
-import { InjectModel } from '@nestjs/mongoose';
 import { Queue } from 'bullmq';
-import { Model } from 'mongoose';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { OmniPayload } from '../domain/omni-payload';
+import { OmniEvents } from '../domain/omni-events';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
 import { MediaProxyService } from './media-proxy.service';
 import { IdentityService } from './identity.service';
 import { RedisLockService } from '../../redis/redis-lock.service';
-import { ContactsService } from '../../contacts/contacts.service';
-import { FacebookAdapter } from '../adapters/facebook.adapter';
-import { InstagramAdapter } from '../adapters/instagram.adapter';
-import { TenantsService } from '../../tenants/tenants.service';
+import {
+  ChannelAdapter,
+  CHANNEL_ADAPTERS,
+} from '../adapters/channel-adapter.interface';
+import { ChannelType } from '../domain/omni-payload';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
-import { BusinessHoursService } from './business-hours.service';
-import { AutoResolveService } from './auto-resolve.service';
-import { AssignmentService } from './assignment.service';
-import { AgentPresenceService } from './agent-presence.service';
-import { ChannelsService } from '../../channels/channels.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
 import { TimelineResponseDto } from '../dto/timeline-response.dto';
+import { InboundOrchestrationService } from './inbound-orchestration.service';
+import { ShadowContactService } from './shadow-contact.service';
 import {
   ThreadIdentity,
   ThreadSessionSlice,
 } from '../repositories/conversation.repository';
 import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 import type { MediaCacheJobData } from '../queue/media-cache.processor';
-import { BotQueueService } from '../bot/bot-queue.service';
-import { ConversationBotState } from '../domain/omni-conversation';
 
 /**
- * ConversationService — listens to `omni.message.received` events and handles:
+ * ConversationService â€” listens to `omni.message.received` events and handles:
  *
  * 1. Idempotency check (Redis optimistic check)
  * 2. Distributed lock acquisition (per sender_id)
  * 3. Identity resolution (Redis cache-aside)
  * 4. Session management: finds or creates conversations
  *    - If current session is resolved/closed:
- *      a) Within reopen window → reopen existing session
- *      b) Past reopen window → create NEW session with link
+ *      a) Within reopen window â†’ reopen existing session
+ *      b) Past reopen window â†’ create NEW session with link
  * 5. Message persistence: saves each message to MongoDB
  * 6. Media caching: proxies expiring URLs via MediaProxyService
  * 7. Cache update: updates identity mapping in Redis
@@ -62,7 +57,7 @@ export class ConversationService {
   /** TTL for the processed-message idempotency marker (1 hour) */
   private readonly IDEM_TTL = 60 * 60;
 
-  /** Lock TTL: 5 seconds — well above typical DB operations (<500ms)
+  /** Lock TTL: 5 seconds â€” well above typical DB operations (<500ms)
    *  but short enough to minimise contention when webhooks burst. */
   private readonly LOCK_TTL = 5_000;
 
@@ -72,23 +67,15 @@ export class ConversationService {
     private readonly mediaProxy: MediaProxyService,
     private readonly identityService: IdentityService,
     private readonly lockService: RedisLockService,
-    private readonly contactsService: ContactsService,
-    private readonly facebookAdapter: FacebookAdapter,
-    private readonly instagramAdapter: InstagramAdapter,
-    private readonly tenantsService: TenantsService,
+    @Inject(CHANNEL_ADAPTERS)
+    private readonly adapters: Map<ChannelType, ChannelAdapter>,
     private readonly settingsService: CrmSettingsService,
-    private readonly businessHoursService: BusinessHoursService,
-    private readonly autoResolveService: AutoResolveService,
-    private readonly assignmentService: AssignmentService,
-    private readonly agentPresenceService: AgentPresenceService,
-    private readonly channelsService: ChannelsService,
-    private readonly botQueueService: BotQueueService,
+    private readonly orchestration: InboundOrchestrationService,
+    private readonly shadowContactService: ShadowContactService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectQueue(OMNI_MEDIA_CACHE_QUEUE)
     private readonly mediaCacheQueue: Queue<MediaCacheJobData>,
-    @InjectModel('GroupSchemaClass')
-    private readonly groupModel: Model<any>,
   ) {}
 
   async getConversationTimeline(params: {
@@ -239,20 +226,20 @@ export class ConversationService {
    * Event handler: called when a normalized message arrives from any provider.
    *
    * Flow:
-   *   1. Optimistic idempotency check (Redis)           — fast-reject duplicates
-   *   2. Acquire distributed lock on sender_id          — prevent race conditions
-   *   3. Resolve identity (Cache → DB)                  — find existing Contact/Conversation
-   *   4. Create Contact/Conversation if needed           — within the lock
-   *      - If existing conversation is resolved/closed → create NEW session
-   *   5. Save message (unique index = DB-level guard)    — platformMessageId dedup
-   *   6. Update identity cache                           — for future fast lookups
+   *   1. Optimistic idempotency check (Redis)           â€” fast-reject duplicates
+   *   2. Acquire distributed lock on sender_id          â€” prevent race conditions
+   *   3. Resolve identity (Cache â†’ DB)                  â€” find existing Contact/Conversation
+   *   4. Create Contact/Conversation if needed           â€” within the lock
+   *      - If existing conversation is resolved/closed â†’ create NEW session
+   *   5. Save message (unique index = DB-level guard)    â€” platformMessageId dedup
+   *   6. Update identity cache                           â€” for future fast lookups
    *   7. Lock auto-released in finally block
    */
-  @OnEvent('omni.message.received')
+  @OnEvent(OmniEvents.MESSAGE_RECEIVED)
   async handleInboundMessage(payload: OmniPayload): Promise<void> {
     const msgId = this.buildMessageDedupId(payload);
 
-    // ── Step 1: Optimistic idempotency check (Redis) ──────────
+    // â”€â”€ Step 1: Optimistic idempotency check (Redis) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const idemKey = `omni:processed:${payload.tenantId}:${msgId}`;
     const idempotencyReserved = await this.redis.set(
       idemKey,
@@ -262,11 +249,11 @@ export class ConversationService {
       'NX',
     );
     if (!idempotencyReserved) {
-      this.logger.debug(`Idempotency hit — skipping message ${msgId}`);
+      this.logger.debug(`Idempotency hit â€” skipping message ${msgId}`);
       return;
     }
 
-    // ── Step 2: Acquire distributed lock on sender ────────────
+    // â”€â”€ Step 2: Acquire distributed lock on sender â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const lockKey = `lock:inbound:${payload.tenantId}:${payload.channelId}:${payload.senderId}`;
 
     try {
@@ -274,7 +261,7 @@ export class ConversationService {
         await this.processWithinLock(payload, idemKey, msgId);
       });
     } catch (error: any) {
-      // E11000 = duplicate key — another worker already saved this message
+      // E11000 = duplicate key â€” another worker already saved this message
       if (error?.code === 11000) {
         this.logger.warn(`Duplicate message (race condition): ${msgId}`);
         return;
@@ -289,14 +276,14 @@ export class ConversationService {
   }
 
   /**
-   * Core processing logic — runs INSIDE the distributed lock.
+   * Core processing logic â€” runs INSIDE the distributed lock.
    */
   private async processWithinLock(
     payload: OmniPayload,
     idemKey: string,
     messageDedupId: string,
   ): Promise<void> {
-    // ── Step 3: Resolve identity (Cache-aside) ────────────────
+    // â”€â”€ Step 3: Resolve identity (Cache-aside) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const identity = await this.identityService.resolveIdentityForTenant(
       payload.tenantId,
       payload.channelType,
@@ -304,11 +291,11 @@ export class ConversationService {
       payload.externalConversationId,
     );
 
-    // ── Step 4: Find or create conversation ───────────────────
+    // â”€â”€ Step 4: Find or create conversation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let conversationId = identity.conversationId;
     let contactId = identity.contactId;
 
-    // ── Step 4a: Check if existing conversation is still active ──
+    // â”€â”€ Step 4a: Check if existing conversation is still active â”€â”€
     let existing: {
       tenantId: string;
       status: string;
@@ -322,7 +309,7 @@ export class ConversationService {
         // Stale identity cache: conversation was deleted or doesn't exist.
         // Invalidate the cache entry and fall through to create a new one.
         this.logger.warn(
-          `Stale identity cache: conversation ${conversationId} not found for sender ${payload.senderId} — invalidating and creating new`,
+          `Stale identity cache: conversation ${conversationId} not found for sender ${payload.senderId} â€” invalidating and creating new`,
         );
         await this.identityService.invalidateIdentity(
           payload.channelType,
@@ -342,12 +329,12 @@ export class ConversationService {
         existing &&
         (existing.status === 'resolved' || existing.status === 'closed')
       ) {
-        // ── Reopen Window Check ──────────────────────────────────
+        // â”€â”€ Reopen Window Check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Fetch tenant session lifecycle config
         const lifecycleConfig = await this.getSessionLifecycleConfig();
         const reopenWindowHours = lifecycleConfig.reopenWindowHours ?? 24;
 
-        // MED-04: resolvedAt fallback chain — closedAt > updatedAt.
+        // MED-04: resolvedAt fallback chain â€” closedAt > updatedAt.
         // updatedAt can be bumped by unrelated writes (tag, note, assignment),
         // causing the reopen window to be inaccurately extended.
         const resolvedAt =
@@ -356,7 +343,7 @@ export class ConversationService {
           (existing as any).updatedAt;
         if (!(existing as any).resolvedAt) {
           this.logger.warn(
-            `Conversation ${conversationId} has no resolvedAt — using ${(existing as any).closedAt ? 'closedAt' : 'updatedAt'} as fallback`,
+            `Conversation ${conversationId} has no resolvedAt â€” using ${(existing as any).closedAt ? 'closedAt' : 'updatedAt'} as fallback`,
           );
         }
         const hoursSinceResolved = resolvedAt
@@ -364,10 +351,10 @@ export class ConversationService {
           : Infinity;
 
         if (reopenWindowHours > 0 && hoursSinceResolved <= reopenWindowHours) {
-          // WITHIN reopen window → reopen existing session
+          // WITHIN reopen window â†’ reopen existing session
           this.logger.log(
             `Conversation ${conversationId} is ${existing.status} but within reopen window ` +
-              `(${hoursSinceResolved.toFixed(1)}h / ${reopenWindowHours}h) — reopening`,
+              `(${hoursSinceResolved.toFixed(1)}h / ${reopenWindowHours}h) â€” reopening`,
           );
 
           const reopened = await this.conversationRepo.reopenConversation(
@@ -387,7 +374,7 @@ export class ConversationService {
               payload.tenantId,
             );
 
-            this.eventEmitter.emit('omni.conversation.reopened', {
+            this.eventEmitter.emit(OmniEvents.CONVERSATION_REOPENED, {
               tenantId: payload.tenantId,
               conversationId,
               previousConversationId: null,
@@ -396,7 +383,7 @@ export class ConversationService {
               isReopenedSession: true, // distinguish from new-session reopen
             });
 
-            this.eventEmitter.emit('omni.conversation.status_changed', {
+            this.eventEmitter.emit(OmniEvents.CONVERSATION_STATUS_CHANGED, {
               tenantId: payload.tenantId,
               conversationId,
               status: 'open',
@@ -408,10 +395,10 @@ export class ConversationService {
               externalConversationId: payload.externalConversationId,
             });
 
-            // ── Auto-reassignment on reopen if agent is offline/unassigned ──
+            // â”€â”€ Auto-reassignment on reopen if agent is offline/unassigned â”€â”€
             const currentAgent = (reopened as any).assignedAgentId;
             if (!currentAgent) {
-              await this.triggerAutoAssignment(
+              await this.orchestration.triggerAutoAssignment(
                 payload,
                 conversationId!,
                 contactId ?? existing.contactId ?? null,
@@ -419,33 +406,24 @@ export class ConversationService {
               );
             } else {
               // Check if the previous agent is still online
-              const presence = await this.agentPresenceService.getPresence(
-                payload.tenantId,
+              await this.orchestration.checkAndReassignIfNeeded(
+                payload,
+                conversationId!,
                 currentAgent,
+                contactId ?? existing.contactId ?? null,
               );
-              if (!presence || presence.status !== 'available') {
-                this.logger.log(
-                  `Reopened conversation ${conversationId}: previous agent ${currentAgent} is offline — triggering reassignment`,
-                );
-                await this.triggerAutoAssignment(
-                  payload,
-                  conversationId!,
-                  contactId ?? existing.contactId ?? null,
-                  'reopen_agent_offline',
-                );
-              }
             }
 
             // Keep contactId from the reopened session
             contactId = existing.contactId ?? contactId;
-            // conversationId stays the same — don't create a new one
+            // conversationId stays the same â€” don't create a new one
           }
         } else {
-          // OUTSIDE reopen window → force creation of a new session
+          // OUTSIDE reopen window â†’ force creation of a new session
           this.logger.log(
             `Existing conversation ${conversationId} is ${existing.status} ` +
               `and reopen window expired (${hoursSinceResolved.toFixed(1)}h > ${reopenWindowHours}h) ` +
-              `— creating new session for sender ${payload.senderId}`,
+              `â€” creating new session for sender ${payload.senderId}`,
           );
           // Keep the contactId from the previous session
           contactId = existing.contactId ?? contactId;
@@ -456,11 +434,13 @@ export class ConversationService {
 
       // Self-heal old data: active conversation exists but contact was never linked.
       if (existing && conversationId && !contactId) {
-        const identityConfig = await this.getIdentityResolutionConfig(
-          payload.tenantId,
-        );
+        const identityConfig =
+          await this.shadowContactService.getIdentityResolutionConfig(
+            payload.tenantId,
+          );
         if (identityConfig.autoCreateShadowContact) {
-          const createdContactId = await this.createShadowContact(payload);
+          const createdContactId =
+            await this.shadowContactService.createShadowContact(payload);
           if (createdContactId) {
             contactId = createdContactId;
             await this.conversationRepo.updateContactId(
@@ -480,12 +460,12 @@ export class ConversationService {
           }
         } else {
           this.logger.debug(
-            `Auto-create shadow contact disabled — skipping for conversation ${conversationId}`,
+            `Auto-create shadow contact disabled â€” skipping for conversation ${conversationId}`,
           );
         }
       }
 
-      // ── Retry auto-assignment for existing open/pending conversations ──
+      // â”€â”€ Retry auto-assignment for existing open/pending conversations â”€â”€
       // If the conversation is still active but has no agent assigned,
       // retry auto-assignment. This covers cases where:
       //   - The original auto-assign failed (e.g. no agents online)
@@ -499,9 +479,9 @@ export class ConversationService {
         const assignedAgent = existing.assignedAgentId;
         if (!assignedAgent) {
           this.logger.debug(
-            `[AUTO-ASSIGN DEBUG] Existing conversation ${conversationId} is ${existing.status} but has NO agent — retrying auto-assignment`,
+            `[AUTO-ASSIGN DEBUG] Existing conversation ${conversationId} is ${existing.status} but has NO agent â€” retrying auto-assignment`,
           );
-          await this.triggerAutoAssignment(
+          await this.orchestration.triggerAutoAssignment(
             payload,
             conversationId,
             contactId ?? existing.contactId ?? null,
@@ -509,14 +489,15 @@ export class ConversationService {
           );
         } else {
           this.logger.debug(
-            `Existing conversation ${conversationId} already assigned to agent ${assignedAgent} — skipping auto-assignment`,
+            `Existing conversation ${conversationId} already assigned to agent ${assignedAgent} â€” skipping auto-assignment`,
           );
         }
       }
     }
 
     if (!conversationId) {
-      // ── Step 3b: Eagerly fetch Facebook profile before creating conversation ──
+      // â”€â”€ Step 3b: Eagerly enrich profile before creating conversation â”€â”€
+      // Delegates to the channel adapter's enrichProfile() method if available.
       // This ensures BOTH the conversation AND shadow contact are created
       // with the real name/avatar from the start.
       // Respects the tenant's autoEnrichProfile setting (GDPR/PDPA compliance).
@@ -526,87 +507,64 @@ export class ConversationService {
         phone?: string;
       } = {};
 
-      const identityResConfig = await this.getIdentityResolutionConfig(
-        payload.tenantId,
-      );
+      const identityResConfig =
+        await this.shadowContactService.getIdentityResolutionConfig(
+          payload.tenantId,
+        );
 
-      if (
-        identityResConfig.autoEnrichProfile &&
-        payload.channelType === 'facebook' &&
-        payload.metadata?.accessToken
-      ) {
-        try {
-          const profile = await this.facebookAdapter.enrichProfile(
-            payload.senderId,
-            payload.metadata.accessToken,
-          );
-          if (profile.name && profile.name !== payload.senderId) {
-            enrichedProfile = profile;
-            this.logger.log(
-              `Pre-enriched Facebook profile for ${payload.senderId}: ${profile.name}`,
+      if (identityResConfig.autoEnrichProfile) {
+        const adapter = this.adapters.get(payload.channelType);
+        if (adapter?.enrichProfile && payload.metadata?.accessToken) {
+          // Channel supports profile API (Facebook, Instagram, etc.)
+          try {
+            const profile = await adapter.enrichProfile(
+              payload.senderId,
+              payload.metadata.accessToken,
+            );
+            if (profile.name && profile.name !== payload.senderId) {
+              enrichedProfile = profile;
+              this.logger.log(
+                `Pre-enriched ${payload.channelType} profile for ${payload.senderId}: ${profile.name}`,
+              );
+            }
+          } catch (err) {
+            this.logger.warn(
+              `${payload.channelType} profile pre-enrichment skipped: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
             );
           }
-        } catch (err) {
-          this.logger.warn(
-            `Facebook profile pre-enrichment skipped: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      } else if (
-        identityResConfig.autoEnrichProfile &&
-        payload.channelType === 'instagram' &&
-        payload.metadata?.accessToken
-      ) {
-        try {
-          const profile = await this.instagramAdapter.enrichProfile(
-            payload.senderId,
-            payload.metadata.accessToken,
-          );
-          if (profile.name && profile.name !== payload.senderId) {
-            enrichedProfile = profile;
+        } else if (payload.metadata?.contactName) {
+          // Channel provides name in webhook payload (WhatsApp, Telegram, etc.)
+          const contactName = payload.metadata.contactName;
+          if (contactName !== payload.senderId) {
+            enrichedProfile = { name: contactName };
             this.logger.log(
-              `Pre-enriched Instagram profile for ${payload.senderId}: ${profile.name}`,
+              `Pre-enriched ${payload.channelType} profile for ${payload.senderId}: ${contactName}`,
             );
           }
-        } catch (err) {
-          this.logger.warn(
-            `Instagram profile pre-enrichment skipped: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
         }
-      } else if (
-        identityResConfig.autoEnrichProfile &&
-        payload.channelType === 'whatsapp'
-      ) {
-        // WhatsApp provides contact name directly in the webhook payload.
-        // No additional API call is needed for profile enrichment.
-        const contactName = payload.metadata?.contactName;
-        if (contactName && contactName !== payload.senderId) {
-          enrichedProfile = { name: contactName };
-          this.logger.log(
-            `Pre-enriched WhatsApp profile for ${payload.senderId}: ${contactName}`,
-          );
-        }
-      } else if (!identityResConfig.autoEnrichProfile) {
+      } else {
         this.logger.debug(
-          `Auto-enrich profile disabled for tenant ${payload.tenantId} — skipping profile fetch`,
+          `Auto-enrich profile disabled for tenant ${payload.tenantId} â€” skipping profile fetch`,
         );
       }
 
       // No active conversation -> maybe no contact either
       if (!contactId) {
         if (identityResConfig.autoCreateShadowContact) {
-          contactId = await this.createShadowContact(payload, enrichedProfile);
+          contactId = await this.shadowContactService.createShadowContact(
+            payload,
+            enrichedProfile,
+          );
         } else {
           this.logger.debug(
-            `Auto-create shadow contact disabled — sender ${payload.senderId} will have no CRM contact`,
+            `Auto-create shadow contact disabled â€” sender ${payload.senderId} will have no CRM contact`,
           );
         }
       }
 
-      // ── Reopen tracking: find previous conversation if any ──
+      // â”€â”€ Reopen tracking: find previous conversation if any â”€â”€
       let previousConversationId: string | null = null;
       let reopenCount = 0;
 
@@ -625,7 +583,7 @@ export class ConversationService {
         reopenCount = (previousConv.reopenCount ?? 0) + 1;
       }
 
-      // No active session → create a new one (with enriched profile)
+      // No active session â†’ create a new one (with enriched profile)
       const conversation = await this.conversationRepo.create({
         tenantId: payload.tenantId,
         channelId: payload.channelId,
@@ -650,7 +608,7 @@ export class ConversationService {
         lastMessageAt: payload.timestamp,
         previousConversationId,
         reopenCount,
-        bot: await this.resolveInitialBotState(
+        bot: await this.orchestration.resolveInitialBotState(
           payload.tenantId,
           this.toSchemaChannelType(payload.channelType),
           payload.channelAccount,
@@ -667,7 +625,7 @@ export class ConversationService {
         );
 
         // Emit reopen event for activity log + realtime
-        this.eventEmitter.emit('omni.conversation.reopened', {
+        this.eventEmitter.emit(OmniEvents.CONVERSATION_REOPENED, {
           tenantId: payload.tenantId,
           conversationId,
           previousConversationId,
@@ -682,7 +640,7 @@ export class ConversationService {
       }
 
       // Emit created event with full conversation for realtime broadcast
-      this.eventEmitter.emit('omni.conversation.created', {
+      this.eventEmitter.emit(OmniEvents.CONVERSATION_CREATED, {
         tenantId: payload.tenantId,
         conversationId,
         channelType: payload.channelType,
@@ -690,7 +648,7 @@ export class ConversationService {
         conversation, // Full object for frontend rendering
       });
 
-      // ── Step 6a: Update identity cache with new mapping ─────
+      // â”€â”€ Step 6a: Update identity cache with new mapping â”€â”€â”€â”€â”€
       await this.identityService.updateIdentity(
         payload.channelType,
         payload.channelAccount,
@@ -699,14 +657,14 @@ export class ConversationService {
         payload.tenantId,
       );
 
-      // ── Step 6b: Schedule auto-resolve for new conversation ─────
-      await this.autoResolveService.scheduleAutoResolve(
+      // â”€â”€ Step 6b: Schedule auto-resolve for new conversation â”€â”€â”€â”€â”€
+      await this.orchestration.rescheduleAutoResolve(
         payload.tenantId,
         conversationId,
       );
 
-      // ── Step 6c: Auto-assign conversation to an agent ──────────
-      await this.triggerAutoAssignment(
+      // â”€â”€ Step 6c: Auto-assign conversation to an agent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      await this.orchestration.triggerAutoAssignment(
         payload,
         conversationId,
         contactId ?? null,
@@ -717,7 +675,7 @@ export class ConversationService {
       // Profile enrichment already done eagerly before conversation creation (Step 3b above).
     }
 
-    // ── Step 5a: Save the message immediately (with original media URL) ──
+    // â”€â”€ Step 5a: Save the message immediately (with original media URL) â”€â”€
     // Media caching is done asynchronously via BullMQ to avoid blocking
     // the distributed lock during large file downloads.
     const { message, inserted } =
@@ -746,7 +704,7 @@ export class ConversationService {
       return;
     }
 
-    // ── Step 5b: Enqueue async media cache job if media is present ──
+    // â”€â”€ Step 5b: Enqueue async media cache job if media is present â”€â”€
     if (payload.mediaUrl) {
       await this.mediaCacheQueue.add(
         'cache-media',
@@ -771,7 +729,7 @@ export class ConversationService {
       this.logger.debug(`Enqueued media cache job for message ${message.id}`);
     }
 
-    // ── Step 5c: Update conversation summary ──────────────────
+    // â”€â”€ Step 5c: Update conversation summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const messagePreview = payload.content || `[${payload.messageType}]`;
 
     await this.conversationRepo.updateLastMessage(
@@ -781,7 +739,7 @@ export class ConversationService {
       payload.senderType,
     );
 
-    // ── Step 5d-2: Track customer's last message time for reply window ──
+    // â”€â”€ Step 5d-2: Track customer's last message time for reply window â”€â”€
     if (payload.senderType === 'customer') {
       await this.conversationRepo.updateLastCustomerMessageAt(
         conversationId,
@@ -789,13 +747,13 @@ export class ConversationService {
       );
     }
 
-    // ── Step 5d: Reschedule auto-resolve timer (message resets the clock) ──
-    await this.autoResolveService.rescheduleAutoResolve(
+    // â”€â”€ Step 5d: Reschedule auto-resolve timer (message resets the clock) â”€â”€
+    await this.orchestration.rescheduleAutoResolve(
       payload.tenantId,
       conversationId,
     );
 
-    // ── Step 7: Refresh processed marker TTL ────────────
+    // â”€â”€ Step 7: Refresh processed marker TTL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     await this.redis.expire(idemKey, this.IDEM_TTL);
 
     this.logger.log(
@@ -803,21 +761,21 @@ export class ConversationService {
     );
 
     // Emit persisted event with internal IDs for realtime broadcast
-    this.eventEmitter.emit('omni.message.persisted', {
+    this.eventEmitter.emit(OmniEvents.MESSAGE_PERSISTED, {
       ...payload,
       conversationId,
       messageId: messageDedupId,
       internalMessageId: message.id,
     });
 
-    await this.enqueueBotProcessingIfNeeded(
+    await this.orchestration.enqueueBotProcessingIfNeeded(
       payload,
       conversationId,
       message.id,
     );
 
-    // ── Step 8: Business Hours / OOO Auto-Reply ────────────────
-    await this.handleBusinessHoursCheck(payload, conversationId);
+    // â”€â”€ Step 8: Business Hours / OOO Auto-Reply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    await this.orchestration.handleBusinessHoursCheck(payload, conversationId);
   }
 
   private buildMessageDedupId(payload: OmniPayload): string {
@@ -851,600 +809,9 @@ export class ConversationService {
     return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
   }
 
-  /**
-   * Resolve initial bot state for a new conversation.
-   * Reads bot enabled flag from the channel's config.
-   * CRM only controls ON/OFF — crm-bot decides which flow to run.
-   */
-  private async resolveInitialBotState(
-    tenantId: string,
-    channelType: string,
-    channelAccount: string,
-  ): Promise<ConversationBotState> {
-    const botConfig = await this.getChannelBotConfig(
-      tenantId,
-      channelType,
-      channelAccount,
-    );
-
-    return {
-      enabled: Boolean(botConfig?.enabled),
-      provider: botConfig?.provider ?? 'typebot',
-      flowId: null, // resolved by crm-bot at runtime
-      sessionId: null,
-      status: 'active',
-      lastError: null,
-      lockedAt: null,
-    };
-  }
-
-  /**
-   * Read bot enabled flag from channel config.
-   * CRM only stores enabled + provider. Flow selection is crm-bot's responsibility.
-   */
-  private async getChannelBotConfig(
-    tenantId: string,
-    channelType: string,
-    channelAccount: string,
-  ): Promise<{ enabled: boolean; provider: string } | undefined> {
-    try {
-      const channel = await this.channelsService.findAnyByAccount(
-        channelType,
-        channelAccount,
-      );
-
-      if (!channel?.config) return undefined;
-
-      // Validate tenant ownership (defense-in-depth)
-      if (channel.tenantId !== tenantId) {
-        this.logger.warn(
-          `Bot config tenant mismatch: channel ${channel.id} belongs to ${channel.tenantId}, not ${tenantId}`,
-        );
-        return undefined;
-      }
-
-      const config = channel.config;
-      if (!config.botEnabled) return undefined;
-
-      return {
-        enabled: Boolean(config.botEnabled),
-        provider: config.botProvider ?? 'typebot',
-      };
-    } catch (err) {
-      this.logger.debug(
-        `Channel bot config lookup failed for ${channelType}/${channelAccount}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return undefined;
-    }
-  }
-
-  private async enqueueBotProcessingIfNeeded(
-    payload: OmniPayload,
-    conversationId: string,
-    inboundMessageId: string,
-  ): Promise<void> {
-    if (payload.senderType !== 'customer') return;
-
-    // Bot-processable message types:
-    // - text: normal text input
-    // - interactive button/list replies: customer tapped a bot button
-    // - media: image/video/audio/file with optional caption
-    const botProcessableTypes = new Set([
-      'text',
-      'image',
-      'video',
-      'audio',
-      'file',
-      'document',
-      'sticker',
-    ]);
-    const isInteractive = !!payload.metadata?.replyId;
-    if (!botProcessableTypes.has(payload.messageType) && !isInteractive) return;
-
-    // Check if the conversation has bot enabled before enqueuing
-    try {
-      const conversation = await this.conversationRepo.findById(conversationId);
-      if (!conversation?.bot?.enabled) {
-        this.logger.debug(
-          `Bot not enabled for conversation ${conversationId} — skipping bot queue`,
-        );
-        return;
-      }
-
-      // For media messages without text, provide a fallback description
-      let text = payload.content;
-      if (!text?.trim() && payload.messageType !== 'text') {
-        text = `[${payload.messageType}]`;
-      }
-
-      await this.botQueueService.enqueueInboundMessage({
-        tenantId: payload.tenantId,
-        org: payload.tenantId,
-        channelId: payload.channelId,
-        conversationId,
-        messageId: inboundMessageId,
-        text: text || '',
-        channel: payload.channelType,
-        replyId: payload.metadata?.replyId,
-        messageType: payload.messageType,
-      });
-    } catch (error) {
-      this.logger.error(
-        `Failed to enqueue bot job for inbound message ${inboundMessageId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
   // ────────────────────────────────────────────────────────────────
-  // Auto-Assignment Engine
+  // Session Lifecycle Configuration
   // ────────────────────────────────────────────────────────────────
-
-  /**
-   * Trigger auto-assignment for a conversation.
-   *
-   * Flow:
-   * 1. Load channel config → supportUserIds + supportGroupIds
-   * 2. Resolve group members into individual user IDs
-   * 3. Merge into a deduplicated agent pool
-   * 4. Call AssignmentService with routing context + agent pool
-   * 5. Emit assignment event for real-time broadcast + activity trail
-   *
-   * If the channel has autoAssignmentEnabled = false, skip assignment.
-   * If supportUserIds AND supportGroupIds are both empty, use all online agents.
-   */
-  private async triggerAutoAssignment(
-    payload: OmniPayload,
-    conversationId: string,
-    contactId: string | null,
-    reason: string,
-    enrichedProfile?: { name?: string; avatarUrl?: string; phone?: string },
-  ): Promise<void> {
-    try {
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG] ═══════════════════════════════════════════════`,
-      );
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG] triggerAutoAssignment called for conversation=${conversationId}, reason=${reason}`,
-      );
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG] tenantId=${payload.tenantId}, channelType=${payload.channelType}, channelAccount=${payload.channelAccount}`,
-      );
-
-      // 1. Load channel config
-      let channelConfig: Record<string, any> = {};
-      try {
-        const channel = await this.channelsService.findAnyByAccount(
-          this.toSchemaChannelType(payload.channelType),
-          payload.channelAccount,
-        );
-        this.logger.debug(
-          `[AUTO-ASSIGN DEBUG] Channel lookup result: ${channel ? `found (id=${channel.id})` : 'NOT FOUND'}`,
-        );
-        this.logger.debug(
-          `[AUTO-ASSIGN DEBUG] Channel full config: ${JSON.stringify(channel?.config ?? {}, null, 2)}`,
-        );
-        channelConfig = channel?.config ?? {};
-      } catch (channelErr: any) {
-        // Channel not found in DB — use defaults (assign from all agents)
-        this.logger.debug(
-          `[AUTO-ASSIGN DEBUG] Channel lookup EXCEPTION: ${channelErr.message}`,
-        );
-        this.logger.debug(
-          `Channel not found for ${payload.channelType}/${payload.channelAccount} — using default routing`,
-        );
-      }
-
-      // 2. Channel-first auto-assignment hierarchy
-      //    - false  → SKIP immediately (channel override OFF)
-      //    - true   → ALWAYS assign (channel override ON, bypasses global)
-      //    - undefined → defer to global toggle (handled by AssignmentService)
-      const channelAutoAssign = channelConfig.autoAssignmentEnabled;
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG] channelConfig.autoAssignmentEnabled = ${JSON.stringify(channelAutoAssign)} (type: ${typeof channelAutoAssign})`,
-      );
-
-      if (channelAutoAssign === false) {
-        this.logger.debug(
-          `[AUTO-ASSIGN DEBUG] ❌ EARLY EXIT: Channel auto-assign is explicitly FALSE — skipping assignment`,
-        );
-        this.logger.log(
-          `Auto-assignment explicitly disabled for channel ${payload.channelAccount} — skipping`,
-        );
-        return;
-      }
-
-      // 3. Build agent pool from channel's support config
-      const supportUserIds: string[] = channelConfig.supportUserIds ?? [];
-      const supportGroupIds: string[] = channelConfig.supportGroupIds ?? [];
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG] supportUserIds=${JSON.stringify(supportUserIds)}, supportGroupIds=${JSON.stringify(supportGroupIds)}`,
-      );
-
-      let agentPool: string[] | undefined = undefined;
-      if (supportUserIds.length > 0 || supportGroupIds.length > 0) {
-        const groupMemberIds =
-          await this.resolveGroupMembersForAssignment(supportGroupIds);
-        this.logger.debug(
-          `[AUTO-ASSIGN DEBUG] Resolved group members: ${JSON.stringify(groupMemberIds)}`,
-        );
-        const allSupportIds = [
-          ...new Set([...supportUserIds, ...groupMemberIds]),
-        ];
-        agentPool = allSupportIds.length > 0 ? allSupportIds : undefined;
-
-        this.logger.debug(
-          `[AUTO-ASSIGN DEBUG] Final agent pool: ${JSON.stringify(agentPool)} (${allSupportIds.length} unique)`,
-        );
-      } else {
-        this.logger.debug(
-          `[AUTO-ASSIGN DEBUG] No support users/groups configured — agent pool is UNDEFINED (all online agents)`,
-        );
-      }
-
-      // 4. Build routing context for rule evaluation
-      const customerName =
-        enrichedProfile?.name ??
-        payload.metadata?.contactName ??
-        payload.senderId;
-
-      // 5. Call AssignmentService with channel override flag
-      const routingContext = {
-        channel: payload.channelType,
-        tags: [],
-        customerName,
-        content: payload.content ?? '',
-        time: this.getCurrentTimeHHmm(),
-        segment: undefined,
-      };
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG] Calling AssignmentService.assignConversation with:`,
-      );
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG]   channelAutoAssignOverride=${JSON.stringify(channelAutoAssign)}`,
-      );
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG]   agentPool=${JSON.stringify(agentPool)}`,
-      );
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG]   contactId=${contactId}, senderId=${payload.senderId}`,
-      );
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG]   routingContext=${JSON.stringify(routingContext)}`,
-      );
-
-      const assignedAgentId = await this.assignmentService.assignConversation(
-        payload.tenantId,
-        conversationId,
-        {
-          agentPool,
-          contactId,
-          externalSenderId: payload.senderId,
-          channelAutoAssignOverride: channelAutoAssign, // true | undefined
-          routingContext,
-          allowReassignment: reason === 'reopen_agent_offline',
-        },
-      );
-
-      // 6. Emit assignment event for real-time broadcast
-      if (assignedAgentId) {
-        this.logger.debug(
-          `[AUTO-ASSIGN DEBUG] ✅ SUCCESS: conversation ${conversationId} assigned to agent ${assignedAgentId}`,
-        );
-        this.eventEmitter.emit('omni.conversation.assigned', {
-          tenantId: payload.tenantId,
-          conversationId,
-          agentId: assignedAgentId,
-          oldAgentId: null,
-          strategy: 'auto',
-          reason,
-        });
-        this.logger.log(
-          `Auto-assigned conversation ${conversationId} → agent ${assignedAgentId} (reason: ${reason})`,
-        );
-      } else {
-        this.logger.debug(
-          `[AUTO-ASSIGN DEBUG] ⚠️ NO ASSIGNMENT: conversation ${conversationId} goes to queue (reason: ${reason})`,
-        );
-        this.logger.log(
-          `Conversation ${conversationId} goes to queue — no available agent (reason: ${reason})`,
-        );
-      }
-      this.logger.debug(
-        `[AUTO-ASSIGN DEBUG] ═══════════════════════════════════════════════`,
-      );
-    } catch (err: any) {
-      // Auto-assignment failure must NOT block message processing
-      this.logger.error(
-        `Auto-assignment failed for conversation ${conversationId}: ${err.message}`,
-        err.stack,
-      );
-    }
-  }
-
-  /**
-   * Resolve group IDs to member user IDs.
-   * Delegates to AssignmentService to eliminate code duplication (DUP-03).
-   */
-  private async resolveGroupMembersForAssignment(
-    groupIds: string[],
-  ): Promise<string[]> {
-    if (groupIds.length === 0) return [];
-    return this.assignmentService.resolveGroupMembers(groupIds);
-  }
-
-  /**
-   * Get current time as HH:mm for routing rule time-based conditions.
-   */
-  private getCurrentTimeHHmm(): string {
-    const now = new Date();
-    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-  }
-
-  // ────────────────────────────────────────────────────────────────
-  // Event listeners for cache invalidation
-  // ────────────────────────────────────────────────────────────────
-
-  /**
-   * When a conversation is resolved or closed, invalidate the identity cache
-   * so the next inbound message creates a NEW session.
-   */
-  @OnEvent('omni.conversation.status_changed')
-  async handleStatusChanged(event: {
-    tenantId: string;
-    conversationId: string;
-    status: string;
-    agentId?: string | null;
-    channelType: string;
-    channelAccount: string;
-    externalConversationId: string;
-  }): Promise<void> {
-    if (event.status === 'resolved' || event.status === 'closed') {
-      await this.identityService.invalidateIdentity(
-        event.channelType,
-        event.channelAccount,
-        event.externalConversationId,
-        event.tenantId,
-      );
-
-      // Cancel any pending auto-resolve job for this conversation
-      await this.autoResolveService.cancelAutoResolve(event.conversationId);
-
-      const assignedAgentId =
-        (await this.conversationRepo.findById(event.conversationId))
-          ?.assignedAgentId ?? null;
-      if (assignedAgentId) {
-        await this.agentPresenceService.releaseConversation(
-          event.tenantId,
-          assignedAgentId,
-        );
-      }
-
-      this.logger.log(
-        `Invalidated identity cache for conversation ${event.conversationId} (${event.status})`,
-      );
-    }
-  }
-
-  /**
-   * Map channel types to lowercase for schema storage.
-   */
-  private toSchemaChannelType(type: string): string {
-    // Return lowercase to match schema enum and domain model
-    return type.toLowerCase();
-  }
-
-  private parsePositiveInt(
-    value: string | undefined,
-    fallback: number,
-    max: number,
-  ): number {
-    const parsed = Number.parseInt(value ?? `${fallback}`, 10);
-    if (Number.isNaN(parsed) || parsed <= 0) {
-      return fallback;
-    }
-    return Math.min(parsed, max);
-  }
-
-  private parseCursor(
-    createdAt?: string,
-    id?: string,
-  ): { createdAt: Date; id: string } | null {
-    if (!createdAt && !id) {
-      return null;
-    }
-    if (!createdAt || !id) {
-      throw new BadRequestException('Cursor requires both createdAt and id');
-    }
-
-    const parsedDate = new Date(createdAt);
-    if (Number.isNaN(parsedDate.getTime())) {
-      throw new BadRequestException(
-        'Cursor createdAt must be a valid ISO date',
-      );
-    }
-
-    return { createdAt: parsedDate, id };
-  }
-
-  private async createShadowContact(
-    payload: OmniPayload,
-    enrichedProfile: { name?: string; avatarUrl?: string; phone?: string } = {},
-  ): Promise<string | null> {
-    try {
-      const tenant = await this.tenantsService.findById(payload.tenantId);
-      const systemActorId = tenant?.ownerId ?? null;
-
-      if (!systemActorId) {
-        this.logger.warn(
-          `Skipping shadow contact creation for sender ${payload.senderId}: ` +
-            `tenant ${payload.tenantId} has no ownerId`,
-        );
-        // Contact requires createdById/updatedById. Without a tenant owner we
-        // cannot satisfy that, so bail out instead of falling through to a
-        // guaranteed ContactSchemaClass validation error.
-        return null;
-      }
-
-      // ── Auto-merge check: does this sender match an existing contact? ──
-      const identityConfig = await this.getIdentityResolutionConfig(
-        payload.tenantId,
-      );
-
-      // ── Email-specific deduplication ────────────────────────────────────
-      // For email channels, the senderId IS the email address.
-      // Check if any existing contact already has this email in their
-      // emails[] array or omniIdentities — prevents N contacts for one sender.
-      if (payload.channelType === 'email' && payload.senderId) {
-        const senderEmail = payload.senderId.toLowerCase();
-
-        // Search by emails[] array first (most reliable)
-        const existingByEmail = await this.contactsService.findByEmail(
-          payload.tenantId,
-          senderEmail,
-        );
-        if (existingByEmail) {
-          // Ensure this contact has the Email omni identity
-          try {
-            await this.contactsService.mergeIdentity(existingByEmail.id, {
-              channelType: this.toSchemaChannelType(payload.channelType),
-              senderId: payload.senderId,
-            });
-          } catch {
-            /* identity may already exist */
-          }
-
-          this.logger.log(
-            `Reused existing contact ${existingByEmail.id} for email ${senderEmail}`,
-          );
-          return existingByEmail.id;
-        }
-
-        // Search by omniIdentities.senderId (catches earlier shadow contacts)
-        const existingByIdentity = await this.contactsService.findBySenderId(
-          payload.tenantId,
-          this.toSchemaChannelType(payload.channelType),
-          payload.senderId,
-        );
-        if (existingByIdentity) {
-          // Add email to emails[] array if not already there
-          try {
-            await this.contactsService.addEmailIfMissing(
-              existingByIdentity.id,
-              senderEmail,
-            );
-          } catch {
-            /* best effort */
-          }
-
-          this.logger.log(
-            `Reused existing contact ${existingByIdentity.id} for sender ${senderEmail} (identity match)`,
-          );
-          return existingByIdentity.id;
-        }
-      }
-
-      if (identityConfig.autoMergeShadowContact) {
-        const phone = payload.metadata?.phone;
-        const email =
-          payload.metadata?.email ||
-          (payload.channelType === 'email' ? payload.senderId : undefined);
-
-        if (phone || email) {
-          const duplicateResult = await this.contactsService.checkDuplicate({
-            phones: phone,
-            emails: email,
-          });
-
-          if (
-            duplicateResult.isDuplicate &&
-            duplicateResult.duplicates.length > 0
-          ) {
-            // Found an existing contact — merge identity into it instead of creating shadow
-            const existingContact = duplicateResult.duplicates[0];
-
-            try {
-              await this.contactsService.mergeIdentity(existingContact.id, {
-                channelType: this.toSchemaChannelType(payload.channelType),
-                senderId: payload.senderId,
-              });
-
-              this.logger.log(
-                `Auto-merged sender ${payload.senderId} into existing contact ${existingContact.id} ` +
-                  `(matched by ${phone ? 'phone' : 'email'})`,
-              );
-
-              this.eventEmitter.emit('omni.contact.auto_merged', {
-                tenantId: payload.tenantId,
-                existingContactId: existingContact.id,
-                senderId: payload.senderId,
-                channelType: payload.channelType,
-                matchedBy: phone ? 'phone' : 'email',
-              });
-
-              return existingContact.id;
-            } catch (mergeErr: any) {
-              this.logger.warn(
-                `Auto-merge failed for sender ${payload.senderId}: ${mergeErr.message} — creating shadow instead`,
-              );
-            }
-          }
-        }
-      }
-
-      // ── Create shadow contact ─────────────────────────────────────────
-      const displayName =
-        enrichedProfile.name ??
-        payload.metadata?.contactName ??
-        payload.senderId;
-
-      const nameParts = displayName.trim().split(/\s+/);
-      const firstName = nameParts[0];
-      const lastName =
-        nameParts.length > 1 ? nameParts.slice(1).join(' ') : '(Omni)';
-
-      // For email channels, populate the emails[] array for future dedup
-      const emailsArray =
-        payload.channelType === 'email' && payload.senderId
-          ? [payload.senderId.toLowerCase()]
-          : [];
-
-      const contact = await this.contactsService.create({
-        tenantId: payload.tenantId,
-        firstName,
-        lastName,
-        emails: emailsArray,
-        status: 'new',
-        lifecycleStage: 'lead',
-        source: this.toSchemaChannelType(payload.channelType),
-        omniIdentities: [
-          {
-            channelType: this.toSchemaChannelType(payload.channelType),
-            senderId: payload.senderId,
-          },
-        ],
-        isShadow: true,
-        createdById: systemActorId ?? undefined,
-        updatedById: systemActorId ?? undefined,
-      } as any);
-
-      this.logger.log(
-        `Created Shadow Contact ${contact.id} for sender ${payload.senderId}`,
-      );
-
-      return contact.id;
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      this.logger.error(
-        `Failed to create Shadow Contact for sender ${payload.senderId}: ${error.message}`,
-        error.stack ?? JSON.stringify(err),
-      );
-      return null;
-    }
-  }
 
   /**
    * Load session lifecycle configuration from tenant CRM settings.
@@ -1481,105 +848,89 @@ export class ConversationService {
     }
   }
 
-  /**
-   * Load identity resolution configuration from tenant CRM settings.
-   * Controls shadow contact creation, social profile enrichment, and auto-merge behavior.
-   */
-  private async getIdentityResolutionConfig(tenantId?: string): Promise<{
-    autoCreateShadowContact: boolean;
-    autoEnrichProfile: boolean;
-    enrichmentDisclaimer: string;
-    autoMergeShadowContact: boolean;
-    autoMergeStrategy: string;
-  }> {
-    const defaults = {
-      autoCreateShadowContact: true,
-      autoEnrichProfile: true,
-      enrichmentDisclaimer:
-        'We collect publicly available profile information to improve your customer experience. You may request data deletion at any time.',
-      autoMergeShadowContact: true,
-      autoMergeStrategy: 'phone_email_match',
-    };
+  // ────────────────────────────────────────────────────────────────
+  // Event listeners for cache invalidation
+  // ────────────────────────────────────────────────────────────────
 
-    try {
-      const config = await this.settingsService.getSetting(
-        'omni_identity_resolution',
-        tenantId,
+  /**
+   * When a conversation is resolved or closed, invalidate the identity cache
+   * so the next inbound message creates a NEW session.
+   */
+  @OnEvent(OmniEvents.CONVERSATION_STATUS_CHANGED)
+  async handleStatusChanged(event: {
+    tenantId: string;
+    conversationId: string;
+    status: string;
+    agentId?: string | null;
+    channelType: string;
+    channelAccount: string;
+    externalConversationId: string;
+  }): Promise<void> {
+    if (event.status === 'resolved' || event.status === 'closed') {
+      await this.identityService.invalidateIdentity(
+        event.channelType,
+        event.channelAccount,
+        event.externalConversationId,
+        event.tenantId,
       );
-      return config ? { ...defaults, ...config } : defaults;
-    } catch (err: any) {
-      this.logger.warn(
-        `Failed to load omni_identity_resolution settings: ${err.message}`,
+
+      // Cancel any pending auto-resolve job for this conversation
+      await this.orchestration.cancelAutoResolve(event.conversationId);
+
+      const assignedAgentId =
+        (await this.conversationRepo.findById(event.conversationId))
+          ?.assignedAgentId ?? null;
+      if (assignedAgentId) {
+        await this.orchestration.releaseConversation(
+          event.tenantId,
+          assignedAgentId,
+        );
+      }
+
+      this.logger.log(
+        `Invalidated identity cache for conversation ${event.conversationId} (${event.status})`,
       );
-      return defaults;
     }
   }
 
-  /**
-   * Check if this message arrived outside business hours.
-   * If so, optionally:
-   *   - Send an out-of-office auto-reply message
-   *   - Set the conversation status to 'pending'
-   */
-  private async handleBusinessHoursCheck(
-    payload: OmniPayload,
-    conversationId: string,
-  ): Promise<void> {
-    try {
-      const withinHours = await this.businessHoursService.isWithinBusinessHours(
-        payload.tenantId,
-      );
+  // ────────────────────────────────────────────────────────────────
+  // Private Helpers
+  // ────────────────────────────────────────────────────────────────
 
-      if (withinHours) {
-        return; // Normal business hours — nothing to do
-      }
+  private toSchemaChannelType(type: string): string {
+    return type.toLowerCase();
+  }
 
-      const oooConfig = await this.businessHoursService.getOOOConfig(
-        payload.tenantId,
-      );
+  private parsePositiveInt(
+    value: string | undefined,
+    fallback: number,
+    max: number,
+  ): number {
+    const parsed = Number.parseInt(value ?? `${fallback}`, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      return fallback;
+    }
+    return Math.min(parsed, max);
+  }
 
-      if (!oooConfig.oooAutoReplyEnabled) {
-        return; // OOO is disabled — nothing to do
-      }
+  private parseCursor(
+    createdAt?: string,
+    id?: string,
+  ): { createdAt: Date; id: string } | null {
+    if (!createdAt && !id) {
+      return null;
+    }
+    if (!createdAt || !id) {
+      throw new BadRequestException('Cursor requires both createdAt and id');
+    }
 
-      // Set conversation to pending if configured
-      if (oooConfig.oooSetPending) {
-        await this.conversationRepo.updateStatus(conversationId, 'pending');
-        this.logger.log(
-          `Set conversation ${conversationId} to pending (outside business hours)`,
-        );
-      }
-
-      // Emit an event for the OOO auto-reply message.
-      // The outbound service or gateway can listen to this and send
-      // the actual reply through the appropriate channel.
-      // Use channel-specific message if configured, otherwise fall back to generic.
-      const oooMessage = this.businessHoursService.getChannelOOOMessage(
-        oooConfig,
-        payload.channelType,
-      );
-      if (oooMessage) {
-        this.eventEmitter.emit('omni.ooo.auto_reply', {
-          tenantId: payload.tenantId,
-          conversationId,
-          channelType: payload.channelType,
-          channelAccount: payload.channelAccount,
-          senderId: payload.senderId,
-          message: oooMessage,
-          externalConversationId: payload.externalConversationId,
-        });
-
-        this.logger.log(
-          `Emitted OOO auto-reply for conversation ${conversationId} ` +
-            `(channel: ${payload.channelType})`,
-        );
-      }
-    } catch (err) {
-      // Non-fatal — don't block message processing if OOO check fails
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      this.logger.warn(
-        `Business hours check failed for conversation ${conversationId}: ${errorMessage}`,
+    const parsedDate = new Date(createdAt);
+    if (Number.isNaN(parsedDate.getTime())) {
+      throw new BadRequestException(
+        'Cursor createdAt must be a valid ISO date',
       );
     }
+
+    return { createdAt: parsedDate, id };
   }
 }

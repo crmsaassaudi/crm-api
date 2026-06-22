@@ -12,9 +12,11 @@ import { Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
+import { ChannelRepository } from '../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { LivechatWidgetService } from './livechat-widget.service';
 import { MessageStatusService } from './services/message-status.service';
 import { runWithTenantContext } from '../common/tenancy/tenant-context';
+import { OmniEvents, LivechatEvents } from '../omni-inbound/domain/omni-events';
 
 /**
  * LivechatGateway — Socket.IO namespace for livechat visitors.
@@ -77,6 +79,7 @@ export class LivechatGateway
 
   constructor(
     private readonly conversationRepo: ConversationRepository,
+    private readonly channelRepo: ChannelRepository,
     private readonly eventEmitter: EventEmitter2,
     private readonly widgetService: LivechatWidgetService,
     private readonly messageStatusService: MessageStatusService,
@@ -97,7 +100,7 @@ export class LivechatGateway
 
     // Forward typing=false so agent UI clears the typing bubble
     if (conversationId && tenantId) {
-      this.eventEmitter.emit('omni.visitor.typing.livechat', {
+      this.eventEmitter.emit(OmniEvents.VISITOR_TYPING_LIVECHAT, {
         conversationId,
         visitorId,
         tenantId,
@@ -126,6 +129,45 @@ export class LivechatGateway
       client.emit('error', {
         message: 'Missing required fields: visitorId, tenantId, channelId',
       });
+      return;
+    }
+
+    // T-036 Security: Validate tenantId by cross-referencing with channelId.
+    // The client-supplied tenantId is untrusted (public namespace, no JWT).
+    // We look up the channel document and verify ownership to prevent
+    // a malicious visitor from impersonating another tenant.
+    try {
+      const channel = await this.channelRepo.findByIdNoTenant(channelId);
+      if (!channel) {
+        this.logger.warn(
+          `[Security] Channel ${channelId} not found — rejecting visitor ${visitorId}`,
+        );
+        client.emit('error', { message: 'Invalid channel' });
+        client.disconnect(true);
+        return;
+      }
+      if (channel.tenantId?.toString() !== tenantId) {
+        this.logger.warn(
+          `[Security] Tenant mismatch: visitor claimed tenant=${tenantId} but channel ${channelId} belongs to ${channel.tenantId}`,
+        );
+        client.emit('error', { message: 'Invalid channel' });
+        client.disconnect(true);
+        return;
+      }
+      if (channel.type !== 'livechat') {
+        this.logger.warn(
+          `[Security] Channel ${channelId} is type="${channel.type}", not livechat`,
+        );
+        client.emit('error', { message: 'Invalid channel' });
+        client.disconnect(true);
+        return;
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `[Security] Channel validation failed for ${channelId}: ${err?.message}`,
+      );
+      client.emit('error', { message: 'Channel validation failed' });
+      client.disconnect(true);
       return;
     }
 
@@ -220,7 +262,7 @@ export class LivechatGateway
 
     if (!visitorId || !tenantId || !data.text) return;
 
-    this.eventEmitter.emit('livechat.message.inbound', {
+    this.eventEmitter.emit(LivechatEvents.MESSAGE_INBOUND, {
       visitorId,
       tenantId,
       channelId,
@@ -268,7 +310,7 @@ export class LivechatGateway
       `Visitor ${visitorId} uploading "${data.fileName}" (${data.mimeType})`,
     );
 
-    this.eventEmitter.emit('livechat.media.inbound', {
+    this.eventEmitter.emit(LivechatEvents.MEDIA_INBOUND, {
       visitorId,
       tenantId,
       channelId,
@@ -305,7 +347,7 @@ export class LivechatGateway
       client.data.conversationId = conversationId;
     }
 
-    this.eventEmitter.emit('omni.visitor.typing.livechat', {
+    this.eventEmitter.emit(OmniEvents.VISITOR_TYPING_LIVECHAT, {
       conversationId,
       visitorId,
       tenantId,
@@ -498,7 +540,7 @@ export class LivechatGateway
       `Visitor ${visitorId} reacted ${data.emoji} on message ${data.messageId}`,
     );
 
-    this.eventEmitter.emit('omni.reaction.inbound', {
+    this.eventEmitter.emit(OmniEvents.REACTION_INBOUND, {
       tenantId,
       channelType: 'livechat',
       channelId: channelId ?? '',

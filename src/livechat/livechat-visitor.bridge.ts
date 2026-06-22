@@ -6,6 +6,7 @@ import { ConversationRepository } from '../omni-inbound/repositories/conversatio
 import { UsersService } from '../users/users.service';
 import { FilesService } from '../files/files.service';
 import { MessageStatusService } from './services/message-status.service';
+import { OmniEvents, LivechatEvents } from '../omni-inbound/domain/omni-events';
 import { runWithTenantContext } from '../common/tenancy/tenant-context';
 
 /**
@@ -44,7 +45,7 @@ export class LivechatVisitorBridge {
    * Khi conversation được assign (auto hoặc manual), resolve visitorId từ
    * OmniConversation.externalId và emit 'agent:joined' đến visitor room.
    */
-  @OnEvent('omni.conversation.assigned')
+  @OnEvent(OmniEvents.CONVERSATION_ASSIGNED)
   async handleAssignment(event: {
     tenantId: string;
     conversationId: string;
@@ -120,7 +121,7 @@ export class LivechatVisitorBridge {
    * OmniGateway emit event này khi agent gõ trong livechat conversation.
    * Bridge lookup visitorId từ OmniConversation.externalId.
    */
-  @OnEvent('omni.agent.typing.livechat')
+  @OnEvent(OmniEvents.AGENT_TYPING_LIVECHAT)
   async handleAgentTyping(event: {
     tenantId: string;
     conversationId: string;
@@ -189,7 +190,7 @@ export class LivechatVisitorBridge {
    * status_changed payload (omni.controller.ts line 861), so we don't need
    * to make a second DB round-trip to resolve visitorId.
    */
-  @OnEvent('omni.conversation.status_changed')
+  @OnEvent(OmniEvents.CONVERSATION_STATUS_CHANGED)
   async handleStatusChanged(event: {
     tenantId: string;
     conversationId: string;
@@ -236,7 +237,7 @@ export class LivechatVisitorBridge {
    *
    * Event is emitted by CsatService.handleConversationResolved().
    */
-  @OnEvent('omni.csat.token_generated')
+  @OnEvent(OmniEvents.CSAT_TOKEN_GENERATED)
   async handleCsatTokenGenerated(event: {
     tenantId: string;
     conversationId: string;
@@ -277,7 +278,7 @@ export class LivechatVisitorBridge {
    *
    * Event payload comes from OmniController.markAsRead().
    */
-  @OnEvent('livechat.agent.read')
+  @OnEvent(LivechatEvents.AGENT_READ)
   async handleAgentRead(event: {
     tenantId: string;
     conversationId: string;

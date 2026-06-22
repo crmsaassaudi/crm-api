@@ -8,6 +8,7 @@ import {
   CHANNEL_ADAPTERS,
 } from '../adapters/channel-adapter.interface';
 import { OmniPayload, ChannelType } from '../domain/omni-payload';
+import { OmniEvents } from '../domain/omni-events';
 import {
   OMNI_ROUTING_QUEUE,
   PRIORITY_NORMAL,
@@ -108,7 +109,7 @@ export class InboundProcessorService {
    *
    * Note: channelConfig is optional for livechat (LivechatAdapter ignores it).
    */
-  @OnEvent('omni.inbound.webhook')
+  @OnEvent(OmniEvents.INBOUND_WEBHOOK)
   async handleLivechatInboundEvent(data: {
     channelType: ChannelType;
     channelId: string;
@@ -185,7 +186,7 @@ export class InboundProcessorService {
     if (!reaction) return false;
 
     // Emit unified event → ReactionService picks it up
-    this.eventEmitter.emit('omni.reaction.inbound', reaction);
+    this.eventEmitter.emit(OmniEvents.REACTION_INBOUND, reaction);
     return true;
   }
 }
