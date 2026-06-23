@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, isValidObjectId } from 'mongoose';
 import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
@@ -34,7 +34,7 @@ export class ReactionService {
    * Handle an inbound reaction from any channel.
    *
    * Flow:
-   * 1. Find the target message by externalMessageId (or internal _id)
+   * 1. Find the target message by _id (if valid ObjectId) or externalMessageId
    * 2. Upsert or remove the reaction
    * 3. Emit 'omni.reaction.persisted' for real-time broadcast
    */
@@ -45,17 +45,31 @@ export class ReactionService {
       // original HTTP/WebSocket CLS scope, so the Mongoose tenant-filter
       // plugin requires activeTenantId in CLS for all DB operations.
       await runWithTenantContext(this.cls, payload.tenantId, async () => {
-        // Resolve message — try internal ID first, then externalMessageId
+        // Resolve message: two ID systems exist —
+        //   • _id: default MongoDB ObjectId (e.g. "6a3693cf3d74fcb9231b0fd8")
+        //   • externalMessageId: provider string (e.g. "lc_d2bcc77e-..._123")
+        //
+        // The payload.messageId from the frontend may be either type.
+        // Use isValidObjectId() to route correctly and avoid CastError.
         let message: OmniMessageDocument | null = null;
 
-        if (payload.messageId) {
-          message = await this.messageModel.findById(payload.messageId).exec();
+        if (payload.messageId && isValidObjectId(payload.messageId)) {
+          // Valid ObjectId → look up by _id
+          message = await this.messageModel
+            .findById(payload.messageId)
+            .exec();
         }
 
+        // Fallback: try externalMessageId lookup.
+        // This covers livechat (string IDs), provider webhook IDs,
+        // and cases where the frontend sends externalMessageId as messageId.
         if (!message) {
-          message = await this.messageModel
-            .findOne({ externalMessageId: payload.externalMessageId })
-            .exec();
+          const extId = payload.externalMessageId || payload.messageId;
+          if (extId) {
+            message = await this.messageModel
+              .findOne({ externalMessageId: extId })
+              .exec();
+          }
         }
 
         if (!message) {

@@ -333,6 +333,70 @@ export class LivechatVisitorBridge {
     }
   }
 
+  // ── Reactions: forward persisted reaction to visitor widget ───────────────
+
+  /**
+   * When a reaction is persisted (agent or visitor reacted on a livechat
+   * conversation), forward the updated reactions array to the visitor widget
+   * so the UI updates in real-time.
+   *
+   * The existing sendReactionToVisitor() method on LivechatGateway emits
+   * 'agent:reaction' to the visitor room — the widget already listens for it.
+   */
+  @OnEvent(OmniEvents.REACTION_PERSISTED)
+  async handleReactionPersisted(event: {
+    tenantId: string;
+    channelType: string;
+    conversationId: string;
+    messageId: string;
+    externalMessageId?: string;
+    reactions: Array<{
+      emoji: string;
+      senderId: string;
+      senderType: string;
+      createdAt?: Date;
+    }>;
+  }): Promise<void> {
+    if (event.channelType !== 'livechat') return;
+
+    try {
+      // Resolve visitorId — prefer Redis cache, fallback to DB
+      let visitorId = await this.getCachedVisitorId(event.conversationId);
+
+      if (!visitorId) {
+        const conv = await runWithTenantContext(
+          this.cls,
+          event.tenantId,
+          () => this.conversationRepo.findById(event.conversationId),
+        );
+        if (!conv || conv.channelType !== 'livechat') return;
+        visitorId = conv.externalConversationId;
+        if (visitorId) {
+          this.cacheVisitorId(event.conversationId, visitorId);
+        }
+      }
+
+      if (!visitorId) return;
+
+      // Forward to visitor widget — uses the externalMessageId as messageId
+      // because the widget identifies messages by their external/local IDs,
+      // not by MongoDB ObjectIds.
+      this.livechatGateway.sendReactionToVisitor(visitorId, {
+        messageId: event.externalMessageId ?? event.messageId,
+        reactions: event.reactions,
+      });
+
+      this.logger.debug(
+        `[Bridge] Forwarded reaction update for message ${event.messageId} ` +
+          `to visitor ${visitorId}`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `[Bridge] handleReactionPersisted failed for ${event.conversationId}: ${err?.message}`,
+      );
+    }
+  }
+
   // ── Redis Cache Helpers ─────────────────────────────────────────────────
 
   /**
