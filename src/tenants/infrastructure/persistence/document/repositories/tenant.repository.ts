@@ -109,50 +109,69 @@ export class TenantsRepository {
     tenantId: string,
     bytes: number,
   ): Promise<boolean> {
-    // 1. Try the normal atomic increment with quota guard
-    const result = await this.tenantsModel.updateOne(
-      {
-        _id: tenantId,
-        'storageQuota.limitBytes': { $exists: true },
-        $or: [
-          { 'storageQuota.limitBytes': -1 }, // unlimited
-          {
-            $expr: {
-              $lte: [
-                { $add: ['$storageQuota.usedBytes', bytes] },
-                '$storageQuota.limitBytes',
-              ],
+    // Read current quota (or initialise if missing)
+    const tenant = await this.tenantsModel.findById(tenantId).lean().exec();
+    if (!tenant) return false;
+
+    const quota = (tenant as any).storageQuota as
+      | { limitBytes?: number; usedBytes?: number }
+      | undefined;
+
+    // If storageQuota doesn't exist yet, initialise with defaults + requested bytes
+    if (!quota || quota.limitBytes === undefined) {
+      const defaultLimit = TenantsRepository.DEFAULT_STORAGE_QUOTA.limitBytes;
+      if (bytes > defaultLimit) return false; // would exceed default limit
+
+      const initialized = await this.tenantsModel.updateOne(
+        {
+          _id: new Types.ObjectId(tenantId),
+          $or: [
+            { storageQuota: { $exists: false } },
+            { 'storageQuota.limitBytes': { $exists: false } },
+          ],
+        },
+        {
+          $set: {
+            storageQuota: {
+              ...TenantsRepository.DEFAULT_STORAGE_QUOTA,
+              usedBytes: bytes,
             },
           },
-        ],
+        },
+      );
+
+      return initialized.modifiedCount > 0;
+    }
+
+    // Unlimited quota — always allow
+    if (quota.limitBytes === -1) {
+      await this.tenantsModel.updateOne(
+        { _id: new Types.ObjectId(tenantId) },
+        { $inc: { 'storageQuota.usedBytes': bytes } },
+      );
+      return true;
+    }
+
+    // Check if increment would exceed the limit
+    const currentUsed = quota.usedBytes ?? 0;
+    if (currentUsed + bytes > quota.limitBytes) {
+      return false; // Over quota
+    }
+
+    // Atomic increment with ceiling guard:
+    // Only increment if usedBytes hasn't changed since we read it
+    // (prevents race condition where two concurrent uploads both pass the check)
+    const result = await this.tenantsModel.updateOne(
+      {
+        _id: new Types.ObjectId(tenantId),
+        'storageQuota.usedBytes': { $lte: quota.limitBytes - bytes },
       },
       { $inc: { 'storageQuota.usedBytes': bytes } },
     );
 
-    if (result.modifiedCount > 0) return true;
-
-    // 2. If no match, check if storageQuota field simply doesn't exist yet.
-    //    Initialize it with defaults + the requested bytes (within default limit).
-    const initialized = await this.tenantsModel.updateOne(
-      {
-        _id: tenantId,
-        'storageQuota': { $exists: false },
-      },
-      {
-        $set: {
-          storageQuota: {
-            ...TenantsRepository.DEFAULT_STORAGE_QUOTA,
-            usedBytes: bytes,
-          },
-        },
-      },
-    );
-
-    if (initialized.modifiedCount > 0) return true;
-
-    // 3. storageQuota exists but the increment would exceed the limit → over quota.
-    return false;
+    return result.modifiedCount > 0;
   }
+
 
   /**
    * Atomically decrement storage usage (for rollback / hard-delete).
