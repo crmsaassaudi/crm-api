@@ -9,7 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 import { ChannelRepository } from '../channels/infrastructure/persistence/document/repositories/channel.repository';
@@ -332,11 +332,6 @@ export class LivechatGateway
       timestamp: data.timestamp ?? new Date().toISOString(),
       visitorName: 'Visitor',
     });
-
-    client.emit('upload:ack', {
-      fileName: data.fileName,
-      mimeType: data.mimeType,
-    });
   }
 
   /**
@@ -579,6 +574,34 @@ export class LivechatGateway
     },
   ): void {
     this.server.to(`visitor:${visitorId}`).emit('agent:reaction', payload);
+  }
+
+  // ── File Upload Events ────────────────────────────────────────────────────
+
+  @OnEvent(LivechatEvents.VISITOR_UPLOAD_COMPLETED)
+  handleVisitorUploadCompleted(payload: {
+    tenantId: string;
+    visitorId: string;
+    fileName: string;
+    mimeType: string;
+  }): void {
+    this.server.to(`visitor:${payload.visitorId}`).emit('upload:ack', {
+      fileName: payload.fileName,
+      mimeType: payload.mimeType,
+    });
+  }
+
+  @OnEvent(LivechatEvents.VISITOR_UPLOAD_FAILED)
+  handleVisitorUploadFailed(payload: {
+    tenantId: string;
+    visitorId: string;
+    fileName: string;
+    error: string;
+  }): void {
+    this.server.to(`visitor:${payload.visitorId}`).emit('upload:error', {
+      message: payload.error,
+      fileName: payload.fileName,
+    });
   }
 
   // ── T-031: Rate Limiting ────────────────────────────────────────────────

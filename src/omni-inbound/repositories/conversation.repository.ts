@@ -678,6 +678,7 @@ export class ConversationRepository {
         assignedAgentId: agentId,
         status: { $in: ['open', 'pending'] },
       })
+      .setOptions({ isPlatformQuery: true })
       .exec();
   }
 
@@ -714,7 +715,7 @@ export class ConversationRepository {
           count: { $sum: 1 },
         },
       },
-    ]);
+    ]).option({ isPlatformQuery: true });
 
     const map = new Map<string, number>();
     for (const row of results) {
@@ -911,9 +912,11 @@ export class ConversationRepository {
    * Used by the auto-resolve cron to know which tenants to scan.
    */
   async findDistinctTenantIdsWithActiveConversations(): Promise<string[]> {
-    const tenantIds = await this.model.distinct('tenantId', {
-      status: { $in: ['open', 'pending'] },
-    });
+    const tenantIds = await this.model
+      .find({ status: { $in: ['open', 'pending'] } })
+      .distinct('tenantId')
+      .setOptions({ isPlatformQuery: true })
+      .exec();
     return tenantIds.map((id) => id.toString());
   }
 

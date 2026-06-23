@@ -92,10 +92,23 @@ export class LivechatInboundBridge {
       });
       fileId = result.fileId;
       storageKey = result.storageKey;
+      
+      this.eventEmitter.emit(LivechatEvents.VISITOR_UPLOAD_COMPLETED, {
+        tenantId: payload.tenantId,
+        visitorId: payload.visitorId,
+        fileName: payload.fileName,
+        mimeType: payload.mimeType,
+      });
     } catch (err: any) {
       this.logger.error(
         `Visitor upload failed for ${payload.visitorId}: ${err?.message}. Skipping media message.`,
       );
+      this.eventEmitter.emit(LivechatEvents.VISITOR_UPLOAD_FAILED, {
+        tenantId: payload.tenantId,
+        visitorId: payload.visitorId,
+        fileName: payload.fileName,
+        error: err?.message || 'Upload failed',
+      });
       return; // do not push broken payload into pipeline
     }
 

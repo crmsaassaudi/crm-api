@@ -130,6 +130,10 @@ export const LivechatEvents = {
   MESSAGE_STATUS: 'livechat.message.status',
   /** Agent marked messages as read */
   AGENT_READ: 'livechat.agent.read',
+  /** Visitor file upload completed to S3 */
+  VISITOR_UPLOAD_COMPLETED: 'livechat.visitor.upload_completed',
+  /** Visitor file upload failed */
+  VISITOR_UPLOAD_FAILED: 'livechat.visitor.upload_failed',
 } as const;
 
 export type LivechatEventName =
@@ -421,4 +425,20 @@ export interface LivechatAgentReadEvent {
   conversationId: string;
   agentId: string;
   messageIds: string[];
+}
+
+/** livechat.visitor.upload_completed */
+export interface LivechatVisitorUploadCompletedEvent {
+  tenantId: string;
+  visitorId: string;
+  fileName: string;
+  mimeType: string;
+}
+
+/** livechat.visitor.upload_failed */
+export interface LivechatVisitorUploadFailedEvent {
+  tenantId: string;
+  visitorId: string;
+  fileName: string;
+  error: string;
 }

@@ -547,7 +547,7 @@ export class ConversationService {
       // Profile enrichment already done eagerly before conversation creation (Step 3b above).
     }
 
-    // â”€â”€ Step 5a: Save the message immediately (with original media URL) â”€â”€
+    // ── Step 5a: Save the message immediately (with original media URL) ──
     // Media caching is done asynchronously via BullMQ to avoid blocking
     // the distributed lock during large file downloads.
     const { message, inserted } =
@@ -576,7 +576,7 @@ export class ConversationService {
       return;
     }
 
-    // â”€â”€ Step 5b: Enqueue async media cache job if media is present â”€â”€
+    // ── Step 5b: Enqueue async media cache job if media is present ──
     if (payload.mediaUrl) {
       await this.mediaCacheQueue.add(
         'cache-media',
@@ -599,6 +599,29 @@ export class ConversationService {
         },
       );
       this.logger.debug(`Enqueued media cache job for message ${message.id}`);
+    } else if (payload.metadata?.media?.storageKey) {
+      // ── Livechat visitor uploads: file already on S3 ──────────────
+      // VisitorUploadService uploads base64 → S3 before the message enters
+      // the pipeline, so there's no external mediaUrl to cache. We resolve
+      // a presigned download URL from the storageKey so agent CRM can
+      // render the media immediately.
+      try {
+        const presignedUrl = await this.mediaProxy.getPresignedUrl(
+          payload.metadata.media.storageKey,
+          3600,
+        );
+        await this.messageRepo.updateMediaProxyUrl(
+          message.id,
+          presignedUrl,
+        );
+        this.logger.debug(
+          `Resolved presigned URL for visitor upload: message ${message.id}`,
+        );
+      } catch (err: any) {
+        this.logger.warn(
+          `Failed to resolve presigned URL for visitor upload ${message.id}: ${err?.message}`,
+        );
+      }
     }
 
     // â”€â”€ Step 5c: Update conversation summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
