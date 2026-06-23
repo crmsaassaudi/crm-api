@@ -1,4 +1,4 @@
-﻿import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { MessageRepository } from '../omni-inbound/repositories/message.repository';
@@ -340,6 +340,17 @@ export class OutboundService {
         source,
         transport,
       });
+
+      // Livechat: agent reply implies they've read all prior visitor messages.
+      // Emit livechat.agent.read so LivechatVisitorBridge persists read status
+      // to DB and pushes the receipt to the visitor widget via socket.
+      if (conversation.channelType === 'livechat') {
+        this.eventEmitter.emit('livechat.agent.read', {
+          tenantId,
+          conversationId,
+          externalConversationId: conversation.externalConversationId,
+        });
+      }
 
       return {
         ok: true,
