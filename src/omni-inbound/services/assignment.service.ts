@@ -19,6 +19,11 @@ import {
   RoutingRuleEvaluatorService,
   RoutingContext,
 } from '../../routing-rules/routing-rule-evaluator.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  OmniEvents,
+  ConversationQueuedEvent,
+} from '../domain/omni-events';
 
 export type AssignmentStrategy =
   | 'round-robin'
@@ -94,6 +99,7 @@ export class AssignmentService {
     private readonly stickyRetryQueue: Queue<StickyRetryJobData>,
     @InjectModel('GroupSchemaClass')
     private readonly groupModel: Model<any>,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -383,30 +389,65 @@ export class AssignmentService {
       }
     }
 
-    if (selectedAgent) {
-      const committed = options.allowReassignment
-        ? await this.conversationRepo.updateAssignment(
-            conversationId,
-            selectedAgent,
-          )
-        : typeof (this.conversationRepo as any).assignIfUnassigned ===
-            'function'
-          ? await this.conversationRepo.assignIfUnassigned(
+    // ── P0 fix: guard the Redis reservation → MongoDB commit gap ──────────
+    // reserveCandidate() atomically increments the agent's Redis load counter.
+    // If any exception fires between that reservation and the MongoDB write
+    // below, the counter would permanently drift (agent appears "full" with a
+    // phantom conversation). The finally block ensures the reservation is always
+    // rolled back when the MongoDB commit does not complete successfully.
+    let committed: any = undefined;
+    try {
+      if (selectedAgent) {
+        committed = options.allowReassignment
+          ? await this.conversationRepo.updateAssignment(
               conversationId,
               selectedAgent,
             )
-          : await this.conversationRepo.updateAssignment(
-              conversationId,
-              selectedAgent,
-            );
+          : typeof (this.conversationRepo as any).assignIfUnassigned ===
+              'function'
+            ? await this.conversationRepo.assignIfUnassigned(
+                conversationId,
+                selectedAgent,
+              )
+            : await this.conversationRepo.updateAssignment(
+                conversationId,
+                selectedAgent,
+              );
 
-      if (committed === null) {
-        await this.presenceService.releaseConversation?.(
-          tenantId,
-          selectedAgent,
-        );
-        reason =
-          'Assignment reservation rolled back because the conversation was already assigned or inactive';
+        if (committed === null) {
+          // Conversation already assigned or inactive — roll back reservation.
+          reason =
+            'Assignment reservation rolled back because the conversation was already assigned or inactive';
+          selectedAgent = null;
+        }
+      }
+    } catch (err: any) {
+      // Re-throw after rollback so BullMQ can retry the job.
+      this.logger.error(
+        `MongoDB assignment write failed for conversation ${conversationId}: ${err.message} — rolling back Redis reservation`,
+        err.stack,
+      );
+      // Rollback happens in finally below.
+      throw err;
+    } finally {
+      // Roll back the Redis reservation if the MongoDB write did not confirm
+      // the assignment (committed === null means rejected; committed ===
+      // undefined means an exception was thrown before the write completed).
+      if (selectedAgent && (committed === null || committed === undefined)) {
+        try {
+          await this.presenceService.releaseConversation?.(
+            tenantId,
+            selectedAgent,
+          );
+          this.logger.warn(
+            `Rolled back Redis reservation for agent ${selectedAgent} on conversation ${conversationId}`,
+          );
+        } catch (releaseErr: any) {
+          this.logger.error(
+            `Failed to roll back Redis reservation for agent ${selectedAgent}: ${releaseErr.message}`,
+          );
+        }
+        // Clear selectedAgent so the audit log below records 'queued', not 'assigned'.
         selectedAgent = null;
       }
     }
@@ -437,6 +478,18 @@ export class AssignmentService {
         metadata,
         outcome: 'queued',
       });
+
+      // T10: notify downstream listeners (ActivityService, metrics, SLA wait-time)
+      // that this conversation is now waiting in the queue.
+      this.eventEmitter.emit(OmniEvents.CONVERSATION_QUEUED, {
+        tenantId,
+        conversationId,
+        strategy: effectiveStrategy,
+        reason,
+        channelType: options.routingContext?.channel ?? 'unknown',
+        queuedSince: new Date(),
+        agentPoolSize: (metadata as any)?.pool?.length ?? 0,
+      } satisfies ConversationQueuedEvent);
     }
 
     return selectedAgent;
@@ -702,27 +755,11 @@ export class AssignmentService {
     return [...agents.slice(index), ...agents.slice(0, index)];
   }
 
-  /**
-   * Least-busy: pick the agent with the fewest open/pending conversations.
-   * Uses a single aggregation pipeline instead of per-agent queries.
-   */
-  private async leastBusy(
-    tenantId: string,
-    agents: string[],
-  ): Promise<{ agentId: string; openChats: number }> {
-    const countMap = await this.conversationRepo.countOpenByAgents(
-      tenantId,
-      agents,
-    );
-
-    const counts = agents.map((agentId) => ({
-      agentId,
-      count: countMap.get(agentId) ?? 0,
-    }));
-
-    counts.sort((a, b) => a.count - b.count);
-    return { agentId: counts[0].agentId, openChats: counts[0].count };
-  }
+  // T11 fix: leastBusy() removed — dead code.
+  // The production path (reserveCandidate → presenceService.reserveAgentFromCandidates)
+  // uses an atomic Lua ZSET script that avoids the O(N) MongoDB aggregation.
+  // If you need a DB-backed fallback, use capacityBased() which already aggregates
+  // open counts and enforces per-agent caps in one pipeline call.
 
   /**
    * Capacity-based: like least-busy, but rejects agents who have reached
@@ -905,6 +942,46 @@ export class AssignmentService {
     } catch {
       return {};
     }
+  }
+
+  /**
+   * T06: log a manual agent assignment (or unassignment) to the audit trail.
+   *
+   * Called by OmniController whenever an agent manually assigns or unassigns a
+   * conversation via the REST API. These events were previously invisible in
+   * the RoutingHistoryPage, creating a blind spot in the audit trail.
+   *
+   * @param params.conversationId - the conversation being (re)assigned
+   * @param params.tenantId       - tenant context
+   * @param params.newAgentId     - the agent being assigned (null = unassigned)
+   * @param params.previousAgentId - the agent before this action (null = none)
+   * @param params.performedByUserId - the agent or admin who triggered this
+   * @param params.channelType    - channel type for per-channel analytics
+   */
+  async logManualAssignment(params: {
+    conversationId: string;
+    tenantId: string;
+    newAgentId: string | null;
+    previousAgentId: string | null;
+    performedByUserId: string | null;
+    channelType?: string | null;
+  }): Promise<void> {
+    const { newAgentId, previousAgentId, performedByUserId } = params;
+    const reason = newAgentId
+      ? `Agent manually ${previousAgentId ? 'reassigned' : 'assigned'} by user ${performedByUserId ?? 'unknown'}`
+      : `Agent manually unassigned (back to queue) by user ${performedByUserId ?? 'unknown'}`;
+
+    await this.writeAuditLog({
+      tenantId: params.tenantId,
+      conversationId: params.conversationId,
+      assignedAgentId: newAgentId,
+      previousAgentId: previousAgentId ?? null,
+      strategy: 'manual',
+      reason,
+      channelType: params.channelType ?? null,
+      metadata: { performedByUserId, isManual: true },
+      outcome: newAgentId ? 'assigned' : 'queued',
+    });
   }
 
   /**

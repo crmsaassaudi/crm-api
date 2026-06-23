@@ -1,4 +1,4 @@
-﻿import {
+import {
   Injectable,
   Logger,
   Inject,
@@ -244,7 +244,11 @@ export class ConversationService {
               externalConversationId: payload.externalConversationId,
             });
 
-            // â”€â”€ Auto-reassignment on reopen if agent is offline/unassigned â”€â”€
+            // ── Auto-reassignment on reopen if agent is offline/unassigned ──
+            // P0 fix: track that assignment was already handled here so the
+            // 'existing_unassigned' retry block below does not fire a second
+            // time reading a stale existing.assignedAgentId snapshot.
+            let assignmentTriggeredOnReopen = false;
             const currentAgent = (reopened as any).assignedAgentId;
             if (!currentAgent) {
               await this.orchestration.triggerAutoAssignment(
@@ -253,19 +257,29 @@ export class ConversationService {
                 contactId ?? existing.contactId ?? null,
                 'reopen_no_agent',
               );
+              assignmentTriggeredOnReopen = true;
             } else {
-              // Check if the previous agent is still online
+              // Check if the previous agent is still online.
+              // checkAndReassignIfNeeded fires triggerAutoAssignment internally
+              // when the agent is gone — count that as handled too.
               await this.orchestration.checkAndReassignIfNeeded(
                 payload,
                 conversationId!,
                 currentAgent,
                 contactId ?? existing.contactId ?? null,
               );
+              assignmentTriggeredOnReopen = true;
             }
 
             // Keep contactId from the reopened session
             contactId = existing.contactId ?? contactId;
-            // conversationId stays the same â€” don't create a new one
+            // conversationId stays the same — don't create a new one
+
+            // Signal to the existing_unassigned block below that assignment
+            // was already handled so it does not double-fire.
+            if (assignmentTriggeredOnReopen) {
+              (existing as any).__assignmentHandledOnReopen = true;
+            }
           }
         } else {
           // OUTSIDE reopen window â†’ force creation of a new session
@@ -325,21 +339,30 @@ export class ConversationService {
         conversationId &&
         (existing.status === 'open' || existing.status === 'pending')
       ) {
-        const assignedAgent = existing.assignedAgentId;
-        if (!assignedAgent) {
+        // P0 fix: skip if assignment was already triggered in the reopen
+        // branch above. existing.assignedAgentId is a stale snapshot taken
+        // before that assignment committed — a second call here would race.
+        if ((existing as any).__assignmentHandledOnReopen) {
           this.logger.debug(
-            `[AUTO-ASSIGN DEBUG] Existing conversation ${conversationId} is ${existing.status} but has NO agent â€” retrying auto-assignment`,
-          );
-          await this.orchestration.triggerAutoAssignment(
-            payload,
-            conversationId,
-            contactId ?? existing.contactId ?? null,
-            'existing_unassigned',
+            `Skipping existing_unassigned retry — assignment already handled on reopen for conversation ${conversationId}`,
           );
         } else {
-          this.logger.debug(
-            `Existing conversation ${conversationId} already assigned to agent ${assignedAgent} â€” skipping auto-assignment`,
-          );
+          const assignedAgent = existing.assignedAgentId;
+          if (!assignedAgent) {
+            this.logger.debug(
+              `[AUTO-ASSIGN] Existing conversation ${conversationId} is ${existing.status} but has NO agent — retrying auto-assignment`,
+            );
+            await this.orchestration.triggerAutoAssignment(
+              payload,
+              conversationId,
+              contactId ?? existing.contactId ?? null,
+              'existing_unassigned',
+            );
+          } else {
+            this.logger.debug(
+              `Existing conversation ${conversationId} already assigned to agent ${assignedAgent} — skipping auto-assignment`,
+            );
+          }
         }
       }
     }
@@ -495,6 +518,7 @@ export class ConversationService {
         channelType: payload.channelType,
         senderId: payload.senderId,
         conversation, // Full object for frontend rendering
+        correlationId: payload.correlationId, // T07: propagate trace ID
       });
 
       // â”€â”€ Step 6a: Update identity cache with new mapping â”€â”€â”€â”€â”€

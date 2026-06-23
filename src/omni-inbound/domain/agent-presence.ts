@@ -158,8 +158,9 @@ export const AGENT_PRESENCE_PREFIX = 'omni:agent:presence';
 export const agentPresenceKey = (tenantId: string, userId: string) =>
   `${AGENT_PRESENCE_PREFIX}:${tenantId}:${userId}`;
 
-export const tenantAgentsKey = (tenantId: string) =>
-  `${AGENT_PRESENCE_PREFIX}:${tenantId}:*`;
+// T12 fix: tenantAgentsKey() removed — never used in production.
+// AgentPresenceService uses tenantPresenceHashKey() + HGETALL for bulk tenant
+// presence reads. KEYS-scan patterns (glob) are O(N) and blocked on production Redis.
 
 export const tenantPresenceHashKey = (tenantId: string) =>
   `omni:presence:${tenantId}`;

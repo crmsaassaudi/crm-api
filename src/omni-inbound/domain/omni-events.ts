@@ -64,6 +64,8 @@ export const OmniEvents = {
   CONVERSATION_DEAL_CREATED: 'omni.conversation.deal_created',
   /** Agent took over conversation from another agent */
   CONVERSATION_TAKEOVER: 'omni.conversation.takeover',
+  /** No agent available — conversation entered the wait queue */
+  CONVERSATION_QUEUED: 'omni.conversation.queued',
 
   // ── Conversation Lock ────────────────────────────────────────────────────
   /** Agent acquired editing lock */
@@ -155,6 +157,15 @@ export type CrmEventName = (typeof CrmEvents)[keyof typeof CrmEvents];
 /** Base shape shared by most omni events */
 export interface OmniEventBase {
   tenantId: string;
+  /**
+   * T07: optional trace ID to correlate events across service boundaries.
+   * Set once at the entry point (inbound webhook / socket message) and
+   * propagated through all downstream events for the same logical operation.
+   *
+   * Format: UUID v4 or any unique string. When absent, use conversationId
+   * as the fallback correlation key.
+   */
+  correlationId?: string;
 }
 
 /** omni.inbound.webhook */
@@ -277,6 +288,21 @@ export interface ConversationTakeoverEvent extends OmniEventBase {
   conversationId: string;
   newAgentId: string;
   previousAgentId: string;
+}
+
+/** omni.conversation.queued */
+export interface ConversationQueuedEvent extends OmniEventBase {
+  conversationId: string;
+  /** The routing strategy that was attempted before queuing */
+  strategy: string;
+  /** Human-readable reason why no agent was available */
+  reason: string;
+  /** Channel that generated this conversation */
+  channelType: string;
+  /** Timestamp when queuing started (for SLA wait-time calculation) */
+  queuedSince: Date;
+  /** Size of the eligible agent pool that was evaluated */
+  agentPoolSize: number;
 }
 
 /** omni.reaction.inbound */

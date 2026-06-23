@@ -12,10 +12,9 @@ export type OmniAssignmentAuditLogDocument =
  * Records WHY a conversation was assigned to a specific agent,
  * which algorithm was used, and the state at the time of assignment.
  *
- * Example entry:
- *   "At 10:00, conversation X was assigned to Agent Y
- *    because algorithm 'capacity-based' selected them
- *    (open chats: 3/5, pool: [A, B, C])"
+ * T05 update: added top-level typed fields (previousAgentId, ruleId, channelType,
+ * agentPoolSize) that were previously buried in the freeform metadata blob.
+ * These fields are indexed for efficient routing analytics queries.
  */
 @Schema({
   timestamps: true,
@@ -51,6 +50,41 @@ export class OmniAssignmentAuditLogSchemaClass extends EntityDocumentHelper {
   })
   assignedAgentId: string | null;
 
+  /**
+   * T05: the agent who was assigned BEFORE this decision.
+   * Null for first-time assignments. Populated for reassignments and fallback re-routes.
+   * Enables reassignment chain queries without joining the activity log.
+   */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserSchemaClass',
+    default: null,
+  })
+  previousAgentId: string | null;
+
+  /**
+   * T05: the routing rule that matched and drove this assignment, if any.
+   * Null when assignment was driven by the default strategy (no rule match).
+   */
+  @Prop({ type: String, default: null })
+  ruleId: string | null;
+
+  /** T05: human-readable name of the matched routing rule for display in dashboards. */
+  @Prop({ type: String, default: null })
+  ruleName: string | null;
+
+  /** T05: channel type (whatsapp, facebook, livechat, etc.) for per-channel analytics. */
+  @Prop({ type: String, default: null })
+  channelType: string | null;
+
+  /** T05: total size of the agent pool evaluated before skills filtering. */
+  @Prop({ type: Number, default: 0 })
+  agentPoolSize: number;
+
+  /** T05: size of the pool after skills filtering (may be smaller than agentPoolSize). */
+  @Prop({ type: Number, default: 0 })
+  eligiblePoolSize: number;
+
   @Prop({
     type: String,
     required: true,
@@ -72,6 +106,7 @@ export class OmniAssignmentAuditLogSchemaClass extends EntityDocumentHelper {
   /**
    * Snapshot of agent workload at the time of assignment.
    * e.g. { agentId: '...', openChats: 3, maxCapacity: 5 }
+   * Note: structured data should prefer top-level Prop fields (see T05 above).
    */
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   metadata: Record<string, any>;
@@ -91,17 +126,35 @@ export const OmniAssignmentAuditLogSchema = SchemaFactory.createForClass(
 
 OmniAssignmentAuditLogSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
+// Core timeline index
 OmniAssignmentAuditLogSchema.index(
   { tenantId: 1, createdAt: -1 },
   { name: 'audit_log_timeline' },
 );
+// Per-agent routing history (existing)
 OmniAssignmentAuditLogSchema.index(
   { tenantId: 1, assignedAgentId: 1, createdAt: -1 },
   { name: 'audit_by_agent' },
 );
+// Per-conversation routing chain (existing)
 OmniAssignmentAuditLogSchema.index(
   { tenantId: 1, conversationId: 1, createdAt: 1 },
   { name: 'audit_by_conversation' },
+);
+// T05: routing rule analytics — "all assignments driven by rule X"
+OmniAssignmentAuditLogSchema.index(
+  { tenantId: 1, ruleId: 1, createdAt: -1 },
+  { name: 'audit_by_rule', sparse: true },
+);
+// T05: per-channel routing analytics — "all assignments for whatsapp last 7 days"
+OmniAssignmentAuditLogSchema.index(
+  { tenantId: 1, channelType: 1, createdAt: -1 },
+  { name: 'audit_by_channel', sparse: true },
+);
+// T05: reassignment chain tracing — "who did this agent reassign from?"
+OmniAssignmentAuditLogSchema.index(
+  { tenantId: 1, previousAgentId: 1, createdAt: -1 },
+  { name: 'audit_by_previous_agent', sparse: true },
 );
 
 // F-12 fix: TTL index for automatic data retention (30 days).

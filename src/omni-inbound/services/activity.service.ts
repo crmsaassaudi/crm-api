@@ -9,6 +9,7 @@ import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
 import { UsersService } from '../../users/users.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { OmniEvents } from '../domain/omni-events';
 
 /**
  * ActivityService — listens to all conversation lifecycle events and
@@ -503,6 +504,35 @@ export class ActivityService {
       `${newAgentName} đã tiếp quản hội thoại từ ${previousAgentName}${reasonText}`,
     );
   }
+
+  @OnEvent(OmniEvents.CONVERSATION_QUEUED)
+  async onConversationQueued(event: {
+    tenantId: string;
+    conversationId: string;
+    strategy: string;
+    reason: string;
+    channelType: string;
+    queuedSince: Date;
+    agentPoolSize: number;
+  }) {
+    await this.log(
+      event.tenantId,
+      event.conversationId,
+      'system',
+      null,
+      'status_changed',
+      null,
+      'queued',
+      {
+        strategy: event.strategy,
+        reason: event.reason,
+        channelType: event.channelType,
+        agentPoolSize: event.agentPoolSize,
+      },
+      `Hội thoại đang chờ phân công (${event.strategy}) — ${event.reason}`,
+    );
+  }
+
 
   // ─── Helpers ────────────────────────────────────────────────────
 

@@ -639,8 +639,74 @@ export class AgentPresenceService {
   }
 
   // ────────────────────────────────────────────────────────────────────
+  // Reconciliation (P0 self-healing)
+  // ────────────────────────────────────────────────────────────────────
+
+  /**
+   * Overwrite an agent's `activeConversations` counter with the authoritative
+   * value from MongoDB. Recomputes `routingStatus` accordingly.
+   *
+   * Called by PresenceReconciliationService when drift is detected between the
+   * Redis counter and MongoDB ground truth (e.g. after a Redis flush).
+   *
+   * @param tenantId  - tenant owning the agent
+   * @param userId    - agent whose counter should be patched
+   * @param actual    - authoritative count from MongoDB countDocuments
+   */
+  async patchActiveConversations(
+    tenantId: string,
+    userId: string,
+    actual: number,
+  ): Promise<void> {
+    const client = this.redis.getClient();
+    const hashKey = tenantPresenceHashKey(tenantId);
+    const loadKey = tenantAgentLoadKey(tenantId);
+
+    const raw = await client.hget(hashKey, userId);
+    if (!raw) {
+      this.logger.debug(
+        `patchActiveConversations: agent ${userId} not in presence hash — skipping`,
+      );
+      return;
+    }
+
+    try {
+      const data: AgentPresence = JSON.parse(raw);
+      data.activeConversations = actual;
+      data.routingStatus = actual >= data.maxCapacity ? 'full' : 'accept';
+
+      // Recompute display status
+      if (
+        data.intentStatus === 'offline' ||
+        data.connectionStatus === 'disconnected'
+      ) {
+        data.status = 'offline';
+      } else {
+        data.status = data.intentStatus as any;
+      }
+
+      const encoded = JSON.stringify(data);
+      const pipeline = client.pipeline();
+      pipeline.hset(hashKey, userId, encoded);
+      pipeline.zadd(loadKey, actual, userId);
+      pipeline.setex(agentPresenceKey(tenantId, userId), HEARTBEAT_TTL_SECONDS, encoded);
+      await pipeline.exec();
+
+      this.logger.log(
+        `Patched activeConversations for agent ${userId} → ${actual} ` +
+          `(routingStatus: ${data.routingStatus})`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to patch presence for agent ${userId}: ${err.message}`,
+      );
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────
   // Queries
   // ────────────────────────────────────────────────────────────────────
+
 
   /**
    * Get a single agent's presence.

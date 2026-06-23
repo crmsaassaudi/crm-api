@@ -35,6 +35,7 @@ import { FilesService } from '../../files/files.service';
 import { RequirePermission } from '../../common/permissions';
 import { AssignmentAuditLogRepository } from '../repositories/assignment-audit-log.repository';
 import { AgentPresenceService } from '../services/agent-presence.service';
+import { AssignmentService } from '../services/assignment.service';
 
 /**
  * REST API for omni-channel conversations and messages.
@@ -71,6 +72,7 @@ export class OmniController {
     private readonly filesService: FilesService,
     private readonly auditLogRepo: AssignmentAuditLogRepository,
     private readonly agentPresenceService: AgentPresenceService,
+    private readonly assignmentService: AssignmentService,
   ) {}
 
   // ─── Routing Trace (production debugging) ────────────────────
@@ -1092,6 +1094,20 @@ export class OmniController {
       performedByUserId,
     });
 
+    // T06: record manual assignment in audit log for RoutingHistoryPage
+    if (agentId !== undefined) {
+      this.assignmentService
+        .logManualAssignment({
+          conversationId: id,
+          tenantId: conversation.tenantId,
+          newAgentId: agentId ?? null,
+          previousAgentId: oldAgentId ?? null,
+          performedByUserId,
+          channelType: conversation.channelType,
+        })
+        .catch(() => {}); // fire-and-forget — audit failure must not block the response
+    }
+
     this.logger.log(
       `Conversation ${id} assigned to agent=${agentId ?? 'unchanged'}, group=${groupId ?? 'unchanged'} by user=${performedByUserId}`,
     );
@@ -1127,6 +1143,18 @@ export class OmniController {
       oldAgentId,
       performedByUserId,
     });
+
+    // T06: record unassignment in audit log for RoutingHistoryPage
+    this.assignmentService
+      .logManualAssignment({
+        conversationId: id,
+        tenantId: conversation.tenantId,
+        newAgentId: null,
+        previousAgentId: oldAgentId ?? null,
+        performedByUserId,
+        channelType: conversation.channelType,
+      })
+      .catch(() => {}); // fire-and-forget
 
     this.logger.log(
       `Conversation ${id} unassigned by user=${performedByUserId}`,

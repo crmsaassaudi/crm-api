@@ -14,6 +14,19 @@ export interface CreateAuditLogDto {
   reason: string;
   metadata?: Record<string, any>;
   outcome: 'assigned' | 'queued' | 'failed';
+  // T05: structured audit fields (previously buried in metadata blob)
+  /** Agent who was assigned before this decision (null = first assignment) */
+  previousAgentId?: string | null;
+  /** Routing rule that matched and drove this assignment (null = default strategy) */
+  ruleId?: string | null;
+  /** Human-readable routing rule name for dashboards */
+  ruleName?: string | null;
+  /** Channel type for per-channel routing analytics */
+  channelType?: string | null;
+  /** Total agent pool size before skills filtering */
+  agentPoolSize?: number;
+  /** Agent pool size after skills filtering */
+  eligiblePoolSize?: number;
 }
 
 @Injectable()

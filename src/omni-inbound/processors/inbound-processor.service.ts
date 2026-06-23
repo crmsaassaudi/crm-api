@@ -1,7 +1,7 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import {
   ChannelAdapter,
@@ -89,6 +89,13 @@ export class InboundProcessorService {
       `Processed ${channelType} message: ${normalized.externalMessageId} ` +
         `from sender ${normalized.senderId}`,
     );
+
+    // T07: stamp a correlationId at the entry point if the adapter didn't supply one.
+    // This ID propagates through all downstream events (conversation created, assigned,
+    // activity logged) and enables end-to-end log tracing without distributed tracing infra.
+    if (!normalized.correlationId) {
+      normalized.correlationId = randomUUID();
+    }
 
     await this.routingQueue.add('omni.route', normalized, {
       jobId: this.buildRoutingJobId(normalized),

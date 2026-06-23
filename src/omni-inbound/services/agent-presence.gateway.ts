@@ -14,6 +14,7 @@ import {
   GRACE_PERIOD_MS,
 } from '../domain/agent-presence';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
+import { PresenceReconciliationService } from './presence-reconciliation.service';
 
 /**
  * Socket.IO gateway for agent presence and status synchronisation.
@@ -57,6 +58,7 @@ export class AgentPresenceGateway {
   constructor(
     private readonly presenceService: AgentPresenceService,
     private readonly settingsService: CrmSettingsService,
+    private readonly reconciliationService: PresenceReconciliationService,
   ) {}
 
   // ─── Client Events ──────────────────────────────────────────────────
@@ -165,6 +167,16 @@ export class AgentPresenceGateway {
       `Agent ${userId} connected (fresh=${isFreshSession}, ` +
         `intent=${presence.intentStatus}, ` +
         `connections=${presence.connections.length})`,
+    );
+
+    // P0 fix: reconcile Redis activeConversations counter against MongoDB on
+    // every connect event. This is the primary self-healing trigger — if Redis
+    // was flushed while the agent was offline, their counter is wrong and would
+    // block new assignments. Fire-and-forget; failures are logged internally.
+    this.reconciliationService.reconcileAgent(tenantId, userId).catch((err) =>
+      this.logger.error(
+        `Reconcile failed on connect for agent ${userId}: ${err.message}`,
+      ),
     );
   }
 

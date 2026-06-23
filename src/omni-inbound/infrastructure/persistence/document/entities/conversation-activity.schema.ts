@@ -18,16 +18,16 @@ const ACTIVITY_ACTIONS = [
   'tag_removed',
   'note_added',
   'note_deleted',
-  'priority_changed',
-  'message_sent',
+  // 'priority_changed',  // T13: no handler in ActivityService — implement when priority feature ships
+  // 'message_sent',      // T13: no handler — omni.message.sent listener not connected to ActivityService
   'auto_resolved',
   'sla_breached',
   'escalated',
   'ticket_created',
   'deal_created',
   'identity_merged',
-  'agent_rejected',
-  'agent_transferred',
+  // 'agent_rejected',    // T13: no handler — implement if rejection flow is added
+  // 'agent_transferred', // T13: no handler — manual transfer uses agent_assigned instead
   'conversation_takeover',
 ] as const;
 
@@ -108,4 +108,19 @@ ConversationActivitySchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 ConversationActivitySchema.index(
   { tenantId: 1, conversationId: 1, createdAt: -1 },
   { name: 'activities_by_conversation' },
+);
+
+// Cross-conversation actor queries: "what did agent X do today?"
+ConversationActivitySchema.index(
+  { tenantId: 1, actorId: 1, createdAt: -1 },
+  { name: 'activities_by_actor' },
+);
+
+// P0 fix: TTL index — auto-delete entries older than 180 days.
+// Without this the collection grows ~5M documents/day at production scale
+// (1M conversations × ~5 events each), degrading all inbox queries over time.
+// Adjust TTL to match your compliance/audit retention requirements.
+ConversationActivitySchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: 180 * 24 * 60 * 60, name: 'activity_ttl_180d' },
 );

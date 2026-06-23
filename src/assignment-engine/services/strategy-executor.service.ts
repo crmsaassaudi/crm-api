@@ -131,36 +131,9 @@ export class StrategyExecutorService {
     await this.redis.set(key, candidateId, 'EX', 86400);
   }
 
-  /**
-   * @deprecated Non-atomic in-memory least-busy selection — kept only for the
-   * existing unit spec and historical reference. Production paths MUST use
-   * {@link leastBusyAtomic}, which reserves the pick in Redis to avoid races.
-   * No production caller invokes this (verified via grep).
-   */
-  leastBusy(loadMap: Map<string, number>): {
-    candidateId: string;
-    load: number;
-  } | null {
-    if (loadMap.size === 0) {
-      this.logger.warn('Least-busy called with empty load map');
-      return null;
-    }
-
-    let minId = '';
-    let minLoad = Infinity;
-
-    for (const [id, load] of loadMap) {
-      if (load < minLoad) {
-        minLoad = load;
-        minId = id;
-      }
-    }
-
-    this.logger.debug(
-      `Least-busy: selected=${minId} with load=${minLoad} (pool size=${loadMap.size})`,
-    );
-    return { candidateId: minId, load: minLoad };
-  }
+  // T11 fix: non-atomic leastBusy() removed.
+  // Use leastBusyAtomic() which reserves the pick in Redis via ZINCRBY
+  // to avoid concurrent assignment races. See method below.
 
   /**
    * Atomic least-busy reservation backed by a Redis sorted set.

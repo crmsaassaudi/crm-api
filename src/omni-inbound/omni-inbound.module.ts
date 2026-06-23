@@ -47,6 +47,7 @@ import { ConversationLifecycleService } from './services/conversation-lifecycle.
 import { ConversationQueryService } from './services/conversation-query.service';
 import { CrmRealtimeGateway } from './services/crm-realtime.gateway';
 import { OmniMetricsListener } from './services/omni-metrics.listener';
+import { PresenceReconciliationService } from './services/presence-reconciliation.service';
 
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
@@ -248,6 +249,8 @@ const workerProviders =
     AgentPresenceService,
     AgentPresenceGateway,
     ConversationLockService,
+    // P0 fix: self-heals Redis presence counters after Redis flush or missed release
+    PresenceReconciliationService,
 
     // ── Pillar 3: Realtime UX ─────────────────────────────────────
     OmniGateway,
