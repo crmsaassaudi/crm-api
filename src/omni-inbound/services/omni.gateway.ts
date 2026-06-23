@@ -34,6 +34,8 @@ import {
   validateSendMessage,
   validateSendMedia,
   validateSendTemplate,
+  validateSendInteractive,
+  validateSendCarousel,
   validateReaction,
   validateTyping,
 } from '../dto/gateway-dto';
@@ -665,6 +667,184 @@ export class OmniGateway
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`SendTemplate error: ${errorMessage}`);
+      return { ok: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Socket event: agent sends an interactive button message.
+   */
+  @SubscribeMessage('omni:message:send-interactive')
+  async handleSendInteractive(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      conversationId: string;
+      body: string;
+      buttons: Array<{ id?: string; title: string; type?: string; url?: string }>;
+      tempId?: string;
+      idempotencyKey?: string;
+      clientMessageId?: string;
+    },
+  ) {
+    const user = client.data.user;
+    if (!user) return { ok: false, error: 'Unauthenticated' };
+
+    const userId = client.data.userId ?? user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    if (!tenantId) return { ok: false, error: 'No tenant context' };
+
+    const validationError = validateSendInteractive(data);
+    if (validationError) return { ok: false, error: validationError };
+
+    this.logger.log(
+      `Agent ${userId} sends interactive (${data.buttons?.length} buttons) to ${data.conversationId}`,
+    );
+
+    try {
+      const result = await runWithTenantContext(this.cls, tenantId, () =>
+        this.outboundService.sendAgentInteractive({
+          tenantId,
+          conversationId: data.conversationId,
+          agentId: userId,
+          body: data.body,
+          buttons: data.buttons,
+          idempotencyKey: data.idempotencyKey,
+          clientMessageId: data.clientMessageId ?? data.tempId,
+          source: 'agent_ui',
+          transport: 'socket',
+        }),
+      );
+
+      const ack = {
+        ok: true,
+        tempId: data.tempId,
+        messageId: result.messageId,
+        idempotencyKey: result.idempotencyKey ?? data.idempotencyKey,
+        clientMessageId:
+          result.clientMessageId ?? data.clientMessageId ?? data.tempId,
+        timestamp: new Date().toISOString(),
+      };
+
+      if (!result.reused) {
+        client
+          .to(
+            `tenant:${client.data.tenantId}:conversation:${data.conversationId}`,
+          )
+          .emit('omni:message:new', {
+            conversationId: data.conversationId,
+            senderId: result.senderId ?? userId,
+            senderName: result.senderName,
+            senderType: 'agent',
+            source: result.source ?? 'agent_ui',
+            messageType: 'interactive',
+            content: data.body,
+            messageId: ack.messageId,
+            idempotencyKey: ack.idempotencyKey,
+            clientMessageId: ack.clientMessageId,
+            timestamp: ack.timestamp,
+            metadata: { buttons: data.buttons },
+          });
+      }
+
+      return ack;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`SendInteractive error: ${errorMessage}`);
+      return { ok: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Socket event: agent sends a carousel card message.
+   */
+  @SubscribeMessage('omni:message:send-carousel')
+  async handleSendCarousel(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      conversationId: string;
+      content?: string;
+      cards: Array<{
+        title?: string;
+        subtitle?: string;
+        imageUrl?: string;
+        buttons?: Array<{ id?: string; title: string; type?: string; url?: string }>;
+      }>;
+      tempId?: string;
+      idempotencyKey?: string;
+      clientMessageId?: string;
+    },
+  ) {
+    const user = client.data.user;
+    if (!user) return { ok: false, error: 'Unauthenticated' };
+
+    const userId = client.data.userId ?? user.id ?? user.sub;
+    const tenantId = client.data.tenantId;
+    if (!tenantId) return { ok: false, error: 'No tenant context' };
+
+    const validationError = validateSendCarousel(data);
+    if (validationError) return { ok: false, error: validationError };
+
+    this.logger.log(
+      `Agent ${userId} sends carousel (${data.cards?.length} cards) to ${data.conversationId}`,
+    );
+
+    try {
+      const result = await runWithTenantContext(this.cls, tenantId, () =>
+        this.outboundService.sendAgentCarousel({
+          tenantId,
+          conversationId: data.conversationId,
+          agentId: userId,
+          content: data.content,
+          cards: data.cards,
+          idempotencyKey: data.idempotencyKey,
+          clientMessageId: data.clientMessageId ?? data.tempId,
+          source: 'agent_ui',
+          transport: 'socket',
+        }),
+      );
+
+      const ack = {
+        ok: true,
+        tempId: data.tempId,
+        messageId: result.messageId,
+        idempotencyKey: result.idempotencyKey ?? data.idempotencyKey,
+        clientMessageId:
+          result.clientMessageId ?? data.clientMessageId ?? data.tempId,
+        timestamp: new Date().toISOString(),
+      };
+
+      if (!result.reused) {
+        client
+          .to(
+            `tenant:${client.data.tenantId}:conversation:${data.conversationId}`,
+          )
+          .emit('omni:message:new', {
+            conversationId: data.conversationId,
+            senderId: result.senderId ?? userId,
+            senderName: result.senderName,
+            senderType: 'agent',
+            source: result.source ?? 'agent_ui',
+            messageType: 'carousel',
+            content:
+              data.content ||
+              data.cards.map((c) => c.title).join(' | ') ||
+              'Carousel',
+            messageId: ack.messageId,
+            idempotencyKey: ack.idempotencyKey,
+            clientMessageId: ack.clientMessageId,
+            timestamp: ack.timestamp,
+            metadata: { cards: data.cards },
+          });
+      }
+
+      return ack;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`SendCarousel error: ${errorMessage}`);
       return { ok: false, error: errorMessage };
     }
   }

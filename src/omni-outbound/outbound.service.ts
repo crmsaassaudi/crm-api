@@ -943,6 +943,370 @@ export class OutboundService {
   }
 
   /**
+   * Send an interactive button message from an agent.
+   *
+   * Persists with messageType 'interactive' and dispatches via adapter.sendInteractive().
+   * Adapters that don't support interactive get a numbered text fallback.
+   */
+  async sendAgentInteractive(params: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    body: string;
+    buttons: Array<{ id?: string; title: string; type?: string; url?: string }>;
+    source?: string;
+    transport?: 'http' | 'socket';
+    idempotencyKey?: string;
+    clientMessageId?: string;
+  }): Promise<any> {
+    const {
+      tenantId,
+      conversationId,
+      agentId,
+      body,
+      buttons,
+      source: rawSource = 'crm_api',
+      transport = 'http',
+      idempotencyKey,
+      clientMessageId,
+    } = params;
+
+    const source = normalizeOutboundSource(rawSource);
+    const senderContext = await this.resolveSenderContext(agentId);
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation)
+      throw new Error(`Conversation ${conversationId} not found`);
+
+    this.enforceReplyWindow(conversation);
+
+    // Adapter-specific validation
+    const channelType = conversation.channelType.toLowerCase();
+    if (channelType === 'whatsapp' && buttons.length > 3) {
+      throw new Error(
+        'WhatsApp interactive messages support a maximum of 3 buttons',
+      );
+    }
+
+    let channel = await this.channelRepo.findByIdWithCredentials(
+      tenantId,
+      conversation.channelId.toString(),
+    );
+    if (!channel && (conversation as any).channelAccount) {
+      channel = await this.channelRepo.findByAccountWithCredentials(
+        tenantId,
+        conversation.channelType,
+        (conversation as any).channelAccount,
+      );
+    }
+    if (!channel)
+      throw new Error(
+        `Channel for conversation ${conversationId} not found or disconnected`,
+      );
+
+    const contentSummary = `${body}\n${buttons.map((b) => `• ${b.title}`).join('\n')}`;
+
+    const message = await this.messageRepo.create({
+      tenantId,
+      conversationId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? undefined,
+      senderType: 'agent',
+      direction: 'outbound',
+      source,
+      messageType: 'interactive',
+      content: body,
+      status: 'sending',
+      idempotencyKey,
+      clientMessageId,
+      metadata: {
+        sender: {
+          id: agentId,
+          name: senderContext.name,
+          avatarUrl: senderContext.avatarUrl ?? null,
+          type: 'agent',
+        },
+        source,
+        transport,
+        buttons,
+      },
+    });
+
+    await this.conversationRepo.updateLastMessage(
+      conversationId,
+      contentSummary.substring(0, 200),
+      new Date(),
+      'agent',
+    );
+
+    try {
+      let adapterResponse: any = null;
+      const adapter = this.adapters.get(
+        conversation.channelType.toLowerCase() as ChannelType,
+      );
+      if (adapter) {
+        if (adapter.sendInteractive) {
+          adapterResponse = await adapter.sendInteractive(
+            conversation.customer.externalId,
+            body,
+            buttons.map((b) => ({
+              id: b.id || b.title,
+              title: b.title,
+            })),
+            {
+              credentials: channel.credentials,
+              account: channel.account,
+              messageId: message.id,
+            },
+          );
+        } else {
+          // Fallback: numbered text
+          const fallback = `${body}\n\n${buttons.map((b, i) => `${i + 1}. ${b.title}`).join('\n')}`;
+          adapterResponse = await adapter.send(
+            conversation.customer.externalId,
+            fallback,
+            'text',
+            {
+              credentials: channel.credentials,
+              account: channel.account,
+              messageId: message.id,
+            },
+          );
+        }
+      }
+
+      const externalId =
+        (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
+      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
+
+      this.eventEmitter.emit('omni.message.sent', {
+        tenantId,
+        conversationId,
+        senderId: agentId,
+        senderName: senderContext.name,
+        senderAvatarUrl: senderContext.avatarUrl ?? null,
+        senderType: 'agent',
+        direction: 'outbound',
+        source,
+        messageType: 'interactive',
+        content: body,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        clientMessageId,
+        transport,
+        timestamp: new Date().toISOString(),
+        createdAt: message.createdAt,
+        metadata: message.metadata,
+      });
+
+      return {
+        ok: true,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        clientMessageId,
+        senderId: agentId,
+        senderName: senderContext.name,
+        senderAvatarUrl: senderContext.avatarUrl ?? null,
+        source,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to send interactive: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      await this.messageRepo.updateStatus(message.id, 'failed');
+      throw error;
+    }
+  }
+
+  /**
+   * Send a carousel message from an agent.
+   *
+   * Persists with messageType 'carousel' and dispatches via adapter.sendCarousel().
+   * Only Livechat currently supports native carousel; other adapters get a
+   * formatted text fallback listing each card.
+   */
+  async sendAgentCarousel(params: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    content?: string;
+    cards: Array<{
+      title?: string;
+      subtitle?: string;
+      imageUrl?: string;
+      buttons?: Array<{ id?: string; title: string; type?: string; url?: string }>;
+    }>;
+    source?: string;
+    transport?: 'http' | 'socket';
+    idempotencyKey?: string;
+    clientMessageId?: string;
+  }): Promise<any> {
+    const {
+      tenantId,
+      conversationId,
+      agentId,
+      content,
+      cards,
+      source: rawSource = 'crm_api',
+      transport = 'http',
+      idempotencyKey,
+      clientMessageId,
+    } = params;
+
+    const source = normalizeOutboundSource(rawSource);
+    const senderContext = await this.resolveSenderContext(agentId);
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation)
+      throw new Error(`Conversation ${conversationId} not found`);
+
+    this.enforceReplyWindow(conversation);
+
+    let channel = await this.channelRepo.findByIdWithCredentials(
+      tenantId,
+      conversation.channelId.toString(),
+    );
+    if (!channel && (conversation as any).channelAccount) {
+      channel = await this.channelRepo.findByAccountWithCredentials(
+        tenantId,
+        conversation.channelType,
+        (conversation as any).channelAccount,
+      );
+    }
+    if (!channel)
+      throw new Error(
+        `Channel for conversation ${conversationId} not found or disconnected`,
+      );
+
+    const contentSummary =
+      content || cards.map((c) => c.title).join(' | ') || 'Carousel';
+
+    const message = await this.messageRepo.create({
+      tenantId,
+      conversationId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? undefined,
+      senderType: 'agent',
+      direction: 'outbound',
+      source,
+      messageType: 'carousel',
+      content: contentSummary,
+      status: 'sending',
+      idempotencyKey,
+      clientMessageId,
+      metadata: {
+        sender: {
+          id: agentId,
+          name: senderContext.name,
+          avatarUrl: senderContext.avatarUrl ?? null,
+          type: 'agent',
+        },
+        source,
+        transport,
+        cards,
+      },
+    });
+
+    await this.conversationRepo.updateLastMessage(
+      conversationId,
+      contentSummary.substring(0, 200),
+      new Date(),
+      'agent',
+    );
+
+    try {
+      let adapterResponse: any = null;
+      const adapter = this.adapters.get(
+        conversation.channelType.toLowerCase() as ChannelType,
+      );
+      if (adapter) {
+        if (adapter.sendCarousel) {
+          adapterResponse = await adapter.sendCarousel(
+            conversation.customer.externalId,
+            content,
+            cards,
+            {
+              credentials: channel.credentials,
+              account: channel.account,
+              messageId: message.id,
+            },
+          );
+        } else {
+          // Fallback: formatted text listing each card
+          const lines = cards.map(
+            (c, i) =>
+              `[${i + 1}] ${c.title ?? ''}${c.subtitle ? ` — ${c.subtitle}` : ''}`,
+          );
+          const fallback = content
+            ? `${content}\n\n${lines.join('\n')}`
+            : lines.join('\n');
+          adapterResponse = await adapter.send(
+            conversation.customer.externalId,
+            fallback,
+            'text',
+            {
+              credentials: channel.credentials,
+              account: channel.account,
+              messageId: message.id,
+            },
+          );
+        }
+      }
+
+      const externalId =
+        (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
+      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
+
+      this.eventEmitter.emit('omni.message.sent', {
+        tenantId,
+        conversationId,
+        senderId: agentId,
+        senderName: senderContext.name,
+        senderAvatarUrl: senderContext.avatarUrl ?? null,
+        senderType: 'agent',
+        direction: 'outbound',
+        source,
+        messageType: 'carousel',
+        content: contentSummary,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        clientMessageId,
+        transport,
+        timestamp: new Date().toISOString(),
+        createdAt: message.createdAt,
+        metadata: message.metadata,
+      });
+
+      return {
+        ok: true,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        clientMessageId,
+        senderId: agentId,
+        senderName: senderContext.name,
+        senderAvatarUrl: senderContext.avatarUrl ?? null,
+        source,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to send carousel: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      await this.messageRepo.updateStatus(message.id, 'failed');
+      throw error;
+    }
+  }
+
+  /**
    * Guard: throws ReplyWindowExpiredException if the platform reply window
    * has elapsed. Called before persisting or sending any free-form message.
    */

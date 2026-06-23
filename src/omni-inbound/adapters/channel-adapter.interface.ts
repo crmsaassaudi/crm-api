@@ -129,6 +129,29 @@ export interface ChannelAdapter {
     buttons: Array<{ id: string; title: string }>,
     channelConfig: any,
   ): Promise<any>;
+
+  /**
+   * Send a carousel message with swipeable cards.
+   * Optional — only supported by Livechat (native carousel) and
+   * Facebook Messenger (generic template).
+   *
+   * @param recipientId    The provider's user ID
+   * @param content        Optional body text above the carousel
+   * @param cards          Array of carousel card objects
+   * @param channelConfig  Credentials/config for this specific channel
+   */
+  sendCarousel?(
+    recipientId: string,
+    content: string | undefined,
+    cards: Array<{
+      title?: string;
+      subtitle?: string;
+      imageUrl?: string;
+      defaultAction?: { type: string; url?: string };
+      buttons?: Array<{ id?: string; title: string; type?: string; url?: string }>;
+    }>,
+    channelConfig: any,
+  ): Promise<any>;
 }
 
 /** DI token for the adapter map */
