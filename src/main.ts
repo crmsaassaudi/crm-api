@@ -61,6 +61,30 @@ async function bootstrap() {
     infer: true,
   });
   const isProduction = process.env.NODE_ENV === 'production';
+
+  // Public widget endpoints — called from ANY customer website that embeds
+  // the livechat widget. Must bypass the strict FRONTEND_DOMAIN CORS policy.
+  // Runs BEFORE app.enableCors() so preflight OPTIONS gets a 204 with correct headers.
+  app.use((req: any, res: any, next: any) => {
+    const url: string = req.url || '';
+    const isWidgetRoute =
+      url.includes('/csat/submit/') ||
+      url.includes('/livechat/config/') ||
+      url.includes('/livechat/history/') ||
+      url.includes('/livechat/analytics/');
+    if (isWidgetRoute) {
+      const origin = req.headers?.origin || '*';
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Max-Age', '86400');
+      if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+      }
+    }
+    return next();
+  });
+
   // In production, FRONTEND_DOMAIN must be set. Falling back to wildcard true
   // is a security risk (cross-tenant data leakage).
   const corsOrigin = isProduction
