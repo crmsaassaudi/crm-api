@@ -506,8 +506,11 @@ export class LivechatEmbedController {
     // PERF FIX #1: Batch-load files instead of N individual findById calls.
     // Previously each media message triggered findById + getPresignedDownloadUrl
     // sequentially (N+1 problem). Now we batch-load all files in one query.
+    //
+    // FIX: fileId is stored inside metadata.media.fileId (not top-level msg.fileId).
+    // The domain mapper does NOT surface a top-level fileId — it's nested in metadata.
     const fileIds = rawMessages
-      .map((msg: any) => msg.fileId)
+      .map((msg: any) => msg.metadata?.media?.fileId)
       .filter(Boolean) as string[];
 
     const fileMap = new Map<string, { path?: string }>();
@@ -524,15 +527,25 @@ export class LivechatEmbedController {
 
     const messages = await Promise.all(
       rawMessages.map(async (msg: any) => {
-        if (msg.fileId) {
-          const file = fileMap.get(msg.fileId.toString?.() ?? msg.fileId);
+        const mediaFileId = msg.metadata?.media?.fileId;
+        if (mediaFileId) {
+          const file = fileMap.get(
+            mediaFileId.toString?.() ?? mediaFileId,
+          );
           if (file?.path) {
             try {
               const url = await this.filesService.getPresignedDownloadUrl(
                 file.path,
                 3600,
               );
-              return { ...msg, mediaUrl: url };
+              return {
+                ...msg,
+                mediaUrl: url,
+                // Surface media metadata for the widget renderer
+                mimeType: msg.metadata?.media?.mimeType,
+                fileName: msg.metadata?.media?.fileName,
+                fileSize: msg.metadata?.media?.size,
+              };
             } catch {
               /* skip — message still returned without url */
             }

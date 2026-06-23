@@ -364,6 +364,10 @@ export class OmniController {
   /**
    * Get paginated messages for a conversation.
    * Returns oldest-first for chat display.
+   *
+   * Enriches media messages that have `metadata.media.fileId` but no
+   * `mediaUrl`/`mediaProxyUrl` (e.g. livechat agent-sent images) with
+   * presigned S3 download URLs so the frontend can render them.
    */
   @Get('conversations/:id/messages')
   @RequirePermission('view', 'contacts')
@@ -378,11 +382,16 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
 
-    return this.messageRepo.findByConversation(
+    const result = await this.messageRepo.findByConversation(
       conversationId,
       parseInt(page, 10),
       Math.min(parseInt(limit, 10), 100),
     );
+
+    // Enrich media messages that have fileId but no resolved URL
+    const enriched = await this.enrichMediaUrls(result.data);
+
+    return { ...result, data: enriched };
   }
 
   @Get('conversations/:id/sync')
@@ -426,6 +435,9 @@ export class OmniController {
         ? messageResult.hasMore
         : messageResult.hasNextPage;
 
+    // Enrich media messages with presigned URLs
+    const enrichedMessages = await this.enrichMediaUrls(messages);
+
     return {
       mode: canDeltaSync ? 'delta' : 'snapshot',
       conversationId,
@@ -433,7 +445,7 @@ export class OmniController {
       afterMessageId: afterMessageId ?? null,
       currentVersion: Date.now(),
       conversation,
-      messages,
+      messages: enrichedMessages,
       hasMore,
       lock: await this.conversationLockService.getLock(
         tenantId,
@@ -1566,5 +1578,64 @@ export class OmniController {
       .join(' ')
       .trim();
     return fullName || user.email || null;
+  }
+
+  /**
+   * Enrich media messages that have `metadata.media.fileId` but no
+   * resolved `mediaUrl` or `mediaProxyUrl`.
+   *
+   * This handles livechat agent-sent media: the file is uploaded to S3
+   * and `fileId` is stored in metadata, but no external provider URL
+   * exists. Without enrichment, the frontend shows "Media unavailable".
+   *
+   * Uses batch file lookup to avoid N+1 queries.
+   */
+  private async enrichMediaUrls(messages: any[]): Promise<any[]> {
+    // Collect fileIds from messages that need URL resolution
+    const needsResolution = messages.filter(
+      (msg) =>
+        msg.metadata?.media?.fileId &&
+        !msg.mediaUrl &&
+        !msg.mediaProxyUrl,
+    );
+
+    if (needsResolution.length === 0) return messages;
+
+    const fileIds = [
+      ...new Set(
+        needsResolution.map((msg) => msg.metadata.media.fileId as string),
+      ),
+    ];
+
+    const fileMap = new Map<string, { path?: string }>();
+    try {
+      const files = await this.filesService.findByIds(fileIds);
+      for (const f of files) {
+        if (f?.id) fileMap.set(f.id.toString(), f);
+      }
+    } catch {
+      // Non-fatal — messages still returned without URLs
+      return messages;
+    }
+
+    return Promise.all(
+      messages.map(async (msg) => {
+        const fileId = msg.metadata?.media?.fileId;
+        if (!fileId || msg.mediaUrl || msg.mediaProxyUrl) return msg;
+
+        const file = fileMap.get(fileId.toString?.() ?? fileId);
+        if (!file?.path) return msg;
+
+        try {
+          const url = await this.filesService.getPresignedDownloadUrl(
+            file.path,
+            3600, // 1 hour TTL
+          );
+          return { ...msg, mediaUrl: url };
+        } catch {
+          return msg;
+        }
+      }),
+    );
   }
 }
