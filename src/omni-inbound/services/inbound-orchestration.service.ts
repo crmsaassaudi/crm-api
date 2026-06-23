@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { OmniPayload } from '../domain/omni-payload';
-import { OmniEvents } from '../domain/omni-events';
+import { OmniEvents, ReplyAutoAssignEvent } from '../domain/omni-events';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { ChannelsService } from '../../channels/channels.service';
 import { AssignmentService } from './assignment.service';
@@ -456,6 +456,72 @@ export class InboundOrchestrationService {
    */
   async releaseConversation(tenantId: string, agentId: string): Promise<void> {
     await this.agentPresenceService.releaseConversation(tenantId, agentId);
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Reply Auto-Assignment
+  // ────────────────────────────────────────────────────────────────
+
+  /**
+   * When an agent replies to an unassigned conversation, implicitly assign
+   * it to that agent. This is fire-and-forget — failures must NOT block
+   * message delivery.
+   *
+   * Flow:
+   *   1. Atomic `assignIfUnassigned` (MongoDB CAS — safe against races)
+   *   2. Increment agent presence counter
+   *   3. Write audit log (`strategy: reply_auto_assign`)
+   *   4. Broadcast assignment event so other agents' UIs update
+   */
+  @OnEvent(OmniEvents.REPLY_AUTO_ASSIGN)
+  async handleReplyAutoAssign(event: ReplyAutoAssignEvent): Promise<void> {
+    const { tenantId, conversationId, agentId, channelType } = event;
+
+    try {
+      // 1. Atomically assign only if still unassigned (prevents double-assign)
+      const committed = await this.conversationRepo.assignIfUnassigned(
+        conversationId,
+        agentId,
+      );
+
+      if (!committed) {
+        // Already assigned by another agent or routing — no action needed
+        this.logger.debug(
+          `Reply auto-assign skipped: conversation ${conversationId} already assigned`,
+        );
+        return;
+      }
+
+      // 2. Increment the agent's active conversation counter
+      await this.agentPresenceService.assignConversation(tenantId, agentId);
+
+      // 3. Audit trail
+      await this.assignmentService.logReplyAutoAssignment({
+        conversationId,
+        tenantId,
+        agentId,
+        channelType,
+      });
+
+      // 4. Broadcast assignment to all connected agents
+      this.eventEmitter.emit(OmniEvents.CONVERSATION_ASSIGNED, {
+        tenantId,
+        conversationId,
+        agentId,
+        oldAgentId: null,
+        strategy: 'reply_auto_assign',
+        reason: 'Agent replied to unassigned conversation',
+      });
+
+      this.logger.log(
+        `Reply auto-assigned conversation ${conversationId} → agent ${agentId}`,
+      );
+    } catch (err: any) {
+      // Non-blocking — reply delivery must not be affected
+      this.logger.warn(
+        `Reply auto-assign failed for conversation ${conversationId}: ${err.message}`,
+      );
+    }
   }
 
   // ────────────────────────────────────────────────────────────────

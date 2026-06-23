@@ -66,6 +66,8 @@ export const OmniEvents = {
   CONVERSATION_TAKEOVER: 'omni.conversation.takeover',
   /** No agent available — conversation entered the wait queue */
   CONVERSATION_QUEUED: 'omni.conversation.queued',
+  /** Agent replied to an unassigned conversation — trigger implicit assignment */
+  REPLY_AUTO_ASSIGN: 'omni.conversation.reply_auto_assign',
 
   // ── Conversation Lock ────────────────────────────────────────────────────
   /** Agent acquired editing lock */
@@ -303,6 +305,14 @@ export interface ConversationQueuedEvent extends OmniEventBase {
   queuedSince: Date;
   /** Size of the eligible agent pool that was evaluated */
   agentPoolSize: number;
+}
+
+/** omni.conversation.reply_auto_assign */
+export interface ReplyAutoAssignEvent extends OmniEventBase {
+  conversationId: string;
+  agentId: string;
+  /** Channel type for analytics */
+  channelType: string;
 }
 
 /** omni.reaction.inbound */

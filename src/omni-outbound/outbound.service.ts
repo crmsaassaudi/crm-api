@@ -223,6 +223,18 @@ export class OutboundService {
     // 2. Enforce platform reply window
     this.enforceReplyWindow(conversation);
 
+    // 2b. Auto-assign on reply: if conversation is unassigned, emit event
+    // so the inbound module can atomically assign, update presence, and
+    // write an audit log — keeping outbound decoupled from assignment infra.
+    if (!conversation.assignedAgentId) {
+      this.eventEmitter.emit('omni.conversation.reply_auto_assign', {
+        tenantId,
+        conversationId,
+        agentId,
+        channelType: conversation.channelType,
+      });
+    }
+
     this.logger.log(
       `Agent ${agentId} sending ${messageType} to conversation ${conversationId}`,
     );

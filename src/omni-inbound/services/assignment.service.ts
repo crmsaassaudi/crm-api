@@ -985,6 +985,31 @@ export class AssignmentService {
   }
 
   /**
+   * Log an implicit assignment triggered by an agent replying to an
+   * unassigned conversation. Separate from manual and auto-assignment so
+   * the routing history page can distinguish the three sources.
+   */
+  async logReplyAutoAssignment(params: {
+    conversationId: string;
+    tenantId: string;
+    agentId: string;
+    channelType?: string | null;
+  }): Promise<void> {
+    await this.writeAuditLog({
+      tenantId: params.tenantId,
+      conversationId: params.conversationId,
+      assignedAgentId: params.agentId,
+      previousAgentId: null,
+      strategy: 'reply_auto_assign',
+      reason:
+        'Agent replied to unassigned conversation — auto-assigned to replying agent',
+      channelType: params.channelType ?? null,
+      metadata: { source: 'reply_auto_assign' },
+      outcome: 'assigned',
+    });
+  }
+
+  /**
    * Write an audit log entry for the assignment decision.
    */
   private async writeAuditLog(dto: CreateAuditLogDto): Promise<void> {
