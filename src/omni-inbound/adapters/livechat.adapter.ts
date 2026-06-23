@@ -178,8 +178,13 @@ export class LivechatAdapter implements ChannelAdapter {
       }
     }
 
+    // Resolve specific type (image/video/audio/file) so the widget's
+    // MessageContent router dispatches to the correct bubble renderer.
+    // Previously sent 'media' which fell through to default text case.
+    const resolvedType = mimeToMessageType(media.mimeType);
+
     await this.gateway.sendToVisitor(recipientId, {
-      type: 'media',
+      type: resolvedType,
       url: resolvedUrl,
       mimeType: media.mimeType,
       fileName: media.fileName,

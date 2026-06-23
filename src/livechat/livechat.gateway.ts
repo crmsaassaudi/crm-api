@@ -421,7 +421,7 @@ export class LivechatGateway
     payload:
       | { type: 'text'; content: string; messageId?: string }
       | {
-          type: 'media';
+          type: 'image' | 'video' | 'audio' | 'file';
           url?: string;
           mimeType: string;
           fileName: string;

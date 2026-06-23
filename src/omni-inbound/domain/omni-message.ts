@@ -8,7 +8,9 @@ export type MessageType =
   | 'video'
   | 'location'
   | 'sticker'
-  | 'template';
+  | 'template'
+  | 'carousel'
+  | 'interactive';
 export type MessageStatus =
   | 'sending'
   | 'sent'
