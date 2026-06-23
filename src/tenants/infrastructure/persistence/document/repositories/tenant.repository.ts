@@ -88,17 +88,32 @@ export class TenantsRepository {
   }
 
   /**
+   * Default storage quota applied when a tenant document has no storageQuota field.
+   * 1 GB limit, 0 bytes used, warn at 80%.
+   */
+  private static readonly DEFAULT_STORAGE_QUOTA = {
+    limitBytes: 1_073_741_824, // 1 GB
+    usedBytes: 0,
+    warnThresholdPercent: 80,
+  };
+
+  /**
    * Atomically increment storage usage WITH quota guard.
    * Returns true if increment succeeded (within quota), false if over quota.
+   *
    * Uses $expr + $lte to ensure usedBytes + increment <= limitBytes.
+   * Falls back to initializing storageQuota with defaults when the field
+   * doesn't exist on the tenant document (prevents "0.0MB / 1024MB" false reject).
    */
   async atomicIncrementStorage(
     tenantId: string,
     bytes: number,
   ): Promise<boolean> {
+    // 1. Try the normal atomic increment with quota guard
     const result = await this.tenantsModel.updateOne(
       {
         _id: tenantId,
+        'storageQuota.limitBytes': { $exists: true },
         $or: [
           { 'storageQuota.limitBytes': -1 }, // unlimited
           {
@@ -113,7 +128,30 @@ export class TenantsRepository {
       },
       { $inc: { 'storageQuota.usedBytes': bytes } },
     );
-    return result.modifiedCount > 0;
+
+    if (result.modifiedCount > 0) return true;
+
+    // 2. If no match, check if storageQuota field simply doesn't exist yet.
+    //    Initialize it with defaults + the requested bytes (within default limit).
+    const initialized = await this.tenantsModel.updateOne(
+      {
+        _id: tenantId,
+        'storageQuota': { $exists: false },
+      },
+      {
+        $set: {
+          storageQuota: {
+            ...TenantsRepository.DEFAULT_STORAGE_QUOTA,
+            usedBytes: bytes,
+          },
+        },
+      },
+    );
+
+    if (initialized.modifiedCount > 0) return true;
+
+    // 3. storageQuota exists but the increment would exceed the limit → over quota.
+    return false;
   }
 
   /**
