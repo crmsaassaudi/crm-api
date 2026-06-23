@@ -114,14 +114,30 @@ export class InboundOrchestrationService {
         payload.metadata?.contactName ??
         payload.senderId;
 
+      // F-03 fix: fetch conversation tags and VIP flag to populate routing context.
+      // Previously these were hardcoded to [] / undefined, making any admin-configured
+      // tag-based or segment-based routing rules permanently unreachable.
+      let conversationTags: string[] = [];
+      let conversationIsVip: boolean | undefined;
+      try {
+        const conv = await this.conversationRepo.findById(conversationId);
+        conversationTags = conv?.tags ?? [];
+        conversationIsVip = (conv as any)?.isVip;
+      } catch {
+        // Non-fatal — routing context will fall back to empty/undefined
+      }
+
       const routingContext = {
         channel: payload.channelType,
-        tags: [],
+        tags: conversationTags,
         customerName,
         content: payload.content ?? '',
         time: this.getCurrentTimeHHmm(),
-        segment: undefined,
+        // Map the VIP flag to the segment field expected by routing rules.
+        // Admins can configure rules like: segment eq 'VIP' → route to Tier-2 team.
+        segment: conversationIsVip === true ? 'VIP' : undefined,
       };
+
 
       // 5. Call AssignmentService
       const assignedAgentId = await this.assignmentService.assignConversation(
@@ -165,8 +181,17 @@ export class InboundOrchestrationService {
   }
 
   /**
-   * Check if an existing conversation's assigned agent is still available.
-   * If not, trigger re-assignment.
+   * Check if an existing conversation's assigned agent is still reachable.
+   * Reassignment is triggered ONLY when the agent has actually disconnected —
+   * not when they are merely 'busy' or 'away', which are valid working states.
+   *
+   * Architecture note (F-08 fix):
+   *   Previously compared `presence.status !== 'available'` which uses the
+   *   *display* status. Agents in 'busy' or 'away' state have display status
+   *   that is not 'available', causing their conversations to be silently stolen
+   *   on every inbound customer message. The correct check is `connectionStatus`,
+   *   which is 'disconnected' only when the socket layer has confirmed the agent
+   *   is unreachable.
    */
   async checkAndReassignIfNeeded(
     payload: OmniPayload,
@@ -179,9 +204,15 @@ export class InboundOrchestrationService {
       assignedAgentId,
     );
 
-    if (!presence || presence.status !== 'available') {
+    // No presence record means the agent has fully expired from Redis → treat as offline.
+    // 'disconnected' connectionStatus means the socket layer lost the agent — reassign.
+    // 'busy' / 'away' agents are intentional working states — do NOT reassign.
+    const agentIsGone =
+      !presence || presence.connectionStatus === 'disconnected';
+
+    if (agentIsGone) {
       this.logger.debug(
-        `Agent ${assignedAgentId} offline for conversation ${conversationId} — re-assigning`,
+        `Agent ${assignedAgentId} is disconnected/gone for conversation ${conversationId} — re-assigning`,
       );
       await this.triggerAutoAssignment(
         payload,
@@ -191,6 +222,7 @@ export class InboundOrchestrationService {
       );
     }
   }
+
 
   // ────────────────────────────────────────────────────────────────
   // Bot Orchestration
@@ -327,12 +359,22 @@ export class InboundOrchestrationService {
    * If so, optionally:
    *   - Send an out-of-office auto-reply message
    *   - Set the conversation status to 'pending'
+   *
+   * F-11 fix: if an agent has already been assigned, skip OOO entirely.
+   * Sending "we are offline" immediately after agent assignment creates a
+   * contradictory and unprofessional customer experience.
    */
   async handleBusinessHoursCheck(
     payload: OmniPayload,
     conversationId: string,
+    assignedAgentId?: string | null,
   ): Promise<void> {
     try {
+      // F-11: if the routing engine already found an available agent, OOO is moot.
+      if (assignedAgentId) {
+        return;
+      }
+
       const withinHours = await this.businessHoursService.isWithinBusinessHours(
         payload.tenantId,
       );
@@ -383,6 +425,7 @@ export class InboundOrchestrationService {
       );
     }
   }
+
 
   // ────────────────────────────────────────────────────────────────
   // Auto-Resolve Timer

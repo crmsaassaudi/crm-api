@@ -10,6 +10,7 @@ import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import { Public } from 'nest-keycloak-connect';
 import { RedisService } from '../redis/redis.service';
+import { ResilienceMetricsService } from '../common/http/resilience-metrics.service';
 
 type ComponentStatus = 'ok' | 'degraded' | 'down';
 
@@ -36,6 +37,8 @@ export class HealthController {
   constructor(
     @Optional() @InjectConnection() private readonly mongo?: Connection,
     @Optional() private readonly redisService?: RedisService,
+    @Optional()
+    private readonly resilienceMetrics?: ResilienceMetricsService,
   ) {}
 
   @Get()
@@ -131,8 +134,15 @@ export class HealthController {
 
   /** Critical queue names to monitor. */
   private static readonly MONITORED_QUEUES = [
+    // Omni-channel inbound pipeline
     'omni-webhooks',
     'omni-routing',
+    'omni-media-cache',
+    'omni-sticky-retry',
+    'omni-auto-resolve',
+    'omni-fallback',
+    'bot-processing',
+    // Automation engine
     'automation-actions',
     'automation-actions-email',
     'automation-actions-sms',
@@ -140,6 +150,8 @@ export class HealthController {
     'automation-actions-webhook',
     'automation-actions-dlq',
     'automation-delayed-resume',
+    // System
+    'crm-dlq',
   ];
 
   /**
@@ -190,6 +202,67 @@ export class HealthController {
       totalWaiting,
       totalFailed,
       queues: results,
+    };
+  }
+
+  // ── T-044: Channel adapter health check ──────────────────────────────────
+
+  /** Channel adapters to report on. */
+  private static readonly CHANNEL_ADAPTERS = [
+    'facebook',
+    'instagram',
+    'whatsapp',
+    'zalo',
+    'telegram',
+    'tiktok',
+    'bot',
+  ] as const;
+
+  /**
+   * `GET /health/channels` — report resilience metrics per channel adapter.
+   *
+   * Returns error rate, total calls, and last error for each adapter.
+   * Ops can use this to detect degraded channel connectivity.
+   */
+  @Get('channels')
+  channels() {
+    if (!this.resilienceMetrics) {
+      return {
+        status: 'unknown',
+        detail: 'ResilienceMetricsService not available',
+      };
+    }
+
+    const allMetrics = this.resilienceMetrics.getMetrics();
+    const channels: Record<string, any> = {};
+    let hasError = false;
+
+    for (const adapter of HealthController.CHANNEL_ADAPTERS) {
+      const metric = allMetrics[adapter];
+      if (metric) {
+        const errorRate =
+          metric.total > 0 ? (metric.failure / metric.total) * 100 : 0;
+        channels[adapter] = {
+          status: errorRate > 50 ? 'degraded' : 'ok',
+          total: metric.total,
+          success: metric.success,
+          failure: metric.failure,
+          errorRate: `${errorRate.toFixed(2)}%`,
+          lastError: metric.lastError ?? null,
+          lastUpdated: metric.lastUpdated ?? null,
+        };
+        if (errorRate > 50) hasError = true;
+      } else {
+        channels[adapter] = {
+          status: 'no_data',
+          detail: 'No API calls recorded since process start',
+        };
+      }
+    }
+
+    return {
+      status: hasError ? 'degraded' : 'ok',
+      channels,
     };
   }
 }

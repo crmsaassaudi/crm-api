@@ -29,6 +29,14 @@ import Redis from 'ioredis';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import { isDedicatedWorkerProcess } from '../../config/runtime-role';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
+import { CrmRealtimeGateway } from './crm-realtime.gateway';
+import {
+  validateSendMessage,
+  validateSendMedia,
+  validateSendTemplate,
+  validateReaction,
+  validateTyping,
+} from '../dto/gateway-dto';
 
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
@@ -66,20 +74,12 @@ export class OmniGateway
 
   private readonly logger = new Logger(OmniGateway.name);
   private readonly socketEventChannels = [
-    'socket:contact:export:completed',
-    'socket:account:export:completed',
-    'socket:deal:export:completed',
-    'socket:ticket:export:completed',
-    'socket:contact:import:completed',
-    'socket:account:import:completed',
-    'socket:deal:import:completed',
-    'socket:ticket:import:completed',
     'socket:omni:message:persisted',
     'socket:omni:conversation:created',
     'socket:omni:conversation:reopened',
     'socket:omni:conversation:customer_updated',
     'socket:omni:message:media_cached',
-    'socket:livechat:message:status',
+    'socket:omni:message:status',
     'socket:omni:conversation:unread_reset',
   ] as const;
 
@@ -100,6 +100,7 @@ export class OmniGateway
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     private readonly cls: ClsService,
+    private readonly crmRealtime: CrmRealtimeGateway,
   ) {}
 
   /**
@@ -110,13 +111,21 @@ export class OmniGateway
   onModuleInit() {
     if (isDedicatedWorkerProcess()) return; // Only API/all-in-one process needs to subscribe
 
+    // Share Socket.IO server with CRM realtime gateway
+    this.crmRealtime.setServer(this.server);
+
+    const allChannels = [
+      ...this.socketEventChannels,
+      ...CrmRealtimeGateway.REDIS_CHANNELS,
+    ];
+
     const sub = this.redis.duplicate();
-    void sub.subscribe(...this.socketEventChannels, (err) => {
+    void sub.subscribe(...allChannels, (err) => {
       if (err) {
         this.logger.error('Failed to subscribe to Redis socket channels', err);
       } else {
         this.logger.log(
-          `Subscribed to Redis socket channels: ${this.socketEventChannels.join(', ')}`,
+          `Subscribed to Redis socket channels: ${allChannels.join(', ')}`,
         );
       }
     });
@@ -124,31 +133,14 @@ export class OmniGateway
     sub.on('message', (channel: string, message: string) => {
       try {
         const event = JSON.parse(message);
+
+        // Delegate CRM events (export/import) to CrmRealtimeGateway
+        if (this.crmRealtime.handleRedisMessage(channel, event)) {
+          return;
+        }
+
+        // Handle omni events
         switch (channel) {
-          case 'socket:contact:export:completed':
-            this.handleContactExportCompleted(event);
-            break;
-          case 'socket:account:export:completed':
-            this.handleModuleExportCompleted('account', event);
-            break;
-          case 'socket:deal:export:completed':
-            this.handleModuleExportCompleted('deal', event);
-            break;
-          case 'socket:ticket:export:completed':
-            this.handleModuleExportCompleted('ticket', event);
-            break;
-          case 'socket:contact:import:completed':
-            this.handleContactImportCompleted(event);
-            break;
-          case 'socket:account:import:completed':
-            this.handleModuleImportCompleted('account', event);
-            break;
-          case 'socket:deal:import:completed':
-            this.handleModuleImportCompleted('deal', event);
-            break;
-          case 'socket:ticket:import:completed':
-            this.handleModuleImportCompleted('ticket', event);
-            break;
           case 'socket:omni:message:persisted':
             this.broadcastInboundMessage(event);
             break;
@@ -164,7 +156,7 @@ export class OmniGateway
           case 'socket:omni:message:media_cached':
             this.broadcastMediaCached(event);
             break;
-          case 'socket:livechat:message:status':
+          case 'socket:omni:message:status':
             this.broadcastMessageStatus(event);
             break;
           case 'socket:omni:conversation:unread_reset':
@@ -408,6 +400,10 @@ export class OmniGateway
       `Agent ${userId} sends message to conversation ${data.conversationId}`,
     );
 
+    // T-037: Validate payload before processing
+    const validationError = validateSendMessage(data);
+    if (validationError) return { ok: false, error: validationError };
+
     try {
       // Wrap in tenant CLS context — WebSocket handlers don't have HTTP
       // interceptor pipeline, so CLS is empty. Mongoose tenant filter
@@ -498,6 +494,10 @@ export class OmniGateway
     const userId = client.data.userId ?? user.id ?? user.sub;
     const tenantId = client.data.tenantId;
     if (!tenantId) return { ok: false, error: 'No tenant context' };
+
+    // T-037: Validate payload before processing
+    const validationError = validateSendMedia(data);
+    if (validationError) return { ok: false, error: validationError };
 
     if (!data?.conversationId || !data?.fileId) {
       return { ok: false, error: 'conversationId and fileId are required' };
@@ -596,11 +596,10 @@ export class OmniGateway
     const tenantId = client.data.tenantId;
     if (!tenantId) return { ok: false, error: 'No tenant context' };
 
-    if (!data?.conversationId || !data?.templateName || !data?.languageCode) {
-      return {
-        ok: false,
-        error: 'conversationId, templateName, and languageCode are required',
-      };
+    // T-037: Validate template payload
+    const validationError = validateSendTemplate(data);
+    if (validationError) {
+      return { ok: false, error: validationError };
     }
 
     this.logger.log(
@@ -842,7 +841,7 @@ export class OmniGateway
     status: 'delivered' | 'read';
   }) {
     if (isDedicatedWorkerProcess()) {
-      await this.publishSocketEvent('socket:livechat:message:status', payload);
+      await this.publishSocketEvent('socket:omni:message:status', payload);
       return;
     }
 
@@ -961,11 +960,10 @@ export class OmniGateway
     const tenantId = client.data.tenantId;
     if (!tenantId) return { ok: false, error: 'No tenant context' };
 
-    if (!data?.conversationId || !data?.messageId || !data?.emoji) {
-      return {
-        ok: false,
-        error: 'conversationId, messageId, and emoji are required',
-      };
+    // T-037: Validate reaction payload
+    const validationError = validateReaction(data);
+    if (validationError) {
+      return { ok: false, error: validationError };
     }
 
     this.logger.debug(
@@ -1075,6 +1073,10 @@ export class OmniGateway
   ) {
     const user = client.data.user;
     if (!user) return;
+
+    // T-037: Validate typing payload
+    const validationError = validateTyping(data);
+    if (validationError) return;
 
     const userId = client.data.userId ?? user.id ?? user.sub;
     const tenantId = client.data.tenantId;
@@ -1237,16 +1239,23 @@ export class OmniGateway
       return { ok: false, error: 'Already claimed (race)' };
     }
 
-    // Try to assign the conversation capacity to this agent
-    const assigned = await this.presenceService.assignConversation(
+    // Pre-check capacity before incrementing to avoid over-assigning.
+    // The old assignConversation returned boolean — the new void version
+    // always increments, so we guard here first.
+    const agentPresence = await this.presenceService.getPresence(
       tenantId,
       userId,
     );
-
-    if (!assigned) {
+    if (
+      agentPresence &&
+      agentPresence.activeConversations >= agentPresence.maxCapacity
+    ) {
       await this.redis.del(claimKey).catch(() => undefined);
       return { ok: false, error: 'Agent at capacity' };
     }
+
+    // Atomically increment the conversation counter
+    await this.presenceService.assignConversation(tenantId, userId);
 
     try {
       await this.conversationLockService.acquireLock({
@@ -1513,121 +1522,6 @@ export class OmniGateway
     this.server.to(room).emit('omni:activity:new', {
       conversationId: event.conversationId,
       activity: event.activity,
-    });
-  }
-
-  /**
-   * Broadcast contact export completion to the tenant room.
-   * Called from Redis pub/sub subscription (cross-process) or
-   * EventEmitter2 (same-process fallback).
-   */
-  private handleContactExportCompleted(event: {
-    tenantId: string;
-    userId: string;
-    downloadUrl: string;
-    expiresAt: string;
-    recordCount: number;
-  }) {
-    const room = `tenant:${event.tenantId}`;
-    this.logger.log(
-      `Broadcasting contact export completed to room=${room} (user=${event.userId}, records=${event.recordCount})`,
-    );
-    this.server.to(room).emit('contact:export:completed', {
-      userId: event.userId,
-      downloadUrl: event.downloadUrl,
-      expiresAt: event.expiresAt,
-      recordCount: event.recordCount,
-    });
-  }
-
-  /**
-   * Generic handler for account/deal/ticket export completion events.
-   * Mirrors contact export: broadcast to the tenant room with a module-prefixed
-   * event name; the client filters by userId.
-   */
-  private handleModuleExportCompleted(
-    module: 'account' | 'deal' | 'ticket',
-    event: {
-      tenantId: string;
-      userId: string;
-      downloadUrl: string;
-      expiresAt: string;
-      recordCount: number;
-    },
-  ) {
-    const room = `tenant:${event.tenantId}`;
-    this.logger.log(
-      `Broadcasting ${module} export completed to room=${room} (user=${event.userId}, records=${event.recordCount})`,
-    );
-    this.server.to(room).emit(`${module}:export:completed`, {
-      userId: event.userId,
-      downloadUrl: event.downloadUrl,
-      expiresAt: event.expiresAt,
-      recordCount: event.recordCount,
-    });
-  }
-
-  /**
-   * Broadcast contact import completion to the user who triggered it.
-   * Unlike export (tenant-wide), import results are only meaningful to the
-   * initiating user, so we emit to the `agent:${userId}` room.
-   */
-  private handleContactImportCompleted(event: {
-    tenantId: string;
-    userId: string;
-    jobId: string;
-    fileName?: string;
-    summary: {
-      total: number;
-      inserted: number;
-      updated: number;
-      skipped: number;
-      errors: number;
-    };
-    reportUrl?: string;
-  }) {
-    const room = `agent:${event.userId}`;
-    this.logger.log(
-      `Broadcasting contact import completed to room=${room}, jobId=${event.jobId}`,
-    );
-    this.server.to(room).emit('contact:import:completed', {
-      jobId: event.jobId,
-      fileName: event.fileName,
-      summary: event.summary,
-      reportUrl: event.reportUrl,
-    });
-  }
-
-  /**
-   * Generic handler for account/deal/ticket import completion events.
-   * Emits to the agent:${userId} room with module-prefixed event name.
-   */
-  private handleModuleImportCompleted(
-    module: 'account' | 'deal' | 'ticket',
-    event: {
-      tenantId: string;
-      userId: string;
-      jobId: string;
-      fileName?: string;
-      summary: {
-        total: number;
-        inserted: number;
-        updated: number;
-        skipped: number;
-        errors: number;
-      };
-      reportUrl?: string;
-    },
-  ) {
-    const room = `agent:${event.userId}`;
-    this.logger.log(
-      `Broadcasting ${module} import completed to room=${room}, jobId=${event.jobId}`,
-    );
-    this.server.to(room).emit(`${module}:import:completed`, {
-      jobId: event.jobId,
-      fileName: event.fileName,
-      summary: event.summary,
-      reportUrl: event.reportUrl,
     });
   }
 

@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+﻿import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { MessageRepository } from '../omni-inbound/repositories/message.repository';
@@ -13,6 +13,8 @@ import { FilesService } from '../files/files.service';
 import { ImageProcessingService } from '../files/image-processing.service';
 import { PLATFORM_LIMITS } from '../files/config/platform-limits.config';
 import { mimeToMessageType } from '../common/utils/mime.util';
+import { OutboundMediaHandler } from './outbound-media.handler';
+import { OutboundEmailHandler } from './outbound-email.handler';
 
 import { ChannelRepository } from '../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { ReplyWindowExpiredException } from './exceptions/reply-window-expired.exception';
@@ -51,7 +53,7 @@ const normalizeOutboundSource = (source?: string | null): string => {
 };
 
 /**
- * OutboundService — handles messages sent from Agents to Customers.
+ * OutboundService â€” handles messages sent from Agents to Customers.
  *
  * Responsibilities:
  * 1. Persist the agent's message to the database.
@@ -82,6 +84,9 @@ export class OutboundService {
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     private readonly filesService: FilesService,
     private readonly imageProcessingService: ImageProcessingService,
+    // T-040/T-041: Extracted handlers
+    private readonly mediaHandler: OutboundMediaHandler,
+    private readonly emailHandler: OutboundEmailHandler,
   ) {}
 
   /**
@@ -371,7 +376,7 @@ export class OutboundService {
    * 1. Validate template exists and is APPROVED
    * 2. Resolve conversation + channel
    * 3. Persist message with type 'template'
-   * 4. Call adapter.sendTemplate() → WhatsApp Cloud API
+   * 4. Call adapter.sendTemplate() â†’ WhatsApp Cloud API
    * 5. Update status and emit events
    */
   async sendAgentTemplate(params: {
@@ -402,7 +407,7 @@ export class OutboundService {
     const source = normalizeOutboundSource(rawSource);
     const senderContext = await this.resolveSenderContext(agentId);
 
-    // ── Idempotency check ──────────────────────────────────────────
+    // â”€â”€ Idempotency check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (idempotencyKey) {
       const existing = await this.messageRepo.findByIdempotencyKey(
         tenantId,
@@ -460,7 +465,7 @@ export class OutboundService {
     // message type allowed outside the 24-hour customer reply window.
 
     // 2. Build content summary for display in conversation timeline
-    const contentSummary = `📋 Template: ${templateName}`;
+    const contentSummary = `ðŸ“‹ Template: ${templateName}`;
 
     this.logger.log(
       `Agent ${agentId} sending template '${templateName}' to conversation ${conversationId}`,
@@ -575,14 +580,18 @@ export class OutboundService {
    * Send a media message from an agent to a customer.
    *
    * Flow:
-   * 1. Resolve file (from fileId → S3 download, or from buffer)
+   * 1. Resolve file (from fileId â†’ S3 download, or from buffer)
    * 2. ACL check (if fileId)
    * 3. Validate against platform limits
    * 4. Compress for platform if image
    * 5. Persist message with status 'sending'
-   * 6. Call adapter.sendMedia() → update status
+   * 6. Call adapter.sendMedia() â†’ update status
    * 7. Create outbound file record
    * 8. Emit events
+   */
+  /**
+   * Send a media message from an agent to a customer.
+   * T-040: Delegated to OutboundMediaHandler for separation of concerns.
    */
   async sendAgentMedia(params: {
     tenantId: string;
@@ -595,243 +604,7 @@ export class OutboundService {
     idempotencyKey?: string;
     clientMessageId?: string;
   }): Promise<any> {
-    const {
-      tenantId,
-      conversationId,
-      agentId,
-      media,
-      caption = '',
-      source: rawSource = 'crm_api',
-      transport = 'http',
-      idempotencyKey,
-      clientMessageId,
-    } = params;
-
-    const source = normalizeOutboundSource(rawSource);
-    const senderContext = await this.resolveSenderContext(agentId);
-
-    // 1. Resolve conversation + channel
-    const conversation = await this.conversationRepo.findById(conversationId);
-    if (!conversation) {
-      throw new Error(`Conversation ${conversationId} not found`);
-    }
-
-    let channel = await this.channelRepo.findByIdWithCredentials(
-      tenantId,
-      conversation.channelId.toString(),
-    );
-    if (!channel && (conversation as any).channelAccount) {
-      channel = await this.channelRepo.findByAccountWithCredentials(
-        tenantId,
-        conversation.channelType,
-        (conversation as any).channelAccount,
-      );
-    }
-    if (!channel) {
-      throw new Error(
-        `Channel for conversation ${conversationId} not found or disconnected`,
-      );
-    }
-
-    this.enforceReplyWindow(conversation);
-
-    // 2. Resolve media buffer
-    let mediaBuffer: Buffer;
-    if (media.fileId) {
-      // Resolve from existing file
-      const file = await this.filesService.findById(media.fileId);
-      if (!file) throw new Error(`File ${media.fileId} not found`);
-      if (!this.filesService.checkAccess(file, agentId, 'AGENT')) {
-        throw new Error('No access to this file');
-      }
-      // Download from S3
-      const downloadUrl = await this.filesService.getPresignedDownloadUrl(
-        file.path,
-        300,
-      );
-      const response = await fetch(downloadUrl);
-      if (!response.ok) throw new Error('Failed to download file from S3');
-      mediaBuffer = Buffer.from(await response.arrayBuffer());
-      media.mimeType =
-        media.mimeType || file.mimeType || 'application/octet-stream';
-      media.fileName = media.fileName || file.fileName || 'file';
-      media.size = mediaBuffer.length;
-    } else if (media.buffer) {
-      mediaBuffer = media.buffer;
-    } else {
-      throw new Error('Either fileId or buffer must be provided');
-    }
-
-    // 3. Validate against platform limits
-    const channelKey = conversation.channelType.toLowerCase() as ChannelType;
-    const platformLimits = PLATFORM_LIMITS[channelKey];
-    if (platformLimits) {
-      const isImage = media.mimeType.startsWith('image/');
-      const limit = isImage ? platformLimits.image : platformLimits.file;
-      if (limit && mediaBuffer.length > limit.maxBytes) {
-        throw new Error(
-          `File size ${(mediaBuffer.length / (1024 * 1024)).toFixed(1)}MB exceeds ${channelKey} limit of ${(limit.maxBytes / (1024 * 1024)).toFixed(0)}MB`,
-        );
-      }
-    }
-
-    // 4. Compress for platform if image
-    let sendBuffer = mediaBuffer;
-    if (
-      media.mimeType.startsWith('image/') &&
-      this.imageProcessingService.isProcessableImage(media.mimeType)
-    ) {
-      try {
-        const compressed =
-          await this.imageProcessingService.compressForPlatform(
-            mediaBuffer,
-            channelKey,
-          );
-        sendBuffer = compressed.buffer;
-        this.logger.log(
-          `Compressed image for ${channelKey}: ${(mediaBuffer.length / 1024).toFixed(0)}KB → ${(sendBuffer.length / 1024).toFixed(0)}KB`,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Platform compression failed, using original: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    // 5. Determine message type
-    const messageType = mimeToMessageType(media.mimeType);
-
-    // 6. Persist message
-    const message = await this.messageRepo.create({
-      tenantId,
-      conversationId,
-      senderId: agentId,
-      senderName: senderContext.name,
-      senderAvatarUrl: senderContext.avatarUrl ?? undefined,
-      senderType: 'agent',
-      direction: 'outbound',
-      source,
-      messageType,
-      content: caption || `[${messageType}] ${media.fileName}`,
-      status: 'sending',
-      idempotencyKey,
-      clientMessageId,
-      metadata: {
-        sender: {
-          id: agentId,
-          name: senderContext.name,
-          avatarUrl: senderContext.avatarUrl ?? null,
-          type: 'agent',
-        },
-        source,
-        transport,
-        media: {
-          fileName: media.fileName,
-          mimeType: media.mimeType,
-          size: sendBuffer.length,
-          fileId: media.fileId,
-        },
-      },
-    });
-
-    // Update conversation last message
-    await this.conversationRepo.updateLastMessage(
-      conversationId,
-      caption || `📎 ${media.fileName}`,
-      new Date(),
-      'agent',
-    );
-
-    // 7. Send via adapter
-    try {
-      const adapter = this.adapters.get(channelKey);
-      let externalId: string | undefined;
-
-      if (adapter?.sendMedia) {
-        // Adapter supports media sending
-        const sendMediaPayload: OutboundMedia = {
-          ...media,
-          buffer: sendBuffer,
-          size: sendBuffer.length,
-          caption,
-        };
-        const result = await adapter.sendMedia(
-          conversation.customer.externalId,
-          sendMediaPayload,
-          {
-            credentials: channel.credentials,
-            account: channel.account,
-            messageId: message.id,
-          },
-        );
-        externalId = result.externalMessageId;
-        if (!result.success) {
-          throw new Error(result.error || 'Adapter sendMedia failed');
-        }
-      } else if (adapter) {
-        // Fallback: send as text with download link
-        const downloadUrl = media.fileId
-          ? await this.filesService.getPresignedDownloadUrl(
-              media.storageKey || '',
-              3600,
-            )
-          : '';
-        const fallbackContent =
-          caption ||
-          `📎 ${media.fileName}${downloadUrl ? '\n' + downloadUrl : ''}`;
-        const adapterResponse = await adapter.send(
-          conversation.customer.externalId,
-          fallbackContent,
-          'text',
-          {
-            credentials: channel.credentials,
-            account: channel.account,
-            messageId: message.id,
-          },
-        );
-        externalId =
-          (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
-      }
-
-      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
-
-      this.eventEmitter.emit('omni.message.sent', {
-        tenantId,
-        conversationId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        senderAvatarUrl: senderContext.avatarUrl ?? null,
-        senderType: 'agent',
-        messageType,
-        content: caption || `[${messageType}] ${media.fileName}`,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        clientMessageId,
-        timestamp: new Date().toISOString(),
-        source,
-        transport,
-      });
-
-      return {
-        ok: true,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        clientMessageId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        source,
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to send media via provider: ${errorMessage}`);
-      await this.messageRepo.updateStatus(message.id, 'failed');
-      throw error;
-    }
+    return this.mediaHandler.sendAgentMedia(params);
   }
 
   /**
@@ -1041,8 +814,8 @@ export class OutboundService {
    * Send a bot media message (image, video, audio, file) to the customer.
    *
    * Downloads media from the bot-provided URL and forwards it via the
-   * channel adapter's sendMedia method. Falls back to text link if
-   * the adapter doesn't support media.
+  /**
+   * Send a bot media message. T-040: Delegated to OutboundMediaHandler.
    */
   async sendBotMedia(params: {
     tenantId: string;
@@ -1053,198 +826,9 @@ export class OutboundService {
     caption?: string;
     idempotencyKey?: string;
   }): Promise<any> {
-    const {
-      tenantId,
-      conversationId,
-      mediaUrl,
-      mimeType: rawMimeType,
-      caption = '',
-      idempotencyKey,
-    } = params;
-
-    if (idempotencyKey) {
-      const existing = await this.messageRepo.findByIdempotencyKey(
-        tenantId,
-        idempotencyKey,
-      );
-      if (existing && existing.status !== 'failed') {
-        return { ok: true, messageId: existing.id, reused: true };
-      }
-    }
-
-    const conversation = await this.conversationRepo.findById(conversationId);
-    if (!conversation) {
-      throw new Error(`Conversation ${conversationId} not found`);
-    }
-
-    let channel = await this.channelRepo.findByIdWithCredentials(
-      tenantId,
-      conversation.channelId.toString(),
+    return this.mediaHandler.sendBotMedia(params, (fallbackParams) =>
+      this.sendBotMessage(fallbackParams),
     );
-    if (!channel && (conversation as any).channelAccount) {
-      channel = await this.channelRepo.findByAccountWithCredentials(
-        tenantId,
-        conversation.channelType,
-        (conversation as any).channelAccount,
-      );
-    }
-    if (!channel) {
-      throw new Error(
-        `Channel for conversation ${conversationId} not found or disconnected`,
-      );
-    }
-
-    this.enforceReplyWindow(conversation);
-
-    // Download media from bot URL
-    let mediaBuffer: Buffer;
-    let mimeType = rawMimeType || 'application/octet-stream';
-    let fileName = 'bot-media';
-
-    try {
-      const response = await fetch(mediaUrl, {
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to download: ${response.status}`);
-      }
-      mediaBuffer = Buffer.from(await response.arrayBuffer());
-
-      // Infer mime type from response if not provided
-      const contentType = response.headers.get('content-type');
-      if (contentType && mimeType === 'application/octet-stream') {
-        mimeType = contentType.split(';')[0].trim();
-      }
-
-      // Extract filename from URL
-      try {
-        const pathname = new URL(mediaUrl).pathname;
-        const basename = pathname.split('/').pop();
-        if (basename && basename.includes('.')) fileName = basename;
-      } catch {
-        /* ignore */
-      }
-    } catch (error) {
-      this.logger.warn(
-        `Bot media download failed for ${mediaUrl}: ${error instanceof Error ? error.message : error}. Falling back to link.`,
-      );
-      // Fallback: send URL as text
-      return this.sendBotMessage({
-        tenantId,
-        conversationId,
-        content: caption ? `${caption}\n${mediaUrl}` : mediaUrl,
-        messageType: 'text',
-        idempotencyKey,
-      });
-    }
-
-    const resolvedMessageType = mimeToMessageType(mimeType);
-
-    // Persist message
-    const message = await this.messageRepo.create({
-      tenantId,
-      conversationId,
-      senderId: 'bot:typebot',
-      senderName: 'Bot',
-      senderType: 'bot',
-      direction: 'outbound',
-      source: 'bot',
-      messageType: resolvedMessageType,
-      content: caption || `[${resolvedMessageType}] ${fileName}`,
-      status: 'sending',
-      idempotencyKey,
-      metadata: {
-        sender: {
-          id: 'bot:typebot',
-          name: 'Bot',
-          avatarUrl: null,
-          type: 'bot',
-        },
-        source: 'bot',
-        provider: 'typebot',
-        media: { fileName, mimeType, size: mediaBuffer.length },
-      },
-    });
-
-    await this.conversationRepo.updateLastMessage(
-      conversationId,
-      caption || `📎 ${fileName}`,
-      new Date(),
-      'bot',
-    );
-
-    try {
-      const channelKey = conversation.channelType.toLowerCase() as ChannelType;
-      const adapter = this.adapters.get(channelKey);
-      let externalId: string | undefined;
-
-      if (adapter?.sendMedia) {
-        const result = await adapter.sendMedia(
-          conversation.customer.externalId,
-          {
-            buffer: mediaBuffer,
-            mimeType,
-            fileName,
-            size: mediaBuffer.length,
-            caption,
-          },
-          {
-            credentials: channel.credentials,
-            account: channel.account,
-            messageId: message.id,
-          },
-        );
-        externalId = result.externalMessageId;
-        if (!result.success) {
-          throw new Error(result.error || 'Adapter sendMedia failed');
-        }
-      } else if (adapter) {
-        // Fallback: send as text with media URL
-        const fallbackContent = caption
-          ? `${caption}\n${mediaUrl}`
-          : `📎 ${fileName}\n${mediaUrl}`;
-        const resp = await adapter.send(
-          conversation.customer.externalId,
-          fallbackContent,
-          'text',
-          {
-            credentials: channel.credentials,
-            account: channel.account,
-            messageId: message.id,
-          },
-        );
-        externalId = resp?.message_id || resp?.id;
-      }
-
-      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
-
-      this.eventEmitter.emit('omni.message.sent', {
-        tenantId,
-        conversationId,
-        senderId: 'bot:typebot',
-        senderName: 'Bot',
-        senderAvatarUrl: null,
-        senderType: 'bot',
-        direction: 'outbound',
-        messageType: resolvedMessageType,
-        content: caption || `[${resolvedMessageType}] ${fileName}`,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        timestamp: new Date().toISOString(),
-        source: 'bot',
-        transport: 'http',
-      });
-
-      return { ok: true, messageId: message.id, status: 'sent' };
-    } catch (error) {
-      this.logger.error(
-        `Failed to send bot media: ${error instanceof Error ? error.message : error}`,
-      );
-      await this.messageRepo.updateStatus(message.id, 'failed');
-      throw error;
-    }
   }
 
   private async resolveSenderContext(agentId: string): Promise<{
@@ -1308,7 +892,7 @@ export class OutboundService {
       };
     }
 
-    // No customer message yet — window is closed
+    // No customer message yet â€” window is closed
     if (!conversation.lastCustomerMessageAt) {
       return {
         isOpen: false,
@@ -1358,7 +942,8 @@ export class OutboundService {
 
   /**
    * Send an email reply from the Agent to the Customer.
-   * Processes S3 inline images natively via Axios streaming into Nodemailer CIDs.
+  /**
+   * Send an email reply. T-041: Delegated to OutboundEmailHandler.
    */
   async sendEmailReply(params: {
     tenantId: string;
@@ -1373,276 +958,6 @@ export class OutboundService {
     references?: string[];
     attachments?: { url: string; filename: string; contentType: string }[];
   }): Promise<any> {
-    const {
-      tenantId,
-      conversationId,
-      agentId,
-      to,
-      cc = [],
-      bcc = [],
-      subject,
-      htmlBody,
-      inReplyTo,
-      references = [],
-      attachments: standardAttachments = [],
-    } = params;
-    const senderContext = await this.resolveSenderContext(agentId);
-
-    const conversation = await this.conversationRepo.findById(conversationId);
-    if (!conversation) {
-      throw new Error(`Conversation ${conversationId} not found`);
-    }
-
-    // 1. Resolve SMTP config from TransportPool
-    const channelId = conversation.channelId.toString();
-    const transportConfig = await this.transportPool.resolveWithTenantGuard(
-      channelId,
-      tenantId,
-    );
-
-    if (!transportConfig || transportConfig.providerType !== 'smtp') {
-      throw new Error('Invalid or missing SMTP configuration for this channel');
-    }
-
-    const { user, password } = transportConfig.credentials;
-    const { host, port, fromEmail, fromName } = transportConfig.publicSettings;
-    const numPort = Number(port);
-
-    // ── Outbound Queue: Throttle + Daily Quota Check ──────────────────
-    const throttleResult = await this.outboundQueue.checkSendAllowed(
-      tenantId,
-      channelId,
-      host,
-      to.length + cc.length + bcc.length,
-    );
-    if (!throttleResult.allowed) {
-      throw new Error(throttleResult.reason || 'Send rate limited');
-    }
-
-    const transporter = nodemailer.createTransport({
-      host,
-      port: numPort,
-      secure: numPort === 465,
-      auth: { user, pass: password },
-    });
-
-    // 2. PARSE HTML & PROCESS CID INLINE IMAGES
-    // Using cheerio for synchronous DOM manipulation
-    // We MUST use for...of for asynchronous operations to avoid unhandled promises
-    const $ = cheerio.load(htmlBody);
-    const imagesToProcess = $('img').toArray();
-    const inlineAttachments: any[] = [];
-
-    for (const [index, el] of imagesToProcess.entries()) {
-      const src = $(el).attr('src');
-      if (src && src.includes('s3')) {
-        // Matches any S3/storage URL
-        const cid = `inline-${index}-${Date.now()}@crmsaudi.dev`;
-        $(el).attr('src', `cid:${cid}`);
-
-        try {
-          // Streaming download from S3 straight into Nodemailer Attachment
-          // This avoids the fatal RAM Exhaustion OOM Trap
-          const response = await axios({
-            method: 'get',
-            url: src,
-            responseType: 'stream',
-          });
-
-          inlineAttachments.push({
-            cid,
-            filename: `image-${index}.jpg`, // Optional, email clients rely more on CID
-            content: response.data,
-            contentType: response.headers['content-type'],
-          });
-        } catch (downloadErr: unknown) {
-          const errorMessage =
-            downloadErr instanceof Error
-              ? downloadErr.message
-              : String(downloadErr);
-          this.logger.warn(
-            `Failed to download inline image from ${src}: ${errorMessage}`,
-          );
-          // Fallback: If we couldn't download it, we leave the S3 URL to avoid breaking the email entirely
-          $(el).attr('src', src);
-        }
-      }
-    }
-
-    // ── Append Email Signature + Signature Fence ───────────────────────
-    const signature = await this.emailSignatureService.getSignature(
-      tenantId,
-      agentId,
-      channelId,
-    );
-    const signatureHtml = signature?.htmlContent || '';
-    const signatureFenceHtml =
-      this.emailSignatureService.wrapWithSignatureFence(
-        signatureHtml,
-        conversationId,
-      );
-    // Append signature + fence to the bottom of the email body
-    if ($('body').length) {
-      $('body').append(signatureFenceHtml);
-    } else {
-      $.root().append(signatureFenceHtml);
-    }
-
-    const finalHtml = $.html();
-
-    // Setup standardized standard attachments via streams as well
-    const formattedAttachments: any[] = [];
-    for (const attachment of standardAttachments) {
-      try {
-        const response = await axios({
-          method: 'get',
-          url: attachment.url,
-          responseType: 'stream',
-        });
-        formattedAttachments.push({
-          filename: attachment.filename,
-          content: response.data,
-          contentType: attachment.contentType,
-        });
-      } catch {
-        this.logger.error(`Failed to download attachment ${attachment.url}`);
-        throw new Error(
-          `Could not fetch attachment ${attachment.filename} for email dispatch`,
-        );
-      }
-    }
-
-    const allAttachments = [...formattedAttachments, ...inlineAttachments];
-
-    // 3. Persist placeholder to MessageRepository
-    // We do this first so we have the Message ID
-    const snippet =
-      finalHtml
-        .replace(/<[^>]*>?/gm, '')
-        .substring(0, 200)
-        .trim() || '(No content)';
-
-    let messageRecord;
-    try {
-      messageRecord = await this.messageRepo.create({
-        tenantId,
-        conversationId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        senderAvatarUrl: senderContext.avatarUrl ?? undefined,
-        senderType: 'agent',
-        direction: 'outbound',
-        source: 'crm_api',
-        messageType: 'text',
-        content: snippet,
-        status: 'sending',
-        metadata: {
-          sender: {
-            id: agentId,
-            name: senderContext.name,
-            avatarUrl: senderContext.avatarUrl ?? null,
-            type: 'agent',
-          },
-          source: 'crm_api',
-        },
-      });
-    } catch (dbErr) {
-      throw new Error(`Failed to create message record: ${dbErr}`);
-    }
-
-    // 4. Send Email via NodeMailer
-    let info;
-    const fromAddress = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
-    try {
-      info = await transporter.sendMail({
-        from: fromAddress,
-        to,
-        cc,
-        bcc,
-        subject,
-        html: `<html><head><meta charset="utf-8"></head><body>${finalHtml}</body></html>`,
-        text: snippet,
-        attachments: allAttachments,
-        inReplyTo: inReplyTo || undefined,
-        references: references.length ? references.join(' ') : undefined,
-        headers: {
-          // Layer 1: Custom CRM Headers for Thread Correlation (Section 5.4)
-          'X-CRM-Thread-ID': conversationId,
-          'X-CRM-Tenant-ID': tenantId,
-          'X-CRM-Message-Id': messageRecord.id,
-        },
-      });
-    } catch (err) {
-      this.logger.error(`Nodemailer failed to send email: ${err}`);
-      await this.messageRepo.updateStatus(messageRecord.id, 'failed');
-      throw err;
-    }
-
-    const externalId = info.messageId || `<${ulid()}@crm.local>`;
-
-    // 5. Update Status + Record Send for Quota Tracking
-    await this.messageRepo.updateStatus(messageRecord.id, 'sent', externalId);
-    await this.conversationRepo.updateLastMessage(
-      conversationId,
-      snippet,
-      new Date(),
-      'agent',
-    );
-
-    // Record successful send for daily quota counter
-    await this.outboundQueue.recordSend(
-      tenantId,
-      channelId,
-      to.length + cc.length + bcc.length,
-    );
-
-    // 6. Save Email Full Content & Metadata
-    await this.emailContentModel.create({
-      tenantId,
-      messageId: messageRecord.id,
-      contactIds: [], // Would normally extract from all recipients
-      subject,
-      htmlBody: finalHtml,
-      textBody: snippet,
-      attachments: standardAttachments, // store metadata of standard attachments only
-    });
-
-    await this.emailMetadataModel.create({
-      tenantId,
-      mailboxId: channelId,
-      messageId: messageRecord.id,
-      emailMessageId: externalId,
-      inReplyTo,
-      references,
-      from: fromAddress,
-      to,
-      cc,
-      bcc,
-      deliveryStatus: 'unknown',
-    });
-
-    // 7. Emit real-time socket event
-    this.eventEmitter.emit('omni.message.sent', {
-      tenantId,
-      conversationId,
-      senderId: agentId,
-      senderName: senderContext.name,
-      senderAvatarUrl: senderContext.avatarUrl ?? null,
-      senderType: 'agent',
-      messageType: 'text',
-      content: snippet, // For UI preview
-      messageId: messageRecord.id,
-      externalMessageId: externalId,
-      status: 'sent',
-      timestamp: new Date().toISOString(),
-      source: 'crm_api',
-      transport: 'http',
-    });
-
-    return {
-      ok: true,
-      messageId: messageRecord.id,
-      externalMessageId: externalId,
-    };
+    return this.emailHandler.sendEmailReply(params);
   }
 }

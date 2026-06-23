@@ -35,6 +35,28 @@ export class AgentStatusAuditRepository {
   }
 
   /**
+   * Find the last status transition for an agent BEFORE a given timestamp.
+   * Used to establish the agent's status at midnight for multi-day sessions.
+   * Without this, time from 00:00 to the first same-day log would be
+   * incorrectly counted as 'offline' (F-05 fix).
+   */
+  async findLastBeforeTimestamp(
+    tenantId: string,
+    agentId: string,
+    before: Date,
+  ): Promise<StatusAuditLogEntry | null> {
+    return this.model
+      .findOne({
+        tenantId,
+        agentId,
+        timestamp: { $lt: before },
+      })
+      .sort({ timestamp: -1 })
+      .lean<StatusAuditLogEntry>()
+      .exec();
+  }
+
+  /**
    * Find all status transitions for an agent within a date range.
    * Sorted by timestamp ascending (chronological order).
    */

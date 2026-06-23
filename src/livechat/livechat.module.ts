@@ -9,6 +9,7 @@ import { LivechatVisitorBridge } from './livechat-visitor.bridge';
 import { VisitorUploadService } from './visitor-upload.service';
 import { LivechatWidgetService } from './livechat-widget.service';
 import { MessageStatusService } from './services/message-status.service';
+import { SocketRateLimiter } from '../common/guards/socket-rate-limiter';
 import { LivechatWidgetRepository } from './infrastructure/persistence/document/repositories/livechat-widget.repository';
 import {
   LivechatWidgetSchemaClass,
@@ -70,6 +71,7 @@ import {
     LivechatWidgetRepository,
     WidgetEventRepository,
     MessageStatusService,
+    SocketRateLimiter,
   ],
   exports: [LivechatGateway, LivechatAdapter, LivechatWidgetService],
 })

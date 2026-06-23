@@ -22,6 +22,7 @@ import { OutboundService } from '../../omni-outbound/outbound.service';
 import { NoteService } from '../services/note.service';
 import { ActivityService } from '../services/activity.service';
 import { ConversationService } from '../services/conversation.service';
+import { ConversationQueryService } from '../services/conversation-query.service';
 import { ConversionService } from '../services/conversion.service';
 import { ConversationLockService } from '../services/conversation-lock.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
@@ -33,6 +34,7 @@ import { TenantsService } from '../../tenants/tenants.service';
 import { FilesService } from '../../files/files.service';
 import { RequirePermission } from '../../common/permissions';
 import { AssignmentAuditLogRepository } from '../repositories/assignment-audit-log.repository';
+import { AgentPresenceService } from '../services/agent-presence.service';
 
 /**
  * REST API for omni-channel conversations and messages.
@@ -56,6 +58,7 @@ export class OmniController {
     private readonly conversationRepo: ConversationRepository,
     private readonly messageRepo: MessageRepository,
     private readonly conversationService: ConversationService,
+    private readonly queryService: ConversationQueryService,
     private readonly conversionService: ConversionService,
     private readonly outboundService: OutboundService,
     private readonly noteService: NoteService,
@@ -67,6 +70,7 @@ export class OmniController {
     private readonly tenantsService: TenantsService,
     private readonly filesService: FilesService,
     private readonly auditLogRepo: AssignmentAuditLogRepository,
+    private readonly agentPresenceService: AgentPresenceService,
   ) {}
 
   // ─── Routing Trace (production debugging) ────────────────────
@@ -499,7 +503,7 @@ export class OmniController {
       throw new BadRequestException('Tenant context not found');
     }
 
-    return this.conversationService.getConversationTimeline({
+    return this.queryService.getConversationTimeline({
       tenantId,
       conversationId,
       query,
@@ -1054,6 +1058,22 @@ export class OmniController {
     if (agentId !== undefined) {
       updated =
         (await this.conversationRepo.updateAssignment(id, agentId)) ?? updated;
+
+      // F-09 fix: sync Redis capacity counters on manual assignment.
+      // Without this, the Redis `activeConversations` counter diverges from
+      // the real open-conversation count in MongoDB.
+      if (oldAgentId && oldAgentId !== agentId) {
+        // Release capacity from the old agent
+        await this.agentPresenceService
+          .releaseConversation(conversation.tenantId, oldAgentId)
+          .catch(() => {});
+      }
+      if (agentId) {
+        // Increment capacity for the new agent
+        await this.agentPresenceService
+          .assignConversation(conversation.tenantId, agentId)
+          .catch(() => {});
+      }
     }
 
     if (groupId !== undefined) {
@@ -1092,6 +1112,13 @@ export class OmniController {
     const oldAgentId = conversation.assignedAgentId;
     const performedByUserId = this.cls.get<string>('userId') ?? null;
     const updated = await this.conversationRepo.updateAssignment(id, null);
+
+    // F-09 fix: release Redis capacity when manually unassigning.
+    if (oldAgentId) {
+      await this.agentPresenceService
+        .releaseConversation(conversation.tenantId, oldAgentId)
+        .catch(() => {});
+    }
 
     this.eventEmitter.emit('omni.conversation.assigned', {
       tenantId: conversation.tenantId,

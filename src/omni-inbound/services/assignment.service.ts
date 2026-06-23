@@ -551,7 +551,13 @@ export class AssignmentService {
               fallbackStrategy,
             },
             {
-              jobId: `sticky-retry-${conversationId}-${Date.now()}`,
+              // F-04 fix: deterministic jobId — BullMQ will deduplicate if a retry
+              // is already pending for this conversation. Previously appending
+              // Date.now() caused a new job per message, leading to duplicate
+              // assignment attempts when the customer sent multiple messages
+              // during the sticky wait window.
+              jobId: `sticky-retry-${conversationId}`,
+
               delay: stickyWaitMinutes * 60 * 1000,
               removeOnComplete: true,
               removeOnFail: { count: 100 },
@@ -629,22 +635,50 @@ export class AssignmentService {
     strategy: AssignmentStrategy,
     tenantMaxCapacity = FALLBACK_MAX_CAPACITY,
   ): Promise<string | null> {
-    const reserve = (this.presenceService as any).reserveAgentFromCandidates;
-    if (typeof reserve === 'function') {
-      return reserve.call(this.presenceService, tenantId, agents);
-    }
+    // ── Architecture note (F-07 fix) ──────────────────────────────────────
+    // Previously this method used a duck-typing guard that called
+    // `presenceService.reserveAgentFromCandidates` for ALL strategies,
+    // meaning the same Lua script was executed regardless of the configured
+    // strategy. The `least-busy` and `capacity-based` fallback branches below
+    // were dead code that was never reached.
+    //
+    // Each strategy now has an explicit, correct implementation:
+    //
+    //   round-robin   → Iterate the pre-ordered list sequentially (respects
+    //                   rotation); call the Lua script per-agent to atomically
+    //                   reserve the first eligible one.
+    //   least-busy    → Delegate to the Lua script which picks the ZSET
+    //                   candidate with the lowest load score.
+    //   capacity-based → Use the DB-backed aggregation which reads real
+    //                   per-agent maxCapacity and enforces hard limits.
+    // ─────────────────────────────────────────────────────────────────────
 
-    if (strategy === 'least-busy') {
-      return (await this.leastBusy(tenantId, agents)).agentId;
+    if (agents.length === 0) return null;
+
+    if (strategy === 'round-robin') {
+      // Candidates are already ordered by roundRobinOrder().
+      // Try each in sequence and reserve the first eligible one atomically.
+      for (const agentId of agents) {
+        const reserved = await this.presenceService.reserveAgentFromCandidates(
+          tenantId,
+          [agentId],
+        );
+        if (reserved) return reserved;
+      }
+      return null;
     }
 
     if (strategy === 'capacity-based') {
+      // DB-based: reads real open-conversation count from MongoDB and respects
+      // per-agent maxCapacity. More accurate but slightly slower than Redis path.
       return (await this.capacityBased(tenantId, agents, tenantMaxCapacity))
         .agentId;
     }
 
-    return agents[0] ?? null;
+    // Default: least-busy — Lua script picks the ZSET candidate with lowest load.
+    return this.presenceService.reserveAgentFromCandidates(tenantId, agents);
   }
+
 
   /**
    * Round-robin: use a Redis counter to cycle through the agent pool.

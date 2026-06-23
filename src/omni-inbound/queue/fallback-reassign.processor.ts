@@ -130,6 +130,13 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
           );
         }
 
+        // F-02 fix: release Redis capacity for the offline agent.
+        // Previously this was never called, leaving the agent's activeConversations
+        // counter inflated in Redis even after conversations were unassigned.
+        // On reconnect the agent would be stuck in 'full' routing status
+        // despite having 0 real conversations.
+        await this.presenceService.releaseConversation(tenantId, agentId);
+
         // Emit event for realtime broadcast
         this.eventEmitter.emit('omni.conversation.assigned', {
           tenantId,
@@ -150,6 +157,7 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
         );
       }
     }
+
 
     // Cleanup disconnect marker
     await this.redis.del(redisKey);

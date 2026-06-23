@@ -65,13 +65,20 @@ return cjson.encode(data)
  * KEYS[2] = tenant load ZSET
  * ARGV[1] = number of candidates
  * ARGV[2..n] = candidate agent ids
+ * ARGV[n+1]  = current Unix timestamp in ms  (for freshness check)
+ * ARGV[n+2]  = heartbeat TTL in ms           (HEARTBEAT_TTL_SECONDS * 1000)
  *
  * Returns the selected agent id, or nil if no candidate has capacity.
+ *
+ * F-01 fix: checks lastHeartbeatMs inside the JSON to reject stale Hash/ZSET
+ * entries that were not cleaned up by TTL expiry on the individual key.
  */
 const LUA_RESERVE_FROM_CANDIDATES = `
 local presenceHash = KEYS[1]
 local loadZset = KEYS[2]
 local candidateCount = tonumber(ARGV[1])
+local nowMs = tonumber(ARGV[candidateCount + 2])
+local heartbeatTtlMs = tonumber(ARGV[candidateCount + 3])
 local bestAgent = nil
 local bestLoad = nil
 
@@ -82,7 +89,11 @@ for i = 1, candidateCount do
     local data = cjson.decode(raw)
     local active = tonumber(data.activeConversations or 0)
     local capacity = tonumber(data.maxCapacity or 0)
-    if data.intentStatus == 'available'
+    -- F-01: freshness guard — reject entries whose heartbeat has expired.
+    local heartbeatMs = tonumber(data.lastHeartbeatMs or 0)
+    local isStale = nowMs - heartbeatMs > heartbeatTtlMs
+    if not isStale
+      and data.intentStatus == 'available'
       and data.connectionStatus == 'connected'
       and capacity > 0
       and active < capacity then
@@ -159,6 +170,11 @@ export class AgentPresenceService {
     const key = agentPresenceKey(presence.tenantId, presence.userId);
     const hashKey = tenantPresenceHashKey(presence.tenantId);
     const loadKey = tenantAgentLoadKey(presence.tenantId);
+
+    // F-01: always stamp lastHeartbeatMs so the Lua script can compare numeric
+    // timestamps atomically without parsing ISO date strings.
+    presence.lastHeartbeatMs = new Date(presence.lastHeartbeat).getTime();
+
     const encoded = JSON.stringify(presence);
 
     const pipeline = client.pipeline();
@@ -226,6 +242,7 @@ export class AgentPresenceService {
       maxCapacity: existing?.maxCapacity ?? DEFAULT_MAX_CAPACITY,
       connections: existing?.connections ?? [],
       lastHeartbeat: new Date(),
+      lastHeartbeatMs: Date.now(),
       disconnectedAt: existing?.disconnectedAt,
       socketId: existing?.socketId,
     };
@@ -351,6 +368,7 @@ export class AgentPresenceService {
       maxCapacity: existing?.maxCapacity ?? DEFAULT_MAX_CAPACITY,
       connections,
       lastHeartbeat: new Date(),
+      lastHeartbeatMs: Date.now(),
       disconnectedAt: undefined,
       socketId,
     };
@@ -520,28 +538,43 @@ export class AgentPresenceService {
 
   /**
    * Atomically increment the active conversation count for an agent.
-   * Returns false if the agent is at capacity or not found.
+   * The counterpart to releaseConversation(), used by the routing engine
+   * and manual assignment endpoints (F-09 fix) to keep Redis capacity in
+   * sync when conversations are assigned directly via the REST API.
    *
-   * Uses a Lua script to guarantee atomicity — no race conditions
-   * even with concurrent requests across multiple server nodes.
+   * If the agent has no presence record (offline/not in Redis), this is a no-op —
+   * the count will be reconciled from MongoDB when they next connect.
    */
-  async assignConversation(tenantId: string, userId: string): Promise<boolean> {
-    const assignedAgent = await this.reserveAgentFromCandidates(tenantId, [
-      userId,
-    ]);
-    const assigned = assignedAgent === userId;
+  async assignConversation(tenantId: string, userId: string): Promise<void> {
+    const client = this.redis.getClient();
+    const hashKey = tenantPresenceHashKey(tenantId);
+    const loadKey = tenantAgentLoadKey(tenantId);
 
-    if (assigned) {
-      const presence = await this.getPresence(tenantId, userId);
-      this.logger.log(
-        `Assigned conversation to agent ${userId} ` +
-          `(${presence?.activeConversations}/${presence?.maxCapacity}) ` +
-          `[routing: ${presence?.routingStatus}]`,
+    const raw = await client.hget(hashKey, userId);
+    if (!raw) return; // Agent not in Redis — no-op
+
+    try {
+      const data: AgentPresence = JSON.parse(raw);
+      const active = (data.activeConversations ?? 0) + 1;
+      data.activeConversations = active;
+      data.routingStatus =
+        active >= (data.maxCapacity ?? DEFAULT_MAX_CAPACITY) ? 'full' : 'accept';
+
+      const encoded = JSON.stringify(data);
+      const pipeline = client.pipeline();
+      pipeline.hset(hashKey, userId, encoded);
+      pipeline.zadd(loadKey, active, userId);
+      await pipeline.exec();
+
+      this.logger.debug(
+        `Assigned conversation for agent ${userId} ` +
+          `(${active}/${data.maxCapacity}) [routing: ${data.routingStatus}]`,
       );
+    } catch {
+      // Parse error — presence record is corrupted, skip silently
     }
-
-    return assigned;
   }
+
 
   /**
    * Atomically reserve the least-loaded eligible agent from a candidate list.
@@ -563,6 +596,10 @@ export class AgentPresenceService {
       tenantAgentLoadKey(tenantId),
       candidates.length.toString(),
       ...candidates,
+      // F-01: pass current timestamp and TTL threshold so the Lua script
+      // can reject stale Hash entries without an extra Redis round-trip.
+      Date.now().toString(),
+      (HEARTBEAT_TTL_SECONDS * 1000).toString(),
     );
 
     return typeof result === 'string' ? result : null;

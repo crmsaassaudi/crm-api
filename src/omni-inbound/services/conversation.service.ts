@@ -1,9 +1,8 @@
-import {
+﻿import {
   Injectable,
   Logger,
   Inject,
   BadRequestException,
-  NotFoundException,
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { OnEvent } from '@nestjs/event-emitter';
@@ -24,15 +23,9 @@ import {
   CHANNEL_ADAPTERS,
 } from '../adapters/channel-adapter.interface';
 import { ChannelType } from '../domain/omni-payload';
-import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
-import { TimelineQueryDto } from '../dto/timeline-query.dto';
-import { TimelineResponseDto } from '../dto/timeline-response.dto';
 import { InboundOrchestrationService } from './inbound-orchestration.service';
 import { ShadowContactService } from './shadow-contact.service';
-import {
-  ThreadIdentity,
-  ThreadSessionSlice,
-} from '../repositories/conversation.repository';
+import { ConversationLifecycleService } from './conversation-lifecycle.service';
 import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 import type { MediaCacheJobData } from '../queue/media-cache.processor';
 
@@ -69,7 +62,7 @@ export class ConversationService {
     private readonly lockService: RedisLockService,
     @Inject(CHANNEL_ADAPTERS)
     private readonly adapters: Map<ChannelType, ChannelAdapter>,
-    private readonly settingsService: CrmSettingsService,
+    private readonly lifecycle: ConversationLifecycleService,
     private readonly orchestration: InboundOrchestrationService,
     private readonly shadowContactService: ShadowContactService,
     private readonly eventEmitter: EventEmitter2,
@@ -77,150 +70,6 @@ export class ConversationService {
     @InjectQueue(OMNI_MEDIA_CACHE_QUEUE)
     private readonly mediaCacheQueue: Queue<MediaCacheJobData>,
   ) {}
-
-  async getConversationTimeline(params: {
-    tenantId: string;
-    conversationId: string;
-    query: TimelineQueryDto;
-  }): Promise<TimelineResponseDto> {
-    const conversation = await this.conversationRepo.findById(
-      params.conversationId,
-    );
-    if (!conversation || conversation.tenantId !== params.tenantId) {
-      throw new NotFoundException(
-        `Conversation ${params.conversationId} not found`,
-      );
-    }
-
-    const sessionLimit = this.parsePositiveInt(
-      params.query.sessionLimit,
-      5,
-      20,
-    );
-    const messageLimit = this.parsePositiveInt(
-      params.query.messageLimit,
-      50,
-      100,
-    );
-
-    const thread: ThreadIdentity = {
-      tenantId: conversation.tenantId,
-      channelType: conversation.channelType,
-      channelAccount: conversation.channelAccount,
-      externalId: conversation.externalConversationId,
-    };
-
-    const anchorCursor = {
-      createdAt: conversation.createdAt,
-      id: conversation.id,
-    };
-
-    const pastCursor = this.parseCursor(
-      params.query.pastCursorCreatedAt,
-      params.query.pastCursorId,
-    );
-    const futureCursor = this.parseCursor(
-      params.query.futureCursorCreatedAt,
-      params.query.futureCursorId,
-    );
-
-    let past: ThreadSessionSlice = {
-      sessions: [],
-      hasMore: false,
-      cursor: null,
-    };
-    let future: ThreadSessionSlice = {
-      sessions: [],
-      hasMore: false,
-      cursor: null,
-    };
-
-    if (!pastCursor && !futureCursor) {
-      const around = await this.conversationRepo.findThreadSessionsAroundAnchor(
-        {
-          thread,
-          anchor: anchorCursor,
-          pastLimit: sessionLimit,
-          futureLimit: sessionLimit,
-        },
-      );
-      past = around.past;
-      future = around.future;
-    } else {
-      if (pastCursor) {
-        past = await this.conversationRepo.findPastSessionsByCursor({
-          ...thread,
-          cursor: pastCursor,
-          limit: sessionLimit,
-        });
-      }
-      if (futureCursor) {
-        future = await this.conversationRepo.findFutureSessionsByCursor({
-          ...thread,
-          cursor: futureCursor,
-          limit: sessionLimit,
-        });
-      }
-    }
-
-    const timelineSessions = [
-      ...past.sessions,
-      conversation,
-      ...future.sessions,
-    ];
-
-    const messageMap =
-      await this.messageRepo.findByConversationIdsChronological(
-        timelineSessions.map((session) => session.id),
-        messageLimit,
-      );
-
-    const toSessionBlock = (session: any) => {
-      const fullName = session.resolvedByAgent
-        ? [session.resolvedByAgent.firstName, session.resolvedByAgent.lastName]
-            .filter(Boolean)
-            .join(' ')
-            .trim() || null
-        : null;
-
-      const sessionMessages = messageMap[session.id] ?? [];
-      const lastMessage = sessionMessages[sessionMessages.length - 1] ?? null;
-
-      return {
-        id: session.id,
-        status: session.status,
-        createdAt: session.createdAt,
-        resolvedAt: session.resolvedAt,
-        resolvedByAgentId: session.resolvedByAgentId,
-        resolvedByAgentName: fullName,
-        resolvedByAgentEmail: session.resolvedByAgent?.email ?? null,
-        resolveReason: session.resolveReason,
-        resolveNote: session.resolveNote,
-        resolveSource: session.resolveSource,
-        lastMessage: session.lastMessage,
-        messages: {
-          data: sessionMessages,
-          hasMore: sessionMessages.length >= messageLimit,
-          cursor: lastMessage
-            ? {
-                createdAt: lastMessage.createdAt,
-                id: lastMessage.id,
-              }
-            : null,
-        },
-      };
-    };
-
-    return {
-      pastSessions: past.sessions.map(toSessionBlock),
-      anchorSession: toSessionBlock(conversation),
-      futureSessions: future.sessions.map(toSessionBlock),
-      hasMorePast: past.hasMore,
-      hasMoreFuture: future.hasMore,
-      pastCursor: past.cursor,
-      futureCursor: future.cursor,
-    };
-  }
 
   /**
    * Event handler: called when a normalized message arrives from any provider.
@@ -331,7 +180,7 @@ export class ConversationService {
       ) {
         // â”€â”€ Reopen Window Check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Fetch tenant session lifecycle config
-        const lifecycleConfig = await this.getSessionLifecycleConfig();
+        const lifecycleConfig = await this.lifecycle.getSessionLifecycleConfig();
         const reopenWindowHours = lifecycleConfig.reopenWindowHours ?? 24;
 
         // MED-04: resolvedAt fallback chain â€” closedAt > updatedAt.
@@ -570,7 +419,7 @@ export class ConversationService {
 
       const previousConv = await this.conversationRepo.findLastByExternalId(
         payload.tenantId,
-        this.toSchemaChannelType(payload.channelType),
+        this.lifecycle.toSchemaChannelType(payload.channelType),
         payload.channelAccount,
         payload.externalConversationId,
       );
@@ -588,7 +437,7 @@ export class ConversationService {
         tenantId: payload.tenantId,
         channelId: payload.channelId,
         channelAccount: payload.channelAccount,
-        channelType: this.toSchemaChannelType(payload.channelType),
+        channelType: this.lifecycle.toSchemaChannelType(payload.channelType),
         externalId: payload.externalConversationId,
         contactId: contactId ?? null,
         customer: {
@@ -610,7 +459,7 @@ export class ConversationService {
         reopenCount,
         bot: await this.orchestration.resolveInitialBotState(
           payload.tenantId,
-          this.toSchemaChannelType(payload.channelType),
+          this.lifecycle.toSchemaChannelType(payload.channelType),
           payload.channelAccount,
         ),
       } as any);
@@ -657,11 +506,10 @@ export class ConversationService {
         payload.tenantId,
       );
 
-      // â”€â”€ Step 6b: Schedule auto-resolve for new conversation â”€â”€â”€â”€â”€
-      await this.orchestration.rescheduleAutoResolve(
-        payload.tenantId,
-        conversationId,
-      );
+      // F-10 fix: removed redundant rescheduleAutoResolve here (was Step 6b).
+      // The authoritative reschedule runs at Step 5d (after message persistence),
+      // which correctly resets the timer once the message is durably stored.
+      // Two calls per new conversation doubled BullMQ Redis operations under load.
 
       // â”€â”€ Step 6c: Auto-assign conversation to an agent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       await this.orchestration.triggerAutoAssignment(
@@ -775,7 +623,14 @@ export class ConversationService {
     );
 
     // â”€â”€ Step 8: Business Hours / OOO Auto-Reply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    await this.orchestration.handleBusinessHoursCheck(payload, conversationId);
+    // F-11 fix: fetch current assignedAgentId so OOO is suppressed when an
+    // agent has already been successfully routed to this conversation.
+    const currentConv = await this.conversationRepo.findById(conversationId);
+    await this.orchestration.handleBusinessHoursCheck(
+      payload,
+      conversationId,
+      currentConv?.assignedAgentId ?? null,
+    );
   }
 
   private buildMessageDedupId(payload: OmniPayload): string {
@@ -800,6 +655,12 @@ export class ConversationService {
     return `synthetic:${createHash('sha256').update(fingerprint).digest('hex')}`;
   }
 
+
+
+  // ────────────────────────────────────────────────────────────────
+  // Private Helpers
+  // ────────────────────────────────────────────────────────────────
+
   private toFingerprintDate(value: Date | string | undefined): string {
     if (!value) {
       return '';
@@ -807,130 +668,5 @@ export class ConversationService {
 
     const date = value instanceof Date ? value : new Date(value);
     return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
-  }
-
-  // ────────────────────────────────────────────────────────────────
-  // Session Lifecycle Configuration
-  // ────────────────────────────────────────────────────────────────
-
-  /**
-   * Load session lifecycle configuration from tenant CRM settings.
-   * Falls back to sensible defaults if not configured.
-   */
-  private async getSessionLifecycleConfig(): Promise<{
-    reopenWindowHours: number;
-    autoResolveTimeoutHours: number;
-    autoResolveEnabled: boolean;
-    oooAutoReplyEnabled: boolean;
-    oooMessage: string;
-    oooSetPending: boolean;
-  }> {
-    const defaults = {
-      reopenWindowHours: 24,
-      autoResolveTimeoutHours: 48,
-      autoResolveEnabled: true,
-      oooAutoReplyEnabled: false,
-      oooMessage:
-        'Thank you for your message! Our team is currently offline. We will get back to you during business hours.',
-      oooSetPending: true,
-    };
-
-    try {
-      const config = await this.settingsService.getSetting(
-        'omni_session_lifecycle',
-      );
-      return config ? { ...defaults, ...config } : defaults;
-    } catch (err: any) {
-      this.logger.warn(
-        `Failed to load omni_session_lifecycle settings: ${err.message}`,
-      );
-      return defaults;
-    }
-  }
-
-  // ────────────────────────────────────────────────────────────────
-  // Event listeners for cache invalidation
-  // ────────────────────────────────────────────────────────────────
-
-  /**
-   * When a conversation is resolved or closed, invalidate the identity cache
-   * so the next inbound message creates a NEW session.
-   */
-  @OnEvent(OmniEvents.CONVERSATION_STATUS_CHANGED)
-  async handleStatusChanged(event: {
-    tenantId: string;
-    conversationId: string;
-    status: string;
-    agentId?: string | null;
-    channelType: string;
-    channelAccount: string;
-    externalConversationId: string;
-  }): Promise<void> {
-    if (event.status === 'resolved' || event.status === 'closed') {
-      await this.identityService.invalidateIdentity(
-        event.channelType,
-        event.channelAccount,
-        event.externalConversationId,
-        event.tenantId,
-      );
-
-      // Cancel any pending auto-resolve job for this conversation
-      await this.orchestration.cancelAutoResolve(event.conversationId);
-
-      const assignedAgentId =
-        (await this.conversationRepo.findById(event.conversationId))
-          ?.assignedAgentId ?? null;
-      if (assignedAgentId) {
-        await this.orchestration.releaseConversation(
-          event.tenantId,
-          assignedAgentId,
-        );
-      }
-
-      this.logger.log(
-        `Invalidated identity cache for conversation ${event.conversationId} (${event.status})`,
-      );
-    }
-  }
-
-  // ────────────────────────────────────────────────────────────────
-  // Private Helpers
-  // ────────────────────────────────────────────────────────────────
-
-  private toSchemaChannelType(type: string): string {
-    return type.toLowerCase();
-  }
-
-  private parsePositiveInt(
-    value: string | undefined,
-    fallback: number,
-    max: number,
-  ): number {
-    const parsed = Number.parseInt(value ?? `${fallback}`, 10);
-    if (Number.isNaN(parsed) || parsed <= 0) {
-      return fallback;
-    }
-    return Math.min(parsed, max);
-  }
-
-  private parseCursor(
-    createdAt?: string,
-    id?: string,
-  ): { createdAt: Date; id: string } | null {
-    if (!createdAt && !id) {
-      return null;
-    }
-    if (!createdAt || !id) {
-      throw new BadRequestException('Cursor requires both createdAt and id');
-    }
-
-    const parsedDate = new Date(createdAt);
-    if (Number.isNaN(parsedDate.getTime())) {
-      throw new BadRequestException(
-        'Cursor createdAt must be a valid ISO date',
-      );
-    }
-
-    return { createdAt: parsedDate, id };
   }
 }

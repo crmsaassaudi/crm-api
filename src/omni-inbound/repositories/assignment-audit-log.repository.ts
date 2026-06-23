@@ -74,8 +74,12 @@ export class AssignmentAuditLogRepository {
 
   /**
    * Global search across all audit logs for a tenant.
-   * Supports filters: conversationId (partial match), outcome, agentId.
+   * Supports filters: conversationId (exact ObjectId match), outcome, agentId.
    * Returns newest-first for the global history page.
+   *
+   * NOTE: conversationId is stored as an ObjectId in MongoDB — partial string
+   * matching via RegExp throws a CastError at query time. If the provided
+   * conversationId is not a valid 24-hex-char ObjectId, returns [] immediately.
    */
   async search(
     tenantId: string,
@@ -89,8 +93,12 @@ export class AssignmentAuditLogRepository {
     const query: Record<string, any> = { tenantId };
 
     if (filters.conversationId) {
-      // Support partial ID matching (user may paste partial IDs)
-      query.conversationId = new RegExp(filters.conversationId, 'i');
+      // ObjectId fields cannot be queried with RegExp — that throws a CastError.
+      // Only search if the caller supplied a valid 24-hex-char ObjectId string.
+      if (!/^[a-f\d]{24}$/i.test(filters.conversationId)) {
+        return []; // Partial/invalid ID — return empty rather than crash.
+      }
+      query.conversationId = filters.conversationId;
     }
     if (filters.outcome) {
       query.outcome = filters.outcome;

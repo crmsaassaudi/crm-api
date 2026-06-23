@@ -103,3 +103,11 @@ OmniAssignmentAuditLogSchema.index(
   { tenantId: 1, conversationId: 1, createdAt: 1 },
   { name: 'audit_by_conversation' },
 );
+
+// F-12 fix: TTL index for automatic data retention (30 days).
+// Assignment audit logs are high-volume (one per routing decision).
+// Older logs can be moved to a cold archive if compliance requires longer retention.
+OmniAssignmentAuditLogSchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: 30 * 24 * 60 * 60, name: 'audit_log_ttl_30d' }, // 30 days
+);

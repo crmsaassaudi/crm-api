@@ -43,6 +43,10 @@ import { ConversationLockService } from './services/conversation-lock.service';
 import { ReactionService } from './services/reaction.service';
 import { InboundOrchestrationService } from './services/inbound-orchestration.service';
 import { ShadowContactService } from './services/shadow-contact.service';
+import { ConversationLifecycleService } from './services/conversation-lifecycle.service';
+import { ConversationQueryService } from './services/conversation-query.service';
+import { CrmRealtimeGateway } from './services/crm-realtime.gateway';
+import { OmniMetricsListener } from './services/omni-metrics.listener';
 
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
@@ -108,6 +112,7 @@ import { DealsModule } from '../deals/deals.module';
 import { TicketsModule } from '../tickets/tickets.module';
 import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
 import { FilesModule } from '../files/files.module';
+import { ObservabilityModule } from '../observability/observability.module';
 import { isWorkerRuntime, isOmniRuntime } from '../config/runtime-role';
 // F3 fix: import LivechatModule so its LivechatAdapter instance (with gateway wired) is shared
 import { LivechatModule } from '../livechat/livechat.module';
@@ -156,6 +161,7 @@ const workerProviders =
     RoutingRulesModule,
     FilesModule,
     CsatModule,
+    ObservabilityModule,
     // F3 fix: LivechatModule provides the single LivechatAdapter instance (gateway-wired)
     forwardRef(() => LivechatModule),
     MongooseModule.forFeature([
@@ -245,6 +251,7 @@ const workerProviders =
 
     // ── Pillar 3: Realtime UX ─────────────────────────────────────
     OmniGateway,
+    CrmRealtimeGateway,
 
     // ── Pillar 4: Webhook Queue ─────────────────────────────────────
     ...workerProviders,
@@ -255,6 +262,8 @@ const workerProviders =
     ConversationRepository,
     MessageRepository,
     ConversationService,
+    ConversationLifecycleService,
+    ConversationQueryService,
     InboundOrchestrationService,
     ShadowContactService,
     ConversionService,
@@ -282,6 +291,9 @@ const workerProviders =
     // ── Pillar 12: Agent Status Audit + Work Time KPI ─────────────
     AgentStatusAuditRepository,
     AgentStatusAuditService,
+
+    // ── Pillar 13: Observability ────────────────────────────────────
+    OmniMetricsListener,
   ],
   exports: [
     InboundProcessorService,
@@ -290,6 +302,7 @@ const workerProviders =
     ConversationRepository,
     MessageRepository,
     ConversationService,
+    ConversationQueryService,
     OmniOutboundModule,
     IdentityService,
     NoteService,

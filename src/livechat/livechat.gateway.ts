@@ -15,6 +15,7 @@ import { ConversationRepository } from '../omni-inbound/repositories/conversatio
 import { ChannelRepository } from '../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { LivechatWidgetService } from './livechat-widget.service';
 import { MessageStatusService } from './services/message-status.service';
+import { SocketRateLimiter } from '../common/guards/socket-rate-limiter';
 import { runWithTenantContext } from '../common/tenancy/tenant-context';
 import { OmniEvents, LivechatEvents } from '../omni-inbound/domain/omni-events';
 
@@ -84,6 +85,7 @@ export class LivechatGateway
     private readonly widgetService: LivechatWidgetService,
     private readonly messageStatusService: MessageStatusService,
     private readonly cls: ClsService,
+    private readonly rateLimiter: SocketRateLimiter,
   ) {}
 
   // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -95,6 +97,9 @@ export class LivechatGateway
   handleDisconnect(client: Socket) {
     const { visitorId, conversationId, tenantId } = client.data ?? {};
     if (!visitorId) return;
+
+    // T-031: Clean up rate limit keys for disconnected socket
+    this.rateLimiter.cleanup(client.id).catch(() => undefined);
 
     this.logger.debug(`Visitor ${visitorId} disconnected`);
 
@@ -243,7 +248,7 @@ export class LivechatGateway
   }
 
   @SubscribeMessage('visitor:message')
-  onVisitorMessage(
+  async onVisitorMessage(
     @ConnectedSocket() client: Socket,
     @MessageBody()
     data: {
@@ -262,6 +267,9 @@ export class LivechatGateway
 
     if (!visitorId || !tenantId || !data.text) return;
 
+    // T-031: Rate limit visitor messages
+    if (!(await this.checkRateLimit(client, 'visitor:message'))) return;
+
     this.eventEmitter.emit(LivechatEvents.MESSAGE_INBOUND, {
       visitorId,
       tenantId,
@@ -278,7 +286,7 @@ export class LivechatGateway
    * Size guard: reject files > 20 MB.
    */
   @SubscribeMessage('visitor:upload')
-  onVisitorUpload(
+  async onVisitorUpload(
     @ConnectedSocket() client: Socket,
     @MessageBody()
     data: {
@@ -306,6 +314,9 @@ export class LivechatGateway
       return;
     }
 
+    // T-031: Rate limit file uploads
+    if (!(await this.checkRateLimit(client, 'visitor:upload'))) return;
+
     this.logger.log(
       `Visitor ${visitorId} uploading "${data.fileName}" (${data.mimeType})`,
     );
@@ -332,7 +343,7 @@ export class LivechatGateway
    * Visitor typing indicator — forwarded to agent CRM via EventEmitter.
    */
   @SubscribeMessage('visitor:typing')
-  onVisitorTyping(
+  async onVisitorTyping(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { isTyping: boolean; conversationId?: string },
   ) {
@@ -341,6 +352,9 @@ export class LivechatGateway
     const conversationId = data.conversationId ?? client.data.conversationId;
 
     if (!visitorId || !tenantId || !conversationId) return;
+
+    // T-031: Rate limit typing events
+    if (!(await this.checkRateLimit(client, 'visitor:typing'))) return;
 
     // Cache conversationId so disconnect can clear typing
     if (!client.data.conversationId) {
@@ -565,5 +579,34 @@ export class LivechatGateway
     },
   ): void {
     this.server.to(`visitor:${visitorId}`).emit('agent:reaction', payload);
+  }
+
+  // ── T-031: Rate Limiting ────────────────────────────────────────────────
+
+  /**
+   * Check rate limit for a socket event. Returns false if rate limited.
+   * Disconnects the socket after 3 consecutive violations.
+   */
+  private async checkRateLimit(
+    client: Socket,
+    eventName: string,
+  ): Promise<boolean> {
+    const allowed = await this.rateLimiter.isAllowed(client.id, eventName);
+    if (!allowed) {
+      const violations = await this.rateLimiter.trackViolation(client.id);
+      client.emit('error', {
+        message: 'Rate limited. Please slow down.',
+        event: eventName,
+      });
+
+      if (violations >= 3) {
+        this.logger.warn(
+          `[RateLimit] Disconnecting abusive socket ${client.id} (visitor=${client.data?.visitorId}) after ${violations} violations`,
+        );
+        client.disconnect(true);
+      }
+      return false;
+    }
+    return true;
   }
 }

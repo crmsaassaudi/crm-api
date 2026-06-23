@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
+import type Redis from 'ioredis';
+import { IOREDIS_CLIENT } from '../redis/redis.tokens';
 import { LivechatGateway } from './livechat.gateway';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 import { UsersService } from '../users/users.service';
@@ -25,10 +27,10 @@ import { runWithTenantContext } from '../common/tenancy/tenant-context';
 export class LivechatVisitorBridge {
   private readonly logger = new Logger(LivechatVisitorBridge.name);
 
-  // PERF FIX #3: Cache conversationId → visitorId mapping.
-  // This mapping never changes for a given conversation. Without cache,
-  // handleAgentTyping hits the DB on every agent keystroke (~3-5/sec).
-  private readonly visitorIdCache = new Map<string, string>();
+  // T-039: Redis-backed cache replaces in-memory Map to survive pod restarts
+  // and work across scaled replicas. Key: livechat:visitor:conv:{id}, TTL: 24h.
+  private static readonly CACHE_PREFIX = 'livechat:visitor:conv:';
+  private static readonly CACHE_TTL = 86400; // 24 hours
 
   constructor(
     private readonly livechatGateway: LivechatGateway,
@@ -37,6 +39,7 @@ export class LivechatVisitorBridge {
     private readonly filesService: FilesService,
     private readonly messageStatusService: MessageStatusService,
     private readonly cls: ClsService,
+    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   // ── Assignment: notify visitor khi agent join ───────────────────────────
@@ -64,7 +67,7 @@ export class LivechatVisitorBridge {
 
       // PERF FIX #3: Populate cache for future typing lookups
       if (visitorId) {
-        this.visitorIdCache.set(event.conversationId, visitorId);
+        this.cacheVisitorId(event.conversationId, visitorId);
       }
 
       // Resolve agent display name and avatar
@@ -134,7 +137,7 @@ export class LivechatVisitorBridge {
 
       // PERF FIX #3: Check cache before DB lookup
       if (!visitorId) {
-        const cached = this.visitorIdCache.get(event.conversationId);
+        const cached = await this.getCachedVisitorId(event.conversationId);
         if (cached) {
           visitorId = cached;
         } else {
@@ -159,7 +162,7 @@ export class LivechatVisitorBridge {
           visitorId = conv.externalConversationId;
           // Populate cache for future lookups
           if (visitorId) {
-            this.visitorIdCache.set(event.conversationId, visitorId);
+            this.cacheVisitorId(event.conversationId, visitorId);
           }
         }
       }
@@ -327,6 +330,37 @@ export class LivechatVisitorBridge {
       this.logger.error(
         `[Bridge] handleAgentRead failed for ${event.conversationId}: ${err?.message}`,
       );
+    }
+  }
+
+  // ── Redis Cache Helpers ─────────────────────────────────────────────────
+
+  /**
+   * Cache conversationId → visitorId mapping in Redis.
+   * Fire-and-forget — cache miss just falls back to DB lookup.
+   */
+  private cacheVisitorId(conversationId: string, visitorId: string): void {
+    const key = `${LivechatVisitorBridge.CACHE_PREFIX}${conversationId}`;
+    this.redis
+      .set(key, visitorId, 'EX', LivechatVisitorBridge.CACHE_TTL)
+      .catch((err) =>
+        this.logger.warn(
+          `[Bridge] Failed to cache visitorId for ${conversationId}: ${err?.message}`,
+        ),
+      );
+  }
+
+  /**
+   * Lookup cached visitorId for a conversationId.
+   */
+  private async getCachedVisitorId(
+    conversationId: string,
+  ): Promise<string | null> {
+    try {
+      const key = `${LivechatVisitorBridge.CACHE_PREFIX}${conversationId}`;
+      return await this.redis.get(key);
+    } catch {
+      return null;
     }
   }
 }

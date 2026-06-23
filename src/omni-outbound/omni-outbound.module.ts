@@ -4,6 +4,8 @@ import { MongooseModule } from '@nestjs/mongoose';
 
 // Service
 import { OutboundService } from './outbound.service';
+import { OutboundMediaHandler } from './outbound-media.handler';
+import { OutboundEmailHandler } from './outbound-email.handler';
 
 // Config
 import replyWindowConfig from './config/reply-window.config';
@@ -110,8 +112,10 @@ import {
     ConversationRepository,
     MessageRepository,
 
-    // Service
+    // Service + Handlers
     OutboundService,
+    OutboundMediaHandler,
+    OutboundEmailHandler,
   ],
   exports: [OutboundService],
 })

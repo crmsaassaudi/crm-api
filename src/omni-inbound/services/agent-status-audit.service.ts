@@ -149,6 +149,23 @@ export class AgentStatusAuditService implements OnModuleInit {
       };
       const currentPresence = activeAgentsMap.get(agentId);
 
+      // F-05 fix: fetch the last status log before midnight so that time
+      // from 00:00 to the first same-day transition is credited to the
+      // correct carried-over status rather than defaulting to 'offline'.
+      let midnightBaselineStatus: string | undefined;
+      if (logs.length > 0) {
+        try {
+          const beforeMidnight = await this.auditRepo.findLastBeforeTimestamp(
+            tenantId,
+            agentId,
+            startOfDay,
+          );
+          midnightBaselineStatus = beforeMidnight?.toStatus;
+        } catch {
+          // Non-fatal — baseline defaults to 'offline' if lookup fails
+        }
+      }
+
       summaries.push(
         this.computeWorkTime(
           agentId,
@@ -159,6 +176,7 @@ export class AgentStatusAuditService implements OnModuleInit {
           startOfDay,
           capEnd,
           isToday ? currentPresence : undefined,
+          midnightBaselineStatus,
         ),
       );
     }
@@ -201,6 +219,21 @@ export class AgentStatusAuditService implements OnModuleInit {
       ? await this.presenceService.getPresence(tenantId, agentId)
       : null;
 
+    // F-05 fix: fetch baseline status before midnight for the same reason.
+    let midnightBaselineStatus: string | undefined;
+    if (logs.length > 0) {
+      try {
+        const beforeMidnight = await this.auditRepo.findLastBeforeTimestamp(
+          tenantId,
+          agentId,
+          startOfDay,
+        );
+        midnightBaselineStatus = beforeMidnight?.toStatus;
+      } catch {
+        // Non-fatal
+      }
+    }
+
     return this.computeWorkTime(
       agentId,
       name || 'Unknown Agent',
@@ -210,6 +243,7 @@ export class AgentStatusAuditService implements OnModuleInit {
       startOfDay,
       capEnd,
       currentPresence || undefined,
+      midnightBaselineStatus,
     );
   }
 
@@ -246,6 +280,12 @@ export class AgentStatusAuditService implements OnModuleInit {
     startOfDay: Date,
     capEnd: Date,
     currentPresence?: AgentPresence,
+    /**
+     * F-05 fix: the agent's status at midnight, carried over from the previous day.
+     * When defined, the pre-transition gap is credited to this status instead of
+     * defaulting to 'offline', which was incorrect for multi-day sessions.
+     */
+    midnightBaselineStatus?: string,
   ): AgentWorkTimeSummary {
     const durations: Record<string, number> = {
       available: 0,
@@ -272,11 +312,18 @@ export class AgentStatusAuditService implements OnModuleInit {
         durations.offline = capEnd.getTime() - startOfDay.getTime();
       }
     } else {
-      // Time from start of day to first transition = offline (usually)
+      // F-05 fix: time from midnight to the first transition is credited to the
+      // status the agent was in at the end of the previous day (baseline).
+      // Previously this was always 'offline', which was wrong for agents who
+      // were already online (e.g. available since yesterday afternoon).
       const firstTs = new Date(logs[0].timestamp).getTime();
       const dayStart = startOfDay.getTime();
       if (firstTs > dayStart) {
-        durations.offline += firstTs - dayStart;
+        const gapStatus =
+          midnightBaselineStatus && midnightBaselineStatus in durations
+            ? midnightBaselineStatus
+            : 'offline';
+        durations[gapStatus] += firstTs - dayStart;
       }
 
       // Process transitions

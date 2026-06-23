@@ -85,6 +85,13 @@ export interface AgentPresence {
   /** Last heartbeat timestamp — if stale, agent is considered offline */
   lastHeartbeat: Date;
 
+  /**
+   * Last heartbeat as Unix milliseconds (numeric).
+   * Stored alongside the ISO string so Lua scripts can compare timestamps
+   * atomically inside Redis without parsing date strings.
+   */
+  lastHeartbeatMs: number;
+
   /** When all connections were lost — used for grace period calculation */
   disconnectedAt?: Date;
 

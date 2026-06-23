@@ -117,6 +117,8 @@ describe('OutboundService', () => {
       redis,
       {} as any, // filesService
       {} as any, // imageProcessingService
+      {} as any, // mediaHandler
+      {} as any, // emailHandler
     );
   });
 
@@ -561,6 +563,8 @@ describe('normalizeOutboundSource (via sendAgentMessage)', () => {
       redis,
       {} as any,
       {} as any,
+      {} as any, // mediaHandler
+      {} as any, // emailHandler
     );
   });
 

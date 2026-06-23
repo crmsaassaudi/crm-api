@@ -65,3 +65,11 @@ AgentStatusAuditLogSchema.index({ tenantId: 1, agentId: 1, timestamp: -1 });
 
 // Index for team-level reports (all agents for a tenant in a time range)
 AgentStatusAuditLogSchema.index({ tenantId: 1, timestamp: -1 });
+
+// F-12 fix: TTL index for automatic data retention (90 days).
+// Prevents unbounded collection growth that would degrade KPI report
+// query performance over time. Adjust TTL to match your compliance requirements.
+AgentStatusAuditLogSchema.index(
+  { timestamp: 1 },
+  { expireAfterSeconds: 90 * 24 * 60 * 60 }, // 90 days
+);
