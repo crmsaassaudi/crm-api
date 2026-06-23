@@ -557,7 +557,13 @@ export class OmniGateway
             idempotencyKey: ack.idempotencyKey,
             clientMessageId: ack.clientMessageId,
             timestamp: ack.timestamp,
-            metadata: { media: { fileId: data.fileId } },
+            metadata: {
+              media: {
+                fileId: data.fileId,
+                mimeType: data.mimeType,
+                fileName: data.fileName,
+              },
+            },
           });
       }
 

@@ -614,6 +614,7 @@ export class ConversationService {
           message.id,
           presignedUrl,
         );
+        payload.mediaProxyUrl = presignedUrl;
         this.logger.debug(
           `Resolved presigned URL for visitor upload: message ${message.id}`,
         );
