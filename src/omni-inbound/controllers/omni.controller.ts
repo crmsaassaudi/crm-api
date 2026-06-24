@@ -1592,14 +1592,17 @@ export class OmniController {
    */
   private async enrichMediaUrls(messages: any[]): Promise<any[]> {
     // Collect fileIds from messages that need URL resolution
-    const needsResolution = messages.filter(
-      (msg) =>
-        msg.metadata?.media?.fileId &&
-        !msg.mediaUrl &&
-        !msg.mediaProxyUrl,
-    );
+    const msgsWithStorageKey: any[] = [];
+    const needsResolution = messages.filter((msg) => {
+      // For livechat visitor uploads, we have storageKey directly
+      if (msg.metadata?.media?.storageKey) {
+        msgsWithStorageKey.push(msg);
+        return false;
+      }
+      return !!msg.metadata?.media?.fileId;
+    });
 
-    if (needsResolution.length === 0) return messages;
+    if (needsResolution.length === 0 && msgsWithStorageKey.length === 0) return messages;
 
     const fileIds = [
       ...new Set(
@@ -1608,20 +1611,36 @@ export class OmniController {
     ];
 
     const fileMap = new Map<string, { path?: string }>();
-    try {
-      const files = await this.filesService.findByIds(fileIds);
-      for (const f of files) {
-        if (f?.id) fileMap.set(f.id.toString(), f);
+    if (fileIds.length > 0) {
+      try {
+        const files = await this.filesService.findByIds(fileIds);
+        for (const f of files) {
+          if (f?.id) fileMap.set(f.id.toString(), f);
+        }
+      } catch {
+        // Non-fatal — messages still returned without URLs
       }
-    } catch {
-      // Non-fatal — messages still returned without URLs
-      return messages;
     }
 
     return Promise.all(
       messages.map(async (msg) => {
+        // 1. Resolve visitor uploads directly from storageKey
+        const storageKey = msg.metadata?.media?.storageKey;
+        if (storageKey) {
+          try {
+            const url = await this.filesService.getPresignedDownloadUrl(
+              storageKey,
+              3600, // 1 hour TTL
+            );
+            return { ...msg, mediaProxyUrl: url };
+          } catch {
+            return msg;
+          }
+        }
+
+        // 2. Resolve agent uploads / other files via fileId lookup
         const fileId = msg.metadata?.media?.fileId;
-        if (!fileId || msg.mediaUrl || msg.mediaProxyUrl) return msg;
+        if (!fileId) return msg;
 
         const file = fileMap.get(fileId.toString?.() ?? fileId);
         if (!file?.path) return msg;
@@ -1631,7 +1650,8 @@ export class OmniController {
             file.path,
             3600, // 1 hour TTL
           );
-          return { ...msg, mediaUrl: url };
+          // Overwrite with fresh signed URL
+          return { ...msg, mediaProxyUrl: url };
         } catch {
           return msg;
         }

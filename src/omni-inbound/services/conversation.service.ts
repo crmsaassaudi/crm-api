@@ -610,10 +610,6 @@ export class ConversationService {
           payload.metadata.media.storageKey,
           3600,
         );
-        await this.messageRepo.updateMediaProxyUrl(
-          message.id,
-          presignedUrl,
-        );
         payload.mediaProxyUrl = presignedUrl;
         this.logger.debug(
           `Resolved presigned URL for visitor upload: message ${message.id}`,

@@ -14,11 +14,14 @@ import { AssignmentService } from '../services/assignment.service';
 import { AgentPresenceService } from '../services/agent-presence.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { OMNI_FALLBACK_QUEUE } from './omni-fallback-queue.constants';
+import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 
 export interface FallbackReassignJobData extends TenantJobData {
   agentId: string;
   strategy: string;
   notifyAgent: boolean;
+  /** ISO timestamp of when the agent disconnected — used for rescheduling when timeout changes */
+  disconnectTime?: string;
 }
 
 /**
@@ -47,6 +50,7 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
     private readonly presenceService: AgentPresenceService,
     private readonly conversationRepo: ConversationRepository,
     private readonly eventEmitter: EventEmitter2,
+    private readonly settingsService: CrmSettingsService,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     cls: ClsService,
   ) {
@@ -74,6 +78,18 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
         `Agent ${agentId} reconnected before reassignment — skipping`,
       );
       return;
+    }
+
+    // F-13: Double-check if the feature was disabled AFTER the job was scheduled
+    try {
+      const config = await this.settingsService.getSetting('omni_auto_reassignment', tenantId);
+      if (config && config.enabled === false) {
+        this.logger.log(`Auto-reassignment disabled for tenant ${tenantId} during the delay — aborting job`);
+        await this.redis.del(redisKey);
+        return;
+      }
+    } catch (err) {
+      // safe fallback
     }
 
     // Double-check via presence service

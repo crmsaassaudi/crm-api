@@ -11,6 +11,8 @@ import {
 import { CrmSettingsService } from './crm-settings.service';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { BadRequestException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ClsService } from 'nestjs-cls';
 import { RequirePermission } from '../common/permissions/permission.decorator';
 import {
   LifecycleStageDto,
@@ -48,7 +50,11 @@ function assertSettingPayloadSize(body: unknown): void {
   version: '1',
 })
 export class CrmSettingsController {
-  constructor(private readonly service: CrmSettingsService) {}
+  constructor(
+    private readonly service: CrmSettingsService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly cls: ClsService,
+  ) {}
 
   @Post('lifecycle/:objectId/stages')
   @RequirePermission('manage_system', 'settings')
@@ -123,22 +129,38 @@ export class CrmSettingsController {
   /** PATCH is the standard verb used by the frontend settings pages. */
   @Patch(':key')
   @RequirePermission('manage_system', 'settings')
-  patchSetting(@Param('key') key: string, @Body() body: any) {
+  async patchSetting(@Param('key') key: string, @Body() body: any) {
     assertSettingPayloadSize(body);
-    return this.service.updateSetting(
+    const result = await this.service.updateSetting(
       key,
       body?.value !== undefined ? body.value : body,
     );
+
+    // Notify listeners (e.g. AgentFallbackService) that a setting has changed
+    this.eventEmitter.emit('settings.changed', {
+      key,
+      tenantId: result.tenantId ?? this.cls.get('tenantId'),
+    });
+
+    return result;
   }
 
   /** POST kept for backwards compatibility. */
   @Post(':key')
   @RequirePermission('manage_system', 'settings')
-  postSetting(@Param('key') key: string, @Body() body: any) {
+  async postSetting(@Param('key') key: string, @Body() body: any) {
     assertSettingPayloadSize(body);
-    return this.service.updateSetting(
+    const result = await this.service.updateSetting(
       key,
       body?.value !== undefined ? body.value : body,
     );
+
+    // Notify listeners (e.g. AgentFallbackService) that a setting has changed
+    this.eventEmitter.emit('settings.changed', {
+      key,
+      tenantId: result.tenantId ?? this.cls.get('tenantId'),
+    });
+
+    return result;
   }
 }
