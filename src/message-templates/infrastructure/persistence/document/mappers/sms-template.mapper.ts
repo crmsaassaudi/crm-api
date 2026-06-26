@@ -1,4 +1,4 @@
-import { SMSTemplate } from '../../../../domain/sms-template';
+﻿import { SMSTemplate } from '../../../../domain/sms-template';
 import { SMSTemplateSchemaClass } from '../entities/sms-template.schema';
 
 export class SMSTemplateMapper {
@@ -11,5 +11,14 @@ export class SMSTemplateMapper {
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;
     return entity;
+  }
+
+  static toPersistence(entity: SMSTemplate): Partial<SMSTemplateSchemaClass> {
+    const p: any = {};
+    if (entity.id) p._id = entity.id;
+    p.tenantId = entity.tenantId;
+    p.name = entity.name;
+    p.message = entity.message;
+    return p;
   }
 }

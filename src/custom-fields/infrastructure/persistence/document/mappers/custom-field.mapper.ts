@@ -1,4 +1,4 @@
-import { CustomField } from '../../../../domain/custom-field';
+﻿import { CustomField } from '../../../../domain/custom-field';
 import { CustomFieldSchemaClass } from '../entities/custom-field.schema';
 
 export class CustomFieldMapper {
@@ -21,5 +21,24 @@ export class CustomFieldMapper {
     domain.createdAt = raw.createdAt;
     domain.updatedAt = raw.updatedAt;
     return domain;
+  }
+
+  static toPersistence(entity: CustomField): Partial<CustomFieldSchemaClass> {
+    const p: any = {};
+    if (entity.id) p._id = entity.id;
+    p.tenantId = entity.tenantId;
+    p.module = entity.module;
+    p.internalKey = entity.internalKey;
+    p.displayLabel = entity.displayLabel;
+    p.fieldType = entity.fieldType;
+    p.isActive = entity.isActive ?? true;
+    p.section = entity.section;
+    p.orderIndex = entity.orderIndex;
+    p.validation = entity.validation;
+    p.governance = entity.governance;
+    p.objectView = entity.objectView;
+    p.placeholder = entity.placeholder;
+    p.options = entity.options;
+    return p;
   }
 }

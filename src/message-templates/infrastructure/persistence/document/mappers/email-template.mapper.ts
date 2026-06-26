@@ -1,4 +1,4 @@
-import { EmailTemplate } from '../../../../domain/email-template';
+﻿import { EmailTemplate } from '../../../../domain/email-template';
 import { EmailTemplateSchemaClass } from '../entities/email-template.schema';
 
 export class EmailTemplateMapper {
@@ -13,5 +13,16 @@ export class EmailTemplateMapper {
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;
     return entity;
+  }
+
+  static toPersistence(entity: EmailTemplate): Partial<EmailTemplateSchemaClass> {
+    const p: any = {};
+    if (entity.id) p._id = entity.id;
+    p.tenantId = entity.tenantId;
+    p.name = entity.name;
+    p.subject = entity.subject;
+    p.htmlContent = entity.htmlContent;
+    p.designJson = entity.designJson;
+    return p;
   }
 }

@@ -1,4 +1,4 @@
-import { SlaPolicy } from '../../../../domain/sla-policy';
+﻿import { SlaPolicy } from '../../../../domain/sla-policy';
 import { SlaPolicySchemaClass } from '../entities/sla-policy.schema';
 
 export class SlaPolicyMapper {
@@ -19,5 +19,17 @@ export class SlaPolicyMapper {
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;
     return entity;
+  }
+
+  static toPersistence(entity: SlaPolicy): Partial<SlaPolicySchemaClass> {
+    const p: any = {};
+    if (entity.id) p._id = entity.id;
+    p.tenantId = entity.tenantId;
+    p.name = entity.name;
+    p.type = entity.type;
+    p.targets = entity.targets;
+    p.enabled = entity.enabled ?? true;
+    p.priority = entity.priority;
+    return p;
   }
 }

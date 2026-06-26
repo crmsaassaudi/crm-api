@@ -54,7 +54,11 @@ export class RichMessageTemplateRepository {
   async create(
     data: Partial<RichMessageTemplate>,
   ): Promise<RichMessageTemplate> {
-    const doc = await this.model.create(data);
+    // Build a plain persistence object via mapper (consistent with contact/task pattern)
+    const persistence = RichMessageTemplateMapper.toPersistence(
+      data as RichMessageTemplate,
+    );
+    const doc = await this.model.create(persistence);
     return RichMessageTemplateMapper.toDomain(doc);
   }
 

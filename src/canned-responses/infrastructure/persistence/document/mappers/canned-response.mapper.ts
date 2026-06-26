@@ -1,4 +1,4 @@
-import { CannedResponse } from '../../../../domain/canned-response';
+﻿import { CannedResponse } from '../../../../domain/canned-response';
 import { CannedResponseSchemaClass } from '../entities/canned-response.schema';
 
 export class CannedResponseMapper {
@@ -15,5 +15,18 @@ export class CannedResponseMapper {
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;
     return entity;
+  }
+
+  static toPersistence(entity: CannedResponse): Partial<CannedResponseSchemaClass> {
+    const p: any = {};
+    if (entity.id) p._id = entity.id;
+    p.tenantId = entity.tenantId;
+    p.shortcut = entity.shortcut;
+    p.content = entity.content;
+    p.category = entity.category;
+    p.scope = entity.scope;
+    p.createdById = entity.createdById;
+    p.attachments = entity.attachments;
+    return p;
   }
 }

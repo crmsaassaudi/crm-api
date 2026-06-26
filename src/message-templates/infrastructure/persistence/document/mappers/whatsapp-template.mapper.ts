@@ -1,4 +1,4 @@
-import { WhatsAppTemplate } from '../../../../domain/whatsapp-template';
+﻿import { WhatsAppTemplate } from '../../../../domain/whatsapp-template';
 import { WhatsAppTemplateSchemaClass } from '../entities/whatsapp-template.schema';
 
 export class WhatsAppTemplateMapper {
@@ -15,5 +15,18 @@ export class WhatsAppTemplateMapper {
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;
     return entity;
+  }
+
+  static toPersistence(entity: WhatsAppTemplate): Partial<WhatsAppTemplateSchemaClass> {
+    const p: any = {};
+    if (entity.id) p._id = entity.id;
+    p.tenantId = entity.tenantId;
+    p.name = entity.name;
+    p.category = entity.category;
+    p.language = entity.language;
+    p.status = entity.status;
+    p.metaTemplateId = entity.metaTemplateId;
+    p.components = entity.components;
+    return p;
   }
 }

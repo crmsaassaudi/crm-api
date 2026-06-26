@@ -1,5 +1,5 @@
-import { AutomationRule } from '../../../../domain/automation-rule';
-import { AutomationRuleSchemaDocument } from '../entities/automation-rule.schema';
+﻿import { AutomationRule } from '../../../../domain/automation-rule';
+import { AutomationRuleSchemaDocument, AutomationRuleSchemaClass } from '../entities/automation-rule.schema';
 
 export class AutomationRuleMapper {
   static toDomain(doc: AutomationRuleSchemaDocument): AutomationRule {
@@ -15,5 +15,18 @@ export class AutomationRuleMapper {
     entity.createdAt = doc.createdAt;
     entity.updatedAt = doc.updatedAt;
     return entity;
+  }
+
+  static toPersistence(entity: AutomationRule): Partial<AutomationRuleSchemaClass> {
+    const p: any = {};
+    if (entity.id) p._id = entity.id;
+    p.tenantId = entity.tenantId;
+    p.name = entity.name;
+    p.trigger = entity.trigger;
+    p.actions = entity.actions;
+    p.enabled = entity.enabled ?? true;
+    p.executionCount = entity.executionCount ?? 0;
+    p.lastExecutedAt = entity.lastExecutedAt;
+    return p;
   }
 }
