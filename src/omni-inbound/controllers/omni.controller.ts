@@ -980,6 +980,44 @@ export class OmniController {
     return updated;
   }
 
+  /**
+   * POST /omni/conversations/:id/snooze
+   *
+   * Temporarily suspends a conversation for a given number of minutes.
+   * Sets status to 'pending' and stores a snoozeUntil timestamp on the
+   * conversation. The conversation reopens automatically when:
+   *   1. The customer sends a new message (handled in inbound flow), or
+   *   2. A scheduled job polls and reopens past-deadline snoozed conversations.
+   */
+  @Post('conversations/:id/snooze')
+  @RequirePermission('edit', 'contacts')
+  @HttpCode(HttpStatus.OK)
+  async snoozeConversation(
+    @Param('id') id: string,
+    @Body('minutes') minutes = 30,
+  ) {
+    const minutesNum = Number(minutes);
+    if (!minutesNum || minutesNum < 1 || minutesNum > 10_080) {
+      throw new BadRequestException('minutes must be between 1 and 10080 (7 days)');
+    }
+
+    const conversation = await this.conversationRepo.findById(id);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${id} not found`);
+    }
+
+    const snoozeUntil = new Date(Date.now() + minutesNum * 60_000);
+
+    const result = await this.conversationRepo.snoozeConversation(id, snoozeUntil);
+    if (!result) {
+      throw new NotFoundException(`Conversation ${id} not found`);
+    }
+
+    this.logger.log(`Conversation ${id} snoozed for ${minutesNum}m until ${snoozeUntil.toISOString()}`);
+
+    return { id, status: 'pending', snoozeUntil };
+  }
+
   @Post('conversations/:id/tags')
   @HttpCode(HttpStatus.OK)
   async addTag(@Param('id') id: string, @Body('tag') tag: string) {

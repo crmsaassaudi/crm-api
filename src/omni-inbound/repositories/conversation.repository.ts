@@ -269,6 +269,26 @@ export class ConversationRepository {
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
+  /**
+   * Snooze a conversation: sets status to 'pending' and records when it
+   * should automatically reopen. The inbound message handler will check
+   * snoozeUntil and reopen to 'open' when the customer messages again.
+   */
+  async snoozeConversation(
+    id: string,
+    snoozeUntil: Date,
+  ): Promise<{ status: string; snoozeUntil: Date } | null> {
+    const doc = await this.model
+      .findByIdAndUpdate(
+        id,
+        { $set: { status: 'pending', snoozeUntil } },
+        { new: true },
+      )
+      .exec();
+    if (!doc) return null;
+    return { status: doc.status, snoozeUntil };
+  }
+
   async updateBotState(
     id: string,
     fields: Partial<{

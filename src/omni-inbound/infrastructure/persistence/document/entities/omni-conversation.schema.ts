@@ -292,6 +292,13 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ type: Date, default: null, index: true })
   lastCustomerMessageAt: Date | null;
 
+  /**
+   * When the conversation should automatically reopen after being snoozed.
+   * Null when the conversation is not snoozed.
+   */
+  @Prop({ type: Date, default: null })
+  snoozeUntil: Date | null;
+
   // ── CSAT (Customer Satisfaction) ──────────────────────────────
 
   /**
