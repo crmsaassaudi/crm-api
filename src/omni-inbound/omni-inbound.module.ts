@@ -69,7 +69,7 @@ import { ConversationRepository } from './repositories/conversation.repository';
 import { MessageRepository } from './repositories/message.repository';
 import { NoteRepository } from './repositories/note.repository';
 import { ActivityRepository } from './repositories/activity.repository';
-import { AssignmentAuditLogRepository } from './repositories/assignment-audit-log.repository';
+import { AssignmentAuditLogRepository } from './repositories/omni-assignment-audit-log.repository';
 import { AgentStatusAuditRepository } from './repositories/agent-status-audit.repository';
 
 // Schemas
@@ -92,7 +92,7 @@ import {
 import {
   OmniAssignmentAuditLogSchemaClass,
   OmniAssignmentAuditLogSchema,
-} from './infrastructure/persistence/document/entities/assignment-audit-log.schema';
+} from './infrastructure/persistence/document/entities/omni-assignment-audit-log.schema';
 import {
   GroupSchemaClass,
   GroupSchema,

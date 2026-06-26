@@ -5,7 +5,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AssignmentService, mergeRoutingConfig } from './assignment.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { AgentPresenceService } from './agent-presence.service';
-import { AssignmentAuditLogRepository } from '../repositories/assignment-audit-log.repository';
+import { AssignmentAuditLogRepository } from '../repositories/omni-assignment-audit-log.repository';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { UsersService } from '../../users/users.service';
 import { RoutingRuleEvaluatorService } from '../../routing-rules/routing-rule-evaluator.service';

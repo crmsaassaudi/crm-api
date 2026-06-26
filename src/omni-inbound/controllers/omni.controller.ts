@@ -33,7 +33,7 @@ import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
 import { FilesService } from '../../files/files.service';
 import { RequirePermission } from '../../common/permissions';
-import { AssignmentAuditLogRepository } from '../repositories/assignment-audit-log.repository';
+import { AssignmentAuditLogRepository } from '../repositories/omni-assignment-audit-log.repository';
 import { AgentPresenceService } from '../services/agent-presence.service';
 import { AssignmentService } from '../services/assignment.service';
 

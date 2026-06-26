@@ -4,7 +4,7 @@ import { Model } from 'mongoose';
 import {
   OmniAssignmentAuditLogSchemaClass,
   OmniAssignmentAuditLogDocument,
-} from '../infrastructure/persistence/document/entities/assignment-audit-log.schema';
+} from '../infrastructure/persistence/document/entities/omni-assignment-audit-log.schema';
 
 export interface CreateAuditLogDto {
   tenantId: string;
@@ -29,12 +29,78 @@ export interface CreateAuditLogDto {
   eligiblePoolSize?: number;
 }
 
+/**
+ * Clean serializable representation of an audit log entry returned by the API.
+ * All ObjectId fields are normalized to hex strings.
+ * Dates are serialized as ISO 8601 strings.
+ */
+export interface AuditLogEntry {
+  id: string;
+  tenantId: string;
+  conversationId: string;
+  assignedAgentId: string | null;
+  previousAgentId: string | null;
+  ruleId: string | null;
+  ruleName: string | null;
+  channelType: string | null;
+  agentPoolSize: number;
+  eligiblePoolSize: number;
+  strategy: string;
+  reason: string;
+  metadata: Record<string, any>;
+  outcome: 'assigned' | 'queued' | 'failed';
+  createdAt: string;
+  updatedAt: string;
+}
+
 @Injectable()
 export class AssignmentAuditLogRepository {
   constructor(
     @InjectModel(OmniAssignmentAuditLogSchemaClass.name)
     private readonly model: Model<OmniAssignmentAuditLogDocument>,
   ) {}
+
+  /**
+   * Convert a raw lean MongoDB document to a clean serializable AuditLogEntry.
+   *
+   * .lean() returns ObjectId instances (not strings) for fields typed as
+   * MongooseSchema.Types.ObjectId. Without this mapper the API response
+   * contains buffer bytes or "[object Object]" instead of hex strings.
+   */
+  private toDto(doc: Record<string, any>): AuditLogEntry {
+    const toHex = (v: any): string | null => {
+      if (v == null) return null;
+      if (typeof v === 'string') return v;
+      if (typeof v.toHexString === 'function') return v.toHexString();
+      return String(v);
+    };
+
+    const toIso = (v: any): string | null => {
+      if (v == null) return null;
+      if (v instanceof Date) return v.toISOString();
+      if (typeof v === 'string') return v;
+      return null;
+    };
+
+    return {
+      id: toHex(doc._id) ?? '',
+      tenantId: toHex(doc.tenantId) ?? '',
+      conversationId: toHex(doc.conversationId) ?? '',
+      assignedAgentId: toHex(doc.assignedAgentId),
+      previousAgentId: toHex(doc.previousAgentId),
+      ruleId: doc.ruleId ?? null,
+      ruleName: doc.ruleName ?? null,
+      channelType: doc.channelType ?? null,
+      agentPoolSize: doc.agentPoolSize ?? 0,
+      eligiblePoolSize: doc.eligiblePoolSize ?? 0,
+      strategy: doc.strategy ?? '',
+      reason: doc.reason ?? '',
+      metadata: doc.metadata ?? {},
+      outcome: doc.outcome,
+      createdAt: toIso(doc.createdAt) as any,
+      updatedAt: toIso(doc.updatedAt) as any,
+    };
+  }
 
   async create(dto: CreateAuditLogDto): Promise<void> {
     await this.model.create(dto);
@@ -46,12 +112,14 @@ export class AssignmentAuditLogRepository {
   async findByTenant(
     tenantId: string,
     limit = 50,
-  ): Promise<OmniAssignmentAuditLogDocument[]> {
-    return this.model
+  ): Promise<AuditLogEntry[]> {
+    const docs = await this.model
       .find({ tenantId })
       .sort({ createdAt: -1 })
       .limit(limit)
+      .lean()
       .exec();
+    return docs.map(this.toDto);
   }
 
   /**
@@ -62,12 +130,14 @@ export class AssignmentAuditLogRepository {
     tenantId: string,
     conversationId: string,
     limit = 20,
-  ): Promise<OmniAssignmentAuditLogDocument[]> {
-    return this.model
+  ): Promise<AuditLogEntry[]> {
+    const docs = await this.model
       .find({ tenantId, conversationId })
       .sort({ createdAt: 1 })
       .limit(limit)
+      .lean()
       .exec();
+    return docs.map(this.toDto);
   }
 
   /**
@@ -77,12 +147,14 @@ export class AssignmentAuditLogRepository {
     tenantId: string,
     agentId: string,
     limit = 50,
-  ): Promise<OmniAssignmentAuditLogDocument[]> {
-    return this.model
+  ): Promise<AuditLogEntry[]> {
+    const docs = await this.model
       .find({ tenantId, assignedAgentId: agentId })
       .sort({ createdAt: -1 })
       .limit(limit)
+      .lean()
       .exec();
+    return docs.map(this.toDto);
   }
 
   /**
@@ -102,7 +174,7 @@ export class AssignmentAuditLogRepository {
       agentId?: string;
     },
     limit = 50,
-  ): Promise<OmniAssignmentAuditLogDocument[]> {
+  ): Promise<AuditLogEntry[]> {
     const query: Record<string, any> = { tenantId };
 
     if (filters.conversationId) {
@@ -120,6 +192,12 @@ export class AssignmentAuditLogRepository {
       query.assignedAgentId = filters.agentId;
     }
 
-    return this.model.find(query).sort({ createdAt: -1 }).limit(limit).exec();
+    const docs = await this.model
+      .find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    return docs.map(this.toDto);
   }
 }

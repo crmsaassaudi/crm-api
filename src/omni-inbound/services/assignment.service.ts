@@ -16,7 +16,7 @@ import { AgentPresenceService } from './agent-presence.service';
 import {
   AssignmentAuditLogRepository,
   CreateAuditLogDto,
-} from '../repositories/assignment-audit-log.repository';
+} from '../repositories/omni-assignment-audit-log.repository';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { UsersService } from '../../users/users.service';
 import { OMNI_STICKY_RETRY_QUEUE } from '../queue/omni-sticky-queue.constants';
