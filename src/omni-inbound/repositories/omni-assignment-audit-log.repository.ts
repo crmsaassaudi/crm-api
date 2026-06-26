@@ -123,22 +123,40 @@ export class AssignmentAuditLogRepository {
   }
 
   /**
-   * Find audit logs for a specific conversation (chronological order).
-   * Primary tool for production routing debugging.
+   * Find audit logs for a specific conversation — newest first.
+   * Supports cursor-based pagination: pass the `createdAt` ISO string of the
+   * last entry received to get the next page (entries older than that cursor).
    */
   async findByConversation(
     tenantId: string,
     conversationId: string,
-    limit = 20,
-  ): Promise<AuditLogEntry[]> {
+    limit = 10,
+    cursor?: string, // ISO timestamp — fetch entries older than this
+  ): Promise<{ entries: AuditLogEntry[]; nextCursor: string | null }> {
+    const query: Record<string, any> = { tenantId, conversationId };
+    if (cursor) {
+      // Cursor = createdAt of the last entry seen — fetch everything strictly older
+      query.createdAt = { $lt: new Date(cursor) };
+    }
+
     const docs = await this.model
-      .find({ tenantId, conversationId })
-      .sort({ createdAt: 1 })
-      .limit(limit)
+      .find(query)
+      .sort({ createdAt: -1 }) // newest first
+      .limit(limit + 1)        // fetch one extra to detect hasMore
       .lean()
       .exec();
-    return docs.map(this.toDto);
+
+    const hasMore = docs.length > limit;
+    if (hasMore) docs.pop(); // remove the extra sentinel doc
+
+    const entries = docs.map((d) => this.toDto(d));
+    const nextCursor = hasMore
+      ? entries[entries.length - 1].createdAt  // ISO string of oldest in page
+      : null;
+
+    return { entries, nextCursor };
   }
+
 
   /**
    * Find audit logs for a specific agent.

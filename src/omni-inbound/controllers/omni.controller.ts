@@ -89,7 +89,8 @@ export class OmniController {
   @RequirePermission('view', 'contacts')
   async getRoutingTrace(
     @Param('id') conversationId: string,
-    @Query('limit') limit = '20',
+    @Query('limit') limit = '10',
+    @Query('cursor') cursor?: string,
   ) {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) {
@@ -101,16 +102,18 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
 
-    const entries = await this.auditLogRepo.findByConversation(
+    const { entries, nextCursor } = await this.auditLogRepo.findByConversation(
       tenantId,
       conversationId,
       Math.min(parseInt(limit, 10), 50),
+      cursor || undefined,
     );
 
     return {
       conversationId,
       entries,
       total: entries.length,
+      nextCursor,
     };
   }
 
