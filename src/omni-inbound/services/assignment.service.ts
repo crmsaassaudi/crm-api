@@ -1,4 +1,10 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  Inject,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -19,7 +25,7 @@ import {
   RoutingRuleEvaluatorService,
   RoutingContext,
 } from '../../routing-rules/routing-rule-evaluator.service';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   OmniEvents,
   ConversationQueuedEvent,
@@ -34,6 +40,78 @@ export type AssignmentStrategy =
 
 /** Hardcoded fallback when no tenant setting or per-agent setting is available */
 const FALLBACK_MAX_CAPACITY = 10;
+
+/**
+ * Sentinel returned by tryStickyRouting() when the preferred agent is at
+ * capacity and a delayed retry has been scheduled. Callers check this value
+ * to distinguish "no agent found" (null) from "waiting for preferred agent".
+ */
+const STICKY_WAITING_SENTINEL = '__sticky_waiting__' as const;
+
+/**
+ * Per-channel routing override. Every field is OPTIONAL — an undefined field
+ * means "inherit from the global omni_routing setting". Stored on the channel
+ * as `channel.config.routing`. This lets, e.g., WhatsApp run `sticky` while
+ * every other channel inherits the tenant default, without duplicating the
+ * unrelated settings.
+ */
+export interface ChannelRoutingOverride {
+  defaultStrategy?: AssignmentStrategy;
+  defaultMaxCapacity?: number;
+  stickyRoutingEnabled?: boolean;
+  stickyTimeoutHours?: number;
+  stickyWaitTimeMinutes?: number;
+  fallbackStrategy?: AssignmentStrategy;
+  skillBasedRoutingEnabled?: boolean;
+}
+
+/** Fully-resolved routing config — every routing-decision field is concrete. */
+export interface ResolvedRoutingConfig {
+  defaultStrategy: AssignmentStrategy;
+  defaultMaxCapacity: number;
+  stickyRoutingEnabled: boolean;
+  stickyTimeoutHours: number;
+  stickyWaitTimeMinutes: number;
+  fallbackStrategy: AssignmentStrategy;
+  skillBasedRoutingEnabled: boolean;
+}
+
+/**
+ * Resolve the effective routing config field-by-field:
+ *   channel override ?? global setting ?? hardcoded default.
+ *
+ * Per-field resolution (not per-object) is deliberate: a channel may override
+ * a single field and inherit the rest. This is the single seam through which
+ * ALL routing-decision settings flow, so adding a new per-channel field is a
+ * one-line change here.
+ *
+ * NOTE: `autoAssignmentEnabled` is intentionally NOT resolved here — the
+ * channel-first auto-assign gate is handled separately via
+ * AssignmentOptions.channelAutoAssignOverride (see assignConversation).
+ */
+export function mergeRoutingConfig(
+  global: any,
+  channel?: ChannelRoutingOverride,
+): ResolvedRoutingConfig {
+  const g = global ?? {};
+  const c = channel ?? {};
+  return {
+    defaultStrategy:
+      c.defaultStrategy ?? (g.defaultStrategy as AssignmentStrategy) ?? 'round-robin',
+    defaultMaxCapacity:
+      c.defaultMaxCapacity ?? g.defaultMaxCapacity ?? FALLBACK_MAX_CAPACITY,
+    stickyRoutingEnabled:
+      c.stickyRoutingEnabled ?? g.stickyRoutingEnabled ?? false,
+    stickyTimeoutHours: c.stickyTimeoutHours ?? g.stickyTimeoutHours ?? 72,
+    // Default 0 preserves the legacy "unset → no wait window" gate semantics.
+    stickyWaitTimeMinutes:
+      c.stickyWaitTimeMinutes ?? g.stickyWaitTimeMinutes ?? 0,
+    fallbackStrategy:
+      c.fallbackStrategy ?? (g.fallbackStrategy as AssignmentStrategy) ?? 'round-robin',
+    skillBasedRoutingEnabled:
+      c.skillBasedRoutingEnabled ?? g.skillBasedRoutingEnabled ?? false,
+  };
+}
 
 export interface AssignmentOptions {
   strategy?: AssignmentStrategy;
@@ -52,6 +130,12 @@ export interface AssignmentOptions {
    *   - undefined → channel did not set; defer to global toggle
    */
   channelAutoAssignOverride?: boolean;
+  /**
+   * Per-channel routing overrides (strategy, capacity, sticky, skills).
+   * Merged over the global omni_routing config via mergeRoutingConfig().
+   * Undefined fields inherit from global.
+   */
+  channelRoutingOverride?: ChannelRoutingOverride;
   /** Allow replacing an existing assigned agent (used by offline fallback). */
   allowReassignment?: boolean;
 }
@@ -75,7 +159,7 @@ export interface AssignmentOptions {
  * Every assignment decision is recorded in the AssignmentAuditLog.
  */
 @Injectable()
-export class AssignmentService {
+export class AssignmentService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AssignmentService.name);
 
   /** In-memory cache: tenantId → { config, expiresAt } for routing settings */
@@ -84,8 +168,20 @@ export class AssignmentService {
     { config: any; expiresAt: number }
   >();
 
-  /** Config cache TTL — 5 minutes */
+  /** Config cache TTL — 5 minutes (backstop; primary invalidation is event-driven) */
   private readonly CONFIG_CACHE_TTL_MS = 5 * 60_000;
+
+  /**
+   * Redis pub/sub channel for cross-instance routing-config cache invalidation.
+   * When an admin changes omni_routing settings, the API pod that served the
+   * request publishes the tenantId here so EVERY pod drops its local cache,
+   * not just the one that handled the HTTP request.
+   */
+  private static readonly CONFIG_INVALIDATION_CHANNEL =
+    'omni:routing-config:invalidate';
+
+  /** Dedicated subscriber connection (ioredis requires a separate conn for SUBSCRIBE). */
+  private configInvalidationSub?: Redis;
 
   constructor(
     private readonly conversationRepo: ConversationRepository,
@@ -101,6 +197,176 @@ export class AssignmentService {
     private readonly groupModel: Model<any>,
     private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Cross-instance config-cache invalidation (Task 2.1)
+  // ────────────────────────────────────────────────────────────────────────
+
+  async onModuleInit(): Promise<void> {
+    try {
+      this.configInvalidationSub = this.redis.duplicate();
+      await this.configInvalidationSub.subscribe(
+        AssignmentService.CONFIG_INVALIDATION_CHANNEL,
+      );
+      this.configInvalidationSub.on('message', (_channel, message) => {
+        // message = tenantId, or '*' to flush the entire cache
+        if (!message || message === '*') {
+          this.routingConfigCache.clear();
+          this.logger.debug('Routing config cache flushed (all tenants)');
+          return;
+        }
+        this.routingConfigCache.delete(message);
+        this.logger.debug(`Routing config cache invalidated for ${message}`);
+      });
+      this.logger.log(
+        `Subscribed to ${AssignmentService.CONFIG_INVALIDATION_CHANNEL} for config invalidation`,
+      );
+    } catch (err: any) {
+      // Non-fatal: the 5-min TTL still bounds staleness if pub/sub is unavailable.
+      this.logger.error(
+        `Failed to subscribe to config invalidation channel: ${err.message}`,
+      );
+    }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.configInvalidationSub) {
+      try {
+        await this.configInvalidationSub.unsubscribe(
+          AssignmentService.CONFIG_INVALIDATION_CHANNEL,
+        );
+        await this.configInvalidationSub.quit();
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Sticky-history cache (Task 3.3)
+  // ────────────────────────────────────────────────────────────────────────
+
+  private stickyContactKey(tenantId: string, contactId: string): string {
+    return `omni:sticky:${tenantId}:c:${contactId}`;
+  }
+
+  private stickySenderKey(tenantId: string, senderId: string): string {
+    return `omni:sticky:${tenantId}:s:${senderId}`;
+  }
+
+  /**
+   * On resolve/close, cache the agent who handled this customer so sticky
+   * routing can look them up in Redis instead of querying MongoDB on every
+   * subsequent inbound message. TTL = the tenant's stickyTimeoutHours, so the
+   * key self-expires exactly when sticky would no longer apply.
+   */
+  @OnEvent('omni.conversation.status_changed')
+  async handleConversationResolvedForSticky(event: {
+    tenantId: string;
+    conversationId: string;
+    status: string;
+  }): Promise<void> {
+    if (event?.status !== 'resolved' && event?.status !== 'closed') return;
+    try {
+      const conv: any = await this.conversationRepo.findById(
+        event.conversationId,
+      );
+      const agentId = conv?.assignedAgentId;
+      if (!agentId) return;
+
+      const resolved = mergeRoutingConfig(
+        await this.getRoutingConfig(event.tenantId),
+      );
+      const ttlSeconds = Math.max(
+        60,
+        Math.floor(resolved.stickyTimeoutHours * 3600),
+      );
+      const payload = JSON.stringify({
+        agentId,
+        resolvedAt: (conv.resolvedAt ?? conv.updatedAt ?? new Date()).toString(),
+      });
+
+      const writes: Promise<unknown>[] = [];
+      if (conv.contactId) {
+        writes.push(
+          this.redis.set(
+            this.stickyContactKey(event.tenantId, String(conv.contactId)),
+            payload,
+            'EX',
+            ttlSeconds,
+          ),
+        );
+      }
+      if (conv.externalSenderId) {
+        writes.push(
+          this.redis.set(
+            this.stickySenderKey(event.tenantId, String(conv.externalSenderId)),
+            payload,
+            'EX',
+            ttlSeconds,
+          ),
+        );
+      }
+      await Promise.all(writes);
+    } catch (err: any) {
+      // Non-fatal: sticky lookup falls back to MongoDB on a cache miss.
+      this.logger.warn(
+        `Failed to cache sticky agent for conversation ${event.conversationId}: ${err.message}`,
+      );
+    }
+  }
+
+  /** Read a cached sticky entry, or null on miss/parse error. */
+  private async readStickyCache(
+    key: string,
+  ): Promise<{ agentId: string; resolvedAt: string } | null> {
+    try {
+      const raw = await this.redis.get(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed?.agentId ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Invalidate the cached routing config for a tenant on EVERY API pod.
+   * Drops this pod's entry immediately (fast self-heal) and publishes to the
+   * Redis channel so other pods do the same. Pass no tenantId to flush all.
+   */
+  async invalidateRoutingConfig(tenantId?: string): Promise<void> {
+    const payload = tenantId ?? '*';
+    if (tenantId) {
+      this.routingConfigCache.delete(tenantId);
+    } else {
+      this.routingConfigCache.clear();
+    }
+    try {
+      await this.redis.publish(
+        AssignmentService.CONFIG_INVALIDATION_CHANNEL,
+        payload,
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to publish config invalidation for ${payload}: ${err.message}`,
+      );
+    }
+  }
+
+  /**
+   * React to admin settings changes. Only omni_routing changes affect the
+   * routing config cache. Fired in-process on the pod that served the PATCH;
+   * invalidateRoutingConfig() fans it out to all pods via Redis pub/sub.
+   */
+  @OnEvent('settings.changed')
+  async handleSettingsChanged(event: {
+    key: string;
+    tenantId?: string;
+  }): Promise<void> {
+    if (event?.key !== 'omni_routing') return;
+    await this.invalidateRoutingConfig(event.tenantId);
+  }
 
   /**
    * Auto-assign a conversation to an available agent.
@@ -204,14 +470,18 @@ export class AssignmentService {
       return (map[s as string] ?? s ?? 'round-robin') as AssignmentStrategy;
     };
 
-    const strategy: AssignmentStrategy = normalizeStrategy(
-      ruleMatch?.strategy ??
-        options.strategy ??
-        (routingConfig.defaultStrategy as string) ??
-        'round-robin',
+    // ── Resolve effective routing config (channel ?? global ?? default) ──
+    // Single seam for all routing-decision settings. Precedence for strategy:
+    //   routing rule > options.strategy > channel override > global > default.
+    const resolved = mergeRoutingConfig(
+      routingConfig,
+      options.channelRoutingOverride,
     );
-    const tenantMaxCapacity: number =
-      routingConfig.defaultMaxCapacity ?? FALLBACK_MAX_CAPACITY;
+
+    const strategy: AssignmentStrategy = normalizeStrategy(
+      ruleMatch?.strategy ?? options.strategy ?? resolved.defaultStrategy,
+    );
+    const tenantMaxCapacity: number = resolved.defaultMaxCapacity;
     const requiredSkills: string[] =
       ruleMatch?.requiredSkills ?? options.requiredSkills ?? [];
 
@@ -267,29 +537,35 @@ export class AssignmentService {
     }
 
     // ── Sticky routing: try the previous agent first ──────────────────
+    // P0 fix: the global `stickyRoutingEnabled` toggle is ALWAYS respected.
+    // Previously `strategy === 'sticky'` (set by a routing rule) bypassed the
+    // toggle entirely — an admin who disabled sticky routing would still see it
+    // triggered for conversations matched by rules. Now: routing rules can
+    // *request* sticky, but only if the tenant has enabled it globally (or via
+    // channel override, which is already merged into `resolved`).
     if (
       !options.skipSticky &&
-      (strategy === 'sticky' ||
-        (routingConfig.stickyRoutingEnabled && strategy !== 'manual'))
+      resolved.stickyRoutingEnabled &&
+      (strategy === 'sticky' || strategy !== 'manual')
     ) {
       const stickyResult = await this.tryStickyRouting(
         tenantId,
         conversationId,
         availableAgents,
         options,
-        routingConfig,
+        resolved,
         tenantMaxCapacity,
       );
-      if (stickyResult === '__sticky_waiting__') {
+      if (stickyResult === STICKY_WAITING_SENTINEL) {
         // Conversation is waiting for the preferred agent — delayed retry scheduled
         await this.writeAuditLog({
           tenantId,
           conversationId,
           assignedAgentId: null,
           strategy: 'sticky',
-          reason: `Sticky wait-time: waiting for preferred agent (max ${routingConfig.stickyWaitTimeMinutes ?? 3} min)`,
+          reason: `Sticky wait-time: waiting for preferred agent (max ${resolved.stickyWaitTimeMinutes} min)`,
           metadata: {
-            stickyWaitTimeMinutes: routingConfig.stickyWaitTimeMinutes ?? 3,
+            stickyWaitTimeMinutes: resolved.stickyWaitTimeMinutes,
           },
           outcome: 'queued',
         });
@@ -310,8 +586,9 @@ export class AssignmentService {
 
     // ── Filter by required skills if present ──────────────────────────
     let eligibleAgents = availableAgents;
-    if (requiredSkills.length > 0 && routingConfig.skillBasedRoutingEnabled) {
+    if (requiredSkills.length > 0 && resolved.skillBasedRoutingEnabled) {
       eligibleAgents = await this.filterBySkills(
+        tenantId,
         availableAgents,
         requiredSkills,
       );
@@ -324,10 +601,7 @@ export class AssignmentService {
     }
 
     const effectiveStrategy =
-      strategy === 'sticky'
-        ? ((routingConfig.fallbackStrategy as AssignmentStrategy) ??
-          'round-robin')
-        : strategy;
+      strategy === 'sticky' ? resolved.fallbackStrategy : strategy;
 
     switch (effectiveStrategy) {
       case 'round-robin': {
@@ -395,6 +669,15 @@ export class AssignmentService {
     // below, the counter would permanently drift (agent appears "full" with a
     // phantom conversation). The finally block ensures the reservation is always
     // rolled back when the MongoDB commit does not complete successfully.
+    //
+    // INVARIANT (P1 fix): every strategy that returns a non-null selectedAgent
+    // here — round-robin, least-busy, AND capacity-based — reserves atomically
+    // in Redis (incrementing the load counter). 'manual'/default return early
+    // above and never reach this block. Therefore a non-null selectedAgent
+    // always corresponds to exactly one Redis increment, so the rollback
+    // (releaseConversation → decrement) below is always balanced. Do NOT add a
+    // strategy that yields a selectedAgent without reserving, or the rollback
+    // will decrement a counter it never incremented (the old capacity-based bug).
     let committed: any = undefined;
     try {
       if (selectedAgent) {
@@ -415,10 +698,13 @@ export class AssignmentService {
               );
 
         if (committed === null) {
-          // Conversation already assigned or inactive — roll back reservation.
+          // Conversation already assigned or inactive — the reservation must be
+          // rolled back. Do NOT null selectedAgent here: the finally block below
+          // keys its release on `selectedAgent` truthiness, so nulling it now
+          // would SKIP the release and leak the Redis increment (over-count).
+          // Leave selectedAgent set; the finally releases it and nulls it.
           reason =
             'Assignment reservation rolled back because the conversation was already assigned or inactive';
-          selectedAgent = null;
         }
       }
     } catch (err: any) {
@@ -508,26 +794,38 @@ export class AssignmentService {
     conversationId: string,
     availableAgents: string[],
     options: AssignmentOptions,
-    routingConfig: any,
+    resolved: ResolvedRoutingConfig,
     tenantMaxCapacity: number,
   ): Promise<string | null> {
-    // Find the previous agent for this customer
+    // Find the previous agent for this customer.
+    // P2 fix: Redis sticky-cache first (written on resolve), MongoDB only on a
+    // cache miss — removing up to 2 DB reads per inbound message on the hot path.
     let previousAgentId: string | null = null;
     let lookupSource = '';
+    const timeoutHours = resolved.stickyTimeoutHours;
+    const withinTimeout = (resolvedAt: string | Date | undefined): boolean => {
+      if (!resolvedAt) return false;
+      const hours =
+        (Date.now() - new Date(resolvedAt).getTime()) / (1000 * 60 * 60);
+      return hours <= timeoutHours;
+    };
 
     if (options.contactId) {
-      const lastConv = await this.conversationRepo.findLastResolvedByContact(
-        tenantId,
-        options.contactId,
+      const cached = await this.readStickyCache(
+        this.stickyContactKey(tenantId, options.contactId),
       );
-      if (lastConv?.assignedAgentId) {
-        // Check if the conversation is within the sticky timeout
-        const timeoutHours = routingConfig.stickyTimeoutHours ?? 72;
-        const resolvedAt = lastConv.resolvedAt ?? lastConv.updatedAt;
-        const hoursSinceResolved =
-          (Date.now() - new Date(resolvedAt).getTime()) / (1000 * 60 * 60);
-
-        if (hoursSinceResolved <= timeoutHours) {
+      if (cached && withinTimeout(cached.resolvedAt)) {
+        previousAgentId = cached.agentId;
+        lookupSource = 'contactId:cache';
+      } else {
+        const lastConv = await this.conversationRepo.findLastResolvedByContact(
+          tenantId,
+          options.contactId,
+        );
+        if (
+          lastConv?.assignedAgentId &&
+          withinTimeout(lastConv.resolvedAt ?? lastConv.updatedAt)
+        ) {
           previousAgentId = lastConv.assignedAgentId;
           lookupSource = 'contactId';
         }
@@ -535,17 +833,21 @@ export class AssignmentService {
     }
 
     if (!previousAgentId && options.externalSenderId) {
-      const lastConv = await this.conversationRepo.findLastResolvedBySender(
-        tenantId,
-        options.externalSenderId,
+      const cached = await this.readStickyCache(
+        this.stickySenderKey(tenantId, options.externalSenderId),
       );
-      if (lastConv?.assignedAgentId) {
-        const timeoutHours = routingConfig.stickyTimeoutHours ?? 72;
-        const resolvedAt = lastConv.resolvedAt ?? lastConv.updatedAt;
-        const hoursSinceResolved =
-          (Date.now() - new Date(resolvedAt).getTime()) / (1000 * 60 * 60);
-
-        if (hoursSinceResolved <= timeoutHours) {
+      if (cached && withinTimeout(cached.resolvedAt)) {
+        previousAgentId = cached.agentId;
+        lookupSource = 'externalSenderId:cache';
+      } else {
+        const lastConv = await this.conversationRepo.findLastResolvedBySender(
+          tenantId,
+          options.externalSenderId,
+        );
+        if (
+          lastConv?.assignedAgentId &&
+          withinTimeout(lastConv.resolvedAt ?? lastConv.updatedAt)
+        ) {
           previousAgentId = lastConv.assignedAgentId;
           lookupSource = 'externalSenderId';
         }
@@ -573,17 +875,17 @@ export class AssignmentService {
       presence?.activeConversations ??
       (await this.conversationRepo.countOpenByAgent(tenantId, previousAgentId));
 
-    const reserve = (this.presenceService as any).reserveAgentFromCandidates;
-    const reservedAgent =
-      typeof reserve === 'function'
-        ? await reserve.call(this.presenceService, tenantId, [previousAgentId])
-        : openChats < agentCapacity
-          ? previousAgentId
-          : null;
+    // Atomically reserve the previous agent (single candidate). The Lua reserve
+    // enforces capacity + freshness; openChats/agentCapacity above are only for
+    // logging/audit context.
+    const reservedAgent = await this.presenceService.reserveAgentFromCandidates(
+      tenantId,
+      [previousAgentId],
+    );
 
     if (!reservedAgent) {
       // Check if sticky wait-time is configured
-      const stickyWaitMinutes = routingConfig.stickyWaitTimeMinutes ?? 0;
+      const stickyWaitMinutes = resolved.stickyWaitTimeMinutes;
 
       if (stickyWaitMinutes > 0) {
         this.logger.log(
@@ -592,8 +894,7 @@ export class AssignmentService {
         );
 
         // Schedule a delayed retry job
-        const fallbackStrategy =
-          (routingConfig.fallbackStrategy as string) ?? 'round-robin';
+        const fallbackStrategy = resolved.fallbackStrategy;
         try {
           await this.stickyRetryQueue.add(
             'sticky-retry',
@@ -625,7 +926,7 @@ export class AssignmentService {
           return null; // Fall through to normal assignment
         }
 
-        return '__sticky_waiting__';
+        return STICKY_WAITING_SENTINEL;
       }
 
       this.logger.debug(
@@ -702,30 +1003,33 @@ export class AssignmentService {
     //                   reserve the first eligible one.
     //   least-busy    → Delegate to the Lua script which picks the ZSET
     //                   candidate with the lowest load score.
-    //   capacity-based → Use the DB-backed aggregation which reads real
-    //                   per-agent maxCapacity and enforces hard limits.
+    //   capacity-based → Atomic Redis Lua reserve gated on effective capacity
+    //                   (per-agent → tenant default). Increments the same load
+    //                   counter as the other strategies (P1 data-integrity fix).
     // ─────────────────────────────────────────────────────────────────────
 
     if (agents.length === 0) return null;
 
     if (strategy === 'round-robin') {
-      // Candidates are already ordered by roundRobinOrder().
-      // Try each in sequence and reserve the first eligible one atomically.
-      for (const agentId of agents) {
-        const reserved = await this.presenceService.reserveAgentFromCandidates(
-          tenantId,
-          [agentId],
-        );
-        if (reserved) return reserved;
-      }
-      return null;
+      // Candidates are already ordered by roundRobinOrder(). P2 fix: a single
+      // first-fit Lua reserve walks the rotated list and atomically reserves the
+      // first eligible agent — replacing the previous N-round-trip loop (one EVAL
+      // per candidate) WITHOUT collapsing rotation into least-busy.
+      return this.presenceService.reserveFirstEligibleAgent(tenantId, agents);
     }
 
     if (strategy === 'capacity-based') {
-      // DB-based: reads real open-conversation count from MongoDB and respects
-      // per-agent maxCapacity. More accurate but slightly slower than Redis path.
-      return (await this.capacityBased(tenantId, agents, tenantMaxCapacity))
-        .agentId;
+      // P1 fix: atomic Redis reservation. Picks the lowest-load eligible agent
+      // that is still under its effective capacity (per-agent → tenant default)
+      // and increments the load counter in the same Lua call. This keeps the
+      // load ZSET consistent with round-robin/least-busy and removes the
+      // previous TOCTOU race + erroneous rollback decrement caused by the old
+      // MongoDB-count path that returned an agent without reserving in Redis.
+      return this.presenceService.reserveCapacityBasedAgent(
+        tenantId,
+        agents,
+        tenantMaxCapacity,
+      );
     }
 
     // Default: least-busy — Lua script picks the ZSET candidate with lowest load.
@@ -756,109 +1060,61 @@ export class AssignmentService {
   }
 
   // T11 fix: leastBusy() removed — dead code.
-  // The production path (reserveCandidate → presenceService.reserveAgentFromCandidates)
-  // uses an atomic Lua ZSET script that avoids the O(N) MongoDB aggregation.
-  // If you need a DB-backed fallback, use capacityBased() which already aggregates
-  // open counts and enforces per-agent caps in one pipeline call.
-
-  /**
-   * Capacity-based: like least-busy, but rejects agents who have reached
-   * their maximum concurrent chat capacity (dynamic per-agent).
-   *
-   * Uses a single aggregation pipeline for counts instead of per-agent queries.
-   * If ALL agents are at max capacity, returns null → conversation goes to queue.
-   */
-  private async capacityBased(
-    tenantId: string,
-    agents: string[],
-    tenantMaxCapacity: number,
-  ): Promise<{
-    agentId: string | null;
-    openChats: number;
-    agentCapacity: number;
-    allLoads: Array<{ agentId: string; count: number; capacity: number }>;
-  }> {
-    // Batch: single aggregation for all agent counts
-    const countMap = await this.conversationRepo.countOpenByAgents(
-      tenantId,
-      agents,
-    );
-
-    // Resolve capacities (still per-agent due to Redis presence check,
-    // but these are cheap in-memory lookups, not DB queries)
-    const counts = await Promise.all(
-      agents.map(async (agentId) => {
-        const capacity = await this.resolveAgentCapacity(
-          tenantId,
-          agentId,
-          tenantMaxCapacity,
-        );
-        return {
-          agentId,
-          count: countMap.get(agentId) ?? 0,
-          capacity,
-        };
-      }),
-    );
-
-    // Filter to only agents under capacity
-    const eligible = counts.filter((c) => c.count < c.capacity);
-
-    if (eligible.length === 0) {
-      return {
-        agentId: null,
-        openChats: 0,
-        agentCapacity: 0,
-        allLoads: counts,
-      };
-    }
-
-    // Pick the agent with fewest open chats among eligible
-    eligible.sort((a, b) => a.count - b.count);
-    return {
-      agentId: eligible[0].agentId,
-      openChats: eligible[0].count,
-      agentCapacity: eligible[0].capacity,
-      allLoads: counts,
-    };
-  }
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Helpers
-  // ────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Resolve the effective max capacity for a specific agent.
-   * Priority: per-agent (Redis presence) → tenant default → hardcoded fallback.
-   */
-  private async resolveAgentCapacity(
-    tenantId: string,
-    agentId: string,
-    tenantMaxCapacity: number,
-  ): Promise<number> {
-    const presence = await this.presenceService.getPresence(tenantId, agentId);
-    if (presence?.maxCapacity && presence.maxCapacity > 0) {
-      return presence.maxCapacity;
-    }
-    return tenantMaxCapacity > 0 ? tenantMaxCapacity : FALLBACK_MAX_CAPACITY;
-  }
+  // P1 fix: capacityBased() (MongoDB-count path) and resolveAgentCapacity()
+  // removed — the capacity-based strategy now reserves atomically in Redis via
+  // presenceService.reserveCapacityBasedAgent(), which resolves the effective
+  // capacity (per-agent → tenant default → hardcoded) inside the Lua script.
+  // The MongoDB count path returned an agent WITHOUT reserving, causing load
+  // ZSET under-count, a TOCTOU race, and an erroneous rollback decrement.
+  // (countOpenByAgents() remains in the repo — still used by
+  // PresenceReconciliationService as the authoritative drift-correction source.)
 
   /**
    * Filter agents by required skills. An agent must have ALL required skills.
+   *
+   * P2 fix: resolves each agent's skills from the Redis presence cache (hydrated
+   * at connect + synced on user update). Only agents whose skills are NOT cached
+   * trigger a single batched MongoDB read, so the hot path is 0 DB reads once
+   * presence is warm. Matching is case-insensitive.
    */
   private async filterBySkills(
+    tenantId: string,
     agentIds: string[],
     requiredSkills: string[],
   ): Promise<string[]> {
-    const users = await this.usersService.findByIds(agentIds);
-    return users
-      .filter((user) => {
-        const agentSkills = user.skills ?? [];
-        return requiredSkills.every((skill) =>
-          agentSkills.some((s) => s.toLowerCase() === skill.toLowerCase()),
+    const skillMap = new Map<string, string[]>();
+    const missing: string[] = [];
+
+    // 1. Presence-first: read cached skills (cheap per-agent HGET, no Mongo).
+    await Promise.all(
+      agentIds.map(async (agentId) => {
+        const presence = await this.presenceService.getPresence(
+          tenantId,
+          agentId,
         );
-      })
-      .map((user) => user.id.toString());
+        if (presence?.skills !== undefined) {
+          skillMap.set(agentId, presence.skills);
+        } else {
+          missing.push(agentId);
+        }
+      }),
+    );
+
+    // 2. Fallback: one batched Mongo read for any agent not hydrated in presence.
+    if (missing.length > 0) {
+      const users = await this.usersService.findByIds(missing);
+      for (const user of users) {
+        skillMap.set(user.id.toString(), user.skills ?? []);
+      }
+    }
+
+    const needles = requiredSkills.map((s) => s.toLowerCase());
+    return agentIds.filter((agentId) => {
+      const agentSkills = (skillMap.get(agentId) ?? []).map((s) =>
+        s.toLowerCase(),
+      );
+      return needles.every((skill) => agentSkills.includes(skill));
+    });
   }
 
   /**

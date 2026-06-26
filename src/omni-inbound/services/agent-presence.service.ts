@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
 import { RedisService } from '../../redis/redis.service';
 import {
   AgentPresence,
@@ -131,6 +132,151 @@ return bestAgent
 `;
 
 /**
+ * Capacity-based reserve: identical to LUA_RESERVE_FROM_CANDIDATES (lowest-load
+ * wins, atomic increment, freshness guard) EXCEPT the effective capacity used for
+ * the `active < capacity` gate is resolved with the tenant default as a fallback:
+ *
+ *   effectiveCapacity = agent.maxCapacity (if > 0) else tenantFallbackCapacity
+ *
+ * This mirrors AssignmentService.resolveAgentCapacity()'s priority
+ * (per-agent → tenant default → hardcoded) but does it atomically inside Redis,
+ * so capacity-based assignments increment the same load counter as every other
+ * strategy. Previously the capacity-based path read MongoDB counts and returned an
+ * agent WITHOUT reserving in Redis, causing (a) the load ZSET to under-count,
+ * (b) a TOCTOU race, and (c) an erroneous rollback decrement.
+ *
+ * KEYS[1] = tenant presence hash
+ * KEYS[2] = tenant load ZSET
+ * ARGV[1] = number of candidates
+ * ARGV[2..n] = candidate agent ids
+ * ARGV[n+1]  = current Unix timestamp in ms (freshness check)
+ * ARGV[n+2]  = heartbeat TTL in ms
+ * ARGV[n+3]  = tenant fallback capacity
+ *
+ * Returns the selected agent id, or nil if no candidate is under capacity.
+ */
+const LUA_RESERVE_CAPACITY_BASED = `
+local presenceHash = KEYS[1]
+local loadZset = KEYS[2]
+local candidateCount = tonumber(ARGV[1])
+local nowMs = tonumber(ARGV[candidateCount + 2])
+local heartbeatTtlMs = tonumber(ARGV[candidateCount + 3])
+local tenantFallbackCap = tonumber(ARGV[candidateCount + 4])
+local bestAgent = nil
+local bestLoad = nil
+local bestCap = nil
+
+local function effectiveCap(agentCap)
+  if agentCap and agentCap > 0 then return agentCap end
+  if tenantFallbackCap and tenantFallbackCap > 0 then return tenantFallbackCap end
+  return 0
+end
+
+for i = 1, candidateCount do
+  local agentId = ARGV[i + 1]
+  local raw = redis.call('HGET', presenceHash, agentId)
+  if raw then
+    local data = cjson.decode(raw)
+    local active = tonumber(data.activeConversations or 0)
+    local capacity = effectiveCap(tonumber(data.maxCapacity or 0))
+    local heartbeatMs = tonumber(data.lastHeartbeatMs or 0)
+    local isStale = nowMs - heartbeatMs > heartbeatTtlMs
+    if not isStale
+      and data.intentStatus == 'available'
+      and data.connectionStatus == 'connected'
+      and capacity > 0
+      and active < capacity then
+      local score = redis.call('ZSCORE', loadZset, agentId)
+      local load = tonumber(score or active)
+      if bestLoad == nil or load < bestLoad then
+        bestLoad = load
+        bestAgent = agentId
+        bestCap = capacity
+      end
+    end
+  end
+end
+
+if not bestAgent then return nil end
+
+local raw = redis.call('HGET', presenceHash, bestAgent)
+if not raw then return nil end
+
+local data = cjson.decode(raw)
+local active = tonumber(data.activeConversations or 0)
+if active >= bestCap then return nil end
+
+active = active + 1
+data.activeConversations = active
+-- routingStatus uses the agent's OWN stored capacity for display consistency.
+local ownCap = tonumber(data.maxCapacity or 0)
+if ownCap > 0 and active >= ownCap then
+  data.routingStatus = 'full'
+else
+  data.routingStatus = 'accept'
+end
+
+redis.call('HSET', presenceHash, bestAgent, cjson.encode(data))
+redis.call('ZADD', loadZset, active, bestAgent)
+return bestAgent
+`;
+
+/**
+ * First-fit reserve: walk the candidate list IN THE GIVEN ORDER and reserve the
+ * FIRST eligible agent (not the lowest-load one). This is the round-robin
+ * primitive — the caller passes an already-rotated list, and rotation fairness
+ * is preserved only if we honour that order. Using LUA_RESERVE_FROM_CANDIDATES
+ * here would silently collapse round-robin into least-busy.
+ *
+ * KEYS[1] = tenant presence hash
+ * KEYS[2] = tenant load ZSET
+ * ARGV[1] = number of candidates
+ * ARGV[2..n] = candidate agent ids (in rotation order)
+ * ARGV[n+1]  = current Unix timestamp in ms (freshness check)
+ * ARGV[n+2]  = heartbeat TTL in ms
+ *
+ * Returns the first eligible agent id (incremented atomically), or nil.
+ */
+const LUA_RESERVE_FIRST_ELIGIBLE = `
+local presenceHash = KEYS[1]
+local loadZset = KEYS[2]
+local candidateCount = tonumber(ARGV[1])
+local nowMs = tonumber(ARGV[candidateCount + 2])
+local heartbeatTtlMs = tonumber(ARGV[candidateCount + 3])
+
+for i = 1, candidateCount do
+  local agentId = ARGV[i + 1]
+  local raw = redis.call('HGET', presenceHash, agentId)
+  if raw then
+    local data = cjson.decode(raw)
+    local active = tonumber(data.activeConversations or 0)
+    local capacity = tonumber(data.maxCapacity or 0)
+    local heartbeatMs = tonumber(data.lastHeartbeatMs or 0)
+    local isStale = nowMs - heartbeatMs > heartbeatTtlMs
+    if not isStale
+      and data.intentStatus == 'available'
+      and data.connectionStatus == 'connected'
+      and capacity > 0
+      and active < capacity then
+      -- First eligible in rotation order wins.
+      active = active + 1
+      data.activeConversations = active
+      if active >= capacity then
+        data.routingStatus = 'full'
+      else
+        data.routingStatus = 'accept'
+      end
+      redis.call('HSET', presenceHash, agentId, cjson.encode(data))
+      redis.call('ZADD', loadZset, active, agentId)
+      return agentId
+    end
+  end
+end
+
+return nil
+`;
+
+/**
  * Callback invoked when an agent's intentStatus changes.
  * Used to wire in audit logging without circular dependencies.
  */
@@ -181,6 +327,13 @@ export class AgentPresenceService {
     pipeline.setex(key, HEARTBEAT_TTL_SECONDS, encoded);
     pipeline.hset(hashKey, presence.userId, encoded);
     pipeline.zadd(loadKey, presence.activeConversations, presence.userId);
+    // P1 fix: set a TTL on the shared hash and ZSET so stale entries from
+    // crashed agents or inactive tenants don't accumulate indefinitely in
+    // Redis memory. 24h is generous — these keys are refreshed on every
+    // heartbeat (~30s interval) so the TTL is only hit when a tenant has
+    // zero active agents for an entire day.
+    pipeline.expire(hashKey, 86400); // 24 hours
+    pipeline.expire(loadKey, 86400); // 24 hours
     await pipeline.exec();
   }
 
@@ -324,6 +477,12 @@ export class AgentPresenceService {
     userId: string,
     socketId: string,
     autoAvailableOnConnect: boolean = false,
+    /**
+     * Per-agent attributes resolved from the user record at connect time.
+     * Hydrating here means skill-based routing and per-agent capacity work
+     * without a MongoDB read on every assignment.
+     */
+    attributes?: { skills?: string[]; maxCapacity?: number },
   ): Promise<{ presence: AgentPresence; isFreshSession: boolean }> {
     const existing = await this.getPresence(tenantId, userId);
 
@@ -354,6 +513,13 @@ export class AgentPresenceService {
       ? [...existing.connections.filter((id) => id !== socketId), socketId]
       : [socketId];
 
+    // Per-agent capacity: prefer the freshly-resolved user value, else keep the
+    // existing presence value, else the global default.
+    const maxCapacity =
+      attributes?.maxCapacity && attributes.maxCapacity > 0
+        ? attributes.maxCapacity
+        : (existing?.maxCapacity ?? DEFAULT_MAX_CAPACITY);
+
     const presence: AgentPresence = {
       userId,
       tenantId,
@@ -361,11 +527,14 @@ export class AgentPresenceService {
       connectionStatus: 'connected',
       routingStatus: computeRoutingStatus(
         existing?.activeConversations ?? 0,
-        existing?.maxCapacity ?? DEFAULT_MAX_CAPACITY,
+        maxCapacity,
       ),
       status: computeDisplayStatus(intentStatus, 'connected'),
       activeConversations: existing?.activeConversations ?? 0,
-      maxCapacity: existing?.maxCapacity ?? DEFAULT_MAX_CAPACITY,
+      maxCapacity,
+      // Hydrate skills from the user record; fall back to the existing cached
+      // value on reconnect when no attributes were supplied.
+      skills: attributes?.skills ?? existing?.skills,
       connections,
       lastHeartbeat: new Date(),
       lastHeartbeatMs: Date.now(),
@@ -606,6 +775,69 @@ export class AgentPresenceService {
   }
 
   /**
+   * Atomically reserve the FIRST eligible agent from an ORDERED candidate list.
+   * Used by `round-robin`: the caller passes an already-rotated list and this
+   * honours that order (first-fit), instead of picking the lowest-load agent.
+   * Replaces the previous N-round-trip loop (one Lua EVAL per candidate) with a
+   * single EVAL while preserving rotation fairness. Set preserves insertion
+   * order, so dedupe does not disturb the rotation.
+   */
+  async reserveFirstEligibleAgent(
+    tenantId: string,
+    orderedCandidateIds: string[],
+  ): Promise<string | null> {
+    const candidates = [...new Set(orderedCandidateIds.filter(Boolean))];
+    if (candidates.length === 0) return null;
+
+    const client = this.redis.getClient();
+    const result = await client.eval(
+      LUA_RESERVE_FIRST_ELIGIBLE,
+      2,
+      tenantPresenceHashKey(tenantId),
+      tenantAgentLoadKey(tenantId),
+      candidates.length.toString(),
+      ...candidates,
+      Date.now().toString(),
+      (HEARTBEAT_TTL_SECONDS * 1000).toString(),
+    );
+
+    return typeof result === 'string' ? result : null;
+  }
+
+  /**
+   * Atomically reserve the least-loaded eligible agent from a candidate list,
+   * gating on the effective capacity (per-agent → tenant default → hardcoded).
+   * Used by the `capacity-based` strategy. Increments the same load counter as
+   * reserveAgentFromCandidates(), so all strategies stay in sync.
+   */
+  async reserveCapacityBasedAgent(
+    tenantId: string,
+    candidateIds: string[],
+    tenantFallbackCapacity: number,
+  ): Promise<string | null> {
+    const candidates = [...new Set(candidateIds.filter(Boolean))];
+    if (candidates.length === 0) return null;
+
+    const client = this.redis.getClient();
+    const result = await client.eval(
+      LUA_RESERVE_CAPACITY_BASED,
+      2,
+      tenantPresenceHashKey(tenantId),
+      tenantAgentLoadKey(tenantId),
+      candidates.length.toString(),
+      ...candidates,
+      Date.now().toString(),
+      (HEARTBEAT_TTL_SECONDS * 1000).toString(),
+      (tenantFallbackCapacity > 0
+        ? tenantFallbackCapacity
+        : DEFAULT_MAX_CAPACITY
+      ).toString(),
+    );
+
+    return typeof result === 'string' ? result : null;
+  }
+
+  /**
    * Atomically decrement the active conversation count for an agent.
    *
    * CRITICAL: This NEVER changes intentStatus. If the agent manually
@@ -840,5 +1072,59 @@ export class AgentPresenceService {
   async getAgentCapacity(tenantId: string, userId: string): Promise<number> {
     const presence = await this.getPresence(tenantId, userId);
     return presence?.maxCapacity ?? DEFAULT_MAX_CAPACITY;
+  }
+
+  /**
+   * Update the cached skills for an agent in their Redis presence record.
+   * No-op if the agent has no live presence (offline) — skills will be
+   * re-hydrated from the user record on their next connect.
+   */
+  async updateAgentSkills(
+    tenantId: string,
+    userId: string,
+    skills: string[],
+  ): Promise<void> {
+    const presence = await this.getPresence(tenantId, userId);
+    if (!presence) return;
+    presence.skills = skills ?? [];
+    await this.persistPresence(presence);
+    this.logger.debug(
+      `Updated cached skills for agent ${userId} (${presence.skills.length} skills)`,
+    );
+  }
+
+  /**
+   * Keep cached per-agent attributes (skills, capacity) in sync when an admin
+   * edits a user. Fired by UsersService on profile update. Bounded staleness:
+   * if the agent is offline this is a no-op and the next connect re-hydrates.
+   */
+  @OnEvent('user.profile.updated')
+  async handleUserProfileUpdated(event: {
+    tenantId: string;
+    userId: string;
+    skills?: string[];
+    omniMaxCapacity?: number | null;
+  }): Promise<void> {
+    if (!event?.tenantId || !event?.userId) return;
+    try {
+      if (event.skills !== undefined) {
+        await this.updateAgentSkills(event.tenantId, event.userId, event.skills);
+      }
+      if (
+        event.omniMaxCapacity !== undefined &&
+        event.omniMaxCapacity !== null &&
+        event.omniMaxCapacity > 0
+      ) {
+        await this.updateMaxCapacity(
+          event.tenantId,
+          event.userId,
+          event.omniMaxCapacity,
+        );
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to sync presence attributes for user ${event.userId}: ${err.message}`,
+      );
+    }
   }
 }

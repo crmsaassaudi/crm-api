@@ -77,6 +77,14 @@ export interface AgentPresence {
   /** Maximum concurrent conversations (per-agent or global default) */
   maxCapacity: number;
 
+  /**
+   * Agent's skills, cached from the user record at connect time so skill-based
+   * routing does not hit MongoDB on every assignment. Synced on user update via
+   * the `user.profile.updated` event. `undefined` means not hydrated yet →
+   * callers must fall back to the user record.
+   */
+  skills?: string[];
+
   // ── Connection Tracking ────────────────────────────────────────
 
   /** Active socket IDs — multi-tab/multi-device support */

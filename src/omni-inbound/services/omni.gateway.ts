@@ -334,8 +334,13 @@ export class OmniGateway
         `Agent ${userId} connected to /omni, joined tenant:${tenantId} and agent:${userId}`,
       );
 
-      // Register agent presence (multi-tab aware)
-      await this.presenceGateway.onAgentConnected(tenantId, userId, client.id);
+      // Register agent presence (multi-tab aware). Hydrate skills + per-agent
+      // capacity from the resolved user record so skill-based routing and
+      // capacity caps work without a MongoDB read on every assignment.
+      await this.presenceGateway.onAgentConnected(tenantId, userId, client.id, {
+        skills: dbUser?.skills,
+        maxCapacity: dbUser?.omniMaxCapacity ?? undefined,
+      });
 
       // Cancel any pending reassignment from a previous disconnect
       await this.agentFallbackService.onAgentReconnected(tenantId, userId);

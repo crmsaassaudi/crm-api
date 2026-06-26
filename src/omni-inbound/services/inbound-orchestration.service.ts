@@ -87,6 +87,11 @@ export class InboundOrchestrationService {
       // 2. Channel-first auto-assignment hierarchy
       const channelAutoAssign = channelConfig.autoAssignmentEnabled;
 
+      // Per-channel routing overrides (strategy/capacity/sticky/skills).
+      // Undefined fields inherit from the global omni_routing config via
+      // mergeRoutingConfig() inside AssignmentService.
+      const channelRoutingOverride = channelConfig.routing;
+
       if (channelAutoAssign === false) {
         this.logger.log(
           `Auto-assignment explicitly disabled for channel ${payload.channelAccount} — skipping`,
@@ -148,6 +153,7 @@ export class InboundOrchestrationService {
           contactId,
           externalSenderId: payload.senderId,
           channelAutoAssignOverride: channelAutoAssign,
+          channelRoutingOverride,
           routingContext,
           allowReassignment: reason === 'reopen_agent_offline',
         },
@@ -492,7 +498,11 @@ export class InboundOrchestrationService {
         return;
       }
 
-      // 2. Increment the agent's active conversation counter
+      // 2. Increment the agent's active conversation counter.
+      // Manual/reply path: assignment did NOT go through the routing engine, so
+      // no Lua reserve incremented the counter — we must increment here. (The
+      // auto-assign path in triggerAutoAssignment increments inside the reserve
+      // Lua, so it must NOT call assignConversation() again — avoid double-count.)
       await this.agentPresenceService.assignConversation(tenantId, agentId);
 
       // 3. Audit trail

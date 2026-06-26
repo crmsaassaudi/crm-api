@@ -280,7 +280,20 @@ export class UsersService {
       skills: updateUserDto.skills,
       reportsToId: updateUserDto.reportsToId,
     });
-    if (updated) this.emitUserPermissionsUpdated(updated);
+    if (updated) {
+      this.emitUserPermissionsUpdated(updated);
+      // Sync per-agent routing attributes (skills / capacity) into omni presence
+      // caches when they change, so skill-based routing stays correct mid-session.
+      if (
+        updateUserDto.skills !== undefined ||
+        updateUserDto.omniMaxCapacity !== undefined
+      ) {
+        this.emitUserProfileUpdated(updated, {
+          skills: updateUserDto.skills,
+          omniMaxCapacity: updateUserDto.omniMaxCapacity,
+        });
+      }
+    }
     return updated;
   }
 
@@ -801,6 +814,25 @@ export class UsersService {
       this.eventEmitter.emit('user.permissions.updated', {
         tenantId: String(membership.tenantId),
         userId: String(user.id),
+      });
+    }
+  }
+
+  /**
+   * Emit a per-tenant profile-update event carrying routing-relevant attributes
+   * (skills, omniMaxCapacity). Consumed by AgentPresenceService to keep its
+   * Redis presence caches in sync without the omni module reaching into users.
+   */
+  private emitUserProfileUpdated(
+    user: User,
+    attrs: { skills?: string[]; omniMaxCapacity?: number | null },
+  ): void {
+    for (const membership of user.tenants ?? []) {
+      this.eventEmitter.emit('user.profile.updated', {
+        tenantId: String(membership.tenantId),
+        userId: String(user.id),
+        skills: attrs.skills,
+        omniMaxCapacity: attrs.omniMaxCapacity,
       });
     }
   }

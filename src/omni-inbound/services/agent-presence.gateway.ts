@@ -130,6 +130,7 @@ export class AgentPresenceGateway {
     tenantId: string,
     userId: string,
     socketId: string,
+    attributes?: { skills?: string[]; maxCapacity?: number },
   ): Promise<void> {
     // Cancel any pending grace period timer for this agent
     this.cancelGraceTimer(tenantId, userId);
@@ -143,6 +144,7 @@ export class AgentPresenceGateway {
         userId,
         socketId,
         autoAvailable,
+        attributes,
       );
 
     // Broadcast current status to all agents in tenant
