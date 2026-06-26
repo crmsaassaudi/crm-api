@@ -95,13 +95,31 @@ export class OmniAssignmentAuditLogSchemaClass extends EntityDocumentHelper {
       'sticky',
       'manual',
       'queue',
+      'reply_auto_assign',
     ],
   })
   strategy: string;
 
-  /** Human-readable reason for the assignment decision */
+  /** Human-readable reason for the assignment decision (kept for legacy data) */
   @Prop({ required: true })
   reason: string;
+
+  /**
+   * i18n key for the reason — used by the frontend to translate the reason.
+   * Format: camelCase key matching routingTrace.reason.<key> in the locale files.
+   * e.g. 'noAgentsQueued', 'stickyWait', 'manualUnassigned'
+   * Null for legacy entries that predate this field.
+   */
+  @Prop({ type: String, default: null })
+  reasonKey: string | null;
+
+  /**
+   * Dynamic interpolation params for the reasonKey translation.
+   * e.g. { minutes: 30 } for stickyWait
+   * Null when the reason has no dynamic parts.
+   */
+  @Prop({ type: MongooseSchema.Types.Mixed, default: null })
+  reasonParams: Record<string, any> | null;
 
   /**
    * Snapshot of agent workload at the time of assignment.

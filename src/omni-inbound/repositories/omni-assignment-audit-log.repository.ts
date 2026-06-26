@@ -12,6 +12,10 @@ export interface CreateAuditLogDto {
   assignedAgentId: string | null;
   strategy: string;
   reason: string;
+  /** i18n key — e.g. 'noAgentsQueued'. Maps to routingTrace.reason.<key> in locale files. */
+  reasonKey?: string | null;
+  /** Interpolation params for the reasonKey — e.g. { minutes: 30 } */
+  reasonParams?: Record<string, any> | null;
   metadata?: Record<string, any>;
   outcome: 'assigned' | 'queued' | 'failed';
   // T05: structured audit fields (previously buried in metadata blob)
@@ -47,6 +51,10 @@ export interface AuditLogEntry {
   eligiblePoolSize: number;
   strategy: string;
   reason: string;
+  /** i18n key for the reason — use this on the frontend to translate. Null for legacy entries. */
+  reasonKey: string | null;
+  /** Interpolation params to pass to t(reasonKey, reasonParams). */
+  reasonParams: Record<string, any> | null;
   metadata: Record<string, any>;
   outcome: 'assigned' | 'queued' | 'failed';
   createdAt: string;
@@ -95,6 +103,8 @@ export class AssignmentAuditLogRepository {
       eligiblePoolSize: doc.eligiblePoolSize ?? 0,
       strategy: doc.strategy ?? '',
       reason: doc.reason ?? '',
+      reasonKey: doc.reasonKey ?? null,
+      reasonParams: doc.reasonParams ?? null,
       metadata: doc.metadata ?? {},
       outcome: doc.outcome,
       createdAt: toIso(doc.createdAt) as any,

@@ -425,6 +425,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
           reason:
             'Auto-assignment globally disabled (omni_routing.autoAssignmentEnabled = false) ' +
             'and channel did not override',
+          reasonKey: 'autoAssignDisabled',
           metadata: { channelOverride: 'undefined', globalEnabled: false },
           outcome: 'queued',
         });
@@ -530,6 +531,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
         assignedAgentId: null,
         strategy,
         reason: 'No available agents online — conversation queued',
+        reasonKey: 'noAgentsQueued',
         metadata: { poolSize: options.agentPool?.length ?? 0 },
         outcome: 'queued',
       });
@@ -564,6 +566,8 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
           assignedAgentId: null,
           strategy: 'sticky',
           reason: `Sticky wait-time: waiting for preferred agent (max ${resolved.stickyWaitTimeMinutes} min)`,
+          reasonKey: 'stickyWait',
+          reasonParams: { minutes: resolved.stickyWaitTimeMinutes },
           metadata: {
             stickyWaitTimeMinutes: resolved.stickyWaitTimeMinutes,
           },
@@ -656,6 +660,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
           assignedAgentId: null,
           strategy: 'manual',
           reason,
+          reasonKey: 'manualAssignment',
           metadata,
           outcome: 'queued',
         });
@@ -748,6 +753,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
         assignedAgentId: selectedAgent,
         strategy: effectiveStrategy,
         reason,
+        reasonKey: 'assigned',
         metadata,
         outcome: 'assigned',
       });
@@ -761,6 +767,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
         assignedAgentId: null,
         strategy: effectiveStrategy,
         reason,
+        reasonKey: 'noAgentsQueued',
         metadata,
         outcome: 'queued',
       });
@@ -967,6 +974,8 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       assignedAgentId: previousAgentId,
       strategy: 'sticky',
       reason: `Sticky routing: reassigned to previous agent (${lookupSource}, ${openChats}/${agentCapacity} chats)`,
+      reasonKey: 'stickyReassigned',
+      reasonParams: { lookupSource, openChats, agentCapacity },
       metadata: {
         previousAgentId,
         lookupSource,
@@ -1227,6 +1236,11 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       ? `Agent manually ${previousAgentId ? 'reassigned' : 'assigned'} by user ${performedByUserId ?? 'unknown'}`
       : `Agent manually unassigned (back to queue) by user ${performedByUserId ?? 'unknown'}`;
 
+    const isReassign = !!previousAgentId;
+    const reasonKey = newAgentId
+      ? (isReassign ? 'manualReassigned' : 'manualAssigned')
+      : 'manualUnassigned';
+
     await this.writeAuditLog({
       tenantId: params.tenantId,
       conversationId: params.conversationId,
@@ -1234,6 +1248,8 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       previousAgentId: previousAgentId ?? null,
       strategy: 'manual',
       reason,
+      reasonKey,
+      reasonParams: { userId: performedByUserId ?? 'unknown' },
       channelType: params.channelType ?? null,
       metadata: { performedByUserId, isManual: true },
       outcome: newAgentId ? 'assigned' : 'queued',
@@ -1259,6 +1275,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       strategy: 'reply_auto_assign',
       reason:
         'Agent replied to unassigned conversation — auto-assigned to replying agent',
+      reasonKey: 'replyAutoAssign',
       channelType: params.channelType ?? null,
       metadata: { source: 'reply_auto_assign' },
       outcome: 'assigned',
