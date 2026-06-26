@@ -235,6 +235,7 @@ export class OmniController {
 
     // Resolve display-friendly resolver info for list cards (name/email),
     // so UI does not have to show raw IDs.
+    // Batch both resolvedByAgentId and assignedAgentId into one user lookup.
     const resolverIds = Array.from(
       new Set(
         result.data
@@ -243,13 +244,23 @@ export class OmniController {
       ),
     );
 
-    let resolverMap = new Map<
+    const assignedAgentIds = Array.from(
+      new Set(
+        result.data
+          .map((c) => c.assignedAgentId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+
+    const allAgentIds = Array.from(new Set([...resolverIds, ...assignedAgentIds]));
+
+    let agentMap = new Map<
       string,
       { name: string | null; email: string | null }
     >();
-    if (resolverIds.length > 0) {
-      const users = await this.usersService.findByIdsGlobal(resolverIds);
-      resolverMap = new Map(
+    if (allAgentIds.length > 0) {
+      const users = await this.usersService.findByIdsGlobal(allAgentIds);
+      agentMap = new Map(
         users.map((u) => {
           const fullName = [u.firstName, u.lastName]
             .filter(Boolean)
@@ -276,15 +287,20 @@ export class OmniController {
         : null;
 
       const resolvedFromMap = c.resolvedByAgentId
-        ? (resolverMap.get(c.resolvedByAgentId) ?? null)
+        ? (agentMap.get(c.resolvedByAgentId) ?? null)
         : null;
 
       const resolvedDisplay = resolvedFromPopulate ?? resolvedFromMap;
+
+      const assignedDisplay = c.assignedAgentId
+        ? (agentMap.get(c.assignedAgentId) ?? null)
+        : null;
 
       return {
         ...c,
         resolvedByAgentName: resolvedDisplay?.name ?? null,
         resolvedByAgentEmail: resolvedDisplay?.email ?? null,
+        assignedAgentName: assignedDisplay?.name ?? null,
       };
     });
 

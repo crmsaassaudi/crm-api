@@ -1585,22 +1585,38 @@ export class OmniGateway
    * Broadcast agent assignment changes to all agents.
    */
   @OnEvent('omni.conversation.assigned')
-  handleAssignmentChanged(event: {
+  async handleAssignmentChanged(event: {
     tenantId: string;
     conversationId: string;
     agentId: string | null;
     oldAgentId: string | null;
     groupId?: string | null;
+    agentName?: string | null;
   }) {
     this.logger.log(
       `Broadcasting assignment: ${event.conversationId} → agent=${event.agentId ?? 'unassigned'}, group=${event.groupId ?? 'unchanged'}`,
     );
+
+    // Resolve agent name if not provided by the emitter
+    let agentName = event.agentName ?? null;
+    if (event.agentId && !agentName) {
+      try {
+        const users = await this.usersService.findByIdsGlobal([event.agentId]);
+        const u = users[0];
+        agentName = u
+          ? ([u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.email || null)
+          : null;
+      } catch {
+        agentName = null;
+      }
+    }
 
     this.server
       .to(`tenant:${event.tenantId}`)
       .emit('omni:conversation:assigned', {
         conversationId: event.conversationId,
         agentId: event.agentId,
+        agentName,
         oldAgentId: event.oldAgentId,
         groupId: event.groupId,
         timestamp: new Date().toISOString(),
