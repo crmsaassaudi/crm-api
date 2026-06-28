@@ -1,8 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Inject } from '@nestjs/common';
-import Redis from 'ioredis';
 import { AgentPresenceService } from './agent-presence.service';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
+import { RedisService } from '../../redis/redis.service';
 import { Server } from 'socket.io';
 
 /**
@@ -31,7 +30,7 @@ export class PresenceAlertService {
   constructor(
     private readonly presenceService: AgentPresenceService,
     private readonly settingsService: CrmSettingsService,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly redisService: RedisService,
   ) {}
 
   /** Called by OmniGateway afterInit to wire the Socket.IO server. */
@@ -164,11 +163,11 @@ export class PresenceAlertService {
     const dedupKey = `presence:alert:${tenantId}:${alert.type}:${alert.agentId}`;
 
     // Check if already alerted recently (1-hour dedup window)
-    const exists = await this.redis.exists(dedupKey);
+    const exists = await this.redisService.get(dedupKey);
     if (exists) return;
 
     // Mark as alerted (TTL 1h)
-    await this.redis.setex(dedupKey, 3600, '1');
+    await this.redisService.set(dedupKey, '1', 3600);
 
     // Broadcast to supervisor room
     if (this.ioServer) {

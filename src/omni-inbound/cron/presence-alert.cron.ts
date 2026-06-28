@@ -1,6 +1,6 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import Redis from 'ioredis';
+import { RedisService } from '../../redis/redis.service';
 import { PresenceAlertService } from '../services/presence-alert.service';
 
 /**
@@ -16,7 +16,7 @@ export class PresenceAlertCron {
 
   constructor(
     private readonly alertService: PresenceAlertService,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly redisService: RedisService,
   ) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -43,10 +43,11 @@ export class PresenceAlertCron {
    * Each tenant with online agents has a hash at this key.
    */
   private async getActiveTenantIds(): Promise<string[]> {
+    const redis = this.redisService.getClient();
     const tenantIds: string[] = [];
     let cursor = '0';
     do {
-      const [nextCursor, keys] = await this.redis.scan(
+      const [nextCursor, keys] = await redis.scan(
         cursor,
         'MATCH',
         'omni:presence:*',
