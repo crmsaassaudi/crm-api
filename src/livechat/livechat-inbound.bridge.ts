@@ -158,6 +158,7 @@ export class LivechatInboundBridge {
     conversationId: string;
     messageId: string;
     internalMessageId: string;
+    externalMessageId?: string;
   }) {
     // Only handle livechat inbound messages from visitor
     if (payload.channelType !== 'livechat') return;
@@ -166,16 +167,30 @@ export class LivechatInboundBridge {
     const visitorId = payload.senderId;
 
     this.logger.debug(
-      `[Bridge] Push conversation:linked → visitor ${visitorId}, conv ${payload.conversationId}`,
+      `[Bridge] Push conversation:linked + message:ack → visitor ${visitorId}, ` +
+        `conv ${payload.conversationId}, msg ${payload.internalMessageId}`,
     );
+
+    const visitorRoom = `visitor:${visitorId}`;
 
     // Emit to visitor room — widget updates socket.data.conversationId
     // and can now include it in visitor:typing events
     this.livechatGateway.server
-      ?.to(`visitor:${visitorId}`)
+      ?.to(visitorRoom)
       .emit('conversation:linked', {
         conversationId: payload.conversationId,
         visitorId,
+      });
+
+    // Push server-assigned messageId back to visitor widget.
+    // Widget uses this to replace the client-generated ID with the real
+    // MongoDB _id, ensuring reactions and read receipts use consistent IDs.
+    this.livechatGateway.server
+      ?.to(visitorRoom)
+      .emit('message:ack', {
+        externalMessageId: payload.externalMessageId ?? payload.messageId,
+        messageId: payload.internalMessageId,
+        conversationId: payload.conversationId,
       });
   }
 }
