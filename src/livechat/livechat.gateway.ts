@@ -553,6 +553,7 @@ export class LivechatGateway
       tenantId,
       channelType: 'livechat',
       channelId: channelId ?? '',
+      messageId: data.messageId,
       externalMessageId: data.messageId,
       senderId: visitorId,
       senderType: 'customer',

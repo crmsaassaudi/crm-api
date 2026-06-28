@@ -72,10 +72,23 @@ export class ReactionService {
           }
         }
 
+        // Second fallback: the livechat widget may pass a MongoDB _id as
+        // externalMessageId (since livechat messages use _id as their only
+        // identifier). Try findById on externalMessageId if it's a valid ObjectId.
+        if (
+          !message &&
+          payload.externalMessageId &&
+          isValidObjectId(payload.externalMessageId)
+        ) {
+          message = await this.messageModel
+            .findById(payload.externalMessageId)
+            .exec();
+        }
+
         if (!message) {
           this.logger.warn(
             `Reaction target not found: externalMessageId=${payload.externalMessageId}, ` +
-              `channel=${payload.channelType}`,
+              `messageId=${payload.messageId}, channel=${payload.channelType}`,
           );
           return;
         }
