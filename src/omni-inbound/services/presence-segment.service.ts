@@ -91,7 +91,7 @@ export class PresenceSegmentService implements OnModuleInit {
       },
       {
         // Deterministic id dedups retries / accidental double-fire at the same instant.
-        jobId: `${keyPrefix}:${tenantId}:${userId}:${atMs}`,
+        jobId: `${keyPrefix}-${tenantId}-${userId}-${atMs}`,
         attempts: 5,
         backoff: { type: 'exponential', delay: 3000 },
         removeOnComplete: 200,
