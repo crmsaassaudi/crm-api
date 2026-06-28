@@ -124,8 +124,11 @@ export class CsatService {
       throw new BadRequestException('Score must be between 1 and 5');
     }
 
+    // isPlatformQuery: bypass tenant-filter plugin — this is a public/anonymous
+    // endpoint with no CLS tenant context. The csatToken is the auth gate.
     const conversation = await this.conversationModel
       .findOne({ csatToken: token })
+      .setOptions({ isPlatformQuery: true })
       .lean()
       .exec();
 
@@ -149,6 +152,7 @@ export class CsatService {
           csatToken: null, // Invalidate token after use
         },
       },
+      { isPlatformQuery: true } as any,
     );
 
     const conversationId = String(conversation._id);
