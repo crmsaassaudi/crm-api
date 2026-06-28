@@ -19,13 +19,19 @@ export interface AgentWorkTimeSummary {
   date: string; // YYYY-MM-DD
   /** Time spent in 'available' status (ms) */
   availableDurationMs: number;
-  /** Time spent in 'busy' status (ms) */
+  /** Time spent in 'busy' status (ms) — legacy bucket, kept for backward compat */
   busyDurationMs: number;
   /** Time spent in 'away' status (ms) */
   awayDurationMs: number;
   /** Time spent in 'offline' status (ms) */
   offlineDurationMs: number;
-  /** Total online time: available + busy + away (ms) */
+  /** Time spent in 'break' status (ms) — canonical */
+  breakDurationMs: number;
+  /** Time spent in 'meeting' status (ms) — canonical */
+  meetingDurationMs: number;
+  /** Time spent in 'training' status (ms) — canonical */
+  trainingDurationMs: number;
+  /** Total online time: available + busy + away + break + meeting + training (ms) */
   totalOnlineDurationMs: number;
   /** Number of status transitions during the day */
   transitionCount: number;
@@ -293,21 +299,21 @@ export class AgentStatusAuditService implements OnModuleInit {
       busy: 0,
       away: 0,
       offline: 0,
+      break: 0,
+      meeting: 0,
+      training: 0,
     };
 
     if (logs.length === 0) {
       // No transitions logged today.
-      const currentIntent = currentPresence
-        ? toLegacyIntent(
-            currentPresence.presenceStatus,
-            currentPresence.routingStatus,
-          )
+      const currentStatus = currentPresence
+        ? currentPresence.presenceStatus.toLowerCase()
         : undefined;
-      if (currentPresence && currentIntent !== 'offline') {
+      if (currentPresence && currentStatus !== 'offline') {
         // Fallback Heuristic: If agent is online NOW but has 0 logs today,
         // assume they've been in their current status since start of day.
         // This handles agents who were already online when audit system started.
-        const status = currentIntent!;
+        const status = currentStatus!;
         const duration = capEnd.getTime() - startOfDay.getTime();
         if (status in durations) {
           durations[status] = duration;
@@ -360,8 +366,12 @@ export class AgentStatusAuditService implements OnModuleInit {
       busyDurationMs: durations.busy,
       awayDurationMs: durations.away,
       offlineDurationMs: durations.offline,
+      breakDurationMs: durations.break,
+      meetingDurationMs: durations.meeting,
+      trainingDurationMs: durations.training,
       totalOnlineDurationMs:
-        durations.available + durations.busy + durations.away,
+        durations.available + durations.busy + durations.away +
+        durations.break + durations.meeting + durations.training,
       transitionCount: logs.length,
       transitions: logs.map((l) => ({
         fromStatus: l.fromStatus,

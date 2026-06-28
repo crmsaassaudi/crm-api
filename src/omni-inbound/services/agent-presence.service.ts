@@ -390,8 +390,10 @@ export class AgentPresenceService {
   }
 
   /**
-   * Fire the audit callback when the legacy-intent projection of the state has
-   * changed. The work-time report still consumes available/busy/away/offline.
+   * Fire the audit callback when the canonical presenceStatus changes.
+   * Records the actual canonical status (AVAILABLE, AWAY, BREAK, MEETING,
+   * TRAINING, OFFLINE) instead of the legacy 4-value intent, so reports can
+   * show granular time breakdowns.
    */
   private async fireAuditIfChanged(
     presence: AgentPresence,
@@ -399,20 +401,17 @@ export class AgentPresenceService {
     trigger: StatusTransitionTrigger,
   ): Promise<void> {
     if (!this.statusTransitionCallback) return;
-    const fromIntent: AgentIntentStatus = before
-      ? toLegacyIntent(before.presenceStatus, before.routingStatus)
+    const fromStatus = before
+      ? before.presenceStatus.toLowerCase()
       : 'offline';
-    const toIntent = toLegacyIntent(
-      presence.presenceStatus,
-      presence.routingStatus,
-    );
-    if (fromIntent === toIntent) return;
+    const toStatus = presence.presenceStatus.toLowerCase();
+    if (fromStatus === toStatus) return;
     try {
       await this.statusTransitionCallback(
         presence.tenantId,
         presence.userId,
-        fromIntent,
-        toIntent,
+        fromStatus as any,
+        toStatus as any,
         trigger,
       );
     } catch (err) {
