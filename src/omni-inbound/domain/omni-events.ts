@@ -134,6 +134,8 @@ export const LivechatEvents = {
   VISITOR_UPLOAD_COMPLETED: 'livechat.visitor.upload_completed',
   /** Visitor file upload failed */
   VISITOR_UPLOAD_FAILED: 'livechat.visitor.upload_failed',
+  /** Visitor identified via pre-chat form or CRMWidget.identify() */
+  VISITOR_IDENTIFIED: 'livechat.visitor.identified',
 } as const;
 
 export type LivechatEventName =
@@ -442,3 +444,15 @@ export interface LivechatVisitorUploadFailedEvent {
   fileName: string;
   error: string;
 }
+
+/** livechat.visitor.identified — pre-chat form or CRMWidget.identify() */
+export interface LivechatVisitorIdentifiedEvent {
+  tenantId: string;
+  visitorId: string;
+  channelId: string;
+  widgetId?: string;
+  conversationId?: string;
+  /** All form field values keyed by field.key */
+  identityData: Record<string, any>;
+}
+

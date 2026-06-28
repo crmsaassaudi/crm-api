@@ -128,12 +128,15 @@ export class LivechatWidget {
     fields?: Array<{
       key: string;
       label: string;
-      type: 'text' | 'email' | 'tel' | 'select' | 'consent';
+      type: 'text' | 'email' | 'tel' | 'select' | 'textarea' | 'consent';
       placeholder?: string;
       required: boolean;
       options?: string[];
       consentText?: string; // GDPR message (when type='consent')
       consentLink?: string; // Privacy policy URL (when type='consent')
+      /** Contact field to map this value to (e.g. 'firstName', 'emails', 'customFields.order_id').
+       *  null/undefined = no mapping, value stored as metadata only. */
+      contactField?: string;
     }>;
   };
 

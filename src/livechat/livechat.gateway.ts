@@ -276,8 +276,12 @@ export class LivechatGateway
       channelId,
       text: data.text,
       timestamp: data.timestamp ?? new Date().toISOString(),
-      visitorName: 'Visitor',
-      metadata: data.metadata,
+      visitorName: client.data.visitorName || 'Visitor',
+      metadata: {
+        ...(data.metadata ?? {}),
+        visitorEmail: client.data.visitorEmail,
+        visitorPhone: client.data.visitorPhone,
+      },
     });
   }
 
@@ -330,7 +334,7 @@ export class LivechatGateway
       fileSize: data.fileSize ?? 0,
       base64: data.base64,
       timestamp: data.timestamp ?? new Date().toISOString(),
-      visitorName: 'Visitor',
+      visitorName: client.data.visitorName || 'Visitor',
     });
   }
 
@@ -367,11 +371,18 @@ export class LivechatGateway
   @SubscribeMessage('visitor:identify')
   async onVisitorIdentify(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { email?: string; name?: string; phone?: string },
+    @MessageBody() data: Record<string, any>,
   ) {
     const visitorId = client.data.visitorId;
     const tenantId = client.data.tenantId;
     if (!visitorId || !tenantId) return;
+
+    const { name, email, phone, ...rest } = data;
+
+    // Always store on socket.data for downstream use by onVisitorMessage
+    if (name) client.data.visitorName = name;
+    if (email) client.data.visitorEmail = email;
+    if (phone) client.data.visitorPhone = phone;
 
     // FIX: Use cached conversationId from socket.data instead of a redundant
     // DB query. visitor:connect already resolved it on handshake.
@@ -380,29 +391,28 @@ export class LivechatGateway
     if (conversationId) {
       try {
         await this.conversationRepo.updateCustomerInfo(conversationId, {
-          email: data.email,
-          name: data.name,
-          // phone stored via generic customer update — updateCustomerInfo accepts extra fields
-          ...(data.phone ? { phone: data.phone } : {}),
+          ...(email ? { email } : {}),
+          ...(name ? { name } : {}),
+          ...(phone ? { phone } : {}),
         });
       } catch (err: any) {
         this.logger.warn(
           `identify update failed for ${visitorId}: ${err?.message}`,
         );
       }
-    } else {
-      // No active conversation yet (visitor identified before first message).
-      // Store on socket.data so handleTextInbound can include it in visitorName.
-      if (data.name) client.data.visitorName = data.name;
-      if (data.email) client.data.visitorEmail = data.email;
-      if (data.phone) client.data.visitorPhone = data.phone;
     }
 
-    client.emit('visitor:identified', {
-      email: data.email,
-      name: data.name,
-      phone: data.phone,
+    // Emit enrichment event so ContactEnrichmentService maps form data → Contact
+    this.eventEmitter.emit(LivechatEvents.VISITOR_IDENTIFIED, {
+      tenantId,
+      visitorId,
+      channelId: client.data.channelId,
+      widgetId: client.data.widgetId,
+      conversationId,
+      identityData: { name, email, phone, ...rest },
     });
+
+    client.emit('visitor:identified', { email, name, phone });
   }
 
   // ── Server → Visitor ────────────────────────────────────────────────────

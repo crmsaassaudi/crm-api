@@ -10,6 +10,7 @@ import { VisitorUploadService } from './visitor-upload.service';
 import { LivechatWidgetService } from './livechat-widget.service';
 import { MessageStatusService } from './services/message-status.service';
 import { SocketRateLimiter } from '../common/guards/socket-rate-limiter';
+import { ContactEnrichmentService } from './contact-enrichment.service';
 import { LivechatWidgetRepository } from './infrastructure/persistence/document/repositories/livechat-widget.repository';
 import {
   LivechatWidgetSchemaClass,
@@ -25,6 +26,7 @@ import { ChannelsModule } from '../channels/channels.module';
 import { UsersModule } from '../users/users.module';
 import { FilesModule } from '../files/files.module';
 import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
+import { ContactsModule } from '../contacts/contacts.module';
 import {
   OmniMessageSchemaClass,
   OmniMessageSchema,
@@ -55,6 +57,7 @@ import {
     ChannelsModule,
     UsersModule,
     FilesModule, // for LivechatAdapter.sendMedia() + LivechatVisitorBridge (avatar presign)
+    ContactsModule, // for ContactEnrichmentService → ContactsService
   ],
   controllers: [
     LivechatEmbedController,
@@ -72,6 +75,7 @@ import {
     WidgetEventRepository,
     MessageStatusService,
     SocketRateLimiter,
+    ContactEnrichmentService,
   ],
   exports: [LivechatGateway, LivechatAdapter, LivechatWidgetService],
 })

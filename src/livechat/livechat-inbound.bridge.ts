@@ -3,8 +3,12 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { LivechatGateway } from './livechat.gateway';
 import { VisitorUploadService } from './visitor-upload.service';
+import { ContactEnrichmentService } from './contact-enrichment.service';
 import { mimeToMessageType } from '../common/utils/mime.util';
 import { OmniEvents, LivechatEvents } from '../omni-inbound/domain/omni-events';
+import type { LivechatVisitorIdentifiedEvent } from '../omni-inbound/domain/omni-events';
+import { runWithTenantContext } from '../common/tenancy/tenant-context';
+import { ClsService } from 'nestjs-cls';
 
 /**
  * LivechatInboundBridge — routes visitor messages into the OmniInbound pipeline
@@ -15,6 +19,7 @@ import { OmniEvents, LivechatEvents } from '../omni-inbound/domain/omni-events';
  * Events consumed:
  *  - livechat.message.inbound  : text message from visitor → omni.inbound.webhook
  *  - livechat.media.inbound    : file upload from visitor → omni.inbound.webhook
+ *  - livechat.visitor.identified : pre-chat form submitted → Contact enrichment
  *  - omni.message.persisted    : after InboundProcessor saves → push conversationId to widget
  */
 @Injectable()
@@ -25,6 +30,8 @@ export class LivechatInboundBridge {
     private readonly eventEmitter: EventEmitter2,
     private readonly livechatGateway: LivechatGateway,
     private readonly visitorUploadService: VisitorUploadService,
+    private readonly contactEnrichmentService: ContactEnrichmentService,
+    private readonly cls: ClsService,
   ) {}
 
   // ── P1.2 FIX: handle text messages ─────────────────────────────────────
@@ -131,6 +138,21 @@ export class LivechatInboundBridge {
         storageKey,
         timestamp: payload.timestamp,
       },
+    });
+  }
+
+  // ── Visitor identified via pre-chat form → Contact enrichment ────────────
+
+  @OnEvent(LivechatEvents.VISITOR_IDENTIFIED)
+  async handleVisitorIdentified(event: LivechatVisitorIdentifiedEvent) {
+    this.logger.debug(
+      `Visitor identified: ${event.visitorId} — enriching Contact`,
+    );
+
+    // Socket events bypass HTTP middleware, so CLS tenant context is missing.
+    // Wrap in tenant context to ensure ContactsService has the correct tenant.
+    await runWithTenantContext(this.cls, event.tenantId, async () => {
+      await this.contactEnrichmentService.enrichFromPreChat(event);
     });
   }
 
