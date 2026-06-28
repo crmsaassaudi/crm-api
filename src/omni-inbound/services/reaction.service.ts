@@ -45,50 +45,40 @@ export class ReactionService {
       // original HTTP/WebSocket CLS scope, so the Mongoose tenant-filter
       // plugin requires activeTenantId in CLS for all DB operations.
       await runWithTenantContext(this.cls, payload.tenantId, async () => {
-        // Resolve message: two ID systems exist —
-        //   • _id: default MongoDB ObjectId (e.g. "6a3693cf3d74fcb9231b0fd8")
-        //   • externalMessageId: provider string (e.g. "lc_d2bcc77e-..._123")
+        // ── Message lookup — two clean paths, no fallback chains ──
         //
-        // The payload.messageId from the frontend may be either type.
-        // Use isValidObjectId() to route correctly and avoid CastError.
+        // 1. messageId (MongoDB _id) — set by internal callers:
+        //    • OmniGateway (agent reaction)
+        //    • LivechatGateway (visitor reaction)
+        //
+        // 2. externalMessageId (provider ID) — set by external webhooks:
+        //    • Facebook/Instagram (mid)
+        //    • WhatsApp (message_id)
+        //    • Zalo (msg_id)
+        //
+        // Both livechat inbound AND outbound messages now have
+        // externalMessageId populated (adapter returns message_id),
+        // so this lookup is consistent across all channels.
         let message: OmniMessageDocument | null = null;
 
+        // Path 1: Internal ID (MongoDB _id)
         if (payload.messageId && isValidObjectId(payload.messageId)) {
-          // Valid ObjectId → look up by _id
           message = await this.messageModel
             .findById(payload.messageId)
             .exec();
         }
 
-        // Fallback: try externalMessageId lookup.
-        // This covers livechat (string IDs), provider webhook IDs,
-        // and cases where the frontend sends externalMessageId as messageId.
-        if (!message) {
-          const extId = payload.externalMessageId || payload.messageId;
-          if (extId) {
-            message = await this.messageModel
-              .findOne({ externalMessageId: extId })
-              .exec();
-          }
-        }
-
-        // Second fallback: the livechat widget may pass a MongoDB _id as
-        // externalMessageId (since livechat messages use _id as their only
-        // identifier). Try findById on externalMessageId if it's a valid ObjectId.
-        if (
-          !message &&
-          payload.externalMessageId &&
-          isValidObjectId(payload.externalMessageId)
-        ) {
+        // Path 2: External provider ID
+        if (!message && payload.externalMessageId) {
           message = await this.messageModel
-            .findById(payload.externalMessageId)
+            .findOne({ externalMessageId: payload.externalMessageId })
             .exec();
         }
 
         if (!message) {
           this.logger.warn(
-            `Reaction target not found: externalMessageId=${payload.externalMessageId}, ` +
-              `messageId=${payload.messageId}, channel=${payload.channelType}`,
+            `Reaction target not found: messageId=${payload.messageId}, ` +
+              `externalMessageId=${payload.externalMessageId}, channel=${payload.channelType}`,
           );
           return;
         }

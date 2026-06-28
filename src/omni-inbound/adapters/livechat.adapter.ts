@@ -125,12 +125,15 @@ export class LivechatAdapter implements ChannelAdapter {
       );
       return;
     }
+    const messageId = channelConfig?.messageId;
     await this.gateway.sendToVisitor(recipientId, {
       type: 'text',
       content,
-      messageId: channelConfig?.messageId,
+      messageId,
     });
-    return { status: 'sent' };
+    // Return message_id following the same contract as external adapters
+    // (FB/WA/Zalo). For livechat the MongoDB _id is the canonical ID.
+    return { status: 'sent', message_id: messageId };
   }
 
   /**
@@ -214,6 +217,7 @@ export class LivechatAdapter implements ChannelAdapter {
       tenantId,
       channelId,
       channelType: 'livechat',
+      messageId: rawPayload.messageId,
       externalMessageId: rawPayload.messageId,
       senderId: rawPayload.visitorId ?? rawPayload.senderId ?? 'visitor',
       senderType: rawPayload.senderType ?? 'customer',
@@ -237,13 +241,14 @@ export class LivechatAdapter implements ChannelAdapter {
       this.logger.warn('LivechatGateway not set — cannot send interactive');
       return;
     }
+    const messageId = channelConfig?.messageId;
     await this.gateway.sendToVisitor(recipientId, {
       type: 'interactive',
       content: body,
       buttons,
-      messageId: channelConfig?.messageId,
+      messageId,
     });
-    return { status: 'sent' };
+    return { status: 'sent', message_id: messageId };
   }
 
   /**
