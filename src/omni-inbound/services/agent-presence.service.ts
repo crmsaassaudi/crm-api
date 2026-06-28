@@ -441,7 +441,7 @@ export class AgentPresenceService {
       | null,
     trigger: StatusTransitionTrigger,
   ): Promise<void> {
-    await this.afterMutation(presence, before, trigger);
+    await this.fireAuditIfChanged(presence, before, trigger);
     if (this.stateChangeCallback) {
       try {
         await this.stateChangeCallback(
