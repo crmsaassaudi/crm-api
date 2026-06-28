@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { AssignmentEngineController } from './assignment-engine.controller';
@@ -35,13 +35,15 @@ import {
   GroupSchema,
 } from '../groups/infrastructure/persistence/document/entities/group.schema';
 
-// Phase 3.3: OmniInboundModule → AgentPresenceService; CrmSettings → CrmSettingsService
-import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
+// Phase 3.3: AgentPresenceService injected directly to avoid circular dep
+// (importing OmniInboundModule triggers ChannelsModule → LivechatModule cycle).
+// AgentPresenceService only depends on Redis (globally available) — safe to
+// instantiate independently.
+import { AgentPresenceService } from '../omni-inbound/services/agent-presence.service';
 import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
 
 @Module({
   imports: [
-    forwardRef(() => OmniInboundModule),
     CrmSettingsModule,
     MongooseModule.forFeature([
       { name: AssignmentRuleSchemaClass.name, schema: AssignmentRuleSchema },
@@ -65,6 +67,8 @@ import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
     FallbackResolverService,
     RuleEvaluatorService,
     AssignmentAuditService,
+    // Phase 3.3: AgentPresenceService provided directly (Redis-only deps)
+    AgentPresenceService,
   ],
   exports: [AssignmentEngineService],
 })
