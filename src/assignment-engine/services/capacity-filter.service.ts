@@ -1,11 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection, Types } from 'mongoose';
+import { AgentPresenceService } from '../../omni-inbound/services/agent-presence.service';
+import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 
 /**
  * CapacityFilterService — filters candidate agents by:
  *   1. Capacity: activeEntityCount < maxCapacity
  *   2. Skills: user.skills ⊇ requiredSkills (matched by apiName)
+ *   3. Presence: online agents preferred/required per module (Phase 3.3)
  *
  * Uses Mongoose Connection to dynamically access CRM entity models
  * (avoids circular module dependencies).
@@ -63,7 +66,19 @@ export class CapacityFilterService {
     },
   };
 
-  constructor(@InjectConnection() private readonly connection: Connection) {}
+  /** Maps CRM module names to omni_presence.requireOnlineForAssignment keys. */
+  private static readonly MODULE_PRESENCE_KEY: Record<string, string> = {
+    Ticket: 'ticket',
+    Task: 'task',
+    Deal: 'deal',
+    Contact: 'contact',
+  };
+
+  constructor(
+    @InjectConnection() private readonly connection: Connection,
+    private readonly presenceService: AgentPresenceService,
+    private readonly settingsService: CrmSettingsService,
+  ) {}
 
   /**
    * Filter candidates by capacity, skills, and availability.
@@ -123,7 +138,75 @@ export class CapacityFilterService {
       );
     }
 
+    // 3. Phase 3.3: Filter/sort by online presence
+    eligible = await this.filterByPresence(tenantId, module, eligible);
+
     return { eligible, loadMap };
+  }
+
+  /**
+   * Phase 3.3: Filter or prioritize candidates based on their online presence.
+   *
+   * Reads `omni_presence.requireOnlineForAssignment[module]`:
+   *   - true  → EXCLUDE candidates who are not AVAILABLE+CONNECTED
+   *   - false → SORT online agents first, but keep offline agents in the list
+   */
+  private async filterByPresence(
+    tenantId: string,
+    module: string,
+    candidateIds: string[],
+  ): Promise<string[]> {
+    if (candidateIds.length === 0) return candidateIds;
+
+    const presenceKey = CapacityFilterService.MODULE_PRESENCE_KEY[module];
+    if (!presenceKey) return candidateIds;
+
+    let requireOnline = false;
+    try {
+      const cfg = await this.settingsService.getSetting('omni_presence', tenantId);
+      const requireMap = (cfg as any)?.requireOnlineForAssignment;
+      if (requireMap && typeof requireMap[presenceKey] === 'boolean') {
+        requireOnline = requireMap[presenceKey];
+      }
+    } catch {
+      // fallback: don't require online
+    }
+
+    // Get all agent presences in one batch
+    const presences = await this.presenceService.getAllAgents(tenantId);
+    const onlineSet = new Set<string>();
+    for (const p of presences) {
+      if (
+        p.presenceStatus === 'AVAILABLE' &&
+        p.connectionStatus === 'CONNECTED'
+      ) {
+        onlineSet.add(p.userId);
+      }
+    }
+
+    if (requireOnline) {
+      // Hard filter: only online agents
+      const filtered = candidateIds.filter((id) => onlineSet.has(id));
+      this.logger.debug(
+        `Presence filter [${module}] (require=true): ${candidateIds.length} → ${filtered.length} online`,
+      );
+      return filtered;
+    }
+
+    // Soft sort: online agents first, then offline
+    const online: string[] = [];
+    const offline: string[] = [];
+    for (const id of candidateIds) {
+      if (onlineSet.has(id)) {
+        online.push(id);
+      } else {
+        offline.push(id);
+      }
+    }
+    this.logger.debug(
+      `Presence sort [${module}] (require=false): ${online.length} online + ${offline.length} offline`,
+    );
+    return [...online, ...offline];
   }
 
   /**

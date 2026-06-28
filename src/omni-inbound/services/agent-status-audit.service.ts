@@ -7,6 +7,7 @@ import {
   StatusTransitionTrigger,
   AgentPresence,
 } from '../domain/agent-presence';
+import { toLegacyIntent } from '../domain/presence-state';
 
 /**
  * Work time summary for a single agent on a single day.
@@ -296,11 +297,17 @@ export class AgentStatusAuditService implements OnModuleInit {
 
     if (logs.length === 0) {
       // No transitions logged today.
-      if (currentPresence && currentPresence.intentStatus !== 'offline') {
+      const currentIntent = currentPresence
+        ? toLegacyIntent(
+            currentPresence.presenceStatus,
+            currentPresence.routingStatus,
+          )
+        : undefined;
+      if (currentPresence && currentIntent !== 'offline') {
         // Fallback Heuristic: If agent is online NOW but has 0 logs today,
-        // assume they've been in their current intentStatus since start of day.
+        // assume they've been in their current status since start of day.
         // This handles agents who were already online when audit system started.
-        const status = currentPresence.intentStatus;
+        const status = currentIntent!;
         const duration = capEnd.getTime() - startOfDay.getTime();
         if (status in durations) {
           durations[status] = duration;

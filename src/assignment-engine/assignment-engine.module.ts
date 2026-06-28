@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { AssignmentEngineController } from './assignment-engine.controller';
@@ -35,8 +35,14 @@ import {
   GroupSchema,
 } from '../groups/infrastructure/persistence/document/entities/group.schema';
 
+// Phase 3.3: OmniInboundModule → AgentPresenceService; CrmSettings → CrmSettingsService
+import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
+import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
+
 @Module({
   imports: [
+    forwardRef(() => OmniInboundModule),
+    CrmSettingsModule,
     MongooseModule.forFeature([
       { name: AssignmentRuleSchemaClass.name, schema: AssignmentRuleSchema },
       {

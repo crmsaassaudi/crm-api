@@ -70,6 +70,9 @@ export class TenantSettingsSeedingService {
       // ── Omni Routing & Assignment ──────────────────────────────────────────
       this.seed(tenantId, 'omni_routing', DEFAULT_OMNI_ROUTING),
 
+      // ── Omni Agent Presence / Workforce ────────────────────────────────────
+      this.seed(tenantId, 'omni_presence', DEFAULT_OMNI_PRESENCE),
+
       // ── Omni Session Lifecycle ─────────────────────────────────────────────
       this.seed(
         tenantId,
@@ -1070,6 +1073,69 @@ const DEFAULT_OMNI_ROUTING = {
   skillBasedRoutingEnabled: false,
 };
 
+// ─── Omni Agent Presence / Workforce defaults ────────────────────────────────
+// See docs/agent-presence-workforce-spec.md §8 for the rationale behind each
+// default. These drive the presence state machine, heartbeat/grace timing,
+// per-module routing eligibility, alerts and the agent ranking guardrails.
+const DEFAULT_OMNI_PRESENCE = {
+  // ── Heartbeat & connection (§2.3) ──────────────────────────────────────────
+  /** Client heartbeat interval (seconds) */
+  heartbeatIntervalSeconds: 30,
+  /** Silence after which a socket is considered disconnected (seconds) */
+  heartbeatTimeoutSeconds: 60,
+  /** Hold state before forcing OFFLINE after all connections lost (seconds) */
+  gracePeriodSeconds: 120,
+
+  // ── Work status (§2.4) ─────────────────────────────────────────────────────
+  /** Window an agent stays in WRAP_UP after closing an interaction (seconds) */
+  wrapUpWindowSeconds: 120,
+
+  // ── Routing interlock (§1.2) ───────────────────────────────────────────────
+  /**
+   * When returning to AVAILABLE from BREAK/MEETING/AWAY/TRAINING, auto-restore
+   * ACCEPTING. Default false — agent must explicitly press "Ready".
+   */
+  restoreAcceptingOnReturn: false,
+
+  // ── Per-module require-online for assignment (§5) ──────────────────────────
+  requireOnlineForAssignment: {
+    livechat: true,
+    social: true,
+    call: true,
+    ticket: false,
+    deal: false,
+    task: false,
+  },
+
+  // ── Alerts (§4.5) ──────────────────────────────────────────────────────────
+  /** Max daily BREAK budget before over-break alert (minutes) */
+  breakBudgetMinutes: 60,
+  /** Stay AVAILABLE+NOT_ACCEPTING this long after login → invisible-login alert (minutes) */
+  loginIdleAlertMinutes: 15,
+  /** AvailabilityRatio (accepting/online) below this flags low-accepting */
+  minAcceptingRatio: 0.5,
+  /** AWAY longer than this → alert (minutes) */
+  longAwayAlertMinutes: 20,
+  /** AVAILABLE+NOT_ACCEPTING continuously longer than this → alert (minutes) */
+  stuckNotAcceptingAlertMinutes: 30,
+
+  // ── Ranking (§4.3) ─────────────────────────────────────────────────────────
+  ranking: {
+    /** Agents below these thresholds appear in detail but are not ranked */
+    minOnlineMinutes: 60,
+    minHandled: 20,
+    /** Default weights (Σ = 1). Presets: support / sales / call_center. */
+    weights: {
+      occupancy: 0.2,
+      availability: 0.15,
+      handled: 0.2,
+      aht: 0.15,
+      sla: 0.15,
+      csat: 0.15,
+    },
+  },
+};
+
 // ─── Omni Auto-Reassignment defaults ───────────────────────────────────────
 
 const DEFAULT_OMNI_AUTO_REASSIGNMENT = {
@@ -1369,6 +1435,7 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   general_localization: DEFAULT_GENERAL_LOCALIZATION,
   general_notifications: DEFAULT_GENERAL_NOTIFICATIONS,
   omni_routing: DEFAULT_OMNI_ROUTING,
+  omni_presence: DEFAULT_OMNI_PRESENCE,
   omni_auto_reassignment: DEFAULT_OMNI_AUTO_REASSIGNMENT,
   omni_session_lifecycle: DEFAULT_OMNI_SESSION_LIFECYCLE,
   omni_identity_resolution: DEFAULT_OMNI_IDENTITY_RESOLUTION,

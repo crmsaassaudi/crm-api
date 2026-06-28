@@ -214,7 +214,7 @@ export class InboundOrchestrationService {
     // 'disconnected' connectionStatus means the socket layer lost the agent — reassign.
     // 'busy' / 'away' agents are intentional working states — do NOT reassign.
     const agentIsGone =
-      !presence || presence.connectionStatus === 'disconnected';
+      !presence || presence.connectionStatus === 'DISCONNECTED';
 
     if (agentIsGone) {
       this.logger.debug(

@@ -21,6 +21,7 @@ import { OmniReportController } from './omni/omni-report.controller';
 import { OmniReportService } from './omni/omni-report.service';
 import { DealReportModule } from './deal/deal-report.module';
 import { TicketReportModule } from './ticket/ticket-report.module';
+import { AgentReportModule } from './agent/agent-report.module';
 import { ReportDigestService } from './digest/report-digest.service';
 import { ReportDigestController } from './digest/report-digest.controller';
 import { MailerModule } from '../mailer/mailer.module';
@@ -39,6 +40,7 @@ import { MailerModule } from '../mailer/mailer.module';
     RedisModule,
     DealReportModule,
     TicketReportModule,
+    AgentReportModule,
     MailerModule,
   ],
   controllers: [

@@ -9,6 +9,7 @@ export type PermissionResource =
   | 'contact_reports'
   | 'deal_reports'
   | 'ticket_reports'
+  | 'agent_reports'
   | 'users'
   | 'groups'
   | 'settings'
@@ -123,6 +124,10 @@ export const PERMISSION_REGISTRY: Record<
   ticket_reports: {
     view: 'reports:ticket:view',
     export: 'reports:ticket:export',
+  },
+  agent_reports: {
+    view: 'reports:agent:view',
+    export: 'reports:agent:export',
   },
   users: {
     view: 'users:view',
@@ -298,6 +303,7 @@ export const CORE_PERMISSIONS: string[] = [
   'reports:contact:view',
   'reports:deal:view',
   'reports:ticket:view',
+  'reports:agent:view',
   // Users & Groups management
   'users:view',
   'users:create',

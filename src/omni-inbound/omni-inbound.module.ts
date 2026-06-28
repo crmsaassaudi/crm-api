@@ -48,9 +48,15 @@ import { ConversationQueryService } from './services/conversation-query.service'
 import { CrmRealtimeGateway } from './services/crm-realtime.gateway';
 import { OmniMetricsListener } from './services/omni-metrics.listener';
 import { PresenceReconciliationService } from './services/presence-reconciliation.service';
+import { PresenceSegmentService } from './services/presence-segment.service';
+import { WorkStatusService } from './services/work-status.service';
+import { PresenceAlertService } from './services/presence-alert.service';
+import { PresenceRolloverCron } from './cron/presence-rollover.cron';
+import { PresenceAlertCron } from './cron/presence-alert.cron';
 
 // Queue
 import { OmniQueueModule } from './queue/omni-queue.module';
+import { PresenceSegmentsProcessor } from './queue/presence-segments.processor';
 import { WebhookProcessor } from './queue/webhook-processor';
 import { OmniRoutingProcessor } from './queue/omni-routing.processor';
 import { MediaCacheProcessor } from './queue/media-cache.processor';
@@ -71,6 +77,8 @@ import { NoteRepository } from './repositories/note.repository';
 import { ActivityRepository } from './repositories/activity.repository';
 import { AssignmentAuditLogRepository } from './repositories/omni-assignment-audit-log.repository';
 import { AgentStatusAuditRepository } from './repositories/agent-status-audit.repository';
+import { AgentStateSegmentRepository } from './repositories/agent-state-segment.repository';
+import { InteractionSegmentRepository } from './repositories/interaction-segment.repository';
 
 // Schemas
 import {
@@ -101,6 +109,14 @@ import {
   AgentStatusAuditLogSchemaClass,
   AgentStatusAuditLogSchema,
 } from './infrastructure/persistence/document/entities/agent-status-audit-log.schema';
+import {
+  AgentStateSegmentSchemaClass,
+  AgentStateSegmentSchema,
+} from './infrastructure/persistence/document/entities/agent-state-segment.schema';
+import {
+  InteractionSegmentSchemaClass,
+  InteractionSegmentSchema,
+} from './infrastructure/persistence/document/entities/interaction-segment.schema';
 
 // External modules
 import { ChannelsModule } from '../channels/channels.module';
@@ -128,6 +144,7 @@ const workerProviders =
         FallbackReassignProcessor,
         AutoResolveProcessor,
         BotProcessingProcessor,
+        PresenceSegmentsProcessor,
       ]
     : [];
 
@@ -187,6 +204,14 @@ const workerProviders =
       {
         name: AgentStatusAuditLogSchemaClass.name,
         schema: AgentStatusAuditLogSchema,
+      },
+      {
+        name: AgentStateSegmentSchemaClass.name,
+        schema: AgentStateSegmentSchema,
+      },
+      {
+        name: InteractionSegmentSchemaClass.name,
+        schema: InteractionSegmentSchema,
       },
     ]),
   ],
@@ -294,6 +319,19 @@ const workerProviders =
     // ── Pillar 12: Agent Status Audit + Work Time KPI ─────────────
     AgentStatusAuditRepository,
     AgentStatusAuditService,
+
+    // ── Pillar 12b: Presence reporting segments + midnight rollover ─
+    AgentStateSegmentRepository,
+    PresenceSegmentService,
+    PresenceRolloverCron,
+
+    // ── Pillar 12c: Work status (auto-derived) + interaction segments ─
+    InteractionSegmentRepository,
+    WorkStatusService,
+
+    // ── Pillar 14: Presence Alerts (Phase 7) ─────────────────────────
+    PresenceAlertService,
+    PresenceAlertCron,
 
     // ── Pillar 13: Observability ────────────────────────────────────
     OmniMetricsListener,

@@ -6,6 +6,7 @@ import { OMNI_STICKY_RETRY_QUEUE } from './omni-sticky-queue.constants';
 import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
 import { OMNI_FALLBACK_QUEUE } from './omni-fallback-queue.constants';
 import { BOT_PROCESSING_QUEUE } from './bot-processing-queue.constants';
+import { PRESENCE_SEGMENTS_QUEUE } from './presence-segments-queue.constants';
 
 /**
  * Registers BullMQ queues for the omni-channel module:
@@ -84,6 +85,15 @@ import { BOT_PROCESSING_QUEUE } from './bot-processing-queue.constants';
           backoff: { type: 'exponential', delay: 1000 },
           removeOnComplete: 100,
           removeOnFail: 500,
+        },
+      },
+      {
+        name: PRESENCE_SEGMENTS_QUEUE,
+        defaultJobOptions: {
+          attempts: 5,
+          backoff: { type: 'exponential', delay: 3000 },
+          removeOnComplete: 200,
+          removeOnFail: 1000,
         },
       },
     ),

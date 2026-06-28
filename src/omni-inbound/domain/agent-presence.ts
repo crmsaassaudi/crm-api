@@ -1,174 +1,95 @@
-// ─── 3-Axis State Model ─────────────────────────────────────────────
+// ─── Agent Presence (Redis record) ──────────────────────────────────────────
 //
-// The Agent Status system separates three independent concerns:
-//   1. Intent    — what the AGENT chose (available, busy, away, offline)
-//   2. Connection — what the NETWORK says (connected, disconnected)
-//   3. Routing   — what the SYSTEM computed (accept, full)
+// The persisted/real-time shape of an agent's presence in Redis. It composes
+// the canonical 4-axis state (presence-state.ts) with connection-tracking and
+// capacity fields. See docs/agent-presence-workforce-spec.md §1, §3.3.
 //
-// The display `status` is deterministically derived from these three axes.
-// Routing eligibility is a simple boolean AND of all three conditions.
-// ────────────────────────────────────────────────────────────────────
+//   presenceStatus  — where the agent is (AVAILABLE/AWAY/BREAK/MEETING/TRAINING/OFFLINE)
+//   routingStatus   — the accept-new-work switch (ACCEPTING/NOT_ACCEPTING)
+//   workStatus      — what the agent is doing (system-derived, display only)
+//   capacityStatus  — OK/FULL, derived from currentLoad vs maxLoad
+//   connectionStatus — CONNECTED/DISCONNECTED (infra)
+//
+// `status` is a lowercase legacy display value kept for the existing frontend
+// and the work-time report; it is derived, never authoritative.
+// ─────────────────────────────────────────────────────────────────────────────
 
-/** Agent's own chosen state — set manually via UI */
-export type AgentIntentStatus = 'available' | 'busy' | 'away' | 'offline';
+import {
+  CapacityStatus,
+  ConnectionStatus,
+  LegacyIntentStatus,
+  PresenceStatus,
+  RoutingStatus,
+  WorkStatus,
+} from './presence-state';
+import { TransitionTrigger } from './presence-state-machine';
 
-/** System-detected network connectivity */
-export type AgentConnectionStatus = 'connected' | 'disconnected';
+// Re-export the canonical model + state machine so callers can import either
+// from the pure modules or from this presence aggregate.
+export * from './presence-state';
+export * from './presence-state-machine';
 
-/** System-computed based on capacity load */
-export type AgentRoutingStatus = 'accept' | 'full';
+/** @deprecated legacy alias — the canonical trigger type is TransitionTrigger. */
+export type StatusTransitionTrigger = TransitionTrigger;
+
+/** @deprecated legacy alias — used by the work-time report. */
+export type AgentIntentStatus = LegacyIntentStatus;
+
+/** @deprecated legacy alias for the lowercase display status. */
+export type AgentStatus = LegacyIntentStatus;
 
 /**
- * Backward-compatible display status — computed from the 3 axes.
- * Used by the frontend UI and older consumers that read `status`.
- */
-export type AgentStatus = 'available' | 'busy' | 'away' | 'offline';
-
-/**
- * What caused an intent status transition — used for audit logging.
- */
-export type StatusTransitionTrigger =
-  | 'agent_manual' // Agent clicked a status in the UI
-  | 'system_grace_expired' // Grace period expired → forced offline
-  | 'system_disconnect' // All connections lost (before grace)
-  | 'system_reconnect' // Agent reconnected within grace period
-  | 'system_connect' // Fresh session started (first connect)
-  | 'system_auto_available'; // Auto-available on connect (tenant setting)
-
-// ─── Agent Presence ─────────────────────────────────────────────────
-
-/**
- * Agent presence — tracks the real-time state of a support agent.
- *
- * Stored in Redis for fast reads and TTL-based auto-expiry (heartbeat).
- * The three status axes are independently managed:
- *   - intentStatus    → only the agent (or grace-period expiry) can change
- *   - connectionStatus → only socket connect/disconnect events change
- *   - routingStatus   → only capacity changes (assign/release) change
+ * Agent presence — the real-time state of a support agent, stored in Redis for
+ * fast reads and TTL-based auto-expiry (heartbeat).
  */
 export interface AgentPresence {
-  /** Our internal user id */
   userId: string;
-
   tenantId: string;
 
-  // ── 3-Axis Status ──────────────────────────────────────────────
+  // ── 4-Axis canonical state ─────────────────────────────────────────────────
+  presenceStatus: PresenceStatus;
+  routingStatus: RoutingStatus;
+  workStatus: WorkStatus;
+  capacityStatus: CapacityStatus;
+  connectionStatus: ConnectionStatus;
 
-  /** Agent's manually chosen status */
-  intentStatus: AgentIntentStatus;
+  /** Derived lowercase display status for the legacy UI / work-time report. */
+  status: LegacyIntentStatus;
 
-  /** System-detected connectivity */
-  connectionStatus: AgentConnectionStatus;
-
-  /** System-computed routing eligibility based on capacity */
-  routingStatus: AgentRoutingStatus;
-
-  /**
-   * Backward-compatible computed display status.
-   * Derived from the 3 axes via `computeDisplayStatus()`.
-   */
-  status: AgentStatus;
-
-  // ── Capacity ───────────────────────────────────────────────────
-
-  /** How many active (open) conversations this agent is handling right now */
+  // ── Capacity ───────────────────────────────────────────────────────────────
   activeConversations: number;
-
-  /** Maximum concurrent conversations (per-agent or global default) */
   maxCapacity: number;
 
-  /**
-   * Agent's skills, cached from the user record at connect time so skill-based
-   * routing does not hit MongoDB on every assignment. Synced on user update via
-   * the `user.profile.updated` event. `undefined` means not hydrated yet →
-   * callers must fall back to the user record.
-   */
+  /** Skills cached from the user record at connect time for skill-based routing. */
   skills?: string[];
 
-  // ── Connection Tracking ────────────────────────────────────────
-
-  /** Active socket IDs — multi-tab/multi-device support */
+  // ── Connection tracking ──────────────────────────────────────────────────
+  /** Active socket IDs — multi-tab/multi-device support (§1.6). */
   connections: string[];
 
-  /** Last heartbeat timestamp — if stale, agent is considered offline */
   lastHeartbeat: Date;
-
-  /**
-   * Last heartbeat as Unix milliseconds (numeric).
-   * Stored alongside the ISO string so Lua scripts can compare timestamps
-   * atomically inside Redis without parsing date strings.
-   */
+  /** Unix ms mirror of lastHeartbeat so Lua can compare numerically. */
   lastHeartbeatMs: number;
 
-  /** When all connections were lost — used for grace period calculation */
+  /** When all connections were lost — drives grace-period calculation. */
   disconnectedAt?: Date;
 
   /**
-   * @deprecated Use `connections[0]` or targeted events instead.
-   * Kept for backward compatibility during migration.
+   * Client timestamp of the last applied status command — the multi-device
+   * Last-Write-Wins monotonic guard (§1.6). Stale commands are dropped.
    */
+  lastCommandTs?: number;
+
+  /** @deprecated kept for backward compatibility during migration. */
   socketId?: string;
 }
 
-// ─── Pure Functions ─────────────────────────────────────────────────
-
-/**
- * Deterministically compute the display status from the 3 axes.
- *
- * Rules:
- *   1. If intent is 'offline' → offline (agent chose to go offline)
- *   2. If connection is 'disconnected' → offline (network is down)
- *   3. Otherwise → mirror the intent status (available, busy, away)
- *
- * Note: routingStatus does NOT affect display status — it only affects
- * whether the agent is eligible for auto-assignment. An "available" agent
- * who is "full" still displays as "available" (with an "At Capacity" badge).
- */
-export function computeDisplayStatus(
-  intent: AgentIntentStatus,
-  connection: AgentConnectionStatus,
-): AgentStatus {
-  if (intent === 'offline') return 'offline';
-  if (connection === 'disconnected') return 'offline';
-  return intent; // 'available' | 'busy' | 'away'
-}
-
-/**
- * Determine if an agent should receive new auto-assigned conversations.
- *
- * All three conditions must be true:
- *   1. Agent chose "available" (not busy/away/offline)
- *   2. Network connection is active
- *   3. Has remaining capacity (not at max)
- */
-export function isEligibleForRouting(presence: AgentPresence): boolean {
-  return (
-    presence.intentStatus === 'available' &&
-    presence.connectionStatus === 'connected' &&
-    presence.routingStatus === 'accept'
-  );
-}
-
-/**
- * Compute routing status from current capacity.
- */
-export function computeRoutingStatus(
-  activeConversations: number,
-  maxCapacity: number,
-): AgentRoutingStatus {
-  return activeConversations >= maxCapacity ? 'full' : 'accept';
-}
-
-// ─── Redis Key Helpers ──────────────────────────────────────────────
+// ─── Redis Key Helpers ──────────────────────────────────────────────────────
 
 export const AGENT_PRESENCE_PREFIX = 'omni:agent:presence';
 
 export const agentPresenceKey = (tenantId: string, userId: string) =>
   `${AGENT_PRESENCE_PREFIX}:${tenantId}:${userId}`;
-
-// T12 fix: tenantAgentsKey() removed — never used in production.
-// AgentPresenceService uses tenantPresenceHashKey() + HGETALL for bulk tenant
-// presence reads. KEYS-scan patterns (glob) are O(N) and blocked on production Redis.
 
 export const tenantPresenceHashKey = (tenantId: string) =>
   `omni:presence:${tenantId}`;
@@ -176,13 +97,15 @@ export const tenantPresenceHashKey = (tenantId: string) =>
 export const tenantAgentLoadKey = (tenantId: string) =>
   `omni:agent_load:${tenantId}`;
 
-// ─── Constants ──────────────────────────────────────────────────────
+// ─── Constants ──────────────────────────────────────────────────────────────
+// NOTE: heartbeat/grace are still hardcoded here. Phase 2.5 wires them to the
+// `omni_presence` tenant setting (heartbeatTimeout=60s, gracePeriod=120s).
 
-/** Heartbeat TTL — if an agent doesn't heartbeat within this window, Redis expires the key */
-export const HEARTBEAT_TTL_SECONDS = 120; // 2 minutes (aligned with grace period)
+/** Heartbeat TTL — Redis expires the presence key if no heartbeat within this. */
+export const HEARTBEAT_TTL_SECONDS = 120;
 
-/** Grace period before marking a disconnected agent as offline (ms) */
-export const GRACE_PERIOD_MS = 2 * 60 * 1000; // 2 minutes
+/** Grace period before marking a disconnected agent OFFLINE (ms). */
+export const GRACE_PERIOD_MS = 2 * 60 * 1000;
 
-/** Default max capacity when no per-agent or tenant setting exists */
+/** Default max capacity when no per-agent or tenant setting exists. */
 export const DEFAULT_MAX_CAPACITY = 10;

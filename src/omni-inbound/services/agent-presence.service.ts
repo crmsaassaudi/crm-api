@@ -4,34 +4,70 @@ import { RedisService } from '../../redis/redis.service';
 import {
   AgentPresence,
   AgentIntentStatus,
-  AgentConnectionStatus,
-  AgentStatus,
   StatusTransitionTrigger,
   agentPresenceKey,
-  computeDisplayStatus,
-  computeRoutingStatus,
-  isEligibleForRouting,
   HEARTBEAT_TTL_SECONDS,
   DEFAULT_MAX_CAPACITY,
   tenantAgentLoadKey,
   tenantPresenceHashKey,
 } from '../domain/agent-presence';
+import {
+  PresenceStatus,
+  RoutingStatus,
+  WorkStatus,
+  computeCapacityStatus,
+  computeDisplayStatus,
+  fromLegacyIntent,
+  isEligibleForRouting,
+  toLegacyIntent,
+} from '../domain/presence-state';
+import { AxisSnapshot } from '../domain/presence-segments';
+import {
+  TransitionActor,
+  applyDayRolloverReset,
+  applyLogin,
+  forceOffline,
+  isStaleCommand,
+  setRouting,
+  transitionPresence,
+} from '../domain/presence-state-machine';
 
 // ────────────────────────────────────────────────────────────────────────
 // Lua Scripts for atomic Redis operations
+//
+// The stored presence JSON uses the canonical 4-axis model:
+//   presenceStatus  : AVAILABLE | AWAY | BREAK | MEETING | TRAINING | OFFLINE
+//   routingStatus   : ACCEPTING | NOT_ACCEPTING   (the accept-work switch)
+//   capacityStatus  : OK | FULL                   (derived from load)
+//   connectionStatus: CONNECTED | DISCONNECTED
+//
+// Routing eligibility (§2.1) = presenceStatus==AVAILABLE && connectionStatus==
+// CONNECTED && routingStatus==ACCEPTING && activeConversations < maxCapacity.
 // ────────────────────────────────────────────────────────────────────────
 
+/** Lua snippet recomputing the lowercase display `status` from the 4 axes. */
+const LUA_RECOMPUTE_DISPLAY = `
+local function recomputeDisplay(d)
+  if d.presenceStatus == 'OFFLINE' or d.connectionStatus == 'DISCONNECTED' then
+    d.status = 'offline'
+  elseif d.presenceStatus == 'AVAILABLE' then
+    if d.routingStatus == 'ACCEPTING' then d.status = 'available' else d.status = 'busy' end
+  else
+    d.status = 'away'
+  end
+end
+`;
+
 /**
- * Atomic release: decrement activeConversations, update routingStatus.
- * NEVER touches intentStatus.
+ * Atomic release: decrement activeConversations, recompute capacityStatus.
+ * NEVER touches presenceStatus or routingStatus.
  *
- * KEYS[1] = tenant presence hash
- * KEYS[2] = tenant load ZSET
- * ARGV[1] = agent id
- *
+ * KEYS[1] = tenant presence hash, KEYS[2] = tenant load ZSET, ARGV[1] = agent id
  * Returns the updated presence JSON, or nil if key missing.
  */
-const LUA_ATOMIC_RELEASE = `
+const LUA_ATOMIC_RELEASE =
+  LUA_RECOMPUTE_DISPLAY +
+  `
 local presenceHash = KEYS[1]
 local loadZset = KEYS[2]
 local agentId = ARGV[1]
@@ -42,39 +78,39 @@ local data = cjson.decode(raw)
 data.activeConversations = math.max(0, data.activeConversations - 1)
 
 if data.activeConversations < data.maxCapacity then
-  data.routingStatus = 'accept'
+  data.capacityStatus = 'OK'
 else
-  data.routingStatus = 'full'
+  data.capacityStatus = 'FULL'
 end
-
--- Recompute display status (NEVER change intentStatus here)
-if data.intentStatus == 'offline' or data.connectionStatus == 'disconnected' then
-  data.status = 'offline'
-else
-  data.status = data.intentStatus
-end
+recomputeDisplay(data)
 
 redis.call('HSET', presenceHash, agentId, cjson.encode(data))
 redis.call('ZADD', loadZset, data.activeConversations, agentId)
 return cjson.encode(data)
 `;
 
+/** Shared eligibility predicate used inside every reserve script. */
+const LUA_ELIGIBLE_FN = `
+local function eligible(data, active, capacity, nowMs, ttlMs)
+  local heartbeatMs = tonumber(data.lastHeartbeatMs or 0)
+  local isStale = nowMs - heartbeatMs > ttlMs
+  return (not isStale)
+    and data.presenceStatus == 'AVAILABLE'
+    and data.connectionStatus == 'CONNECTED'
+    and data.routingStatus == 'ACCEPTING'
+    and capacity > 0
+    and active < capacity
+end
+`;
+
 /**
- * Reserve one eligible agent from a candidate list.
+ * Reserve the LEAST-loaded eligible agent from a candidate list (least-busy).
  *
- * KEYS[1] = tenant presence hash
- * KEYS[2] = tenant load ZSET
- * ARGV[1] = number of candidates
- * ARGV[2..n] = candidate agent ids
- * ARGV[n+1]  = current Unix timestamp in ms  (for freshness check)
- * ARGV[n+2]  = heartbeat TTL in ms           (HEARTBEAT_TTL_SECONDS * 1000)
- *
- * Returns the selected agent id, or nil if no candidate has capacity.
- *
- * F-01 fix: checks lastHeartbeatMs inside the JSON to reject stale Hash/ZSET
- * entries that were not cleaned up by TTL expiry on the individual key.
+ * ARGV[1]=count, ARGV[2..n]=ids, ARGV[n+1]=nowMs, ARGV[n+2]=heartbeatTtlMs
  */
-const LUA_RESERVE_FROM_CANDIDATES = `
+const LUA_RESERVE_FROM_CANDIDATES =
+  LUA_ELIGIBLE_FN +
+  `
 local presenceHash = KEYS[1]
 local loadZset = KEYS[2]
 local candidateCount = tonumber(ARGV[1])
@@ -90,14 +126,7 @@ for i = 1, candidateCount do
     local data = cjson.decode(raw)
     local active = tonumber(data.activeConversations or 0)
     local capacity = tonumber(data.maxCapacity or 0)
-    -- F-01: freshness guard — reject entries whose heartbeat has expired.
-    local heartbeatMs = tonumber(data.lastHeartbeatMs or 0)
-    local isStale = nowMs - heartbeatMs > heartbeatTtlMs
-    if not isStale
-      and data.intentStatus == 'available'
-      and data.connectionStatus == 'connected'
-      and capacity > 0
-      and active < capacity then
+    if eligible(data, active, capacity, nowMs, heartbeatTtlMs) then
       local score = redis.call('ZSCORE', loadZset, agentId)
       local load = tonumber(score or active)
       if bestLoad == nil or load < bestLoad then
@@ -112,7 +141,6 @@ if not bestAgent then return nil end
 
 local raw = redis.call('HGET', presenceHash, bestAgent)
 if not raw then return nil end
-
 local data = cjson.decode(raw)
 local active = tonumber(data.activeConversations or 0)
 local capacity = tonumber(data.maxCapacity or 0)
@@ -120,11 +148,7 @@ if active >= capacity then return nil end
 
 active = active + 1
 data.activeConversations = active
-if active >= capacity then
-  data.routingStatus = 'full'
-else
-  data.routingStatus = 'accept'
-end
+if active >= capacity then data.capacityStatus = 'FULL' else data.capacityStatus = 'OK' end
 
 redis.call('HSET', presenceHash, bestAgent, cjson.encode(data))
 redis.call('ZADD', loadZset, active, bestAgent)
@@ -132,30 +156,14 @@ return bestAgent
 `;
 
 /**
- * Capacity-based reserve: identical to LUA_RESERVE_FROM_CANDIDATES (lowest-load
- * wins, atomic increment, freshness guard) EXCEPT the effective capacity used for
- * the `active < capacity` gate is resolved with the tenant default as a fallback:
+ * Capacity-based reserve: like least-busy but the eligibility capacity uses the
+ * tenant fallback when the agent has no per-agent capacity.
  *
- *   effectiveCapacity = agent.maxCapacity (if > 0) else tenantFallbackCapacity
- *
- * This mirrors AssignmentService.resolveAgentCapacity()'s priority
- * (per-agent → tenant default → hardcoded) but does it atomically inside Redis,
- * so capacity-based assignments increment the same load counter as every other
- * strategy. Previously the capacity-based path read MongoDB counts and returned an
- * agent WITHOUT reserving in Redis, causing (a) the load ZSET to under-count,
- * (b) a TOCTOU race, and (c) an erroneous rollback decrement.
- *
- * KEYS[1] = tenant presence hash
- * KEYS[2] = tenant load ZSET
- * ARGV[1] = number of candidates
- * ARGV[2..n] = candidate agent ids
- * ARGV[n+1]  = current Unix timestamp in ms (freshness check)
- * ARGV[n+2]  = heartbeat TTL in ms
- * ARGV[n+3]  = tenant fallback capacity
- *
- * Returns the selected agent id, or nil if no candidate is under capacity.
+ * ARGV[1]=count, ids…, nowMs, heartbeatTtlMs, tenantFallbackCap
  */
-const LUA_RESERVE_CAPACITY_BASED = `
+const LUA_RESERVE_CAPACITY_BASED =
+  LUA_RECOMPUTE_DISPLAY +
+  `
 local presenceHash = KEYS[1]
 local loadZset = KEYS[2]
 local candidateCount = tonumber(ARGV[1])
@@ -181,9 +189,10 @@ for i = 1, candidateCount do
     local capacity = effectiveCap(tonumber(data.maxCapacity or 0))
     local heartbeatMs = tonumber(data.lastHeartbeatMs or 0)
     local isStale = nowMs - heartbeatMs > heartbeatTtlMs
-    if not isStale
-      and data.intentStatus == 'available'
-      and data.connectionStatus == 'connected'
+    if (not isStale)
+      and data.presenceStatus == 'AVAILABLE'
+      and data.connectionStatus == 'CONNECTED'
+      and data.routingStatus == 'ACCEPTING'
       and capacity > 0
       and active < capacity then
       local score = redis.call('ZSCORE', loadZset, agentId)
@@ -201,20 +210,15 @@ if not bestAgent then return nil end
 
 local raw = redis.call('HGET', presenceHash, bestAgent)
 if not raw then return nil end
-
 local data = cjson.decode(raw)
 local active = tonumber(data.activeConversations or 0)
 if active >= bestCap then return nil end
 
 active = active + 1
 data.activeConversations = active
--- routingStatus uses the agent's OWN stored capacity for display consistency.
 local ownCap = tonumber(data.maxCapacity or 0)
-if ownCap > 0 and active >= ownCap then
-  data.routingStatus = 'full'
-else
-  data.routingStatus = 'accept'
-end
+if ownCap > 0 and active >= ownCap then data.capacityStatus = 'FULL' else data.capacityStatus = 'OK' end
+recomputeDisplay(data)
 
 redis.call('HSET', presenceHash, bestAgent, cjson.encode(data))
 redis.call('ZADD', loadZset, active, bestAgent)
@@ -222,22 +226,12 @@ return bestAgent
 `;
 
 /**
- * First-fit reserve: walk the candidate list IN THE GIVEN ORDER and reserve the
- * FIRST eligible agent (not the lowest-load one). This is the round-robin
- * primitive — the caller passes an already-rotated list, and rotation fairness
- * is preserved only if we honour that order. Using LUA_RESERVE_FROM_CANDIDATES
- * here would silently collapse round-robin into least-busy.
- *
- * KEYS[1] = tenant presence hash
- * KEYS[2] = tenant load ZSET
- * ARGV[1] = number of candidates
- * ARGV[2..n] = candidate agent ids (in rotation order)
- * ARGV[n+1]  = current Unix timestamp in ms (freshness check)
- * ARGV[n+2]  = heartbeat TTL in ms
- *
- * Returns the first eligible agent id (incremented atomically), or nil.
+ * First-fit reserve: reserve the FIRST eligible agent in the given (rotated)
+ * order — the round-robin primitive. ARGV layout matches the least-busy script.
  */
-const LUA_RESERVE_FIRST_ELIGIBLE = `
+const LUA_RESERVE_FIRST_ELIGIBLE =
+  LUA_ELIGIBLE_FN +
+  `
 local presenceHash = KEYS[1]
 local loadZset = KEYS[2]
 local candidateCount = tonumber(ARGV[1])
@@ -251,21 +245,10 @@ for i = 1, candidateCount do
     local data = cjson.decode(raw)
     local active = tonumber(data.activeConversations or 0)
     local capacity = tonumber(data.maxCapacity or 0)
-    local heartbeatMs = tonumber(data.lastHeartbeatMs or 0)
-    local isStale = nowMs - heartbeatMs > heartbeatTtlMs
-    if not isStale
-      and data.intentStatus == 'available'
-      and data.connectionStatus == 'connected'
-      and capacity > 0
-      and active < capacity then
-      -- First eligible in rotation order wins.
+    if eligible(data, active, capacity, nowMs, heartbeatTtlMs) then
       active = active + 1
       data.activeConversations = active
-      if active >= capacity then
-        data.routingStatus = 'full'
-      else
-        data.routingStatus = 'accept'
-      end
+      if active >= capacity then data.capacityStatus = 'FULL' else data.capacityStatus = 'OK' end
       redis.call('HSET', presenceHash, agentId, cjson.encode(data))
       redis.call('ZADD', loadZset, active, agentId)
       return agentId
@@ -277,8 +260,8 @@ return nil
 `;
 
 /**
- * Callback invoked when an agent's intentStatus changes.
- * Used to wire in audit logging without circular dependencies.
+ * Callback invoked when an agent's legacy intent (derived from presence +
+ * routing) changes. Wires audit logging without a circular dependency.
  */
 export type StatusTransitionCallback = (
   tenantId: string,
@@ -289,36 +272,67 @@ export type StatusTransitionCallback = (
 ) => void | Promise<void>;
 
 /**
- * Manages agent presence and capacity in Redis.
+ * Callback invoked on every canonical state change with the full before/after
+ * axis snapshots — drives the reporting segment timeline (PresenceSegmentService).
+ */
+export type StateChangeCallback = (
+  tenantId: string,
+  agentId: string,
+  before: AxisSnapshot | null,
+  after: AxisSnapshot,
+  trigger: StatusTransitionTrigger,
+  atMs: number,
+) => void | Promise<void>;
+
+/** Redis SET of tenants with live presence — drives the rollover cron. */
+export const ACTIVE_PRESENCE_TENANTS_KEY = 'omni:active_presence_tenants';
+
+/**
+ * Manages agent presence and capacity in Redis using the canonical 4-axis model
+ * (presence-state.ts) + the pure state machine (presence-state-machine.ts).
  *
- * Architecture:
- *   - 3-axis state model: Intent × Connection × Routing
- *   - Atomic Lua scripts for capacity operations (no race conditions)
- *   - Multi-tab connection tracking via connections[] array
- *   - Grace period handled by the gateway layer
- *
- * Intent Status:  set by the agent (available, busy, away, offline)
- * Connection Status: set by socket connect/disconnect events
- * Routing Status: computed from activeConversations vs maxCapacity
- * Display Status: deterministically derived from Intent + Connection
+ *   - presenceStatus / routingStatus mutated via the state machine
+ *   - capacityStatus / status are derived on every persist
+ *   - atomic Lua scripts for capacity reserve/release (no race conditions)
+ *   - multi-tab connection tracking + Last-Write-Wins guard (§1.6)
+ *   - grace period handled by the gateway layer
  */
 @Injectable()
 export class AgentPresenceService {
   private readonly logger = new Logger(AgentPresenceService.name);
 
-  /** Optional callback for audit logging of status transitions */
+  /** Optional callback for audit logging of (legacy-intent) status transitions */
   private statusTransitionCallback?: StatusTransitionCallback;
+
+  /** Optional callback for the canonical state-change reporting segments */
+  private stateChangeCallback?: StateChangeCallback;
 
   constructor(private readonly redis: RedisService) {}
 
+  // ────────────────────────────────────────────────────────────────────
+  // Persistence helpers
+  // ────────────────────────────────────────────────────────────────────
+
+  /**
+   * Recompute derived fields (capacityStatus, status display, lastHeartbeatMs)
+   * and write the presence record to Redis (individual key + tenant hash + ZSET).
+   */
   private async persistPresence(presence: AgentPresence): Promise<void> {
     const client = this.redis.getClient();
     const key = agentPresenceKey(presence.tenantId, presence.userId);
     const hashKey = tenantPresenceHashKey(presence.tenantId);
     const loadKey = tenantAgentLoadKey(presence.tenantId);
 
-    // F-01: always stamp lastHeartbeatMs so the Lua script can compare numeric
-    // timestamps atomically without parsing ISO date strings.
+    // Derived fields — always recomputed so they can never drift.
+    presence.capacityStatus = computeCapacityStatus(
+      presence.activeConversations,
+      presence.maxCapacity,
+    );
+    presence.status = computeDisplayStatus(
+      presence.presenceStatus,
+      presence.routingStatus,
+      presence.connectionStatus,
+    );
     presence.lastHeartbeatMs = new Date(presence.lastHeartbeat).getTime();
 
     const encoded = JSON.stringify(presence);
@@ -327,13 +341,12 @@ export class AgentPresenceService {
     pipeline.setex(key, HEARTBEAT_TTL_SECONDS, encoded);
     pipeline.hset(hashKey, presence.userId, encoded);
     pipeline.zadd(loadKey, presence.activeConversations, presence.userId);
-    // P1 fix: set a TTL on the shared hash and ZSET so stale entries from
-    // crashed agents or inactive tenants don't accumulate indefinitely in
-    // Redis memory. 24h is generous — these keys are refreshed on every
-    // heartbeat (~30s interval) so the TTL is only hit when a tenant has
-    // zero active agents for an entire day.
-    pipeline.expire(hashKey, 86400); // 24 hours
-    pipeline.expire(loadKey, 86400); // 24 hours
+    pipeline.expire(hashKey, 86400);
+    pipeline.expire(loadKey, 86400);
+    // Track tenants with live presence so the rollover cron can enumerate them
+    // without an O(N) Redis KEYS scan.
+    pipeline.sadd(ACTIVE_PRESENCE_TENANTS_KEY, presence.tenantId);
+    pipeline.expire(ACTIVE_PRESENCE_TENANTS_KEY, 86400 * 2);
     await pipeline.exec();
   }
 
@@ -350,111 +363,318 @@ export class AgentPresenceService {
     }
   }
 
+  /** Build a fresh presence record from the canonical axes + connection info. */
+  private buildPresence(
+    base: Partial<AgentPresence> &
+      Pick<AgentPresence, 'userId' | 'tenantId'>,
+  ): AgentPresence {
+    return {
+      userId: base.userId,
+      tenantId: base.tenantId,
+      presenceStatus: base.presenceStatus ?? 'OFFLINE',
+      routingStatus: base.routingStatus ?? 'NOT_ACCEPTING',
+      workStatus: base.workStatus ?? 'IDLE',
+      capacityStatus: 'OK',
+      connectionStatus: base.connectionStatus ?? 'DISCONNECTED',
+      status: 'offline',
+      activeConversations: base.activeConversations ?? 0,
+      maxCapacity: base.maxCapacity ?? DEFAULT_MAX_CAPACITY,
+      skills: base.skills,
+      connections: base.connections ?? [],
+      lastHeartbeat: base.lastHeartbeat ?? new Date(),
+      lastHeartbeatMs: base.lastHeartbeatMs ?? Date.now(),
+      disconnectedAt: base.disconnectedAt,
+      lastCommandTs: base.lastCommandTs,
+      socketId: base.socketId,
+    };
+  }
+
   /**
-   * Register a callback to be invoked on every intentStatus transition.
-   * Called by AgentStatusAuditService during module init.
+   * Fire the audit callback when the legacy-intent projection of the state has
+   * changed. The work-time report still consumes available/busy/away/offline.
    */
+  private async fireAuditIfChanged(
+    presence: AgentPresence,
+    before: { presenceStatus: PresenceStatus; routingStatus: RoutingStatus } | null,
+    trigger: StatusTransitionTrigger,
+  ): Promise<void> {
+    if (!this.statusTransitionCallback) return;
+    const fromIntent: AgentIntentStatus = before
+      ? toLegacyIntent(before.presenceStatus, before.routingStatus)
+      : 'offline';
+    const toIntent = toLegacyIntent(
+      presence.presenceStatus,
+      presence.routingStatus,
+    );
+    if (fromIntent === toIntent) return;
+    try {
+      await this.statusTransitionCallback(
+        presence.tenantId,
+        presence.userId,
+        fromIntent,
+        toIntent,
+        trigger,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Status transition callback failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   setStatusTransitionCallback(cb: StatusTransitionCallback): void {
     this.statusTransitionCallback = cb;
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // Intent Status (human-controlled)
-  // ────────────────────────────────────────────────────────────────────
+  setStateChangeCallback(cb: StateChangeCallback): void {
+    this.stateChangeCallback = cb;
+  }
 
   /**
-   * Set the agent's intent status (human decision).
-   *
-   * This ONLY changes intentStatus. It never touches connectionStatus
-   * or routingStatus. The display status is recomputed after.
+   * Fired after any state mutation: drives both the legacy work-time audit and
+   * the canonical reporting segments.
    */
-  async updateIntentStatus(
-    tenantId: string,
-    userId: string,
-    intentStatus: AgentIntentStatus,
-    trigger: StatusTransitionTrigger = 'agent_manual',
-  ): Promise<AgentPresence> {
-    const existing = await this.getPresence(tenantId, userId);
-
-    const oldIntent = existing?.intentStatus ?? 'offline';
-
-    const presence: AgentPresence = {
-      userId,
-      tenantId,
-      intentStatus,
-      connectionStatus: existing?.connectionStatus ?? 'disconnected',
-      routingStatus: computeRoutingStatus(
-        existing?.activeConversations ?? 0,
-        existing?.maxCapacity ?? DEFAULT_MAX_CAPACITY,
-      ),
-      status: computeDisplayStatus(
-        intentStatus,
-        existing?.connectionStatus ?? 'disconnected',
-      ),
-      activeConversations: existing?.activeConversations ?? 0,
-      maxCapacity: existing?.maxCapacity ?? DEFAULT_MAX_CAPACITY,
-      connections: existing?.connections ?? [],
-      lastHeartbeat: new Date(),
-      lastHeartbeatMs: Date.now(),
-      disconnectedAt: existing?.disconnectedAt,
-      socketId: existing?.socketId,
-    };
-
-    await this.persistPresence(presence);
-
-    this.logger.log(
-      `Agent ${userId} intentStatus → ${intentStatus} (trigger: ${trigger})`,
-    );
-
-    // Fire audit callback if status actually changed
-    if (oldIntent !== intentStatus && this.statusTransitionCallback) {
+  private async afterMutation(
+    presence: AgentPresence,
+    before:
+      | { presenceStatus: PresenceStatus; routingStatus: RoutingStatus; workStatus: WorkStatus }
+      | null,
+    trigger: StatusTransitionTrigger,
+  ): Promise<void> {
+    await this.afterMutation(presence, before, trigger);
+    if (this.stateChangeCallback) {
       try {
-        await this.statusTransitionCallback(
-          tenantId,
-          userId,
-          oldIntent,
-          intentStatus,
+        await this.stateChangeCallback(
+          presence.tenantId,
+          presence.userId,
+          before
+            ? {
+                presenceStatus: before.presenceStatus,
+                routingStatus: before.routingStatus,
+                workStatus: before.workStatus,
+              }
+            : null,
+          {
+            presenceStatus: presence.presenceStatus,
+            routingStatus: presence.routingStatus,
+            workStatus: presence.workStatus,
+          },
           trigger,
+          new Date(presence.lastHeartbeat).getTime(),
         );
       } catch (err) {
         this.logger.error(
-          `Status transition callback failed: ${err instanceof Error ? err.message : String(err)}`,
+          `State-change callback failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
+  }
 
+  /** Tenants that currently have (or recently had) live presence. */
+  async getActivePresenceTenants(): Promise<string[]> {
+    return this.redis.getClient().smembers(ACTIVE_PRESENCE_TENANTS_KEY);
+  }
+
+  /**
+   * Set the system-derived workStatus (§2.4). Records a work-axis segment via
+   * afterMutation. No-op when there is no live presence or the value is unchanged.
+   */
+  async setWorkStatus(
+    tenantId: string,
+    userId: string,
+    workStatus: WorkStatus,
+  ): Promise<AgentPresence | null> {
+    const existing = await this.getPresence(tenantId, userId);
+    if (!existing) return null;
+    if (existing.workStatus === workStatus) return existing;
+
+    const before = {
+      presenceStatus: existing.presenceStatus,
+      routingStatus: existing.routingStatus,
+      workStatus: existing.workStatus,
+    };
+    const presence: AgentPresence = {
+      ...existing,
+      workStatus,
+      lastHeartbeat: new Date(),
+    };
+    await this.persistPresence(presence);
+    await this.afterMutation(presence, before, 'system_work_status');
+    return presence;
+  }
+
+  // ────────────────────────────────────────────────────────────────────
+  // Presence & Routing (human-controlled)
+  // ────────────────────────────────────────────────────────────────────
+
+  /**
+   * Change the presence axis (AVAILABLE/AWAY/BREAK/MEETING/TRAINING/OFFLINE)
+   * via the state machine, applying the routing interlock (§1.2). Drops stale
+   * multi-device commands (§1.6).
+   */
+  async applyPresence(
+    tenantId: string,
+    userId: string,
+    to: PresenceStatus,
+    trigger: StatusTransitionTrigger = 'agent_manual',
+    opts: {
+      actor?: TransitionActor;
+      clientTs?: number;
+      restoreAcceptingOnReturn?: boolean;
+      wasAcceptingBeforeLeave?: boolean;
+    } = {},
+  ): Promise<AgentPresence | null> {
+    const existing =
+      (await this.getPresence(tenantId, userId)) ??
+      this.buildPresence({ userId, tenantId });
+
+    if (opts.clientTs !== undefined && isStaleCommand(opts.clientTs, existing.lastCommandTs)) {
+      this.logger.debug(
+        `Dropping stale presence command for ${userId} (clientTs=${opts.clientTs} < ${existing.lastCommandTs})`,
+      );
+      return existing;
+    }
+
+    const now = Date.now();
+    const result = transitionPresence(
+      {
+        presenceStatus: existing.presenceStatus,
+        routingStatus: existing.routingStatus,
+        workStatus: existing.workStatus,
+        connectionStatus: existing.connectionStatus,
+        currentLoad: existing.activeConversations,
+        maxLoad: existing.maxCapacity,
+        updatedAtMs: existing.lastHeartbeatMs,
+      },
+      to,
+      {
+        trigger,
+        nowMs: now,
+        actor: opts.actor ?? 'agent',
+        restoreAcceptingOnReturn: opts.restoreAcceptingOnReturn,
+        wasAcceptingBeforeLeave:
+          opts.wasAcceptingBeforeLeave ?? existing.routingStatus === 'ACCEPTING',
+      },
+    );
+
+    if (!result.ok) {
+      this.logger.warn(`Presence transition rejected for ${userId}: ${result.error}`);
+      return existing;
+    }
+
+    const before = {
+      presenceStatus: existing.presenceStatus,
+      routingStatus: existing.routingStatus,
+      workStatus: existing.workStatus,
+    };
+    const presence: AgentPresence = {
+      ...existing,
+      presenceStatus: result.state.presenceStatus,
+      routingStatus: result.state.routingStatus,
+      lastHeartbeat: new Date(),
+      lastCommandTs: opts.clientTs ?? existing.lastCommandTs,
+    };
+
+    await this.persistPresence(presence);
+    this.logger.log(
+      `Agent ${userId} presence → ${presence.presenceStatus} / routing → ${presence.routingStatus} (${trigger})`,
+    );
+    await this.afterMutation(presence, before, trigger);
     return presence;
   }
 
   /**
-   * @deprecated Use updateIntentStatus() instead.
-   * Kept for backward compatibility during migration.
+   * Toggle the accept-work switch (ACCEPTING/NOT_ACCEPTING). Only valid while
+   * AVAILABLE + CONNECTED.
    */
-  async updateStatus(
+  async setRoutingControl(
     tenantId: string,
     userId: string,
-    status: AgentStatus,
-    socketId?: string,
-  ): Promise<AgentPresence> {
-    // Map old single-status to the new intent model
-    const intentStatus = status as AgentIntentStatus;
-    const result = await this.updateIntentStatus(
-      tenantId,
-      userId,
-      intentStatus,
-      'agent_manual',
-    );
+    routing: RoutingStatus,
+    trigger: StatusTransitionTrigger = 'agent_manual',
+    opts: { clientTs?: number } = {},
+  ): Promise<AgentPresence | null> {
+    const existing = await this.getPresence(tenantId, userId);
+    if (!existing) return null;
 
-    // Preserve socketId for backward compat
-    if (socketId) {
-      result.socketId = socketId;
-      if (!result.connections.includes(socketId)) {
-        result.connections.push(socketId);
-      }
-      await this.persistPresence(result);
+    if (opts.clientTs !== undefined && isStaleCommand(opts.clientTs, existing.lastCommandTs)) {
+      return existing;
     }
 
-    return result;
+    const result = setRouting(
+      {
+        presenceStatus: existing.presenceStatus,
+        routingStatus: existing.routingStatus,
+        workStatus: existing.workStatus,
+        connectionStatus: existing.connectionStatus,
+        currentLoad: existing.activeConversations,
+        maxLoad: existing.maxCapacity,
+        updatedAtMs: existing.lastHeartbeatMs,
+      },
+      routing,
+      { trigger, nowMs: Date.now() },
+    );
+
+    if (!result.ok) {
+      this.logger.warn(`Routing change rejected for ${userId}: ${result.error}`);
+      return existing;
+    }
+
+    const before = {
+      presenceStatus: existing.presenceStatus,
+      routingStatus: existing.routingStatus,
+      workStatus: existing.workStatus,
+    };
+    const presence: AgentPresence = {
+      ...existing,
+      routingStatus: result.state.routingStatus,
+      lastHeartbeat: new Date(),
+      lastCommandTs: opts.clientTs ?? existing.lastCommandTs,
+    };
+    await this.persistPresence(presence);
+    await this.afterMutation(presence, before, trigger);
+    return presence;
+  }
+
+  /**
+   * Legacy intent shim — maps available/busy/away/offline onto the canonical
+   * (presence, routing) pair (Busy = AVAILABLE + NOT_ACCEPTING, §1.2). Used by
+   * the existing frontend's `agent:status:update` event and grace expiry.
+   */
+  async updateIntentStatus(
+    tenantId: string,
+    userId: string,
+    intent: AgentIntentStatus,
+    trigger: StatusTransitionTrigger = 'agent_manual',
+    opts: { clientTs?: number } = {},
+  ): Promise<AgentPresence> {
+    const { presenceStatus, routingStatus } = fromLegacyIntent(intent);
+    const existing =
+      (await this.getPresence(tenantId, userId)) ??
+      this.buildPresence({ userId, tenantId });
+
+    if (opts.clientTs !== undefined && isStaleCommand(opts.clientTs, existing.lastCommandTs)) {
+      return existing;
+    }
+
+    const before = {
+      presenceStatus: existing.presenceStatus,
+      routingStatus: existing.routingStatus,
+      workStatus: existing.workStatus,
+    };
+    const presence: AgentPresence = {
+      ...existing,
+      presenceStatus,
+      // 'available' wants ACCEPTING, 'busy' wants NOT_ACCEPTING — honour intent
+      // directly here since this is an explicit agent command, not a return.
+      routingStatus,
+      lastHeartbeat: new Date(),
+      lastCommandTs: opts.clientTs ?? existing.lastCommandTs,
+    };
+    await this.persistPresence(presence);
+    this.logger.log(`Agent ${userId} intent → ${intent} (${trigger})`);
+    await this.afterMutation(presence, before, trigger);
+    return presence;
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -463,151 +683,97 @@ export class AgentPresenceService {
 
   /**
    * Register a new socket connection for an agent.
-   * Called when a socket connects (each tab = one connection).
    *
-   * - Adds socketId to connections[]
-   * - Sets connectionStatus = 'connected'
-   * - Clears disconnectedAt
-   * - If fresh session (no existing presence), sets intentStatus based on tenant config
-   *
-   * @returns The updated presence and whether this was a fresh session
+   * - Fresh session  → login: AVAILABLE + NOT_ACCEPTING (or ACCEPTING if the
+   *   tenant opts into autoAvailableOnConnect — never the default, §2.2).
+   * - Reconnect within grace → restore previous presence + routing.
+   * - Additional tab → keep current state.
    */
   async addConnection(
     tenantId: string,
     userId: string,
     socketId: string,
     autoAvailableOnConnect: boolean = false,
-    /**
-     * Per-agent attributes resolved from the user record at connect time.
-     * Hydrating here means skill-based routing and per-agent capacity work
-     * without a MongoDB read on every assignment.
-     */
     attributes?: { skills?: string[]; maxCapacity?: number },
   ): Promise<{ presence: AgentPresence; isFreshSession: boolean }> {
     const existing = await this.getPresence(tenantId, userId);
-
     const isFreshSession = !existing;
-    let intentStatus: AgentIntentStatus;
-    let trigger: StatusTransitionTrigger;
-
-    if (isFreshSession) {
-      // No prior presence → fresh session
-      intentStatus = autoAvailableOnConnect ? 'available' : 'offline';
-      trigger = autoAvailableOnConnect
-        ? 'system_auto_available'
-        : 'system_connect';
-    } else if (existing.connectionStatus === 'disconnected') {
-      // Reconnect within grace period → restore previous intent
-      intentStatus = existing.intentStatus;
-      trigger = 'system_reconnect';
-      this.logger.log(
-        `Agent ${userId} reconnected within grace period → restoring intentStatus: ${intentStatus}`,
-      );
-    } else {
-      // Additional tab/device → keep current intent
-      intentStatus = existing.intentStatus;
-      trigger = 'system_connect';
-    }
 
     const connections = existing?.connections
       ? [...existing.connections.filter((id) => id !== socketId), socketId]
       : [socketId];
 
-    // Per-agent capacity: prefer the freshly-resolved user value, else keep the
-    // existing presence value, else the global default.
     const maxCapacity =
       attributes?.maxCapacity && attributes.maxCapacity > 0
         ? attributes.maxCapacity
         : (existing?.maxCapacity ?? DEFAULT_MAX_CAPACITY);
 
-    const presence: AgentPresence = {
+    let presenceStatus: PresenceStatus;
+    let routingStatus: RoutingStatus;
+    let trigger: StatusTransitionTrigger;
+
+    if (isFreshSession) {
+      // Login always lands AVAILABLE; only an explicit tenant opt-in arms routing.
+      presenceStatus = 'AVAILABLE';
+      routingStatus = autoAvailableOnConnect ? 'ACCEPTING' : 'NOT_ACCEPTING';
+      trigger = 'system_login';
+    } else {
+      // Reconnect or additional tab → keep prior canonical state.
+      presenceStatus = existing.presenceStatus;
+      routingStatus = existing.routingStatus;
+      trigger =
+        existing.connectionStatus === 'DISCONNECTED'
+          ? 'system_reconnect'
+          : 'system_connect';
+    }
+
+    const before = existing
+      ? {
+          presenceStatus: existing.presenceStatus,
+          routingStatus: existing.routingStatus,
+          workStatus: existing.workStatus,
+        }
+      : null;
+
+    const presence = this.buildPresence({
       userId,
       tenantId,
-      intentStatus,
-      connectionStatus: 'connected',
-      routingStatus: computeRoutingStatus(
-        existing?.activeConversations ?? 0,
-        maxCapacity,
-      ),
-      status: computeDisplayStatus(intentStatus, 'connected'),
+      presenceStatus,
+      routingStatus,
+      workStatus: existing?.workStatus ?? 'IDLE',
+      connectionStatus: 'CONNECTED',
       activeConversations: existing?.activeConversations ?? 0,
       maxCapacity,
-      // Hydrate skills from the user record; fall back to the existing cached
-      // value on reconnect when no attributes were supplied.
       skills: attributes?.skills ?? existing?.skills,
       connections,
       lastHeartbeat: new Date(),
-      lastHeartbeatMs: Date.now(),
       disconnectedAt: undefined,
+      lastCommandTs: existing?.lastCommandTs,
       socketId,
-    };
+    });
 
     await this.persistPresence(presence);
-
     this.logger.log(
-      `Agent ${userId} socket ${socketId} connected (${connections.length} total connections)`,
+      `Agent ${userId} socket ${socketId} connected ` +
+        `(fresh=${isFreshSession}, ${connections.length} connections, ` +
+        `presence=${presence.presenceStatus})`,
     );
 
-    // Fire audit callback for fresh session intent assignment
-    if (isFreshSession && this.statusTransitionCallback) {
-      try {
-        await this.statusTransitionCallback(
-          tenantId,
-          userId,
-          'offline',
-          intentStatus,
-          trigger,
-        );
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`Status transition callback failed: ${message}`);
-      }
-    }
-
-    // Fire audit callback for reconnect (connection restored)
-    if (
-      !isFreshSession &&
-      existing?.connectionStatus === 'disconnected' &&
-      this.statusTransitionCallback
-    ) {
-      try {
-        await this.statusTransitionCallback(
-          tenantId,
-          userId,
-          existing.intentStatus, // "from" is the same because intent didn't change
-          intentStatus,
-          trigger,
-        );
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`Status transition callback failed: ${message}`);
-      }
-    }
-
+    await this.afterMutation(presence, before, trigger);
     return { presence, isFreshSession };
   }
 
   /**
-   * Remove a socket connection for an agent.
-   * Called when a single socket disconnects (tab close, network drop).
-   *
-   * - Removes socketId from connections[]
-   * - If connections[] is now empty → sets connectionStatus = 'disconnected'
-   *   and records disconnectedAt for grace period tracking
-   * - Does NOT change intentStatus — the grace period timer handles that
-   *
-   * @returns `allDisconnected` = true if this was the last connection
+   * Remove a socket connection. When the last connection is gone, mark the
+   * connection DISCONNECTED and record disconnectedAt (grace period handled by
+   * the gateway). Does NOT change presenceStatus — grace expiry does that.
    */
   async removeConnection(
     tenantId: string,
     userId: string,
     socketId: string,
-  ): Promise<{
-    presence: AgentPresence | null;
-    allDisconnected: boolean;
-  }> {
+  ): Promise<{ presence: AgentPresence | null; allDisconnected: boolean }> {
     const existing = await this.getPresence(tenantId, userId);
-
     if (!existing) {
       return { presence: null, allDisconnected: true };
     }
@@ -615,32 +781,22 @@ export class AgentPresenceService {
     const connections = existing.connections.filter((id) => id !== socketId);
     const allDisconnected = connections.length === 0;
 
-    const connectionStatus: AgentConnectionStatus = allDisconnected
-      ? 'disconnected'
-      : 'connected';
-
     const presence: AgentPresence = {
       ...existing,
       connections,
-      connectionStatus,
-      status: computeDisplayStatus(existing.intentStatus, connectionStatus),
+      connectionStatus: allDisconnected ? 'DISCONNECTED' : 'CONNECTED',
       disconnectedAt: allDisconnected ? new Date() : existing.disconnectedAt,
       lastHeartbeat: new Date(),
     };
-
-    // Remove deprecated socketId if the disconnected socket was the primary
     if (existing.socketId === socketId) {
-      presence.socketId = connections[0]; // next available, or undefined
+      presence.socketId = connections[0];
     }
 
     await this.persistPresence(presence);
-
     this.logger.log(
       `Agent ${userId} socket ${socketId} disconnected ` +
-        `(${connections.length} remaining). ` +
-        `allDisconnected=${allDisconnected}`,
+        `(${connections.length} remaining, allDisconnected=${allDisconnected})`,
     );
-
     return { presence, allDisconnected };
   }
 
@@ -649,8 +805,7 @@ export class AgentPresenceService {
   // ────────────────────────────────────────────────────────────────────
 
   /**
-   * Called when the grace period expires and the agent hasn't reconnected.
-   * Forces intentStatus → 'offline' and triggers audit log.
+   * Called when the grace period expires without reconnection. Forces OFFLINE.
    */
   async handleGracePeriodExpired(
     tenantId: string,
@@ -659,44 +814,91 @@ export class AgentPresenceService {
     const existing = await this.getPresence(tenantId, userId);
     if (!existing) return null;
 
-    // Guard: if agent reconnected in the meantime, skip
-    if (existing.connectionStatus === 'connected') {
+    if (existing.connectionStatus === 'CONNECTED') {
       this.logger.debug(
-        `Grace period expired for agent ${userId} but they're already reconnected — skipping`,
+        `Grace period expired for agent ${userId} but already reconnected — skipping`,
       );
       return existing;
     }
 
-    return this.updateIntentStatus(
-      tenantId,
-      userId,
-      'offline',
-      'system_grace_expired',
+    const before = {
+      presenceStatus: existing.presenceStatus,
+      routingStatus: existing.routingStatus,
+      workStatus: existing.workStatus,
+    };
+    const result = forceOffline(
+      {
+        presenceStatus: existing.presenceStatus,
+        routingStatus: existing.routingStatus,
+        workStatus: existing.workStatus,
+        connectionStatus: existing.connectionStatus,
+        currentLoad: existing.activeConversations,
+        maxLoad: existing.maxCapacity,
+        updatedAtMs: existing.lastHeartbeatMs,
+      },
+      { trigger: 'system_grace_expired', nowMs: Date.now(), actor: 'system' },
     );
+    const presence: AgentPresence = {
+      ...existing,
+      presenceStatus: result.state.presenceStatus,
+      routingStatus: result.state.routingStatus,
+      connectionStatus: 'DISCONNECTED',
+      lastHeartbeat: new Date(),
+    };
+    await this.persistPresence(presence);
+    await this.afterMutation(presence, before, 'system_grace_expired');
+    return presence;
+  }
+
+  /**
+   * Midnight rollover (§3.2) — reset routing to NOT_ACCEPTING for an agent who
+   * is online across the day boundary. Presence is preserved; the segment is
+   * cut by the rollover cron (Phase 2). Returns true if routing changed.
+   */
+  async applyDayRollover(tenantId: string, userId: string): Promise<boolean> {
+    const existing = await this.getPresence(tenantId, userId);
+    if (!existing) return false;
+    const result = applyDayRolloverReset(
+      {
+        presenceStatus: existing.presenceStatus,
+        routingStatus: existing.routingStatus,
+        workStatus: existing.workStatus,
+        connectionStatus: existing.connectionStatus,
+        currentLoad: existing.activeConversations,
+        maxLoad: existing.maxCapacity,
+        updatedAtMs: existing.lastHeartbeatMs,
+      },
+      Date.now(),
+    );
+    if (result.changed.length === 0) return false;
+    const before = {
+      presenceStatus: existing.presenceStatus,
+      routingStatus: existing.routingStatus,
+      workStatus: existing.workStatus,
+    };
+    const presence: AgentPresence = {
+      ...existing,
+      routingStatus: result.state.routingStatus,
+      lastHeartbeat: new Date(),
+    };
+    await this.persistPresence(presence);
+    await this.afterMutation(presence, before, 'system_day_rollover');
+    return true;
   }
 
   // ────────────────────────────────────────────────────────────────────
   // Heartbeat
   // ────────────────────────────────────────────────────────────────────
 
-  /**
-   * Refresh heartbeat TTL without changing any status.
-   * Called periodically by the frontend (every 30s).
-   *
-   * If the key doesn't exist, we do NOT re-register the agent as offline.
-   * The grace period + fallback service handles that case properly.
-   */
   async heartbeat(tenantId: string, userId: string): Promise<void> {
     const presence = await this.getPresence(tenantId, userId);
     if (presence) {
       presence.lastHeartbeat = new Date();
       await this.persistPresence(presence);
     } else {
-      // Key expired or never existed — do NOT auto-register.
-      // The frontend will re-establish via socket connect → addConnection().
       this.logger.warn(
         `Heartbeat for agent ${userId} but no presence key — ignoring ` +
-          `(agent will re-register on reconnect)`,
+          `(will re-register on reconnect)`,
       );
     }
   }
@@ -706,13 +908,8 @@ export class AgentPresenceService {
   // ────────────────────────────────────────────────────────────────────
 
   /**
-   * Atomically increment the active conversation count for an agent.
-   * The counterpart to releaseConversation(), used by the routing engine
-   * and manual assignment endpoints (F-09 fix) to keep Redis capacity in
-   * sync when conversations are assigned directly via the REST API.
-   *
-   * If the agent has no presence record (offline/not in Redis), this is a no-op —
-   * the count will be reconciled from MongoDB when they next connect.
+   * Atomically increment the active conversation count (used by direct/manual
+   * assignment to keep Redis in sync). No-op if the agent has no presence.
    */
   async assignConversation(tenantId: string, userId: string): Promise<void> {
     const client = this.redis.getClient();
@@ -720,36 +917,27 @@ export class AgentPresenceService {
     const loadKey = tenantAgentLoadKey(tenantId);
 
     const raw = await client.hget(hashKey, userId);
-    if (!raw) return; // Agent not in Redis — no-op
+    if (!raw) return;
 
     try {
       const data: AgentPresence = JSON.parse(raw);
       const active = (data.activeConversations ?? 0) + 1;
       data.activeConversations = active;
-      data.routingStatus =
-        active >= (data.maxCapacity ?? DEFAULT_MAX_CAPACITY) ? 'full' : 'accept';
+      data.capacityStatus = computeCapacityStatus(
+        active,
+        data.maxCapacity ?? DEFAULT_MAX_CAPACITY,
+      );
 
       const encoded = JSON.stringify(data);
       const pipeline = client.pipeline();
       pipeline.hset(hashKey, userId, encoded);
       pipeline.zadd(loadKey, active, userId);
       await pipeline.exec();
-
-      this.logger.debug(
-        `Assigned conversation for agent ${userId} ` +
-          `(${active}/${data.maxCapacity}) [routing: ${data.routingStatus}]`,
-      );
     } catch {
-      // Parse error — presence record is corrupted, skip silently
+      // Corrupted record — skip silently
     }
   }
 
-
-  /**
-   * Atomically reserve the least-loaded eligible agent from a candidate list.
-   * The Lua script runs entirely inside Redis: it checks presence eligibility,
-   * capacity, ZSET score, increments load, and returns the selected agent id.
-   */
   async reserveAgentFromCandidates(
     tenantId: string,
     candidateIds: string[],
@@ -765,23 +953,12 @@ export class AgentPresenceService {
       tenantAgentLoadKey(tenantId),
       candidates.length.toString(),
       ...candidates,
-      // F-01: pass current timestamp and TTL threshold so the Lua script
-      // can reject stale Hash entries without an extra Redis round-trip.
       Date.now().toString(),
       (HEARTBEAT_TTL_SECONDS * 1000).toString(),
     );
-
     return typeof result === 'string' ? result : null;
   }
 
-  /**
-   * Atomically reserve the FIRST eligible agent from an ORDERED candidate list.
-   * Used by `round-robin`: the caller passes an already-rotated list and this
-   * honours that order (first-fit), instead of picking the lowest-load agent.
-   * Replaces the previous N-round-trip loop (one Lua EVAL per candidate) with a
-   * single EVAL while preserving rotation fairness. Set preserves insertion
-   * order, so dedupe does not disturb the rotation.
-   */
   async reserveFirstEligibleAgent(
     tenantId: string,
     orderedCandidateIds: string[],
@@ -800,16 +977,9 @@ export class AgentPresenceService {
       Date.now().toString(),
       (HEARTBEAT_TTL_SECONDS * 1000).toString(),
     );
-
     return typeof result === 'string' ? result : null;
   }
 
-  /**
-   * Atomically reserve the least-loaded eligible agent from a candidate list,
-   * gating on the effective capacity (per-agent → tenant default → hardcoded).
-   * Used by the `capacity-based` strategy. Increments the same load counter as
-   * reserveAgentFromCandidates(), so all strategies stay in sync.
-   */
   async reserveCapacityBasedAgent(
     tenantId: string,
     candidateIds: string[],
@@ -833,20 +1003,15 @@ export class AgentPresenceService {
         : DEFAULT_MAX_CAPACITY
       ).toString(),
     );
-
     return typeof result === 'string' ? result : null;
   }
 
   /**
-   * Atomically decrement the active conversation count for an agent.
-   *
-   * CRITICAL: This NEVER changes intentStatus. If the agent manually
-   * set 'busy', they stay 'busy'. Only routingStatus changes
-   * (full → accept when capacity frees up).
+   * Atomically decrement the active conversation count. NEVER changes
+   * presenceStatus or routingStatus — only capacityStatus (FULL → OK).
    */
   async releaseConversation(tenantId: string, userId: string): Promise<void> {
     const client = this.redis.getClient();
-
     const result = await client.eval(
       LUA_ATOMIC_RELEASE,
       2,
@@ -865,7 +1030,7 @@ export class AgentPresenceService {
       this.logger.log(
         `Released conversation for agent ${userId} ` +
           `(${updated.activeConversations}/${updated.maxCapacity}) ` +
-          `[intent: ${updated.intentStatus}, routing: ${updated.routingStatus}]`,
+          `[presence: ${updated.presenceStatus}, capacity: ${updated.capacityStatus}]`,
       );
     }
   }
@@ -874,17 +1039,6 @@ export class AgentPresenceService {
   // Reconciliation (P0 self-healing)
   // ────────────────────────────────────────────────────────────────────
 
-  /**
-   * Overwrite an agent's `activeConversations` counter with the authoritative
-   * value from MongoDB. Recomputes `routingStatus` accordingly.
-   *
-   * Called by PresenceReconciliationService when drift is detected between the
-   * Redis counter and MongoDB ground truth (e.g. after a Redis flush).
-   *
-   * @param tenantId  - tenant owning the agent
-   * @param userId    - agent whose counter should be patched
-   * @param actual    - authoritative count from MongoDB countDocuments
-   */
   async patchActiveConversations(
     tenantId: string,
     userId: string,
@@ -905,17 +1059,12 @@ export class AgentPresenceService {
     try {
       const data: AgentPresence = JSON.parse(raw);
       data.activeConversations = actual;
-      data.routingStatus = actual >= data.maxCapacity ? 'full' : 'accept';
-
-      // Recompute display status
-      if (
-        data.intentStatus === 'offline' ||
-        data.connectionStatus === 'disconnected'
-      ) {
-        data.status = 'offline';
-      } else {
-        data.status = data.intentStatus as any;
-      }
+      data.capacityStatus = computeCapacityStatus(actual, data.maxCapacity);
+      data.status = computeDisplayStatus(
+        data.presenceStatus,
+        data.routingStatus,
+        data.connectionStatus,
+      );
 
       const encoded = JSON.stringify(data);
       const pipeline = client.pipeline();
@@ -926,7 +1075,7 @@ export class AgentPresenceService {
 
       this.logger.log(
         `Patched activeConversations for agent ${userId} → ${actual} ` +
-          `(routingStatus: ${data.routingStatus})`,
+          `(capacity: ${data.capacityStatus})`,
       );
     } catch (err: any) {
       this.logger.error(
@@ -939,10 +1088,6 @@ export class AgentPresenceService {
   // Queries
   // ────────────────────────────────────────────────────────────────────
 
-
-  /**
-   * Get a single agent's presence.
-   */
   async getPresence(
     tenantId: string,
     userId: string,
@@ -968,9 +1113,6 @@ export class AgentPresenceService {
     return presence;
   }
 
-  /**
-   * Get all agents for a tenant (any status).
-   */
   async getAllAgents(tenantId: string): Promise<AgentPresence[]> {
     const client = this.redis.getClient();
     const hashKey = tenantPresenceHashKey(tenantId);
@@ -998,22 +1140,22 @@ export class AgentPresenceService {
   }
 
   /**
-   * Get all agents eligible for auto-assignment routing.
-   *
-   * An agent is eligible when ALL three conditions are met:
-   *   1. intentStatus === 'available'
-   *   2. connectionStatus === 'connected'
-   *   3. routingStatus === 'accept' (not at capacity)
+   * Get all agents eligible for auto-assignment (§2.1): AVAILABLE + CONNECTED +
+   * ACCEPTING + under capacity.
    */
   async getAvailableAgents(tenantId: string): Promise<AgentPresence[]> {
     const allAgents = await this.getAllAgents(tenantId);
-    return allAgents.filter(isEligibleForRouting);
+    return allAgents.filter((a) =>
+      isEligibleForRouting({
+        presenceStatus: a.presenceStatus,
+        connectionStatus: a.connectionStatus,
+        routingStatus: a.routingStatus,
+        currentLoad: a.activeConversations,
+        maxLoad: a.maxCapacity,
+      }),
+    );
   }
 
-  /**
-   * Get user IDs of agents eligible for routing.
-   * Used by AssignmentService for auto-assignment.
-   */
   async getOnlineAgents(tenantId: string): Promise<string[]> {
     const available = await this.getAvailableAgents(tenantId);
     return available.map((a) => a.userId);
@@ -1023,9 +1165,6 @@ export class AgentPresenceService {
   // Administration
   // ────────────────────────────────────────────────────────────────────
 
-  /**
-   * Remove an agent's presence entirely (e.g. on explicit logout).
-   */
   async removePresence(tenantId: string, userId: string): Promise<void> {
     const client = this.redis.getClient();
     const pipeline = client.pipeline();
@@ -1036,10 +1175,6 @@ export class AgentPresenceService {
     this.logger.log(`Agent ${userId} removed from presence`);
   }
 
-  /**
-   * Update the max capacity for an agent in their Redis presence record.
-   * Recomputes routingStatus after changing capacity.
-   */
   async updateMaxCapacity(
     tenantId: string,
     userId: string,
@@ -1047,38 +1182,19 @@ export class AgentPresenceService {
   ): Promise<void> {
     const presence = await this.getPresence(tenantId, userId);
     if (!presence) return;
-
     presence.maxCapacity = maxCapacity;
-    presence.routingStatus = computeRoutingStatus(
-      presence.activeConversations,
-      maxCapacity,
-    );
-    presence.status = computeDisplayStatus(
-      presence.intentStatus,
-      presence.connectionStatus,
-    );
-
     await this.persistPresence(presence);
-
     this.logger.log(
       `Updated max capacity for agent ${userId} to ${maxCapacity} ` +
-        `[routing: ${presence.routingStatus}]`,
+        `[capacity: ${presence.capacityStatus}]`,
     );
   }
 
-  /**
-   * Get the configured max capacity for an agent.
-   */
   async getAgentCapacity(tenantId: string, userId: string): Promise<number> {
     const presence = await this.getPresence(tenantId, userId);
     return presence?.maxCapacity ?? DEFAULT_MAX_CAPACITY;
   }
 
-  /**
-   * Update the cached skills for an agent in their Redis presence record.
-   * No-op if the agent has no live presence (offline) — skills will be
-   * re-hydrated from the user record on their next connect.
-   */
   async updateAgentSkills(
     tenantId: string,
     userId: string,
@@ -1093,11 +1209,6 @@ export class AgentPresenceService {
     );
   }
 
-  /**
-   * Keep cached per-agent attributes (skills, capacity) in sync when an admin
-   * edits a user. Fired by UsersService on profile update. Bounded staleness:
-   * if the agent is offline this is a no-op and the next connect re-hydrates.
-   */
   @OnEvent('user.profile.updated')
   async handleUserProfileUpdated(event: {
     tenantId: string;
