@@ -54,7 +54,9 @@ export class LivechatAdapter implements ChannelAdapter {
           ...(rawPayload.metadata ?? {}),
           contactName: rawPayload.visitorName || undefined,
         },
-        externalMessageId: `lc_${rawPayload.visitorId}_${Date.now()}`,
+        externalMessageId: rawPayload.metadata?.clientMessageId
+          ? String(rawPayload.metadata.clientMessageId)
+          : `lc_${rawPayload.visitorId}_${Date.now()}`,
         externalConversationId: rawPayload.visitorId,
         timestamp: rawPayload.timestamp
           ? new Date(rawPayload.timestamp)
