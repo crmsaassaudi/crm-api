@@ -22,6 +22,14 @@ import {
   CreateTaskExecutor,
   CreateTicketExecutor,
   AddTagExecutor,
+  RemoveTagExecutor,
+  AddNoteExecutor,
+  CreateRecordExecutor,
+  HttpRequestExecutor,
+  SendWhatsAppExecutor,
+  SendZnsExecutor,
+  SendLivechatExecutor,
+  InternalNotificationExecutor,
 } from '../engine/action-executors';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationDlqProducer } from './automation-dlq.producer';
@@ -98,6 +106,14 @@ export class ActionProcessorMixin {
       'create_task',
       'create_ticket',
       'add_tag',
+      'remove_tag',
+      'add_note',
+      'create_record',
+      'http_request',
+      'send_whatsapp',
+      'send_zns',
+      'send_livechat',
+      'internal_notification',
     ]);
     if (!validActions.has(data.actionType as string)) {
       return `unknown actionType "${data.actionType}"`;
@@ -110,6 +126,8 @@ export class ActionProcessorMixin {
       'Deal',
       'Account',
       'Task',
+      'Conversation',
+      'Message',
     ]);
     if (!validRecordTypes.has(data.recordType as string)) {
       return `unknown recordType "${data.recordType}"`;
@@ -288,6 +306,14 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
     createTask: CreateTaskExecutor,
     createTicket: CreateTicketExecutor,
     addTag: AddTagExecutor,
+    removeTag: RemoveTagExecutor,
+    addNote: AddNoteExecutor,
+    createRecord: CreateRecordExecutor,
+    httpRequest: HttpRequestExecutor,
+    sendWhatsApp: SendWhatsAppExecutor,
+    sendZns: SendZnsExecutor,
+    sendLivechat: SendLivechatExecutor,
+    internalNotification: InternalNotificationExecutor,
     cls: ClsService,
   ) {
     super();
@@ -301,6 +327,14 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
       [createTask.actionType, createTask],
       [createTicket.actionType, createTicket],
       [addTag.actionType, addTag],
+      [removeTag.actionType, removeTag],
+      [addNote.actionType, addNote],
+      [createRecord.actionType, createRecord],
+      [httpRequest.actionType, httpRequest],
+      [sendWhatsApp.actionType, sendWhatsApp],
+      [sendZns.actionType, sendZns],
+      [sendLivechat.actionType, sendLivechat],
+      [internalNotification.actionType, internalNotification],
     ]);
     this.mixin = new ActionProcessorMixin(
       executors,
@@ -311,7 +345,7 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
   }
 
   @OnWorkerEvent('failed')
-  override onFailed(job: Job, error: Error) {
+  override async onFailed(job: Job, error: Error) {
     this.mixin.handleFailedJob(job, error);
   }
 
@@ -352,7 +386,7 @@ export class AutomationEmailProcessor extends BaseTenantConsumer<AutomationActio
   }
 
   @OnWorkerEvent('failed')
-  override onFailed(job: Job, error: Error) {
+  override async onFailed(job: Job, error: Error) {
     this.mixin.handleFailedJob(job, error);
   }
 
@@ -377,12 +411,18 @@ export class AutomationSmsProcessor extends BaseTenantConsumer<AutomationActionJ
     executionLogRepo: AutomationExecutionLogRepository,
     dlqProducer: AutomationDlqProducer,
     sendSms: SendSmsExecutor,
+    sendWhatsApp: SendWhatsAppExecutor,
+    sendZns: SendZnsExecutor,
+    sendLivechat: SendLivechatExecutor,
     cls: ClsService,
   ) {
     super();
     this.cls = cls;
     const executors = new Map<string, ActionExecutor>([
       [sendSms.actionType, sendSms],
+      [sendWhatsApp.actionType, sendWhatsApp],
+      [sendZns.actionType, sendZns],
+      [sendLivechat.actionType, sendLivechat],
     ]);
     this.mixin = new ActionProcessorMixin(
       executors,
@@ -393,7 +433,7 @@ export class AutomationSmsProcessor extends BaseTenantConsumer<AutomationActionJ
   }
 
   @OnWorkerEvent('failed')
-  override onFailed(job: Job, error: Error) {
+  override async onFailed(job: Job, error: Error) {
     this.mixin.handleFailedJob(job, error);
   }
 
@@ -422,6 +462,10 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
     createTask: CreateTaskExecutor,
     createTicket: CreateTicketExecutor,
     addTag: AddTagExecutor,
+    removeTag: RemoveTagExecutor,
+    addNote: AddNoteExecutor,
+    createRecord: CreateRecordExecutor,
+    internalNotification: InternalNotificationExecutor,
     cls: ClsService,
   ) {
     super();
@@ -432,6 +476,10 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
       [createTask.actionType, createTask],
       [createTicket.actionType, createTicket],
       [addTag.actionType, addTag],
+      [removeTag.actionType, removeTag],
+      [addNote.actionType, addNote],
+      [createRecord.actionType, createRecord],
+      [internalNotification.actionType, internalNotification],
     ]);
     this.mixin = new ActionProcessorMixin(
       executors,
@@ -442,7 +490,7 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
   }
 
   @OnWorkerEvent('failed')
-  override onFailed(job: Job, error: Error) {
+  override async onFailed(job: Job, error: Error) {
     this.mixin.handleFailedJob(job, error);
   }
 
@@ -467,12 +515,14 @@ export class AutomationWebhookProcessor extends BaseTenantConsumer<AutomationAct
     executionLogRepo: AutomationExecutionLogRepository,
     dlqProducer: AutomationDlqProducer,
     webhook: WebhookExecutor,
+    httpRequest: HttpRequestExecutor,
     cls: ClsService,
   ) {
     super();
     this.cls = cls;
     const executors = new Map<string, ActionExecutor>([
       [webhook.actionType, webhook],
+      [httpRequest.actionType, httpRequest],
     ]);
     this.mixin = new ActionProcessorMixin(
       executors,
@@ -483,7 +533,7 @@ export class AutomationWebhookProcessor extends BaseTenantConsumer<AutomationAct
   }
 
   @OnWorkerEvent('failed')
-  override onFailed(job: Job, error: Error) {
+  override async onFailed(job: Job, error: Error) {
     this.mixin.handleFailedJob(job, error);
   }
 

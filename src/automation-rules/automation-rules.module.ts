@@ -59,6 +59,14 @@ import {
   CreateTaskExecutor,
   CreateTicketExecutor,
   AddTagExecutor,
+  RemoveTagExecutor,
+  AddNoteExecutor,
+  CreateRecordExecutor,
+  HttpRequestExecutor,
+  SendWhatsAppExecutor,
+  SendZnsExecutor,
+  SendLivechatExecutor,
+  InternalNotificationExecutor,
 } from './engine/action-executors';
 
 // ── Providers (Email + SMS) ─────────────────────────────────────────────
@@ -97,6 +105,7 @@ import { AccountsModule } from '../accounts/accounts.module';
 import { TasksModule } from '../tasks/tasks.module';
 import { AssignmentEngineModule } from '../assignment-engine/assignment-engine.module';
 import { ChannelsModule } from '../channels/channels.module';
+import { NotesModule } from '../notes/notes.module';
 import { isWorkerRuntime } from '../config/runtime-role';
 import {
   TicketSchemaClass,
@@ -154,6 +163,8 @@ const workerProviders = isWorkerRuntime()
     forwardRef(() => AssignmentEngineModule),
     // Channel Config — needed by SendEmailExecutor/SendSmsExecutor for dynamic credentials
     forwardRef(() => ChannelsModule),
+    // Notes — needed by AddNoteExecutor for contact notes
+    forwardRef(() => NotesModule),
   ],
   controllers: [
     AutomationRulesController,
@@ -183,7 +194,7 @@ const workerProviders = isWorkerRuntime()
     CrmRecordUpdateService,
     SsrfGuardService,
     WebhookHeaderCryptoService,
-    // Action Executors (all 8 types)
+    // Action Executors (all 15 types)
     SendEmailExecutor,
     SendSmsExecutor,
     UpdateFieldExecutor,
@@ -192,6 +203,14 @@ const workerProviders = isWorkerRuntime()
     CreateTaskExecutor,
     CreateTicketExecutor,
     AddTagExecutor,
+    RemoveTagExecutor,
+    AddNoteExecutor,
+    CreateRecordExecutor,
+    HttpRequestExecutor,
+    SendWhatsAppExecutor,
+    SendZnsExecutor,
+    SendLivechatExecutor,
+    InternalNotificationExecutor,
     // Email Provider (SendGrid — dry-run if no API key)
     {
       provide: EMAIL_PROVIDER_TOKEN,

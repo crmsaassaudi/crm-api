@@ -26,6 +26,10 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WebhookHeaderCryptoService } from './webhook-header-crypto.service';
 import { TasksService } from '../../tasks/tasks.service';
 import { TicketsService } from '../../tickets/tickets.service';
+import { NotesService } from '../../notes/notes.service';
+import { ContactsService } from '../../contacts/contacts.service';
+import { DealsService } from '../../deals/deals.service';
+import { AccountsService } from '../../accounts/accounts.service';
 
 /**
  * Base interface for all action executors.
@@ -1037,6 +1041,799 @@ export class AddTagExecutor implements ActionExecutor {
     return {
       success: true,
       output: { addedTags: rawTags, mergedTags },
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Remove Tag Executor
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class RemoveTagExecutor implements ActionExecutor {
+  readonly actionType = 'remove_tag';
+  private readonly logger = new Logger(RemoveTagExecutor.name);
+
+  constructor(private readonly crmUpdate: CrmRecordUpdateService) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { recordId, recordType, actionConfig, tenantId, recordData } = job;
+
+    const rawTags: string[] = Array.isArray(actionConfig.tags)
+      ? actionConfig.tags
+      : typeof actionConfig.tags === 'string'
+        ? actionConfig.tags
+            .split(',')
+            .map((t: string) => t.trim())
+            .filter(Boolean)
+        : [];
+
+    if (rawTags.length === 0) {
+      return {
+        success: false,
+        error: { code: 'NO_TAGS', message: 'actionConfig.tags is required' },
+      };
+    }
+
+    this.logger.log(
+      `[RemoveTag] tenant=${tenantId} ${recordType}(${recordId}) -= [${rawTags.join(', ')}]`,
+    );
+
+    // Set-difference: O(n) with Set lookup
+    const existingTags: string[] = Array.isArray(recordData.tags)
+      ? recordData.tags
+      : [];
+    const removeSet = new Set(rawTags);
+    const filteredTags = existingTags.filter((t) => !removeSet.has(t));
+
+    // Skip DB write if no change (idempotent optimization)
+    if (filteredTags.length === existingTags.length) {
+      this.logger.log(
+        `[RemoveTag] No-op: none of [${rawTags.join(', ')}] found on ${recordType}(${recordId})`,
+      );
+      return { success: true, output: { removedTags: [], remainingTags: existingTags } };
+    }
+
+    const result = await this.crmUpdate.updateField({
+      tenantId,
+      recordType: recordType as any,
+      recordId,
+      field: 'tags',
+      value: filteredTags,
+      sourceWorkflowId: job.sourceWorkflowId,
+      automationDepth: job.automationDepth,
+      automationBreadcrumbs: job.automationBreadcrumbs,
+    });
+
+    if (!result.success) {
+      return {
+        success: false,
+        error: {
+          code: 'REMOVE_TAG_FAILED',
+          message:
+            result.error ||
+            `Failed to remove tags from ${recordType}(${recordId})`,
+        },
+      };
+    }
+
+    const actuallyRemoved = existingTags.filter((t) => removeSet.has(t));
+    this.logger.log(
+      `[RemoveTag] ✅ Removed [${actuallyRemoved.join(', ')}] from ${recordType}(${recordId})`,
+    );
+
+    return {
+      success: true,
+      output: { removedTags: actuallyRemoved, remainingTags: filteredTags },
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Add Note Executor
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class AddNoteExecutor implements ActionExecutor {
+  readonly actionType = 'add_note';
+  private readonly logger = new Logger(AddNoteExecutor.name);
+
+  constructor(
+    private readonly notesService: NotesService,
+    private readonly templateEngine: TemplateInterpolationService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
+  ) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { recordId, recordType, actionConfig, tenantId, recordData } = job;
+
+    const content = this.templateEngine.interpolate(
+      actionConfig.content || '',
+      recordData,
+      { fallbackMap: { firstName: 'Record', Name: 'Record' } },
+    );
+
+    if (!content.trim()) {
+      return {
+        success: false,
+        error: { code: 'EMPTY_NOTE', message: 'Note content is empty after interpolation' },
+      };
+    }
+
+    // Resolve contactId: direct if Contact, else look in recordData hierarchy
+    const contactId =
+      recordType === 'Contact'
+        ? recordId
+        : recordData.contactId || recordData.relatedContact?.id || undefined;
+
+    this.logger.log(
+      `[AddNote] tenant=${tenantId} contactId=${contactId || 'N/A'} noteType=${actionConfig.noteType || 'system'} contentLength=${content.length}`,
+    );
+
+    // If we have a contactId, create a real note
+    if (contactId) {
+      try {
+        const note = await this.notesService.createForContact(contactId, {
+          content,
+          title: `[Automation] ${content.length > 60 ? content.slice(0, 60) + '...' : content}`,
+        } as any);
+
+        this.logger.log(
+          `[AddNote] ✅ Note ${note.id} created for contact=${contactId} via ${recordType}(${recordId})`,
+        );
+
+        return {
+          success: true,
+          output: { noteId: note.id, contactId, noteType: actionConfig.noteType || 'system' },
+        };
+      } catch (err: any) {
+        this.logger.error(`[AddNote] Failed: ${err.message}`, err.stack);
+        return {
+          success: false,
+          error: { code: 'ADD_NOTE_FAILED', message: err.message },
+        };
+      }
+    }
+
+    // Fallback: emit as activity log event if no contact context
+    this.logger.log(
+      `[AddNote] No contactId resolvable for ${recordType}(${recordId}), emitting as activity event`,
+    );
+    this.eventEmitter?.emit('automation.note-fallback', {
+      tenantId,
+      recordType,
+      recordId,
+      content,
+      noteType: actionConfig.noteType || 'system',
+    });
+
+    return {
+      success: true,
+      output: { fallback: true, recordType, recordId, noteType: actionConfig.noteType },
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Create Record Executor
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class CreateRecordExecutor implements ActionExecutor {
+  readonly actionType = 'create_record';
+  private readonly logger = new Logger(CreateRecordExecutor.name);
+
+  /** Record type → service mapping, resolved lazily to avoid circular deps */
+  private static readonly SUPPORTED_TYPES = new Set([
+    'Contact', 'Lead', 'Deal', 'Account', 'Ticket', 'Task',
+  ]);
+
+  constructor(
+    private readonly templateEngine: TemplateInterpolationService,
+    @Optional() private readonly contactsService?: ContactsService,
+    @Optional() private readonly dealsService?: DealsService,
+    @Optional() private readonly ticketsService?: TicketsService,
+    @Optional() private readonly tasksService?: TasksService,
+    @Optional() private readonly accountsService?: AccountsService,
+  ) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { recordId, recordType, actionConfig, tenantId, recordData } = job;
+    const targetType = actionConfig.recordType || 'Contact';
+
+    if (!CreateRecordExecutor.SUPPORTED_TYPES.has(targetType)) {
+      return {
+        success: false,
+        retryable: false,
+        error: {
+          code: 'UNSUPPORTED_RECORD_TYPE',
+          message: `Record type "${targetType}" is not supported. Valid: ${[...CreateRecordExecutor.SUPPORTED_TYPES].join(', ')}`,
+        },
+      };
+    }
+
+    // Parse field mappings: JSON string → object, then interpolate each value
+    let fieldData: Record<string, any>;
+    try {
+      const raw =
+        typeof actionConfig.fieldMappings === 'string'
+          ? JSON.parse(actionConfig.fieldMappings)
+          : actionConfig.fieldMappings || {};
+
+      fieldData = {};
+      for (const [key, val] of Object.entries(raw)) {
+        fieldData[key] =
+          typeof val === 'string'
+            ? this.templateEngine.interpolate(val, recordData)
+            : val;
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        retryable: false,
+        error: {
+          code: 'INVALID_FIELD_MAPPINGS',
+          message: `Failed to parse fieldMappings: ${err.message}`,
+        },
+      };
+    }
+
+    this.logger.log(
+      `[CreateRecord] tenant=${tenantId} type=${targetType} fields=${Object.keys(fieldData).length} triggeredBy=${recordType}(${recordId})`,
+    );
+
+    try {
+      const created = await this.createByType(targetType, fieldData);
+
+      this.logger.log(
+        `[CreateRecord] ✅ Created ${targetType} ${created.id} with ${Object.keys(fieldData).length} fields`,
+      );
+
+      return {
+        success: true,
+        output: { recordType: targetType, recordId: created.id },
+      };
+    } catch (err: any) {
+      this.logger.error(`[CreateRecord] Failed: ${err.message}`, err.stack);
+
+      // Mongoose ValidationError → non-retryable
+      const retryable = err.name !== 'ValidationError' && err.name !== 'CastError';
+      return {
+        success: false,
+        retryable,
+        error: { code: 'CREATE_RECORD_FAILED', message: err.message },
+      };
+    }
+  }
+
+  private async createByType(
+    type: string,
+    data: Record<string, any>,
+  ): Promise<{ id: string }> {
+    switch (type) {
+      case 'Contact':
+      case 'Lead':
+        if (!this.contactsService) throw new Error('ContactsService not available');
+        return this.contactsService.create(data as any);
+      case 'Deal':
+        if (!this.dealsService) throw new Error('DealsService not available');
+        return this.dealsService.create(data as any);
+      case 'Ticket':
+        if (!this.ticketsService) throw new Error('TicketsService not available');
+        return this.ticketsService.create(data as any);
+      case 'Task':
+        if (!this.tasksService) throw new Error('TasksService not available');
+        return this.tasksService.create(data as any);
+      case 'Account':
+        if (!this.accountsService) throw new Error('AccountsService not available');
+        return this.accountsService.create(data as any);
+      default:
+        throw new Error(`Unsupported type: ${type}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP Request Executor
+// ---------------------------------------------------------------------------
+
+/** Hard timeout for HTTP requests (milliseconds). */
+const HTTP_REQUEST_HARD_TIMEOUT_MS = 5000;
+/** Max response body size to prevent memory bombs (bytes). */
+const HTTP_RESPONSE_MAX_BYTES = 65_536; // 64 KB
+
+@Injectable()
+export class HttpRequestExecutor implements ActionExecutor {
+  readonly actionType = 'http_request';
+  private readonly logger = new Logger(HttpRequestExecutor.name);
+
+  constructor(
+    private readonly templateEngine: TemplateInterpolationService,
+    private readonly ssrfGuard: SsrfGuardService,
+    private readonly crmUpdate: CrmRecordUpdateService,
+  ) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { actionConfig, recordData, tenantId, recordId, recordType } = job;
+    const url = actionConfig.url;
+    const method = (actionConfig.method || 'GET').toUpperCase();
+
+    if (!url) {
+      return {
+        success: false,
+        error: { code: 'NO_URL', message: 'url is required for http_request' },
+      };
+    }
+
+    // SSRF Guard
+    const ssrfCheck = await this.ssrfGuard.validate(url);
+    if (!ssrfCheck.safe) {
+      this.logger.warn(`[HttpRequest] SSRF BLOCKED: ${url} - ${ssrfCheck.reason}`);
+      return {
+        success: false,
+        retryable: false,
+        error: { code: 'SSRF_BLOCKED', message: ssrfCheck.reason! },
+      };
+    }
+
+    // DNS Pinning
+    let fetchUrl = url;
+    const pinnedHeaders: Record<string, string> = {};
+    if (ssrfCheck.resolvedIp) {
+      const parsedUrl = new URL(url);
+      const originalHost = parsedUrl.host;
+      const ipLiteral = ssrfCheck.resolvedIp.includes(':')
+        ? `[${ssrfCheck.resolvedIp}]`
+        : ssrfCheck.resolvedIp;
+      parsedUrl.hostname = ipLiteral;
+      fetchUrl = parsedUrl.toString();
+      pinnedHeaders['Host'] = originalHost;
+    }
+
+    // Build headers from config
+    const userHeaders: Record<string, string> = {};
+    if (Array.isArray(actionConfig.headers)) {
+      for (const h of actionConfig.headers) {
+        if (h.key && h.value) {
+          userHeaders[h.key] = this.templateEngine.interpolate(h.value, recordData);
+        }
+      }
+    }
+
+    // Interpolate body
+    let bodyStr: string | undefined;
+    if (method !== 'GET' && method !== 'HEAD') {
+      bodyStr = actionConfig.bodyTemplate
+        ? this.templateEngine.interpolate(actionConfig.bodyTemplate, recordData)
+        : JSON.stringify(recordData);
+    }
+
+    this.logger.log(
+      `[HttpRequest] tenant=${tenantId} ${method} ${url} bodyLength=${bodyStr?.length || 0}`,
+    );
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), HTTP_REQUEST_HARD_TIMEOUT_MS);
+
+      const fetchOptions: RequestInit = {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...userHeaders,
+          ...pinnedHeaders,
+        },
+        signal: controller.signal,
+      };
+
+      if (bodyStr) {
+        fetchOptions.body = bodyStr;
+      }
+
+      const response = await fetch(fetchUrl, fetchOptions);
+
+      // Read response with size limit
+      const responseBody = await this.readResponseCapped(response);
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: {
+            code: 'HTTP_ERROR',
+            message: `HTTP ${response.status} ${response.statusText}: ${responseBody.substring(0, 200)}`,
+          },
+        };
+      }
+
+      // Response mapping: extract values and write back to record
+      let mappedOutput: Record<string, any> = {};
+      if (actionConfig.responseMapping && responseBody) {
+        mappedOutput = await this.applyResponseMapping(
+          actionConfig.responseMapping,
+          responseBody,
+          { tenantId, recordType, recordId, job },
+        );
+      }
+
+      return {
+        success: true,
+        output: {
+          status: response.status,
+          url,
+          method,
+          responseMapped: Object.keys(mappedOutput).length > 0,
+          ...mappedOutput,
+        },
+      };
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        this.logger.warn(`[HttpRequest] TIMEOUT after ${HTTP_REQUEST_HARD_TIMEOUT_MS}ms: ${url}`);
+        return {
+          success: false,
+          error: { code: 'HTTP_TIMEOUT', message: `Request to ${url} timed out` },
+        };
+      }
+
+      this.logger.error(`[HttpRequest] Failed: ${error.message}`, error.stack);
+      return {
+        success: false,
+        error: { code: 'HTTP_ERROR', message: error.message },
+      };
+    }
+  }
+
+  /** Read response body up to HTTP_RESPONSE_MAX_BYTES to prevent memory bombs. */
+  private async readResponseCapped(response: Response): Promise<string> {
+    try {
+      const reader = response.body?.getReader();
+      if (!reader) return '';
+
+      const chunks: Uint8Array[] = [];
+      let totalSize = 0;
+
+      while (totalSize < HTTP_RESPONSE_MAX_BYTES) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        totalSize += value.length;
+      }
+
+      reader.cancel().catch(() => {});
+      const merged = new Uint8Array(Math.min(totalSize, HTTP_RESPONSE_MAX_BYTES));
+      let offset = 0;
+      for (const chunk of chunks) {
+        const copyLen = Math.min(chunk.length, HTTP_RESPONSE_MAX_BYTES - offset);
+        merged.set(chunk.subarray(0, copyLen), offset);
+        offset += copyLen;
+        if (offset >= HTTP_RESPONSE_MAX_BYTES) break;
+      }
+      return new TextDecoder().decode(merged);
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Apply response mapping: parse JSON response, extract value at dot-path,
+   * write back to record via CrmRecordUpdateService.
+   *
+   * Format: "response.path → recordField" (one mapping per line)
+   */
+  private async applyResponseMapping(
+    mappingStr: string,
+    responseBody: string,
+    ctx: { tenantId: string; recordType: string; recordId: string; job: AutomationActionJobData },
+  ): Promise<Record<string, any>> {
+    const result: Record<string, any> = {};
+    try {
+      const responseJson = JSON.parse(responseBody);
+      const lines = mappingStr.split('\n').filter((l) => l.includes('→') || l.includes('->'));
+
+      for (const line of lines) {
+        const [srcPath, targetField] = line.split(/→|->/).map((s) => s.trim());
+        if (!srcPath || !targetField) continue;
+
+        // Extract value at dot-notation path: O(depth) where depth ≤ 10
+        const value = this.getNestedValue(responseJson, srcPath);
+        if (value !== undefined) {
+          await this.crmUpdate.updateField({
+            tenantId: ctx.tenantId,
+            recordType: ctx.recordType as any,
+            recordId: ctx.recordId,
+            field: targetField,
+            value,
+            sourceWorkflowId: ctx.job.sourceWorkflowId,
+            automationDepth: ctx.job.automationDepth,
+            automationBreadcrumbs: ctx.job.automationBreadcrumbs,
+          });
+          result[targetField] = value;
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`[HttpRequest] Response mapping error: ${err.message}`);
+    }
+    return result;
+  }
+
+  /** Safely traverse nested object by dot-path. Capped at 10 levels to prevent abuse. */
+  private getNestedValue(obj: any, path: string): any {
+    const parts = path.split('.');
+    if (parts.length > 10) return undefined;
+    let current = obj;
+    for (const part of parts) {
+      if (current == null || typeof current !== 'object') return undefined;
+      current = current[part];
+    }
+    return current;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Send WhatsApp Executor (dry-run stub — Meta WABA integration pending)
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class SendWhatsAppExecutor implements ActionExecutor {
+  readonly actionType = 'send_whatsapp';
+  private readonly logger = new Logger(SendWhatsAppExecutor.name);
+
+  constructor(private readonly templateEngine: TemplateInterpolationService) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { recordId, recordType, actionConfig, tenantId, recordData } = job;
+
+    const recipientField = actionConfig.recipientField || 'phones';
+    const phone = recordData[recipientField]?.[0] || recordData[recipientField] || recordData.phones?.[0];
+
+    if (!phone) {
+      return {
+        success: false,
+        error: { code: 'NO_PHONE', message: `No phone found in field "${recipientField}"` },
+      };
+    }
+
+    const templateName = this.templateEngine.interpolate(
+      actionConfig.templateName || '',
+      recordData,
+    );
+
+    if (!templateName) {
+      return {
+        success: false,
+        error: { code: 'NO_TEMPLATE', message: 'WhatsApp template name is required' },
+      };
+    }
+
+    this.logger.log(
+      `[SendWhatsApp] DRY-RUN tenant=${tenantId} to=${phone} template="${templateName}" lang=${actionConfig.language || 'vi'}`,
+    );
+
+    // TODO: Integrate with Meta Cloud API POST /v17.0/{phone_id}/messages
+    // For now, log and return success (dry-run mode)
+    return {
+      success: true,
+      output: {
+        dryRun: true,
+        to: phone,
+        templateName,
+        language: actionConfig.language || 'vi',
+        recordType,
+        recordId,
+      },
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Send ZNS Executor (dry-run stub — Zalo OA integration pending)
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class SendZnsExecutor implements ActionExecutor {
+  readonly actionType = 'send_zns';
+  private readonly logger = new Logger(SendZnsExecutor.name);
+
+  constructor(private readonly templateEngine: TemplateInterpolationService) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { recordId, recordType, actionConfig, tenantId, recordData } = job;
+
+    const recipientField = actionConfig.recipientField || 'phones';
+    const phone = recordData[recipientField]?.[0] || recordData[recipientField] || recordData.phones?.[0];
+
+    if (!phone) {
+      return {
+        success: false,
+        error: { code: 'NO_PHONE', message: `No phone found in field "${recipientField}"` },
+      };
+    }
+
+    const templateId = actionConfig.templateId;
+    if (!templateId) {
+      return {
+        success: false,
+        error: { code: 'NO_TEMPLATE_ID', message: 'ZNS template ID is required' },
+      };
+    }
+
+    // Parse and interpolate template params
+    let params: Record<string, any> = {};
+    try {
+      const raw =
+        typeof actionConfig.params === 'string'
+          ? JSON.parse(actionConfig.params)
+          : actionConfig.params || {};
+
+      for (const [key, val] of Object.entries(raw)) {
+        params[key] =
+          typeof val === 'string'
+            ? this.templateEngine.interpolate(val, recordData)
+            : val;
+      }
+    } catch {
+      params = {};
+    }
+
+    this.logger.log(
+      `[SendZNS] DRY-RUN tenant=${tenantId} to=${phone} templateId=${templateId} params=${JSON.stringify(params)}`,
+    );
+
+    // TODO: Integrate with Zalo OA API POST /oa/message/cs
+    return {
+      success: true,
+      output: {
+        dryRun: true,
+        to: phone,
+        templateId,
+        params,
+        recordType,
+        recordId,
+      },
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Send Livechat Executor (event-driven)
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class SendLivechatExecutor implements ActionExecutor {
+  readonly actionType = 'send_livechat';
+  private readonly logger = new Logger(SendLivechatExecutor.name);
+
+  constructor(
+    private readonly templateEngine: TemplateInterpolationService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
+  ) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { recordId, recordType, actionConfig, tenantId, recordData } = job;
+
+    // Resolve conversation ID
+    const conversationId =
+      recordType === 'Conversation'
+        ? recordId
+        : recordData.conversationId || recordData.omniConversationId || undefined;
+
+    if (!conversationId) {
+      return {
+        success: false,
+        error: {
+          code: 'NO_CONVERSATION',
+          message: `Cannot resolve conversation ID from ${recordType}(${recordId})`,
+        },
+      };
+    }
+
+    const message = this.templateEngine.interpolate(
+      actionConfig.message || '',
+      recordData,
+      { fallbackMap: { firstName: 'Customer', Name: 'Customer' } },
+    );
+
+    if (!message.trim()) {
+      return {
+        success: false,
+        error: { code: 'EMPTY_MESSAGE', message: 'Livechat message is empty after interpolation' },
+      };
+    }
+
+    this.logger.log(
+      `[SendLivechat] tenant=${tenantId} conversation=${conversationId} messageLength=${message.length}`,
+    );
+
+    // Event-driven: LivechatModule listens and delivers via WebSocket
+    this.eventEmitter?.emit('livechat.system-message', {
+      tenantId,
+      conversationId,
+      message,
+      source: 'automation',
+      workflowId: job.workflowId,
+    });
+
+    return {
+      success: true,
+      output: { conversationId, messageLength: message.length },
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal Notification Executor (event-driven)
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class InternalNotificationExecutor implements ActionExecutor {
+  readonly actionType = 'internal_notification';
+  private readonly logger = new Logger(InternalNotificationExecutor.name);
+
+  constructor(
+    private readonly templateEngine: TemplateInterpolationService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
+  ) {}
+
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+    const { recordId, recordType, actionConfig, tenantId, recordData } = job;
+
+    const title = this.templateEngine.interpolate(
+      actionConfig.title || 'Workflow Notification',
+      recordData,
+      { fallbackMap: { firstName: 'Record', Name: 'Record' } },
+    );
+
+    const message = this.templateEngine.interpolate(
+      actionConfig.message || '',
+      recordData,
+      { fallbackMap: { firstName: 'Record', Name: 'Record' } },
+    );
+
+    const recipientType = actionConfig.recipientType || 'owner';
+
+    // Resolve recipient IDs based on type
+    let recipientIds: string[] = [];
+    switch (recipientType) {
+      case 'owner':
+        if (recordData.ownerId) recipientIds = [recordData.ownerId];
+        break;
+      case 'team':
+        // Team members are resolved by the notification consumer
+        break;
+      case 'specific':
+        if (actionConfig.specificUserId) recipientIds = [actionConfig.specificUserId];
+        break;
+      case 'all_admins':
+        // Resolved by the notification consumer (needs tenant user query)
+        break;
+    }
+
+    this.logger.log(
+      `[InternalNotification] tenant=${tenantId} type=${recipientType} recipients=${recipientIds.length || recipientType} title="${title}"`,
+    );
+
+    // Emit event — Realtime/Notification module handles delivery (WebSocket + DB persistence)
+    this.eventEmitter?.emit('internal.notification', {
+      tenantId,
+      recipientType,
+      recipientIds,
+      title,
+      message,
+      source: 'automation',
+      context: {
+        workflowId: job.workflowId,
+        recordType,
+        recordId,
+      },
+    });
+
+    return {
+      success: true,
+      output: {
+        recipientType,
+        recipientCount: recipientIds.length || recipientType,
+        title,
+      },
     };
   }
 }

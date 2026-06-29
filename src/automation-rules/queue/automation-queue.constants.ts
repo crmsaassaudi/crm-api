@@ -65,14 +65,22 @@ export interface AutomationActionJobData {
     | 'webhook'
     | 'create_task'
     | 'create_ticket'
-    | 'add_tag';
+    | 'add_tag'
+    | 'remove_tag'
+    | 'add_note'
+    | 'create_record'
+    | 'http_request'
+    | 'send_whatsapp'
+    | 'send_zns'
+    | 'send_livechat'
+    | 'internal_notification';
 
   /** Action-specific config set by the admin in the Visual Builder */
   actionConfig: Record<string, any>;
 
   /** The record that triggered the workflow */
   recordId: string;
-  recordType: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task';
+  recordType: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task' | 'Conversation' | 'Message';
   recordData: Record<string, any>;
 
   /** Automation depth for loop prevention Layer 2 */
@@ -143,14 +151,22 @@ export function resolveQueueForAction(actionType: string): string {
     case 'send_email':
       return AUTOMATION_EMAIL_QUEUE;
     case 'send_sms':
+    case 'send_whatsapp':
+    case 'send_zns':
+    case 'send_livechat':
       return AUTOMATION_SMS_QUEUE;
     case 'update_field':
     case 'route_to_team':
     case 'create_task':
     case 'create_ticket':
     case 'add_tag':
+    case 'remove_tag':
+    case 'add_note':
+    case 'create_record':
+    case 'internal_notification':
       return AUTOMATION_INTERNAL_QUEUE;
     case 'webhook':
+    case 'http_request':
       return AUTOMATION_WEBHOOK_QUEUE;
     default:
       return AUTOMATION_INTERNAL_QUEUE;
