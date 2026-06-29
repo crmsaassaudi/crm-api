@@ -422,6 +422,29 @@ export class ConversationService {
         );
       }
 
+      // ── Pre-identified visitor: contactId from identity cache ─────
+      // When a livechat visitor submits a pre-chat form before their first
+      // message, ContactEnrichmentService creates/merges a Contact and caches
+      // the contactId in the identity service. We use it here to populate
+      // conversation.customer with the real name/phone from the Contact
+      // instead of falling through to create a duplicate shadow contact.
+      if (contactId && !enrichedProfile.name) {
+        const existingContact = await this.shadowContactService.findContact(contactId);
+        if (existingContact) {
+          const fullName = [existingContact.firstName, existingContact.lastName]
+            .filter(Boolean).join(' ');
+          if (fullName && fullName !== 'Visitor') {
+            enrichedProfile.name = fullName;
+          }
+          if (!enrichedProfile.phone && existingContact.phones?.[0]) {
+            enrichedProfile.phone = existingContact.phones[0];
+          }
+          this.logger.log(
+            `Pre-identified visitor ${payload.senderId}: using enriched Contact ${contactId}`,
+          );
+        }
+      }
+
       // No active conversation -> maybe no contact either
       if (!contactId) {
         if (identityResConfig.autoCreateShadowContact) {
@@ -431,11 +454,11 @@ export class ConversationService {
           );
         } else {
           this.logger.debug(
-            `Auto-create shadow contact disabled â€” sender ${payload.senderId} will have no CRM contact`,
+            `Auto-create shadow contact disabled — sender ${payload.senderId} will have no CRM contact`,
           );
         }
-      }
 
+      }
       // â”€â”€ Reopen tracking: find previous conversation if any â”€â”€
       let previousConversationId: string | null = null;
       let reopenCount = 0;

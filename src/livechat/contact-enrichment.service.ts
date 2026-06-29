@@ -119,6 +119,23 @@ export class ContactEnrichmentService {
           `Linked Contact ${contactId} ↔ Conversation ${conversationId} (1:1)`,
         );
       }
+
+      // ── Step 5b: Cache contactId even WITHOUT conversation ────────
+      // When visitor submits pre-chat form before their first message,
+      // conversationId is null. We still cache the contactId so that
+      // ConversationService picks it up when the first message arrives
+      // and creates the conversation linked to the correct contact
+      // instead of creating a duplicate shadow contact.
+      if (!conversationId && contactId) {
+        await this.identityService.updateIdentity(
+          'livechat', channelId, visitorId,
+          { contactId, conversationId: null },
+          tenantId,
+        );
+        this.logger.log(
+          `Cached Contact ${contactId} for visitor ${visitorId} (no conversation yet)`,
+        );
+      }
     } catch (err: any) {
       // Enrichment failure must NOT block the chat flow
       this.logger.error(

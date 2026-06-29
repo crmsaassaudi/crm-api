@@ -241,6 +241,31 @@ export class ShadowContactService {
     }
   }
 
+  /**
+   * Look up an existing contact by ID.
+   * Used by ConversationService to populate conversation.customer
+   * with enriched data when a pre-identified visitor sends their first message.
+   */
+  async findContact(contactId: string): Promise<{
+    firstName?: string;
+    lastName?: string;
+    emails?: string[];
+    phones?: string[];
+  } | null> {
+    try {
+      const contact = await this.contactsService.findOne(contactId);
+      if (!contact) return null;
+      return {
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        emails: contact.emails,
+        phones: contact.phones,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   // ── Private Helpers ────────────────────────────────────────────
 
   private toSchemaChannelType(type: string): string {
