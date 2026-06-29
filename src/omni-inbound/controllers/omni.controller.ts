@@ -299,8 +299,12 @@ export class OmniController {
         ? (agentMap.get(c.assignedAgentId) ?? null)
         : null;
 
+      // Destructure out populated Mongoose objects — frontend expects
+      // string IDs only, not full user objects.
+      const { assignedAgent: _aa, resolvedByAgent: _ra, ...rest } = c;
+
       return {
-        ...c,
+        ...rest,
         resolvedByAgentName: resolvedDisplay?.name ?? null,
         resolvedByAgentEmail: resolvedDisplay?.email ?? null,
         assignedAgentName: assignedDisplay?.name ?? null,

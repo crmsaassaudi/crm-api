@@ -24,6 +24,7 @@ import { FilesLocalModule } from './infrastructure/uploader/local/files.module';
 import { FilesS3Module } from './infrastructure/uploader/s3/files.module';
 import { FilesS3PresignedModule } from './infrastructure/uploader/s3-presigned/files.module';
 import { TenantsModule } from '../tenants/tenants.module';
+import { RedisModule } from '../redis/redis.module';
 
 const infrastructurePersistenceModule = DocumentFilePersistenceModule;
 
@@ -53,6 +54,8 @@ const infrastructureUploaderModule =
     }),
     // TenantsModule for quota management
     forwardRef(() => TenantsModule),
+    // Redis for distributed presigned URL caching
+    RedisModule,
   ],
   providers: [
     FilesService,

@@ -288,7 +288,7 @@ export class FileManagementController {
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
 
-    return this.filesService.listFiles(
+    const result = await this.filesService.listFiles(
       tenantId,
       userId,
       userRole,
@@ -300,6 +300,29 @@ export class FileManagementController {
       },
       { page: query.page ?? 1, limit: query.limit ?? 20 },
     );
+
+    // Enrich each file with presigned download + thumbnail URLs
+    const enrichedData = await Promise.all(
+      result.data.map(async (file) => {
+        try {
+          const downloadUrl =
+            await this.filesService.getPresignedDownloadUrl(file.path);
+          const thumbnailUrl = file.thumbnailKey
+            ? await this.filesService.getPresignedDownloadUrl(file.thumbnailKey)
+            : undefined;
+          return {
+            ...file,
+            path: undefined,
+            downloadUrl,
+            thumbnailUrl,
+          };
+        } catch {
+          return { ...file, path: undefined };
+        }
+      }),
+    );
+
+    return { ...result, data: enrichedData };
   }
 
   // ── Detail ────────────────────────────────────────────────────────
@@ -542,13 +565,36 @@ export class FileManagementController {
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
 
-    return this.filesService.listFiles(
+    const result = await this.filesService.listFiles(
       tenantId,
       userId,
       userRole,
       { search: q },
       { page: page ?? 1, limit: limit ?? 20 },
     );
+
+    // Enrich each file with presigned download + thumbnail URLs
+    const enrichedData = await Promise.all(
+      result.data.map(async (file) => {
+        try {
+          const downloadUrl =
+            await this.filesService.getPresignedDownloadUrl(file.path);
+          const thumbnailUrl = file.thumbnailKey
+            ? await this.filesService.getPresignedDownloadUrl(file.thumbnailKey)
+            : undefined;
+          return {
+            ...file,
+            path: undefined,
+            downloadUrl,
+            thumbnailUrl,
+          };
+        } catch {
+          return { ...file, path: undefined };
+        }
+      }),
+    );
+
+    return { ...result, data: enrichedData };
   }
 }
 

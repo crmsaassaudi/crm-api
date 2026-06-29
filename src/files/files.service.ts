@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ClsService } from 'nestjs-cls';
@@ -22,6 +23,7 @@ import {
 import { FileType, FileAccessLevel, FileStatus } from './domain/file';
 import { NullableType } from '../utils/types/nullable.type';
 import { AllConfigType } from '../config/config.type';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class FilesService {
@@ -29,10 +31,14 @@ export class FilesService {
   private readonly s3: S3Client;
   private readonly bucket: string;
 
+  /** Redis cache TTL for presigned URLs — 10 minutes */
+  private static readonly PRESIGNED_CACHE_TTL_SECONDS = 10 * 60;
+
   constructor(
     private readonly fileRepository: FileRepository,
     private readonly configService: ConfigService<AllConfigType>,
     private readonly cls: ClsService,
+    @Optional() private readonly redisService?: RedisService,
   ) {
     this.bucket =
       configService.get('file.awsDefaultS3Bucket', { infer: true }) ?? '';
@@ -94,19 +100,47 @@ export class FilesService {
   // ── Presigned Download URL ────────────────────────────────────────
 
   /**
-   * Generate a presigned download URL for a file.
+   * Generate (or return Redis-cached) presigned download URL for a file.
+   *
+   * Cache strategy:
+   * - Key: `presigned:<storageKey>` in Redis
+   * - TTL: 10 minutes (presigned URL lives 60 min → 50 min safety margin)
+   * - Shared across all pods/processes → no redundant signing
+   * - Falls back to direct generation if Redis is unavailable
+   *
    * ACL must be checked BEFORE calling this method.
-   * URL is never cached in DB — always generated fresh.
    */
   async getPresignedDownloadUrl(
     storageKey: string,
     ttlSeconds = 3600,
   ): Promise<string> {
+    const cacheKey = `presigned:${storageKey}`;
+
+    // Try Redis cache first
+    if (this.redisService) {
+      try {
+        const cached = await this.redisService.get<string>(cacheKey);
+        if (cached) return cached;
+      } catch {
+        // Redis unavailable — fall through to generate fresh
+      }
+    }
+
+    // Generate fresh presigned URL
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: storageKey,
     });
-    return getSignedUrl(this.s3, command, { expiresIn: ttlSeconds });
+    const url = await getSignedUrl(this.s3, command, { expiresIn: ttlSeconds });
+
+    // Store in Redis with TTL (fire-and-forget, don't block response)
+    if (this.redisService) {
+      this.redisService
+        .set(cacheKey, url, FilesService.PRESIGNED_CACHE_TTL_SECONDS)
+        .catch(() => {}); // Silently ignore Redis write failures
+    }
+
+    return url;
   }
 
   // ── Listing ───────────────────────────────────────────────────────
