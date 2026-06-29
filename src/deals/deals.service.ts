@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -30,6 +31,7 @@ import {
 } from './deals.constants';
 import { StartDealImportDto } from './dto/start-deal-import.dto';
 import { ExportRequestService, ExportRequestDto } from '../common/export';
+import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 
 @Injectable()
 export class DealsService {
@@ -49,8 +51,79 @@ export class DealsService {
     @InjectModel(ImportJobSchemaClass.name)
     private readonly importJobModel: Model<ImportJobDocument>,
     private readonly exportRequest: ExportRequestService,
+    private readonly crmSettings: CrmSettingsService,
   ) {
     this.importStorage = this.storageFactory.create('deals');
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────
+
+  /**
+   * ObjectId ref fields that should be converted from '' to undefined.
+   * Prevents Mongoose CastError when empty strings hit ObjectId casts.
+   */
+  private static readonly OBJECT_ID_FIELDS = [
+    'accountId',
+    'ownerId',
+    'sourceId',
+    'stageId',
+    'pipelineId',
+    'omniConversationId',
+  ] as const;
+
+  /** Convert empty string ObjectId refs to undefined in-place. */
+  private cleanRefs<T extends Record<string, any>>(data: T): T {
+    for (const key of DealsService.OBJECT_ID_FIELDS) {
+      if ((data as any)[key] === '') {
+        (data as any)[key] = undefined;
+      }
+    }
+    return data;
+  }
+
+  /**
+   * Validate tenant-configurable required fields.
+   * Reads the layout_settings from CrmSettings (30s cache) and checks
+   * that all fields marked isRequired=true have a non-empty value.
+   */
+  private async validateRequiredFields(
+    data: Record<string, any>,
+    mode: 'create' | 'update',
+  ): Promise<void> {
+    const layoutSettings = await this.crmSettings.getSetting('layout_settings');
+    const layout = layoutSettings?.groupLayouts?.['default'];
+    const fieldConfigs: Array<{
+      key: string;
+      isRequired: boolean;
+      isVisible: boolean;
+    }> = layout?.Deal || [];
+
+    const errors: Record<string, string> = {};
+
+    for (const field of fieldConfigs) {
+      if (!field.isRequired) continue;
+
+      // On update, only validate fields that are present in the payload.
+      if (mode === 'update' && !(field.key in data)) continue;
+
+      const value = data[field.key];
+      const isEmpty =
+        value === undefined ||
+        value === null ||
+        value === '' ||
+        (Array.isArray(value) && value.length === 0);
+
+      if (isEmpty) {
+        errors[field.key] = `${field.key} is required`;
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      throw new UnprocessableEntityException({
+        status: 422,
+        errors,
+      });
+    }
   }
 
   // ─────────────────────────── EXPORT ───────────────────────────
@@ -89,11 +162,12 @@ export class DealsService {
   }
 
   async create(data: Partial<Deal>): Promise<Deal> {
-    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
+    this.cleanRefs(data as Record<string, any>);
+    await this.validateRequiredFields(data as Record<string, any>, 'create');
+
     return this.repository.create({
       ...data,
       name: data.title || data.name,
-      ownerId,
     } as any);
   }
 
@@ -115,11 +189,12 @@ export class DealsService {
     // Snapshot before update for audit trail
     const existingDeal = await this.repository.findOne({ _id: id });
 
-    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
+    this.cleanRefs(data as Record<string, any>);
+    await this.validateRequiredFields(data as Record<string, any>, 'update');
+
     const updated = await this.repository.update(id, {
       ...data,
       name: data.title || data.name,
-      ownerId,
     } as any);
 
     // Emit audit trail event: field-level change tracking

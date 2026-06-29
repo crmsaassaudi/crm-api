@@ -90,6 +90,7 @@ describe('DealsService', () => {
       exportQueue,
       importJobModel,
       exportRequest,
+      { getSetting: jest.fn().mockResolvedValue(null) } as any, // crmSettings
     );
   });
 

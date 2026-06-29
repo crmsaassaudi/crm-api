@@ -15,6 +15,8 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { TicketsService } from './tickets.service';
+import { CreateTicketDto } from './dto/create-ticket.dto';
+import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { Ticket } from './domain/ticket';
 import { ApiTags, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
@@ -37,8 +39,8 @@ export class TicketsController {
 
   @Post()
   @RequirePermission('create', 'tickets')
-  create(@Body() data: Partial<Ticket>) {
-    return this.service.create(data);
+  create(@Body() data: CreateTicketDto) {
+    return this.service.create(data as Partial<Ticket>);
   }
 
   @Get()
@@ -50,8 +52,8 @@ export class TicketsController {
   @Patch(':id')
   @RequirePermission('edit', 'tickets')
   @UsePipes(new SanitizeMaskedInputPipe())
-  update(@Param('id') id: string, @Body() data: Partial<Ticket>) {
-    return this.service.update(id, data);
+  update(@Param('id') id: string, @Body() data: UpdateTicketDto) {
+    return this.service.update(id, data as Partial<Ticket>);
   }
 
   @Delete(':id')

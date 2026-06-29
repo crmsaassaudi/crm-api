@@ -56,6 +56,7 @@ describe('TicketsService', () => {
         list: jest.fn(),
         download: jest.fn(),
       } as any, // exportRequest
+      { getSetting: jest.fn().mockResolvedValue(null) } as any, // crmSettings
     );
   });
 

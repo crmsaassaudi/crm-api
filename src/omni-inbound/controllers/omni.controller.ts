@@ -26,8 +26,6 @@ import { ConversationQueryService } from '../services/conversation-query.service
 import { ConversionService } from '../services/conversion.service';
 import { ConversationLockService } from '../services/conversation-lock.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
-import { CreateDealFromConversationDto } from '../dto/create-deal-from-conversation.dto';
-import { CreateTicketFromConversationDto } from '../dto/create-ticket-from-conversation.dto';
 import { LinkMessagesDto } from '../dto/link-messages.dto';
 import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
@@ -1618,55 +1616,7 @@ export class OmniController {
     return this.getConversationFiles(conversationId, 'image/', page, limit);
   }
 
-  // ─── Conversion Engine (Deal / Ticket from Conversation) ──────
-
-  /**
-   * POST /omni/conversations/:id/create-deal
-   * Create a Deal linked to this omni-conversation.
-   */
-  @Post('conversations/:id/create-deal')
-  @HttpCode(HttpStatus.CREATED)
-  async createDealFromConversation(
-    @Param('id') conversationId: string,
-    @Body() dto: CreateDealFromConversationDto,
-  ) {
-    const tenantId = this.cls.get<string>('tenantId');
-    const agentId = this.cls.get<string>('userId');
-    if (!tenantId || !agentId) {
-      throw new BadRequestException('User or Tenant context not found');
-    }
-
-    return this.conversionService.createDeal(
-      tenantId,
-      agentId,
-      conversationId,
-      dto,
-    );
-  }
-
-  /**
-   * POST /omni/conversations/:id/create-ticket
-   * Create a Ticket linked to this omni-conversation.
-   */
-  @Post('conversations/:id/create-ticket')
-  @HttpCode(HttpStatus.CREATED)
-  async createTicketFromConversation(
-    @Param('id') conversationId: string,
-    @Body() dto: CreateTicketFromConversationDto,
-  ) {
-    const tenantId = this.cls.get<string>('tenantId');
-    const agentId = this.cls.get<string>('userId');
-    if (!tenantId || !agentId) {
-      throw new BadRequestException('User or Tenant context not found');
-    }
-
-    return this.conversionService.createTicket(
-      tenantId,
-      agentId,
-      conversationId,
-      dto,
-    );
-  }
+  // ─── Conversion Engine (link-messages) ────────────────────────
 
   /**
    * POST /omni/conversations/:id/link-messages

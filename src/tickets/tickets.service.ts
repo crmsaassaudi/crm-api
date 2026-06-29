@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -35,6 +36,7 @@ import {
 } from './tickets.constants';
 import { StartTicketImportDto } from './dto/start-ticket-import.dto';
 import { ExportRequestService, ExportRequestDto } from '../common/export';
+import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 
 @Injectable()
 export class TicketsService {
@@ -55,8 +57,86 @@ export class TicketsService {
     @InjectModel(ImportJobSchemaClass.name)
     private readonly importJobModel: Model<ImportJobDocument>,
     private readonly exportRequest: ExportRequestService,
+    private readonly crmSettings: CrmSettingsService,
   ) {
     this.importStorage = this.storageFactory.create('tickets');
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────
+
+  /**
+   * ObjectId ref fields that should be converted from '' to undefined.
+   * Prevents Mongoose CastError when empty strings hit ObjectId casts.
+   */
+  private static readonly OBJECT_ID_FIELDS = [
+    'contactId',
+    'accountId',
+    'ownerId',
+    'groupId',
+    'statusId',
+    'typeId',
+    'sourceId',
+    'dealId',
+    'parentTicketId',
+    'omniConversationId',
+    'resolutionCodeId',
+    'slaPolicyId',
+  ] as const;
+
+  /** Convert empty string ObjectId refs to undefined in-place. */
+  private cleanRefs<T extends Record<string, any>>(data: T): T {
+    for (const key of TicketsService.OBJECT_ID_FIELDS) {
+      if ((data as any)[key] === '') {
+        (data as any)[key] = undefined;
+      }
+    }
+    return data;
+  }
+
+  /**
+   * Validate tenant-configurable required fields.
+   * Reads the layout_settings from CrmSettings (30s cache) and checks
+   * that all fields marked isRequired=true have a non-empty value.
+   */
+  private async validateRequiredFields(
+    data: Record<string, any>,
+    mode: 'create' | 'update',
+  ): Promise<void> {
+    const layoutSettings = await this.crmSettings.getSetting('layout_settings');
+    const layout = layoutSettings?.groupLayouts?.['default'];
+    const fieldConfigs: Array<{
+      key: string;
+      isRequired: boolean;
+      isVisible: boolean;
+    }> = layout?.Ticket || [];
+
+    const errors: Record<string, string> = {};
+
+    for (const field of fieldConfigs) {
+      if (!field.isRequired) continue;
+
+      // On update, only validate fields that are present in the payload.
+      // This allows partial updates without requiring all required fields.
+      if (mode === 'update' && !(field.key in data)) continue;
+
+      const value = data[field.key];
+      const isEmpty =
+        value === undefined ||
+        value === null ||
+        value === '' ||
+        (Array.isArray(value) && value.length === 0);
+
+      if (isEmpty) {
+        errors[field.key] = `${field.key} is required`;
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      throw new UnprocessableEntityException({
+        status: 422,
+        errors,
+      });
+    }
   }
 
   // ─────────────────────────── EXPORT ───────────────────────────
@@ -91,15 +171,14 @@ export class TicketsService {
   }
 
   async create(data: Partial<Ticket>): Promise<Ticket> {
-    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
-    const groupId = data.groupId === '' ? undefined : data.groupId;
+    this.cleanRefs(data as Record<string, any>);
+    await this.validateRequiredFields(data as Record<string, any>, 'create');
+
     const ticketNumber = await this.repository.generateTicketNumber();
 
     const ticket = await this.repository.create({
       ...data,
       ticketNumber,
-      ownerId,
-      groupId,
       isSlaBreached: false,
       timeSpentSeconds: 0,
     } as any);
@@ -128,10 +207,10 @@ export class TicketsService {
     // Snapshot before update for audit trail
     const existingTicket = await this.repository.findOne({ _id: id });
 
-    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
-    const groupId = data.groupId === '' ? undefined : data.groupId;
+    this.cleanRefs(data as Record<string, any>);
+    await this.validateRequiredFields(data as Record<string, any>, 'update');
 
-    const updateData: any = { ...data, ownerId, groupId };
+    const updateData: any = { ...data };
 
     // Status transition guard. Custom per-tenant status names mean we can't
     // hard-code an allow-list, but we CAN refuse the one transition that's
