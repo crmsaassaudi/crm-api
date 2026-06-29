@@ -58,12 +58,22 @@ export class NoteRepository extends BaseDocumentRepository<
       .find(scopedWhere)
       .sort({ createdAt: -1, _id: -1 })
       .limit(params.limit + 1)
+      .populate('createdById', 'firstName lastName')
       .exec();
 
     const pageDocs = docs.slice(0, params.limit);
 
     return {
-      data: pageDocs.map((doc) => this.mapToDomain(doc)),
+      data: pageDocs.map((doc) => {
+        // Extract author info from populated createdById before mapper converts it to string
+        const populatedAuthor = doc.createdById as any;
+        const authorName = populatedAuthor?.firstName || populatedAuthor?.lastName
+          ? [populatedAuthor.firstName, populatedAuthor.lastName].filter(Boolean).join(' ')
+          : undefined;
+
+        const note = this.mapToDomain(doc);
+        return { ...note, authorName };
+      }),
       nextCursor:
         docs.length > params.limit && pageDocs.length > 0
           ? pageDocs[pageDocs.length - 1].createdAt.toISOString()
