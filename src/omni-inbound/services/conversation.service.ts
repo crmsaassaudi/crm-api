@@ -439,6 +439,9 @@ export class ConversationService {
           if (!enrichedProfile.phone && existingContact.phones?.[0]) {
             enrichedProfile.phone = existingContact.phones[0];
           }
+          if (existingContact.emails?.[0]) {
+            (enrichedProfile as any).email = existingContact.emails[0];
+          }
           this.logger.log(
             `Pre-identified visitor ${payload.senderId}: using enriched Contact ${contactId}`,
           );
@@ -497,6 +500,7 @@ export class ConversationService {
             payload.metadata.avatarUrl ??
             undefined,
           phone: enrichedProfile.phone ?? payload.metadata.phone ?? undefined,
+          email: (enrichedProfile as any).email ?? payload.metadata?.email ?? undefined,
         },
         status: 'open',
         lastMessage: payload.content,

@@ -279,8 +279,8 @@ export class LivechatGateway
       visitorName: client.data.visitorName || 'Visitor',
       metadata: {
         ...(data.metadata ?? {}),
-        visitorEmail: client.data.visitorEmail,
-        visitorPhone: client.data.visitorPhone,
+        // Pass all identity data from pre-chat form (dynamic fields)
+        ...(client.data.identityData ?? {}),
       },
     });
   }
@@ -377,42 +377,32 @@ export class LivechatGateway
     const tenantId = client.data.tenantId;
     if (!visitorId || !tenantId) return;
 
-    const { name, email, phone, ...rest } = data;
+    // Store ALL identity data generically — field keys are dynamic
+    // (admin-configured via widget preChatForm.fields).
+    // Do NOT destructure specific field names here.
+    client.data.identityData = data;
 
-    // Always store on socket.data for downstream use by onVisitorMessage
-    if (name) client.data.visitorName = name;
-    if (email) client.data.visitorEmail = email;
-    if (phone) client.data.visitorPhone = phone;
+    // Best-effort display name: try common keys for conversation.customer
+    const displayName = data.name || data.full_name || data.ho_ten;
+    if (displayName) client.data.visitorName = displayName;
 
-    // FIX: Use cached conversationId from socket.data instead of a redundant
-    // DB query. visitor:connect already resolved it on handshake.
     const conversationId: string | undefined = client.data.conversationId;
 
-    if (conversationId) {
-      try {
-        await this.conversationRepo.updateCustomerInfo(conversationId, {
-          ...(email ? { email } : {}),
-          ...(name ? { name } : {}),
-          ...(phone ? { phone } : {}),
-        });
-      } catch (err: any) {
-        this.logger.warn(
-          `identify update failed for ${visitorId}: ${err?.message}`,
-        );
-      }
-    }
-
-    // Emit enrichment event so ContactEnrichmentService maps form data → Contact
-    this.eventEmitter.emit(LivechatEvents.VISITOR_IDENTIFIED, {
+    // Await enrichment so identity cache is populated BEFORE the widget
+    // unlocks chat input. This prevents the race condition where the
+    // visitor sends a message before enrichment finishes writing to Redis.
+    // ContactEnrichmentService.enrichFromPreChat() handles updateCustomerInfo
+    // internally when conversationId is present, so no need to call it here.
+    await this.eventEmitter.emitAsync(LivechatEvents.VISITOR_IDENTIFIED, {
       tenantId,
       visitorId,
       channelId: client.data.channelId,
       widgetId: client.data.widgetId,
       conversationId,
-      identityData: { name, email, phone, ...rest },
+      identityData: data,
     });
 
-    client.emit('visitor:identified', { email, name, phone });
+    client.emit('visitor:identified', { success: true });
   }
 
   // ── Server → Visitor ────────────────────────────────────────────────────

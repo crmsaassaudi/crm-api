@@ -208,17 +208,22 @@ export class ContactEnrichmentService {
     let email: string | undefined;
     let phone: string | undefined;
     let displayName: string | undefined;
+    const nameParts: string[] = [];
 
     for (const fieldDef of fieldMappings) {
       const value = identityData[fieldDef.key];
       if (value === undefined || value === null || value === '') continue;
 
-      // Track raw name/email/phone for conversation.customer and dedup
-      if (fieldDef.key === 'name') displayName = String(value);
-      if (fieldDef.key === 'email') email = String(value);
-      if (fieldDef.key === 'phone') phone = String(value);
-
       const target = fieldDef.contactField;
+
+      // Detect email/phone/name by contactField TARGET (dynamic mapping)
+      // not by key name (admin-configured, could be anything).
+      if (target === 'emails') email = String(value).toLowerCase();
+      if (target === 'phones') phone = String(value);
+      if (target === 'firstName' || target === 'lastName') {
+        nameParts.push(String(value));
+      }
+
       if (!target) continue; // No mapping → metadata only
 
       if (target.startsWith('customFields.')) {
@@ -239,7 +244,13 @@ export class ContactEnrichmentService {
       }
     }
 
-    // Also extract raw email/phone from identityData even without mapping
+    // Build display name from mapped name parts (firstName + lastName)
+    if (nameParts.length > 0) {
+      displayName = nameParts.join(' ');
+    }
+
+    // Fallback: extract email/phone from identityData even without mapping
+    // (for backward compatibility with forms that have standard keys)
     if (!email && identityData.email) email = String(identityData.email);
     if (!phone && identityData.phone) phone = String(identityData.phone);
     if (!displayName && identityData.name) displayName = String(identityData.name);
