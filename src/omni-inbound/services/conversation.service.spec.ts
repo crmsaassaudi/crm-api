@@ -14,6 +14,7 @@ import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 import { InboundOrchestrationService } from './inbound-orchestration.service';
 import { ShadowContactService } from './shadow-contact.service';
+import { ConversationLifecycleService } from './conversation-lifecycle.service';
 
 describe('ConversationService Concurrency', () => {
   let service: ConversationService;
@@ -127,6 +128,12 @@ describe('ConversationService Concurrency', () => {
         {
           provide: ShadowContactService,
           useValue: shadowContactMock,
+        },
+        {
+          provide: ConversationLifecycleService,
+          useValue: {
+            toSchemaChannelType: jest.fn().mockImplementation((type: string) => type.toLowerCase()),
+          },
         },
         { provide: IOREDIS_CLIENT, useValue: redisMock },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
@@ -324,5 +331,84 @@ describe('ConversationService Concurrency', () => {
       'omni.message.persisted',
       expect.anything(),
     );
+  });
+
+  // ── Pre-identified visitor tests (pre-chat form enrichment) ──────────
+
+  describe('pre-identified visitor flow', () => {
+    it('should use enriched Contact data when identity cache has contactId but no conversationId', async () => {
+      // Scenario: Visitor submitted pre-chat form → enrichment cached contactId
+      // → first message arrives → conversationId is null but contactId exists
+      identityServiceMock.resolveIdentityForTenant.mockResolvedValueOnce({
+        contactId: 'enriched_contact_99',
+        conversationId: null,
+      });
+
+      // Mock findContact to return the enriched contact data
+      shadowContactMock.findContact = jest.fn().mockResolvedValue({
+        firstName: 'Nguyen',
+        lastName: 'Toan',
+        emails: ['toan@example.com'],
+        phones: ['0901234567'],
+      });
+
+      const payload = createPayload('msg_pre_identified');
+      await service.handleInboundMessage(payload);
+
+      // Should NOT create a new shadow contact
+      expect(shadowContactMock.createShadowContact).not.toHaveBeenCalled();
+
+      // Should create conversation with enriched customer data
+      expect(conversationRepoMock.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contactId: 'enriched_contact_99',
+          customer: expect.objectContaining({
+            name: 'Nguyen Toan',
+            phone: '0901234567',
+            email: 'toan@example.com',
+          }),
+        }),
+      );
+    });
+
+    it('should fall back to shadow contact when identity cache has no contactId', async () => {
+      // No pre-identification — normal flow
+      identityServiceMock.resolveIdentityForTenant.mockResolvedValueOnce({
+        contactId: null,
+        conversationId: null,
+      });
+
+      const payload = createPayload('msg_no_prechat');
+      await service.handleInboundMessage(payload);
+
+      // Should create shadow contact as usual
+      expect(shadowContactMock.createShadowContact).toHaveBeenCalled();
+      expect(conversationRepoMock.create).toHaveBeenCalled();
+    });
+
+    it('should populate email in conversation.customer from enriched Contact', async () => {
+      identityServiceMock.resolveIdentityForTenant.mockResolvedValueOnce({
+        contactId: 'contact_with_email',
+        conversationId: null,
+      });
+
+      shadowContactMock.findContact = jest.fn().mockResolvedValue({
+        firstName: 'Test',
+        lastName: 'User',
+        emails: ['test.user@company.com'],
+        phones: [],
+      });
+
+      const payload = createPayload('msg_email_test');
+      await service.handleInboundMessage(payload);
+
+      expect(conversationRepoMock.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customer: expect.objectContaining({
+            email: 'test.user@company.com',
+          }),
+        }),
+      );
+    });
   });
 });
