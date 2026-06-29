@@ -255,7 +255,9 @@ export class OmniController {
       ),
     );
 
-    const allAgentIds = Array.from(new Set([...resolverIds, ...assignedAgentIds]));
+    const allAgentIds = Array.from(
+      new Set([...resolverIds, ...assignedAgentIds]),
+    );
 
     let agentMap = new Map<
       string,
@@ -1005,7 +1007,9 @@ export class OmniController {
   ) {
     const minutesNum = Number(minutes);
     if (!minutesNum || minutesNum < 1 || minutesNum > 10_080) {
-      throw new BadRequestException('minutes must be between 1 and 10080 (7 days)');
+      throw new BadRequestException(
+        'minutes must be between 1 and 10080 (7 days)',
+      );
     }
 
     const conversation = await this.conversationRepo.findById(id);
@@ -1015,12 +1019,17 @@ export class OmniController {
 
     const snoozeUntil = new Date(Date.now() + minutesNum * 60_000);
 
-    const result = await this.conversationRepo.snoozeConversation(id, snoozeUntil);
+    const result = await this.conversationRepo.snoozeConversation(
+      id,
+      snoozeUntil,
+    );
     if (!result) {
       throw new NotFoundException(`Conversation ${id} not found`);
     }
 
-    this.logger.log(`Conversation ${id} snoozed for ${minutesNum}m until ${snoozeUntil.toISOString()}`);
+    this.logger.log(
+      `Conversation ${id} snoozed for ${minutesNum}m until ${snoozeUntil.toISOString()}`,
+    );
 
     return { id, status: 'pending', snoozeUntil };
   }
@@ -1376,6 +1385,12 @@ export class OmniController {
 
   // ─── Settings ─────────────────────────────────────────────────
 
+  /** Default notification sound config used when tenant has none */
+  private static readonly DEFAULT_NOTIFICATION_SOUND = {
+    agent: { enabled: true, soundUrl: null, volume: 80 },
+    visitor: { enabled: true, soundUrl: null, volume: 80 },
+  };
+
   /**
    * GET /omni/settings
    * Returns current omni-channel settings for the tenant.
@@ -1385,29 +1400,70 @@ export class OmniController {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) throw new BadRequestException('Tenant context not found');
     const tenant = await this.tenantsService.findById(tenantId);
-    return tenant?.omniSettings ?? { resolveNoteMode: 'optional' };
+    const settings = tenant?.omniSettings ?? { resolveNoteMode: 'optional' };
+    return {
+      ...settings,
+      notificationSound:
+        settings.notificationSound ?? OmniController.DEFAULT_NOTIFICATION_SOUND,
+    };
   }
 
   /**
    * PATCH /omni/settings
-   * Updates omni-channel settings.
+   * Updates omni-channel settings (resolveNoteMode and/or notificationSound).
    */
   @Patch('settings')
-  async updateSettings(@Body('resolveNoteMode') resolveNoteMode: string) {
+  async updateSettings(
+    @Body('resolveNoteMode') resolveNoteMode?: string,
+    @Body('notificationSound')
+    notificationSound?: {
+      agent?: { enabled?: boolean; soundUrl?: string | null; volume?: number };
+      visitor?: {
+        enabled?: boolean;
+        soundUrl?: string | null;
+        volume?: number;
+      };
+    },
+  ) {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) throw new BadRequestException('Tenant context not found');
 
-    const validModes = ['disabled', 'optional', 'required'];
-    if (!validModes.includes(resolveNoteMode)) {
-      throw new BadRequestException(
-        `resolveNoteMode must be one of: ${validModes.join(', ')}`,
-      );
+    // Validate resolveNoteMode if provided
+    if (resolveNoteMode !== undefined) {
+      const validModes = ['disabled', 'optional', 'required'];
+      if (!validModes.includes(resolveNoteMode)) {
+        throw new BadRequestException(
+          `resolveNoteMode must be one of: ${validModes.join(', ')}`,
+        );
+      }
     }
 
-    await this.tenantsService.updateOmniSettings(tenantId, {
-      resolveNoteMode: resolveNoteMode as 'disabled' | 'optional' | 'required',
-    });
-    return { resolveNoteMode };
+    // Validate volume ranges if provided
+    const validateVolume = (v?: number) => {
+      if (v !== undefined && (v < 0 || v > 100)) {
+        throw new BadRequestException('volume must be between 0 and 100');
+      }
+    };
+    validateVolume(notificationSound?.agent?.volume);
+    validateVolume(notificationSound?.visitor?.volume);
+
+    const payload: Record<string, any> = {};
+    if (resolveNoteMode !== undefined) {
+      payload.resolveNoteMode = resolveNoteMode;
+    }
+    if (notificationSound !== undefined) {
+      payload.notificationSound = notificationSound;
+    }
+
+    if (Object.keys(payload).length === 0) {
+      throw new BadRequestException('At least one setting field is required');
+    }
+
+    const updated = await this.tenantsService.updateOmniSettings(
+      tenantId,
+      payload,
+    );
+    return updated?.omniSettings ?? payload;
   }
 
   /**
@@ -1663,7 +1719,8 @@ export class OmniController {
       return !!msg.metadata?.media?.fileId;
     });
 
-    if (needsResolution.length === 0 && msgsWithStorageKey.length === 0) return messages;
+    if (needsResolution.length === 0 && msgsWithStorageKey.length === 0)
+      return messages;
 
     const fileIds = [
       ...new Set(

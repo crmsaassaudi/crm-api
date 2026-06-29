@@ -25,9 +25,35 @@ export class TenantMapper {
     tenant.botWorkspaceId = raw.botWorkspaceId ?? undefined;
 
     // Extract plain object to avoid Mongoose subdocument serialization issues
+    const defaultNs = { enabled: true, soundUrl: null, volume: 80 };
+    const rawNs = raw.omniSettings?.notificationSound;
     tenant.omniSettings = raw.omniSettings
-      ? { resolveNoteMode: raw.omniSettings.resolveNoteMode }
-      : { resolveNoteMode: 'optional' };
+      ? {
+          resolveNoteMode: raw.omniSettings.resolveNoteMode,
+          notificationSound: {
+            agent: rawNs?.agent
+              ? {
+                  enabled: rawNs.agent.enabled ?? true,
+                  soundUrl: rawNs.agent.soundUrl ?? null,
+                  volume: rawNs.agent.volume ?? 80,
+                }
+              : { ...defaultNs },
+            visitor: rawNs?.visitor
+              ? {
+                  enabled: rawNs.visitor.enabled ?? true,
+                  soundUrl: rawNs.visitor.soundUrl ?? null,
+                  volume: rawNs.visitor.volume ?? 80,
+                }
+              : { ...defaultNs },
+          },
+        }
+      : {
+          resolveNoteMode: 'optional',
+          notificationSound: {
+            agent: { ...defaultNs },
+            visitor: { ...defaultNs },
+          },
+        };
 
     tenant.i18nSettings = raw.i18nSettings
       ? {

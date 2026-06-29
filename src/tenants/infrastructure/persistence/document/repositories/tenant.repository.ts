@@ -79,10 +79,53 @@ export class TenantsRepository {
 
   async updateOmniSettings(
     tenantId: string,
-    omniSettings: { resolveNoteMode: 'disabled' | 'optional' | 'required' },
+    omniSettings: {
+      resolveNoteMode?: 'disabled' | 'optional' | 'required';
+      notificationSound?: {
+        agent?: {
+          enabled?: boolean;
+          soundUrl?: string | null;
+          volume?: number;
+        };
+        visitor?: {
+          enabled?: boolean;
+          soundUrl?: string | null;
+          volume?: number;
+        };
+      };
+    },
   ): Promise<Tenant | null> {
+    // Build dot-notation $set to merge fields without overwriting siblings
+    const setFields: Record<string, unknown> = {};
+    if (omniSettings.resolveNoteMode !== undefined) {
+      setFields['omniSettings.resolveNoteMode'] = omniSettings.resolveNoteMode;
+    }
+    if (omniSettings.notificationSound?.agent) {
+      const a = omniSettings.notificationSound.agent;
+      if (a.enabled !== undefined)
+        setFields['omniSettings.notificationSound.agent.enabled'] = a.enabled;
+      if (a.soundUrl !== undefined)
+        setFields['omniSettings.notificationSound.agent.soundUrl'] = a.soundUrl;
+      if (a.volume !== undefined)
+        setFields['omniSettings.notificationSound.agent.volume'] = a.volume;
+    }
+    if (omniSettings.notificationSound?.visitor) {
+      const v = omniSettings.notificationSound.visitor;
+      if (v.enabled !== undefined)
+        setFields['omniSettings.notificationSound.visitor.enabled'] = v.enabled;
+      if (v.soundUrl !== undefined)
+        setFields['omniSettings.notificationSound.visitor.soundUrl'] =
+          v.soundUrl;
+      if (v.volume !== undefined)
+        setFields['omniSettings.notificationSound.visitor.volume'] = v.volume;
+    }
+
+    if (Object.keys(setFields).length === 0) {
+      return this.findById(tenantId);
+    }
+
     const updated = await this.tenantsModel
-      .findByIdAndUpdate(tenantId, { $set: { omniSettings } }, { new: true })
+      .findByIdAndUpdate(tenantId, { $set: setFields }, { new: true })
       .exec();
     return updated ? TenantMapper.toDomain(updated) : null;
   }
@@ -171,7 +214,6 @@ export class TenantsRepository {
 
     return result.modifiedCount > 0;
   }
-
 
   /**
    * Atomically decrement storage usage (for rollback / hard-delete).

@@ -18,6 +18,15 @@ export enum ProvisioningStatus {
   FAILED = 'FAILED',
 }
 
+export interface NotificationSoundConfig {
+  /** Whether notification sound is enabled */
+  enabled: boolean;
+  /** URL to custom sound file. null = system default (synthesized chime) */
+  soundUrl: string | null;
+  /** Volume level 0-100. Default: 80 */
+  volume: number;
+}
+
 export class Tenant {
   @ApiProperty({ type: String })
   id: string;
@@ -70,6 +79,10 @@ export class Tenant {
   @ApiProperty()
   omniSettings: {
     resolveNoteMode: 'disabled' | 'optional' | 'required';
+    notificationSound?: {
+      agent: NotificationSoundConfig;
+      visitor: NotificationSoundConfig;
+    };
   };
 
   @ApiProperty({ description: 'Storage quota for tenant files' })

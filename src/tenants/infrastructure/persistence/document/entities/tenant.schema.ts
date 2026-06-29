@@ -81,11 +81,45 @@ export class TenantSchemaClass extends EntityDocumentHelper {
         enum: ['disabled', 'optional', 'required'],
         default: 'optional',
       },
+      notificationSound: {
+        type: {
+          agent: {
+            type: {
+              enabled: { type: Boolean, default: true },
+              soundUrl: { type: String, default: null },
+              volume: { type: Number, default: 80 },
+            },
+            default: () => ({ enabled: true, soundUrl: null, volume: 80 }),
+          },
+          visitor: {
+            type: {
+              enabled: { type: Boolean, default: true },
+              soundUrl: { type: String, default: null },
+              volume: { type: Number, default: 80 },
+            },
+            default: () => ({ enabled: true, soundUrl: null, volume: 80 }),
+          },
+        },
+        default: () => ({
+          agent: { enabled: true, soundUrl: null, volume: 80 },
+          visitor: { enabled: true, soundUrl: null, volume: 80 },
+        }),
+      },
     },
-    default: () => ({ resolveNoteMode: 'optional' }),
+    default: () => ({
+      resolveNoteMode: 'optional',
+      notificationSound: {
+        agent: { enabled: true, soundUrl: null, volume: 80 },
+        visitor: { enabled: true, soundUrl: null, volume: 80 },
+      },
+    }),
   })
   omniSettings: {
     resolveNoteMode: 'disabled' | 'optional' | 'required';
+    notificationSound?: {
+      agent: { enabled: boolean; soundUrl: string | null; volume: number };
+      visitor: { enabled: boolean; soundUrl: string | null; volume: number };
+    };
   };
 
   @Prop({

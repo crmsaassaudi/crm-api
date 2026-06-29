@@ -480,7 +480,21 @@ export class TenantsService {
 
   async updateOmniSettings(
     tenantId: string,
-    omniSettings: { resolveNoteMode: 'disabled' | 'optional' | 'required' },
+    omniSettings: {
+      resolveNoteMode?: 'disabled' | 'optional' | 'required';
+      notificationSound?: {
+        agent?: {
+          enabled?: boolean;
+          soundUrl?: string | null;
+          volume?: number;
+        };
+        visitor?: {
+          enabled?: boolean;
+          soundUrl?: string | null;
+          volume?: number;
+        };
+      };
+    },
   ): Promise<Tenant | null> {
     return this.tenantsRepository.updateOmniSettings(tenantId, omniSettings);
   }
