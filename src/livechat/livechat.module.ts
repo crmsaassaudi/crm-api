@@ -11,6 +11,7 @@ import { LivechatWidgetService } from './livechat-widget.service';
 import { MessageStatusService } from './services/message-status.service';
 import { SocketRateLimiter } from '../common/guards/socket-rate-limiter';
 import { ContactEnrichmentService } from './contact-enrichment.service';
+import { LivechatWebhookService } from './services/livechat-webhook.service';
 import { LivechatWidgetRepository } from './infrastructure/persistence/document/repositories/livechat-widget.repository';
 import {
   LivechatWidgetSchemaClass,
@@ -76,6 +77,7 @@ import {
     MessageStatusService,
     SocketRateLimiter,
     ContactEnrichmentService,
+    LivechatWebhookService,
   ],
   exports: [LivechatGateway, LivechatAdapter, LivechatWidgetService],
 })

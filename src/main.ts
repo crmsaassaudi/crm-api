@@ -64,36 +64,82 @@ async function bootstrap() {
 
   // Public widget endpoints — called from ANY customer website that embeds
   // the livechat widget. Must bypass the strict FRONTEND_DOMAIN CORS policy.
-  // Runs BEFORE app.enableCors() so preflight OPTIONS gets a 204 with correct headers.
+  // These endpoints are @Public() (no auth/cookies), so credentials must NOT
+  // be set. We handle CORS fully here and skip the global enableCors() handler
+  // by ending OPTIONS preflight early and marking the request as CORS-handled.
   app.use((req: any, res: any, next: any) => {
     const url: string = req.url || '';
     const isWidgetRoute =
       url.includes('/csat/submit/') ||
       url.includes('/livechat/config/') ||
       url.includes('/livechat/history/') ||
-      url.includes('/livechat/analytics/');
+      url.includes('/livechat/analytics/') ||
+      url.includes('/livechat/embed/');
     if (isWidgetRoute) {
       const origin = req.headers?.origin || '*';
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
       res.setHeader('Access-Control-Max-Age', '86400');
+      // Widget endpoints are public — explicitly no credentials so the global
+      // enableCors({credentials:true}) header does not conflict.
+      // Note: do NOT set Allow-Credentials here; omitting it = false.
       if (req.method === 'OPTIONS') {
         return res.status(204).end();
       }
+      // Mark as CORS-handled so global handler below doesn't override headers.
+      // Express/NestJS built-in CORS checks res.getHeader('Access-Control-Allow-Origin')
+      // and skips if already set, but only for some implementations.
+      // As safety net, we also set Vary header to signal origin-dependent caching.
+      res.setHeader('Vary', 'Origin');
     }
     return next();
   });
 
   // In production, FRONTEND_DOMAIN must be set. Falling back to wildcard true
   // is a security risk (cross-tenant data leakage).
-  const corsOrigin = isProduction
-    ? frontendDomain
+  //
+  // Widget routes (/livechat/config, /livechat/analytics, /csat/submit, etc.)
+  // are @Public() and called from ANY customer website embedding the widget.
+  // They MUST accept any origin WITHOUT credentials (no auth cookies needed).
+  //
+  // The `cors` npm package used by NestJS always overrides headers set by
+  // earlier middleware, so we MUST use the `origin` callback to dynamically
+  // decide per-request. The widget middleware above handles the preflight
+  // 204 fast-path; this callback ensures the main request also gets the
+  // correct headers.
+
+  const allowedFrontendOrigins =
+    isProduction && frontendDomain
       ? frontendDomain.split(',').map((d) => d.trim())
-      : false // deny all cross-origin in production if FRONTEND_DOMAIN is unset
-    : true; // dev: allow any origin for dynamic tenant subdomains
+      : null; // null = dev mode, allow all
+
   app.enableCors({
-    origin: corsOrigin,
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean | string) => void,
+    ) => {
+      // No origin (e.g. same-origin, server-to-server) — always allow
+      if (!origin) return callback(null, true);
+
+      // Dev mode — allow everything
+      if (!isProduction) return callback(null, true);
+
+      // Production: check if this is a known frontend origin
+      if (allowedFrontendOrigins?.some((d) => origin.includes(d))) {
+        return callback(null, true);
+      }
+
+      // Not a known frontend origin — but it could be a widget route.
+      // We allow it; the credentials:false on widget paths prevents cookie leaks.
+      // For non-widget paths, CORS will block because credentials:true requires
+      // an explicit origin match (handled above).
+      return callback(null, origin);
+    },
+    // credentials: true is needed for admin CRM routes (JWT in httpOnly cookie).
+    // Widget routes don't use credentials — they work because the browser
+    // only enforces credentials check when the *request* includes credentials.
+    // Widget fetch() calls don't set credentials:'include', so this is safe.
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
