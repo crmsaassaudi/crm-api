@@ -236,6 +236,10 @@ export class InboundOrchestrationService {
 
   /**
    * Resolve the initial bot state for a new conversation.
+   *
+   * Conversation bot is ALWAYS enabled by default. The channel-level
+   * botEnabled flag acts as a master switch checked at enqueue time.
+   * Agent can explicitly disable bot per conversation (override).
    */
   async resolveInitialBotState(
     tenantId: string,
@@ -249,7 +253,7 @@ export class InboundOrchestrationService {
     );
 
     return {
-      enabled: Boolean(botConfig?.enabled),
+      enabled: true, // always default ON — channel master switch decides at runtime
       provider: botConfig?.provider ?? 'typebot',
       flowId: null,
       sessionId: null,
@@ -260,35 +264,34 @@ export class InboundOrchestrationService {
   }
 
   /**
-   * Read bot enabled flag from channel config.
+   * Read bot config from channel. Always returns an object with enabled flag
+   * (never undefined) so callers can distinguish "channel has no config" from
+   * "channel explicitly disabled bot".
    */
   async getChannelBotConfig(
     tenantId: string,
     channelType: string,
     channelAccount: string,
-  ): Promise<{ enabled: boolean; provider: string } | undefined> {
+  ): Promise<{ enabled: boolean; provider: string }> {
     try {
       const channel = await this.channelsService.findAnyByAccount(
         channelType,
         channelAccount,
       );
 
-      if (!channel?.config) return undefined;
+      if (!channel?.config) return { enabled: false, provider: 'typebot' };
 
       // Validate tenant ownership (defense-in-depth)
       if (channel.tenantId !== tenantId) {
         this.logger.warn(
           `Bot config tenant mismatch: channel ${channel.id} belongs to ${channel.tenantId}, not ${tenantId}`,
         );
-        return undefined;
+        return { enabled: false, provider: 'typebot' };
       }
 
-      const config = channel.config;
-      if (!config.botEnabled) return undefined;
-
       return {
-        enabled: Boolean(config.botEnabled),
-        provider: config.botProvider ?? 'typebot',
+        enabled: Boolean(channel.config.botEnabled),
+        provider: channel.config.botProvider ?? 'typebot',
       };
     } catch (err) {
       this.logger.debug(
@@ -296,12 +299,20 @@ export class InboundOrchestrationService {
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      return undefined;
+      return { enabled: false, provider: 'typebot' };
     }
   }
 
   /**
-   * Enqueue bot processing for an inbound message if the conversation has bot enabled.
+   * Enqueue bot processing for an inbound message.
+   *
+   * Two-level bot toggle:
+   *   1. Channel level (master switch) — if OFF, bot never runs
+   *   2. Conversation level (per-conversation override, default ON)
+   *      — only skips when agent explicitly disabled bot on this conversation
+   *
+   * Default: conversation.bot.enabled = true (always).
+   * Legacy conversations without bot state are treated as enabled.
    */
   async enqueueBotProcessingIfNeeded(
     payload: OmniPayload,
@@ -323,37 +334,39 @@ export class InboundOrchestrationService {
     if (!botProcessableTypes.has(payload.messageType) && !isInteractive) return;
 
     try {
-      const conversation = await this.conversationRepo.findById(conversationId);
-
-      // Primary check: conversation-level bot state
-      let botEnabled = conversation?.bot?.enabled === true;
-
-      // Fallback: if conversation has no bot state (created before bot was enabled),
-      // check the channel-level config and sync it to the conversation
-      if (!botEnabled && conversation) {
-        const channelBotConfig = await this.getChannelBotConfig(
-          payload.tenantId,
-          payload.channelType,
-          payload.channelAccount,
-        );
-        if (channelBotConfig?.enabled) {
-          this.logger.log(
-            `Bot enabled on channel but not on conversation ${conversationId} — syncing bot state`,
-          );
-          await this.conversationRepo.updateBotState(conversationId, {
-            enabled: true,
-            provider: channelBotConfig.provider ?? 'typebot',
-            status: 'active',
-          });
-          botEnabled = true;
-        }
-      }
-
-      if (!botEnabled) {
+      // ── Level 1: Channel master switch ──────────────────────────────
+      const channelBotConfig = await this.getChannelBotConfig(
+        payload.tenantId,
+        payload.channelType,
+        payload.channelAccount,
+      );
+      if (!channelBotConfig.enabled) {
         this.logger.debug(
-          `Bot not enabled for conversation ${conversationId} — skipping bot queue`,
+          `Bot disabled on channel ${payload.channelType}/${payload.channelAccount} — skipping bot queue`,
         );
         return;
+      }
+
+      // ── Level 2: Conversation override ─────────────────────────────
+      // Default: enabled (conversation.bot.enabled defaults to true).
+      // Only skip when agent EXPLICITLY disabled bot on this conversation.
+      const conversation = await this.conversationRepo.findById(conversationId);
+      if (!conversation) return;
+
+      if (conversation.bot?.enabled === false) {
+        this.logger.debug(
+          `Bot explicitly disabled by agent on conversation ${conversationId} — skipping`,
+        );
+        return;
+      }
+
+      // Auto-initialize bot state for legacy conversations (no bot field)
+      if (!conversation.bot) {
+        await this.conversationRepo.updateBotState(conversationId, {
+          enabled: true,
+          provider: channelBotConfig.provider,
+          status: 'active',
+        });
       }
 
       let text = payload.content;

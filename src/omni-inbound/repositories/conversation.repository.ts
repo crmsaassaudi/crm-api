@@ -746,7 +746,8 @@ export class ConversationRepository {
 
   /**
    * Reopen a resolved/closed conversation: set status back to 'open',
-   * increment reopenCount, and clear resolve metadata.
+   * increment reopenCount, clear resolve metadata, and reset bot session
+   * context so the bot starts fresh (while preserving the enabled flag).
    */
   async reopenConversation(
     conversationId: string,
@@ -762,6 +763,12 @@ export class ConversationRepository {
             resolveReason: null,
             resolveNote: null,
             resolveSource: null,
+            // Reset bot session context — fresh start on reopen
+            'bot.sessionId': null,
+            'bot.flowId': null,
+            'bot.status': 'active',
+            'bot.lastError': null,
+            'bot.lockedAt': null,
           },
           $inc: { reopenCount: 1 },
         },
