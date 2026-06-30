@@ -324,7 +324,32 @@ export class InboundOrchestrationService {
 
     try {
       const conversation = await this.conversationRepo.findById(conversationId);
-      if (!conversation?.bot?.enabled) {
+
+      // Primary check: conversation-level bot state
+      let botEnabled = conversation?.bot?.enabled === true;
+
+      // Fallback: if conversation has no bot state (created before bot was enabled),
+      // check the channel-level config and sync it to the conversation
+      if (!botEnabled && conversation) {
+        const channelBotConfig = await this.getChannelBotConfig(
+          payload.tenantId,
+          payload.channelType,
+          payload.channelAccount,
+        );
+        if (channelBotConfig?.enabled) {
+          this.logger.log(
+            `Bot enabled on channel but not on conversation ${conversationId} — syncing bot state`,
+          );
+          await this.conversationRepo.updateBotState(conversationId, {
+            enabled: true,
+            provider: channelBotConfig.provider ?? 'typebot',
+            status: 'active',
+          });
+          botEnabled = true;
+        }
+      }
+
+      if (!botEnabled) {
         this.logger.debug(
           `Bot not enabled for conversation ${conversationId} — skipping bot queue`,
         );
