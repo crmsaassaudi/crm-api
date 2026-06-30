@@ -16,11 +16,13 @@ export class BotApiService {
   async dispatch(payload: BotReplyRequest): Promise<BotAcceptResponse> {
     const baseUrl = this.resolveBotBaseUrl();
     const endpoint = `${baseUrl}/api/bot/typebot/reply`;
+    const secret = this.configService.get<string>('CRM_BOT_INTERNAL_SECRET');
 
     const response = await axios.post<BotAcceptResponse>(endpoint, payload, {
       timeout: 3000, // Only waiting for acceptance, not processing
       headers: {
         'content-type': 'application/json',
+        ...(secret ? { 'x-crm-internal-secret': secret } : {}),
       },
     });
 
@@ -31,9 +33,17 @@ export class BotApiService {
     return response.data;
   }
 
-  /** Build the callback URL that bot will POST results to */
+  /**
+   * Build the callback URL that bot will POST results to.
+   *
+   * Prioritizes CRM_API_INTERNAL_URL because crm-bot validates the callback
+   * origin against its own CRM_API_INTERNAL_URL env var (SSRF protection).
+   * Using the public URL would cause an origin mismatch in Docker/K8s
+   * where internal and public URLs differ.
+   */
   resolveCallbackUrl(): string {
     const raw =
+      this.configService.get<string>('CRM_API_INTERNAL_URL', { infer: true }) ||
       this.configService.get<string>('CRM_API_PUBLIC_URL', { infer: true }) ||
       this.configService.get<string>('API_BASE_URL', { infer: true }) ||
       'http://localhost:3000';
