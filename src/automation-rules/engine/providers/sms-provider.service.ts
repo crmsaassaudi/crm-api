@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ActionExecutionResult } from '../action-executors';
+import { ActionExecutionResult } from '../executors/executor.interface';
 
 /**
  * SmsProviderService — abstract interface for sending SMS messages.
@@ -92,6 +92,7 @@ export class TwilioSmsProvider implements SmsProviderService {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: body.toString(),
+        signal: AbortSignal.timeout(10_000), // 10s hard timeout
       });
 
       if (!response.ok) {

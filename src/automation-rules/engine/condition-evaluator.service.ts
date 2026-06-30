@@ -106,7 +106,8 @@ export class ConditionEvaluatorService {
     rule: ConditionRule,
     data: Record<string, any>,
   ): boolean {
-    const fieldValue = data[rule.field];
+    // Support dot-notation nested paths: "address.city", "customFields.budget"
+    const fieldValue = this.resolvePath(data, rule.field);
     const conditionValue = rule.value;
 
     // Special operators that work on null/undefined
@@ -232,5 +233,23 @@ export class ConditionEvaluatorService {
         this.checkDepth(rule, depth + 1);
       }
     }
+  }
+
+  /**
+   * Resolve a dot-delimited path against a data object.
+   * E.g. "address.city" → data.address?.city
+   * Falls back to flat lookup for non-dot fields: "status" → data.status
+   */
+  private resolvePath(data: Record<string, any>, path: string): any {
+    // Fast path: no dots → flat lookup (most common case)
+    if (!path.includes('.')) return data[path];
+
+    const keys = path.split('.');
+    let value: any = data;
+    for (const key of keys) {
+      if (value === undefined || value === null) return undefined;
+      value = value[key];
+    }
+    return value;
   }
 }

@@ -7,8 +7,9 @@ import {
   AUTOMATION_SMS_QUEUE,
   AUTOMATION_INTERNAL_QUEUE,
   AUTOMATION_WEBHOOK_QUEUE,
-  AutomationJobName,
   AutomationActionJobData,
+  resolveQueueForAction,
+  resolveJobNameForAction,
 } from './automation-queue.constants';
 import { DEFAULT_JOB_OPTIONS } from '../../queue/config/default-job-options';
 
@@ -40,13 +41,30 @@ export class AutomationActionProducer {
     @InjectQueue(AUTOMATION_WEBHOOK_QUEUE)
     private readonly webhookQueue: Queue,
   ) {
-    this.queueMap = new Map<string, Queue>([
-      ['send_email', this.emailQueue],
-      ['send_sms', this.smsQueue],
-      ['update_field', this.internalQueue],
-      ['route_to_team', this.internalQueue],
-      ['webhook', this.webhookQueue],
-    ]);
+    // Build queue map from canonical resolveQueueForAction() — single source of truth.
+    // This ensures all 16 action types route to the correct typed queue.
+    const queueNameToInstance: Record<string, Queue> = {
+      [AUTOMATION_EMAIL_QUEUE]: this.emailQueue,
+      [AUTOMATION_SMS_QUEUE]: this.smsQueue,
+      [AUTOMATION_INTERNAL_QUEUE]: this.internalQueue,
+      [AUTOMATION_WEBHOOK_QUEUE]: this.webhookQueue,
+    };
+
+    const allActionTypes = [
+      'send_email', 'send_sms', 'update_field', 'route_to_team', 'webhook',
+      'create_task', 'create_ticket', 'add_tag', 'remove_tag', 'add_note',
+      'create_record', 'http_request', 'send_whatsapp', 'send_zns',
+      'send_livechat', 'internal_notification',
+    ];
+
+    this.queueMap = new Map<string, Queue>();
+    for (const actionType of allActionTypes) {
+      const queueName = resolveQueueForAction(actionType);
+      this.queueMap.set(
+        actionType,
+        queueNameToInstance[queueName] ?? this.mainQueue,
+      );
+    }
   }
 
   /**
@@ -65,7 +83,7 @@ export class AutomationActionProducer {
     data: AutomationActionJobData,
     opts?: { jobId?: string },
   ): Promise<string | undefined> {
-    const jobName = this.resolveJobName(data.actionType);
+    const jobName = resolveJobNameForAction(data.actionType);
     const queue = this.queueMap.get(data.actionType) || this.mainQueue;
 
     const jobId = opts?.jobId ?? `${data.executionId}:${data.nodeId}`;
@@ -73,7 +91,6 @@ export class AutomationActionProducer {
     const job = await queue.add(jobName, data, {
       ...DEFAULT_JOB_OPTIONS,
       jobId,
-      // Priority: email/sms are higher priority than update-field
       priority: this.resolvePriority(data.actionType),
     });
 
@@ -94,36 +111,30 @@ export class AutomationActionProducer {
     return results;
   }
 
-  private resolveJobName(actionType: string): AutomationJobName {
-    switch (actionType) {
-      case 'send_email':
-        return AutomationJobName.SEND_EMAIL;
-      case 'send_sms':
-        return AutomationJobName.SEND_SMS;
-      case 'update_field':
-        return AutomationJobName.UPDATE_FIELD;
-      case 'route_to_team':
-        return AutomationJobName.ROUTE_TO_TEAM;
-      case 'webhook':
-        return AutomationJobName.WEBHOOK;
-      default:
-        return AutomationJobName.UPDATE_FIELD; // fallback to internal
-    }
-  }
-
   private resolvePriority(actionType: string): number {
     // Lower number = higher priority in BullMQ
     switch (actionType) {
       case 'send_email':
-        return 1;
       case 'send_sms':
+      case 'send_whatsapp':
+      case 'send_zns':
+      case 'send_livechat':
         return 1;
       case 'route_to_team':
+      case 'internal_notification':
         return 2;
       case 'update_field':
+      case 'add_tag':
+      case 'remove_tag':
+      case 'add_note':
         return 3;
-      case 'webhook':
+      case 'create_task':
+      case 'create_ticket':
+      case 'create_record':
         return 4;
+      case 'webhook':
+      case 'http_request':
+        return 5;
       default:
         return 5;
     }

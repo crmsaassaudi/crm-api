@@ -29,6 +29,7 @@ export const AUTOMATION_DELAYED_QUEUE = 'automation-delayed-resume';
 
 /**
  * Job names used within the automation action queues.
+ * Each action type has a distinct name for observability in BullMQ dashboards.
  */
 export enum AutomationJobName {
   SEND_EMAIL = 'automation.send-email',
@@ -36,7 +37,44 @@ export enum AutomationJobName {
   UPDATE_FIELD = 'automation.update-field',
   ROUTE_TO_TEAM = 'automation.route-to-team',
   WEBHOOK = 'automation.webhook',
+  CREATE_TASK = 'automation.create-task',
+  CREATE_TICKET = 'automation.create-ticket',
+  ADD_TAG = 'automation.add-tag',
+  REMOVE_TAG = 'automation.remove-tag',
+  ADD_NOTE = 'automation.add-note',
+  CREATE_RECORD = 'automation.create-record',
+  HTTP_REQUEST = 'automation.http-request',
+  SEND_WHATSAPP = 'automation.send-whatsapp',
+  SEND_ZNS = 'automation.send-zns',
+  SEND_LIVECHAT = 'automation.send-livechat',
+  INTERNAL_NOTIFICATION = 'automation.internal-notification',
   DELAYED_RESUME = 'automation.delayed-resume',
+}
+
+/**
+ * Canonical mapping from actionType → AutomationJobName.
+ * Single source of truth — used by AutomationActionProducer.
+ */
+export function resolveJobNameForAction(actionType: string): AutomationJobName {
+  const mapping: Record<string, AutomationJobName> = {
+    send_email: AutomationJobName.SEND_EMAIL,
+    send_sms: AutomationJobName.SEND_SMS,
+    update_field: AutomationJobName.UPDATE_FIELD,
+    route_to_team: AutomationJobName.ROUTE_TO_TEAM,
+    webhook: AutomationJobName.WEBHOOK,
+    create_task: AutomationJobName.CREATE_TASK,
+    create_ticket: AutomationJobName.CREATE_TICKET,
+    add_tag: AutomationJobName.ADD_TAG,
+    remove_tag: AutomationJobName.REMOVE_TAG,
+    add_note: AutomationJobName.ADD_NOTE,
+    create_record: AutomationJobName.CREATE_RECORD,
+    http_request: AutomationJobName.HTTP_REQUEST,
+    send_whatsapp: AutomationJobName.SEND_WHATSAPP,
+    send_zns: AutomationJobName.SEND_ZNS,
+    send_livechat: AutomationJobName.SEND_LIVECHAT,
+    internal_notification: AutomationJobName.INTERNAL_NOTIFICATION,
+  };
+  return mapping[actionType] ?? AutomationJobName.UPDATE_FIELD;
 }
 
 /**

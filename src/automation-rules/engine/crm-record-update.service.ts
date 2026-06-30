@@ -26,19 +26,27 @@ export class CrmRecordUpdateService {
   private readonly logger = new Logger(CrmRecordUpdateService.name);
 
   /**
-   * System / ownership / audit fields that automation `update_field` actions
-   * must never write (MED-01). Setting these could escalate tenant scope,
-   * corrupt identity, or rewrite ownership.
+   * System / identity / audit fields that NO automation action may ever write
+   * (MED-01). Setting these could escalate tenant scope, corrupt identity,
+   * or rewrite audit trails.
    */
   private static readonly PROTECTED_FIELDS = new Set<string>([
     '_id',
     'id',
     'tenantId',
-    'ownerId',
     'createdAt',
     'updatedAt',
     'createdBy',
     '__v',
+  ]);
+
+  /**
+   * Ownership fields that only privileged internal executors (e.g.
+   * RouteToTeamExecutor) may write. External `update_field` actions are
+   * blocked unless the caller explicitly opts in via `allowRestricted`.
+   */
+  private static readonly RESTRICTED_FIELDS = new Set<string>([
+    'ownerId',
   ]);
 
   constructor(
@@ -70,6 +78,8 @@ export class CrmRecordUpdateService {
     sourceWorkflowId: string;
     automationDepth?: number;
     automationBreadcrumbs?: string[];
+    /** When true, allows writing RESTRICTED_FIELDS (e.g. ownerId). Internal use only. */
+    allowRestricted?: boolean;
   }): Promise<{
     success: boolean;
     previousValue: any;
@@ -82,10 +92,10 @@ export class CrmRecordUpdateService {
       `[CrmUpdate] ${recordType}(${recordId}).${field} = "${params.value}" | tenant=${tenantId}`,
     );
 
-    // MED-01: never let an automation action overwrite system/ownership fields.
-    // targetField comes from workflow config (admin-authored, but workflows can
-    // be imported), so an allow-by-default + explicit blocklist guards against
-    // tenant takeover / privilege escalation / id corruption.
+    // MED-01: Two-tier field protection.
+    // Tier 1 (PROTECTED): system/identity fields — NEVER writable by automation.
+    // Tier 2 (RESTRICTED): ownership fields — writable only by privileged
+    //   internal executors (e.g. RouteToTeamExecutor) via allowRestricted flag.
     if (CrmRecordUpdateService.PROTECTED_FIELDS.has(field)) {
       this.logger.warn(
         `[CrmUpdate] Blocked attempt to set protected field "${field}" on ${recordType}(${recordId})`,
@@ -95,6 +105,21 @@ export class CrmRecordUpdateService {
         previousValue: undefined,
         newValue: params.value,
         error: `Field "${field}" is protected and cannot be set by automation`,
+      };
+    }
+
+    if (
+      CrmRecordUpdateService.RESTRICTED_FIELDS.has(field) &&
+      !params.allowRestricted
+    ) {
+      this.logger.warn(
+        `[CrmUpdate] Blocked attempt to set restricted field "${field}" on ${recordType}(${recordId}) (allowRestricted=false)`,
+      );
+      return {
+        success: false,
+        previousValue: undefined,
+        newValue: params.value,
+        error: `Field "${field}" is restricted. Use a dedicated action (e.g. Route to Team) instead of update_field.`,
       };
     }
 

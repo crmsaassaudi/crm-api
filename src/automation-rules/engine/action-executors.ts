@@ -560,6 +560,7 @@ export class RouteToTeamExecutor implements ActionExecutor {
         sourceWorkflowId: job.sourceWorkflowId,
         automationDepth: job.automationDepth,
         automationBreadcrumbs: job.automationBreadcrumbs,
+        allowRestricted: true,
       });
 
       if (!result.success) {
@@ -616,6 +617,7 @@ export class RouteToTeamExecutor implements ActionExecutor {
         sourceWorkflowId: job.sourceWorkflowId,
         automationDepth: job.automationDepth,
         automationBreadcrumbs: job.automationBreadcrumbs,
+        allowRestricted: true,
       });
 
       if (!updateResult.success) {
@@ -772,6 +774,8 @@ export class WebhookExecutor implements ActionExecutor {
         };
       }
 
+      // Consume the response body to release the TCP connection (PERF-04).
+      await response.body?.cancel().catch(() => {});
       clearTimeout(timer);
       return {
         success: true,
@@ -1006,10 +1010,19 @@ export class AddTagExecutor implements ActionExecutor {
       `[AddTag] tenant=${tenantId} ${recordType}(${recordId}) += [${rawTags.join(', ')}]`,
     );
 
-    // Merge new tags with existing tags (deduplication)
-    const existingTags: string[] = Array.isArray(recordData.tags)
-      ? recordData.tags
-      : [];
+    // Re-fetch fresh record to avoid stale-data race condition.
+    // The job payload's recordData may be stale (serialized at dispatch time).
+    // Two concurrent add_tag jobs on the same record would overwrite each other
+    // without this fresh read.
+    const freshRecord = await this.crmUpdate.fetchRecord(
+      recordType as any,
+      recordId,
+    );
+    const existingTags: string[] = Array.isArray(freshRecord?.tags)
+      ? freshRecord.tags
+      : Array.isArray(recordData.tags)
+        ? recordData.tags
+        : [];
     const mergedTags = Array.from(new Set([...existingTags, ...rawTags]));
 
     const result = await this.crmUpdate.updateField({
@@ -1079,10 +1092,16 @@ export class RemoveTagExecutor implements ActionExecutor {
       `[RemoveTag] tenant=${tenantId} ${recordType}(${recordId}) -= [${rawTags.join(', ')}]`,
     );
 
-    // Set-difference: O(n) with Set lookup
-    const existingTags: string[] = Array.isArray(recordData.tags)
-      ? recordData.tags
-      : [];
+    // Re-fetch fresh record to avoid stale-data race condition (same as AddTag).
+    const freshRecord = await this.crmUpdate.fetchRecord(
+      recordType as any,
+      recordId,
+    );
+    const existingTags: string[] = Array.isArray(freshRecord?.tags)
+      ? freshRecord.tags
+      : Array.isArray(recordData.tags)
+        ? recordData.tags
+        : [];
     const removeSet = new Set(rawTags);
     const filteredTags = existingTags.filter((t) => !removeSet.has(t));
 
@@ -1744,14 +1763,31 @@ export class SendLivechatExecutor implements ActionExecutor {
       `[SendLivechat] tenant=${tenantId} conversation=${conversationId} messageLength=${message.length}`,
     );
 
-    // Event-driven: LivechatModule listens and delivers via WebSocket
-    this.eventEmitter?.emit('livechat.system-message', {
-      tenantId,
-      conversationId,
-      message,
-      source: 'automation',
-      workflowId: job.workflowId,
-    });
+    // Guard: EventEmitter is required for delivery
+    if (!this.eventEmitter) {
+      return {
+        success: false,
+        retryable: false,
+        error: { code: 'NO_EVENT_BUS', message: 'EventEmitter not injected — cannot deliver livechat message' },
+      };
+    }
+
+    // Async emit: waits for all listeners to complete, surfaces errors
+    try {
+      await this.eventEmitter.emitAsync('livechat.system-message', {
+        tenantId,
+        conversationId,
+        message,
+        source: 'automation',
+        workflowId: job.workflowId,
+      });
+    } catch (err: any) {
+      this.logger.error(`[SendLivechat] Delivery failed: ${err.message}`, err.stack);
+      return {
+        success: false,
+        error: { code: 'LIVECHAT_DELIVERY_FAILED', message: err.message },
+      };
+    }
 
     return {
       success: true,
@@ -1812,20 +1848,37 @@ export class InternalNotificationExecutor implements ActionExecutor {
       `[InternalNotification] tenant=${tenantId} type=${recipientType} recipients=${recipientIds.length || recipientType} title="${title}"`,
     );
 
-    // Emit event — Realtime/Notification module handles delivery (WebSocket + DB persistence)
-    this.eventEmitter?.emit('internal.notification', {
-      tenantId,
-      recipientType,
-      recipientIds,
-      title,
-      message,
-      source: 'automation',
-      context: {
-        workflowId: job.workflowId,
-        recordType,
-        recordId,
-      },
-    });
+    // Guard: EventEmitter is required for delivery
+    if (!this.eventEmitter) {
+      return {
+        success: false,
+        retryable: false,
+        error: { code: 'NO_EVENT_BUS', message: 'EventEmitter not injected — cannot send notification' },
+      };
+    }
+
+    // Async emit: waits for all listeners to complete, surfaces errors
+    try {
+      await this.eventEmitter.emitAsync('internal.notification', {
+        tenantId,
+        recipientType,
+        recipientIds,
+        title,
+        message,
+        source: 'automation',
+        context: {
+          workflowId: job.workflowId,
+          recordType,
+          recordId,
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`[InternalNotification] Delivery failed: ${err.message}`, err.stack);
+      return {
+        success: false,
+        error: { code: 'NOTIFICATION_DELIVERY_FAILED', message: err.message },
+      };
+    }
 
     return {
       success: true,

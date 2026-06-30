@@ -20,6 +20,9 @@ import { WebhookHeaderCryptoService } from './webhook-header-crypto.service';
 /** Hard cap on wait-node delays — 90 days in milliseconds (MED-04). */
 export const MAX_WAIT_DELAY_MS = 90 * 24 * 60 * 60 * 1000;
 
+/** Hard timeout for a single workflow execution (PERF-03). */
+const MAX_EXECUTION_TIMEOUT_MS = 30_000;
+
 /**
  * Fields preserved when slimming a record before it is queued / logged.
  * Keeps just what templates and recipient-resolution need, dropping the
@@ -70,6 +73,28 @@ export class WorkflowOrchestratorService {
    */
   async execute(
     workflow: any, // Lean document from findActiveByTrigger
+    payload: AutomationEventPayload,
+  ): Promise<void> {
+    // Hard timeout: prevent unbounded event-listener thread blocking.
+    // The timer MUST be cleared on normal completion to avoid handle leaks.
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        this.executeInternal(workflow, payload),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`EXECUTION_TIMEOUT: Workflow "${workflow.name}" exceeded ${MAX_EXECUTION_TIMEOUT_MS}ms`)),
+            MAX_EXECUTION_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private async executeInternal(
+    workflow: any,
     payload: AutomationEventPayload,
   ): Promise<void> {
     const tenantId = payload.tenantId;
@@ -127,7 +152,9 @@ export class WorkflowOrchestratorService {
 
     // ── Layer 3: Run-once check ───────────────────────────────────────────
     if (workflow.triggerConfig?.runOncePerRecord) {
-      const runOnceCheck = await this.loopPrevention.checkRunOnce({
+      // Atomic check-and-mark: eliminates TOCTOU race where two workers
+      // both pass a separate check() before either calls mark().
+      const runOnceCheck = await this.loopPrevention.checkAndMarkRunOnce({
         tenantId,
         workflowId,
         recordId,
@@ -148,9 +175,6 @@ export class WorkflowOrchestratorService {
         await this.executionLogRepo.skipExecution(execLog._id.toString());
         return;
       }
-
-      // Mark as executed for future run-once checks
-      await this.loopPrevention.markRunOnce({ tenantId, workflowId, recordId });
     }
 
     // ── Start execution log ───────────────────────────────────────────────
@@ -177,8 +201,13 @@ export class WorkflowOrchestratorService {
         );
       }
 
+      // Pre-build O(1) lookup maps (SCALE-02)
+      const graph = this.buildGraphIndex(nodes, edges);
+
       // Find the trigger node (entry point)
-      const triggerNode = nodes.find((n: any) => n.type === 'trigger');
+      const triggerNode = graph.nodeMap.get(
+        nodes.find((n: any) => n.type === 'trigger')?.id ?? '',
+      );
       if (!triggerNode) {
         throw new Error('No trigger node found in published workflow');
       }
@@ -186,8 +215,7 @@ export class WorkflowOrchestratorService {
       // BFS traversal from trigger node
       const hibernated = await this.traverseFromNode(
         triggerNode.id,
-        nodes,
-        edges,
+        graph,
         payload,
         executionId,
         workflowId,
@@ -244,11 +272,12 @@ export class WorkflowOrchestratorService {
     depth: number,
   ): Promise<void> {
     const stepLogs: ExecutionStep[] = [];
+    // Pre-build O(1) lookup maps (SCALE-02)
+    const graph = this.buildGraphIndex(nodes, edges);
     try {
       const hibernated = await this.traverseFromNode(
         nodeId,
-        nodes,
-        edges,
+        graph,
         payload,
         executionId,
         workflowId,
@@ -293,8 +322,7 @@ export class WorkflowOrchestratorService {
    */
   private async traverseFromNode(
     nodeId: string,
-    nodes: any[],
-    edges: any[],
+    graph: GraphIndex,
     payload: AutomationEventPayload,
     executionId: string,
     workflowId: string,
@@ -303,7 +331,7 @@ export class WorkflowOrchestratorService {
     depth: number,
     stepLogs: ExecutionStep[],
   ): Promise<boolean> {
-    const node = nodes.find((n: any) => n.id === nodeId);
+    const node = graph.nodeMap.get(nodeId);
     if (!node) return false;
 
     // ── Layer 0: hard step ceiling (CRIT-04 defense-in-depth) ────────────
@@ -358,12 +386,11 @@ export class WorkflowOrchestratorService {
       });
 
       // Follow all edges from trigger
-      const nextEdges = edges.filter((e: any) => e.source === nodeId);
+      const nextEdges = graph.edgeMap.get(nodeId) ?? [];
       for (const edge of nextEdges) {
         const hibernated = await this.traverseFromNode(
           edge.target,
-          nodes,
-          edges,
+          graph,
           payload,
           executionId,
           workflowId,
@@ -402,8 +429,8 @@ export class WorkflowOrchestratorService {
       });
 
       // Follow edges matching the branch (True/False Split)
-      const branchEdges = edges.filter((e: any) => {
-        if (e.source !== nodeId) return false;
+      const allEdgesFromNode = graph.edgeMap.get(nodeId) ?? [];
+      const branchEdges = allEdgesFromNode.filter((e: any) => {
         // If edge has sourceHandle, match it; otherwise follow all
         if (e.sourceHandle) return e.sourceHandle === branch;
         return matched; // Legacy: only follow if matched
@@ -412,8 +439,7 @@ export class WorkflowOrchestratorService {
       for (const edge of branchEdges) {
         const hibernated = await this.traverseFromNode(
           edge.target,
-          nodes,
-          edges,
+          graph,
           payload,
           executionId,
           workflowId,
@@ -455,7 +481,7 @@ export class WorkflowOrchestratorService {
           nodeId,
           nodeName: actionData.nodeName,
           nodeType: 'action',
-          status: 'success',
+          status: 'queued' as any, // Not 'success' — action is enqueued, not yet executed
           input: { actionType: actionConfig?.actionType, config: actionConfig },
           output: { queued: true },
           startedAt: stepStart,
@@ -478,12 +504,11 @@ export class WorkflowOrchestratorService {
       }
 
       // Follow edges from action to next nodes (chaining)
-      const nextEdges = edges.filter((e: any) => e.source === nodeId);
+      const nextEdges = graph.edgeMap.get(nodeId) ?? [];
       for (const edge of nextEdges) {
         const hibernated = await this.traverseFromNode(
           edge.target,
-          nodes,
-          edges,
+          graph,
           payload,
           executionId,
           workflowId,
@@ -526,7 +551,7 @@ export class WorkflowOrchestratorService {
       await this.flushStepLogs(executionId, stepLogs);
 
       // Schedule delayed resume for each downstream edge
-      const nextEdges = edges.filter((e: any) => e.source === nodeId);
+      const nextEdges = graph.edgeMap.get(nodeId) ?? [];
       for (const edge of nextEdges) {
         const delayedData: AutomationDelayedJobData = {
           executionId,
@@ -598,4 +623,28 @@ export class WorkflowOrchestratorService {
     if (config.actionType !== 'webhook') return config;
     return (await this.webhookHeaderCrypto.encryptWebhookConfig(config)).config;
   }
+
+  /**
+   * Pre-build O(1) lookup structures for nodes and edges.
+   * Replaces O(n) find/filter on every traversal step (SCALE-02).
+   */
+  private buildGraphIndex(nodes: any[], edges: any[]): GraphIndex {
+    const nodeMap = new Map<string, any>();
+    for (const n of nodes) nodeMap.set(n.id, n);
+
+    const edgeMap = new Map<string, any[]>();
+    for (const e of edges) {
+      const list = edgeMap.get(e.source) ?? [];
+      list.push(e);
+      edgeMap.set(e.source, list);
+    }
+
+    return { nodeMap, edgeMap };
+  }
+}
+
+/** Pre-computed graph index for O(1) lookups during DAG traversal. */
+interface GraphIndex {
+  nodeMap: Map<string, any>;
+  edgeMap: Map<string, any[]>;
 }

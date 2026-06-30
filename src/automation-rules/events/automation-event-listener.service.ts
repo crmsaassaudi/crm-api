@@ -5,6 +5,7 @@ import { AutomationWorkflowRepository } from '../infrastructure/persistence/docu
 import { WorkflowOrchestratorService } from '../engine/workflow-orchestrator.service';
 import { BulkEventThrottleService } from '../engine/bulk-event-throttle.service';
 import { AutomationBulkProducer } from '../queue/automation-bulk.producer';
+import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 
 /**
  * AutomationEventListenerService — listens for CRM object events
@@ -27,6 +28,7 @@ export class AutomationEventListenerService {
     private readonly orchestrator: WorkflowOrchestratorService,
     private readonly throttle: BulkEventThrottleService,
     private readonly bulkProducer: AutomationBulkProducer,
+    private readonly executionLogRepo: AutomationExecutionLogRepository,
   ) {}
 
   // ── Wildcard listener for all automation events ───────────────────────
@@ -110,6 +112,28 @@ export class AutomationEventListenerService {
           this.logger.error(
             `Workflow "${wf.name}" (${wf._id}) execution failed: ${wfError.message}`,
           );
+
+          // Track the failure in execution log so admins can see it in the dashboard.
+          // The orchestrator may have already created its own log entry, but if it
+          // threw before that (e.g. EXECUTION_TIMEOUT), this is the only record.
+          try {
+            const execLog = await this.executionLogRepo.startExecution({
+              tenantId,
+              workflowId: wf._id.toString(),
+              workflowName: wf.name,
+              recordId,
+              recordType: object,
+              automationDepth: depth,
+            });
+            await this.executionLogRepo.failExecution(execLog._id.toString(), {
+              code: 'LISTENER_ERROR',
+              message: wfError.message,
+            });
+          } catch (logErr: any) {
+            this.logger.error(
+              `[Event] Failed to log listener error: ${logErr.message}`,
+            );
+          }
         }
       }
     } catch (error: any) {

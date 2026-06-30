@@ -37,12 +37,22 @@ export class BulkEventThrottleService {
     const key = `automation:rate:${tenantId}`;
 
     try {
-      const current = await this.redis.incr(key);
-
-      // Set expiry only on first increment (when key is created)
-      if (current === 1) {
-        await this.redis.expire(key, 1);
-      }
+      // Atomic INCR + EXPIRE via Lua script to prevent key leaks
+      // if the process crashes between the two Redis commands.
+      // (Same proven pattern as LoopPreventionService.checkStrictLoop)
+      const incrWithTtlScript = `
+        local count = redis.call('incr', KEYS[1])
+        if count == 1 then
+          redis.call('expire', KEYS[1], ARGV[1])
+        end
+        return count
+      `;
+      const current = (await this.redis.eval(
+        incrWithTtlScript,
+        1,
+        key,
+        '1',
+      )) as number;
 
       const throttled = current > this.threshold;
 

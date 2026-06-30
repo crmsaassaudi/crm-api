@@ -138,15 +138,26 @@ export class LoopPreventionService {
    * @returns { allowed: true } if the workflow can run,
    *          { allowed: false, reason } if already executed for this record
    */
-  async checkRunOnce(params: {
+  /**
+   * Atomic check-and-mark for run-once semantics.
+   * Uses SET NX (set-if-not-exists) to eliminate the TOCTOU race between
+   * separate checkRunOnce() and markRunOnce() calls.
+   *
+   * @returns { allowed: true } if this is the first execution,
+   *          { allowed: false, reason } if already executed for this record
+   */
+  async checkAndMarkRunOnce(params: {
     tenantId: string;
     workflowId: string;
     recordId: string;
   }): Promise<{ allowed: boolean; reason?: string }> {
     const key = `automation:runonce:${params.tenantId}:${params.workflowId}:${params.recordId}`;
 
-    const exists = await this.redis.exists(key);
-    if (exists) {
+    // SET NX: returns 'OK' if the key was set (first execution),
+    // null if the key already exists (already executed).
+    const result = await this.redis.set(key, '1', 'EX', this.RUN_ONCE_TTL, 'NX');
+
+    if (result !== 'OK') {
       this.logger.debug(
         `[Layer 3] LOOP_RUN_ONCE_SKIPPED: workflow=${params.workflowId} record=${params.recordId}`,
       );
@@ -157,19 +168,6 @@ export class LoopPreventionService {
     }
 
     return { allowed: true };
-  }
-
-  /**
-   * Mark a (workflow, record) pair as "executed" for the run-once check.
-   * Called after a workflow successfully starts execution.
-   */
-  async markRunOnce(params: {
-    tenantId: string;
-    workflowId: string;
-    recordId: string;
-  }): Promise<void> {
-    const key = `automation:runonce:${params.tenantId}:${params.workflowId}:${params.recordId}`;
-    await this.redis.set(key, '1', 'EX', this.RUN_ONCE_TTL);
   }
 
   // ── Cleanup (for testing) ────────────────────────────────────────────
