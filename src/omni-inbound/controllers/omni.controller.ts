@@ -1072,6 +1072,44 @@ export class OmniController {
     return { ok: true, conversationId: id, botDisabled: true };
   }
 
+  /**
+   * POST /omni/conversations/:id/bot/enable
+   *
+   * Manually re-enable the bot on this conversation (undo agent takeover).
+   * Sets bot.enabled=true, bot.status='active' and emits BOT_ENABLED event.
+   */
+  @Post('conversations/:id/bot/enable')
+  @RequirePermission('edit', 'contacts')
+  @HttpCode(HttpStatus.OK)
+  async enableBotOnConversation(@Param('id') id: string) {
+    const tenantId = this.cls.get<string>('tenantId');
+    const agentId = this.cls.get<string>('userId');
+    if (!tenantId || !agentId) {
+      throw new BadRequestException('User or Tenant context not found');
+    }
+
+    const conversation = await this.conversationRepo.findById(id);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${id} not found`);
+    }
+
+    await this.conversationRepo.updateBotState(id, {
+      enabled: true,
+      status: 'active',
+    });
+
+    this.eventEmitter.emit('omni.bot.enabled', {
+      tenantId,
+      conversationId: id,
+      reason: 'agent_reenable',
+      agentId,
+    });
+
+    this.logger.log(`Bot re-enabled on conversation ${id} by agent ${agentId}`);
+
+    return { ok: true, conversationId: id, botDisabled: false };
+  }
+
   @Post('conversations/:id/tags')
   @HttpCode(HttpStatus.OK)
   async addTag(@Param('id') id: string, @Body('tag') tag: string) {

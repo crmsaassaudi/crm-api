@@ -74,6 +74,8 @@ export const OmniEvents = {
   BOT_HANDOFF: 'omni.bot.handoff',
   /** Bot disabled on conversation (agent takeover or explicit toggle) */
   BOT_DISABLED: 'omni.bot.disabled',
+  /** Bot re-enabled on conversation (agent undoes takeover) */
+  BOT_ENABLED: 'omni.bot.enabled',
 
   // ── Conversation Lock ────────────────────────────────────────────────────
   /** Agent acquired editing lock */
@@ -469,4 +471,3 @@ export interface LivechatVisitorIdentifiedEvent {
   /** All form field values keyed by field.key */
   identityData: Record<string, any>;
 }
-
