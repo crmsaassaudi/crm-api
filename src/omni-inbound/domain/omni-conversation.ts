@@ -3,6 +3,16 @@ import { ChannelType } from './omni-payload';
 export type ConversationStatus = 'open' | 'pending' | 'resolved' | 'closed';
 export type BotConversationStatus = 'active' | 'handoff' | 'ended';
 
+/**
+ * Channel-level bot mode — controls how bot and auto-assignment interact.
+ *
+ * - `bot_first`: Bot handles conversation first. Auto-assignment is DEFERRED
+ *                until bot emits `handoff_to_agent`. Recommended mode.
+ * - `bot_only`:  Bot handles everything. No handoff to human agent.
+ * - `disabled`:  No bot — auto-assign agent immediately (legacy behavior).
+ */
+export type BotMode = 'bot_first' | 'bot_only' | 'disabled';
+
 export interface ConversationBotState {
   enabled: boolean;
   provider: string;

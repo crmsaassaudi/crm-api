@@ -235,6 +235,48 @@ export class OutboundService {
       });
     }
 
+    // 2c. Auto-disable bot on agent reply: if bot is still active on
+    // this conversation, mark it as ended so the bot stops processing
+    // further messages. The channel setting `botAutoDisableOnAgentReply`
+    // controls whether this behavior is enabled (defaults to true).
+    const botState = (conversation as any).bot;
+    if (botState?.enabled === true && botState?.status === 'active') {
+      const channelAccount =
+        (conversation as any).channelAccount ??
+        conversation.channelId?.toString();
+      let shouldDisable = true; // default: always disable on agent reply
+
+      try {
+        const channelForBot = await this.channelRepo.findByIdWithCredentials(
+          tenantId,
+          conversation.channelId.toString(),
+        );
+        if (channelForBot?.config) {
+          // Explicit opt-out: set botAutoDisableOnAgentReply = false to keep bot active
+          shouldDisable =
+            channelForBot.config.botAutoDisableOnAgentReply !== false;
+        }
+      } catch {
+        // If channel lookup fails, still disable bot as safety default
+      }
+
+      if (shouldDisable) {
+        this.logger.log(
+          `[BOT-DISABLE] Agent ${agentId} replied to conv ${conversationId} — disabling active bot`,
+        );
+        await this.conversationRepo.updateBotState(conversationId, {
+          enabled: false,
+          status: 'ended',
+        });
+        this.eventEmitter.emit('omni.bot.disabled', {
+          tenantId,
+          conversationId,
+          reason: 'agent_reply',
+          agentId,
+        });
+      }
+    }
+
     this.logger.log(
       `Agent ${agentId} sending ${messageType} to conversation ${conversationId}`,
     );

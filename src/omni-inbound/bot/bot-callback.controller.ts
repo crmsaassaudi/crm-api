@@ -139,7 +139,7 @@ export class BotCallbackController {
         this.logger.log(
           `[BOT-CALLBACK] Handling HANDOFF for conv=${conversationId}`,
         );
-        await this.handleHandoff(org, conversationId);
+        await this.handleHandoff(org, conversationId, payload.handoffMeta);
       } else if (payload.status === 'ended') {
         this.logger.log(
           `[BOT-CALLBACK] Bot flow ENDED for conv=${conversationId}`,
@@ -237,8 +237,12 @@ export class BotCallbackController {
   private async handleHandoff(
     tenantId: string,
     conversationId: string,
+    handoffMeta?: { target?: string; groupId?: string; agentId?: string; message?: string },
   ): Promise<void> {
     await this.conversationRepo.markBotHandoff(conversationId);
+
+    const target = handoffMeta?.target ?? 'general';
+    const customMessage = handoffMeta?.message;
 
     const systemMessage = await this.messageRepo.create({
       tenantId,
@@ -249,11 +253,14 @@ export class BotCallbackController {
       direction: 'internal',
       source: 'bot',
       messageType: 'text',
-      content: 'Đang chuyển tư vấn viên',
+      content: customMessage || 'Đang chuyển tư vấn viên',
       status: 'delivered',
       metadata: {
         event: 'bot_handoff',
         provider: 'typebot',
+        handoffTarget: target,
+        ...(handoffMeta?.groupId ? { handoffGroupId: handoffMeta.groupId } : {}),
+        ...(handoffMeta?.agentId ? { handoffAgentId: handoffMeta.agentId } : {}),
       },
     });
 
@@ -280,5 +287,57 @@ export class BotCallbackController {
       transport: 'http',
       metadata: systemMessage.metadata,
     });
+
+    // ── Targeted assignment based on handoffMeta ──────────────────
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) return;
+
+    if (target === 'agent' && handoffMeta?.agentId) {
+      // Direct agent assignment — skip auto-assignment engine
+      this.logger.log(
+        `[BOT-CALLBACK] Handoff → direct agent=${handoffMeta.agentId} for conv=${conversationId}`,
+      );
+      await this.conversationRepo.assignAgent(conversationId, handoffMeta.agentId);
+      this.eventEmitter.emit('omni.conversation.assigned', {
+        tenantId,
+        conversationId,
+        agentId: handoffMeta.agentId,
+        source: 'bot_handoff',
+      });
+    } else if (target === 'group' && handoffMeta?.groupId) {
+      // Group assignment — assign group then trigger auto-assignment within group
+      this.logger.log(
+        `[BOT-CALLBACK] Handoff → group=${handoffMeta.groupId} for conv=${conversationId}`,
+      );
+      await this.conversationRepo.assignGroup(conversationId, handoffMeta.groupId);
+      if (!conversation.assignedAgentId) {
+        this.eventEmitter.emit('omni.bot.handoff', {
+          tenantId,
+          conversationId,
+          channelType: conversation.channelType,
+          channelAccount: (conversation as any).channelAccount ?? conversation.channelId?.toString(),
+          contactId: conversation.contactId ?? null,
+          targetGroupId: handoffMeta.groupId,
+        });
+      }
+    } else {
+      // General handoff — trigger standard auto-assignment
+      if (!conversation.assignedAgentId) {
+        this.eventEmitter.emit('omni.bot.handoff', {
+          tenantId,
+          conversationId,
+          channelType: conversation.channelType,
+          channelAccount: (conversation as any).channelAccount ?? conversation.channelId?.toString(),
+          contactId: conversation.contactId ?? null,
+        });
+        this.logger.log(
+          `[BOT-CALLBACK] Emitted BOT_HANDOFF → triggering auto-assignment for conv=${conversationId}`,
+        );
+      } else {
+        this.logger.log(
+          `[BOT-CALLBACK] Handoff complete — conv=${conversationId} already has agent=${conversation.assignedAgentId}, skipping auto-assignment`,
+        );
+      }
+    }
   }
 }

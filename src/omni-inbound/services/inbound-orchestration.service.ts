@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { OmniPayload } from '../domain/omni-payload';
-import { OmniEvents, ReplyAutoAssignEvent } from '../domain/omni-events';
+import {
+  OmniEvents,
+  ReplyAutoAssignEvent,
+  BotHandoffEvent,
+} from '../domain/omni-events';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { ChannelsService } from '../../channels/channels.service';
 import { AssignmentService } from './assignment.service';
@@ -9,7 +13,10 @@ import { AgentPresenceService } from './agent-presence.service';
 import { AutoResolveService } from './auto-resolve.service';
 import { BusinessHoursService } from './business-hours.service';
 import { BotQueueService } from '../bot/bot-queue.service';
-import { ConversationBotState } from '../domain/omni-conversation';
+import {
+  ConversationBotState,
+  BotMode,
+} from '../domain/omni-conversation';
 
 /**
  * InboundOrchestrationService — coordinates post-persistence side effects
@@ -272,7 +279,7 @@ export class InboundOrchestrationService {
     tenantId: string,
     channelType: string,
     channelAccount: string,
-  ): Promise<{ enabled: boolean; provider: string }> {
+  ): Promise<{ enabled: boolean; provider: string; botMode: BotMode }> {
     this.logger.log(
       `[BOT-CONFIG] Looking up bot config: channelType=${channelType}, channelAccount=${channelAccount}, tenantId=${tenantId}`,
     );
@@ -301,7 +308,7 @@ export class InboundOrchestrationService {
         this.logger.log(
           `[BOT-CONFIG] Channel found but has no config — returning enabled=false`,
         );
-        return { enabled: false, provider: 'typebot' };
+        return { enabled: false, provider: 'typebot', botMode: 'disabled' };
       }
 
       // Validate tenant ownership (defense-in-depth)
@@ -309,15 +316,24 @@ export class InboundOrchestrationService {
         this.logger.warn(
           `Bot config tenant mismatch: channel ${channel.id} belongs to ${channel.tenantId}, not ${tenantId}`,
         );
-        return { enabled: false, provider: 'typebot' };
+        return { enabled: false, provider: 'typebot', botMode: 'disabled' };
       }
 
+      // Resolve botMode: explicit config > derive from botEnabled flag > disabled
+      const rawBotMode = channel.config.botMode as string | undefined;
+      const botEnabled = Boolean(channel.config.botEnabled);
+      const botMode: BotMode = rawBotMode === 'bot_first' || rawBotMode === 'bot_only' || rawBotMode === 'disabled'
+        ? rawBotMode
+        : botEnabled ? 'bot_first' : 'disabled';
+
       const result = {
-        enabled: Boolean(channel.config.botEnabled),
+        enabled: botEnabled,
         provider: channel.config.botProvider ?? 'typebot',
+        botMode,
       };
       this.logger.log(
-        `[BOT-CONFIG] Result: enabled=${result.enabled}, provider=${result.provider}, botEnabled raw=${channel.config.botEnabled}`,
+        `[BOT-CONFIG] Result: enabled=${result.enabled}, provider=${result.provider}, ` +
+          `botMode=${result.botMode}, botEnabled raw=${channel.config.botEnabled}`,
       );
       return result;
     } catch (err) {
@@ -326,7 +342,7 @@ export class InboundOrchestrationService {
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      return { enabled: false, provider: 'typebot' };
+      return { enabled: false, provider: 'typebot', botMode: 'disabled' };
     }
   }
 
@@ -644,6 +660,72 @@ export class InboundOrchestrationService {
         `Reply auto-assign failed for conversation ${conversationId}: ${err.message}`,
       );
     }
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Bot Handoff → Auto-Assignment
+  // ────────────────────────────────────────────────────────────────
+
+  /**
+   * When bot hands off a conversation to a human agent, trigger
+   * auto-assignment. This is the deferred assignment that was skipped
+   * during conversation creation when botMode = 'bot_first'.
+   */
+  @OnEvent(OmniEvents.BOT_HANDOFF)
+  async handleBotHandoff(event: BotHandoffEvent): Promise<void> {
+    const { tenantId, conversationId, channelType, channelAccount, contactId } =
+      event;
+
+    try {
+      this.logger.log(
+        `[BOT-HANDOFF] Triggering deferred auto-assignment for conv=${conversationId}`,
+      );
+
+      // Build a minimal OmniPayload for the assignment engine
+      const syntheticPayload = {
+        tenantId,
+        channelType,
+        channelAccount,
+        senderId: '',
+        channelId: '',
+        externalConversationId: '',
+        content: '',
+        messageType: 'text',
+        senderType: 'customer',
+        timestamp: new Date(),
+        metadata: {},
+      } as OmniPayload;
+
+      await this.triggerAutoAssignment(
+        syntheticPayload,
+        conversationId,
+        contactId,
+        'bot_handoff',
+      );
+    } catch (err: any) {
+      // Non-blocking — handoff must still complete even if assignment fails
+      this.logger.error(
+        `[BOT-HANDOFF] Auto-assignment failed for conv=${conversationId}: ${err.message}`,
+        err.stack,
+      );
+    }
+  }
+
+  /**
+   * Check if a conversation is currently in bot-first mode with an active bot.
+   * Used by ConversationService to decide whether to defer auto-assignment.
+   */
+  async isBotFirstActive(
+    tenantId: string,
+    channelType: string,
+    channelAccount: string,
+  ): Promise<boolean> {
+    const botConfig = await this.getChannelBotConfig(
+      tenantId,
+      channelType,
+      channelAccount,
+    );
+    return botConfig.botMode === 'bot_first' || botConfig.botMode === 'bot_only';
   }
 
   // ────────────────────────────────────────────────────────────────

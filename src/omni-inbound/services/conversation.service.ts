@@ -323,12 +323,12 @@ export class ConversationService {
           }
         } else {
           this.logger.debug(
-            `Auto-create shadow contact disabled â€” skipping for conversation ${conversationId}`,
+            `Auto-create shadow contact disabled — skipping for conversation ${conversationId}`,
           );
         }
       }
 
-      // â”€â”€ Retry auto-assignment for existing open/pending conversations â”€â”€
+      // ——— Retry auto-assignment for existing open/pending conversations ———
       // If the conversation is still active but has no agent assigned,
       // retry auto-assignment. This covers cases where:
       //   - The original auto-assign failed (e.g. no agents online)
@@ -339,10 +339,18 @@ export class ConversationService {
         conversationId &&
         (existing.status === 'open' || existing.status === 'pending')
       ) {
-        // P0 fix: skip if assignment was already triggered in the reopen
-        // branch above. existing.assignedAgentId is a stale snapshot taken
-        // before that assignment committed — a second call here would race.
-        if ((existing as any).__assignmentHandledOnReopen) {
+        // Bot-first: skip retry when bot is still actively handling
+        const botState = (existing as any).bot;
+        const botIsActive =
+          botState?.enabled === true && botState?.status === 'active';
+        if (botIsActive) {
+          this.logger.debug(
+            `[BOT-FIRST] Bot still active on conv ${conversationId} — skipping assignment retry`,
+          );
+        } else if ((existing as any).__assignmentHandledOnReopen) {
+          // P0 fix: skip if assignment was already triggered in the reopen
+          // branch above. existing.assignedAgentId is a stale snapshot taken
+          // before that assignment committed — a second call here would race.
           this.logger.debug(
             `Skipping existing_unassigned retry — assignment already handled on reopen for conversation ${conversationId}`,
           );
@@ -368,7 +376,7 @@ export class ConversationService {
     }
 
     if (!conversationId) {
-      // â”€â”€ Step 3b: Eagerly enrich profile before creating conversation â”€â”€
+      // ——— Step 3b: Eagerly enrich profile before creating conversation ———
       // Delegates to the channel adapter's enrichProfile() method if available.
       // This ensures BOTH the conversation AND shadow contact are created
       // with the real name/avatar from the start.
@@ -562,14 +570,29 @@ export class ConversationService {
       // which correctly resets the timer once the message is durably stored.
       // Two calls per new conversation doubled BullMQ Redis operations under load.
 
-      // â”€â”€ Step 6c: Auto-assign conversation to an agent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      await this.orchestration.triggerAutoAssignment(
-        payload,
-        conversationId,
-        contactId ?? null,
-        previousConversationId ? 'reopen_new_session' : 'new_conversation',
-        enrichedProfile,
+      // ── Step 6c: Auto-assign conversation to an agent ──────────
+      // Bot-first: DEFER assignment until bot handoff.
+      // When botMode is 'bot_first' or 'bot_only', the bot handles the
+      // conversation first. Assignment only happens when bot emits handoff.
+      const isBotFirst = await this.orchestration.isBotFirstActive(
+        payload.tenantId,
+        this.lifecycle.toSchemaChannelType(payload.channelType),
+        payload.channelAccount,
       );
+
+      if (isBotFirst) {
+        this.logger.log(
+          `[BOT-FIRST] Deferring auto-assignment — bot will handle first, conv=${conversationId}`,
+        );
+      } else {
+        await this.orchestration.triggerAutoAssignment(
+          payload,
+          conversationId,
+          contactId ?? null,
+          previousConversationId ? 'reopen_new_session' : 'new_conversation',
+          enrichedProfile,
+        );
+      }
 
       // Profile enrichment already done eagerly before conversation creation (Step 3b above).
     }

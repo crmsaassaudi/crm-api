@@ -69,6 +69,12 @@ export const OmniEvents = {
   /** Agent replied to an unassigned conversation — trigger implicit assignment */
   REPLY_AUTO_ASSIGN: 'omni.conversation.reply_auto_assign',
 
+  // ── Bot Lifecycle ────────────────────────────────────────────────────────
+  /** Bot handed off conversation to human agent — trigger auto-assignment */
+  BOT_HANDOFF: 'omni.bot.handoff',
+  /** Bot disabled on conversation (agent takeover or explicit toggle) */
+  BOT_DISABLED: 'omni.bot.disabled',
+
   // ── Conversation Lock ────────────────────────────────────────────────────
   /** Agent acquired editing lock */
   CONVERSATION_LOCK_ACQUIRED: 'omni.conversation.lock_acquired',
@@ -319,6 +325,14 @@ export interface ReplyAutoAssignEvent extends OmniEventBase {
   agentId: string;
   /** Channel type for analytics */
   channelType: string;
+}
+
+/** omni.bot.handoff — Bot handed off conversation to human agent */
+export interface BotHandoffEvent extends OmniEventBase {
+  conversationId: string;
+  channelType: string;
+  channelAccount: string;
+  contactId: string | null;
 }
 
 /** omni.reaction.inbound */

@@ -65,4 +65,10 @@ export interface BotCallbackPayload {
   status: 'active' | 'handoff' | 'ended';
   handoff: boolean;
   messages: BotReplyMessage[];
+  handoffMeta?: {
+    target: 'general' | 'group' | 'agent';
+    groupId?: string;
+    agentId?: string;
+    message?: string;
+  };
 }

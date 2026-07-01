@@ -344,6 +344,51 @@ export class ConversationRepository {
   }
 
   /**
+   * Directly assign a specific agent to the conversation.
+   * Used by targeted Handoff blocks (target = "agent").
+   */
+  async assignAgent(
+    id: string,
+    agentId: string,
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            assignedAgentId: agentId,
+            status: 'open',
+          },
+        },
+        { new: true },
+      )
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Assign a conversation to a specific group/team.
+   * Used by targeted Handoff blocks (target = "group").
+   */
+  async assignGroup(
+    id: string,
+    groupId: string,
+  ): Promise<OmniConversation | null> {
+    const doc = await this.model
+      .findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            assignedGroupId: groupId,
+          },
+        },
+        { new: true },
+      )
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
    * Update status with metadata — captures who resolved/closed and when.
    * Also invalidates identity cache by emitting an event.
    */
