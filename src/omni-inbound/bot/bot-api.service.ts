@@ -18,19 +18,37 @@ export class BotApiService {
     const endpoint = `${baseUrl}/api/bot/typebot/reply`;
     const secret = this.configService.get<string>('CRM_BOT_INTERNAL_SECRET');
 
-    const response = await axios.post<BotAcceptResponse>(endpoint, payload, {
-      timeout: 3000, // Only waiting for acceptance, not processing
-      headers: {
-        'content-type': 'application/json',
-        ...(secret ? { 'x-crm-internal-secret': secret } : {}),
-      },
-    });
-
-    this.logger.debug(
-      `crm-bot accepted request for conversation ${payload.conversationId}, inbound ${payload.inboundMessageId}`,
+    this.logger.log(
+      `[BOT-API] Dispatching to crm-bot: endpoint=${endpoint}, ` +
+        `conv=${payload.conversationId}, msg=${payload.inboundMessageId}, ` +
+        `sessionId=${payload.sessionId}, channel=${payload.channel}`,
     );
 
-    return response.data;
+    try {
+      const response = await axios.post<BotAcceptResponse>(endpoint, payload, {
+        timeout: 3000, // Only waiting for acceptance, not processing
+        headers: {
+          'content-type': 'application/json',
+          ...(secret ? { 'x-crm-internal-secret': secret } : {}),
+        },
+      });
+
+      this.logger.log(
+        `[BOT-API] ✓ crm-bot response: status=${response.status}, ` +
+          `data=${JSON.stringify(response.data)}, conv=${payload.conversationId}`,
+      );
+
+      return response.data;
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const data = error?.response?.data;
+      this.logger.error(
+        `[BOT-API] ✗ crm-bot dispatch FAILED: status=${status}, ` +
+          `data=${JSON.stringify(data)}, message=${error?.message}, ` +
+          `endpoint=${endpoint}, conv=${payload.conversationId}`,
+      );
+      throw error;
+    }
   }
 
   /**

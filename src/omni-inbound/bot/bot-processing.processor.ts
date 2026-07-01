@@ -33,22 +33,36 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
 
   protected async handle(job: Job<BotProcessingJobData>): Promise<void> {
     const data = job.data;
+    this.logger.log(
+      `[BOT-PROCESSOR] ▶ Processing job ${job.id} — conv=${data.conversationId}, msg=${data.messageId}, ` +
+        `channel=${data.channel}, text="${(data.text || '').substring(0, 50)}"`,
+    );
 
     // 1. Validate conversation state
     const conversation = await this.conversationRepo.findById(
       data.conversationId,
     );
     if (!conversation) {
-      this.logger.warn(`Conversation ${data.conversationId} not found`);
+      this.logger.warn(
+        `[BOT-PROCESSOR] ✗ SKIP — Conversation ${data.conversationId} NOT FOUND, job=${job.id}`,
+      );
       return;
     }
     if (conversation.tenantId !== data.tenantId) {
+      this.logger.error(
+        `[BOT-PROCESSOR] ✗ REJECTED — Cross-tenant: conv.tenant=${conversation.tenantId}, job.tenant=${data.tenantId}`,
+      );
       throw new Error(
         `Cross-tenant bot job rejected for conversation ${data.conversationId}`,
       );
     }
 
     const bot = conversation.bot;
+    this.logger.log(
+      `[BOT-PROCESSOR] Conversation state: status=${conversation.status}, ` +
+        `bot=${JSON.stringify(bot ?? null)}`,
+    );
+
     const isDone =
       conversation.status === 'resolved' ||
       conversation.status === 'closed' ||
@@ -56,8 +70,9 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
       bot?.status === 'ended';
 
     if (!bot?.enabled || isDone) {
-      this.logger.debug(
-        `Skipping bot job for conversation ${data.conversationId}: bot disabled or done`,
+      this.logger.log(
+        `[BOT-PROCESSOR] ✗ SKIP — bot.enabled=${bot?.enabled}, isDone=${isDone} ` +
+          `(conv.status=${conversation.status}, bot.status=${bot?.status}), job=${job.id}`,
       );
       return;
     }
@@ -69,6 +84,10 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
     // 3. Fire-and-forget to crm-bot
     try {
       const callbackUrl = this.botApi.resolveCallbackUrl();
+      this.logger.log(
+        `[BOT-PROCESSOR] Dispatching to crm-bot — conv=${data.conversationId}, ` +
+          `sessionId=${bot.sessionId}, callbackUrl=${callbackUrl}`,
+      );
 
       const result = await this.botApi.dispatch({
         org: data.org,
@@ -84,17 +103,21 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
       });
 
       if (result.duplicate) {
-        this.logger.debug(
-          `Bot reported duplicate for message ${data.messageId} — skipping`,
+        this.logger.log(
+          `[BOT-PROCESSOR] Bot reported DUPLICATE for msg=${data.messageId} — skipping`,
         );
         return;
       }
 
-      this.logger.debug(
-        `Bot accepted request for conversation ${data.conversationId}`,
+      this.logger.log(
+        `[BOT-PROCESSOR] ✓ Bot ACCEPTED request for conv=${data.conversationId}, msg=${data.messageId}`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `[BOT-PROCESSOR] ✗ Bot dispatch FAILED for conv=${data.conversationId}: ${message}`,
+        error instanceof Error ? error.stack : undefined,
+      );
       await this.conversationRepo.updateBotState(data.conversationId, {
         lastError: message,
       });

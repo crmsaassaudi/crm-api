@@ -273,13 +273,36 @@ export class InboundOrchestrationService {
     channelType: string,
     channelAccount: string,
   ): Promise<{ enabled: boolean; provider: string }> {
+    this.logger.log(
+      `[BOT-CONFIG] Looking up bot config: channelType=${channelType}, channelAccount=${channelAccount}, tenantId=${tenantId}`,
+    );
     try {
-      const channel = await this.channelsService.findAnyByAccount(
-        channelType,
-        channelAccount,
-      );
+      // FIX: For livechat, channelAccount is the MongoDB _id (channelId),
+      // NOT the `account` field (lc_<ulid>). findAnyByAccount queries
+      // { type, account } which never matches a MongoDB _id, causing
+      // the channel lookup to silently fail and disable bot processing.
+      let channel: any;
+      if (channelType === 'livechat') {
+        channel = await this.channelsService.findById(channelAccount);
+        this.logger.log(
+          `[BOT-CONFIG] Livechat channel lookup by _id=${channelAccount}: found=${!!channel}`,
+        );
+      } else {
+        channel = await this.channelsService.findAnyByAccount(
+          channelType,
+          channelAccount,
+        );
+        this.logger.log(
+          `[BOT-CONFIG] Channel lookup by account: found=${!!channel}, channelId=${channel?.id}`,
+        );
+      }
 
-      if (!channel?.config) return { enabled: false, provider: 'typebot' };
+      if (!channel?.config) {
+        this.logger.log(
+          `[BOT-CONFIG] Channel found but has no config — returning enabled=false`,
+        );
+        return { enabled: false, provider: 'typebot' };
+      }
 
       // Validate tenant ownership (defense-in-depth)
       if (channel.tenantId !== tenantId) {
@@ -289,13 +312,17 @@ export class InboundOrchestrationService {
         return { enabled: false, provider: 'typebot' };
       }
 
-      return {
+      const result = {
         enabled: Boolean(channel.config.botEnabled),
         provider: channel.config.botProvider ?? 'typebot',
       };
+      this.logger.log(
+        `[BOT-CONFIG] Result: enabled=${result.enabled}, provider=${result.provider}, botEnabled raw=${channel.config.botEnabled}`,
+      );
+      return result;
     } catch (err) {
-      this.logger.debug(
-        `Channel bot config lookup failed for ${channelType}/${channelAccount}: ${
+      this.logger.warn(
+        `[BOT-CONFIG] Channel bot config lookup FAILED for ${channelType}/${channelAccount}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -319,7 +346,19 @@ export class InboundOrchestrationService {
     conversationId: string,
     inboundMessageId: string,
   ): Promise<void> {
-    if (payload.senderType !== 'customer') return;
+    this.logger.log(
+      `[BOT-FLOW] ▶ enqueueBotProcessingIfNeeded START — ` +
+        `msg=${inboundMessageId}, conv=${conversationId}, ` +
+        `channel=${payload.channelType}/${payload.channelAccount}, ` +
+        `senderType=${payload.senderType}, messageType=${payload.messageType}`,
+    );
+
+    if (payload.senderType !== 'customer') {
+      this.logger.log(
+        `[BOT-FLOW] ✗ SKIP — senderType="${payload.senderType}" (not customer), msg=${inboundMessageId}`,
+      );
+      return;
+    }
 
     const botProcessableTypes = new Set([
       'text',
@@ -331,18 +370,29 @@ export class InboundOrchestrationService {
       'sticker',
     ]);
     const isInteractive = !!payload.metadata?.replyId;
-    if (!botProcessableTypes.has(payload.messageType) && !isInteractive) return;
+    if (!botProcessableTypes.has(payload.messageType) && !isInteractive) {
+      this.logger.log(
+        `[BOT-FLOW] ✗ SKIP — messageType="${payload.messageType}" not processable and not interactive, msg=${inboundMessageId}`,
+      );
+      return;
+    }
 
     try {
       // ── Level 1: Channel master switch ──────────────────────────────
+      this.logger.log(
+        `[BOT-FLOW] Checking Level 1: Channel bot master switch...`,
+      );
       const channelBotConfig = await this.getChannelBotConfig(
         payload.tenantId,
         payload.channelType,
         payload.channelAccount,
       );
+      this.logger.log(
+        `[BOT-FLOW] Channel bot config result: enabled=${channelBotConfig.enabled}, provider=${channelBotConfig.provider}`,
+      );
       if (!channelBotConfig.enabled) {
-        this.logger.debug(
-          `Bot disabled on channel ${payload.channelType}/${payload.channelAccount} — skipping bot queue`,
+        this.logger.log(
+          `[BOT-FLOW] ✗ SKIP — Bot DISABLED on channel ${payload.channelType}/${payload.channelAccount}, msg=${inboundMessageId}`,
         );
         return;
       }
@@ -350,18 +400,33 @@ export class InboundOrchestrationService {
       // ── Level 2: Conversation override ─────────────────────────────
       // Default: enabled (conversation.bot.enabled defaults to true).
       // Only skip when agent EXPLICITLY disabled bot on this conversation.
+      this.logger.log(
+        `[BOT-FLOW] Checking Level 2: Conversation bot override...`,
+      );
       const conversation = await this.conversationRepo.findById(conversationId);
-      if (!conversation) return;
+      if (!conversation) {
+        this.logger.warn(
+          `[BOT-FLOW] ✗ SKIP — Conversation ${conversationId} NOT FOUND in DB, msg=${inboundMessageId}`,
+        );
+        return;
+      }
+
+      this.logger.log(
+        `[BOT-FLOW] Conversation bot state: bot=${JSON.stringify(conversation.bot ?? null)}, status=${conversation.status}`,
+      );
 
       if (conversation.bot?.enabled === false) {
-        this.logger.debug(
-          `Bot explicitly disabled by agent on conversation ${conversationId} — skipping`,
+        this.logger.log(
+          `[BOT-FLOW] ✗ SKIP — Bot explicitly DISABLED by agent on conversation ${conversationId}, msg=${inboundMessageId}`,
         );
         return;
       }
 
       // Auto-initialize bot state for legacy conversations (no bot field)
       if (!conversation.bot) {
+        this.logger.log(
+          `[BOT-FLOW] Auto-initializing bot state for legacy conversation ${conversationId}`,
+        );
         await this.conversationRepo.updateBotState(conversationId, {
           enabled: true,
           provider: channelBotConfig.provider,
@@ -374,6 +439,10 @@ export class InboundOrchestrationService {
         text = `[${payload.messageType}]`;
       }
 
+      this.logger.log(
+        `[BOT-FLOW] ✓ ENQUEUING bot job — conv=${conversationId}, msg=${inboundMessageId}, text="${(text || '').substring(0, 50)}"`,
+      );
+
       await this.botQueueService.enqueueInboundMessage({
         tenantId: payload.tenantId,
         org: payload.tenantId,
@@ -385,11 +454,16 @@ export class InboundOrchestrationService {
         replyId: payload.metadata?.replyId,
         messageType: payload.messageType,
       });
+
+      this.logger.log(
+        `[BOT-FLOW] ✓ Bot job ENQUEUED successfully — conv=${conversationId}, msg=${inboundMessageId}`,
+      );
     } catch (error) {
       this.logger.error(
-        `Failed to enqueue bot job for inbound message ${inboundMessageId}: ${
+        `[BOT-FLOW] ✗ FAILED to enqueue bot job for msg=${inboundMessageId}: ${
           error instanceof Error ? error.message : String(error)
         }`,
+        error instanceof Error ? error.stack : undefined,
       );
     }
   }
