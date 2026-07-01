@@ -47,33 +47,62 @@ export class BotCallbackController {
     this.validateInternalSecret(secret);
 
     const { conversationId, org } = payload;
-    this.logger.debug(
-      `Bot callback received for conversation ${conversationId}, message ${payload.inboundMessageId}`,
+    this.logger.log(
+      `[BOT-CALLBACK] ▶ Received callback — conv=${conversationId}, org=${org}, ` +
+        `inboundMsg=${payload.inboundMessageId}, sessionId=${payload.sessionId}, ` +
+        `status=${payload.status}, handoff=${!!payload.handoff}, ` +
+        `messages=${payload.messages?.length ?? 0}`,
     );
+
+    if (payload.messages?.length) {
+      payload.messages.forEach((m, i) => {
+        this.logger.log(
+          `[BOT-CALLBACK] Message[${i}]: type=${m.type}, ` +
+            `text="${(m.text || '').substring(0, 80)}", ` +
+            `buttons=${m.buttons?.length ?? 0}, url=${m.url ?? 'none'}`,
+        );
+      });
+    }
 
     // Wrap in tenant context — Mongoose tenant-filter plugin needs activeTenantId in CLS
     return runWithTenantContext(this.cls, org, async () => {
       // 1. Validate conversation exists and belongs to tenant
       const conversation = await this.conversationRepo.findById(conversationId);
       if (!conversation) {
-        this.logger.warn(`Callback: conversation ${conversationId} not found`);
+        this.logger.warn(
+          `[BOT-CALLBACK] ✗ Conversation ${conversationId} NOT FOUND — ignoring callback`,
+        );
         return { ok: true, ignored: true };
       }
       if (conversation.tenantId !== org) {
+        this.logger.error(
+          `[BOT-CALLBACK] ✗ Tenant mismatch: conv.tenant=${conversation.tenantId}, payload.org=${org}`,
+        );
         throw new ForbiddenException('Tenant mismatch');
       }
+
+      this.logger.log(
+        `[BOT-CALLBACK] Conversation validated — channel=${conversation.channelType}, ` +
+          `status=${conversation.status}, bot=${JSON.stringify(conversation.bot ?? null)}`,
+      );
 
       // 2. Update bot state (sessionId, status)
       if (
         payload.sessionId &&
         payload.sessionId !== conversation.bot?.sessionId
       ) {
+        this.logger.log(
+          `[BOT-CALLBACK] Updating bot sessionId: ${conversation.bot?.sessionId} → ${payload.sessionId}, status=${payload.status ?? 'active'}`,
+        );
         await this.conversationRepo.updateBotState(conversationId, {
           sessionId: payload.sessionId,
           status: payload.status ?? 'active',
           lastError: null,
         });
       } else if (payload.status) {
+        this.logger.log(
+          `[BOT-CALLBACK] Updating bot status: ${conversation.bot?.status} → ${payload.status}`,
+        );
         await this.conversationRepo.updateBotState(conversationId, {
           status: payload.status,
           lastError: null,
@@ -82,25 +111,48 @@ export class BotCallbackController {
 
       // 3. Send bot messages to customer
       for (const [index, message] of (payload.messages ?? []).entries()) {
-        await this.sendBotMessage(
-          org,
-          conversationId,
-          payload.inboundMessageId,
-          message,
-          index,
+        this.logger.log(
+          `[BOT-CALLBACK] Sending message[${index}]: type=${message.type}, ` +
+            `buttons=${message.buttons?.length ?? 0}`,
         );
+        try {
+          await this.sendBotMessage(
+            org,
+            conversationId,
+            payload.inboundMessageId,
+            message,
+            index,
+          );
+          this.logger.log(
+            `[BOT-CALLBACK] ✓ Message[${index}] sent successfully`,
+          );
+        } catch (err) {
+          this.logger.error(
+            `[BOT-CALLBACK] ✗ Message[${index}] FAILED: ${err instanceof Error ? err.message : String(err)}`,
+            err instanceof Error ? err.stack : undefined,
+          );
+        }
       }
 
       // 4. Handle handoff / ended
       if (payload.handoff || payload.status === 'handoff') {
+        this.logger.log(
+          `[BOT-CALLBACK] Handling HANDOFF for conv=${conversationId}`,
+        );
         await this.handleHandoff(org, conversationId);
       } else if (payload.status === 'ended') {
+        this.logger.log(
+          `[BOT-CALLBACK] Bot flow ENDED for conv=${conversationId}`,
+        );
         await this.conversationRepo.updateBotState(conversationId, {
           enabled: false,
           status: 'ended',
         });
       }
 
+      this.logger.log(
+        `[BOT-CALLBACK] ✓ Callback processed successfully — conv=${conversationId}`,
+      );
       return { ok: true };
     });
   }
