@@ -61,9 +61,10 @@ export class LivechatAdapter implements ChannelAdapter {
         timestamp: rawPayload.timestamp
           ? new Date(rawPayload.timestamp)
           : new Date(),
-        providerTimestamp: rawPayload.timestamp
-          ? new Date(rawPayload.timestamp)
-          : new Date(),
+        // Use server time — livechat messages arrive in real-time via WS,
+        // no webhook reordering needed (unlike FB/Zalo). Using browser clock
+        // causes sort mismatch with bot replies that use server clock.
+        providerTimestamp: new Date(),
       };
     }
 
@@ -103,7 +104,7 @@ export class LivechatAdapter implements ChannelAdapter {
         externalMessageId: `lc_media_${rawPayload.visitorId}_${ts.getTime()}`,
         externalConversationId: rawPayload.visitorId,
         timestamp: ts,
-        providerTimestamp: ts,
+        providerTimestamp: new Date(),
       };
     }
 
