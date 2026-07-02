@@ -173,7 +173,7 @@ export class InboundOrchestrationService {
           conversationId,
           agentId: assignedAgentId,
           oldAgentId: null,
-          strategy: 'auto',
+          strategy: reason === 'bot_handoff' ? 'bot_handoff' : 'auto',
           reason,
         });
         this.logger.log(

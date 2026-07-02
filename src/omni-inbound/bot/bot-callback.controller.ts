@@ -13,7 +13,6 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ConversationRepository } from '../repositories/conversation.repository';
-import { MessageRepository } from '../repositories/message.repository';
 import { OutboundService } from '../../omni-outbound/outbound.service';
 import { BotCallbackPayload, BotReplyMessage } from './bot-processing.types';
 
@@ -32,7 +31,6 @@ export class BotCallbackController {
     private readonly configService: ConfigService,
     private readonly cls: ClsService,
     private readonly conversationRepo: ConversationRepository,
-    private readonly messageRepo: MessageRepository,
     private readonly outboundService: OutboundService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
@@ -242,50 +240,12 @@ export class BotCallbackController {
     await this.conversationRepo.markBotHandoff(conversationId);
 
     const target = handoffMeta?.target ?? 'general';
-    const customMessage = handoffMeta?.message;
 
-    const systemMessage = await this.messageRepo.create({
+    // Broadcast bot state change so frontend updates toggle button in realtime
+    this.eventEmitter.emit('omni.bot.disabled', {
       tenantId,
       conversationId,
-      senderId: 'system',
-      senderName: 'System',
-      senderType: 'system',
-      direction: 'internal',
-      source: 'bot',
-      messageType: 'text',
-      content: customMessage || 'Đang chuyển tư vấn viên',
-      status: 'delivered',
-      metadata: {
-        event: 'bot_handoff',
-        provider: 'typebot',
-        handoffTarget: target,
-        ...(handoffMeta?.groupId ? { handoffGroupId: handoffMeta.groupId } : {}),
-        ...(handoffMeta?.agentId ? { handoffAgentId: handoffMeta.agentId } : {}),
-      },
-    });
-
-    await this.conversationRepo.updateLastMessage(
-      conversationId,
-      systemMessage.content,
-      new Date(),
-      'system',
-    );
-
-    this.eventEmitter.emit('omni.message.sent', {
-      tenantId,
-      conversationId,
-      senderId: 'system',
-      senderName: 'System',
-      senderType: 'system',
-      direction: 'internal',
-      source: 'bot',
-      messageType: 'text',
-      content: systemMessage.content,
-      messageId: systemMessage.id,
-      status: 'delivered',
-      timestamp: new Date().toISOString(),
-      transport: 'http',
-      metadata: systemMessage.metadata,
+      reason: 'handoff',
     });
 
     // ── Targeted assignment based on handoffMeta ──────────────────

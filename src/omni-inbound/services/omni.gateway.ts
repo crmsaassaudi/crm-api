@@ -1623,6 +1623,36 @@ export class OmniGateway
       });
   }
 
+  @OnEvent('omni.bot.disabled')
+  handleBotDisabled(event: {
+    tenantId: string;
+    conversationId: string;
+    reason: string;
+  }) {
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:conversation:bot_state', {
+        conversationId: event.conversationId,
+        bot: { enabled: false, status: 'handoff' },
+        reason: event.reason,
+        timestamp: new Date().toISOString(),
+      });
+  }
+
+  @OnEvent('omni.bot.enabled')
+  handleBotEnabled(event: {
+    tenantId: string;
+    conversationId: string;
+  }) {
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:conversation:bot_state', {
+        conversationId: event.conversationId,
+        bot: { enabled: true, status: 'active' },
+        timestamp: new Date().toISOString(),
+      });
+  }
+
   @OnEvent('omni.conversation.lock_acquired')
   handleLockAcquired(event: any) {
     const payload = this.standardEvent('conversation.lock_acquired', event);

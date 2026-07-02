@@ -533,6 +533,31 @@ export class ActivityService {
     );
   }
 
+  @OnEvent(OmniEvents.BOT_HANDOFF)
+  async onBotHandoff(event: {
+    tenantId: string;
+    conversationId: string;
+    channelType: string;
+    channelAccount: string;
+    contactId: string | null;
+  }) {
+    await this.log(
+      event.tenantId,
+      event.conversationId,
+      'system',
+      null,
+      'bot_handoff',
+      'active',
+      'handoff',
+      {
+        channelType: event.channelType,
+        channelAccount: event.channelAccount,
+        contactId: event.contactId,
+      },
+      'Bot đã hoàn tất flow và chuyển hội thoại cho tư vấn viên',
+    );
+  }
+
 
   // ─── Helpers ────────────────────────────────────────────────────
 
@@ -648,6 +673,7 @@ export class ActivityService {
       'capacity-based': 'Capacity-Based',
       sticky: 'Sticky Routing',
       manual: 'thủ công',
+      bot_handoff: 'Bot Handoff',
     };
     return map[strategy] ?? strategy;
   }
