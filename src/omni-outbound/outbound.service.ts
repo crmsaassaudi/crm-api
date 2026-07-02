@@ -765,6 +765,7 @@ export class OutboundService {
         status: 'sending',
         idempotencyKey,
         metadata,
+        providerTimestamp: new Date(),
       });
     } catch (error) {
       if (idempotencyKey && (error as any)?.code === 11000) {

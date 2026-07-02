@@ -411,6 +411,7 @@ export class OutboundMediaHandler {
       content: caption || `[${resolvedMessageType}] ${fileName}`,
       status: 'sending',
       idempotencyKey,
+      providerTimestamp: new Date(),
       metadata: {
         sender: {
           id: 'bot:typebot',
