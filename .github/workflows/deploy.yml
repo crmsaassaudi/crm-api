@@ -35,17 +35,37 @@ jobs:
 
             test -f .env.production
 
-            # ── Build with legacy builder (VPS lacks buildx) ──────────────
-            export DOCKER_BUILDKIT=0
+            # ── Stop old container BEFORE building ─────────────────────────
+            # This prevents overlayfs race conditions where the old container
+            # still holds references to snapshot layers that get recycled
+            # during the new build.
+            docker compose -f docker-compose.yml down --timeout 30 2>/dev/null || true
 
-            # Build image once, then run single all-in-one container.
-            # --no-cache ensures no stale layer cache with legacy builder.
-            docker build --pull --no-cache -t crm-api:production .
+            # Flush pending filesystem operations before building
+            sync
 
-            # ── Deploy: stop old → start new → then prune ──────────────────
-            # Wait for old containers to fully stop before pruning to avoid
-            # the overlayfs race condition where prune removes snapshot layers
-            # that containerd still references.
+            # ── Build with BuildKit ──────────────────────────────────────────
+            # BuildKit handles layer caching and overlayfs snapshots more
+            # reliably than the legacy builder, especially for deeply-nested
+            # node_modules trees (@socket.io/*, @nestjs/*, etc.)
+            export DOCKER_BUILDKIT=1
+
+            # Build with retry: containerd overlayfs can still occasionally
+            # fail on the first attempt if prior snapshots weren't fully
+            # cleaned up. A single retry is sufficient.
+            build_image() {
+              docker build --pull --no-cache -t crm-api:production .
+            }
+
+            if ! build_image; then
+              echo "⚠ Build failed, cleaning snapshots and retrying..."
+              docker builder prune -f 2>/dev/null || true
+              sync
+              sleep 5
+              build_image
+            fi
+
+            # ── Deploy: start new container ──────────────────────────────────
             docker compose -f docker-compose.yml up -d --no-build --remove-orphans crm-api
 
             # Give the new container time to fully start and attach to layers
@@ -69,4 +89,7 @@ jobs:
 
             # ── Cleanup: safe to prune now that new container is healthy ───
             docker container prune -f
-            docker image prune -f
+            # Only prune dangling images (untagged) — avoid removing layers
+            # still referenced by the running container's parent chain
+            docker image prune -f --filter "dangling=true"
+            sync
