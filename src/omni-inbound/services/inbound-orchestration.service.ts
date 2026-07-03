@@ -13,6 +13,7 @@ import { AgentPresenceService } from './agent-presence.service';
 import { AutoResolveService } from './auto-resolve.service';
 import { BusinessHoursService } from './business-hours.service';
 import { BotQueueService } from '../bot/bot-queue.service';
+import { ConversationCommandService } from '../aggregate/conversation-command.service';
 import {
   ConversationBotState,
   BotMode,
@@ -46,6 +47,7 @@ export class InboundOrchestrationService {
     private readonly businessHoursService: BusinessHoursService,
     private readonly botQueueService: BotQueueService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly conversationCommandService: ConversationCommandService,
   ) {}
 
   // ────────────────────────────────────────────────────────────────
@@ -361,6 +363,7 @@ export class InboundOrchestrationService {
     payload: OmniPayload,
     conversationId: string,
     inboundMessageId: string,
+    inboundProviderTimestamp?: Date,
   ): Promise<void> {
     this.logger.log(
       `[BOT-FLOW] ▶ enqueueBotProcessingIfNeeded START — ` +
@@ -443,6 +446,9 @@ export class InboundOrchestrationService {
         this.logger.log(
           `[BOT-FLOW] Auto-initializing bot state for legacy conversation ${conversationId}`,
         );
+        // Direct write — bot processing depends on this state being committed
+        // before the bot job runs. enqueue would be async and create a race
+        // where BotProcessingProcessor reads bot=null and skips.
         await this.conversationRepo.updateBotState(conversationId, {
           enabled: true,
           provider: channelBotConfig.provider,
@@ -469,6 +475,7 @@ export class InboundOrchestrationService {
         channel: payload.channelType,
         replyId: payload.metadata?.replyId,
         messageType: payload.messageType,
+        inboundProviderTimestamp: inboundProviderTimestamp?.toISOString(),
       });
 
       this.logger.log(
@@ -526,7 +533,15 @@ export class InboundOrchestrationService {
       }
 
       if (oooConfig.oooSetPending) {
-        await this.conversationRepo.updateStatus(conversationId, 'pending');
+        await this.conversationCommandService.enqueueChangeStatus(
+          conversationId,
+          payload.tenantId,
+          {
+            newStatus: 'pending',
+            reason: 'outside_business_hours',
+            resolveSource: 'system',
+          },
+        );
         this.logger.log(
           `Set conversation ${conversationId} to pending (outside business hours)`,
         );
@@ -612,47 +627,23 @@ export class InboundOrchestrationService {
     const { tenantId, conversationId, agentId, channelType } = event;
 
     try {
-      // 1. Atomically assign only if still unassigned (prevents double-assign)
-      const committed = await this.conversationRepo.assignIfUnassigned(
+      // Enqueue ASSIGN_AGENT command with CAS semantics (onlyIfUnassigned)
+      await this.conversationCommandService.enqueueAssignAgent(
         conversationId,
-        agentId,
+        tenantId,
+        {
+          agentId,
+          reason: 'reply_auto_assign',
+          onlyIfUnassigned: true,
+          syncCapacity: { assignAgentId: agentId },
+          auditLog: { channelType },
+        },
       );
 
-      if (!committed) {
-        // Already assigned by another agent or routing — no action needed
-        this.logger.debug(
-          `Reply auto-assign skipped: conversation ${conversationId} already assigned`,
-        );
-        return;
-      }
-
-      // 2. Increment the agent's active conversation counter.
-      // Manual/reply path: assignment did NOT go through the routing engine, so
-      // no Lua reserve incremented the counter — we must increment here. (The
-      // auto-assign path in triggerAutoAssignment increments inside the reserve
-      // Lua, so it must NOT call assignConversation() again — avoid double-count.)
-      await this.agentPresenceService.assignConversation(tenantId, agentId);
-
-      // 3. Audit trail
-      await this.assignmentService.logReplyAutoAssignment({
-        conversationId,
-        tenantId,
-        agentId,
-        channelType,
-      });
-
-      // 4. Broadcast assignment to all connected agents
-      this.eventEmitter.emit(OmniEvents.CONVERSATION_ASSIGNED, {
-        tenantId,
-        conversationId,
-        agentId,
-        oldAgentId: null,
-        strategy: 'reply_auto_assign',
-        reason: 'Agent replied to unassigned conversation',
-      });
+      // Audit trail handled inside ASSIGN_AGENT processor handler
 
       this.logger.log(
-        `Reply auto-assigned conversation ${conversationId} → agent ${agentId}`,
+        `Reply auto-assign enqueued: conversation ${conversationId} → agent ${agentId}`,
       );
     } catch (err: any) {
       // Non-blocking — reply delivery must not be affected

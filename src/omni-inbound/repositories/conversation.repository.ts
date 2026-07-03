@@ -1053,4 +1053,35 @@ export class ConversationRepository {
 
     return pagination(mappedItems, total, { page: safePage, limit: safeLimit });
   }
+
+  // ── Aggregate Methods (Phase 1) ──────────────────────────────────
+
+  /**
+   * Atomically allocate the next sequence number for a conversation.
+   * Called inside the ConversationOpsProcessor lock — guarantees monotonic
+   * ordering even under concurrent access.
+   */
+  async getNextSequence(conversationId: string): Promise<number> {
+    const doc = await this.model.findOneAndUpdate(
+      { _id: conversationId },
+      { $inc: { nextSequence: 1 } },
+      { returnDocument: 'after', projection: { nextSequence: 1 } },
+    );
+    return doc?.nextSequence ?? 1;
+  }
+
+  /**
+   * Apply an arbitrary Mongoose update expression to a conversation.
+   * This is the single entry point for all aggregate-level mutations
+   * from ConversationOpsProcessor.
+   *
+   * Accepts raw $set, $inc, $unset — the processor builds the correct
+   * update expression based on the command being processed.
+   */
+  async atomicUpdate(
+    conversationId: string,
+    update: Record<string, any>,
+  ): Promise<void> {
+    await this.model.findByIdAndUpdate(conversationId, update).exec();
+  }
 }

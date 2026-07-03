@@ -685,6 +685,8 @@ export class OutboundService {
     messageType?: string;
     buttons?: Array<{ id?: string; label: string; value?: string }>;
     idempotencyKey?: string;
+    /** Minimum timestamp — bot reply must sort after this (customer msg timestamp) */
+    afterTimestamp?: number;
   }): Promise<any> {
     const {
       tenantId,
@@ -693,6 +695,7 @@ export class OutboundService {
       messageType = 'text',
       buttons,
       idempotencyKey,
+      afterTimestamp,
     } = params;
 
     if (idempotencyKey) {
@@ -750,6 +753,11 @@ export class OutboundService {
       buttons: buttons ?? [],
     };
 
+    // Guarantee bot reply sorts after the triggering customer message
+    const botTimestamp = afterTimestamp
+      ? new Date(Math.max(Date.now(), afterTimestamp + 1))
+      : new Date();
+
     let message;
     try {
       message = await this.messageRepo.create({
@@ -765,7 +773,7 @@ export class OutboundService {
         status: 'sending',
         idempotencyKey,
         metadata,
-        providerTimestamp: new Date(),
+        providerTimestamp: botTimestamp,
       });
     } catch (error) {
       if (idempotencyKey && (error as any)?.code === 11000) {
@@ -891,6 +899,7 @@ export class OutboundService {
     mimeType?: string;
     caption?: string;
     idempotencyKey?: string;
+    afterTimestamp?: number;
   }): Promise<any> {
     return this.mediaHandler.sendBotMedia(params, (fallbackParams) =>
       this.sendBotMessage(fallbackParams),

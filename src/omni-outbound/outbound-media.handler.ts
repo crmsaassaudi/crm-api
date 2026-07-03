@@ -305,6 +305,7 @@ export class OutboundMediaHandler {
       mimeType?: string;
       caption?: string;
       idempotencyKey?: string;
+      afterTimestamp?: number;
     },
     /** Callback for text fallback when media download fails */
     sendBotTextFallback: (params: {
@@ -313,6 +314,7 @@ export class OutboundMediaHandler {
       content: string;
       messageType?: string;
       idempotencyKey?: string;
+      afterTimestamp?: number;
     }) => Promise<any>,
   ): Promise<any> {
     const {
@@ -322,6 +324,7 @@ export class OutboundMediaHandler {
       mimeType: rawMimeType,
       caption = '',
       idempotencyKey,
+      afterTimestamp,
     } = params;
 
     if (idempotencyKey) {
@@ -394,10 +397,15 @@ export class OutboundMediaHandler {
         content: caption ? `${caption}\n${mediaUrl}` : mediaUrl,
         messageType: 'text',
         idempotencyKey,
+        afterTimestamp,
       });
     }
 
     const resolvedMessageType = mimeToMessageType(mimeType);
+
+    const botTimestamp = afterTimestamp
+      ? new Date(Math.max(Date.now(), afterTimestamp + 1))
+      : new Date();
 
     const message = await this.messageRepo.create({
       tenantId,
@@ -411,7 +419,7 @@ export class OutboundMediaHandler {
       content: caption || `[${resolvedMessageType}] ${fileName}`,
       status: 'sending',
       idempotencyKey,
-      providerTimestamp: new Date(),
+      providerTimestamp: botTimestamp,
       metadata: {
         sender: {
           id: 'bot:typebot',

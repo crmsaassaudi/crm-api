@@ -7,6 +7,7 @@ import { ConversationRepository } from '../repositories/conversation.repository'
 import { BOT_PROCESSING_QUEUE } from '../queue/bot-processing-queue.constants';
 import { BotApiService } from './bot-api.service';
 import { BotProcessingJobData } from './bot-processing.types';
+import { ConversationCommandService } from '../aggregate/conversation-command.service';
 
 /**
  * BullMQ processor — fire-and-forget to crm-bot.
@@ -26,6 +27,7 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
     cls: ClsService,
     private readonly conversationRepo: ConversationRepository,
     private readonly botApi: BotApiService,
+    private readonly conversationCommandService: ConversationCommandService,
   ) {
     super();
     this.cls = cls;
@@ -118,9 +120,14 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
         `[BOT-PROCESSOR] ✗ Bot dispatch FAILED for conv=${data.conversationId}: ${message}`,
         error instanceof Error ? error.stack : undefined,
       );
-      await this.conversationRepo.updateBotState(data.conversationId, {
-        lastError: message,
-      });
+      await this.conversationCommandService.enqueueUpdateBotState(
+        data.conversationId,
+        data.tenantId,
+        {
+          botState: { lastError: message },
+          reason: 'bot_dispatch_error',
+        },
+      );
       throw error;
     }
   }

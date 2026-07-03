@@ -30,15 +30,7 @@ export class BotQueueService {
     }
 
     const jobId = `bot-${data.tenantId}-${data.messageId}`;
-    await this.botQueue.add('process-bot-message', data, {
-      jobId,
-      // Delay bot processing to ensure inbound message flow completes first
-      // (updateLastMessage, MESSAGE_PERSISTED event, business hours check).
-      // Without this, the bot worker picks up the job nearly instantly and can
-      // persist its reply BEFORE the customer message processing finishes,
-      // causing wrong message ordering and stale conversation snippets.
-      delay: 500,
-    });
+    await this.botQueue.add('process-bot-message', data, { jobId });
     this.logger.log(
       `[BOT-QUEUE] ✓ Job ADDED — jobId=${jobId}, conv=${data.conversationId}`,
     );

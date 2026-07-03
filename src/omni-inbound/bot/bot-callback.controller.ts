@@ -13,15 +13,24 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ConversationRepository } from '../repositories/conversation.repository';
-import { OutboundService } from '../../omni-outbound/outbound.service';
-import { BotCallbackPayload, BotReplyMessage } from './bot-processing.types';
+import { MessageRepository } from '../repositories/message.repository';
+import { BotCallbackPayload } from './bot-processing.types';
+import { BotGeneratedReplyEvent } from '../aggregate/conversation-command.types';
+import { BOT_GENERATED_REPLY_EVENT } from '../aggregate/conversation-ops.constants';
 
 /**
  * Receives async callback from crm-bot after it finishes processing a flow.
- * This replaces the old synchronous wait in BotProcessingProcessor.
  *
- * Flow: Bot processes flow → POST /v1/bot-callback/reply → this controller
- *       → save messages → send replies → handle handoff
+ * ── Aggregate Architecture (Phase 1) ──
+ * This controller NO LONGER performs any direct DB mutations.
+ * It validates the request, then emits a `bot.generated_reply` event
+ * which is consumed by ConversationCommandService and converted into
+ * a BOT_REPLY command processed sequentially by ConversationOpsProcessor.
+ *
+ * This decoupling:
+ * - Eliminates race conditions between bot replies and customer messages
+ * - Allows future bot sources (AI Agent, Flow Builder) to use the same pattern
+ * - Ensures all mutations go through the Conversation Aggregate Root
  */
 @Controller({ path: 'bot-callback', version: '1' })
 export class BotCallbackController {
@@ -31,7 +40,7 @@ export class BotCallbackController {
     private readonly configService: ConfigService,
     private readonly cls: ClsService,
     private readonly conversationRepo: ConversationRepository,
-    private readonly outboundService: OutboundService,
+    private readonly messageRepo: MessageRepository,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -64,7 +73,7 @@ export class BotCallbackController {
 
     // Wrap in tenant context — Mongoose tenant-filter plugin needs activeTenantId in CLS
     return runWithTenantContext(this.cls, org, async () => {
-      // 1. Validate conversation exists and belongs to tenant
+      // 1. Validate conversation exists and belongs to tenant (read-only)
       const conversation = await this.conversationRepo.findById(conversationId);
       if (!conversation) {
         this.logger.warn(
@@ -84,73 +93,40 @@ export class BotCallbackController {
           `status=${conversation.status}, bot=${JSON.stringify(conversation.bot ?? null)}`,
       );
 
-      // 2. Update bot state (sessionId, status)
-      if (
-        payload.sessionId &&
-        payload.sessionId !== conversation.bot?.sessionId
-      ) {
-        this.logger.log(
-          `[BOT-CALLBACK] Updating bot sessionId: ${conversation.bot?.sessionId} → ${payload.sessionId}, status=${payload.status ?? 'active'}`,
-        );
-        await this.conversationRepo.updateBotState(conversationId, {
-          sessionId: payload.sessionId,
-          status: payload.status ?? 'active',
-          lastError: null,
-        });
-      } else if (payload.status) {
-        this.logger.log(
-          `[BOT-CALLBACK] Updating bot status: ${conversation.bot?.status} → ${payload.status}`,
-        );
-        await this.conversationRepo.updateBotState(conversationId, {
-          status: payload.status,
-          lastError: null,
-        });
-      }
-
-      // 3. Send bot messages to customer
-      for (const [index, message] of (payload.messages ?? []).entries()) {
-        this.logger.log(
-          `[BOT-CALLBACK] Sending message[${index}]: type=${message.type}, ` +
-            `buttons=${message.buttons?.length ?? 0}`,
-        );
-        try {
-          await this.sendBotMessage(
-            org,
-            conversationId,
-            payload.inboundMessageId,
-            message,
-            index,
-          );
-          this.logger.log(
-            `[BOT-CALLBACK] ✓ Message[${index}] sent successfully`,
-          );
-        } catch (err) {
-          this.logger.error(
-            `[BOT-CALLBACK] ✗ Message[${index}] FAILED: ${err instanceof Error ? err.message : String(err)}`,
-            err instanceof Error ? err.stack : undefined,
-          );
+      // 2. Resolve afterTimestamp from inbound message for causal ordering
+      let afterTimestamp: number | undefined;
+      try {
+        const [inboundMsg] = await this.messageRepo.findByIds([
+          payload.inboundMessageId,
+        ]);
+        if (inboundMsg?.providerTimestamp) {
+          afterTimestamp = new Date(inboundMsg.providerTimestamp).getTime();
         }
+      } catch {
+        // Non-fatal — bot messages will use current server time
       }
 
-      // 4. Handle handoff / ended
-      if (payload.handoff || payload.status === 'handoff') {
-        this.logger.log(
-          `[BOT-CALLBACK] Handling HANDOFF for conv=${conversationId}`,
-        );
-        await this.handleHandoff(org, conversationId, payload.handoffMeta);
-      } else if (payload.status === 'ended') {
-        this.logger.log(
-          `[BOT-CALLBACK] Bot flow ENDED for conv=${conversationId}`,
-        );
-        await this.conversationRepo.updateBotState(conversationId, {
-          enabled: false,
-          status: 'ended',
-        });
-      }
+      // 3. Emit event → ConversationCommandService → BOT_REPLY command → Processor
+      // NO direct mutations here — everything is handled by the Aggregate
+      const event: BotGeneratedReplyEvent = {
+        conversationId,
+        tenantId: org,
+        messages: payload.messages ?? [],
+        handoff: !!payload.handoff,
+        handoffMeta: payload.handoffMeta,
+        sessionId: payload.sessionId,
+        status: payload.status ?? 'active',
+        inboundMessageId: payload.inboundMessageId,
+        afterTimestamp,
+      };
+
+      this.eventEmitter.emit(BOT_GENERATED_REPLY_EVENT, event);
 
       this.logger.log(
-        `[BOT-CALLBACK] ✓ Callback processed successfully — conv=${conversationId}`,
+        `[BOT-CALLBACK] ✓ Emitted ${BOT_GENERATED_REPLY_EVENT} — conv=${conversationId}, ` +
+          `msgs=${event.messages.length}, handoff=${event.handoff}`,
       );
+
       return { ok: true };
     });
   }
@@ -167,137 +143,6 @@ export class BotCallbackController {
     }
     if (secret !== expected) {
       throw new ForbiddenException('Invalid internal secret');
-    }
-  }
-
-  private async sendBotMessage(
-    tenantId: string,
-    conversationId: string,
-    inboundMessageId: string,
-    message: BotReplyMessage,
-    index: number,
-  ): Promise<void> {
-    const idempotencyKey = `bot:${inboundMessageId}:${index}`;
-
-    switch (message.type) {
-      case 'text': {
-        // Text message — may include interactive buttons.
-        //
-        // Typebot attaches choice-input buttons to the LAST text bubble,
-        // so buttons always arrive on a type="text" message.
-        // outbound.sendBotMessage() detects buttons and auto-routes:
-        //   buttons present + adapter.sendInteractive → WhatsApp interactive buttons
-        //   buttons present + no sendInteractive      → numbered text fallback
-        //   no buttons                                → plain text
-        const content = message.text?.trim();
-        if (!content) return;
-
-        await this.outboundService.sendBotMessage({
-          tenantId,
-          conversationId,
-          content,
-          messageType: 'text',
-          buttons: message.buttons,
-          idempotencyKey,
-        });
-        break;
-      }
-
-      case 'image':
-      case 'video':
-      case 'audio':
-      case 'file': {
-        // Media message — download from bot URL → upload via channel adapter
-        if (!message.url) {
-          this.logger.warn(`Bot ${message.type} message has no URL — skipping`);
-          return;
-        }
-
-        await this.outboundService.sendBotMedia({
-          tenantId,
-          conversationId,
-          mediaUrl: message.url,
-          mediaType: message.type,
-          mimeType: message.mimeType,
-          caption: message.text?.trim(),
-          idempotencyKey,
-        });
-        break;
-      }
-
-      default:
-        this.logger.warn(
-          `Unknown bot message type="${message.type}" — skipping`,
-        );
-    }
-  }
-
-  private async handleHandoff(
-    tenantId: string,
-    conversationId: string,
-    handoffMeta?: { target?: string; groupId?: string; agentId?: string; message?: string },
-  ): Promise<void> {
-    await this.conversationRepo.markBotHandoff(conversationId);
-
-    const target = handoffMeta?.target ?? 'general';
-
-    // Broadcast bot state change so frontend updates toggle button in realtime
-    this.eventEmitter.emit('omni.bot.disabled', {
-      tenantId,
-      conversationId,
-      reason: 'handoff',
-    });
-
-    // ── Targeted assignment based on handoffMeta ──────────────────
-    const conversation = await this.conversationRepo.findById(conversationId);
-    if (!conversation) return;
-
-    if (target === 'agent' && handoffMeta?.agentId) {
-      // Direct agent assignment — skip auto-assignment engine
-      this.logger.log(
-        `[BOT-CALLBACK] Handoff → direct agent=${handoffMeta.agentId} for conv=${conversationId}`,
-      );
-      await this.conversationRepo.assignAgent(conversationId, handoffMeta.agentId);
-      this.eventEmitter.emit('omni.conversation.assigned', {
-        tenantId,
-        conversationId,
-        agentId: handoffMeta.agentId,
-        source: 'bot_handoff',
-      });
-    } else if (target === 'group' && handoffMeta?.groupId) {
-      // Group assignment — assign group then trigger auto-assignment within group
-      this.logger.log(
-        `[BOT-CALLBACK] Handoff → group=${handoffMeta.groupId} for conv=${conversationId}`,
-      );
-      await this.conversationRepo.assignGroup(conversationId, handoffMeta.groupId);
-      if (!conversation.assignedAgentId) {
-        this.eventEmitter.emit('omni.bot.handoff', {
-          tenantId,
-          conversationId,
-          channelType: conversation.channelType,
-          channelAccount: (conversation as any).channelAccount ?? conversation.channelId?.toString(),
-          contactId: conversation.contactId ?? null,
-          targetGroupId: handoffMeta.groupId,
-        });
-      }
-    } else {
-      // General handoff — trigger standard auto-assignment
-      if (!conversation.assignedAgentId) {
-        this.eventEmitter.emit('omni.bot.handoff', {
-          tenantId,
-          conversationId,
-          channelType: conversation.channelType,
-          channelAccount: (conversation as any).channelAccount ?? conversation.channelId?.toString(),
-          contactId: conversation.contactId ?? null,
-        });
-        this.logger.log(
-          `[BOT-CALLBACK] Emitted BOT_HANDOFF → triggering auto-assignment for conv=${conversationId}`,
-        );
-      } else {
-        this.logger.log(
-          `[BOT-CALLBACK] Handoff complete — conv=${conversationId} already has agent=${conversation.assignedAgentId}, skipping auto-assignment`,
-        );
-      }
     }
   }
 }

@@ -12,6 +12,7 @@ import {
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
+import { ConversationCommandService } from '../aggregate/conversation-command.service';
 
 export interface AutoResolveJobData extends TenantJobData {
   conversationId: string;
@@ -45,6 +46,7 @@ export class AutoResolveProcessor extends BaseTenantConsumer<AutoResolveJobData>
     private readonly settingsService: CrmSettingsService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    private readonly conversationCommandService: ConversationCommandService,
     cls: ClsService,
   ) {
     super();
@@ -167,32 +169,24 @@ export class AutoResolveProcessor extends BaseTenantConsumer<AutoResolveJobData>
       return;
     }
 
-    await this.conversationRepo.updateStatusWithMetadata(
+    await this.conversationCommandService.enqueueChangeStatus(
       conversationId,
-      'resolved',
-      null, // no agent (system action)
-      'auto_resolved',
-      `Auto-resolved after ${timeoutHours}h of inactivity`,
-      'auto',
+      tenantId,
+      {
+        newStatus: 'resolved',
+        oldStatus: conversation.status,
+        agentId: null,
+        reason: 'auto_resolved',
+        note: `Auto-resolved after ${timeoutHours}h of inactivity`,
+        resolveSource: 'auto',
+        channelType: conversation.channelType,
+        channelAccount: conversation.channelAccount,
+        externalConversationId: conversation.externalConversationId,
+      },
     );
 
     // Clean up warning key
     await this.redis.del(`${this.WARN_KEY_PREFIX}:${conversationId}`);
-
-    // Emit event for cache invalidation + realtime broadcast
-    this.eventEmitter.emit('omni.conversation.status_changed', {
-      tenantId,
-      conversationId,
-      status: 'resolved',
-      oldStatus: conversation.status,
-      agentId: null,
-      reason: 'auto_resolved',
-      note: `Auto-resolved after ${timeoutHours}h of inactivity`,
-      resolveSource: 'auto',
-      channelType: conversation.channelType,
-      channelAccount: conversation.channelAccount,
-      externalConversationId: conversation.externalConversationId,
-    });
 
     this.logger.log(
       `Auto-resolved conversation ${conversationId} ` +

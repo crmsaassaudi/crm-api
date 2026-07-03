@@ -28,6 +28,7 @@ import { ShadowContactService } from './shadow-contact.service';
 import { ConversationLifecycleService } from './conversation-lifecycle.service';
 import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 import type { MediaCacheJobData } from '../queue/media-cache.processor';
+import { ConversationCommandService } from '../aggregate/conversation-command.service';
 
 /**
  * ConversationService â€” listens to `omni.message.received` events and handles:
@@ -69,6 +70,7 @@ export class ConversationService {
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectQueue(OMNI_MEDIA_CACHE_QUEUE)
     private readonly mediaCacheQueue: Queue<MediaCacheJobData>,
+    private readonly conversationCommandService: ConversationCommandService,
   ) {}
 
   /**
@@ -597,135 +599,25 @@ export class ConversationService {
       // Profile enrichment already done eagerly before conversation creation (Step 3b above).
     }
 
-    // ── Step 5a: Save the message immediately (with original media URL) ──
-    // Media caching is done asynchronously via BullMQ to avoid blocking
-    // the distributed lock during large file downloads.
-    const { message, inserted } =
-      await this.messageRepo.upsertInboundByExternalId({
-        tenantId: payload.tenantId,
-        conversationId: conversationId,
-        senderId: payload.senderId,
-        senderType: payload.senderType,
-        direction: 'inbound',
-        messageType: payload.messageType,
-        content: payload.content,
-        mediaUrl: payload.mediaUrl,
-        mediaProxyUrl: undefined, // will be set async by MediaCacheProcessor
-        status: 'delivered',
-        metadata: payload.metadata,
-        externalMessageId: messageDedupId,
-        platformMessageId: messageDedupId, // dedup key
-        providerTimestamp: payload.providerTimestamp ?? payload.timestamp,
-      });
-
-    if (!inserted) {
-      await this.redis.expire(idemKey, this.IDEM_TTL);
-      this.logger.debug(
-        `Duplicate inbound message ${messageDedupId} already persisted; skipping side effects`,
-      );
-      return;
-    }
-
-    // ── Step 5b: Enqueue async media cache job if media is present ──
-    if (payload.mediaUrl) {
-      await this.mediaCacheQueue.add(
-        'cache-media',
-        {
-          tenantId: payload.tenantId,
-          conversationId,
-          messageId: message.id,
-          mediaUrl: payload.mediaUrl,
-          channelType: payload.channelType,
-          mediaId: payload.metadata?.mediaId ?? messageDedupId,
-          accessToken: payload.metadata?.accessToken,
-        },
-        {
-          // Use messageId as jobId for deduplication
-          jobId: `media-${message.id}`,
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 2000 },
-          removeOnComplete: { count: 200 },
-          removeOnFail: { count: 500 },
-        },
-      );
-      this.logger.debug(`Enqueued media cache job for message ${message.id}`);
-    } else if (payload.metadata?.media?.storageKey) {
-      // ── Livechat visitor uploads: file already on S3 ──────────────
-      // VisitorUploadService uploads base64 → S3 before the message enters
-      // the pipeline, so there's no external mediaUrl to cache. We resolve
-      // a presigned download URL from the storageKey so agent CRM can
-      // render the media immediately.
-      try {
-        const presignedUrl = await this.mediaProxy.getPresignedUrl(
-          payload.metadata.media.storageKey,
-          3600,
-        );
-        payload.mediaProxyUrl = presignedUrl;
-        this.logger.debug(
-          `Resolved presigned URL for visitor upload: message ${message.id}`,
-        );
-      } catch (err: any) {
-        this.logger.warn(
-          `Failed to resolve presigned URL for visitor upload ${message.id}: ${err?.message}`,
-        );
-      }
-    }
-
-    // â”€â”€ Step 5c: Update conversation summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const messagePreview = payload.content || `[${payload.messageType}]`;
-
-    await this.conversationRepo.updateLastMessage(
+    // ── Aggregate: Enqueue CUSTOMER_MESSAGE command ──────────────────
+    // All message persistence, aggregate updates, event emission,
+    // bot processing, and business hours checks are handled by
+    // ConversationOpsProcessor sequentially per conversation.
+    // This eliminates race conditions between customer message
+    // side-effects and bot reply processing.
+    await this.conversationCommandService.enqueueCustomerMessage(
       conversationId,
-      messagePreview.substring(0, 200),
-      payload.timestamp,
-      payload.senderType,
-    );
-
-    // â”€â”€ Step 5d-2: Track customer's last message time for reply window â”€â”€
-    if (payload.senderType === 'customer') {
-      await this.conversationRepo.updateLastCustomerMessageAt(
-        conversationId,
-        payload.providerTimestamp ?? payload.timestamp,
-      );
-    }
-
-    // â”€â”€ Step 5d: Reschedule auto-resolve timer (message resets the clock) â”€â”€
-    await this.orchestration.rescheduleAutoResolve(
       payload.tenantId,
-      conversationId,
+      payload,
+      messageDedupId,
+      idemKey,
     );
-
-    // â”€â”€ Step 7: Refresh processed marker TTL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    await this.redis.expire(idemKey, this.IDEM_TTL);
 
     this.logger.log(
-      `Saved message ${messageDedupId} ` + `to conversation ${conversationId}`,
-    );
-
-    // Emit persisted event with internal IDs for realtime broadcast
-    this.eventEmitter.emit(OmniEvents.MESSAGE_PERSISTED, {
-      ...payload,
-      conversationId,
-      messageId: messageDedupId,
-      internalMessageId: message.id,
-    });
-
-    await this.orchestration.enqueueBotProcessingIfNeeded(
-      payload,
-      conversationId,
-      message.id,
-    );
-
-    // â”€â”€ Step 8: Business Hours / OOO Auto-Reply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // F-11 fix: fetch current assignedAgentId so OOO is suppressed when an
-    // agent has already been successfully routed to this conversation.
-    const currentConv = await this.conversationRepo.findById(conversationId);
-    await this.orchestration.handleBusinessHoursCheck(
-      payload,
-      conversationId,
-      currentConv?.assignedAgentId ?? null,
+      `Enqueued CUSTOMER_MESSAGE for ${messageDedupId} → conversation ${conversationId}`,
     );
   }
+
 
   private buildMessageDedupId(payload: OmniPayload): string {
     const externalMessageId = payload.externalMessageId?.trim();

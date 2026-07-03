@@ -34,6 +34,7 @@ import { RequirePermission } from '../../common/permissions';
 import { AssignmentAuditLogRepository } from '../repositories/omni-assignment-audit-log.repository';
 import { AgentPresenceService } from '../services/agent-presence.service';
 import { AssignmentService } from '../services/assignment.service';
+import { ConversationCommandService } from '../aggregate/conversation-command.service';
 
 /**
  * REST API for omni-channel conversations and messages.
@@ -71,6 +72,7 @@ export class OmniController {
     private readonly auditLogRepo: AssignmentAuditLogRepository,
     private readonly agentPresenceService: AgentPresenceService,
     private readonly assignmentService: AssignmentService,
+    private readonly conversationCommandService: ConversationCommandService,
   ) {}
 
   // ─── Routing Trace (production debugging) ────────────────────
@@ -896,15 +898,16 @@ export class OmniController {
     });
 
     if (conversation.assignedAgentId !== agentId) {
-      await this.conversationRepo.updateAssignment(conversationId, agentId);
-      this.eventEmitter.emit('omni.conversation.assigned', {
-        tenantId,
+      await this.conversationCommandService.executeAssignAgent(
         conversationId,
-        agentId,
-        oldAgentId: conversation.assignedAgentId,
-        performedByUserId: agentId,
-        reason: 'takeover',
-      });
+        tenantId,
+        {
+          agentId,
+          previousAgentId: conversation.assignedAgentId,
+          reason: 'takeover',
+          performedByUserId: agentId,
+        },
+      );
     }
 
     return {
@@ -952,34 +955,21 @@ export class OmniController {
 
     const oldStatus = conversation.status;
 
-    let updated;
-    if (status === 'resolved' || status === 'closed') {
-      updated = await this.conversationRepo.updateStatusWithMetadata(
-        id,
-        status,
+    const updated = await this.conversationCommandService.executeChangeStatus(
+      id,
+      conversation.tenantId,
+      {
+        newStatus: status as any,
+        oldStatus,
         agentId,
         reason,
         note,
-        resolveSource ?? 'agent',
-      );
-    } else {
-      updated = await this.conversationRepo.updateStatus(id, status);
-    }
-
-    // Emit event for cache invalidation, audit trail, and WebSocket broadcast
-    this.eventEmitter.emit('omni.conversation.status_changed', {
-      tenantId: conversation.tenantId,
-      conversationId: id,
-      status,
-      oldStatus,
-      agentId,
-      reason,
-      note,
-      resolveSource: resolveSource ?? 'agent',
-      channelType: conversation.channelType,
-      channelAccount: conversation.channelAccount,
-      externalConversationId: conversation.externalConversationId,
-    });
+        resolveSource: resolveSource ?? 'agent',
+        channelType: conversation.channelType,
+        channelAccount: conversation.channelAccount,
+        externalConversationId: conversation.externalConversationId,
+      },
+    );
 
     this.logger.log(
       `Conversation ${id} status → ${status} (by ${resolveSource ?? 'agent'} ${agentId})`,
@@ -1053,17 +1043,15 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${id} not found`);
     }
 
-    await this.conversationRepo.updateBotState(id, {
-      enabled: false,
-      status: 'ended',
-    });
-
-    this.eventEmitter.emit('omni.bot.disabled', {
+    const updated = await this.conversationCommandService.executeUpdateBotState(
+      id,
       tenantId,
-      conversationId: id,
-      reason: 'agent_takeover',
-      agentId,
-    });
+      {
+        botState: { enabled: false, status: 'ended' },
+        reason: 'agent_takeover',
+        agentId,
+      },
+    );
 
     this.logger.log(
       `Bot disabled on conversation ${id} by agent ${agentId} (manual takeover)`,
@@ -1093,17 +1081,15 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${id} not found`);
     }
 
-    await this.conversationRepo.updateBotState(id, {
-      enabled: true,
-      status: 'active',
-    });
-
-    this.eventEmitter.emit('omni.bot.enabled', {
+    const updated = await this.conversationCommandService.executeUpdateBotState(
+      id,
       tenantId,
-      conversationId: id,
-      reason: 'agent_reenable',
-      agentId,
-    });
+      {
+        botState: { enabled: true, status: 'active' },
+        reason: 'agent_reenable',
+        agentId,
+      },
+    );
 
     this.logger.log(`Bot re-enabled on conversation ${id} by agent ${agentId}`);
 
@@ -1216,60 +1202,46 @@ export class OmniController {
     let updated: any = conversation;
 
     if (agentId !== undefined) {
-      updated =
-        (await this.conversationRepo.updateAssignment(id, agentId)) ?? updated;
-
-      // F-09 fix: sync Redis capacity counters on manual assignment.
-      // Without this, the Redis `activeConversations` counter diverges from
-      // the real open-conversation count in MongoDB.
-      if (oldAgentId && oldAgentId !== agentId) {
-        // Release capacity from the old agent
-        await this.agentPresenceService
-          .releaseConversation(conversation.tenantId, oldAgentId)
-          .catch(() => {});
-      }
-      if (agentId) {
-        // Increment capacity for the new agent
-        await this.agentPresenceService
-          .assignConversation(conversation.tenantId, agentId)
-          .catch(() => {});
-      }
-    }
-
-    if (groupId !== undefined) {
-      updated =
-        (await this.conversationRepo.updateGroupAssignment(id, groupId)) ??
-        updated;
-    }
-
-    this.eventEmitter.emit('omni.conversation.assigned', {
-      tenantId: conversation.tenantId,
-      conversationId: id,
-      agentId: agentId !== undefined ? agentId : conversation.assignedAgentId,
-      oldAgentId,
-      groupId: groupId !== undefined ? groupId : undefined,
-      oldGroupId,
-      performedByUserId,
-    });
-
-    // T06: record manual assignment in audit log for RoutingHistoryPage
-    if (agentId !== undefined) {
-      this.assignmentService
-        .logManualAssignment({
-          conversationId: id,
-          tenantId: conversation.tenantId,
-          newAgentId: agentId ?? null,
-          previousAgentId: oldAgentId ?? null,
+      updated = await this.conversationCommandService.executeAssignAgent(
+        id,
+        conversation.tenantId,
+        {
+          agentId,
+          groupId,
+          previousAgentId: oldAgentId,
+          previousGroupId: oldGroupId,
+          reason: 'manual',
           performedByUserId,
-          channelType: conversation.channelType,
-        })
-        .catch(() => {}); // fire-and-forget — audit failure must not block the response
+          syncCapacity: {
+            releaseAgentId: (oldAgentId && oldAgentId !== agentId) ? oldAgentId : undefined,
+            assignAgentId: agentId ?? undefined,
+          },
+          auditLog: { channelType: conversation.channelType },
+        },
+      );
+
+      this.logger.log(
+        `Conversation ${id} assigned: agent=${agentId ?? 'unchanged'}, group=${groupId ?? 'unchanged'} by user=${performedByUserId}`,
+      );
+      return updated;
     }
 
-    this.logger.log(
-      `Conversation ${id} assigned to agent=${agentId ?? 'unchanged'}, group=${groupId ?? 'unchanged'} by user=${performedByUserId}`,
-    );
-    return updated;
+    // Group-only assignment (no agent change)
+    if (groupId !== undefined) {
+      updated = await this.conversationRepo.updateGroupAssignment(id, groupId);
+
+      this.eventEmitter.emit('omni.conversation.assigned', {
+        tenantId: conversation.tenantId,
+        conversationId: id,
+        agentId: conversation.assignedAgentId,
+        oldAgentId,
+        groupId,
+        oldGroupId,
+        performedByUserId,
+      });
+
+      return updated;
+    }
   }
 
   /**
@@ -1285,39 +1257,26 @@ export class OmniController {
 
     const oldAgentId = conversation.assignedAgentId;
     const performedByUserId = this.cls.get<string>('userId') ?? null;
-    const updated = await this.conversationRepo.updateAssignment(id, null);
 
-    // F-09 fix: release Redis capacity when manually unassigning.
-    if (oldAgentId) {
-      await this.agentPresenceService
-        .releaseConversation(conversation.tenantId, oldAgentId)
-        .catch(() => {});
-    }
-
-    this.eventEmitter.emit('omni.conversation.assigned', {
-      tenantId: conversation.tenantId,
-      conversationId: id,
-      agentId: null,
-      oldAgentId,
-      performedByUserId,
-    });
-
-    // T06: record unassignment in audit log for RoutingHistoryPage
-    this.assignmentService
-      .logManualAssignment({
-        conversationId: id,
-        tenantId: conversation.tenantId,
-        newAgentId: null,
-        previousAgentId: oldAgentId ?? null,
+    const operationId = await this.conversationCommandService.executeAssignAgent(
+      id,
+      conversation.tenantId,
+      {
+        agentId: null,
+        previousAgentId: oldAgentId,
+        reason: 'manual_unassign',
         performedByUserId,
-        channelType: conversation.channelType,
-      })
-      .catch(() => {}); // fire-and-forget
+        syncCapacity: {
+          releaseAgentId: oldAgentId ?? undefined,
+        },
+        auditLog: { channelType: conversation.channelType },
+      },
+    );
 
     this.logger.log(
       `Conversation ${id} unassigned by user=${performedByUserId}`,
     );
-    return updated;
+    return operationId;
   }
 
   // ─── Notes ──────────────────────────────────────────────────────

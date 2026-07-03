@@ -159,6 +159,33 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ type: Date, default: null, index: true })
   lastMessageAt: Date | null;
 
+  // ── Aggregate Fields (Phase 1) ──────────────────────────────────
+
+  /** Monotonically increasing sequence counter for causal ordering.
+   *  Allocated atomically via $inc inside ConversationOpsProcessor. */
+  @Prop({ default: 0 })
+  nextSequence: number;
+
+  /** Reference to the most recent message document. */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'OmniMessageSchemaClass',
+    default: null,
+  })
+  lastMessageId: string | null;
+
+  /** Truncated content preview (max 200 chars) for conversation list rendering. */
+  @Prop({ default: null })
+  lastMessagePreview: string | null;
+
+  /** Message type of the last message (text, image, file, etc.). */
+  @Prop({ default: null })
+  lastMessageType: string | null;
+
+  /** Sender type of the last message (customer, agent, bot). */
+  @Prop({ default: null })
+  lastMessageSenderType: string | null;
+
   @Prop({ default: 0 })
   unreadCount: number;
 

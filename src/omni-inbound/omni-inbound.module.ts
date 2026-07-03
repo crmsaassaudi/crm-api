@@ -133,6 +133,8 @@ import { ObservabilityModule } from '../observability/observability.module';
 import { isWorkerRuntime, isOmniRuntime } from '../config/runtime-role';
 // F3 fix: import LivechatModule so its LivechatAdapter instance (with gateway wired) is shared
 import { LivechatModule } from '../livechat/livechat.module';
+// Phase 1: Conversation Aggregate — sequential command processing
+import { ConversationOpsModule } from './aggregate/conversation-ops.module';
 
 const workerProviders =
   isWorkerRuntime() || isOmniRuntime()
@@ -182,6 +184,8 @@ const workerProviders =
     ObservabilityModule,
     // F3 fix: LivechatModule provides the single LivechatAdapter instance (gateway-wired)
     forwardRef(() => LivechatModule),
+    // Phase 1: Conversation Aggregate — sequential command processing
+    ConversationOpsModule,
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,

@@ -12,6 +12,8 @@ export interface BotProcessingJobData {
   replyId?: string;
   /** Original message type (text, image, video, etc.) */
   messageType?: string;
+  /** Customer message providerTimestamp — bot replies must sort after this */
+  inboundProviderTimestamp?: string;
 }
 
 export interface BotReplyRequest {

@@ -15,6 +15,7 @@ import { AgentPresenceService } from '../services/agent-presence.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { OMNI_FALLBACK_QUEUE } from './omni-fallback-queue.constants';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
+import { ConversationCommandService } from '../aggregate/conversation-command.service';
 
 export interface FallbackReassignJobData extends TenantJobData {
   agentId: string;
@@ -52,6 +53,7 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
     private readonly eventEmitter: EventEmitter2,
     private readonly settingsService: CrmSettingsService,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    private readonly conversationCommandService: ConversationCommandService,
     cls: ClsService,
   ) {
     super();
@@ -130,10 +132,16 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
         let newAgentId: string | null = null;
 
         if (assignmentStrategy === 'unassign') {
-          // 'back-to-queue' — just unassign, conversation goes back to queue
-          await this.conversationRepo.updateAssignment(
+          // 'back-to-queue' — unassign via aggregate command
+          await this.conversationCommandService.enqueueAssignAgent(
             conversation.id,
-            null as any,
+            tenantId,
+            {
+              agentId: null,
+              previousAgentId: agentId,
+              reason: 'fallback_offline',
+              syncCapacity: { releaseAgentId: agentId },
+            },
           );
         } else {
           newAgentId = await this.assignmentService.assignConversation(
