@@ -98,17 +98,20 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
     } catch (error) {
       // Move to DLQ after max attempts
       if (job.attemptsMade >= CONV_OPS_MAX_ATTEMPTS - 1) {
-        await this.dlqQueue.add('dead-letter', {
+        const dlqPayload = {
           command: cmd,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
           failedAt: new Date().toISOString(),
           attempts: job.attemptsMade + 1,
-        });
+        };
+        await this.dlqQueue.add('dead-letter', dlqPayload);
         this.logger.error(
           `[CONV-OPS] Moved to DLQ after ${job.attemptsMade + 1} attempts: ` +
             `op=${cmd.operationId} type=${cmd.type} conv=${cmd.conversationId}`,
         );
+        // Emit DLQ event for external alerting (Slack, Loki, Prometheus)
+        this.eventEmitter.emit('conv-ops.dlq.entered', dlqPayload);
         return; // Don't re-throw — prevent infinite retry
       }
       throw error; // BullMQ retries with exponential backoff
@@ -146,6 +149,12 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
   // ────────────────────────────────────────────────────────────────────
 
   private async processCommand(cmd: ConversationCommand): Promise<void> {
+    const startTime = Date.now();
+
+    // Propagate correlation context for downstream structured logs
+    this.cls.set('correlationId', cmd.operationId);
+    this.cls.set('conversationId', cmd.conversationId);
+
     // 1. Idempotency check
     const alreadyProcessed = await this.checkIdempotency(cmd);
     if (alreadyProcessed) return;
@@ -190,6 +199,19 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
 
     // 4. Mark processed
     await this.markProcessed(cmd);
+
+    // 5. Duration metrics
+    const duration = Date.now() - startTime;
+    this.logger.log(
+      `[CONV-OPS] ✓ ${cmd.type} op=${cmd.operationId} ` +
+        `conv=${cmd.conversationId} duration=${duration}ms`,
+    );
+    if (duration > 5000) {
+      this.logger.warn(
+        `[CONV-OPS] SLOW_OPERATION: ${cmd.type} took ${duration}ms ` +
+          `op=${cmd.operationId} conv=${cmd.conversationId} tenant=${cmd.tenantId}`,
+      );
+    }
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -310,36 +332,30 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       });
     }
 
-    // Reschedule auto-resolve timer
+    // Reschedule auto-resolve timer (non-critical — degraded UX if fails)
     await this.orchestration
       .rescheduleAutoResolve(payload.tenantId, cmd.conversationId)
       .catch((err) =>
-        this.logger.error(`rescheduleAutoResolve failed: ${err?.message}`),
+        this.logOperationWarning(cmd, 'rescheduleAutoResolve', err),
       );
 
     // Read conversation state ONCE for downstream checks (bot state, business hours).
-    // This read happens after atomicUpdate but only needs pre-existing fields
-    // (assignedAgentId, bot state) which are not modified by the atomicUpdate above.
     const conversationSnapshot = await this.conversationRepo.findById(
       cmd.conversationId,
     );
 
-    // Enqueue bot processing — MUST await because orchestration may perform
-    // direct writes (e.g. updateBotState auto-init for legacy conversations)
-    // that must complete within the lock to prevent concurrent mutations.
-    await this.orchestration
-      .enqueueBotProcessingIfNeeded(
-        payload,
-        cmd.conversationId,
-        message.id,
-        payload.providerTimestamp ?? payload.timestamp,
-      )
-      .catch((err) =>
-        this.logger.error(`Bot enqueue failed: ${err?.message}`),
-      );
+    // Enqueue bot processing — CRITICAL: if this fails, customer won't get
+    // a bot reply. Re-throw so BullMQ retries the entire command.
+    // Message persistence is idempotent (upsertInboundByExternalId), so retry is safe.
+    await this.orchestration.enqueueBotProcessingIfNeeded(
+      payload,
+      cmd.conversationId,
+      message.id,
+      payload.providerTimestamp ?? payload.timestamp,
+      conversationSnapshot, // reuse snapshot — avoid redundant findById
+    );
 
-    // Business hours check — use assignedAgentId from snapshot to skip OOO
-    // for conversations that already have an agent (F-11 fix).
+    // Business hours check (non-critical — OOO message can be missed)
     await this.orchestration
       .handleBusinessHoursCheck(
         payload,
@@ -347,7 +363,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         conversationSnapshot?.assignedAgentId ?? null,
       )
       .catch((err) =>
-        this.logger.error(`Business hours check failed: ${err?.message}`),
+        this.logOperationWarning(cmd, 'businessHoursCheck', err),
       );
   }
 
@@ -410,6 +426,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
             idempotencyKey,
             afterTimestamp: resolvedAfterTimestamp,
             buttons: msg.buttons,
+            skipAggregateUpdate: true, // processor handles atomicUpdate
           });
           lastBotMessageId = result?.messageId ?? lastBotMessageId;
         } else if (
@@ -800,5 +817,21 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         `[CONV-OPS] In-process event publish failed (outbox poller will retry): ${err?.message}`,
       );
     }
+  }
+
+  // ────────────────────────────────────────────────────────────────────
+  // Structured Logging
+  // ────────────────────────────────────────────────────────────────────
+
+  private logOperationWarning(
+    cmd: ConversationCommand,
+    operation: string,
+    err: any,
+  ): void {
+    this.logger.warn(
+      `[CONV-OPS] Non-critical op failed: ${operation} ` +
+        `op=${cmd.operationId} conv=${cmd.conversationId} ` +
+        `tenant=${cmd.tenantId} error=${err?.message}`,
+    );
   }
 }

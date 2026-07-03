@@ -364,6 +364,7 @@ export class InboundOrchestrationService {
     conversationId: string,
     inboundMessageId: string,
     inboundProviderTimestamp?: Date,
+    conversationSnapshot?: any,
   ): Promise<void> {
     this.logger.log(
       `[BOT-FLOW] ▶ enqueueBotProcessingIfNeeded START — ` +
@@ -422,7 +423,8 @@ export class InboundOrchestrationService {
       this.logger.log(
         `[BOT-FLOW] Checking Level 2: Conversation bot override...`,
       );
-      const conversation = await this.conversationRepo.findById(conversationId);
+      // Reuse caller's snapshot if available to avoid redundant DB read
+      const conversation = conversationSnapshot ?? await this.conversationRepo.findById(conversationId);
       if (!conversation) {
         this.logger.warn(
           `[BOT-FLOW] ✗ SKIP — Conversation ${conversationId} NOT FOUND in DB, msg=${inboundMessageId}`,

@@ -687,6 +687,8 @@ export class OutboundService {
     idempotencyKey?: string;
     /** Minimum timestamp — bot reply must sort after this (customer msg timestamp) */
     afterTimestamp?: number;
+    /** Skip updateLastMessage — caller (processor) handles aggregate update */
+    skipAggregateUpdate?: boolean;
   }): Promise<any> {
     const {
       tenantId,
@@ -795,12 +797,15 @@ export class OutboundService {
       throw error;
     }
 
-    await this.conversationRepo.updateLastMessage(
-      conversationId,
-      content.substring(0, 200),
-      new Date(),
-      'bot',
-    );
+    // Skip aggregate update when processor handles it (avoids double write)
+    if (!params.skipAggregateUpdate) {
+      await this.conversationRepo.updateLastMessage(
+        conversationId,
+        content.substring(0, 200),
+        new Date(),
+        'bot',
+      );
+    }
 
     try {
       let adapterResponse: any = null;

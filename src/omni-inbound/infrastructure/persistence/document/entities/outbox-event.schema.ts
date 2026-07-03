@@ -36,11 +36,17 @@ export class OutboxEventSchemaClass {
 
   @Prop({
     type: String,
-    enum: ['pending', 'published'],
+    enum: ['pending', 'published', 'failed'],
     default: 'pending',
     index: true,
   })
-  status: 'pending' | 'published';
+  status: 'pending' | 'published' | 'failed';
+
+  @Prop({ type: Number, default: 0 })
+  retryCount: number;
+
+  @Prop({ type: String, default: null })
+  lastError: string | null;
 
   @Prop({ default: () => new Date() })
   createdAt: Date;
