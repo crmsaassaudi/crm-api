@@ -488,7 +488,7 @@ export class ConversationService {
     const isReopen =
       previousConv &&
       (previousConv.status === 'resolved' || previousConv.status === 'closed');
-    const reopenCount = isReopen ? (previousConv!.reopenCount ?? 0) + 1 : 0;
+    const reopenCount = isReopen ? (previousConv.reopenCount ?? 0) + 1 : 0;
 
     const conversation = await this.conversationRepo.create({
       tenantId: payload.tenantId,
@@ -507,7 +507,7 @@ export class ConversationService {
       status: 'open',
       lastMessage: payload.content,
       lastMessageAt: payload.timestamp,
-      previousConversationId: isReopen ? previousConv!.id : null,
+      previousConversationId: isReopen ? (previousConv?.id ?? null) : null,
       reopenCount,
       bot: await this.orchestration.resolveInitialBotState(
         payload.tenantId,
@@ -519,7 +519,7 @@ export class ConversationService {
     this.emitConversationCreationEvents(
       payload,
       conversation,
-      isReopen ? previousConv!.id : null,
+      isReopen ? (previousConv?.id ?? null) : null,
       reopenCount,
     );
     return conversation;

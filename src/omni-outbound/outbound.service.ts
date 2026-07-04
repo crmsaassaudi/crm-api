@@ -186,20 +186,20 @@ export class OutboundService {
       );
 
       await this.messageRepo.updateStatus(message.id, 'sent', externalId);
-      this.emitMessageSentEvent(
+      this.emitMessageSentEvent({
         tenantId,
         conversationId,
         agentId,
         senderContext,
         messageType,
         content,
-        message.id,
+        messageId: message.id,
         externalId,
         idempotencyKey,
         clientMessageId,
         source,
         transport,
-      );
+      });
 
       if (conversation.channelType === 'livechat') {
         this.eventEmitter.emit('livechat.agent.read', {
@@ -293,11 +293,11 @@ export class OutboundService {
       conversation.channelId.toString(),
     );
 
-    if (!channel && (conversation as any).channelAccount) {
+    if (!channel && conversation.channelAccount) {
       channel = await this.channelRepo.findByAccountWithCredentials(
         tenantId,
         conversation.channelType,
-        (conversation as any).channelAccount,
+        conversation.channelAccount,
       );
     }
 
@@ -331,7 +331,7 @@ export class OutboundService {
     agentId: string,
     conversation: any,
   ): Promise<void> {
-    const botState = (conversation as any).bot;
+    const botState = conversation.bot;
     if (botState?.enabled === true && botState?.status === 'active') {
       let shouldDisable = true;
       try {
@@ -426,25 +426,37 @@ export class OutboundService {
       },
     );
 
-    return (
-      (adapterResponse as any)?.message_id || (adapterResponse as any)?.id || ''
-    );
+    return adapterResponse?.message_id || adapterResponse?.id || '';
   }
 
-  private emitMessageSentEvent(
-    tenantId: string,
-    conversationId: string,
-    agentId: string,
-    senderContext: any,
-    messageType: string,
-    content: string,
-    messageId: string,
-    externalId: string,
-    idempotencyKey?: string,
-    clientMessageId?: string,
-    source?: string,
-    transport?: string,
-  ): void {
+  private emitMessageSentEvent(options: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    senderContext: any;
+    messageType: string;
+    content: string;
+    messageId: string;
+    externalId: string;
+    idempotencyKey?: string;
+    clientMessageId?: string;
+    source?: string;
+    transport?: string;
+  }): void {
+    const {
+      tenantId,
+      conversationId,
+      agentId,
+      senderContext,
+      messageType,
+      content,
+      messageId,
+      externalId,
+      idempotencyKey,
+      clientMessageId,
+      source,
+      transport,
+    } = options;
     this.eventEmitter.emit('omni.message.sent', {
       tenantId,
       conversationId,
@@ -944,9 +956,7 @@ export class OutboundService {
       );
     }
 
-    return (
-      (adapterResponse as any)?.message_id || (adapterResponse as any)?.id || ''
-    );
+    return adapterResponse?.message_id || adapterResponse?.id || '';
   }
 
   /**

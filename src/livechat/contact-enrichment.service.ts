@@ -119,16 +119,14 @@ export class ContactEnrichmentService {
 
       // ── Step 5: Link Conversation ↔ Contact (1:1) ──────────────────
       if (contactId) {
-        await this.linkContactAndConversation(
-          tenantId,
-          contactId,
+        await this.linkContactAndConversation(tenantId, contactId, {
           conversationId,
           channelId,
           visitorId,
           email,
           phone,
           displayName,
-        );
+        });
       }
     } catch (err: any) {
       // Enrichment failure must NOT block the chat flow
@@ -365,13 +363,17 @@ export class ContactEnrichmentService {
   private async linkContactAndConversation(
     tenantId: string,
     contactId: string,
-    conversationId: string | undefined | null,
-    channelId: string,
-    visitorId: string,
-    email?: string,
-    phone?: string,
-    displayName?: string,
+    options: {
+      conversationId: string | undefined | null;
+      channelId: string;
+      visitorId: string;
+      email?: string;
+      phone?: string;
+      displayName?: string;
+    },
   ): Promise<void> {
+    const { conversationId, channelId, visitorId, email, phone, displayName } =
+      options;
     if (conversationId) {
       await this.conversationRepo.updateContactId(conversationId, contactId);
 

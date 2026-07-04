@@ -409,11 +409,11 @@ export class OutboundMediaHandler {
       tenantId,
       conversation.channelId.toString(),
     );
-    if (!channel && (conversation as any).channelAccount) {
+    if (!channel && conversation.channelAccount) {
       channel = await this.channelRepo.findByAccountWithCredentials(
         tenantId,
         conversation.channelType,
-        (conversation as any).channelAccount,
+        conversation.channelAccount,
       );
     }
     if (!channel)
@@ -439,8 +439,8 @@ export class OutboundMediaHandler {
         throw new Error(`Failed to download: ${response.status}`);
       const buffer = Buffer.from(await response.arrayBuffer());
       const mimeType =
-        rawMimeType ||
-        response.headers.get('content-type')?.split(';')[0].trim() ||
+        rawMimeType ??
+        response.headers.get('content-type')?.split(';')[0].trim() ??
         'application/octet-stream';
       let fileName = 'bot-media';
       try {
