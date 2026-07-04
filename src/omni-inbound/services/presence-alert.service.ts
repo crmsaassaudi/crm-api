@@ -53,7 +53,7 @@ export class PresenceAlertService {
       return; // No config → skip
     }
 
-    const thresholds = {
+    const thresholds: AlertThresholds = {
       loginIdleMinutes: cfg?.loginIdleAlertMinutes ?? 15,
       breakBudgetMinutes: cfg?.breakBudgetMinutes ?? 60,
       stuckNotAcceptingMinutes: cfg?.stuckNotAcceptingAlertMinutes ?? 30,
@@ -62,77 +62,21 @@ export class PresenceAlertService {
 
     const now = Date.now();
     const alerts: AlertPayload[] = [];
-
     let onlineCount = 0;
     let fullCount = 0;
 
     for (const agent of agents) {
       if (agent.presenceStatus === 'OFFLINE') continue;
       onlineCount++;
-
       const presenceMinutes = agent.lastCommandTs
         ? (now - agent.lastCommandTs) / 60_000
         : 0;
-
-      // Rule 1: Invisible Login
-      if (
-        agent.presenceStatus === 'AVAILABLE' &&
-        agent.routingStatus === 'NOT_ACCEPTING' &&
-        presenceMinutes >= thresholds.loginIdleMinutes
-      ) {
-        alerts.push({
-          type: 'invisible_login',
-          agentId: agent.userId,
-          detail: `AVAILABLE + NOT_ACCEPTING for ${Math.round(presenceMinutes)} min`,
-        });
-      }
-
-      // Rule 3: Stuck NOT_ACCEPTING (superset of invisible login, longer window)
-      if (
-        agent.presenceStatus === 'AVAILABLE' &&
-        agent.routingStatus === 'NOT_ACCEPTING' &&
-        presenceMinutes >= thresholds.stuckNotAcceptingMinutes
-      ) {
-        alerts.push({
-          type: 'stuck_not_accepting',
-          agentId: agent.userId,
-          detail: `NOT_ACCEPTING for ${Math.round(presenceMinutes)} min`,
-        });
-      }
-
-      // Rule 4: Long AWAY
-      if (
-        agent.presenceStatus === 'AWAY' &&
-        presenceMinutes >= thresholds.longAwayMinutes
-      ) {
-        alerts.push({
-          type: 'long_away',
-          agentId: agent.userId,
-          detail: `AWAY for ${Math.round(presenceMinutes)} min`,
-        });
-      }
-
-      // Rule 2: Over-break (needs daily accumulator from segments)
-      // Check if current break + segment accumulator exceeds budget
-      if (agent.presenceStatus === 'BREAK') {
-        const breakToday = (agent as any).breakTodayMinutes ?? 0;
-        const totalBreak = breakToday + presenceMinutes;
-        if (totalBreak >= thresholds.breakBudgetMinutes) {
-          alerts.push({
-            type: 'over_break',
-            agentId: agent.userId,
-            detail: `BREAK total ${Math.round(totalBreak)} min (budget: ${thresholds.breakBudgetMinutes})`,
-          });
-        }
-      }
-
-      // Track full agents for Rule 5
-      if (agent.capacityStatus === 'FULL') {
-        fullCount++;
-      }
+      alerts.push(
+        ...this.evaluateAgentRules(agent, presenceMinutes, thresholds),
+      );
+      if (agent.capacityStatus === 'FULL') fullCount++;
     }
 
-    // Rule 5: All-FULL
     if (onlineCount > 0 && fullCount === onlineCount) {
       alerts.push({
         type: 'all_full',
@@ -141,7 +85,6 @@ export class PresenceAlertService {
       });
     }
 
-    // Fire alerts (with dedup)
     for (const alert of alerts) {
       await this.fireAlert(tenantId, alert);
     }
@@ -151,6 +94,84 @@ export class PresenceAlertService {
         `[${tenantId}] Evaluated ${agents.length} agents → ${alerts.length} alerts`,
       );
     }
+  }
+
+  /**
+   * Evaluate all per-agent alert rules and return triggered alerts.
+   */
+  private evaluateAgentRules(
+    agent: any,
+    presenceMinutes: number,
+    thresholds: AlertThresholds,
+  ): AlertPayload[] {
+    const alerts: AlertPayload[] = [];
+
+    // Rule 1: Invisible Login
+    if (
+      agent.presenceStatus === 'AVAILABLE' &&
+      agent.routingStatus === 'NOT_ACCEPTING' &&
+      presenceMinutes >= thresholds.loginIdleMinutes
+    ) {
+      alerts.push({
+        type: 'invisible_login',
+        agentId: agent.userId,
+        detail: `AVAILABLE + NOT_ACCEPTING for ${Math.round(presenceMinutes)} min`,
+      });
+    }
+
+    // Rule 3: Stuck NOT_ACCEPTING (superset of invisible login, longer window)
+    if (
+      agent.presenceStatus === 'AVAILABLE' &&
+      agent.routingStatus === 'NOT_ACCEPTING' &&
+      presenceMinutes >= thresholds.stuckNotAcceptingMinutes
+    ) {
+      alerts.push({
+        type: 'stuck_not_accepting',
+        agentId: agent.userId,
+        detail: `NOT_ACCEPTING for ${Math.round(presenceMinutes)} min`,
+      });
+    }
+
+    // Rule 4: Long AWAY
+    if (
+      agent.presenceStatus === 'AWAY' &&
+      presenceMinutes >= thresholds.longAwayMinutes
+    ) {
+      alerts.push({
+        type: 'long_away',
+        agentId: agent.userId,
+        detail: `AWAY for ${Math.round(presenceMinutes)} min`,
+      });
+    }
+
+    // Rule 2: Over-break (needs daily accumulator from segments)
+    const overBreakAlert = this.evaluateOverBreak(
+      agent,
+      presenceMinutes,
+      thresholds.breakBudgetMinutes,
+    );
+    if (overBreakAlert) alerts.push(overBreakAlert);
+
+    return alerts;
+  }
+
+  /**
+   * Rule 2: evaluate over-break threshold.
+   */
+  private evaluateOverBreak(
+    agent: any,
+    presenceMinutes: number,
+    breakBudgetMinutes: number,
+  ): AlertPayload | null {
+    if (agent.presenceStatus !== 'BREAK') return null;
+    const breakToday = (agent as any).breakTodayMinutes ?? 0;
+    const totalBreak = breakToday + presenceMinutes;
+    if (totalBreak < breakBudgetMinutes) return null;
+    return {
+      type: 'over_break',
+      agentId: agent.userId,
+      detail: `BREAK total ${Math.round(totalBreak)} min (budget: ${breakBudgetMinutes})`,
+    };
   }
 
   /**
@@ -194,4 +215,11 @@ interface AlertPayload {
     | 'all_full';
   agentId: string;
   detail: string;
+}
+
+interface AlertThresholds {
+  loginIdleMinutes: number;
+  breakBudgetMinutes: number;
+  stuckNotAcceptingMinutes: number;
+  longAwayMinutes: number;
 }

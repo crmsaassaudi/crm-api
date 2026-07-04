@@ -145,22 +145,10 @@ export class CrmSettingsController {
     return result;
   }
 
-  /** POST kept for backwards compatibility. */
+  /** POST kept for backwards compatibility — delegates to PATCH. */
   @Post(':key')
   @RequirePermission('manage_system', 'settings')
-  async postSetting(@Param('key') key: string, @Body() body: any) {
-    assertSettingPayloadSize(body);
-    const result = await this.service.updateSetting(
-      key,
-      body?.value !== undefined ? body.value : body,
-    );
-
-    // Notify listeners (e.g. AgentFallbackService) that a setting has changed
-    this.eventEmitter.emit('settings.changed', {
-      key,
-      tenantId: result.tenantId ?? this.cls.get('tenantId'),
-    });
-
-    return result;
+  postSetting(@Param('key') key: string, @Body() body: any) {
+    return this.patchSetting(key, body);
   }
 }

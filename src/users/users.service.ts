@@ -190,78 +190,26 @@ export class UsersService {
     // Do not remove comment below.
     // <updating-property />
 
-    let password: string | undefined = undefined;
-
-    if (updateUserDto.password) {
-      const userObject = await this.usersRepository.findById(id);
-
-      if (userObject && userObject?.password !== updateUserDto.password) {
-        const salt = await bcrypt.genSalt();
-        password = await bcrypt.hash(updateUserDto.password, salt);
-      }
-    }
-
-    let email: string | null | undefined = undefined;
-
-    if (updateUserDto.email) {
-      const userObject = await this.usersRepository.findByEmail(
-        updateUserDto.email,
-      );
-
-      if (userObject && userObject.id !== id) {
-        throw new UnprocessableEntityException({
-          status: HttpStatus.UNPROCESSABLE_ENTITY,
-          errors: {
-            email: 'emailAlreadyExists',
-          },
-        });
-      }
-
-      email = updateUserDto.email;
-    } else if (updateUserDto.email === null) {
-      email = null;
-    }
-
-    let photo: FileType | null | undefined = undefined;
-
-    if (updateUserDto.photo?.id) {
-      const fileObject = await this.filesService.findById(
-        updateUserDto.photo.id,
-      );
-      if (!fileObject) {
-        throw new UnprocessableEntityException({
-          status: HttpStatus.UNPROCESSABLE_ENTITY,
-          errors: {
-            photo: 'imageNotExists',
-          },
-        });
-      }
-      photo = fileObject;
-    } else if (updateUserDto.photo === null) {
-      photo = null;
-    }
+    const password = await this.resolveUpdatedPassword(id, updateUserDto);
+    const email = await this.resolveUpdatedEmail(id, updateUserDto);
+    const photo = await this.resolveUpdatedPhoto(updateUserDto);
 
     // ── CRIT-01: Only SUPER_ADMIN may change platformRole or status ──
-    // The create endpoint (POST /users) is already gated by @Roles(SUPER_ADMIN).
-    // Without this guard, any tenant admin with 'edit:users' permission could
-    // PATCH themselves to SUPER_ADMIN, gaining full cross-tenant platform access.
     const callerUser = await this.usersRepository.findById(
       this.cls.get('userId'),
     );
     const isSuperAdmin =
       callerUser?.platformRole?.id === PlatformRoleEnum.SUPER_ADMIN;
 
-    let platformRole: Role | undefined = undefined;
+    const platformRole: Role | undefined =
+      updateUserDto.platformRole?.id && isSuperAdmin
+        ? { id: updateUserDto.platformRole.id as PlatformRoleEnum }
+        : undefined;
 
-    if (updateUserDto.platformRole?.id && isSuperAdmin) {
-      platformRole = { id: updateUserDto.platformRole.id as PlatformRoleEnum };
-    }
-
-    let status: Status | undefined = undefined;
-
-    if (updateUserDto.status?.id && isSuperAdmin) {
-      status = { id: updateUserDto.status.id as StatusEnum };
-    }
+    const status: Status | undefined =
+      updateUserDto.status?.id && isSuperAdmin
+        ? { id: updateUserDto.status.id as StatusEnum }
+        : undefined;
 
     const updated = await this.usersRepository.update(id, {
       // Do not remove comment below.
@@ -282,8 +230,6 @@ export class UsersService {
     });
     if (updated) {
       this.emitUserPermissionsUpdated(updated);
-      // Sync per-agent routing attributes (skills / capacity) into omni presence
-      // caches when they change, so skill-based routing stays correct mid-session.
       if (
         updateUserDto.skills !== undefined ||
         updateUserDto.omniMaxCapacity !== undefined
@@ -295,6 +241,48 @@ export class UsersService {
       }
     }
     return updated;
+  }
+
+  private async resolveUpdatedPassword(
+    id: User['id'],
+    dto: UpdateUserDto,
+  ): Promise<string | undefined> {
+    if (!dto.password) return undefined;
+    const existing = await this.usersRepository.findById(id);
+    if (existing?.password === dto.password) return undefined;
+    const salt = await bcrypt.genSalt();
+    return bcrypt.hash(dto.password, salt);
+  }
+
+  private async resolveUpdatedEmail(
+    id: User['id'],
+    dto: UpdateUserDto,
+  ): Promise<string | null | undefined> {
+    if (dto.email === null) return null;
+    if (!dto.email) return undefined;
+    const existing = await this.usersRepository.findByEmail(dto.email);
+    if (existing && existing.id !== id) {
+      throw new UnprocessableEntityException({
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        errors: { email: 'emailAlreadyExists' },
+      });
+    }
+    return dto.email;
+  }
+
+  private async resolveUpdatedPhoto(
+    dto: UpdateUserDto,
+  ): Promise<FileType | null | undefined> {
+    if (dto.photo === null) return null;
+    if (!dto.photo?.id) return undefined;
+    const file = await this.filesService.findById(dto.photo.id);
+    if (!file) {
+      throw new UnprocessableEntityException({
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        errors: { photo: 'imageNotExists' },
+      });
+    }
+    return file;
   }
 
   async remove(id: User['id']): Promise<void> {

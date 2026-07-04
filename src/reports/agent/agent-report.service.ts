@@ -191,7 +191,7 @@ export class AgentReportService {
   private async buildAgents(
     dto: GetAgentReportDto,
   ): Promise<AgentWorkTimeItem[]> {
-    const tenantId = new Types.ObjectId(this.cls.get('tenantId'));
+    const tenantId = new Types.ObjectId(this.cls.get<string>('tenantId'));
     const fromDay = dto.fromDate.slice(0, 10);
     const toDay = dto.toDate.slice(0, 10);
     const dayKey = { $gte: fromDay, $lte: toDay };
@@ -226,7 +226,25 @@ export class AgentReportService {
       ]),
     ]);
 
-    // Pivot raw durations into a per-agent accumulator.
+    const acc = this.pivotStateRows(stateRows);
+    this.pivotInteractionRows(interactionRows, acc);
+
+    const agentIds = [...acc.keys()];
+    const nameMap = await this.resolveNames(agentIds);
+    return agentIds.map((agentId) =>
+      this.assembleAgentItem(agentId, acc, nameMap),
+    );
+  }
+
+  /**
+   * Pivot raw state aggregation rows into per-agent KPI accumulators.
+   */
+  private pivotStateRows(
+    stateRows: {
+      _id: { agentId: string; axis: string; value: string };
+      durationMs: number;
+    }[],
+  ): Map<string, KpiDurations & { byChannel: Record<Channel, ChannelHandle> }> {
     const acc = new Map<
       string,
       KpiDurations & { byChannel: Record<Channel, ChannelHandle> }
@@ -263,11 +281,7 @@ export class AgentReportService {
       const ms = row.durationMs;
       const value = row._id.value;
       if (row._id.axis === 'presence') {
-        if (value === 'AVAILABLE') v.availableMs += ms;
-        else if (value === 'AWAY') v.awayMs += ms;
-        else if (value === 'BREAK') v.breakMs += ms;
-        else if (value === 'MEETING') v.meetingMs += ms;
-        else if (value === 'TRAINING') v.trainingMs += ms;
+        this.applyPresenceRow(v, value, ms);
       } else if (row._id.axis === 'routing') {
         if (value === 'ACCEPTING') v.acceptingMs += ms;
         else if (value === 'NOT_ACCEPTING') v.notAcceptingMs += ms;
@@ -277,7 +291,61 @@ export class AgentReportService {
         else if (value === 'IDLE') v.idleMs += ms;
       }
     }
+    return acc;
+  }
 
+  private applyPresenceRow(
+    v: KpiDurations & { byChannel: Record<Channel, ChannelHandle> },
+    value: string,
+    ms: number,
+  ): void {
+    if (value === 'AVAILABLE') v.availableMs += ms;
+    else if (value === 'AWAY') v.awayMs += ms;
+    else if (value === 'BREAK') v.breakMs += ms;
+    else if (value === 'MEETING') v.meetingMs += ms;
+    else if (value === 'TRAINING') v.trainingMs += ms;
+  }
+
+  /**
+   * Pivot raw interaction aggregation rows into per-agent accumulators.
+   */
+  private pivotInteractionRows(
+    interactionRows: {
+      _id: { agentId: string; type: string };
+      durationMs: number;
+      count: number;
+    }[],
+    acc: Map<
+      string,
+      KpiDurations & { byChannel: Record<Channel, ChannelHandle> }
+    >,
+  ): void {
+    const ensure = (agentId: string) => {
+      let v = acc.get(agentId);
+      if (!v) {
+        v = {
+          availableMs: 0,
+          awayMs: 0,
+          breakMs: 0,
+          meetingMs: 0,
+          trainingMs: 0,
+          acceptingMs: 0,
+          notAcceptingMs: 0,
+          handleMs: 0,
+          wrapMs: 0,
+          idleMs: 0,
+          handledCount: 0,
+          byChannel: {
+            chat: { durationMs: 0, durationFormatted: '0m', count: 0 },
+            ticket: { durationMs: 0, durationFormatted: '0m', count: 0 },
+            email: { durationMs: 0, durationFormatted: '0m', count: 0 },
+            call: { durationMs: 0, durationFormatted: '0m', count: 0 },
+          },
+        };
+        acc.set(agentId, v);
+      }
+      return v;
+    };
     for (const row of interactionRows) {
       const v = ensure(row._id.agentId);
       const ch = row._id.type as Channel;
@@ -290,48 +358,55 @@ export class AgentReportService {
         v.handledCount += row.count;
       }
     }
+  }
 
-    const agentIds = [...acc.keys()];
-    const nameMap = await this.resolveNames(agentIds);
-
-    return agentIds.map((agentId) => {
-      const v = acc.get(agentId)!;
-      const kpis = computeKpis(v);
-      const info = nameMap.get(agentId) ?? {
-        name: 'Unknown Agent',
-        email: 'no-email',
-      };
-      return {
-        agentId,
-        agentName: info.name,
-        agentEmail: info.email,
-        presence: {
-          availableMs: v.availableMs,
-          awayMs: v.awayMs,
-          breakMs: v.breakMs,
-          meetingMs: v.meetingMs,
-          trainingMs: v.trainingMs,
-        },
-        onlineMs: kpis.onlineMs,
-        routing: {
-          acceptingMs: v.acceptingMs,
-          notAcceptingMs: v.notAcceptingMs,
-        },
-        work: { handleMs: v.handleMs, wrapMs: v.wrapMs, idleMs: v.idleMs },
-        handledCount: v.handledCount,
-        byChannel: v.byChannel,
-        occupancy: kpis.occupancy,
-        utilization: kpis.utilization,
-        availabilityRatio: kpis.availabilityRatio,
-        idleRatio: kpis.idleRatio,
-        ahtMs: kpis.ahtMs,
-        onlineFormatted: formatDuration(kpis.onlineMs),
-        availableFormatted: formatDuration(v.availableMs),
-        handleFormatted: formatDuration(v.handleMs),
-        wrapFormatted: formatDuration(v.wrapMs),
-        ahtFormatted: formatDuration(kpis.ahtMs),
-      };
-    });
+  /**
+   * Build a single AgentWorkTimeItem from accumulated data.
+   */
+  private assembleAgentItem(
+    agentId: string,
+    acc: Map<
+      string,
+      KpiDurations & { byChannel: Record<Channel, ChannelHandle> }
+    >,
+    nameMap: Map<string, { name: string; email: string }>,
+  ): AgentWorkTimeItem {
+    const v = acc.get(agentId)!;
+    const kpis = computeKpis(v);
+    const info = nameMap.get(agentId) ?? {
+      name: 'Unknown Agent',
+      email: 'no-email',
+    };
+    return {
+      agentId,
+      agentName: info.name,
+      agentEmail: info.email,
+      presence: {
+        availableMs: v.availableMs,
+        awayMs: v.awayMs,
+        breakMs: v.breakMs,
+        meetingMs: v.meetingMs,
+        trainingMs: v.trainingMs,
+      },
+      onlineMs: kpis.onlineMs,
+      routing: {
+        acceptingMs: v.acceptingMs,
+        notAcceptingMs: v.notAcceptingMs,
+      },
+      work: { handleMs: v.handleMs, wrapMs: v.wrapMs, idleMs: v.idleMs },
+      handledCount: v.handledCount,
+      byChannel: v.byChannel,
+      occupancy: kpis.occupancy,
+      utilization: kpis.utilization,
+      availabilityRatio: kpis.availabilityRatio,
+      idleRatio: kpis.idleRatio,
+      ahtMs: kpis.ahtMs,
+      onlineFormatted: formatDuration(kpis.onlineMs),
+      availableFormatted: formatDuration(v.availableMs),
+      handleFormatted: formatDuration(v.handleMs),
+      wrapFormatted: formatDuration(v.wrapMs),
+      ahtFormatted: formatDuration(kpis.ahtMs),
+    };
   }
 
   private async resolveNames(
@@ -362,7 +437,7 @@ export class AgentReportService {
   }> {
     try {
       const cfg = await this.settingsService.getSetting('omni_presence');
-      const ranking = (cfg as any)?.ranking ?? {};
+      const ranking = (cfg as Record<string, any>)?.ranking ?? {};
       return {
         weights: { ...DEFAULT_WEIGHTS, ...(ranking.weights ?? {}) },
         minOnlineMinutes:

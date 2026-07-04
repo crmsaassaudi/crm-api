@@ -215,8 +215,10 @@ export class ContactEnrichmentService {
 
       // Detect email/phone/name by contactField TARGET (dynamic mapping)
       // not by key name (admin-configured, could be anything).
-      if (target === 'emails') email = String(value).toLowerCase();
-      if (target === 'phones') phone = String(value);
+      this.extractSignals(target, value, { email, phone, nameParts }, (s) => {
+        email = s.email ?? email;
+        phone = s.phone ?? phone;
+      });
       if (target === 'firstName' || target === 'lastName') {
         nameParts.push(String(value));
       }
@@ -232,17 +234,56 @@ export class ContactEnrichmentService {
     }
 
     // Fallback: extract email/phone from identityData even without mapping
-    // (for backward compatibility with forms that have standard keys)
-    if (!email && identityData.email) email = String(identityData.email);
-    if (!phone && identityData.phone) phone = String(identityData.phone);
-    if (!displayName && identityData.name)
-      displayName = String(identityData.name);
+    ({ email, phone, displayName } = this.applyFallbackSignals(
+      identityData,
+      email,
+      phone,
+      displayName,
+    ));
 
     if (Object.keys(customFieldsUpdate).length > 0) {
       contactUpdate.customFields = customFieldsUpdate;
     }
 
     return { contactUpdate, email, phone, displayName };
+  }
+
+  /**
+   * Extract email/phone signals from a field mapping target+value pair.
+   */
+  private extractSignals(
+    target: string | undefined,
+    value: any,
+    current: {
+      email: string | undefined;
+      phone: string | undefined;
+      nameParts: string[];
+    },
+    update: (signals: { email?: string; phone?: string }) => void,
+  ): void {
+    if (target === 'emails') update({ email: String(value).toLowerCase() });
+    if (target === 'phones') update({ phone: String(value) });
+  }
+
+  /**
+   * Apply backward-compatible fallbacks for identityData that has standard
+   * keys (email, phone, name) even without an explicit contactField mapping.
+   */
+  private applyFallbackSignals(
+    identityData: Record<string, any>,
+    email: string | undefined,
+    phone: string | undefined,
+    displayName: string | undefined,
+  ): {
+    email: string | undefined;
+    phone: string | undefined;
+    displayName: string | undefined;
+  } {
+    if (!email && identityData.email) email = String(identityData.email);
+    if (!phone && identityData.phone) phone = String(identityData.phone);
+    if (!displayName && identityData.name)
+      displayName = String(identityData.name);
+    return { email, phone, displayName };
   }
 
   /**

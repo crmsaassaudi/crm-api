@@ -43,7 +43,7 @@ const FALLBACK_MAX_CAPACITY = 10;
  * capacity and a delayed retry has been scheduled. Callers check this value
  * to distinguish "no agent found" (null) from "waiting for preferred agent".
  */
-const STICKY_WAITING_SENTINEL = '__sticky_waiting__' as const;
+const STICKY_WAITING_SENTINEL = '__sticky_waiting__';
 
 /**
  * Per-channel routing override. Every field is OPTIONAL — an undefined field
@@ -612,16 +612,69 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     const effectiveStrategy =
       strategy === 'sticky' ? resolved.fallbackStrategy : strategy;
 
+    const selection = await this.runStrategySelection(
+      tenantId,
+      conversationId,
+      effectiveStrategy,
+      eligibleAgents,
+      tenantMaxCapacity,
+      ruleMatch,
+      metadata,
+    );
+    if (selection.earlyReturn) return null;
+    selectedAgent = selection.selectedAgent;
+    reason = selection.reason;
+    metadata = selection.metadata;
+
+    selectedAgent = await this.commitWithRollback(
+      tenantId,
+      conversationId,
+      selectedAgent,
+      options,
+    );
+
+    await this.finalizeAssignment(
+      tenantId,
+      conversationId,
+      selectedAgent,
+      effectiveStrategy,
+      reason,
+      metadata,
+      options,
+    );
+
+    return selectedAgent;
+  }
+
+  /** Run the strategy switch and return selection result. Returns earlyReturn=true for manual. */
+  private async runStrategySelection(
+    tenantId: string,
+    conversationId: string,
+    effectiveStrategy: AssignmentStrategy,
+    eligibleAgents: string[],
+    tenantMaxCapacity: number,
+    ruleMatch: any,
+    baseMeta: Record<string, any>,
+  ): Promise<{
+    earlyReturn: boolean;
+    selectedAgent: string | null;
+    reason: string;
+    metadata: Record<string, any>;
+  }> {
+    let selectedAgent: string | null = null;
+    let reason = '';
+    let metadata = baseMeta;
+
     switch (effectiveStrategy) {
       case 'round-robin': {
-        const orderedAgents = await this.roundRobinOrder(
+        const ordered = await this.roundRobinOrder(
           tenantId,
           eligibleAgents,
           ruleMatch?.teamId,
         );
         selectedAgent = await this.reserveCandidate(
           tenantId,
-          orderedAgents,
+          ordered,
           'round-robin',
         );
         reason = `Round-robin selected agent (index from Redis counter)`;
@@ -645,112 +698,97 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
           'capacity-based',
           tenantMaxCapacity,
         );
-        if (selectedAgent) {
-          reason = `Capacity-based: reserved agent below capacity via Redis`;
-        } else {
-          reason = `All agents at max capacity — conversation queued`;
-        }
-        metadata = {
-          pool: eligibleAgents,
-          tenantMaxCapacity,
-        };
+        reason = selectedAgent
+          ? `Capacity-based: reserved agent below capacity via Redis`
+          : `All agents at max capacity — conversation queued`;
+        metadata = { pool: eligibleAgents, tenantMaxCapacity };
         break;
       }
       case 'manual':
       default: {
-        reason = 'Manual assignment — no auto-assign';
         await this.writeAuditLog({
           tenantId,
           conversationId,
           assignedAgentId: null,
           strategy: 'manual',
-          reason,
+          reason: 'Manual assignment — no auto-assign',
           reasonKey: 'manualAssignment',
           metadata,
           outcome: 'queued',
         });
-        return null;
+        return { earlyReturn: true, selectedAgent: null, reason: '', metadata };
       }
     }
+    return { earlyReturn: false, selectedAgent, reason, metadata };
+  }
 
-    // ── P0 fix: guard the Redis reservation → MongoDB commit gap ──────────
-    // reserveCandidate() atomically increments the agent's Redis load counter.
-    // If any exception fires between that reservation and the MongoDB write
-    // below, the counter would permanently drift (agent appears "full" with a
-    // phantom conversation). The finally block ensures the reservation is always
-    // rolled back when the MongoDB commit does not complete successfully.
-    //
-    // INVARIANT (P1 fix): every strategy that returns a non-null selectedAgent
-    // here — round-robin, least-busy, AND capacity-based — reserves atomically
-    // in Redis (incrementing the load counter). 'manual'/default return early
-    // above and never reach this block. Therefore a non-null selectedAgent
-    // always corresponds to exactly one Redis increment, so the rollback
-    // (releaseConversation → decrement) below is always balanced. Do NOT add a
-    // strategy that yields a selectedAgent without reserving, or the rollback
-    // will decrement a counter it never incremented (the old capacity-based bug).
+  /**
+   * Commit the agent reservation to MongoDB with Redis rollback on failure.
+   * Returns the committed agent ID, or null if rejected/rolled-back.
+   */
+  private async commitWithRollback(
+    tenantId: string,
+    conversationId: string,
+    selectedAgent: string | null,
+    options: AssignmentOptions,
+  ): Promise<string | null> {
+    if (!selectedAgent) return null;
     let committed: any = undefined;
     try {
-      if (selectedAgent) {
-        committed = options.allowReassignment
-          ? await this.conversationRepo.updateAssignment(
+      committed = options.allowReassignment
+        ? await this.conversationRepo.updateAssignment(
+            conversationId,
+            selectedAgent,
+          )
+        : typeof (this.conversationRepo as any).assignIfUnassigned ===
+            'function'
+          ? await this.conversationRepo.assignIfUnassigned(
               conversationId,
               selectedAgent,
             )
-          : typeof (this.conversationRepo as any).assignIfUnassigned ===
-              'function'
-            ? await this.conversationRepo.assignIfUnassigned(
-                conversationId,
-                selectedAgent,
-              )
-            : await this.conversationRepo.updateAssignment(
-                conversationId,
-                selectedAgent,
-              );
-
-        if (committed === null) {
-          // Conversation already assigned or inactive — the reservation must be
-          // rolled back. Do NOT null selectedAgent here: the finally block below
-          // keys its release on `selectedAgent` truthiness, so nulling it now
-          // would SKIP the release and leak the Redis increment (over-count).
-          // Leave selectedAgent set; the finally releases it and nulls it.
-          reason =
-            'Assignment reservation rolled back because the conversation was already assigned or inactive';
-        }
-      }
+          : await this.conversationRepo.updateAssignment(
+              conversationId,
+              selectedAgent,
+            );
     } catch (err: any) {
-      // Re-throw after rollback so BullMQ can retry the job.
       this.logger.error(
-        `MongoDB assignment write failed for conversation ${conversationId}: ${err.message} — rolling back Redis reservation`,
+        `MongoDB assignment write failed for conversation ${conversationId}: ${err.message} — rolling back`,
         err.stack,
       );
-      // Rollback happens in finally below.
+      await this.presenceService
+        .releaseConversation?.(tenantId, selectedAgent)
+        .catch(() => undefined);
       throw err;
-    } finally {
-      // Roll back the Redis reservation if the MongoDB write did not confirm
-      // the assignment (committed === null means rejected; committed ===
-      // undefined means an exception was thrown before the write completed).
-      if (selectedAgent && (committed === null || committed === undefined)) {
-        try {
-          await this.presenceService.releaseConversation?.(
-            tenantId,
-            selectedAgent,
-          );
-          this.logger.warn(
-            `Rolled back Redis reservation for agent ${selectedAgent} on conversation ${conversationId}`,
-          );
-        } catch (releaseErr: any) {
-          this.logger.error(
-            `Failed to roll back Redis reservation for agent ${selectedAgent}: ${releaseErr.message}`,
-          );
-        }
-        // Clear selectedAgent so the audit log below records 'queued', not 'assigned'.
-        selectedAgent = null;
-      }
     }
+    if (committed === null) {
+      this.logger.warn(
+        `Rolled back Redis reservation for agent ${selectedAgent}: already assigned`,
+      );
+      await this.presenceService
+        .releaseConversation?.(tenantId, selectedAgent)
+        .catch((e: any) =>
+          this.logger.error(
+            `Failed to roll back reservation for ${selectedAgent}: ${e.message}`,
+          ),
+        );
+      return null;
+    }
+    return selectedAgent;
+  }
 
+  /** Write audit log and emit queued event after strategy + commit resolution. */
+  private async finalizeAssignment(
+    tenantId: string,
+    conversationId: string,
+    selectedAgent: string | null,
+    effectiveStrategy: AssignmentStrategy,
+    reason: string,
+    metadata: Record<string, any>,
+    options: AssignmentOptions,
+  ): Promise<void> {
     if (selectedAgent) {
       this.logger.log(
-        `Auto-assigned conversation ${conversationId} to agent ${selectedAgent} (${effectiveStrategy})`,
+        `Auto-assigned ${conversationId} → agent ${selectedAgent} (${effectiveStrategy})`,
       );
       await this.writeAuditLog({
         tenantId,
@@ -764,7 +802,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       });
     } else {
       this.logger.warn(
-        `No agent available under ${effectiveStrategy} for conversation ${conversationId} — queued`,
+        `No agent under ${effectiveStrategy} for ${conversationId} — queued`,
       );
       await this.writeAuditLog({
         tenantId,
@@ -776,9 +814,6 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
         metadata,
         outcome: 'queued',
       });
-
-      // T10: notify downstream listeners (ActivityService, metrics, SLA wait-time)
-      // that this conversation is now waiting in the queue.
       this.eventEmitter.emit(OmniEvents.CONVERSATION_QUEUED, {
         tenantId,
         conversationId,
@@ -789,8 +824,6 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
         agentPoolSize: (metadata as any)?.pool?.length ?? 0,
       } satisfies ConversationQueuedEvent);
     }
-
-    return selectedAgent;
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -809,69 +842,43 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     resolved: ResolvedRoutingConfig,
     tenantMaxCapacity: number,
   ): Promise<string | null> {
-    // Find the previous agent for this customer.
-    // P2 fix: Redis sticky-cache first (written on resolve), MongoDB only on a
-    // cache miss — removing up to 2 DB reads per inbound message on the hot path.
-    let previousAgentId: string | null = null;
-    let lookupSource = '';
     const timeoutHours = resolved.stickyTimeoutHours;
     const withinTimeout = (resolvedAt: string | Date | undefined): boolean => {
       if (!resolvedAt) return false;
-      const hours =
-        (Date.now() - new Date(resolvedAt).getTime()) / (1000 * 60 * 60);
-      return hours <= timeoutHours;
+      return (
+        (Date.now() - new Date(resolvedAt).getTime()) / 3_600_000 <=
+        timeoutHours
+      );
     };
 
+    let previousAgentId: string | null = null;
+    let lookupSource = '';
+
     if (options.contactId) {
-      const cached = await this.readStickyCache(
-        this.stickyContactKey(tenantId, options.contactId),
+      const result = await this.lookupStickyContact(
+        tenantId,
+        options.contactId,
+        withinTimeout,
       );
-      if (cached && withinTimeout(cached.resolvedAt)) {
-        previousAgentId = cached.agentId;
-        lookupSource = 'contactId:cache';
-      } else {
-        const lastConv = await this.conversationRepo.findLastResolvedByContact(
-          tenantId,
-          options.contactId,
-        );
-        if (
-          lastConv?.assignedAgentId &&
-          withinTimeout(lastConv.resolvedAt ?? lastConv.updatedAt)
-        ) {
-          previousAgentId = lastConv.assignedAgentId;
-          lookupSource = 'contactId';
-        }
-      }
+      previousAgentId = result.agentId;
+      lookupSource = result.source;
     }
 
     if (!previousAgentId && options.externalSenderId) {
-      const cached = await this.readStickyCache(
-        this.stickySenderKey(tenantId, options.externalSenderId),
+      const result = await this.lookupStickySender(
+        tenantId,
+        options.externalSenderId,
+        withinTimeout,
       );
-      if (cached && withinTimeout(cached.resolvedAt)) {
-        previousAgentId = cached.agentId;
-        lookupSource = 'externalSenderId:cache';
-      } else {
-        const lastConv = await this.conversationRepo.findLastResolvedBySender(
-          tenantId,
-          options.externalSenderId,
-        );
-        if (
-          lastConv?.assignedAgentId &&
-          withinTimeout(lastConv.resolvedAt ?? lastConv.updatedAt)
-        ) {
-          previousAgentId = lastConv.assignedAgentId;
-          lookupSource = 'externalSenderId';
-        }
-      }
+      previousAgentId = result.agentId;
+      lookupSource = result.source;
     }
 
     if (!previousAgentId) return null;
 
-    // Check if the previous agent is available and has capacity
     if (!availableAgents.includes(previousAgentId)) {
       this.logger.debug(
-        `Sticky routing: previous agent ${previousAgentId} is not available — falling back`,
+        `Sticky routing: previous agent ${previousAgentId} not available — falling back`,
       );
       return null;
     }
@@ -887,26 +894,17 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       presence?.activeConversations ??
       (await this.conversationRepo.countOpenByAgent(tenantId, previousAgentId));
 
-    // Atomically reserve the previous agent (single candidate). The Lua reserve
-    // enforces capacity + freshness; openChats/agentCapacity above are only for
-    // logging/audit context.
     const reservedAgent = await this.presenceService.reserveAgentFromCandidates(
       tenantId,
       [previousAgentId],
     );
 
     if (!reservedAgent) {
-      // Check if sticky wait-time is configured
       const stickyWaitMinutes = resolved.stickyWaitTimeMinutes;
-
       if (stickyWaitMinutes > 0) {
         this.logger.log(
-          `Sticky routing: previous agent ${previousAgentId} is at capacity ` +
-            `(${openChats}/${agentCapacity}) — waiting ${stickyWaitMinutes} min`,
+          `Sticky: agent ${previousAgentId} at capacity (${openChats}/${agentCapacity}) — waiting ${stickyWaitMinutes} min`,
         );
-
-        // Schedule a delayed retry job
-        const fallbackStrategy = resolved.fallbackStrategy;
         try {
           await this.stickyRetryQueue.add(
             'sticky-retry',
@@ -914,17 +912,11 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
               tenantId,
               conversationId,
               stickyAgentId: previousAgentId,
-              fallbackStrategy,
+              fallbackStrategy: resolved.fallbackStrategy,
             },
             {
-              // F-04 fix: deterministic jobId — BullMQ will deduplicate if a retry
-              // is already pending for this conversation. Previously appending
-              // Date.now() caused a new job per message, leading to duplicate
-              // assignment attempts when the customer sent multiple messages
-              // during the sticky wait window.
               jobId: `sticky-retry-${conversationId}`,
-
-              delay: stickyWaitMinutes * 60 * 1000,
+              delay: stickyWaitMinutes * 60_000,
               removeOnComplete: true,
               removeOnFail: { count: 100 },
               attempts: 2,
@@ -935,14 +927,12 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
           this.logger.error(
             `Failed to schedule sticky retry for ${conversationId}: ${err.message}`,
           );
-          return null; // Fall through to normal assignment
+          return null;
         }
-
         return STICKY_WAITING_SENTINEL;
       }
-
       this.logger.debug(
-        `Sticky routing: previous agent ${previousAgentId} is at capacity (${openChats}/${agentCapacity}) — falling back`,
+        `Sticky: agent ${previousAgentId} at capacity (${openChats}/${agentCapacity}) — falling back`,
       );
       return null;
     }
@@ -971,26 +961,66 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.logger.log(
-      `Sticky-assigned conversation ${conversationId} to previous agent ${previousAgentId} (lookup: ${lookupSource})`,
+      `Sticky-assigned ${conversationId} → agent ${previousAgentId} (lookup: ${lookupSource})`,
     );
     await this.writeAuditLog({
       tenantId,
       conversationId,
       assignedAgentId: previousAgentId,
       strategy: 'sticky',
-      reason: `Sticky routing: reassigned to previous agent (${lookupSource}, ${openChats}/${agentCapacity} chats)`,
-      reasonKey: 'stickyReassigned',
-      reasonParams: { lookupSource, openChats, agentCapacity },
-      metadata: {
-        previousAgentId,
-        lookupSource,
-        openChats,
-        agentCapacity,
-      },
+      reason: `Sticky: re-assigned to previous agent (${lookupSource})`,
+      reasonKey: 'stickyMatch',
+      reasonParams: { agentId: previousAgentId, source: lookupSource },
+      metadata: { openChats, agentCapacity, source: lookupSource },
       outcome: 'assigned',
     });
-
     return previousAgentId;
+  }
+
+  private async lookupStickyContact(
+    tenantId: string,
+    contactId: string,
+    withinTimeout: (v: string | Date | undefined) => boolean,
+  ): Promise<{ agentId: string | null; source: string }> {
+    const cached = await this.readStickyCache(
+      this.stickyContactKey(tenantId, contactId),
+    );
+    if (cached && withinTimeout(cached.resolvedAt))
+      return { agentId: cached.agentId, source: 'contactId:cache' };
+    const last = await this.conversationRepo.findLastResolvedByContact(
+      tenantId,
+      contactId,
+    );
+    if (
+      last?.assignedAgentId &&
+      withinTimeout(last.resolvedAt ?? last.updatedAt)
+    ) {
+      return { agentId: last.assignedAgentId, source: 'contactId' };
+    }
+    return { agentId: null, source: '' };
+  }
+
+  private async lookupStickySender(
+    tenantId: string,
+    senderId: string,
+    withinTimeout: (v: string | Date | undefined) => boolean,
+  ): Promise<{ agentId: string | null; source: string }> {
+    const cached = await this.readStickyCache(
+      this.stickySenderKey(tenantId, senderId),
+    );
+    if (cached && withinTimeout(cached.resolvedAt))
+      return { agentId: cached.agentId, source: 'externalSenderId:cache' };
+    const last = await this.conversationRepo.findLastResolvedBySender(
+      tenantId,
+      senderId,
+    );
+    if (
+      last?.assignedAgentId &&
+      withinTimeout(last.resolvedAt ?? last.updatedAt)
+    ) {
+      return { agentId: last.assignedAgentId, source: 'externalSenderId' };
+    }
+    return { agentId: null, source: '' };
   }
 
   // ────────────────────────────────────────────────────────────────────────

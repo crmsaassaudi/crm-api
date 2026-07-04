@@ -251,11 +251,12 @@ export class AgentFallbackService {
         'omni_auto_reassignment',
         tenantId,
       );
+      const cfg = config as Record<string, any>;
       return {
-        enabled: (config as any)?.enabled ?? false,
-        timeoutMinutes: (config as any)?.timeoutMinutes ?? 3,
-        strategy: (config as any)?.strategy ?? 'back-to-queue',
-        notifyAgent: (config as any)?.notifyAgent ?? true,
+        enabled: cfg?.enabled ?? false,
+        timeoutMinutes: cfg?.timeoutMinutes ?? 3,
+        strategy: cfg?.strategy ?? 'back-to-queue',
+        notifyAgent: cfg?.notifyAgent ?? true,
       };
     } catch {
       return {

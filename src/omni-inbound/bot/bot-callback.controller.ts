@@ -65,7 +65,7 @@ export class BotCallbackController {
       payload.messages.forEach((m, i) => {
         this.logger.log(
           `[BOT-CALLBACK] Message[${i}]: type=${m.type}, ` +
-            `text="${(m.text || '').substring(0, 80)}", ` +
+            `text="${(m.text ?? '').substring(0, 80)}", ` +
             `buttons=${m.buttons?.length ?? 0}, url=${m.url ?? 'none'}`,
         );
       });

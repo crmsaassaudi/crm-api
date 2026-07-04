@@ -106,7 +106,7 @@ export class OmniController {
       tenantId,
       conversationId,
       Math.min(parseInt(limit, 10), 50),
-      cursor || undefined,
+      cursor ?? undefined,
     );
 
     return {
@@ -201,17 +201,8 @@ export class OmniController {
     const slaFilter = sla ? sla.split(',') : undefined;
     const tagsFilter = tags ? tags.split(',') : undefined;
 
-    let assignedAgent: string | null | undefined = undefined;
-    let assignedGroup: string | null | undefined = undefined;
-    let unassigned = false;
-
-    if (assignedTo === 'me') {
-      assignedAgent = userId;
-    } else if (assignedTo === 'unassigned') {
-      unassigned = true;
-    } else if (assignedTo?.startsWith('group:')) {
-      assignedGroup = assignedTo.substring(6);
-    }
+    const { assignedAgent, assignedGroup, unassigned } =
+      this.resolveAssignedToFilter(assignedTo, userId);
 
     const result = await this.conversationRepo.findCursorPaginated(
       {
@@ -236,48 +227,7 @@ export class OmniController {
       parseInt(limit, 10), // cap will be applied in repo
     );
 
-    // Resolve display-friendly resolver info for list cards (name/email),
-    // so UI does not have to show raw IDs.
-    // Batch both resolvedByAgentId and assignedAgentId into one user lookup.
-    const resolverIds = Array.from(
-      new Set(
-        result.data
-          .map((c) => c.resolvedByAgentId)
-          .filter((id): id is string => Boolean(id)),
-      ),
-    );
-
-    const assignedAgentIds = Array.from(
-      new Set(
-        result.data
-          .map((c) => c.assignedAgentId)
-          .filter((id): id is string => Boolean(id)),
-      ),
-    );
-
-    const allAgentIds = Array.from(
-      new Set([...resolverIds, ...assignedAgentIds]),
-    );
-
-    let agentMap = new Map<
-      string,
-      { name: string | null; email: string | null }
-    >();
-    if (allAgentIds.length > 0) {
-      const users = await this.usersService.findByIdsGlobal(allAgentIds);
-      agentMap = new Map(
-        users.map((u) => {
-          const fullName = [u.firstName, u.lastName]
-            .filter(Boolean)
-            .join(' ')
-            .trim();
-          return [
-            String(u.id),
-            { name: fullName || null, email: u.email ?? null },
-          ];
-        }),
-      );
-    }
+    const agentMap = await this.buildAgentDisplayMap(result.data);
 
     const enrichedData = result.data.map((c) => {
       const resolvedFromPopulate = c.resolvedByAgent
@@ -320,7 +270,62 @@ export class OmniController {
     };
   }
 
-  // ─── Batch Messages (cross-module) ──────────────────────────────
+  /** Parse the `assignedTo` query param into filter fields. */
+  private resolveAssignedToFilter(
+    assignedTo: string | undefined,
+    userId: string,
+  ): {
+    assignedAgent: string | null | undefined;
+    assignedGroup: string | null | undefined;
+    unassigned: boolean;
+  } {
+    if (assignedTo === 'me')
+      return {
+        assignedAgent: userId,
+        assignedGroup: undefined,
+        unassigned: false,
+      };
+    if (assignedTo === 'unassigned')
+      return {
+        assignedAgent: undefined,
+        assignedGroup: undefined,
+        unassigned: true,
+      };
+    if (assignedTo?.startsWith('group:'))
+      return {
+        assignedAgent: undefined,
+        assignedGroup: assignedTo.substring(6),
+        unassigned: false,
+      };
+    return {
+      assignedAgent: undefined,
+      assignedGroup: undefined,
+      unassigned: false,
+    };
+  }
+
+  /** Batch-resolve agent display info (name/email) for all agents in a page of conversations. */
+  private async buildAgentDisplayMap(
+    conversations: any[],
+  ): Promise<Map<string, { name: string | null; email: string | null }>> {
+    const ids = Array.from(
+      new Set(
+        [
+          ...conversations.map((c) => c.resolvedByAgentId),
+          ...conversations.map((c) => c.assignedAgentId),
+        ].filter((id): id is string => Boolean(id)),
+      ),
+    );
+    if (ids.length === 0) return new Map();
+    const users = await this.usersService.findByIdsGlobal(ids);
+    return new Map(
+      users.map((u) => {
+        const name =
+          [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || null;
+        return [String(u.id), { name, email: u.email ?? null }];
+      }),
+    );
+  }
 
   /**
    * Fetch messages by an array of IDs.

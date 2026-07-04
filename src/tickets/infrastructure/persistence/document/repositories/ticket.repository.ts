@@ -160,7 +160,7 @@ export class TicketRepository extends BaseDocumentRepository<
     ]);
 
     return pagination(
-      docs.map((doc: any) => this.mapToDomain(doc as any)),
+      docs.map((doc: any) => this.mapToDomain(doc)),
       totalItems,
       paginationOptions,
     );

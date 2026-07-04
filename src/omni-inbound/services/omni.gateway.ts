@@ -211,97 +211,19 @@ export class OmniGateway
       client.data.user = decoded;
       const keycloakUserId = decoded.id ?? decoded.sub;
 
-      // ── Resolve MongoDB _id from keycloakId ──────────────────────────
-      // The JWT contains the keycloakId (UUID), but channel configs, assignment,
-      // and supportUserIds all use MongoDB ObjectId. We MUST resolve the internal
-      // _id so presence, assignment, and pool filtering all use the same ID format.
-      let userId = keycloakUserId;
-      let dbUser: any = null;
-      try {
-        dbUser = await this.usersService.findByKeycloakIdAndProvider({
-          keycloakId: keycloakUserId,
-          provider: 'email',
-        });
-        if (dbUser) {
-          userId = dbUser.id.toString();
-          this.logger.log(
-            `Resolved keycloakId ${keycloakUserId} → MongoDB _id ${userId}`,
-          );
-        } else {
-          this.logger.warn(
-            `Could not resolve MongoDB _id for keycloakId ${keycloakUserId} — using keycloakId as fallback`,
-          );
-        }
-      } catch (err: any) {
-        this.logger.warn(
-          `Failed to resolve MongoDB _id for keycloakId ${keycloakUserId}: ${err.message} — using keycloakId as fallback`,
-        );
-      }
-
-      // ── Resolve tenantId ────────────────────────────────────────────
-      // Strategy: subdomain or explicit token/handshake tenant. No membership guessing.
-      let tenantId: string | null = null;
-      const host = client.handshake.headers.host ?? '';
-      const hostWithoutPort = this.normalizeHost(host.split(':')[0]);
-
-      const rootDomain = this.normalizeHost(
-        this.configService.get('app.rootDomain', { infer: true }) ??
-          'crmsaudi.dev',
+      // 4. Resolve MongoDB _id from keycloakId
+      const { userId, dbUser } = await this.resolveMongoUserId(
+        client.id,
+        keycloakUserId,
       );
 
-      // 1. Try subdomain resolution (production: tenant.crmsaudi.dev)
-      if (hostWithoutPort.endsWith(`.${rootDomain}`)) {
-        const subdomain = hostWithoutPort.slice(
-          0,
-          hostWithoutPort.length - rootDomain.length - 1,
-        );
-        if (
-          subdomain &&
-          !subdomain.includes('.') &&
-          !this.SYSTEM_SUBDOMAINS.includes(subdomain.toLowerCase())
-        ) {
-          const tenant = await this.tenantsService.findByAlias(subdomain);
-          if (tenant) {
-            tenantId = tenant.id;
-            this.logger.log(
-              `Resolved tenant alias "${subdomain}" → ${tenantId}`,
-            );
-          } else {
-            this.logger.warn(`Tenant alias "${subdomain}" not found in DB`);
-          }
-        }
-      }
-
-      // 2. Resolve only explicit tenant hints from token or non-production handshake.
-      if (!tenantId) {
-        const explicitTenantHint =
-          decoded.tenantId ??
-          decoded.tenant_id ??
-          (process.env.NODE_ENV !== 'production'
-            ? (client.handshake.auth?.tenantId ??
-              client.handshake.headers['x-tenant-id'])
-            : null);
-
-        if (typeof explicitTenantHint === 'string' && explicitTenantHint) {
-          if (/^[0-9a-fA-F]{24}$/.test(explicitTenantHint)) {
-            const tenant =
-              await this.tenantsService.findById(explicitTenantHint);
-            tenantId = tenant?.id ?? null;
-          } else {
-            const tenant =
-              await this.tenantsService.findByAlias(explicitTenantHint);
-            tenantId = tenant?.id ?? null;
-          }
-        }
-      }
+      // 5. Resolve tenantId from subdomain or explicit hints
+      const tenantId = await this.resolveTenantId(client, decoded);
 
       if (
         tenantId &&
         dbUser &&
-        !dbUser.tenants?.some(
-          (membership: any) =>
-            membership.tenantId?.toString() === tenantId?.toString(),
-        )
+        !dbUser.tenants?.some((m: any) => m.tenantId?.toString() === tenantId)
       ) {
         this.logger.warn(
           `Client ${client.id} requested tenant ${tenantId} without membership. Disconnecting.`,
@@ -310,46 +232,120 @@ export class OmniGateway
         return;
       }
 
-      // 3. No tenant resolved → reject connection
       if (!tenantId) {
         this.logger.warn(
-          `Client ${client.id} — cannot resolve explicit tenantId (host=${host}, user=${userId}). Disconnecting.`,
+          `Client ${client.id} — cannot resolve tenantId (user=${userId}). Disconnecting.`,
         );
         client.disconnect();
         return;
       }
 
       this.logger.debug(
-        `JWT decoded for ${client.id}: tenantId=${tenantId}, keycloakId=${keycloakUserId}, ` +
-          `resolvedUserId=${userId}, host=${host}, fields=${Object.keys(decoded).join(',')}`,
+        `JWT decoded for ${client.id}: tenantId=${tenantId}, keycloakId=${keycloakUserId}, resolvedUserId=${userId}`,
       );
 
-      // Persist resolved identifiers on the socket for use during disconnect
       client.data.tenantId = tenantId;
       client.data.userId = userId;
 
-      // Join tenant room for broadcast events
       await client.join(`tenant:${tenantId}`);
       await client.join(`agent:${userId}`);
       this.logger.log(
         `Agent ${userId} connected to /omni, joined tenant:${tenantId} and agent:${userId}`,
       );
 
-      // Register agent presence (multi-tab aware). Hydrate skills + per-agent
-      // capacity from the resolved user record so skill-based routing and
-      // capacity caps work without a MongoDB read on every assignment.
       await this.presenceGateway.onAgentConnected(tenantId, userId, client.id, {
         skills: dbUser?.skills,
         maxCapacity: dbUser?.omniMaxCapacity ?? undefined,
       });
 
-      // Cancel any pending reassignment from a previous disconnect
       await this.agentFallbackService.onAgentReconnected(tenantId, userId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Connection error for client ${client.id}: ${message}`);
       client.disconnect();
     }
+  }
+
+  /** Resolve MongoDB _id from keycloakId — falls back to keycloakId if not found. */
+  private async resolveMongoUserId(
+    clientId: string,
+    keycloakUserId: string,
+  ): Promise<{ userId: string; dbUser: any | null }> {
+    try {
+      const dbUser = await this.usersService.findByKeycloakIdAndProvider({
+        keycloakId: keycloakUserId,
+        provider: 'email',
+      });
+      if (dbUser) {
+        const userId = dbUser.id.toString();
+        this.logger.log(
+          `Resolved keycloakId ${keycloakUserId} → MongoDB _id ${userId}`,
+        );
+        return { userId, dbUser };
+      }
+      this.logger.warn(
+        `[${clientId}] Could not resolve MongoDB _id for keycloakId ${keycloakUserId} — using fallback`,
+      );
+      return { userId: keycloakUserId, dbUser: null };
+    } catch (err: any) {
+      this.logger.warn(
+        `[${clientId}] Failed to resolve MongoDB _id: ${err.message} — using fallback`,
+      );
+      return { userId: keycloakUserId, dbUser: null };
+    }
+  }
+
+  /** Resolve tenantId: subdomain first, then explicit token/handshake hint. */
+  private async resolveTenantId(
+    client: Socket,
+    decoded: any,
+  ): Promise<string | null> {
+    const host = client.handshake.headers.host ?? '';
+    const hostWithoutPort = this.normalizeHost(host.split(':')[0]);
+    const rootDomain = this.normalizeHost(
+      this.configService.get('app.rootDomain', { infer: true }) ??
+        'crmsaudi.dev',
+    );
+
+    // 1. Subdomain resolution
+    if (hostWithoutPort.endsWith(`.${rootDomain}`)) {
+      const subdomain = hostWithoutPort.slice(
+        0,
+        hostWithoutPort.length - rootDomain.length - 1,
+      );
+      if (
+        subdomain &&
+        !subdomain.includes('.') &&
+        !this.SYSTEM_SUBDOMAINS.includes(subdomain.toLowerCase())
+      ) {
+        const tenant = await this.tenantsService.findByAlias(subdomain);
+        if (tenant) {
+          this.logger.log(
+            `Resolved tenant alias "${subdomain}" → ${tenant.id}`,
+          );
+          return tenant.id;
+        }
+        this.logger.warn(`Tenant alias "${subdomain}" not found in DB`);
+      }
+    }
+
+    // 2. Explicit hint from token or non-prod handshake
+    const hint =
+      decoded.tenantId ??
+      decoded.tenant_id ??
+      (process.env.NODE_ENV !== 'production'
+        ? (client.handshake.auth?.tenantId ??
+          client.handshake.headers['x-tenant-id'])
+        : null);
+
+    if (typeof hint === 'string' && hint) {
+      const tenant = /^[0-9a-fA-F]{24}$/.test(hint)
+        ? await this.tenantsService.findById(hint)
+        : await this.tenantsService.findByAlias(hint);
+      return tenant?.id ?? null;
+    }
+
+    return null;
   }
 
   async handleDisconnect(client: Socket) {
@@ -851,8 +847,8 @@ export class OmniGateway
             source: result.source ?? 'agent_ui',
             messageType: 'carousel',
             content:
-              data.content ||
-              data.cards.map((c) => c.title).join(' | ') ||
+              data.content ??
+              data.cards.map((c) => c.title).join(' | ') ??
               'Carousel',
             messageId: ack.messageId,
             idempotencyKey: ack.idempotencyKey,
@@ -1615,9 +1611,9 @@ export class OmniGateway
         const users = await this.usersService.findByIdsGlobal([event.agentId]);
         const u = users[0];
         agentName = u
-          ? [u.firstName, u.lastName].filter(Boolean).join(' ').trim() ||
-            u.email ||
-            null
+          ? (([u.firstName, u.lastName].filter(Boolean).join(' ').trim() ||
+              u.email) ??
+            null)
           : null;
       } catch {
         agentName = null;

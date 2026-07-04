@@ -223,7 +223,7 @@ export class WorkStatusService {
         'omni_presence',
         tenantId,
       );
-      const v = (config as any)?.wrapUpWindowSeconds;
+      const v = (config as Record<string, any>)?.wrapUpWindowSeconds;
       return typeof v === 'number' && v > 0 ? v : DEFAULT_WRAP_UP_SECONDS;
     } catch {
       return DEFAULT_WRAP_UP_SECONDS;

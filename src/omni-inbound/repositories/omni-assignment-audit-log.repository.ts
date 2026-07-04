@@ -6,6 +6,9 @@ import {
   OmniAssignmentAuditLogDocument,
 } from '../infrastructure/persistence/document/entities/omni-assignment-audit-log.schema';
 
+/** Union type for all possible audit log outcomes. */
+export type AuditOutcome = 'assigned' | 'queued' | 'failed';
+
 export interface CreateAuditLogDto {
   tenantId: string;
   conversationId: string;
@@ -17,7 +20,7 @@ export interface CreateAuditLogDto {
   /** Interpolation params for the reasonKey — e.g. { minutes: 30 } */
   reasonParams?: Record<string, any> | null;
   metadata?: Record<string, any>;
-  outcome: 'assigned' | 'queued' | 'failed';
+  outcome: AuditOutcome;
   // T05: structured audit fields (previously buried in metadata blob)
   /** Agent who was assigned before this decision (null = first assignment) */
   previousAgentId?: string | null;
@@ -56,7 +59,7 @@ export interface AuditLogEntry {
   /** Interpolation params to pass to t(reasonKey, reasonParams). */
   reasonParams: Record<string, any> | null;
   metadata: Record<string, any>;
-  outcome: 'assigned' | 'queued' | 'failed';
+  outcome: AuditOutcome;
   createdAt: string;
   updatedAt: string;
 }
@@ -194,7 +197,7 @@ export class AssignmentAuditLogRepository {
     tenantId: string,
     filters: {
       conversationId?: string;
-      outcome?: 'assigned' | 'queued' | 'failed';
+      outcome?: AuditOutcome;
       agentId?: string;
     },
     limit = 50,
