@@ -89,4 +89,3 @@ const OmniInboundModuleRef = () =>
   exports: [ConversationCommandService, BullModule],
 })
 export class ConversationOpsModule {}
-

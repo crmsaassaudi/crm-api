@@ -1648,7 +1648,8 @@ export class SendWhatsAppExecutor implements ActionExecutor {
 
   constructor(private readonly templateEngine: TemplateInterpolationService) {}
 
-  execute(job: AutomationActionJobData): ActionExecutionResult {
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
     const recipientField = actionConfig.recipientField || 'phones';
@@ -1713,7 +1714,8 @@ export class SendZnsExecutor implements ActionExecutor {
 
   constructor(private readonly templateEngine: TemplateInterpolationService) {}
 
-  execute(job: AutomationActionJobData): ActionExecutionResult {
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
     const recipientField = actionConfig.recipientField || 'phones';
