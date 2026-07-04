@@ -18,7 +18,7 @@ import {
   CONV_OPS_MAX_ATTEMPTS,
   BOT_GENERATED_REPLY_EVENT,
 } from './conversation-ops.constants';
-import type { ConversationOpsProcessor } from './conversation-ops.processor';
+import { ConversationOpsProcessor } from './conversation-ops.processor';
 
 /**
  * ConversationCommandService — builds and enqueues typed commands
@@ -37,12 +37,7 @@ export class ConversationCommandService {
 
   constructor(
     @InjectQueue(CONV_OPS_QUEUE) private readonly opsQueue: Queue,
-    @Inject(
-      forwardRef(
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        () => require('./conversation-ops.processor').ConversationOpsProcessor,
-      ),
-    )
+    @Inject(forwardRef(() => ConversationOpsProcessor))
     private readonly processor: ConversationOpsProcessor,
   ) {}
 

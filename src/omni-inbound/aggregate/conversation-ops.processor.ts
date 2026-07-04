@@ -1,11 +1,10 @@
 import { Processor, InjectQueue } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleInit, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Job, Queue } from 'bullmq';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Inject } from '@nestjs/common';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { logSwallowed } from '../../common/utils/log-swallowed';
@@ -50,21 +49,28 @@ import { OutboundService } from '../../omni-outbound/outbound.service';
 import { AgentPresenceService } from '../services/agent-presence.service';
 import { AssignmentService } from '../services/assignment.service';
 
+import { ModuleRef } from '@nestjs/core';
+
+import { OnModuleInit } from '@nestjs/common';
+
 /**
  * Aggregate Root processor — serializes all conversation mutations
  * via per-conversation Redis locks and BullMQ queue.
  */
 @Processor(CONV_OPS_QUEUE)
-export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCommand> {
+export class ConversationOpsProcessor
+  extends BaseTenantConsumer<ConversationCommand>
+  implements OnModuleInit
+{
   protected readonly logger = new Logger(ConversationOpsProcessor.name);
   protected readonly cls: ClsService;
+  private orchestration: InboundOrchestrationService;
 
   constructor(
     cls: ClsService,
     private readonly lockService: RedisLockService,
     private readonly conversationRepo: ConversationRepository,
     private readonly messageRepo: MessageRepository,
-    private readonly orchestration: InboundOrchestrationService,
     private readonly mediaProxy: MediaProxyService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
@@ -77,9 +83,16 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
     private readonly outboundService: OutboundService,
     private readonly agentPresenceService: AgentPresenceService,
     private readonly assignmentService: AssignmentService,
+    private readonly moduleRef: ModuleRef,
   ) {
     super();
     this.cls = cls;
+  }
+
+  async onModuleInit() {
+    this.orchestration = this.moduleRef.get(InboundOrchestrationService, {
+      strict: false,
+    });
   }
 
   protected async handle(job: Job<ConversationCommand>): Promise<void> {

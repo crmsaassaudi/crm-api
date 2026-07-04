@@ -1,10 +1,9 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ScheduleModule } from '@nestjs/schedule';
 
 import { CONV_OPS_QUEUE, CONV_OPS_DLQ } from './conversation-ops.constants';
-import { ConversationCommandService } from './conversation-command.service';
 import { OutboxPublisherService } from './outbox-publisher.service';
 
 import {
@@ -17,31 +16,18 @@ import {
 } from '../infrastructure/persistence/document/entities/outbox-event.schema';
 
 import { RedisModule } from '../../redis/redis.module';
-import { OmniOutboundModule } from '../../omni-outbound/omni-outbound.module';
 import { isWorkerRuntime, isOmniRuntime } from '../../config/runtime-role';
 
 /**
- * ConversationOpsModule — BullMQ queue infrastructure + command service.
+ * ConversationOpsModule — Shared BullMQ queue infrastructure + Mongoose schemas.
  *
- * Intentionally does NOT register ConversationOpsProcessor here.
- * The processor depends on ConversationRepository, MessageRepository,
- * InboundOrchestrationService, AgentPresenceService, AssignmentService —
- * all of which live in OmniInboundModule.
- *
- * Registering the processor in OmniInboundModule (which imports this module)
- * avoids the circular dependency:
- *   ConversationOpsModule → OmniInboundModule → ConversationOpsModule
- *
- * Registers:
- * - BullMQ queues: conversation-ops + DLQ
- * - MongoDB schemas: processed_operations + outbox_events
- * - ConversationCommandService: builds and enqueues typed commands
- * - OutboxPublisherService: cron poller for missed event publishes
+ * Logic services (ConversationCommandService, ConversationOpsProcessor) are
+ * registered in OmniInboundModule to avoid complex circular dependency cycles
+ * and ensure they have access to all necessary repositories.
  */
 @Module({
   imports: [
     RedisModule,
-    forwardRef(() => OmniOutboundModule),
     ScheduleModule.forRoot(),
     BullModule.registerQueue(
       {
@@ -73,11 +59,9 @@ import { isWorkerRuntime, isOmniRuntime } from '../../config/runtime-role';
     ]),
   ],
   providers: [
-    ConversationCommandService,
     ...(isWorkerRuntime() || isOmniRuntime() ? [OutboxPublisherService] : []),
   ],
-  // Export MongooseModule so OmniInboundModule can access ProcessedOperation
-  // and OutboxEvent models needed by ConversationOpsProcessor
-  exports: [ConversationCommandService, BullModule, MongooseModule],
+  // Export BullModule and MongooseModule so they can be used by services in OmniInboundModule
+  exports: [BullModule, MongooseModule],
 })
 export class ConversationOpsModule {}

@@ -136,6 +136,7 @@ import { LivechatModule } from '../livechat/livechat.module';
 // Phase 1: Conversation Aggregate — sequential command processing
 import { ConversationOpsModule } from './aggregate/conversation-ops.module';
 import { ConversationOpsProcessor } from './aggregate/conversation-ops.processor';
+import { ConversationCommandService } from './aggregate/conversation-command.service';
 import { RedisLockService } from '../redis/redis-lock.service';
 
 const workerProviders =
@@ -307,7 +308,8 @@ const workerProviders =
     // Registered here (not in ConversationOpsModule) so all its deps
     // (ConversationRepository, InboundOrchestrationService, etc.) are
     // available without circular module imports.
-    RedisLockService,
+    // Note: RedisLockService + IOREDIS_CLIENT come from RedisModule (already imported).
+    ConversationCommandService,
     ConversationOpsProcessor,
 
     // ── Pillar 7: Notes ───────────────────────────────────────────
@@ -357,6 +359,7 @@ const workerProviders =
     MessageRepository,
     ConversationService,
     ConversationQueryService,
+    ConversationCommandService,
     OmniOutboundModule,
     IdentityService,
     NoteService,

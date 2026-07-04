@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { OmniPayload } from '../domain/omni-payload';
 import {
@@ -44,6 +44,7 @@ export class InboundOrchestrationService {
     private readonly businessHoursService: BusinessHoursService,
     private readonly botQueueService: BotQueueService,
     private readonly eventEmitter: EventEmitter2,
+    @Inject(forwardRef(() => ConversationCommandService))
     private readonly conversationCommandService: ConversationCommandService,
   ) {}
 
