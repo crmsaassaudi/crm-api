@@ -45,6 +45,9 @@ const FALLBACK_MAX_CAPACITY = 10;
  */
 const STICKY_WAITING_SENTINEL = '__sticky_waiting__';
 
+/** Predicate that returns true when a resolved timestamp is within the sticky timeout window. */
+type StickyTimeoutFn = (resolvedAt: string | Date | undefined) => boolean;
+
 /**
  * Per-channel routing override. Every field is OPTIONAL — an undefined field
  * means "inherit from the global omni_routing setting". Stored on the channel
@@ -843,7 +846,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     tenantMaxCapacity: number,
   ): Promise<string | null> {
     const timeoutHours = resolved.stickyTimeoutHours;
-    const withinTimeout = (resolvedAt: string | Date | undefined): boolean => {
+    const withinTimeout: StickyTimeoutFn = (resolvedAt) => {
       if (!resolvedAt) return false;
       return (
         (Date.now() - new Date(resolvedAt).getTime()) / 3_600_000 <=
@@ -980,7 +983,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
   private async lookupStickyContact(
     tenantId: string,
     contactId: string,
-    withinTimeout: (v: string | Date | undefined) => boolean,
+    withinTimeout: StickyTimeoutFn,
   ): Promise<{ agentId: string | null; source: string }> {
     const cached = await this.readStickyCache(
       this.stickyContactKey(tenantId, contactId),
@@ -1003,7 +1006,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
   private async lookupStickySender(
     tenantId: string,
     senderId: string,
-    withinTimeout: (v: string | Date | undefined) => boolean,
+    withinTimeout: StickyTimeoutFn,
   ): Promise<{ agentId: string | null; source: string }> {
     const cached = await this.readStickyCache(
       this.stickySenderKey(tenantId, senderId),

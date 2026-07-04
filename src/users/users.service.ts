@@ -203,12 +203,12 @@ export class UsersService {
 
     const platformRole: Role | undefined =
       updateUserDto.platformRole?.id && isSuperAdmin
-        ? { id: updateUserDto.platformRole.id as PlatformRoleEnum }
+        ? { id: updateUserDto.platformRole.id }
         : undefined;
 
     const status: Status | undefined =
       updateUserDto.status?.id && isSuperAdmin
-        ? { id: updateUserDto.status.id as StatusEnum }
+        ? { id: updateUserDto.status.id }
         : undefined;
 
     const updated = await this.usersRepository.update(id, {

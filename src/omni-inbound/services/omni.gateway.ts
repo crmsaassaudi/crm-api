@@ -270,7 +270,7 @@ export class OmniGateway
   private async resolveMongoUserId(
     clientId: string,
     keycloakUserId: string,
-  ): Promise<{ userId: string; dbUser: any | null }> {
+  ): Promise<{ userId: string; dbUser: any }> {
     try {
       const dbUser = await this.usersService.findByKeycloakIdAndProvider({
         keycloakId: keycloakUserId,
@@ -313,11 +313,7 @@ export class OmniGateway
         0,
         hostWithoutPort.length - rootDomain.length - 1,
       );
-      if (
-        subdomain &&
-        !subdomain.includes('.') &&
-        !this.SYSTEM_SUBDOMAINS.includes(subdomain.toLowerCase())
-      ) {
+      if (this.isValidSubdomain(subdomain)) {
         const tenant = await this.tenantsService.findByAlias(subdomain);
         if (tenant) {
           this.logger.log(
@@ -346,6 +342,14 @@ export class OmniGateway
     }
 
     return null;
+  }
+
+  private isValidSubdomain(subdomain: string): boolean {
+    return (
+      Boolean(subdomain) &&
+      !subdomain.includes('.') &&
+      !this.SYSTEM_SUBDOMAINS.includes(subdomain.toLowerCase())
+    );
   }
 
   async handleDisconnect(client: Socket) {

@@ -164,7 +164,7 @@ export class PresenceAlertService {
     breakBudgetMinutes: number,
   ): AlertPayload | null {
     if (agent.presenceStatus !== 'BREAK') return null;
-    const breakToday = (agent as any).breakTodayMinutes ?? 0;
+    const breakToday = agent.breakTodayMinutes ?? 0;
     const totalBreak = breakToday + presenceMinutes;
     if (totalBreak < breakBudgetMinutes) return null;
     return {

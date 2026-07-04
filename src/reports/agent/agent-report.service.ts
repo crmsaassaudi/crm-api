@@ -249,32 +249,8 @@ export class AgentReportService {
       string,
       KpiDurations & { byChannel: Record<Channel, ChannelHandle> }
     >();
-    const ensure = (agentId: string) => {
-      let v = acc.get(agentId);
-      if (!v) {
-        v = {
-          availableMs: 0,
-          awayMs: 0,
-          breakMs: 0,
-          meetingMs: 0,
-          trainingMs: 0,
-          acceptingMs: 0,
-          notAcceptingMs: 0,
-          handleMs: 0,
-          wrapMs: 0,
-          idleMs: 0,
-          handledCount: 0,
-          byChannel: {
-            chat: { durationMs: 0, durationFormatted: '0m', count: 0 },
-            ticket: { durationMs: 0, durationFormatted: '0m', count: 0 },
-            email: { durationMs: 0, durationFormatted: '0m', count: 0 },
-            call: { durationMs: 0, durationFormatted: '0m', count: 0 },
-          },
-        };
-        acc.set(agentId, v);
-      }
-      return v;
-    };
+    const ensure = (agentId: string) =>
+      this.ensureAgentAccumulator(acc, agentId);
 
     for (const row of stateRows) {
       const v = ensure(row._id.agentId);
@@ -320,32 +296,8 @@ export class AgentReportService {
       KpiDurations & { byChannel: Record<Channel, ChannelHandle> }
     >,
   ): void {
-    const ensure = (agentId: string) => {
-      let v = acc.get(agentId);
-      if (!v) {
-        v = {
-          availableMs: 0,
-          awayMs: 0,
-          breakMs: 0,
-          meetingMs: 0,
-          trainingMs: 0,
-          acceptingMs: 0,
-          notAcceptingMs: 0,
-          handleMs: 0,
-          wrapMs: 0,
-          idleMs: 0,
-          handledCount: 0,
-          byChannel: {
-            chat: { durationMs: 0, durationFormatted: '0m', count: 0 },
-            ticket: { durationMs: 0, durationFormatted: '0m', count: 0 },
-            email: { durationMs: 0, durationFormatted: '0m', count: 0 },
-            call: { durationMs: 0, durationFormatted: '0m', count: 0 },
-          },
-        };
-        acc.set(agentId, v);
-      }
-      return v;
-    };
+    const ensure = (agentId: string) =>
+      this.ensureAgentAccumulator(acc, agentId);
     for (const row of interactionRows) {
       const v = ensure(row._id.agentId);
       const ch = row._id.type as Channel;
@@ -358,6 +310,40 @@ export class AgentReportService {
         v.handledCount += row.count;
       }
     }
+  }
+
+  /** Upsert and return a zeroed accumulator entry for the given agent. */
+  private ensureAgentAccumulator(
+    acc: Map<
+      string,
+      KpiDurations & { byChannel: Record<Channel, ChannelHandle> }
+    >,
+    agentId: string,
+  ): KpiDurations & { byChannel: Record<Channel, ChannelHandle> } {
+    let v = acc.get(agentId);
+    if (!v) {
+      v = {
+        availableMs: 0,
+        awayMs: 0,
+        breakMs: 0,
+        meetingMs: 0,
+        trainingMs: 0,
+        acceptingMs: 0,
+        notAcceptingMs: 0,
+        handleMs: 0,
+        wrapMs: 0,
+        idleMs: 0,
+        handledCount: 0,
+        byChannel: {
+          chat: { durationMs: 0, durationFormatted: '0m', count: 0 },
+          ticket: { durationMs: 0, durationFormatted: '0m', count: 0 },
+          email: { durationMs: 0, durationFormatted: '0m', count: 0 },
+          call: { durationMs: 0, durationFormatted: '0m', count: 0 },
+        },
+      };
+      acc.set(agentId, v);
+    }
+    return v;
   }
 
   /**
