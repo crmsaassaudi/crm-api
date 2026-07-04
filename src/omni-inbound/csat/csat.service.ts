@@ -13,8 +13,10 @@ import {
   OmniConversationDocument,
 } from '../infrastructure/persistence/document/entities/omni-conversation.schema';
 
+export type CsatScore = 1 | 2 | 3 | 4 | 5;
+
 export interface CsatSubmitDto {
-  score: 1 | 2 | 3 | 4 | 5;
+  score: CsatScore;
   comment?: string;
 }
 
@@ -31,7 +33,7 @@ export interface CsatAggregateResult {
   responded: number;
   responseRate: number;
   avgScore: number | null;
-  breakdown: Record<1 | 2 | 3 | 4 | 5, number>;
+  breakdown: Record<CsatScore, number>;
   byAgent: Array<{
     agentId: string;
     avgScore: number;
@@ -268,7 +270,7 @@ export class CsatService {
       responseRate:
         totalSurveys > 0 ? Math.round((responded / totalSurveys) * 100) : 0,
       avgScore,
-      breakdown: breakdown as Record<1 | 2 | 3 | 4 | 5, number>,
+      breakdown: breakdown as Record<CsatScore, number>,
       byAgent: byAgentRaw.map((r) => ({
         agentId: String(r._id),
         avgScore: Math.round(r.avgScore * 10) / 10,

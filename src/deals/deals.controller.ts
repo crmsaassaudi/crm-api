@@ -18,7 +18,14 @@ import { DealsService } from './deals.service';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { UpdateDealDto } from './dto/update-deal.dto';
 import { Deal } from './domain/deal';
-import { ApiTags, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiBody,
+  ApiProperty,
+  ApiPropertyOptional,
+} from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
@@ -27,7 +34,6 @@ import { StartDealImportDto } from './dto/start-deal-import.dto';
 import { ExportRequestDto } from '../common/export';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { IsString, IsOptional, IsEnum } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 class CreateDealActivityDto {
   @ApiProperty({

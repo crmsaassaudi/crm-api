@@ -250,7 +250,7 @@ export class LivechatGateway
       widgetId: client.data.widgetId,
       text: data.text,
       timestamp: data.timestamp ?? new Date().toISOString(),
-      visitorName: client.data.visitorName || 'Visitor',
+      visitorName: client.data.visitorName ?? 'Visitor',
       metadata: {
         ...(data.metadata ?? {}),
         // Pass all identity data from pre-chat form (dynamic fields)
@@ -309,7 +309,7 @@ export class LivechatGateway
       fileSize: data.fileSize ?? 0,
       base64: data.base64,
       timestamp: data.timestamp ?? new Date().toISOString(),
-      visitorName: client.data.visitorName || 'Visitor',
+      visitorName: client.data.visitorName ?? 'Visitor',
     });
   }
 

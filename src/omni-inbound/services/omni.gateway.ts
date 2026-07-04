@@ -10,8 +10,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Inject, Logger, OnModuleInit } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import { OnEvent } from '@nestjs/event-emitter';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { AgentPresenceService } from './agent-presence.service';
 import { AgentPresenceGateway } from './agent-presence.gateway';
 import { AgentFallbackService } from './agent-fallback.service';

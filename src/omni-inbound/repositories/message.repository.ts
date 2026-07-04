@@ -96,7 +96,7 @@ export class MessageRepository {
     ]);
 
     // Reverse so oldest first for display
-    const reversed = items.reverse();
+    const reversed = [...items].reverse();
     const mappedItems = reversed.map((doc) =>
       OmniMessageMapper.toDomain(doc as any),
     );
@@ -124,7 +124,7 @@ export class MessageRepository {
       .exec();
 
     // Reverse so oldest first for display
-    const reversed = items.reverse();
+    const reversed = [...items].reverse();
     const data = reversed.map((doc) => OmniMessageMapper.toDomain(doc as any));
 
     return { data };
@@ -267,7 +267,8 @@ export class MessageRepository {
 
     const hasMore = docs.length > safeLimit;
     const trimmed = hasMore ? docs.slice(0, safeLimit) : docs;
-    const ordered = params.direction === 'past' ? trimmed.reverse() : trimmed;
+    const ordered =
+      params.direction === 'past' ? [...trimmed].reverse() : trimmed;
     const data = ordered.map((doc) => OmniMessageMapper.toDomain(doc));
 
     const edge =

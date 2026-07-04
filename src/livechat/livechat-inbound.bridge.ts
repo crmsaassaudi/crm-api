@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { LivechatGateway } from './livechat.gateway';
 import { VisitorUploadService } from './visitor-upload.service';
 import { ContactEnrichmentService } from './contact-enrichment.service';

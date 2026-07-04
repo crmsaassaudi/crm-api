@@ -240,7 +240,7 @@ export class DealsService {
     const filter: any = { dealId: dealId, deletedAt: null };
     if (tenantId) {
       try {
-        filter.tenantId = new Types.ObjectId(tenantId);
+        filter.tenantId = new Types.ObjectId(String(tenantId));
       } catch {
         filter.tenantId = tenantId;
       }

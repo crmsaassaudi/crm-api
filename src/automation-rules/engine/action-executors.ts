@@ -836,13 +836,16 @@ export class CreateTaskExecutor implements ActionExecutor {
       { fallbackMap: { firstName: 'Customer', Name: 'Customer' } },
     );
 
-    const dueDateRaw = actionConfig.dueDateOffsetDays
-      ? new Date(
-          Date.now() + Number(actionConfig.dueDateOffsetDays) * 86_400_000,
-        )
-      : actionConfig.dueDate
-        ? new Date(actionConfig.dueDate)
-        : new Date(Date.now() + 86_400_000); // default: tomorrow
+    let dueDateRaw: Date;
+    if (actionConfig.dueDateOffsetDays) {
+      dueDateRaw = new Date(
+        Date.now() + Number(actionConfig.dueDateOffsetDays) * 86_400_000,
+      );
+    } else if (actionConfig.dueDate) {
+      dueDateRaw = new Date(actionConfig.dueDate);
+    } else {
+      dueDateRaw = new Date(Date.now() + 86_400_000); // default: tomorrow
+    }
 
     this.logger.log(
       `[CreateTask] tenant=${tenantId} title="${title}" dueDate=${dueDateRaw.toISOString()} triggeredBy=${recordType}(${recordId})`,
@@ -1046,7 +1049,7 @@ export class AddTagExecutor implements ActionExecutor {
         error: {
           code: 'ADD_TAG_FAILED',
           message:
-            result.error || `Failed to add tags to ${recordType}(${recordId})`,
+            result.error ?? `Failed to add tags to ${recordType}(${recordId})`,
         },
       };
     }

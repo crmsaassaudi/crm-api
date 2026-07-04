@@ -216,7 +216,7 @@ export class LivechatVisitorBridge {
 
       if (!visitorId) return;
 
-      await this.livechatGateway.sendToVisitor(visitorId, {
+      this.livechatGateway.sendToVisitor(visitorId, {
         type: 'text',
         content: '__conversation_ended__',
       });

@@ -65,9 +65,62 @@ export class EmailSendController {
       throw new BadRequestException('configId, to, and subject are required');
     }
 
-    // 1. Resolve SMTP transport by configId (same as SendEmailExecutor)
-    const transportConfig = await this.transportPool.resolveWithTenantGuard(
+    // 1. Resolve SMTP transport by configId
+    const transportConfig = await this.resolveSmtpTransport(
       dto.configId,
+      tenantId,
+    );
+
+    const { user, password } = transportConfig.credentials;
+    const { host, port, fromEmail, fromName } = transportConfig.publicSettings;
+    const numPort = Number(port);
+
+    // 2. Throttle check
+    await this.checkSendThrottle(tenantId, dto, host);
+
+    // 3. Send email
+    const generatedMessageId = new Types.ObjectId();
+    const from = `"${fromName || 'CRM'}" <${fromEmail || user}>`;
+
+    try {
+      const result = await this.dispatchEmail({
+        host,
+        numPort,
+        user,
+        password,
+        from,
+        dto,
+        generatedMessageId,
+      });
+
+      this.logger.log(
+        `[EmailSend] ✅ Sent to=${dto.to.join(',')} subject="${dto.subject}" messageId=${result.messageId}`,
+      );
+
+      // 4. Persist tracking records
+      await this.persistEmailRecords({
+        tenantId,
+        dto,
+        generatedMessageId,
+        fromEmail: fromEmail || user,
+        rfc822MessageId: result.messageId,
+      });
+
+      return {
+        ok: true,
+        messageId: result.messageId,
+        generatedMessageId: generatedMessageId.toString(),
+      };
+    } catch (error: any) {
+      this.logger.error(`[EmailSend] ❌ Failed: ${error.message}`, error.stack);
+      throw new BadRequestException(`Failed to send email: ${error.message}`);
+    }
+  }
+
+  /** Resolve and validate SMTP transport config for the given channel. */
+  private async resolveSmtpTransport(configId: string, tenantId: string) {
+    const transportConfig = await this.transportPool.resolveWithTenantGuard(
+      configId,
       tenantId,
     );
 
@@ -77,11 +130,15 @@ export class EmailSendController {
       );
     }
 
-    const { user, password } = transportConfig.credentials;
-    const { host, port, fromEmail, fromName } = transportConfig.publicSettings;
-    const numPort = Number(port);
+    return transportConfig;
+  }
 
-    // 2. Throttle check
+  /** Check outbound throttle limits before sending. */
+  private async checkSendThrottle(
+    tenantId: string,
+    dto: SendEmailDto,
+    host: string,
+  ): Promise<void> {
     const recipients = [
       ...(dto.to || []),
       ...(dto.cc || []),
@@ -98,72 +155,71 @@ export class EmailSendController {
         throttleResult.reason || 'Send rate limited',
       );
     }
+  }
 
-    // 3. Create Nodemailer transporter
+  /** Create Nodemailer transport and dispatch the email. */
+  private async dispatchEmail(params: {
+    host: string;
+    numPort: number;
+    user: string;
+    password: string;
+    from: string;
+    dto: SendEmailDto;
+    generatedMessageId: Types.ObjectId;
+  }) {
     const transporter = nodemailer.createTransport({
-      host,
-      port: numPort,
-      secure: numPort === 465,
-      auth: { user, pass: password },
+      host: params.host,
+      port: params.numPort,
+      secure: params.numPort === 465,
+      auth: { user: params.user, pass: params.password },
       tls: { rejectUnauthorized: process.env.NODE_ENV === 'production' },
     });
 
-    // 4. Build and send email
-    const from = `"${fromName || 'CRM'}" <${fromEmail || user}>`;
-    const generatedMessageId = new Types.ObjectId();
+    return transporter.sendMail({
+      from: params.from,
+      to: params.dto.to,
+      cc: params.dto.cc || [],
+      bcc: params.dto.bcc || [],
+      subject: params.dto.subject,
+      html: params.dto.htmlBody,
+      messageId: `<${params.generatedMessageId}@crm.local>`,
+    });
+  }
 
-    try {
-      const result = await transporter.sendMail({
-        from,
-        to: dto.to,
-        cc: dto.cc || [],
-        bcc: dto.bcc || [],
-        subject: dto.subject,
-        html: dto.htmlBody,
-        messageId: `<${generatedMessageId}@crm.local>`,
-      });
+  /** Persist email content and metadata for tracking and thread correlation. */
+  private async persistEmailRecords(params: {
+    tenantId: string;
+    dto: SendEmailDto;
+    generatedMessageId: Types.ObjectId;
+    fromEmail: string;
+    rfc822MessageId: string | false;
+  }): Promise<void> {
+    await this.emailContentModel.create({
+      tenantId: params.tenantId,
+      messageId: params.generatedMessageId,
+      contactIds: params.dto.contactId ? [params.dto.contactId] : [],
+      subject: params.dto.subject,
+      htmlBody: params.dto.htmlBody || '',
+      textBody: '',
+      attachments: [],
+      from: params.fromEmail,
+      to: params.dto.to,
+      cc: params.dto.cc || [],
+      rfc822MessageId: params.rfc822MessageId || null,
+    });
 
-      this.logger.log(
-        `[EmailSend] ✅ Sent to=${dto.to.join(',')} subject="${dto.subject}" messageId=${result.messageId}`,
-      );
-
-      // 5. Persist to email_contents for tracking (searchable)
-      await this.emailContentModel.create({
-        tenantId,
-        messageId: generatedMessageId,
-        contactIds: dto.contactId ? [dto.contactId] : [],
-        subject: dto.subject,
-        htmlBody: dto.htmlBody || '',
-        textBody: '',
-        attachments: [],
-        from: fromEmail || user,
-        to: dto.to,
-        cc: dto.cc || [],
-        rfc822MessageId: result.messageId || null,
-      });
-
-      // 6. Persist metadata for thread tracking
-      await this.emailMetadataModel.create({
-        tenantId,
-        mailboxId: dto.configId,
-        messageId: generatedMessageId,
-        emailMessageId: result.messageId || `<${generatedMessageId}@crm.local>`,
-        from: fromEmail || user,
-        to: dto.to,
-        cc: dto.cc || [],
-        bcc: dto.bcc || [],
-        crmFolder: 'sent',
-        deliveryStatus: 'sent',
-      });
-
-      return {
-        ok: true,
-        messageId: result.messageId,
-        generatedMessageId: generatedMessageId.toString(),
-      };
-    } catch (error: any) {
-      this.logger.error(`[EmailSend] ❌ Failed: ${error.message}`, error.stack);
-      throw new BadRequestException(`Failed to send email: ${error.message}`);
-    }
+    await this.emailMetadataModel.create({
+      tenantId: params.tenantId,
+      mailboxId: params.dto.configId,
+      messageId: params.generatedMessageId,
+      emailMessageId:
+        params.rfc822MessageId || `<${params.generatedMessageId}@crm.local>`,
+      from: params.fromEmail,
+      to: params.dto.to,
+      cc: params.dto.cc || [],
+      bcc: params.dto.bcc || [],
+      crmFolder: 'sent',
+      deliveryStatus: 'sent',
+    });
   }
 }

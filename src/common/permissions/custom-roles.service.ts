@@ -88,7 +88,7 @@ export class CustomRolesService {
     for (const [resource, actions] of Object.entries(PERMISSION_REGISTRY)) {
       matrix[resource] = Object.entries(actions)
         .filter(([, key]) => Boolean(key))
-        .map(([action, key]) => ({ action, key: key as string }));
+        .map(([action, key]) => ({ action, key }));
     }
 
     return {

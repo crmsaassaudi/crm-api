@@ -240,7 +240,7 @@ export class LeadScoringService {
       actual = contact[field];
     }
 
-    return this.applyOperator(operator as ScoringOperator, actual, value);
+    return this.applyOperator(operator, actual, value);
   }
 
   private applyOperator(

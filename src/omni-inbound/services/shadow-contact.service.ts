@@ -109,7 +109,7 @@ export class ShadowContactService {
       if (identityConfig.autoMergeShadowContact) {
         const phone = payload.metadata?.phone;
         const email =
-          payload.metadata?.email ||
+          payload.metadata?.email ??
           (payload.channelType === 'email' ? payload.senderId : undefined);
 
         if (phone || email) {

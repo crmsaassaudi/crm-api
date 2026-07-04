@@ -166,14 +166,16 @@ export class TelegramAdapter implements ChannelAdapter {
         const blob = new Blob([new Uint8Array(media.buffer)], {
           type: media.mimeType,
         });
-        const fileKey =
-          method === 'sendPhoto'
-            ? 'photo'
-            : method === 'sendAudio'
-              ? 'audio'
-              : method === 'sendVideo'
-                ? 'video'
-                : 'document';
+        let fileKey: string;
+        if (method === 'sendPhoto') {
+          fileKey = 'photo';
+        } else if (method === 'sendAudio') {
+          fileKey = 'audio';
+        } else if (method === 'sendVideo') {
+          fileKey = 'video';
+        } else {
+          fileKey = 'document';
+        }
         form.append(fileKey, blob, media.fileName || 'file');
       }
 

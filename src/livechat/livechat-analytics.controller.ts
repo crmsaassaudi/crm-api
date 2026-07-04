@@ -48,7 +48,7 @@ export class LivechatAnalyticsController {
     if (!config) return; // Invalid widget — silently ignore
 
     // Extract domain from origin
-    const origin = req.headers?.origin || req.headers?.referer;
+    const origin = req.headers?.origin ?? req.headers?.referer;
     let domain: string | undefined;
     try {
       domain = new URL(origin).hostname;
@@ -57,7 +57,7 @@ export class LivechatAnalyticsController {
     }
 
     const isMobile = /Mobile|Android|iPhone/i.test(
-      req.headers?.['user-agent'] || '',
+      req.headers?.['user-agent'] ?? '',
     );
 
     await this.eventRepo.track({
@@ -96,7 +96,7 @@ export class LivechatAnalyticsController {
     const config = await this.widgetService.getPublicConfig(body.widgetId);
     if (!config) return;
 
-    const origin = req.headers?.origin || req.headers?.referer;
+    const origin = req.headers?.origin ?? req.headers?.referer;
     let domain: string | undefined;
     try {
       domain = new URL(origin).hostname;
@@ -104,7 +104,7 @@ export class LivechatAnalyticsController {
       /* ignore */
     }
     const isMobile = /Mobile|Android|iPhone/i.test(
-      req.headers?.['user-agent'] || '',
+      req.headers?.['user-agent'] ?? '',
     );
 
     await this.eventRepo.trackBatch(
@@ -129,7 +129,7 @@ export class LivechatAnalyticsController {
     @Param('widgetId') widgetId: string,
     @Query('days') days?: string,
   ) {
-    const d = parseInt(days || '30', 10);
+    const d = parseInt(days ?? '30', 10);
     const to = new Date();
     const from = new Date(to.getTime() - d * 24 * 60 * 60 * 1000);
 

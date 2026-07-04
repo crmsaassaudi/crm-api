@@ -356,39 +356,40 @@ export class AccountsService {
       this.importJobModel.countDocuments(filter).exec(),
     ]);
 
-    // For active/queued jobs, enrich with real-time BullMQ progress
     for (const doc of data) {
-      if (doc.status === 'active' || doc.status === 'queued') {
-        try {
-          const bullJob = await this.importQueue.getJob(doc.bullJobId);
-          if (bullJob) {
-            const state = await bullJob.getState();
-            (doc as any).status = state;
-            if (bullJob.progress && typeof bullJob.progress === 'object') {
-              (doc as any).progress = bullJob.progress;
-            }
-          }
-        } catch {
-          // BullMQ job may have been cleaned up — keep MongoDB status
-        }
-      }
-      // Extract populated user object
-      if (
-        (doc as any).userId &&
-        typeof (doc as any).userId === 'object' &&
-        (doc as any).userId.firstName
-      ) {
-        (doc as any).user = {
-          firstName: (doc as any).userId.firstName,
-          lastName: (doc as any).userId.lastName,
-          email: (doc as any).userId.email,
-          avatar: (doc as any).userId.avatar,
-        };
-        (doc as any).userId = String((doc as any).userId._id);
-      }
+      await this.enrichJobWithBullMQProgress(doc);
+      this.extractPopulatedUser(doc);
     }
 
     return { data, total, page, limit };
+  }
+
+  /** Enrich active/queued jobs with real-time BullMQ progress. */
+  private async enrichJobWithBullMQProgress(doc: any): Promise<void> {
+    if (doc.status !== 'active' && doc.status !== 'queued') return;
+    try {
+      const bullJob = await this.importQueue.getJob(doc.bullJobId);
+      if (!bullJob) return;
+      doc.status = await bullJob.getState();
+      if (bullJob.progress && typeof bullJob.progress === 'object') {
+        doc.progress = bullJob.progress;
+      }
+    } catch {
+      // BullMQ job may have been cleaned up — keep MongoDB status
+    }
+  }
+
+  /** Extract populated user object from Mongoose populate result. */
+  private extractPopulatedUser(doc: any): void {
+    if (doc.userId && typeof doc.userId === 'object' && doc.userId.firstName) {
+      doc.user = {
+        firstName: doc.userId.firstName,
+        lastName: doc.userId.lastName,
+        email: doc.userId.email,
+        avatar: doc.userId.avatar,
+      };
+      doc.userId = String(doc.userId._id);
+    }
   }
 
   async getImportJobDetail(id: string) {

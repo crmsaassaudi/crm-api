@@ -441,16 +441,16 @@ export class LivechatEmbedController {
     @Param('channelId') channelId: string,
     @Query('visitorId') visitorId: string,
     @Query('tenantId') tenantId: string,
-    @Query('limit') limitStr = '30',
     @Req() req: any,
     @Res() res: Response,
+    @Query('limit') limitStr?: string,
     @Query('after') afterStr?: string,
   ) {
     if (!visitorId || !tenantId) {
       throw new BadRequestException('visitorId and tenantId are required');
     }
 
-    const limit = Math.min(parseInt(limitStr, 10) || 30, 50);
+    const limit = Math.min(parseInt(limitStr ?? '30', 10) || 30, 50);
 
     // CORS — widget is embedded on external websites
     const origin = req.headers?.origin || req.headers?.referer;

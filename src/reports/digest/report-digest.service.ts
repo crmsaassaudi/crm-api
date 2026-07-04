@@ -140,9 +140,7 @@ export class ReportDigestService {
     kpi: WeeklyKpi,
   ): Promise<void> {
     const appName =
-      (this.config.get('app.name' as any, { infer: true }) as
-        | string
-        | undefined) ?? 'CRM';
+      this.config.get('app.name' as any, { infer: true }) ?? 'CRM';
 
     const html = this.buildHtml(kpi, appName);
 
