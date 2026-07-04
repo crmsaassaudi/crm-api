@@ -18,8 +18,15 @@ import {
 } from '../infrastructure/persistence/document/entities/outbox-event.schema';
 
 import { RedisModule } from '../../redis/redis.module';
+import { RedisLockService } from '../../redis/redis-lock.service';
 import { OmniOutboundModule } from '../../omni-outbound/omni-outbound.module';
 import { isWorkerRuntime, isOmniRuntime } from '../../config/runtime-role';
+
+// Lazy import to break circular dependency:
+// ConversationOpsModule ← OmniInboundModule ← ConversationOpsModule
+const OmniInboundModuleRef = () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('../omni-inbound.module').OmniInboundModule;
 
 /**
  * ConversationOpsModule — Conversation Aggregate infrastructure.
@@ -37,6 +44,9 @@ import { isWorkerRuntime, isOmniRuntime } from '../../config/runtime-role';
   imports: [
     RedisModule,
     forwardRef(() => OmniOutboundModule),
+    // Break circular dep: OmniInboundModule provides ConversationRepository,
+    // MessageRepository, AgentPresenceService, AssignmentService, etc.
+    forwardRef(OmniInboundModuleRef),
     ScheduleModule.forRoot(),
     BullModule.registerQueue(
       {
@@ -68,6 +78,7 @@ import { isWorkerRuntime, isOmniRuntime } from '../../config/runtime-role';
     ]),
   ],
   providers: [
+    RedisLockService,
     ConversationCommandService,
     // Processor is always registered — API runtime uses executeInline(),
     // Worker runtime additionally processes BullMQ jobs via @Processor decorator
@@ -78,3 +89,4 @@ import { isWorkerRuntime, isOmniRuntime } from '../../config/runtime-role';
   exports: [ConversationCommandService, BullModule],
 })
 export class ConversationOpsModule {}
+
