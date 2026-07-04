@@ -115,8 +115,8 @@ export class OutboundMediaHandler {
       if (!response.ok) throw new Error('Failed to download file from S3');
       mediaBuffer = Buffer.from(await response.arrayBuffer());
       media.mimeType =
-        media.mimeType || file.mimeType || 'application/octet-stream';
-      media.fileName = media.fileName || file.fileName || 'file';
+        media.mimeType ?? file.mimeType ?? 'application/octet-stream';
+      media.fileName = media.fileName ?? file.fileName ?? 'file';
       media.size = mediaBuffer.length;
     } else if (media.buffer) {
       mediaBuffer = media.buffer;
@@ -211,22 +211,7 @@ export class OutboundMediaHandler {
 
       if (adapter?.sendMedia) {
         // Resolve public URL if needed (e.g. for Instagram)
-        let resolvedUrl = media.url;
-        if (
-          !resolvedUrl &&
-          (channelKey === 'instagram' || channelKey === 'zalo')
-        ) {
-          if (media.fileId) {
-            const file = await this.filesService.findById(media.fileId);
-            if (file) {
-              resolvedUrl = await this.filesService.getPresignedDownloadUrl(
-                file.path,
-                3600,
-              );
-            }
-          }
-        }
-
+        const resolvedUrl = await this.resolvePublicUrl(media, channelKey);
         const sendMediaPayload: OutboundMedia = {
           ...media,
           buffer: sendBuffer,
@@ -245,30 +230,17 @@ export class OutboundMediaHandler {
         );
         externalId = result.externalMessageId;
         if (!result.success) {
-          throw new Error(result.error || 'Adapter sendMedia failed');
+          throw new Error(result.error ?? 'Adapter sendMedia failed');
         }
       } else if (adapter) {
-        const downloadUrl = media.fileId
-          ? await this.filesService.getPresignedDownloadUrl(
-              media.storageKey || '',
-              3600,
-            )
-          : '';
-        const fallbackContent =
-          caption ||
-          `📎 ${media.fileName}${downloadUrl ? '\n' + downloadUrl : ''}`;
-        const adapterResponse = await adapter.send(
-          conversation.customer.externalId,
-          fallbackContent,
-          'text',
-          {
-            credentials: channel.credentials,
-            account: channel.account,
-            messageId: message.id,
-          },
+        externalId = await this.sendViaFallbackAdapter(
+          adapter,
+          conversation,
+          media,
+          caption,
+          message.id,
+          channel,
         );
-        externalId =
-          (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
       }
 
       await this.messageRepo.updateStatus(message.id, 'sent', externalId);
@@ -526,10 +498,10 @@ export class OutboundMediaHandler {
           },
         );
         if (!result.success)
-          throw new Error(result.error || 'Adapter sendMedia failed');
+          throw new Error(result.error ?? 'Adapter sendMedia failed');
         externalId = result.externalMessageId;
       } else if (adapter) {
-        const resp = await adapter.send(
+        const adapterResponse = await adapter.send(
           conversation.customer.externalId,
           caption ? `${caption}\n[media]` : `📎 ${fileName}`,
           'text',
@@ -539,7 +511,7 @@ export class OutboundMediaHandler {
             messageId: message.id,
           },
         );
-        externalId = resp?.message_id || resp?.id;
+        externalId = adapterResponse?.message_id ?? adapterResponse?.id;
       }
 
       await this.messageRepo.updateStatus(message.id, 'sent', externalId);
@@ -566,6 +538,56 @@ export class OutboundMediaHandler {
       await this.messageRepo.updateStatus(message.id, 'failed');
       throw error;
     }
+  }
+
+  // ── Private Helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Resolve a public URL for channels that require one (Instagram, Zalo).
+   * Returns the existing URL if already set, otherwise generates a presigned S3 URL.
+   */
+  private async resolvePublicUrl(
+    media: OutboundMedia,
+    channelKey: ChannelType,
+  ): Promise<string | undefined> {
+    if (media.url) return media.url;
+    if (channelKey !== 'instagram' && channelKey !== 'zalo') return undefined;
+    if (!media.fileId) return undefined;
+    const file = await this.filesService.findById(media.fileId);
+    if (!file) return undefined;
+    return this.filesService.getPresignedDownloadUrl(file.path, 3600);
+  }
+
+  /**
+   * Send media via text-only adapter fallback (attach download link in content).
+   */
+  private async sendViaFallbackAdapter(
+    adapter: ChannelAdapter,
+    conversation: any,
+    media: OutboundMedia,
+    caption: string,
+    messageId: string,
+    channel: any,
+  ): Promise<string | undefined> {
+    const downloadUrl = media.fileId
+      ? await this.filesService.getPresignedDownloadUrl(
+          media.storageKey ?? '',
+          3600,
+        )
+      : '';
+    const fallbackContent =
+      caption || `📎 ${media.fileName}${downloadUrl ? '\n' + downloadUrl : ''}`;
+    const adapterResponse = await adapter.send(
+      conversation.customer.externalId,
+      fallbackContent,
+      'text',
+      {
+        credentials: channel.credentials,
+        account: channel.account,
+        messageId,
+      },
+    );
+    return adapterResponse?.message_id ?? adapterResponse?.id;
   }
 
   // ── Shared Helpers ──────────────────────────────────────────────────────

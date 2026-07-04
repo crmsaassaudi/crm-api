@@ -95,7 +95,15 @@ export class EnvCryptoService implements ICryptoService, OnModuleInit {
     const iv = Buffer.from(ivB64, 'base64');
     const authTag = Buffer.from(authTagB64, 'base64');
 
-    const decipher = createDecipheriv('aes-256-gcm', this.key, iv);
+    // SECURITY: Enforce 128-bit auth tag to prevent GCM tag truncation attacks
+    if (authTag.length !== 16) {
+      throw new Error(
+        'Invalid GCM authentication tag length — expected 16 bytes (128-bit)',
+      );
+    }
+    const decipher = createDecipheriv('aes-256-gcm', this.key, iv, {
+      authTagLength: 16,
+    });
     decipher.setAuthTag(authTag);
 
     let decrypted = decipher.update(ciphertext, 'base64', 'utf8');
@@ -229,12 +237,20 @@ export class KmsCryptoService implements ICryptoService, OnModuleInit {
 
     try {
       // 2. Local AES-256-GCM decrypt
+      const kmsAuthTag = Buffer.from(authTagB64, 'base64');
+      // SECURITY: Enforce 128-bit auth tag to prevent GCM tag truncation attacks
+      if (kmsAuthTag.length !== 16) {
+        throw new Error(
+          'Invalid GCM authentication tag length — expected 16 bytes (128-bit)',
+        );
+      }
       const decipher = createDecipheriv(
         'aes-256-gcm',
         dataKeyPlaintext,
         Buffer.from(ivB64, 'base64'),
+        { authTagLength: 16 },
       );
-      decipher.setAuthTag(Buffer.from(authTagB64, 'base64'));
+      decipher.setAuthTag(kmsAuthTag);
 
       let decrypted = decipher.update(ciphertext, 'base64', 'utf8');
       decrypted += decipher.final('utf8');

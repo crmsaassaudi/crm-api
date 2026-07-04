@@ -61,21 +61,11 @@ export class PresenceAlertService {
     };
 
     const now = Date.now();
-    const alerts: AlertPayload[] = [];
-    let onlineCount = 0;
-    let fullCount = 0;
-
-    for (const agent of agents) {
-      if (agent.presenceStatus === 'OFFLINE') continue;
-      onlineCount++;
-      const presenceMinutes = agent.lastCommandTs
-        ? (now - agent.lastCommandTs) / 60_000
-        : 0;
-      alerts.push(
-        ...this.evaluateAgentRules(agent, presenceMinutes, thresholds),
-      );
-      if (agent.capacityStatus === 'FULL') fullCount++;
-    }
+    const { alerts, onlineCount, fullCount } = this.collectAgentAlerts(
+      agents,
+      now,
+      thresholds,
+    );
 
     if (onlineCount > 0 && fullCount === onlineCount) {
       alerts.push({
@@ -94,6 +84,34 @@ export class PresenceAlertService {
         `[${tenantId}] Evaluated ${agents.length} agents → ${alerts.length} alerts`,
       );
     }
+  }
+
+  /**
+   * Iterate over all agents and collect triggered alerts, online count, and
+   * full-capacity count. Extracted from evaluateAll to reduce cognitive complexity.
+   */
+  private collectAgentAlerts(
+    agents: any[],
+    now: number,
+    thresholds: AlertThresholds,
+  ): { alerts: AlertPayload[]; onlineCount: number; fullCount: number } {
+    const alerts: AlertPayload[] = [];
+    let onlineCount = 0;
+    let fullCount = 0;
+
+    for (const agent of agents) {
+      if (agent.presenceStatus === 'OFFLINE') continue;
+      onlineCount++;
+      const presenceMinutes = agent.lastCommandTs
+        ? (now - agent.lastCommandTs) / 60_000
+        : 0;
+      alerts.push(
+        ...this.evaluateAgentRules(agent, presenceMinutes, thresholds),
+      );
+      if (agent.capacityStatus === 'FULL') fullCount++;
+    }
+
+    return { alerts, onlineCount, fullCount };
   }
 
   /**

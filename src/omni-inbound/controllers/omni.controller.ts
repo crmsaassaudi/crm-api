@@ -143,8 +143,8 @@ export class OmniController {
     const entries = await this.auditLogRepo.search(
       tenantId,
       {
-        conversationId: search || undefined,
-        outcome: outcome || undefined,
+        conversationId: search ?? undefined,
+        outcome: outcome ?? undefined,
       },
       Math.min(parseInt(limit, 10), 100),
     );

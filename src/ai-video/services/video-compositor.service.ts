@@ -21,6 +21,14 @@ export class VideoCompositorService {
 
   constructor(private readonly settingsRepository: AiVideoSettingsRepository) {}
 
+  /**
+   * Strip any characters that could be used for path traversal.
+   * Only allows alphanumeric, underscore, and dash.
+   */
+  private sanitizePathSegment(input: string): string {
+    return input.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+  }
+
   async renderVideo(tenantId: string, options: RenderOptions): Promise<string> {
     const settings = await this.settingsRepository.findByTenantId(tenantId);
     // Validate bgmVolume is a finite number in [0, 1] to prevent FFmpeg
@@ -29,15 +37,20 @@ export class VideoCompositorService {
     const bgmVolume = Number.isFinite(rawVolume)
       ? Math.max(0, Math.min(1, rawVolume))
       : 0.15;
-    const tempDir = path.join('/tmp', 'crm-render', tenantId);
+
+    // SECURITY: Sanitize path segments to prevent directory traversal
+    const safeTenantId = this.sanitizePathSegment(tenantId);
+    const safeJobId = this.sanitizePathSegment(options.jobId);
+
+    const tempDir = path.join('/tmp', 'crm-render', safeTenantId);
     fs.mkdirSync(tempDir, { recursive: true });
     fs.mkdirSync(path.join(process.cwd(), 'files'), { recursive: true });
 
-    const voiceAudioPath = path.join(tempDir, `${options.jobId}_voice.mp3`);
+    const voiceAudioPath = path.join(tempDir, `${safeJobId}_voice.mp3`);
     const outputVideoPath = path.join(
       process.cwd(),
       'files',
-      `ai-video-${options.jobId}.mp4`,
+      `ai-video-${safeJobId}.mp4`,
     );
 
     fs.writeFileSync(voiceAudioPath, options.voiceAudioBuffer);

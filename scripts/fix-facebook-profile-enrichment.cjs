@@ -16,9 +16,11 @@ const axios = require('axios');
 // ---------------------------------------------------------------------------
 // Config — update MONGO_URL if needed (or export it as an env var)
 // ---------------------------------------------------------------------------
-const MONGO_URL =
-  process.env.MONGODB_URL ||
-  'mongodb+srv://nguyentoan102002_db_user:Xq0t6ZsieMIelTiz@crm.sfh1nlk.mongodb.net/crm?appName=crm';
+const MONGO_URL = process.env.MONGODB_URL || process.env.DATABASE_URL;
+if (!MONGO_URL) {
+  console.error('❌ MONGODB_URL env var is required. Usage: MONGODB_URL=mongodb+srv://... node scripts/fix-facebook-profile-enrichment.cjs');
+  process.exit(1);
+}
 
 (async () => {
   console.log('Connecting to MongoDB...');

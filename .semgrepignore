@@ -15,6 +15,7 @@ dist/
 # Generated code
 **/database/seeds/**
 **/.hygen/**
+public/widget/
 
 # Config & docs
 *.md

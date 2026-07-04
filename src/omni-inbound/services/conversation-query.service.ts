@@ -3,14 +3,14 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { ConversationRepository } from '../repositories/conversation.repository';
-import { MessageRepository } from '../repositories/message.repository';
-import { TimelineQueryDto } from '../dto/timeline-query.dto';
-import { TimelineResponseDto } from '../dto/timeline-response.dto';
 import {
+  ConversationRepository,
   ThreadIdentity,
   ThreadSessionSlice,
 } from '../repositories/conversation.repository';
+import { MessageRepository } from '../repositories/message.repository';
+import { TimelineQueryDto } from '../dto/timeline-query.dto';
+import { TimelineResponseDto } from '../dto/timeline-response.dto';
 
 /**
  * ConversationQueryService — read-only queries for conversation data.

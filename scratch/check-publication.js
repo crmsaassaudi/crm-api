@@ -1,6 +1,10 @@
 const { MongoClient, ObjectId } = require('mongodb');
 
-const uri = 'mongodb+srv://nguyentoan102002_db_user:Xq0t6ZsieMIelTiz@crm.sfh1nlk.mongodb.net/crm?appName=crm';
+const uri = process.env.DATABASE_URL;
+if (!uri) {
+  console.error('❌ DATABASE_URL env var is required.');
+  process.exit(1);
+}
 
 async function main() {
   const client = new MongoClient(uri);

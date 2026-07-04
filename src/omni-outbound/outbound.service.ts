@@ -1131,7 +1131,8 @@ export class OutboundService {
         `Channel for conversation ${conversationId} not found or disconnected`,
       );
 
-    const contentSummary = `${body}\n${buttons.map((b) => `• ${b.title}`).join('\n')}`;
+    const buttonList = buttons.map((b) => `• ${b.title}`).join('\n');
+    const contentSummary = `${body}\n${buttonList}`;
 
     const message = await this.messageRepo.create({
       tenantId,
@@ -1173,38 +1174,17 @@ export class OutboundService {
         conversation.channelType.toLowerCase() as ChannelType,
       );
       if (adapter) {
-        if (adapter.sendInteractive) {
-          adapterResponse = await adapter.sendInteractive(
-            conversation.customer.externalId,
-            body,
-            buttons.map((b) => ({
-              id: b.id || b.title,
-              title: b.title,
-            })),
-            {
-              credentials: channel.credentials,
-              account: channel.account,
-              messageId: message.id,
-            },
-          );
-        } else {
-          // Fallback: numbered text
-          const fallback = `${body}\n\n${buttons.map((b, i) => `${i + 1}. ${b.title}`).join('\n')}`;
-          adapterResponse = await adapter.send(
-            conversation.customer.externalId,
-            fallback,
-            'text',
-            {
-              credentials: channel.credentials,
-              account: channel.account,
-              messageId: message.id,
-            },
-          );
-        }
+        adapterResponse = await this.dispatchInteractiveToProvider(
+          conversation,
+          channel,
+          message,
+          body,
+          buttons,
+          adapter,
+        );
       }
 
-      const externalId =
-        (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
+      const externalId = adapterResponse?.message_id || adapterResponse?.id;
       await this.messageRepo.updateStatus(message.id, 'sent', externalId);
 
       this.eventEmitter.emit('omni.message.sent', {
@@ -1316,7 +1296,7 @@ export class OutboundService {
       );
 
     const contentSummary =
-      content || cards.map((c) => c.title).join(' | ') || 'Carousel';
+      content ?? cards.map((c) => c.title).join(' | ') ?? 'Carousel';
 
     const message = await this.messageRepo.create({
       tenantId,
@@ -1358,41 +1338,17 @@ export class OutboundService {
         conversation.channelType.toLowerCase() as ChannelType,
       );
       if (adapter) {
-        if (adapter.sendCarousel) {
-          adapterResponse = await adapter.sendCarousel(
-            conversation.customer.externalId,
-            content,
-            cards,
-            {
-              credentials: channel.credentials,
-              account: channel.account,
-              messageId: message.id,
-            },
-          );
-        } else {
-          // Fallback: formatted text listing each card
-          const lines = cards.map(
-            (c, i) =>
-              `[${i + 1}] ${c.title ?? ''}${c.subtitle ? ` — ${c.subtitle}` : ''}`,
-          );
-          const fallback = content
-            ? `${content}\n\n${lines.join('\n')}`
-            : lines.join('\n');
-          adapterResponse = await adapter.send(
-            conversation.customer.externalId,
-            fallback,
-            'text',
-            {
-              credentials: channel.credentials,
-              account: channel.account,
-              messageId: message.id,
-            },
-          );
-        }
+        adapterResponse = await this.dispatchCarouselToProvider(
+          conversation,
+          channel,
+          message,
+          content,
+          cards,
+          adapter,
+        );
       }
 
-      const externalId =
-        (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
+      const externalId = adapterResponse?.message_id || adapterResponse?.id;
       await this.messageRepo.updateStatus(message.id, 'sent', externalId);
 
       this.eventEmitter.emit('omni.message.sent', {
@@ -1459,8 +1415,90 @@ export class OutboundService {
     }
   }
 
-  /**
-   * Send an email reply from the Agent to the Customer.
+  /** Dispatch an interactive button message via the channel adapter. */
+  // eslint-disable-next-line @typescript-eslint/require-await
+  private async dispatchInteractiveToProvider(
+    conversation: any,
+    channel: any,
+    message: any,
+    body: string,
+    buttons: Array<{ id?: string; title: string; type?: string; url?: string }>,
+    adapter: any,
+  ): Promise<any> {
+    if (adapter.sendInteractive) {
+      return adapter.sendInteractive(
+        conversation.customer.externalId,
+        body,
+        buttons.map((b) => ({
+          id: b.id ?? b.title,
+          title: b.title,
+        })),
+        {
+          credentials: channel.credentials,
+          account: channel.account,
+          messageId: message.id,
+        },
+      );
+    }
+    // Fallback: numbered text
+    const numberedButtons = buttons
+      .map((b, i) => `${i + 1}. ${b.title}`)
+      .join('\n');
+    const fallback = `${body}\n\n${numberedButtons}`;
+    return adapter.send(conversation.customer.externalId, fallback, 'text', {
+      credentials: channel.credentials,
+      account: channel.account,
+      messageId: message.id,
+    });
+  }
+
+  /** Dispatch a carousel message via the channel adapter. */
+  // eslint-disable-next-line @typescript-eslint/require-await
+  private async dispatchCarouselToProvider(
+    conversation: any,
+    channel: any,
+    message: any,
+    content: string | undefined,
+    cards: Array<{
+      title?: string;
+      subtitle?: string;
+      imageUrl?: string;
+      buttons?: Array<{
+        id?: string;
+        title: string;
+        type?: string;
+        url?: string;
+      }>;
+    }>,
+    adapter: any,
+  ): Promise<any> {
+    if (adapter.sendCarousel) {
+      return adapter.sendCarousel(
+        conversation.customer.externalId,
+        content,
+        cards,
+        {
+          credentials: channel.credentials,
+          account: channel.account,
+          messageId: message.id,
+        },
+      );
+    }
+    // Fallback: formatted text listing each card
+    const lines = cards.map((c, i) => {
+      const subtitle = c.subtitle ? ` \u2014 ${c.subtitle}` : '';
+      return `[${i + 1}] ${c.title ?? ''}${subtitle}`;
+    });
+    const fallback = content
+      ? `${content}\n\n${lines.join('\n')}`
+      : lines.join('\n');
+    return adapter.send(conversation.customer.externalId, fallback, 'text', {
+      credentials: channel.credentials,
+      account: channel.account,
+      messageId: message.id,
+    });
+  }
+
   /**
    * Send an email reply. T-041: Delegated to OutboundEmailHandler.
    */

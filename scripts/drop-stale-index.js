@@ -8,9 +8,11 @@
  */
 const { MongoClient } = require('mongodb');
 
-const uri =
-  process.env.DATABASE_URL ||
-  'mongodb+srv://nguyentoan102002_db_user:Xq0t6ZsieMIelTiz@crm.sfh1nlk.mongodb.net/crm?appName=crm';
+const uri = process.env.DATABASE_URL;
+if (!uri) {
+  console.error('❌ DATABASE_URL env var is required. Usage: DATABASE_URL=mongodb+srv://... node scripts/drop-stale-index.js');
+  process.exit(1);
+}
 
 const STALE_INDEXES = ['tenant_1_shortcut_1', 'tenant_1'];
 const COLLECTION = 'canned_responses';

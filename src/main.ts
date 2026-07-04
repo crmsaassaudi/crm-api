@@ -60,8 +60,21 @@ async function setupWebSocket(app: NestExpressApplication) {
 }
 
 function setupSecurityHeaders(app: INestApplication) {
-  const helmetMiddleware = helmet({ contentSecurityPolicy: false });
+  const helmetMiddleware = helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        connectSrc: ["'self'", 'wss:', 'https:'],
+        fontSrc: ["'self'", 'https:', 'data:'],
+        frameSrc: ["'self'"],
+      },
+    },
+  });
   app.use((req: any, res: any, next: any) => {
+    // Widget/preview routes embed third-party content; skip CSP for them
     if (req.url?.includes('/livechat/preview/')) {
       return next();
     }
@@ -115,7 +128,8 @@ function setupGlobalCors(
       if (allowedFrontendOrigins?.some((d) => origin.includes(d))) {
         return callback(null, true);
       }
-      return callback(null, origin);
+      // SECURITY: Reject non-allowlisted origins in production
+      return callback(new Error(`Origin ${origin} not allowed by CORS`));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

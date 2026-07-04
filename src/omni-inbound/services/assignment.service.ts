@@ -412,35 +412,13 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     const channelOverride = options.channelAutoAssignOverride;
     this.logger.debug(`channelOverride=${channelOverride ?? 'undefined'}`);
 
-    if (channelOverride === true) {
-      // Channel explicitly enabled — proceed regardless of global setting
-      this.logger.debug(`Channel override=true → bypassing global toggle`);
-    } else if (channelOverride === undefined) {
-      // Channel did not set — check global toggle
-      this.logger.debug(
-        `Channel override=undefined → checking global toggle: autoAssignmentEnabled=${routingConfig.autoAssignmentEnabled}`,
-      );
-      if (routingConfig.autoAssignmentEnabled === false) {
-        this.logger.log(
-          `Auto-assignment globally disabled for tenant ${tenantId} ` +
-            `and channel did not override — conversation ${conversationId} queued`,
-        );
-        await this.writeAuditLog({
-          tenantId,
-          conversationId,
-          assignedAgentId: null,
-          strategy: 'manual',
-          reason:
-            'Auto-assignment globally disabled (omni_routing.autoAssignmentEnabled = false) ' +
-            'and channel did not override',
-          reasonKey: 'autoAssignDisabled',
-          metadata: { channelOverride: 'undefined', globalEnabled: false },
-          outcome: 'queued',
-        });
-        return null;
-      }
-      this.logger.debug(`Global auto-assign enabled → proceeding`);
-    }
+    const eligibilityResult = await this.checkAutoAssignEligibility(
+      tenantId,
+      conversationId,
+      channelOverride,
+      routingConfig,
+    );
+    if (eligibilityResult === 'queued') return null;
     // channelOverride === false is already handled upstream (triggerAutoAssignment)
 
     // ── Evaluate routing rules to override defaults ───────────────────
@@ -647,6 +625,59 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     );
 
     return selectedAgent;
+  }
+
+  /**
+   * Determine whether auto-assignment should proceed based on the
+   * channel-level override and the global toggle.
+   *
+   * Returns `'proceed'` when assignment should continue, or `'queued'` when
+   * the conversation should be placed in the queue without assigning an agent.
+   */
+  private async checkAutoAssignEligibility(
+    tenantId: string,
+    conversationId: string,
+    channelOverride: boolean | undefined,
+    routingConfig: any,
+  ): Promise<'proceed' | 'queued'> {
+    if (channelOverride === true) {
+      // Channel explicitly enabled — bypass global setting
+      this.logger.debug(`Channel override=true → bypassing global toggle`);
+      return 'proceed';
+    }
+
+    if (channelOverride !== undefined) {
+      // channelOverride === false is handled upstream; any other truthy value proceeds
+      return 'proceed';
+    }
+
+    // Channel did not set override — defer to global toggle
+    this.logger.debug(
+      `Channel override=undefined → checking global toggle: autoAssignmentEnabled=${routingConfig.autoAssignmentEnabled}`,
+    );
+
+    if (routingConfig.autoAssignmentEnabled === false) {
+      this.logger.log(
+        `Auto-assignment globally disabled for tenant ${tenantId} ` +
+          `and channel did not override — conversation ${conversationId} queued`,
+      );
+      await this.writeAuditLog({
+        tenantId,
+        conversationId,
+        assignedAgentId: null,
+        strategy: 'manual',
+        reason:
+          'Auto-assignment globally disabled (omni_routing.autoAssignmentEnabled = false) ' +
+          'and channel did not override',
+        reasonKey: 'autoAssignDisabled',
+        metadata: { channelOverride: 'undefined', globalEnabled: false },
+        outcome: 'queued',
+      });
+      return 'queued';
+    }
+
+    this.logger.debug(`Global auto-assign enabled → proceeding`);
+    return 'proceed';
   }
 
   /** Run the strategy switch and return selection result. Returns earlyReturn=true for manual. */
@@ -908,31 +939,14 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(
           `Sticky: agent ${previousAgentId} at capacity (${openChats}/${agentCapacity}) — waiting ${stickyWaitMinutes} min`,
         );
-        try {
-          await this.stickyRetryQueue.add(
-            'sticky-retry',
-            {
-              tenantId,
-              conversationId,
-              stickyAgentId: previousAgentId,
-              fallbackStrategy: resolved.fallbackStrategy,
-            },
-            {
-              jobId: `sticky-retry-${conversationId}`,
-              delay: stickyWaitMinutes * 60_000,
-              removeOnComplete: true,
-              removeOnFail: { count: 100 },
-              attempts: 2,
-              backoff: { type: 'fixed', delay: 5000 },
-            },
-          );
-        } catch (err: any) {
-          this.logger.error(
-            `Failed to schedule sticky retry for ${conversationId}: ${err.message}`,
-          );
-          return null;
-        }
-        return STICKY_WAITING_SENTINEL;
+        const scheduled = await this.scheduleStickyRetry(
+          tenantId,
+          conversationId,
+          previousAgentId,
+          resolved.fallbackStrategy,
+          stickyWaitMinutes,
+        );
+        return scheduled ? STICKY_WAITING_SENTINEL : null;
       }
       this.logger.debug(
         `Sticky: agent ${previousAgentId} at capacity (${openChats}/${agentCapacity}) — falling back`,
@@ -940,6 +954,57 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
+    return this.commitStickyAssignment(
+      tenantId,
+      conversationId,
+      previousAgentId,
+      options,
+      openChats,
+      agentCapacity,
+      lookupSource,
+    );
+  }
+
+  /** Schedule a BullMQ delayed retry for sticky routing. Returns true on success. */
+  private async scheduleStickyRetry(
+    tenantId: string,
+    conversationId: string,
+    stickyAgentId: string,
+    fallbackStrategy: string,
+    stickyWaitMinutes: number,
+  ): Promise<boolean> {
+    try {
+      await this.stickyRetryQueue.add(
+        'sticky-retry',
+        { tenantId, conversationId, stickyAgentId, fallbackStrategy },
+        {
+          jobId: `sticky-retry-${conversationId}`,
+          delay: stickyWaitMinutes * 60_000,
+          removeOnComplete: true,
+          removeOnFail: { count: 100 },
+          attempts: 2,
+          backoff: { type: 'fixed', delay: 5000 },
+        },
+      );
+      return true;
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to schedule sticky retry for ${conversationId}: ${err.message}`,
+      );
+      return false;
+    }
+  }
+
+  /** Commit the sticky assignment to DB and write the audit log. */
+  private async commitStickyAssignment(
+    tenantId: string,
+    conversationId: string,
+    previousAgentId: string,
+    options: AssignmentOptions,
+    openChats: number,
+    agentCapacity: number,
+    lookupSource: string,
+  ): Promise<string | null> {
     const committed = options.allowReassignment
       ? await this.conversationRepo.updateAssignment(
           conversationId,
@@ -1269,9 +1334,11 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     channelType?: string | null;
   }): Promise<void> {
     const { newAgentId, previousAgentId, performedByUserId } = params;
+    const verb = previousAgentId ? 'reassigned' : 'assigned';
+    const actor = performedByUserId ?? 'unknown';
     const reason = newAgentId
-      ? `Agent manually ${previousAgentId ? 'reassigned' : 'assigned'} by user ${performedByUserId ?? 'unknown'}`
-      : `Agent manually unassigned (back to queue) by user ${performedByUserId ?? 'unknown'}`;
+      ? `Agent manually ${verb} by user ${actor}`
+      : `Agent manually unassigned (back to queue) by user ${actor}`;
 
     const isReassign = !!previousAgentId;
     let reasonKey = 'manualUnassigned';

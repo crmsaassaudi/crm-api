@@ -1319,16 +1319,9 @@ export class OmniGateway
           agentName: user.name ?? null,
         });
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : error && typeof error === 'object' && 'message' in error
-              ? (error as any).message
-              : String(error);
-
         client.emit('omni:collision', {
           conversationId: data.conversationId,
-          message,
+          message: this.extractErrorMessage(error),
           lock: (error as any)?.response?.lock,
         });
       }
@@ -1830,5 +1823,14 @@ export class OmniGateway
         .to(`agent:${event.agentId}`)
         .emit('omni:csat:received', payload);
     }
+  }
+
+  /** Resolve any thrown value to a human-readable error string. */
+  private extractErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (error && typeof error === 'object' && 'message' in error) {
+      return String((error as Record<string, unknown>).message);
+    }
+    return String(error);
   }
 }

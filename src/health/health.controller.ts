@@ -239,30 +239,36 @@ export class HealthController {
 
     for (const adapter of HealthController.CHANNEL_ADAPTERS) {
       const metric = allMetrics[adapter];
-      if (metric) {
-        const errorRate =
-          metric.total > 0 ? (metric.failure / metric.total) * 100 : 0;
-        channels[adapter] = {
-          status: errorRate > 50 ? 'degraded' : 'ok',
-          total: metric.total,
-          success: metric.success,
-          failure: metric.failure,
-          errorRate: `${errorRate.toFixed(2)}%`,
-          lastError: metric.lastError ?? null,
-          lastUpdated: metric.lastUpdated ?? null,
-        };
-        if (errorRate > 50) hasError = true;
-      } else {
-        channels[adapter] = {
-          status: 'no_data',
-          detail: 'No API calls recorded since process start',
-        };
-      }
+      const report = this.buildChannelReport(metric);
+      channels[adapter] = report;
+      if (report.status === 'degraded') hasError = true;
     }
 
     return {
       status: hasError ? 'degraded' : 'ok',
       channels,
+    };
+  }
+
+  /** Build a single channel adapter health report from its resilience metric. */
+  private buildChannelReport(metric: any): Record<string, any> {
+    if (!metric) {
+      return {
+        status: 'no_data',
+        detail: 'No API calls recorded since process start',
+      };
+    }
+
+    const errorRate =
+      metric.total > 0 ? (metric.failure / metric.total) * 100 : 0;
+    return {
+      status: errorRate > 50 ? 'degraded' : 'ok',
+      total: metric.total,
+      success: metric.success,
+      failure: metric.failure,
+      errorRate: `${errorRate.toFixed(2)}%`,
+      lastError: metric.lastError ?? null,
+      lastUpdated: metric.lastUpdated ?? null,
     };
   }
 }

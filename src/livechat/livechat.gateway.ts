@@ -138,40 +138,13 @@ export class LivechatGateway
     }
 
     // T-036 Security: Validate tenantId by cross-referencing with channelId.
-    // The client-supplied tenantId is untrusted (public namespace, no JWT).
-    // We look up the channel document and verify ownership to prevent
-    // a malicious visitor from impersonating another tenant.
-    try {
-      const channel = await this.channelRepo.findByIdNoTenant(channelId);
-      if (!channel) {
-        this.logger.warn(
-          `[Security] Channel ${channelId} not found — rejecting visitor ${visitorId}`,
-        );
-        client.emit('error', { message: 'Invalid channel' });
-        client.disconnect(true);
-        return;
-      }
-      if (channel.tenantId?.toString() !== tenantId) {
-        this.logger.warn(
-          `[Security] Tenant mismatch: visitor claimed tenant=${tenantId} but channel ${channelId} belongs to ${channel.tenantId}`,
-        );
-        client.emit('error', { message: 'Invalid channel' });
-        client.disconnect(true);
-        return;
-      }
-      if (channel.type !== 'livechat') {
-        this.logger.warn(
-          `[Security] Channel ${channelId} is type="${channel.type}", not livechat`,
-        );
-        client.emit('error', { message: 'Invalid channel' });
-        client.disconnect(true);
-        return;
-      }
-    } catch (err: any) {
-      this.logger.error(
-        `[Security] Channel validation failed for ${channelId}: ${err?.message}`,
-      );
-      client.emit('error', { message: 'Channel validation failed' });
+    const validationError = await this.validateChannelOwnership(
+      channelId,
+      tenantId,
+      visitorId,
+    );
+    if (validationError) {
+      client.emit('error', { message: validationError });
       client.disconnect(true);
       return;
     }
@@ -179,7 +152,7 @@ export class LivechatGateway
     // Domain whitelist enforcement (check Origin header from handshake)
     if (widgetId) {
       const origin =
-        client.handshake?.headers?.origin || client.handshake?.headers?.referer;
+        client.handshake?.headers?.origin ?? client.handshake?.headers?.referer;
       const allowed = await this.widgetService.isDomainAllowed(
         widgetId,
         origin as string | undefined,
@@ -634,5 +607,44 @@ export class LivechatGateway
       return false;
     }
     return true;
+  }
+
+  /**
+   * Validate that the given channelId belongs to the claimed tenantId
+   * and is a livechat channel. Returns an error message string on failure,
+   * or null when the channel is valid.
+   */
+  private async validateChannelOwnership(
+    channelId: string,
+    tenantId: string,
+    visitorId: string,
+  ): Promise<string | null> {
+    try {
+      const channel = await this.channelRepo.findByIdNoTenant(channelId);
+      if (!channel) {
+        this.logger.warn(
+          `[Security] Channel ${channelId} not found — rejecting visitor ${visitorId}`,
+        );
+        return 'Invalid channel';
+      }
+      if (channel.tenantId?.toString() !== tenantId) {
+        this.logger.warn(
+          `[Security] Tenant mismatch: visitor claimed tenant=${tenantId} but channel ${channelId} belongs to ${channel.tenantId}`,
+        );
+        return 'Invalid channel';
+      }
+      if (channel.type !== 'livechat') {
+        this.logger.warn(
+          `[Security] Channel ${channelId} is type="${channel.type}", not livechat`,
+        );
+        return 'Invalid channel';
+      }
+      return null;
+    } catch (err: any) {
+      this.logger.error(
+        `[Security] Channel validation failed for ${channelId}: ${err?.message}`,
+      );
+      return 'Channel validation failed';
+    }
   }
 }

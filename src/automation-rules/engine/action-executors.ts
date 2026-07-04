@@ -1676,6 +1676,13 @@ export class HttpRequestExecutor implements ActionExecutor {
     let current = obj;
     for (const part of parts) {
       if (current == null || typeof current !== 'object') return undefined;
+      // SECURITY: Block prototype pollution vectors
+      if (
+        part === '__proto__' ||
+        part === 'constructor' ||
+        part === 'prototype'
+      )
+        return undefined;
       current = current[part];
     }
     return current;

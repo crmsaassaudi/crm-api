@@ -145,6 +145,9 @@ export class TemplateInterpolationService {
 
     for (const key of keys) {
       if (value === undefined || value === null) return undefined;
+      // SECURITY: Block prototype pollution vectors
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype')
+        return undefined;
       value = value[key];
     }
 

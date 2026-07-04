@@ -47,6 +47,15 @@ export class SendGridEmailProvider implements EmailProviderService {
     this.fromName = process.env.SENDGRID_FROM_NAME || 'CRM Automation';
     this.isDryRun = !apiKey;
 
+    // SECURITY: Dry-run mode disables TLS verification for local MailDev.
+    // This MUST NOT run in production — fail fast if no API key in prod.
+    if (this.isDryRun && process.env.NODE_ENV === 'production') {
+      throw new Error(
+        '[EmailProvider] SENDGRID_API_KEY is required in production. ' +
+          'Dry-run mode with TLS bypass is not allowed.',
+      );
+    }
+
     if (!this.isDryRun && this.fromEmail === 'noreply@crm.local') {
       this.logger.error(
         '[EmailProvider] SENDGRID_FROM_EMAIL is not configured — emails will fail DKIM/DMARC validation!',
@@ -57,7 +66,10 @@ export class SendGridEmailProvider implements EmailProviderService {
       this.logger.warn(
         '[EmailProvider] No SENDGRID_API_KEY found — running in DRY-RUN mode (log only)',
       );
-      // Create a dummy transporter for dry-run (local dev: MailDev has no valid cert)
+      // SECURITY: rejectUnauthorized=false is acceptable here because:
+      // 1. isDryRun=true means no SENDGRID_API_KEY → dev/test only
+      // 2. MailDev (localhost:1025) uses a self-signed cert
+      // 3. Production guard above prevents this code path in production
       this.transporter = nodemailer.createTransport({
         host: 'localhost',
         port: 1025,

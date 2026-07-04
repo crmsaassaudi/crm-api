@@ -177,7 +177,7 @@ export class TenantsRepository {
       | undefined;
 
     // If storageQuota doesn't exist yet, initialise with defaults + requested bytes
-    if (!quota || quota.limitBytes === undefined) {
+    if (quota?.limitBytes == null) {
       const defaultLimit = TenantsRepository.DEFAULT_STORAGE_QUOTA.limitBytes;
       if (bytes > defaultLimit) return false; // would exceed default limit
 

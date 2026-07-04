@@ -102,7 +102,7 @@ export class OutboundEmailHandler {
       to.length + cc.length + bcc.length,
     );
     if (!throttleResult.allowed) {
-      throw new Error(throttleResult.reason || 'Send rate limited');
+      throw new Error(throttleResult.reason ?? 'Send rate limited');
     }
 
     const transporter = nodemailer.createTransport({
@@ -113,23 +113,145 @@ export class OutboundEmailHandler {
     });
 
     // 2. PARSE HTML & PROCESS CID INLINE IMAGES
+    const { $, inlineAttachments } =
+      await this.processHtmlWithInlineImages(htmlBody);
+
+    // ── Append Email Signature + Signature Fence ───────────────────────
+    await this.appendEmailSignature(
+      $,
+      tenantId,
+      agentId,
+      channelId,
+      conversationId,
+    );
+    const finalHtml = $.html();
+
+    // 3. Setup standard attachments via streams
+    const formattedAttachments =
+      await this.fetchStandardAttachments(standardAttachments);
+    const allAttachments = [...formattedAttachments, ...inlineAttachments];
+
+    // 4. Persist placeholder to MessageRepository
+    const snippet = this.extractSnippet(finalHtml);
+    const messageRecord = await this.persistOutboundMessage({
+      tenantId,
+      conversationId,
+      agentId,
+      senderContext,
+      snippet,
+    });
+
+    // 5. Send Email via NodeMailer
+    const fromAddress = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
+    let info;
+    try {
+      info = await transporter.sendMail({
+        from: fromAddress,
+        to,
+        cc,
+        bcc,
+        subject,
+        html: `<html><head><meta charset="utf-8"></head><body>${finalHtml}</body></html>`,
+        text: snippet,
+        attachments: allAttachments,
+        inReplyTo: inReplyTo ?? undefined,
+        references: references.length ? references.join(' ') : undefined,
+        headers: {
+          'X-CRM-Thread-ID': conversationId,
+          'X-CRM-Tenant-ID': tenantId,
+          'X-CRM-Message-Id': messageRecord.id,
+        },
+      });
+    } catch (err) {
+      this.logger.error(`Nodemailer failed to send email: ${err}`);
+      await this.messageRepo.updateStatus(messageRecord.id, 'failed');
+      throw err;
+    }
+
+    const externalId = info.messageId ?? `<${ulid()}@crm.local>`;
+
+    // 6. Update Status + Record Send for Quota Tracking
+    await this.messageRepo.updateStatus(messageRecord.id, 'sent', externalId);
+    await this.conversationRepo.updateLastMessage(
+      conversationId,
+      snippet,
+      new Date(),
+      'agent',
+    );
+    await this.outboundQueue.recordSend(
+      tenantId,
+      channelId,
+      to.length + cc.length + bcc.length,
+    );
+
+    // 7. Persist Email Full Content & Metadata
+    await this.persistEmailContent({
+      tenantId,
+      messageId: messageRecord.id,
+      subject,
+      finalHtml,
+      snippet,
+      standardAttachments,
+    });
+    await this.persistEmailMetadata({
+      tenantId,
+      channelId,
+      messageId: messageRecord.id,
+      externalId,
+      inReplyTo,
+      references,
+      fromAddress,
+      to,
+      cc,
+      bcc,
+    });
+
+    // 8. Emit real-time socket event
+    this.eventEmitter.emit('omni.message.sent', {
+      tenantId,
+      conversationId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? null,
+      senderType: 'agent',
+      messageType: 'text',
+      content: snippet,
+      messageId: messageRecord.id,
+      externalMessageId: externalId,
+      status: 'sent',
+      timestamp: new Date().toISOString(),
+      source: 'crm_api',
+      transport: 'http',
+    });
+
+    return {
+      ok: true,
+      messageId: messageRecord.id,
+      externalMessageId: externalId,
+    };
+  }
+
+  // ── Private Helpers ─────────────────────────────────────────────────────
+
+  /** Parse HTML, download S3 inline images, and embed as CID attachments. */
+  private async processHtmlWithInlineImages(
+    htmlBody: string,
+  ): Promise<{ $: ReturnType<typeof cheerio.load>; inlineAttachments: any[] }> {
     const $ = cheerio.load(htmlBody);
     const imagesToProcess = $('img').toArray();
     const inlineAttachments: any[] = [];
 
     for (const [index, el] of imagesToProcess.entries()) {
       const src = $(el).attr('src');
-      if (src && src.includes('s3')) {
+      if (src?.includes('s3')) {
         const cid = `inline-${index}-${Date.now()}@crmsaudi.dev`;
         $(el).attr('src', `cid:${cid}`);
-
         try {
           const response = await axios({
             method: 'get',
             url: src,
             responseType: 'stream',
           });
-
           inlineAttachments.push({
             cid,
             filename: `image-${index}.jpg`,
@@ -149,13 +271,23 @@ export class OutboundEmailHandler {
       }
     }
 
-    // ── Append Email Signature + Signature Fence ───────────────────────
+    return { $, inlineAttachments };
+  }
+
+  /** Append tenant/agent email signature to the document. */
+  private async appendEmailSignature(
+    $: ReturnType<typeof cheerio.load>,
+    tenantId: string,
+    agentId: string,
+    channelId: string,
+    conversationId: string,
+  ): Promise<void> {
     const signature = await this.emailSignatureService.getSignature(
       tenantId,
       agentId,
       channelId,
     );
-    const signatureHtml = signature?.htmlContent || '';
+    const signatureHtml = signature?.htmlContent ?? '';
     const signatureFenceHtml =
       this.emailSignatureService.wrapWithSignatureFence(
         signatureHtml,
@@ -166,19 +298,21 @@ export class OutboundEmailHandler {
     } else {
       $.root().append(signatureFenceHtml);
     }
+  }
 
-    const finalHtml = $.html();
-
-    // Setup standard attachments via streams
-    const formattedAttachments: any[] = [];
-    for (const attachment of standardAttachments) {
+  /** Download standard attachment files from remote URLs. */
+  private async fetchStandardAttachments(
+    attachments: { url: string; filename: string; contentType: string }[],
+  ): Promise<any[]> {
+    const result: any[] = [];
+    for (const attachment of attachments) {
       try {
         const response = await axios({
           method: 'get',
           url: attachment.url,
           responseType: 'stream',
         });
-        formattedAttachments.push({
+        result.push({
           filename: attachment.filename,
           content: response.data,
           contentType: attachment.contentType,
@@ -190,19 +324,30 @@ export class OutboundEmailHandler {
         );
       }
     }
+    return result;
+  }
 
-    const allAttachments = [...formattedAttachments, ...inlineAttachments];
-
-    // 3. Persist placeholder to MessageRepository
-    const snippet =
-      finalHtml
+  /** Strip HTML tags and return the first 200 characters as a plain-text snippet. */
+  private extractSnippet(html: string): string {
+    return (
+      html
         .replace(/<[^>]*>?/gm, '')
         .substring(0, 200)
-        .trim() || '(No content)';
+        .trim() || '(No content)'
+    );
+  }
 
-    let messageRecord;
+  /** Persist an outbound message record and return it. */
+  private async persistOutboundMessage(opts: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    senderContext: { name: string; avatarUrl?: string | null };
+    snippet: string;
+  }): Promise<any> {
+    const { tenantId, conversationId, agentId, senderContext, snippet } = opts;
     try {
-      messageRecord = await this.messageRepo.create({
+      return await this.messageRepo.create({
         tenantId,
         conversationId,
         senderId: agentId,
@@ -227,99 +372,54 @@ export class OutboundEmailHandler {
     } catch (dbErr) {
       throw new Error(`Failed to create message record: ${dbErr}`);
     }
+  }
 
-    // 4. Send Email via NodeMailer
-    let info;
-    const fromAddress = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
-    try {
-      info = await transporter.sendMail({
-        from: fromAddress,
-        to,
-        cc,
-        bcc,
-        subject,
-        html: `<html><head><meta charset="utf-8"></head><body>${finalHtml}</body></html>`,
-        text: snippet,
-        attachments: allAttachments,
-        inReplyTo: inReplyTo || undefined,
-        references: references.length ? references.join(' ') : undefined,
-        headers: {
-          'X-CRM-Thread-ID': conversationId,
-          'X-CRM-Tenant-ID': tenantId,
-          'X-CRM-Message-Id': messageRecord.id,
-        },
-      });
-    } catch (err) {
-      this.logger.error(`Nodemailer failed to send email: ${err}`);
-      await this.messageRepo.updateStatus(messageRecord.id, 'failed');
-      throw err;
-    }
-
-    const externalId = info.messageId || `<${ulid()}@crm.local>`;
-
-    // 5. Update Status + Record Send for Quota Tracking
-    await this.messageRepo.updateStatus(messageRecord.id, 'sent', externalId);
-    await this.conversationRepo.updateLastMessage(
-      conversationId,
-      snippet,
-      new Date(),
-      'agent',
-    );
-
-    await this.outboundQueue.recordSend(
-      tenantId,
-      channelId,
-      to.length + cc.length + bcc.length,
-    );
-
-    // 6. Save Email Full Content & Metadata
+  /** Persist EmailContent document. */
+  private async persistEmailContent(opts: {
+    tenantId: string;
+    messageId: string;
+    subject: string;
+    finalHtml: string;
+    snippet: string;
+    standardAttachments: any[];
+  }): Promise<void> {
     await this.emailContentModel.create({
-      tenantId,
-      messageId: messageRecord.id,
+      tenantId: opts.tenantId,
+      messageId: opts.messageId,
       contactIds: [],
-      subject,
-      htmlBody: finalHtml,
-      textBody: snippet,
-      attachments: standardAttachments,
+      subject: opts.subject,
+      htmlBody: opts.finalHtml,
+      textBody: opts.snippet,
+      attachments: opts.standardAttachments,
     });
+  }
 
+  /** Persist EmailMetadata document. */
+  private async persistEmailMetadata(opts: {
+    tenantId: string;
+    channelId: string;
+    messageId: string;
+    externalId: string;
+    inReplyTo?: string;
+    references: string[];
+    fromAddress: string;
+    to: string[];
+    cc: string[];
+    bcc: string[];
+  }): Promise<void> {
     await this.emailMetadataModel.create({
-      tenantId,
-      mailboxId: channelId,
-      messageId: messageRecord.id,
-      emailMessageId: externalId,
-      inReplyTo,
-      references,
-      from: fromAddress,
-      to,
-      cc,
-      bcc,
+      tenantId: opts.tenantId,
+      mailboxId: opts.channelId,
+      messageId: opts.messageId,
+      emailMessageId: opts.externalId,
+      inReplyTo: opts.inReplyTo,
+      references: opts.references,
+      from: opts.fromAddress,
+      to: opts.to,
+      cc: opts.cc,
+      bcc: opts.bcc,
       deliveryStatus: 'unknown',
     });
-
-    // 7. Emit real-time socket event
-    this.eventEmitter.emit('omni.message.sent', {
-      tenantId,
-      conversationId,
-      senderId: agentId,
-      senderName: senderContext.name,
-      senderAvatarUrl: senderContext.avatarUrl ?? null,
-      senderType: 'agent',
-      messageType: 'text',
-      content: snippet,
-      messageId: messageRecord.id,
-      externalMessageId: externalId,
-      status: 'sent',
-      timestamp: new Date().toISOString(),
-      source: 'crm_api',
-      transport: 'http',
-    });
-
-    return {
-      ok: true,
-      messageId: messageRecord.id,
-      externalMessageId: externalId,
-    };
   }
 
   // ── Shared Helpers ──────────────────────────────────────────────────────
