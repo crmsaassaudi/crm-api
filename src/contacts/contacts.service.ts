@@ -1148,7 +1148,7 @@ export class ContactsService {
     }
 
     // Sorted lock key prevents deadlocks — always same order regardless of caller
-    const [a, b] = [primaryId, targetId].sort();
+    const [a, b] = [primaryId, targetId].sort((x, y) => x.localeCompare(y));
     const lockKey = `lock:contact:merge:${a}:${b}`;
 
     return this.lockService.acquire(lockKey, 10_000, async () => {

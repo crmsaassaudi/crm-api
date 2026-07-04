@@ -15,7 +15,7 @@ function stringifyCanonical(value: any): string {
   if (Array.isArray(value)) {
     return '[' + value.map((v) => stringifyCanonical(v)).join(',') + ']';
   }
-  const keys = Object.keys(value).sort();
+  const keys = Object.keys(value).sort((a, b) => a.localeCompare(b));
   return (
     '{' +
     keys

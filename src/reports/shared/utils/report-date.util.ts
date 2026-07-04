@@ -47,17 +47,19 @@ export const mergeGrowthBuckets = (
     ...deletedByDate.keys(),
   ]);
 
-  return [...keys].sort().map((date) => {
-    const createdCount = createdByDate.get(date) ?? 0;
-    const deletedCount = deletedByDate.get(date) ?? 0;
+  return [...keys]
+    .sort((a, b) => a.localeCompare(b))
+    .map((date) => {
+      const createdCount = createdByDate.get(date) ?? 0;
+      const deletedCount = deletedByDate.get(date) ?? 0;
 
-    return {
-      date,
-      createdCount,
-      deletedCount,
-      netGrowth: createdCount - deletedCount,
-    };
-  });
+      return {
+        date,
+        createdCount,
+        deletedCount,
+        netGrowth: createdCount - deletedCount,
+      };
+    });
 };
 
 const parseBoundaryDate = (value: string, isEnd: boolean): Date => {

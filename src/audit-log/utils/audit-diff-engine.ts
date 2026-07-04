@@ -165,7 +165,7 @@ export class AuditDiffEngine {
       // caused by order differences (e.g. tags: ['a','b'] vs ['b','a'])
       const normalize = (v: any) =>
         Array.isArray(v) && v.every((x) => typeof x !== 'object')
-          ? JSON.stringify([...v].sort())
+          ? JSON.stringify([...v].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
           : JSON.stringify(v);
 
       if (normalize(sOld) !== normalize(sNew)) {

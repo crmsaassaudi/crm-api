@@ -291,7 +291,7 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
   ): Promise<number | null> {
     try {
       // Clean the message ID — remove angle brackets if present
-      const cleanId = messageId.replace(/^<|>$/g, '');
+      const cleanId = messageId.replace(/(?:^<)|(?:>$)/g, '');
 
       const results = await client.search({
         header: { 'message-id': cleanId },

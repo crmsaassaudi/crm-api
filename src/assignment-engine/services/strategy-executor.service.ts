@@ -97,7 +97,7 @@ export class StrategyExecutorService {
       return null;
     }
 
-    const sorted = [...candidates].sort();
+    const sorted = [...candidates].sort((a, b) => a.localeCompare(b));
     if (sorted.length === 1) {
       if (reserve) await this.setRoundRobinCursor(scope, sorted[0]);
       return sorted[0];

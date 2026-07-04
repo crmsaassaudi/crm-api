@@ -210,11 +210,29 @@ export class OutboundMediaHandler {
       let externalId: string | undefined;
 
       if (adapter?.sendMedia) {
+        // Resolve public URL if needed (e.g. for Instagram)
+        let resolvedUrl = media.url;
+        if (
+          !resolvedUrl &&
+          (channelKey === 'instagram' || channelKey === 'zalo')
+        ) {
+          if (media.fileId) {
+            const file = await this.filesService.findById(media.fileId);
+            if (file) {
+              resolvedUrl = await this.filesService.getPresignedDownloadUrl(
+                file.path,
+                3600,
+              );
+            }
+          }
+        }
+
         const sendMediaPayload: OutboundMedia = {
           ...media,
           buffer: sendBuffer,
           size: sendBuffer.length,
           caption,
+          url: resolvedUrl,
         };
         const result = await adapter.sendMedia(
           conversation.customer.externalId,

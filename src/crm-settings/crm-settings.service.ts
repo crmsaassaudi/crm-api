@@ -524,7 +524,7 @@ export class CrmSettingsService {
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '');
+      .replace(/(?:^_+)|(?:_+$)/g, '');
   }
 
   private generateUlid(): string {

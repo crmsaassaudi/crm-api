@@ -277,18 +277,14 @@ export class InstagramAdapter implements ChannelAdapter {
     }
 
     // Instagram requires a publicly accessible URL for media attachments.
-    // The OutboundService should have already resolved a presigned S3 URL.
-    const mediaUrl = media.storageKey
-      ? undefined // Will be resolved by OutboundService
-      : undefined;
+    // The OutboundMediaHandler should have already resolved a presigned S3 URL.
+    const mediaUrl = media.url;
 
-    if (!mediaUrl && !media.storageKey) {
-      // Fallback: if we have a buffer, we can't directly upload to Instagram.
-      // Instagram requires a public URL, not a direct buffer upload.
+    if (!mediaUrl) {
       return {
         success: false,
         error:
-          'Instagram requires a public URL for media. Buffer-only upload is not supported.',
+          'Instagram requires a public URL for media attachments, but none was provided.',
       };
     }
 

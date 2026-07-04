@@ -26,6 +26,9 @@ export interface OutboundMedia {
 
   /** S3 storage key (resolved internally, not set by caller) */
   storageKey?: string;
+
+  /** Resolved public URL (e.g. presigned S3 URL) for providers that require it (Instagram, Zalo) */
+  url?: string;
 }
 
 /**

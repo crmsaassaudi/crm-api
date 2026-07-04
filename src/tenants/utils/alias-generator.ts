@@ -30,7 +30,7 @@ export function generateAlias(companyName: string): string {
   alias = alias.trim().replace(/\s+/g, '-').replace(/-+/g, '-');
 
   // Step 5: Ensure starts/ends with alphanumeric
-  alias = alias.replace(/^-+|-+$/g, '');
+  alias = alias.replace(/(?:^-+)|(?:-+$)/g, '');
 
   // Step 6: Enforce length constraints
   alias = alias.slice(0, 50);

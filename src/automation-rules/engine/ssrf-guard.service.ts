@@ -204,7 +204,7 @@ export class SsrfGuardService {
   }
 
   private normalizeIp(hostnameOrIp: string): string | null {
-    const trimmed = hostnameOrIp.trim().replace(/^\[|\]$/g, '');
+    const trimmed = hostnameOrIp.trim().replace(/(?:^\[)|(?:\]$)/g, '');
     if (isIP(trimmed)) return trimmed;
 
     const ipv4Mapped = trimmed.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);

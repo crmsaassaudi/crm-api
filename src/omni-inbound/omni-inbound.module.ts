@@ -137,7 +137,6 @@ import { LivechatModule } from '../livechat/livechat.module';
 import { ConversationOpsModule } from './aggregate/conversation-ops.module';
 import { ConversationOpsProcessor } from './aggregate/conversation-ops.processor';
 import { ConversationCommandService } from './aggregate/conversation-command.service';
-import { RedisLockService } from '../redis/redis-lock.service';
 
 const workerProviders =
   isWorkerRuntime() || isOmniRuntime()

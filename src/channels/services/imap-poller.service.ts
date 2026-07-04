@@ -945,7 +945,9 @@ export class ImapPollerService implements OnModuleDestroy {
   }
 
   private normalizeLabelSet(labels?: string[]): string[] {
-    return [...new Set((labels || []).filter(Boolean))].sort();
+    return [...new Set((labels || []).filter(Boolean))].sort((a, b) =>
+      a.localeCompare(b),
+    );
   }
 
   private sameStringArray(left: string[], right: string[]): boolean {

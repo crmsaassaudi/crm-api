@@ -51,8 +51,6 @@ import { AssignmentService } from '../services/assignment.service';
 
 import { ModuleRef } from '@nestjs/core';
 
-import { OnModuleInit } from '@nestjs/common';
-
 /**
  * Aggregate Root processor — serializes all conversation mutations
  * via per-conversation Redis locks and BullMQ queue.
@@ -89,7 +87,7 @@ export class ConversationOpsProcessor
     this.cls = cls;
   }
 
-  async onModuleInit() {
+  onModuleInit() {
     this.orchestration = this.moduleRef.get(InboundOrchestrationService, {
       strict: false,
     });

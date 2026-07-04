@@ -176,13 +176,15 @@ export class DealReportService {
     );
 
     const allDates = new Set([...wonMap.keys(), ...lostMap.keys()]);
-    const data: RevenueTrendPoint[] = [...allDates].sort().map((date) => ({
-      date,
-      wonCount: wonMap.get(date)?.count ?? 0,
-      lostCount: lostMap.get(date)?.count ?? 0,
-      wonValue: wonMap.get(date)?.value ?? 0,
-      lostValue: lostMap.get(date)?.value ?? 0,
-    }));
+    const data: RevenueTrendPoint[] = [...allDates]
+      .sort((a, b) => a.localeCompare(b))
+      .map((date) => ({
+        date,
+        wonCount: wonMap.get(date)?.count ?? 0,
+        lostCount: lostMap.get(date)?.count ?? 0,
+        wonValue: wonMap.get(date)?.value ?? 0,
+        lostValue: lostMap.get(date)?.value ?? 0,
+      }));
 
     return buildReportResponse({
       report: 'revenue_trend',
