@@ -163,10 +163,17 @@ export class AuditDiffEngine {
 
       // Sort arrays of primitives before comparing to avoid false-positive diffs
       // caused by order differences (e.g. tags: ['a','b'] vs ['b','a'])
-      const normalize = (v: any) =>
-        Array.isArray(v) && v.every((x) => typeof x !== 'object')
-          ? JSON.stringify([...v].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
-          : JSON.stringify(v);
+      const normalize = (v: any) => {
+        if (Array.isArray(v) && v.every((x) => typeof x !== 'object')) {
+          const sorted = [...v].sort((a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+          });
+          return JSON.stringify(sorted);
+        }
+        return JSON.stringify(v);
+      };
 
       if (normalize(sOld) !== normalize(sNew)) {
         const change: { f: string; l?: string; o: any; n: any } = {

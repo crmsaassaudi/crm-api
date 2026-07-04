@@ -1,4 +1,5 @@
 import {
+  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
@@ -17,7 +18,7 @@ import { EmailMetadataSchemaClass } from '../infrastructure/persistence/document
 import { OmniMessageSchemaClass } from '../../omni-inbound/infrastructure/persistence/document/entities/omni-message.schema';
 import { ICryptoService, CRYPTO_SERVICE_TOKEN } from '../domain/crypto.service';
 import { EmailChannelSettingsService } from './email-channel-settings.service';
-import { Inject } from '@nestjs/common';
+
 import { simpleParser, ParsedMail } from 'mailparser';
 import { OAuth2TokenManager } from './oauth2-token-manager.service';
 import { ClsService } from 'nestjs-cls';
