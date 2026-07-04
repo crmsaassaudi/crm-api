@@ -31,15 +31,15 @@ import type { MediaCacheJobData } from '../queue/media-cache.processor';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
 
 /**
- * ConversationService â€” listens to `omni.message.received` events and handles:
+ * ConversationService — listens to `omni.message.received` events and handles:
  *
  * 1. Idempotency check (Redis optimistic check)
  * 2. Distributed lock acquisition (per sender_id)
  * 3. Identity resolution (Redis cache-aside)
  * 4. Session management: finds or creates conversations
  *    - If current session is resolved/closed:
- *      a) Within reopen window â†’ reopen existing session
- *      b) Past reopen window â†’ create NEW session with link
+ *      a) Within reopen window → reopen existing session
+ *      b) Past reopen window → create NEW session with link
  * 5. Message persistence: saves each message to MongoDB
  * 6. Media caching: proxies expiring URLs via MediaProxyService
  * 7. Cache update: updates identity mapping in Redis
@@ -51,7 +51,7 @@ export class ConversationService {
   /** TTL for the processed-message idempotency marker (1 hour) */
   private readonly IDEM_TTL = 60 * 60;
 
-  /** Lock TTL: 5 seconds â€” well above typical DB operations (<500ms)
+  /** Lock TTL: 5 seconds — well above typical DB operations (<500ms)
    *  but short enough to minimise contention when webhooks burst. */
   private readonly LOCK_TTL = 5_000;
 
@@ -77,20 +77,20 @@ export class ConversationService {
    * Event handler: called when a normalized message arrives from any provider.
    *
    * Flow:
-   *   1. Optimistic idempotency check (Redis)           â€” fast-reject duplicates
-   *   2. Acquire distributed lock on sender_id          â€” prevent race conditions
-   *   3. Resolve identity (Cache â†’ DB)                  â€” find existing Contact/Conversation
-   *   4. Create Contact/Conversation if needed           â€” within the lock
-   *      - If existing conversation is resolved/closed â†’ create NEW session
-   *   5. Save message (unique index = DB-level guard)    â€” platformMessageId dedup
-   *   6. Update identity cache                           â€” for future fast lookups
+   *   1. Optimistic idempotency check (Redis)           — fast-reject duplicates
+   *   2. Acquire distributed lock on sender_id          — prevent race conditions
+   *   3. Resolve identity (Cache → DB)                  — find existing Contact/Conversation
+   *   4. Create Contact/Conversation if needed           — within the lock
+   *      - If existing conversation is resolved/closed → create NEW session
+   *   5. Save message (unique index = DB-level guard)    — platformMessageId dedup
+   *   6. Update identity cache                           — for future fast lookups
    *   7. Lock auto-released in finally block
    */
   @OnEvent(OmniEvents.MESSAGE_RECEIVED)
   async handleInboundMessage(payload: OmniPayload): Promise<void> {
     const msgId = this.buildMessageDedupId(payload);
 
-    // â”€â”€ Step 1: Optimistic idempotency check (Redis) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Step 1: Optimistic idempotency check (Redis) ──────────
     const idemKey = `omni:processed:${payload.tenantId}:${msgId}`;
     const idempotencyReserved = await this.redis.set(
       idemKey,
@@ -100,11 +100,11 @@ export class ConversationService {
       'NX',
     );
     if (!idempotencyReserved) {
-      this.logger.debug(`Idempotency hit â€” skipping message ${msgId}`);
+      this.logger.debug(`Idempotency hit — skipping message ${msgId}`);
       return;
     }
 
-    // â”€â”€ Step 2: Acquire distributed lock on sender â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Step 2: Acquire distributed lock on sender ────────────
     const lockKey = `lock:inbound:${payload.tenantId}:${payload.channelId}:${payload.senderId}`;
 
     try {
@@ -112,7 +112,7 @@ export class ConversationService {
         await this.processWithinLock(payload, idemKey, msgId);
       });
     } catch (error: any) {
-      // E11000 = duplicate key â€” another worker already saved this message
+      // E11000 = duplicate key — another worker already saved this message
       if (error?.code === 11000) {
         this.logger.warn(`Duplicate message (race condition): ${msgId}`);
         return;
@@ -127,14 +127,14 @@ export class ConversationService {
   }
 
   /**
-   * Core processing logic â€” runs INSIDE the distributed lock.
+   * Core processing logic — runs INSIDE the distributed lock.
    */
   private async processWithinLock(
     payload: OmniPayload,
     idemKey: string,
     messageDedupId: string,
   ): Promise<void> {
-    // â”€â”€ Step 3: Resolve identity (Cache-aside) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Step 3: Resolve identity (Cache-aside) ────────────────
     const identity = await this.identityService.resolveIdentityForTenant(
       payload.tenantId,
       payload.channelType,
@@ -142,428 +142,52 @@ export class ConversationService {
       payload.externalConversationId,
     );
 
-    // â”€â”€ Step 4: Find or create conversation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let conversationId = identity.conversationId;
     let contactId = identity.contactId;
 
-    // â”€â”€ Step 4a: Check if existing conversation is still active â”€â”€
-    let existing: {
-      tenantId: string;
-      status: string;
-      contactId: string | null;
-      assignedAgentId: string | null;
-    } | null = null;
-    if (conversationId) {
-      existing = await this.conversationRepo.findById(conversationId);
+    // ── Step 4: Resolve existing or create new conversation ────
+    const existing = await this.resolveExistingConversation(
+      payload,
+      conversationId,
+    );
 
-      if (!existing) {
-        // Stale identity cache: conversation was deleted or doesn't exist.
-        // Invalidate the cache entry and fall through to create a new one.
-        this.logger.warn(
-          `Stale identity cache: conversation ${conversationId} not found for sender ${payload.senderId} â€” invalidating and creating new`,
-        );
-        await this.identityService.invalidateIdentity(
-          payload.channelType,
-          payload.channelAccount,
-          payload.externalConversationId,
-          payload.tenantId,
-        );
-        conversationId = null;
-        contactId = null;
-      } else if (existing.tenantId !== payload.tenantId) {
-        throw new BadRequestException(
-          `Cross-tenant conversation mapping detected for sender ${payload.senderId}`,
-        );
-      }
+    if (existing) {
+      const reopenResult = await this.handleConversationReopen(
+        payload,
+        existing,
+        conversationId!,
+      );
+      conversationId = reopenResult.conversationId;
+      contactId = reopenResult.contactId;
 
-      if (
-        existing &&
-        (existing.status === 'resolved' || existing.status === 'closed')
-      ) {
-        // â”€â”€ Reopen Window Check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // Fetch tenant session lifecycle config
-        const lifecycleConfig =
-          await this.lifecycle.getSessionLifecycleConfig();
-        const reopenWindowHours = lifecycleConfig.reopenWindowHours ?? 24;
-
-        // MED-04: resolvedAt fallback chain â€” closedAt > updatedAt.
-        // updatedAt can be bumped by unrelated writes (tag, note, assignment),
-        // causing the reopen window to be inaccurately extended.
-        const resolvedAt =
-          (existing as any).resolvedAt ??
-          (existing as any).closedAt ??
-          (existing as any).updatedAt;
-        if (!(existing as any).resolvedAt) {
-          this.logger.warn(
-            `Conversation ${conversationId} has no resolvedAt â€” using ${(existing as any).closedAt ? 'closedAt' : 'updatedAt'} as fallback`,
-          );
-        }
-        const hoursSinceResolved = resolvedAt
-          ? (Date.now() - new Date(resolvedAt).getTime()) / (1000 * 60 * 60)
-          : Infinity;
-
-        if (reopenWindowHours > 0 && hoursSinceResolved <= reopenWindowHours) {
-          // WITHIN reopen window â†’ reopen existing session
-          this.logger.log(
-            `Conversation ${conversationId} is ${existing.status} but within reopen window ` +
-              `(${hoursSinceResolved.toFixed(1)}h / ${reopenWindowHours}h) â€” reopening`,
-          );
-
-          const reopened = await this.conversationRepo.reopenConversation(
-            conversationId!,
-          );
-
-          if (reopened) {
-            // Update identity cache so future messages go to this conversation
-            await this.identityService.updateIdentity(
-              payload.channelType,
-              payload.channelAccount,
-              payload.externalConversationId,
-              {
-                contactId: existing.contactId ?? contactId,
-                conversationId,
-              },
-              payload.tenantId,
-            );
-
-            this.eventEmitter.emit(OmniEvents.CONVERSATION_REOPENED, {
-              tenantId: payload.tenantId,
-              conversationId,
-              previousConversationId: null,
-              reopenCount: reopened.reopenCount,
-              conversation: reopened,
-              isReopenedSession: true, // distinguish from new-session reopen
-            });
-
-            this.eventEmitter.emit(OmniEvents.CONVERSATION_STATUS_CHANGED, {
-              tenantId: payload.tenantId,
-              conversationId,
-              status: 'open',
-              oldStatus: existing.status,
-              agentId: null,
-              reason: 'customer_replied_within_reopen_window',
-              channelType: payload.channelType,
-              channelAccount: payload.channelAccount,
-              externalConversationId: payload.externalConversationId,
-            });
-
-            // ── Auto-reassignment on reopen if agent is offline/unassigned ──
-            // P0 fix: track that assignment was already handled here so the
-            // 'existing_unassigned' retry block below does not fire a second
-            // time reading a stale existing.assignedAgentId snapshot.
-            let assignmentTriggeredOnReopen = false;
-            const currentAgent = (reopened as any).assignedAgentId;
-            if (!currentAgent) {
-              await this.orchestration.triggerAutoAssignment(
-                payload,
-                conversationId!,
-                contactId ?? existing.contactId ?? null,
-                'reopen_no_agent',
-              );
-              assignmentTriggeredOnReopen = true;
-            } else {
-              // Check if the previous agent is still online.
-              // checkAndReassignIfNeeded fires triggerAutoAssignment internally
-              // when the agent is gone — count that as handled too.
-              await this.orchestration.checkAndReassignIfNeeded(
-                payload,
-                conversationId!,
-                currentAgent,
-                contactId ?? existing.contactId ?? null,
-              );
-              assignmentTriggeredOnReopen = true;
-            }
-
-            // Keep contactId from the reopened session
-            contactId = existing.contactId ?? contactId;
-            // conversationId stays the same — don't create a new one
-
-            // Signal to the existing_unassigned block below that assignment
-            // was already handled so it does not double-fire.
-            if (assignmentTriggeredOnReopen) {
-              (existing as any).__assignmentHandledOnReopen = true;
-            }
-          }
-        } else {
-          // OUTSIDE reopen window â†’ force creation of a new session
-          this.logger.log(
-            `Existing conversation ${conversationId} is ${existing.status} ` +
-              `and reopen window expired (${hoursSinceResolved.toFixed(1)}h > ${reopenWindowHours}h) ` +
-              `â€” creating new session for sender ${payload.senderId}`,
-          );
-          // Keep the contactId from the previous session
-          contactId = existing.contactId ?? contactId;
-          // Set conversationId to null so a new one is created below
-          conversationId = null;
-        }
-      }
-
-      // Self-heal old data: active conversation exists but contact was never linked.
-      if (existing && conversationId && !contactId) {
-        const identityConfig =
-          await this.shadowContactService.getIdentityResolutionConfig(
-            payload.tenantId,
-          );
-        if (identityConfig.autoCreateShadowContact) {
-          const createdContactId =
-            await this.shadowContactService.createShadowContact(payload);
-          if (createdContactId) {
-            contactId = createdContactId;
-            await this.conversationRepo.updateContactId(
-              conversationId,
-              contactId,
-            );
-            await this.identityService.updateIdentity(
-              payload.channelType,
-              payload.channelAccount,
-              payload.externalConversationId,
-              { contactId, conversationId },
-              payload.tenantId,
-            );
-            this.logger.log(
-              `Linked Shadow Contact ${contactId} to existing conversation ${conversationId}`,
-            );
-          }
-        } else {
-          this.logger.debug(
-            `Auto-create shadow contact disabled — skipping for conversation ${conversationId}`,
-          );
-        }
-      }
-
-      // ——— Retry auto-assignment for existing open/pending conversations ———
-      // If the conversation is still active but has no agent assigned,
-      // retry auto-assignment. This covers cases where:
-      //   - The original auto-assign failed (e.g. no agents online)
-      //   - The conversation was unassigned manually
-      //   - Agent disconnected and fallback didn't find a replacement
-      if (
-        existing &&
-        conversationId &&
-        (existing.status === 'open' || existing.status === 'pending')
-      ) {
-        // Bot-first: skip retry when bot is still actively handling
-        const botState = (existing as any).bot;
-        const botIsActive =
-          botState?.enabled === true && botState?.status === 'active';
-        if (botIsActive) {
-          this.logger.debug(
-            `[BOT-FIRST] Bot still active on conv ${conversationId} — skipping assignment retry`,
-          );
-        } else if ((existing as any).__assignmentHandledOnReopen) {
-          // P0 fix: skip if assignment was already triggered in the reopen
-          // branch above. existing.assignedAgentId is a stale snapshot taken
-          // before that assignment committed — a second call here would race.
-          this.logger.debug(
-            `Skipping existing_unassigned retry — assignment already handled on reopen for conversation ${conversationId}`,
-          );
-        } else {
-          const assignedAgent = existing.assignedAgentId;
-          if (!assignedAgent) {
-            this.logger.debug(
-              `[AUTO-ASSIGN] Existing conversation ${conversationId} is ${existing.status} but has NO agent — retrying auto-assignment`,
-            );
-            await this.orchestration.triggerAutoAssignment(
-              payload,
-              conversationId,
-              contactId ?? existing.contactId ?? null,
-              'existing_unassigned',
-            );
-          } else {
-            this.logger.debug(
-              `Existing conversation ${conversationId} already assigned to agent ${assignedAgent} — skipping auto-assignment`,
-            );
-          }
-        }
-      }
+      await this.handleExistingContactSelfHeal(
+        payload,
+        existing,
+        conversationId,
+        contactId,
+      );
+      await this.retryAutoAssignmentIfNeeded(
+        payload,
+        existing,
+        conversationId,
+        contactId,
+      );
     }
 
     if (!conversationId) {
-      // ——— Step 3b: Eagerly enrich profile before creating conversation ———
-      // Delegates to the channel adapter's enrichProfile() method if available.
-      // This ensures BOTH the conversation AND shadow contact are created
-      // with the real name/avatar from the start.
-      // Respects the tenant's autoEnrichProfile setting (GDPR/PDPA compliance).
-      let enrichedProfile: {
-        name?: string;
-        avatarUrl?: string;
-        phone?: string;
-      } = {};
-
-      const identityResConfig =
-        await this.shadowContactService.getIdentityResolutionConfig(
-          payload.tenantId,
-        );
-
-      if (identityResConfig.autoEnrichProfile) {
-        const adapter = this.adapters.get(payload.channelType);
-        if (adapter?.enrichProfile && payload.metadata?.accessToken) {
-          // Channel supports profile API (Facebook, Instagram, etc.)
-          try {
-            const profile = await adapter.enrichProfile(
-              payload.senderId,
-              payload.metadata.accessToken,
-            );
-            if (profile.name && profile.name !== payload.senderId) {
-              enrichedProfile = profile;
-              this.logger.log(
-                `Pre-enriched ${payload.channelType} profile for ${payload.senderId}: ${profile.name}`,
-              );
-            }
-          } catch (err) {
-            this.logger.warn(
-              `${payload.channelType} profile pre-enrichment skipped: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          }
-        } else if (payload.metadata?.contactName) {
-          // Channel provides name in webhook payload (WhatsApp, Telegram, etc.)
-          const contactName = payload.metadata.contactName;
-          if (contactName !== payload.senderId) {
-            enrichedProfile = { name: contactName };
-            this.logger.log(
-              `Pre-enriched ${payload.channelType} profile for ${payload.senderId}: ${contactName}`,
-            );
-          }
-        }
-      } else {
-        this.logger.debug(
-          `Auto-enrich profile disabled for tenant ${payload.tenantId} â€” skipping profile fetch`,
-        );
-      }
-
-      // ── Pre-identified visitor: contactId from identity cache ─────
-      // When a livechat visitor submits a pre-chat form before their first
-      // message, ContactEnrichmentService creates/merges a Contact and caches
-      // the contactId in the identity service. We use it here to populate
-      // conversation.customer with the real name/phone from the Contact
-      // instead of falling through to create a duplicate shadow contact.
-      if (contactId && !enrichedProfile.name) {
-        const existingContact =
-          await this.shadowContactService.findContact(contactId);
-        if (existingContact) {
-          const fullName = [existingContact.firstName, existingContact.lastName]
-            .filter(Boolean)
-            .join(' ');
-          if (fullName && fullName !== 'Visitor') {
-            enrichedProfile.name = fullName;
-          }
-          if (!enrichedProfile.phone && existingContact.phones?.[0]) {
-            enrichedProfile.phone = existingContact.phones[0];
-          }
-          if (existingContact.emails?.[0]) {
-            (enrichedProfile as any).email = existingContact.emails[0];
-          }
-          this.logger.log(
-            `Pre-identified visitor ${payload.senderId}: using enriched Contact ${contactId}`,
-          );
-        }
-      }
-
-      // No active conversation -> maybe no contact either
-      if (!contactId) {
-        if (identityResConfig.autoCreateShadowContact) {
-          contactId = await this.shadowContactService.createShadowContact(
-            payload,
-            enrichedProfile,
-          );
-        } else {
-          this.logger.debug(
-            `Auto-create shadow contact disabled — sender ${payload.senderId} will have no CRM contact`,
-          );
-        }
-      }
-      // â”€â”€ Reopen tracking: find previous conversation if any â”€â”€
-      let previousConversationId: string | null = null;
-      let reopenCount = 0;
-
-      const previousConv = await this.conversationRepo.findLastByExternalId(
-        payload.tenantId,
-        this.lifecycle.toSchemaChannelType(payload.channelType),
-        payload.channelAccount,
-        payload.externalConversationId,
+      const enriched = await this.enrichProfileAndResolveContact(
+        payload,
+        contactId,
       );
+      contactId = enriched.contactId;
 
-      if (
-        previousConv &&
-        (previousConv.status === 'resolved' || previousConv.status === 'closed')
-      ) {
-        previousConversationId = previousConv.id;
-        reopenCount = (previousConv.reopenCount ?? 0) + 1;
-      }
-
-      // No active session â†’ create a new one (with enriched profile)
-      const conversation = await this.conversationRepo.create({
-        tenantId: payload.tenantId,
-        channelId: payload.channelId,
-        channelAccount: payload.channelAccount,
-        channelType: this.lifecycle.toSchemaChannelType(payload.channelType),
-        externalId: payload.externalConversationId,
-        contactId: contactId ?? null,
-        customer: {
-          externalId: payload.senderId,
-          name:
-            enrichedProfile.name ??
-            payload.metadata.contactName ??
-            payload.senderId,
-          avatarUrl:
-            enrichedProfile.avatarUrl ??
-            payload.metadata.avatarUrl ??
-            undefined,
-          phone: enrichedProfile.phone ?? payload.metadata.phone ?? undefined,
-          email:
-            (enrichedProfile as any).email ??
-            payload.metadata?.email ??
-            undefined,
-        },
-        status: 'open',
-        lastMessage: payload.content,
-        lastMessageAt: payload.timestamp,
-        previousConversationId,
-        reopenCount,
-        bot: await this.orchestration.resolveInitialBotState(
-          payload.tenantId,
-          this.lifecycle.toSchemaChannelType(payload.channelType),
-          payload.channelAccount,
-        ),
-      } as any);
-
+      const conversation = await this.createNewConversation(
+        payload,
+        contactId,
+        enriched.profile,
+      );
       conversationId = conversation.id;
 
-      if (previousConversationId) {
-        this.logger.log(
-          `Created reopened conversation ${conversationId} ` +
-            `(previous: ${previousConversationId}, reopenCount: ${reopenCount}) ` +
-            `for customer ${payload.senderId} on ${payload.channelType}`,
-        );
-
-        // Emit reopen event for activity log + realtime
-        this.eventEmitter.emit(OmniEvents.CONVERSATION_REOPENED, {
-          tenantId: payload.tenantId,
-          conversationId,
-          previousConversationId,
-          reopenCount,
-          conversation, // Full object for frontend rendering
-        });
-      } else {
-        this.logger.log(
-          `Created new conversation ${conversationId} ` +
-            `for customer ${payload.senderId} on ${payload.channelType}`,
-        );
-      }
-
-      // Emit created event with full conversation for realtime broadcast
-      this.eventEmitter.emit(OmniEvents.CONVERSATION_CREATED, {
-        tenantId: payload.tenantId,
-        conversationId,
-        channelType: payload.channelType,
-        senderId: payload.senderId,
-        conversation, // Full object for frontend rendering
-        correlationId: payload.correlationId, // T07: propagate trace ID
-      });
-
-      // â”€â”€ Step 6a: Update identity cache with new mapping â”€â”€â”€â”€â”€
       await this.identityService.updateIdentity(
         payload.channelType,
         payload.channelAccount,
@@ -572,44 +196,14 @@ export class ConversationService {
         payload.tenantId,
       );
 
-      // F-10 fix: removed redundant rescheduleAutoResolve here (was Step 6b).
-      // The authoritative reschedule runs at Step 5d (after message persistence),
-      // which correctly resets the timer once the message is durably stored.
-      // Two calls per new conversation doubled BullMQ Redis operations under load.
-
-      // ── Step 6c: Auto-assign conversation to an agent ──────────
-      // Bot-first: DEFER assignment until bot handoff.
-      // When botMode is 'bot_first' or 'bot_only', the bot handles the
-      // conversation first. Assignment only happens when bot emits handoff.
-      const isBotFirst = await this.orchestration.isBotFirstActive(
-        payload.tenantId,
-        this.lifecycle.toSchemaChannelType(payload.channelType),
-        payload.channelAccount,
+      await this.triggerInitialAutoAssignment(
+        payload,
+        conversationId,
+        contactId,
       );
-
-      if (isBotFirst) {
-        this.logger.log(
-          `[BOT-FIRST] Deferring auto-assignment — bot will handle first, conv=${conversationId}`,
-        );
-      } else {
-        await this.orchestration.triggerAutoAssignment(
-          payload,
-          conversationId,
-          contactId ?? null,
-          previousConversationId ? 'reopen_new_session' : 'new_conversation',
-          enrichedProfile,
-        );
-      }
-
-      // Profile enrichment already done eagerly before conversation creation (Step 3b above).
     }
 
     // ── Aggregate: Enqueue CUSTOMER_MESSAGE command ──────────────────
-    // All message persistence, aggregate updates, event emission,
-    // bot processing, and business hours checks are handled by
-    // ConversationOpsProcessor sequentially per conversation.
-    // This eliminates race conditions between customer message
-    // side-effects and bot reply processing.
     await this.conversationCommandService.enqueueCustomerMessage(
       conversationId,
       payload.tenantId,
@@ -648,6 +242,338 @@ export class ConversationService {
   // ────────────────────────────────────────────────────────────────
   // Private Helpers
   // ────────────────────────────────────────────────────────────────
+
+  private async resolveExistingConversation(
+    payload: OmniPayload,
+    conversationId: string | null,
+  ) {
+    if (!conversationId) return null;
+
+    const existing = await this.conversationRepo.findById(conversationId);
+    if (!existing) {
+      this.logger.warn(
+        `Stale identity cache: conversation ${conversationId} not found — invalidating`,
+      );
+      await this.identityService.invalidateIdentity(
+        payload.channelType,
+        payload.channelAccount,
+        payload.externalConversationId,
+        payload.tenantId,
+      );
+      return null;
+    }
+
+    if (existing.tenantId !== payload.tenantId) {
+      throw new BadRequestException(
+        `Cross-tenant conversation mapping detected for sender ${payload.senderId}`,
+      );
+    }
+
+    return existing;
+  }
+
+  private async handleConversationReopen(
+    payload: OmniPayload,
+    existing: any,
+    conversationId: string,
+  ): Promise<{ conversationId: string | null; contactId: string | null }> {
+    if (existing.status !== 'resolved' && existing.status !== 'closed') {
+      return { conversationId, contactId: existing.contactId };
+    }
+
+    const config = await this.lifecycle.getSessionLifecycleConfig();
+    const reopenWindow = config.reopenWindowHours ?? 24;
+    const resolvedAt =
+      existing.resolvedAt ?? existing.closedAt ?? existing.updatedAt;
+    const hoursSinceResolved = resolvedAt
+      ? (Date.now() - new Date(resolvedAt).getTime()) / (1000 * 60 * 60)
+      : Infinity;
+
+    if (reopenWindow > 0 && hoursSinceResolved <= reopenWindow) {
+      this.logger.log(
+        `Reopening conversation ${conversationId} within window (${hoursSinceResolved.toFixed(1)}h)`,
+      );
+      const reopened =
+        await this.conversationRepo.reopenConversation(conversationId);
+      if (reopened) {
+        await this.identityService.updateIdentity(
+          payload.channelType,
+          payload.channelAccount,
+          payload.externalConversationId,
+          { contactId: existing.contactId, conversationId },
+          payload.tenantId,
+        );
+        this.emitReopenEvents(payload, existing, reopened);
+        await this.handleReassignmentOnReopen(
+          payload,
+          conversationId,
+          existing.contactId,
+          reopened.assignedAgentId,
+        );
+        existing.__assignmentHandledOnReopen = true;
+        return { conversationId, contactId: existing.contactId };
+      }
+    }
+
+    this.logger.log(
+      `Reopen window expired for ${conversationId} — forcing new session`,
+    );
+    return { conversationId: null, contactId: existing.contactId };
+  }
+
+  private emitReopenEvents(payload: OmniPayload, existing: any, reopened: any) {
+    this.eventEmitter.emit(OmniEvents.CONVERSATION_REOPENED, {
+      tenantId: payload.tenantId,
+      conversationId: reopened.id,
+      previousConversationId: null,
+      reopenCount: reopened.reopenCount,
+      conversation: reopened,
+      isReopenedSession: true,
+    });
+    this.eventEmitter.emit(OmniEvents.CONVERSATION_STATUS_CHANGED, {
+      tenantId: payload.tenantId,
+      conversationId: reopened.id,
+      status: 'open',
+      oldStatus: existing.status,
+      agentId: null,
+      reason: 'customer_replied_within_reopen_window',
+      channelType: payload.channelType,
+      channelAccount: payload.channelAccount,
+      externalConversationId: payload.externalConversationId,
+    });
+  }
+
+  private async handleReassignmentOnReopen(
+    payload: OmniPayload,
+    conversationId: string,
+    contactId: string | null,
+    currentAgent: string | null,
+  ) {
+    if (!currentAgent) {
+      await this.orchestration.triggerAutoAssignment(
+        payload,
+        conversationId,
+        contactId,
+        'reopen_no_agent',
+      );
+    } else {
+      await this.orchestration.checkAndReassignIfNeeded(
+        payload,
+        conversationId,
+        currentAgent,
+        contactId,
+      );
+    }
+  }
+
+  private async handleExistingContactSelfHeal(
+    payload: OmniPayload,
+    existing: any,
+    conversationId: string | null,
+    contactId: string | null,
+  ) {
+    if (conversationId && !contactId) {
+      const config =
+        await this.shadowContactService.getIdentityResolutionConfig(
+          payload.tenantId,
+        );
+      if (config.autoCreateShadowContact) {
+        const createdId =
+          await this.shadowContactService.createShadowContact(payload);
+        if (createdId) {
+          await this.conversationRepo.updateContactId(
+            conversationId,
+            createdId,
+          );
+          await this.identityService.updateIdentity(
+            payload.channelType,
+            payload.channelAccount,
+            payload.externalConversationId,
+            { contactId: createdId, conversationId },
+            payload.tenantId,
+          );
+        }
+      }
+    }
+  }
+
+  private async retryAutoAssignmentIfNeeded(
+    payload: OmniPayload,
+    existing: any,
+    conversationId: string | null,
+    contactId: string | null,
+  ) {
+    if (
+      !conversationId ||
+      (existing.status !== 'open' && existing.status !== 'pending')
+    )
+      return;
+
+    const botIsActive =
+      existing.bot?.enabled === true && existing.bot?.status === 'active';
+    if (botIsActive || existing.__assignmentHandledOnReopen) return;
+
+    if (!existing.assignedAgentId) {
+      await this.orchestration.triggerAutoAssignment(
+        payload,
+        conversationId,
+        contactId,
+        'existing_unassigned',
+      );
+    }
+  }
+
+  private async enrichProfileAndResolveContact(
+    payload: OmniPayload,
+    contactId: string | null,
+  ) {
+    const config = await this.shadowContactService.getIdentityResolutionConfig(
+      payload.tenantId,
+    );
+    let profile: any = {};
+
+    if (config.autoEnrichProfile) {
+      profile = await this.fetchExternalProfile(payload);
+    }
+
+    if (contactId && !profile.name) {
+      const enriched = await this.shadowContactService.enrichProfileFromContact(
+        contactId,
+        profile,
+      );
+      profile = enriched || profile;
+    }
+
+    if (!contactId && config.autoCreateShadowContact) {
+      contactId = await this.shadowContactService.createShadowContact(
+        payload,
+        profile,
+      );
+    }
+
+    return { contactId, profile };
+  }
+
+  private async fetchExternalProfile(payload: OmniPayload) {
+    const adapter = this.adapters.get(payload.channelType);
+    if (adapter?.enrichProfile && payload.metadata?.accessToken) {
+      try {
+        return await adapter.enrichProfile(
+          payload.senderId,
+          payload.metadata.accessToken,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Profile enrichment skipped: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } else if (payload.metadata?.contactName) {
+      return { name: payload.metadata.contactName };
+    }
+    return {};
+  }
+
+  private async createNewConversation(
+    payload: OmniPayload,
+    contactId: string | null,
+    profile: any,
+  ) {
+    const previousConv = await this.conversationRepo.findLastByExternalId(
+      payload.tenantId,
+      this.lifecycle.toSchemaChannelType(payload.channelType),
+      payload.channelAccount,
+      payload.externalConversationId,
+    );
+
+    const isReopen =
+      previousConv &&
+      (previousConv.status === 'resolved' || previousConv.status === 'closed');
+    const reopenCount = isReopen ? (previousConv!.reopenCount ?? 0) + 1 : 0;
+
+    const conversation = await this.conversationRepo.create({
+      tenantId: payload.tenantId,
+      channelId: payload.channelId,
+      channelAccount: payload.channelAccount,
+      channelType: this.lifecycle.toSchemaChannelType(payload.channelType),
+      externalId: payload.externalConversationId,
+      contactId: contactId ?? null,
+      customer: {
+        externalId: payload.senderId,
+        name: profile.name ?? payload.metadata.contactName ?? payload.senderId,
+        avatarUrl: profile.avatarUrl ?? payload.metadata.avatarUrl ?? undefined,
+        phone: profile.phone ?? payload.metadata.phone ?? undefined,
+        email: profile.email ?? payload.metadata?.email ?? undefined,
+      },
+      status: 'open',
+      lastMessage: payload.content,
+      lastMessageAt: payload.timestamp,
+      previousConversationId: isReopen ? previousConv!.id : null,
+      reopenCount,
+      bot: await this.orchestration.resolveInitialBotState(
+        payload.tenantId,
+        this.lifecycle.toSchemaChannelType(payload.channelType),
+        payload.channelAccount,
+      ),
+    } as any);
+
+    this.emitConversationCreationEvents(
+      payload,
+      conversation,
+      isReopen ? previousConv!.id : null,
+      reopenCount,
+    );
+    return conversation;
+  }
+
+  private emitConversationCreationEvents(
+    payload: OmniPayload,
+    conversation: any,
+    prevId: string | null,
+    reopenCount: number,
+  ) {
+    if (prevId) {
+      this.eventEmitter.emit(OmniEvents.CONVERSATION_REOPENED, {
+        tenantId: payload.tenantId,
+        conversationId: conversation.id,
+        previousConversationId: prevId,
+        reopenCount,
+        conversation,
+      });
+    }
+    this.eventEmitter.emit(OmniEvents.CONVERSATION_CREATED, {
+      tenantId: payload.tenantId,
+      conversationId: conversation.id,
+      channelType: payload.channelType,
+      senderId: payload.senderId,
+      conversation,
+      correlationId: payload.correlationId,
+    });
+  }
+
+  private async triggerInitialAutoAssignment(
+    payload: OmniPayload,
+    conversationId: string,
+    contactId: string | null,
+  ) {
+    const isBotFirst = await this.orchestration.isBotFirstActive(
+      payload.tenantId,
+      this.lifecycle.toSchemaChannelType(payload.channelType),
+      payload.channelAccount,
+    );
+
+    if (isBotFirst) {
+      this.logger.log(
+        `[BOT-FIRST] Deferring auto-assignment for ${conversationId}`,
+      );
+    } else {
+      await this.orchestration.triggerAutoAssignment(
+        payload,
+        conversationId,
+        contactId,
+        'new_conversation',
+      );
+    }
+  }
 
   private toFingerprintDate(value: Date | string | undefined): string {
     if (!value) {

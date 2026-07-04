@@ -116,7 +116,7 @@ export class LivechatAdapter implements ChannelAdapter {
     return true;
   }
 
-  async send(
+  send(
     recipientId: string,
     content: string,
     _messageType: string,
@@ -126,17 +126,17 @@ export class LivechatAdapter implements ChannelAdapter {
       this.logger.warn(
         'LivechatGateway not set — cannot deliver message to visitor',
       );
-      return;
+      return Promise.resolve();
     }
     const messageId = channelConfig?.messageId;
-    await this.gateway.sendToVisitor(recipientId, {
+    this.gateway.sendToVisitor(recipientId, {
       type: 'text',
       content,
       messageId,
     });
     // Return message_id following the same contract as external adapters
     // (FB/WA/Zalo). For livechat the MongoDB _id is the canonical ID.
-    return { status: 'sent', message_id: messageId };
+    return Promise.resolve({ status: 'sent', message_id: messageId });
   }
 
   /**
@@ -190,7 +190,7 @@ export class LivechatAdapter implements ChannelAdapter {
     // Previously sent 'media' which fell through to default text case.
     const resolvedType = mimeToMessageType(media.mimeType);
 
-    await this.gateway.sendToVisitor(recipientId, {
+    this.gateway.sendToVisitor(recipientId, {
       type: resolvedType,
       url: resolvedUrl,
       mimeType: media.mimeType,
@@ -234,7 +234,7 @@ export class LivechatAdapter implements ChannelAdapter {
    * Send an interactive button message to the visitor widget.
    * Used by OutboundService when bot sends buttons.
    */
-  async sendInteractive(
+  sendInteractive(
     recipientId: string,
     body: string,
     buttons: Array<{ id: string; title: string }>,
@@ -242,35 +242,35 @@ export class LivechatAdapter implements ChannelAdapter {
   ): Promise<any> {
     if (!this.gateway) {
       this.logger.warn('LivechatGateway not set — cannot send interactive');
-      return;
+      return Promise.resolve();
     }
     const messageId = channelConfig?.messageId;
-    await this.gateway.sendToVisitor(recipientId, {
+    this.gateway.sendToVisitor(recipientId, {
       type: 'interactive',
       content: body,
       buttons,
       messageId,
     });
-    return { status: 'sent', message_id: messageId };
+    return Promise.resolve({ status: 'sent', message_id: messageId });
   }
 
   /**
    * Send a carousel message to the visitor widget.
    */
-  async sendCarousel(
+  sendCarousel(
     recipientId: string,
     content: string | undefined,
     cards: any[],
   ): Promise<any> {
     if (!this.gateway) {
       this.logger.warn('LivechatGateway not set — cannot send carousel');
-      return;
+      return Promise.resolve();
     }
-    await this.gateway.sendToVisitor(recipientId, {
+    this.gateway.sendToVisitor(recipientId, {
       type: 'carousel',
       content,
       cards,
     });
-    return { status: 'sent' };
+    return Promise.resolve({ status: 'sent' });
   }
 }

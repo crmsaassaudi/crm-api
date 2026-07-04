@@ -339,7 +339,6 @@ export class OutboundMediaHandler {
       tenantId,
       conversationId,
       mediaUrl,
-      mimeType: rawMimeType,
       caption = '',
       idempotencyKey,
       afterTimestamp,
@@ -356,58 +355,23 @@ export class OutboundMediaHandler {
     }
 
     const conversation = await this.conversationRepo.findById(conversationId);
-    if (!conversation) {
+    if (!conversation)
       throw new Error(`Conversation ${conversationId} not found`);
-    }
 
-    let channel = await this.channelRepo.findByIdWithCredentials(
+    const channel = await this.resolveChannelForOutbound(
       tenantId,
-      conversation.channelId.toString(),
+      conversation,
     );
-    if (!channel && (conversation as any).channelAccount) {
-      channel = await this.channelRepo.findByAccountWithCredentials(
-        tenantId,
-        conversation.channelType,
-        (conversation as any).channelAccount,
-      );
-    }
-    if (!channel) {
-      throw new Error(
-        `Channel for conversation ${conversationId} not found or disconnected`,
-      );
-    }
-
     this.enforceReplyWindow(conversation);
 
     // Download media from bot URL
-    let mediaBuffer: Buffer;
-    let mimeType = rawMimeType || 'application/octet-stream';
-    let fileName = 'bot-media';
-
-    try {
-      const response = await fetch(mediaUrl, {
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to download: ${response.status}`);
-      }
-      mediaBuffer = Buffer.from(await response.arrayBuffer());
-
-      const contentType = response.headers.get('content-type');
-      if (contentType && mimeType === 'application/octet-stream') {
-        mimeType = contentType.split(';')[0].trim();
-      }
-
-      try {
-        const pathname = new URL(mediaUrl).pathname;
-        const basename = pathname.split('/').pop();
-        if (basename && basename.includes('.')) fileName = basename;
-      } catch {
-        /* ignore */
-      }
-    } catch (error) {
+    const downloadResult = await this.downloadBotMedia(
+      mediaUrl,
+      params.mimeType,
+    );
+    if (!downloadResult.success) {
       this.logger.warn(
-        `Bot media download failed for ${mediaUrl}: ${error instanceof Error ? error.message : error}. Falling back to link.`,
+        `Bot media download failed: ${downloadResult.error}. Falling back to link.`,
       );
       return sendBotTextFallback({
         tenantId,
@@ -419,11 +383,93 @@ export class OutboundMediaHandler {
       });
     }
 
-    const resolvedMessageType = mimeToMessageType(mimeType);
-
     const botTimestamp = afterTimestamp
       ? new Date(Math.max(Date.now(), afterTimestamp + 1))
       : new Date();
+
+    return this.persistAndDispatchMedia({
+      tenantId,
+      conversationId,
+      conversation,
+      channel,
+      mediaBuffer: downloadResult.buffer!,
+      mimeType: downloadResult.mimeType!,
+      fileName: downloadResult.fileName!,
+      caption,
+      idempotencyKey,
+      botTimestamp,
+    });
+  }
+
+  private async resolveChannelForOutbound(
+    tenantId: string,
+    conversation: any,
+  ): Promise<any> {
+    let channel = await this.channelRepo.findByIdWithCredentials(
+      tenantId,
+      conversation.channelId.toString(),
+    );
+    if (!channel && (conversation as any).channelAccount) {
+      channel = await this.channelRepo.findByAccountWithCredentials(
+        tenantId,
+        conversation.channelType,
+        (conversation as any).channelAccount,
+      );
+    }
+    if (!channel)
+      throw new Error(`Channel for conversation ${conversation.id} not found`);
+    return channel;
+  }
+
+  private async downloadBotMedia(
+    mediaUrl: string,
+    rawMimeType?: string,
+  ): Promise<{
+    success: boolean;
+    buffer?: Buffer;
+    mimeType?: string;
+    fileName?: string;
+    error?: string;
+  }> {
+    try {
+      const response = await fetch(mediaUrl, {
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok)
+        throw new Error(`Failed to download: ${response.status}`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const mimeType =
+        rawMimeType ||
+        response.headers.get('content-type')?.split(';')[0].trim() ||
+        'application/octet-stream';
+      let fileName = 'bot-media';
+      try {
+        const pathname = new URL(mediaUrl).pathname;
+        const basename = pathname.split('/').pop();
+        if (basename && basename.includes('.')) fileName = basename;
+      } catch {
+        /* ignore */
+      }
+      return { success: true, buffer, mimeType, fileName };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async persistAndDispatchMedia(params: any): Promise<any> {
+    const {
+      tenantId,
+      conversationId,
+      conversation,
+      channel,
+      mediaBuffer,
+      mimeType,
+      fileName,
+      caption,
+      idempotencyKey,
+      botTimestamp,
+    } = params;
+    const messageType = mimeToMessageType(mimeType);
 
     const message = await this.messageRepo.create({
       tenantId,
@@ -433,8 +479,8 @@ export class OutboundMediaHandler {
       senderType: 'bot',
       direction: 'outbound',
       source: 'bot',
-      messageType: resolvedMessageType,
-      content: caption || `[${resolvedMessageType}] ${fileName}`,
+      messageType,
+      content: caption || `[${messageType}] ${fileName}`,
       status: 'sending',
       idempotencyKey,
       providerTimestamp: botTimestamp,
@@ -479,17 +525,13 @@ export class OutboundMediaHandler {
             messageId: message.id,
           },
         );
-        externalId = result.externalMessageId;
-        if (!result.success) {
+        if (!result.success)
           throw new Error(result.error || 'Adapter sendMedia failed');
-        }
+        externalId = result.externalMessageId;
       } else if (adapter) {
-        const fallbackContent = caption
-          ? `${caption}\n${mediaUrl}`
-          : `📎 ${fileName}\n${mediaUrl}`;
         const resp = await adapter.send(
           conversation.customer.externalId,
-          fallbackContent,
+          caption ? `${caption}\n[media]` : `📎 ${fileName}`,
           'text',
           {
             credentials: channel.credentials,
@@ -501,17 +543,15 @@ export class OutboundMediaHandler {
       }
 
       await this.messageRepo.updateStatus(message.id, 'sent', externalId);
-
       this.eventEmitter.emit('omni.message.sent', {
         tenantId,
         conversationId,
         senderId: 'bot:typebot',
         senderName: 'Bot',
-        senderAvatarUrl: null,
         senderType: 'bot',
         direction: 'outbound',
-        messageType: resolvedMessageType,
-        content: caption || `[${resolvedMessageType}] ${fileName}`,
+        messageType,
+        content: caption || `[${messageType}] ${fileName}`,
         messageId: message.id,
         externalMessageId: externalId,
         status: 'sent',
@@ -520,12 +560,9 @@ export class OutboundMediaHandler {
         source: 'bot',
         transport: 'http',
       });
-
       return { ok: true, messageId: message.id, status: 'sent' };
-    } catch (error) {
-      this.logger.error(
-        `Failed to send bot media: ${error instanceof Error ? error.message : error}`,
-      );
+    } catch (error: any) {
+      this.logger.error(`Failed to send bot media: ${error.message}`);
       await this.messageRepo.updateStatus(message.id, 'failed');
       throw error;
     }

@@ -1,6 +1,5 @@
 import { IsString, IsOptional, IsBoolean } from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { PartialType } from '@nestjs/swagger';
+import { ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { CreateTicketDto } from './create-ticket.dto';
 
 /**

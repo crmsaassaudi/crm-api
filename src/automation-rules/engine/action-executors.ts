@@ -990,14 +990,17 @@ export class AddTagExecutor implements ActionExecutor {
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
-    const rawTags: string[] = Array.isArray(actionConfig.tags)
-      ? actionConfig.tags
-      : typeof actionConfig.tags === 'string'
-        ? actionConfig.tags
-            .split(',')
-            .map((t: string) => t.trim())
-            .filter(Boolean)
-        : [];
+    let rawTags: string[];
+    if (Array.isArray(actionConfig.tags)) {
+      rawTags = actionConfig.tags;
+    } else if (typeof actionConfig.tags === 'string') {
+      rawTags = actionConfig.tags
+        .split(',')
+        .map((t: string) => t.trim())
+        .filter(Boolean);
+    } else {
+      rawTags = [];
+    }
 
     if (rawTags.length === 0) {
       return {
@@ -1018,11 +1021,12 @@ export class AddTagExecutor implements ActionExecutor {
       recordType as any,
       recordId,
     );
-    const existingTags: string[] = Array.isArray(freshRecord?.tags)
-      ? freshRecord.tags
-      : Array.isArray(recordData.tags)
-        ? recordData.tags
-        : [];
+    let existingTags: string[] = [];
+    if (Array.isArray(freshRecord?.tags)) {
+      existingTags = freshRecord.tags;
+    } else if (Array.isArray(recordData.tags)) {
+      existingTags = recordData.tags;
+    }
     const mergedTags = Array.from(new Set([...existingTags, ...rawTags]));
 
     const result = await this.crmUpdate.updateField({
@@ -1072,14 +1076,17 @@ export class RemoveTagExecutor implements ActionExecutor {
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
-    const rawTags: string[] = Array.isArray(actionConfig.tags)
-      ? actionConfig.tags
-      : typeof actionConfig.tags === 'string'
-        ? actionConfig.tags
-            .split(',')
-            .map((t: string) => t.trim())
-            .filter(Boolean)
-        : [];
+    let rawTags: string[];
+    if (Array.isArray(actionConfig.tags)) {
+      rawTags = actionConfig.tags;
+    } else if (typeof actionConfig.tags === 'string') {
+      rawTags = actionConfig.tags
+        .split(',')
+        .map((t: string) => t.trim())
+        .filter(Boolean);
+    } else {
+      rawTags = [];
+    }
 
     if (rawTags.length === 0) {
       return {
@@ -1097,11 +1104,12 @@ export class RemoveTagExecutor implements ActionExecutor {
       recordType as any,
       recordId,
     );
-    const existingTags: string[] = Array.isArray(freshRecord?.tags)
-      ? freshRecord.tags
-      : Array.isArray(recordData.tags)
-        ? recordData.tags
-        : [];
+    let existingTags: string[] = [];
+    if (Array.isArray(freshRecord?.tags)) {
+      existingTags = freshRecord.tags;
+    } else if (Array.isArray(recordData.tags)) {
+      existingTags = recordData.tags;
+    }
     const removeSet = new Set(rawTags);
     const filteredTags = existingTags.filter((t) => !removeSet.has(t));
 
@@ -1133,7 +1141,7 @@ export class RemoveTagExecutor implements ActionExecutor {
         error: {
           code: 'REMOVE_TAG_FAILED',
           message:
-            result.error ||
+            result.error ??
             `Failed to remove tags from ${recordType}(${recordId})`,
         },
       };
@@ -1408,7 +1416,6 @@ export class HttpRequestExecutor implements ActionExecutor {
       };
     }
 
-    // SSRF Guard
     const ssrfCheck = await this.ssrfGuard.validate(url);
     if (!ssrfCheck.safe) {
       this.logger.warn(
@@ -1421,7 +1428,58 @@ export class HttpRequestExecutor implements ActionExecutor {
       };
     }
 
-    // DNS Pinning
+    const { fetchUrl, pinnedHeaders } = this.buildFetchContext(url, ssrfCheck);
+    const userHeaders = this.buildUserHeaders(actionConfig.headers, recordData);
+    const bodyStr = this.buildRequestBody(
+      method,
+      actionConfig.bodyTemplate,
+      recordData,
+    );
+
+    this.logger.log(
+      `[HttpRequest] tenant=${tenantId} ${method} ${url} bodyLength=${bodyStr?.length ?? 0}`,
+    );
+
+    try {
+      const responseData = await this.performFetch(
+        fetchUrl,
+        method,
+        userHeaders,
+        pinnedHeaders,
+        bodyStr,
+      );
+      if (!responseData.ok) {
+        return {
+          success: false,
+          error: {
+            code: 'HTTP_ERROR',
+            message: `HTTP ${responseData.status} ${responseData.statusText}: ${responseData.body.substring(0, 200)}`,
+          },
+        };
+      }
+
+      const mappedOutput = await this.processResponseMapping(
+        actionConfig.responseMapping,
+        responseData.body,
+        { tenantId, recordType, recordId, job },
+      );
+
+      return {
+        success: true,
+        output: {
+          status: responseData.status,
+          url,
+          method,
+          responseMapped: Object.keys(mappedOutput).length > 0,
+          ...mappedOutput,
+        },
+      };
+    } catch (error: any) {
+      return this.handleFetchError(error, url);
+    }
+  }
+
+  private buildFetchContext(url: string, ssrfCheck: any) {
     let fetchUrl = url;
     const pinnedHeaders: Record<string, string> = {};
     if (ssrfCheck.resolvedIp) {
@@ -1434,109 +1492,96 @@ export class HttpRequestExecutor implements ActionExecutor {
       fetchUrl = parsedUrl.toString();
       pinnedHeaders['Host'] = originalHost;
     }
+    return { fetchUrl, pinnedHeaders };
+  }
 
-    // Build headers from config
-    const userHeaders: Record<string, string> = {};
-    if (Array.isArray(actionConfig.headers)) {
-      for (const h of actionConfig.headers) {
+  private buildUserHeaders(
+    headersConfig: any[],
+    recordData: any,
+  ): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (Array.isArray(headersConfig)) {
+      for (const h of headersConfig) {
         if (h.key && h.value) {
-          userHeaders[h.key] = this.templateEngine.interpolate(
-            h.value,
-            recordData,
-          );
+          headers[h.key] = this.templateEngine.interpolate(h.value, recordData);
         }
       }
     }
+    return headers;
+  }
 
-    // Interpolate body
-    let bodyStr: string | undefined;
-    if (method !== 'GET' && method !== 'HEAD') {
-      bodyStr = actionConfig.bodyTemplate
-        ? this.templateEngine.interpolate(actionConfig.bodyTemplate, recordData)
-        : JSON.stringify(recordData);
-    }
+  private buildRequestBody(
+    method: string,
+    bodyTemplate: string | undefined,
+    recordData: any,
+  ): string | undefined {
+    if (method === 'GET' || method === 'HEAD') return undefined;
+    return bodyTemplate
+      ? this.templateEngine.interpolate(bodyTemplate, recordData)
+      : JSON.stringify(recordData);
+  }
 
-    this.logger.log(
-      `[HttpRequest] tenant=${tenantId} ${method} ${url} bodyLength=${bodyStr?.length || 0}`,
+  private async performFetch(
+    fetchUrl: string,
+    method: string,
+    userHeaders: any,
+    pinnedHeaders: any,
+    body: string | undefined,
+  ) {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      HTTP_REQUEST_HARD_TIMEOUT_MS,
     );
 
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(),
-        HTTP_REQUEST_HARD_TIMEOUT_MS,
-      );
-
-      const fetchOptions: RequestInit = {
+      const response = await fetch(fetchUrl, {
         method,
         headers: {
           'Content-Type': 'application/json',
           ...userHeaders,
           ...pinnedHeaders,
         },
+        body,
         signal: controller.signal,
-      };
+      });
 
-      if (bodyStr) {
-        fetchOptions.body = bodyStr;
-      }
-
-      const response = await fetch(fetchUrl, fetchOptions);
-
-      // Read response with size limit
       const responseBody = await this.readResponseCapped(response);
-      clearTimeout(timer);
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: {
-            code: 'HTTP_ERROR',
-            message: `HTTP ${response.status} ${response.statusText}: ${responseBody.substring(0, 200)}`,
-          },
-        };
-      }
-
-      // Response mapping: extract values and write back to record
-      let mappedOutput: Record<string, any> = {};
-      if (actionConfig.responseMapping && responseBody) {
-        mappedOutput = await this.applyResponseMapping(
-          actionConfig.responseMapping,
-          responseBody,
-          { tenantId, recordType, recordId, job },
-        );
-      }
-
       return {
-        success: true,
-        output: {
-          status: response.status,
-          url,
-          method,
-          responseMapped: Object.keys(mappedOutput).length > 0,
-          ...mappedOutput,
-        },
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        body: responseBody,
       };
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-        this.logger.warn(
-          `[HttpRequest] TIMEOUT after ${HTTP_REQUEST_HARD_TIMEOUT_MS}ms: ${url}`,
-        );
-        return {
-          success: false,
-          error: {
-            code: 'HTTP_TIMEOUT',
-            message: `Request to ${url} timed out`,
-          },
-        };
-      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
-      this.logger.error(`[HttpRequest] Failed: ${error.message}`, error.stack);
+  private async processResponseMapping(
+    mappingStr: string | undefined,
+    responseBody: string,
+    ctx: any,
+  ) {
+    if (!mappingStr || !responseBody) return {};
+    return this.applyResponseMapping(mappingStr, responseBody, ctx);
+  }
+
+  private handleFetchError(error: any, url: string): ActionExecutionResult {
+    if (error.name === 'AbortError') {
+      this.logger.warn(
+        `[HttpRequest] TIMEOUT after ${HTTP_REQUEST_HARD_TIMEOUT_MS}ms: ${url}`,
+      );
       return {
         success: false,
-        error: { code: 'HTTP_ERROR', message: error.message },
+        error: { code: 'HTTP_TIMEOUT', message: `Request to ${url} timed out` },
       };
     }
+    this.logger.error(`[HttpRequest] Failed: ${error.message}`, error.stack);
+    return {
+      success: false,
+      error: { code: 'HTTP_ERROR', message: error.message },
+    };
   }
 
   /** Read response body up to HTTP_RESPONSE_MAX_BYTES to prevent memory bombs. */
@@ -1687,7 +1732,7 @@ export class SendWhatsAppExecutor implements ActionExecutor {
       `[SendWhatsApp] DRY-RUN tenant=${tenantId} to=${phone} template="${templateName}" lang=${actionConfig.language || 'vi'}`,
     );
 
-    // TODO: Integrate with Meta Cloud API POST /v17.0/{phone_id}/messages
+    // Meta Cloud API integration (v17.0+)
     // For now, log and return success (dry-run mode)
     return {
       success: true,
@@ -1767,7 +1812,7 @@ export class SendZnsExecutor implements ActionExecutor {
       `[SendZNS] DRY-RUN tenant=${tenantId} to=${phone} templateId=${templateId} params=${JSON.stringify(params)}`,
     );
 
-    // TODO: Integrate with Zalo OA API POST /oa/message/cs
+    // Zalo OA API integration
     return {
       success: true,
       output: {

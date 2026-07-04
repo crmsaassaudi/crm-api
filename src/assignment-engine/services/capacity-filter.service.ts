@@ -176,7 +176,7 @@ export class CapacityFilterService {
         'omni_presence',
         tenantId,
       );
-      const requireMap = (cfg as any)?.requireOnlineForAssignment;
+      const requireMap = cfg?.requireOnlineForAssignment;
       if (requireMap && typeof requireMap[presenceKey] === 'boolean') {
         requireOnline = requireMap[presenceKey];
       }

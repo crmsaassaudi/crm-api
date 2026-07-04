@@ -29,7 +29,7 @@ export class NotesService {
   ): Promise<Note> {
     await this.ensureContact(contactId);
     const title =
-      data.title?.trim() ||
+      data.title?.trim() ??
       (data.content.length > 80
         ? data.content.slice(0, 80) + '...'
         : data.content);

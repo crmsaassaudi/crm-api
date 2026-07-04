@@ -63,19 +63,19 @@ export class BotApiService {
    */
   resolveCallbackUrl(): string {
     const raw =
-      this.configService.get<string>('CRM_API_INTERNAL_URL', { infer: true }) ||
-      this.configService.get<string>('CRM_API_PUBLIC_URL', { infer: true }) ||
-      this.configService.get<string>('API_BASE_URL', { infer: true }) ||
+      this.configService.get<string>('CRM_API_INTERNAL_URL', { infer: true }) ??
+      this.configService.get<string>('CRM_API_PUBLIC_URL', { infer: true }) ??
+      this.configService.get<string>('API_BASE_URL', { infer: true }) ??
       'http://localhost:3000';
     const apiPrefix =
-      this.configService.get<string>('API_PREFIX', { infer: true }) || 'api';
+      this.configService.get<string>('API_PREFIX', { infer: true }) ?? 'api';
     return `${raw.replace(/\/+$/, '')}/${apiPrefix}/v1/bot-callback/reply`;
   }
 
   private resolveBotBaseUrl(): string {
     const raw =
-      this.configService.get<string>('CRM_BOT_URL', { infer: true }) ||
-      this.configService.get<string>('BOT_SERVICE_URL', { infer: true }) ||
+      this.configService.get<string>('CRM_BOT_URL', { infer: true }) ??
+      this.configService.get<string>('BOT_SERVICE_URL', { infer: true }) ??
       'http://localhost:4203';
     return raw.replace(/\/+$/, '');
   }

@@ -3,8 +3,8 @@ import { AgentStatusAuditRepository } from '../repositories/agent-status-audit.r
 import { AgentPresenceService } from './agent-presence.service';
 import { UsersService } from '../../users/users.service';
 import {
-  AgentIntentStatus,
-  StatusTransitionTrigger,
+  LegacyIntentStatus,
+  TransitionTrigger,
   AgentPresence,
 } from '../domain/agent-presence';
 
@@ -73,9 +73,9 @@ export class AgentStatusAuditService implements OnModuleInit {
   async logTransition(
     tenantId: string,
     agentId: string,
-    fromStatus: AgentIntentStatus,
-    toStatus: AgentIntentStatus,
-    trigger: StatusTransitionTrigger,
+    fromStatus: LegacyIntentStatus,
+    toStatus: LegacyIntentStatus,
+    trigger: TransitionTrigger,
     metadata?: Record<string, any>,
   ): Promise<void> {
     try {
@@ -286,11 +286,6 @@ export class AgentStatusAuditService implements OnModuleInit {
     startOfDay: Date,
     capEnd: Date,
     currentPresence?: AgentPresence,
-    /**
-     * F-05 fix: the agent's status at midnight, carried over from the previous day.
-     * When defined, the pre-transition gap is credited to this status instead of
-     * defaulting to 'offline', which was incorrect for multi-day sessions.
-     */
     midnightBaselineStatus?: string,
   ): AgentWorkTimeSummary {
     const durations: Record<string, number> = {
@@ -304,56 +299,15 @@ export class AgentStatusAuditService implements OnModuleInit {
     };
 
     if (logs.length === 0) {
-      // No transitions logged today.
-      const currentStatus = currentPresence
-        ? currentPresence.presenceStatus.toLowerCase()
-        : undefined;
-      if (currentPresence && currentStatus !== 'offline') {
-        // Fallback Heuristic: If agent is online NOW but has 0 logs today,
-        // assume they've been in their current status since start of day.
-        // This handles agents who were already online when audit system started.
-        const status = currentStatus!;
-        const duration = capEnd.getTime() - startOfDay.getTime();
-        if (status in durations) {
-          durations[status] = duration;
-        } else {
-          durations.offline = duration;
-        }
-      } else {
-        // No logs and not currently online → agent was offline all day
-        durations.offline = capEnd.getTime() - startOfDay.getTime();
-      }
+      this.handleNoLogsCase(durations, startOfDay, capEnd, currentPresence);
     } else {
-      // F-05 fix: time from midnight to the first transition is credited to the
-      // status the agent was in at the end of the previous day (baseline).
-      // Previously this was always 'offline', which was wrong for agents who
-      // were already online (e.g. available since yesterday afternoon).
-      const firstTs = new Date(logs[0].timestamp).getTime();
-      const dayStart = startOfDay.getTime();
-      if (firstTs > dayStart) {
-        const gapStatus =
-          midnightBaselineStatus && midnightBaselineStatus in durations
-            ? midnightBaselineStatus
-            : 'offline';
-        durations[gapStatus] += firstTs - dayStart;
-      }
-
-      // Process transitions
-      for (let i = 0; i < logs.length; i++) {
-        const current = logs[i];
-        const currentTs = new Date(current.timestamp).getTime();
-        const nextTs =
-          i + 1 < logs.length
-            ? new Date(logs[i + 1].timestamp).getTime()
-            : capEnd.getTime();
-
-        const duration = Math.max(0, nextTs - currentTs);
-        const status = current.toStatus;
-
-        if (status in durations) {
-          durations[status] += duration;
-        }
-      }
+      this.processTransitions(
+        durations,
+        logs,
+        startOfDay,
+        capEnd,
+        midnightBaselineStatus,
+      );
     }
 
     return {
@@ -383,5 +337,60 @@ export class AgentStatusAuditService implements OnModuleInit {
         timestamp: new Date(l.timestamp).toISOString(),
       })),
     };
+  }
+
+  private handleNoLogsCase(
+    durations: Record<string, number>,
+    startOfDay: Date,
+    capEnd: Date,
+    currentPresence?: AgentPresence,
+  ): void {
+    const duration = capEnd.getTime() - startOfDay.getTime();
+    const currentStatus = currentPresence?.presenceStatus?.toLowerCase();
+
+    if (currentPresence && currentStatus && currentStatus !== 'offline') {
+      if (currentStatus in durations) {
+        durations[currentStatus] = duration;
+      } else {
+        durations.offline = duration;
+      }
+    } else {
+      durations.offline = duration;
+    }
+  }
+
+  private processTransitions(
+    durations: Record<string, number>,
+    logs: any[],
+    startOfDay: Date,
+    capEnd: Date,
+    midnightBaselineStatus?: string,
+  ): void {
+    const dayStart = startOfDay.getTime();
+    const firstTs = new Date(logs[0].timestamp).getTime();
+
+    if (firstTs > dayStart) {
+      const gapStatus =
+        midnightBaselineStatus && midnightBaselineStatus in durations
+          ? midnightBaselineStatus
+          : 'offline';
+      durations[gapStatus] += firstTs - dayStart;
+    }
+
+    for (let i = 0; i < logs.length; i++) {
+      const current = logs[i];
+      const currentTs = new Date(current.timestamp).getTime();
+      const nextTs =
+        i + 1 < logs.length
+          ? new Date(logs[i + 1].timestamp).getTime()
+          : capEnd.getTime();
+
+      const duration = Math.max(0, nextTs - currentTs);
+      const status = current.toStatus;
+
+      if (status in durations) {
+        durations[status] += duration;
+      }
+    }
   }
 }

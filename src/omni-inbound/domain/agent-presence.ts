@@ -22,21 +22,11 @@ import {
   RoutingStatus,
   WorkStatus,
 } from './presence-state';
-import { TransitionTrigger } from './presence-state-machine';
 
 // Re-export the canonical model + state machine so callers can import either
 // from the pure modules or from this presence aggregate.
 export * from './presence-state';
 export * from './presence-state-machine';
-
-/** @deprecated legacy alias — the canonical trigger type is TransitionTrigger. */
-export type StatusTransitionTrigger = TransitionTrigger;
-
-/** @deprecated legacy alias — used by the work-time report. */
-export type AgentIntentStatus = LegacyIntentStatus;
-
-/** @deprecated legacy alias for the lowercase display status. */
-export type AgentStatus = LegacyIntentStatus;
 
 /**
  * Agent presence — the real-time state of a support agent, stored in Redis for
@@ -79,9 +69,6 @@ export interface AgentPresence {
    * Last-Write-Wins monotonic guard (§1.6). Stale commands are dropped.
    */
   lastCommandTs?: number;
-
-  /** @deprecated kept for backward compatibility during migration. */
-  socketId?: string;
 }
 
 // ─── Redis Key Helpers ──────────────────────────────────────────────────────

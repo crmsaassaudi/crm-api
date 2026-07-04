@@ -375,63 +375,20 @@ export class ConversationOpsProcessor
     }
 
     // Send each bot message via outbound service
-    let lastBotMessageId: string | null = null;
-    for (const [index, msg] of (messages ?? []).entries()) {
-      try {
-        const idempotencyKey = `bot:${inboundMessageId}:${index}`;
-
-        if (msg.type === 'text' && msg.text) {
-          const result = await this.outboundService.sendBotMessage({
-            tenantId: cmd.tenantId,
-            conversationId: cmd.conversationId,
-            content: msg.text,
-            idempotencyKey,
-            afterTimestamp: resolvedAfterTimestamp,
-            buttons: msg.buttons,
-            skipAggregateUpdate: true, // processor handles atomicUpdate
-          });
-          lastBotMessageId = result?.messageId ?? lastBotMessageId;
-        } else if (
-          ['image', 'video', 'audio', 'file'].includes(msg.type) &&
-          msg.url
-        ) {
-          const result = await this.outboundService.sendBotMedia({
-            tenantId: cmd.tenantId,
-            conversationId: cmd.conversationId,
-            mediaUrl: msg.url,
-            mediaType: msg.type,
-            mimeType: msg.mimeType,
-            caption: msg.text,
-            idempotencyKey,
-            afterTimestamp: resolvedAfterTimestamp,
-          });
-          lastBotMessageId = result?.messageId ?? lastBotMessageId;
-        }
-      } catch (err: any) {
-        this.logger.error(
-          `[CONV-OPS] Bot message send failed (msg ${index}): ${err?.message}`,
-        );
-      }
-    }
+    const lastBotMessageId = await this.sendBotMessages(
+      cmd,
+      messages,
+      inboundMessageId,
+      resolvedAfterTimestamp,
+    );
 
     // Update aggregate with bot's last message
     if (lastBotMessageId) {
-      const lastMsg = messages[messages.length - 1];
-      const botPreview = (
-        lastMsg?.text || `[${lastMsg?.type ?? 'bot'}]`
-      ).substring(0, PREVIEW_MAX_LENGTH);
-
-      await this.conversationRepo.atomicUpdate(cmd.conversationId, {
-        $set: {
-          lastMessageId: lastBotMessageId,
-          lastMessagePreview: botPreview,
-          lastMessageType: lastMsg?.type ?? 'text',
-          lastMessageAt: new Date(),
-          lastMessageSenderType: 'bot',
-          lastMessage: botPreview, // backward compat
-          unreadCount: 0, // Bot "reads" the conversation
-        },
-      });
+      await this.updateConversationWithLastBotMessage(
+        cmd.conversationId,
+        messages,
+        lastBotMessageId,
+      );
     }
 
     this.logger.log(
@@ -440,58 +397,142 @@ export class ConversationOpsProcessor
     );
 
     if (handoff) {
-      await this.conversationRepo.markBotHandoff(cmd.conversationId);
+      await this.handleBotHandoff(cmd, handoffMeta);
+    }
+  }
 
-      const conversation = await this.conversationRepo.findById(
-        cmd.conversationId,
-      );
+  private async sendBotMessages(
+    cmd: ConversationCommand,
+    messages: any[],
+    inboundMessageId: string | undefined,
+    resolvedAfterTimestamp: number | undefined,
+  ): Promise<string | null> {
+    let lastBotMessageId: string | null = null;
+    for (const [index, msg] of (messages ?? []).entries()) {
+      try {
+        const idempotencyKey = `bot:${inboundMessageId}:${index}`;
+        let result: { messageId: string } | null = null;
 
-      if (handoffMeta?.target === 'agent' && handoffMeta.agentId) {
-        await this.conversationRepo.assignAgent(
-          cmd.conversationId,
-          handoffMeta.agentId,
-        );
-        await this.saveAndPublishOutboxEvent(
-          cmd.conversationId,
-          cmd.tenantId,
-          OmniEvents.CONVERSATION_ASSIGNED,
-          {
+        if (msg.type === 'text' && msg.text) {
+          result = await this.outboundService.sendBotMessage({
             tenantId: cmd.tenantId,
             conversationId: cmd.conversationId,
-            agentId: handoffMeta.agentId,
-            oldAgentId: null,
-            reason: 'bot_handoff_targeted',
-          },
-        );
-      } else if (handoffMeta?.target === 'group' && handoffMeta.groupId) {
-        await this.conversationRepo.assignGroup(
-          cmd.conversationId,
-          handoffMeta.groupId,
-        );
-        await this.saveAndPublishOutboxEvent(
-          cmd.conversationId,
-          cmd.tenantId,
-          OmniEvents.CONVERSATION_ASSIGNED,
-          {
+            content: msg.text,
+            idempotencyKey,
+            afterTimestamp: resolvedAfterTimestamp,
+            buttons: msg.buttons,
+            skipAggregateUpdate: true,
+          });
+        } else if (
+          ['image', 'video', 'audio', 'file'].includes(msg.type) &&
+          msg.url
+        ) {
+          result = await this.outboundService.sendBotMedia({
             tenantId: cmd.tenantId,
             conversationId: cmd.conversationId,
-            agentId: null,
-            oldAgentId: null,
-            groupId: handoffMeta.groupId,
-            reason: 'bot_handoff_targeted',
-          },
+            mediaUrl: msg.url,
+            mediaType: msg.type,
+            mimeType: msg.mimeType,
+            caption: msg.text,
+            idempotencyKey: idempotencyKey ?? undefined,
+            afterTimestamp: resolvedAfterTimestamp,
+          });
+        }
+        lastBotMessageId = result?.messageId ?? lastBotMessageId;
+      } catch (err: any) {
+        this.logger.error(
+          `[CONV-OPS] Bot message send failed (msg ${index}): ${err?.message}`,
         );
       }
+    }
+    return lastBotMessageId;
+  }
 
-      this.eventEmitter.emit(OmniEvents.BOT_HANDOFF, {
+  private async updateConversationWithLastBotMessage(
+    conversationId: string,
+    messages: any[],
+    lastBotMessageId: string,
+  ): Promise<void> {
+    const lastMsg = messages[messages.length - 1];
+    const botPreview = (
+      lastMsg?.text || `[${lastMsg?.type ?? 'bot'}]`
+    ).substring(0, PREVIEW_MAX_LENGTH);
+
+    await this.conversationRepo.atomicUpdate(conversationId, {
+      $set: {
+        lastMessageId: lastBotMessageId,
+        lastMessagePreview: botPreview,
+        lastMessageType: lastMsg?.type ?? 'text',
+        lastMessageAt: new Date(),
+        lastMessageSenderType: 'bot',
+        lastMessage: botPreview,
+        unreadCount: 0,
+      },
+    });
+  }
+
+  private async handleBotHandoff(
+    cmd: ConversationCommand,
+    handoffMeta: any,
+  ): Promise<void> {
+    await this.conversationRepo.markBotHandoff(cmd.conversationId);
+    const conversation = await this.conversationRepo.findById(
+      cmd.conversationId,
+    );
+
+    if (handoffMeta?.target === 'agent' && handoffMeta.agentId) {
+      await this.conversationRepo.assignAgent(
+        cmd.conversationId,
+        handoffMeta.agentId,
+      );
+      await this.publishAssignmentEvent(
+        cmd,
+        handoffMeta.agentId,
+        null,
+        'bot_handoff_targeted',
+      );
+    } else if (handoffMeta?.target === 'group' && handoffMeta.groupId) {
+      await this.conversationRepo.assignGroup(
+        cmd.conversationId,
+        handoffMeta.groupId,
+      );
+      await this.publishAssignmentEvent(
+        cmd,
+        null,
+        handoffMeta.groupId,
+        'bot_handoff_targeted',
+      );
+    }
+
+    this.eventEmitter.emit(OmniEvents.BOT_HANDOFF, {
+      tenantId: cmd.tenantId,
+      conversationId: cmd.conversationId,
+      channelType: conversation?.channelType,
+      channelAccount:
+        conversation?.channelAccount ?? conversation?.channelId?.toString(),
+      contactId: conversation?.contactId ?? null,
+    });
+  }
+
+  private async publishAssignmentEvent(
+    cmd: ConversationCommand,
+    agentId: string | null,
+    groupId: string | null,
+    reason: string,
+  ): Promise<void> {
+    await this.saveAndPublishOutboxEvent(
+      cmd.conversationId,
+      cmd.tenantId,
+      OmniEvents.CONVERSATION_ASSIGNED,
+      {
         tenantId: cmd.tenantId,
         conversationId: cmd.conversationId,
-        channelType: conversation?.channelType,
-        channelAccount:
-          conversation?.channelAccount ?? conversation?.channelId?.toString(),
-        contactId: conversation?.contactId ?? null,
-      });
-    }
+        agentId,
+        oldAgentId: null,
+        groupId: groupId ?? undefined,
+        reason,
+      },
+    );
   }
 
   // ── ASSIGN_AGENT Handler ─────────────────────────────────────────
@@ -511,32 +552,84 @@ export class ConversationOpsProcessor
       auditLog,
     } = cmd.payload;
 
+    const committed = await this.performAssignmentUpdate(
+      cmd.conversationId,
+      agentId,
+      groupId,
+      onlyIfUnassigned,
+    );
+    if (!committed) return;
+
+    await this.emitAssignmentEvents(
+      cmd,
+      agentId,
+      previousAgentId,
+      groupId,
+      previousGroupId,
+      performedByUserId,
+      reason,
+    );
+
+    this.logger.log(
+      `[CONV-OPS] ASSIGN_AGENT: conv=${cmd.conversationId} agent=${agentId} group=${groupId} reason=${reason}`,
+    );
+
+    this.syncPresenceOnAssignment(cmd.tenantId, syncCapacity);
+
+    if (auditLog?.channelType && agentId !== undefined) {
+      this.logAssignmentAuditTrail(
+        cmd.tenantId,
+        cmd.conversationId,
+        agentId,
+        previousAgentId,
+        performedByUserId,
+        auditLog.channelType,
+        reason,
+      );
+    }
+  }
+
+  private async performAssignmentUpdate(
+    conversationId: string,
+    agentId: string | null | undefined,
+    groupId: string | null | undefined,
+    onlyIfUnassigned: boolean | undefined,
+  ): Promise<boolean> {
     if (onlyIfUnassigned && agentId) {
       const committed = await this.conversationRepo.assignIfUnassigned(
-        cmd.conversationId,
+        conversationId,
         agentId,
       );
       if (!committed) {
         this.logger.debug(
-          `[CONV-OPS] ASSIGN_AGENT skipped — conv ${cmd.conversationId} already assigned`,
+          `[CONV-OPS] ASSIGN_AGENT skipped — conv ${conversationId} already assigned`,
         );
-        return;
+        return false;
       }
     } else {
-      if (agentId !== undefined) {
+      if (agentId !== undefined)
         await this.conversationRepo.updateAssignment(
-          cmd.conversationId,
-          agentId,
+          conversationId,
+          agentId ?? null,
         );
-      }
-      if (groupId !== undefined) {
+      if (groupId !== undefined)
         await this.conversationRepo.updateGroupAssignment(
-          cmd.conversationId,
-          groupId,
+          conversationId,
+          groupId ?? null,
         );
-      }
     }
+    return true;
+  }
 
+  private async emitAssignmentEvents(
+    cmd: ConversationCommand,
+    agentId: string | null | undefined,
+    previousAgentId: string | null | undefined,
+    groupId: string | null | undefined,
+    previousGroupId: string | null | undefined,
+    performedByUserId: string | null | undefined,
+    reason: string,
+  ): Promise<void> {
     await this.saveAndPublishOutboxEvent(
       cmd.conversationId,
       cmd.tenantId,
@@ -552,55 +645,50 @@ export class ConversationOpsProcessor
         reason,
       },
     );
+  }
 
-    this.logger.log(
-      `[CONV-OPS] ASSIGN_AGENT: conv=${cmd.conversationId} agent=${agentId} ` +
-        `group=${groupId} reason=${reason}`,
-    );
-
+  private syncPresenceOnAssignment(tenantId: string, syncCapacity: any): void {
     if (syncCapacity?.releaseAgentId) {
       this.agentPresenceService
-        .releaseConversation(cmd.tenantId, syncCapacity.releaseAgentId)
-        .catch(
-          logSwallowed(
-            this.logger,
-            `releaseConversation(${syncCapacity.releaseAgentId})`,
-          ),
-        );
+        .releaseConversation(tenantId, syncCapacity.releaseAgentId)
+        .catch(logSwallowed(this.logger, 'releaseConversation'));
     }
     if (syncCapacity?.assignAgentId) {
       this.agentPresenceService
-        .assignConversation(cmd.tenantId, syncCapacity.assignAgentId)
-        .catch(
-          logSwallowed(
-            this.logger,
-            `assignConversation(${syncCapacity.assignAgentId})`,
-          ),
-        );
+        .assignConversation(tenantId, syncCapacity.assignAgentId)
+        .catch(logSwallowed(this.logger, 'assignConversation'));
     }
+  }
 
-    if (auditLog?.channelType && agentId !== undefined) {
-      if (reason === 'reply_auto_assign') {
-        this.assignmentService
-          .logReplyAutoAssignment({
-            conversationId: cmd.conversationId,
-            tenantId: cmd.tenantId,
-            agentId: agentId!,
-            channelType: auditLog.channelType,
-          })
-          .catch(logSwallowed(this.logger, 'logReplyAutoAssignment'));
-      } else {
-        this.assignmentService
-          .logManualAssignment({
-            conversationId: cmd.conversationId,
-            tenantId: cmd.tenantId,
-            newAgentId: agentId ?? null,
-            previousAgentId: previousAgentId ?? null,
-            performedByUserId: performedByUserId ?? null,
-            channelType: auditLog.channelType,
-          })
-          .catch(logSwallowed(this.logger, 'logManualAssignment'));
-      }
+  private logAssignmentAuditTrail(
+    tenantId: string,
+    conversationId: string,
+    agentId: string | null | undefined,
+    previousAgentId: string | null | undefined,
+    performedByUserId: string | null | undefined,
+    channelType: string,
+    reason: string,
+  ): void {
+    if (reason === 'reply_auto_assign') {
+      this.assignmentService
+        .logReplyAutoAssignment({
+          conversationId,
+          tenantId,
+          agentId: agentId!,
+          channelType,
+        })
+        .catch(logSwallowed(this.logger, 'logReplyAutoAssignment'));
+    } else {
+      this.assignmentService
+        .logManualAssignment({
+          conversationId,
+          tenantId,
+          newAgentId: agentId ?? null,
+          previousAgentId: previousAgentId ?? null,
+          performedByUserId: performedByUserId ?? null,
+          channelType,
+        })
+        .catch(logSwallowed(this.logger, 'logManualAssignment'));
     }
   }
 

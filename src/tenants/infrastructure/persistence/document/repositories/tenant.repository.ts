@@ -95,30 +95,16 @@ export class TenantsRepository {
       };
     },
   ): Promise<Tenant | null> {
-    // Build dot-notation $set to merge fields without overwriting siblings
     const setFields: Record<string, unknown> = {};
+
     if (omniSettings.resolveNoteMode !== undefined) {
       setFields['omniSettings.resolveNoteMode'] = omniSettings.resolveNoteMode;
     }
-    if (omniSettings.notificationSound?.agent) {
-      const a = omniSettings.notificationSound.agent;
-      if (a.enabled !== undefined)
-        setFields['omniSettings.notificationSound.agent.enabled'] = a.enabled;
-      if (a.soundUrl !== undefined)
-        setFields['omniSettings.notificationSound.agent.soundUrl'] = a.soundUrl;
-      if (a.volume !== undefined)
-        setFields['omniSettings.notificationSound.agent.volume'] = a.volume;
-    }
-    if (omniSettings.notificationSound?.visitor) {
-      const v = omniSettings.notificationSound.visitor;
-      if (v.enabled !== undefined)
-        setFields['omniSettings.notificationSound.visitor.enabled'] = v.enabled;
-      if (v.soundUrl !== undefined)
-        setFields['omniSettings.notificationSound.visitor.soundUrl'] =
-          v.soundUrl;
-      if (v.volume !== undefined)
-        setFields['omniSettings.notificationSound.visitor.volume'] = v.volume;
-    }
+
+    this.buildNotificationSoundUpdates(
+      setFields,
+      omniSettings.notificationSound,
+    );
 
     if (Object.keys(setFields).length === 0) {
       return this.findById(tenantId);
@@ -128,6 +114,36 @@ export class TenantsRepository {
       .findByIdAndUpdate(tenantId, { $set: setFields }, { new: true })
       .exec();
     return updated ? TenantMapper.toDomain(updated) : null;
+  }
+
+  private buildNotificationSoundUpdates(
+    setFields: Record<string, unknown>,
+    notificationSound?: any,
+  ): void {
+    if (!notificationSound) return;
+
+    if (notificationSound.agent) {
+      this.addSoundUpdates(setFields, 'agent', notificationSound.agent);
+    }
+    if (notificationSound.visitor) {
+      this.addSoundUpdates(setFields, 'visitor', notificationSound.visitor);
+    }
+  }
+
+  private addSoundUpdates(
+    setFields: Record<string, unknown>,
+    type: 'agent' | 'visitor',
+    config: any,
+  ): void {
+    if (config.enabled !== undefined)
+      setFields[`omniSettings.notificationSound.${type}.enabled`] =
+        config.enabled;
+    if (config.soundUrl !== undefined)
+      setFields[`omniSettings.notificationSound.${type}.soundUrl`] =
+        config.soundUrl;
+    if (config.volume !== undefined)
+      setFields[`omniSettings.notificationSound.${type}.volume`] =
+        config.volume;
   }
 
   /**

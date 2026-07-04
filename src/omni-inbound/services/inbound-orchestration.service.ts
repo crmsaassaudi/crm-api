@@ -77,80 +77,21 @@ export class InboundOrchestrationService {
         `[AUTO-ASSIGN] triggerAutoAssignment for conversation=${conversationId}, reason=${reason}`,
       );
 
-      // 1. Load channel config
-      let channelConfig: Record<string, any> = {};
-      try {
-        const channel = await this.channelsService.findAnyByAccount(
-          this.toSchemaChannelType(payload.channelType),
-          payload.channelAccount,
-        );
-        channelConfig = channel?.config ?? {};
-      } catch (_channelErr: any) {
-        this.logger.debug(
-          `Channel not found for ${payload.channelType}/${payload.channelAccount} — using default routing`,
-        );
-      }
-
-      // 2. Channel-first auto-assignment hierarchy
-      const channelAutoAssign = channelConfig.autoAssignmentEnabled;
-
-      // Per-channel routing overrides (strategy/capacity/sticky/skills).
-      // Undefined fields inherit from the global omni_routing config via
-      // mergeRoutingConfig() inside AssignmentService.
-      const channelRoutingOverride = channelConfig.routing;
-
-      if (channelAutoAssign === false) {
+      const channelConfig = await this.loadChannelConfig(payload);
+      if (channelConfig.autoAssignmentEnabled === false) {
         this.logger.log(
           `Auto-assignment explicitly disabled for channel ${payload.channelAccount} — skipping`,
         );
         return;
       }
 
-      // 3. Build agent pool from channel's support config
-      const supportUserIds: string[] = channelConfig.supportUserIds ?? [];
-      const supportGroupIds: string[] = channelConfig.supportGroupIds ?? [];
+      const agentPool = await this.resolveAgentPool(channelConfig);
+      const routingContext = await this.buildRoutingContext(
+        payload,
+        conversationId,
+        enrichedProfile,
+      );
 
-      let agentPool: string[] | undefined = undefined;
-      if (supportUserIds.length > 0 || supportGroupIds.length > 0) {
-        const groupMemberIds =
-          await this.resolveGroupMembersForAssignment(supportGroupIds);
-        const allSupportIds = [
-          ...new Set([...supportUserIds, ...groupMemberIds]),
-        ];
-        agentPool = allSupportIds.length > 0 ? allSupportIds : undefined;
-      }
-
-      // 4. Build routing context for rule evaluation
-      const customerName =
-        enrichedProfile?.name ??
-        payload.metadata?.contactName ??
-        payload.senderId;
-
-      // F-03 fix: fetch conversation tags and VIP flag to populate routing context.
-      // Previously these were hardcoded to [] / undefined, making any admin-configured
-      // tag-based or segment-based routing rules permanently unreachable.
-      let conversationTags: string[] = [];
-      let conversationIsVip: boolean | undefined;
-      try {
-        const conv = await this.conversationRepo.findById(conversationId);
-        conversationTags = conv?.tags ?? [];
-        conversationIsVip = (conv as any)?.isVip;
-      } catch {
-        // Non-fatal — routing context will fall back to empty/undefined
-      }
-
-      const routingContext = {
-        channel: payload.channelType,
-        tags: conversationTags,
-        customerName,
-        content: payload.content ?? '',
-        time: this.getCurrentTimeHHmm(),
-        // Map the VIP flag to the segment field expected by routing rules.
-        // Admins can configure rules like: segment eq 'VIP' → route to Tier-2 team.
-        segment: conversationIsVip === true ? 'VIP' : undefined,
-      };
-
-      // 5. Call AssignmentService
       const assignedAgentId = await this.assignmentService.assignConversation(
         payload.tenantId,
         conversationId,
@@ -158,25 +99,19 @@ export class InboundOrchestrationService {
           agentPool,
           contactId,
           externalSenderId: payload.senderId,
-          channelAutoAssignOverride: channelAutoAssign,
-          channelRoutingOverride,
+          channelAutoAssignOverride: channelConfig.autoAssignmentEnabled,
+          channelRoutingOverride: channelConfig.routing,
           routingContext,
           allowReassignment: reason === 'reopen_agent_offline',
         },
       );
 
-      // 6. Emit assignment event for real-time broadcast
       if (assignedAgentId) {
-        this.eventEmitter.emit(OmniEvents.CONVERSATION_ASSIGNED, {
-          tenantId: payload.tenantId,
+        this.emitAssignmentEvent(
+          payload.tenantId,
           conversationId,
-          agentId: assignedAgentId,
-          oldAgentId: null,
-          strategy: reason === 'bot_handoff' ? 'bot_handoff' : 'auto',
+          assignedAgentId,
           reason,
-        });
-        this.logger.log(
-          `Auto-assigned conversation ${conversationId} → agent ${assignedAgentId} (reason: ${reason})`,
         );
       } else {
         this.logger.log(
@@ -184,12 +119,92 @@ export class InboundOrchestrationService {
         );
       }
     } catch (err: any) {
-      // Auto-assignment failure must NOT block message processing
       this.logger.error(
         `Auto-assignment failed for conversation ${conversationId}: ${err.message}`,
         err.stack,
       );
     }
+  }
+
+  private async loadChannelConfig(payload: OmniPayload): Promise<any> {
+    try {
+      const channel = await this.channelsService.findAnyByAccount(
+        this.toSchemaChannelType(payload.channelType),
+        payload.channelAccount,
+      );
+      return channel?.config ?? {};
+    } catch (_channelErr: any) {
+      this.logger.debug(
+        `Channel not found for ${payload.channelType}/${payload.channelAccount} — using default routing`,
+      );
+      return {};
+    }
+  }
+
+  private async resolveAgentPool(
+    channelConfig: any,
+  ): Promise<string[] | undefined> {
+    const supportUserIds: string[] = channelConfig.supportUserIds ?? [];
+    const supportGroupIds: string[] = channelConfig.supportGroupIds ?? [];
+
+    if (supportUserIds.length === 0 && supportGroupIds.length === 0) {
+      return undefined;
+    }
+
+    const groupMemberIds =
+      await this.resolveGroupMembersForAssignment(supportGroupIds);
+    const allSupportIds = [...new Set([...supportUserIds, ...groupMemberIds])];
+    return allSupportIds.length > 0 ? allSupportIds : undefined;
+  }
+
+  private async buildRoutingContext(
+    payload: OmniPayload,
+    conversationId: string,
+    enrichedProfile?: { name?: string },
+  ): Promise<any> {
+    const customerName =
+      enrichedProfile?.name ??
+      payload.metadata?.contactName ??
+      payload.senderId;
+
+    let conversationTags: string[] = [];
+    let conversationIsVip: boolean | undefined;
+
+    try {
+      const conv = await this.conversationRepo.findById(conversationId);
+      conversationTags = conv?.tags ?? [];
+      conversationIsVip = (conv as any)?.isVip;
+    } catch {
+      // Non-fatal
+    }
+
+    return {
+      channel: payload.channelType,
+      tags: conversationTags,
+      customerName,
+      content: payload.content ?? '',
+      time: this.getCurrentTimeHHmm(),
+      segment: conversationIsVip === true ? 'VIP' : undefined,
+    };
+  }
+
+  private emitAssignmentEvent(
+    tenantId: string,
+    conversationId: string,
+    agentId: string,
+    reason: string,
+  ): void {
+    this.eventEmitter.emit(OmniEvents.CONVERSATION_ASSIGNED, {
+      tenantId,
+      conversationId,
+      agentId,
+      oldAgentId: null,
+      strategy: reason === 'bot_handoff' ? 'bot_handoff' : 'auto',
+      reason,
+    });
+    this.logger.log(
+      `Auto-assigned conversation ${conversationId} → agent ${agentId} (reason: ${reason})`,
+    );
   }
 
   /**
@@ -320,14 +335,14 @@ export class InboundOrchestrationService {
       // Resolve botMode: explicit config > derive from botEnabled flag > disabled
       const rawBotMode = channel.config.botMode as string | undefined;
       const botEnabled = Boolean(channel.config.botEnabled);
-      const botMode: BotMode =
+      let botMode: BotMode = botEnabled ? 'bot_first' : 'disabled';
+      if (
         rawBotMode === 'bot_first' ||
         rawBotMode === 'bot_only' ||
         rawBotMode === 'disabled'
-          ? rawBotMode
-          : botEnabled
-            ? 'bot_first'
-            : 'disabled';
+      ) {
+        botMode = rawBotMode;
+      }
 
       const result = {
         enabled: botEnabled,
@@ -368,17 +383,70 @@ export class InboundOrchestrationService {
     conversationSnapshot?: any,
   ): Promise<void> {
     this.logger.log(
-      `[BOT-FLOW] ▶ enqueueBotProcessingIfNeeded START — ` +
-        `msg=${inboundMessageId}, conv=${conversationId}, ` +
-        `channel=${payload.channelType}/${payload.channelAccount}, ` +
-        `senderType=${payload.senderType}, messageType=${payload.messageType}`,
+      `[BOT-FLOW] ▶ enqueueBotProcessingIfNeeded START — msg=${inboundMessageId}, conv=${conversationId}`,
     );
 
+    if (!this.isMessageBotProcessable(payload)) {
+      return;
+    }
+
+    try {
+      const channelBotConfig = await this.getChannelBotConfig(
+        payload.tenantId,
+        payload.channelType,
+        payload.channelAccount,
+      );
+
+      if (!channelBotConfig.enabled) {
+        this.logger.log(
+          `[BOT-FLOW] ✗ SKIP — Bot DISABLED on channel ${payload.channelType}/${payload.channelAccount}`,
+        );
+        return;
+      }
+
+      const conversation =
+        conversationSnapshot ??
+        (await this.conversationRepo.findById(conversationId));
+      if (!conversation) {
+        this.logger.warn(
+          `[BOT-FLOW] ✗ SKIP — Conversation ${conversationId} NOT FOUND`,
+        );
+        return;
+      }
+
+      if (conversation.bot?.enabled === false) {
+        this.logger.log(`[BOT-FLOW] ✗ SKIP — Bot explicitly DISABLED by agent`);
+        return;
+      }
+
+      await this.ensureConversationBotState(
+        conversationId,
+        conversation,
+        channelBotConfig,
+      );
+
+      await this.enqueueBotJob(
+        payload,
+        conversationId,
+        inboundMessageId,
+        inboundProviderTimestamp,
+      );
+    } catch (error) {
+      this.logger.error(
+        `[BOT-FLOW] ✗ FAILED to enqueue bot job: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  private isMessageBotProcessable(payload: OmniPayload): boolean {
     if (payload.senderType !== 'customer') {
       this.logger.log(
-        `[BOT-FLOW] ✗ SKIP — senderType="${payload.senderType}" (not customer), msg=${inboundMessageId}`,
+        `[BOT-FLOW] ✗ SKIP — senderType="${payload.senderType}" (not customer)`,
       );
-      return;
+      return false;
     }
 
     const botProcessableTypes = new Set([
@@ -391,109 +459,61 @@ export class InboundOrchestrationService {
       'sticker',
     ]);
     const isInteractive = !!payload.metadata?.replyId;
+
     if (!botProcessableTypes.has(payload.messageType) && !isInteractive) {
       this.logger.log(
-        `[BOT-FLOW] ✗ SKIP — messageType="${payload.messageType}" not processable and not interactive, msg=${inboundMessageId}`,
+        `[BOT-FLOW] ✗ SKIP — messageType="${payload.messageType}" not processable`,
       );
-      return;
+      return false;
     }
 
-    try {
-      // ── Level 1: Channel master switch ──────────────────────────────
+    return true;
+  }
+
+  private async ensureConversationBotState(
+    conversationId: string,
+    conversation: any,
+    channelBotConfig: any,
+  ): Promise<void> {
+    if (!conversation.bot) {
       this.logger.log(
-        `[BOT-FLOW] Checking Level 1: Channel bot master switch...`,
+        `[BOT-FLOW] Auto-initializing bot state for legacy conversation ${conversationId}`,
       );
-      const channelBotConfig = await this.getChannelBotConfig(
-        payload.tenantId,
-        payload.channelType,
-        payload.channelAccount,
-      );
-      this.logger.log(
-        `[BOT-FLOW] Channel bot config result: enabled=${channelBotConfig.enabled}, provider=${channelBotConfig.provider}`,
-      );
-      if (!channelBotConfig.enabled) {
-        this.logger.log(
-          `[BOT-FLOW] ✗ SKIP — Bot DISABLED on channel ${payload.channelType}/${payload.channelAccount}, msg=${inboundMessageId}`,
-        );
-        return;
-      }
-
-      // ── Level 2: Conversation override ─────────────────────────────
-      // Default: enabled (conversation.bot.enabled defaults to true).
-      // Only skip when agent EXPLICITLY disabled bot on this conversation.
-      this.logger.log(
-        `[BOT-FLOW] Checking Level 2: Conversation bot override...`,
-      );
-      // Reuse caller's snapshot if available to avoid redundant DB read
-      const conversation =
-        conversationSnapshot ??
-        (await this.conversationRepo.findById(conversationId));
-      if (!conversation) {
-        this.logger.warn(
-          `[BOT-FLOW] ✗ SKIP — Conversation ${conversationId} NOT FOUND in DB, msg=${inboundMessageId}`,
-        );
-        return;
-      }
-
-      this.logger.log(
-        `[BOT-FLOW] Conversation bot state: bot=${JSON.stringify(conversation.bot ?? null)}, status=${conversation.status}`,
-      );
-
-      if (conversation.bot?.enabled === false) {
-        this.logger.log(
-          `[BOT-FLOW] ✗ SKIP — Bot explicitly DISABLED by agent on conversation ${conversationId}, msg=${inboundMessageId}`,
-        );
-        return;
-      }
-
-      // Auto-initialize bot state for legacy conversations (no bot field)
-      if (!conversation.bot) {
-        this.logger.log(
-          `[BOT-FLOW] Auto-initializing bot state for legacy conversation ${conversationId}`,
-        );
-        // Direct write — bot processing depends on this state being committed
-        // before the bot job runs. enqueue would be async and create a race
-        // where BotProcessingProcessor reads bot=null and skips.
-        await this.conversationRepo.updateBotState(conversationId, {
-          enabled: true,
-          provider: channelBotConfig.provider,
-          status: 'active',
-        });
-      }
-
-      let text = payload.content;
-      if (!text?.trim() && payload.messageType !== 'text') {
-        text = `[${payload.messageType}]`;
-      }
-
-      this.logger.log(
-        `[BOT-FLOW] ✓ ENQUEUING bot job — conv=${conversationId}, msg=${inboundMessageId}, text="${(text || '').substring(0, 50)}"`,
-      );
-
-      await this.botQueueService.enqueueInboundMessage({
-        tenantId: payload.tenantId,
-        org: payload.tenantId,
-        channelId: payload.channelId,
-        conversationId,
-        messageId: inboundMessageId,
-        text: text || '',
-        channel: payload.channelType,
-        replyId: payload.metadata?.replyId,
-        messageType: payload.messageType,
-        inboundProviderTimestamp: inboundProviderTimestamp?.toISOString(),
+      await this.conversationRepo.updateBotState(conversationId, {
+        enabled: true,
+        provider: channelBotConfig.provider,
+        status: 'active',
       });
-
-      this.logger.log(
-        `[BOT-FLOW] ✓ Bot job ENQUEUED successfully — conv=${conversationId}, msg=${inboundMessageId}`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `[BOT-FLOW] ✗ FAILED to enqueue bot job for msg=${inboundMessageId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        error instanceof Error ? error.stack : undefined,
-      );
     }
+  }
+
+  private async enqueueBotJob(
+    payload: OmniPayload,
+    conversationId: string,
+    inboundMessageId: string,
+    inboundProviderTimestamp?: Date,
+  ): Promise<void> {
+    let text = payload.content;
+    if (!text?.trim() && payload.messageType !== 'text') {
+      text = `[${payload.messageType}]`;
+    }
+
+    await this.botQueueService.enqueueInboundMessage({
+      tenantId: payload.tenantId,
+      org: payload.tenantId,
+      channelId: payload.channelId,
+      conversationId,
+      messageId: inboundMessageId,
+      text: text ?? '',
+      channel: payload.channelType,
+      replyId: payload.metadata?.replyId,
+      messageType: payload.messageType,
+      inboundProviderTimestamp: inboundProviderTimestamp?.toISOString(),
+    });
+
+    this.logger.log(
+      `[BOT-FLOW] ✓ Bot job ENQUEUED successfully — conv=${conversationId}`,
+    );
   }
 
   // ────────────────────────────────────────────────────────────────

@@ -266,6 +266,34 @@ export class ShadowContactService {
     }
   }
 
+  /**
+   * Enrich a profile object with data from a CRM Contact.
+   */
+  async enrichProfileFromContact(
+    contactId: string,
+    profile: any,
+  ): Promise<any> {
+    const contact = await this.findContact(contactId);
+    if (!contact) return profile;
+
+    const enriched = { ...profile };
+    const fullName = [contact.firstName, contact.lastName]
+      .filter(Boolean)
+      .join(' ');
+
+    if (fullName && fullName !== 'Visitor') {
+      enriched.name = fullName;
+    }
+    if (!enriched.phone && contact.phones?.[0]) {
+      enriched.phone = contact.phones[0];
+    }
+    if (contact.emails?.[0]) {
+      enriched.email = contact.emails[0];
+    }
+
+    return enriched;
+  }
+
   // ── Private Helpers ────────────────────────────────────────────
 
   private toSchemaChannelType(type: string): string {

@@ -95,10 +95,17 @@ export function validateSendInteractive(data: any): string | null {
     return 'body text is required';
   if (data.body.length > MAX_CONTENT_LENGTH)
     return `body exceeds max length of ${MAX_CONTENT_LENGTH} characters`;
-  if (!Array.isArray(data.buttons) || data.buttons.length === 0)
+  const buttonsError = validateButtons(data.buttons);
+  if (buttonsError) return buttonsError;
+
+  return null;
+}
+
+function validateButtons(buttons: any[]): string | null {
+  if (!Array.isArray(buttons) || buttons.length === 0)
     return 'at least 1 button is required';
-  if (data.buttons.length > 10) return 'maximum 10 buttons allowed';
-  for (const btn of data.buttons) {
+  if (buttons.length > 10) return 'maximum 10 buttons allowed';
+  for (const btn of buttons) {
     if (!btn.title || typeof btn.title !== 'string')
       return 'each button must have a title';
     if (btn.title.length > 200)

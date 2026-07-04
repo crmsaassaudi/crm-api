@@ -1,5 +1,6 @@
 import {
   ClassSerializerInterceptor,
+  INestApplication,
   Logger,
   ValidationPipe,
   VersioningType,
@@ -23,50 +24,52 @@ import helmet from 'helmet';
 import { json, urlencoded } from 'express';
 
 async function bootstrap() {
-  // In scaled mode, docker-compose sets APP_RUNTIME=api explicitly.
-  // In all-in-one mode (docker-compose.yml), APP_RUNTIME is intentionally
-  // UNSET so runtime-role.ts detects 'all-in-one' and registers ALL
-  // BullMQ processors in this single process.
-  // Best-effort Sentry init BEFORE AppModule loads so we capture
-  // exceptions thrown during DI bootstrap.
   const { initSentryIfConfigured } = await import(
     './common/observability/sentry.bootstrap'
   );
   await initSentryIfConfigured();
+
   const { AppModule } = await import('./app.module');
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.set('trust proxy', 1);
 
+  const configService = app.get(ConfigService<AllConfigType>);
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  await setupWebSocket(app);
+  setupSecurityHeaders(app);
+  setupWidgetCors(app);
+  setupGlobalCors(app, configService, isProduction);
+  setupGlobalMiddleware(app, AppModule);
+  setupGlobalFiltersAndInterceptors(app);
+  setupSwagger(app, configService, isProduction);
+
+  if (isProduction) {
+    runProductionGuards();
+  }
+
+  const port = configService.getOrThrow('app.port', { infer: true });
+  await app.listen(port);
+  Logger.log(`🚀 CRM API is running on port ${port}`, 'Bootstrap');
+}
+
+async function setupWebSocket(app: NestExpressApplication) {
   const redisIoAdapter = new RedisIoAdapter(app);
   await redisIoAdapter.connectToRedis();
   app.useWebSocketAdapter(redisIoAdapter);
+}
 
-  useContainer(app.select(AppModule), { fallbackOnErrors: true });
-  const configService = app.get(ConfigService<AllConfigType>);
-
-  // Security headers — must be before any route registration
-  // Disable frameguard for livechat preview routes (admin iframe embedding)
-  const helmetMiddleware = helmet({
-    contentSecurityPolicy: false,
-  });
+function setupSecurityHeaders(app: INestApplication) {
+  const helmetMiddleware = helmet({ contentSecurityPolicy: false });
   app.use((req: any, res: any, next: any) => {
-    // Skip X-Frame-Options for preview endpoints (iframe in admin panel)
     if (req.url?.includes('/livechat/preview/')) {
       return next();
     }
     return helmetMiddleware(req, res, next);
   });
+}
 
-  const frontendDomain = configService.get('app.frontendDomain', {
-    infer: true,
-  });
-  const isProduction = process.env.NODE_ENV === 'production';
-
-  // Public widget endpoints — called from ANY customer website that embeds
-  // the livechat widget. Must bypass the strict FRONTEND_DOMAIN CORS policy.
-  // These endpoints are @Public() (no auth/cookies), so credentials must NOT
-  // be set. We handle CORS fully here and skip the global enableCors() handler
-  // by ending OPTIONS preflight early and marking the request as CORS-handled.
+function setupWidgetCors(app: INestApplication) {
   app.use((req: any, res: any, next: any) => {
     const url: string = req.url || '';
     const isWidgetRoute =
@@ -81,65 +84,39 @@ async function bootstrap() {
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
       res.setHeader('Access-Control-Max-Age', '86400');
-      // Widget endpoints are public — explicitly no credentials so the global
-      // enableCors({credentials:true}) header does not conflict.
-      // Note: do NOT set Allow-Credentials here; omitting it = false.
+      res.setHeader('Vary', 'Origin');
       if (req.method === 'OPTIONS') {
         return res.status(204).end();
       }
-      // Mark as CORS-handled so global handler below doesn't override headers.
-      // Express/NestJS built-in CORS checks res.getHeader('Access-Control-Allow-Origin')
-      // and skips if already set, but only for some implementations.
-      // As safety net, we also set Vary header to signal origin-dependent caching.
-      res.setHeader('Vary', 'Origin');
     }
     return next();
   });
+}
 
-  // In production, FRONTEND_DOMAIN must be set. Falling back to wildcard true
-  // is a security risk (cross-tenant data leakage).
-  //
-  // Widget routes (/livechat/config, /livechat/analytics, /csat/submit, etc.)
-  // are @Public() and called from ANY customer website embedding the widget.
-  // They MUST accept any origin WITHOUT credentials (no auth cookies needed).
-  //
-  // The `cors` npm package used by NestJS always overrides headers set by
-  // earlier middleware, so we MUST use the `origin` callback to dynamically
-  // decide per-request. The widget middleware above handles the preflight
-  // 204 fast-path; this callback ensures the main request also gets the
-  // correct headers.
-
+function setupGlobalCors(
+  app: INestApplication,
+  configService: ConfigService<AllConfigType>,
+  isProduction: boolean,
+) {
+  const frontendDomain = configService.get('app.frontendDomain', {
+    infer: true,
+  });
   const allowedFrontendOrigins =
     isProduction && frontendDomain
       ? frontendDomain.split(',').map((d) => d.trim())
-      : null; // null = dev mode, allow all
+      : null;
 
   app.enableCors({
     origin: (
       origin: string | undefined,
       callback: (err: Error | null, allow?: boolean | string) => void,
     ) => {
-      // No origin (e.g. same-origin, server-to-server) — always allow
-      if (!origin) return callback(null, true);
-
-      // Dev mode — allow everything
-      if (!isProduction) return callback(null, true);
-
-      // Production: check if this is a known frontend origin
+      if (!origin || !isProduction) return callback(null, true);
       if (allowedFrontendOrigins?.some((d) => origin.includes(d))) {
         return callback(null, true);
       }
-
-      // Not a known frontend origin — but it could be a widget route.
-      // We allow it; the credentials:false on widget paths prevents cookie leaks.
-      // For non-widget paths, CORS will block because credentials:true requires
-      // an explicit origin match (handled above).
       return callback(null, origin);
     },
-    // credentials: true is needed for admin CRM routes (JWT in httpOnly cookie).
-    // Widget routes don't use credentials — they work because the browser
-    // only enforces credentials check when the *request* includes credentials.
-    // Widget fetch() calls don't set credentials:'include', so this is safe.
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
@@ -150,15 +127,11 @@ async function bootstrap() {
       'x-tenant-id',
     ],
   });
+}
 
-  // Enable cookie parsing for HttpOnly session cookies (BFF pattern)
+function setupGlobalMiddleware(app: INestApplication, AppModule: any) {
+  useContainer(app.select(AppModule), { fallbackOnErrors: true });
   app.use(cookieParser());
-
-  // Capture rawBody for webhook signature verification. Adapters
-  // (Facebook/WhatsApp/Zalo) HMAC the exact bytes the provider sent — JSON
-  // re-serialization would change whitespace/key order and invalidate the
-  // signature. Without this, a stripped signature check could silently
-  // succeed on attacker-controlled payloads.
   app.use(
     json({
       limit: '10mb',
@@ -168,39 +141,38 @@ async function bootstrap() {
     }),
   );
   app.use(urlencoded({ extended: true, limit: '10mb' }));
-
-  // Use Winston Logger
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
-
-  // Global Exception Filter
-  const httpAdapter = app.get(HttpAdapterHost);
-  const clsService = app.get(ClsService);
-  app.useGlobalFilters(new GlobalExceptionFilter(httpAdapter, clsService));
-
   app.enableShutdownHooks();
+  const configService = app.get(ConfigService<AllConfigType>);
   app.setGlobalPrefix(
     configService.getOrThrow('app.apiPrefix', { infer: true }),
     {
       exclude: ['/', '/queues'],
     },
   );
-  app.enableVersioning({
-    type: VersioningType.URI,
-  });
+  app.enableVersioning({ type: VersioningType.URI });
+}
+
+function setupGlobalFiltersAndInterceptors(app: INestApplication) {
+  const httpAdapter = app.get(HttpAdapterHost);
+  const clsService = app.get(ClsService);
+  const reflector = app.get(Reflector);
+
+  app.useGlobalFilters(new GlobalExceptionFilter(httpAdapter, clsService));
   app.useGlobalPipes(new ValidationPipe(validationOptions));
   app.useGlobalInterceptors(
-    // CorrelationIdInterceptor must run first so subsequent interceptors,
-    // services and the global exception filter see the request ID in CLS.
     new CorrelationIdInterceptor(clsService),
-    // ResolvePromisesInterceptor is used to resolve promises in responses because class-transformer can't do it
-    // https://github.com/typestack/class-transformer/issues/549
     new NormalizeIdInterceptor(),
     new ResolvePromisesInterceptor(),
-    new ClassSerializerInterceptor(app.get(Reflector)),
+    new ClassSerializerInterceptor(reflector),
   );
+}
 
-  // Task A: Only expose Swagger docs in non-production environments.
-  // Swagger in production leaks full API surface, route patterns, and DTO structure.
+function setupSwagger(
+  app: INestApplication,
+  configService: ConfigService<AllConfigType>,
+  isProduction: boolean,
+) {
   if (!isProduction) {
     const options = new DocumentBuilder()
       .setTitle('API')
@@ -221,74 +193,50 @@ async function bootstrap() {
       'Bootstrap',
     );
   }
+}
 
-  // ── Production Startup Guards ──────────────────────────────────
-  if (isProduction) {
-    const jwtSecret = process.env.AUTH_JWT_SECRET || process.env.JWT_SECRET;
-    if (!jwtSecret || jwtSecret === 'secret') {
-      Logger.error(
-        '🚫 FATAL: AUTH_JWT_SECRET is not set or is using the insecure default "secret". ' +
-          'Set a cryptographically random 256-bit secret before deploying to production.',
-        'Bootstrap',
-      );
-      process.exit(1);
-    }
-
-    // HIGH-14: Validate refresh token secret is not default/empty
-    const refreshSecret = process.env.AUTH_REFRESH_SECRET;
-    if (!refreshSecret || refreshSecret.length < 32) {
-      Logger.error(
-        '🚫 FATAL: AUTH_REFRESH_SECRET is not set or too short (min 32 chars). ' +
-          'Attackers can forge refresh tokens.',
-        'Bootstrap',
-      );
-      process.exit(1);
-    }
-
-    // HIGH-14: Validate S3 credentials when FILE_DRIVER=s3
-    if (
-      (process.env.FILE_DRIVER === 's3' ||
-        process.env.FILE_DRIVER === 's3-presigned') &&
-      (!process.env.ACCESS_KEY_ID || !process.env.SECRET_ACCESS_KEY)
-    ) {
-      Logger.error(
-        '🚫 FATAL: FILE_DRIVER is s3 but ACCESS_KEY_ID or SECRET_ACCESS_KEY is empty. ' +
-          'File uploads will silently fail.',
-        'Bootstrap',
-      );
-      process.exit(1);
-    }
-
-    // HIGH-14: Validate internal API key is set
-    if (
-      !process.env.INTERNAL_API_KEY ||
-      process.env.INTERNAL_API_KEY.length < 16
-    ) {
-      Logger.warn(
-        '⚠️  INTERNAL_API_KEY is not set or too short — inter-service auth is weakened.',
-        'Bootstrap',
-      );
-    }
-
-    if (!process.env.REDIS_PASSWORD) {
-      Logger.warn(
-        '⚠️  REDIS_PASSWORD is empty in production — Redis is accessible without authentication!',
-        'Bootstrap',
-      );
-    }
-
-    if (!process.env.FRONTEND_DOMAIN) {
-      Logger.warn(
-        '⚠️  FRONTEND_DOMAIN is not set — CORS will deny ALL cross-origin requests in production.',
-        'Bootstrap',
-      );
-    }
+function runProductionGuards() {
+  const jwtSecret = process.env.AUTH_JWT_SECRET || process.env.JWT_SECRET;
+  if (!jwtSecret || jwtSecret === 'secret') {
+    Logger.error(
+      '🚫 FATAL: AUTH_JWT_SECRET is not set or insecure.',
+      'Bootstrap',
+    );
+    process.exit(1);
   }
 
-  await app.listen(configService.getOrThrow('app.port', { infer: true }));
+  const refreshSecret = process.env.AUTH_REFRESH_SECRET;
+  if (!refreshSecret || refreshSecret.length < 32) {
+    Logger.error(
+      '🚫 FATAL: AUTH_REFRESH_SECRET is missing or too short.',
+      'Bootstrap',
+    );
+    process.exit(1);
+  }
 
-  const port = configService.getOrThrow('app.port', { infer: true });
-  Logger.log(`🚀 CRM API is running on port ${port}`, 'Bootstrap');
+  if (
+    (process.env.FILE_DRIVER === 's3' ||
+      process.env.FILE_DRIVER === 's3-presigned') &&
+    (!process.env.ACCESS_KEY_ID || !process.env.SECRET_ACCESS_KEY)
+  ) {
+    Logger.error('🚫 FATAL: S3 credentials missing.', 'Bootstrap');
+    process.exit(1);
+  }
+
+  if (
+    !process.env.INTERNAL_API_KEY ||
+    process.env.INTERNAL_API_KEY.length < 16
+  ) {
+    Logger.warn('⚠️  INTERNAL_API_KEY is missing or too short.', 'Bootstrap');
+  }
+
+  if (!process.env.REDIS_PASSWORD) {
+    Logger.warn('⚠️  REDIS_PASSWORD is empty in production.', 'Bootstrap');
+  }
+
+  if (!process.env.FRONTEND_DOMAIN) {
+    Logger.warn('⚠️  FRONTEND_DOMAIN is not set.', 'Bootstrap');
+  }
 }
 
 bootstrap().catch((err) => {
@@ -296,7 +244,6 @@ bootstrap().catch((err) => {
   process.exit(1);
 });
 
-// Catch unhandled promise rejections that escape NestJS error boundaries
 process.on('unhandledRejection', (reason, promise) => {
   console.error(
     '[Process] Unhandled Rejection at:',
@@ -306,7 +253,6 @@ process.on('unhandledRejection', (reason, promise) => {
   );
 });
 
-// Catch synchronous exceptions thrown outside of async context
 process.on('uncaughtException', (err) => {
   console.error('[Process] Uncaught Exception:', err);
   process.exit(1);

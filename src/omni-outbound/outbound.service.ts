@@ -114,232 +114,60 @@ export class OutboundService {
     const source = normalizeOutboundSource(rawSource);
     const senderContext = await this.resolveSenderContext(agentId);
 
-    let retryMessage: Awaited<
-      ReturnType<MessageRepository['findByIdempotencyKey']>
-    > = null;
-
-    if (idempotencyKey) {
-      const existing = await this.messageRepo.findByIdempotencyKey(
-        tenantId,
-        idempotencyKey,
-      );
-      if (existing && existing.status !== 'failed') {
-        return {
-          ok: true,
-          messageId: existing.id,
-          externalMessageId: existing.externalMessageId,
-          status: existing.status,
-          idempotencyKey,
-          clientMessageId: existing.clientMessageId,
-          senderId: existing.senderId,
-          senderName: existing.senderName ?? senderContext.name,
-          senderAvatarUrl:
-            existing.senderAvatarUrl ?? senderContext.avatarUrl ?? null,
-          source: existing.source ?? source,
-          reused: true,
-        };
-      }
-      retryMessage = existing;
-    }
-
-    const outboundIdempotencyRedisKey = idempotencyKey
-      ? `omni:outbound:idempotency:${tenantId}:${idempotencyKey}`
-      : null;
-    let reservedIdempotencyKey = false;
-
-    if (outboundIdempotencyRedisKey && !retryMessage) {
-      const reserved = await this.redis.set(
-        outboundIdempotencyRedisKey,
-        'processing',
-        'EX',
-        OUTBOUND_IDEMPOTENCY_TTL_SECONDS,
-        'NX',
-      );
-
-      if (reserved === 'OK') {
-        reservedIdempotencyKey = true;
-      } else {
-        const existing = await this.messageRepo.findByIdempotencyKey(
-          tenantId,
-          idempotencyKey!,
-        );
-        if (existing && existing.status !== 'failed') {
-          return {
-            ok: true,
-            messageId: existing.id,
-            externalMessageId: existing.externalMessageId,
-            status: existing.status,
-            idempotencyKey,
-            clientMessageId: existing.clientMessageId,
-            senderId: existing.senderId,
-            senderName: existing.senderName ?? senderContext.name,
-            senderAvatarUrl:
-              existing.senderAvatarUrl ?? senderContext.avatarUrl ?? null,
-            source: existing.source ?? source,
-            reused: true,
-          };
-        }
-        if (existing) {
-          retryMessage = existing;
-        } else {
-          throw new Error('Duplicate message is already being processed');
-        }
-      }
-    }
-
-    // 1. Fetch conversation to get channel details and external ID
-    const conversation = await this.conversationRepo.findById(conversationId);
-    if (!conversation) {
-      throw new Error(`Conversation ${conversationId} not found`);
-    }
-
-    let channel = await this.channelRepo.findByIdWithCredentials(
+    const idempotency = await this.checkOutboundIdempotency(
       tenantId,
-      conversation.channelId.toString(),
+      idempotencyKey,
+      senderContext,
+      source,
+    );
+    if (idempotency.reused) return idempotency.response;
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation)
+      throw new Error(`Conversation ${conversationId} not found`);
+
+    const channel = await this.resolveChannelForOutbound(
+      tenantId,
+      conversation,
     );
 
-    // Fallback: If channel record was deleted/re-created, try finding by account
-    if (!channel && (conversation as any).channelAccount) {
-      this.logger.log(
-        `Channel ${conversation.channelId} not found, searching by account ${(conversation as any).channelAccount}`,
-      );
-      channel = await this.channelRepo.findByAccountWithCredentials(
-        tenantId,
-        conversation.channelType,
-        (conversation as any).channelAccount,
-      );
-    }
-
-    if (!channel) {
-      throw new Error(
-        `Channel for conversation ${conversationId} not found or disconnected`,
-      );
-    }
-
-    // 2. Enforce platform reply window
     this.enforceReplyWindow(conversation);
-
-    // 2b. Auto-assign on reply: if conversation is unassigned, emit event
-    // so the inbound module can atomically assign, update presence, and
-    // write an audit log — keeping outbound decoupled from assignment infra.
-    if (!conversation.assignedAgentId) {
-      this.eventEmitter.emit('omni.conversation.reply_auto_assign', {
-        tenantId,
-        conversationId,
-        agentId,
-        channelType: conversation.channelType,
-      });
-    }
-
-    // 2c. Auto-disable bot on agent reply: if bot is still active on
-    // this conversation, mark it as ended so the bot stops processing
-    // further messages. The channel setting `botAutoDisableOnAgentReply`
-    // controls whether this behavior is enabled (defaults to true).
-    const botState = (conversation as any).bot;
-    if (botState?.enabled === true && botState?.status === 'active') {
-      const _channelAccount =
-        (conversation as any).channelAccount ??
-        conversation.channelId?.toString();
-      let shouldDisable = true; // default: always disable on agent reply
-
-      try {
-        const channelForBot = await this.channelRepo.findByIdWithCredentials(
-          tenantId,
-          conversation.channelId.toString(),
-        );
-        if (channelForBot?.config) {
-          // Explicit opt-out: set botAutoDisableOnAgentReply = false to keep bot active
-          shouldDisable =
-            channelForBot.config.botAutoDisableOnAgentReply !== false;
-        }
-      } catch {
-        // If channel lookup fails, still disable bot as safety default
-      }
-
-      if (shouldDisable) {
-        this.logger.log(
-          `[BOT-DISABLE] Agent ${agentId} replied to conv ${conversationId} — disabling active bot`,
-        );
-        await this.conversationRepo.updateBotState(conversationId, {
-          enabled: false,
-          status: 'ended',
-        });
-        this.eventEmitter.emit('omni.bot.disabled', {
-          tenantId,
-          conversationId,
-          reason: 'agent_reply',
-          agentId,
-        });
-      }
-    }
+    this.handleImplicitAssignment(
+      tenantId,
+      conversationId,
+      agentId,
+      conversation,
+    );
+    await this.handleBotAutoDisable(
+      tenantId,
+      conversationId,
+      agentId,
+      conversation,
+    );
 
     this.logger.log(
       `Agent ${agentId} sending ${messageType} to conversation ${conversationId}`,
     );
 
-    // 3. Persist to MessageRepository
-    let message = retryMessage;
+    let message = idempotency.retryMessage;
     if (message) {
       await this.messageRepo.updateStatus(message.id, 'sending');
     } else {
-      try {
-        message = await this.messageRepo.create({
-          tenantId: tenantId,
-          conversationId: conversationId,
-          senderId: agentId,
-          senderName: senderContext.name,
-          senderAvatarUrl: senderContext.avatarUrl ?? undefined,
-          senderType: 'agent',
-          direction: 'outbound',
-          source,
-          messageType,
-          content,
-          status: 'sending',
-          idempotencyKey,
-          clientMessageId,
-          metadata: {
-            sender: {
-              id: agentId,
-              name: senderContext.name,
-              avatarUrl: senderContext.avatarUrl ?? null,
-              type: 'agent',
-            },
-            source,
-            transport,
-          },
-        });
-      } catch (error) {
-        if (idempotencyKey && (error as any)?.code === 11000) {
-          const existing = await this.messageRepo.findByIdempotencyKey(
-            tenantId,
-            idempotencyKey,
-          );
-          if (existing) {
-            return {
-              ok: true,
-              messageId: existing.id,
-              externalMessageId: existing.externalMessageId,
-              status: existing.status,
-              idempotencyKey,
-              clientMessageId: existing.clientMessageId,
-              senderId: existing.senderId,
-              senderName: existing.senderName ?? senderContext.name,
-              senderAvatarUrl:
-                existing.senderAvatarUrl ?? senderContext.avatarUrl ?? null,
-              source: existing.source ?? source,
-              reused: true,
-            };
-          }
-        }
-        if (reservedIdempotencyKey && outboundIdempotencyRedisKey) {
-          await this.redis.del(outboundIdempotencyRedisKey);
-        }
-        throw error;
-      }
+      message = await this.persistOutboundMessage({
+        tenantId,
+        conversationId,
+        agentId,
+        senderContext,
+        source,
+        messageType,
+        content,
+        idempotencyKey,
+        clientMessageId,
+        transport,
+      });
     }
 
-    // 3. Update conversation last message summary
-    if (!retryMessage) {
+    if (!idempotency.retryMessage) {
       await this.conversationRepo.updateLastMessage(
         conversationId,
         content.substring(0, 200),
@@ -348,52 +176,31 @@ export class OutboundService {
       );
     }
 
-    // 4. Send to Provider API via Adapter
     try {
-      let adapterResponse: any = null;
-      const adapter = this.adapters.get(
-        conversation.channelType.toLowerCase() as ChannelType,
+      const externalId = await this.dispatchToProvider(
+        conversation,
+        channel,
+        message,
+        content,
+        messageType,
       );
-      if (adapter) {
-        adapterResponse = await adapter.send(
-          conversation.customer.externalId,
-          content,
-          messageType,
-          {
-            credentials: channel.credentials,
-            account: channel.account,
-            messageId: message.id,
-          },
-        );
-      }
 
-      // Update status to sent and save external ID
-      const externalId =
-        (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
       await this.messageRepo.updateStatus(message.id, 'sent', externalId);
-
-      this.eventEmitter.emit('omni.message.sent', {
+      this.emitMessageSentEvent(
         tenantId,
         conversationId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        senderAvatarUrl: senderContext.avatarUrl ?? null,
-        senderType: 'agent',
+        agentId,
+        senderContext,
         messageType,
         content,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
+        message.id,
+        externalId,
         idempotencyKey,
         clientMessageId,
-        timestamp: new Date().toISOString(),
         source,
         transport,
-      });
+      );
 
-      // Livechat: agent reply implies they've read all prior visitor messages.
-      // Emit livechat.agent.read so LivechatVisitorBridge persists read status
-      // to DB and pushes the receipt to the visitor widget via socket.
       if (conversation.channelType === 'livechat') {
         this.eventEmitter.emit('livechat.agent.read', {
           tenantId,
@@ -415,14 +222,259 @@ export class OutboundService {
         source,
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to send message via provider: ${errorMessage}`);
-      await this.messageRepo.updateStatus(message.id, 'failed');
-      if (reservedIdempotencyKey && outboundIdempotencyRedisKey) {
-        await this.redis.del(outboundIdempotencyRedisKey);
-      }
+      await this.handleOutboundError(message, idempotency.redisKey, error);
       throw error;
+    }
+  }
+
+  private async checkOutboundIdempotency(
+    tenantId: string,
+    idempotencyKey: string | undefined,
+    senderContext: any,
+    source: string,
+  ): Promise<{
+    reused: boolean;
+    response?: any;
+    retryMessage?: any;
+    redisKey?: string;
+    reserved?: boolean;
+  }> {
+    if (!idempotencyKey) return { reused: false };
+
+    const existing = await this.messageRepo.findByIdempotencyKey(
+      tenantId,
+      idempotencyKey,
+    );
+
+    if (existing && existing.status !== 'failed') {
+      return {
+        reused: true,
+        response: {
+          ok: true,
+          messageId: existing.id,
+          externalMessageId: existing.externalMessageId,
+          status: existing.status,
+          idempotencyKey,
+          clientMessageId: existing.clientMessageId,
+          senderId: existing.senderId,
+          senderName: existing.senderName ?? senderContext.name,
+          senderAvatarUrl:
+            existing.senderAvatarUrl ?? senderContext.avatarUrl ?? null,
+          source: existing.source ?? source,
+          reused: true,
+        },
+      };
+    }
+
+    const redisKey = `omni:outbound:idempotency:${tenantId}:${idempotencyKey}`;
+    if (!existing) {
+      const reserved = await this.redis.set(
+        redisKey,
+        'processing',
+        'EX',
+        OUTBOUND_IDEMPOTENCY_TTL_SECONDS,
+        'NX',
+      );
+      if (reserved !== 'OK') {
+        throw new Error('Duplicate message is already being processed');
+      }
+      return { reused: false, redisKey, reserved: true };
+    }
+
+    return { reused: false, retryMessage: existing, redisKey };
+  }
+
+  private async resolveChannelForOutbound(
+    tenantId: string,
+    conversation: any,
+  ): Promise<any> {
+    let channel = await this.channelRepo.findByIdWithCredentials(
+      tenantId,
+      conversation.channelId.toString(),
+    );
+
+    if (!channel && (conversation as any).channelAccount) {
+      channel = await this.channelRepo.findByAccountWithCredentials(
+        tenantId,
+        conversation.channelType,
+        (conversation as any).channelAccount,
+      );
+    }
+
+    if (!channel) {
+      throw new Error(
+        `Channel for conversation ${conversation.id} not found or disconnected`,
+      );
+    }
+    return channel;
+  }
+
+  private handleImplicitAssignment(
+    tenantId: string,
+    conversationId: string,
+    agentId: string,
+    conversation: any,
+  ): void {
+    if (!conversation.assignedAgentId) {
+      this.eventEmitter.emit('omni.conversation.reply_auto_assign', {
+        tenantId,
+        conversationId,
+        agentId,
+        channelType: conversation.channelType,
+      });
+    }
+  }
+
+  private async handleBotAutoDisable(
+    tenantId: string,
+    conversationId: string,
+    agentId: string,
+    conversation: any,
+  ): Promise<void> {
+    const botState = (conversation as any).bot;
+    if (botState?.enabled === true && botState?.status === 'active') {
+      let shouldDisable = true;
+      try {
+        const channelForBot = await this.channelRepo.findByIdWithCredentials(
+          tenantId,
+          conversation.channelId.toString(),
+        );
+        if (channelForBot?.config) {
+          shouldDisable =
+            channelForBot.config.botAutoDisableOnAgentReply !== false;
+        }
+      } catch {
+        /* ignore */
+      }
+
+      if (shouldDisable) {
+        await this.conversationRepo.updateBotState(conversationId, {
+          enabled: false,
+          status: 'ended',
+        });
+        this.eventEmitter.emit('omni.bot.disabled', {
+          tenantId,
+          conversationId,
+          reason: 'agent_reply',
+          agentId,
+        });
+      }
+    }
+  }
+
+  private async persistOutboundMessage(params: any): Promise<any> {
+    const {
+      tenantId,
+      conversationId,
+      agentId,
+      senderContext,
+      source,
+      messageType,
+      content,
+      idempotencyKey,
+      clientMessageId,
+      transport,
+    } = params;
+
+    return this.messageRepo.create({
+      tenantId,
+      conversationId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? undefined,
+      senderType: 'agent',
+      direction: 'outbound',
+      source,
+      messageType,
+      content,
+      status: 'sending',
+      idempotencyKey,
+      clientMessageId,
+      metadata: {
+        sender: {
+          id: agentId,
+          name: senderContext.name,
+          avatarUrl: senderContext.avatarUrl ?? null,
+          type: 'agent',
+        },
+        source,
+        transport,
+      },
+    });
+  }
+
+  private async dispatchToProvider(
+    conversation: any,
+    channel: any,
+    message: any,
+    content: string,
+    messageType: string,
+  ): Promise<string> {
+    const adapter = this.adapters.get(
+      conversation.channelType.toLowerCase() as ChannelType,
+    );
+    if (!adapter) return '';
+
+    const adapterResponse = await adapter.send(
+      conversation.customer.externalId,
+      content,
+      messageType,
+      {
+        credentials: channel.credentials,
+        account: channel.account,
+        messageId: message.id,
+      },
+    );
+
+    return (
+      (adapterResponse as any)?.message_id || (adapterResponse as any)?.id || ''
+    );
+  }
+
+  private emitMessageSentEvent(
+    tenantId: string,
+    conversationId: string,
+    agentId: string,
+    senderContext: any,
+    messageType: string,
+    content: string,
+    messageId: string,
+    externalId: string,
+    idempotencyKey?: string,
+    clientMessageId?: string,
+    source?: string,
+    transport?: string,
+  ): void {
+    this.eventEmitter.emit('omni.message.sent', {
+      tenantId,
+      conversationId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? null,
+      senderType: 'agent',
+      messageType,
+      content,
+      messageId,
+      externalMessageId: externalId,
+      status: 'sent',
+      idempotencyKey,
+      clientMessageId,
+      timestamp: new Date().toISOString(),
+      source,
+      transport,
+    });
+  }
+
+  private async handleOutboundError(
+    message: any,
+    redisKey: string | undefined,
+    error: any,
+  ): Promise<void> {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.logger.error(`Failed to send message via provider: ${errorMessage}`);
+    await this.messageRepo.updateStatus(message.id, 'failed');
+    if (redisKey) {
+      await this.redis.del(redisKey);
     }
   }
 
@@ -718,26 +770,93 @@ export class OutboundService {
       throw new Error(`Conversation ${conversationId} not found`);
     }
 
-    let channel = await this.channelRepo.findByIdWithCredentials(
+    const channel = await this.resolveChannelForOutbound(
       tenantId,
-      conversation.channelId.toString(),
+      conversation,
     );
-
-    if (!channel && (conversation as any).channelAccount) {
-      channel = await this.channelRepo.findByAccountWithCredentials(
-        tenantId,
-        conversation.channelType,
-        (conversation as any).channelAccount,
-      );
-    }
-
-    if (!channel) {
-      throw new Error(
-        `Channel for conversation ${conversationId} not found or disconnected`,
-      );
-    }
-
     this.enforceReplyWindow(conversation);
+
+    // Guarantee bot reply sorts after the triggering customer message
+    const botTimestamp = afterTimestamp
+      ? new Date(Math.max(Date.now(), afterTimestamp + 1))
+      : new Date();
+
+    const message = await this.persistBotMessage({
+      tenantId,
+      conversationId,
+      content,
+      messageType,
+      buttons,
+      idempotencyKey,
+      botTimestamp,
+    });
+
+    // Skip aggregate update when processor handles it (avoids double write)
+    if (!params.skipAggregateUpdate) {
+      await this.conversationRepo.updateLastMessage(
+        conversationId,
+        content.substring(0, 200),
+        new Date(),
+        'bot',
+      );
+    }
+
+    try {
+      const externalId = await this.dispatchBotToProvider(
+        conversation,
+        channel,
+        message,
+        content,
+        messageType,
+        buttons ?? [],
+      );
+
+      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
+
+      this.eventEmitter.emit('omni.message.sent', {
+        tenantId,
+        conversationId,
+        senderId: 'bot:typebot',
+        senderName: 'Bot',
+        senderAvatarUrl: null,
+        senderType: 'bot',
+        direction: 'outbound',
+        messageType,
+        content,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        timestamp: new Date().toISOString(),
+        source: 'bot',
+        transport: 'http',
+        metadata: message.metadata,
+      });
+
+      return {
+        ok: true,
+        messageId: message.id,
+        externalMessageId: externalId,
+        status: 'sent',
+        idempotencyKey,
+        source: 'bot',
+      };
+    } catch (error) {
+      await this.handleOutboundError(message, undefined, error);
+      throw error;
+    }
+  }
+
+  private async persistBotMessage(params: any): Promise<any> {
+    const {
+      tenantId,
+      conversationId,
+      content,
+      messageType,
+      buttons,
+      idempotencyKey,
+      botTimestamp,
+    } = params;
 
     const metadata = {
       sender: {
@@ -751,14 +870,8 @@ export class OutboundService {
       buttons: buttons ?? [],
     };
 
-    // Guarantee bot reply sorts after the triggering customer message
-    const botTimestamp = afterTimestamp
-      ? new Date(Math.max(Date.now(), afterTimestamp + 1))
-      : new Date();
-
-    let message;
     try {
-      message = await this.messageRepo.create({
+      return await this.messageRepo.create({
         tenantId,
         conversationId,
         senderId: 'bot:typebot',
@@ -779,110 +892,61 @@ export class OutboundService {
           tenantId,
           idempotencyKey,
         );
-        if (existing) {
-          return {
-            ok: true,
-            messageId: existing.id,
-            externalMessageId: existing.externalMessageId,
-            status: existing.status,
-            idempotencyKey,
-            reused: true,
-          };
-        }
+        if (existing) return existing;
       }
       throw error;
     }
+  }
 
-    // Skip aggregate update when processor handles it (avoids double write)
-    if (!params.skipAggregateUpdate) {
-      await this.conversationRepo.updateLastMessage(
-        conversationId,
-        content.substring(0, 200),
-        new Date(),
-        'bot',
-      );
-    }
+  private async dispatchBotToProvider(
+    conversation: any,
+    channel: any,
+    message: any,
+    content: string,
+    messageType: string,
+    buttons: any[],
+  ): Promise<string> {
+    const adapter = this.adapters.get(
+      conversation.channelType.toLowerCase() as ChannelType,
+    );
+    if (!adapter) return '';
 
-    try {
-      let adapterResponse: any = null;
-      const adapter = this.adapters.get(
-        conversation.channelType.toLowerCase() as ChannelType,
-      );
-      if (adapter) {
-        // If message has buttons and adapter supports interactive, use interactive
-        if (buttons?.length && adapter.sendInteractive) {
-          adapterResponse = await adapter.sendInteractive(
-            conversation.customer.externalId,
-            content,
-            buttons.map((b) => ({
-              id: b.id || b.value || b.label,
-              title: b.label,
-            })),
-            {
-              credentials: channel.credentials,
-              account: channel.account,
-              messageId: message.id,
-            },
-          );
-        } else {
-          // Plain text (or adapter doesn't support interactive)
-          const sendContent = buttons?.length
-            ? `${content}\n\n${buttons.map((b, i) => `${i + 1}. ${b.label}`).join('\n')}`
-            : content;
-          adapterResponse = await adapter.send(
-            conversation.customer.externalId,
-            sendContent,
-            messageType,
-            {
-              credentials: channel.credentials,
-              account: channel.account,
-              messageId: message.id,
-            },
-          );
-        }
-      }
-
-      const externalId =
-        (adapterResponse as any)?.message_id || (adapterResponse as any)?.id;
-      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
-
-      this.eventEmitter.emit('omni.message.sent', {
-        tenantId,
-        conversationId,
-        senderId: 'bot:typebot',
-        senderName: 'Bot',
-        senderAvatarUrl: null,
-        senderType: 'bot',
-        direction: 'outbound',
-        messageType,
+    let adapterResponse: any = null;
+    // If message has buttons and adapter supports interactive, use interactive
+    if (buttons?.length && adapter.sendInteractive) {
+      adapterResponse = await adapter.sendInteractive(
+        conversation.customer.externalId,
         content,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        timestamp: new Date().toISOString(),
-        source: 'bot',
-        transport: 'http',
-        metadata,
-      });
-
-      return {
-        ok: true,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        source: 'bot',
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.logger.error(
-        `Failed to send bot message via provider: ${errorMessage}`,
+        buttons.map((b) => ({
+          id: b.id || b.value || b.label,
+          title: b.label,
+        })),
+        {
+          credentials: channel.credentials,
+          account: channel.account,
+          messageId: message.id,
+        },
       );
-      await this.messageRepo.updateStatus(message.id, 'failed');
-      throw error;
+    } else {
+      // Plain text (or adapter doesn't support interactive)
+      const sendContent = buttons?.length
+        ? `${content}\n\n${buttons.map((b, i) => `${i + 1}. ${b.label}`).join('\n')}`
+        : content;
+      adapterResponse = await adapter.send(
+        conversation.customer.externalId,
+        sendContent,
+        messageType,
+        {
+          credentials: channel.credentials,
+          account: channel.account,
+          messageId: message.id,
+        },
+      );
     }
+
+    return (
+      (adapterResponse as any)?.message_id || (adapterResponse as any)?.id || ''
+    );
   }
 
   /**

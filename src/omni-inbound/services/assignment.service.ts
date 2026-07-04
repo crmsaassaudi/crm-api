@@ -1241,11 +1241,10 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       : `Agent manually unassigned (back to queue) by user ${performedByUserId ?? 'unknown'}`;
 
     const isReassign = !!previousAgentId;
-    const reasonKey = newAgentId
-      ? isReassign
-        ? 'manualReassigned'
-        : 'manualAssigned'
-      : 'manualUnassigned';
+    let reasonKey = 'manualUnassigned';
+    if (newAgentId) {
+      reasonKey = isReassign ? 'manualReassigned' : 'manualAssigned';
+    }
 
     await this.writeAuditLog({
       tenantId: params.tenantId,

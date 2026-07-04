@@ -118,53 +118,16 @@ export class ContactEnrichmentService {
       }
 
       // ── Step 5: Link Conversation ↔ Contact (1:1) ──────────────────
-      if (conversationId && contactId) {
-        await this.conversationRepo.updateContactId(conversationId, contactId);
-
-        // Also update conversation.customer for display consistency
-        await this.conversationRepo.updateCustomerInfo(conversationId, {
-          ...(displayName ? { name: displayName } : {}),
-          ...(email ? { email } : {}),
-          ...(phone ? { phone } : {}),
-        });
-
-        // Update identity cache
-        await this.identityService.updateIdentity(
-          'livechat',
-          channelId,
-          visitorId,
-          { contactId, conversationId },
+      if (contactId) {
+        await this.linkContactAndConversation(
           tenantId,
-        );
-
-        // ── Step 6: Broadcast for CRM realtime update ──────────────────
-        this.eventEmitter.emit(OmniEvents.CONVERSATION_CUSTOMER_UPDATED, {
-          tenantId,
-          conversationId,
           contactId,
-        });
-
-        this.logger.log(
-          `Linked Contact ${contactId} ↔ Conversation ${conversationId} (1:1)`,
-        );
-      }
-
-      // ── Step 5b: Cache contactId even WITHOUT conversation ────────
-      // When visitor submits pre-chat form before their first message,
-      // conversationId is null. We still cache the contactId so that
-      // ConversationService picks it up when the first message arrives
-      // and creates the conversation linked to the correct contact
-      // instead of creating a duplicate shadow contact.
-      if (!conversationId && contactId) {
-        await this.identityService.updateIdentity(
-          'livechat',
+          conversationId,
           channelId,
           visitorId,
-          { contactId, conversationId: null },
-          tenantId,
-        );
-        this.logger.log(
-          `Cached Contact ${contactId} for visitor ${visitorId} (no conversation yet)`,
+          email,
+          phone,
+          displayName,
         );
       }
     } catch (err: any) {
@@ -262,22 +225,7 @@ export class ContactEnrichmentService {
 
       if (!target) continue; // No mapping → metadata only
 
-      if (target.startsWith('customFields.')) {
-        // Custom field: customFields.order_id → { order_id: value }
-        const cfKey = target.replace('customFields.', '');
-        customFieldsUpdate[cfKey] = value;
-      } else if (target === 'emails') {
-        contactUpdate.emails = [String(value).toLowerCase()];
-      } else if (target === 'phones') {
-        contactUpdate.phones = [String(value)];
-      } else if (target === 'firstName' && !contactUpdate.firstName) {
-        // If mapping to firstName and value looks like full name, split it
-        const parts = this.splitName(String(value));
-        contactUpdate.firstName = parts.firstName;
-        if (parts.lastName) contactUpdate.lastName = parts.lastName;
-      } else {
-        contactUpdate[target] = value;
-      }
+      this.applyFieldMapping(contactUpdate, customFieldsUpdate, target, value);
     }
 
     // Build display name from mapped name parts (firstName + lastName)
@@ -370,19 +318,9 @@ export class ContactEnrichmentService {
     if (email) {
       const byEmail = await this.contactsService.findByEmail(tenantId, email);
       if (byEmail) {
-        // Merge visitor identity into existing contact
-        try {
-          await this.contactsService.mergeIdentity(byEmail.id, {
-            channelType: 'livechat',
-            senderId: visitorId,
-          });
-        } catch {
-          // Identity may already exist — safe to ignore
-        }
-
-        // Update with form data
-        await this.enrichExistingContact(
+        await this.mergeAndEnrich(
           byEmail.id,
+          visitorId,
           contactUpdate,
           email,
           phone,
@@ -414,7 +352,119 @@ export class ContactEnrichmentService {
     }
 
     // No match → create new Contact
-    const nameParts = this.splitName(displayName || 'Visitor');
+    return this.createNewContact(
+      tenantId,
+      visitorId,
+      contactUpdate,
+      email,
+      phone,
+      displayName,
+    );
+  }
+
+  private async linkContactAndConversation(
+    tenantId: string,
+    contactId: string,
+    conversationId: string | undefined | null,
+    channelId: string,
+    visitorId: string,
+    email?: string,
+    phone?: string,
+    displayName?: string,
+  ): Promise<void> {
+    if (conversationId) {
+      await this.conversationRepo.updateContactId(conversationId, contactId);
+
+      // Also update conversation.customer for display consistency
+      await this.conversationRepo.updateCustomerInfo(conversationId, {
+        ...(displayName ? { name: displayName } : {}),
+        ...(email ? { email } : {}),
+        ...(phone ? { phone } : {}),
+      });
+
+      // Update identity cache
+      await this.identityService.updateIdentity(
+        'livechat',
+        channelId,
+        visitorId,
+        { contactId, conversationId },
+        tenantId,
+      );
+
+      // ── Step 6: Broadcast for CRM realtime update ──────────────────
+      this.eventEmitter.emit(OmniEvents.CONVERSATION_CUSTOMER_UPDATED, {
+        tenantId,
+        conversationId,
+        contactId,
+      });
+
+      this.logger.log(
+        `Linked Contact ${contactId} ↔ Conversation ${conversationId} (1:1)`,
+      );
+    } else {
+      // ── Step 5b: Cache contactId even WITHOUT conversation ────────
+      await this.identityService.updateIdentity(
+        'livechat',
+        channelId,
+        visitorId,
+        { contactId, conversationId: null },
+        tenantId,
+      );
+      this.logger.log(
+        `Cached Contact ${contactId} for visitor ${visitorId} (no conversation yet)`,
+      );
+    }
+  }
+
+  private applyFieldMapping(
+    contactUpdate: Record<string, any>,
+    customFieldsUpdate: Record<string, any>,
+    target: string,
+    value: any,
+  ): void {
+    if (target.startsWith('customFields.')) {
+      const cfKey = target.replace('customFields.', '');
+      customFieldsUpdate[cfKey] = value;
+    } else if (target === 'emails') {
+      contactUpdate.emails = [String(value).toLowerCase()];
+    } else if (target === 'phones') {
+      contactUpdate.phones = [String(value)];
+    } else if (target === 'firstName' && !contactUpdate.firstName) {
+      const parts = this.splitName(String(value));
+      contactUpdate.firstName = parts.firstName;
+      if (parts.lastName) contactUpdate.lastName = parts.lastName;
+    } else {
+      contactUpdate[target] = value;
+    }
+  }
+
+  private async mergeAndEnrich(
+    contactId: string,
+    visitorId: string,
+    contactUpdate: Record<string, any>,
+    email: string,
+    phone?: string,
+  ): Promise<void> {
+    try {
+      await this.contactsService.mergeIdentity(contactId, {
+        channelType: 'livechat',
+        senderId: visitorId,
+      });
+    } catch {
+      // Identity may already exist
+    }
+    await this.enrichExistingContact(contactId, contactUpdate, email, phone);
+  }
+
+  private async createNewContact(
+    tenantId: string,
+    visitorId: string,
+    contactUpdate: Record<string, any>,
+    email?: string,
+    phone?: string,
+    displayName?: string,
+  ): Promise<string | null> {
+    const nameParts = this.splitName(displayName ?? 'Visitor');
     try {
       const newContact = await this.contactsService.create({
         ...nameParts,

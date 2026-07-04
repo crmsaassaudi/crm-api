@@ -3,8 +3,8 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { RedisService } from '../../redis/redis.service';
 import {
   AgentPresence,
-  AgentIntentStatus,
-  StatusTransitionTrigger,
+  LegacyIntentStatus,
+  TransitionTrigger,
   agentPresenceKey,
   HEARTBEAT_TTL_SECONDS,
   DEFAULT_MAX_CAPACITY,
@@ -264,9 +264,9 @@ return nil
 export type StatusTransitionCallback = (
   tenantId: string,
   agentId: string,
-  fromStatus: AgentIntentStatus,
-  toStatus: AgentIntentStatus,
-  trigger: StatusTransitionTrigger,
+  fromStatus: LegacyIntentStatus,
+  toStatus: LegacyIntentStatus,
+  trigger: TransitionTrigger,
 ) => void | Promise<void>;
 
 /**
@@ -278,7 +278,7 @@ export type StateChangeCallback = (
   agentId: string,
   before: AxisSnapshot | null,
   after: AxisSnapshot,
-  trigger: StatusTransitionTrigger,
+  trigger: TransitionTrigger,
   atMs: number,
 ) => void | Promise<void>;
 
@@ -382,7 +382,6 @@ export class AgentPresenceService {
       lastHeartbeatMs: base.lastHeartbeatMs ?? Date.now(),
       disconnectedAt: base.disconnectedAt,
       lastCommandTs: base.lastCommandTs,
-      socketId: base.socketId,
     };
   }
 
@@ -398,7 +397,7 @@ export class AgentPresenceService {
       presenceStatus: PresenceStatus;
       routingStatus: RoutingStatus;
     } | null,
-    trigger: StatusTransitionTrigger,
+    trigger: TransitionTrigger,
   ): Promise<void> {
     if (!this.statusTransitionCallback) return;
     const fromStatus = before ? before.presenceStatus.toLowerCase() : 'offline';
@@ -438,7 +437,7 @@ export class AgentPresenceService {
       routingStatus: RoutingStatus;
       workStatus: WorkStatus;
     } | null,
-    trigger: StatusTransitionTrigger,
+    trigger: TransitionTrigger,
   ): Promise<void> {
     await this.fireAuditIfChanged(presence, before, trigger);
     if (this.stateChangeCallback) {
@@ -515,7 +514,7 @@ export class AgentPresenceService {
     tenantId: string,
     userId: string,
     to: PresenceStatus,
-    trigger: StatusTransitionTrigger = 'agent_manual',
+    trigger: TransitionTrigger = 'agent_manual',
     opts: {
       actor?: TransitionActor;
       clientTs?: number;
@@ -596,7 +595,7 @@ export class AgentPresenceService {
     tenantId: string,
     userId: string,
     routing: RoutingStatus,
-    trigger: StatusTransitionTrigger = 'agent_manual',
+    trigger: TransitionTrigger = 'agent_manual',
     opts: { clientTs?: number } = {},
   ): Promise<AgentPresence | null> {
     const existing = await this.getPresence(tenantId, userId);
@@ -654,8 +653,8 @@ export class AgentPresenceService {
   async updateIntentStatus(
     tenantId: string,
     userId: string,
-    intent: AgentIntentStatus,
-    trigger: StatusTransitionTrigger = 'agent_manual',
+    intent: LegacyIntentStatus,
+    trigger: TransitionTrigger = 'agent_manual',
     opts: { clientTs?: number } = {},
   ): Promise<AgentPresence> {
     const { presenceStatus, routingStatus } = fromLegacyIntent(intent);
@@ -723,7 +722,7 @@ export class AgentPresenceService {
 
     let presenceStatus: PresenceStatus;
     let routingStatus: RoutingStatus;
-    let trigger: StatusTransitionTrigger;
+    let trigger: TransitionTrigger;
 
     if (isFreshSession) {
       // Login always lands AVAILABLE; only an explicit tenant opt-in arms routing.
@@ -762,7 +761,6 @@ export class AgentPresenceService {
       lastHeartbeat: new Date(),
       disconnectedAt: undefined,
       lastCommandTs: existing?.lastCommandTs,
-      socketId,
     });
 
     await this.persistPresence(presence);
@@ -801,9 +799,6 @@ export class AgentPresenceService {
       disconnectedAt: allDisconnected ? new Date() : existing.disconnectedAt,
       lastHeartbeat: new Date(),
     };
-    if (existing.socketId === socketId) {
-      presence.socketId = connections[0];
-    }
 
     await this.persistPresence(presence);
     this.logger.log(

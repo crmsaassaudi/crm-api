@@ -10,6 +10,7 @@ import { Logger } from '@nestjs/common';
 import { AgentPresenceService } from './agent-presence.service';
 import { AgentPresence, GRACE_PERIOD_MS } from '../domain/agent-presence';
 import {
+  LegacyIntentStatus,
   PresenceStatus,
   RoutingStatus,
   toLegacyIntent,
@@ -76,7 +77,7 @@ export class AgentPresenceGateway {
     const presence = await this.presenceService.updateIntentStatus(
       ctx.tenantId,
       ctx.userId,
-      data.status as any,
+      data.status as LegacyIntentStatus,
       'agent_manual',
       { clientTs: data.clientTs },
     );
@@ -241,7 +242,7 @@ export class AgentPresenceGateway {
         'omni_presence',
         tenantId,
       );
-      const graceSec = (cfg as any)?.gracePeriodSeconds;
+      const graceSec = cfg?.gracePeriodSeconds;
       if (typeof graceSec === 'number' && graceSec > 0) {
         gracePeriodMs = graceSec * 1000;
       }
@@ -339,7 +340,7 @@ export class AgentPresenceGateway {
         'omni_routing',
         tenantId,
       );
-      return (config as any)?.autoAvailableOnConnect ?? false;
+      return config?.autoAvailableOnConnect ?? false;
     } catch {
       return false;
     }
@@ -353,7 +354,7 @@ export class AgentPresenceGateway {
         'omni_presence',
         tenantId,
       );
-      return (config as any)?.restoreAcceptingOnReturn ?? false;
+      return config?.restoreAcceptingOnReturn ?? false;
     } catch {
       return false;
     }

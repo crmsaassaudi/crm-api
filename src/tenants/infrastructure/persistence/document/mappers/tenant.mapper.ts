@@ -24,79 +24,90 @@ export class TenantMapper {
     tenant.onboardingGoal = raw.onboardingGoal ?? undefined;
     tenant.botWorkspaceId = raw.botWorkspaceId ?? undefined;
 
-    // Extract plain object to avoid Mongoose subdocument serialization issues
-    const defaultNs = { enabled: true, soundUrl: null, volume: 80 };
-    const rawNs = raw.omniSettings?.notificationSound;
-    tenant.omniSettings = raw.omniSettings
-      ? {
-          resolveNoteMode: raw.omniSettings.resolveNoteMode,
-          notificationSound: {
-            agent: rawNs?.agent
-              ? {
-                  enabled: rawNs.agent.enabled ?? true,
-                  soundUrl: rawNs.agent.soundUrl ?? null,
-                  volume: rawNs.agent.volume ?? 80,
-                }
-              : { ...defaultNs },
-            visitor: rawNs?.visitor
-              ? {
-                  enabled: rawNs.visitor.enabled ?? true,
-                  soundUrl: rawNs.visitor.soundUrl ?? null,
-                  volume: rawNs.visitor.volume ?? 80,
-                }
-              : { ...defaultNs },
-          },
-        }
-      : {
-          resolveNoteMode: 'optional',
-          notificationSound: {
-            agent: { ...defaultNs },
-            visitor: { ...defaultNs },
-          },
-        };
-
-    tenant.i18nSettings = raw.i18nSettings
-      ? {
-          locale: raw.i18nSettings.locale ?? 'en',
-          timezone: raw.i18nSettings.timezone ?? 'UTC',
-          dateFormat: raw.i18nSettings.dateFormat ?? 'MM/DD/YYYY',
-          currency: raw.i18nSettings.currency ?? 'USD',
-        }
-      : {
-          locale: 'en',
-          timezone: 'UTC',
-          dateFormat: 'MM/DD/YYYY',
-          currency: 'USD',
-        };
+    tenant.omniSettings = this.mapOmniSettings(raw.omniSettings);
+    tenant.i18nSettings = this.mapI18nSettings(raw.i18nSettings);
 
     // null = Core only (default); array = Core + granted features
     tenant.availablePermissions = raw.availablePermissions ?? null;
     tenant.disabledCorePermissions = raw.disabledCorePermissions ?? [];
 
-    // Storage quota — handle both old (usedMB) and new (usedBytes) schemas
-    const rawQuota = raw.storageQuota as any;
-    tenant.storageQuota = rawQuota
-      ? {
-          limitBytes:
-            rawQuota.limitBytes ??
-            (rawQuota.limitMB != null
-              ? rawQuota.limitMB * 1024 * 1024
-              : 1073741824),
-          usedBytes:
-            rawQuota.usedBytes ??
-            (rawQuota.usedMB != null
-              ? Math.round(rawQuota.usedMB * 1024 * 1024)
-              : 0),
-          warnThresholdPercent: rawQuota.warnThresholdPercent ?? 80,
-          lastRecalculatedAt: rawQuota.lastRecalculatedAt,
-        }
-      : { limitBytes: 1073741824, usedBytes: 0, warnThresholdPercent: 80 };
-
+    tenant.storageQuota = this.mapStorageQuota(raw.storageQuota);
     tenant.storageBreakdown = (raw as any).storageBreakdown ?? undefined;
 
     tenant.createdAt = raw.createdAt;
     tenant.updatedAt = raw.updatedAt;
     return tenant;
+  }
+
+  private static mapOmniSettings(rawSettings: any) {
+    const defaultNs = { enabled: true, soundUrl: null, volume: 80 };
+    if (!rawSettings) {
+      return {
+        resolveNoteMode: 'optional',
+        notificationSound: {
+          agent: { ...defaultNs },
+          visitor: { ...defaultNs },
+        },
+      };
+    }
+
+    const rawNs = rawSettings.notificationSound;
+    return {
+      resolveNoteMode: rawSettings.resolveNoteMode,
+      notificationSound: {
+        agent: rawNs?.agent
+          ? {
+              enabled: rawNs.agent.enabled ?? true,
+              soundUrl: rawNs.agent.soundUrl ?? null,
+              volume: rawNs.agent.volume ?? 80,
+            }
+          : { ...defaultNs },
+        visitor: rawNs?.visitor
+          ? {
+              enabled: rawNs.visitor.enabled ?? true,
+              soundUrl: rawNs.visitor.soundUrl ?? null,
+              volume: rawNs.visitor.volume ?? 80,
+            }
+          : { ...defaultNs },
+      },
+    };
+  }
+
+  private static mapI18nSettings(rawI18n: any) {
+    if (!rawI18n) {
+      return {
+        locale: 'en',
+        timezone: 'UTC',
+        dateFormat: 'MM/DD/YYYY',
+        currency: 'USD',
+      };
+    }
+    return {
+      locale: rawI18n.locale ?? 'en',
+      timezone: rawI18n.timezone ?? 'UTC',
+      dateFormat: rawI18n.dateFormat ?? 'MM/DD/YYYY',
+      currency: rawI18n.currency ?? 'USD',
+    };
+  }
+
+  private static mapStorageQuota(rawQuota: any) {
+    if (!rawQuota) {
+      return { limitBytes: 1073741824, usedBytes: 0, warnThresholdPercent: 80 };
+    }
+    return {
+      limitBytes:
+        rawQuota.limitBytes ??
+        (rawQuota.limitMB != null
+          ? rawQuota.limitMB * 1024 * 1024
+          : 1073741824),
+      usedBytes:
+        rawQuota.usedBytes ??
+        (rawQuota.usedMB != null
+          ? Math.round(rawQuota.usedMB * 1024 * 1024)
+          : 0),
+      warnThresholdPercent: rawQuota.warnThresholdPercent ?? 80,
+      lastRecalculatedAt: rawQuota.lastRecalculatedAt,
+    };
   }
 
   static toPersistence(domain: Tenant): Partial<TenantSchemaClass> {
