@@ -40,7 +40,7 @@ export class CacheInvalidationService {
               `Error deleting keys for pattern ${pattern}: ${err.message}`,
               err.stack,
             );
-            reject(err);
+            reject(err instanceof Error ? err : new Error(String(err)));
           });
       });
 
@@ -49,7 +49,7 @@ export class CacheInvalidationService {
           `Error scanning keys for pattern ${pattern}: ${err.message}`,
           err.stack,
         );
-        reject(err);
+        reject(err instanceof Error ? err : new Error(String(err)));
       });
     });
   }

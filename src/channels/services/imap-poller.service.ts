@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -53,7 +58,7 @@ type ProviderLabelDetail = {
  *   4. Clean emails → save to email_contents/email_metadata → emit to OmniInbound pipeline
  */
 @Injectable()
-export class ImapPollerService implements OnModuleDestroy {
+export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ImapPollerService.name);
   private pollTimer: NodeJS.Timeout | null = null;
   /** Graceful shutdown flag — stops in-flight polling loops */
@@ -96,11 +101,17 @@ export class ImapPollerService implements OnModuleDestroy {
     private readonly emailMetadataModel: Model<EmailMetadataSchemaClass>,
     @InjectModel(OmniMessageSchemaClass.name)
     private readonly omniMessageModel: Model<OmniMessageSchemaClass>,
-  ) {
+  ) {}
+
+  async onModuleInit() {
     // Only start IMAP polling in email-worker (or legacy monolith worker) process.
     // Prevents duplicate polling from api-service and omni-worker-service.
     if (isEmailWorkerRuntime() || isWorkerRuntime()) {
-      void this.cleanupStaleLocks();
+      await this.cleanupStaleLocks().catch((err) =>
+        this.logger.error(
+          `[ImapPoller] Failed to cleanup stale locks: ${err.message}`,
+        ),
+      );
       this.startScheduler();
     } else {
       this.logger.log('[ImapPoller] Skipped — not an email-worker process');
