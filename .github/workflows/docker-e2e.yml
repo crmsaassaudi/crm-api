@@ -20,7 +20,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --no-audit --fund=false
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Dependency audit (high + critical)
+        run: npm audit --audit-level=high --omit=dev
+        continue-on-error: true  # Warn but don't block — known overrides may cause noise
+
+      - name: Unit tests
+        run: npm run test:unit -- --ci --passWithNoTests
 
       # <database-document-block>
       - name: Run e2e tests for NestJS with Mongoose

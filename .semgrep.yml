@@ -1,0 +1,152 @@
+# CRM API — Semgrep Security Rules
+#
+# Vì mỗi service là git repo riêng, file này chứa tất cả rules cần thiết.
+# Shared rules (ở e:\CRM\.semgrep\) là bản "master" để copy khi mở rộng.
+#
+# Community rules (p/typescript, p/nodejs, p/owasp-top-ten...) được load
+# tự động qua --config auto trong workflow.
+
+rules:
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # COMMON — Áp dụng cho mọi CRM service
+  # ═══════════════════════════════════════════════════════════════════════
+
+  - id: crm.hardcoded-jwt-secret
+    patterns:
+      - pattern-either:
+          - pattern: jwt.sign($PAYLOAD, "...")
+          - pattern: jwt.verify($TOKEN, "...")
+          - pattern: "JwtModule.register({..., secret: \"...\", ...})"
+    message: >
+      JWT secret is hardcoded. Use environment variables via ConfigService.
+    severity: ERROR
+    languages: [typescript, javascript]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-798: Use of Hard-coded Credentials"
+
+  - id: crm.logging-sensitive-data
+    patterns:
+      - pattern-either:
+          - pattern: $LOG.log(..., $OBJ.password, ...)
+          - pattern: $LOG.log(..., $OBJ.token, ...)
+          - pattern: $LOG.log(..., $OBJ.secret, ...)
+          - pattern: console.log(..., $OBJ.password, ...)
+          - pattern: console.log(..., $OBJ.accessToken, ...)
+    message: >
+      Sensitive data (password/token/secret) is being logged. Redact first.
+    severity: WARNING
+    languages: [typescript, javascript]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-532: Insertion of Sensitive Information into Log File"
+
+  - id: crm.ssrf-user-controlled-url
+    patterns:
+      - pattern-either:
+          - pattern: axios.get($REQ.body.$URL)
+          - pattern: axios.post($REQ.body.$URL, ...)
+          - pattern: this.httpService.get($REQ.body.$URL)
+          - pattern: this.httpService.post($REQ.body.$URL, ...)
+          - pattern: fetch($REQ.body.$URL)
+    message: >
+      Potential SSRF — HTTP request with user-controlled URL.
+      Validate and allowlist the URL before making the request.
+    severity: ERROR
+    languages: [typescript, javascript]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-918: Server-Side Request Forgery (SSRF)"
+
+  - id: crm.mass-assignment-object-assign
+    patterns:
+      - pattern-either:
+          - pattern: Object.assign($ENTITY, req.body)
+          - pattern: Object.assign($ENTITY, $REQ.body)
+          - pattern: "{ ...$ENTITY, ...req.body }"
+          - pattern: "{ ...$ENTITY, ...$REQ.body }"
+    message: >
+      Potential mass assignment. Use a validated DTO with class-validator.
+    severity: WARNING
+    languages: [typescript, javascript]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-915: Improperly Controlled Modification of Dynamically-Determined Object Attributes"
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # NESTJS + MONGOOSE — Cho các NestJS backend services
+  # ═══════════════════════════════════════════════════════════════════════
+
+  - id: crm.mongoose-missing-tenant-filter
+    patterns:
+      - pattern-either:
+          - pattern: $MODEL.find({...})
+          - pattern: $MODEL.findOne({...})
+          - pattern: $MODEL.findOneAndUpdate({...}, ...)
+          - pattern: $MODEL.findOneAndDelete({...})
+          - pattern: $MODEL.updateMany({...}, ...)
+          - pattern: $MODEL.deleteMany({...})
+      - pattern-not: $MODEL.find({..., tenantId: ..., ...})
+      - pattern-not: $MODEL.findOne({..., tenantId: ..., ...})
+      - pattern-not: $MODEL.findOneAndUpdate({..., tenantId: ..., ...}, ...)
+      - pattern-not: $MODEL.findOneAndDelete({..., tenantId: ..., ...})
+      - pattern-not: $MODEL.updateMany({..., tenantId: ..., ...}, ...)
+      - pattern-not: $MODEL.deleteMany({..., tenantId: ..., ...})
+      - pattern-not-inside: |
+          $MODEL.aggregate(...)
+      - pattern-not-inside: |
+          describe(..., function() { ... })
+    message: >
+      Mongoose query missing `tenantId` filter — multi-tenant data leak risk.
+      Add `// nosemgrep: crm.mongoose-missing-tenant-filter` if handled by plugin.
+    severity: ERROR
+    languages: [typescript, javascript]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-284: Improper Access Control"
+      confidence: MEDIUM
+
+  - id: crm.mongoose-empty-bulk-filter
+    patterns:
+      - pattern-either:
+          - pattern: $MODEL.updateMany({}, ...)
+          - pattern: $MODEL.deleteMany({})
+    message: >
+      Bulk operation with empty filter `{}` — will affect ALL documents.
+    severity: ERROR
+    languages: [typescript, javascript]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-284: Improper Access Control"
+
+  - id: crm.nestjs-controller-missing-guard
+    patterns:
+      - pattern: |
+          @Controller(...)
+          class $CTRL { ... }
+      - pattern-not: |
+          @UseGuards(...)
+          @Controller(...)
+          class $CTRL { ... }
+      - pattern-not: |
+          @Controller(...)
+          @UseGuards(...)
+          class $CTRL { ... }
+      - metavariable-regex:
+          metavariable: $CTRL
+          regex: "^(?!Health|Public).*Controller$"
+    message: >
+      Controller `$CTRL` has no @UseGuards(). Add auth guard.
+    severity: WARNING
+    languages: [typescript]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-306: Missing Authentication for Critical Function"

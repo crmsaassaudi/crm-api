@@ -42,3 +42,9 @@ jest_html_reporters.html
 !.env.example
 /ormconfig.json
 .codegpt
+
+# SonarQube
+.scannerwork/
+
+# Semgrep
+semgrep-results.*
