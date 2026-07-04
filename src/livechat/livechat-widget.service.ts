@@ -269,14 +269,7 @@ export class LivechatWidgetService {
         autoDetect: widget.localization?.autoDetect ?? true,
         fallbackLocale: widget.localization?.fallbackLocale ?? 'en',
         supportedLocales: widget.localization?.supportedLocales ?? [],
-        rtl: (() => {
-          const rtlSetting = widget.localization?.rtl ?? 'auto';
-          if (rtlSetting !== 'auto') return rtlSetting;
-          const RTL_LOCALES = ['ar', 'he', 'fa', 'ur'];
-          return RTL_LOCALES.includes(widget.localization?.locale ?? 'en')
-            ? 'rtl'
-            : 'ltr';
-        })(),
+        rtl: this.resolveRtlDirection(widget.localization),
         translations: widget.localization?.translations ?? {},
       },
 
@@ -345,6 +338,17 @@ export class LivechatWidgetService {
 
       // NOTE: security.hmacSecret, routing internals, automation are NOT exposed.
     };
+  }
+
+  /** Resolve the RTL text direction from locale settings. */
+  private resolveRtlDirection(localization?: {
+    rtl?: string;
+    locale?: string;
+  }): string {
+    const rtlSetting = localization?.rtl ?? 'auto';
+    if (rtlSetting !== 'auto') return rtlSetting;
+    const RTL_LOCALES = ['ar', 'he', 'fa', 'ur'];
+    return RTL_LOCALES.includes(localization?.locale ?? 'en') ? 'rtl' : 'ltr';
   }
 
   // ── Domain Whitelist ──────────────────────────────────────────────────────

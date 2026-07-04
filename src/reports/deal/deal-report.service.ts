@@ -538,7 +538,7 @@ export class DealReportService {
     dto: GetDealReportDto,
   ): Promise<ReportResponse<DealVelocityData>> {
     const startedAt = process.hrtime.bigint();
-    const context = await this.resolveDateContext(dto);
+    const context = this.resolveDateContext(dto);
     const match = {
       ...this.buildBaseMatch(dto),
       wonAt: { $gte: context.from, $lte: context.to },
@@ -563,14 +563,7 @@ export class DealReportService {
         ? daysToClose.reduce((s, v) => s + v, 0) / daysToClose.length
         : 0;
 
-    const median =
-      daysToClose.length > 0
-        ? daysToClose.length % 2 === 0
-          ? (daysToClose[daysToClose.length / 2 - 1] +
-              daysToClose[daysToClose.length / 2]) /
-            2
-          : daysToClose[Math.floor(daysToClose.length / 2)]
-        : 0;
+    const median = this.computeMedian(daysToClose);
 
     const totalWonValue = rows.reduce((s, r) => s + (r.value ?? 0), 0);
 
@@ -606,13 +599,13 @@ export class DealReportService {
   }
 
   private tenantObjectId(): Types.ObjectId {
-    const tenantId = this.cls.get('tenantId');
+    const tenantId: string = this.cls.get('tenantId');
     return new Types.ObjectId(tenantId);
   }
 
   private resolveDateContext(dto: BaseReportFilterDto): DateContext {
     const { from, to } = parseReportDateRange(dto.fromDate, dto.toDate);
-    const timezone = dto.timezone || 'UTC';
+    const timezone = dto.timezone ?? 'UTC';
     const resolvedGranularity = BaseReportFilterDto.resolveGranularity(
       from,
       to,
@@ -632,5 +625,12 @@ export class DealReportService {
       resolvedGranularity,
       warnings,
     };
+  }
+  private computeMedian(sorted: number[]): number {
+    if (sorted.length === 0) return 0;
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0
+      ? (sorted[mid - 1] + sorted[mid]) / 2
+      : sorted[mid];
   }
 }

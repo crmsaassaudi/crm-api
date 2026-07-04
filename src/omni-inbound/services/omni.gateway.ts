@@ -180,89 +180,133 @@ export class OmniGateway
 
   async handleConnection(client: Socket) {
     try {
-      // 1. Parse the sid cookie from the handshake headers
-      const rawCookie = client.handshake.headers.cookie;
-      const cookies = rawCookie ? cookie.parse(rawCookie) : {};
-      const sid = cookies['sid'];
+      const auth = await this.authenticateSocket(client);
+      if (!auth) return;
 
-      if (!sid) {
-        this.logger.warn(`Client ${client.id} has no session cookie (sid)`);
-        client.disconnect();
-        return;
-      }
-
-      // 2. Resolve session from Redis via SessionService
-      const session = await this.sessionService.getSession(sid);
-      if (!session) {
-        this.logger.warn(`Client ${client.id} has invalid/expired session`);
-        client.disconnect();
-        return;
-      }
-
-      // 3. Decode the token to get user info
-      const decoded: any = jwtDecode(session.idToken || session.accessToken);
-      if (!decoded) {
-        this.logger.warn(`Client ${client.id} has malformed token in session`);
-        client.disconnect();
-        return;
-      }
-
-      client.data.user = decoded;
-      const keycloakUserId = decoded.id ?? decoded.sub;
-
-      // 4. Resolve MongoDB _id from keycloakId
-      const { userId, dbUser } = await this.resolveMongoUserId(
-        client.id,
-        keycloakUserId,
+      const tenantId = await this.validateTenantMembership(
+        client,
+        auth.decoded,
+        auth.userId,
+        auth.dbUser,
       );
+      if (!tenantId) return;
 
-      // 5. Resolve tenantId from subdomain or explicit hints
-      const tenantId = await this.resolveTenantId(client, decoded);
-
-      if (
-        tenantId &&
-        dbUser &&
-        !dbUser.tenants?.some((m: any) => m.tenantId?.toString() === tenantId)
-      ) {
-        this.logger.warn(
-          `Client ${client.id} requested tenant ${tenantId} without membership. Disconnecting.`,
-        );
-        client.disconnect();
-        return;
-      }
-
-      if (!tenantId) {
-        this.logger.warn(
-          `Client ${client.id} — cannot resolve tenantId (user=${userId}). Disconnecting.`,
-        );
-        client.disconnect();
-        return;
-      }
-
-      this.logger.debug(
-        `JWT decoded for ${client.id}: tenantId=${tenantId}, keycloakId=${keycloakUserId}, resolvedUserId=${userId}`,
-      );
-
-      client.data.tenantId = tenantId;
-      client.data.userId = userId;
-
-      await client.join(`tenant:${tenantId}`);
-      await client.join(`agent:${userId}`);
-      this.logger.log(
-        `Agent ${userId} connected to /omni, joined tenant:${tenantId} and agent:${userId}`,
-      );
-
-      await this.presenceGateway.onAgentConnected(tenantId, userId, client.id, {
-        skills: dbUser?.skills,
-        maxCapacity: dbUser?.omniMaxCapacity ?? undefined,
-      });
-
-      await this.agentFallbackService.onAgentReconnected(tenantId, userId);
+      await this.setupAgentSocket(client, tenantId, auth.userId, auth.dbUser);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Connection error for client ${client.id}: ${message}`);
       client.disconnect();
     }
+  }
+
+  /**
+   * Authenticate the socket connection: parse session cookie, validate session,
+   * decode JWT, and resolve the MongoDB user ID.
+   * Returns null (and disconnects) on any authentication failure.
+   */
+  private async authenticateSocket(client: Socket): Promise<{
+    decoded: any;
+    userId: string;
+    dbUser: any;
+  } | null> {
+    const rawCookie = client.handshake.headers.cookie;
+    const cookies = rawCookie ? cookie.parse(rawCookie) : {};
+    const sid = cookies['sid'];
+
+    if (!sid) {
+      this.logger.warn(`Client ${client.id} has no session cookie (sid)`);
+      client.disconnect();
+      return null;
+    }
+
+    const session = await this.sessionService.getSession(sid);
+    if (!session) {
+      this.logger.warn(`Client ${client.id} has invalid/expired session`);
+      client.disconnect();
+      return null;
+    }
+
+    const decoded: any = jwtDecode(session.idToken || session.accessToken);
+    if (!decoded) {
+      this.logger.warn(`Client ${client.id} has malformed token in session`);
+      client.disconnect();
+      return null;
+    }
+
+    client.data.user = decoded;
+    const keycloakUserId = decoded.id ?? decoded.sub;
+    const { userId, dbUser } = await this.resolveMongoUserId(
+      client.id,
+      keycloakUserId,
+    );
+
+    return { decoded, userId, dbUser };
+  }
+
+  /**
+   * Validate that the resolved tenant exists and the user has membership.
+   * Returns the tenantId on success, or null (and disconnects) on failure.
+   */
+  private async validateTenantMembership(
+    client: Socket,
+    decoded: any,
+    userId: string,
+    dbUser: any,
+  ): Promise<string | null> {
+    const tenantId = await this.resolveTenantId(client, decoded);
+
+    if (
+      tenantId &&
+      dbUser &&
+      !dbUser.tenants?.some((m: any) => m.tenantId?.toString() === tenantId)
+    ) {
+      this.logger.warn(
+        `Client ${client.id} requested tenant ${tenantId} without membership. Disconnecting.`,
+      );
+      client.disconnect();
+      return null;
+    }
+
+    if (!tenantId) {
+      this.logger.warn(
+        `Client ${client.id} — cannot resolve tenantId (user=${userId}). Disconnecting.`,
+      );
+      client.disconnect();
+      return null;
+    }
+
+    this.logger.debug(
+      `JWT decoded for ${client.id}: tenantId=${tenantId}, keycloakId=${decoded.id ?? decoded.sub}, resolvedUserId=${userId}`,
+    );
+
+    return tenantId;
+  }
+
+  /**
+   * Finalize the agent socket: persist context, join rooms, register presence,
+   * and trigger reconnection handlers.
+   */
+  private async setupAgentSocket(
+    client: Socket,
+    tenantId: string,
+    userId: string,
+    dbUser: any,
+  ): Promise<void> {
+    client.data.tenantId = tenantId;
+    client.data.userId = userId;
+
+    await client.join(`tenant:${tenantId}`);
+    await client.join(`agent:${userId}`);
+    this.logger.log(
+      `Agent ${userId} connected to /omni, joined tenant:${tenantId} and agent:${userId}`,
+    );
+
+    await this.presenceGateway.onAgentConnected(tenantId, userId, client.id, {
+      skills: dbUser?.skills,
+      maxCapacity: dbUser?.omniMaxCapacity ?? undefined,
+    });
+
+    await this.agentFallbackService.onAgentReconnected(tenantId, userId);
   }
 
   /** Resolve MongoDB _id from keycloakId — falls back to keycloakId if not found. */
@@ -522,8 +566,8 @@ export class OmniGateway
           agentId: userId,
           media: {
             fileId: data.fileId,
-            mimeType: data.mimeType || 'application/octet-stream',
-            fileName: data.fileName || 'file',
+            mimeType: data.mimeType ?? 'application/octet-stream',
+            fileName: data.fileName ?? 'file',
             size: 0, // will be resolved from DB
           },
           caption: data.caption,
@@ -557,7 +601,7 @@ export class OmniGateway
             senderType: 'agent',
             source: result.source ?? 'agent_ui',
             messageType: result.messageType ?? 'file',
-            content: data.caption || `📎 ${data.fileName || 'file'}`,
+            content: data.caption ?? `📎 ${data.fileName ?? 'file'}`,
             messageId: ack.messageId,
             idempotencyKey: ack.idempotencyKey,
             clientMessageId: ack.clientMessageId,

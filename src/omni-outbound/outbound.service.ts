@@ -533,27 +533,16 @@ export class OutboundService {
     const senderContext = await this.resolveSenderContext(agentId);
 
     // â”€â”€ Idempotency check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if (idempotencyKey) {
-      const existing = await this.messageRepo.findByIdempotencyKey(
-        tenantId,
-        idempotencyKey,
-      );
-      if (existing && existing.status !== 'failed') {
-        return {
-          ok: true,
-          messageId: existing.id,
-          externalMessageId: existing.externalMessageId,
-          status: existing.status,
+    const idempotencyResult = idempotencyKey
+      ? await this.checkOutboundIdempotency(
+          tenantId,
           idempotencyKey,
-          clientMessageId: existing.clientMessageId,
-          senderId: existing.senderId,
-          senderName: existing.senderName ?? senderContext.name,
-          senderAvatarUrl:
-            existing.senderAvatarUrl ?? senderContext.avatarUrl ?? null,
-          source: existing.source ?? source,
-          reused: true,
-        };
-      }
+          senderContext,
+          source,
+        )
+      : { reused: false };
+    if (idempotencyResult.reused && idempotencyResult.response) {
+      return idempotencyResult.response;
     }
 
     // 1. Resolve conversation + channel
@@ -568,22 +557,10 @@ export class OutboundService {
       );
     }
 
-    let channel = await this.channelRepo.findByIdWithCredentials(
+    const channel = await this.resolveChannelForOutbound(
       tenantId,
-      conversation.channelId.toString(),
+      conversation,
     );
-    if (!channel && (conversation as any).channelAccount) {
-      channel = await this.channelRepo.findByAccountWithCredentials(
-        tenantId,
-        conversation.channelType,
-        (conversation as any).channelAccount,
-      );
-    }
-    if (!channel) {
-      throw new Error(
-        `Channel for conversation ${conversationId} not found or disconnected`,
-      );
-    }
 
     // NOTE: Template messages deliberately SKIP enforceReplyWindow().
     // WhatsApp templates are pre-approved by Meta and are the only
@@ -639,7 +616,7 @@ export class OutboundService {
     // 5. Send via WhatsApp adapter
     try {
       const adapter = this.adapters.get('whatsapp');
-      if (!adapter || !adapter.sendTemplate) {
+      if (!adapter?.sendTemplate) {
         throw new Error(
           'WhatsApp adapter or sendTemplate method not available',
         );
@@ -941,8 +918,11 @@ export class OutboundService {
       );
     } else {
       // Plain text (or adapter doesn't support interactive)
+      const numberedButtons = buttons
+        .map((b, i) => `${i + 1}. ${b.label}`)
+        .join('\n');
       const sendContent = buttons?.length
-        ? `${content}\n\n${buttons.map((b, i) => `${i + 1}. ${b.label}`).join('\n')}`
+        ? `${content}\n\n${numberedButtons}`
         : content;
       adapterResponse = await adapter.send(
         conversation.customer.externalId,

@@ -49,10 +49,24 @@ export class SmsSendController {
       throw new BadRequestException('configId, to, and message are required');
     }
 
-    // 1. Resolve SMS config
-    const config = await this.configRepo.findByIdWithCredentials(
+    // 1. Resolve and validate SMS credentials
+    const { accountSid, authToken, fromNumber } = await this.resolveCredentials(
       tenantId,
       dto.configId,
+    );
+
+    // 2. Send via Twilio REST API
+    return this.dispatchViaTwilio(accountSid, authToken, fromNumber, dto);
+  }
+
+  /** Resolve SMS channel config and decrypt credentials. */
+  private async resolveCredentials(
+    tenantId: string,
+    configId: string,
+  ): Promise<{ accountSid: string; authToken: string; fromNumber: string }> {
+    const config = await this.configRepo.findByIdWithCredentials(
+      tenantId,
+      configId,
     );
     if (!config) {
       throw new BadRequestException('SMS channel config not found');
@@ -63,16 +77,15 @@ export class SmsSendController {
       );
     }
 
-    // 2. Decrypt credentials
     const credentials = JSON.parse(
       await this.crypto.decrypt(config.encryptedCredentials),
     );
 
-    const accountSid = credentials.accountSid || credentials.twilioAccountSid;
-    const authToken = credentials.authToken || credentials.twilioAuthToken;
+    const accountSid = credentials.accountSid ?? credentials.twilioAccountSid;
+    const authToken = credentials.authToken ?? credentials.twilioAuthToken;
     const fromNumber =
-      credentials.fromNumber ||
-      credentials.twilioPhoneNumber ||
+      credentials.fromNumber ??
+      credentials.twilioPhoneNumber ??
       config.publicSettings?.fromNumber;
 
     if (!accountSid || !authToken || !fromNumber) {
@@ -81,7 +94,16 @@ export class SmsSendController {
       );
     }
 
-    // 3. Send via Twilio REST API (same as TwilioSmsProvider)
+    return { accountSid, authToken, fromNumber };
+  }
+
+  /** Send an SMS via Twilio REST API. */
+  private async dispatchViaTwilio(
+    accountSid: string,
+    authToken: string,
+    fromNumber: string,
+    dto: SendSmsDto,
+  ) {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
     const params = new URLSearchParams({
       From: fromNumber,
@@ -105,10 +127,10 @@ export class SmsSendController {
 
       if (!response.ok) {
         this.logger.error(
-          `[SmsSend] ❌ Twilio error: ${data.message || JSON.stringify(data)}`,
+          `[SmsSend] ❌ Twilio error: ${data.message ?? JSON.stringify(data)}`,
         );
         throw new BadRequestException(
-          `Twilio error: ${data.message || 'Unknown error'}`,
+          `Twilio error: ${data.message ?? 'Unknown error'}`,
         );
       }
 

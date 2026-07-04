@@ -117,6 +117,19 @@ export function mergeRoutingConfig(
   };
 }
 
+/**
+ * Normalize strategy strings: accept both 'round_robin' (DB/settings format)
+ * and 'round-robin' (AssignmentService internal format).
+ */
+function normalizeStrategy(s: string | undefined): AssignmentStrategy {
+  const map: Record<string, AssignmentStrategy> = {
+    round_robin: 'round-robin',
+    least_busy: 'least-busy',
+    capacity_based: 'capacity-based',
+  };
+  return (map[s as string] ?? s ?? 'round-robin') as AssignmentStrategy;
+}
+
 export interface AssignmentOptions {
   strategy?: AssignmentStrategy;
   agentPool?: string[];
@@ -387,12 +400,10 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     agentPool?: string[],
   ): Promise<string | null> {
     // ── Normalize arguments (backward compat with old 3-arg calls) ─────
-    let options: AssignmentOptions;
-    if (typeof strategyOrOptions === 'string') {
-      options = { strategy: strategyOrOptions, agentPool };
-    } else {
-      options = strategyOrOptions ?? {};
-    }
+    const options: AssignmentOptions =
+      typeof strategyOrOptions === 'string'
+        ? { strategy: strategyOrOptions, agentPool }
+        : (strategyOrOptions ?? {});
 
     // ── Resolve tenant routing config ─────────────────────────────────
     const routingConfig = await this.getRoutingConfig(tenantId);
@@ -400,15 +411,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       `assignConversation tenantId=${tenantId}, conversationId=${conversationId}`,
     );
 
-    // ── Channel-first auto-assignment hierarchy ───────────────────────
-    //
-    // Priority:
-    //   1. Channel.autoAssign === false → SKIP (handled upstream in triggerAutoAssignment)
-    //   2. Channel.autoAssign === true  → ALWAYS assign (skip global check)
-    //   3. Channel.autoAssign === undefined → Defer to global toggle
-    //      - Global ON  → assign
-    //      - Global OFF → queue
-    //
+    // ── Channel-first auto-assignment gate ─────────────────────────────
     const channelOverride = options.channelAutoAssignOverride;
     this.logger.debug(`channelOverride=${channelOverride ?? 'undefined'}`);
 
@@ -419,47 +422,11 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       routingConfig,
     );
     if (eligibilityResult === 'queued') return null;
-    // channelOverride === false is already handled upstream (triggerAutoAssignment)
 
-    // ── Evaluate routing rules to override defaults ───────────────────
-    let ruleMatch: Awaited<
-      ReturnType<RoutingRuleEvaluatorService['evaluateForTenant']>
-    > = null;
-    if (options.routingContext) {
-      this.logger.debug(`Evaluating routing rules for tenant ${tenantId}`);
-      try {
-        ruleMatch = await this.routingRuleEvaluator.evaluateForTenant(
-          tenantId,
-          options.routingContext,
-        );
-        this.logger.debug(
-          `Routing rule matched: strategy=${ruleMatch?.strategy ?? 'none'}, teamId=${ruleMatch?.teamId ?? 'none'}`,
-        );
-      } catch (err: any) {
-        this.logger.warn(
-          `Routing rule evaluation failed: ${err.message} — using default routing`,
-        );
-      }
-    } else {
-      this.logger.debug(
-        `No routingContext provided — skipping rule evaluation`,
-      );
-    }
-
-    // Normalize strategy: accept both 'round_robin' (DB/settings format)
-    // and 'round-robin' (AssignmentService internal format)
-    const normalizeStrategy = (s: string | undefined): AssignmentStrategy => {
-      const map: Record<string, AssignmentStrategy> = {
-        round_robin: 'round-robin',
-        least_busy: 'least-busy',
-        capacity_based: 'capacity-based',
-      };
-      return (map[s as string] ?? s ?? 'round-robin') as AssignmentStrategy;
-    };
+    // ── Evaluate routing rules ────────────────────────────────────────
+    const ruleMatch = await this.resolveRoutingRuleMatch(tenantId, options);
 
     // ── Resolve effective routing config (channel ?? global ?? default) ──
-    // Single seam for all routing-decision settings. Precedence for strategy:
-    //   routing rule > options.strategy > channel override > global > default.
     const resolved = mergeRoutingConfig(
       routingConfig,
       options.channelRoutingOverride,
@@ -472,33 +439,17 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     const requiredSkills: string[] =
       ruleMatch?.requiredSkills ?? options.requiredSkills ?? [];
 
-    // If a routing rule matched and specifies a team, resolve the agent pool
-    // from that team (group members) and intersect with channel pool.
-    let effectivePool = options.agentPool;
-    if (ruleMatch?.teamId) {
-      this.logger.debug(
-        `Routing rule "${ruleMatch.ruleName}" matched — teamId=${ruleMatch.teamId}, strategy=${ruleMatch.strategy}`,
-      );
-      const teamMembers = await this.resolveGroupMembers(ruleMatch.teamId);
-      if (teamMembers.length > 0) {
-        if (effectivePool && effectivePool.length > 0) {
-          // Intersect: only agents in BOTH channel pool AND routing rule team
-          const teamSet = new Set(teamMembers);
-          effectivePool = effectivePool.filter((id) => teamSet.has(id));
-          this.logger.debug(
-            `Team pool intersected with channel pool: ${effectivePool.length} agents eligible`,
-          );
-        } else {
-          effectivePool = teamMembers;
-        }
-      }
-    }
+    // ── Resolve agent pool (routing rule team ∩ channel pool) ─────────
+    const effectivePool = await this.resolveEffectivePool(
+      ruleMatch,
+      options.agentPool,
+    );
 
     this.logger.debug(
       `Strategy resolved: ${strategy}, tenantMaxCapacity=${tenantMaxCapacity}, requiredSkills=[${requiredSkills.join(',')}], effectivePool size=${effectivePool?.length ?? 'all'}`,
     );
 
-    // Get available agents (online/available status)
+    // ── Get available agents ──────────────────────────────────────────
     const availableAgents = await this.getAvailableAgents(
       tenantId,
       effectivePool,
@@ -524,74 +475,36 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
-    // ── Sticky routing: try the previous agent first ──────────────────
-    // P0 fix: the global `stickyRoutingEnabled` toggle is ALWAYS respected.
-    // Previously `strategy === 'sticky'` (set by a routing rule) bypassed the
-    // toggle entirely — an admin who disabled sticky routing would still see it
-    // triggered for conversations matched by rules. Now: routing rules can
-    // *request* sticky, but only if the tenant has enabled it globally (or via
-    // channel override, which is already merged into `resolved`).
-    if (
-      !options.skipSticky &&
-      resolved.stickyRoutingEnabled &&
-      (strategy === 'sticky' || strategy !== 'manual')
-    ) {
-      const stickyResult = await this.tryStickyRouting(
-        tenantId,
-        conversationId,
-        availableAgents,
-        options,
-        resolved,
-        tenantMaxCapacity,
-      );
-      if (stickyResult === STICKY_WAITING_SENTINEL) {
-        // Conversation is waiting for the preferred agent — delayed retry scheduled
-        await this.writeAuditLog({
-          tenantId,
-          conversationId,
-          assignedAgentId: null,
-          strategy: 'sticky',
-          reason: `Sticky wait-time: waiting for preferred agent (max ${resolved.stickyWaitTimeMinutes} min)`,
-          reasonKey: 'stickyWait',
-          reasonParams: { minutes: resolved.stickyWaitTimeMinutes },
-          metadata: {
-            stickyWaitTimeMinutes: resolved.stickyWaitTimeMinutes,
-          },
-          outcome: 'queued',
-        });
-        return null;
-      }
-      if (stickyResult) return stickyResult;
-      // If sticky fails, fall through to the configured strategy
-    }
+    // ── Sticky routing ────────────────────────────────────────────────
+    const stickyAgent = await this.tryStickyRoutingIfEnabled(
+      tenantId,
+      conversationId,
+      availableAgents,
+      options,
+      resolved,
+      tenantMaxCapacity,
+      strategy,
+    );
+    if (stickyAgent === STICKY_WAITING_SENTINEL) return null;
+    if (stickyAgent) return stickyAgent;
 
-    let selectedAgent: string | null = null;
-    let reason = '';
-    let metadata: Record<string, any> = {
+    // ── Filter by skills & run strategy ───────────────────────────────
+    const eligibleAgents = await this.filterEligibleAgents(
+      tenantId,
+      availableAgents,
+      requiredSkills,
+      resolved.skillBasedRoutingEnabled,
+    );
+
+    const effectiveStrategy =
+      strategy === 'sticky' ? resolved.fallbackStrategy : strategy;
+
+    const metadata: Record<string, any> = {
       routingContext: options.routingContext ?? null,
       matchedRule: ruleMatch
         ? { ruleId: ruleMatch.ruleId, ruleName: ruleMatch.ruleName }
         : null,
     };
-
-    // ── Filter by required skills if present ──────────────────────────
-    let eligibleAgents = availableAgents;
-    if (requiredSkills.length > 0 && resolved.skillBasedRoutingEnabled) {
-      eligibleAgents = await this.filterBySkills(
-        tenantId,
-        availableAgents,
-        requiredSkills,
-      );
-      if (eligibleAgents.length === 0) {
-        this.logger.warn(
-          `No agents with required skills ${requiredSkills.join(', ')} — falling back to full pool`,
-        );
-        eligibleAgents = availableAgents;
-      }
-    }
-
-    const effectiveStrategy =
-      strategy === 'sticky' ? resolved.fallbackStrategy : strategy;
 
     const selection = await this.runStrategySelection(
       tenantId,
@@ -603,14 +516,11 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       metadata,
     );
     if (selection.earlyReturn) return null;
-    selectedAgent = selection.selectedAgent;
-    reason = selection.reason;
-    metadata = selection.metadata;
 
-    selectedAgent = await this.commitWithRollback(
+    const selectedAgent = await this.commitWithRollback(
       tenantId,
       conversationId,
-      selectedAgent,
+      selection.selectedAgent,
       options,
     );
 
@@ -619,12 +529,154 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       conversationId,
       selectedAgent,
       effectiveStrategy,
-      reason,
-      metadata,
+      selection.reason,
+      selection.metadata,
       options,
     );
 
     return selectedAgent;
+  }
+
+  /**
+   * Evaluate routing rules for the tenant, returning the matched rule or null.
+   * Errors are caught and logged — fallback to default routing.
+   */
+  private async resolveRoutingRuleMatch(
+    tenantId: string,
+    options: AssignmentOptions,
+  ): Promise<Awaited<
+    ReturnType<RoutingRuleEvaluatorService['evaluateForTenant']>
+  > | null> {
+    if (!options.routingContext) {
+      this.logger.debug(
+        `No routingContext provided — skipping rule evaluation`,
+      );
+      return null;
+    }
+
+    this.logger.debug(`Evaluating routing rules for tenant ${tenantId}`);
+    try {
+      const match = await this.routingRuleEvaluator.evaluateForTenant(
+        tenantId,
+        options.routingContext,
+      );
+      this.logger.debug(
+        `Routing rule matched: strategy=${match?.strategy ?? 'none'}, teamId=${match?.teamId ?? 'none'}`,
+      );
+      return match;
+    } catch (err: any) {
+      this.logger.warn(
+        `Routing rule evaluation failed: ${err.message} — using default routing`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Resolve the effective agent pool by intersecting the routing rule's
+   * team members with the channel-scoped pool.
+   */
+  private async resolveEffectivePool(
+    ruleMatch: { teamId?: string; ruleName?: string; strategy?: string } | null,
+    channelPool: string[] | undefined,
+  ): Promise<string[] | undefined> {
+    if (!ruleMatch?.teamId) return channelPool;
+
+    this.logger.debug(
+      `Routing rule "${ruleMatch.ruleName}" matched — teamId=${ruleMatch.teamId}, strategy=${ruleMatch.strategy}`,
+    );
+    const teamMembers = await this.resolveGroupMembers(ruleMatch.teamId);
+    if (teamMembers.length === 0) return channelPool;
+
+    if (!channelPool || channelPool.length === 0) return teamMembers;
+
+    // Intersect: only agents in BOTH channel pool AND routing rule team
+    const teamSet = new Set(teamMembers);
+    const intersected = channelPool.filter((id) => teamSet.has(id));
+    this.logger.debug(
+      `Team pool intersected with channel pool: ${intersected.length} agents eligible`,
+    );
+    return intersected;
+  }
+
+  /**
+   * Attempt sticky routing if enabled and applicable.
+   * Returns agent ID on success, STICKY_WAITING_SENTINEL if waiting,
+   * or null to fall through to strategy-based assignment.
+   */
+  private async tryStickyRoutingIfEnabled(
+    tenantId: string,
+    conversationId: string,
+    availableAgents: string[],
+    options: AssignmentOptions,
+    resolved: ResolvedRoutingConfig,
+    tenantMaxCapacity: number,
+    strategy: AssignmentStrategy,
+  ): Promise<string | null> {
+    const shouldTrySticky =
+      !options.skipSticky &&
+      resolved.stickyRoutingEnabled &&
+      (strategy === 'sticky' || strategy !== 'manual');
+
+    if (!shouldTrySticky) return null;
+
+    const stickyResult = await this.tryStickyRouting(
+      tenantId,
+      conversationId,
+      availableAgents,
+      options,
+      resolved,
+      tenantMaxCapacity,
+    );
+
+    if (stickyResult === STICKY_WAITING_SENTINEL) {
+      await this.writeAuditLog({
+        tenantId,
+        conversationId,
+        assignedAgentId: null,
+        strategy: 'sticky',
+        reason: `Sticky wait-time: waiting for preferred agent (max ${resolved.stickyWaitTimeMinutes} min)`,
+        reasonKey: 'stickyWait',
+        reasonParams: { minutes: resolved.stickyWaitTimeMinutes },
+        metadata: {
+          stickyWaitTimeMinutes: resolved.stickyWaitTimeMinutes,
+        },
+        outcome: 'queued',
+      });
+      return STICKY_WAITING_SENTINEL;
+    }
+
+    return stickyResult;
+  }
+
+  /**
+   * Filter agents by required skills with automatic fallback to the full
+   * pool when no skilled agents are available.
+   */
+  private async filterEligibleAgents(
+    tenantId: string,
+    availableAgents: string[],
+    requiredSkills: string[],
+    skillBasedRoutingEnabled: boolean,
+  ): Promise<string[]> {
+    if (requiredSkills.length === 0 || !skillBasedRoutingEnabled) {
+      return availableAgents;
+    }
+
+    const skilled = await this.filterBySkills(
+      tenantId,
+      availableAgents,
+      requiredSkills,
+    );
+
+    if (skilled.length === 0) {
+      this.logger.warn(
+        `No agents with required skills ${requiredSkills.join(', ')} — falling back to full pool`,
+      );
+      return availableAgents;
+    }
+
+    return skilled;
   }
 
   /**

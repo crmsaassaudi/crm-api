@@ -40,6 +40,7 @@ import {
   getFileCategory,
   detectMimeFromBuffer,
 } from './file-upload-security.util';
+import { FileCategory } from './domain/file';
 
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { ConfigService } from '@nestjs/config';
@@ -112,7 +113,33 @@ export class FileManagementController {
       throw new BadRequestException('No file provided');
     }
 
-    // ── Validate ────────────────────────────────────────────────────
+    this.validateUploadedFile(file);
+
+    // ── Quota check (atomic) ────────────────────────────────────────
+    const category = dto.category ?? getFileCategory(file.mimetype);
+    const countsQuota = category !== 'general';
+
+    if (countsQuota) {
+      await this.enforceStorageQuota(tenantId, file.size);
+    }
+
+    try {
+      return await this.processAndUpload(tenantId, userId, file, dto, category);
+    } catch (err) {
+      // Rollback quota on failure
+      if (countsQuota) {
+        await this.tenantsService
+          .decrementStorageUsage(tenantId, file.size)
+          .catch((e) =>
+            this.logger.warn(`Quota rollback failed: ${(e as Error).message}`),
+          );
+      }
+      throw err;
+    }
+  }
+
+  /** Validate file name, MIME type (declared + magic bytes), and size limits. */
+  private validateUploadedFile(file: Express.Multer.File): void {
     if (!isAllowedFileName(file.originalname)) {
       throw new BadRequestException('File type not allowed');
     }
@@ -121,9 +148,6 @@ export class FileManagementController {
     }
 
     // HIGH-11: Verify magic bytes match the declared MIME type.
-    // Client-supplied Content-Type is trivially forged. An attacker can rename
-    // malware.exe → resume.pdf and send Content-Type: application/pdf.
-    // The extension check passes, but magic bytes reveal the real format.
     const detectedMime = detectMimeFromBuffer(file.buffer);
     if (detectedMime && !isAllowedMimeType(detectedMime)) {
       throw new BadRequestException(
@@ -138,144 +162,150 @@ export class FileManagementController {
         `File size ${(file.size / (1024 * 1024)).toFixed(1)}MB exceeds limit of ${(maxFileSize / (1024 * 1024)).toFixed(0)}MB`,
       );
     }
+  }
 
-    // ── Quota check (atomic) ────────────────────────────────────────
-    const category = dto.category ?? getFileCategory(file.mimetype);
-    const countsQuota = category !== 'general';
-
-    if (countsQuota) {
-      const withinQuota = await this.tenantsService.incrementStorageUsage(
-        tenantId,
-        file.size,
+  /** Enforce tenant storage quota, throwing if exceeded. */
+  private async enforceStorageQuota(
+    tenantId: string,
+    fileSize: number,
+  ): Promise<void> {
+    const withinQuota = await this.tenantsService.incrementStorageUsage(
+      tenantId,
+      fileSize,
+    );
+    if (!withinQuota) {
+      const quota = await this.tenantsService.checkStorageQuota(tenantId);
+      throw new PayloadTooLargeException(
+        `Storage quota exceeded (${(quota.usedBytes / (1024 * 1024)).toFixed(1)}MB / ${quota.limitBytes === -1 ? 'unlimited' : (quota.limitBytes / (1024 * 1024)).toFixed(0) + 'MB'})`,
       );
-      if (!withinQuota) {
-        const quota = await this.tenantsService.checkStorageQuota(tenantId);
-        throw new PayloadTooLargeException(
-          `Storage quota exceeded (${(quota.usedBytes / (1024 * 1024)).toFixed(1)}MB / ${quota.limitBytes === -1 ? 'unlimited' : (quota.limitBytes / (1024 * 1024)).toFixed(0) + 'MB'})`,
-        );
-      }
+    }
+  }
+
+  /** Compress, upload to S3, generate thumbnail, and create DB record. */
+  private async processAndUpload(
+    tenantId: string,
+    userId: string,
+    file: Express.Multer.File,
+    dto: UploadFileDto,
+    category: FileCategory,
+  ) {
+    // ── Compress if image ───────────────────────────────────────────
+    let uploadBuffer = file.buffer;
+    let uploadMimeType = file.mimetype;
+    let imageWidth: number | undefined;
+    let imageHeight: number | undefined;
+    let originalMimeType: string | undefined;
+    let originalSize: number | undefined;
+
+    if (this.imageProcessingService.isProcessableImage(file.mimetype)) {
+      const compressed = await this.imageProcessingService.compressForStorage(
+        file.buffer,
+        file.mimetype,
+      );
+      uploadBuffer = compressed.buffer;
+      uploadMimeType = compressed.mimeType;
+      imageWidth = compressed.width;
+      imageHeight = compressed.height;
+      originalMimeType = file.mimetype;
+      originalSize = file.size;
     }
 
+    // ── S3 Upload ─────────────────────────────────────────────────
+    const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+    const safeExt = SAFE_EXT.test(ext) ? ext : 'bin';
+    // Use webp extension if compressed to webp
+    const finalExt =
+      uploadMimeType === 'image/webp' && safeExt !== 'webp' ? 'webp' : safeExt;
+    const storageKey = `${tenantId}/${randomStringGenerator()}.${finalExt}`;
+
+    await this.s3.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: storageKey,
+        Body: uploadBuffer,
+        ContentType: uploadMimeType,
+        ContentDisposition: `attachment; filename="${sanitizeFilename(file.originalname)}"`,
+        Metadata: { tenantId },
+      }),
+    );
+
+    // ── Thumbnail ─────────────────────────────────────────────────
+    const thumbnailKey = await this.generateThumbnail(tenantId, file);
+
+    // ── Checksum ──────────────────────────────────────────────────
+    const checksum = crypto
+      .createHash('sha256')
+      .update(uploadBuffer)
+      .digest('hex');
+
+    // ── DB Record ─────────────────────────────────────────────────
+    const fileRecord = await this.filesService.upsertByMessageId(
+      tenantId,
+      `upload_${storageKey}`, // unique key for uploads
+      {
+        path: storageKey,
+        fileName: file.originalname,
+        mimeType: uploadMimeType,
+        fileSize: uploadBuffer.length,
+        checksum,
+        category,
+        source: 'upload',
+        status: 'ready',
+        uploadedBy: userId,
+        accessLevel: dto.accessLevel ?? 'tenant',
+        allowedUserIds: [],
+        conversationId: dto.conversationId,
+        folderId: dto.folderId ?? undefined,
+        thumbnailKey,
+        imageMetadata:
+          imageWidth || imageHeight
+            ? {
+                width: imageWidth,
+                height: imageHeight,
+                originalMimeType,
+                originalSize,
+              }
+            : undefined,
+        tags: dto.tags ?? [],
+        isDeleted: false,
+      },
+    );
+
+    this.logger.log(
+      `File uploaded: ${storageKey} (${(uploadBuffer.length / 1024).toFixed(0)}KB) by user ${userId}`,
+    );
+
+    return { file: fileRecord.file };
+  }
+
+  /** Generate a thumbnail for processable images. Returns the S3 key or undefined. */
+  private async generateThumbnail(
+    tenantId: string,
+    file: Express.Multer.File,
+  ): Promise<string | undefined> {
+    if (!this.imageProcessingService.isProcessableImage(file.mimetype)) {
+      return undefined;
+    }
     try {
-      // ── Compress if image ───────────────────────────────────────────
-      let uploadBuffer = file.buffer;
-      let uploadMimeType = file.mimetype;
-      let imageWidth: number | undefined;
-      let imageHeight: number | undefined;
-      let originalMimeType: string | undefined;
-      let originalSize: number | undefined;
-
-      if (this.imageProcessingService.isProcessableImage(file.mimetype)) {
-        const compressed = await this.imageProcessingService.compressForStorage(
-          file.buffer,
-          file.mimetype,
-        );
-        uploadBuffer = compressed.buffer;
-        uploadMimeType = compressed.mimeType;
-        imageWidth = compressed.width;
-        imageHeight = compressed.height;
-        originalMimeType = file.mimetype;
-        originalSize = file.size;
-      }
-
-      // ── S3 Upload ─────────────────────────────────────────────────
-      const ext = (file.originalname.split('.').pop() || '').toLowerCase();
-      const safeExt = SAFE_EXT.test(ext) ? ext : 'bin';
-      // Use webp extension if compressed to webp
-      const finalExt =
-        uploadMimeType === 'image/webp' && safeExt !== 'webp'
-          ? 'webp'
-          : safeExt;
-      const storageKey = `${tenantId}/${randomStringGenerator()}.${finalExt}`;
-
+      const thumbBuffer = await this.imageProcessingService.generateThumbnail(
+        file.buffer,
+      );
+      const thumbnailKey = `${tenantId}/thumbs/${randomStringGenerator()}.webp`;
       await this.s3.send(
         new PutObjectCommand({
           Bucket: this.bucket,
-          Key: storageKey,
-          Body: uploadBuffer,
-          ContentType: uploadMimeType,
-          ContentDisposition: `attachment; filename="${sanitizeFilename(file.originalname)}"`,
+          Key: thumbnailKey,
+          Body: thumbBuffer,
+          ContentType: 'image/webp',
           Metadata: { tenantId },
         }),
       );
-
-      // ── Thumbnail ─────────────────────────────────────────────────
-      let thumbnailKey: string | undefined;
-      if (this.imageProcessingService.isProcessableImage(file.mimetype)) {
-        try {
-          const thumbBuffer =
-            await this.imageProcessingService.generateThumbnail(file.buffer);
-          thumbnailKey = `${tenantId}/thumbs/${randomStringGenerator()}.webp`;
-          await this.s3.send(
-            new PutObjectCommand({
-              Bucket: this.bucket,
-              Key: thumbnailKey,
-              Body: thumbBuffer,
-              ContentType: 'image/webp',
-              Metadata: { tenantId },
-            }),
-          );
-        } catch (err) {
-          this.logger.warn(
-            `Thumbnail generation failed: ${(err as Error).message}`,
-          );
-        }
-      }
-
-      // ── Checksum ──────────────────────────────────────────────────
-      const checksum = crypto
-        .createHash('sha256')
-        .update(uploadBuffer)
-        .digest('hex');
-
-      // ── DB Record ─────────────────────────────────────────────────
-      const fileRecord = await this.filesService.upsertByMessageId(
-        tenantId,
-        `upload_${storageKey}`, // unique key for uploads
-        {
-          path: storageKey,
-          fileName: file.originalname,
-          mimeType: uploadMimeType,
-          fileSize: uploadBuffer.length,
-          checksum,
-          category,
-          source: 'upload',
-          status: 'ready',
-          uploadedBy: userId,
-          accessLevel: dto.accessLevel ?? 'tenant',
-          allowedUserIds: [],
-          conversationId: dto.conversationId,
-          folderId: dto.folderId ?? undefined,
-          thumbnailKey,
-          imageMetadata:
-            imageWidth || imageHeight
-              ? {
-                  width: imageWidth,
-                  height: imageHeight,
-                  originalMimeType,
-                  originalSize,
-                }
-              : undefined,
-          tags: dto.tags ?? [],
-          isDeleted: false,
-        },
-      );
-
-      this.logger.log(
-        `File uploaded: ${storageKey} (${(uploadBuffer.length / 1024).toFixed(0)}KB) by user ${userId}`,
-      );
-
-      return { file: fileRecord.file };
+      return thumbnailKey;
     } catch (err) {
-      // Rollback quota on failure
-      if (countsQuota) {
-        await this.tenantsService
-          .decrementStorageUsage(tenantId, file.size)
-          .catch((e) =>
-            this.logger.warn(`Quota rollback failed: ${(e as Error).message}`),
-          );
-      }
-      throw err;
+      this.logger.warn(
+        `Thumbnail generation failed: ${(err as Error).message}`,
+      );
+      return undefined;
     }
   }
 

@@ -433,32 +433,41 @@ export class TicketsService {
     ]);
 
     for (const doc of data) {
-      if (doc.status === 'active' || doc.status === 'queued') {
-        try {
-          const bullJob = await this.importQueue.getJob(doc.bullJobId);
-          if (bullJob) {
-            (doc as any).status = await bullJob.getState();
-            if (bullJob.progress && typeof bullJob.progress === 'object')
-              (doc as any).progress = bullJob.progress;
-          }
-        } catch {}
-      }
-      // Extract populated user object
-      if (
-        (doc as any).userId &&
-        typeof (doc as any).userId === 'object' &&
-        (doc as any).userId.firstName
-      ) {
-        (doc as any).user = {
-          firstName: (doc as any).userId.firstName,
-          lastName: (doc as any).userId.lastName,
-          email: (doc as any).userId.email,
-          avatar: (doc as any).userId.avatar,
-        };
-        (doc as any).userId = String((doc as any).userId._id);
-      }
+      await this.enrichBullJobStatus(doc as any);
+      this.extractPopulatedUser(doc as any);
     }
     return { data, total, page, limit };
+  }
+
+  /** Sync in-progress job status from BullMQ. */
+  private async enrichBullJobStatus(doc: any): Promise<void> {
+    if (doc.status !== 'active' && doc.status !== 'queued') return;
+    try {
+      const bullJob = await this.importQueue.getJob(doc.bullJobId);
+      if (!bullJob) return;
+      doc.status = await bullJob.getState();
+      if (bullJob.progress && typeof bullJob.progress === 'object') {
+        doc.progress = bullJob.progress;
+      }
+    } catch {}
+  }
+
+  /** Extract populated user object from userId. */
+  private extractPopulatedUser(doc: any): void {
+    if (
+      !doc.userId ||
+      typeof doc.userId !== 'object' ||
+      !doc.userId.firstName
+    ) {
+      return;
+    }
+    doc.user = {
+      firstName: doc.userId.firstName,
+      lastName: doc.userId.lastName,
+      email: doc.userId.email,
+      avatar: doc.userId.avatar,
+    };
+    doc.userId = String(doc.userId._id);
   }
 
   async getImportJobDetail(id: string) {

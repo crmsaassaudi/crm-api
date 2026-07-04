@@ -152,7 +152,7 @@ export class EmailSendController {
     );
     if (!throttleResult.allowed) {
       throw new BadRequestException(
-        throttleResult.reason || 'Send rate limited',
+        throttleResult.reason ?? 'Send rate limited',
       );
     }
   }

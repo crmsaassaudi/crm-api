@@ -638,13 +638,13 @@ export class TicketReportService {
   }
 
   private tenantObjectId(): Types.ObjectId {
-    const tenantId = this.cls.get('tenantId');
+    const tenantId: string = this.cls.get('tenantId');
     return new Types.ObjectId(tenantId);
   }
 
   private resolveDateContext(dto: BaseReportFilterDto): DateContext {
     const { from, to } = parseReportDateRange(dto.fromDate, dto.toDate);
-    const timezone = dto.timezone || 'UTC';
+    const timezone = dto.timezone ?? 'UTC';
     const resolvedGranularity = BaseReportFilterDto.resolveGranularity(
       from,
       to,

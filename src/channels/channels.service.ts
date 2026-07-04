@@ -399,86 +399,127 @@ export class ChannelsService {
       (dto.type === 'facebook' || dto.type === 'instagram') &&
       dto.credentials?.accessToken
     ) {
-      try {
-        const userToken = dto.credentials.accessToken;
-
-        // Fetch tất cả Facebook Pages của user (kèm IG business account nếu có)
-        const pagesResponse = await axios.get(
-          `https://graph.facebook.com/${META_GRAPH_VERSION}/me/accounts`,
-          {
-            params: {
-              access_token: userToken,
-              fields:
-                'id,name,access_token,picture{url},instagram_business_account{id,username,profile_picture_url}',
-            },
-          },
-        );
-
-        const pages: any[] = pagesResponse.data.data ?? [];
-
-        let finalAccessToken = userToken;
-        let finalPageName = dto.name;
-        let avatarUrl = '';
-        let webhookTargetId = dto.account; // ID dùng để subscribe webhook
-
-        if (dto.type === 'facebook') {
-          // Match theo Facebook Page ID
-          const matchedPage = pages.find((p) => p.id === dto.account);
-          if (matchedPage) {
-            finalAccessToken = matchedPage.access_token;
-            finalPageName = matchedPage.name;
-            avatarUrl = matchedPage.picture?.data?.url ?? '';
-          }
-          webhookTargetId = dto.account; // subscribe trực tiếp trên Page ID
-        } else if (dto.type === 'instagram') {
-          // Tìm FB Page nào có instagram_business_account.id khớp với dto.account
-          for (const page of pages) {
-            const igAccount = page.instagram_business_account;
-            if (igAccount && igAccount.id === dto.account) {
-              finalAccessToken = page.access_token; // dùng Page Access Token
-              finalPageName = igAccount.username ?? dto.name;
-              avatarUrl = igAccount.profile_picture_url ?? '';
-              webhookTargetId = page.id; // webhook subscribe trên FB Page, không phải IG ID
-              break;
-            }
-          }
-        }
-
-        // Subscribe app webhooks
-        await axios.post(
-          `https://graph.facebook.com/${META_GRAPH_VERSION}/${webhookTargetId}/subscribed_apps`,
-          {
-            subscribed_fields: [
-              'messages',
-              'messaging_postbacks',
-              'messaging_optins',
-            ],
-          },
-          { params: { access_token: finalAccessToken } },
-        );
-
-        // Update channel với credentials, name và avatar thật
-        await this.repository.update(tenantId, channel.id, {
-          status: 'Connected',
-          name: finalPageName,
-          credentials: { ...dto.credentials, accessToken: finalAccessToken },
-          config: { ...dto.config, avatarUrl },
-        });
-
-        channel.status = 'Connected';
-        channel.name = finalPageName;
-        channel.config = { ...dto.config, avatarUrl };
-      } catch (error) {
-        const err = error as any;
-        this.logger.error(
-          `Failed to automate Meta channel setup: ${JSON.stringify(err?.response?.data || err?.message)}`,
-        );
-        await this.repository.update(tenantId, channel.id, { status: 'Error' });
-        channel.status = 'Error';
-      }
+      await this.automateMetaChannelSetup(tenantId, channel, dto);
     }
 
     return channel;
+  }
+
+  /**
+   * Automate Meta (Facebook/Instagram) channel setup: fetch pages,
+   * match the account, subscribe webhooks, and update the channel record.
+   */
+  private async automateMetaChannelSetup(
+    tenantId: string,
+    channel: Channel,
+    dto: CreateChannelDto,
+  ): Promise<void> {
+    try {
+      const userToken = dto.credentials!.accessToken;
+
+      const pagesResponse = await axios.get(
+        `https://graph.facebook.com/${META_GRAPH_VERSION}/me/accounts`,
+        {
+          params: {
+            access_token: userToken,
+            fields:
+              'id,name,access_token,picture{url},instagram_business_account{id,username,profile_picture_url}',
+          },
+        },
+      );
+
+      const pages: any[] = pagesResponse.data.data ?? [];
+      const matched = this.matchMetaPageAccount(dto, pages, userToken);
+
+      await this.subscribeMetaWebhooks(
+        matched.webhookTargetId,
+        matched.accessToken,
+      );
+
+      await this.repository.update(tenantId, channel.id, {
+        status: 'Connected',
+        name: matched.pageName,
+        credentials: { ...dto.credentials, accessToken: matched.accessToken },
+        config: { ...dto.config, avatarUrl: matched.avatarUrl },
+      });
+
+      channel.status = 'Connected';
+      channel.name = matched.pageName;
+      channel.config = { ...dto.config, avatarUrl: matched.avatarUrl };
+    } catch (error) {
+      const err = error as any;
+      this.logger.error(
+        `Failed to automate Meta channel setup: ${JSON.stringify(err?.response?.data ?? err?.message)}`,
+      );
+      await this.repository.update(tenantId, channel.id, { status: 'Error' });
+      channel.status = 'Error';
+    }
+  }
+
+  /**
+   * Match the DTO account against fetched Facebook pages (or their linked
+   * Instagram business accounts) and return the resolved credentials.
+   */
+  private matchMetaPageAccount(
+    dto: CreateChannelDto,
+    pages: any[],
+    userToken: string,
+  ): {
+    accessToken: string;
+    pageName: string;
+    avatarUrl: string;
+    webhookTargetId: string;
+  } {
+    if (dto.type === 'facebook') {
+      const matchedPage = pages.find((p) => p.id === dto.account);
+      return {
+        accessToken: matchedPage?.access_token ?? userToken,
+        pageName: matchedPage?.name ?? dto.name,
+        avatarUrl: matchedPage?.picture?.data?.url ?? '',
+        webhookTargetId: dto.account,
+      };
+    }
+
+    // Instagram: find the FB Page whose IG business account matches dto.account
+    for (const page of pages) {
+      const igAccount = page.instagram_business_account;
+      if (igAccount?.id === dto.account) {
+        return {
+          accessToken: page.access_token,
+          pageName: igAccount.username ?? dto.name,
+          avatarUrl: igAccount.profile_picture_url ?? '',
+          webhookTargetId: page.id,
+        };
+      }
+    }
+
+    // No match found — use the user token as fallback
+    return {
+      accessToken: userToken,
+      pageName: dto.name,
+      avatarUrl: '',
+      webhookTargetId: dto.account,
+    };
+  }
+
+  /**
+   * Subscribe the Meta app to webhooks on the specified page/account.
+   */
+  private async subscribeMetaWebhooks(
+    targetId: string,
+    accessToken: string,
+  ): Promise<void> {
+    await axios.post(
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/${targetId}/subscribed_apps`,
+      {
+        subscribed_fields: [
+          'messages',
+          'messaging_postbacks',
+          'messaging_optins',
+        ],
+      },
+      { params: { access_token: accessToken } },
+    );
   }
 
   async update(id: string, dto: UpdateChannelDto): Promise<Channel> {
@@ -561,8 +602,8 @@ export class ChannelsService {
           autoReplyMessage: '',
           defaultRoutingRuleId: '',
           webhookStatus: 'Pending',
-          tokenExpiry: metaChannel.tokenExpiry || '',
-          avatarUrl: metaChannel.avatarUrl || '',
+          tokenExpiry: metaChannel.tokenExpiry ?? '',
+          avatarUrl: metaChannel.avatarUrl ?? '',
         },
       },
     );
@@ -571,7 +612,7 @@ export class ChannelsService {
       if (metaChannel.type === 'facebook' || metaChannel.type === 'instagram') {
         await axios.post(
           `https://graph.facebook.com/${META_GRAPH_VERSION}/${
-            metaChannel.pageId || metaChannel.accountId
+            metaChannel.pageId ?? metaChannel.accountId
           }/subscribed_apps`,
           {
             subscribed_fields: [
@@ -590,8 +631,8 @@ export class ChannelsService {
         config: {
           ...channel.config,
           webhookStatus: 'Active',
-          tokenExpiry: metaChannel.tokenExpiry || '',
-          avatarUrl: metaChannel.avatarUrl || '',
+          tokenExpiry: metaChannel.tokenExpiry ?? '',
+          avatarUrl: metaChannel.avatarUrl ?? '',
         },
       });
 
@@ -599,15 +640,15 @@ export class ChannelsService {
     } catch (error: any) {
       this.logger.error(
         'Failed to connect Meta channel',
-        error?.response?.data || error?.message || error,
+        error?.response?.data ?? error?.message ?? error,
       );
       const updated = await this.repository.update(tenantId, channel.id, {
         status: 'Error',
         config: {
           ...channel.config,
           webhookStatus: 'Error',
-          tokenExpiry: metaChannel.tokenExpiry || '',
-          avatarUrl: metaChannel.avatarUrl || '',
+          tokenExpiry: metaChannel.tokenExpiry ?? '',
+          avatarUrl: metaChannel.avatarUrl ?? '',
         },
       });
       return updated ?? { ...channel, status: 'Error' };
@@ -749,7 +790,7 @@ export class ChannelsService {
           accountId: page.id,
           pageId: page.id,
           name: page.name,
-          category: page.category || 'Facebook Page',
+          category: page.category ?? 'Facebook Page',
           type: 'facebook',
           accessToken: page.access_token,
           tokenExpiry: '',
@@ -766,7 +807,7 @@ export class ChannelsService {
         channels.push({
           accountId: igAccount.id,
           pageId: page.id,
-          name: igAccount.username || `${page.name} (IG)`,
+          name: igAccount.username ?? `${page.name} (IG)`,
           category: 'Instagram Business',
           type: 'instagram',
           accessToken: page.access_token,

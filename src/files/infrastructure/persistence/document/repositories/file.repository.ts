@@ -151,10 +151,7 @@ export class FileDocumentRepository
       query.fileName = { $regex: escapeRegex(filters.search), $options: 'i' };
     }
     if (filters?.folderId !== undefined) {
-      query.folderId =
-        filters.folderId === null
-          ? { $in: [null, undefined] }
-          : filters.folderId;
+      query.folderId = filters.folderId ?? { $in: [null, undefined] };
     }
 
     const [data, total] = await Promise.all([

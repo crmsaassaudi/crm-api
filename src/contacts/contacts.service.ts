@@ -446,32 +446,14 @@ export class ContactsService {
     const previousStageName = previousStage?.apiName ?? null;
 
     // --- Guardrail 2: Compute transition direction + skipped stages ---
-    const fromIndex = previousStageName
-      ? validStages.indexOf(previousStageName)
-      : -1;
-    const toIndex = validStages.indexOf(stage.apiName);
-
-    let direction: 'forward' | 'backward' | 'lateral' = 'lateral';
-    let skippedStages: string[] = [];
-
-    if (fromIndex >= 0 && toIndex >= 0) {
-      if (toIndex > fromIndex) {
-        direction = 'forward';
-        // Record any skipped stages (non-sequential forward jump)
-        if (toIndex - fromIndex > 1) {
-          skippedStages = validStages.slice(fromIndex + 1, toIndex);
-        }
-      } else if (toIndex < fromIndex) {
-        direction = 'backward';
-        // Record stages being "reversed over"
-        if (fromIndex - toIndex > 1) {
-          skippedStages = validStages.slice(toIndex + 1, fromIndex);
-        }
-      }
-    }
+    const { direction, skippedStages } = this.computeTransitionDirection(
+      validStages,
+      previousStageName,
+      stage.apiName,
+    );
 
     // Get the current user from CLS context for attribution
-    const changedById = this.cls.get('user.id') || contact.updatedById;
+    const changedById = this.cls.get('user.id') ?? contact.updatedById;
 
     let finalAccountId = params?.accountId;
 
@@ -550,6 +532,38 @@ export class ContactsService {
       account: finalAccountId,
       deal: dealId,
     };
+  }
+
+  /**
+   * Compute the direction of a lifecycle stage transition and any
+   * skipped stages for non-sequential jumps.
+   */
+  private computeTransitionDirection(
+    validStages: string[],
+    fromStageName: string | null,
+    toStageName: string,
+  ): {
+    direction: 'forward' | 'backward' | 'lateral';
+    skippedStages: string[];
+  } {
+    const fromIndex = fromStageName ? validStages.indexOf(fromStageName) : -1;
+    const toIndex = validStages.indexOf(toStageName);
+
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+      return { direction: 'lateral', skippedStages: [] };
+    }
+
+    if (toIndex > fromIndex) {
+      const skipped =
+        toIndex - fromIndex > 1
+          ? validStages.slice(fromIndex + 1, toIndex)
+          : [];
+      return { direction: 'forward', skippedStages: skipped };
+    }
+
+    const skipped =
+      fromIndex - toIndex > 1 ? validStages.slice(toIndex + 1, fromIndex) : [];
+    return { direction: 'backward', skippedStages: skipped };
   }
 
   /**
@@ -815,48 +829,11 @@ export class ContactsService {
     ]);
 
     // Enrich active/queued jobs with real-time BullMQ progress.
-    for (const doc of data) {
-      if (doc.status === 'active' || doc.status === 'queued') {
-        try {
-          const bullJob = await this.exportQueue.getJob(doc.bullJobId);
-          if (bullJob) {
-            (doc as any).status = await bullJob.getState();
-            if (bullJob.progress && typeof bullJob.progress === 'object') {
-              (doc as any).progress = bullJob.progress;
-            }
-          }
-        } catch {
-          // BullMQ job cleaned up — keep MongoDB status
-        }
-      }
-    }
+    await this.enrichJobsWithBullProgress(data, this.exportQueue);
 
     // .lean() strips Mongoose virtuals/transforms, so ObjectId fields remain
     // as raw buffer objects. Sanitize them to plain strings for the API.
-    const sanitized = data.map((doc: any) => {
-      const out = { ...doc };
-      out.id = String(doc._id);
-      delete out._id;
-      delete out.__v;
-      if (doc.tenantId) out.tenantId = String(doc.tenantId);
-      // Preserve populated user object; stringify only if it's still an ObjectId
-      if (
-        doc.userId &&
-        typeof doc.userId === 'object' &&
-        doc.userId.firstName
-      ) {
-        out.user = {
-          firstName: doc.userId.firstName,
-          lastName: doc.userId.lastName,
-          email: doc.userId.email,
-          avatar: doc.userId.avatar,
-        };
-        out.userId = String(doc.userId._id);
-      } else if (doc.userId) {
-        out.userId = String(doc.userId);
-      }
-      return out;
-    });
+    const sanitized = this.sanitizeLeanJobDocs(data);
 
     return { data: sanitized, total, page, limit };
   }
@@ -1040,39 +1017,13 @@ export class ContactsService {
       this.importJobModel.countDocuments(filter).exec(),
     ]);
 
-    // For active/queued jobs, enrich with real-time BullMQ progress
-    for (const doc of data) {
-      if (doc.status === 'active' || doc.status === 'queued') {
-        try {
-          const bullJob = await this.importQueue.getJob(doc.bullJobId);
-          if (bullJob) {
-            const state = await bullJob.getState();
-            (doc as any).status = state;
-            if (bullJob.progress && typeof bullJob.progress === 'object') {
-              (doc as any).progress = bullJob.progress;
-            }
-          }
-        } catch {
-          // BullMQ job may have been cleaned up — keep MongoDB status
-        }
-      }
-      // Extract populated user object
-      if (
-        (doc as any).userId &&
-        typeof (doc as any).userId === 'object' &&
-        (doc as any).userId.firstName
-      ) {
-        (doc as any).user = {
-          firstName: (doc as any).userId.firstName,
-          lastName: (doc as any).userId.lastName,
-          email: (doc as any).userId.email,
-          avatar: (doc as any).userId.avatar,
-        };
-        (doc as any).userId = String((doc as any).userId._id);
-      }
-    }
+    // Enrich active/queued jobs with real-time BullMQ progress
+    await this.enrichJobsWithBullProgress(data, this.importQueue);
 
-    return { data, total, page, limit };
+    // Sanitize lean docs (ObjectId → string, extract populated user)
+    const sanitized = this.sanitizeLeanJobDocs(data);
+
+    return { data: sanitized, total, page, limit };
   }
 
   async getImportJobDetail(id: string) {
@@ -1266,6 +1217,60 @@ export class ContactsService {
     this.eventEmitter.emit(buildAutomationEventName(event, 'Contact'), payload);
   }
 
+  /**
+   * Enrich active/queued job docs with real-time BullMQ state and progress.
+   * Shared between export and import job listing endpoints.
+   */
+  private async enrichJobsWithBullProgress(
+    docs: any[],
+    queue: Queue,
+  ): Promise<void> {
+    for (const doc of docs) {
+      if (doc.status !== 'active' && doc.status !== 'queued') continue;
+      try {
+        const bullJob = await queue.getJob(doc.bullJobId);
+        if (!bullJob) continue;
+        doc.status = await bullJob.getState();
+        if (bullJob.progress && typeof bullJob.progress === 'object') {
+          doc.progress = bullJob.progress;
+        }
+      } catch {
+        // BullMQ job may have been cleaned up — keep MongoDB status
+      }
+    }
+  }
+
+  /**
+   * Sanitize Mongoose .lean() documents for the API: convert ObjectIds to
+   * strings, extract populated user objects, and strip internal fields.
+   */
+  private sanitizeLeanJobDocs(docs: any[]): any[] {
+    return docs.map((doc) => {
+      const out = { ...doc };
+      out.id = String(doc._id);
+      delete out._id;
+      delete out.__v;
+      if (doc.tenantId) out.tenantId = String(doc.tenantId);
+      // Preserve populated user object; stringify only if still an ObjectId
+      if (
+        doc.userId &&
+        typeof doc.userId === 'object' &&
+        doc.userId.firstName
+      ) {
+        out.user = {
+          firstName: doc.userId.firstName,
+          lastName: doc.userId.lastName,
+          email: doc.userId.email,
+          avatar: doc.userId.avatar,
+        };
+        out.userId = String(doc.userId._id);
+      } else if (doc.userId) {
+        out.userId = String(doc.userId);
+      }
+      return out;
+    });
+  }
+
   private emitActivityLog(input: {
     targetType: string;
     targetId: string;
@@ -1276,12 +1281,12 @@ export class ContactsService {
   }): void {
     this.eventEmitter.emit('activity.create', {
       ...input,
-      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
-      actorId: input.actorId || this.getCurrentUserId(),
+      tenantId: this.cls.get('activeTenantId') ?? this.cls.get('tenantId'),
+      actorId: input.actorId ?? this.getCurrentUserId(),
     });
   }
 
   private getCurrentUserId(): string | undefined {
-    return this.cls.get('userId') || this.cls.get('user.id');
+    return this.cls.get('userId') ?? this.cls.get('user.id');
   }
 }

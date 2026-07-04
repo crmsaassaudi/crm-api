@@ -646,51 +646,22 @@ export class ContactReportService {
       this.getFunnelCoverage(dto, context.to),
       this.getStageMap(),
     ]);
-    const match = {
-      ...this.buildBaseMatch(dto, { createdBeforeOrOn: context.to }),
-      'stageHistory.0': { $exists: true },
-    };
-    // MED-09: Limit to 50k contacts to prevent OOM on large tenants.
-    // Funnel reports load full stageHistory into memory for analysis.
-    const FUNNEL_LIMIT = 50_000;
-    const contacts = await this.contactModel
-      .find(match, { createdAt: 1, stageHistory: 1 })
-      .sort({ createdAt: -1 })
-      .limit(FUNNEL_LIMIT)
-      .lean()
-      .exec();
-    if (contacts.length >= FUNNEL_LIMIT) {
-      context.warnings.push(
-        `Results limited to ${FUNNEL_LIMIT.toLocaleString()} most recent contacts`,
-      );
-    }
+    const contacts = await this.fetchFunnelContacts(dto, context);
+
     const transitions = new Map<string, number[]>();
 
     for (const contact of contacts) {
       const history = this.sortHistory(contact.stageHistory ?? []);
       for (let index = 0; index < history.length; index += 1) {
-        const entry = history[index];
-        const changedAt = this.toValidDate(entry.changedAt);
-        if (!changedAt || changedAt < context.from || changedAt > context.to) {
-          continue;
-        }
-
-        const previous = history[index - 1];
-        const startedAtDate =
-          this.toValidDate(previous?.changedAt) ??
-          this.toValidDate((contact as any).createdAt);
-        const fromStage = entry.fromStage ?? previous?.toStage ?? null;
-        const toStage = entry.toStage ?? null;
-
-        if (!startedAtDate || !fromStage || !toStage || fromStage === toStage) {
-          continue;
-        }
-
-        const elapsedDays = Math.max(
-          0,
-          (changedAt.getTime() - startedAtDate.getTime()) / 86_400_000,
+        const transition = this.resolveTransition(
+          history,
+          index,
+          contact,
+          context,
         );
-        const key = `${fromStage}::${toStage}`;
+        if (!transition) continue;
+
+        const { key, elapsedDays } = transition;
         transitions.set(key, [...(transitions.get(key) ?? []), elapsedDays]);
       }
     }
@@ -732,57 +703,13 @@ export class ContactReportService {
     const startedAt = process.hrtime.bigint();
     const context = await this.resolveDateContext(dto);
     const coverage = await this.getFunnelCoverage(dto, context.to);
-    const match = {
-      ...this.buildBaseMatch(dto, { createdBeforeOrOn: context.to }),
-      'stageHistory.0': { $exists: true },
-    };
-    // MED-09: Limit to 50k contacts to prevent OOM on large tenants.
-    const FUNNEL_LIMIT = 50_000;
-    const contacts = await this.contactModel
-      .find(match, { stageHistory: 1 })
-      .sort({ createdAt: -1 })
-      .limit(FUNNEL_LIMIT)
-      .lean()
-      .exec();
-    if (contacts.length >= FUNNEL_LIMIT) {
-      context.warnings.push(
-        `Results limited to ${FUNNEL_LIMIT.toLocaleString()} most recent contacts`,
-      );
-    }
+    const contacts = await this.fetchFunnelContacts(dto, context);
+
     const leakage = new Map<string, FunnelLeakageItem>();
 
     for (const contact of contacts) {
       const history = this.sortHistory(contact.stageHistory ?? []);
-      for (let index = 0; index < history.length; index += 1) {
-        const entry = history[index];
-        const changedAt = this.toValidDate(entry.changedAt);
-        if (!changedAt || changedAt < context.from || changedAt > context.to) {
-          continue;
-        }
-
-        const fromStage =
-          entry.fromStage ?? history[index - 1]?.toStage ?? 'unknown';
-        const toStage = entry.toStage ?? 'unknown';
-
-        if (entry.direction === 'backward') {
-          this.incrementLeakage(leakage, {
-            type: 'backward',
-            fromStage,
-            toStage,
-            count: 0,
-          });
-        }
-
-        if (entry.skippedStages?.length) {
-          this.incrementLeakage(leakage, {
-            type: 'skipped',
-            fromStage,
-            toStage,
-            count: 0,
-            skippedStages: entry.skippedStages,
-          });
-        }
-      }
+      this.collectLeakageEntries(history, context, leakage);
     }
 
     const data = [...leakage.values()].sort((a, b) => b.count - a.count);
@@ -798,6 +725,99 @@ export class ContactReportService {
       } as Partial<FunnelReportMeta>,
       warnings: coverage.warnings,
     });
+  }
+
+  /** Load contacts with stageHistory for funnel reports (capped at 50k). */
+  private async fetchFunnelContacts(
+    dto: GetContactReportDto,
+    context: DateContext,
+  ): Promise<any[]> {
+    const match = {
+      ...this.buildBaseMatch(dto, { createdBeforeOrOn: context.to }),
+      'stageHistory.0': { $exists: true },
+    };
+    const FUNNEL_LIMIT = 50_000;
+    const contacts = await this.contactModel
+      .find(match, { createdAt: 1, stageHistory: 1 })
+      .sort({ createdAt: -1 })
+      .limit(FUNNEL_LIMIT)
+      .lean()
+      .exec();
+    if (contacts.length >= FUNNEL_LIMIT) {
+      context.warnings.push(
+        `Results limited to ${FUNNEL_LIMIT.toLocaleString()} most recent contacts`,
+      );
+    }
+    return contacts;
+  }
+
+  /** Resolve a single stage transition with elapsed days, or null if invalid/out-of-range. */
+  private resolveTransition(
+    history: StageHistoryEntry[],
+    index: number,
+    contact: any,
+    context: DateContext,
+  ): { key: string; elapsedDays: number } | null {
+    const entry = history[index];
+    const changedAt = this.toValidDate(entry.changedAt);
+    if (!changedAt || changedAt < context.from || changedAt > context.to) {
+      return null;
+    }
+
+    const previous = history[index - 1];
+    const startedAtDate =
+      this.toValidDate(previous?.changedAt) ??
+      this.toValidDate(contact.createdAt);
+    const fromStage = entry.fromStage ?? previous?.toStage ?? null;
+    const toStage = entry.toStage ?? null;
+
+    if (!startedAtDate || !fromStage || !toStage || fromStage === toStage) {
+      return null;
+    }
+
+    const elapsedDays = Math.max(
+      0,
+      (changedAt.getTime() - startedAtDate.getTime()) / 86_400_000,
+    );
+    return { key: `${fromStage}::${toStage}`, elapsedDays };
+  }
+
+  /** Collect leakage entries (backward/skipped transitions) from a sorted history. */
+  private collectLeakageEntries(
+    history: StageHistoryEntry[],
+    context: DateContext,
+    leakage: Map<string, FunnelLeakageItem>,
+  ): void {
+    for (let index = 0; index < history.length; index += 1) {
+      const entry = history[index];
+      const changedAt = this.toValidDate(entry.changedAt);
+      if (!changedAt || changedAt < context.from || changedAt > context.to) {
+        continue;
+      }
+
+      const fromStage =
+        entry.fromStage ?? history[index - 1]?.toStage ?? 'unknown';
+      const toStage = entry.toStage ?? 'unknown';
+
+      if (entry.direction === 'backward') {
+        this.incrementLeakage(leakage, {
+          type: 'backward',
+          fromStage,
+          toStage,
+          count: 0,
+        });
+      }
+
+      if (entry.skippedStages?.length) {
+        this.incrementLeakage(leakage, {
+          type: 'skipped',
+          fromStage,
+          toStage,
+          count: 0,
+          skippedStages: entry.skippedStages,
+        });
+      }
+    }
   }
 
   private async resolveDateContext(

@@ -110,23 +110,12 @@ export class MediaProxyService {
     );
 
     // ── Quota check ────────────────────────────────────────────────
-    try {
-      const quota = await this.tenantsService.checkStorageQuota(tenantId);
-      if (!quota.allowed) {
-        this.logger.warn(
-          `Tenant ${tenantId} storage quota exceeded ` +
-            `(${(quota.usedBytes / (1024 * 1024)).toFixed(1)}/${quota.limitBytes === -1 ? 'unlimited' : (quota.limitBytes / (1024 * 1024)).toFixed(0)} MB) — returning original URL`,
-        );
-        return { proxyUrl: originalUrl };
-      }
-    } catch (err) {
-      this.logger.warn(
-        `Quota check failed for tenant ${tenantId}: ${(err as Error).message} — proceeding with cache`,
-      );
+    if (!(await this.checkQuotaOrWarn(tenantId))) {
+      return { proxyUrl: originalUrl };
     }
 
     try {
-      // ── Step 1: Download from provider ────────────────────────────
+      // ── Download ─────────────────────────────────────────────────
       const buffer = await this.downloadFromProvider(
         channelType,
         originalUrl,
@@ -134,102 +123,47 @@ export class MediaProxyService {
         accessToken,
       );
 
-      // ── Step 2: Detect MIME from magic bytes ──────────────────────
+      // ── Detect & compress ────────────────────────────────────────
       const detectedMime =
         detectMimeFromBuffer(buffer) || 'application/octet-stream';
-      const isImage = detectedMime.startsWith('image/');
+      const compressed = await this.compressIfImage(buffer, detectedMime);
 
-      // ── Step 3: Compress if image ─────────────────────────────────
-      let uploadBuffer = buffer;
-      let uploadMimeType = detectedMime;
-      let imageWidth: number | undefined;
-      let imageHeight: number | undefined;
-      let originalMimeType: string | undefined;
-      let originalSize: number | undefined;
-
-      if (
-        isImage &&
-        this.imageProcessingService.isProcessableImage(detectedMime)
-      ) {
-        try {
-          const compressed =
-            await this.imageProcessingService.compressForStorage(
-              buffer,
-              detectedMime,
-            );
-          uploadBuffer = compressed.buffer;
-          uploadMimeType = compressed.mimeType;
-          imageWidth = compressed.width;
-          imageHeight = compressed.height;
-          originalMimeType = detectedMime;
-          originalSize = buffer.length;
-        } catch (err) {
-          this.logger.warn(
-            `Image compression failed, using original: ${(err as Error).message}`,
-          );
-        }
-      }
-
-      // ── Step 4: Upload to S3 ──────────────────────────────────────
-      const ext = this.getExtensionFromMime(uploadMimeType);
+      // ── Upload to S3 + thumbnail ─────────────────────────────────
+      const ext = this.getExtensionFromMime(compressed.mimeType);
       const storageKey = `${tenantId}/omni-media/${randomStringGenerator()}.${ext}`;
-
-      await this.s3.send(
-        new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: storageKey,
-          Body: uploadBuffer,
-          ContentType: uploadMimeType,
-          Metadata: {
-            tenantId,
-            messageId,
-            channelType,
-            originalMediaId: mediaId,
-          },
-        }),
+      await this.uploadToS3(
+        storageKey,
+        compressed.buffer,
+        compressed.mimeType,
+        {
+          tenantId,
+          messageId,
+          channelType,
+          originalMediaId: mediaId,
+        },
       );
 
-      // ── Step 5: Generate thumbnail (images only) ──────────────────
-      let thumbnailKey: string | undefined;
-      if (
-        isImage &&
-        this.imageProcessingService.isProcessableImage(detectedMime)
-      ) {
-        try {
-          const thumbBuffer =
-            await this.imageProcessingService.generateThumbnail(buffer);
-          thumbnailKey = `${tenantId}/omni-media/thumbs/${randomStringGenerator()}.webp`;
-          await this.s3.send(
-            new PutObjectCommand({
-              Bucket: this.bucket,
-              Key: thumbnailKey,
-              Body: thumbBuffer,
-              ContentType: 'image/webp',
-              Metadata: { tenantId },
-            }),
-          );
-        } catch (err) {
-          this.logger.warn(
-            `Thumbnail generation failed: ${(err as Error).message}`,
-          );
-        }
-      }
+      const thumbnailKey = await this.generateImageThumbnail(
+        tenantId,
+        buffer,
+        detectedMime,
+        'omni-media/thumbs',
+      );
 
-      // ── Step 6: Checksum ──────────────────────────────────────────
+      // ── Persist + quota ──────────────────────────────────────────
       const checksum = crypto
         .createHash('sha256')
-        .update(uploadBuffer)
+        .update(compressed.buffer)
         .digest('hex');
 
-      // ── Step 7: Upsert file record (idempotent by messageId) ──────
       const { file, isNew } = await this.filesService.upsertByMessageId(
         tenantId,
         messageId,
         {
           path: storageKey,
           fileName: `${mediaId}.${ext}`,
-          mimeType: uploadMimeType,
-          fileSize: uploadBuffer.length,
+          mimeType: compressed.mimeType,
+          fileSize: compressed.buffer.length,
           checksum,
           category: 'omni_media',
           source: 'omni_inbound',
@@ -238,43 +172,20 @@ export class MediaProxyService {
           conversationId,
           messageId,
           thumbnailKey,
-          imageMetadata:
-            imageWidth || imageHeight
-              ? {
-                  width: imageWidth,
-                  height: imageHeight,
-                  originalMimeType,
-                  originalSize,
-                }
-              : undefined,
+          imageMetadata: compressed.imageMetadata,
           tags: [channelType],
         },
       );
 
-      // ── Step 8: Increment quota (only on new records) ─────────────
       if (isNew) {
-        try {
-          const withinQuota = await this.tenantsService.incrementStorageUsage(
-            tenantId,
-            uploadBuffer.length,
-          );
-          if (!withinQuota) {
-            this.logger.warn(
-              `Quota increment rejected for tenant ${tenantId} — file stored but quota not updated`,
-            );
-          }
-        } catch (err) {
-          this.logger.warn(
-            `Failed to increment storage for tenant ${tenantId}: ${(err as Error).message}`,
-          );
-        }
+        await this.tryIncrementQuota(tenantId, compressed.buffer.length);
       }
 
-      // ── Step 9: Generate presigned URL ────────────────────────────
+      // ── Presigned URL ────────────────────────────────────────────
       const proxyUrl = await this.getPresignedUrl(storageKey);
 
       this.logger.log(
-        `Media cached: ${channelType}/${mediaId} → ${storageKey} (${(uploadBuffer.length / 1024).toFixed(0)}KB, ${isNew ? 'new' : 'dedup'})`,
+        `Media cached: ${channelType}/${mediaId} → ${storageKey} (${(compressed.buffer.length / 1024).toFixed(0)}KB, ${isNew ? 'new' : 'dedup'})`,
       );
 
       return { proxyUrl, fileId: file.id };
@@ -284,6 +195,139 @@ export class MediaProxyService {
         (error as Error).stack,
       );
       return { proxyUrl: originalUrl };
+    }
+  }
+
+  /** Quick quota pre-check; returns true if caching should proceed. */
+  private async checkQuotaOrWarn(tenantId: string): Promise<boolean> {
+    try {
+      const quota = await this.tenantsService.checkStorageQuota(tenantId);
+      if (!quota.allowed) {
+        this.logger.warn(
+          `Tenant ${tenantId} storage quota exceeded ` +
+            `(${(quota.usedBytes / (1024 * 1024)).toFixed(1)}/${quota.limitBytes === -1 ? 'unlimited' : (quota.limitBytes / (1024 * 1024)).toFixed(0)} MB) — returning original URL`,
+        );
+        return false;
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Quota check failed for tenant ${tenantId}: ${(err as Error).message} — proceeding with cache`,
+      );
+    }
+    return true;
+  }
+
+  /** Compress image buffers; returns original data for non-images. */
+  private async compressIfImage(
+    buffer: Buffer,
+    detectedMime: string,
+  ): Promise<{
+    buffer: Buffer;
+    mimeType: string;
+    imageMetadata?: {
+      width: number;
+      height: number;
+      originalMimeType: string;
+      originalSize: number;
+    };
+  }> {
+    const isImage = detectedMime.startsWith('image/');
+    if (
+      !isImage ||
+      !this.imageProcessingService.isProcessableImage(detectedMime)
+    ) {
+      return { buffer, mimeType: detectedMime };
+    }
+    try {
+      const compressed = await this.imageProcessingService.compressForStorage(
+        buffer,
+        detectedMime,
+      );
+      return {
+        buffer: compressed.buffer,
+        mimeType: compressed.mimeType,
+        imageMetadata: {
+          width: compressed.width,
+          height: compressed.height,
+          originalMimeType: detectedMime,
+          originalSize: buffer.length,
+        },
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Image compression failed, using original: ${(err as Error).message}`,
+      );
+      return { buffer, mimeType: detectedMime };
+    }
+  }
+
+  /** Upload a buffer to S3 with the given key. */
+  private async uploadToS3(
+    key: string,
+    body: Buffer,
+    contentType: string,
+    metadata: Record<string, string>,
+  ): Promise<void> {
+    await this.s3.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+        Metadata: metadata,
+      }),
+    );
+  }
+
+  /** Generate an image thumbnail and upload to S3; returns the key or undefined. */
+  private async generateImageThumbnail(
+    tenantId: string,
+    buffer: Buffer,
+    detectedMime: string,
+    subPath: string,
+  ): Promise<string | undefined> {
+    const isImage = detectedMime.startsWith('image/');
+    if (
+      !isImage ||
+      !this.imageProcessingService.isProcessableImage(detectedMime)
+    ) {
+      return undefined;
+    }
+    try {
+      const thumbBuffer =
+        await this.imageProcessingService.generateThumbnail(buffer);
+      const thumbnailKey = `${tenantId}/${subPath}/${randomStringGenerator()}.webp`;
+      await this.uploadToS3(thumbnailKey, thumbBuffer, 'image/webp', {
+        tenantId,
+      });
+      return thumbnailKey;
+    } catch (err) {
+      this.logger.warn(
+        `Thumbnail generation failed: ${(err as Error).message}`,
+      );
+      return undefined;
+    }
+  }
+
+  /** Best-effort quota increment. */
+  private async tryIncrementQuota(
+    tenantId: string,
+    bytes: number,
+  ): Promise<void> {
+    try {
+      const withinQuota = await this.tenantsService.incrementStorageUsage(
+        tenantId,
+        bytes,
+      );
+      if (!withinQuota) {
+        this.logger.warn(
+          `Quota increment rejected for tenant ${tenantId} — file stored but quota not updated`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Failed to increment storage for tenant ${tenantId}: ${(err as Error).message}`,
+      );
     }
   }
 
