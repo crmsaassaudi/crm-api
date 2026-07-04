@@ -5,7 +5,6 @@ import { ScheduleModule } from '@nestjs/schedule';
 
 import { CONV_OPS_QUEUE, CONV_OPS_DLQ } from './conversation-ops.constants';
 import { ConversationCommandService } from './conversation-command.service';
-import { ConversationOpsProcessor } from './conversation-ops.processor';
 import { OutboxPublisherService } from './outbox-publisher.service';
 
 import {
@@ -18,35 +17,31 @@ import {
 } from '../infrastructure/persistence/document/entities/outbox-event.schema';
 
 import { RedisModule } from '../../redis/redis.module';
-import { RedisLockService } from '../../redis/redis-lock.service';
 import { OmniOutboundModule } from '../../omni-outbound/omni-outbound.module';
 import { isWorkerRuntime, isOmniRuntime } from '../../config/runtime-role';
 
-// Lazy import to break circular dependency:
-// ConversationOpsModule ← OmniInboundModule ← ConversationOpsModule
-const OmniInboundModuleRef = () =>
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  require('../omni-inbound.module').OmniInboundModule;
-
 /**
- * ConversationOpsModule — Conversation Aggregate infrastructure.
+ * ConversationOpsModule — BullMQ queue infrastructure + command service.
+ *
+ * Intentionally does NOT register ConversationOpsProcessor here.
+ * The processor depends on ConversationRepository, MessageRepository,
+ * InboundOrchestrationService, AgentPresenceService, AssignmentService —
+ * all of which live in OmniInboundModule.
+ *
+ * Registering the processor in OmniInboundModule (which imports this module)
+ * avoids the circular dependency:
+ *   ConversationOpsModule → OmniInboundModule → ConversationOpsModule
  *
  * Registers:
  * - BullMQ queues: conversation-ops + DLQ
  * - MongoDB schemas: processed_operations + outbox_events
- * - ConversationCommandService: builds and enqueues commands
- * - ConversationOpsProcessor: processes commands (worker only)
+ * - ConversationCommandService: builds and enqueues typed commands
  * - OutboxPublisherService: cron poller for missed event publishes
- *
- * This module should be imported by OmniInboundModule.
  */
 @Module({
   imports: [
     RedisModule,
     forwardRef(() => OmniOutboundModule),
-    // Break circular dep: OmniInboundModule provides ConversationRepository,
-    // MessageRepository, AgentPresenceService, AssignmentService, etc.
-    forwardRef(OmniInboundModuleRef),
     ScheduleModule.forRoot(),
     BullModule.registerQueue(
       {
@@ -78,14 +73,11 @@ const OmniInboundModuleRef = () =>
     ]),
   ],
   providers: [
-    RedisLockService,
     ConversationCommandService,
-    // Processor is always registered — API runtime uses executeInline(),
-    // Worker runtime additionally processes BullMQ jobs via @Processor decorator
-    ConversationOpsProcessor,
-    // Outbox poller only needed in worker runtime
     ...(isWorkerRuntime() || isOmniRuntime() ? [OutboxPublisherService] : []),
   ],
-  exports: [ConversationCommandService, BullModule],
+  // Export MongooseModule so OmniInboundModule can access ProcessedOperation
+  // and OutboxEvent models needed by ConversationOpsProcessor
+  exports: [ConversationCommandService, BullModule, MongooseModule],
 })
 export class ConversationOpsModule {}

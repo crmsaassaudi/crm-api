@@ -135,6 +135,8 @@ import { isWorkerRuntime, isOmniRuntime } from '../config/runtime-role';
 import { LivechatModule } from '../livechat/livechat.module';
 // Phase 1: Conversation Aggregate — sequential command processing
 import { ConversationOpsModule } from './aggregate/conversation-ops.module';
+import { ConversationOpsProcessor } from './aggregate/conversation-ops.processor';
+import { RedisLockService } from '../redis/redis-lock.service';
 
 const workerProviders =
   isWorkerRuntime() || isOmniRuntime()
@@ -300,6 +302,13 @@ const workerProviders =
     ShadowContactService,
     ConversionService,
     IdentityService,
+
+    // ── Pillar 5b: Conversation Aggregate Processor ───────────────
+    // Registered here (not in ConversationOpsModule) so all its deps
+    // (ConversationRepository, InboundOrchestrationService, etc.) are
+    // available without circular module imports.
+    RedisLockService,
+    ConversationOpsProcessor,
 
     // ── Pillar 7: Notes ───────────────────────────────────────────
     NoteRepository,
