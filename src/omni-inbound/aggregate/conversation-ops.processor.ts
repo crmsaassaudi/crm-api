@@ -1,7 +1,7 @@
 import { Processor, InjectQueue } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { InjectModel, InjectConnection } from '@nestjs/mongoose';
-import { Model, Connection } from 'mongoose';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { Job, Queue } from 'bullmq';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -31,6 +31,10 @@ import {
   CONV_OPS_LOCK_PREFIX,
   CONV_OPS_LOCK_TTL_MS,
   CONV_OPS_MAX_ATTEMPTS,
+  IDEM_KEY_TTL_SEC,
+  PREVIEW_MAX_LENGTH,
+  PRESIGNED_URL_TTL_SEC,
+  SLOW_OP_THRESHOLD_MS,
 } from './conversation-ops.constants';
 import {
   ProcessedOperationSchemaClass,
@@ -46,18 +50,8 @@ import { AgentPresenceService } from '../services/agent-presence.service';
 import { AssignmentService } from '../services/assignment.service';
 
 /**
- * ConversationOpsProcessor — the Aggregate Root processor.
- *
- * Processes commands from the conversation-ops queue sequentially
- * per conversation using Redis distributed locks.
- *
- * Responsibilities:
- * 1. Acquire per-conversation lock (sequential within same conversation)
- * 2. Idempotency check (MongoDB processed_operations collection)
- * 3. Allocate sequence number (MongoDB atomic $inc)
- * 4. Execute command (save message, update aggregate, save outbox events)
- * 5. Publish outbox events after commit
- * 6. Move to DLQ after max retries
+ * Aggregate Root processor — serializes all conversation mutations
+ * via per-conversation Redis locks and BullMQ queue.
  */
 @Processor(CONV_OPS_QUEUE)
 export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCommand> {
@@ -73,7 +67,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
     private readonly mediaProxy: MediaProxyService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
-    @InjectConnection() private readonly connection: Connection,
+
     @InjectModel(ProcessedOperationSchemaClass.name)
     private readonly processedOpsModel: Model<ProcessedOperationDocument>,
     @InjectModel(OutboxEventSchemaClass.name)
@@ -96,7 +90,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         await this.processCommand(cmd);
       });
     } catch (error) {
-      // Move to DLQ after max attempts
+
       if (job.attemptsMade >= CONV_OPS_MAX_ATTEMPTS - 1) {
         const dlqPayload = {
           command: cmd,
@@ -110,61 +104,39 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
           `[CONV-OPS] Moved to DLQ after ${job.attemptsMade + 1} attempts: ` +
             `op=${cmd.operationId} type=${cmd.type} conv=${cmd.conversationId}`,
         );
-        // Emit DLQ event for external alerting (Slack, Loki, Prometheus)
         this.eventEmitter.emit('conv-ops.dlq.entered', dlqPayload);
-        return; // Don't re-throw — prevent infinite retry
+        return;
       }
-      throw error; // BullMQ retries with exponential backoff
+      throw error;
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // Inline Execution (Hybrid Pattern — synchronous callers)
-  // ────────────────────────────────────────────────────────────────────
+  // ── Inline Execution ──────────────────────────────────────────────
 
-  /**
-   * Execute a command synchronously within the aggregate lock.
-   *
-   * Production pattern (Zendesk, HubSpot, Salesforce):
-   * Controller operations need synchronous response with updated document.
-   * Instead of enqueuing to BullMQ and waiting (anti-pattern under load),
-   * we acquire the SAME per-conversation Redis lock and execute the handler
-   * inline. This guarantees sequential consistency with queue-based
-   * operations (CUSTOMER_MESSAGE, BOT_REPLY) without the queue overhead.
-   *
-   * Returns the updated conversation document for the controller response.
-   */
+  /** Execute synchronously within the aggregate lock. Returns updated conversation. */
   async executeInline(cmd: ConversationCommand): Promise<any> {
     const lockKey = `${CONV_OPS_LOCK_PREFIX}${cmd.conversationId}`;
 
     return this.lockService.acquire(lockKey, CONV_OPS_LOCK_TTL_MS, async () => {
       await this.processCommand(cmd);
-      // Return the updated conversation for synchronous response
       return this.conversationRepo.findById(cmd.conversationId);
     });
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // Command Router
-  // ────────────────────────────────────────────────────────────────────
+  // ── Command Router ────────────────────────────────────────────────
 
   private async processCommand(cmd: ConversationCommand): Promise<void> {
     const startTime = Date.now();
-
-    // Propagate correlation context for downstream structured logs
     this.cls.set('correlationId', cmd.operationId);
     this.cls.set('conversationId', cmd.conversationId);
 
-    // 1. Idempotency check
     const alreadyProcessed = await this.checkIdempotency(cmd);
     if (alreadyProcessed) return;
-
-    // 2. Allocate sequence (inside lock — monotonic per conversation)
     const sequence = await this.conversationRepo.getNextSequence(
       cmd.conversationId,
     );
 
-    // 3. Route to handler
+
     switch (cmd.type) {
       case 'CUSTOMER_MESSAGE':
         await this.handleCustomerMessage(
@@ -197,16 +169,14 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         this.logger.warn(`[CONV-OPS] Unknown command type: ${cmd.type}`);
     }
 
-    // 4. Mark processed
-    await this.markProcessed(cmd);
 
-    // 5. Duration metrics
+
     const duration = Date.now() - startTime;
     this.logger.log(
       `[CONV-OPS] ✓ ${cmd.type} op=${cmd.operationId} ` +
         `conv=${cmd.conversationId} duration=${duration}ms`,
     );
-    if (duration > 5000) {
+    if (duration > SLOW_OP_THRESHOLD_MS) {
       this.logger.warn(
         `[CONV-OPS] SLOW_OPERATION: ${cmd.type} took ${duration}ms ` +
           `op=${cmd.operationId} conv=${cmd.conversationId} tenant=${cmd.tenantId}`,
@@ -224,7 +194,6 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
   ): Promise<void> {
     const { omniPayload: payload, messageDedupId, idemKey } = cmd.payload;
 
-    // Save the inbound message
     const { message, inserted } =
       await this.messageRepo.upsertInboundByExternalId({
         tenantId: payload.tenantId,
@@ -244,22 +213,18 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       });
 
     if (!inserted) {
-      await this.redis.expire(idemKey, 3600);
+      await this.redis.expire(idemKey, IDEM_KEY_TTL_SEC);
       this.logger.debug(
         `[CONV-OPS] Duplicate inbound message ${messageDedupId} — skipping`,
       );
       return;
     }
 
-    // Handle media: livechat visitor uploads (file already on S3)
-    if (
-      !payload.mediaUrl &&
-      payload.metadata?.media?.storageKey
-    ) {
+    if (!payload.mediaUrl && payload.metadata?.media?.storageKey) {
       try {
         const presignedUrl = await this.mediaProxy.getPresignedUrl(
           payload.metadata.media.storageKey,
-          3600,
+          PRESIGNED_URL_TTL_SEC,
         );
         payload.mediaProxyUrl = presignedUrl;
       } catch (err: any) {
@@ -269,10 +234,9 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       }
     }
 
-    // Update conversation aggregate (single atomic write)
     const preview = (payload.content || `[${payload.messageType}]`).substring(
       0,
-      200,
+      PREVIEW_MAX_LENGTH,
     );
     const msgTimestamp = payload.providerTimestamp ?? payload.timestamp;
 
@@ -283,28 +247,25 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         lastMessageType: payload.messageType,
         lastMessageAt: msgTimestamp,
         lastMessageSenderType: payload.senderType,
-        // Backward compat: dual-write old field
         lastMessage: preview,
-        // Track customer's last message time for reply window
+
         ...(payload.senderType === 'customer'
           ? { lastCustomerMessageAt: msgTimestamp }
           : {}),
       },
       $inc: {
         messageCount: 1,
-        // Only increment unread for customer messages
+
         ...(payload.senderType === 'customer' ? { unreadCount: 1 } : {}),
       },
     });
 
-    // Expire idempotency key
-    await this.redis.expire(idemKey, 3600);
+    await this.redis.expire(idemKey, IDEM_KEY_TTL_SEC);
 
     this.logger.log(
       `[CONV-OPS] Saved message ${messageDedupId} seq=${sequence} conv=${cmd.conversationId}`,
     );
 
-    // Save outbox event + publish
     const persistedEvent = {
       ...payload,
       conversationId: cmd.conversationId,
@@ -319,7 +280,6 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       persistedEvent,
     );
 
-    // Enqueue media cache job if needed (async, non-blocking)
     if (payload.mediaUrl) {
       this.eventEmitter.emit('conv-ops.media-cache-needed', {
         tenantId: payload.tenantId,
@@ -332,30 +292,24 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       });
     }
 
-    // Reschedule auto-resolve timer (non-critical — degraded UX if fails)
     await this.orchestration
       .rescheduleAutoResolve(payload.tenantId, cmd.conversationId)
       .catch((err) =>
         this.logOperationWarning(cmd, 'rescheduleAutoResolve', err),
       );
 
-    // Read conversation state ONCE for downstream checks (bot state, business hours).
     const conversationSnapshot = await this.conversationRepo.findById(
       cmd.conversationId,
     );
 
-    // Enqueue bot processing — CRITICAL: if this fails, customer won't get
-    // a bot reply. Re-throw so BullMQ retries the entire command.
-    // Message persistence is idempotent (upsertInboundByExternalId), so retry is safe.
     await this.orchestration.enqueueBotProcessingIfNeeded(
       payload,
       cmd.conversationId,
       message.id,
       payload.providerTimestamp ?? payload.timestamp,
-      conversationSnapshot, // reuse snapshot — avoid redundant findById
+      conversationSnapshot,
     );
 
-    // Business hours check (non-critical — OOO message can be missed)
     await this.orchestration
       .handleBusinessHoursCheck(
         payload,
@@ -457,7 +411,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       const lastMsg = messages[messages.length - 1];
       const botPreview = (
         lastMsg?.text || `[${lastMsg?.type ?? 'bot'}]`
-      ).substring(0, 200);
+      ).substring(0, PREVIEW_MAX_LENGTH);
 
       await this.conversationRepo.atomicUpdate(cmd.conversationId, {
         $set: {
@@ -477,22 +431,18 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         `msgs=${messages?.length ?? 0} handoff=${handoff}`,
     );
 
-    // Handle handoff if needed (channel-agnostic: works for livechat, WhatsApp, Facebook, Zalo, etc.)
     if (handoff) {
       await this.conversationRepo.markBotHandoff(cmd.conversationId);
 
-      // Read conversation ONCE for handoff context (needed for event payload)
       const conversation = await this.conversationRepo.findById(
         cmd.conversationId,
       );
 
-      // Targeted handoff: assign to specific agent or group
       if (handoffMeta?.target === 'agent' && handoffMeta.agentId) {
         await this.conversationRepo.assignAgent(
           cmd.conversationId,
           handoffMeta.agentId,
         );
-        // Outbox event so CRM agent UI receives realtime assignment notification
         await this.saveAndPublishOutboxEvent(
           cmd.conversationId,
           cmd.tenantId,
@@ -525,27 +475,17 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         );
       }
 
-      // Emit handoff event — @OnEvent(BOT_HANDOFF) in orchestration
-      // triggers deferred auto-assignment. Include channel context so
-      // the assignment engine can apply channel-specific routing rules
-      // (e.g., WhatsApp-only agent pool, Facebook group routing, etc.)
-      // DO NOT also call orchestration.handleBotHandoff() directly —
-      // that would cause double auto-assignment execution.
       this.eventEmitter.emit(OmniEvents.BOT_HANDOFF, {
         tenantId: cmd.tenantId,
         conversationId: cmd.conversationId,
         channelType: conversation?.channelType,
-        channelAccount:
-          (conversation as any)?.channelAccount ??
-          conversation?.channelId?.toString(),
+        channelAccount: conversation?.channelAccount ?? conversation?.channelId?.toString(),
         contactId: conversation?.contactId ?? null,
       });
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // ASSIGN_AGENT Handler (Phase 2)
-  // ────────────────────────────────────────────────────────────────────
+  // ── ASSIGN_AGENT Handler ─────────────────────────────────────────
 
   private async handleAssignAgent(
     cmd: ConversationCommand & { payload: AssignAgentPayload },
@@ -562,7 +502,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       auditLog,
     } = cmd.payload;
 
-    // CAS: only assign if currently unassigned (for reply-auto-assign)
+
     if (onlyIfUnassigned && agentId) {
       const committed = await this.conversationRepo.assignIfUnassigned(
         cmd.conversationId,
@@ -575,7 +515,6 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         return;
       }
     } else {
-      // Standard assignment
       if (agentId !== undefined) {
         await this.conversationRepo.updateAssignment(
           cmd.conversationId,
@@ -590,11 +529,10 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       }
     }
 
-    // Outbox event for realtime broadcast
     await this.saveAndPublishOutboxEvent(
       cmd.conversationId,
       cmd.tenantId,
-      'omni.conversation.assigned',
+      OmniEvents.CONVERSATION_ASSIGNED,
       {
         tenantId: cmd.tenantId,
         conversationId: cmd.conversationId,
@@ -612,7 +550,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         `group=${groupId} reason=${reason}`,
     );
 
-    // Post-commit: capacity sync (fire-and-forget, non-transactional)
+
     if (syncCapacity?.releaseAgentId) {
       this.agentPresenceService
         .releaseConversation(cmd.tenantId, syncCapacity.releaseAgentId)
@@ -624,7 +562,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         .catch(() => {});
     }
 
-    // Post-commit: audit log for routing history
+
     if (auditLog?.channelType && agentId !== undefined) {
       if (reason === 'reply_auto_assign') {
         this.assignmentService
@@ -650,9 +588,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // CHANGE_STATUS Handler (Phase 2)
-  // ────────────────────────────────────────────────────────────────────
+  // ── CHANGE_STATUS Handler ────────────────────────────────────────
 
   private async handleChangeStatus(
     cmd: ConversationCommand & { payload: ChangeStatusPayload },
@@ -685,11 +621,11 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       );
     }
 
-    // Outbox event for cache invalidation + realtime broadcast
+
     await this.saveAndPublishOutboxEvent(
       cmd.conversationId,
       cmd.tenantId,
-      'omni.conversation.status_changed',
+      OmniEvents.CONVERSATION_STATUS_CHANGED,
       {
         tenantId: cmd.tenantId,
         conversationId: cmd.conversationId,
@@ -711,9 +647,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
     );
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // UPDATE_BOT_STATE Handler (Phase 2)
-  // ────────────────────────────────────────────────────────────────────
+  // ── UPDATE_BOT_STATE Handler ─────────────────────────────────────
 
   private async handleUpdateBotState(
     cmd: ConversationCommand & { payload: UpdateBotStatePayload },
@@ -725,17 +659,11 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       botState as Parameters<typeof this.conversationRepo.updateBotState>[1],
     );
 
-    // Determine event type based on the mutation
     let eventType: string;
-    if (botState.enabled === false) {
-      eventType = 'omni.bot.disabled';
-    } else if (botState.enabled === true) {
-      eventType = 'omni.bot.enabled';
-    } else if (botState.lastError) {
-      eventType = 'omni.bot.error';
-    } else {
-      eventType = 'omni.bot.state_updated';
-    }
+    if (botState.enabled === false) eventType = OmniEvents.BOT_DISABLED;
+    else if (botState.enabled === true) eventType = OmniEvents.BOT_ENABLED;
+    else if (botState.lastError) eventType = 'omni.bot.error';
+    else eventType = 'omni.bot.state_updated';
 
     await this.saveAndPublishOutboxEvent(
       cmd.conversationId,
@@ -779,14 +707,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
     }
   }
 
-  private async markProcessed(cmd: ConversationCommand): Promise<void> {
-    // Already inserted in checkIdempotency — nothing to do.
-    // The record exists and will auto-purge via TTL index after 30 days.
-  }
-
-  // ────────────────────────────────────────────────────────────────────
-  // Outbox
-  // ────────────────────────────────────────────────────────────────────
+  // ── Outbox ─────────────────────────────────────────────────────
 
   private async saveAndPublishOutboxEvent(
     conversationId: string,
@@ -794,34 +715,24 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
     eventType: string,
     payload: Record<string, any>,
   ): Promise<void> {
-    // Save to outbox (will be picked up by poller if in-process publish fails)
     const outboxDoc = await this.outboxModel.create({
-      conversationId,
-      tenantId,
-      eventType,
-      payload,
-      status: 'pending',
+      conversationId, tenantId, eventType, payload, status: 'pending',
     });
 
-    // Best-effort in-process publish
     try {
       this.eventEmitter.emit(eventType, payload);
-      // Use _id for update to avoid matching wrong record when multiple
-      // pending events exist for the same conversation + eventType.
       await this.outboxModel.updateOne(
         { _id: outboxDoc._id },
         { $set: { status: 'published', publishedAt: new Date() } },
       );
     } catch (err: any) {
       this.logger.warn(
-        `[CONV-OPS] In-process event publish failed (outbox poller will retry): ${err?.message}`,
+        `[CONV-OPS] In-process publish failed, poller will retry: ${err?.message}`,
       );
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // Structured Logging
-  // ────────────────────────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────
 
   private logOperationWarning(
     cmd: ConversationCommand,
