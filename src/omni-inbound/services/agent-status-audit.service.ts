@@ -7,7 +7,6 @@ import {
   StatusTransitionTrigger,
   AgentPresence,
 } from '../domain/agent-presence';
-import { toLegacyIntent } from '../domain/presence-state';
 
 /**
  * Work time summary for a single agent on a single day.

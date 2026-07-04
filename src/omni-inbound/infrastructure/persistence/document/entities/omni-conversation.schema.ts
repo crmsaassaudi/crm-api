@@ -175,15 +175,15 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   lastMessageId: string | null;
 
   /** Truncated content preview (max 200 chars) for conversation list rendering. */
-  @Prop({ default: null })
+  @Prop({ type: String, default: null })
   lastMessagePreview: string | null;
 
   /** Message type of the last message (text, image, file, etc.). */
-  @Prop({ default: null })
+  @Prop({ type: String, default: null })
   lastMessageType: string | null;
 
   /** Sender type of the last message (customer, agent, bot). */
-  @Prop({ default: null })
+  @Prop({ type: String, default: null })
   lastMessageSenderType: string | null;
 
   @Prop({ default: 0 })

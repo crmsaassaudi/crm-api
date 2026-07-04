@@ -4,7 +4,7 @@ const H = 3_600_000; // 1h in ms
 const M = 60_000;
 
 describe('computeKpis (§4.2)', () => {
-  it('TC08: Occupancy = (handle+wrap)/available, Utilization = /online', () => {
+  it('should TC08: Occupancy = (handle+wrap)/available, Utilization = /online', () => {
     // available 7h (handle 4h, wrap 45m, idle 2h15m), away 20m, break 1h, meeting 30m
     const k = computeKpis({
       availableMs: 7 * H,
@@ -26,7 +26,7 @@ describe('computeKpis (§4.2)', () => {
     expect(k.ahtMs).toBeCloseTo((4 * H + 45 * M) / 12, 5); // 23.75m
   });
 
-  it('availabilityRatio = accepting/online', () => {
+  it('should return availabilityRatio = accepting/online', () => {
     const k = computeKpis({
       availableMs: 9 * H,
       awayMs: 0,
@@ -44,7 +44,7 @@ describe('computeKpis (§4.2)', () => {
     expect(k.ahtMs).toBe(0); // no division by zero
   });
 
-  it('guards division by zero', () => {
+  it('should guard division by zero', () => {
     const k = computeKpis({
       availableMs: 0,
       awayMs: 0,
@@ -64,19 +64,19 @@ describe('computeKpis (§4.2)', () => {
 });
 
 describe('minMaxNormalize', () => {
-  it('normalizes to [0,1]', () => {
+  it('should normalize to [0,1]', () => {
     expect(minMaxNormalize([0, 5, 10])).toEqual([0, 0.5, 1]);
   });
-  it('all-equal → all 1', () => {
+  it('should return all 1 when all-equal', () => {
     expect(minMaxNormalize([4, 4, 4])).toEqual([1, 1, 1]);
   });
-  it('empty → empty', () => {
+  it('should return empty for empty input', () => {
     expect(minMaxNormalize([])).toEqual([]);
   });
 });
 
 describe('formatDuration', () => {
-  it('formats h/m', () => {
+  it('should format h/m durations correctly', () => {
     expect(formatDuration(0)).toBe('0m');
     expect(formatDuration(45 * M)).toBe('45m');
     expect(formatDuration(2 * H)).toBe('2h');

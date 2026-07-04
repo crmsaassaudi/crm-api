@@ -6,7 +6,7 @@ import { RedisService } from './redis.service';
 import { RedisLockService } from './redis-lock.service';
 import { RedisEvictionPolicyGuard } from './redis-eviction-policy.guard';
 import type { RedisOptions } from 'ioredis';
-// @ts-ignore -- cache-manager-ioredis does not ship type declarations
+// @ts-expect-error -- cache-manager-ioredis does not ship type declarations
 import * as redisStore from 'cache-manager-ioredis';
 import Redis from 'ioredis';
 import { IOREDIS_CLIENT } from './redis.tokens';

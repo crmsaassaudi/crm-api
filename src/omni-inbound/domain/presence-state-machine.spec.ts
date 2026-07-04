@@ -1,4 +1,4 @@
-import { AgentState } from './presence-state';
+﻿import { AgentState } from './presence-state';
 import {
   applyDayRolloverReset,
   applyLogin,
@@ -29,13 +29,13 @@ const state = (over: Partial<AgentState> = {}): AgentState => ({
 });
 
 describe('canTransitionPresence (§2.2 matrix)', () => {
-  it('OFFLINE only → AVAILABLE', () => {
+  it('should OFFLINE only → AVAILABLE', () => {
     expect(canTransitionPresence('OFFLINE', 'AVAILABLE')).toBe(true);
     expect(canTransitionPresence('OFFLINE', 'BREAK')).toBe(false);
     expect(canTransitionPresence('OFFLINE', 'MEETING')).toBe(false);
   });
 
-  it('agent cannot self-select OFFLINE; system/supervisor can', () => {
+  it('should agent cannot self-select OFFLINE; system/supervisor can', () => {
     expect(canTransitionPresence('AVAILABLE', 'OFFLINE', 'agent')).toBe(false);
     expect(canTransitionPresence('AVAILABLE', 'OFFLINE', 'system')).toBe(true);
     expect(canTransitionPresence('AVAILABLE', 'OFFLINE', 'supervisor')).toBe(
@@ -43,7 +43,7 @@ describe('canTransitionPresence (§2.2 matrix)', () => {
     );
   });
 
-  it('online → online always allowed', () => {
+  it('should online → online always allowed', () => {
     expect(canTransitionPresence('AVAILABLE', 'MEETING')).toBe(true);
     expect(canTransitionPresence('BREAK', 'AVAILABLE')).toBe(true);
     expect(canTransitionPresence('MEETING', 'TRAINING')).toBe(true);
@@ -51,7 +51,7 @@ describe('canTransitionPresence (§2.2 matrix)', () => {
 });
 
 describe('transitionPresence routing interlock (§1.2)', () => {
-  it('leaving AVAILABLE forces NOT_ACCEPTING', () => {
+  it('should leaving AVAILABLE forces NOT_ACCEPTING', () => {
     const r = transitionPresence(
       state({ routingStatus: 'ACCEPTING' }),
       'MEETING',
@@ -63,7 +63,7 @@ describe('transitionPresence routing interlock (§1.2)', () => {
     expect(r.changed.sort()).toEqual(['presence', 'routing']);
   });
 
-  it('returning to AVAILABLE keeps NOT_ACCEPTING by default (restore=false)', () => {
+  it('should returning to AVAILABLE keeps NOT_ACCEPTING by default (restore=false)', () => {
     const meeting = state({
       presenceStatus: 'MEETING',
       routingStatus: 'NOT_ACCEPTING',
@@ -78,7 +78,7 @@ describe('transitionPresence routing interlock (§1.2)', () => {
     expect(r.changed).toEqual(['presence']);
   });
 
-  it('returning to AVAILABLE restores ACCEPTING when restore=true and was accepting', () => {
+  it('should returning to AVAILABLE restores ACCEPTING when restore=true and was accepting', () => {
     const meeting = state({
       presenceStatus: 'MEETING',
       routingStatus: 'NOT_ACCEPTING',
@@ -92,7 +92,7 @@ describe('transitionPresence routing interlock (§1.2)', () => {
     expect(r.changed.sort()).toEqual(['presence', 'routing']);
   });
 
-  it('restore=true but was NOT accepting before leave → stays NOT_ACCEPTING', () => {
+  it('should restore=true but was NOT accepting before leave → stays NOT_ACCEPTING', () => {
     const meeting = state({
       presenceStatus: 'MEETING',
       routingStatus: 'NOT_ACCEPTING',
@@ -105,7 +105,7 @@ describe('transitionPresence routing interlock (§1.2)', () => {
     expect(r.state.routingStatus).toBe('NOT_ACCEPTING');
   });
 
-  it('rejects illegal transition without mutating state', () => {
+  it('should rejects illegal transition without mutating state', () => {
     const off = state({
       presenceStatus: 'OFFLINE',
       routingStatus: 'NOT_ACCEPTING',
@@ -118,7 +118,7 @@ describe('transitionPresence routing interlock (§1.2)', () => {
 });
 
 describe('setRouting (Ready toggle)', () => {
-  it('can start ACCEPTING when AVAILABLE + CONNECTED', () => {
+  it('should can start ACCEPTING when AVAILABLE + CONNECTED', () => {
     const s = state({ routingStatus: 'NOT_ACCEPTING' });
     const r = setRouting(s, 'ACCEPTING', ctx());
     expect(r.ok).toBe(true);
@@ -126,7 +126,7 @@ describe('setRouting (Ready toggle)', () => {
     expect(r.changed).toEqual(['routing']);
   });
 
-  it('cannot accept while not AVAILABLE', () => {
+  it('should cannot accept while not AVAILABLE', () => {
     const s = state({
       presenceStatus: 'BREAK',
       routingStatus: 'NOT_ACCEPTING',
@@ -135,7 +135,7 @@ describe('setRouting (Ready toggle)', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('cannot start ACCEPTING while disconnected', () => {
+  it('should cannot start ACCEPTING while disconnected', () => {
     const s = state({
       routingStatus: 'NOT_ACCEPTING',
       connectionStatus: 'DISCONNECTED',
@@ -144,7 +144,7 @@ describe('setRouting (Ready toggle)', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('no-op when already in target routing', () => {
+  it('should no-op when already in target routing', () => {
     const s = state({ routingStatus: 'ACCEPTING' });
     const r = setRouting(s, 'ACCEPTING', ctx());
     expect(r.ok).toBe(true);
@@ -153,7 +153,7 @@ describe('setRouting (Ready toggle)', () => {
 });
 
 describe('login / logout (§2.2, TC04)', () => {
-  it('login always lands AVAILABLE + NOT_ACCEPTING (never ACCEPTING)', () => {
+  it('should login always lands AVAILABLE + NOT_ACCEPTING (never ACCEPTING)', () => {
     const off = state({
       presenceStatus: 'OFFLINE',
       routingStatus: 'NOT_ACCEPTING',
@@ -165,7 +165,7 @@ describe('login / logout (§2.2, TC04)', () => {
     expect(r.state.connectionStatus).toBe('CONNECTED');
   });
 
-  it('forceOffline closes routing', () => {
+  it('should forceOffline closes routing', () => {
     const r = forceOffline(
       state({ routingStatus: 'ACCEPTING' }),
       ctx({ trigger: 'system_grace_expired', actor: 'system' }),
@@ -177,7 +177,7 @@ describe('login / logout (§2.2, TC04)', () => {
 });
 
 describe('day rollover (§3.2, TC04)', () => {
-  it('resets ACCEPTING → NOT_ACCEPTING at midnight, presence unchanged', () => {
+  it('should resets ACCEPTING → NOT_ACCEPTING at midnight, presence unchanged', () => {
     const s = state({
       presenceStatus: 'AVAILABLE',
       routingStatus: 'ACCEPTING',
@@ -188,7 +188,7 @@ describe('day rollover (§3.2, TC04)', () => {
     expect(r.changed).toEqual(['routing']);
   });
 
-  it('no-op when already NOT_ACCEPTING', () => {
+  it('should no-op when already NOT_ACCEPTING', () => {
     const r = applyDayRolloverReset(
       state({ routingStatus: 'NOT_ACCEPTING' }),
       9_000,
@@ -198,7 +198,7 @@ describe('day rollover (§3.2, TC04)', () => {
 });
 
 describe('multi-device LWW guard (§1.6, TC11)', () => {
-  it('drops a command older than the last applied one', () => {
+  it('should drops a command older than the last applied one', () => {
     expect(isStaleCommand(100, 200)).toBe(true); // delayed device A command
     expect(isStaleCommand(300, 200)).toBe(false); // newer wins
     expect(isStaleCommand(200, 200)).toBe(false); // equal applies
@@ -207,7 +207,7 @@ describe('multi-device LWW guard (§1.6, TC11)', () => {
 });
 
 describe('TC01 routing timeline (default restore=false)', () => {
-  it('returning to AVAILABLE from MEETING/BREAK does not re-arm ACCEPTING', () => {
+  it('should returning to AVAILABLE from MEETING/BREAK does not re-arm ACCEPTING', () => {
     // 08:05 ACCEPTING
     let s = state({ presenceStatus: 'AVAILABLE', routingStatus: 'ACCEPTING' });
     // 10:00 MEETING → NOT_ACCEPTING
@@ -233,7 +233,7 @@ describe('TC01 routing timeline (default restore=false)', () => {
     expect(s.routingStatus).toBe('NOT_ACCEPTING');
   });
 
-  it('variant restore=true re-arms ACCEPTING on return', () => {
+  it('should variant restore=true re-arms ACCEPTING on return', () => {
     let s = state({ presenceStatus: 'AVAILABLE', routingStatus: 'ACCEPTING' });
     s = transitionPresence(s, 'MEETING', ctx()).state;
     s = transitionPresence(

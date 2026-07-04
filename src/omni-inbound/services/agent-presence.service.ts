@@ -19,13 +19,11 @@ import {
   computeDisplayStatus,
   fromLegacyIntent,
   isEligibleForRouting,
-  toLegacyIntent,
 } from '../domain/presence-state';
 import { AxisSnapshot } from '../domain/presence-segments';
 import {
   TransitionActor,
   applyDayRolloverReset,
-  applyLogin,
   forceOffline,
   isStaleCommand,
   setRouting,

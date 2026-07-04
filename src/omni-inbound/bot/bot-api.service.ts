@@ -16,7 +16,9 @@ export class BotApiService {
   async dispatch(payload: BotReplyRequest): Promise<BotAcceptResponse> {
     const baseUrl = this.resolveBotBaseUrl();
     const endpoint = `${baseUrl}/api/bot/typebot/reply`;
-    const secret = this.configService.get<string>('CRM_BOT_INTERNAL_SECRET');
+    const secret = this.configService.get<string>('CRM_BOT_INTERNAL_SECRET', {
+      infer: true,
+    });
 
     this.logger.log(
       `[BOT-API] Dispatching to crm-bot: endpoint=${endpoint}, ` +

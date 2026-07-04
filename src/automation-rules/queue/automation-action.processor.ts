@@ -1,4 +1,4 @@
-import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
+﻿import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
@@ -350,7 +350,7 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
   }
 
   @OnWorkerEvent('failed')
-  override async onFailed(job: Job, error: Error) {
+  override onFailed(job: Job, error: Error) {
     this.mixin.handleFailedJob(job, error);
   }
 
@@ -391,7 +391,7 @@ export class AutomationEmailProcessor extends BaseTenantConsumer<AutomationActio
   }
 
   @OnWorkerEvent('failed')
-  override async onFailed(job: Job, error: Error) {
+  override onFailed(job: Job, error: Error) {
     this.mixin.handleFailedJob(job, error);
   }
 
@@ -438,7 +438,7 @@ export class AutomationSmsProcessor extends BaseTenantConsumer<AutomationActionJ
   }
 
   @OnWorkerEvent('failed')
-  override async onFailed(job: Job, error: Error) {
+  override onFailed(job: Job, error: Error) {
     this.mixin.handleFailedJob(job, error);
   }
 
@@ -495,7 +495,7 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
   }
 
   @OnWorkerEvent('failed')
-  override async onFailed(job: Job, error: Error) {
+  override onFailed(job: Job, error: Error) {
     this.mixin.handleFailedJob(job, error);
   }
 
@@ -538,7 +538,7 @@ export class AutomationWebhookProcessor extends BaseTenantConsumer<AutomationAct
   }
 
   @OnWorkerEvent('failed')
-  override async onFailed(job: Job, error: Error) {
+  override onFailed(job: Job, error: Error) {
     this.mixin.handleFailedJob(job, error);
   }
 

@@ -95,7 +95,7 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
         await this.redis.del(redisKey);
         return;
       }
-    } catch (err) {
+    } catch (_err) {
       // safe fallback
     }
 

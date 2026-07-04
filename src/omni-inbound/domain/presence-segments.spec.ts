@@ -1,4 +1,4 @@
-import {
+﻿import {
   AxisSnapshot,
   OpenSegmentMap,
   dayKeyOf,
@@ -14,7 +14,7 @@ const snap = (over: Partial<AxisSnapshot> = {}): AxisSnapshot => ({
 });
 
 describe('diffSegments', () => {
-  it('opens fresh segments when nothing is open', () => {
+  it('should opens fresh segments when nothing is open', () => {
     const { closed, next } = diffSegments({}, snap(), 1_000);
     expect(closed).toEqual([]);
     expect(next).toEqual({
@@ -24,7 +24,7 @@ describe('diffSegments', () => {
     });
   });
 
-  it('closes only the axis that changed', () => {
+  it('should closes only the axis that changed', () => {
     const open: OpenSegmentMap = {
       presence: { value: 'AVAILABLE', startAtMs: 1_000 },
       routing: { value: 'NOT_ACCEPTING', startAtMs: 1_000 },
@@ -49,7 +49,7 @@ describe('diffSegments', () => {
     expect(next.presence).toEqual(open.presence); // untouched
   });
 
-  it('OFFLINE closes all open segments and opens none', () => {
+  it('should OFFLINE closes all open segments and opens none', () => {
     const open: OpenSegmentMap = {
       presence: { value: 'AVAILABLE', startAtMs: 1_000 },
       routing: { value: 'ACCEPTING', startAtMs: 1_000 },
@@ -72,7 +72,7 @@ describe('diffSegments', () => {
     });
   });
 
-  it('no-op when nothing changed (idempotent heartbeat)', () => {
+  it('should no-op when nothing changed (idempotent heartbeat)', () => {
     const open: OpenSegmentMap = {
       presence: { value: 'AVAILABLE', startAtMs: 1_000 },
       routing: { value: 'NOT_ACCEPTING', startAtMs: 1_000 },
@@ -85,7 +85,7 @@ describe('diffSegments', () => {
 });
 
 describe('rolloverSegments (§3.2)', () => {
-  it('closes at the boundary and re-opens with same value', () => {
+  it('should closes at the boundary and re-opens with same value', () => {
     const open: OpenSegmentMap = {
       presence: { value: 'AVAILABLE', startAtMs: 1_000 },
       routing: { value: 'ACCEPTING', startAtMs: 1_000 },
@@ -98,7 +98,7 @@ describe('rolloverSegments (§3.2)', () => {
     expect(next.routing).toEqual({ value: 'ACCEPTING', startAtMs: boundary });
   });
 
-  it('TC01-style invariant: presence durations across a change sum correctly', () => {
+  it('should TC01-style invariant: presence durations across a change sum correctly', () => {
     // AVAILABLE 1000→3000 (2000), then MEETING from 3000.
     let open: OpenSegmentMap = {};
     let r = diffSegments(open, snap({ presenceStatus: 'AVAILABLE' }), 1_000);
@@ -111,7 +111,7 @@ describe('rolloverSegments (§3.2)', () => {
 });
 
 describe('dayKeyOf', () => {
-  it('returns the UTC date', () => {
+  it('should returns the UTC date', () => {
     expect(dayKeyOf(Date.UTC(2026, 5, 28, 23, 30))).toBe('2026-06-28');
     expect(dayKeyOf(Date.UTC(2026, 5, 28, 0, 0))).toBe('2026-06-28');
   });

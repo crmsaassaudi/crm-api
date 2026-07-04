@@ -39,6 +39,7 @@ export class ConversationCommandService {
     @InjectQueue(CONV_OPS_QUEUE) private readonly opsQueue: Queue,
     @Inject(
       forwardRef(
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         () => require('./conversation-ops.processor').ConversationOpsProcessor,
       ),
     )

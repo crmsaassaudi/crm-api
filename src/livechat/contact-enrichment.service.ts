@@ -306,7 +306,9 @@ export class ContactEnrichmentService {
   private async enrichExistingContact(
     contactId: string,
     contactUpdate: Record<string, any>,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     email?: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     phone?: string,
   ): Promise<void> {
     const existing = await this.contactsService.findOne(contactId);

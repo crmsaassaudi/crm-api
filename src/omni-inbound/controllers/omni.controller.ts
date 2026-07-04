@@ -1043,15 +1043,16 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${id} not found`);
     }
 
-    const updated = await this.conversationCommandService.executeUpdateBotState(
-      id,
-      tenantId,
-      {
-        botState: { enabled: false, status: 'ended' },
-        reason: 'agent_takeover',
-        agentId,
-      },
-    );
+    const _updated =
+      await this.conversationCommandService.executeUpdateBotState(
+        id,
+        tenantId,
+        {
+          botState: { enabled: false, status: 'ended' },
+          reason: 'agent_takeover',
+          agentId,
+        },
+      );
 
     this.logger.log(
       `Bot disabled on conversation ${id} by agent ${agentId} (manual takeover)`,
@@ -1081,15 +1082,16 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${id} not found`);
     }
 
-    const updated = await this.conversationCommandService.executeUpdateBotState(
-      id,
-      tenantId,
-      {
-        botState: { enabled: true, status: 'active' },
-        reason: 'agent_reenable',
-        agentId,
-      },
-    );
+    const _updated =
+      await this.conversationCommandService.executeUpdateBotState(
+        id,
+        tenantId,
+        {
+          botState: { enabled: true, status: 'active' },
+          reason: 'agent_reenable',
+          agentId,
+        },
+      );
 
     this.logger.log(`Bot re-enabled on conversation ${id} by agent ${agentId}`);
 

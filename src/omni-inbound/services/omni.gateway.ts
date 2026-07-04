@@ -20,7 +20,7 @@ import { SessionService } from '../../auth/services/session.service';
 import { TenantsService } from '../../tenants/tenants.service';
 import { UsersService } from '../../users/users.service';
 import { jwtDecode } from 'jwt-decode';
-// @ts-ignore -- cookie@0.x does not ship type declarations
+// @ts-expect-error -- cookie@0.x does not ship type declarations
 import * as cookie from 'cookie';
 import { ConfigService } from '@nestjs/config';
 import { AllConfigType } from '../../config/config.type';

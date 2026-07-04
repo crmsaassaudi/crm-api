@@ -1,4 +1,4 @@
-import {
+﻿import {
   AgentState,
   computeCapacityStatus,
   computeDisplayStatus,
@@ -23,13 +23,13 @@ const base: AgentState = {
 };
 
 describe('presence-state predicates', () => {
-  it('isOnline: only OFFLINE is offline', () => {
+  it('should isOnline: only OFFLINE is offline', () => {
     expect(isOnline('AVAILABLE')).toBe(true);
     expect(isOnline('BREAK')).toBe(true);
     expect(isOnline('OFFLINE')).toBe(false);
   });
 
-  it('isRoutablePresence: only AVAILABLE', () => {
+  it('should isRoutablePresence: only AVAILABLE', () => {
     expect(isRoutablePresence('AVAILABLE')).toBe(true);
     for (const p of [
       'AWAY',
@@ -42,7 +42,7 @@ describe('presence-state predicates', () => {
     }
   });
 
-  it('capacity status & isFull', () => {
+  it('should capacity status & isFull', () => {
     expect(computeCapacityStatus(4, 5)).toBe('OK');
     expect(computeCapacityStatus(5, 5)).toBe('FULL');
     expect(isFull({ currentLoad: 5, maxLoad: 5 })).toBe(true);
@@ -51,11 +51,11 @@ describe('presence-state predicates', () => {
 });
 
 describe('isEligibleForRouting — 4 independent gates (§2.1)', () => {
-  it('eligible when all gates pass', () => {
+  it('should eligible when all gates pass', () => {
     expect(isEligibleForRouting(base)).toBe(true);
   });
 
-  it('fails if not AVAILABLE', () => {
+  it('should fails if not AVAILABLE', () => {
     expect(isEligibleForRouting({ ...base, presenceStatus: 'BREAK' })).toBe(
       false,
     );
@@ -64,19 +64,19 @@ describe('isEligibleForRouting — 4 independent gates (§2.1)', () => {
     );
   });
 
-  it('fails if disconnected', () => {
+  it('should fails if disconnected', () => {
     expect(
       isEligibleForRouting({ ...base, connectionStatus: 'DISCONNECTED' }),
     ).toBe(false);
   });
 
-  it('fails if NOT_ACCEPTING (Busy)', () => {
+  it('should fails if NOT_ACCEPTING (Busy)', () => {
     expect(
       isEligibleForRouting({ ...base, routingStatus: 'NOT_ACCEPTING' }),
     ).toBe(false);
   });
 
-  it('fails when FULL (currentLoad >= maxLoad) — TC07', () => {
+  it('should fails when FULL (currentLoad >= maxLoad) — TC07', () => {
     expect(isEligibleForRouting({ ...base, currentLoad: 5, maxLoad: 5 })).toBe(
       false,
     );
@@ -85,7 +85,7 @@ describe('isEligibleForRouting — 4 independent gates (§2.1)', () => {
     );
   });
 
-  it('workStatus does NOT gate routing — IN_CHAT agent still eligible until FULL', () => {
+  it('should workStatus does NOT gate routing — IN_CHAT agent still eligible until FULL', () => {
     const inChat: AgentState = {
       ...base,
       workStatus: 'IN_CHAT',
@@ -96,7 +96,7 @@ describe('isEligibleForRouting — 4 independent gates (§2.1)', () => {
 });
 
 describe('legacy interop (§1.2: Busy = AVAILABLE + NOT_ACCEPTING)', () => {
-  it('toLegacyIntent', () => {
+  it('should toLegacyIntent', () => {
     expect(toLegacyIntent('AVAILABLE', 'ACCEPTING')).toBe('available');
     expect(toLegacyIntent('AVAILABLE', 'NOT_ACCEPTING')).toBe('busy');
     expect(toLegacyIntent('AWAY', 'NOT_ACCEPTING')).toBe('away');
@@ -105,7 +105,7 @@ describe('legacy interop (§1.2: Busy = AVAILABLE + NOT_ACCEPTING)', () => {
     expect(toLegacyIntent('OFFLINE', 'NOT_ACCEPTING')).toBe('offline');
   });
 
-  it('fromLegacyIntent', () => {
+  it('should fromLegacyIntent', () => {
     expect(fromLegacyIntent('available')).toEqual({
       presenceStatus: 'AVAILABLE',
       routingStatus: 'ACCEPTING',
@@ -124,7 +124,7 @@ describe('legacy interop (§1.2: Busy = AVAILABLE + NOT_ACCEPTING)', () => {
     });
   });
 
-  it('round-trips for the four legacy values', () => {
+  it('should round-trips for the four legacy values', () => {
     const intents: LegacyIntentStatus[] = [
       'available',
       'busy',
@@ -139,7 +139,7 @@ describe('legacy interop (§1.2: Busy = AVAILABLE + NOT_ACCEPTING)', () => {
 });
 
 describe('computeDisplayStatus', () => {
-  it('disconnected or OFFLINE → offline', () => {
+  it('should disconnected or OFFLINE → offline', () => {
     expect(computeDisplayStatus('AVAILABLE', 'ACCEPTING', 'DISCONNECTED')).toBe(
       'offline',
     );
@@ -148,7 +148,7 @@ describe('computeDisplayStatus', () => {
     );
   });
 
-  it('connected mirrors legacy intent', () => {
+  it('should connected mirrors legacy intent', () => {
     expect(computeDisplayStatus('AVAILABLE', 'ACCEPTING', 'CONNECTED')).toBe(
       'available',
     );
@@ -162,7 +162,7 @@ describe('computeDisplayStatus', () => {
 });
 
 describe('deriveWorkStatus priority (§2.4)', () => {
-  it('respects IN_CALL > IN_CHAT > IN_TICKET > IN_EMAIL > WRAP_UP > IDLE', () => {
+  it('should respects IN_CALL > IN_CHAT > IN_TICKET > IN_EMAIL > WRAP_UP > IDLE', () => {
     expect(deriveWorkStatus({ call: true, chat: true })).toBe('IN_CALL');
     expect(deriveWorkStatus({ chat: true, ticket: true })).toBe('IN_CHAT');
     expect(deriveWorkStatus({ ticket: true, email: true })).toBe('IN_TICKET');

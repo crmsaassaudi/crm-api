@@ -988,7 +988,7 @@ describe('AssignmentService', () => {
   // ────────────────────────────────────────────────────────────────────────
 
   describe('per-channel routing override', () => {
-    it('mergeRoutingConfig: channel ?? global ?? hardcoded, field-by-field', () => {
+    it('should handle mergeRoutingConfig: channel ?? global ?? hardcoded, field-by-field', () => {
       const resolved = mergeRoutingConfig(
         {
           defaultStrategy: 'round-robin',
@@ -1010,7 +1010,7 @@ describe('AssignmentService', () => {
       expect(resolved.skillBasedRoutingEnabled).toBe(false);
     });
 
-    it('mergeRoutingConfig: empty inputs produce all hardcoded defaults', () => {
+    it('should handle mergeRoutingConfig: empty inputs produce all hardcoded defaults', () => {
       const resolved = mergeRoutingConfig(undefined, undefined);
       expect(resolved).toEqual({
         defaultStrategy: 'round-robin',

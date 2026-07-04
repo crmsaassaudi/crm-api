@@ -2,10 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AgentPresenceService } from './agent-presence.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
-import {
-  tenantPresenceHashKey,
-  tenantAgentLoadKey,
-} from '../domain/agent-presence';
 
 /**
  * PresenceReconciliationService — self-healing guard for Redis agent counters.

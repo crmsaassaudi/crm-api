@@ -11,8 +11,7 @@ import { ChannelType } from '../omni-inbound/domain/omni-payload';
 import { OutboundMedia } from './types/outbound-media.type';
 import { FilesService } from '../files/files.service';
 import { ImageProcessingService } from '../files/image-processing.service';
-import { PLATFORM_LIMITS } from '../files/config/platform-limits.config';
-import { mimeToMessageType } from '../common/utils/mime.util';
+
 import { OutboundMediaHandler } from './outbound-media.handler';
 import { OutboundEmailHandler } from './outbound-email.handler';
 
@@ -27,10 +26,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { EmailContentDocument } from '../channels/infrastructure/persistence/document/entities/email-content.schema';
 import { EmailMetadataDocument } from '../channels/infrastructure/persistence/document/entities/email-metadata.schema';
-import * as nodemailer from 'nodemailer';
-import { ulid } from 'ulid';
-import * as cheerio from 'cheerio';
-import axios from 'axios';
+
 import type Redis from 'ioredis';
 import { IOREDIS_CLIENT } from '../redis/redis.tokens';
 import { UsersService } from '../users/users.service';
@@ -241,7 +237,7 @@ export class OutboundService {
     // controls whether this behavior is enabled (defaults to true).
     const botState = (conversation as any).bot;
     if (botState?.enabled === true && botState?.status === 'active') {
-      const channelAccount =
+      const _channelAccount =
         (conversation as any).channelAccount ??
         conversation.channelId?.toString();
       let shouldDisable = true; // default: always disable on agent reply

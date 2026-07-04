@@ -1648,7 +1648,7 @@ export class SendWhatsAppExecutor implements ActionExecutor {
 
   constructor(private readonly templateEngine: TemplateInterpolationService) {}
 
-  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+  execute(job: AutomationActionJobData): ActionExecutionResult {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
     const recipientField = actionConfig.recipientField || 'phones';
@@ -1713,7 +1713,7 @@ export class SendZnsExecutor implements ActionExecutor {
 
   constructor(private readonly templateEngine: TemplateInterpolationService) {}
 
-  async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
+  execute(job: AutomationActionJobData): ActionExecutionResult {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
     const recipientField = actionConfig.recipientField || 'phones';
