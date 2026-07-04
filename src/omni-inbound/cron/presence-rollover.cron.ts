@@ -65,12 +65,20 @@ export class PresenceRolloverCron {
     let agentCount = 0;
     for (const tenantId of tenants) {
       const agents = await this.presenceService.getAllAgents(tenantId);
-      for (let i = 0; i < agents.length; i += PresenceRolloverCron.CONCURRENCY) {
+      for (
+        let i = 0;
+        i < agents.length;
+        i += PresenceRolloverCron.CONCURRENCY
+      ) {
         const batch = agents.slice(i, i + PresenceRolloverCron.CONCURRENCY);
         await Promise.allSettled(
           batch.map(async (a) => {
             // 1. Cut + re-open segments at the boundary.
-            await this.segmentService.rolloverAgent(tenantId, a.userId, boundaryMs);
+            await this.segmentService.rolloverAgent(
+              tenantId,
+              a.userId,
+              boundaryMs,
+            );
             // 2. Reset routing for the new day (fires its own segment change).
             await this.presenceService.applyDayRollover(tenantId, a.userId);
           }),
@@ -79,6 +87,8 @@ export class PresenceRolloverCron {
       }
     }
 
-    this.logger.log(`Presence rollover done — ${agentCount} agent(s) processed`);
+    this.logger.log(
+      `Presence rollover done — ${agentCount} agent(s) processed`,
+    );
   }
 }

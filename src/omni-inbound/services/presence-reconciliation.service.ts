@@ -2,7 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AgentPresenceService } from './agent-presence.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
-import { tenantPresenceHashKey, tenantAgentLoadKey } from '../domain/agent-presence';
+import {
+  tenantPresenceHashKey,
+  tenantAgentLoadKey,
+} from '../domain/agent-presence';
 
 /**
  * PresenceReconciliationService — self-healing guard for Redis agent counters.
@@ -50,10 +53,16 @@ export class PresenceReconciliationService {
    */
   async reconcileAgent(tenantId: string, agentId: string): Promise<void> {
     try {
-      const presence = await this.presenceService.getPresence(tenantId, agentId);
+      const presence = await this.presenceService.getPresence(
+        tenantId,
+        agentId,
+      );
       if (!presence) return; // agent not in Redis — nothing to reconcile
 
-      const actual = await this.conversationRepo.countOpenByAgent(tenantId, agentId);
+      const actual = await this.conversationRepo.countOpenByAgent(
+        tenantId,
+        agentId,
+      );
       const stored = presence.activeConversations ?? 0;
 
       if (stored !== actual) {
@@ -61,7 +70,11 @@ export class PresenceReconciliationService {
           `Presence drift detected for agent ${agentId} (tenant ${tenantId}): ` +
             `Redis=${stored}, MongoDB=${actual} — patching`,
         );
-        await this.presenceService.patchActiveConversations(tenantId, agentId, actual);
+        await this.presenceService.patchActiveConversations(
+          tenantId,
+          agentId,
+          actual,
+        );
       } else {
         this.logger.debug(
           `Agent ${agentId} presence counter OK (activeConversations=${actual})`,
@@ -140,7 +153,9 @@ export class PresenceReconciliationService {
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async reconcileAllTenants(): Promise<void> {
-    this.logger.debug('[Reconcile] Starting periodic presence reconciliation...');
+    this.logger.debug(
+      '[Reconcile] Starting periodic presence reconciliation...',
+    );
     try {
       const tenantIds =
         await this.conversationRepo.findDistinctTenantIdsWithActiveConversations();

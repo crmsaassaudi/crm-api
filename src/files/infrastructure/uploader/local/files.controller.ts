@@ -64,7 +64,7 @@ export class FilesLocalController {
 
   @Get(':path')
   @ApiExcludeEndpoint()
-  download(@Param('path') requested: string, @Response() response) {
+  download(@Param('path') requested: string, @Response() response: any) {
     if (!requested || !SAFE_FILENAME.test(requested)) {
       throw new BadRequestException('Invalid file name');
     }

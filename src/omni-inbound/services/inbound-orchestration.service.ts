@@ -14,10 +14,7 @@ import { AutoResolveService } from './auto-resolve.service';
 import { BusinessHoursService } from './business-hours.service';
 import { BotQueueService } from '../bot/bot-queue.service';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
-import {
-  ConversationBotState,
-  BotMode,
-} from '../domain/omni-conversation';
+import { ConversationBotState, BotMode } from '../domain/omni-conversation';
 
 /**
  * InboundOrchestrationService — coordinates post-persistence side effects
@@ -152,7 +149,6 @@ export class InboundOrchestrationService {
         segment: conversationIsVip === true ? 'VIP' : undefined,
       };
 
-
       // 5. Call AssignmentService
       const assignedAgentId = await this.assignmentService.assignConversation(
         payload.tenantId,
@@ -237,7 +233,6 @@ export class InboundOrchestrationService {
       );
     }
   }
-
 
   // ────────────────────────────────────────────────────────────────
   // Bot Orchestration
@@ -324,9 +319,14 @@ export class InboundOrchestrationService {
       // Resolve botMode: explicit config > derive from botEnabled flag > disabled
       const rawBotMode = channel.config.botMode as string | undefined;
       const botEnabled = Boolean(channel.config.botEnabled);
-      const botMode: BotMode = rawBotMode === 'bot_first' || rawBotMode === 'bot_only' || rawBotMode === 'disabled'
-        ? rawBotMode
-        : botEnabled ? 'bot_first' : 'disabled';
+      const botMode: BotMode =
+        rawBotMode === 'bot_first' ||
+        rawBotMode === 'bot_only' ||
+        rawBotMode === 'disabled'
+          ? rawBotMode
+          : botEnabled
+            ? 'bot_first'
+            : 'disabled';
 
       const result = {
         enabled: botEnabled,
@@ -424,7 +424,9 @@ export class InboundOrchestrationService {
         `[BOT-FLOW] Checking Level 2: Conversation bot override...`,
       );
       // Reuse caller's snapshot if available to avoid redundant DB read
-      const conversation = conversationSnapshot ?? await this.conversationRepo.findById(conversationId);
+      const conversation =
+        conversationSnapshot ??
+        (await this.conversationRepo.findById(conversationId));
       if (!conversation) {
         this.logger.warn(
           `[BOT-FLOW] ✗ SKIP — Conversation ${conversationId} NOT FOUND in DB, msg=${inboundMessageId}`,
@@ -577,7 +579,6 @@ export class InboundOrchestrationService {
     }
   }
 
-
   // ────────────────────────────────────────────────────────────────
   // Auto-Resolve Timer
   // ────────────────────────────────────────────────────────────────
@@ -718,7 +719,9 @@ export class InboundOrchestrationService {
       channelType,
       channelAccount,
     );
-    return botConfig.botMode === 'bot_first' || botConfig.botMode === 'bot_only';
+    return (
+      botConfig.botMode === 'bot_first' || botConfig.botMode === 'bot_only'
+    );
   }
 
   // ────────────────────────────────────────────────────────────────

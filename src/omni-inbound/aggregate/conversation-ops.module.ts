@@ -73,9 +73,7 @@ import { isWorkerRuntime, isOmniRuntime } from '../../config/runtime-role';
     // Worker runtime additionally processes BullMQ jobs via @Processor decorator
     ConversationOpsProcessor,
     // Outbox poller only needed in worker runtime
-    ...(isWorkerRuntime() || isOmniRuntime()
-      ? [OutboxPublisherService]
-      : []),
+    ...(isWorkerRuntime() || isOmniRuntime() ? [OutboxPublisherService] : []),
   ],
   exports: [ConversationCommandService, BullModule],
 })

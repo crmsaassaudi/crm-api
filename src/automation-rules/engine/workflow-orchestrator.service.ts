@@ -83,7 +83,12 @@ export class WorkflowOrchestratorService {
         this.executeInternal(workflow, payload),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
-            () => reject(new Error(`EXECUTION_TIMEOUT: Workflow "${workflow.name}" exceeded ${MAX_EXECUTION_TIMEOUT_MS}ms`)),
+            () =>
+              reject(
+                new Error(
+                  `EXECUTION_TIMEOUT: Workflow "${workflow.name}" exceeded ${MAX_EXECUTION_TIMEOUT_MS}ms`,
+                ),
+              ),
             MAX_EXECUTION_TIMEOUT_MS,
           );
         }),

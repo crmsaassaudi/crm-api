@@ -99,7 +99,7 @@ export class LivechatInboundBridge {
       });
       fileId = result.fileId;
       storageKey = result.storageKey;
-      
+
       this.eventEmitter.emit(LivechatEvents.VISITOR_UPLOAD_COMPLETED, {
         tenantId: payload.tenantId,
         visitorId: payload.visitorId,
@@ -197,22 +197,18 @@ export class LivechatInboundBridge {
 
     // Emit to visitor room — widget updates socket.data.conversationId
     // and can now include it in visitor:typing events
-    this.livechatGateway.server
-      ?.to(visitorRoom)
-      .emit('conversation:linked', {
-        conversationId: payload.conversationId,
-        visitorId,
-      });
+    this.livechatGateway.server?.to(visitorRoom).emit('conversation:linked', {
+      conversationId: payload.conversationId,
+      visitorId,
+    });
 
     // Push server-assigned messageId back to visitor widget.
     // Widget uses this to replace the client-generated ID with the real
     // MongoDB _id, ensuring reactions and read receipts use consistent IDs.
-    this.livechatGateway.server
-      ?.to(visitorRoom)
-      .emit('message:ack', {
-        externalMessageId: payload.externalMessageId ?? payload.messageId,
-        messageId: payload.internalMessageId,
-        conversationId: payload.conversationId,
-      });
+    this.livechatGateway.server?.to(visitorRoom).emit('message:ack', {
+      externalMessageId: payload.externalMessageId ?? payload.messageId,
+      messageId: payload.internalMessageId,
+      conversationId: payload.conversationId,
+    });
   }
 }

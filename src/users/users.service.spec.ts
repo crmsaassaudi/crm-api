@@ -29,7 +29,7 @@ describe('UsersService', () => {
     usersRepository = {
       create: jest
         .fn()
-        .mockImplementation((data) =>
+        .mockImplementation((data: any) =>
           Promise.resolve({ id: 'user_new', ...data }),
         ),
       findById: jest.fn().mockResolvedValue(null),
@@ -43,14 +43,15 @@ describe('UsersService', () => {
         .mockResolvedValue({ data: [], hasNextPage: false }),
       update: jest
         .fn()
-        .mockImplementation((id, data) =>
+        .mockImplementation((id: any, data: any) =>
           Promise.resolve({ id, ...data, tenants: [] }),
         ),
       remove: jest.fn().mockResolvedValue(undefined),
       upsertWithTenants: jest
         .fn()
-        .mockImplementation((_kcId, _email, _data, tenants) =>
-          Promise.resolve({ id: 'user_existing', tenants }),
+        .mockImplementation(
+          (_kcId: any, _email: any, _data: any, tenants: any) =>
+            Promise.resolve({ id: 'user_existing', tenants }),
         ),
       removeTenantMembership: jest
         .fn()
@@ -178,7 +179,13 @@ describe('UsersService', () => {
       usersRepository.findByEmail.mockResolvedValueOnce(
         createUser({
           keycloakId: 'kc_existing',
-          tenants: [{ tenantId: 'other_tenant', roles: ['MEMBER'] }],
+          tenants: [
+            {
+              tenantId: 'other_tenant',
+              roles: ['MEMBER'],
+              joinedAt: new Date(),
+            },
+          ],
         }),
       );
 
@@ -198,7 +205,9 @@ describe('UsersService', () => {
     it('should throw when user already belongs to tenant', async () => {
       usersRepository.findByEmail.mockResolvedValueOnce(
         createUser({
-          tenants: [{ tenantId: 'tenant_1', roles: ['MEMBER'] }],
+          tenants: [
+            { tenantId: 'tenant_1', roles: ['MEMBER'], joinedAt: new Date() },
+          ],
         }),
       );
 
@@ -267,7 +276,7 @@ describe('UsersService', () => {
     });
 
     it('should throw when tenant context is missing', async () => {
-      cls.get = jest.fn(() => undefined);
+      cls.get = jest.fn((_key: string) => undefined) as any;
 
       await expect(
         service.invite({ email: 'no-tenant@test.com' }),
@@ -296,8 +305,8 @@ describe('UsersService', () => {
       usersRepository.findById.mockResolvedValueOnce(
         createUser({
           tenants: [
-            { tenantId: 'tenant_1', roles: ['MEMBER'] },
-            { tenantId: 'tenant_2', roles: ['ADMIN'] },
+            { tenantId: 'tenant_1', roles: ['MEMBER'], joinedAt: new Date() },
+            { tenantId: 'tenant_2', roles: ['ADMIN'], joinedAt: new Date() },
           ],
         }),
       );
@@ -445,7 +454,13 @@ describe('UsersService', () => {
     it('should throw when user does not belong to current tenant', async () => {
       usersRepository.findById.mockResolvedValueOnce(
         createUser({
-          tenants: [{ tenantId: 'other_tenant', roles: ['MEMBER'] }],
+          tenants: [
+            {
+              tenantId: 'other_tenant',
+              roles: ['MEMBER'],
+              joinedAt: new Date(),
+            },
+          ],
         }),
       );
 
@@ -457,7 +472,9 @@ describe('UsersService', () => {
     it('should return groups when user belongs to tenant', async () => {
       usersRepository.findById.mockResolvedValueOnce(
         createUser({
-          tenants: [{ tenantId: 'tenant_1', roles: ['MEMBER'] }],
+          tenants: [
+            { tenantId: 'tenant_1', roles: ['MEMBER'], joinedAt: new Date() },
+          ],
         }),
       );
       groupRepository.findGroupsByMember.mockResolvedValueOnce([

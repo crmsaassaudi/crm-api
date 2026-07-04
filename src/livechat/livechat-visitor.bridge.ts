@@ -364,10 +364,8 @@ export class LivechatVisitorBridge {
       let visitorId = await this.getCachedVisitorId(event.conversationId);
 
       if (!visitorId) {
-        const conv = await runWithTenantContext(
-          this.cls,
-          event.tenantId,
-          () => this.conversationRepo.findById(event.conversationId),
+        const conv = await runWithTenantContext(this.cls, event.tenantId, () =>
+          this.conversationRepo.findById(event.conversationId),
         );
         if (!conv || conv.channelType !== 'livechat') return;
         visitorId = conv.externalConversationId;

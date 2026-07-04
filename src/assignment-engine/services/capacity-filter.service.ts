@@ -1,4 +1,10 @@
-import { Injectable, Logger, Optional, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  Optional,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection, Types } from 'mongoose';
 import { AgentPresenceService } from '../../omni-inbound/services/agent-presence.service';
@@ -76,7 +82,8 @@ export class CapacityFilterService {
 
   constructor(
     @InjectConnection() private readonly connection: Connection,
-    @Optional() @Inject(forwardRef(() => AgentPresenceService))
+    @Optional()
+    @Inject(forwardRef(() => AgentPresenceService))
     private readonly presenceService: AgentPresenceService | null,
     private readonly settingsService: CrmSettingsService,
   ) {}
@@ -165,7 +172,10 @@ export class CapacityFilterService {
 
     let requireOnline = false;
     try {
-      const cfg = await this.settingsService.getSetting('omni_presence', tenantId);
+      const cfg = await this.settingsService.getSetting(
+        'omni_presence',
+        tenantId,
+      );
       const requireMap = (cfg as any)?.requireOnlineForAssignment;
       if (requireMap && typeof requireMap[presenceKey] === 'boolean') {
         requireOnline = requireMap[presenceKey];

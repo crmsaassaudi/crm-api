@@ -4,7 +4,7 @@ describe('WhatsAppAdapter', () => {
   let adapter: WhatsAppAdapter;
 
   beforeEach(() => {
-    adapter = new WhatsAppAdapter();
+    adapter = new WhatsAppAdapter({ updateByName: jest.fn() } as any);
   });
 
   describe('channelType', () => {
@@ -33,7 +33,7 @@ describe('WhatsAppAdapter', () => {
         ],
       };
 
-      const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
+      const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
       expect(result.channelType).toBe('whatsapp');
       expect(result.senderId).toBe('wa_001');
@@ -66,7 +66,7 @@ describe('WhatsAppAdapter', () => {
         ],
       };
 
-      const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
+      const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
       expect(result.messageType).toBe('image');
       expect(result.content).toBe('Check this out!');
@@ -96,7 +96,7 @@ describe('WhatsAppAdapter', () => {
         ],
       };
 
-      const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
+      const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
       expect(result.messageType).toBe('file');
       expect(result.metadata.mediaId).toBe('media_doc_001');
@@ -123,7 +123,7 @@ describe('WhatsAppAdapter', () => {
         ],
       };
 
-      const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
+      const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
       expect(result.messageType).toBe('location');
       expect(result.content).toContain('Ho Chi Minh City');

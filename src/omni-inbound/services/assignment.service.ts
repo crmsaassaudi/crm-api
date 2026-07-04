@@ -26,10 +26,7 @@ import {
   RoutingContext,
 } from '../../routing-rules/routing-rule-evaluator.service';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
-import {
-  OmniEvents,
-  ConversationQueuedEvent,
-} from '../domain/omni-events';
+import { OmniEvents, ConversationQueuedEvent } from '../domain/omni-events';
 
 export type AssignmentStrategy =
   | 'round-robin'
@@ -97,7 +94,9 @@ export function mergeRoutingConfig(
   const c = channel ?? {};
   return {
     defaultStrategy:
-      c.defaultStrategy ?? (g.defaultStrategy as AssignmentStrategy) ?? 'round-robin',
+      c.defaultStrategy ??
+      (g.defaultStrategy as AssignmentStrategy) ??
+      'round-robin',
     defaultMaxCapacity:
       c.defaultMaxCapacity ?? g.defaultMaxCapacity ?? FALLBACK_MAX_CAPACITY,
     stickyRoutingEnabled:
@@ -107,7 +106,9 @@ export function mergeRoutingConfig(
     stickyWaitTimeMinutes:
       c.stickyWaitTimeMinutes ?? g.stickyWaitTimeMinutes ?? 0,
     fallbackStrategy:
-      c.fallbackStrategy ?? (g.fallbackStrategy as AssignmentStrategy) ?? 'round-robin',
+      c.fallbackStrategy ??
+      (g.fallbackStrategy as AssignmentStrategy) ??
+      'round-robin',
     skillBasedRoutingEnabled:
       c.skillBasedRoutingEnabled ?? g.skillBasedRoutingEnabled ?? false,
   };
@@ -283,7 +284,11 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       );
       const payload = JSON.stringify({
         agentId,
-        resolvedAt: (conv.resolvedAt ?? conv.updatedAt ?? new Date()).toString(),
+        resolvedAt: (
+          conv.resolvedAt ??
+          conv.updatedAt ??
+          new Date()
+        ).toString(),
       });
 
       const writes: Promise<unknown>[] = [];
@@ -1045,7 +1050,6 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     return this.presenceService.reserveAgentFromCandidates(tenantId, agents);
   }
 
-
   /**
    * Round-robin: use a Redis counter to cycle through the agent pool.
    */
@@ -1238,7 +1242,9 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
 
     const isReassign = !!previousAgentId;
     const reasonKey = newAgentId
-      ? (isReassign ? 'manualReassigned' : 'manualAssigned')
+      ? isReassign
+        ? 'manualReassigned'
+        : 'manualAssigned'
       : 'manualUnassigned';
 
     await this.writeAuditLog({

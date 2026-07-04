@@ -67,7 +67,14 @@ export class AgentReportService {
         acc.utilSum += a.utilization;
         return acc;
       },
-      { onlineMs: 0, availableMs: 0, handleMs: 0, handledCount: 0, occSum: 0, utilSum: 0 },
+      {
+        onlineMs: 0,
+        availableMs: 0,
+        handleMs: 0,
+        handledCount: 0,
+        occSum: 0,
+        utilSum: 0,
+      },
     );
     const n = agents.length || 1;
 
@@ -117,7 +124,10 @@ export class AgentReportService {
     // v1 uses the 4 locally-available metrics; SLA/CSAT integration is deferred,
     // so renormalize their weights over the available four.
     const wSum =
-      weights.occupancy + weights.availability + weights.handled + weights.aht || 1;
+      weights.occupancy +
+        weights.availability +
+        weights.handled +
+        weights.aht || 1;
 
     const scored: AgentRankingItem[] = eligible.map((a, i) => ({
       agentId: a.agentId,
@@ -217,7 +227,10 @@ export class AgentReportService {
     ]);
 
     // Pivot raw durations into a per-agent accumulator.
-    const acc = new Map<string, KpiDurations & { byChannel: Record<Channel, ChannelHandle> }>();
+    const acc = new Map<
+      string,
+      KpiDurations & { byChannel: Record<Channel, ChannelHandle> }
+    >();
     const ensure = (agentId: string) => {
       let v = acc.get(agentId);
       if (!v) {
@@ -331,7 +344,8 @@ export class AgentReportService {
       for (const u of users) {
         map.set(u.id.toString(), {
           name:
-            `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'Unknown Agent',
+            `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() ||
+            'Unknown Agent',
           email: u.email ?? 'no-email',
         });
       }

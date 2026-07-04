@@ -6,7 +6,10 @@ import {
   isAllClosed,
 } from './work-status';
 
-const rec = (open: Record<string, number>, wrapUpUntilMs?: number): WorkRecord => ({
+const rec = (
+  open: Record<string, number>,
+  wrapUpUntilMs?: number,
+): WorkRecord => ({
   open,
   wrapUpUntilMs,
 });
@@ -33,7 +36,9 @@ describe('computeWorkStatus priority (§2.4)', () => {
   });
 
   it('IN_CHAT beats ticket/email', () => {
-    expect(computeWorkStatus(rec({ 'chat:1': 1, 'email:2': 1 }), 100)).toBe('IN_CHAT');
+    expect(computeWorkStatus(rec({ 'chat:1': 1, 'email:2': 1 }), 100)).toBe(
+      'IN_CHAT',
+    );
   });
 
   it('IN_TICKET beats email', () => {

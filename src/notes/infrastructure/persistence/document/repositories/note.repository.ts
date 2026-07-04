@@ -67,9 +67,12 @@ export class NoteRepository extends BaseDocumentRepository<
       data: pageDocs.map((doc) => {
         // Extract author info from populated createdById before mapper converts it to string
         const populatedAuthor = doc.createdById as any;
-        const authorName = populatedAuthor?.firstName || populatedAuthor?.lastName
-          ? [populatedAuthor.firstName, populatedAuthor.lastName].filter(Boolean).join(' ')
-          : undefined;
+        const authorName =
+          populatedAuthor?.firstName || populatedAuthor?.lastName
+            ? [populatedAuthor.firstName, populatedAuthor.lastName]
+                .filter(Boolean)
+                .join(' ')
+            : undefined;
 
         const note = this.mapToDomain(doc);
         return { ...note, authorName };

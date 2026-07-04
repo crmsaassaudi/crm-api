@@ -63,9 +63,7 @@ export class ReactionService {
 
         // Path 1: Internal ID (MongoDB _id)
         if (payload.messageId && isValidObjectId(payload.messageId)) {
-          message = await this.messageModel
-            .findById(payload.messageId)
-            .exec();
+          message = await this.messageModel.findById(payload.messageId).exec();
         }
 
         // Path 2: External provider ID

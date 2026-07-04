@@ -132,7 +132,9 @@ describe('ConversationService Concurrency', () => {
         {
           provide: ConversationLifecycleService,
           useValue: {
-            toSchemaChannelType: jest.fn().mockImplementation((type: string) => type.toLowerCase()),
+            toSchemaChannelType: jest
+              .fn()
+              .mockImplementation((type: string) => type.toLowerCase()),
           },
         },
         { provide: IOREDIS_CLIENT, useValue: redisMock },
@@ -273,14 +275,16 @@ describe('ConversationService Concurrency', () => {
 
   it('should skip processing if E11000 is thrown during save', async () => {
     // Simulate race condition where the lock was slow and another worker saved it
-    lockServiceMock.acquire.mockImplementationOnce((key, ttl, cb) => {
-      void key;
-      void ttl;
-      void cb;
-      const err = new Error('Duplicate key');
-      (err as any).code = 11000;
-      throw err;
-    });
+    lockServiceMock.acquire.mockImplementationOnce(
+      (key: any, ttl: any, cb: any) => {
+        void key;
+        void ttl;
+        void cb;
+        const err = new Error('Duplicate key');
+        (err as any).code = 11000;
+        throw err;
+      },
+    );
 
     const payload = createPayload('msg_001');
     await service.handleInboundMessage(payload);

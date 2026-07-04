@@ -68,7 +68,7 @@ export class AssignmentEngineController {
   @RequirePermission('view', 'settings')
   @ApiOperation({ summary: 'List assignment rules (optional module filter)' })
   @ApiQuery({ name: 'module', required: false })
-  findAllRules(@Query('module') module?: string) {
+  findAllRules(@Query('module') module?: string): Promise<any[]> {
     return this.service.findAllRules(module);
   }
 
@@ -97,7 +97,7 @@ export class AssignmentEngineController {
   @Post('rules/reorder')
   @RequirePermission('manage_system', 'settings')
   @ApiOperation({ summary: 'Reorder assignment rules by priority' })
-  reorderRules(@Body() dto: ReorderRulesDto) {
+  reorderRules(@Body() dto: ReorderRulesDto): Promise<any[]> {
     return this.service.reorderRules(dto.orderedIds);
   }
 
@@ -129,7 +129,7 @@ export class AssignmentEngineController {
   @Get('skills')
   @RequirePermission('view', 'settings')
   @ApiOperation({ summary: 'List managed assignment skills' })
-  findAllSkills() {
+  findAllSkills(): Promise<any[]> {
     return this.service.findAllSkills();
   }
 

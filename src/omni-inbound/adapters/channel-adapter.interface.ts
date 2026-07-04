@@ -148,7 +148,12 @@ export interface ChannelAdapter {
       subtitle?: string;
       imageUrl?: string;
       defaultAction?: { type: string; url?: string };
-      buttons?: Array<{ id?: string; title: string; type?: string; url?: string }>;
+      buttons?: Array<{
+        id?: string;
+        title: string;
+        type?: string;
+        url?: string;
+      }>;
     }>,
     channelConfig: any,
   ): Promise<any>;

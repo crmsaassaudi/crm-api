@@ -17,7 +17,9 @@ export class CannedResponseMapper {
     return entity;
   }
 
-  static toPersistence(entity: CannedResponse): Partial<CannedResponseSchemaClass> {
+  static toPersistence(
+    entity: CannedResponse,
+  ): Partial<CannedResponseSchemaClass> {
     const p: any = {};
     if (entity.id) p._id = entity.id;
     p.tenantId = entity.tenantId;

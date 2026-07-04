@@ -365,8 +365,7 @@ export class AgentPresenceService {
 
   /** Build a fresh presence record from the canonical axes + connection info. */
   private buildPresence(
-    base: Partial<AgentPresence> &
-      Pick<AgentPresence, 'userId' | 'tenantId'>,
+    base: Partial<AgentPresence> & Pick<AgentPresence, 'userId' | 'tenantId'>,
   ): AgentPresence {
     return {
       userId: base.userId,
@@ -397,13 +396,14 @@ export class AgentPresenceService {
    */
   private async fireAuditIfChanged(
     presence: AgentPresence,
-    before: { presenceStatus: PresenceStatus; routingStatus: RoutingStatus } | null,
+    before: {
+      presenceStatus: PresenceStatus;
+      routingStatus: RoutingStatus;
+    } | null,
     trigger: StatusTransitionTrigger,
   ): Promise<void> {
     if (!this.statusTransitionCallback) return;
-    const fromStatus = before
-      ? before.presenceStatus.toLowerCase()
-      : 'offline';
+    const fromStatus = before ? before.presenceStatus.toLowerCase() : 'offline';
     const toStatus = presence.presenceStatus.toLowerCase();
     if (fromStatus === toStatus) return;
     try {
@@ -435,9 +435,11 @@ export class AgentPresenceService {
    */
   private async afterMutation(
     presence: AgentPresence,
-    before:
-      | { presenceStatus: PresenceStatus; routingStatus: RoutingStatus; workStatus: WorkStatus }
-      | null,
+    before: {
+      presenceStatus: PresenceStatus;
+      routingStatus: RoutingStatus;
+      workStatus: WorkStatus;
+    } | null,
     trigger: StatusTransitionTrigger,
   ): Promise<void> {
     await this.fireAuditIfChanged(presence, before, trigger);
@@ -527,7 +529,10 @@ export class AgentPresenceService {
       (await this.getPresence(tenantId, userId)) ??
       this.buildPresence({ userId, tenantId });
 
-    if (opts.clientTs !== undefined && isStaleCommand(opts.clientTs, existing.lastCommandTs)) {
+    if (
+      opts.clientTs !== undefined &&
+      isStaleCommand(opts.clientTs, existing.lastCommandTs)
+    ) {
       this.logger.debug(
         `Dropping stale presence command for ${userId} (clientTs=${opts.clientTs} < ${existing.lastCommandTs})`,
       );
@@ -552,12 +557,15 @@ export class AgentPresenceService {
         actor: opts.actor ?? 'agent',
         restoreAcceptingOnReturn: opts.restoreAcceptingOnReturn,
         wasAcceptingBeforeLeave:
-          opts.wasAcceptingBeforeLeave ?? existing.routingStatus === 'ACCEPTING',
+          opts.wasAcceptingBeforeLeave ??
+          existing.routingStatus === 'ACCEPTING',
       },
     );
 
     if (!result.ok) {
-      this.logger.warn(`Presence transition rejected for ${userId}: ${result.error}`);
+      this.logger.warn(
+        `Presence transition rejected for ${userId}: ${result.error}`,
+      );
       return existing;
     }
 
@@ -596,7 +604,10 @@ export class AgentPresenceService {
     const existing = await this.getPresence(tenantId, userId);
     if (!existing) return null;
 
-    if (opts.clientTs !== undefined && isStaleCommand(opts.clientTs, existing.lastCommandTs)) {
+    if (
+      opts.clientTs !== undefined &&
+      isStaleCommand(opts.clientTs, existing.lastCommandTs)
+    ) {
       return existing;
     }
 
@@ -615,7 +626,9 @@ export class AgentPresenceService {
     );
 
     if (!result.ok) {
-      this.logger.warn(`Routing change rejected for ${userId}: ${result.error}`);
+      this.logger.warn(
+        `Routing change rejected for ${userId}: ${result.error}`,
+      );
       return existing;
     }
 
@@ -652,7 +665,10 @@ export class AgentPresenceService {
       (await this.getPresence(tenantId, userId)) ??
       this.buildPresence({ userId, tenantId });
 
-    if (opts.clientTs !== undefined && isStaleCommand(opts.clientTs, existing.lastCommandTs)) {
+    if (
+      opts.clientTs !== undefined &&
+      isStaleCommand(opts.clientTs, existing.lastCommandTs)
+    ) {
       return existing;
     }
 
@@ -1069,7 +1085,11 @@ export class AgentPresenceService {
       const pipeline = client.pipeline();
       pipeline.hset(hashKey, userId, encoded);
       pipeline.zadd(loadKey, actual, userId);
-      pipeline.setex(agentPresenceKey(tenantId, userId), HEARTBEAT_TTL_SECONDS, encoded);
+      pipeline.setex(
+        agentPresenceKey(tenantId, userId),
+        HEARTBEAT_TTL_SECONDS,
+        encoded,
+      );
       await pipeline.exec();
 
       this.logger.log(
@@ -1218,7 +1238,11 @@ export class AgentPresenceService {
     if (!event?.tenantId || !event?.userId) return;
     try {
       if (event.skills !== undefined) {
-        await this.updateAgentSkills(event.tenantId, event.userId, event.skills);
+        await this.updateAgentSkills(
+          event.tenantId,
+          event.userId,
+          event.skills,
+        );
       }
       if (
         event.omniMaxCapacity !== undefined &&

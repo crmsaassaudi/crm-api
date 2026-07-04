@@ -88,12 +88,16 @@ export class CreateDealDto {
   @IsOptional()
   customFields?: Record<string, any>;
 
-  @ApiPropertyOptional({ description: 'Pipeline ObjectId (preferred over pipeline string)' })
+  @ApiPropertyOptional({
+    description: 'Pipeline ObjectId (preferred over pipeline string)',
+  })
   @IsString()
   @IsOptional()
   pipelineId?: string;
 
-  @ApiPropertyOptional({ description: 'Omni-conversation this deal was created from' })
+  @ApiPropertyOptional({
+    description: 'Omni-conversation this deal was created from',
+  })
   @IsString()
   @IsOptional()
   omniConversationId?: string;

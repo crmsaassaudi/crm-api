@@ -590,7 +590,10 @@ export class TicketReportService {
 
     // Ensure all 5 scores appear even if count=0
     const distMap = new Map<number, CsatDistributionItem>(
-      distribution.map((d) => [d.score as number, d as CsatDistributionItem]),
+      distribution.map((d: any) => [
+        d.score as number,
+        d as CsatDistributionItem,
+      ]),
     );
     const fullDistribution: CsatDistributionItem[] = [1, 2, 3, 4, 5].map(
       (score) => distMap.get(score) ?? { score, count: 0, percentage: 0 },

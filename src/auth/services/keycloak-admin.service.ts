@@ -360,7 +360,7 @@ export class KeycloakAdminService implements OnModuleInit {
       const links = await this.kcAdminClient.users.listFederatedIdentities({
         id: userId,
       });
-      return links.map((link) => ({
+      return links.map((link: any) => ({
         identityProvider: link.identityProvider!,
         userId: link.userId!,
         userName: link.userName!,
@@ -403,7 +403,7 @@ export class KeycloakAdminService implements OnModuleInit {
   ): Promise<{ id: string; name: string } | null> {
     return this.ensureClient(async () => {
       const groups = await this.kcAdminClient.groups.find({ search: name });
-      const group = groups.find((g) => g.name === name);
+      const group = groups.find((g: any) => g.name === name);
       if (group) {
         return { id: group.id!, name: group.name! };
       }

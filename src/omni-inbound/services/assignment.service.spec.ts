@@ -358,11 +358,7 @@ describe('AssignmentService', () => {
       // Must go through the atomic capacity reserve, NOT the old Mongo path.
       expect(
         presenceServiceMock.reserveCapacityBasedAgent,
-      ).toHaveBeenCalledWith(
-        'tenant_1',
-        ['agent_1', 'agent_2', 'agent_3'],
-        10,
-      );
+      ).toHaveBeenCalledWith('tenant_1', ['agent_1', 'agent_2', 'agent_3'], 10);
     });
 
     it('should queue conversation when all agents are at max capacity', async () => {
@@ -1047,9 +1043,7 @@ describe('AssignmentService', () => {
       });
 
       expect(result).toBe('agent_2');
-      expect(
-        presenceServiceMock.reserveCapacityBasedAgent,
-      ).toHaveBeenCalled();
+      expect(presenceServiceMock.reserveCapacityBasedAgent).toHaveBeenCalled();
       expect(auditLogRepoMock.create).toHaveBeenCalledWith(
         expect.objectContaining({ strategy: 'capacity-based' }),
       );

@@ -155,7 +155,13 @@ export class LoopPreventionService {
 
     // SET NX: returns 'OK' if the key was set (first execution),
     // null if the key already exists (already executed).
-    const result = await this.redis.set(key, '1', 'EX', this.RUN_ONCE_TTL, 'NX');
+    const result = await this.redis.set(
+      key,
+      '1',
+      'EX',
+      this.RUN_ONCE_TTL,
+      'NX',
+    );
 
     if (result !== 'OK') {
       this.logger.debug(

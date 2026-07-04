@@ -1213,7 +1213,8 @@ export class OmniController {
           reason: 'manual',
           performedByUserId,
           syncCapacity: {
-            releaseAgentId: (oldAgentId && oldAgentId !== agentId) ? oldAgentId : undefined,
+            releaseAgentId:
+              oldAgentId && oldAgentId !== agentId ? oldAgentId : undefined,
             assignAgentId: agentId ?? undefined,
           },
           auditLog: { channelType: conversation.channelType },
@@ -1258,20 +1259,21 @@ export class OmniController {
     const oldAgentId = conversation.assignedAgentId;
     const performedByUserId = this.cls.get<string>('userId') ?? null;
 
-    const operationId = await this.conversationCommandService.executeAssignAgent(
-      id,
-      conversation.tenantId,
-      {
-        agentId: null,
-        previousAgentId: oldAgentId,
-        reason: 'manual_unassign',
-        performedByUserId,
-        syncCapacity: {
-          releaseAgentId: oldAgentId ?? undefined,
+    const operationId =
+      await this.conversationCommandService.executeAssignAgent(
+        id,
+        conversation.tenantId,
+        {
+          agentId: null,
+          previousAgentId: oldAgentId,
+          reason: 'manual_unassign',
+          performedByUserId,
+          syncCapacity: {
+            releaseAgentId: oldAgentId ?? undefined,
+          },
+          auditLog: { channelType: conversation.channelType },
         },
-        auditLog: { channelType: conversation.channelType },
-      },
-    );
+      );
 
     this.logger.log(
       `Conversation ${id} unassigned by user=${performedByUserId}`,

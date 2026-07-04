@@ -62,7 +62,7 @@ describe('Auth Module', () => {
           .then(({ body }) =>
             body
               .find(
-                (letter) =>
+                (letter: any) =>
                   letter.to[0].address.toLowerCase() ===
                     newUserEmail.toLowerCase() &&
                   /.*confirm\-email\?hash\=(\S+).*/g.test(letter.text),
@@ -84,7 +84,7 @@ describe('Auth Module', () => {
           .then(({ body }) =>
             body
               .find(
-                (letter) =>
+                (letter: any) =>
                   letter.to[0].address.toLowerCase() ===
                     newUserEmail.toLowerCase() &&
                   /.*confirm\-email\?hash\=(\S+).*/g.test(letter.text),
@@ -120,7 +120,7 @@ describe('Auth Module', () => {
   });
 
   describe('Logged in user', () => {
-    let newUserApiToken;
+    let newUserApiToken: any;
 
     beforeAll(async () => {
       await request(app)
@@ -279,7 +279,7 @@ describe('Auth Module', () => {
         .get('/email')
         .then(({ body }) =>
           body
-            .find((letter) => {
+            .find((letter: any) => {
               return (
                 letter.to[0].address.toLowerCase() ===
                   newUserNewEmail.toLowerCase() &&

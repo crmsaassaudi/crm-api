@@ -115,17 +115,20 @@ async function main() {
   for (const spec of indexes) {
     try {
       const existing = await db.collection(spec.collection).indexes();
-      const conflict = existing.find((idx) => idx.name === spec.name);
+      const conflict = existing.find((idx: any) => idx.name === spec.name);
       if (conflict) {
         console.log(`[skip] ${spec.collection}.${spec.name} already exists`);
         skipped++;
         continue;
       }
-      await db.collection(spec.collection).createIndex(spec.key as any, {
-        name: spec.name,
-        background: true,
-        ...(spec.options ?? {}),
-      });
+      await db.collection(spec.collection).createIndex(
+        spec.key as any,
+        {
+          name: spec.name,
+          background: true,
+          ...(spec.options ?? {}),
+        } as any,
+      );
       console.log(`[ok]   ${spec.collection}.${spec.name}`);
       created++;
     } catch (err: any) {

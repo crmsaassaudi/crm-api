@@ -28,8 +28,11 @@ export class NotesService {
     data: CreateNoteDto,
   ): Promise<Note> {
     await this.ensureContact(contactId);
-    const title = data.title?.trim() ||
-      (data.content.length > 80 ? data.content.slice(0, 80) + '...' : data.content);
+    const title =
+      data.title?.trim() ||
+      (data.content.length > 80
+        ? data.content.slice(0, 80) + '...'
+        : data.content);
     const note = await this.repository.create({
       contactId,
       title,

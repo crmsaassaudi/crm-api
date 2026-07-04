@@ -449,7 +449,7 @@ export class AssignmentEngineService {
   //  CRUD: Rules
   // ════════════════════════════════════════════════════════════════════════
 
-  async findAllRules(module?: string) {
+  async findAllRules(module?: string): Promise<any[]> {
     const filter: any = { tenantId: this.tenantId };
     if (module) filter.module = module;
     return this.ruleModel.find(filter).sort({ priority: 1 }).lean().exec();
@@ -485,7 +485,7 @@ export class AssignmentEngineService {
       throw new NotFoundException('Assignment rule not found');
   }
 
-  async reorderRules(orderedIds: string[]) {
+  async reorderRules(orderedIds: string[]): Promise<any[]> {
     const ops = orderedIds.map((id, idx) => ({
       updateOne: {
         filter: { _id: id, tenantId: this.tenantId },
@@ -518,7 +518,7 @@ export class AssignmentEngineService {
   //  CRUD: Skills
   // ════════════════════════════════════════════════════════════════════════
 
-  async findAllSkills() {
+  async findAllSkills(): Promise<any[]> {
     return this.skillModel
       .find({ tenantId: this.tenantId })
       .sort({ category: 1, name: 1 })

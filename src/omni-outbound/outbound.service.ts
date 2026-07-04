@@ -1196,7 +1196,12 @@ export class OutboundService {
       title?: string;
       subtitle?: string;
       imageUrl?: string;
-      buttons?: Array<{ id?: string; title: string; type?: string; url?: string }>;
+      buttons?: Array<{
+        id?: string;
+        title: string;
+        type?: string;
+        url?: string;
+      }>;
     }>;
     source?: string;
     transport?: 'http' | 'socket';

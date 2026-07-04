@@ -82,7 +82,7 @@ export class OnboardingController {
   @ApiConflictResponse({ description: 'Email already registered' })
   async start(
     @Body() dto: OnboardingStartDto,
-    @Request() req,
+    @Request() req: any,
     @Res({ passthrough: true }) res: Response,
   ) {
     const { email, fullName, password } = dto;
@@ -204,7 +204,7 @@ export class OnboardingController {
   })
   @ApiOkResponse({ description: 'Onboarding session data' })
   @ApiNotFoundResponse({ description: 'No active onboarding session' })
-  async getContext(@Request() req) {
+  async getContext(@Request() req: any) {
     const userId = this.extractUserId(req);
     const session = await this.onboardingService.getSession(userId);
     if (!session) {
@@ -233,7 +233,7 @@ export class OnboardingController {
   })
   @ApiOkResponse({ description: 'Context updated' })
   @ApiNotFoundResponse({ description: 'No active onboarding session' })
-  async updateContext(@Request() req, @Body() dto: OnboardingContextDto) {
+  async updateContext(@Request() req: any, @Body() dto: OnboardingContextDto) {
     const userId = this.extractUserId(req);
     const session = await this.onboardingService.updateSession(userId, dto);
     return {
@@ -257,7 +257,7 @@ export class OnboardingController {
   @ApiOperation({ summary: 'Complete onboarding — queue tenant provisioning' })
   @ApiAcceptedResponse({ description: 'Provisioning job queued' })
   @ApiNotFoundResponse({ description: 'No active onboarding session' })
-  async complete(@Request() req) {
+  async complete(@Request() req: any) {
     const userId = this.extractUserId(req);
     const session = await this.onboardingService.getSession(userId);
     if (!session || !session.companyName) {
@@ -321,7 +321,7 @@ export class OnboardingController {
   @ApiNotFoundResponse({ description: 'Provisioning ID not found' })
   async getStatus(
     @Param('provisioningId') provisioningId: string,
-    @Request() req,
+    @Request() req: any,
     @Res({ passthrough: true }) res: Response,
   ) {
     const status =

@@ -1110,7 +1110,10 @@ export class RemoveTagExecutor implements ActionExecutor {
       this.logger.log(
         `[RemoveTag] No-op: none of [${rawTags.join(', ')}] found on ${recordType}(${recordId})`,
       );
-      return { success: true, output: { removedTags: [], remainingTags: existingTags } };
+      return {
+        success: true,
+        output: { removedTags: [], remainingTags: existingTags },
+      };
     }
 
     const result = await this.crmUpdate.updateField({
@@ -1175,7 +1178,10 @@ export class AddNoteExecutor implements ActionExecutor {
     if (!content.trim()) {
       return {
         success: false,
-        error: { code: 'EMPTY_NOTE', message: 'Note content is empty after interpolation' },
+        error: {
+          code: 'EMPTY_NOTE',
+          message: 'Note content is empty after interpolation',
+        },
       };
     }
 
@@ -1203,7 +1209,11 @@ export class AddNoteExecutor implements ActionExecutor {
 
         return {
           success: true,
-          output: { noteId: note.id, contactId, noteType: actionConfig.noteType || 'system' },
+          output: {
+            noteId: note.id,
+            contactId,
+            noteType: actionConfig.noteType || 'system',
+          },
         };
       } catch (err: any) {
         this.logger.error(`[AddNote] Failed: ${err.message}`, err.stack);
@@ -1228,7 +1238,12 @@ export class AddNoteExecutor implements ActionExecutor {
 
     return {
       success: true,
-      output: { fallback: true, recordType, recordId, noteType: actionConfig.noteType },
+      output: {
+        fallback: true,
+        recordType,
+        recordId,
+        noteType: actionConfig.noteType,
+      },
     };
   }
 }
@@ -1244,7 +1259,12 @@ export class CreateRecordExecutor implements ActionExecutor {
 
   /** Record type → service mapping, resolved lazily to avoid circular deps */
   private static readonly SUPPORTED_TYPES = new Set([
-    'Contact', 'Lead', 'Deal', 'Account', 'Ticket', 'Task',
+    'Contact',
+    'Lead',
+    'Deal',
+    'Account',
+    'Ticket',
+    'Task',
   ]);
 
   constructor(
@@ -1316,7 +1336,8 @@ export class CreateRecordExecutor implements ActionExecutor {
       this.logger.error(`[CreateRecord] Failed: ${err.message}`, err.stack);
 
       // Mongoose ValidationError → non-retryable
-      const retryable = err.name !== 'ValidationError' && err.name !== 'CastError';
+      const retryable =
+        err.name !== 'ValidationError' && err.name !== 'CastError';
       return {
         success: false,
         retryable,
@@ -1332,19 +1353,22 @@ export class CreateRecordExecutor implements ActionExecutor {
     switch (type) {
       case 'Contact':
       case 'Lead':
-        if (!this.contactsService) throw new Error('ContactsService not available');
+        if (!this.contactsService)
+          throw new Error('ContactsService not available');
         return this.contactsService.create(data as any);
       case 'Deal':
         if (!this.dealsService) throw new Error('DealsService not available');
         return this.dealsService.create(data as any);
       case 'Ticket':
-        if (!this.ticketsService) throw new Error('TicketsService not available');
+        if (!this.ticketsService)
+          throw new Error('TicketsService not available');
         return this.ticketsService.create(data as any);
       case 'Task':
         if (!this.tasksService) throw new Error('TasksService not available');
         return this.tasksService.create(data as any);
       case 'Account':
-        if (!this.accountsService) throw new Error('AccountsService not available');
+        if (!this.accountsService)
+          throw new Error('AccountsService not available');
         return this.accountsService.create(data as any);
       default:
         throw new Error(`Unsupported type: ${type}`);
@@ -1387,7 +1411,9 @@ export class HttpRequestExecutor implements ActionExecutor {
     // SSRF Guard
     const ssrfCheck = await this.ssrfGuard.validate(url);
     if (!ssrfCheck.safe) {
-      this.logger.warn(`[HttpRequest] SSRF BLOCKED: ${url} - ${ssrfCheck.reason}`);
+      this.logger.warn(
+        `[HttpRequest] SSRF BLOCKED: ${url} - ${ssrfCheck.reason}`,
+      );
       return {
         success: false,
         retryable: false,
@@ -1414,7 +1440,10 @@ export class HttpRequestExecutor implements ActionExecutor {
     if (Array.isArray(actionConfig.headers)) {
       for (const h of actionConfig.headers) {
         if (h.key && h.value) {
-          userHeaders[h.key] = this.templateEngine.interpolate(h.value, recordData);
+          userHeaders[h.key] = this.templateEngine.interpolate(
+            h.value,
+            recordData,
+          );
         }
       }
     }
@@ -1433,7 +1462,10 @@ export class HttpRequestExecutor implements ActionExecutor {
 
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), HTTP_REQUEST_HARD_TIMEOUT_MS);
+      const timer = setTimeout(
+        () => controller.abort(),
+        HTTP_REQUEST_HARD_TIMEOUT_MS,
+      );
 
       const fetchOptions: RequestInit = {
         method,
@@ -1487,10 +1519,15 @@ export class HttpRequestExecutor implements ActionExecutor {
       };
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        this.logger.warn(`[HttpRequest] TIMEOUT after ${HTTP_REQUEST_HARD_TIMEOUT_MS}ms: ${url}`);
+        this.logger.warn(
+          `[HttpRequest] TIMEOUT after ${HTTP_REQUEST_HARD_TIMEOUT_MS}ms: ${url}`,
+        );
         return {
           success: false,
-          error: { code: 'HTTP_TIMEOUT', message: `Request to ${url} timed out` },
+          error: {
+            code: 'HTTP_TIMEOUT',
+            message: `Request to ${url} timed out`,
+          },
         };
       }
 
@@ -1519,10 +1556,15 @@ export class HttpRequestExecutor implements ActionExecutor {
       }
 
       reader.cancel().catch(() => {});
-      const merged = new Uint8Array(Math.min(totalSize, HTTP_RESPONSE_MAX_BYTES));
+      const merged = new Uint8Array(
+        Math.min(totalSize, HTTP_RESPONSE_MAX_BYTES),
+      );
       let offset = 0;
       for (const chunk of chunks) {
-        const copyLen = Math.min(chunk.length, HTTP_RESPONSE_MAX_BYTES - offset);
+        const copyLen = Math.min(
+          chunk.length,
+          HTTP_RESPONSE_MAX_BYTES - offset,
+        );
         merged.set(chunk.subarray(0, copyLen), offset);
         offset += copyLen;
         if (offset >= HTTP_RESPONSE_MAX_BYTES) break;
@@ -1542,12 +1584,19 @@ export class HttpRequestExecutor implements ActionExecutor {
   private async applyResponseMapping(
     mappingStr: string,
     responseBody: string,
-    ctx: { tenantId: string; recordType: string; recordId: string; job: AutomationActionJobData },
+    ctx: {
+      tenantId: string;
+      recordType: string;
+      recordId: string;
+      job: AutomationActionJobData;
+    },
   ): Promise<Record<string, any>> {
     const result: Record<string, any> = {};
     try {
       const responseJson = JSON.parse(responseBody);
-      const lines = mappingStr.split('\n').filter((l) => l.includes('→') || l.includes('->'));
+      const lines = mappingStr
+        .split('\n')
+        .filter((l) => l.includes('→') || l.includes('->'));
 
       for (const line of lines) {
         const [srcPath, targetField] = line.split(/→|->/).map((s) => s.trim());
@@ -1603,12 +1652,18 @@ export class SendWhatsAppExecutor implements ActionExecutor {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
     const recipientField = actionConfig.recipientField || 'phones';
-    const phone = recordData[recipientField]?.[0] || recordData[recipientField] || recordData.phones?.[0];
+    const phone =
+      recordData[recipientField]?.[0] ||
+      recordData[recipientField] ||
+      recordData.phones?.[0];
 
     if (!phone) {
       return {
         success: false,
-        error: { code: 'NO_PHONE', message: `No phone found in field "${recipientField}"` },
+        error: {
+          code: 'NO_PHONE',
+          message: `No phone found in field "${recipientField}"`,
+        },
       };
     }
 
@@ -1620,7 +1675,10 @@ export class SendWhatsAppExecutor implements ActionExecutor {
     if (!templateName) {
       return {
         success: false,
-        error: { code: 'NO_TEMPLATE', message: 'WhatsApp template name is required' },
+        error: {
+          code: 'NO_TEMPLATE',
+          message: 'WhatsApp template name is required',
+        },
       };
     }
 
@@ -1659,12 +1717,18 @@ export class SendZnsExecutor implements ActionExecutor {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
     const recipientField = actionConfig.recipientField || 'phones';
-    const phone = recordData[recipientField]?.[0] || recordData[recipientField] || recordData.phones?.[0];
+    const phone =
+      recordData[recipientField]?.[0] ||
+      recordData[recipientField] ||
+      recordData.phones?.[0];
 
     if (!phone) {
       return {
         success: false,
-        error: { code: 'NO_PHONE', message: `No phone found in field "${recipientField}"` },
+        error: {
+          code: 'NO_PHONE',
+          message: `No phone found in field "${recipientField}"`,
+        },
       };
     }
 
@@ -1672,7 +1736,10 @@ export class SendZnsExecutor implements ActionExecutor {
     if (!templateId) {
       return {
         success: false,
-        error: { code: 'NO_TEMPLATE_ID', message: 'ZNS template ID is required' },
+        error: {
+          code: 'NO_TEMPLATE_ID',
+          message: 'ZNS template ID is required',
+        },
       };
     }
 
@@ -1734,7 +1801,9 @@ export class SendLivechatExecutor implements ActionExecutor {
     const conversationId =
       recordType === 'Conversation'
         ? recordId
-        : recordData.conversationId || recordData.omniConversationId || undefined;
+        : recordData.conversationId ||
+          recordData.omniConversationId ||
+          undefined;
 
     if (!conversationId) {
       return {
@@ -1755,7 +1824,10 @@ export class SendLivechatExecutor implements ActionExecutor {
     if (!message.trim()) {
       return {
         success: false,
-        error: { code: 'EMPTY_MESSAGE', message: 'Livechat message is empty after interpolation' },
+        error: {
+          code: 'EMPTY_MESSAGE',
+          message: 'Livechat message is empty after interpolation',
+        },
       };
     }
 
@@ -1768,7 +1840,11 @@ export class SendLivechatExecutor implements ActionExecutor {
       return {
         success: false,
         retryable: false,
-        error: { code: 'NO_EVENT_BUS', message: 'EventEmitter not injected — cannot deliver livechat message' },
+        error: {
+          code: 'NO_EVENT_BUS',
+          message:
+            'EventEmitter not injected — cannot deliver livechat message',
+        },
       };
     }
 
@@ -1782,7 +1858,10 @@ export class SendLivechatExecutor implements ActionExecutor {
         workflowId: job.workflowId,
       });
     } catch (err: any) {
-      this.logger.error(`[SendLivechat] Delivery failed: ${err.message}`, err.stack);
+      this.logger.error(
+        `[SendLivechat] Delivery failed: ${err.message}`,
+        err.stack,
+      );
       return {
         success: false,
         error: { code: 'LIVECHAT_DELIVERY_FAILED', message: err.message },
@@ -1837,7 +1916,8 @@ export class InternalNotificationExecutor implements ActionExecutor {
         // Team members are resolved by the notification consumer
         break;
       case 'specific':
-        if (actionConfig.specificUserId) recipientIds = [actionConfig.specificUserId];
+        if (actionConfig.specificUserId)
+          recipientIds = [actionConfig.specificUserId];
         break;
       case 'all_admins':
         // Resolved by the notification consumer (needs tenant user query)
@@ -1853,7 +1933,10 @@ export class InternalNotificationExecutor implements ActionExecutor {
       return {
         success: false,
         retryable: false,
-        error: { code: 'NO_EVENT_BUS', message: 'EventEmitter not injected — cannot send notification' },
+        error: {
+          code: 'NO_EVENT_BUS',
+          message: 'EventEmitter not injected — cannot send notification',
+        },
       };
     }
 
@@ -1873,7 +1956,10 @@ export class InternalNotificationExecutor implements ActionExecutor {
         },
       });
     } catch (err: any) {
-      this.logger.error(`[InternalNotification] Delivery failed: ${err.message}`, err.stack);
+      this.logger.error(
+        `[InternalNotification] Delivery failed: ${err.message}`,
+        err.stack,
+      );
       return {
         success: false,
         error: { code: 'NOTIFICATION_DELIVERY_FAILED', message: err.message },

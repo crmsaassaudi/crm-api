@@ -8,6 +8,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Inject } from '@nestjs/common';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
+import { logSwallowed } from '../../common/utils/log-swallowed';
 
 import { BaseTenantConsumer } from '../../queue/base-tenant.consumer';
 import { RedisLockService } from '../../redis/redis-lock.service';
@@ -86,11 +87,14 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
     const lockKey = `${CONV_OPS_LOCK_PREFIX}${cmd.conversationId}`;
 
     try {
-      await this.lockService.acquire(lockKey, CONV_OPS_LOCK_TTL_MS, async () => {
-        await this.processCommand(cmd);
-      });
+      await this.lockService.acquire(
+        lockKey,
+        CONV_OPS_LOCK_TTL_MS,
+        async () => {
+          await this.processCommand(cmd);
+        },
+      );
     } catch (error) {
-
       if (job.attemptsMade >= CONV_OPS_MAX_ATTEMPTS - 1) {
         const dlqPayload = {
           command: cmd,
@@ -136,7 +140,6 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       cmd.conversationId,
     );
 
-
     switch (cmd.type) {
       case 'CUSTOMER_MESSAGE':
         await this.handleCustomerMessage(
@@ -168,8 +171,6 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       default:
         this.logger.warn(`[CONV-OPS] Unknown command type: ${cmd.type}`);
     }
-
-
 
     const duration = Date.now() - startTime;
     this.logger.log(
@@ -316,9 +317,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         cmd.conversationId,
         conversationSnapshot?.assignedAgentId ?? null,
       )
-      .catch((err) =>
-        this.logOperationWarning(cmd, 'businessHoursCheck', err),
-      );
+      .catch((err) => this.logOperationWarning(cmd, 'businessHoursCheck', err));
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -342,9 +341,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
     // Resolve the afterTimestamp from the triggering inbound message
     let resolvedAfterTimestamp = afterTimestamp;
     if (!resolvedAfterTimestamp && inboundMessageId) {
-      const [inboundMsg] = await this.messageRepo.findByIds([
-        inboundMessageId,
-      ]);
+      const [inboundMsg] = await this.messageRepo.findByIds([inboundMessageId]);
       if (inboundMsg?.providerTimestamp) {
         resolvedAfterTimestamp = new Date(
           inboundMsg.providerTimestamp,
@@ -479,7 +476,8 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         tenantId: cmd.tenantId,
         conversationId: cmd.conversationId,
         channelType: conversation?.channelType,
-        channelAccount: conversation?.channelAccount ?? conversation?.channelId?.toString(),
+        channelAccount:
+          conversation?.channelAccount ?? conversation?.channelId?.toString(),
         contactId: conversation?.contactId ?? null,
       });
     }
@@ -501,7 +499,6 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
       syncCapacity,
       auditLog,
     } = cmd.payload;
-
 
     if (onlyIfUnassigned && agentId) {
       const committed = await this.conversationRepo.assignIfUnassigned(
@@ -550,18 +547,26 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         `group=${groupId} reason=${reason}`,
     );
 
-
     if (syncCapacity?.releaseAgentId) {
       this.agentPresenceService
         .releaseConversation(cmd.tenantId, syncCapacity.releaseAgentId)
-        .catch(() => {});
+        .catch(
+          logSwallowed(
+            this.logger,
+            `releaseConversation(${syncCapacity.releaseAgentId})`,
+          ),
+        );
     }
     if (syncCapacity?.assignAgentId) {
       this.agentPresenceService
         .assignConversation(cmd.tenantId, syncCapacity.assignAgentId)
-        .catch(() => {});
+        .catch(
+          logSwallowed(
+            this.logger,
+            `assignConversation(${syncCapacity.assignAgentId})`,
+          ),
+        );
     }
-
 
     if (auditLog?.channelType && agentId !== undefined) {
       if (reason === 'reply_auto_assign') {
@@ -572,7 +577,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
             agentId: agentId!,
             channelType: auditLog.channelType,
           })
-          .catch(() => {});
+          .catch(logSwallowed(this.logger, 'logReplyAutoAssignment'));
       } else {
         this.assignmentService
           .logManualAssignment({
@@ -583,7 +588,7 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
             performedByUserId: performedByUserId ?? null,
             channelType: auditLog.channelType,
           })
-          .catch(() => {});
+          .catch(logSwallowed(this.logger, 'logManualAssignment'));
       }
     }
   }
@@ -615,12 +620,8 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
         resolveSource ?? 'agent',
       );
     } else {
-      await this.conversationRepo.updateStatus(
-        cmd.conversationId,
-        newStatus,
-      );
+      await this.conversationRepo.updateStatus(cmd.conversationId, newStatus);
     }
-
 
     await this.saveAndPublishOutboxEvent(
       cmd.conversationId,
@@ -716,7 +717,11 @@ export class ConversationOpsProcessor extends BaseTenantConsumer<ConversationCom
     payload: Record<string, any>,
   ): Promise<void> {
     const outboxDoc = await this.outboxModel.create({
-      conversationId, tenantId, eventType, payload, status: 'pending',
+      conversationId,
+      tenantId,
+      eventType,
+      payload,
+      status: 'pending',
     });
 
     try {

@@ -39,16 +39,16 @@ const makeContact = (overrides: Partial<any> = {}) => ({
   ...overrides,
 });
 
-beforeAll(() => {
+beforeAll(async () => {
   connection = await setupTestDatabase();
   Contact = connection.model('Contact', ContactSchema);
 }, 30000);
 
-afterEach(() => {
+afterEach(async () => {
   await clearDatabase();
 });
 
-afterAll(() => {
+afterAll(async () => {
   await teardownTestDatabase();
 }, 10000);
 

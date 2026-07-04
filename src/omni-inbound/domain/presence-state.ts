@@ -113,7 +113,9 @@ export function computeCapacityStatus(
   return currentLoad >= maxLoad ? 'FULL' : 'OK';
 }
 
-export function isFull(state: Pick<AgentState, 'currentLoad' | 'maxLoad'>): boolean {
+export function isFull(
+  state: Pick<AgentState, 'currentLoad' | 'maxLoad'>,
+): boolean {
   return state.currentLoad >= state.maxLoad;
 }
 
@@ -128,7 +130,11 @@ export function isFull(state: Pick<AgentState, 'currentLoad' | 'maxLoad'>): bool
 export function isEligibleForRouting(
   state: Pick<
     AgentState,
-    'presenceStatus' | 'connectionStatus' | 'routingStatus' | 'currentLoad' | 'maxLoad'
+    | 'presenceStatus'
+    | 'connectionStatus'
+    | 'routingStatus'
+    | 'currentLoad'
+    | 'maxLoad'
   >,
 ): boolean {
   return (

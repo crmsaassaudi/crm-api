@@ -179,4 +179,3 @@ export interface UpdateBotStatePayload {
   reason: string; // 'agent_takeover' | 'agent_reenable' | 'bot_dispatch_error' | 'auto_init'
   agentId?: string;
 }
-

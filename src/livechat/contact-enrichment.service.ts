@@ -4,7 +4,10 @@ import { ContactsService } from '../contacts/contacts.service';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
 import { IdentityService } from '../omni-inbound/services/identity.service';
 import { LivechatWidgetService } from './livechat-widget.service';
-import { OmniEvents, LivechatVisitorIdentifiedEvent } from '../omni-inbound/domain/omni-events';
+import {
+  OmniEvents,
+  LivechatVisitorIdentifiedEvent,
+} from '../omni-inbound/domain/omni-events';
 
 /**
  * ContactEnrichmentService — maps pre-chat form data to CRM Contact entity.
@@ -55,11 +58,22 @@ export class ContactEnrichmentService {
    *   5. Ensure Conversation.contactId = Contact.id (1:1 link)
    *   6. Broadcast changes for CRM realtime update
    */
-  async enrichFromPreChat(event: LivechatVisitorIdentifiedEvent): Promise<void> {
-    const { tenantId, visitorId, channelId, widgetId, conversationId, identityData } = event;
+  async enrichFromPreChat(
+    event: LivechatVisitorIdentifiedEvent,
+  ): Promise<void> {
+    const {
+      tenantId,
+      visitorId,
+      channelId,
+      widgetId,
+      conversationId,
+      identityData,
+    } = event;
 
     if (!identityData || Object.keys(identityData).length === 0) {
-      this.logger.debug(`No identity data for visitor ${visitorId} — skipping enrichment`);
+      this.logger.debug(
+        `No identity data for visitor ${visitorId} — skipping enrichment`,
+      );
       return;
     }
 
@@ -75,18 +89,31 @@ export class ContactEnrichmentService {
       let contactId: string | null = null;
 
       if (conversationId) {
-        const conversation = await this.conversationRepo.findById(conversationId);
+        const conversation =
+          await this.conversationRepo.findById(conversationId);
         contactId = conversation?.contactId ?? null;
       }
 
       // ── Step 3a: If we already have a contactId, enrich it ──────────
       if (contactId) {
-        await this.enrichExistingContact(contactId, contactUpdate, email, phone);
-        this.logger.log(`Enriched existing Contact ${contactId} from pre-chat form`);
+        await this.enrichExistingContact(
+          contactId,
+          contactUpdate,
+          email,
+          phone,
+        );
+        this.logger.log(
+          `Enriched existing Contact ${contactId} from pre-chat form`,
+        );
       } else {
         // ── Step 3b: Search by email/phone dedup ──────────────────────
         contactId = await this.findOrCreateContact(
-          tenantId, visitorId, contactUpdate, email, phone, displayName,
+          tenantId,
+          visitorId,
+          contactUpdate,
+          email,
+          phone,
+          displayName,
         );
       }
 
@@ -103,7 +130,9 @@ export class ContactEnrichmentService {
 
         // Update identity cache
         await this.identityService.updateIdentity(
-          'livechat', channelId, visitorId,
+          'livechat',
+          channelId,
+          visitorId,
           { contactId, conversationId },
           tenantId,
         );
@@ -128,7 +157,9 @@ export class ContactEnrichmentService {
       // instead of creating a duplicate shadow contact.
       if (!conversationId && contactId) {
         await this.identityService.updateIdentity(
-          'livechat', channelId, visitorId,
+          'livechat',
+          channelId,
+          visitorId,
           { contactId, conversationId: null },
           tenantId,
         );
@@ -167,7 +198,9 @@ export class ContactEnrichmentService {
         return fields;
       }
     } catch {
-      this.logger.debug(`Widget ${widgetId} not found — using default mappings`);
+      this.logger.debug(
+        `Widget ${widgetId} not found — using default mappings`,
+      );
     }
 
     return this.getDefaultFieldMappings();
@@ -177,7 +210,10 @@ export class ContactEnrichmentService {
    * Default field mappings when widget config is unavailable.
    * Maps the 3 standard fields: name→firstName, email→emails, phone→phones.
    */
-  private getDefaultFieldMappings(): Array<{ key: string; contactField: string }> {
+  private getDefaultFieldMappings(): Array<{
+    key: string;
+    contactField: string;
+  }> {
     return [
       { key: 'name', contactField: 'firstName' },
       { key: 'email', contactField: 'emails' },
@@ -253,7 +289,8 @@ export class ContactEnrichmentService {
     // (for backward compatibility with forms that have standard keys)
     if (!email && identityData.email) email = String(identityData.email);
     if (!phone && identityData.phone) phone = String(identityData.phone);
-    if (!displayName && identityData.name) displayName = String(identityData.name);
+    if (!displayName && identityData.name)
+      displayName = String(identityData.name);
 
     if (Object.keys(customFieldsUpdate).length > 0) {
       contactUpdate.customFields = customFieldsUpdate;
@@ -342,19 +379,35 @@ export class ContactEnrichmentService {
         }
 
         // Update with form data
-        await this.enrichExistingContact(byEmail.id, contactUpdate, email, phone);
-        this.logger.log(`Merged visitor ${visitorId} into Contact ${byEmail.id} by email ${email}`);
+        await this.enrichExistingContact(
+          byEmail.id,
+          contactUpdate,
+          email,
+          phone,
+        );
+        this.logger.log(
+          `Merged visitor ${visitorId} into Contact ${byEmail.id} by email ${email}`,
+        );
         return byEmail.id;
       }
     }
 
     // Try dedup by senderId (livechat identity)
     const bySender = await this.contactsService.findBySenderId(
-      tenantId, 'livechat', visitorId,
+      tenantId,
+      'livechat',
+      visitorId,
     );
     if (bySender) {
-      await this.enrichExistingContact(bySender.id, contactUpdate, email, phone);
-      this.logger.log(`Enriched existing Contact ${bySender.id} for visitor ${visitorId}`);
+      await this.enrichExistingContact(
+        bySender.id,
+        contactUpdate,
+        email,
+        phone,
+      );
+      this.logger.log(
+        `Enriched existing Contact ${bySender.id} for visitor ${visitorId}`,
+      );
       return bySender.id;
     }
 
@@ -365,11 +418,15 @@ export class ContactEnrichmentService {
         ...nameParts,
         emails: email ? [email.toLowerCase()] : [],
         phones: phone ? [phone] : [],
-        ...(contactUpdate.companyName ? { companyName: contactUpdate.companyName } : {}),
+        ...(contactUpdate.companyName
+          ? { companyName: contactUpdate.companyName }
+          : {}),
         ...(contactUpdate.title ? { title: contactUpdate.title } : {}),
         ...(contactUpdate.role ? { role: contactUpdate.role } : {}),
         ...(contactUpdate.address ? { address: contactUpdate.address } : {}),
-        ...(contactUpdate.customFields ? { customFields: contactUpdate.customFields } : {}),
+        ...(contactUpdate.customFields
+          ? { customFields: contactUpdate.customFields }
+          : {}),
         isShadow: !email && !phone,
         omniIdentities: [{ channelType: 'livechat', senderId: visitorId }],
       } as any);
@@ -379,7 +436,9 @@ export class ContactEnrichmentService {
       );
       return newContact.id;
     } catch (err: any) {
-      this.logger.error(`Failed to create Contact for visitor ${visitorId}: ${err.message}`);
+      this.logger.error(
+        `Failed to create Contact for visitor ${visitorId}: ${err.message}`,
+      );
       return null;
     }
   }
@@ -387,7 +446,10 @@ export class ContactEnrichmentService {
   /**
    * Split a full name string into firstName + lastName.
    */
-  private splitName(fullName: string): { firstName: string; lastName?: string } {
+  private splitName(fullName: string): {
+    firstName: string;
+    lastName?: string;
+  } {
     const parts = fullName.trim().split(/\s+/);
     if (parts.length === 1) {
       return { firstName: parts[0] };

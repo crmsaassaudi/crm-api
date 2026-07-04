@@ -31,9 +31,19 @@ describe('diffSegments', () => {
       work: { value: 'IDLE', startAtMs: 1_000 },
     };
     // agent presses Ready at t=3000 → routing changes, others unchanged
-    const { closed, next } = diffSegments(open, snap({ routingStatus: 'ACCEPTING' }), 3_000);
+    const { closed, next } = diffSegments(
+      open,
+      snap({ routingStatus: 'ACCEPTING' }),
+      3_000,
+    );
     expect(closed).toEqual([
-      { axis: 'routing', value: 'NOT_ACCEPTING', startAtMs: 1_000, endAtMs: 3_000, durationMs: 2_000 },
+      {
+        axis: 'routing',
+        value: 'NOT_ACCEPTING',
+        startAtMs: 1_000,
+        endAtMs: 3_000,
+        durationMs: 2_000,
+      },
     ]);
     expect(next.routing).toEqual({ value: 'ACCEPTING', startAtMs: 3_000 });
     expect(next.presence).toEqual(open.presence); // untouched
@@ -45,11 +55,21 @@ describe('diffSegments', () => {
       routing: { value: 'ACCEPTING', startAtMs: 1_000 },
       work: { value: 'IN_CHAT', startAtMs: 2_000 },
     };
-    const { closed, next } = diffSegments(open, snap({ presenceStatus: 'OFFLINE' }), 5_000);
+    const { closed, next } = diffSegments(
+      open,
+      snap({ presenceStatus: 'OFFLINE' }),
+      5_000,
+    );
     expect(next).toEqual({});
     expect(closed).toHaveLength(3);
     const work = closed.find((c) => c.axis === 'work')!;
-    expect(work).toEqual({ axis: 'work', value: 'IN_CHAT', startAtMs: 2_000, endAtMs: 5_000, durationMs: 3_000 });
+    expect(work).toEqual({
+      axis: 'work',
+      value: 'IN_CHAT',
+      startAtMs: 2_000,
+      endAtMs: 5_000,
+      durationMs: 3_000,
+    });
   });
 
   it('no-op when nothing changed (idempotent heartbeat)', () => {

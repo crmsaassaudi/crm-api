@@ -15,7 +15,9 @@ export class EmailTemplateMapper {
     return entity;
   }
 
-  static toPersistence(entity: EmailTemplate): Partial<EmailTemplateSchemaClass> {
+  static toPersistence(
+    entity: EmailTemplate,
+  ): Partial<EmailTemplateSchemaClass> {
     const p: any = {};
     if (entity.id) p._id = entity.id;
     p.tenantId = entity.tenantId;

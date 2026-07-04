@@ -529,9 +529,7 @@ export class LivechatEmbedController {
       rawMessages.map(async (msg: any) => {
         const mediaFileId = msg.metadata?.media?.fileId;
         if (mediaFileId) {
-          const file = fileMap.get(
-            mediaFileId.toString?.() ?? mediaFileId,
-          );
+          const file = fileMap.get(mediaFileId.toString?.() ?? mediaFileId);
           if (file?.path) {
             try {
               const url = await this.filesService.getPresignedDownloadUrl(

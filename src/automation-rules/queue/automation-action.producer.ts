@@ -51,10 +51,22 @@ export class AutomationActionProducer {
     };
 
     const allActionTypes = [
-      'send_email', 'send_sms', 'update_field', 'route_to_team', 'webhook',
-      'create_task', 'create_ticket', 'add_tag', 'remove_tag', 'add_note',
-      'create_record', 'http_request', 'send_whatsapp', 'send_zns',
-      'send_livechat', 'internal_notification',
+      'send_email',
+      'send_sms',
+      'update_field',
+      'route_to_team',
+      'webhook',
+      'create_task',
+      'create_ticket',
+      'add_tag',
+      'remove_tag',
+      'add_note',
+      'create_record',
+      'http_request',
+      'send_whatsapp',
+      'send_zns',
+      'send_livechat',
+      'internal_notification',
     ];
 
     this.queueMap = new Map<string, Queue>();

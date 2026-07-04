@@ -99,10 +99,17 @@ export class AgentPresenceGateway {
       ctx.userId,
       data.presenceStatus,
       'agent_manual',
-      { actor: 'agent', clientTs: data.clientTs, restoreAcceptingOnReturn: restore },
+      {
+        actor: 'agent',
+        clientTs: data.clientTs,
+        restoreAcceptingOnReturn: restore,
+      },
     );
     if (presence) this.broadcastStatus(ctx.tenantId, ctx.userId, presence);
-    return { ok: !!presence, presence: presence ? this.toWire(ctx.userId, presence) : null };
+    return {
+      ok: !!presence,
+      presence: presence ? this.toWire(ctx.userId, presence) : null,
+    };
   }
 
   /** Ready toggle: ACCEPTING | NOT_ACCEPTING. */
@@ -122,7 +129,10 @@ export class AgentPresenceGateway {
       { clientTs: data.clientTs },
     );
     if (presence) this.broadcastStatus(ctx.tenantId, ctx.userId, presence);
-    return { ok: !!presence, presence: presence ? this.toWire(ctx.userId, presence) : null };
+    return {
+      ok: !!presence,
+      presence: presence ? this.toWire(ctx.userId, presence) : null,
+    };
   }
 
   @SubscribeMessage('agent:heartbeat')
@@ -165,7 +175,9 @@ export class AgentPresenceGateway {
     this.broadcastStatus(tenantId, userId, presence);
 
     // Authoritative sync directly to the connecting socket (page-reload fix).
-    this.server.to(socketId).emit('agent:status:sync', this.toWire(userId, presence));
+    this.server
+      .to(socketId)
+      .emit('agent:status:sync', this.toWire(userId, presence));
     this.logger.debug(
       `Sent agent:status:sync to ${userId} (presence=${presence.presenceStatus})`,
     );
@@ -176,11 +188,13 @@ export class AgentPresenceGateway {
     );
 
     // P0 self-heal: reconcile Redis counter vs MongoDB on every connect.
-    this.reconciliationService.reconcileAgent(tenantId, userId).catch((err) =>
-      this.logger.error(
-        `Reconcile failed on connect for agent ${userId}: ${err.message}`,
-      ),
-    );
+    this.reconciliationService
+      .reconcileAgent(tenantId, userId)
+      .catch((err) =>
+        this.logger.error(
+          `Reconcile failed on connect for agent ${userId}: ${err.message}`,
+        ),
+      );
   }
 
   async onAgentDisconnected(
@@ -213,14 +227,20 @@ export class AgentPresenceGateway {
 
   // ─── Grace Period Management ────────────────────────────────────────
 
-  private async startGraceTimer(tenantId: string, userId: string): Promise<void> {
+  private async startGraceTimer(
+    tenantId: string,
+    userId: string,
+  ): Promise<void> {
     const timerKey = `${tenantId}:${userId}`;
     this.cancelGraceTimer(tenantId, userId);
 
     // Phase 2.5: read grace period from tenant settings, fallback to hardcoded constant
     let gracePeriodMs = GRACE_PERIOD_MS;
     try {
-      const cfg = await this.settingsService.getSetting('omni_presence', tenantId);
+      const cfg = await this.settingsService.getSetting(
+        'omni_presence',
+        tenantId,
+      );
       const graceSec = (cfg as any)?.gracePeriodSeconds;
       if (typeof graceSec === 'number' && graceSec > 0) {
         gracePeriodMs = graceSec * 1000;
@@ -266,9 +286,7 @@ export class AgentPresenceGateway {
 
   // ─── Helpers ────────────────────────────────────────────────────────
 
-  private ctxOf(
-    client: Socket,
-  ): { tenantId: string; userId: string } | null {
+  private ctxOf(client: Socket): { tenantId: string; userId: string } | null {
     const user = client.data.user;
     if (!user) return null;
     const tenantId = client.data.tenantId;
@@ -288,7 +306,10 @@ export class AgentPresenceGateway {
       userId,
       // legacy contract (current frontend)
       status: presence.status,
-      intentStatus: toLegacyIntent(presence.presenceStatus, presence.routingStatus),
+      intentStatus: toLegacyIntent(
+        presence.presenceStatus,
+        presence.routingStatus,
+      ),
       connectionStatus: presence.connectionStatus.toLowerCase(),
       // legacy `routingStatus` means CAPACITY for the current frontend: accept | full
       routingStatus: presence.capacityStatus === 'FULL' ? 'full' : 'accept',
@@ -324,7 +345,9 @@ export class AgentPresenceGateway {
     }
   }
 
-  private async getRestoreAcceptingOnReturn(tenantId: string): Promise<boolean> {
+  private async getRestoreAcceptingOnReturn(
+    tenantId: string,
+  ): Promise<boolean> {
     try {
       const config = await this.settingsService.getSetting(
         'omni_presence',

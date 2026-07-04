@@ -44,15 +44,33 @@ import { AutomationDlqProducer } from './automation-dlq.producer';
 export class ActionProcessorMixin {
   /** Hoisted to static to avoid re-allocation on every job validation. */
   private static readonly VALID_ACTIONS = new Set([
-    'send_email', 'send_sms', 'update_field', 'route_to_team', 'webhook',
-    'create_task', 'create_ticket', 'add_tag', 'remove_tag', 'add_note',
-    'create_record', 'http_request', 'send_whatsapp', 'send_zns',
-    'send_livechat', 'internal_notification',
+    'send_email',
+    'send_sms',
+    'update_field',
+    'route_to_team',
+    'webhook',
+    'create_task',
+    'create_ticket',
+    'add_tag',
+    'remove_tag',
+    'add_note',
+    'create_record',
+    'http_request',
+    'send_whatsapp',
+    'send_zns',
+    'send_livechat',
+    'internal_notification',
   ]);
 
   private static readonly VALID_RECORD_TYPES = new Set([
-    'Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task',
-    'Conversation', 'Message',
+    'Lead',
+    'Contact',
+    'Ticket',
+    'Deal',
+    'Account',
+    'Task',
+    'Conversation',
+    'Message',
   ]);
 
   constructor(
@@ -114,7 +132,9 @@ export class ActionProcessorMixin {
       return `unknown actionType "${data.actionType}"`;
     }
 
-    if (!ActionProcessorMixin.VALID_RECORD_TYPES.has(data.recordType as string)) {
+    if (
+      !ActionProcessorMixin.VALID_RECORD_TYPES.has(data.recordType as string)
+    ) {
       return `unknown recordType "${data.recordType}"`;
     }
 

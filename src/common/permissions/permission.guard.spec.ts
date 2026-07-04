@@ -59,7 +59,7 @@ describe('PermissionGuard', () => {
       resource: 'contacts',
     });
     // Override CLS to have no userId
-    cls.get = jest.fn(() => undefined);
+    cls.get = jest.fn((_key: string) => undefined) as any;
 
     const context = createContext(null);
     const result = await guard.canActivate(context);

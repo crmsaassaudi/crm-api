@@ -558,7 +558,6 @@ export class ActivityService {
     );
   }
 
-
   // ─── Helpers ────────────────────────────────────────────────────
 
   private async log(

@@ -65,7 +65,7 @@ export class AuthController {
   @HttpCode(HttpStatus.FOUND)
   @ApiOperation({ summary: 'Handle Keycloak OAuth callback' })
   async callback(
-    @Request() req,
+    @Request() req: any,
     @Query('code') code: string,
     @Query('state') state: string,
     @Res() res: Response,
@@ -104,7 +104,10 @@ export class AuthController {
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Silent token refresh using session cookie' })
-  async refresh(@Request() req, @Res({ passthrough: true }) res: Response) {
+  async refresh(
+    @Request() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const sidCandidates = this.getSidCandidates(req);
     if (sidCandidates.length === 0) {
       throw new UnauthorizedException('No session cookie');
@@ -129,7 +132,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Logout: clear session, cookie, and Keycloak IdP session',
   })
-  async logout(@Request() req, @Res({ passthrough: true }) res: Response) {
+  async logout(@Request() req: any, @Res({ passthrough: true }) res: Response) {
     for (const sid of this.getSidCandidates(req)) {
       await this.service.logout(sid).catch(() => undefined);
     }
@@ -142,7 +145,7 @@ export class AuthController {
   @Get('me')
   @ApiOkResponse({ type: User })
   @HttpCode(HttpStatus.OK)
-  public async me(@Request() req): Promise<NullableType<User>> {
+  public async me(@Request() req: any): Promise<NullableType<User>> {
     return this.service.me(req.user);
   }
 
@@ -150,7 +153,7 @@ export class AuthController {
   @Get('tenants')
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: Tenant, isArray: true })
-  public async myTenants(@Request() req): Promise<Tenant[]> {
+  public async myTenants(@Request() req: any): Promise<Tenant[]> {
     return this.service.myTenants(req.user);
   }
 
@@ -160,7 +163,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: User })
   public update(
-    @Request() request,
+    @Request() request: any,
     @Body() userDto: AuthUpdateDto,
   ): Promise<NullableType<User>> {
     return this.service.update(request.user, userDto);
@@ -169,7 +172,7 @@ export class AuthController {
   @ApiBearerAuth()
   @Delete('me')
   @HttpCode(HttpStatus.NO_CONTENT)
-  public async delete(@Request() request): Promise<void> {
+  public async delete(@Request() request: any): Promise<void> {
     return this.service.softDelete(request.user);
   }
 

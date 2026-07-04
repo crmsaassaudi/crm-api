@@ -95,7 +95,7 @@ describe('TenantRolesGuard', () => {
   // TENANT ISOLATION — no tenantId in CLS
   // ═══════════════════════════════════════════════════════════════════
   it('should deny when no tenantId in CLS context', async () => {
-    cls.get = jest.fn(() => undefined);
+    cls.get = jest.fn((_key: string) => undefined) as any;
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(
       createUser({ platformRole: null }),
     );
@@ -111,7 +111,9 @@ describe('TenantRolesGuard', () => {
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(
       createUser({
         platformRole: null,
-        tenants: [{ tenantId: 'OTHER_TENANT', roles: ['ADMIN'] }],
+        tenants: [
+          { tenantId: 'OTHER_TENANT', roles: ['ADMIN'], joinedAt: new Date() },
+        ],
       }),
     );
     const context = createContext([TenantRoleEnum.ADMIN]);
@@ -126,7 +128,9 @@ describe('TenantRolesGuard', () => {
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(
       createUser({
         platformRole: null,
-        tenants: [{ tenantId: 'tenant_1', roles: ['ADMIN'] }],
+        tenants: [
+          { tenantId: 'tenant_1', roles: ['ADMIN'], joinedAt: new Date() },
+        ],
       }),
     );
     const context = createContext([TenantRoleEnum.ADMIN]);
@@ -138,7 +142,9 @@ describe('TenantRolesGuard', () => {
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(
       createUser({
         platformRole: null,
-        tenants: [{ tenantId: 'tenant_1', roles: ['MEMBER'] }],
+        tenants: [
+          { tenantId: 'tenant_1', roles: ['MEMBER'], joinedAt: new Date() },
+        ],
       }),
     );
     const context = createContext([
@@ -153,7 +159,9 @@ describe('TenantRolesGuard', () => {
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(
       createUser({
         platformRole: null,
-        tenants: [{ tenantId: 'tenant_1', roles: ['VIEWER'] }],
+        tenants: [
+          { tenantId: 'tenant_1', roles: ['VIEWER'], joinedAt: new Date() },
+        ],
       }),
     );
     const context = createContext([TenantRoleEnum.ADMIN, TenantRoleEnum.OWNER]);
@@ -169,7 +177,7 @@ describe('TenantRolesGuard', () => {
       createUser({
         platformRole: null,
         tenants: [
-          { tenantId: 'tenant_2', roles: ['ADMIN'] },
+          { tenantId: 'tenant_2', roles: ['ADMIN'], joinedAt: new Date() },
           // No membership in tenant_1
         ],
       }),

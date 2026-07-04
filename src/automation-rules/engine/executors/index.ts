@@ -10,10 +10,7 @@
  */
 
 // ── Interfaces ──────────────────────────────────────────────────────────────
-export {
-  ActionExecutor,
-  ActionExecutionResult,
-} from './executor.interface';
+export { ActionExecutor, ActionExecutionResult } from './executor.interface';
 
 // ── Executor Implementations ────────────────────────────────────────────────
 export {

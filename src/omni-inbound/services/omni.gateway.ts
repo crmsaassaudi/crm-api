@@ -20,6 +20,7 @@ import { SessionService } from '../../auth/services/session.service';
 import { TenantsService } from '../../tenants/tenants.service';
 import { UsersService } from '../../users/users.service';
 import { jwtDecode } from 'jwt-decode';
+// @ts-ignore -- cookie@0.x does not ship type declarations
 import * as cookie from 'cookie';
 import { ConfigService } from '@nestjs/config';
 import { AllConfigType } from '../../config/config.type';
@@ -692,7 +693,12 @@ export class OmniGateway
     data: {
       conversationId: string;
       body: string;
-      buttons: Array<{ id?: string; title: string; type?: string; url?: string }>;
+      buttons: Array<{
+        id?: string;
+        title: string;
+        type?: string;
+        url?: string;
+      }>;
       tempId?: string;
       idempotencyKey?: string;
       clientMessageId?: string;
@@ -781,7 +787,12 @@ export class OmniGateway
         title?: string;
         subtitle?: string;
         imageUrl?: string;
-        buttons?: Array<{ id?: string; title: string; type?: string; url?: string }>;
+        buttons?: Array<{
+          id?: string;
+          title: string;
+          type?: string;
+          url?: string;
+        }>;
       }>;
       tempId?: string;
       idempotencyKey?: string;
@@ -1604,7 +1615,9 @@ export class OmniGateway
         const users = await this.usersService.findByIdsGlobal([event.agentId]);
         const u = users[0];
         agentName = u
-          ? ([u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.email || null)
+          ? [u.firstName, u.lastName].filter(Boolean).join(' ').trim() ||
+            u.email ||
+            null
           : null;
       } catch {
         agentName = null;
@@ -1640,10 +1653,7 @@ export class OmniGateway
   }
 
   @OnEvent('omni.bot.enabled')
-  handleBotEnabled(event: {
-    tenantId: string;
-    conversationId: string;
-  }) {
+  handleBotEnabled(event: { tenantId: string; conversationId: string }) {
     this.server
       .to(`tenant:${event.tenantId}`)
       .emit('omni:conversation:bot_state', {

@@ -305,8 +305,9 @@ export class FileManagementController {
     const enrichedData = await Promise.all(
       result.data.map(async (file) => {
         try {
-          const downloadUrl =
-            await this.filesService.getPresignedDownloadUrl(file.path);
+          const downloadUrl = await this.filesService.getPresignedDownloadUrl(
+            file.path,
+          );
           const thumbnailUrl = file.thumbnailKey
             ? await this.filesService.getPresignedDownloadUrl(file.thumbnailKey)
             : undefined;
@@ -577,8 +578,9 @@ export class FileManagementController {
     const enrichedData = await Promise.all(
       result.data.map(async (file) => {
         try {
-          const downloadUrl =
-            await this.filesService.getPresignedDownloadUrl(file.path);
+          const downloadUrl = await this.filesService.getPresignedDownloadUrl(
+            file.path,
+          );
           const thumbnailUrl = file.thumbnailKey
             ? await this.filesService.getPresignedDownloadUrl(file.thumbnailKey)
             : undefined;

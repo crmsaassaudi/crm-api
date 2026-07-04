@@ -119,10 +119,7 @@ export class AssignmentAuditLogRepository {
   /**
    * Find audit logs for a tenant, sorted by most recent.
    */
-  async findByTenant(
-    tenantId: string,
-    limit = 50,
-  ): Promise<AuditLogEntry[]> {
+  async findByTenant(tenantId: string, limit = 50): Promise<AuditLogEntry[]> {
     const docs = await this.model
       .find({ tenantId })
       .sort({ createdAt: -1 })
@@ -152,7 +149,7 @@ export class AssignmentAuditLogRepository {
     const docs = await this.model
       .find(query)
       .sort({ createdAt: -1 }) // newest first
-      .limit(limit + 1)        // fetch one extra to detect hasMore
+      .limit(limit + 1) // fetch one extra to detect hasMore
       .lean()
       .exec();
 
@@ -161,12 +158,11 @@ export class AssignmentAuditLogRepository {
 
     const entries = docs.map((d) => this.toDto(d));
     const nextCursor = hasMore
-      ? entries[entries.length - 1].createdAt  // ISO string of oldest in page
+      ? entries[entries.length - 1].createdAt // ISO string of oldest in page
       : null;
 
     return { entries, nextCursor };
   }
-
 
   /**
    * Find audit logs for a specific agent.

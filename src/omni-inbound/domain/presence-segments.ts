@@ -14,7 +14,11 @@ import { PresenceStatus, RoutingStatus, WorkStatus } from './presence-state';
 
 export type SegmentAxis = 'presence' | 'routing' | 'work';
 
-export const SEGMENT_AXES: readonly SegmentAxis[] = ['presence', 'routing', 'work'];
+export const SEGMENT_AXES: readonly SegmentAxis[] = [
+  'presence',
+  'routing',
+  'work',
+];
 
 /** An open segment held in Redis: the current value + when it started. */
 export interface OpenSegment {
@@ -51,7 +55,11 @@ const axisValue = (snap: AxisSnapshot, axis: SegmentAxis): string => {
   }
 };
 
-const close = (axis: SegmentAxis, open: OpenSegment, endAtMs: number): ClosedSegment => ({
+const close = (
+  axis: SegmentAxis,
+  open: OpenSegment,
+  endAtMs: number,
+): ClosedSegment => ({
   axis,
   value: open.value,
   startAtMs: open.startAtMs,

@@ -33,7 +33,9 @@ describe('ContactEnrichmentService', () => {
       findByEmail: jest.fn().mockResolvedValue(null),
       findByPhone: jest.fn().mockResolvedValue(null),
       findBySenderId: jest.fn().mockResolvedValue(null),
-      create: jest.fn().mockResolvedValue({ id: 'contact_new', _id: 'contact_new' }),
+      create: jest
+        .fn()
+        .mockResolvedValue({ id: 'contact_new', _id: 'contact_new' }),
       update: jest.fn().mockResolvedValue(undefined),
       mergeIdentity: jest.fn().mockResolvedValue(undefined),
     };
@@ -73,66 +75,84 @@ describe('ContactEnrichmentService', () => {
     ) => svc.buildContactUpdate(identityData, fieldMappings);
 
     it('should detect email by contactField "emails", not by key name', () => {
-      const result = callBuildContactUpdate(service, {
-        lien_he: 'test@example.com',
-      }, [
-        { key: 'lien_he', contactField: 'emails' },
-      ]);
+      const result = callBuildContactUpdate(
+        service,
+        {
+          lien_he: 'test@example.com',
+        },
+        [{ key: 'lien_he', contactField: 'emails' }],
+      );
 
       expect(result.email).toBe('test@example.com');
       expect(result.contactUpdate.emails).toEqual(['test@example.com']);
     });
 
     it('should detect phone by contactField "phones", not by key name', () => {
-      const result = callBuildContactUpdate(service, {
-        sdt: '0901234567',
-      }, [
-        { key: 'sdt', contactField: 'phones' },
-      ]);
+      const result = callBuildContactUpdate(
+        service,
+        {
+          sdt: '0901234567',
+        },
+        [{ key: 'sdt', contactField: 'phones' }],
+      );
 
       expect(result.phone).toBe('0901234567');
       expect(result.contactUpdate.phones).toEqual(['0901234567']);
     });
 
     it('should build displayName from firstName + lastName targets', () => {
-      const result = callBuildContactUpdate(service, {
-        ho: 'Nguyen',
-        ten: 'Toan',
-      }, [
-        { key: 'ho', contactField: 'firstName' },
-        { key: 'ten', contactField: 'lastName' },
-      ]);
+      const result = callBuildContactUpdate(
+        service,
+        {
+          ho: 'Nguyen',
+          ten: 'Toan',
+        },
+        [
+          { key: 'ho', contactField: 'firstName' },
+          { key: 'ten', contactField: 'lastName' },
+        ],
+      );
 
       expect(result.displayName).toBe('Nguyen Toan');
     });
 
     it('should build displayName from single lastName target', () => {
-      const result = callBuildContactUpdate(service, {
-        name: 'Nguyen Toan',
-      }, [
-        { key: 'name', contactField: 'lastName' },
-      ]);
+      const result = callBuildContactUpdate(
+        service,
+        {
+          name: 'Nguyen Toan',
+        },
+        [{ key: 'name', contactField: 'lastName' }],
+      );
 
       expect(result.displayName).toBe('Nguyen Toan');
       expect(result.contactUpdate.lastName).toBe('Nguyen Toan');
     });
 
     it('should handle custom fields mapping', () => {
-      const result = callBuildContactUpdate(service, {
-        order_id: 'ORD-123',
-      }, [
-        { key: 'order_id', contactField: 'customFields.order_id' },
-      ]);
+      const result = callBuildContactUpdate(
+        service,
+        {
+          order_id: 'ORD-123',
+        },
+        [{ key: 'order_id', contactField: 'customFields.order_id' }],
+      );
 
-      expect(result.contactUpdate.customFields).toEqual({ order_id: 'ORD-123' });
+      expect(result.contactUpdate.customFields).toEqual({
+        order_id: 'ORD-123',
+      });
     });
 
     it('should skip fields with no contactField mapping', () => {
-      const result = callBuildContactUpdate(service, {
-        note: 'some note',
-      }, [
-        { key: 'note' }, // no contactField
-      ]);
+      const result = callBuildContactUpdate(
+        service,
+        {
+          note: 'some note',
+        },
+        [
+          { key: 'note' }, // no contactField
+        ],
+      );
 
       expect(Object.keys(result.contactUpdate)).toHaveLength(0);
       expect(result.email).toBeUndefined();
@@ -141,13 +161,17 @@ describe('ContactEnrichmentService', () => {
     });
 
     it('should fallback to standard keys when no contactField matches', () => {
-      const result = callBuildContactUpdate(service, {
-        email: 'user@test.com',
-        phone: '123456',
-        name: 'Test User',
-      }, [
-        // Empty field mappings — no contactField targets
-      ]);
+      const result = callBuildContactUpdate(
+        service,
+        {
+          email: 'user@test.com',
+          phone: '123456',
+          name: 'Test User',
+        },
+        [
+          // Empty field mappings — no contactField targets
+        ],
+      );
 
       expect(result.email).toBe('user@test.com');
       expect(result.phone).toBe('123456');
@@ -155,17 +179,21 @@ describe('ContactEnrichmentService', () => {
     });
 
     it('should handle full dynamic form with custom keys', () => {
-      const result = callBuildContactUpdate(service, {
-        ho_ten: 'Nguyen Van A',
-        email_lien_he: 'nva@company.com',
-        sdt: '0987654321',
-        cong_ty: 'ACME Corp',
-      }, [
-        { key: 'ho_ten', contactField: 'firstName' },
-        { key: 'email_lien_he', contactField: 'emails' },
-        { key: 'sdt', contactField: 'phones' },
-        { key: 'cong_ty', contactField: 'companyName' },
-      ]);
+      const result = callBuildContactUpdate(
+        service,
+        {
+          ho_ten: 'Nguyen Van A',
+          email_lien_he: 'nva@company.com',
+          sdt: '0987654321',
+          cong_ty: 'ACME Corp',
+        },
+        [
+          { key: 'ho_ten', contactField: 'firstName' },
+          { key: 'email_lien_he', contactField: 'emails' },
+          { key: 'sdt', contactField: 'phones' },
+          { key: 'cong_ty', contactField: 'companyName' },
+        ],
+      );
 
       expect(result.email).toBe('nva@company.com');
       expect(result.phone).toBe('0987654321');
@@ -176,26 +204,32 @@ describe('ContactEnrichmentService', () => {
     });
 
     it('should lowercase email values', () => {
-      const result = callBuildContactUpdate(service, {
-        email: 'User@EXAMPLE.COM',
-      }, [
-        { key: 'email', contactField: 'emails' },
-      ]);
+      const result = callBuildContactUpdate(
+        service,
+        {
+          email: 'User@EXAMPLE.COM',
+        },
+        [{ key: 'email', contactField: 'emails' }],
+      );
 
       expect(result.email).toBe('user@example.com');
       expect(result.contactUpdate.emails).toEqual(['user@example.com']);
     });
 
     it('should skip empty/null/undefined values', () => {
-      const result = callBuildContactUpdate(service, {
-        email: '',
-        phone: null,
-        name: undefined,
-      }, [
-        { key: 'email', contactField: 'emails' },
-        { key: 'phone', contactField: 'phones' },
-        { key: 'name', contactField: 'firstName' },
-      ]);
+      const result = callBuildContactUpdate(
+        service,
+        {
+          email: '',
+          phone: null,
+          name: undefined,
+        },
+        [
+          { key: 'email', contactField: 'emails' },
+          { key: 'phone', contactField: 'phones' },
+          { key: 'name', contactField: 'firstName' },
+        ],
+      );
 
       expect(result.email).toBeUndefined();
       expect(result.phone).toBeUndefined();
@@ -220,7 +254,10 @@ describe('ContactEnrichmentService', () => {
 
       contactsServiceMock.findByEmail.mockResolvedValue(null);
       contactsServiceMock.findBySenderId.mockResolvedValue(null);
-      contactsServiceMock.create.mockResolvedValue({ id: 'contact_abc', _id: 'contact_abc' });
+      contactsServiceMock.create.mockResolvedValue({
+        id: 'contact_abc',
+        _id: 'contact_abc',
+      });
 
       await service.enrichFromPreChat({
         tenantId: 'tenant_1',

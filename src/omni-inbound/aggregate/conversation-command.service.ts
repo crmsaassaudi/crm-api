@@ -37,7 +37,11 @@ export class ConversationCommandService {
 
   constructor(
     @InjectQueue(CONV_OPS_QUEUE) private readonly opsQueue: Queue,
-    @Inject(forwardRef(() => require('./conversation-ops.processor').ConversationOpsProcessor))
+    @Inject(
+      forwardRef(
+        () => require('./conversation-ops.processor').ConversationOpsProcessor,
+      ),
+    )
     private readonly processor: ConversationOpsProcessor,
   ) {}
 
@@ -301,4 +305,3 @@ export class ConversationCommandService {
     });
   }
 }
-

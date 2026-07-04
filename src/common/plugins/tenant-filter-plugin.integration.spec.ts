@@ -30,16 +30,16 @@ let TestItem: Model<any>;
 const TENANT_A = new mongoose.Types.ObjectId().toString();
 const TENANT_B = new mongoose.Types.ObjectId().toString();
 
-beforeAll(() => {
+beforeAll(async () => {
   connection = await setupTestDatabase();
   TestItem = connection.model('TestItem', TestItemSchema);
 }, 30000);
 
-afterEach(() => {
+afterEach(async () => {
   await clearDatabase();
 });
 
-afterAll(() => {
+afterAll(async () => {
   await teardownTestDatabase();
 }, 10000);
 

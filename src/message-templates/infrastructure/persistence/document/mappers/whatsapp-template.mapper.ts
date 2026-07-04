@@ -17,7 +17,9 @@ export class WhatsAppTemplateMapper {
     return entity;
   }
 
-  static toPersistence(entity: WhatsAppTemplate): Partial<WhatsAppTemplateSchemaClass> {
+  static toPersistence(
+    entity: WhatsAppTemplate,
+  ): Partial<WhatsAppTemplateSchemaClass> {
     const p: any = {};
     if (entity.id) p._id = entity.id;
     p.tenantId = entity.tenantId;

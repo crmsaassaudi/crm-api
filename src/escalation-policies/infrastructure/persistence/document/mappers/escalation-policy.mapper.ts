@@ -1,5 +1,8 @@
 ﻿import { EscalationPolicy } from '../../../../domain/escalation-policy';
-import { EscalationPolicySchemaDocument, EscalationPolicySchemaClass } from '../entities/escalation-policy.schema';
+import {
+  EscalationPolicySchemaDocument,
+  EscalationPolicySchemaClass,
+} from '../entities/escalation-policy.schema';
 
 export class EscalationPolicyMapper {
   static toDomain(doc: EscalationPolicySchemaDocument): EscalationPolicy {
@@ -22,7 +25,9 @@ export class EscalationPolicyMapper {
     return entity;
   }
 
-  static toPersistence(entity: EscalationPolicy): Partial<EscalationPolicySchemaClass> {
+  static toPersistence(
+    entity: EscalationPolicy,
+  ): Partial<EscalationPolicySchemaClass> {
     const p: any = {};
     if (entity.id) p._id = entity.id;
     p.tenantId = entity.tenantId;

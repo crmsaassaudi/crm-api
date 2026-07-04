@@ -36,7 +36,10 @@
   const query = {
     tenantId: tenantId,
     deletedAt: { $exists: false },
-    $or: [{ emails: { $in: [sampleEmail] } }, { phones: { $in: [samplePhone] } }],
+    $or: [
+      { emails: { $in: [sampleEmail] } },
+      { phones: { $in: [samplePhone] } },
+    ],
   };
 
   print('\n── explain("executionStats") for the dedup query ──');
@@ -54,7 +57,14 @@
   print('  uses IXSCAN       : ' + usesIxscan);
   print('  uses COLLSCAN     : ' + usesCollscan);
 
-  const pass = usesIxscan && !usesCollscan && hasEmailIdx && names.includes('tenant_phone_lookup');
-  print('\n  RESULT : ' + (pass ? 'PASS ✅ (index-backed)' : 'FAIL ❌ (collection scan!)'));
+  const pass =
+    usesIxscan &&
+    !usesCollscan &&
+    hasEmailIdx &&
+    names.includes('tenant_phone_lookup');
+  print(
+    '\n  RESULT : ' +
+      (pass ? 'PASS ✅ (index-backed)' : 'FAIL ❌ (collection scan!)'),
+  );
   quit(pass ? 0 : 1);
 })();

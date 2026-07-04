@@ -83,7 +83,7 @@ export class TenantsAuthController {
   @ApiBadRequestResponse({ description: 'Invalid payload' })
   @ApiConflictResponse({ description: 'organizationAlias is already taken' })
   async onboardExistingUser(
-    @Request() request,
+    @Request() request: any,
     @Body() dto: OnboardExistingUserDto,
   ): Promise<RegisterTenantResult> {
     const user = request.user as User;

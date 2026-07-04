@@ -118,7 +118,15 @@ export interface AutomationActionJobData {
 
   /** The record that triggered the workflow */
   recordId: string;
-  recordType: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task' | 'Conversation' | 'Message';
+  recordType:
+    | 'Lead'
+    | 'Contact'
+    | 'Ticket'
+    | 'Deal'
+    | 'Account'
+    | 'Task'
+    | 'Conversation'
+    | 'Message';
   recordData: Record<string, any>;
 
   /** Automation depth for loop prevention Layer 2 */

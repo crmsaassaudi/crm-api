@@ -42,7 +42,10 @@ export class PresenceSegmentService implements OnModuleInit {
     this.logger.log('Registered presence state-change callback for segments');
   }
 
-  private async readOpen(tenantId: string, userId: string): Promise<OpenSegmentMap> {
+  private async readOpen(
+    tenantId: string,
+    userId: string,
+  ): Promise<OpenSegmentMap> {
     const raw = await this.redis.getClient().get(openSegKey(tenantId, userId));
     if (!raw) return {};
     try {
@@ -136,6 +139,13 @@ export class PresenceSegmentService implements OnModuleInit {
     if (Object.keys(open).length === 0) return;
     const { closed, next } = rolloverSegments(open, boundaryMs);
     await this.writeOpen(tenantId, userId, next);
-    await this.enqueue(tenantId, userId, 'system_day_rollover', closed, 'roll', boundaryMs);
+    await this.enqueue(
+      tenantId,
+      userId,
+      'system_day_rollover',
+      closed,
+      'roll',
+      boundaryMs,
+    );
   }
 }

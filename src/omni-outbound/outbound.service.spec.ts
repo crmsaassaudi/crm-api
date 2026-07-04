@@ -557,7 +557,7 @@ describe('normalizeOutboundSource (via sendAgentMessage)', () => {
       {} as any,
       {} as any,
       {} as any,
-      usersService,
+      usersService as any,
       {} as any,
       {} as any,
       redis,

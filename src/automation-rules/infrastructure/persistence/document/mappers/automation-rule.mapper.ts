@@ -1,5 +1,8 @@
 ﻿import { AutomationRule } from '../../../../domain/automation-rule';
-import { AutomationRuleSchemaDocument, AutomationRuleSchemaClass } from '../entities/automation-rule.schema';
+import {
+  AutomationRuleSchemaDocument,
+  AutomationRuleSchemaClass,
+} from '../entities/automation-rule.schema';
 
 export class AutomationRuleMapper {
   static toDomain(doc: AutomationRuleSchemaDocument): AutomationRule {
@@ -17,7 +20,9 @@ export class AutomationRuleMapper {
     return entity;
   }
 
-  static toPersistence(entity: AutomationRule): Partial<AutomationRuleSchemaClass> {
+  static toPersistence(
+    entity: AutomationRule,
+  ): Partial<AutomationRuleSchemaClass> {
     const p: any = {};
     if (entity.id) p._id = entity.id;
     p.tenantId = entity.tenantId;

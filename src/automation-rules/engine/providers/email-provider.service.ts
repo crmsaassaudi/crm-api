@@ -78,9 +78,9 @@ export class SendGridEmailProvider implements EmailProviderService {
         // Enable TLS verification in production to prevent MITM attacks
         tls: { rejectUnauthorized: isProduction },
         // Timeout guards — prevent indefinite blocking on network issues
-        connectionTimeout: 10_000,  // 10s to establish TCP connection
-        greetingTimeout: 10_000,    // 10s for SMTP EHLO greeting
-        socketTimeout: 30_000,      // 30s for entire send operation
+        connectionTimeout: 10_000, // 10s to establish TCP connection
+        greetingTimeout: 10_000, // 10s for SMTP EHLO greeting
+        socketTimeout: 30_000, // 30s for entire send operation
       });
       this.logger.log('[EmailProvider] SendGrid SMTP configured successfully');
     }

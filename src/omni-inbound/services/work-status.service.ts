@@ -141,7 +141,9 @@ export class WorkStatusService {
         await this.recompute(tenantId, userId, record);
       }
     } catch (err: any) {
-      this.logger.error(`closeInteraction failed for ${userId}: ${err.message}`);
+      this.logger.error(
+        `closeInteraction failed for ${userId}: ${err.message}`,
+      );
     }
   }
 
@@ -262,7 +264,9 @@ export class WorkStatusService {
     if (newStatus !== 'resolved' && newStatus !== 'closed') return;
 
     // status_changed does not carry the owner — resolve it from the conversation.
-    const conv: any = await this.conversationRepo.findById(event.conversationId);
+    const conv: any = await this.conversationRepo.findById(
+      event.conversationId,
+    );
     const agentId = conv?.assignedAgentId;
     if (!agentId) return;
 

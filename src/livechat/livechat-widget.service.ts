@@ -421,9 +421,7 @@ export class LivechatWidgetService {
    * Widget configs change rarely — caching saves a DB query on every
    * socket connect and config request.
    */
-  async getCachedWidget(
-    widgetId: string,
-  ): Promise<LivechatWidget | null> {
+  async getCachedWidget(widgetId: string): Promise<LivechatWidget | null> {
     const cached = this.widgetCache.get(widgetId);
     if (cached && cached.expiresAt > Date.now()) {
       return cached.widget;

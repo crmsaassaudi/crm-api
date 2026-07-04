@@ -370,8 +370,12 @@ export class AgentStatusAuditService implements OnModuleInit {
       meetingDurationMs: durations.meeting,
       trainingDurationMs: durations.training,
       totalOnlineDurationMs:
-        durations.available + durations.busy + durations.away +
-        durations.break + durations.meeting + durations.training,
+        durations.available +
+        durations.busy +
+        durations.away +
+        durations.break +
+        durations.meeting +
+        durations.training,
       transitionCount: logs.length,
       transitions: logs.map((l) => ({
         fromStatus: l.fromStatus,

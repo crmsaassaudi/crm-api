@@ -45,9 +45,7 @@ export class CrmRecordUpdateService {
    * RouteToTeamExecutor) may write. External `update_field` actions are
    * blocked unless the caller explicitly opts in via `allowRestricted`.
    */
-  private static readonly RESTRICTED_FIELDS = new Set<string>([
-    'ownerId',
-  ]);
+  private static readonly RESTRICTED_FIELDS = new Set<string>(['ownerId']);
 
   constructor(
     private readonly contactsService: ContactsService,

@@ -1,5 +1,8 @@
 ﻿import { RoutingRule } from '../../../../domain/routing-rule';
-import { RoutingRuleSchemaDocument, RoutingRuleSchemaClass } from '../entities/routing-rule.schema';
+import {
+  RoutingRuleSchemaDocument,
+  RoutingRuleSchemaClass,
+} from '../entities/routing-rule.schema';
 
 export class RoutingRuleMapper {
   static toDomain(doc: RoutingRuleSchemaDocument): RoutingRule {

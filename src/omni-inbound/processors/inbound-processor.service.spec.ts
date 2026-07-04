@@ -21,7 +21,11 @@ describe('InboundProcessorService', () => {
     adapters.set('zalo', new ZaloAdapter());
     adapters.set('whatsapp', new WhatsAppAdapter(mockWaTemplateRepo));
 
-    service = new InboundProcessorService(adapters, routingQueue as any);
+    service = new InboundProcessorService(
+      adapters,
+      routingQueue as any,
+      { emit: jest.fn() } as any,
+    );
   });
 
   it('should route a Facebook payload to the Facebook adapter', async () => {

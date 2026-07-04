@@ -84,9 +84,14 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
 
     // F-13: Double-check if the feature was disabled AFTER the job was scheduled
     try {
-      const config = await this.settingsService.getSetting('omni_auto_reassignment', tenantId);
+      const config = await this.settingsService.getSetting(
+        'omni_auto_reassignment',
+        tenantId,
+      );
       if (config && config.enabled === false) {
-        this.logger.log(`Auto-reassignment disabled for tenant ${tenantId} during the delay — aborting job`);
+        this.logger.log(
+          `Auto-reassignment disabled for tenant ${tenantId} during the delay — aborting job`,
+        );
         await this.redis.del(redisKey);
         return;
       }
@@ -181,7 +186,6 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
         );
       }
     }
-
 
     // Cleanup disconnect marker
     await this.redis.del(redisKey);

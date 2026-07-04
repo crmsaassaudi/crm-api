@@ -32,7 +32,9 @@ export function requireTenantId(cls: ClsService, source: string): string {
 }
 
 export function getUserId(cls: ClsService): string | undefined {
-  return cls.get<string>('userId') || cls.get<any>('user.id') || undefined;
+  return (
+    cls.get<string>('userId') || (cls.get('user.id') as string) || undefined
+  );
 }
 
 export function getCorrelationId(cls: ClsService): string | undefined {

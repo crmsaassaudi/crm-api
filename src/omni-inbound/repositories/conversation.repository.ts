@@ -761,26 +761,28 @@ export class ConversationRepository {
     const validIds = agentIds.filter((id) => Types.ObjectId.isValid(id));
     if (validIds.length === 0) return new Map();
 
-    const results = await this.model.aggregate<{
-      _id: string;
-      count: number;
-    }>([
-      {
-        $match: {
-          tenantId: new Types.ObjectId(tenantId),
-          assignedAgentId: {
-            $in: validIds.map((id) => new Types.ObjectId(id)),
+    const results = await this.model
+      .aggregate<{
+        _id: string;
+        count: number;
+      }>([
+        {
+          $match: {
+            tenantId: new Types.ObjectId(tenantId),
+            assignedAgentId: {
+              $in: validIds.map((id) => new Types.ObjectId(id)),
+            },
+            status: { $in: ['open', 'pending'] },
           },
-          status: { $in: ['open', 'pending'] },
         },
-      },
-      {
-        $group: {
-          _id: '$assignedAgentId',
-          count: { $sum: 1 },
+        {
+          $group: {
+            _id: '$assignedAgentId',
+            count: { $sum: 1 },
+          },
         },
-      },
-    ]).option({ isPlatformQuery: true });
+      ])
+      .option({ isPlatformQuery: true });
 
     const map = new Map<string, number>();
     for (const row of results) {

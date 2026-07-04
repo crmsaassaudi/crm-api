@@ -381,7 +381,7 @@ export class EmailLabelService {
       const mailboxes = await client.list();
       return mailboxes
         .map((mailbox: any) => this.mailboxToLabel(mailbox))
-        .filter((label): label is ObservedLabel => Boolean(label));
+        .filter((label: any): label is ObservedLabel => Boolean(label));
     } catch (error: any) {
       throw new BadRequestException(
         `Provider label discovery failed: ${error.message}. For Gmail, make sure each label has "Show in IMAP" enabled in Gmail settings.`,

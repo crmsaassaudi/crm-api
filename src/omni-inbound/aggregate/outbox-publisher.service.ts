@@ -46,9 +46,7 @@ export class OutboxPublisherService {
 
     if (pending.length === 0) return;
 
-    this.logger.debug(
-      `[OUTBOX] Publishing ${pending.length} pending event(s)`,
-    );
+    this.logger.debug(`[OUTBOX] Publishing ${pending.length} pending event(s)`);
 
     for (const entry of pending) {
       // Detect stale events — may indicate a systemic publish failure

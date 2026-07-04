@@ -171,14 +171,12 @@ export class PresenceAlertService {
 
     // Broadcast to supervisor room
     if (this.ioServer) {
-      this.ioServer
-        .to(`tenant:${tenantId}`)
-        .emit('presence:alert', {
-          type: alert.type,
-          agentId: alert.agentId,
-          detail: alert.detail,
-          timestamp: new Date().toISOString(),
-        });
+      this.ioServer.to(`tenant:${tenantId}`).emit('presence:alert', {
+        type: alert.type,
+        agentId: alert.agentId,
+        detail: alert.detail,
+        timestamp: new Date().toISOString(),
+      });
     }
 
     this.logger.warn(

@@ -184,7 +184,7 @@ export class AccountRepository extends BaseDocumentRepository<
         .populate('accountType')
         .lean()
         .exec(),
-      cappedCount(this.model, scopedWhere),
+      cappedCount(this.model as any, scopedWhere),
     ]);
 
     return pagination(

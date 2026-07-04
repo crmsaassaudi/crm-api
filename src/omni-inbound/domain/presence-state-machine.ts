@@ -6,11 +6,7 @@
 // segments to close/open in §3). See docs/agent-presence-workforce-spec.md §2.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import {
-  AgentState,
-  PresenceStatus,
-  RoutingStatus,
-} from './presence-state';
+import { AgentState, PresenceStatus, RoutingStatus } from './presence-state';
 
 /** What caused a transition — used for audit logging and segment triggers. */
 export type TransitionTrigger =

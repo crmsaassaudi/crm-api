@@ -1006,7 +1006,8 @@ export class ImapPollerService implements OnModuleDestroy {
     try {
       // Use raw Mongoose query since repo doesn't have this filter
       const ChannelConfigModel =
-        this.configRepo['configModel'] || (this.configRepo as any).model;
+        (this.configRepo as any)['configModel'] ||
+        (this.configRepo as any).model;
 
       if (!ChannelConfigModel) {
         // Fallback: scan visible configs

@@ -29,7 +29,7 @@ export class DashboardsService {
 
   // ── List ─────────────────────────────────────────────────────────────────
 
-  async findAll(): Promise<DashboardDocument[]> {
+  async findAll() {
     return this.model
       .find({
         tenantId: this.tenantId,
@@ -41,7 +41,7 @@ export class DashboardsService {
 
   // ── Get one ───────────────────────────────────────────────────────────────
 
-  async findOne(id: string): Promise<DashboardDocument> {
+  async findOne(id: string) {
     const doc = await this.model
       .findOne({ _id: id, tenantId: this.tenantId })
       .lean();

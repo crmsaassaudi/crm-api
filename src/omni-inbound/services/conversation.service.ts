@@ -182,7 +182,8 @@ export class ConversationService {
       ) {
         // â”€â”€ Reopen Window Check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Fetch tenant session lifecycle config
-        const lifecycleConfig = await this.lifecycle.getSessionLifecycleConfig();
+        const lifecycleConfig =
+          await this.lifecycle.getSessionLifecycleConfig();
         const reopenWindowHours = lifecycleConfig.reopenWindowHours ?? 24;
 
         // MED-04: resolvedAt fallback chain â€” closedAt > updatedAt.
@@ -439,10 +440,12 @@ export class ConversationService {
       // conversation.customer with the real name/phone from the Contact
       // instead of falling through to create a duplicate shadow contact.
       if (contactId && !enrichedProfile.name) {
-        const existingContact = await this.shadowContactService.findContact(contactId);
+        const existingContact =
+          await this.shadowContactService.findContact(contactId);
         if (existingContact) {
           const fullName = [existingContact.firstName, existingContact.lastName]
-            .filter(Boolean).join(' ');
+            .filter(Boolean)
+            .join(' ');
           if (fullName && fullName !== 'Visitor') {
             enrichedProfile.name = fullName;
           }
@@ -470,7 +473,6 @@ export class ConversationService {
             `Auto-create shadow contact disabled — sender ${payload.senderId} will have no CRM contact`,
           );
         }
-
       }
       // â”€â”€ Reopen tracking: find previous conversation if any â”€â”€
       let previousConversationId: string | null = null;
@@ -510,7 +512,10 @@ export class ConversationService {
             payload.metadata.avatarUrl ??
             undefined,
           phone: enrichedProfile.phone ?? payload.metadata.phone ?? undefined,
-          email: (enrichedProfile as any).email ?? payload.metadata?.email ?? undefined,
+          email:
+            (enrichedProfile as any).email ??
+            payload.metadata?.email ??
+            undefined,
         },
         status: 'open',
         lastMessage: payload.content,
@@ -618,7 +623,6 @@ export class ConversationService {
     );
   }
 
-
   private buildMessageDedupId(payload: OmniPayload): string {
     const externalMessageId = payload.externalMessageId?.trim();
     if (externalMessageId) {
@@ -640,8 +644,6 @@ export class ConversationService {
 
     return `synthetic:${createHash('sha256').update(fingerprint).digest('hex')}`;
   }
-
-
 
   // ────────────────────────────────────────────────────────────────
   // Private Helpers

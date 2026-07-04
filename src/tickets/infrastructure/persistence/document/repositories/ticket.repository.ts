@@ -156,11 +156,11 @@ export class TicketRepository extends BaseDocumentRepository<
           .limit(paginationOptions.limit)
           .lean(),
       ).exec(),
-      cappedCount(this.model, scopedWhere),
+      cappedCount(this.model as any, scopedWhere),
     ]);
 
     return pagination(
-      docs.map((doc) => this.mapToDomain(doc as any)),
+      docs.map((doc: any) => this.mapToDomain(doc as any)),
       totalItems,
       paginationOptions,
     );

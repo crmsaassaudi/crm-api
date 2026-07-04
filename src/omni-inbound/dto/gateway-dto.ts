@@ -97,8 +97,7 @@ export function validateSendInteractive(data: any): string | null {
     return `body exceeds max length of ${MAX_CONTENT_LENGTH} characters`;
   if (!Array.isArray(data.buttons) || data.buttons.length === 0)
     return 'at least 1 button is required';
-  if (data.buttons.length > 10)
-    return 'maximum 10 buttons allowed';
+  if (data.buttons.length > 10) return 'maximum 10 buttons allowed';
   for (const btn of data.buttons) {
     if (!btn.title || typeof btn.title !== 'string')
       return 'each button must have a title';
@@ -116,8 +115,7 @@ export function validateSendCarousel(data: any): string | null {
     return 'conversationId must be a valid 24-char hex string';
   if (!Array.isArray(data.cards) || data.cards.length === 0)
     return 'at least 1 card is required';
-  if (data.cards.length > 10)
-    return 'maximum 10 cards allowed';
+  if (data.cards.length > 10) return 'maximum 10 cards allowed';
   for (const card of data.cards) {
     if (!card.title || typeof card.title !== 'string')
       return 'each card must have a title';
