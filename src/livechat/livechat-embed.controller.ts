@@ -451,15 +451,8 @@ export class LivechatEmbedController {
     }
 
     const limit = Math.min(parseInt(limitStr ?? '30', 10) || 30, 50);
+    this.setCorsHeaders(req, res);
 
-    // CORS — widget is embedded on external websites
-    const origin = req.headers?.origin || req.headers?.referer;
-    const corsOrigin = origin ? new URL(origin).origin : '*';
-    res.setHeader('Access-Control-Allow-Origin', corsOrigin);
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-
-    // Public endpoint — no auth/interceptor sets CLS.
-    // Set CLS manually so Mongoose tenant filter plugin works.
     const conv = await runWithTenantContext(this.cls, tenantId, () =>
       this.conversationRepo.findLastByExternalId(
         tenantId,
@@ -470,45 +463,60 @@ export class LivechatEmbedController {
     );
 
     if (!conv) {
-      // No conversation yet — return empty (visitor just opened widget for first time)
       res.json({ conversationId: null, messages: [] });
       return;
     }
 
-    // Parse `after` cursor for incremental fetch (reconnect optimization).
-    // When provided, only messages created AFTER this timestamp are returned,
-    // preventing full history reload on every reconnect.
+    const rawMessages = await this.fetchRawMessages(
+      tenantId,
+      conv.id,
+      limit,
+      afterStr,
+    );
+    const messages = await this.enrichMessages(rawMessages);
+
+    res.json({
+      conversationId: conv.id,
+      status: conv.status,
+      messages,
+    });
+  }
+
+  private setCorsHeaders(req: any, res: Response): void {
+    const origin = req.headers?.origin || req.headers?.referer;
+    const corsOrigin = origin ? new URL(origin).origin : '*';
+    res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  }
+
+  private async fetchRawMessages(
+    tenantId: string,
+    convId: string,
+    limit: number,
+    afterStr?: string,
+  ): Promise<any[]> {
     const afterDate = afterStr ? new Date(afterStr) : null;
     const useIncremental = afterDate && !isNaN(afterDate.getTime());
 
-    let rawMessages: any[];
-
     if (useIncremental) {
-      // Cursor-based: fetch only messages newer than `after`
       const cursorResult = await runWithTenantContext(this.cls, tenantId, () =>
         this.messageRepo.findByConversationIdWithCursor({
-          conversationId: conv.id,
+          conversationId: convId,
           limit,
           direction: 'future',
-          cursor: { createdAt: afterDate, id: '' },
+          cursor: { createdAt: afterDate!, id: '' },
         }),
       );
-      rawMessages = cursorResult.data;
-    } else {
-      // Full fetch (first load) — PERF FIX #7: use findRecentByConversation
-      // which skips countDocuments (widget doesn't need total count)
-      const result = await runWithTenantContext(this.cls, tenantId, () =>
-        this.messageRepo.findRecentByConversation(conv.id, limit),
-      );
-      rawMessages = result.data;
+      return cursorResult.data;
     }
 
-    // PERF FIX #1: Batch-load files instead of N individual findById calls.
-    // Previously each media message triggered findById + getPresignedDownloadUrl
-    // sequentially (N+1 problem). Now we batch-load all files in one query.
-    //
-    // FIX: fileId is stored inside metadata.media.fileId (not top-level msg.fileId).
-    // The domain mapper does NOT surface a top-level fileId — it's nested in metadata.
+    const result = await runWithTenantContext(this.cls, tenantId, () =>
+      this.messageRepo.findRecentByConversation(convId, limit),
+    );
+    return result.data;
+  }
+
+  private async enrichMessages(rawMessages: any[]): Promise<any[]> {
     const fileIds = rawMessages
       .map((msg: any) => msg.metadata?.media?.fileId)
       .filter(Boolean) as string[];
@@ -521,42 +529,34 @@ export class LivechatEmbedController {
           if (f?.id) fileMap.set(f.id.toString(), f);
         }
       } catch {
-        /* non-fatal — messages still returned without URLs */
+        /* non-fatal */
       }
     }
 
-    const messages = await Promise.all(
+    return Promise.all(
       rawMessages.map(async (msg: any) => {
         const mediaFileId = msg.metadata?.media?.fileId;
-        if (mediaFileId) {
-          const file = fileMap.get(mediaFileId.toString?.() ?? mediaFileId);
-          if (file?.path) {
-            try {
-              const url = await this.filesService.getPresignedDownloadUrl(
-                file.path,
-                3600,
-              );
-              return {
-                ...msg,
-                mediaUrl: url,
-                // Surface media metadata for the widget renderer
-                mimeType: msg.metadata?.media?.mimeType,
-                fileName: msg.metadata?.media?.fileName,
-                fileSize: msg.metadata?.media?.size,
-              };
-            } catch {
-              /* skip — message still returned without url */
-            }
-          }
+        if (!mediaFileId) return msg;
+
+        const file = fileMap.get(mediaFileId.toString?.() ?? mediaFileId);
+        if (!file?.path) return msg;
+
+        try {
+          const url = await this.filesService.getPresignedDownloadUrl(
+            file.path,
+            3600,
+          );
+          return {
+            ...msg,
+            mediaUrl: url,
+            mimeType: msg.metadata?.media?.mimeType,
+            fileName: msg.metadata?.media?.fileName,
+            fileSize: msg.metadata?.media?.size,
+          };
+        } catch {
+          return msg;
         }
-        return msg;
       }),
     );
-
-    res.json({
-      conversationId: conv.id,
-      status: conv.status,
-      messages,
-    });
   }
 }

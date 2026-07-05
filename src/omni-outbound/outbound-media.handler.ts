@@ -454,7 +454,7 @@ export class OutboundMediaHandler {
         tenantId,
         idempotencyKey,
       );
-      if (existing && existing.status !== 'failed') {
+      if (existing?.status && existing.status !== 'failed') {
         return { ok: true, messageId: existing.id, reused: true };
       }
     }
@@ -740,7 +740,7 @@ export class OutboundMediaHandler {
         .trim();
 
       return {
-        name: fullName || user.email || 'Agent',
+        name: (fullName || user.email) ?? 'Agent',
         avatarUrl: user.photo?.path ?? null,
       };
     } catch (error) {

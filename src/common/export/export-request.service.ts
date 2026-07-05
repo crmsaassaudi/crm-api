@@ -214,9 +214,9 @@ export class ExportRequestService {
     try {
       const bullJob = await queue.getJob(doc.bullJobId);
       if (bullJob) {
-        (doc as any).status = await bullJob.getState();
+        doc.status = await bullJob.getState();
         if (bullJob.progress && typeof bullJob.progress === 'object') {
-          (doc as any).progress = bullJob.progress;
+          doc.progress = bullJob.progress;
         }
       }
     } catch {

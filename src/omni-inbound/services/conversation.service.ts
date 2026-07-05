@@ -5,13 +5,12 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { OnEvent } from '@nestjs/event-emitter';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
-import { OmniPayload } from '../domain/omni-payload';
+import { OmniPayload, ChannelType } from '../domain/omni-payload';
 import { OmniEvents } from '../domain/omni-events';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
@@ -22,7 +21,6 @@ import {
   ChannelAdapter,
   CHANNEL_ADAPTERS,
 } from '../adapters/channel-adapter.interface';
-import { ChannelType } from '../domain/omni-payload';
 import { InboundOrchestrationService } from './inbound-orchestration.service';
 import { ShadowContactService } from './shadow-contact.service';
 import { ConversationLifecycleService } from './conversation-lifecycle.service';

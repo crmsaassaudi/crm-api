@@ -38,24 +38,38 @@ export class LivechatWidgetService {
   ): Promise<LivechatWidget> {
     const widgetId = `wdg_${randomBytes(8).toString('hex')}`;
 
-    // Check name uniqueness per channel
-    if (data.channelId && data.name) {
-      const existing = await this.repo.findByChannelId(
-        tenantId,
-        data.channelId,
-      );
-      if (existing.some((w) => w.name === data.name)) {
-        throw new ConflictException(
-          `Widget with name "${data.name}" already exists for this channel`,
-        );
-      }
-    }
+    await this.ensureUniqueName(tenantId, data.channelId, data.name);
 
-    return this.repo.create({
+    const widgetData = {
       ...data,
+      ...this.applyDefaultSettings(data),
       widgetId,
       tenantId,
       status: 'active',
+    };
+
+    return this.repo.create(widgetData as LivechatWidget);
+  }
+
+  private async ensureUniqueName(
+    tenantId: string,
+    channelId?: string,
+    name?: string,
+  ): Promise<void> {
+    if (!channelId || !name) return;
+
+    const existing = await this.repo.findByChannelId(tenantId, channelId);
+    if (existing.some((w) => w.name === name)) {
+      throw new ConflictException(
+        `Widget with name "${name}" already exists for this channel`,
+      );
+    }
+  }
+
+  private applyDefaultSettings(
+    data: Partial<LivechatWidget>,
+  ): Partial<LivechatWidget> {
+    return {
       branding: data.branding ?? {},
       theme: data.theme ?? { primaryColor: '#6366f1' },
       layout: data.layout ?? {
@@ -90,7 +104,6 @@ export class LivechatWidgetService {
         maxFilesPerMessage: 1,
       },
       csat: data.csat ?? { enabled: false },
-      // New sections
       mobile: data.mobile ?? {
         enabled: true,
         fullscreen: false,
@@ -106,7 +119,7 @@ export class LivechatWidgetService {
         rememberOpenState: false,
         rememberDraftMessage: true,
       },
-    });
+    };
   }
 
   async findAll(tenantId: string): Promise<LivechatWidget[]> {

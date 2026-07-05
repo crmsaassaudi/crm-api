@@ -254,13 +254,17 @@ export class AssignmentEngineService {
   private async executeStrategy(
     context: AssignmentContext,
     settings: any,
-    eligible: string[],
-    eligibleLoadMap: Map<string, number>,
     matchedRule: any,
-    strategy: string,
-    candidatePool: string[],
-    teamId: string | undefined,
+    options: {
+      eligible: string[];
+      eligibleLoadMap: Map<string, number>;
+      strategy: string;
+      candidatePool: string[];
+      teamId: string | undefined;
+    },
   ): Promise<AssignmentResult> {
+    const { eligible, eligibleLoadMap, strategy, candidatePool, teamId } =
+      options;
     const reserve = !context.dryRun;
     const rrScope = `${context.tenantId}:${context.module}:${teamId ?? 'default'}`;
 
@@ -393,16 +397,13 @@ export class AssignmentEngineService {
     }
 
     // Steps 7–9: execute strategy, audit, return
-    return this.executeStrategy(
-      context,
-      settings,
+    return this.executeStrategy(context, settings, matchedRule, {
       eligible,
       eligibleLoadMap,
-      matchedRule,
       strategy,
       candidatePool,
       teamId,
-    );
+    });
   }
 
   // ════════════════════════════════════════════════════════════════════════

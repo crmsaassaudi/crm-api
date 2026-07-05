@@ -546,7 +546,6 @@ export class OmniGateway
     const tenantId = client.data.tenantId;
     if (!tenantId) return { ok: false, error: 'No tenant context' };
 
-    // T-037: Validate payload before processing
     const validationError = validateSendMedia(data);
     if (validationError) return { ok: false, error: validationError };
 
@@ -568,7 +567,7 @@ export class OmniGateway
             fileId: data.fileId,
             mimeType: data.mimeType ?? 'application/octet-stream',
             fileName: data.fileName ?? 'file',
-            size: 0, // will be resolved from DB
+            size: 0,
           },
           caption: data.caption,
           idempotencyKey: data.idempotencyKey,
@@ -588,33 +587,7 @@ export class OmniGateway
         timestamp: new Date().toISOString(),
       };
 
-      // Broadcast to other agents watching this conversation
-      if (!result.reused) {
-        client
-          .to(
-            `tenant:${client.data.tenantId}:conversation:${data.conversationId}`,
-          )
-          .emit('omni:message:new', {
-            conversationId: data.conversationId,
-            senderId: result.senderId ?? userId,
-            senderName: result.senderName,
-            senderType: 'agent',
-            source: result.source ?? 'agent_ui',
-            messageType: result.messageType ?? 'file',
-            content: data.caption ?? `📎 ${data.fileName ?? 'file'}`,
-            messageId: ack.messageId,
-            idempotencyKey: ack.idempotencyKey,
-            clientMessageId: ack.clientMessageId,
-            timestamp: ack.timestamp,
-            metadata: {
-              media: {
-                fileId: data.fileId,
-                mimeType: data.mimeType,
-                fileName: data.fileName,
-              },
-            },
-          });
-      }
+      this.broadcastAgentMessage(client, tenantId, result, data, ack, userId);
 
       return ack;
     } catch (error) {
@@ -623,6 +596,40 @@ export class OmniGateway
       this.logger.error(`SendMedia error: ${errorMessage}`);
       return { ok: false, error: errorMessage };
     }
+  }
+
+  private broadcastAgentMessage(
+    client: Socket,
+    tenantId: string,
+    result: any,
+    data: any,
+    ack: any,
+    userId: string,
+  ) {
+    if (result.reused) return;
+
+    client
+      .to(`tenant:${tenantId}:conversation:${data.conversationId}`)
+      .emit('omni:message:new', {
+        conversationId: data.conversationId,
+        senderId: result.senderId ?? userId,
+        senderName: result.senderName,
+        senderType: 'agent',
+        source: result.source ?? 'agent_ui',
+        messageType: result.messageType ?? 'file',
+        content: data.caption ?? `📎 ${data.fileName ?? 'file'}`,
+        messageId: ack.messageId,
+        idempotencyKey: ack.idempotencyKey,
+        clientMessageId: ack.clientMessageId,
+        timestamp: ack.timestamp,
+        metadata: {
+          media: {
+            fileId: data.fileId,
+            mimeType: data.mimeType,
+            fileName: data.fileName,
+          },
+        },
+      });
   }
 
   /**
@@ -1655,7 +1662,7 @@ export class OmniGateway
             .filter(Boolean)
             .join(' ')
             .trim();
-          agentName = nameParts || u.email || null;
+          agentName = (nameParts || u.email) ?? null;
         } else {
           agentName = null;
         }
