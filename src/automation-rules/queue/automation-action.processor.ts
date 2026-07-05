@@ -1,4 +1,4 @@
-﻿import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
+import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
@@ -205,7 +205,7 @@ export class ActionProcessorMixin {
             `[Processor] Non-retryable failure for node=${data.nodeId}: ${result.error?.code} — routing to DLQ (skip BullMQ retry)`,
           );
           await this.dlqProducer
-            .sendToDlq(data, result.error?.message || 'Non-retryable failure')
+            .sendToDlq(data, result.error?.message ?? 'Non-retryable failure')
             .catch((dlqErr) =>
               this.logger.error(
                 `[Processor] Failed to send to DLQ: ${dlqErr.message}`,
@@ -218,7 +218,7 @@ export class ActionProcessorMixin {
         this.logger.warn(
           `[Processor] Action ${data.actionType} failed for node=${data.nodeId}: ${result.error?.message}`,
         );
-        throw new Error(result.error?.message || 'Action execution failed');
+        throw new Error(result.error?.message ?? 'Action execution failed');
       }
 
       this.logger.log(

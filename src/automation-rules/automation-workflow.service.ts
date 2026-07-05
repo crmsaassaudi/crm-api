@@ -78,7 +78,7 @@ export class AutomationWorkflowService {
     const result = await this.repo.create({
       tenantId: this.tenantId,
       name: dto.name,
-      description: dto.description || '',
+      description: dto.description ?? '',
       status: 'draft',
       triggerConfig: dto.triggerConfig as any,
       nodes: encryptedDraftNodes.nodes as any,
@@ -327,7 +327,7 @@ export class AutomationWorkflowService {
     for (const cn of conditionNodes) {
       if (cn.config?.rules) {
         const validation = this.conditionEvaluator.validate({
-          logic: cn.config.logic || 'AND',
+          logic: cn.config.logic ?? 'AND',
           rules: cn.config.rules,
         });
         if (!validation.valid) {

@@ -104,14 +104,14 @@ export class SendEmailExecutor implements ActionExecutor {
 
     // -- Template Interpolation with null-safe fallback --
     const subject = this.templateEngine.interpolate(
-      actionConfig.subject || '',
+      actionConfig.subject ?? '',
       recordData,
       {
         fallbackMap: { Name: 'Valued Customer', firstName: 'Valued Customer' },
       },
     );
     const body = this.templateEngine.interpolate(
-      actionConfig.template || '',
+      actionConfig.template ?? '',
       recordData,
       {
         fallbackMap: { Name: 'Valued Customer', firstName: 'Valued Customer' },
@@ -161,8 +161,8 @@ export class SendEmailExecutor implements ActionExecutor {
         }
 
         const fromEmail =
-          transport.publicSettings?.fromEmail || 'noreply@example.com';
-        const fromName = transport.publicSettings?.fromName || 'CRM';
+          transport.publicSettings?.fromEmail ?? 'noreply@example.com';
+        const fromName = transport.publicSettings?.fromName ?? 'CRM';
 
         this.logger.log(
           `[SendEmail] Using dynamic config "${transport.name}" (${transport.providerType}) from=${fromEmail}`,
@@ -192,7 +192,7 @@ export class SendEmailExecutor implements ActionExecutor {
               await this.channelConfigRepo.updateHealthStatus(configId, {
                 status: 'error',
                 lastHealthError: classified.message,
-                consecutiveFailures: (transport.consecutiveFailures || 0) + 1,
+                consecutiveFailures: (transport.consecutiveFailures ?? 0) + 1,
               });
 
               // P1: Passive trigger - schedule fast-lane adaptive health check
@@ -246,10 +246,10 @@ export class SendEmailExecutor implements ActionExecutor {
       providerType: config.providerType,
       name: config.name,
       status: config.status,
-      healthState: (config as any).healthState || 'healthy',
+      healthState: (config as any).healthState ?? 'healthy',
       credentials,
-      publicSettings: config.publicSettings || {},
-      consecutiveFailures: config.consecutiveFailures || 0,
+      publicSettings: config.publicSettings ?? {},
+      consecutiveFailures: config.consecutiveFailures ?? 0,
     };
   }
 }
@@ -306,7 +306,7 @@ export class SendSmsExecutor implements ActionExecutor {
 
     // -- Template Interpolation --
     const message = this.templateEngine.interpolate(
-      actionConfig.message || '',
+      actionConfig.message ?? '',
       recordData,
       {
         fallbackMap: { Name: 'Valued Customer', firstName: 'Valued Customer' },
@@ -392,7 +392,7 @@ export class SendSmsExecutor implements ActionExecutor {
               await this.smsChannelConfigRepo.updateHealthStatus(configId, {
                 status: 'error',
                 lastHealthError: classified.message,
-                consecutiveFailures: (transport.consecutiveFailures || 0) + 1,
+                consecutiveFailures: (transport.consecutiveFailures ?? 0) + 1,
               });
 
               // P1: Passive trigger - schedule fast-lane adaptive health check
@@ -447,10 +447,10 @@ export class SendSmsExecutor implements ActionExecutor {
       providerType: config.providerType,
       name: config.name,
       status: config.status,
-      healthState: (config as any).healthState || 'healthy',
+      healthState: (config as any).healthState ?? 'healthy',
       credentials,
-      publicSettings: config.publicSettings || {},
-      consecutiveFailures: config.consecutiveFailures || 0,
+      publicSettings: config.publicSettings ?? {},
+      consecutiveFailures: config.consecutiveFailures ?? 0,
     };
   }
 }
@@ -626,7 +626,7 @@ export class RouteToTeamExecutor implements ActionExecutor {
           error: {
             code: 'ROUTE_UPDATE_FAILED',
             message:
-              updateResult.error || 'Failed to update ownerId after assignment',
+              updateResult.error ?? 'Failed to update ownerId after assignment',
           },
         };
       }
@@ -682,7 +682,7 @@ export class WebhookExecutor implements ActionExecutor {
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { actionConfig, recordData, tenantId } = job;
     const url = actionConfig.webhookUrl;
-    const method = (actionConfig.method || 'POST').toUpperCase();
+    const method = (actionConfig.method ?? 'POST').toUpperCase();
     const timeout = Math.min(
       actionConfig.timeout || WEBHOOK_HARD_TIMEOUT_MS,
       WEBHOOK_HARD_TIMEOUT_MS,
@@ -831,7 +831,7 @@ export class CreateTaskExecutor implements ActionExecutor {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
     const title = this.templateEngine.interpolate(
-      actionConfig.title || 'Follow up',
+      actionConfig.title ?? 'Follow up',
       recordData,
       { fallbackMap: { firstName: 'Customer', Name: 'Customer' } },
     );
@@ -861,7 +861,7 @@ export class CreateTaskExecutor implements ActionExecutor {
             )
           : undefined,
         dueDate: dueDateRaw,
-        priority: actionConfig.priority || 'MEDIUM',
+        priority: actionConfig.priority ?? 'MEDIUM',
         ownerId: actionConfig.assigneeId || recordData.ownerId,
         categoryId: actionConfig.categoryId,
         relatedTo: {
@@ -913,7 +913,7 @@ export class CreateTicketExecutor implements ActionExecutor {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
     const subject = this.templateEngine.interpolate(
-      actionConfig.subject || 'Support Request',
+      actionConfig.subject ?? 'Support Request',
       recordData,
       { fallbackMap: { firstName: 'Customer', Name: 'Customer' } },
     );
@@ -945,7 +945,7 @@ export class CreateTicketExecutor implements ActionExecutor {
               recordData,
             )
           : undefined,
-        priority: actionConfig.priority || 'MEDIUM',
+        priority: actionConfig.priority ?? 'MEDIUM',
         statusId: actionConfig.statusId,
         typeId: actionConfig.typeId,
         sourceId: actionConfig.sourceId,
@@ -1181,7 +1181,7 @@ export class AddNoteExecutor implements ActionExecutor {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
     const content = this.templateEngine.interpolate(
-      actionConfig.content || '',
+      actionConfig.content ?? '',
       recordData,
       { fallbackMap: { firstName: 'Record', Name: 'Record' } },
     );
@@ -1203,7 +1203,7 @@ export class AddNoteExecutor implements ActionExecutor {
         : recordData.contactId || recordData.relatedContact?.id || undefined;
 
     this.logger.log(
-      `[AddNote] tenant=${tenantId} contactId=${contactId || 'N/A'} noteType=${actionConfig.noteType || 'system'} contentLength=${content.length}`,
+      `[AddNote] tenant=${tenantId} contactId=${contactId ?? 'N/A'} noteType=${actionConfig.noteType ?? 'system'} contentLength=${content.length}`,
     );
 
     // If we have a contactId, create a real note
@@ -1223,7 +1223,7 @@ export class AddNoteExecutor implements ActionExecutor {
           output: {
             noteId: note.id,
             contactId,
-            noteType: actionConfig.noteType || 'system',
+            noteType: actionConfig.noteType ?? 'system',
           },
         };
       } catch (err: any) {
@@ -1244,7 +1244,7 @@ export class AddNoteExecutor implements ActionExecutor {
       recordType,
       recordId,
       content,
-      noteType: actionConfig.noteType || 'system',
+      noteType: actionConfig.noteType ?? 'system',
     });
 
     return {
@@ -1289,7 +1289,7 @@ export class CreateRecordExecutor implements ActionExecutor {
 
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
-    const targetType = actionConfig.recordType || 'Contact';
+    const targetType = actionConfig.recordType ?? 'Contact';
 
     if (!CreateRecordExecutor.SUPPORTED_TYPES.has(targetType)) {
       return {
@@ -1410,7 +1410,7 @@ export class HttpRequestExecutor implements ActionExecutor {
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { actionConfig, recordData, tenantId, recordId, recordType } = job;
     const url = actionConfig.url;
-    const method = (actionConfig.method || 'GET').toUpperCase();
+    const method = (actionConfig.method ?? 'GET').toUpperCase();
 
     if (!url) {
       return {
@@ -1707,7 +1707,7 @@ export class SendWhatsAppExecutor implements ActionExecutor {
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
-    const recipientField = actionConfig.recipientField || 'phones';
+    const recipientField = actionConfig.recipientField ?? 'phones';
     const phone =
       recordData[recipientField]?.[0] ||
       recordData[recipientField] ||
@@ -1724,7 +1724,7 @@ export class SendWhatsAppExecutor implements ActionExecutor {
     }
 
     const templateName = this.templateEngine.interpolate(
-      actionConfig.templateName || '',
+      actionConfig.templateName ?? '',
       recordData,
     );
 
@@ -1739,7 +1739,7 @@ export class SendWhatsAppExecutor implements ActionExecutor {
     }
 
     this.logger.log(
-      `[SendWhatsApp] DRY-RUN tenant=${tenantId} to=${phone} template="${templateName}" lang=${actionConfig.language || 'vi'}`,
+      `[SendWhatsApp] DRY-RUN tenant=${tenantId} to=${phone} template="${templateName}" lang=${actionConfig.language ?? 'vi'}`,
     );
 
     // Meta Cloud API integration (v17.0+)
@@ -1750,7 +1750,7 @@ export class SendWhatsAppExecutor implements ActionExecutor {
         dryRun: true,
         to: phone,
         templateName,
-        language: actionConfig.language || 'vi',
+        language: actionConfig.language ?? 'vi',
         recordType,
         recordId,
       },
@@ -1773,7 +1773,7 @@ export class SendZnsExecutor implements ActionExecutor {
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
-    const recipientField = actionConfig.recipientField || 'phones';
+    const recipientField = actionConfig.recipientField ?? 'phones';
     const phone =
       recordData[recipientField]?.[0] ||
       recordData[recipientField] ||
@@ -1873,7 +1873,7 @@ export class SendLivechatExecutor implements ActionExecutor {
     }
 
     const message = this.templateEngine.interpolate(
-      actionConfig.message || '',
+      actionConfig.message ?? '',
       recordData,
       { fallbackMap: { firstName: 'Customer', Name: 'Customer' } },
     );
@@ -1950,18 +1950,18 @@ export class InternalNotificationExecutor implements ActionExecutor {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
     const title = this.templateEngine.interpolate(
-      actionConfig.title || 'Workflow Notification',
+      actionConfig.title ?? 'Workflow Notification',
       recordData,
       { fallbackMap: { firstName: 'Record', Name: 'Record' } },
     );
 
     const message = this.templateEngine.interpolate(
-      actionConfig.message || '',
+      actionConfig.message ?? '',
       recordData,
       { fallbackMap: { firstName: 'Record', Name: 'Record' } },
     );
 
-    const recipientType = actionConfig.recipientType || 'owner';
+    const recipientType = actionConfig.recipientType ?? 'owner';
 
     // Resolve recipient IDs based on type
     let recipientIds: string[] = [];

@@ -44,10 +44,10 @@ export class TenantsService {
 
   private getTenantLoginUrl(alias: string): string {
     const frontendUrl =
-      this.configService.get('keycloak.frontendUrl', { infer: true }) ||
+      this.configService.get('keycloak.frontendUrl', { infer: true }) ??
       'https://crmsaudi.dev';
     const rootDomain =
-      this.configService.get('app.rootDomain', { infer: true }) ||
+      this.configService.get('app.rootDomain', { infer: true }) ??
       'crmsaudi.dev';
     const url = new URL(frontendUrl);
 

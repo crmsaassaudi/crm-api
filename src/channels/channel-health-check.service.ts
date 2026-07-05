@@ -285,7 +285,7 @@ export class ChannelHealthCheckService {
 
       this.logger.warn(
         `[AdaptiveCheck] Runtime failure detected for config ${payload.configId} ` +
-          `(HTTP ${payload.httpStatus || 'unknown'}). ` +
+          `(HTTP ${payload.httpStatus ?? 'unknown'}). ` +
           `Scheduled fast-lane check at ${fiveMinutesFromNow.toISOString()}`,
       );
     } catch (error: any) {
@@ -328,7 +328,7 @@ export class ChannelHealthCheckService {
         resolvedCredentials,
         {
           ...(config.publicSettings || {}),
-          authType: config.authType || 'app_password',
+          authType: config.authType ?? 'app_password',
         },
       );
 
@@ -361,7 +361,7 @@ export class ChannelHealthCheckService {
         // ── FAIL: Transition state + schedule adaptive check ─────────────
         return this.handleVerifyFailure(
           config,
-          result.error || 'Connection verification failed',
+          result.error ?? 'Connection verification failed',
         );
       }
     } catch (error: any) {
@@ -380,7 +380,7 @@ export class ChannelHealthCheckService {
     config: ChannelConfig,
     errorMessage: string,
   ): Promise<'failed'> {
-    const newFailures = (config.consecutiveFailures || 0) + 1;
+    const newFailures = (config.consecutiveFailures ?? 0) + 1;
     const shouldMarkError = newFailures >= this.FAILURE_THRESHOLD;
 
     // Determine new health state
@@ -401,7 +401,7 @@ export class ChannelHealthCheckService {
     this.logger.warn(
       `[HealthCheck] ❌ Config "${config.name}" FAILED ` +
         `(${newFailures}/${this.FAILURE_THRESHOLD}) ` +
-        `state: ${config.healthState || 'healthy'} → ${newHealthState} ` +
+        `state: ${config.healthState ?? 'healthy'} → ${newHealthState} ` +
         `next check: ${this.formatInterval(intervalMs)} — ${errorMessage}`,
     );
 

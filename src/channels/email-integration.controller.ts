@@ -86,10 +86,10 @@ export class EmailIntegrationController {
 
   private setRequestContext(req: Request): void {
     const ip =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      req.ip ||
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
+      req.ip ??
       null;
-    const userAgent = (req.headers['user-agent'] as string) || null;
+    const userAgent = (req.headers['user-agent'] as string) ?? null;
 
     this.cls.set('clientIp', ip);
     this.cls.set('userAgent', userAgent);

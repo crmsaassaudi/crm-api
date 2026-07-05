@@ -45,15 +45,15 @@ export class EmailIntegrationService {
       name: config.name,
       providerType: config.providerType,
       status,
-      healthState: config.healthState || 'healthy',
+      healthState: config.healthState ?? 'healthy',
       lastVerifiedAt: config.lastVerifiedAt,
       lastHealthError: config.lastHealthError,
-      consecutiveFailures: config.consecutiveFailures || 0,
+      consecutiveFailures: config.consecutiveFailures ?? 0,
       isDefault: config.isDefault,
       inboundSyncEnabled: Boolean(config.publicSettings?.imapHost),
       syncTargetFolders:
         await this.emailSettings.getSyncTargetFolders(tenantId),
-      settings: this.publicMailboxSettings(config.publicSettings || {}),
+      settings: this.publicMailboxSettings(config.publicSettings ?? {}),
       needsAdminAction:
         status === 'token_expired' || status === 'error_needs_admin_action',
     };
@@ -63,7 +63,7 @@ export class EmailIntegrationService {
     const tenantId = this.getTenantId();
     const existing = await this.getEmailConfig(tenantId, id);
     const publicSettings = dto.publicSettings
-      ? { ...(existing.publicSettings || {}), ...dto.publicSettings }
+      ? { ...(existing.publicSettings ?? {}), ...dto.publicSettings }
       : undefined;
 
     if (dto.emailSettings) {
@@ -91,8 +91,8 @@ export class EmailIntegrationService {
     const tenantId = this.getTenantId();
     const existing = await this.getEmailConfigWithCredentials(tenantId, id);
     const publicSettings = dto.publicSettings
-      ? { ...(existing.publicSettings || {}), ...dto.publicSettings }
-      : existing.publicSettings || {};
+      ? { ...(existing.publicSettings ?? {}), ...dto.publicSettings }
+      : (existing.publicSettings ?? {});
 
     if (dto.credentials) {
       return this.channelConfigService.update(id, {
@@ -119,12 +119,12 @@ export class EmailIntegrationService {
     if (!result.success) {
       await this.configRepo.update(tenantId, id, {
         status: 'error',
-        lastHealthError: result.error || 'Connection verification failed',
-        consecutiveFailures: (existing.consecutiveFailures || 0) + 1,
+        lastHealthError: result.error ?? 'Connection verification failed',
+        consecutiveFailures: (existing.consecutiveFailures ?? 0) + 1,
         healthState: 'unhealthy',
       } as any);
       throw new BadRequestException(
-        `Connection verification failed: ${result.error || 'Unknown error'}`,
+        `Connection verification failed: ${result.error ?? 'Unknown error'}`,
       );
     }
 
@@ -180,10 +180,10 @@ export class EmailIntegrationService {
         configId: id,
         configName: config.name,
         providerType: config.providerType,
-        changes: { result: 'failure', error: verify.error || 'Unknown error' },
+        changes: { result: 'failure', error: verify.error ?? 'Unknown error' },
       });
       throw new BadRequestException(
-        `Connection verification failed: ${verify.error || 'Unknown error'}`,
+        `Connection verification failed: ${verify.error ?? 'Unknown error'}`,
       );
     }
 
@@ -192,9 +192,9 @@ export class EmailIntegrationService {
       syncJob = await this.historicalSync.startSync({
         tenantId,
         configId: id,
-        mode: dto.mode || 'auto_discover',
-        maxAgeDays: dto.maxAgeDays || 7,
-        maxThreads: dto.maxThreads || 50,
+        mode: dto.mode ?? 'auto_discover',
+        maxAgeDays: dto.maxAgeDays ?? 7,
+        maxThreads: dto.maxThreads ?? 50,
       });
     }
 
@@ -206,7 +206,7 @@ export class EmailIntegrationService {
         result: 'success',
         imapReady: true,
         startedBackfill: Boolean(dto.startBackfill),
-        syncJobId: syncJob?.jobId || null,
+        syncJobId: syncJob?.jobId ?? null,
       },
     });
 
@@ -292,9 +292,9 @@ export class EmailIntegrationService {
     this.eventEmitter.emit(`channel-config.audit.${action}`, {
       ...data,
       tenantId: this.cls.get('tenantId'),
-      userId: this.cls.get('userId') || 'system',
-      ipAddress: this.cls.get('clientIp') || null,
-      userAgent: this.cls.get('userAgent') || null,
+      userId: this.cls.get('userId') ?? 'system',
+      ipAddress: this.cls.get('clientIp') ?? null,
+      userAgent: this.cls.get('userAgent') ?? null,
     });
   }
 }

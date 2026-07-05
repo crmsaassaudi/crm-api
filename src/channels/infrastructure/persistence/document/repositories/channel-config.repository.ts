@@ -258,28 +258,28 @@ export class ChannelConfigRepository {
     entity.id = raw._id?.toString();
     entity.tenantId = raw.tenantId?.toString();
     entity.providerType = raw.providerType;
-    entity.schemaVersion = (raw as any).schemaVersion || 1;
+    entity.schemaVersion = (raw as any).schemaVersion ?? 1;
     entity.name = raw.name;
     entity.isDefault = raw.isDefault;
     entity.status = raw.status;
-    entity.publicSettings = raw.publicSettings || {};
-    entity.authType = (raw as any).authType || 'app_password';
-    entity.tokenExpiresAt = (raw as any).tokenExpiresAt || null;
+    entity.publicSettings = raw.publicSettings ?? {};
+    entity.authType = (raw as any).authType ?? 'app_password';
+    entity.tokenExpiresAt = (raw as any).tokenExpiresAt ?? null;
     entity.deletedAt = raw.deletedAt;
     // Health Check Metadata (Phase 2)
-    entity.lastVerifiedAt = raw.lastVerifiedAt || null;
-    entity.lastHealthError = raw.lastHealthError || null;
-    entity.consecutiveFailures = raw.consecutiveFailures || 0;
+    entity.lastVerifiedAt = raw.lastVerifiedAt ?? null;
+    entity.lastHealthError = raw.lastHealthError ?? null;
+    entity.consecutiveFailures = raw.consecutiveFailures ?? 0;
     // Adaptive Health Check (Phase 3)
-    entity.healthState = (raw as any).healthState || 'healthy';
-    entity.nextHealthCheckAt = (raw as any).nextHealthCheckAt || null;
+    entity.healthState = (raw as any).healthState ?? 'healthy';
+    entity.nextHealthCheckAt = (raw as any).nextHealthCheckAt ?? null;
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;
     if (raw.encryptedCredentials) {
       entity.encryptedCredentials = raw.encryptedCredentials;
     }
-    entity.accessToken = (raw as any).accessToken || null;
-    entity.refreshToken = (raw as any).refreshToken || null;
+    entity.accessToken = (raw as any).accessToken ?? null;
+    entity.refreshToken = (raw as any).refreshToken ?? null;
     return entity;
   }
 

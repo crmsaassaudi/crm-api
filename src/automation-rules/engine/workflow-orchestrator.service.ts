@@ -465,7 +465,7 @@ export class WorkflowOrchestratorService {
 
     this.bufferStep(stepLogs, {
       nodeId: node.id,
-      nodeName: node.config?.name || 'Condition',
+      nodeName: node.config?.name ?? 'Condition',
       nodeType: 'condition',
       branch,
       status: 'success',
@@ -521,7 +521,7 @@ export class WorkflowOrchestratorService {
       workflowId,
       tenantId,
       nodeId: node.id,
-      nodeName: actionConfig?.name || actionConfig?.actionType || 'Action',
+      nodeName: actionConfig?.name ?? actionConfig?.actionType ?? 'Action',
       actionType: actionConfig?.actionType,
       actionConfig,
       recordId: payload.recordId,
@@ -599,13 +599,13 @@ export class WorkflowOrchestratorService {
     const delayMs = this.computeDelayMs(config);
 
     this.logger.log(
-      `[Orchestrator] ⏸ Wait node "${config.name || 'Wait'}": ` +
+      `[Orchestrator] ⏸ Wait node "${config.name ?? 'Wait'}": ` +
         `delay=${config.delayValue} ${config.delayUnit} (${delayMs}ms)`,
     );
 
     this.bufferStep(stepLogs, {
       nodeId: node.id,
-      nodeName: config.name || 'Wait',
+      nodeName: config.name ?? 'Wait',
       nodeType: 'wait' as any,
       status: 'waiting' as any,
       input: {

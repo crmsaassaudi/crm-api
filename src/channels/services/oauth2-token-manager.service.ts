@@ -86,7 +86,7 @@ export class OAuth2TokenManager {
   } {
     const providerConfig = this.getProviderConfig(options.provider);
     const state = options.state ?? this.generateState();
-    const redirectUri = options.redirectUri || providerConfig.redirectUri;
+    const redirectUri = options.redirectUri ?? providerConfig.redirectUri;
 
     if (!redirectUri) {
       throw new BadRequestException(
@@ -123,7 +123,7 @@ export class OAuth2TokenManager {
   ): Promise<ChannelConfig> {
     const tenantId = this.getTenantId();
     const providerConfig = this.getProviderConfig(options.provider);
-    const redirectUri = options.redirectUri || providerConfig.redirectUri;
+    const redirectUri = options.redirectUri ?? providerConfig.redirectUri;
 
     if (!redirectUri) {
       throw new BadRequestException(
@@ -156,10 +156,11 @@ export class OAuth2TokenManager {
     const existingCredentials = existing?.encryptedCredentials
       ? JSON.parse(await this.crypto.decrypt(existing.encryptedCredentials))
       : {};
-    const emailAddress =
-      options.emailAddress ||
-      this.extractEmailFromIdToken(tokenSet.id_token) ||
-      existingCredentials.user;
+    const emailAddress = this.resolveEmailAddress(
+      options,
+      tokenSet.id_token,
+      existingCredentials,
+    );
 
     if (!emailAddress) {
       throw new BadRequestException(
@@ -167,26 +168,22 @@ export class OAuth2TokenManager {
       );
     }
 
-    const encryptedCredentials = await this.crypto.encrypt(
-      JSON.stringify({ ...existingCredentials, user: emailAddress }),
+    const {
+      encryptedCredentials,
+      encryptedAccessToken,
+      encryptedRefreshToken,
+      tokenExpiresAt,
+    } = await this.buildTokenPayload(
+      existingCredentials,
+      emailAddress,
+      tokenSet,
     );
-    const encryptedAccessToken = await this.crypto.encrypt(
-      tokenSet.access_token,
+    const publicSettings = this.buildPublicSettings(
+      providerConfig,
+      existing,
+      options,
+      emailAddress,
     );
-    const encryptedRefreshToken = tokenSet.refresh_token
-      ? await this.crypto.encrypt(tokenSet.refresh_token)
-      : null;
-    const tokenExpiresAt = this.calculateExpiry(tokenSet.expires_in);
-    const publicSettings = {
-      ...providerConfig.defaultPublicSettings,
-      ...(existing?.publicSettings || {}),
-      ...(options.publicSettings || {}),
-      fromEmail:
-        options.publicSettings?.fromEmail ||
-        existing?.publicSettings?.fromEmail ||
-        emailAddress,
-      oauthProvider: options.provider,
-    };
 
     const saved = existing
       ? await this.repository.updateOAuthTokens(existing.id, {
@@ -206,7 +203,7 @@ export class OAuth2TokenManager {
       : await this.repository.create({
           tenantId,
           providerType: 'smtp',
-          name: options.name || `${emailAddress} OAuth2`,
+          name: options.name ?? `${emailAddress} OAuth2`,
           authType: 'oauth2',
           encryptedCredentials,
           accessToken: encryptedAccessToken,
@@ -214,7 +211,7 @@ export class OAuth2TokenManager {
           tokenExpiresAt,
           publicSettings,
           status: 'active',
-          isDefault: options.isDefault || false,
+          isDefault: options.isDefault ?? false,
           deletedAt: null,
           lastVerifiedAt: new Date(),
           lastHealthError: null,
@@ -238,6 +235,59 @@ export class OAuth2TokenManager {
     saved.accessToken = null;
     saved.refreshToken = null;
     return saved;
+  }
+
+  private resolveEmailAddress(
+    options: OAuth2CallbackOptions,
+    idToken: string | undefined,
+    existingCredentials: Record<string, any>,
+  ): string | undefined {
+    return (
+      options.emailAddress ??
+      this.extractEmailFromIdToken(idToken) ??
+      existingCredentials.user
+    );
+  }
+
+  private async buildTokenPayload(
+    existingCredentials: Record<string, any>,
+    emailAddress: string,
+    tokenSet: TokenEndpointResponse,
+  ) {
+    const encryptedCredentials = await this.crypto.encrypt(
+      JSON.stringify({ ...existingCredentials, user: emailAddress }),
+    );
+    const encryptedAccessToken = await this.crypto.encrypt(
+      tokenSet.access_token!,
+    );
+    const encryptedRefreshToken = tokenSet.refresh_token
+      ? await this.crypto.encrypt(tokenSet.refresh_token)
+      : null;
+    const tokenExpiresAt = this.calculateExpiry(tokenSet.expires_in);
+    return {
+      encryptedCredentials,
+      encryptedAccessToken,
+      encryptedRefreshToken,
+      tokenExpiresAt,
+    };
+  }
+
+  private buildPublicSettings(
+    providerConfig: OAuth2ProviderConfig,
+    existing: OAuth2ConfigLike | null,
+    options: OAuth2CallbackOptions,
+    emailAddress: string,
+  ): Record<string, any> {
+    return {
+      ...providerConfig.defaultPublicSettings,
+      ...(existing?.publicSettings ?? {}),
+      ...(options.publicSettings ?? {}),
+      fromEmail:
+        options.publicSettings?.fromEmail ??
+        existing?.publicSettings?.fromEmail ??
+        emailAddress,
+      oauthProvider: options.provider,
+    };
   }
 
   async getValidAccessToken(config: OAuth2ConfigLike): Promise<string> {
@@ -363,8 +413,8 @@ export class OAuth2TokenManager {
 
     if (!response.ok) {
       throw new BadRequestException(
-        payload.error_description ||
-          payload.error ||
+        payload.error_description ??
+          payload.error ??
           `OAuth2 token endpoint failed with HTTP ${response.status}`,
       );
     }

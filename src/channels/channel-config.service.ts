@@ -466,9 +466,9 @@ export class ChannelConfigService {
   ): void {
     try {
       const tenantId = this.cls.get('tenantId');
-      const userId = this.cls.get('userId') || 'system';
-      const ipAddress = this.cls.get('clientIp') || null;
-      const userAgent = this.cls.get('userAgent') || null;
+      const userId = this.cls.get('userId') ?? 'system';
+      const ipAddress = this.cls.get('clientIp') ?? null;
+      const userAgent = this.cls.get('userAgent') ?? null;
 
       this.eventEmitter.emit(`channel-config.audit.${action}`, {
         ...data,

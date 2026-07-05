@@ -406,7 +406,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     if (!imapHost) return;
 
     const auth =
-      (config.authType || 'app_password') === 'oauth2'
+      (config.authType ?? 'app_password') === 'oauth2'
         ? {
             user: credentials.user,
             accessToken: credentials.accessToken,
@@ -645,7 +645,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
       ),
     ]);
     this.logger.log(
-      `[ImapPoller] UID=${msg.uid}: Parsed OK — subject="${parsed.subject || '(none)'}"`,
+      `[ImapPoller] UID=${msg.uid}: Parsed OK — subject="${parsed.subject ?? '(none)'}"`,
     );
 
     // Extract properly decoded content

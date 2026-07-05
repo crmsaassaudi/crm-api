@@ -43,8 +43,8 @@ export class SendGridEmailProvider implements EmailProviderService {
 
   constructor() {
     const apiKey = process.env.SENDGRID_API_KEY;
-    this.fromEmail = process.env.SENDGRID_FROM_EMAIL || 'noreply@crm.local';
-    this.fromName = process.env.SENDGRID_FROM_NAME || 'CRM Automation';
+    this.fromEmail = process.env.SENDGRID_FROM_EMAIL ?? 'noreply@crm.local';
+    this.fromName = process.env.SENDGRID_FROM_NAME ?? 'CRM Automation';
     this.isDryRun = !apiKey;
 
     // SECURITY: Dry-run mode disables TLS verification for local MailDev.

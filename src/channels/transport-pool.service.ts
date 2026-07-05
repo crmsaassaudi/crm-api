@@ -140,12 +140,12 @@ export class TransportPoolService implements OnModuleDestroy {
       providerType: config.providerType,
       name: config.name,
       status: config.status,
-      authType: config.authType || 'app_password',
-      healthState: (config as any).healthState || 'healthy',
+      authType: config.authType ?? 'app_password',
+      healthState: (config as any).healthState ?? 'healthy',
       credentials,
-      publicSettings: config.publicSettings || {},
-      tokenExpiresAt: config.tokenExpiresAt || null,
-      consecutiveFailures: config.consecutiveFailures || 0,
+      publicSettings: config.publicSettings ?? {},
+      tokenExpiresAt: config.tokenExpiresAt ?? null,
+      consecutiveFailures: config.consecutiveFailures ?? 0,
     };
 
     // 5. Store in cache (with LRU eviction if full)
