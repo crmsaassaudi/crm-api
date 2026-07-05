@@ -31,7 +31,7 @@ import { AccountTypeSchemaClass } from '../../account-settings/entities/account-
 // ── Helpers ─────────────────────────────────────────────────────────
 
 const resolve = (map: Map<string, string>, val: unknown): string =>
-  map.get(String(val ?? '')) || String(val ?? '');
+  map.get(String(val ?? '')) ?? String(val ?? '');
 
 // ── Columns ─────────────────────────────────────────────────────────
 
@@ -99,9 +99,9 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
   private readonly storage: ExportStorageService;
 
   // ── Per-job lookup maps ───────────────────────────────────────────
-  private userMap = new Map<string, string>();
-  private statusMap = new Map<string, string>();
-  private typeMap = new Map<string, string>();
+  private readonly userMap = new Map<string, string>();
+  private readonly statusMap = new Map<string, string>();
+  private readonly typeMap = new Map<string, string>();
   private resolvedColumns: ExportColumn[] = [];
 
   constructor(

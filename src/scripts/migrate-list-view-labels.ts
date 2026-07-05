@@ -38,9 +38,106 @@ const LOCALIZED_MODULE_MAP: Record<string, string> = {
 
 function resolveModule(module: string): string | null {
   if (VALID_MODULES.includes(module)) return module;
-  const resolved = LOCALIZED_MODULE_MAP[module.toLowerCase()];
-  return resolved || null;
+  return LOCALIZED_MODULE_MAP[module.toLowerCase()] ?? null;
 }
+
+// ── Per-view helpers ───────────────────────────────────────────────
+
+interface ViewPatchResult {
+  deleted: boolean;
+  modulesFixed: number;
+  labelsStripped: number;
+  dirty: boolean;
+}
+
+/** Fix module name on a single view. Returns true if the view should be deleted. */
+function fixViewModule(view: any): {
+  deleted: boolean;
+  fixed: boolean;
+  dirty: boolean;
+} {
+  const resolved = resolveModule(view.module);
+  if (!resolved) {
+    console.log(
+      `    ⚠ Deleting orphaned view "${view.name}" with unknown module "${view.module}"`,
+    );
+    return { deleted: true, fixed: false, dirty: true };
+  }
+  if (resolved !== view.module) {
+    console.log(
+      `    → Fixed module: "${view.module}" → "${resolved}" (view: "${view.name}")`,
+    );
+    view.module = resolved;
+    return { deleted: false, fixed: true, dirty: true };
+  }
+  return { deleted: false, fixed: false, dirty: false };
+}
+
+/** Strip labels from all columns of a single view. Returns number of labels removed. */
+function stripColumnLabels(view: any): number {
+  if (!Array.isArray(view.columns)) return 0;
+  let stripped = 0;
+  for (const column of view.columns) {
+    if (column.label !== undefined) {
+      delete column.label;
+      stripped++;
+    }
+  }
+  return stripped;
+}
+
+/** Process all views (module fix + label strip). Returns patch counts. */
+function processViews(views: any[]): Omit<ViewPatchResult, 'deleted'> {
+  let labelsStripped = 0;
+  let modulesFixed = 0;
+  let dirty = false;
+
+  for (let i = views.length - 1; i >= 0; i--) {
+    const view = views[i];
+
+    const { deleted, fixed, dirty: modDirty } = fixViewModule(view);
+    if (deleted) {
+      views.splice(i, 1);
+      dirty = true;
+      continue;
+    }
+    if (fixed) modulesFixed++;
+    if (modDirty) dirty = true;
+
+    const stripped = stripColumnLabels(view);
+    if (stripped > 0) {
+      labelsStripped += stripped;
+      dirty = true;
+    }
+  }
+
+  return { labelsStripped, modulesFixed, dirty };
+}
+
+/** Deduplicate views keeping the first occurrence per module+name (case-insensitive). */
+function deduplicateViews(views: any[]): { removed: number; dirty: boolean } {
+  const seen = new Set<string>();
+  let removed = 0;
+  let dirty = false;
+
+  for (let i = views.length - 1; i >= 0; i--) {
+    const key = `${views[i].module.toLowerCase()}::${views[i].name.toLowerCase()}`;
+    if (seen.has(key)) {
+      console.log(
+        `    ✂ Removing duplicate view "${views[i].name}" (module: ${views[i].module}, id: ${views[i].id})`,
+      );
+      views.splice(i, 1);
+      removed++;
+      dirty = true;
+    } else {
+      seen.add(key);
+    }
+  }
+
+  return { removed, dirty };
+}
+
+// ── Main migration ─────────────────────────────────────────────────
 
 async function migrateListViews() {
   const uri = process.env.DATABASE_URL;
@@ -74,63 +171,17 @@ async function migrateListViews() {
         continue;
       }
 
-      let labelsStripped = 0;
-      let modulesFixed = 0;
-      let viewsDeleted = 0;
-      let duplicatesRemoved = 0;
-      let dirty = false;
+      const initialCount = views.length;
+      const {
+        labelsStripped,
+        modulesFixed,
+        dirty: processDirty,
+      } = processViews(views);
+      const viewsDeleted = initialCount - views.length;
 
-      // Process views in reverse so splicing doesn't break indices
-      for (let i = views.length - 1; i >= 0; i--) {
-        const view = views[i];
-
-        // Fix module name
-        const resolved = resolveModule(view.module);
-        if (!resolved) {
-          console.log(
-            `    ⚠ Deleting orphaned view "${view.name}" with unknown module "${view.module}"`,
-          );
-          views.splice(i, 1);
-          viewsDeleted++;
-          dirty = true;
-          continue;
-        }
-        if (resolved !== view.module) {
-          console.log(
-            `    → Fixed module: "${view.module}" → "${resolved}" (view: "${view.name}")`,
-          );
-          view.module = resolved;
-          modulesFixed++;
-          dirty = true;
-        }
-
-        // Strip labels from columns
-        if (Array.isArray(view.columns)) {
-          for (const column of view.columns) {
-            if (column.label !== undefined) {
-              delete column.label;
-              labelsStripped++;
-              dirty = true;
-            }
-          }
-        }
-      }
-
-      // Deduplicate: keep the FIRST view per module+name (case-insensitive)
-      const seen = new Set<string>();
-      for (let i = views.length - 1; i >= 0; i--) {
-        const key = `${views[i].module.toLowerCase()}::${views[i].name.toLowerCase()}`;
-        if (seen.has(key)) {
-          console.log(
-            `    ✂ Removing duplicate view "${views[i].name}" (module: ${views[i].module}, id: ${views[i].id})`,
-          );
-          views.splice(i, 1);
-          duplicatesRemoved++;
-          dirty = true;
-        } else {
-          seen.add(key);
-        }
-      }
+      const { removed: duplicatesRemoved, dirty: dedupDirty } =
+        deduplicateViews(views);
+      const dirty = processDirty || dedupDirty;
 
       if (dirty) {
         await collection.updateOne(

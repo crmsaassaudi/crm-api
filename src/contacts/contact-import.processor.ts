@@ -374,7 +374,7 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
 
   private normalizePhone(value: string): string {
     // Strip everything except digits — no '+' prefix
-    return value.replace(/[^0-9]/g, '');
+    return value.replace(/\D/g, '');
   }
 
   private uniq(values: string[]): string[] {

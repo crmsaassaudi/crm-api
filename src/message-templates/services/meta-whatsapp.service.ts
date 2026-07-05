@@ -12,14 +12,14 @@ export class MetaWhatsAppService {
 
   private getCredentials() {
     const accessToken =
-      this.configService.get<string>('META_ACCESS_TOKEN', { infer: true }) ||
+      this.configService.get<string>('META_ACCESS_TOKEN', { infer: true }) ??
       process.env.META_ACCESS_TOKEN;
     const wabaId =
       this.configService.get<string>('META_WHATSAPP_BUSINESS_ACCOUNT_ID', {
         infer: true,
-      }) || process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID;
+      }) ?? process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID;
     const phoneNumberId =
-      this.configService.get<string>('META_PHONE_NUMBER_ID', { infer: true }) ||
+      this.configService.get<string>('META_PHONE_NUMBER_ID', { infer: true }) ??
       process.env.META_PHONE_NUMBER_ID;
     return { accessToken, wabaId, phoneNumberId };
   }

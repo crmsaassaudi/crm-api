@@ -83,6 +83,41 @@ export class ContactRepository extends BaseDocumentRepository<
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  private applyParsedFilters(
+    where: FilterQuery<ContactSchemaClass>,
+    parsedFilters: any[],
+  ): void {
+    const OWNER_FIELD_MAP: Record<string, string> = {
+      owner: 'ownerId',
+      createdBy: 'createdById',
+      updatedBy: 'updatedById',
+    };
+
+    for (const f of parsedFilters) {
+      if (!f.id || !f.value) continue;
+      if (!this.ALLOWED_FILTER_FIELDS.has(f.id)) continue;
+
+      if (['emails', 'phones'].includes(f.id)) {
+        where[f.id] = {
+          $regex: `^${this.escapeRegex(String(f.value))}$`,
+          $options: 'i',
+        };
+      } else if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
+        where[f.id] = Array.isArray(f.value) ? { $in: f.value } : f.value;
+      } else if (f.id in OWNER_FIELD_MAP) {
+        const dbField = OWNER_FIELD_MAP[f.id];
+        where[dbField] = Array.isArray(f.value) ? { $in: f.value } : f.value;
+      } else if (Array.isArray(f.value)) {
+        where[f.id] = { $in: f.value };
+      } else {
+        where[f.id] = {
+          $regex: this.escapeRegex(String(f.value)),
+          $options: 'i',
+        };
+      }
+    }
+  }
+
   private buildListWhere(filterOptions?: any | null) {
     const where: FilterQuery<ContactSchemaClass> = {
       deletedAt: { $exists: false },
@@ -97,10 +132,6 @@ export class ContactRepository extends BaseDocumentRepository<
 
     if (filterOptions?.search) {
       const searchTerm = filterOptions.search.trim();
-      // MongoDB $text tokenizes by punctuation, so emails like
-      // "user@example.com" get split into ["user", "example", "com"].
-      // When the search term looks like an email, use a regex fallback
-      // on the emails array for exact substring matching.
       if (searchTerm.includes('@')) {
         const escaped = this.escapeRegex(searchTerm);
         where.$or = [
@@ -112,7 +143,6 @@ export class ContactRepository extends BaseDocumentRepository<
       }
     }
 
-    // Filter by lifecycle stage
     if (filterOptions?.lifecycleStage) {
       where.lifecycleStageId = filterOptions.lifecycleStage;
     }
@@ -124,48 +154,9 @@ export class ContactRepository extends BaseDocumentRepository<
             ? JSON.parse(filterOptions.filters)
             : filterOptions.filters;
         if (Array.isArray(parsedFilters)) {
-          parsedFilters.forEach((f: any) => {
-            if (!f.id || !f.value) return;
-
-            // Block fields that are not in the whitelist
-            if (!this.ALLOWED_FILTER_FIELDS.has(f.id)) return;
-
-            // Array fields: emails[] and phones[] need special matching
-            if (['emails', 'phones'].includes(f.id)) {
-              // Case-insensitive match within the array
-              where[f.id] = {
-                $regex: `^${this.escapeRegex(String(f.value))}$`,
-                $options: 'i',
-              };
-            } else if (
-              ['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)
-            ) {
-              where[f.id] = Array.isArray(f.value) ? { $in: f.value } : f.value;
-            } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
-              // Map virtual field names to actual DB field names
-              const fieldMap: Record<string, string> = {
-                owner: 'ownerId',
-                createdBy: 'createdById',
-                updatedBy: 'updatedById',
-              };
-              const dbField = fieldMap[f.id] || f.id;
-              where[dbField] = Array.isArray(f.value)
-                ? { $in: f.value }
-                : f.value;
-            } else if (Array.isArray(f.value)) {
-              // Any other array value: use $in
-              where[f.id] = { $in: f.value };
-            } else {
-              // Escape regex metacharacters to prevent ReDoS attacks
-              where[f.id] = {
-                $regex: this.escapeRegex(String(f.value)),
-                $options: 'i',
-              };
-            }
-          });
+          this.applyParsedFilters(where, parsedFilters);
         }
       } catch (err) {
-        // Log malformed filter JSON so issues are discoverable
         const logger = new Logger(ContactRepository.name);
         logger.warn(
           `Malformed filter JSON ignored: ${err instanceof Error ? err.message : String(err)}`,
@@ -560,7 +551,7 @@ export class ContactRepository extends BaseDocumentRepository<
     data: Partial<ContactSchemaClass>,
   ): Promise<Contact | null> {
     const scopedFilter = this.applyTenantFilter({ _id: id, __v: version });
-    const updatedById = this.cls.get('userId') || this.cls.get('user.id');
+    const updatedById = this.cls.get('userId') ?? this.cls.get('user.id');
     const doc = await this.model
       .findOneAndUpdate(
         scopedFilter,
