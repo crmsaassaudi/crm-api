@@ -1260,7 +1260,7 @@ export class OmniGateway
           clientMessageId: payload.clientMessageId,
           timestamp: payload.timestamp,
           providerTimestamp: payload.timestamp,
-          createdAt: payload.createdAt || payload.timestamp || new Date(),
+          createdAt: payload.createdAt ?? payload.timestamp ?? new Date(),
           metadata: payload.metadata,
         });
     }
