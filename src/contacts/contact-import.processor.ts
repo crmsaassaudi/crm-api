@@ -269,20 +269,14 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
       mapped.arrayFields.emails ?? [],
       existing.emails ?? [],
       data.tenantSettings.multipleEmailsAllowed,
-      mapped.row,
-      set,
-      addToSet,
-      errors,
+      { row: mapped.row, set, addToSet, errors },
     );
     this.mergeArray(
       'phones',
       mapped.arrayFields.phones ?? [],
       existing.phones ?? [],
       data.tenantSettings.multiplePhonesAllowed,
-      mapped.row,
-      set,
-      addToSet,
-      errors,
+      { row: mapped.row, set, addToSet, errors },
     );
 
     const update: Record<string, any> = {};
@@ -321,25 +315,27 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     incoming: string[],
     existing: string[],
     multipleAllowed: boolean,
-    row: number,
-    set: Record<string, any>,
-    addToSet: Record<string, any>,
-    errors: ImportRowError[],
+    context: {
+      row: number;
+      set: Record<string, any>;
+      addToSet: Record<string, any>;
+      errors: ImportRowError[];
+    },
   ): void {
     if (incoming.length === 0) return;
 
     if (multipleAllowed) {
       const fresh = incoming.filter((v) => !existing.includes(v));
-      if (fresh.length) addToSet[field] = { $each: fresh };
+      if (fresh.length) context.addToSet[field] = { $each: fresh };
       return;
     }
 
     // Single-value mode: fill if empty, otherwise warn on a differing value.
     if (existing.length === 0) {
-      set[field] = [incoming[0]];
+      context.set[field] = [incoming[0]];
       if (incoming.length > 1) {
-        errors.push({
-          row,
+        context.errors.push({
+          row: context.row,
           code: ImportErrorCode.VALIDATION_FAILED,
           field,
           reason: `Only the first ${field} kept (multiple ${field} disabled)`,
@@ -351,8 +347,8 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
 
     const conflicting = incoming.filter((v) => !existing.includes(v));
     if (conflicting.length) {
-      errors.push({
-        row,
+      context.errors.push({
+        row: context.row,
         code: ImportErrorCode.VALIDATION_FAILED,
         field,
         reason: `Conflict: ${field} differs and multiple ${field} disabled — kept existing`,

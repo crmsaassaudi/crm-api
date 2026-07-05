@@ -132,11 +132,7 @@ export class ImportDedupEngine {
     for (const field of matchingFields) {
       const lookup = new Map<string, any>();
       for (const doc of existingDocs) {
-        const docValues: string[] = Array.isArray(doc[field])
-          ? doc[field]
-          : doc[field] != null
-            ? [String(doc[field])]
-            : [];
+        const docValues = this.extractDocValues(doc, field);
         for (const v of docValues) {
           const normalized =
             typeof v === 'string' ? v.toLowerCase() : String(v);
@@ -148,6 +144,13 @@ export class ImportDedupEngine {
     return lookupMaps;
   }
 
+  private extractDocValues(doc: any, field: string): string[] {
+    const value = doc[field];
+    if (Array.isArray(value)) return value;
+    if (value != null) return [String(value)];
+    return [];
+  }
+
   /** Match each row against the lookup maps; record results and claimed keys. */
   private matchRows(
     batch: MappedRow[],
@@ -157,19 +160,7 @@ export class ImportDedupEngine {
     results: Map<number, DedupMatch>,
   ): void {
     for (const m of batch) {
-      let match: any = null;
-      outer: for (const field of config.matchingFields) {
-        const lookup = lookupMaps.get(field)!;
-        for (const v of extractValues(m, field)) {
-          const normalized =
-            typeof v === 'string' ? v.toLowerCase() : String(v);
-          const hit = lookup.get(normalized);
-          if (hit) {
-            match = hit;
-            break outer;
-          }
-        }
-      }
+      const match = this.findMatch(m, config, extractValues, lookupMaps);
 
       if (match) {
         results.set(m.row, { existing: match, claimedByEarlierRow: false });
@@ -186,6 +177,23 @@ export class ImportDedupEngine {
       keys.forEach((k) => this.claimedKeys.add(k));
       results.set(m.row, { existing: null, claimedByEarlierRow: false });
     }
+  }
+
+  private findMatch(
+    m: MappedRow,
+    config: DedupConfig,
+    extractValues: (row: MappedRow, field: string) => string[],
+    lookupMaps: Map<string, Map<string, any>>,
+  ): any {
+    for (const field of config.matchingFields) {
+      const lookup = lookupMaps.get(field)!;
+      for (const v of extractValues(m, field)) {
+        const normalized = typeof v === 'string' ? v.toLowerCase() : String(v);
+        const hit = lookup.get(normalized);
+        if (hit) return hit;
+      }
+    }
+    return null;
   }
 
   /**

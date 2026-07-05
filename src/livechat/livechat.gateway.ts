@@ -149,40 +149,16 @@ export class LivechatGateway
       return;
     }
 
-    // Domain whitelist enforcement (check Origin header from handshake)
-    if (widgetId) {
-      const originHeader =
-        client.handshake?.headers?.origin ?? client.handshake?.headers?.referer;
-      const origin = Array.isArray(originHeader)
-        ? originHeader[0]
-        : originHeader;
-      const allowed = await this.widgetService.isDomainAllowed(
-        widgetId,
-        origin,
-      );
-      if (!allowed) {
-        this.logger.warn(`Domain blocked for widget ${widgetId}: ${origin}`);
-        client.emit('error', { message: 'Domain not allowed' });
-        client.disconnect(true);
-        return;
-      }
-    }
-
-    // HMAC identity verification (if widget requires it)
-    if (widgetId && data.userHash) {
-      const result = await this.widgetService.verifyIdentity(
-        widgetId,
-        visitorId,
-        data.userHash,
-      );
-      if (!result.valid) {
-        this.logger.warn(
-          `HMAC verification failed for visitor ${visitorId} on widget ${widgetId}`,
-        );
-        client.emit('error', { message: 'Identity verification failed' });
-        client.disconnect(true);
-        return;
-      }
+    // Domain whitelist enforcement and identity verification
+    const isConnectionValid = await this.validateVisitorConnection(
+      client,
+      widgetId,
+      visitorId,
+      data.userHash,
+    );
+    if (!isConnectionValid) {
+      client.disconnect(true);
+      return;
     }
 
     // Store context in socket.data — no DB write needed
@@ -649,5 +625,44 @@ export class LivechatGateway
       );
       return 'Channel validation failed';
     }
+  }
+
+  private async validateVisitorConnection(
+    client: Socket,
+    widgetId: string | undefined,
+    visitorId: string,
+    userHash: string | undefined,
+  ): Promise<boolean> {
+    if (!widgetId) return true;
+
+    // Domain whitelist enforcement (check Origin header from handshake)
+    const originHeader =
+      client.handshake?.headers?.origin ?? client.handshake?.headers?.referer;
+    const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+    const allowed = await this.widgetService.isDomainAllowed(widgetId, origin);
+
+    if (!allowed) {
+      this.logger.warn(`Domain blocked for widget ${widgetId}: ${origin}`);
+      client.emit('error', { message: 'Domain not allowed' });
+      return false;
+    }
+
+    // HMAC identity verification (if widget requires it)
+    if (userHash) {
+      const result = await this.widgetService.verifyIdentity(
+        widgetId,
+        visitorId,
+        userHash,
+      );
+      if (!result.valid) {
+        this.logger.warn(
+          `HMAC verification failed for visitor ${visitorId} on widget ${widgetId}`,
+        );
+        client.emit('error', { message: 'Identity verification failed' });
+        return false;
+      }
+    }
+
+    return true;
   }
 }

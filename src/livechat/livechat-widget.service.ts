@@ -214,48 +214,10 @@ export class LivechatWidgetService {
 
   private buildPublicUiConfig(widget: LivechatWidget) {
     return {
-      branding: {
-        logo: widget.branding?.logo,
-        companyName: widget.branding?.companyName,
-        agentName: widget.branding?.agentName,
-        agentAvatar: widget.branding?.agentAvatar,
-        removeBranding: widget.branding?.removeBranding ?? false,
-      },
-      theme: {
-        primaryColor: widget.theme?.primaryColor ?? '#6366f1',
-        secondaryColor: widget.theme?.secondaryColor,
-        headerColor: widget.theme?.headerColor,
-        backgroundColor: widget.theme?.backgroundColor,
-        textColor: widget.theme?.textColor,
-        darkMode: widget.theme?.darkMode ?? 'light',
-        borderRadius: widget.theme?.borderRadius ?? 16,
-        fontFamily: widget.theme?.fontFamily,
-      },
-      layout: {
-        position: widget.layout?.position ?? 'bottom-right',
-        launcherType: widget.layout?.launcherType ?? 'circle',
-        launcherIcon: widget.layout?.launcherIcon,
-        launcherText: widget.layout?.launcherText,
-        launcherSize: widget.layout?.launcherSize ?? 'medium',
-        widgetWidth: widget.layout?.widgetWidth ?? 380,
-        widgetHeight: widget.layout?.widgetHeight ?? 550,
-        offsetX: widget.layout?.offsetX ?? 20,
-        offsetY: widget.layout?.offsetY ?? 20,
-        hideMobile: widget.layout?.hideMobile ?? false,
-        zIndex: widget.layout?.zIndex ?? 2147483640,
-        attentionGrabber: widget.layout?.attentionGrabber,
-      },
-      welcome: {
-        greeting: widget.welcome?.greeting,
-        subtitle: widget.welcome?.subtitle,
-        replyTimeText: widget.welcome?.replyTimeText,
-        showGreetingBubble: widget.welcome?.showGreetingBubble ?? false,
-        autoOpenDelay: widget.welcome?.autoOpenDelay ?? 0,
-        awayGreeting: widget.welcome?.awayGreeting,
-        awaySubtitle: widget.welcome?.awaySubtitle,
-        offlineGreeting: widget.welcome?.offlineGreeting,
-        offlineSubtitle: widget.welcome?.offlineSubtitle,
-      },
+      branding: this.buildPublicBrandingConfig(widget),
+      theme: this.buildPublicThemeConfig(widget),
+      layout: this.buildPublicLayoutConfig(widget),
+      welcome: this.buildPublicWelcomeConfig(widget),
       launcher: {
         label: widget.launcher?.label,
         showUnreadBadge: widget.launcher?.showUnreadBadge ?? true,
@@ -269,45 +231,68 @@ export class LivechatWidgetService {
     };
   }
 
+  private buildPublicBrandingConfig(widget: LivechatWidget) {
+    return {
+      logo: widget.branding?.logo,
+      companyName: widget.branding?.companyName,
+      agentName: widget.branding?.agentName,
+      agentAvatar: widget.branding?.agentAvatar,
+      removeBranding: widget.branding?.removeBranding ?? false,
+    };
+  }
+
+  private buildPublicThemeConfig(widget: LivechatWidget) {
+    return {
+      primaryColor: widget.theme?.primaryColor ?? '#6366f1',
+      secondaryColor: widget.theme?.secondaryColor,
+      headerColor: widget.theme?.headerColor,
+      backgroundColor: widget.theme?.backgroundColor,
+      textColor: widget.theme?.textColor,
+      darkMode: widget.theme?.darkMode ?? 'light',
+      borderRadius: widget.theme?.borderRadius ?? 16,
+      fontFamily: widget.theme?.fontFamily,
+    };
+  }
+
+  private buildPublicLayoutConfig(widget: LivechatWidget) {
+    return {
+      position: widget.layout?.position ?? 'bottom-right',
+      launcherType: widget.layout?.launcherType ?? 'circle',
+      launcherIcon: widget.layout?.launcherIcon,
+      launcherText: widget.layout?.launcherText,
+      launcherSize: widget.layout?.launcherSize ?? 'medium',
+      widgetWidth: widget.layout?.widgetWidth ?? 380,
+      widgetHeight: widget.layout?.widgetHeight ?? 550,
+      offsetX: widget.layout?.offsetX ?? 20,
+      offsetY: widget.layout?.offsetY ?? 20,
+      hideMobile: widget.layout?.hideMobile ?? false,
+      zIndex: widget.layout?.zIndex ?? 2147483640,
+      attentionGrabber: widget.layout?.attentionGrabber,
+    };
+  }
+
+  private buildPublicWelcomeConfig(widget: LivechatWidget) {
+    return {
+      greeting: widget.welcome?.greeting,
+      subtitle: widget.welcome?.subtitle,
+      replyTimeText: widget.welcome?.replyTimeText,
+      showGreetingBubble: widget.welcome?.showGreetingBubble ?? false,
+      autoOpenDelay: widget.welcome?.autoOpenDelay ?? 0,
+      awayGreeting: widget.welcome?.awayGreeting,
+      awaySubtitle: widget.welcome?.awaySubtitle,
+      offlineGreeting: widget.welcome?.offlineGreeting,
+      offlineSubtitle: widget.welcome?.offlineSubtitle,
+    };
+  }
+
   private buildPublicBehaviorConfig(widget: LivechatWidget) {
     return {
       conversationStarters: widget.conversationStarters ?? [],
-      offline: {
-        enabled: widget.offline?.enabled ?? false,
-        timezone: widget.offline?.timezone,
-        businessHours: widget.offline?.businessHours,
-        offlineMessage: widget.offline?.offlineMessage,
-        captureLeadWhenOffline: widget.offline?.captureLeadWhenOffline ?? true,
-      },
-      preChatForm: {
-        enabled: widget.preChatForm?.enabled ?? false,
-        trigger: widget.preChatForm?.trigger ?? 'before_chat',
-        skipIfKnownVisitor: widget.preChatForm?.skipIfKnownVisitor ?? false,
-        showOnlyOffline: widget.preChatForm?.showOnlyOffline ?? false,
-        fields: widget.preChatForm?.fields ?? [],
-      },
-      routing: {
-        enableDepartmentSelector:
-          widget.routing?.enableDepartmentSelector ?? false,
-        departments: widget.routing?.departments ?? [],
-        showQueuePosition: widget.routing?.showQueuePosition ?? false,
-        queueMessage:
-          widget.routing?.queueMessage ?? 'You are #{position} in queue',
-      },
-      proactiveChat: {
-        enabled: widget.proactiveChat?.enabled ?? false,
-        rules: widget.proactiveChat?.rules ?? [],
-      },
-      displayRules: {
-        includePages: widget.displayRules?.includePages ?? [],
-        excludePages: widget.displayRules?.excludePages ?? [],
-        devices: widget.displayRules?.devices ?? [
-          'desktop',
-          'mobile',
-          'tablet',
-        ],
-        loggedInOnly: widget.displayRules?.loggedInOnly ?? false,
-      },
+      offline: this.buildPublicOfflineConfig(widget),
+      preChatForm: this.buildPublicPreChatFormConfig(widget),
+      routing: this.buildPublicRoutingConfig(widget),
+      proactiveChat: this.buildPublicProactiveChatConfig(widget),
+      displayRules: this.buildPublicDisplayRulesConfig(widget),
       csat: {
         enabled: widget.csat?.enabled ?? false,
         question: widget.csat?.question,
@@ -316,40 +301,98 @@ export class LivechatWidgetService {
     };
   }
 
+  private buildPublicOfflineConfig(widget: LivechatWidget) {
+    return {
+      enabled: widget.offline?.enabled ?? false,
+      timezone: widget.offline?.timezone,
+      businessHours: widget.offline?.businessHours,
+      offlineMessage: widget.offline?.offlineMessage,
+      captureLeadWhenOffline: widget.offline?.captureLeadWhenOffline ?? true,
+    };
+  }
+
+  private buildPublicPreChatFormConfig(widget: LivechatWidget) {
+    return {
+      enabled: widget.preChatForm?.enabled ?? false,
+      trigger: widget.preChatForm?.trigger ?? 'before_chat',
+      skipIfKnownVisitor: widget.preChatForm?.skipIfKnownVisitor ?? false,
+      showOnlyOffline: widget.preChatForm?.showOnlyOffline ?? false,
+      fields: widget.preChatForm?.fields ?? [],
+    };
+  }
+
+  private buildPublicRoutingConfig(widget: LivechatWidget) {
+    return {
+      enableDepartmentSelector:
+        widget.routing?.enableDepartmentSelector ?? false,
+      departments: widget.routing?.departments ?? [],
+      showQueuePosition: widget.routing?.showQueuePosition ?? false,
+      queueMessage:
+        widget.routing?.queueMessage ?? 'You are #{position} in queue',
+    };
+  }
+
+  private buildPublicProactiveChatConfig(widget: LivechatWidget) {
+    return {
+      enabled: widget.proactiveChat?.enabled ?? false,
+      rules: widget.proactiveChat?.rules ?? [],
+    };
+  }
+
+  private buildPublicDisplayRulesConfig(widget: LivechatWidget) {
+    return {
+      includePages: widget.displayRules?.includePages ?? [],
+      excludePages: widget.displayRules?.excludePages ?? [],
+      devices: widget.displayRules?.devices ?? ['desktop', 'mobile', 'tablet'],
+      loggedInOnly: widget.displayRules?.loggedInOnly ?? false,
+    };
+  }
+
   private buildPublicAdvancedConfig(widget: LivechatWidget) {
     return {
-      localization: {
-        locale: widget.localization?.locale ?? 'en',
-        autoDetect: widget.localization?.autoDetect ?? true,
-        fallbackLocale: widget.localization?.fallbackLocale ?? 'en',
-        supportedLocales: widget.localization?.supportedLocales ?? [],
-        rtl: this.resolveRtlDirection(widget.localization),
-        translations: widget.localization?.translations ?? {},
-      },
-      advanced: {
-        customCSS: widget.advanced?.customCSS,
-        enableSoundNotification:
-          widget.advanced?.enableSoundNotification ?? true,
-        enableFileUpload: widget.advanced?.enableFileUpload ?? true,
-        maxFileSize: widget.advanced?.maxFileSize ?? 25,
-        allowedFileTypes: widget.advanced?.allowedFileTypes,
-        imagePreview: widget.advanced?.imagePreview ?? true,
-        dragDrop: widget.advanced?.dragDrop ?? false,
-        cameraCapture: widget.advanced?.cameraCapture ?? false,
-        maxFilesPerMessage: widget.advanced?.maxFilesPerMessage ?? 1,
-      },
-      notifications: {
-        sound:
-          widget.notifications?.sound ??
-          widget.advanced?.enableSoundNotification ??
-          true,
-        vibration: widget.notifications?.vibration ?? false,
-      },
+      localization: this.buildPublicLocalizationConfig(widget),
+      advanced: this.buildPublicAdvancedInnerConfig(widget),
+      notifications: this.buildPublicNotificationsConfig(widget),
       statePersistence: {
         rememberOpenState: widget.statePersistence?.rememberOpenState ?? false,
         rememberDraftMessage:
           widget.statePersistence?.rememberDraftMessage ?? true,
       },
+    };
+  }
+
+  private buildPublicLocalizationConfig(widget: LivechatWidget) {
+    return {
+      locale: widget.localization?.locale ?? 'en',
+      autoDetect: widget.localization?.autoDetect ?? true,
+      fallbackLocale: widget.localization?.fallbackLocale ?? 'en',
+      supportedLocales: widget.localization?.supportedLocales ?? [],
+      rtl: this.resolveRtlDirection(widget.localization),
+      translations: widget.localization?.translations ?? {},
+    };
+  }
+
+  private buildPublicAdvancedInnerConfig(widget: LivechatWidget) {
+    return {
+      customCSS: widget.advanced?.customCSS,
+      enableSoundNotification: widget.advanced?.enableSoundNotification ?? true,
+      enableFileUpload: widget.advanced?.enableFileUpload ?? true,
+      maxFileSize: widget.advanced?.maxFileSize ?? 25,
+      allowedFileTypes: widget.advanced?.allowedFileTypes,
+      imagePreview: widget.advanced?.imagePreview ?? true,
+      dragDrop: widget.advanced?.dragDrop ?? false,
+      cameraCapture: widget.advanced?.cameraCapture ?? false,
+      maxFilesPerMessage: widget.advanced?.maxFilesPerMessage ?? 1,
+    };
+  }
+
+  private buildPublicNotificationsConfig(widget: LivechatWidget) {
+    return {
+      sound:
+        widget.notifications?.sound ??
+        widget.advanced?.enableSoundNotification ??
+        true,
+      vibration: widget.notifications?.vibration ?? false,
     };
   }
 

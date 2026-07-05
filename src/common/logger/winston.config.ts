@@ -10,9 +10,10 @@ import { maskSecrets } from './secret-masker';
 // that looks like a credential. Applied for every transport before any
 // formatter that serializes to string.
 const maskFormat = winston.format((info) => {
-  if (typeof info.message === 'string') {
-    info.message = maskSecrets(info.message);
-  } else if (info.message && typeof info.message === 'object') {
+  if (
+    typeof info.message === 'string' ||
+    (info.message && typeof info.message === 'object')
+  ) {
     info.message = maskSecrets(info.message);
   }
   for (const key of Object.keys(info)) {
@@ -44,11 +45,11 @@ function contextFields(clsService: ClsService) {
     let userId = '-';
     try {
       correlationId =
-        (clsService.get && clsService.get<string>('correlationId')) ||
-        clsService.getId?.() ||
+        clsService.get?.<string>('correlationId') ??
+        clsService.getId?.() ??
         'N/A';
-      tenantId = (clsService.get && clsService.get<string>('tenantId')) || '-';
-      userId = (clsService.get && clsService.get<string>('userId')) || '-';
+      tenantId = clsService.get?.<string>('tenantId') ?? '-';
+      userId = clsService.get?.<string>('userId') ?? '-';
     } catch {
       /* CLS not bound (e.g. boot-time logs) — leave defaults */
     }

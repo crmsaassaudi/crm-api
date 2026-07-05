@@ -133,33 +133,53 @@ export class ChannelsService {
 
   private buildLivechatDefaultConfig(dto: CreateLivechatChannelDto) {
     return {
-      // Content
-      greeting: dto.greeting ?? 'Hi there 👋 How can we help you today?',
-      agentName: dto.agentName ?? 'Support Team',
-      agentAvatar: dto.agentAvatar ?? null,
-      launcherIconUrl: dto.launcherIconUrl ?? null,
-      offlineMessage: dto.offlineMessage ?? 'We are offline. Leave a message!',
-      // Colors
-      brandColor: dto.brandColor ?? '#6366f1',
-      launcherColor: dto.launcherColor ?? null,
-      agentBubbleColor: dto.agentBubbleColor ?? null,
-      agentTextColor: dto.agentTextColor ?? null,
-      // Typography / Shape
-      fontFamily: dto.fontFamily ?? null,
-      borderRadius: dto.borderRadius ?? 16,
-      launcherSize: dto.launcherSize ?? 56,
-      // Behavior
-      position: dto.position ?? 'bottom-right',
-      allowedOrigins: dto.allowedOrigins ?? [],
-      autoOpen: dto.autoOpen ?? false,
-      autoOpenDelay: dto.autoOpenDelay ?? 3000,
-      showBranding: dto.showBranding ?? true,
+      ...this.buildLivechatContentConfig(dto),
+      ...this.buildLivechatColorsConfig(dto),
+      ...this.buildLivechatTypographyConfig(dto),
+      ...this.buildLivechatBehaviorConfig(dto),
       // Advanced
       customCSS: dto.customCSS ?? null,
       // Internal
       businessHoursOverride: false,
       autoReplyMessage: '',
       webhookStatus: 'Active',
+    };
+  }
+
+  private buildLivechatContentConfig(dto: CreateLivechatChannelDto) {
+    return {
+      greeting: dto.greeting ?? 'Hi there 👋 How can we help you today?',
+      agentName: dto.agentName ?? 'Support Team',
+      agentAvatar: dto.agentAvatar ?? null,
+      launcherIconUrl: dto.launcherIconUrl ?? null,
+      offlineMessage: dto.offlineMessage ?? 'We are offline. Leave a message!',
+    };
+  }
+
+  private buildLivechatColorsConfig(dto: CreateLivechatChannelDto) {
+    return {
+      brandColor: dto.brandColor ?? '#6366f1',
+      launcherColor: dto.launcherColor ?? null,
+      agentBubbleColor: dto.agentBubbleColor ?? null,
+      agentTextColor: dto.agentTextColor ?? null,
+    };
+  }
+
+  private buildLivechatTypographyConfig(dto: CreateLivechatChannelDto) {
+    return {
+      fontFamily: dto.fontFamily ?? null,
+      borderRadius: dto.borderRadius ?? 16,
+      launcherSize: dto.launcherSize ?? 56,
+    };
+  }
+
+  private buildLivechatBehaviorConfig(dto: CreateLivechatChannelDto) {
+    return {
+      position: dto.position ?? 'bottom-right',
+      allowedOrigins: dto.allowedOrigins ?? [],
+      autoOpen: dto.autoOpen ?? false,
+      autoOpenDelay: dto.autoOpenDelay ?? 3000,
+      showBranding: dto.showBranding ?? true,
     };
   }
 

@@ -11,7 +11,7 @@
  * Returns a clone — does not mutate the input.
  */
 const SECRET_KEY_RE =
-  /^(authorization|cookie|set-cookie|password|secret|token|access_token|refresh_token|id_token|client_secret|api[_-]?key|x[_-]api[_-]key|x[_-]hub[_-]signature.*|page_token|user_access_token)$/i;
+  /^(authorization|cookie|set-cookie|password|secret|token|api-key|apikey|x-api-key|x-hub-signature.*)$/i;
 const SECRET_KEY_SUFFIX_RE =
   /(_token|_secret|_password|_key|_credential|_credentials)$/i;
 const BEARER_IN_STRING_RE = /(Bearer\s+)[A-Za-z0-9._-]{8,}/g;
