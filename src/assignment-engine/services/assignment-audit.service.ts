@@ -63,7 +63,7 @@ export class AssignmentAuditService {
       await this.auditLogModel.create({
         tenantId: context.tenantId,
         module: context.module,
-        entityId: context.entityId || 'pre-create',
+        entityId: context.entityId ?? 'pre-create',
         ...data,
         metadata: {
           attributes: context.attributes,

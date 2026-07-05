@@ -394,7 +394,7 @@ export class ListViewsService {
     const raw = await this.settingsService.getSetting(this.SETTINGS_KEY);
     const settings: ListViewsSettings =
       raw && typeof raw === 'object' && Array.isArray(raw.views)
-        ? (raw as ListViewsSettings)
+        ? (raw as ListViewsSettings) // narrowed but TS needs the cast for type inference
         : { views: [] };
     const { missing } = this.mergeDefaults(settings);
     if (missing.length > 0) {

@@ -879,7 +879,7 @@ export class ChannelsService {
   private getWhatsAppConfigId(type: MetaConnectionType): string | undefined {
     if (type !== 'wa') return undefined;
     const configId =
-      process.env.FACEBOOK_WHATSAPP_CONFIG_ID ||
+      process.env.FACEBOOK_WHATSAPP_CONFIG_ID ??
       process.env.META_WHATSAPP_CONFIG_ID;
     if (!configId) {
       this.logger.error(
@@ -890,14 +890,14 @@ export class ChannelsService {
   }
 
   private getMetaAppId(): string {
-    const appId = process.env.FACEBOOK_APP_ID || process.env.META_APP_ID;
+    const appId = process.env.FACEBOOK_APP_ID ?? process.env.META_APP_ID;
     if (!appId) throw new BadRequestException('Meta app ID is not configured');
     return appId;
   }
 
   private getMetaAppSecret(): string {
     const appSecret =
-      process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET;
+      process.env.FACEBOOK_APP_SECRET ?? process.env.META_APP_SECRET;
     if (!appSecret) {
       throw new BadRequestException('Meta app secret is not configured');
     }

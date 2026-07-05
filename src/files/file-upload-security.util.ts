@@ -107,10 +107,9 @@ export function isAllowedMimeType(mimeType?: string): boolean {
  */
 export function getFileCategory(mimeType: string): FileCategory {
   const lower = mimeType.toLowerCase();
-  if (lower.startsWith('image/')) return 'general';
   if (lower.startsWith('video/') || lower.startsWith('audio/'))
-    return 'general';
-  if (ALLOWED_DOCUMENT_MIME_TYPES.has(lower)) return 'general';
+    return 'omni_media';
+  if (ALLOWED_DOCUMENT_MIME_TYPES.has(lower)) return 'ticket_attachment';
   return 'general';
 }
 
@@ -124,6 +123,15 @@ export function getFileCategory(mimeType: string): FileCategory {
 export function detectMimeFromBuffer(buffer: Buffer): string | null {
   if (buffer.length < 4) return null;
 
+  return (
+    detectImageMime(buffer) ??
+    detectDocumentMime(buffer) ??
+    detectMediaMime(buffer)
+  );
+}
+
+/** Detect image MIME types from magic bytes. */
+function detectImageMime(buffer: Buffer): string | null {
   // JPEG: FF D8 FF
   if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
     return 'image/jpeg';
@@ -165,6 +173,11 @@ export function detectMimeFromBuffer(buffer: Buffer): string | null {
     return 'image/webp';
   }
 
+  return null;
+}
+
+/** Detect PDF MIME type from magic bytes. */
+function detectDocumentMime(buffer: Buffer): string | null {
   // PDF: %PDF
   if (
     buffer[0] === 0x25 &&
@@ -174,7 +187,11 @@ export function detectMimeFromBuffer(buffer: Buffer): string | null {
   ) {
     return 'application/pdf';
   }
+  return null;
+}
 
+/** Detect audio/video MIME types from magic bytes. */
+function detectMediaMime(buffer: Buffer): string | null {
   // MP4 / MOV: ....ftyp (offset 4)
   if (
     buffer.length >= 8 &&
@@ -241,5 +258,5 @@ export function detectAllowedImageMimeFromBuffer(
 ): string | null {
   const mime = detectMimeFromBuffer(buffer);
   // Only return image MIME types for backward compat
-  return mime && mime.startsWith('image/') ? mime : null;
+  return mime?.startsWith('image/') ? mime : null;
 }

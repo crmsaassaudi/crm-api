@@ -210,9 +210,9 @@ export class LivechatGateway
       if (conversationId) {
         client.data.conversationId = conversationId;
       }
-    } catch (err: any) {
+    } catch (err) {
       this.logger.warn(
-        `Could not resolve conversation for visitor ${visitorId}: ${err?.message}`,
+        `Could not resolve conversation for visitor ${visitorId}: ${(err as Error)?.message}`,
       );
     }
 
@@ -358,7 +358,7 @@ export class LivechatGateway
     client.data.identityData = data;
 
     // Best-effort display name: try common keys for conversation.customer
-    const displayName = data.name || data.full_name || data.ho_ten;
+    const displayName = data.name ?? data.full_name ?? data.ho_ten;
     if (displayName) client.data.visitorName = displayName;
 
     const conversationId: string | undefined = client.data.conversationId;
@@ -640,9 +640,9 @@ export class LivechatGateway
         return 'Invalid channel';
       }
       return null;
-    } catch (err: any) {
+    } catch (err) {
       this.logger.error(
-        `[Security] Channel validation failed for ${channelId}: ${err?.message}`,
+        `[Security] Channel validation failed for ${channelId}: ${(err as Error)?.message}`,
       );
       return 'Channel validation failed';
     }

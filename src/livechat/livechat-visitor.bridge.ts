@@ -111,9 +111,9 @@ export class LivechatVisitorBridge {
         agentName,
         agentAvatarUrl,
       );
-    } catch (err: any) {
+    } catch (err) {
       this.logger.error(
-        `[Bridge] handleAssignment failed for ${event.conversationId}: ${err?.message}`,
+        `[Bridge] handleAssignment failed for ${event.conversationId}: ${(err as Error)?.message}`,
       );
     }
   }
@@ -179,9 +179,9 @@ export class LivechatVisitorBridge {
       );
 
       this.livechatGateway.sendTypingIndicator(visitorId, event.isTyping);
-    } catch (err: any) {
+    } catch (err) {
       this.logger.error(
-        `[Bridge] handleAgentTyping failed for ${event.conversationId}: ${err?.message}`,
+        `[Bridge] handleAgentTyping failed for ${event.conversationId}: ${(err as Error)?.message}`,
       );
     }
   }
@@ -224,9 +224,9 @@ export class LivechatVisitorBridge {
       this.logger.log(
         `[Bridge] Notified visitor ${visitorId} — conversation ${event.conversationId} ended`,
       );
-    } catch (err: any) {
+    } catch (err) {
       this.logger.error(
-        `[Bridge] handleStatusChanged failed for ${event.conversationId}: ${err?.message}`,
+        `[Bridge] handleStatusChanged failed for ${event.conversationId}: ${(err as Error)?.message}`,
       );
     }
   }
@@ -265,9 +265,9 @@ export class LivechatVisitorBridge {
       this.logger.log(
         `[Bridge] CSAT token pushed to visitor ${visitorId} for conv ${event.conversationId}`,
       );
-    } catch (err: any) {
+    } catch (err) {
       this.logger.error(
-        `[Bridge] handleCsatTokenGenerated failed for ${event.conversationId}: ${err?.message}`,
+        `[Bridge] handleCsatTokenGenerated failed for ${event.conversationId}: ${(err as Error)?.message}`,
       );
     }
   }
@@ -326,9 +326,9 @@ export class LivechatVisitorBridge {
         `[Bridge] Agent read: pushed read receipt for ${updatedIds.length} message(s) ` +
           `to visitor ${visitorId} (conv ${event.conversationId})`,
       );
-    } catch (err: any) {
+    } catch (err) {
       this.logger.error(
-        `[Bridge] handleAgentRead failed for ${event.conversationId}: ${err?.message}`,
+        `[Bridge] handleAgentRead failed for ${event.conversationId}: ${(err as Error)?.message}`,
       );
     }
   }
@@ -388,9 +388,9 @@ export class LivechatVisitorBridge {
         `[Bridge] Forwarded reaction update for message ${event.messageId} ` +
           `to visitor ${visitorId}`,
       );
-    } catch (err: any) {
+    } catch (err) {
       this.logger.error(
-        `[Bridge] handleReactionPersisted failed for ${event.conversationId}: ${err?.message}`,
+        `[Bridge] handleReactionPersisted failed for ${event.conversationId}: ${(err as Error)?.message}`,
       );
     }
   }
@@ -407,7 +407,7 @@ export class LivechatVisitorBridge {
       .set(key, visitorId, 'EX', LivechatVisitorBridge.CACHE_TTL)
       .catch((err) =>
         this.logger.warn(
-          `[Bridge] Failed to cache visitorId for ${conversationId}: ${err?.message}`,
+          `[Bridge] Failed to cache visitorId for ${conversationId}: ${(err as Error)?.message}`,
         ),
       );
   }

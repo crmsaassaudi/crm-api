@@ -925,7 +925,7 @@ export class ContactReportService {
   }
 
   private resolveTenantId(): Types.ObjectId | string {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     if (!tenantId) {
       throw new BadRequestException('Tenant context missing');
     }

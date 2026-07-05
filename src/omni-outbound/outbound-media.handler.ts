@@ -75,6 +75,81 @@ export class OutboundMediaHandler {
     const senderContext = await this.resolveSenderContext(agentId);
 
     // 1. Resolve conversation + channel
+    const { conversation, channel } = await this.resolveConversationAndChannel(
+      tenantId,
+      conversationId,
+    );
+    this.enforceReplyWindow(conversation);
+
+    // 2. Resolve media buffer
+    const mediaBuffer = await this.resolveMediaBuffer(media, agentId);
+
+    // 3. Validate against platform limits
+    const channelKey = conversation.channelType.toLowerCase() as ChannelType;
+    this.validatePlatformLimits(channelKey, media.mimeType, mediaBuffer.length);
+
+    // 4. Compress for platform if image
+    const sendBuffer = await this.compressMediaForPlatform(
+      mediaBuffer,
+      media.mimeType,
+      channelKey,
+    );
+
+    // 5. Determine message type
+    const messageType = mimeToMessageType(media.mimeType);
+
+    // 6. Persist message
+    const message = await this.persistAgentMediaMessage({
+      tenantId,
+      conversationId,
+      agentId,
+      senderContext,
+      media,
+      sendBuffer,
+      caption,
+      source,
+      transport,
+      messageType,
+      idempotencyKey,
+      clientMessageId,
+    });
+
+    await this.conversationRepo.updateLastMessage(
+      conversationId,
+      caption || `📎 ${media.fileName}`,
+      new Date(),
+      'agent',
+    );
+
+    // 7. Send via adapter
+    return this.dispatchAgentMedia({
+      tenantId,
+      conversationId,
+      agentId,
+      senderContext,
+      conversation,
+      channel,
+      media,
+      sendBuffer,
+      caption,
+      channelKey,
+      messageType,
+      message,
+      idempotencyKey,
+      clientMessageId,
+      source,
+      transport,
+    });
+  }
+
+  /**
+   * Resolve conversation and its associated channel.
+   * Tries channelId first, falls back to channelAccount lookup.
+   */
+  private async resolveConversationAndChannel(
+    tenantId: string,
+    conversationId: string,
+  ): Promise<{ conversation: any; channel: any }> {
     const conversation = await this.conversationRepo.findById(conversationId);
     if (!conversation) {
       throw new Error(`Conversation ${conversationId} not found`);
@@ -97,10 +172,18 @@ export class OutboundMediaHandler {
       );
     }
 
-    this.enforceReplyWindow(conversation);
+    return { conversation, channel };
+  }
 
-    // 2. Resolve media buffer
-    let mediaBuffer: Buffer;
+  /**
+   * Resolve the media buffer from either a fileId (S3 download) or an
+   * inline buffer. Mutates media fields (mimeType, fileName, size) when
+   * resolved from S3.
+   */
+  private async resolveMediaBuffer(
+    media: OutboundMedia,
+    agentId: string,
+  ): Promise<Buffer> {
     if (media.fileId) {
       const file = await this.filesService.findById(media.fileId);
       if (!file) throw new Error(`File ${media.fileId} not found`);
@@ -113,119 +196,169 @@ export class OutboundMediaHandler {
       );
       const response = await fetch(downloadUrl);
       if (!response.ok) throw new Error('Failed to download file from S3');
-      mediaBuffer = Buffer.from(await response.arrayBuffer());
+      const buffer = Buffer.from(await response.arrayBuffer());
       media.mimeType =
         media.mimeType ?? file.mimeType ?? 'application/octet-stream';
       media.fileName = media.fileName ?? file.fileName ?? 'file';
-      media.size = mediaBuffer.length;
-    } else if (media.buffer) {
-      mediaBuffer = media.buffer;
-    } else {
-      throw new Error('Either fileId or buffer must be provided');
+      media.size = buffer.length;
+      return buffer;
     }
 
-    // 3. Validate against platform limits
-    const channelKey = conversation.channelType.toLowerCase() as ChannelType;
+    if (media.buffer) {
+      return media.buffer;
+    }
+
+    throw new Error('Either fileId or buffer must be provided');
+  }
+
+  /**
+   * Validate media file size against per-channel platform limits.
+   */
+  private validatePlatformLimits(
+    channelKey: ChannelType,
+    mimeType: string,
+    bufferLength: number,
+  ): void {
     const platformLimits = PLATFORM_LIMITS[channelKey];
-    if (platformLimits) {
-      const isImage = media.mimeType.startsWith('image/');
-      const limit = isImage ? platformLimits.image : platformLimits.file;
-      if (limit && mediaBuffer.length > limit.maxBytes) {
-        throw new Error(
-          `File size ${(mediaBuffer.length / (1024 * 1024)).toFixed(1)}MB exceeds ${channelKey} limit of ${(limit.maxBytes / (1024 * 1024)).toFixed(0)}MB`,
-        );
-      }
-    }
+    if (!platformLimits) return;
 
-    // 4. Compress for platform if image
-    let sendBuffer = mediaBuffer;
+    const isImage = mimeType.startsWith('image/');
+    const limit = isImage ? platformLimits.image : platformLimits.file;
+    if (limit && bufferLength > limit.maxBytes) {
+      throw new Error(
+        `File size ${(bufferLength / (1024 * 1024)).toFixed(1)}MB exceeds ${channelKey} limit of ${(limit.maxBytes / (1024 * 1024)).toFixed(0)}MB`,
+      );
+    }
+  }
+
+  /**
+   * Compress image for the target platform. Returns the original buffer
+   * for non-image or non-processable types.
+   */
+  private async compressMediaForPlatform(
+    mediaBuffer: Buffer,
+    mimeType: string,
+    channelKey: ChannelType,
+  ): Promise<Buffer> {
     if (
-      media.mimeType.startsWith('image/') &&
-      this.imageProcessingService.isProcessableImage(media.mimeType)
+      !mimeType.startsWith('image/') ||
+      !this.imageProcessingService.isProcessableImage(mimeType)
     ) {
-      try {
-        const compressed =
-          await this.imageProcessingService.compressForPlatform(
-            mediaBuffer,
-            channelKey,
-          );
-        sendBuffer = compressed.buffer;
-        this.logger.log(
-          `Compressed image for ${channelKey}: ${(mediaBuffer.length / 1024).toFixed(0)}KB → ${(sendBuffer.length / 1024).toFixed(0)}KB`,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Platform compression failed, using original: ${(err as Error).message}`,
-        );
-      }
+      return mediaBuffer;
     }
 
-    // 5. Determine message type
-    const messageType = mimeToMessageType(media.mimeType);
+    try {
+      const compressed = await this.imageProcessingService.compressForPlatform(
+        mediaBuffer,
+        channelKey,
+      );
+      this.logger.log(
+        `Compressed image for ${channelKey}: ${(mediaBuffer.length / 1024).toFixed(0)}KB → ${(compressed.buffer.length / 1024).toFixed(0)}KB`,
+      );
+      return compressed.buffer;
+    } catch (err) {
+      this.logger.warn(
+        `Platform compression failed, using original: ${(err as Error).message}`,
+      );
+      return mediaBuffer;
+    }
+  }
 
-    // 6. Persist message
-    const message = await this.messageRepo.create({
-      tenantId,
-      conversationId,
-      senderId: agentId,
-      senderName: senderContext.name,
-      senderAvatarUrl: senderContext.avatarUrl ?? undefined,
+  /**
+   * Persist the outbound agent media message to the database.
+   */
+  private async persistAgentMediaMessage(opts: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    senderContext: { name: string; avatarUrl?: string | null };
+    media: OutboundMedia;
+    sendBuffer: Buffer;
+    caption: string;
+    source: string;
+    transport: string;
+    messageType: string;
+    idempotencyKey?: string;
+    clientMessageId?: string;
+  }): Promise<any> {
+    return this.messageRepo.create({
+      tenantId: opts.tenantId,
+      conversationId: opts.conversationId,
+      senderId: opts.agentId,
+      senderName: opts.senderContext.name,
+      senderAvatarUrl: opts.senderContext.avatarUrl ?? undefined,
       senderType: 'agent',
       direction: 'outbound',
-      source,
-      messageType,
-      content: caption || `[${messageType}] ${media.fileName}`,
+      source: opts.source,
+      messageType: opts.messageType,
+      content: opts.caption || `[${opts.messageType}] ${opts.media.fileName}`,
       status: 'sending',
-      idempotencyKey,
-      clientMessageId,
+      idempotencyKey: opts.idempotencyKey,
+      clientMessageId: opts.clientMessageId,
       metadata: {
         sender: {
-          id: agentId,
-          name: senderContext.name,
-          avatarUrl: senderContext.avatarUrl ?? null,
+          id: opts.agentId,
+          name: opts.senderContext.name,
+          avatarUrl: opts.senderContext.avatarUrl ?? null,
           type: 'agent',
         },
-        source,
-        transport,
+        source: opts.source,
+        transport: opts.transport,
         media: {
-          fileName: media.fileName,
-          mimeType: media.mimeType,
-          size: sendBuffer.length,
-          fileId: media.fileId,
+          fileName: opts.media.fileName,
+          mimeType: opts.media.mimeType,
+          size: opts.sendBuffer.length,
+          fileId: opts.media.fileId,
         },
       },
     });
+  }
 
-    // Update conversation last message
-    await this.conversationRepo.updateLastMessage(
-      conversationId,
-      caption || `📎 ${media.fileName}`,
-      new Date(),
-      'agent',
-    );
-
-    // 7. Send via adapter
+  /**
+   * Dispatch media to the channel adapter and emit the sent event.
+   * Handles adapter selection, fallback, status update, and error recovery.
+   */
+  private async dispatchAgentMedia(ctx: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    senderContext: { name: string; avatarUrl?: string | null };
+    conversation: any;
+    channel: any;
+    media: OutboundMedia;
+    sendBuffer: Buffer;
+    caption: string;
+    channelKey: ChannelType;
+    messageType: string;
+    message: any;
+    idempotencyKey?: string;
+    clientMessageId?: string;
+    source: string;
+    transport: string;
+  }): Promise<any> {
     try {
-      const adapter = this.adapters.get(channelKey);
+      const adapter = this.adapters.get(ctx.channelKey);
       let externalId: string | undefined;
 
       if (adapter?.sendMedia) {
-        // Resolve public URL if needed (e.g. for Instagram)
-        const resolvedUrl = await this.resolvePublicUrl(media, channelKey);
+        const resolvedUrl = await this.resolvePublicUrl(
+          ctx.media,
+          ctx.channelKey,
+        );
         const sendMediaPayload: OutboundMedia = {
-          ...media,
-          buffer: sendBuffer,
-          size: sendBuffer.length,
-          caption,
+          ...ctx.media,
+          buffer: ctx.sendBuffer,
+          size: ctx.sendBuffer.length,
+          caption: ctx.caption,
           url: resolvedUrl,
         };
         const result = await adapter.sendMedia(
-          conversation.customer.externalId,
+          ctx.conversation.customer.externalId,
           sendMediaPayload,
           {
-            credentials: channel.credentials,
-            account: channel.account,
-            messageId: message.id,
+            credentials: ctx.channel.credentials,
+            account: ctx.channel.account,
+            messageId: ctx.message.id,
           },
         );
         externalId = result.externalMessageId;
@@ -235,51 +368,51 @@ export class OutboundMediaHandler {
       } else if (adapter) {
         externalId = await this.sendViaFallbackAdapter(
           adapter,
-          conversation,
-          media,
-          caption,
-          message.id,
-          channel,
+          ctx.conversation,
+          ctx.media,
+          ctx.caption,
+          ctx.message.id,
+          ctx.channel,
         );
       }
 
-      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
+      await this.messageRepo.updateStatus(ctx.message.id, 'sent', externalId);
 
       this.eventEmitter.emit('omni.message.sent', {
-        tenantId,
-        conversationId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        senderAvatarUrl: senderContext.avatarUrl ?? null,
+        tenantId: ctx.tenantId,
+        conversationId: ctx.conversationId,
+        senderId: ctx.agentId,
+        senderName: ctx.senderContext.name,
+        senderAvatarUrl: ctx.senderContext.avatarUrl ?? null,
         senderType: 'agent',
-        messageType,
-        content: caption || `[${messageType}] ${media.fileName}`,
-        messageId: message.id,
+        messageType: ctx.messageType,
+        content: ctx.caption || `[${ctx.messageType}] ${ctx.media.fileName}`,
+        messageId: ctx.message.id,
         externalMessageId: externalId,
         status: 'sent',
-        idempotencyKey,
-        clientMessageId,
+        idempotencyKey: ctx.idempotencyKey,
+        clientMessageId: ctx.clientMessageId,
         timestamp: new Date().toISOString(),
-        source,
-        transport,
+        source: ctx.source,
+        transport: ctx.transport,
       });
 
       return {
         ok: true,
-        messageId: message.id,
+        messageId: ctx.message.id,
         externalMessageId: externalId,
         status: 'sent',
-        idempotencyKey,
-        clientMessageId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        source,
+        idempotencyKey: ctx.idempotencyKey,
+        clientMessageId: ctx.clientMessageId,
+        senderId: ctx.agentId,
+        senderName: ctx.senderContext.name,
+        source: ctx.source,
       };
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to send media via provider: ${errorMessage}`);
-      await this.messageRepo.updateStatus(message.id, 'failed');
+      await this.messageRepo.updateStatus(ctx.message.id, 'failed');
       throw error;
     }
   }

@@ -67,7 +67,7 @@ export class FileType {
       ) {
         const s3 = new S3Client({
           region: (fileConfig() as FileConfig).awsS3Region ?? '',
-          endpoint: (fileConfig() as FileConfig).awsS3Endpoint || undefined,
+          endpoint: (fileConfig() as FileConfig).awsS3Endpoint ?? undefined,
           forcePathStyle: !!(fileConfig() as FileConfig).awsS3Endpoint,
           credentials: {
             accessKeyId: (fileConfig() as FileConfig).accessKeyId ?? '',
@@ -159,7 +159,7 @@ export class FileType {
       ) {
         const s3 = new S3Client({
           region: (fileConfig() as FileConfig).awsS3Region ?? '',
-          endpoint: (fileConfig() as FileConfig).awsS3Endpoint || undefined,
+          endpoint: (fileConfig() as FileConfig).awsS3Endpoint ?? undefined,
           forcePathStyle: !!(fileConfig() as FileConfig).awsS3Endpoint,
           credentials: {
             accessKeyId: (fileConfig() as FileConfig).accessKeyId ?? '',

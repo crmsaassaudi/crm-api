@@ -764,7 +764,7 @@ export class OmniReportService {
 
   private resolveDateContext(dto: BaseReportFilterDto): DateContext {
     const { from, to } = parseReportDateRange(dto.fromDate, dto.toDate);
-    const timezone = dto.timezone || 'UTC';
+    const timezone = dto.timezone ?? 'UTC';
     const resolvedGranularity = BaseReportFilterDto.resolveGranularity(
       from,
       to,

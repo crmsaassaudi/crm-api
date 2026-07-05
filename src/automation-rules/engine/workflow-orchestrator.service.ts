@@ -340,9 +340,6 @@ export class WorkflowOrchestratorService {
     if (!node) return false;
 
     // ── Layer 0: hard step ceiling (CRIT-04 defense-in-depth) ────────────
-    // Independent of Redis: bounds total work in a single execution so a cyclic
-    // graph that slipped past validation (or a Redis outage disabling the
-    // strict-loop guard) can never recurse into a stack overflow.
     const MAX_TOTAL_STEPS = 1000;
     if (stepLogs.length > MAX_TOTAL_STEPS) {
       throw new Error(
@@ -376,212 +373,278 @@ export class WorkflowOrchestratorService {
       throw new Error(`LOOP_STRICT_DETECTED: ${loopCheck.reason}`);
     }
 
-    // ── Process node by type ────────────────────────────────────────────
+    // ── Delegate to type-specific handler ──────────────────────────────
+    const ctx = {
+      graph,
+      payload,
+      executionId,
+      workflowId,
+      tenantId,
+      executionSessionId,
+      depth,
+      stepLogs,
+    };
     if (node.type === 'trigger') {
-      // Trigger node: just log and move to next
-      this.bufferStep(stepLogs, {
-        nodeId,
-        nodeName: 'Trigger',
-        nodeType: 'trigger',
-        status: 'success',
-        input: { event: payload.event, object: payload.object },
-        startedAt: stepStart,
-        completedAt: new Date(),
-        duration: Date.now() - stepStart.getTime(),
-      });
-
-      // Follow all edges from trigger
-      const nextEdges = graph.edgeMap.get(nodeId) ?? [];
-      for (const edge of nextEdges) {
-        const hibernated = await this.traverseFromNode(
-          edge.target,
-          graph,
-          payload,
-          executionId,
-          workflowId,
-          tenantId,
-          executionSessionId,
-          depth,
-          stepLogs,
-        );
-        if (hibernated) return true;
-      }
+      return this.processTriggerNode(node, stepStart, ctx);
     } else if (node.type === 'condition') {
-      // Condition node: evaluate and follow True/False branch
-      const conditionConfig = node.config as ConditionGroup | undefined;
-      let matched = true;
-
-      if (conditionConfig && conditionConfig.rules) {
-        matched = this.conditionEvaluator.evaluate(
-          conditionConfig,
-          payload.data,
-        );
-      }
-
-      const branch = matched ? 'matched' : 'not_matched';
-
-      this.bufferStep(stepLogs, {
-        nodeId,
-        nodeName: node.config?.name || 'Condition',
-        nodeType: 'condition',
-        branch,
-        status: 'success',
-        input: { conditionConfig, recordData: payload.data },
-        output: { matched, branch },
-        startedAt: stepStart,
-        completedAt: new Date(),
-        duration: Date.now() - stepStart.getTime(),
-      });
-
-      // Follow edges matching the branch (True/False Split)
-      const allEdgesFromNode = graph.edgeMap.get(nodeId) ?? [];
-      const branchEdges = allEdgesFromNode.filter((e: any) => {
-        // If edge has sourceHandle, match it; otherwise follow all
-        if (e.sourceHandle) return e.sourceHandle === branch;
-        return matched; // Legacy: only follow if matched
-      });
-
-      for (const edge of branchEdges) {
-        const hibernated = await this.traverseFromNode(
-          edge.target,
-          graph,
-          payload,
-          executionId,
-          workflowId,
-          tenantId,
-          executionSessionId,
-          depth,
-          stepLogs,
-        );
-        if (hibernated) return true;
-      }
+      return this.processConditionNode(node, stepStart, ctx);
     } else if (node.type === 'action') {
-      const actionConfig = await this.encryptActionConfigForQueue(
-        node.config || {},
-      );
-      // Action node: dispatch to typed queue
-      const actionData: AutomationActionJobData = {
+      return this.processActionNode(node, stepStart, ctx);
+    } else if (node.type === 'wait') {
+      return this.processWaitNode(node, stepStart, ctx);
+    }
+
+    return false;
+  }
+
+  // ── Node-type handlers ───────────────────────────────────────────────────
+
+  private async processTriggerNode(
+    node: any,
+    stepStart: Date,
+    ctx: TraversalContext,
+  ): Promise<boolean> {
+    const {
+      graph,
+      payload,
+      executionId,
+      workflowId,
+      tenantId,
+      executionSessionId,
+      depth,
+      stepLogs,
+    } = ctx;
+    this.bufferStep(stepLogs, {
+      nodeId: node.id,
+      nodeName: 'Trigger',
+      nodeType: 'trigger',
+      status: 'success',
+      input: { event: payload.event, object: payload.object },
+      startedAt: stepStart,
+      completedAt: new Date(),
+      duration: Date.now() - stepStart.getTime(),
+    });
+
+    for (const edge of graph.edgeMap.get(node.id) ?? []) {
+      const hibernated = await this.traverseFromNode(
+        edge.target,
+        graph,
+        payload,
         executionId,
         workflowId,
         tenantId,
-        nodeId,
-        nodeName: actionConfig?.name || actionConfig?.actionType || 'Action',
-        actionType: actionConfig?.actionType,
-        actionConfig,
+        executionSessionId,
+        depth,
+        stepLogs,
+      );
+      if (hibernated) return true;
+    }
+    return false;
+  }
+
+  private async processConditionNode(
+    node: any,
+    stepStart: Date,
+    ctx: TraversalContext,
+  ): Promise<boolean> {
+    const {
+      graph,
+      payload,
+      executionId,
+      workflowId,
+      tenantId,
+      executionSessionId,
+      depth,
+      stepLogs,
+    } = ctx;
+    const conditionConfig = node.config as ConditionGroup | undefined;
+    const matched = conditionConfig?.rules
+      ? this.conditionEvaluator.evaluate(conditionConfig, payload.data)
+      : true;
+    const branch = matched ? 'matched' : 'not_matched';
+
+    this.bufferStep(stepLogs, {
+      nodeId: node.id,
+      nodeName: node.config?.name || 'Condition',
+      nodeType: 'condition',
+      branch,
+      status: 'success',
+      input: { conditionConfig, recordData: payload.data },
+      output: { matched, branch },
+      startedAt: stepStart,
+      completedAt: new Date(),
+      duration: Date.now() - stepStart.getTime(),
+    });
+
+    const allEdges = graph.edgeMap.get(node.id) ?? [];
+    const branchEdges = allEdges.filter((e: any) =>
+      e.sourceHandle ? e.sourceHandle === branch : matched,
+    );
+
+    for (const edge of branchEdges) {
+      const hibernated = await this.traverseFromNode(
+        edge.target,
+        graph,
+        payload,
+        executionId,
+        workflowId,
+        tenantId,
+        executionSessionId,
+        depth,
+        stepLogs,
+      );
+      if (hibernated) return true;
+    }
+    return false;
+  }
+
+  private async processActionNode(
+    node: any,
+    stepStart: Date,
+    ctx: TraversalContext,
+  ): Promise<boolean> {
+    const {
+      graph,
+      payload,
+      executionId,
+      workflowId,
+      tenantId,
+      executionSessionId,
+      depth,
+      stepLogs,
+    } = ctx;
+    const actionConfig = await this.encryptActionConfigForQueue(
+      node.config || {},
+    );
+    const actionData: AutomationActionJobData = {
+      executionId,
+      workflowId,
+      tenantId,
+      nodeId: node.id,
+      nodeName: actionConfig?.name || actionConfig?.actionType || 'Action',
+      actionType: actionConfig?.actionType,
+      actionConfig,
+      recordId: payload.recordId,
+      recordType: payload.object,
+      recordData: payload.data,
+      automationDepth: depth,
+      automationBreadcrumbs: this.appendBreadcrumb(
+        payload.automationBreadcrumbs,
+        workflowId,
+      ),
+      sourceWorkflowId: workflowId,
+    };
+
+    try {
+      await this.actionProducer.dispatch(actionData);
+      this.bufferStep(stepLogs, {
+        nodeId: node.id,
+        nodeName: actionData.nodeName,
+        nodeType: 'action',
+        status: 'queued' as any,
+        input: { actionType: actionConfig?.actionType, config: actionConfig },
+        output: { queued: true },
+        startedAt: stepStart,
+        completedAt: new Date(),
+        duration: Date.now() - stepStart.getTime(),
+      });
+    } catch (error: any) {
+      this.bufferStep(stepLogs, {
+        nodeId: node.id,
+        nodeName: actionData.nodeName,
+        nodeType: 'action',
+        status: 'failed',
+        input: { actionType: node.config?.actionType },
+        error: { code: 'ACTION_DISPATCH_FAILED', message: error.message },
+        startedAt: stepStart,
+        completedAt: new Date(),
+        duration: Date.now() - stepStart.getTime(),
+      });
+      throw error;
+    }
+
+    for (const edge of graph.edgeMap.get(node.id) ?? []) {
+      const hibernated = await this.traverseFromNode(
+        edge.target,
+        graph,
+        payload,
+        executionId,
+        workflowId,
+        tenantId,
+        executionSessionId,
+        depth,
+        stepLogs,
+      );
+      if (hibernated) return true;
+    }
+    return false;
+  }
+
+  private async processWaitNode(
+    node: any,
+    stepStart: Date,
+    ctx: TraversalContext,
+  ): Promise<boolean> {
+    const {
+      graph,
+      payload,
+      executionId,
+      workflowId,
+      tenantId,
+      executionSessionId,
+      depth,
+      stepLogs,
+    } = ctx;
+    const config = node.config as WaitNodeConfig;
+    const delayMs = this.computeDelayMs(config);
+
+    this.logger.log(
+      `[Orchestrator] ⏸ Wait node "${config.name || 'Wait'}": ` +
+        `delay=${config.delayValue} ${config.delayUnit} (${delayMs}ms)`,
+    );
+
+    this.bufferStep(stepLogs, {
+      nodeId: node.id,
+      nodeName: config.name || 'Wait',
+      nodeType: 'wait' as any,
+      status: 'waiting' as any,
+      input: {
+        delayType: config.delayType,
+        delayValue: config.delayValue,
+        delayUnit: config.delayUnit,
+      },
+      output: {
+        delayMs,
+        resumeAt: new Date(Date.now() + delayMs).toISOString(),
+      },
+      startedAt: stepStart,
+      completedAt: new Date(),
+      duration: 0,
+    });
+    await this.flushStepLogs(executionId, stepLogs);
+
+    // Schedule delayed resume for each downstream edge
+    for (const edge of graph.edgeMap.get(node.id) ?? []) {
+      const delayedData: AutomationDelayedJobData = {
+        executionId,
+        workflowId,
+        tenantId,
+        resumeFromNodeId: edge.target,
         recordId: payload.recordId,
         recordType: payload.object,
-        recordData: payload.data,
         automationDepth: depth,
         automationBreadcrumbs: this.appendBreadcrumb(
           payload.automationBreadcrumbs,
           workflowId,
         ),
         sourceWorkflowId: workflowId,
+        executionSessionId,
       };
-
-      try {
-        await this.actionProducer.dispatch(actionData);
-
-        this.bufferStep(stepLogs, {
-          nodeId,
-          nodeName: actionData.nodeName,
-          nodeType: 'action',
-          status: 'queued' as any, // Not 'success' — action is enqueued, not yet executed
-          input: { actionType: actionConfig?.actionType, config: actionConfig },
-          output: { queued: true },
-          startedAt: stepStart,
-          completedAt: new Date(),
-          duration: Date.now() - stepStart.getTime(),
-        });
-      } catch (error: any) {
-        this.bufferStep(stepLogs, {
-          nodeId,
-          nodeName: actionData.nodeName,
-          nodeType: 'action',
-          status: 'failed',
-          input: { actionType: node.config?.actionType },
-          error: { code: 'ACTION_DISPATCH_FAILED', message: error.message },
-          startedAt: stepStart,
-          completedAt: new Date(),
-          duration: Date.now() - stepStart.getTime(),
-        });
-        throw error;
-      }
-
-      // Follow edges from action to next nodes (chaining)
-      const nextEdges = graph.edgeMap.get(nodeId) ?? [];
-      for (const edge of nextEdges) {
-        const hibernated = await this.traverseFromNode(
-          edge.target,
-          graph,
-          payload,
-          executionId,
-          workflowId,
-          tenantId,
-          executionSessionId,
-          depth,
-          stepLogs,
-        );
-        if (hibernated) return true;
-      }
-    } else if (node.type === 'wait') {
-      // ── Wait/Delay node: hibernate execution ──────────────────────────
-      const config = node.config as WaitNodeConfig;
-      const delayMs = this.computeDelayMs(config);
-
-      this.logger.log(
-        `[Orchestrator] ⏸ Wait node "${config.name || 'Wait'}": ` +
-          `delay=${config.delayValue} ${config.delayUnit} (${delayMs}ms)`,
-      );
-
-      // Log the wait step
-      this.bufferStep(stepLogs, {
-        nodeId,
-        nodeName: config.name || 'Wait',
-        nodeType: 'wait' as any,
-        status: 'waiting' as any,
-        input: {
-          delayType: config.delayType,
-          delayValue: config.delayValue,
-          delayUnit: config.delayUnit,
-        },
-        output: {
-          delayMs,
-          resumeAt: new Date(Date.now() + delayMs).toISOString(),
-        },
-        startedAt: stepStart,
-        completedAt: new Date(),
-        duration: 0,
-      });
-      await this.flushStepLogs(executionId, stepLogs);
-
-      // Schedule delayed resume for each downstream edge
-      const nextEdges = graph.edgeMap.get(nodeId) ?? [];
-      for (const edge of nextEdges) {
-        const delayedData: AutomationDelayedJobData = {
-          executionId,
-          workflowId,
-          tenantId,
-          resumeFromNodeId: edge.target,
-          recordId: payload.recordId,
-          recordType: payload.object,
-          automationDepth: depth,
-          automationBreadcrumbs: this.appendBreadcrumb(
-            payload.automationBreadcrumbs,
-            workflowId,
-          ),
-          sourceWorkflowId: workflowId,
-          executionSessionId,
-        };
-
-        await this.delayedProducer.scheduleResume(delayedData, delayMs);
-      }
-
-      // STOP traversal — delayed queue will resume
-      return true;
+      await this.delayedProducer.scheduleResume(delayedData, delayMs);
     }
 
-    return false;
+    // STOP traversal — delayed queue will resume
+    return true;
   }
 
   private bufferStep(stepLogs: ExecutionStep[], step: ExecutionStep): void {
@@ -652,4 +715,16 @@ export class WorkflowOrchestratorService {
 interface GraphIndex {
   nodeMap: Map<string, any>;
   edgeMap: Map<string, any[]>;
+}
+
+/** Shared traversal state passed to each node-type handler. */
+interface TraversalContext {
+  graph: GraphIndex;
+  payload: AutomationEventPayload;
+  executionId: string;
+  workflowId: string;
+  tenantId: string;
+  executionSessionId: string;
+  depth: number;
+  stepLogs: ExecutionStep[];
 }

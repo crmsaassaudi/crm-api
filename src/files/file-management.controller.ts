@@ -156,7 +156,7 @@ export class FileManagementController {
     }
 
     const maxFileSize =
-      this.configService.get('file.maxFileSize', { infer: true }) || 26214400;
+      this.configService.get('file.maxFileSize', { infer: true }) ?? 26214400;
     if (file.size > maxFileSize) {
       throw new PayloadTooLargeException(
         `File size ${(file.size / (1024 * 1024)).toFixed(1)}MB exceeds limit of ${(maxFileSize / (1024 * 1024)).toFixed(0)}MB`,
@@ -211,7 +211,7 @@ export class FileManagementController {
     }
 
     // ── S3 Upload ─────────────────────────────────────────────────
-    const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+    const ext = (file.originalname.split('.').pop() ?? '').toLowerCase();
     const safeExt = SAFE_EXT.test(ext) ? ext : 'bin';
     // Use webp extension if compressed to webp
     const finalExt =
@@ -634,7 +634,7 @@ function sanitizeFilename(name: string): string {
   return (
     name
       .replace(/[\r\n"\\]/g, '_')
-      .replace(/[^\w.\-]/g, '_')
+      .replace(/[^\w.-]/g, '_')
       .slice(0, 120) || 'file'
   );
 }

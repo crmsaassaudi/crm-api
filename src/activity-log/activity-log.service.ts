@@ -31,9 +31,9 @@ export class ActivityLogService {
       targetId: data.targetId,
       event: data.event,
       actorId:
-        data.actorId || this.cls.get('userId') || this.cls.get('user.id'),
+        data.actorId ?? this.cls.get('userId') ?? this.cls.get('user.id'),
       payload: data.payload,
-      occurredAt: data.occurredAt || new Date(),
+      occurredAt: data.occurredAt ?? new Date(),
     } as ActivityLog);
   }
 
@@ -59,7 +59,7 @@ export class ActivityLogService {
         actorId: item.actorId,
         actor: item.actor,
         occurredAt: item.occurredAt,
-        payload: item.payload || {},
+        payload: item.payload ?? {},
       })),
       nextCursor: result.nextCursor,
       hasNextPage: result.hasNextPage,

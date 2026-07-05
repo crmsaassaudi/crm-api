@@ -46,7 +46,7 @@ export class CsatController {
   @Post('generate-token/:conversationId')
   @ApiOperation({ summary: 'Generate CSAT survey token for a conversation' })
   generateToken(@Param('conversationId') conversationId: string) {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     return this.csatService.generateToken(conversationId, tenantId);
   }
 
@@ -67,7 +67,7 @@ export class CsatController {
     @Query('agentId') agentId?: string,
     @Query('channelType') channelType?: string,
   ) {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     return this.csatService.getReport(tenantId, {
       from,
       to,

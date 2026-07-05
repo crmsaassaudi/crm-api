@@ -73,9 +73,10 @@ export class DealsService {
 
   /** Convert empty string ObjectId refs to undefined in-place. */
   private cleanRefs<T extends Record<string, any>>(data: T): T {
+    const mutable = data as Record<string, unknown>;
     for (const key of DealsService.OBJECT_ID_FIELDS) {
-      if ((data as any)[key] === '') {
-        (data as any)[key] = undefined;
+      if (mutable[key] === '') {
+        mutable[key] = undefined;
       }
     }
     return data;
@@ -158,7 +159,7 @@ export class DealsService {
   }
 
   private getCurrentUserId(): string | undefined {
-    return this.cls.get('userId') || this.cls.get('user.id');
+    return this.cls.get('userId') ?? this.cls.get('user.id');
   }
 
   async create(data: Partial<Deal>): Promise<Deal> {
@@ -234,7 +235,7 @@ export class DealsService {
       return { data: [], total: 0 };
     }
 
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const { Types } = await import('mongoose');
 
     const filter: any = { dealId: dealId, deletedAt: null };
@@ -316,7 +317,7 @@ export class DealsService {
       );
     }
 
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId() ?? 'system';
 
     const job = await this.importQueue.add('import', {
@@ -364,7 +365,7 @@ export class DealsService {
     limit?: number;
     status?: string;
   }) {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId() ?? 'system';
     const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(50, Math.max(1, options.limit ?? 10));
@@ -393,36 +394,37 @@ export class DealsService {
     ]);
 
     for (const doc of data) {
-      if (doc.status === 'active' || doc.status === 'queued') {
+      const record = doc as Record<string, any>;
+      if (record.status === 'active' || record.status === 'queued') {
         try {
-          const bullJob = await this.importQueue.getJob(doc.bullJobId);
+          const bullJob = await this.importQueue.getJob(record.bullJobId);
           if (bullJob) {
-            (doc as any).status = await bullJob.getState();
+            record.status = await bullJob.getState();
             if (bullJob.progress && typeof bullJob.progress === 'object')
-              (doc as any).progress = bullJob.progress;
+              record.progress = bullJob.progress;
           }
         } catch {}
       }
       // Extract populated user object
       if (
-        (doc as any).userId &&
-        typeof (doc as any).userId === 'object' &&
-        (doc as any).userId.firstName
+        record.userId &&
+        typeof record.userId === 'object' &&
+        record.userId.firstName
       ) {
-        (doc as any).user = {
-          firstName: (doc as any).userId.firstName,
-          lastName: (doc as any).userId.lastName,
-          email: (doc as any).userId.email,
-          avatar: (doc as any).userId.avatar,
+        record.user = {
+          firstName: record.userId.firstName,
+          lastName: record.userId.lastName,
+          email: record.userId.email,
+          avatar: record.userId.avatar,
         };
-        (doc as any).userId = String((doc as any).userId._id);
+        record.userId = String(record.userId._id);
       }
     }
     return { data, total, page, limit };
   }
 
   async getImportJobDetail(id: string) {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId() ?? 'system';
     const doc = await this.importJobModel
       .findOne({ _id: id, tenantId, userId, entityType: 'deal' })
@@ -430,12 +432,13 @@ export class DealsService {
       .exec();
     if (!doc) throw new NotFoundException('Import job not found');
     if (doc.status === 'active' || doc.status === 'queued') {
+      const record = doc as Record<string, any>;
       try {
         const bullJob = await this.importQueue.getJob(doc.bullJobId);
         if (bullJob) {
-          (doc as any).status = await bullJob.getState();
+          record.status = await bullJob.getState();
           if (bullJob.progress && typeof bullJob.progress === 'object')
-            (doc as any).progress = bullJob.progress;
+            record.progress = bullJob.progress;
         }
       } catch {}
     }
@@ -445,7 +448,7 @@ export class DealsService {
   async getImportStatus(jobId: string) {
     const job = await this.importQueue.getJob(jobId);
     if (!job) throw new NotFoundException('Import job not found');
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId() ?? 'system';
     if (
       String(job.data?.tenantId ?? '') !== String(tenantId ?? '') ||

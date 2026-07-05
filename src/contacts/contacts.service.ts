@@ -642,7 +642,7 @@ export class ContactsService {
   async exportContacts(
     params: ExportContactsDto,
   ): Promise<{ jobId: string; status: 'queued' }> {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
 
     await this.enforceExportQuota(userId);
@@ -750,7 +750,7 @@ export class ContactsService {
       throw new NotFoundException('Export job not found');
     }
 
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
     if (
       String(job.data?.tenantId ?? '') !== String(tenantId ?? '') ||
@@ -769,7 +769,7 @@ export class ContactsService {
 
   /** Request cancellation of a running export (worker checks each batch). */
   async cancelExport(jobId: string): Promise<{ status: string }> {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
 
     const doc = await this.exportJobModel
@@ -796,7 +796,7 @@ export class ContactsService {
     limit?: number;
     status?: string;
   }): Promise<{ data: any[]; total: number; page: number; limit: number }> {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
     const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(50, Math.max(1, options.limit ?? 10));
@@ -936,7 +936,7 @@ export class ContactsService {
     };
 
     const job = await this.importQueue.add('import', {
-      tenantId: this.cls.get('activeTenantId') || this.cls.get('tenantId'),
+      tenantId: this.cls.get('activeTenantId') ?? this.cls.get('tenantId'),
       userId: this.getCurrentUserId(),
       fileKey: dto.fileKey,
       mapping: dto.mapping,
@@ -949,7 +949,7 @@ export class ContactsService {
     });
 
     // Persist to MongoDB for import history
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
     try {
       await this.importJobModel.create({
@@ -991,7 +991,7 @@ export class ContactsService {
     page: number;
     limit: number;
   }> {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
     const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(50, Math.max(1, options.limit ?? 10));
@@ -1027,7 +1027,7 @@ export class ContactsService {
   }
 
   async getImportJobDetail(id: string) {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
 
     const doc = await this.importJobModel
@@ -1067,7 +1067,7 @@ export class ContactsService {
 
     // Same ownership guard as export: a job is only visible to the tenant +
     // user that created it.
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
     if (
       String(job.data?.tenantId ?? '') !== String(tenantId ?? '') ||
@@ -1200,7 +1200,7 @@ export class ContactsService {
     record: Contact,
     changedFields?: string[],
   ): void {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     if (!tenantId) return; // No tenant context (e.g. seeder, migration)
 
     const payload: AutomationEventPayload = {

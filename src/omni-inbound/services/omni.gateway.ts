@@ -226,7 +226,7 @@ export class OmniGateway
       return null;
     }
 
-    const decoded: any = jwtDecode(session.idToken || session.accessToken);
+    const decoded: any = jwtDecode(session.idToken ?? session.accessToken);
     if (!decoded) {
       this.logger.warn(`Client ${client.id} has malformed token in session`);
       client.disconnect();

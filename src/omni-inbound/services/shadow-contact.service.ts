@@ -44,155 +44,27 @@ export class ShadowContactService {
     enrichedProfile: { name?: string; avatarUrl?: string; phone?: string } = {},
   ): Promise<string | null> {
     try {
-      const tenant = await this.tenantsService.findById(payload.tenantId);
-      const systemActorId = tenant?.ownerId ?? null;
+      const systemActorId = await this.resolveSystemActor(payload.tenantId);
+      if (!systemActorId) return null;
 
-      if (!systemActorId) {
-        this.logger.warn(
-          `Skipping shadow contact creation for sender ${payload.senderId}: ` +
-            `tenant ${payload.tenantId} has no ownerId`,
-        );
-        return null;
-      }
-
-      // ── Auto-merge check: does this sender match an existing contact? ──
       const identityConfig = await this.getIdentityResolutionConfig(
         payload.tenantId,
       );
 
-      // ── Email-specific deduplication ────────────────────────────────────
+      // Email-specific deduplication
       if (payload.channelType === 'email' && payload.senderId) {
-        const senderEmail = payload.senderId.toLowerCase();
-
-        const existingByEmail = await this.contactsService.findByEmail(
-          payload.tenantId,
-          senderEmail,
-        );
-        if (existingByEmail) {
-          try {
-            await this.contactsService.mergeIdentity(existingByEmail.id, {
-              channelType: this.toSchemaChannelType(payload.channelType),
-              senderId: payload.senderId,
-            });
-          } catch {
-            /* identity may already exist */
-          }
-
-          this.logger.log(
-            `Reused existing contact ${existingByEmail.id} for email ${senderEmail}`,
-          );
-          return existingByEmail.id;
-        }
-
-        const existingByIdentity = await this.contactsService.findBySenderId(
-          payload.tenantId,
-          this.toSchemaChannelType(payload.channelType),
-          payload.senderId,
-        );
-        if (existingByIdentity) {
-          try {
-            await this.contactsService.addEmailIfMissing(
-              existingByIdentity.id,
-              senderEmail,
-            );
-          } catch {
-            /* best effort */
-          }
-
-          this.logger.log(
-            `Reused existing contact ${existingByIdentity.id} for sender ${senderEmail} (identity match)`,
-          );
-          return existingByIdentity.id;
-        }
+        const emailMatchId = await this.resolveEmailContact(payload);
+        if (emailMatchId) return emailMatchId;
       }
 
+      // Auto-merge check
       if (identityConfig.autoMergeShadowContact) {
-        const phone = payload.metadata?.phone;
-        const email =
-          payload.metadata?.email ??
-          (payload.channelType === 'email' ? payload.senderId : undefined);
-
-        if (phone || email) {
-          const duplicateResult = await this.contactsService.checkDuplicate({
-            phones: phone,
-            emails: email,
-          });
-
-          if (
-            duplicateResult.isDuplicate &&
-            duplicateResult.duplicates.length > 0
-          ) {
-            const existingContact = duplicateResult.duplicates[0];
-
-            try {
-              await this.contactsService.mergeIdentity(existingContact.id, {
-                channelType: this.toSchemaChannelType(payload.channelType),
-                senderId: payload.senderId,
-              });
-
-              this.logger.log(
-                `Auto-merged sender ${payload.senderId} into existing contact ${existingContact.id} ` +
-                  `(matched by ${phone ? 'phone' : 'email'})`,
-              );
-
-              this.eventEmitter.emit(OmniEvents.CONTACT_AUTO_MERGED, {
-                tenantId: payload.tenantId,
-                existingContactId: existingContact.id,
-                senderId: payload.senderId,
-                channelType: payload.channelType,
-                matchedBy: phone ? 'phone' : 'email',
-              });
-
-              return existingContact.id;
-            } catch (mergeErr: any) {
-              this.logger.warn(
-                `Auto-merge failed for sender ${payload.senderId}: ${mergeErr.message} — creating shadow instead`,
-              );
-            }
-          }
-        }
+        const mergedId = await this.tryAutoMerge(payload);
+        if (mergedId) return mergedId;
       }
 
-      // ── Create shadow contact ─────────────────────────────────────────
-      const displayName =
-        enrichedProfile.name ??
-        payload.metadata?.contactName ??
-        payload.senderId;
-
-      const nameParts = displayName.trim().split(/\s+/);
-      const firstName = nameParts[0];
-      const lastName =
-        nameParts.length > 1 ? nameParts.slice(1).join(' ') : '(Omni)';
-
-      const emailsArray =
-        payload.channelType === 'email' && payload.senderId
-          ? [payload.senderId.toLowerCase()]
-          : [];
-
-      const contact = await this.contactsService.create({
-        tenantId: payload.tenantId,
-        firstName,
-        lastName,
-        emails: emailsArray,
-        status: 'new',
-        lifecycleStage: 'lead',
-        source: this.toSchemaChannelType(payload.channelType),
-        omniIdentities: [
-          {
-            channelType: this.toSchemaChannelType(payload.channelType),
-            senderId: payload.senderId,
-          },
-        ],
-        isShadow: true,
-        createdById: systemActorId ?? undefined,
-        updatedById: systemActorId ?? undefined,
-      } as any);
-
-      this.logger.log(
-        `Created Shadow Contact ${contact.id} for sender ${payload.senderId}`,
-      );
-
-      return contact.id;
+      // Create shadow contact
+      return this.persistShadowContact(payload, enrichedProfile, systemActorId);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       this.logger.error(
@@ -201,6 +73,172 @@ export class ShadowContactService {
       );
       return null;
     }
+  }
+
+  /**
+   * Resolve the system actor (tenant owner) for shadow contact creation.
+   * Returns null if the tenant has no owner.
+   */
+  private async resolveSystemActor(tenantId: string): Promise<string | null> {
+    const tenant = await this.tenantsService.findById(tenantId);
+    const systemActorId = tenant?.ownerId ?? null;
+    if (!systemActorId) {
+      this.logger.warn(
+        `Skipping shadow contact creation: tenant ${tenantId} has no ownerId`,
+      );
+    }
+    return systemActorId;
+  }
+
+  /**
+   * Email-specific deduplication: try to match by email address,
+   * then by senderId identity. Returns existing contact ID or null.
+   */
+  private async resolveEmailContact(
+    payload: OmniPayload,
+  ): Promise<string | null> {
+    const senderEmail = payload.senderId.toLowerCase();
+
+    const existingByEmail = await this.contactsService.findByEmail(
+      payload.tenantId,
+      senderEmail,
+    );
+    if (existingByEmail) {
+      try {
+        await this.contactsService.mergeIdentity(existingByEmail.id, {
+          channelType: this.toSchemaChannelType(payload.channelType),
+          senderId: payload.senderId,
+        });
+      } catch {
+        /* identity may already exist */
+      }
+      this.logger.log(
+        `Reused existing contact ${existingByEmail.id} for email ${senderEmail}`,
+      );
+      return existingByEmail.id;
+    }
+
+    const existingByIdentity = await this.contactsService.findBySenderId(
+      payload.tenantId,
+      this.toSchemaChannelType(payload.channelType),
+      payload.senderId,
+    );
+    if (existingByIdentity) {
+      try {
+        await this.contactsService.addEmailIfMissing(
+          existingByIdentity.id,
+          senderEmail,
+        );
+      } catch {
+        /* best effort */
+      }
+      this.logger.log(
+        `Reused existing contact ${existingByIdentity.id} for sender ${senderEmail} (identity match)`,
+      );
+      return existingByIdentity.id;
+    }
+
+    return null;
+  }
+
+  /**
+   * Auto-merge: check if the sender matches an existing contact
+   * by phone or email. Returns merged contact ID or null.
+   */
+  private async tryAutoMerge(payload: OmniPayload): Promise<string | null> {
+    const phone = payload.metadata?.phone;
+    const email =
+      payload.metadata?.email ??
+      (payload.channelType === 'email' ? payload.senderId : undefined);
+
+    if (!phone && !email) return null;
+
+    const duplicateResult = await this.contactsService.checkDuplicate({
+      phones: phone,
+      emails: email,
+    });
+
+    if (
+      !duplicateResult.isDuplicate ||
+      duplicateResult.duplicates.length === 0
+    ) {
+      return null;
+    }
+
+    const existingContact = duplicateResult.duplicates[0];
+    try {
+      await this.contactsService.mergeIdentity(existingContact.id, {
+        channelType: this.toSchemaChannelType(payload.channelType),
+        senderId: payload.senderId,
+      });
+
+      this.logger.log(
+        `Auto-merged sender ${payload.senderId} into existing contact ${existingContact.id} ` +
+          `(matched by ${phone ? 'phone' : 'email'})`,
+      );
+
+      this.eventEmitter.emit(OmniEvents.CONTACT_AUTO_MERGED, {
+        tenantId: payload.tenantId,
+        existingContactId: existingContact.id,
+        senderId: payload.senderId,
+        channelType: payload.channelType,
+        matchedBy: phone ? 'phone' : 'email',
+      });
+
+      return existingContact.id;
+    } catch (mergeErr) {
+      this.logger.warn(
+        `Auto-merge failed for sender ${payload.senderId}: ${(mergeErr as Error).message} — creating shadow instead`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Persist a new shadow contact from the inbound payload.
+   */
+  private async persistShadowContact(
+    payload: OmniPayload,
+    enrichedProfile: { name?: string; avatarUrl?: string; phone?: string },
+    systemActorId: string,
+  ): Promise<string> {
+    const displayName =
+      enrichedProfile.name ?? payload.metadata?.contactName ?? payload.senderId;
+
+    const nameParts = displayName.trim().split(/\s+/);
+    const firstName = nameParts[0];
+    const lastName =
+      nameParts.length > 1 ? nameParts.slice(1).join(' ') : '(Omni)';
+
+    const emailsArray =
+      payload.channelType === 'email' && payload.senderId
+        ? [payload.senderId.toLowerCase()]
+        : [];
+
+    const contact = await this.contactsService.create({
+      tenantId: payload.tenantId,
+      firstName,
+      lastName,
+      emails: emailsArray,
+      status: 'new',
+      lifecycleStage: 'lead',
+      source: this.toSchemaChannelType(payload.channelType),
+      omniIdentities: [
+        {
+          channelType: this.toSchemaChannelType(payload.channelType),
+          senderId: payload.senderId,
+        },
+      ],
+      isShadow: true,
+      createdById: systemActorId,
+      updatedById: systemActorId,
+    } as any); // Shadow fields not in CreateContactDto
+
+    this.logger.log(
+      `Created Shadow Contact ${contact.id} for sender ${payload.senderId}`,
+    );
+
+    return contact.id;
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -233,9 +271,9 @@ export class ShadowContactService {
         tenantId,
       );
       return config ? { ...defaults, ...config } : defaults;
-    } catch (err: any) {
+    } catch (err) {
       this.logger.warn(
-        `Failed to load omni_identity_resolution settings: ${err.message}`,
+        `Failed to load omni_identity_resolution settings: ${(err as Error).message}`,
       );
       return defaults;
     }

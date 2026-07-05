@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -10,7 +11,6 @@ import {
 } from '@nestjs/common';
 import { CrmSettingsService } from './crm-settings.service';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { BadRequestException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import { RequirePermission } from '../common/permissions/permission.decorator';

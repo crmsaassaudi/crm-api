@@ -131,9 +131,9 @@ export class LivechatWidgetService {
     id: string,
     data: Partial<LivechatWidget>,
   ): Promise<LivechatWidget> {
-    // Prevent changing widgetId or tenantId
-    delete (data as any).widgetId;
-    delete (data as any).tenantId;
+    const sanitized = data as Record<string, unknown>;
+    delete sanitized.widgetId;
+    delete sanitized.tenantId;
 
     const updated = await this.repo.update(tenantId, id, data);
     if (!updated) throw new NotFoundException('Widget not found');
@@ -485,7 +485,7 @@ export class LivechatWidgetService {
         ...(widget.security ?? {}),
         hmacSecret: newSecret,
       },
-    } as any);
+    } as Partial<LivechatWidget>);
 
     return newSecret;
   }

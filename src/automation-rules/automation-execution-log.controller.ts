@@ -20,6 +20,7 @@ import { AutomationActionProducer } from './queue/automation-action.producer';
 import { CrmRecordUpdateService } from './engine/crm-record-update.service';
 import { RetryStepDto } from './dto/workflow.dto';
 import { RequirePermission } from '../common/permissions';
+import { AutomationActionJobData } from './queue/automation-queue.constants';
 
 /**
  * AutomationExecutionLogController — REST API for querying execution logs.
@@ -121,19 +122,13 @@ export class AutomationExecutionLogController {
   })
   @RequirePermission('retry', 'automation_logs')
   async retryStep(@Param('id') id: string, @Body() dto: RetryStepDto) {
-    // 1. Verify execution log exists
-    const log = await this.repo.findByIdWithSteps(this.tenantId, id);
-    if (!log) throw new NotFoundException('Execution log not found');
+    // 1. Verify execution log and step exist
+    const { step, executionLog } = await this.fetchRetryStepData(
+      id,
+      dto.nodeId,
+    );
 
-    // 2. Get the step data for re-dispatch
-    const stepData = await this.repo.getStepData(id, dto.nodeId);
-    if (!stepData) {
-      throw new NotFoundException(
-        `Step with nodeId "${dto.nodeId}" not found in execution log`,
-      );
-    }
-
-    // 3. Atomic idempotency guard: only failed/dlq steps can be retried
+    // 2. Atomic idempotency guard: only failed/dlq steps can be retried
     const transitioned = await this.repo.retryStep(id, dto.nodeId);
     if (!transitioned) {
       throw new BadRequestException(
@@ -141,13 +136,53 @@ export class AutomationExecutionLogController {
       );
     }
 
-    // 4. Re-dispatch the action job using original data from the step.
-    //    CRIT-03: re-fetch the latest record so the action (e.g. template
-    //    interpolation / recipient resolution) has real data instead of an
-    //    empty object. Fall back to the recordData captured on the step input
-    //    if the record was deleted / can't be re-fetched.
-    const { step, executionLog } = stepData;
+    // 3. Re-dispatch the action job using original data from the step.
+    const jobData = await this.buildRetryJobData(
+      id,
+      dto.nodeId,
+      step,
+      executionLog,
+    );
+    await this.actionProducer.dispatch(
+      jobData,
+      // Unique jobId so the manual retry is not deduped against the original
+      // failed job (CRIT-02 idempotency uses a deterministic jobId).
+      { jobId: `${id}:${dto.nodeId}:retry:${Date.now()}` },
+    );
 
+    return {
+      message: 'Step retry dispatched successfully',
+      nodeId: dto.nodeId,
+    };
+  }
+
+  /** Validate that the execution log and requested step both exist. */
+  private async fetchRetryStepData(
+    executionId: string,
+    nodeId: string,
+  ): Promise<{ step: any; executionLog: any }> {
+    const log = await this.repo.findByIdWithSteps(this.tenantId, executionId);
+    if (!log) throw new NotFoundException('Execution log not found');
+
+    const stepData = await this.repo.getStepData(executionId, nodeId);
+    if (!stepData) {
+      throw new NotFoundException(
+        `Step with nodeId "${nodeId}" not found in execution log`,
+      );
+    }
+    return stepData;
+  }
+
+  /**
+   * Build the action job payload for retry, re-fetching the latest record
+   * so templates and recipient resolution have real data (CRIT-03).
+   */
+  private async buildRetryJobData(
+    executionId: string,
+    nodeId: string,
+    step: any,
+    executionLog: any,
+  ): Promise<AutomationActionJobData> {
     let recordData: Record<string, any> =
       step.input?.recordData && typeof step.input.recordData === 'object'
         ? step.input.recordData
@@ -165,29 +200,19 @@ export class AutomationExecutionLogController {
       }
     }
 
-    await this.actionProducer.dispatch(
-      {
-        executionId: id,
-        workflowId: executionLog.workflowId?.toString() || '',
-        tenantId: this.tenantId,
-        nodeId: dto.nodeId,
-        nodeName: step.nodeName,
-        actionType: step.input?.actionType || 'send_email',
-        actionConfig: step.input?.config || {},
-        recordId: executionLog.recordId,
-        recordType: executionLog.recordType,
-        recordData,
-        automationDepth: executionLog.automationDepth || 0,
-        sourceWorkflowId: executionLog.workflowId?.toString() || '',
-      },
-      // Unique jobId so the manual retry is not deduped against the original
-      // failed job (CRIT-02 idempotency uses a deterministic jobId).
-      { jobId: `${id}:${dto.nodeId}:retry:${Date.now()}` },
-    );
-
     return {
-      message: 'Step retry dispatched successfully',
-      nodeId: dto.nodeId,
+      executionId,
+      workflowId: executionLog.workflowId?.toString() ?? '',
+      tenantId: this.tenantId,
+      nodeId,
+      nodeName: step.nodeName,
+      actionType: step.input?.actionType ?? 'send_email',
+      actionConfig: step.input?.config ?? {},
+      recordId: executionLog.recordId,
+      recordType: executionLog.recordType,
+      recordData,
+      automationDepth: executionLog.automationDepth ?? 0,
+      sourceWorkflowId: executionLog.workflowId?.toString() ?? '',
     };
   }
 }

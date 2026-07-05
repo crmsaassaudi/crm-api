@@ -161,13 +161,13 @@ export class AssignmentEngineService {
 
     // Step 5: Resolve candidate pool
     let candidatePool: string[] = [];
-    let strategy = settings.defaultStrategy || 'round-robin';
+    let strategy = settings.defaultStrategy ?? 'round-robin';
     let requiredSkills: string[] = [];
     let teamId = settings.defaultTeamId;
 
     if (matchedRule) {
-      strategy = matchedRule.actions.strategy || strategy;
-      requiredSkills = matchedRule.actions.requiredSkills || [];
+      strategy = matchedRule.actions.strategy ?? strategy;
+      requiredSkills = matchedRule.actions.requiredSkills ?? [];
       if (matchedRule.actions.assignToUserId) {
         // Direct user assignment
         const result: AssignmentResult = {
@@ -212,7 +212,7 @@ export class AssignmentEngineService {
     // Step 6: Filter candidates (capacity + skills).
     // filterEligible also returns the loadMap it computed, so the least-busy
     // strategy below can reuse it instead of re-querying Mongo (HIGH-04).
-    const maxCapacity = settings.defaultMaxCapacity || 50;
+    const maxCapacity = settings.defaultMaxCapacity ?? 50;
     const { eligible, loadMap: eligibleLoadMap } =
       await this.capacityFilter.filterEligible(
         context.tenantId,
@@ -266,7 +266,7 @@ export class AssignmentEngineService {
     // dry-run runs read-only: do not reserve the Redis cursor / load counter.
     const reserve = !context.dryRun;
     let selectedId: string | null;
-    const rrScope = `${context.tenantId}:${context.module}:${teamId || 'default'}`;
+    const rrScope = `${context.tenantId}:${context.module}:${teamId ?? 'default'}`;
 
     if (strategy === 'least-busy') {
       // Reuse the loadMap from filterEligible, narrowed to the still-eligible
@@ -345,10 +345,10 @@ export class AssignmentEngineService {
       context.module,
     );
 
-    const triggerFields = settings.triggerFields || [];
+    const triggerFields = settings.triggerFields ?? [];
     if (triggerFields.length === 0) {
       return {
-        ownerId: context.currentOwnerId || null,
+        ownerId: context.currentOwnerId ?? null,
         strategy: 'none',
         reason: 'No trigger fields configured — skipping re-evaluation',
         fallback: false,
@@ -361,7 +361,7 @@ export class AssignmentEngineService {
     );
     if (overlap.length === 0) {
       return {
-        ownerId: context.currentOwnerId || null,
+        ownerId: context.currentOwnerId ?? null,
         strategy: 'none',
         reason: `Changed fields [${context.changedFields.join(',')}] do not overlap with trigger fields [${triggerFields.join(',')}]`,
         fallback: false,
@@ -414,7 +414,7 @@ export class AssignmentEngineService {
     strategy: string;
     teamId?: string | null;
   }): Promise<void> {
-    const scope = `${params.tenantId}:${params.module}:${params.teamId || 'default'}`;
+    const scope = `${params.tenantId}:${params.module}:${params.teamId ?? 'default'}`;
     await this.strategyExecutor.release(
       scope,
       params.candidateId,

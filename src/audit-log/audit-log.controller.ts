@@ -36,7 +36,7 @@ export class AuditLogController {
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
   ) {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
 
     return this.auditLogService.getAuditLogs({
       tenantId,

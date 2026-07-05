@@ -169,28 +169,11 @@ export class FolderService {
     }
 
     // Resolve new parent
-    let newParentPath = '';
-    let newDepth = 0;
-    if (newParentId) {
-      const newParent = await this.folderRepository.findById(newParentId);
-      if (!newParent || newParent.tenantId !== tenantId) {
-        throw new NotFoundException('Target folder not found');
-      }
-      // Can't move into a descendant
-      if (newParent.path.startsWith(folder.path + '/')) {
-        throw new BadRequestException(
-          'Cannot move a folder into one of its descendants',
-        );
-      }
-      newParentPath = newParent.path;
-      newDepth = newParent.depth + 1;
-
-      if (newDepth >= MAX_DEPTH) {
-        throw new BadRequestException(
-          `Maximum folder depth of ${MAX_DEPTH} exceeded`,
-        );
-      }
-    }
+    const { newParentPath, newDepth } = await this.resolveNewParent(
+      tenantId,
+      folder,
+      newParentId,
+    );
 
     // Check duplicate name under new parent
     const exists = await this.folderRepository.existsByName(
@@ -231,6 +214,34 @@ export class FolderService {
     }
 
     return updated;
+  }
+
+  /** Resolve path and depth for the new parent folder, enforcing depth limits. */
+  private async resolveNewParent(
+    tenantId: string,
+    folder: FolderType,
+    newParentId: string | null,
+  ): Promise<{ newParentPath: string; newDepth: number }> {
+    if (!newParentId) {
+      return { newParentPath: '', newDepth: 0 };
+    }
+    const newParent = await this.folderRepository.findById(newParentId);
+    if (!newParent || newParent.tenantId !== tenantId) {
+      throw new NotFoundException('Target folder not found');
+    }
+    // Can't move into a descendant
+    if (newParent.path.startsWith(folder.path + '/')) {
+      throw new BadRequestException(
+        'Cannot move a folder into one of its descendants',
+      );
+    }
+    const newDepth = newParent.depth + 1;
+    if (newDepth >= MAX_DEPTH) {
+      throw new BadRequestException(
+        `Maximum folder depth of ${MAX_DEPTH} exceeded`,
+      );
+    }
+    return { newParentPath: newParent.path, newDepth };
   }
 
   // ── Update Color ──────────────────────────────────────────────────

@@ -45,7 +45,7 @@ export class ExportRequestService {
   ) {}
 
   private tenantId(): string {
-    return this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    return this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
   }
 
   private userId(): string | undefined {

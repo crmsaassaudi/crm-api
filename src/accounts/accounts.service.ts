@@ -270,7 +270,7 @@ export class AccountsService {
       );
     }
 
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
 
     const job = await this.importQueue.add('import', {
@@ -326,7 +326,7 @@ export class AccountsService {
     page: number;
     limit: number;
   }> {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
     const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(50, Math.max(1, options.limit ?? 10));
@@ -393,7 +393,7 @@ export class AccountsService {
   }
 
   async getImportJobDetail(id: string) {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
 
     const doc = await this.importJobModel
@@ -430,7 +430,7 @@ export class AccountsService {
       throw new NotFoundException('Import job not found');
     }
 
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId();
     if (
       String(job.data?.tenantId ?? '') !== String(tenantId ?? '') ||

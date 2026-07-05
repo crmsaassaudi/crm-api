@@ -285,7 +285,7 @@ export class TicketsService {
     record: Ticket,
     changedFields?: string[],
   ): void {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     if (!tenantId) return;
 
     const payload: AutomationEventPayload = {
@@ -302,7 +302,7 @@ export class TicketsService {
   }
 
   private getCurrentUserId(): string | undefined {
-    return this.cls.get('userId') || this.cls.get('user.id');
+    return this.cls.get('userId') ?? this.cls.get('user.id');
   }
 
   // ──────────────────────────── TICKET IMPORT ────────────────────────────
@@ -356,7 +356,7 @@ export class TicketsService {
       );
     }
 
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId() ?? 'system';
 
     const job = await this.importQueue.add('import', {
@@ -404,7 +404,7 @@ export class TicketsService {
     limit?: number;
     status?: string;
   }) {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId() ?? 'system';
     const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(50, Math.max(1, options.limit ?? 10));
@@ -471,7 +471,7 @@ export class TicketsService {
   }
 
   async getImportJobDetail(id: string) {
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId() ?? 'system';
     const doc = await this.importJobModel
       .findOne({ _id: id, tenantId, userId, entityType: 'ticket' })
@@ -494,7 +494,7 @@ export class TicketsService {
   async getImportStatus(jobId: string) {
     const job = await this.importQueue.getJob(jobId);
     if (!job) throw new NotFoundException('Import job not found');
-    const tenantId = this.cls.get('activeTenantId') || this.cls.get('tenantId');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const userId = this.getCurrentUserId() ?? 'system';
     if (
       String(job.data?.tenantId ?? '') !== String(tenantId ?? '') ||
