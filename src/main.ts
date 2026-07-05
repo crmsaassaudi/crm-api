@@ -210,7 +210,7 @@ function setupSwagger(
 }
 
 function runProductionGuards() {
-  const jwtSecret = process.env.AUTH_JWT_SECRET || process.env.JWT_SECRET;
+  const jwtSecret = process.env.AUTH_JWT_SECRET ?? process.env.JWT_SECRET;
   if (!jwtSecret || jwtSecret === 'secret') {
     Logger.error(
       '🚫 FATAL: AUTH_JWT_SECRET is not set or insecure.',

@@ -100,7 +100,7 @@ const indexes: IndexSpec[] = [
 ];
 
 async function main() {
-  const uri = process.env.DATABASE_URL || process.env.MONGO_URL;
+  const uri = process.env.DATABASE_URL ?? process.env.MONGO_URL;
   if (!uri) {
     console.error('DATABASE_URL or MONGO_URL is required');
     process.exit(1);

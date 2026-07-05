@@ -54,13 +54,12 @@ export class HealthController {
   @Get('ready')
   async ready() {
     const report = await this.collect();
-    const overall: ComponentStatus = Object.values(report).some(
-      (c) => c.status === 'down',
-    )
-      ? 'down'
-      : Object.values(report).some((c) => c.status === 'degraded')
-        ? 'degraded'
-        : 'ok';
+    let overall: ComponentStatus = 'ok';
+    if (Object.values(report).some((c) => c.status === 'down')) {
+      overall = 'down';
+    } else if (Object.values(report).some((c) => c.status === 'degraded')) {
+      overall = 'degraded';
+    }
 
     if (overall === 'down') {
       throw new ServiceUnavailableException({

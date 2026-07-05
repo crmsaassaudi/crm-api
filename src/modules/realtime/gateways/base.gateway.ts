@@ -59,7 +59,7 @@ export class BaseGateway
     }
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     // Explicitly leave every room and drop every listener. Socket.IO does
     // most of this on its own, but explicit cleanup keeps Node's
     // EventEmitter from accumulating stale references when the socket
@@ -68,7 +68,7 @@ export class BaseGateway
       const rooms = Array.from(client.rooms ?? []);
       for (const room of rooms) {
         if (room !== client.id) {
-          void client.leave(room);
+          await client.leave(room);
         }
       }
       client.removeAllListeners();

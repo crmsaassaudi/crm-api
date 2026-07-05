@@ -94,7 +94,7 @@ export class FilesS3PresignedService {
       this.cls.get<string>('activeTenantId') ||
       this.cls.get<string>('tenantId') ||
       'platform';
-    const ext = (file.fileName.split('.').pop() || '').toLowerCase();
+    const ext = (file.fileName.split('.').pop() ?? '').toLowerCase();
     if (!SAFE_EXT.test(ext)) {
       throw new UnprocessableEntityException({
         status: HttpStatus.UNPROCESSABLE_ENTITY,
@@ -140,7 +140,7 @@ function sanitizeFilename(name: string): string {
   return (
     name
       .replace(/[\r\n"\\]/g, '_')
-      .replace(/[^\w.\-]/g, '_')
+      .replace(/[^\w.-]/g, '_')
       .slice(0, 120) || 'file'
   );
 }

@@ -69,7 +69,7 @@ export const winstonConfig = (clsService: ClsService): WinstonModuleOptions => {
       info.correlationId = ctx.correlationId;
       info.tenantId = ctx.tenantId;
       info.userId = ctx.userId;
-      info.service = process.env.APP_RUNTIME || 'api';
+      info.service = process.env.APP_RUNTIME ?? 'api';
       return info;
     })(),
     winston.format.json(),

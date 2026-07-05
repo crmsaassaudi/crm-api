@@ -33,7 +33,7 @@ export class MetricsController {
   private isAllowed(req: Request): boolean {
     const allowed = new Set([
       ...DEFAULT_ALLOWED_CIDRS,
-      ...(process.env.METRICS_ALLOW_IPS || '')
+      ...(process.env.METRICS_ALLOW_IPS ?? '')
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean),
@@ -41,9 +41,9 @@ export class MetricsController {
     const ip =
       (req.headers['x-forwarded-for'] as string | undefined)
         ?.split(',')[0]
-        ?.trim() ||
-      req.ip ||
-      req.socket.remoteAddress ||
+        ?.trim() ??
+      req.ip ??
+      req.socket.remoteAddress ??
       '';
     return allowed.has(ip);
   }

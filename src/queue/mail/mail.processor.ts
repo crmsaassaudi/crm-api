@@ -49,8 +49,9 @@ export class MailProcessor extends BaseConsumer {
 
     this.logger.log(`Sending welcome email to ${job.data.email}...`);
     try {
-      // TODO: replace with real mailer call (MailerService.sendWelcomeEmail).
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // Placeholder: inject MailerService and call sendWelcomeEmail(job.data)
+      // when the mailer module is wired up to this processor.
+      await Promise.resolve();
       this.logger.log(`Welcome email sent to ${job.data.email}`);
     } catch (err) {
       // Roll back dedup key so retry can re-attempt.

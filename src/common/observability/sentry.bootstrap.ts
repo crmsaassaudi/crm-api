@@ -36,8 +36,8 @@ export async function initSentryIfConfigured(): Promise<void> {
   try {
     sentry.init({
       dsn,
-      environment: process.env.NODE_ENV || 'development',
-      release: process.env.APP_VERSION || process.env.GIT_SHA,
+      environment: process.env.NODE_ENV ?? 'development',
+      release: process.env.APP_VERSION ?? process.env.GIT_SHA,
       tracesSampleRate: Number(process.env.SENTRY_TRACES_RATE) || 0,
       // We do our own secret masking in the logger; Sentry's beforeSend
       // applies the same maskSecrets so anything that escapes a logger call
@@ -51,7 +51,7 @@ export async function initSentryIfConfigured(): Promise<void> {
         }
       },
     });
-    sentry.setTag('service', process.env.APP_RUNTIME || 'api');
+    sentry.setTag('service', process.env.APP_RUNTIME ?? 'api');
     logger.log('[Sentry] Initialized');
   } catch (err: any) {
     logger.warn(`[Sentry] Init failed: ${err?.message ?? err}`);

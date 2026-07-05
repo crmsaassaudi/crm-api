@@ -181,7 +181,7 @@ export class WebhookProcessor extends BaseConsumer {
     if (!providerMessageId) return null;
 
     return `processed:webhook:${channelType}:${
-      accountId || 'unknown'
+      accountId ?? 'unknown'
     }:${providerMessageId}`;
   }
 

@@ -212,46 +212,7 @@ export class TicketsService {
 
     const updateData: any = { ...data };
 
-    // Status transition guard. Custom per-tenant status names mean we can't
-    // hard-code an allow-list, but we CAN refuse the one transition that's
-    // never intended: leaving a terminal status without an explicit
-    // reopen signal. Without this guard, a stale FE state can silently
-    // unresolve a closed ticket.
-    if (
-      data.statusId &&
-      existingTicket &&
-      (existingTicket as any).statusId &&
-      String((existingTicket as any).statusId) !== String(data.statusId)
-    ) {
-      const [oldStatus, newStatus] = await Promise.all([
-        this.ticketSettingsService.findStatusById(
-          String((existingTicket as any).statusId),
-        ),
-        this.ticketSettingsService.findStatusById(data.statusId),
-      ]);
-      if (oldStatus?.isTerminal && !newStatus?.isTerminal) {
-        const allowReopen = (data as any).allowReopen === true;
-        if (!allowReopen) {
-          throw new BadRequestException(
-            `Ticket is in terminal status "${oldStatus.label}". Reopening requires allowReopen=true.`,
-          );
-        }
-      }
-      if (newStatus?.isTerminal) {
-        if (!data.resolvedAt) updateData.resolvedAt = new Date();
-        if (!data.closedAt) updateData.closedAt = new Date();
-      }
-    } else if (data.statusId) {
-      // Status set on a ticket that had no prior status (first transition)
-      // — still honour the terminal auto-stamp.
-      const status = await this.ticketSettingsService.findStatusById(
-        data.statusId,
-      );
-      if (status?.isTerminal) {
-        if (!data.resolvedAt) updateData.resolvedAt = new Date();
-        if (!data.closedAt) updateData.closedAt = new Date();
-      }
-    }
+    await this.handleStatusChange(existingTicket, data, updateData);
 
     const updated = await this.repository.update(id, updateData);
 
@@ -272,6 +233,77 @@ export class TicketsService {
     }
 
     return updated;
+  }
+
+  /**
+   * Orchestrate status transition validation and terminal-state auto-stamps.
+   * Called only when a statusId is present in the update payload.
+   */
+  private async handleStatusChange(
+    existingTicket: Ticket | null,
+    data: Partial<Ticket>,
+    updateData: any,
+  ): Promise<void> {
+    if (!data.statusId) return;
+
+    const existingStatusId = (existingTicket as any)?.statusId;
+    const isRealTransition =
+      existingStatusId && String(existingStatusId) !== String(data.statusId);
+
+    if (isRealTransition) {
+      await this.applyStatusTransitionGuard(existingStatusId, data, updateData);
+    } else {
+      // First-time status set — honour terminal auto-stamp only
+      await this.applyTerminalStamps(data.statusId, data, updateData);
+    }
+  }
+
+  /**
+   * Guard: prevent leaving a terminal status without an explicit reopen signal.
+   * Auto-stamps resolvedAt/closedAt when transitioning into a terminal status.
+   */
+  private async applyStatusTransitionGuard(
+    oldStatusId: any,
+    data: Partial<Ticket>,
+    updateData: any,
+  ): Promise<void> {
+    const [oldStatus, newStatus] = await Promise.all([
+      this.ticketSettingsService.findStatusById(String(oldStatusId)),
+      this.ticketSettingsService.findStatusById(data.statusId!),
+    ]);
+
+    if (oldStatus?.isTerminal && !newStatus?.isTerminal) {
+      if ((data as any).allowReopen !== true) {
+        throw new BadRequestException(
+          `Ticket is in terminal status "${oldStatus.label}". Reopening requires allowReopen=true.`,
+        );
+      }
+    }
+
+    if (newStatus?.isTerminal) {
+      this.applyTerminalTimestamps(data, updateData);
+    }
+  }
+
+  /** Apply resolvedAt/closedAt stamps when moving into a terminal status. */
+  private async applyTerminalStamps(
+    statusId: string,
+    data: Partial<Ticket>,
+    updateData: any,
+  ): Promise<void> {
+    const status = await this.ticketSettingsService.findStatusById(statusId);
+    if (status?.isTerminal) {
+      this.applyTerminalTimestamps(data, updateData);
+    }
+  }
+
+  /** Set resolvedAt and closedAt in updateData if not already present. */
+  private applyTerminalTimestamps(
+    data: Partial<Ticket>,
+    updateData: any,
+  ): void {
+    if (!data.resolvedAt) updateData.resolvedAt = new Date();
+    if (!data.closedAt) updateData.closedAt = new Date();
   }
 
   async remove(id: string): Promise<void> {

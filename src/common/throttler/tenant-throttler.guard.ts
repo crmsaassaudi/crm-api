@@ -32,7 +32,8 @@ export class TenantThrottlerGuard extends ThrottlerGuard {
       const tenantId = this.cls?.get<string>('tenantId');
       const userId = this.cls?.get<string>('userId');
       if (tenantId) {
-        return `tenant:${tenantId}${userId ? `:${userId}` : ''}`;
+        const userSuffix = userId ? `:${userId}` : '';
+        return `tenant:${tenantId}${userSuffix}`;
       }
     } catch {
       /* CLS not active for this request */

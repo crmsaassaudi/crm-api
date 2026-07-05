@@ -124,11 +124,13 @@ export class TenantProvisioningWorker
     );
 
     // ── Saga compensation trackers ──────────────────────────────────────
-    let aliasReserved = false;
-    let keycloakOrgId: string | null = null;
-    let keycloakUserCreatedByThisJob = false;
-    let keycloakUserId: string | null = null;
-    let tenantId: string | null = null;
+    const saga = {
+      aliasReserved: false,
+      keycloakOrgId: null as string | null,
+      keycloakUserCreatedByThisJob: false,
+      keycloakUserId: null as string | null,
+      tenantId: null as string | null,
+    };
 
     try {
       await this.updateStatus(provisioningId, {
@@ -138,142 +140,22 @@ export class TenantProvisioningWorker
         stepLabel: 'Starting…',
       });
 
-      // ── Step 1: Alias already reserved by ensureUniqueAlias (producer) ──
-      // Verify reservation exists
-      aliasReserved = true;
-      await this.reportStep(provisioningId, 1);
+      // Phase 1: Keycloak
+      await this.provisionKeycloakResources(provisioningId, data, saga);
 
-      // ── Step 2: Create Keycloak Organization ──────────────────────────
-      const kcOrg = await this.keycloakAdminService.createOrganization(
-        data.companyName,
-        data.alias,
+      // Phase 2: MongoDB + bot workspace
+      const { redirectUrl, localUser } = await this.provisionMongoResources(
+        provisioningId,
+        data,
+        saga,
       );
-      keycloakOrgId = kcOrg.id;
-      await this.reportStep(provisioningId, 2);
 
-      // ── Step 3: Find or create the Keycloak User ──────────────────────
-      let kcUser = await this.keycloakAdminService.findUserByEmail(data.email);
-      if (kcUser) {
-        keycloakUserId = kcUser.id;
-        this.logger.log(`Reusing existing KC user ${keycloakUserId}`);
-      } else {
-        // PLG: password is provided; SLG: create without password
-        const password = data.password || this.generateTempPassword();
-        kcUser = await this.keycloakAdminService.createUser(
-          data.email,
-          password,
-          data.fullName,
-        );
-        keycloakUserId = kcUser.id;
-        keycloakUserCreatedByThisJob = true;
-        this.logger.log(`Created new KC user ${keycloakUserId}`);
-      }
-      await this.reportStep(provisioningId, 3);
-
-      // ── Step 4: Add user to the organization ──────────────────────────
-      await this.keycloakAdminService.addUserToOrganization(
-        keycloakOrgId!,
-        keycloakUserId!,
-      );
-      await this.reportStep(provisioningId, 4);
-
-      // ── Step 5: Create Tenant record in MongoDB ───────────────────────
-      const tenantData: Partial<Tenant> = {
-        keycloakOrgId: keycloakOrgId!,
-        alias: data.alias,
-        name: data.companyName,
-        ownerId: null as any,
-        subscriptionPlan: data.plan || SubscriptionPlan.FREE,
-        status: TenantStatus.ACTIVE,
-        provisioningStatus: ProvisioningStatus.PROVISIONING,
-        onboardingGoal: data.useCase,
-      };
-      const spaceIdx = data.fullName.indexOf(' ');
-      const firstName =
-        spaceIdx > -1 ? data.fullName.slice(0, spaceIdx) : data.fullName;
-      const lastName = spaceIdx > -1 ? data.fullName.slice(spaceIdx + 1) : '';
-
-      const transactionalResult =
-        await this.transactionManager.runInTransaction(async (session) => {
-          const tenant = await this.tenantsRepository.create(
-            tenantData,
-            session,
-          );
-
-          const localUser = await this.userRepository.upsertWithTenants(
-            keycloakUserId!,
-            data.email,
-            {
-              firstName,
-              lastName,
-              provider: AuthProvidersEnum.email,
-              platformRole: { id: PlatformRoleEnum.USER } as any,
-              status: { id: StatusEnum.active } as any,
-              keycloakId: keycloakUserId!,
-              onboardingStatus: 'COMPLETED',
-            },
-            [{ tenantId: tenant.id, roles: ['OWNER'], joinedAt: new Date() }],
-            session,
-          );
-
-          await this.tenantsRepository.updateOwner(
-            tenant.id,
-            localUser.id as string,
-            session,
-          );
-
-          return { tenant, localUser };
-        });
-
-      const tenant = transactionalResult.tenant;
-      const localUser = transactionalResult.localUser;
-      tenantId = tenant.id;
-      await this.reportStep(provisioningId, 5);
-      await this.reportStep(provisioningId, 6);
-
-      await this.reportStep(provisioningId, 7);
-
-      // ── Step 8: Provision crm-bot Typebot workspace ───────────────────
-      const botWorkspaceId =
-        await this.crmBotWorkspaceProvisioningService.provisionWorkspace({
-          tenantId: tenantId!,
-          ownerEmail: data.email,
-          ownerName: data.fullName,
-          tenantName: data.companyName,
-        });
-      await this.tenantsRepository.update(tenantId!, { botWorkspaceId } as any);
-      await this.reportStep(provisioningId, 8);
-
-      // ── Step 9: Confirm alias reservation ─────────────────────────────
-      await this.aliasReservationRepository.confirm(data.alias);
-      await this.reportStep(provisioningId, 9);
-
-      // ── Step 10: Seed sample data (placeholder for Phase 3) ───────────
-      // TODO: Implement sample data seeder based on data.useCase
-      await this.reportStep(provisioningId, 10);
-
-      // ── Mark provisioning as READY ────────────────────────────────────
-      await this.tenantsRepository.update(tenantId!, {
-        provisioningStatus: ProvisioningStatus.READY,
-      });
-
-      const redirectUrl = this.getTenantLoginUrl(data.alias);
-
-      await this.updateStatus(provisioningId, {
-        status: 'READY',
-        currentStep: TOTAL_STEPS,
-        totalSteps: TOTAL_STEPS,
-        stepLabel: 'Your workspace is ready!',
-        tenantId: tenantId!,
-        redirectUrl,
-      });
-
-      // ── Emit event for downstream listeners (CRM settings seeding, etc.)
-      runWithTenantContext(this.cls, tenantId!, () =>
+      // ── Emit event for downstream listeners ─────────────────────────
+      runWithTenantContext(this.cls, saga.tenantId!, () =>
         this.eventEmitter.emit(
           'tenant.created',
           new TenantCreatedEvent(
-            tenantId!,
+            saga.tenantId!,
             data.companyName,
             data.email,
             localUser.id as string,
@@ -286,52 +168,220 @@ export class TenantProvisioningWorker
         `[${source}] Provisioning complete for "${data.companyName}" → ${redirectUrl}`,
       );
     } catch (error: unknown) {
-      // ── Saga Rollback (compensating transactions) ──────────────────────
-      const errMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(
-        `[${source}] Provisioning FAILED for "${data.companyName}": ${errMsg}`,
-        error instanceof Error ? error.stack : undefined,
+      await this.runSagaRollback(
+        error,
+        data,
+        saga,
+        job,
+        provisioningId,
+        source,
       );
-
-      // Compensate in reverse order
-      if (tenantId) {
-        await this.safeRollback('Delete MongoDB tenant', () =>
-          this.tenantsRepository.update(tenantId!, {
-            provisioningStatus: ProvisioningStatus.FAILED,
-            provisioningError: errMsg,
-          } as any),
-        );
-      }
-
-      if (keycloakOrgId) {
-        await this.safeRollback('Delete KC org', () =>
-          this.keycloakAdminService.deleteOrganization(keycloakOrgId!),
-        );
-      }
-
-      if (keycloakUserCreatedByThisJob && keycloakUserId) {
-        await this.safeRollback('Delete KC user', () =>
-          this.keycloakAdminService.deleteUser(keycloakUserId!),
-        );
-      }
-
-      if (aliasReserved) {
-        await this.safeRollback('Delete alias reservation', () =>
-          this.aliasReservationRepository.delete(data.alias),
-        );
-      }
-
-      await this.updateStatus(provisioningId, {
-        status: 'FAILED',
-        currentStep: 0,
-        totalSteps: TOTAL_STEPS,
-        stepLabel: 'Provisioning failed',
-        error: 'Workspace setup failed. Our team has been notified.',
-        retryable: (job.attemptsMade ?? 0) < (job.opts?.attempts ?? 3),
-      });
-
       throw error; // Let BullMQ handle retry
     }
+  }
+
+  /** Phase 1: reserve alias, create KC org, find-or-create KC user. */
+  private async provisionKeycloakResources(
+    provisioningId: string,
+    data: TenantProvisioningJobData,
+    saga: {
+      aliasReserved: boolean;
+      keycloakOrgId: string | null;
+      keycloakUserCreatedByThisJob: boolean;
+      keycloakUserId: string | null;
+      tenantId: string | null;
+    },
+  ): Promise<void> {
+    // Step 1: alias already reserved by producer
+    saga.aliasReserved = true;
+    await this.reportStep(provisioningId, 1);
+
+    // Step 2: Keycloak Organization
+    const kcOrg = await this.keycloakAdminService.createOrganization(
+      data.companyName,
+      data.alias,
+    );
+    saga.keycloakOrgId = kcOrg.id;
+    await this.reportStep(provisioningId, 2);
+
+    // Step 3: Keycloak User
+    let kcUser = await this.keycloakAdminService.findUserByEmail(data.email);
+    if (kcUser) {
+      saga.keycloakUserId = kcUser.id;
+      this.logger.log(`Reusing existing KC user ${saga.keycloakUserId}`);
+    } else {
+      const password = data.password ?? this.generateTempPassword();
+      kcUser = await this.keycloakAdminService.createUser(
+        data.email,
+        password,
+        data.fullName,
+      );
+      saga.keycloakUserId = kcUser.id;
+      saga.keycloakUserCreatedByThisJob = true;
+      this.logger.log(`Created new KC user ${saga.keycloakUserId}`);
+    }
+    await this.reportStep(provisioningId, 3);
+
+    // Step 4: Add user to KC organization
+    await this.keycloakAdminService.addUserToOrganization(
+      saga.keycloakOrgId!,
+      saga.keycloakUserId!,
+    );
+    await this.reportStep(provisioningId, 4);
+  }
+
+  /** Phase 2: create MongoDB tenant, bot workspace, confirm alias, mark READY. */
+  private async provisionMongoResources(
+    provisioningId: string,
+    data: TenantProvisioningJobData,
+    saga: {
+      aliasReserved: boolean;
+      keycloakOrgId: string | null;
+      keycloakUserCreatedByThisJob: boolean;
+      keycloakUserId: string | null;
+      tenantId: string | null;
+    },
+  ): Promise<{ redirectUrl: string; localUser: any }> {
+    const tenantData: Partial<Tenant> = {
+      keycloakOrgId: saga.keycloakOrgId!,
+      alias: data.alias,
+      name: data.companyName,
+      ownerId: null as any,
+      subscriptionPlan: data.plan ?? SubscriptionPlan.FREE,
+      status: TenantStatus.ACTIVE,
+      provisioningStatus: ProvisioningStatus.PROVISIONING,
+      onboardingGoal: data.useCase,
+    };
+
+    const spaceIdx = data.fullName.indexOf(' ');
+    const firstName =
+      spaceIdx > -1 ? data.fullName.slice(0, spaceIdx) : data.fullName;
+    const lastName = spaceIdx > -1 ? data.fullName.slice(spaceIdx + 1) : '';
+
+    const transactionalResult = await this.transactionManager.runInTransaction(
+      async (session) => {
+        const tenant = await this.tenantsRepository.create(tenantData, session);
+        const localUser = await this.userRepository.upsertWithTenants(
+          saga.keycloakUserId!,
+          data.email,
+          {
+            firstName,
+            lastName,
+            provider: AuthProvidersEnum.email,
+            platformRole: { id: PlatformRoleEnum.USER } as any,
+            status: { id: StatusEnum.active } as any,
+            keycloakId: saga.keycloakUserId!,
+            onboardingStatus: 'COMPLETED',
+          },
+          [{ tenantId: tenant.id, roles: ['OWNER'], joinedAt: new Date() }],
+          session,
+        );
+        await this.tenantsRepository.updateOwner(
+          tenant.id,
+          localUser.id as string,
+          session,
+        );
+        return { tenant, localUser };
+      },
+    );
+
+    const { tenant, localUser } = transactionalResult;
+    saga.tenantId = tenant.id;
+    await this.reportStep(provisioningId, 5);
+    await this.reportStep(provisioningId, 6);
+    await this.reportStep(provisioningId, 7);
+
+    // Step 8: Bot workspace
+    const botWorkspaceId =
+      await this.crmBotWorkspaceProvisioningService.provisionWorkspace({
+        tenantId: saga.tenantId!,
+        ownerEmail: data.email,
+        ownerName: data.fullName,
+        tenantName: data.companyName,
+      });
+    await this.tenantsRepository.update(saga.tenantId!, {
+      botWorkspaceId,
+    } as any);
+    await this.reportStep(provisioningId, 8);
+
+    // Step 9: Confirm alias reservation
+    await this.aliasReservationRepository.confirm(data.alias);
+    await this.reportStep(provisioningId, 9);
+
+    // Step 10: Seed sample data placeholder
+    await this.reportStep(provisioningId, 10);
+
+    // Mark READY
+    await this.tenantsRepository.update(saga.tenantId!, {
+      provisioningStatus: ProvisioningStatus.READY,
+    });
+
+    const redirectUrl = this.getTenantLoginUrl(data.alias);
+    await this.updateStatus(provisioningId, {
+      status: 'READY',
+      currentStep: TOTAL_STEPS,
+      totalSteps: TOTAL_STEPS,
+      stepLabel: 'Your workspace is ready!',
+      tenantId: saga.tenantId!,
+      redirectUrl,
+    });
+
+    return { redirectUrl, localUser };
+  }
+
+  /** Execute compensating rollback transactions in reverse order. */
+  private async runSagaRollback(
+    error: unknown,
+    data: TenantProvisioningJobData,
+    saga: {
+      aliasReserved: boolean;
+      keycloakOrgId: string | null;
+      keycloakUserCreatedByThisJob: boolean;
+      keycloakUserId: string | null;
+      tenantId: string | null;
+    },
+    job: Job<TenantProvisioningJobData>,
+    provisioningId: string,
+    source: string,
+  ): Promise<void> {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    this.logger.error(
+      `[${source}] Provisioning FAILED for "${data.companyName}": ${errMsg}`,
+      error instanceof Error ? error.stack : undefined,
+    );
+
+    if (saga.tenantId) {
+      await this.safeRollback('Delete MongoDB tenant', () =>
+        this.tenantsRepository.update(saga.tenantId!, {
+          provisioningStatus: ProvisioningStatus.FAILED,
+          provisioningError: errMsg,
+        } as any),
+      );
+    }
+    if (saga.keycloakOrgId) {
+      await this.safeRollback('Delete KC org', () =>
+        this.keycloakAdminService.deleteOrganization(saga.keycloakOrgId!),
+      );
+    }
+    if (saga.keycloakUserCreatedByThisJob && saga.keycloakUserId) {
+      await this.safeRollback('Delete KC user', () =>
+        this.keycloakAdminService.deleteUser(saga.keycloakUserId!),
+      );
+    }
+    if (saga.aliasReserved) {
+      await this.safeRollback('Delete alias reservation', () =>
+        this.aliasReservationRepository.delete(data.alias),
+      );
+    }
+
+    await this.updateStatus(provisioningId, {
+      status: 'FAILED',
+      currentStep: 0,
+      totalSteps: TOTAL_STEPS,
+      stepLabel: 'Provisioning failed',
+      error: 'Workspace setup failed. Our team has been notified.',
+      retryable: (job.attemptsMade ?? 0) < (job.opts?.attempts ?? 3),
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

@@ -102,8 +102,7 @@ export class ZaloAdapter implements ChannelAdapter {
     body: any,
     _rawBody?: Buffer,
   ): boolean {
-    void headers;
-    void _rawBody;
+    // headers and _rawBody are intentionally unused (underscore-prefixed params)
     const mac = body?.mac;
     if (!mac) {
       this.logger.warn('Zalo webhook missing mac field');
