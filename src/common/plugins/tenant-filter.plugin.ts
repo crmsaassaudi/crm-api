@@ -345,26 +345,39 @@ function castTenantForQuery(
   // For array sub-document fields like 'tenants.tenantId',
   // schema.path() may return the parent array. Try to resolve via nested path.
   if (!schemaPath && tenantField.includes('.')) {
-    const parts = tenantField.split('.');
-    let currentSchema: any = schema;
-    for (const part of parts) {
-      const pathInfo = currentSchema?.path?.(part);
-      if (!pathInfo) break;
-      if (pathInfo.schema) {
-        currentSchema = pathInfo.schema;
-      } else if (
-        pathInfo.instance === 'ObjectId' &&
-        Types.ObjectId.isValid(activeTenantId)
-      ) {
-        return new Types.ObjectId(activeTenantId);
-      } else if (pathInfo.caster?.instance === 'ObjectId') {
-        return new Types.ObjectId(activeTenantId);
-      } else {
-        currentSchema = pathInfo;
-      }
-    }
+    return resolveNestedTenantPath(schema, tenantField, activeTenantId);
   }
 
+  return activeTenantId;
+}
+
+/**
+ * Walk a dot-separated schema path to determine if the leaf field is an ObjectId.
+ * Used when schema.path() cannot resolve array sub-document paths directly.
+ */
+function resolveNestedTenantPath(
+  schema: Schema,
+  tenantField: string,
+  activeTenantId: string,
+) {
+  const parts = tenantField.split('.');
+  let currentSchema: any = schema;
+  for (const part of parts) {
+    const pathInfo = currentSchema?.path?.(part);
+    if (!pathInfo) break;
+    if (pathInfo.schema) {
+      currentSchema = pathInfo.schema;
+    } else if (
+      pathInfo.instance === 'ObjectId' &&
+      Types.ObjectId.isValid(activeTenantId)
+    ) {
+      return new Types.ObjectId(activeTenantId);
+    } else if (pathInfo.caster?.instance === 'ObjectId') {
+      return new Types.ObjectId(activeTenantId);
+    } else {
+      currentSchema = pathInfo;
+    }
+  }
   return activeTenantId;
 }
 

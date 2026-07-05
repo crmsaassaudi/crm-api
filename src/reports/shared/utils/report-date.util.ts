@@ -64,11 +64,9 @@ export const mergeGrowthBuckets = (
 
 const parseBoundaryDate = (value: string, isEnd: boolean): Date => {
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
-  const date = dateOnly
-    ? new Date(`${value}T${isEnd ? '23:59:59.999' : '00:00:00.000'}Z`)
-    : new Date(value);
-
-  return date;
+  if (!dateOnly) return new Date(value);
+  const timeSuffix = isEnd ? '23:59:59.999' : '00:00:00.000';
+  return new Date(`${value}T${timeSuffix}Z`);
 };
 
 const toCountMap = (rows: BucketCount[]): Map<string, number> =>

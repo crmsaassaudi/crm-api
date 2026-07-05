@@ -24,7 +24,7 @@ export class CustomFieldsCacheService {
   /**
    * Returns map { field_key → display_label } for a tenant + entityType.
    * Cache hit: returns cached map (Redis TTL 300s).
-   * Cache miss: TODO Phase 1 — query CustomFieldsRepository, cache, return.
+   * Cache miss: Phase 1 will query CustomFieldsRepository, cache, and return.
    * Error: returns {} — fail-open, non-blocking.
    */
   async getLabelsForTenant(
@@ -37,7 +37,7 @@ export class CustomFieldsCacheService {
         await this.redisService.get<Record<string, string>>(cacheKey);
       if (cached) return cached;
 
-      // TODO Phase 1: Read from CrmSettingsService / CustomFieldsRepository
+      // [Phase 1] Read from CrmSettingsService / CustomFieldsRepository
       // and cache with TTL 300s. For now, return empty map.
       // When implemented:
       //   const labels = await this.customFieldsRepo.getLabelsMap(tenantId, entityType);

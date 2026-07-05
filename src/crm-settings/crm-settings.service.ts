@@ -221,39 +221,18 @@ export class CrmSettingsService {
       throw new NotFoundException(`Lifecycle stage "${stageId}" not found`);
     }
 
-    const updates: Record<string, any> = {};
-    for (const [field, value] of Object.entries(payload)) {
-      if (LIFECYCLE_STAGE_MUTABLE_FIELDS.has(field)) {
-        updates[field] =
-          field === 'apiName' ? this.normalizeApiName(value) : value;
-      }
-    }
-
+    const updates = this.filterMutableFields(
+      payload,
+      LIFECYCLE_STAGE_MUTABLE_FIELDS,
+    );
     if (Object.keys(updates).length === 0) {
       return setting;
     }
 
-    if (updates.name !== undefined && !String(updates.name).trim()) {
-      throw new BadRequestException('Lifecycle stage name is required');
-    }
-
-    if (updates.name !== undefined) {
-      updates.name = String(updates.name).trim();
-    }
+    this.validateNameField(updates, 'Lifecycle stage name');
 
     if (updates.apiName !== undefined) {
-      if (!updates.apiName) {
-        throw new BadRequestException('Lifecycle stage apiName is required');
-      }
-
-      const duplicate = stages.some(
-        (item) => item.id !== stageId && item.apiName === updates.apiName,
-      );
-      if (duplicate) {
-        throw new ConflictException(
-          `Lifecycle stage apiName "${updates.apiName}" already exists`,
-        );
-      }
+      this.validateApiNameUniqueness(updates.apiName, stageId, stages);
 
       if (
         objectId.toLowerCase() === 'contact' &&
@@ -382,39 +361,19 @@ export class CrmSettingsService {
       throw new NotFoundException(`Lifecycle status "${statusId}" not found`);
     }
 
-    const updates: Record<string, any> = {};
-    for (const [field, value] of Object.entries(payload)) {
-      if (LIFECYCLE_STATUS_MUTABLE_FIELDS.has(field)) {
-        updates[field] =
-          field === 'apiName' ? this.normalizeApiName(value) : value;
-      }
-    }
+    const updates = this.filterMutableFields(
+      payload,
+      LIFECYCLE_STATUS_MUTABLE_FIELDS,
+    );
 
     if (Object.keys(updates).length === 0) {
       return setting;
     }
 
-    if (updates.label !== undefined && !String(updates.label).trim()) {
-      throw new BadRequestException('Lifecycle status label is required');
-    }
-
-    if (updates.label !== undefined) {
-      updates.label = String(updates.label).trim();
-    }
+    this.validateNameField(updates, 'Lifecycle status label', 'label');
 
     if (updates.apiName !== undefined) {
-      if (!updates.apiName) {
-        throw new BadRequestException('Lifecycle status apiName is required');
-      }
-
-      const duplicate = statuses.some(
-        (item) => item.id !== statusId && item.apiName === updates.apiName,
-      );
-      if (duplicate) {
-        throw new ConflictException(
-          `Lifecycle status apiName "${updates.apiName}" already exists`,
-        );
-      }
+      this.validateApiNameUniqueness(updates.apiName, statusId, statuses);
 
       if (
         objectId.toLowerCase() === 'contact' &&
@@ -525,6 +484,53 @@ export class CrmSettingsService {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/(?:^_+)|(?:_+$)/g, '');
+  }
+
+  /** Filter payload fields against a set of mutable field names, normalizing apiName. */
+  private filterMutableFields(
+    payload: Record<string, any>,
+    mutableFields: Set<string>,
+  ): Record<string, any> {
+    const updates: Record<string, any> = {};
+    for (const [field, value] of Object.entries(payload)) {
+      if (mutableFields.has(field)) {
+        updates[field] =
+          field === 'apiName' ? this.normalizeApiName(value) : value;
+      }
+    }
+    return updates;
+  }
+
+  /** Validate that a name/label field is non-empty and trim it. */
+  private validateNameField(
+    updates: Record<string, any>,
+    label: string,
+    fieldName = 'name',
+  ): void {
+    if (updates[fieldName] === undefined) return;
+    if (!String(updates[fieldName]).trim()) {
+      throw new BadRequestException(`${label} is required`);
+    }
+    updates[fieldName] = String(updates[fieldName]).trim();
+  }
+
+  /** Validate that an apiName is non-empty and unique within a collection. */
+  private validateApiNameUniqueness(
+    apiName: string,
+    excludeId: string,
+    items: Array<Record<string, any>>,
+  ): void {
+    if (!apiName) {
+      throw new BadRequestException('Lifecycle apiName is required');
+    }
+    const duplicate = items.some(
+      (item) => item.id !== excludeId && item.apiName === apiName,
+    );
+    if (duplicate) {
+      throw new ConflictException(
+        `Lifecycle apiName "${apiName}" already exists`,
+      );
+    }
   }
 
   private generateUlid(): string {

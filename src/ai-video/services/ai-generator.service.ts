@@ -25,8 +25,8 @@ export class AiGeneratorService {
     });
     const contextText = `
       Video URL: ${videoUrl}
-      User Input Prompt: ${userPrompt || 'None'}
-      Existing Draft Caption: ${existingCaption || 'None'}
+      User Input Prompt: ${userPrompt ?? 'None'}
+      Existing Draft Caption: ${existingCaption ?? 'None'}
     `;
 
     if (geminiApiKey) {

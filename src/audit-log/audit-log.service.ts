@@ -56,7 +56,7 @@ export class AuditLogService {
     if (!cursor) return;
     try {
       const { t, _id } = JSON.parse(Buffer.from(cursor, 'base64').toString());
-      const objectId = new Types.ObjectId(_id);
+      const objectId = Types.ObjectId.createFromHexString(_id);
       where.$or = [
         { t: { $lt: new Date(t) } },
         { t: new Date(t), _id: { $lt: objectId } },

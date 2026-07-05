@@ -24,7 +24,7 @@ export class RedisIoAdapter extends IoAdapter {
       password:
         configService.get<string>('redis.password', {
           infer: true,
-        }) || undefined,
+        }) ?? undefined,
       db: configService.get<number>('redis.db', { infer: true }) ?? 0,
     };
 

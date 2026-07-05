@@ -201,7 +201,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     }
 
     const appSecret =
-      process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET;
+      process.env.FACEBOOK_APP_SECRET ?? process.env.META_APP_SECRET;
     if (!appSecret) {
       this.logger.error(
         'FACEBOOK_APP_SECRET is not configured — cannot verify WhatsApp webhook signature',

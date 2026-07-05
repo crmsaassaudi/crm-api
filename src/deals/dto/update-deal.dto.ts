@@ -1,7 +1,6 @@
-import { PartialType } from '@nestjs/swagger';
+import { PartialType, ApiPropertyOptional } from '@nestjs/swagger';
 import { CreateDealDto } from './create-deal.dto';
 import { IsDate, IsOptional, IsString } from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 export class UpdateDealDto extends PartialType(CreateDealDto) {

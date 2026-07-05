@@ -30,7 +30,7 @@ export class VoiceSynthesisService {
     const settings = await this.settingsRepository.findByTenantId(tenantId);
     const elevenLabsApiKey = settings?.elevenLabsApiKey;
     const voiceId =
-      voiceIdOverride || settings?.defaultVoiceId || '21m00Tcm4TlvDq8ikWAM'; // Rachel
+      voiceIdOverride ?? settings?.defaultVoiceId ?? '21m00Tcm4TlvDq8ikWAM'; // Rachel
 
     if (elevenLabsApiKey) {
       try {

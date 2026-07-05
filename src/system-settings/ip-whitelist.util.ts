@@ -14,10 +14,10 @@ export function extractClientIp(request: {
     : forwardedFor?.split(',')[0];
 
   return normalizeIp(
-    firstForwardedIp ||
-      request.ip ||
-      request.socket?.remoteAddress ||
-      request.connection?.remoteAddress ||
+    firstForwardedIp ??
+      request.ip ??
+      request.socket?.remoteAddress ??
+      request.connection?.remoteAddress ??
       '',
   );
 }

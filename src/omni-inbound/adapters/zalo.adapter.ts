@@ -110,7 +110,7 @@ export class ZaloAdapter implements ChannelAdapter {
     }
 
     const oaSecretKey =
-      process.env.ZALO_OA_SECRET_KEY || process.env.ZALO_WEBHOOK_SECRET;
+      process.env.ZALO_OA_SECRET_KEY ?? process.env.ZALO_WEBHOOK_SECRET;
     if (!oaSecretKey) {
       this.logger.error(
         'ZALO_OA_SECRET_KEY is not configured — cannot verify Zalo webhook',

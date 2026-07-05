@@ -379,19 +379,19 @@ export abstract class BaseImportProcessor<
       : null;
 
     // ── Step 4: Build bulk-write ops ──
-    this.buildBatchOps(
-      validWithRefs,
+    this.buildBatchOps({
+      rows: validWithRefs,
       data,
-      context.dedupEngine,
+      dedupEngine: context.dedupEngine,
       dedupMatches,
-      context.dedupConfig,
+      dedupConfig: context.dedupConfig,
       resolvedRefs,
-      context.summary,
+      summary: context.summary,
       errors,
       ops,
       opMeta,
       affected,
-    );
+    });
 
     // ── Step 5: Execute (skip for dry-run) ──
     await this.executeBatchOps(ops, opMeta, affected, data, context, errors);
@@ -459,61 +459,63 @@ export abstract class BaseImportProcessor<
   }
 
   /** Step 4: Populate ops / opMeta / affected arrays from dedup-resolved rows. */
-  private buildBatchOps(
-    validWithRefs: MappedRow[],
-    data: TJobData,
-    dedupEngine: ImportDedupEngine,
-    dedupMatches: Map<number, any> | null,
-    dedupConfig: DedupConfig | undefined,
-    resolvedRefs: Map<number, Record<string, string>>,
-    summary: ImportSummary,
-    errors: ImportRowError[],
-    ops: any[],
-    opMeta: Array<{ row: number; type: 'insert' | 'update' }>,
-    affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
-  ): void {
+  private buildBatchOps(ctx: {
+    rows: MappedRow[];
+    data: TJobData;
+    dedupEngine: ImportDedupEngine;
+    dedupMatches: Map<number, any> | null;
+    dedupConfig: DedupConfig | undefined;
+    resolvedRefs: Map<number, Record<string, string>>;
+    summary: ImportSummary;
+    errors: ImportRowError[];
+    ops: any[];
+    opMeta: Array<{ row: number; type: 'insert' | 'update' }>;
+    affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>;
+  }): void {
     const now = new Date();
-    const policy = dedupConfig?.policy;
+    const policy = ctx.dedupConfig?.policy;
 
-    for (const m of validWithRefs) {
-      const refs = resolvedRefs.get(m.row) ?? {};
-      const match = dedupMatches?.get(m.row);
+    for (const m of ctx.rows) {
+      const refs = ctx.resolvedRefs.get(m.row) ?? {};
+      const match = ctx.dedupMatches?.get(m.row);
 
       if (match?.claimedByEarlierRow) {
-        summary.skipped++;
-        errors.push(dedupEngine.buildDuplicateInFileError(m));
+        ctx.summary.skipped++;
+        ctx.errors.push(ctx.dedupEngine.buildDuplicateInFileError(m));
         continue;
       }
 
       if (!match?.existing || policy === 'create_new') {
-        ops.push({
-          insertOne: { document: this.buildInsert(m, data, now, refs) },
+        ctx.ops.push({
+          insertOne: { document: this.buildInsert(m, ctx.data, now, refs) },
         });
-        opMeta.push({ row: m.row, type: 'insert' });
-        summary.inserted++;
-        affected.push({ type: 'insert', row: m.row });
+        ctx.opMeta.push({ row: m.row, type: 'insert' });
+        ctx.summary.inserted++;
+        ctx.affected.push({ type: 'insert', row: m.row });
         continue;
       }
 
       if (policy === 'skip') {
-        summary.skipped++;
+        ctx.summary.skipped++;
         continue;
       }
 
       const update =
         policy === 'overwrite'
-          ? this.buildOverwrite(m, data, refs)
-          : this.buildMerge(m, match.existing, data, errors, refs);
+          ? this.buildOverwrite(m, ctx.data, refs)
+          : this.buildMerge(m, match.existing, ctx.data, ctx.errors, refs);
 
       if (!update) {
-        summary.skipped++;
+        ctx.summary.skipped++;
         continue;
       }
 
-      ops.push({ updateOne: { filter: { _id: match.existing._id }, update } });
-      opMeta.push({ row: m.row, type: 'update' });
-      summary.updated++;
-      affected.push({
+      ctx.ops.push({
+        updateOne: { filter: { _id: match.existing._id }, update },
+      });
+      ctx.opMeta.push({ row: m.row, type: 'update' });
+      ctx.summary.updated++;
+      ctx.affected.push({
         type: 'update',
         id: String(match.existing._id),
         row: m.row,

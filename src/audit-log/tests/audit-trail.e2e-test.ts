@@ -19,8 +19,8 @@
  *   npx ts-node src/audit-log/tests/audit-trail.e2e-test.ts
  */
 
-const API_BASE = process.env.API_BASE_URL || 'http://localhost:3001';
-const AUTH_COOKIE = process.env.AUTH_COOKIE || '';
+const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:3001';
+const AUTH_COOKIE = process.env.AUTH_COOKIE ?? '';
 const WAIT_FOR_WORKER_MS = 3000; // Wait for BullMQ worker to process
 
 interface TestResult {

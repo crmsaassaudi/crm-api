@@ -288,6 +288,16 @@ export class ActionProcessorMixin {
       );
     }
   }
+  /** Common handle implementation — sets CLS context and delegates to mixin. */
+  static async handleWithClsContext(
+    mixin: ActionProcessorMixin,
+    cls: ClsService,
+    job: Job<AutomationActionJobData>,
+  ): Promise<void> {
+    cls.set('executionSource', 'A_F');
+    cls.set('sourceContext', { flowId: job.data.workflowId });
+    return mixin.processAction(job);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -356,9 +366,7 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
   }
 
   protected async handle(job: Job<AutomationActionJobData>): Promise<void> {
-    this.cls.set('executionSource', 'A_F');
-    this.cls.set('sourceContext', { flowId: job.data.workflowId });
-    return this.mixin.processAction(job);
+    return ActionProcessorMixin.handleWithClsContext(this.mixin, this.cls, job);
   }
 }
 
@@ -398,9 +406,7 @@ export class AutomationEmailProcessor extends BaseTenantConsumer<AutomationActio
   }
 
   protected async handle(job: Job<AutomationActionJobData>): Promise<void> {
-    this.cls.set('executionSource', 'A_F');
-    this.cls.set('sourceContext', { flowId: job.data.workflowId });
-    return this.mixin.processAction(job);
+    return ActionProcessorMixin.handleWithClsContext(this.mixin, this.cls, job);
   }
 }
 
@@ -446,9 +452,7 @@ export class AutomationSmsProcessor extends BaseTenantConsumer<AutomationActionJ
   }
 
   protected async handle(job: Job<AutomationActionJobData>): Promise<void> {
-    this.cls.set('executionSource', 'A_F');
-    this.cls.set('sourceContext', { flowId: job.data.workflowId });
-    return this.mixin.processAction(job);
+    return ActionProcessorMixin.handleWithClsContext(this.mixin, this.cls, job);
   }
 }
 
@@ -504,9 +508,7 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
   }
 
   protected async handle(job: Job<AutomationActionJobData>): Promise<void> {
-    this.cls.set('executionSource', 'A_F');
-    this.cls.set('sourceContext', { flowId: job.data.workflowId });
-    return this.mixin.processAction(job);
+    return ActionProcessorMixin.handleWithClsContext(this.mixin, this.cls, job);
   }
 }
 
@@ -548,8 +550,6 @@ export class AutomationWebhookProcessor extends BaseTenantConsumer<AutomationAct
   }
 
   protected async handle(job: Job<AutomationActionJobData>): Promise<void> {
-    this.cls.set('executionSource', 'A_F');
-    this.cls.set('sourceContext', { flowId: job.data.workflowId });
-    return this.mixin.processAction(job);
+    return ActionProcessorMixin.handleWithClsContext(this.mixin, this.cls, job);
   }
 }

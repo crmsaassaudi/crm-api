@@ -677,17 +677,7 @@ export class SocialContentAssetsService {
     },
   ): Promise<SocialContentAssetWithDetails> {
     const [latestVersion, publications] = await Promise.all([
-      options.latestVersion
-        ? Promise.resolve(options.latestVersion)
-        : asset.latestVersionId
-          ? this.versionRepository.findById(
-              asset.tenantId,
-              asset.latestVersionId,
-            )
-          : this.versionRepository.findLatestByAssetId(
-              asset.tenantId,
-              asset.id,
-            ),
+      this.resolveLatestVersion(asset, options.latestVersion),
       this.publicationRepository.findByAssetId(asset.tenantId, asset.id),
     ]);
 
@@ -697,6 +687,23 @@ export class SocialContentAssetsService {
       publicationCounts: this.countPublications(publications),
       publications: options.includePublications ? publications : undefined,
     };
+  }
+
+  /** Resolve the latest version: prefer provided → lookup by ID → fallback to latest. */
+  private resolveLatestVersion(
+    asset: SocialContentAssetEntity,
+    provided?: SocialContentAssetVersionEntity,
+  ): Promise<SocialContentAssetVersionEntity | null> {
+    if (provided) {
+      return Promise.resolve(provided);
+    }
+    if (asset.latestVersionId) {
+      return this.versionRepository.findById(
+        asset.tenantId,
+        asset.latestVersionId,
+      );
+    }
+    return this.versionRepository.findLatestByAssetId(asset.tenantId, asset.id);
   }
 
   private countPublications(publications: PublicationInstanceEntity[]) {

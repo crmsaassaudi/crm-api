@@ -131,95 +131,113 @@ export class TenantInterceptor implements NestInterceptor {
    */
   private async resolveI18nContext(tenantId: string): Promise<void> {
     try {
-      // Check Redis cache for tenant i18n settings
-      const tenantI18nKey = `tenant:i18n:${tenantId}`;
-      let locale = 'en';
-      let timezone = 'UTC';
+      const { locale: tenantLocale, timezone: tenantTimezone } =
+        await this.resolveTenantI18n(tenantId);
 
-      try {
-        const cachedI18n = await this.redisService.get<{
-          locale: string;
-          timezone: string;
-        }>(tenantI18nKey);
-        if (cachedI18n) {
-          locale = cachedI18n.locale;
-          timezone = cachedI18n.timezone;
-        } else {
-          // Mutex lock: only one requester hits the DB on cache miss.
-          // Others use safe defaults for this request — cache populates within ms.
-          const lockKey = `${tenantI18nKey}:lock`;
-          const client = this.redisService.getClient();
-          const lockAcquired = await client.set(lockKey, '1', 'EX', 5, 'NX');
-          if (lockAcquired === 'OK') {
-            try {
-              const tenantRepo = this.moduleRef.get(TenantsRepository, {
-                strict: false,
-              });
-              const tenant = await tenantRepo.findById(tenantId);
-              locale = tenant?.i18nSettings?.locale ?? 'en';
-              timezone = tenant?.i18nSettings?.timezone ?? 'UTC';
-              await this.redisService
-                .set(tenantI18nKey, { locale, timezone }, TENANT_I18N_CACHE_TTL)
-                .catch(() => {
-                  /* non-fatal */
-                });
-            } finally {
-              await client.del(lockKey);
-            }
-          }
-        }
-      } catch {
-        // Cache/DB failure — use defaults
-      }
-
-      // User-level override
       const userId = this.cls.get('userId');
-      if (userId) {
-        try {
-          const userI18nKey = `user:i18n:${userId}`;
-          const cachedUser = await this.redisService
-            .get<{ locale?: string; timezone?: string }>(userI18nKey)
-            .catch(() => null);
-
-          if (cachedUser) {
-            if (cachedUser.locale) locale = cachedUser.locale;
-            if (cachedUser.timezone) timezone = cachedUser.timezone;
-          } else {
-            const userRepo = this.moduleRef.get(UserRepository, {
-              strict: false,
-            });
-            let user: any = null;
-            if (isValidObjectId(userId)) {
-              user = await userRepo.findById(userId);
-            } else if (userId.includes('-')) {
-              user = await userRepo.findByKeycloakIdAndProvider({
-                keycloakId: userId,
-                provider:
-                  (this.cls.get('user') as any)?.identity_provider ?? 'email',
-              });
-            }
-            const userPrefs = {
-              locale: user?.i18nPreferences?.locale ?? null,
-              timezone: user?.i18nPreferences?.timezone ?? null,
-            };
-            await this.redisService
-              .set(userI18nKey, userPrefs, USER_KEYCLOAK_CACHE_TTL)
-              .catch(() => {
-                /* non-fatal */
-              });
-            if (userPrefs.locale) locale = userPrefs.locale;
-            if (userPrefs.timezone) timezone = userPrefs.timezone;
-          }
-        } catch {
-          // User lookup failed — use tenant defaults
-        }
-      }
+      const { locale, timezone } = userId
+        ? await this.resolveUserI18nOverride(
+            userId,
+            tenantLocale,
+            tenantTimezone,
+          )
+        : { locale: tenantLocale, timezone: tenantTimezone };
 
       this.cls.set('tenantLocale', locale);
       this.cls.set('tenantTimezone', timezone);
     } catch {
       this.cls.set('tenantLocale', 'en');
       this.cls.set('tenantTimezone', 'UTC');
+    }
+  }
+
+  /** Resolve tenant-level i18n from Redis cache or DB (with mutex). */
+  private async resolveTenantI18n(
+    tenantId: string,
+  ): Promise<{ locale: string; timezone: string }> {
+    const tenantI18nKey = `tenant:i18n:${tenantId}`;
+    try {
+      const cachedI18n = await this.redisService.get<{
+        locale: string;
+        timezone: string;
+      }>(tenantI18nKey);
+      if (cachedI18n) {
+        return { locale: cachedI18n.locale, timezone: cachedI18n.timezone };
+      }
+
+      // Mutex lock: only one requester hits the DB on cache miss.
+      const lockKey = `${tenantI18nKey}:lock`;
+      const client = this.redisService.getClient();
+      const lockAcquired = await client.set(lockKey, '1', 'EX', 5, 'NX');
+      if (lockAcquired !== 'OK') {
+        return { locale: 'en', timezone: 'UTC' };
+      }
+
+      try {
+        const tenantRepo = this.moduleRef.get(TenantsRepository, {
+          strict: false,
+        });
+        const tenant = await tenantRepo.findById(tenantId);
+        const locale = tenant?.i18nSettings?.locale ?? 'en';
+        const timezone = tenant?.i18nSettings?.timezone ?? 'UTC';
+        await this.redisService
+          .set(tenantI18nKey, { locale, timezone }, TENANT_I18N_CACHE_TTL)
+          .catch(() => {
+            /* non-fatal */
+          });
+        return { locale, timezone };
+      } finally {
+        await client.del(lockKey);
+      }
+    } catch {
+      return { locale: 'en', timezone: 'UTC' };
+    }
+  }
+
+  /** Apply user-level i18n overrides (preferences > tenant defaults). */
+  private async resolveUserI18nOverride(
+    userId: string,
+    locale: string,
+    timezone: string,
+  ): Promise<{ locale: string; timezone: string }> {
+    try {
+      const userI18nKey = `user:i18n:${userId}`;
+      const cachedUser = await this.redisService
+        .get<{ locale?: string; timezone?: string }>(userI18nKey)
+        .catch(() => null);
+
+      if (cachedUser) {
+        return {
+          locale: cachedUser.locale ?? locale,
+          timezone: cachedUser.timezone ?? timezone,
+        };
+      }
+
+      const userRepo = this.moduleRef.get(UserRepository, { strict: false });
+      let user: any = null;
+      if (isValidObjectId(userId)) {
+        user = await userRepo.findById(userId);
+      } else if (userId.includes('-')) {
+        user = await userRepo.findByKeycloakIdAndProvider({
+          keycloakId: userId,
+          provider: (this.cls.get('user') as any)?.identity_provider ?? 'email',
+        });
+      }
+      const userPrefs = {
+        locale: user?.i18nPreferences?.locale ?? null,
+        timezone: user?.i18nPreferences?.timezone ?? null,
+      };
+      await this.redisService
+        .set(userI18nKey, userPrefs, USER_KEYCLOAK_CACHE_TTL)
+        .catch(() => {
+          /* non-fatal */
+        });
+      return {
+        locale: userPrefs.locale ?? locale,
+        timezone: userPrefs.timezone ?? timezone,
+      };
+    } catch {
+      return { locale, timezone };
     }
   }
 
