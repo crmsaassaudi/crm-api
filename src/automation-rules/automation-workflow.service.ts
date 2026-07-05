@@ -45,7 +45,7 @@ export class AutomationWorkflowService {
   }
 
   private get userId(): string {
-    return this.cls.get('user.id') || 'system';
+    return this.cls.get('user.id') ?? 'system';
   }
 
   // ── Queries ────────────────────────────────────────────────────────────

@@ -465,7 +465,7 @@ export class AuthService {
     try {
       const url = new URL(returnTo);
       const rootDomain = (
-        this.configService.get('app.rootDomain', { infer: true }) ||
+        this.configService.get('app.rootDomain', { infer: true }) ??
         'crmsaudi.dev'
       ).toLowerCase();
       const hostname = url.hostname.toLowerCase();

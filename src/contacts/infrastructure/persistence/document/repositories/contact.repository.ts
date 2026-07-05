@@ -192,7 +192,7 @@ export class ContactRepository extends BaseDocumentRepository<
     filterOptions,
     paginationOptions,
   }: {
-    filterOptions?: any | null;
+    filterOptions?: any;
     paginationOptions: IPaginationOptions;
   }): Promise<PaginationResponseDto<Contact>> {
     const where = this.buildListWhere(filterOptions);
@@ -223,7 +223,7 @@ export class ContactRepository extends BaseDocumentRepository<
     filterOptions,
     paginationOptions,
   }: {
-    filterOptions?: any | null;
+    filterOptions?: any;
     paginationOptions: ICursorPaginationOptions;
   }): Promise<CursorPaginationResponseDto<Contact>> {
     const where = this.buildListWhere(filterOptions);

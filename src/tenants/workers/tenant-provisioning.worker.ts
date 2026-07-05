@@ -24,11 +24,11 @@ import {
   SubscriptionPlan,
   TenantStatus,
   ProvisioningStatus,
+  Tenant,
 } from '../domain/tenant';
 import { AuthProvidersEnum } from '../../auth/auth-providers.enum';
 import { PlatformRoleEnum } from '../../roles/platform-role.enum';
 import { StatusEnum } from '../../statuses/statuses.enum';
-import { Tenant } from '../domain/tenant';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ulid } from 'ulid';
 
@@ -482,10 +482,10 @@ export class TenantProvisioningWorker
 
   private getTenantLoginUrl(alias: string): string {
     const frontendUrl =
-      this.configService.get('keycloak.frontendUrl', { infer: true }) ||
+      this.configService.get('keycloak.frontendUrl', { infer: true }) ??
       'https://crmsaudi.dev';
     const rootDomain =
-      this.configService.get('app.rootDomain', { infer: true }) ||
+      this.configService.get('app.rootDomain', { infer: true }) ??
       'crmsaudi.dev';
     const url = new URL(frontendUrl);
     url.hostname = `${alias}.${rootDomain}`;

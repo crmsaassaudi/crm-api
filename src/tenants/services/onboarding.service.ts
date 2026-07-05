@@ -70,11 +70,9 @@ export class OnboardingService {
       ...update,
     };
 
-    // Auto-advance step based on filled fields
-    if (merged.companyName && merged.teamSize && !merged.useCase) {
-      merged.step = 3;
-    } else if (merged.companyName && merged.teamSize && merged.useCase) {
-      merged.step = 3; // Ready to complete
+    // Auto-advance step once company name and team size are captured
+    if (merged.companyName && merged.teamSize) {
+      merged.step = 3; // Ready to complete when useCase also filled
     }
 
     const key = `${ONBOARDING_KEY_PREFIX}${userId}`;

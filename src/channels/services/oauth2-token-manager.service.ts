@@ -85,7 +85,7 @@ export class OAuth2TokenManager {
     state: string;
   } {
     const providerConfig = this.getProviderConfig(options.provider);
-    const state = options.state || this.generateState();
+    const state = options.state ?? this.generateState();
     const redirectUri = options.redirectUri || providerConfig.redirectUri;
 
     if (!redirectUri) {

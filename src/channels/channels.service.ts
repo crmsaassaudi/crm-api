@@ -263,7 +263,7 @@ export class ChannelsService {
     if (params.error) {
       return this.renderMetaPopupMessage(targetOrigin, {
         type: 'META_OAUTH_ERROR',
-        error: params.errorDescription || params.error,
+        error: params.errorDescription ?? params.error,
       });
     }
 
@@ -279,7 +279,7 @@ export class ChannelsService {
       const longLivedToken = await this.exchangeMetaLongLivedToken(
         tokenData.accessToken,
       );
-      const accessToken = longLivedToken.accessToken || tokenData.accessToken;
+      const accessToken = longLivedToken.accessToken ?? tokenData.accessToken;
       const userTokenExpiry = this.toExpiryIso(
         longLivedToken.expiresIn ?? tokenData.expiresIn,
       );
@@ -446,8 +446,8 @@ export class ChannelsService {
       channel.status = 'Connected';
       channel.name = matched.pageName;
       channel.config = { ...dto.config, avatarUrl: matched.avatarUrl };
-    } catch (error) {
-      const err = error as any;
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: unknown }; message?: string };
       this.logger.error(
         `Failed to automate Meta channel setup: ${JSON.stringify(err?.response?.data ?? err?.message)}`,
       );

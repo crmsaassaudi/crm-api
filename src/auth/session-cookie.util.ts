@@ -5,7 +5,7 @@ import { AllConfigType } from '../config/config.type';
 export const SID_COOKIE = 'sid';
 
 const getRootDomain = (configService: ConfigService<AllConfigType>): string =>
-  configService.get('app.rootDomain', { infer: true }) || 'crmsaudi.dev';
+  configService.get('app.rootDomain', { infer: true }) ?? 'crmsaudi.dev';
 
 const getCookieBaseOptions = (
   configService: ConfigService<AllConfigType>,

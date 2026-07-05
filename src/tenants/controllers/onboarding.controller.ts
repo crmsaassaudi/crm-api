@@ -86,11 +86,12 @@ export class OnboardingController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const { email, fullName, password } = dto;
-    let step = 'checking existing account';
+    let step = 'initializing';
     let createdKcUserId: string | null = null;
 
     try {
       // 1. Check if email already exists in MongoDB or Keycloak
+      step = 'checking existing account';
       const [existingLocalUser, existingKcUser] = await Promise.all([
         this.userRepository.findByEmail(email),
         this.keycloakAdminService.findUserByEmail(email),
@@ -213,9 +214,9 @@ export class OnboardingController {
     return {
       step: session.step,
       data: {
-        companyName: session.companyName || null,
-        teamSize: session.teamSize || null,
-        useCase: session.useCase || null,
+        companyName: session.companyName ?? null,
+        teamSize: session.teamSize ?? null,
+        useCase: session.useCase ?? null,
       },
     };
   }
@@ -239,9 +240,9 @@ export class OnboardingController {
     return {
       step: session.step,
       data: {
-        companyName: session.companyName || null,
-        teamSize: session.teamSize || null,
-        useCase: session.useCase || null,
+        companyName: session.companyName ?? null,
+        teamSize: session.teamSize ?? null,
+        useCase: session.useCase ?? null,
       },
     };
   }
@@ -285,8 +286,8 @@ export class OnboardingController {
     await this.provisioningProducer.enqueue({
       provisioningId,
       userId,
-      email: user.email || '',
-      fullName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+      email: user.email ?? '',
+      fullName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
       companyName: session.companyName,
       alias,
       plan: SubscriptionPlan.FREE,

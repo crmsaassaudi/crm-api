@@ -770,12 +770,14 @@ export class OmniController {
         ...payload,
       });
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : typeof error === 'string'
-            ? error
-            : JSON.stringify(error);
+      let message: string;
+      if (error instanceof Error) {
+        message = error.message;
+      } else if (typeof error === 'string') {
+        message = error;
+      } else {
+        message = JSON.stringify(error);
+      }
       this.logger.error(`Failed to send email reply: ${message}`);
       throw new BadRequestException(message);
     }
@@ -1690,7 +1692,7 @@ export class OmniController {
       .filter(Boolean)
       .join(' ')
       .trim();
-    return fullName || user.email || null;
+    return fullName || (user.email ?? null);
   }
 
   /**

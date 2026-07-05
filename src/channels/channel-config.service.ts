@@ -101,11 +101,11 @@ export class ChannelConfigService {
       tenantId,
       providerType: dto.providerType,
       name: dto.name,
-      authType: dto.authType || 'app_password',
+      authType: dto.authType ?? 'app_password',
       encryptedCredentials,
-      publicSettings: dto.publicSettings || {},
+      publicSettings: dto.publicSettings ?? {},
       status: 'active',
-      isDefault: dto.isDefault || false,
+      isDefault: dto.isDefault ?? false,
       deletedAt: null,
       lastVerifiedAt: new Date(), // Verified at creation time
       lastHealthError: null,
@@ -129,7 +129,7 @@ export class ChannelConfigService {
       changes: {
         providerType: dto.providerType,
         name: dto.name,
-        isDefault: dto.isDefault || false,
+        isDefault: dto.isDefault ?? false,
       },
     });
 

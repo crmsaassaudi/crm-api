@@ -68,7 +68,7 @@ export class HybridAuthGuard extends AuthGuard {
       throw new UnauthorizedException('Session invalid or expired');
     }
 
-    return super.canActivate(context) as Promise<boolean>;
+    return Promise.resolve(super.canActivate(context)).then(Boolean);
   }
 
   private async tryActivateSession(

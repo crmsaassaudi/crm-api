@@ -104,14 +104,12 @@ export const buildMongoCursorFilter = <TSchema>({
   cursorId: string;
 }): FilterQuery<TSchema> => {
   const objectId = new Types.ObjectId(cursorId);
-  const operator =
-    sortOrder === 'asc'
-      ? direction === 'prev'
-        ? '$lt'
-        : '$gt'
-      : direction === 'prev'
-        ? '$gt'
-        : '$lt';
+  let operator: string;
+  if (sortOrder === 'asc') {
+    operator = direction === 'prev' ? '$lt' : '$gt';
+  } else {
+    operator = direction === 'prev' ? '$gt' : '$lt';
+  }
 
   return {
     $or: [

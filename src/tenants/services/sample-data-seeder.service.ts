@@ -72,7 +72,7 @@ export class SampleDataSeederService {
       }
 
       this.logger.log(
-        `[SampleData] Seeded "${useCase || 'all'}" data for tenant ${tenantId}`,
+        `[SampleData] Seeded "${useCase ?? 'all'}" data for tenant ${tenantId}`,
       );
     } catch (err) {
       this.logger.error(

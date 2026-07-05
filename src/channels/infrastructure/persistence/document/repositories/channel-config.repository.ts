@@ -110,7 +110,7 @@ export class ChannelConfigRepository {
     const $set: Record<string, any> = {
       accessToken: data.accessToken,
       tokenExpiresAt: data.tokenExpiresAt,
-      authType: data.authType || 'oauth2',
+      authType: data.authType ?? 'oauth2',
     };
 
     if (data.refreshToken !== undefined && data.refreshToken !== null) {

@@ -1365,7 +1365,7 @@ export class OmniGateway
         client.emit('omni:collision', {
           conversationId: data.conversationId,
           message: this.extractErrorMessage(error),
-          lock: (error as any)?.response?.lock,
+          lock: (error as { response?: { lock?: unknown } })?.response?.lock,
         });
       }
     }
@@ -1650,11 +1650,15 @@ export class OmniGateway
       try {
         const users = await this.usersService.findByIdsGlobal([event.agentId]);
         const u = users[0];
-        agentName = u
-          ? (([u.firstName, u.lastName].filter(Boolean).join(' ').trim() ||
-              u.email) ??
-            null)
-          : null;
+        if (u) {
+          const nameParts = [u.firstName, u.lastName]
+            .filter(Boolean)
+            .join(' ')
+            .trim();
+          agentName = nameParts || u.email || null;
+        } else {
+          agentName = null;
+        }
       } catch {
         agentName = null;
       }

@@ -113,7 +113,7 @@ import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { TenantResolverMiddleware } from './tenants/middleware/tenant-resolver.middleware';
 import { MaintenanceModeGuard } from './system-settings/maintenance-mode.guard';
 
-const nodeEnv = process.env.NODE_ENV || 'development';
+const nodeEnv = process.env.NODE_ENV ?? 'development';
 const envFilePath = [
   `.env.${nodeEnv}.local`,
   `.env.${nodeEnv}`,

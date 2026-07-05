@@ -819,23 +819,26 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     options: AssignmentOptions,
   ): Promise<string | null> {
     if (!selectedAgent) return null;
-    let committed: any = undefined;
+    let committed: any;
     try {
-      committed = options.allowReassignment
-        ? await this.conversationRepo.updateAssignment(
-            conversationId,
-            selectedAgent,
-          )
-        : typeof (this.conversationRepo as any).assignIfUnassigned ===
-            'function'
-          ? await this.conversationRepo.assignIfUnassigned(
-              conversationId,
-              selectedAgent,
-            )
-          : await this.conversationRepo.updateAssignment(
-              conversationId,
-              selectedAgent,
-            );
+      if (options.allowReassignment) {
+        committed = await this.conversationRepo.updateAssignment(
+          conversationId,
+          selectedAgent,
+        );
+      } else if (
+        typeof (this.conversationRepo as any).assignIfUnassigned === 'function'
+      ) {
+        committed = await this.conversationRepo.assignIfUnassigned(
+          conversationId,
+          selectedAgent,
+        );
+      } else {
+        committed = await this.conversationRepo.updateAssignment(
+          conversationId,
+          selectedAgent,
+        );
+      }
     } catch (err: any) {
       this.logger.error(
         `MongoDB assignment write failed for conversation ${conversationId}: ${err.message} — rolling back`,
@@ -1057,20 +1060,25 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     agentCapacity: number,
     lookupSource: string,
   ): Promise<string | null> {
-    const committed = options.allowReassignment
-      ? await this.conversationRepo.updateAssignment(
-          conversationId,
-          previousAgentId,
-        )
-      : typeof (this.conversationRepo as any).assignIfUnassigned === 'function'
-        ? await this.conversationRepo.assignIfUnassigned(
-            conversationId,
-            previousAgentId,
-          )
-        : await this.conversationRepo.updateAssignment(
-            conversationId,
-            previousAgentId,
-          );
+    let committed: any;
+    if (options.allowReassignment) {
+      committed = await this.conversationRepo.updateAssignment(
+        conversationId,
+        previousAgentId,
+      );
+    } else if (
+      typeof (this.conversationRepo as any).assignIfUnassigned === 'function'
+    ) {
+      committed = await this.conversationRepo.assignIfUnassigned(
+        conversationId,
+        previousAgentId,
+      );
+    } else {
+      committed = await this.conversationRepo.updateAssignment(
+        conversationId,
+        previousAgentId,
+      );
+    }
 
     if (committed === null) {
       await this.presenceService.releaseConversation?.(
