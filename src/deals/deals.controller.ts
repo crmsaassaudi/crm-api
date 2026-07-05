@@ -35,6 +35,17 @@ import { ExportRequestDto } from '../common/export';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { IsString, IsOptional, IsEnum } from 'class-validator';
 
+/** Map a safe file extension to its HTTP Content-Type. */
+function resolveContentType(ext: string | undefined): string {
+  if (ext === 'xlsx') {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  }
+  if (ext === 'gz') {
+    return 'application/gzip';
+  }
+  return 'text/csv; charset=utf-8';
+}
+
 class CreateDealActivityDto {
   @ApiProperty({
     enum: ['note', 'call', 'meeting', 'email', 'task'],
@@ -197,12 +208,7 @@ export class DealsController {
     const file = await this.service.getExportDownload(token);
     const safeFilename = file.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const ext = safeFilename.split('.').pop()?.toLowerCase();
-    const contentType =
-      ext === 'xlsx'
-        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        : ext === 'gz'
-          ? 'application/gzip'
-          : 'text/csv; charset=utf-8';
+    const contentType = resolveContentType(ext);
     res.setHeader('Content-Type', contentType);
     res.setHeader(
       'Content-Disposition',

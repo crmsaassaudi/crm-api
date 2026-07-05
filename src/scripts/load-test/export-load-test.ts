@@ -84,6 +84,61 @@ async function expectOk(res: Response, label: string): Promise<void> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+interface PollResult {
+  status: string;
+  progress: any;
+  result: any;
+  failedReason?: string;
+}
+
+async function pollUntilDone(
+  base: string,
+  jobId: string,
+  h: Record<string, string>,
+  cfg: Config,
+  startedAt: number,
+): Promise<any> {
+  let lastProcessed = -1;
+  while (true) {
+    if (Date.now() - startedAt > cfg.timeoutMs) {
+      throw new Error(`Timed out after ${cfg.timeoutMs}ms (job ${jobId})`);
+    }
+    await sleep(cfg.pollIntervalMs);
+    const stRes = await fetch(`${base}/export-status/${jobId}`, { headers: h });
+    await expectOk(stRes, 'status');
+    const st = (await stRes.json()) as PollResult;
+    const processed = st.progress?.processed ?? 0;
+    if (processed !== lastProcessed) {
+      const pct = st.progress?.pct;
+      console.log(
+        `[export-load] ${st.status} processed=${processed}` +
+          (pct != null ? ` (${pct}%)` : ''),
+      );
+      lastProcessed = processed;
+    }
+    if (st.status === 'completed') {
+      return st.result;
+    }
+    if (st.status === 'failed') {
+      throw new Error(`Export failed: ${st.failedReason ?? 'unknown'}`);
+    }
+  }
+}
+
+async function downloadResult(result: any, cfg: Config): Promise<void> {
+  if (!cfg.download || !result?.downloadUrl) return;
+  const dlUrl = result.downloadUrl.startsWith('http')
+    ? result.downloadUrl
+    : `${cfg.baseUrl.replace(/\/api\/v1$/, '')}${result.downloadUrl}`;
+  const dlStart = Date.now();
+  const dlRes = await fetch(dlUrl, { headers: { Cookie: cfg.cookie } });
+  await expectOk(dlRes, 'download');
+  const buf = Buffer.from(await dlRes.arrayBuffer());
+  console.log(
+    `[export-load] downloaded : ${buf.length} bytes in ${Date.now() - dlStart} ms`,
+  );
+}
+
 async function run(): Promise<void> {
   const cfg = configFromEnv();
   const h = { Cookie: cfg.cookie, 'Content-Type': 'application/json' };
@@ -104,38 +159,7 @@ async function run(): Promise<void> {
   const { jobId } = (await startRes.json()) as { jobId: string };
   console.log(`[export-load] queued jobId=${jobId}`);
 
-  let result: any;
-  let lastProcessed = -1;
-  while (true) {
-    if (Date.now() - startedAt > cfg.timeoutMs) {
-      throw new Error(`Timed out after ${cfg.timeoutMs}ms (job ${jobId})`);
-    }
-    await sleep(cfg.pollIntervalMs);
-    const stRes = await fetch(`${base}/export-status/${jobId}`, { headers: h });
-    await expectOk(stRes, 'status');
-    const st = (await stRes.json()) as {
-      status: string;
-      progress: any;
-      result: any;
-      failedReason?: string;
-    };
-    const processed = st.progress?.processed ?? 0;
-    if (processed !== lastProcessed) {
-      const pct = st.progress?.pct;
-      console.log(
-        `[export-load] ${st.status} processed=${processed}` +
-          (pct != null ? ` (${pct}%)` : ''),
-      );
-      lastProcessed = processed;
-    }
-    if (st.status === 'completed') {
-      result = st.result;
-      break;
-    }
-    if (st.status === 'failed') {
-      throw new Error(`Export failed: ${st.failedReason ?? 'unknown'}`);
-    }
-  }
+  const result = await pollUntilDone(base, jobId, h, cfg, startedAt);
 
   const elapsedMs = Date.now() - startedAt;
   const rows = result?.recordCount ?? 0;
@@ -146,18 +170,7 @@ async function run(): Promise<void> {
   console.log(`[export-load] throughput: ${throughput} rows/s`);
   console.log(`[export-load] downloadUrl: ${result?.downloadUrl ?? 'n/a'}`);
 
-  if (cfg.download && result?.downloadUrl) {
-    const dlUrl = result.downloadUrl.startsWith('http')
-      ? result.downloadUrl
-      : `${cfg.baseUrl.replace(/\/api\/v1$/, '')}${result.downloadUrl}`;
-    const dlStart = Date.now();
-    const dlRes = await fetch(dlUrl, { headers: { Cookie: cfg.cookie } });
-    await expectOk(dlRes, 'download');
-    const buf = Buffer.from(await dlRes.arrayBuffer());
-    console.log(
-      `[export-load] downloaded : ${buf.length} bytes in ${Date.now() - dlStart} ms`,
-    );
-  }
+  await downloadResult(result, cfg);
 }
 
 run().catch((err) => {

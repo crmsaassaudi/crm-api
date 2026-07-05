@@ -11,7 +11,6 @@ import { BaseTenantConsumer } from '../../queue/base-tenant.consumer';
 import {
   BaseImportJobData,
   DedupMatchingField,
-  DedupPolicy,
   ImportErrorCode,
   ImportModuleConfig,
   ImportPreview,
@@ -228,7 +227,7 @@ export abstract class BaseImportProcessor<
     const dedupConfig: DedupConfig | undefined = data.deduplication
       ? {
           matchingFields: data.deduplication.matchingFields,
-          policy: data.deduplication.policy as DedupPolicy,
+          policy: data.deduplication.policy,
         }
       : undefined;
 
@@ -361,52 +360,15 @@ export abstract class BaseImportProcessor<
     summary.total += batch.length;
 
     // ── Step 1: Required-field validation ──
-    const valid: MappedRow[] = [];
-    for (const m of batch) {
-      const missing = this.moduleConfig.requiredFields.filter(
-        (f) => !m.fields[f] && !(m.arrayFields[f]?.length > 0),
-      );
-      if (missing.length) {
-        summary.errors++;
-        errors.push({
-          row: m.row,
-          code: ImportErrorCode.REQUIRED_FIELD_MISSING,
-          field: missing.join(','),
-          reason: `Missing required field(s): ${missing.join(', ')}`,
-        });
-        continue;
-      }
-
-      // Module-specific validation.
-      const moduleErrors = this.validateRow(m, data);
-      if (moduleErrors.length) {
-        summary.errors += moduleErrors.length;
-        errors.push(...moduleErrors);
-        continue;
-      }
-
-      valid.push(m);
-    }
+    const valid = this.validateBatchRows(batch, data, summary, errors);
 
     // ── Step 2: Reference resolution ──
-    const resolvedRefs = new Map<number, Record<string, string>>();
-    if (refResolver) {
-      for (const m of valid) {
-        const result = refResolver.resolveRow(m.row, m.fields);
-        if (result.errors.length) {
-          summary.errors += result.errors.length;
-          errors.push(...result.errors);
-          // Remove from valid — can't insert/update without resolved refs.
-          continue;
-        }
-        resolvedRefs.set(m.row, result.resolved);
-      }
-    }
-
-    // Filter valid rows to only those with successfully resolved refs.
-    const validWithRefs = refResolver
-      ? valid.filter((m) => resolvedRefs.has(m.row))
-      : valid;
+    const { validWithRefs, resolvedRefs } = this.resolveRefs(
+      valid,
+      refResolver,
+      summary,
+      errors,
+    );
 
     // ── Step 3: Dedup lookup ──
     const dedupMatches = dedupConfig
@@ -419,6 +381,109 @@ export abstract class BaseImportProcessor<
         )
       : null;
 
+    // ── Step 4: Build bulk-write ops ──
+    this.buildBatchOps(
+      validWithRefs,
+      data,
+      dedupEngine,
+      dedupMatches,
+      dedupConfig,
+      resolvedRefs,
+      summary,
+      errors,
+      ops,
+      opMeta,
+      affected,
+    );
+
+    // ── Step 5: Execute (skip for dry-run) ──
+    await this.executeBatchOps(
+      ops,
+      opMeta,
+      affected,
+      data,
+      summary,
+      report,
+      errors,
+      dryRun,
+    );
+  }
+
+  /** Step 1: Filter out rows missing required fields or failing module validation. */
+  private validateBatchRows(
+    batch: MappedRow[],
+    data: TJobData,
+    summary: ImportSummary,
+    errors: ImportRowError[],
+  ): MappedRow[] {
+    const valid: MappedRow[] = [];
+    for (const m of batch) {
+      const missing = this.moduleConfig.requiredFields.filter(
+        (f) => !m.fields[f] && (m.arrayFields[f]?.length ?? 0) <= 0,
+      );
+      if (missing.length) {
+        summary.errors++;
+        errors.push({
+          row: m.row,
+          code: ImportErrorCode.REQUIRED_FIELD_MISSING,
+          field: missing.join(','),
+          reason: `Missing required field(s): ${missing.join(', ')}`,
+        });
+        continue;
+      }
+      const moduleErrors = this.validateRow(m, data);
+      if (moduleErrors.length) {
+        summary.errors += moduleErrors.length;
+        errors.push(...moduleErrors);
+        continue;
+      }
+      valid.push(m);
+    }
+    return valid;
+  }
+
+  /** Step 2: Resolve reference fields for each valid row; drop rows that fail. */
+  private resolveRefs(
+    valid: MappedRow[],
+    refResolver: ImportReferenceResolver | undefined,
+    summary: ImportSummary,
+    errors: ImportRowError[],
+  ): {
+    validWithRefs: MappedRow[];
+    resolvedRefs: Map<number, Record<string, string>>;
+  } {
+    const resolvedRefs = new Map<number, Record<string, string>>();
+    if (refResolver) {
+      for (const m of valid) {
+        const result = refResolver.resolveRow(m.row, m.fields);
+        if (result.errors.length) {
+          summary.errors += result.errors.length;
+          errors.push(...result.errors);
+          continue;
+        }
+        resolvedRefs.set(m.row, result.resolved);
+      }
+    }
+    const validWithRefs = refResolver
+      ? valid.filter((m) => resolvedRefs.has(m.row))
+      : valid;
+    return { validWithRefs, resolvedRefs };
+  }
+
+  /** Step 4: Populate ops / opMeta / affected arrays from dedup-resolved rows. */
+  private buildBatchOps(
+    validWithRefs: MappedRow[],
+    data: TJobData,
+    dedupEngine: ImportDedupEngine,
+    dedupMatches: Map<number, any> | null,
+    dedupConfig: DedupConfig | undefined,
+    resolvedRefs: Map<number, Record<string, string>>,
+    summary: ImportSummary,
+    errors: ImportRowError[],
+    ops: any[],
+    opMeta: Array<{ row: number; type: 'insert' | 'update' }>,
+    affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
+  ): void {
     const now = new Date();
     const policy = dedupConfig?.policy;
 
@@ -432,8 +497,7 @@ export abstract class BaseImportProcessor<
         continue;
       }
 
-      if (!match?.existing) {
-        // No match — insert new record.
+      if (!match?.existing || policy === 'create_new') {
         ops.push({
           insertOne: { document: this.buildInsert(m, data, now, refs) },
         });
@@ -443,20 +507,8 @@ export abstract class BaseImportProcessor<
         continue;
       }
 
-      // Matched an existing record — apply the chosen policy.
       if (policy === 'skip') {
         summary.skipped++;
-        continue;
-      }
-
-      if (policy === 'create_new') {
-        // Force create a new record even though a duplicate exists.
-        ops.push({
-          insertOne: { document: this.buildInsert(m, data, now, refs) },
-        });
-        opMeta.push({ row: m.row, type: 'insert' });
-        summary.inserted++;
-        affected.push({ type: 'insert', row: m.row });
         continue;
       }
 
@@ -470,9 +522,7 @@ export abstract class BaseImportProcessor<
         continue;
       }
 
-      ops.push({
-        updateOne: { filter: { _id: match.existing._id }, update },
-      });
+      ops.push({ updateOne: { filter: { _id: match.existing._id }, update } });
       opMeta.push({ row: m.row, type: 'update' });
       summary.updated++;
       affected.push({
@@ -481,8 +531,19 @@ export abstract class BaseImportProcessor<
         row: m.row,
       });
     }
+  }
 
-    // ── Step 4: Execute bulkWrite (skip for dry-run) ──
+  /** Step 5: Run bulkWrite and call post-write hooks. */
+  private async executeBatchOps(
+    ops: any[],
+    opMeta: Array<{ row: number; type: 'insert' | 'update' }>,
+    affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
+    data: TJobData,
+    summary: ImportSummary,
+    report: ImportReportWriter,
+    errors: ImportRowError[],
+    dryRun: boolean,
+  ): Promise<void> {
     if (dryRun) {
       await report.appendErrors(errors);
       return;
@@ -490,13 +551,10 @@ export abstract class BaseImportProcessor<
 
     if (ops.length > 0) {
       const failed = await this.executeBulk(ops, opMeta, errors, summary);
-      // Reconcile counts: failed ops never persisted.
       for (const meta of failed) {
         if (meta.type === 'insert') summary.inserted--;
         else summary.updated--;
       }
-
-      // Post-write hooks (automation events, etc.)
       if (data.triggerAutomations) {
         const failedRows = new Set(failed.map((f) => f.row));
         const successfulAffected = affected.filter(

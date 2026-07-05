@@ -23,7 +23,7 @@ export interface DedupConfig {
  */
 export interface DedupMatch {
   /** The matched existing document, or null if no match. */
-  existing: any | null;
+  existing: any;
   /** Whether this row was claimed by an earlier row in the same file. */
   claimedByEarlierRow: boolean;
 }
@@ -67,14 +67,33 @@ export class ImportDedupEngine {
     const results = new Map<number, DedupMatch>();
 
     if (config.matchingFields.length === 0) {
-      // No dedup configured — every row is a fresh insert.
       for (const m of batch) {
         results.set(m.row, { existing: null, claimedByEarlierRow: false });
       }
       return results;
     }
 
-    // Collect all values to query per matching field.
+    const fieldValues = this.collectFieldValues(batch, config, extractValues);
+    const existingDocs = await this.fetchExistingDocs(
+      model,
+      tenantId,
+      fieldValues,
+    );
+    const lookupMaps = this.buildLookupMaps(
+      config.matchingFields,
+      existingDocs,
+    );
+    this.matchRows(batch, config, extractValues, lookupMaps, results);
+
+    return results;
+  }
+
+  /** Collect all candidate dedup values per field across the batch. */
+  private collectFieldValues(
+    batch: MappedRow[],
+    config: DedupConfig,
+    extractValues: (row: MappedRow, field: DedupMatchingField) => string[],
+  ): Map<DedupMatchingField, string[]> {
     const fieldValues = new Map<DedupMatchingField, string[]>();
     for (const field of config.matchingFields) {
       const allVals: string[] = [];
@@ -83,41 +102,43 @@ export class ImportDedupEngine {
       }
       fieldValues.set(field, [...new Set(allVals.filter(Boolean))]);
     }
+    return fieldValues;
+  }
 
-    // Build the $or query — one clause per matching field with $in.
+  /** Run the batch $or query and return matching documents. */
+  private async fetchExistingDocs(
+    model: Model<any>,
+    tenantId: string,
+    fieldValues: Map<DedupMatchingField, string[]>,
+  ): Promise<any[]> {
     const or: any[] = [];
     for (const [field, values] of fieldValues) {
       if (values.length > 0) {
         or.push({ [field]: { $in: values } });
       }
     }
+    if (or.length === 0) return [];
+    return model
+      .find({ tenantId, deletedAt: { $exists: false }, $or: or })
+      .lean()
+      .exec();
+  }
 
-    // Execute the batch lookup query.
-    const existingDocs: any[] = [];
-    if (or.length > 0) {
-      const found = await model
-        .find({
-          tenantId,
-          deletedAt: { $exists: false },
-          $or: or,
-        })
-        .lean()
-        .exec();
-      existingDocs.push(...found);
-    }
-
-    // Index existing docs by each matching field's values for O(1) lookup.
+  /** Build a per-field normalized-value → document lookup map. */
+  private buildLookupMaps(
+    matchingFields: DedupMatchingField[],
+    existingDocs: any[],
+  ): Map<DedupMatchingField, Map<string, any>> {
     const lookupMaps = new Map<DedupMatchingField, Map<string, any>>();
-    for (const field of config.matchingFields) {
+    for (const field of matchingFields) {
       const lookup = new Map<string, any>();
       for (const doc of existingDocs) {
-        const docValues = Array.isArray(doc[field])
+        const docValues: string[] = Array.isArray(doc[field])
           ? doc[field]
-          : doc[field]
+          : doc[field] != null
             ? [String(doc[field])]
             : [];
         for (const v of docValues) {
-          // Normalize to lowercase for case-insensitive matching on string fields.
           const normalized =
             typeof v === 'string' ? v.toLowerCase() : String(v);
           if (!lookup.has(normalized)) lookup.set(normalized, doc);
@@ -125,24 +146,30 @@ export class ImportDedupEngine {
       }
       lookupMaps.set(field, lookup);
     }
+    return lookupMaps;
+  }
 
-    // Match each row against the lookup maps.
+  /** Match each row against the lookup maps; record results and claimed keys. */
+  private matchRows(
+    batch: MappedRow[],
+    config: DedupConfig,
+    extractValues: (row: MappedRow, field: DedupMatchingField) => string[],
+    lookupMaps: Map<DedupMatchingField, Map<string, any>>,
+    results: Map<number, DedupMatch>,
+  ): void {
     for (const m of batch) {
-      let match: any | null = null;
-
-      for (const field of config.matchingFields) {
+      let match: any = null;
+      outer: for (const field of config.matchingFields) {
         const lookup = lookupMaps.get(field)!;
-        const values = extractValues(m, field);
-        for (const v of values) {
+        for (const v of extractValues(m, field)) {
           const normalized =
             typeof v === 'string' ? v.toLowerCase() : String(v);
           const hit = lookup.get(normalized);
           if (hit) {
             match = hit;
-            break;
+            break outer;
           }
         }
-        if (match) break;
       }
 
       if (match) {
@@ -150,7 +177,6 @@ export class ImportDedupEngine {
         continue;
       }
 
-      // Within-file dedup: don't insert two rows sharing a dedup key.
       const keys = this.buildDedupKeys(m, config.matchingFields, extractValues);
       const clash = keys.find((k) => this.claimedKeys.has(k));
       if (clash) {
@@ -158,12 +184,9 @@ export class ImportDedupEngine {
         continue;
       }
 
-      // No match and no clash — claim the keys for this row.
       keys.forEach((k) => this.claimedKeys.add(k));
       results.set(m.row, { existing: null, claimedByEarlierRow: false });
     }
-
-    return results;
   }
 
   /**

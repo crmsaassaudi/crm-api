@@ -162,6 +162,20 @@ export class DealsService {
     return this.cls.get('userId') ?? this.cls.get('user.id');
   }
 
+  private resolveTenantId(): string {
+    return this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+  }
+
+  /** Resolve a display filename from DTO, falling back to the fileKey basename. */
+  private resolveImportFileName(dto: StartDealImportDto): string {
+    return dto.fileName ?? dto.fileKey.split('/').pop() ?? 'unknown';
+  }
+
+  /** Resolve the import file format from the DTO or infer from fileKey extension. */
+  private resolveImportFileFormat(dto: StartDealImportDto): string {
+    return dto.fileFormat ?? (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv');
+  }
+
   async create(data: Partial<Deal>): Promise<Deal> {
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'create');
@@ -317,7 +331,7 @@ export class DealsService {
       );
     }
 
-    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    const tenantId = this.resolveTenantId();
     const userId = this.getCurrentUserId() ?? 'system';
 
     const job = await this.importQueue.add('import', {
@@ -329,7 +343,7 @@ export class DealsService {
       dryRun: dto.dryRun ?? false,
       triggerAutomations: dto.triggerAutomations ?? false,
       estimatedRows: dto.estimatedRows,
-      fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
+      fileName: this.resolveImportFileName(dto),
     });
 
     try {
@@ -337,9 +351,8 @@ export class DealsService {
         tenantId,
         userId,
         entityType: 'deal',
-        fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
-        fileFormat:
-          dto.fileFormat || (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv'),
+        fileName: this.resolveImportFileName(dto),
+        fileFormat: this.resolveImportFileFormat(dto),
         rowCount: dto.estimatedRows ?? 0,
         status: 'queued',
         bullJobId: String(job.id),

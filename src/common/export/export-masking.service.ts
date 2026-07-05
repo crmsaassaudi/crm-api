@@ -31,7 +31,7 @@ export class ExportMaskingService {
       tenantId,
     );
     const layoutConfig =
-      layoutSettings?.groupLayouts?.[effectiveGroup] ||
+      layoutSettings?.groupLayouts?.[effectiveGroup] ??
       layoutSettings?.groupLayouts?.['default'];
 
     // Mirror the interceptor: Contact/Lead share the 'Contact' layout.

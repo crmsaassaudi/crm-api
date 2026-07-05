@@ -83,37 +83,58 @@ export class ContactRepository extends BaseDocumentRepository<
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  private static readonly OWNER_FIELD_MAP: Record<string, string> = {
+    owner: 'ownerId',
+    createdBy: 'createdById',
+    updatedBy: 'updatedById',
+  };
+
+  /**
+   * Resolve a single filter entry into a [dbField, condition] tuple.
+   * Returns null when the filter should be skipped.
+   */
+  private resolveSingleFilterCondition(f: {
+    id: string;
+    value: any;
+  }): [string, any] | null {
+    if (!f.id || !f.value) return null;
+    if (!this.ALLOWED_FILTER_FIELDS.has(f.id)) return null;
+
+    if (['emails', 'phones'].includes(f.id)) {
+      return [
+        f.id,
+        { $regex: `^${this.escapeRegex(String(f.value))}$`, $options: 'i' },
+      ];
+    }
+
+    if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
+      return [f.id, Array.isArray(f.value) ? { $in: f.value } : f.value];
+    }
+
+    const ownerDbField = ContactRepository.OWNER_FIELD_MAP[f.id];
+    if (ownerDbField) {
+      return [
+        ownerDbField,
+        Array.isArray(f.value) ? { $in: f.value } : f.value,
+      ];
+    }
+
+    if (Array.isArray(f.value)) {
+      return [f.id, { $in: f.value }];
+    }
+
+    return [f.id, { $regex: this.escapeRegex(String(f.value)), $options: 'i' }];
+  }
+
   private applyParsedFilters(
     where: FilterQuery<ContactSchemaClass>,
     parsedFilters: any[],
   ): void {
-    const OWNER_FIELD_MAP: Record<string, string> = {
-      owner: 'ownerId',
-      createdBy: 'createdById',
-      updatedBy: 'updatedById',
-    };
-
     for (const f of parsedFilters) {
-      if (!f.id || !f.value) continue;
-      if (!this.ALLOWED_FILTER_FIELDS.has(f.id)) continue;
-
-      if (['emails', 'phones'].includes(f.id)) {
-        where[f.id] = {
-          $regex: `^${this.escapeRegex(String(f.value))}$`,
-          $options: 'i',
-        };
-      } else if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
-        where[f.id] = Array.isArray(f.value) ? { $in: f.value } : f.value;
-      } else if (f.id in OWNER_FIELD_MAP) {
-        const dbField = OWNER_FIELD_MAP[f.id];
-        where[dbField] = Array.isArray(f.value) ? { $in: f.value } : f.value;
-      } else if (Array.isArray(f.value)) {
-        where[f.id] = { $in: f.value };
-      } else {
-        where[f.id] = {
-          $regex: this.escapeRegex(String(f.value)),
-          $options: 'i',
-        };
+      const resolved = this.resolveSingleFilterCondition(f);
+      if (resolved) {
+        const [dbField, condition] = resolved;
+        where[dbField] = condition;
       }
     }
   }

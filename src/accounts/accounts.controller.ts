@@ -24,6 +24,17 @@ import { RequirePermission } from '../common/permissions';
 import { StartAccountImportDto } from './dto/start-account-import.dto';
 import { ExportRequestDto } from '../common/export';
 
+/** Map a safe file extension to its HTTP Content-Type. */
+function resolveContentType(ext: string | undefined): string {
+  if (ext === 'xlsx') {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  }
+  if (ext === 'gz') {
+    return 'application/gzip';
+  }
+  return 'text/csv; charset=utf-8';
+}
+
 @ApiTags('Accounts')
 @ApiBearerAuth()
 @UseInterceptors(DataMaskingInterceptor)
@@ -157,12 +168,7 @@ export class AccountsController {
     const file = await this.service.getExportDownload(token);
     const safeFilename = file.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const ext = safeFilename.split('.').pop()?.toLowerCase();
-    const contentType =
-      ext === 'xlsx'
-        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        : ext === 'gz'
-          ? 'application/gzip'
-          : 'text/csv; charset=utf-8';
+    const contentType = resolveContentType(ext);
     res.setHeader('Content-Type', contentType);
     res.setHeader(
       'Content-Disposition',

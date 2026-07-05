@@ -125,7 +125,7 @@ export class MediaProxyService {
 
       // ── Detect & compress ────────────────────────────────────────
       const detectedMime =
-        detectMimeFromBuffer(buffer) || 'application/octet-stream';
+        detectMimeFromBuffer(buffer) ?? 'application/octet-stream';
       const compressed = await this.compressIfImage(buffer, detectedMime);
 
       // ── Upload to S3 + thumbnail ─────────────────────────────────

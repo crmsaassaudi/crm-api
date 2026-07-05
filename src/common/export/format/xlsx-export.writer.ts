@@ -52,12 +52,12 @@ export class XlsxExportWriter implements ExportFormatWriter {
 
   async finalize(): Promise<void> {
     // Commits the active worksheet then finalizes the zip and ends the stream.
-    await this.sheet.commit();
+    this.sheet.commit();
     await this.workbook.commit();
   }
 
-  private async rollover(): Promise<void> {
-    await this.sheet.commit();
+  private rollover(): void {
+    this.sheet.commit();
     this.sheetIndex++;
     this.sheet = this.workbook.addWorksheet(`Export ${this.sheetIndex}`);
     if (this.headers.length) {

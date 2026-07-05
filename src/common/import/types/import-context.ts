@@ -1,13 +1,14 @@
 import { TenantJobData } from '../../../queue/base-tenant.consumer';
 
-/**
- * Dedup matching field — each module defines its own valid values,
- * but the shared engine treats them as opaque strings.
- */
-export type DedupMatchingField = string;
-
 /** How the import engine should handle a matched duplicate. */
 export type DedupPolicy = 'skip' | 'overwrite' | 'merge' | 'create_new';
+
+/**
+ * Opaque alias kept for readability at call-sites that declare matching fields.
+ * Each module defines its own valid values; the shared engine treats them as
+ * plain strings.
+ */
+export type DedupMatchingField = string;
 
 /**
  * Base job data interface for ALL import jobs across every module.

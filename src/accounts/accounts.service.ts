@@ -91,6 +91,20 @@ export class AccountsService {
     return this.cls.get('userId') ?? 'system';
   }
 
+  private resolveTenantId(): string {
+    return this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+  }
+
+  /** Resolve a display filename from DTO, falling back to the fileKey basename. */
+  private resolveImportFileName(dto: StartAccountImportDto): string {
+    return dto.fileName ?? dto.fileKey.split('/').pop() ?? 'unknown';
+  }
+
+  /** Resolve the import file format from the DTO or infer from the fileKey extension. */
+  private resolveImportFileFormat(dto: StartAccountImportDto): string {
+    return dto.fileFormat ?? (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv');
+  }
+
   async create(data: Partial<Account>): Promise<Account> {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const phones = data.phones ?? [];
@@ -270,7 +284,7 @@ export class AccountsService {
       );
     }
 
-    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    const tenantId = this.resolveTenantId();
     const userId = this.getCurrentUserId();
 
     const job = await this.importQueue.add('import', {
@@ -282,7 +296,7 @@ export class AccountsService {
       dryRun: dto.dryRun ?? false,
       triggerAutomations: dto.triggerAutomations ?? false,
       estimatedRows: dto.estimatedRows,
-      fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
+      fileName: this.resolveImportFileName(dto),
     });
 
     // Persist to MongoDB for import history
@@ -291,9 +305,8 @@ export class AccountsService {
         tenantId,
         userId,
         entityType: 'account',
-        fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
-        fileFormat:
-          dto.fileFormat || (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv'),
+        fileName: this.resolveImportFileName(dto),
+        fileFormat: this.resolveImportFileFormat(dto),
         rowCount: dto.estimatedRows ?? 0,
         status: 'queued',
         bullJobId: String(job.id),
@@ -326,7 +339,7 @@ export class AccountsService {
     page: number;
     limit: number;
   }> {
-    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    const tenantId = this.resolveTenantId();
     const userId = this.getCurrentUserId();
     const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(50, Math.max(1, options.limit ?? 10));
@@ -393,7 +406,7 @@ export class AccountsService {
   }
 
   async getImportJobDetail(id: string) {
-    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    const tenantId = this.resolveTenantId();
     const userId = this.getCurrentUserId();
 
     const doc = await this.importJobModel
@@ -430,7 +443,7 @@ export class AccountsService {
       throw new NotFoundException('Import job not found');
     }
 
-    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    const tenantId = this.resolveTenantId();
     const userId = this.getCurrentUserId();
     if (
       String(job.data?.tenantId ?? '') !== String(tenantId ?? '') ||

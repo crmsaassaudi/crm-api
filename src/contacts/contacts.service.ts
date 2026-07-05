@@ -936,7 +936,7 @@ export class ContactsService {
     };
 
     const job = await this.importQueue.add('import', {
-      tenantId: this.cls.get('activeTenantId') ?? this.cls.get('tenantId'),
+      tenantId: this.resolveTenantId(),
       userId: this.getCurrentUserId(),
       fileKey: dto.fileKey,
       mapping: dto.mapping,
@@ -944,20 +944,19 @@ export class ContactsService {
       dryRun: dto.dryRun ?? false,
       triggerAutomations: dto.triggerAutomations ?? false,
       estimatedRows: dto.estimatedRows,
-      fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
+      fileName: this.resolveImportFileName(dto),
       tenantSettings,
     });
 
     // Persist to MongoDB for import history
-    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    const tenantId = this.resolveTenantId();
     const userId = this.getCurrentUserId();
     try {
       await this.importJobModel.create({
         tenantId,
         userId,
-        fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
-        fileFormat:
-          dto.fileFormat || (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv'),
+        fileName: this.resolveImportFileName(dto),
+        fileFormat: this.resolveImportFileFormat(dto),
         rowCount: dto.estimatedRows ?? 0,
         status: 'queued',
         bullJobId: String(job.id),
@@ -1284,6 +1283,20 @@ export class ContactsService {
       tenantId: this.cls.get('activeTenantId') ?? this.cls.get('tenantId'),
       actorId: input.actorId ?? this.getCurrentUserId(),
     });
+  }
+
+  private resolveTenantId(): string {
+    return this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+  }
+
+  /** Resolve a display filename from DTO, falling back to the fileKey basename. */
+  private resolveImportFileName(dto: StartImportDto): string {
+    return dto.fileName ?? dto.fileKey.split('/').pop() ?? 'unknown';
+  }
+
+  /** Resolve the import file format from the DTO or infer from fileKey extension. */
+  private resolveImportFileFormat(dto: StartImportDto): string {
+    return dto.fileFormat ?? (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv');
   }
 
   private getCurrentUserId(): string | undefined {

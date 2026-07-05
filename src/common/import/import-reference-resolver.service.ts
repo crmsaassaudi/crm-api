@@ -63,48 +63,57 @@ export class ImportReferenceResolver {
     for (const refField of this.referenceFields) {
       const collection = this.connection.db!.collection(refField.collection);
 
-      // Build the query — always scope to tenant if configured.
       const query: any = {};
       if (refField.tenantScoped) {
         query.tenantId = this.tenantId;
       }
 
-      // Fetch all possible reference records for this field.
       const projection: any = { _id: 1 };
       for (const lookupField of refField.lookupFields) {
         projection[lookupField] = 1;
       }
 
       const docs = await collection.find(query).project(projection).toArray();
-
-      // Build text → ObjectId lookup map.
-      const textMap = new Map<string, string>();
-      const idSet = new Set<string>();
-
-      for (const doc of docs) {
-        const id = String(doc._id);
-        idSet.add(id);
-
-        for (const lookupField of refField.lookupFields) {
-          const value = doc[lookupField];
-          if (value != null) {
-            const normalized = String(value).trim().toLowerCase();
-            if (normalized && !textMap.has(normalized)) {
-              textMap.set(normalized, id);
-            }
-          }
-        }
-      }
-
+      const { textMap, idSet } = this.buildFieldCachesFromDocs(
+        docs,
+        refField.lookupFields,
+      );
       this.cache.set(refField.entityField, textMap);
       this.idCache.set(refField.entityField, idSet);
     }
 
     this.initialized = true;
+    const fieldSummary = this.referenceFields
+      .map(
+        (f) => `${f.entityField}(${this.cache.get(f.entityField)?.size ?? 0})`,
+      )
+      .join(', ');
     this.logger.debug(
-      `Reference resolver initialized for tenant ${this.tenantId}: ` +
-        `${this.referenceFields.map((f) => `${f.entityField}(${this.cache.get(f.entityField)?.size ?? 0})`).join(', ')}`,
+      `Reference resolver initialized for tenant ${this.tenantId}: ${fieldSummary}`,
     );
+  }
+
+  /** Build text→id and id-set caches from a collection's raw documents. */
+  private buildFieldCachesFromDocs(
+    docs: any[],
+    lookupFields: readonly string[],
+  ): { textMap: Map<string, string>; idSet: Set<string> } {
+    const textMap = new Map<string, string>();
+    const idSet = new Set<string>();
+    for (const doc of docs) {
+      const id = String(doc._id);
+      idSet.add(id);
+      for (const lookupField of lookupFields) {
+        const value = doc[lookupField];
+        if (value != null) {
+          const normalized = String(value).trim().toLowerCase();
+          if (normalized && !textMap.has(normalized)) {
+            textMap.set(normalized, id);
+          }
+        }
+      }
+    }
+    return { textMap, idSet };
   }
 
   /**
@@ -140,45 +149,76 @@ export class ImportReferenceResolver {
 
       // Step 1: Check if the value is a valid ObjectId.
       if (OBJECT_ID_REGEX.test(valueStr)) {
-        const idSet = this.idCache.get(refField.entityField);
-        if (idSet?.has(valueStr)) {
-          resolved[refField.entityField] = valueStr;
-          continue;
-        }
-        // ObjectId format but doesn't exist in the org.
-        errors.push({
-          row: rowNum,
-          code: ImportErrorCode.REFERENCE_NOT_FOUND,
-          field: refField.entityField,
-          reason: `Reference "${refField.entityField}" ObjectId "${valueStr}" not found in this organization`,
-          value: valueStr,
-        });
+        this.resolveByObjectId(
+          rowNum,
+          refField.entityField,
+          valueStr,
+          resolved,
+          errors,
+        );
         continue;
       }
 
       // Step 2: Try text-based resolution.
-      const textMap = this.cache.get(refField.entityField);
-      const normalized = valueStr.toLowerCase();
-      const resolvedId = textMap?.get(normalized);
-
-      if (resolvedId) {
-        resolved[refField.entityField] = resolvedId;
-        continue;
-      }
-
-      // Step 3: No match — error.
-      if (refField.required) {
-        errors.push({
-          row: rowNum,
-          code: ImportErrorCode.REFERENCE_NOT_FOUND,
-          field: refField.entityField,
-          reason: `Reference "${refField.entityField}" value "${valueStr}" not found. Check the value and try again.`,
-          value: valueStr,
-        });
-      }
-      // Non-required references that fail to resolve are silently skipped.
+      this.resolveByText(
+        rowNum,
+        refField.entityField,
+        refField.required,
+        valueStr,
+        resolved,
+        errors,
+      );
     }
 
     return { resolved, errors };
+  }
+
+  /** Resolve a field whose raw value is already a valid ObjectId hex string. */
+  private resolveByObjectId(
+    rowNum: number,
+    field: string,
+    valueStr: string,
+    resolved: Record<string, string>,
+    errors: ImportRowError[],
+  ): void {
+    const idSet = this.idCache.get(field);
+    if (idSet?.has(valueStr)) {
+      resolved[field] = valueStr;
+      return;
+    }
+    errors.push({
+      row: rowNum,
+      code: ImportErrorCode.REFERENCE_NOT_FOUND,
+      field,
+      reason: `Reference "${field}" ObjectId "${valueStr}" not found in this organization`,
+      value: valueStr,
+    });
+  }
+
+  /** Resolve a field via text-based cache lookup. */
+  private resolveByText(
+    rowNum: number,
+    field: string,
+    required: boolean | undefined,
+    valueStr: string,
+    resolved: Record<string, string>,
+    errors: ImportRowError[],
+  ): void {
+    const textMap = this.cache.get(field);
+    const resolvedId = textMap?.get(valueStr.toLowerCase());
+    if (resolvedId) {
+      resolved[field] = resolvedId;
+      return;
+    }
+    if (required) {
+      errors.push({
+        row: rowNum,
+        code: ImportErrorCode.REFERENCE_NOT_FOUND,
+        field,
+        reason: `Reference "${field}" value "${valueStr}" not found. Check the value and try again.`,
+        value: valueStr,
+      });
+    }
+    // Non-required references that fail to resolve are silently skipped.
   }
 }

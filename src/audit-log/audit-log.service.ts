@@ -32,19 +32,7 @@ export class AuditLogService {
   }) {
     const { tenantId, entityType, entityId, limit, cursor } = params;
     const where: any = { tenantId, entityType, entityId };
-
-    if (cursor) {
-      try {
-        const { t, _id } = JSON.parse(Buffer.from(cursor, 'base64').toString());
-        const objectId = new Types.ObjectId(_id);
-        where.$or = [
-          { t: { $lt: new Date(t) } },
-          { t: new Date(t), _id: { $lt: objectId } },
-        ];
-      } catch {
-        // Invalid cursor — ignore and return from beginning
-      }
-    }
+    this.applyCursorFilter(where, cursor);
 
     const docs = await this.model
       .find(where)
@@ -55,134 +43,163 @@ export class AuditLogService {
     const hasMore = docs.length > limit;
     const page = hasMore ? docs.slice(0, limit) : docs;
     const last = page[page.length - 1];
-    const nextCursor =
-      hasMore && last
-        ? Buffer.from(
-            JSON.stringify({
-              t: last.t instanceof Date ? last.t.toISOString() : last.t,
-              _id: last._id.toString(),
-            }),
-          ).toString('base64')
-        : null;
+    const nextCursor = this.buildNextCursor(hasMore, last);
 
-    // ── Populate actor and referenced user info (batch lookup) ──────────────────────
+    const userMap = await this.buildUserMap(page);
+
+    const enriched = page.map((entry: any) => this.enrichEntry(entry, userMap));
+    return { data: enriched, nextCursor, hasMore };
+  }
+
+  /** Apply a composite cursor constraint ({ t, _id }) to the Mongoose filter in-place. */
+  private applyCursorFilter(where: any, cursor: string | undefined): void {
+    if (!cursor) return;
+    try {
+      const { t, _id } = JSON.parse(Buffer.from(cursor, 'base64').toString());
+      const objectId = new Types.ObjectId(_id);
+      where.$or = [
+        { t: { $lt: new Date(t) } },
+        { t: new Date(t), _id: { $lt: objectId } },
+      ];
+    } catch {
+      // Invalid cursor — ignore and return from beginning
+    }
+  }
+
+  /** Build the opaque next-page cursor from the last page entry. */
+  private buildNextCursor(hasMore: boolean, last: any): string | null {
+    if (!hasMore || !last) return null;
+    return Buffer.from(
+      JSON.stringify({
+        t: last.t instanceof Date ? last.t.toISOString() : last.t,
+        _id: last._id.toString(),
+      }),
+    ).toString('base64');
+  }
+
+  /** Batch-load all actor + referenced-user data needed for a page of entries. */
+  private async buildUserMap(
+    page: any[],
+  ): Promise<
+    Record<
+      string,
+      { firstName?: string; lastName?: string; email?: string; photo?: any }
+    >
+  > {
     const actorIds = page
       .map((d: any) => d.actorId)
       .filter((id: string) => id && id !== 'system');
 
-    const referencedUserIds: string[] = [];
+    const referencedUserIds = this.collectReferencedUserIds(page);
+
+    const allUserIds = [...new Set([...actorIds, ...referencedUserIds])];
+    return this.fetchUsers(allUserIds);
+  }
+
+  /** Collect ObjectId values from ownerId / assigneeId change entries. */
+  private collectReferencedUserIds(page: any[]): string[] {
+    const ids: string[] = [];
     for (const entry of page) {
-      if (entry.changes && Array.isArray(entry.changes)) {
-        for (const change of entry.changes) {
-          if (change.f === 'ownerId' || change.f === 'assigneeId') {
-            if (
-              change.o &&
-              typeof change.o === 'string' &&
-              change.o !== 'system'
-            ) {
-              referencedUserIds.push(change.o);
-            }
-            if (
-              change.n &&
-              typeof change.n === 'string' &&
-              change.n !== 'system'
-            ) {
-              referencedUserIds.push(change.n);
-            }
-          }
+      if (!Array.isArray(entry.changes)) continue;
+      for (const change of entry.changes) {
+        if (change.f !== 'ownerId' && change.f !== 'assigneeId') continue;
+        if (change.o && typeof change.o === 'string' && change.o !== 'system') {
+          ids.push(change.o);
+        }
+        if (change.n && typeof change.n === 'string' && change.n !== 'system') {
+          ids.push(change.n);
         }
       }
     }
+    return ids;
+  }
 
-    const allUserIds = [...actorIds, ...referencedUserIds].filter(
-      (value, index, self) => self.indexOf(value) === index,
-    );
-
-    const userMap: Record<
+  /** Resolve a list of user IDs to a firstName/lastName/email/photo map. */
+  private async fetchUsers(
+    allUserIds: string[],
+  ): Promise<
+    Record<
       string,
       { firstName?: string; lastName?: string; email?: string; photo?: any }
-    > = {};
-    if (allUserIds.length > 0) {
-      try {
-        const validIds = allUserIds
-          .filter((id) => Types.ObjectId.isValid(id as string))
-          .map((id) => new Types.ObjectId(id as string));
-
-        if (validIds.length > 0) {
-          const users = (await this.userModel
-            .find(
-              { _id: { $in: validIds } },
-              { firstName: 1, lastName: 1, email: 1, photo: 1 },
-            )
-            .lean()) as Array<{
-            _id: any;
-            firstName?: string;
-            lastName?: string;
-            email?: string;
-            photo?: any;
-          }>;
-
-          for (const u of users) {
-            userMap[u._id.toString()] = {
-              firstName: u.firstName,
-              lastName: u.lastName,
-              email: u.email,
-              photo: u.photo,
-            };
-          }
-        }
-      } catch (err) {
-        console.error('[AuditLogService] User lookup failed:', err?.message);
+    >
+  > {
+    const userMap: Record<string, any> = {};
+    if (allUserIds.length === 0) return userMap;
+    try {
+      const validIds = allUserIds
+        .filter((id) => Types.ObjectId.isValid(id))
+        .map((id) => new Types.ObjectId(id));
+      if (validIds.length === 0) return userMap;
+      const users = (await this.userModel
+        .find(
+          { _id: { $in: validIds } },
+          { firstName: 1, lastName: 1, email: 1, photo: 1 },
+        )
+        .lean()) as Array<{
+        _id: any;
+        firstName?: string;
+        lastName?: string;
+        email?: string;
+        photo?: any;
+      }>;
+      for (const u of users) {
+        userMap[u._id.toString()] = {
+          firstName: u.firstName,
+          lastName: u.lastName,
+          email: u.email,
+          photo: u.photo,
+        };
       }
+    } catch (err: any) {
+      console.error('[AuditLogService] User lookup failed:', err?.message);
     }
+    return userMap;
+  }
 
-    const enriched = page.map((entry: any) => {
-      const actor = userMap[entry.actorId];
-      // Destructure to separate _id and __v from rest to avoid ObjectId serialization issues
-      const { _id, __v: _ignored, changes, ...rest } = entry;
-      const idStr = typeof _id === 'string' ? _id : String(_id);
+  /** Enrich a single audit log entry with resolved actor and user-reference data. */
+  private enrichEntry(entry: any, userMap: Record<string, any>): any {
+    const actor = userMap[entry.actorId];
+    const { _id, __v: _ignored, changes, ...rest } = entry;
+    const idStr = typeof _id === 'string' ? _id : String(_id);
+    const enrichedChanges = this.enrichChanges(changes ?? [], userMap);
+    const actorShape = this.resolveActorShape(actor, entry.actorId);
+    return { ...rest, _id: idStr, changes: enrichedChanges, actor: actorShape };
+  }
 
-      const enrichedChanges = (changes || []).map((change: any) => {
-        if (change.f === 'ownerId' || change.f === 'assigneeId') {
-          const oldUser = change.o ? userMap[String(change.o)] : null;
-          const newUser = change.n ? userMap[String(change.n)] : null;
-
-          return {
-            ...change,
-            o: oldUser
-              ? [oldUser.firstName, oldUser.lastName]
-                  .filter(Boolean)
-                  .join(' ') || oldUser.email
-              : change.o,
-            n: newUser
-              ? [newUser.firstName, newUser.lastName]
-                  .filter(Boolean)
-                  .join(' ') || newUser.email
-              : change.n,
-          };
-        }
-        return change;
-      });
-
+  /** Map change entries so ownerId / assigneeId values show display names. */
+  private enrichChanges(changes: any[], userMap: Record<string, any>): any[] {
+    return changes.map((change) => {
+      if (change.f !== 'ownerId' && change.f !== 'assigneeId') return change;
+      const displayName = (u: any) =>
+        u
+          ? [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email
+          : null;
       return {
-        ...rest,
-        _id: idStr,
-        changes: enrichedChanges,
-        actor: actor
-          ? {
-              name:
-                [actor.firstName, actor.lastName].filter(Boolean).join(' ') ||
-                actor.email ||
-                null,
-              email: actor.email || null,
-              photo: actor.photo?.url ?? actor.photo ?? null,
-            }
-          : entry.actorId === 'system'
-            ? { name: 'System', email: null, photo: null }
-            : { name: null, email: null, photo: null },
+        ...change,
+        o: displayName(change.o ? userMap[String(change.o)] : null) ?? change.o,
+        n: displayName(change.n ? userMap[String(change.n)] : null) ?? change.n,
       };
     });
+  }
 
-    return { data: enriched, nextCursor, hasMore };
+  /** Resolve the actor shape for a log entry. */
+  private resolveActorShape(
+    actor: any,
+    actorId: string,
+  ): { name: string | null; email: string | null; photo: any } {
+    if (actor) {
+      return {
+        name:
+          [actor.firstName, actor.lastName].filter(Boolean).join(' ') ||
+          actor.email ||
+          null,
+        email: actor.email ?? null,
+        photo: actor.photo?.url ?? actor.photo ?? null,
+      };
+    }
+    if (actorId === 'system') {
+      return { name: 'System', email: null, photo: null };
+    }
+    return { name: null, email: null, photo: null };
   }
 }
