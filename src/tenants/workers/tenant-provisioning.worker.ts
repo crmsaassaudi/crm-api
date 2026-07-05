@@ -223,9 +223,11 @@ export class TenantProvisioningWorker
     await this.reportStep(provisioningId, 3);
 
     // Step 4: Add user to KC organization
+    const keycloakOrgId = saga.keycloakOrgId;
+    const keycloakUserId = saga.keycloakUserId;
     await this.keycloakAdminService.addUserToOrganization(
-      saga.keycloakOrgId!,
-      saga.keycloakUserId!,
+      keycloakOrgId,
+      keycloakUserId,
     );
     await this.reportStep(provisioningId, 4);
   }
@@ -286,7 +288,8 @@ export class TenantProvisioningWorker
     );
 
     const { tenant, localUser } = transactionalResult;
-    saga.tenantId = tenant.id;
+    const tenantId = tenant.id;
+    saga.tenantId = tenantId;
     await this.reportStep(provisioningId, 5);
     await this.reportStep(provisioningId, 6);
     await this.reportStep(provisioningId, 7);
@@ -294,12 +297,12 @@ export class TenantProvisioningWorker
     // Step 8: Bot workspace
     const botWorkspaceId =
       await this.crmBotWorkspaceProvisioningService.provisionWorkspace({
-        tenantId: saga.tenantId!,
+        tenantId,
         ownerEmail: data.email,
         ownerName: data.fullName,
         tenantName: data.companyName,
       });
-    await this.tenantsRepository.update(saga.tenantId!, {
+    await this.tenantsRepository.update(tenantId, {
       botWorkspaceId,
     } as any);
     await this.reportStep(provisioningId, 8);
@@ -312,7 +315,7 @@ export class TenantProvisioningWorker
     await this.reportStep(provisioningId, 10);
 
     // Mark READY
-    await this.tenantsRepository.update(saga.tenantId!, {
+    await this.tenantsRepository.update(tenantId, {
       provisioningStatus: ProvisioningStatus.READY,
     });
 
@@ -322,7 +325,7 @@ export class TenantProvisioningWorker
       currentStep: TOTAL_STEPS,
       totalSteps: TOTAL_STEPS,
       stepLabel: 'Your workspace is ready!',
-      tenantId: saga.tenantId!,
+      tenantId,
       redirectUrl,
     });
 
