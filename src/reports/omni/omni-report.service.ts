@@ -759,7 +759,7 @@ export class OmniReportService {
 
   private tenantObjectId(): Types.ObjectId {
     const tenantId = this.cls.get('tenantId');
-    return new Types.ObjectId(tenantId);
+    return new Types.ObjectId(String(tenantId));
   }
 
   private resolveDateContext(dto: BaseReportFilterDto): DateContext {

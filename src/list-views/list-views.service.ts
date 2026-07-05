@@ -375,9 +375,9 @@ export class ListViewsService {
     if (defaultListViews?.views) {
       const existingModules = new Set(settings.views.map((v) => v.module));
       missing.push(
-        ...(defaultListViews.views.filter(
+        ...defaultListViews.views.filter(
           (dv) => !existingModules.has(dv.module),
-        ) as ListViewDefinition[]),
+        ),
       );
     }
     return {

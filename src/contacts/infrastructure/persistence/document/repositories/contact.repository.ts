@@ -139,29 +139,43 @@ export class ContactRepository extends BaseDocumentRepository<
     }
   }
 
+  private applyOwnerRestriction(
+    where: FilterQuery<ContactSchemaClass>,
+    filterOptions: any,
+  ): void {
+    const currentUserId = filterOptions.__currentUserId;
+    if (currentUserId) {
+      where.ownerId = currentUserId;
+    }
+  }
+
+  private applySearchFilter(
+    where: FilterQuery<ContactSchemaClass>,
+    search: string,
+  ): void {
+    const searchTerm = search.trim();
+    if (searchTerm.includes('@')) {
+      const escaped = this.escapeRegex(searchTerm);
+      where.$or = [
+        { emails: { $regex: escaped, $options: 'i' } },
+        { $text: { $search: searchTerm } },
+      ];
+    } else {
+      where.$text = { $search: searchTerm };
+    }
+  }
+
   private buildListWhere(filterOptions?: any | null) {
     const where: FilterQuery<ContactSchemaClass> = {
       deletedAt: { $exists: false },
     };
 
     if (filterOptions?.__restrictToOwner) {
-      const currentUserId = filterOptions.__currentUserId;
-      if (currentUserId) {
-        where.ownerId = currentUserId;
-      }
+      this.applyOwnerRestriction(where, filterOptions);
     }
 
     if (filterOptions?.search) {
-      const searchTerm = filterOptions.search.trim();
-      if (searchTerm.includes('@')) {
-        const escaped = this.escapeRegex(searchTerm);
-        where.$or = [
-          { emails: { $regex: escaped, $options: 'i' } },
-          { $text: { $search: searchTerm } },
-        ];
-      } else {
-        where.$text = { $search: searchTerm };
-      }
+      this.applySearchFilter(where, filterOptions.search);
     }
 
     if (filterOptions?.lifecycleStage) {

@@ -186,6 +186,44 @@ export class ExportRequestService {
     return { status: 'cancelling' };
   }
 
+  private buildListFilter(
+    entityType: string,
+    tenantId: string,
+    userId: string | undefined,
+    status?: string,
+  ): Record<string, any> {
+    const filter: Record<string, any> = { tenantId, userId, entityType };
+    const allowedStatuses = [
+      'queued',
+      'active',
+      'completed',
+      'failed',
+      'cancelled',
+    ];
+    if (status && allowedStatuses.includes(status)) {
+      filter.status = status;
+    }
+    return filter;
+  }
+
+  private async enrichListDocWithBullJob(
+    doc: any,
+    queue: Queue,
+  ): Promise<void> {
+    if (doc.status !== 'active' && doc.status !== 'queued') return;
+    try {
+      const bullJob = await queue.getJob(doc.bullJobId);
+      if (bullJob) {
+        (doc as any).status = await bullJob.getState();
+        if (bullJob.progress && typeof bullJob.progress === 'object') {
+          (doc as any).progress = bullJob.progress;
+        }
+      }
+    } catch {
+      // BullMQ job cleaned up — keep MongoDB status
+    }
+  }
+
   async list(
     entityType: string,
     queue: Queue,
@@ -197,15 +235,12 @@ export class ExportRequestService {
     const limit = Math.min(50, Math.max(1, options.limit ?? 10));
     const skip = (page - 1) * limit;
 
-    const filter: Record<string, any> = { tenantId, userId, entityType };
-    if (
-      options.status &&
-      ['queued', 'active', 'completed', 'failed', 'cancelled'].includes(
-        options.status,
-      )
-    ) {
-      filter.status = options.status;
-    }
+    const filter = this.buildListFilter(
+      entityType,
+      tenantId,
+      userId,
+      options.status,
+    );
 
     const [data, total] = await Promise.all([
       this.jobModel
@@ -219,21 +254,9 @@ export class ExportRequestService {
       this.jobModel.countDocuments(filter).exec(),
     ]);
 
-    for (const doc of data) {
-      if (doc.status === 'active' || doc.status === 'queued') {
-        try {
-          const bullJob = await queue.getJob(doc.bullJobId);
-          if (bullJob) {
-            (doc as any).status = await bullJob.getState();
-            if (bullJob.progress && typeof bullJob.progress === 'object') {
-              (doc as any).progress = bullJob.progress;
-            }
-          }
-        } catch {
-          // BullMQ job cleaned up — keep MongoDB status
-        }
-      }
-    }
+    await Promise.all(
+      data.map((doc) => this.enrichListDocWithBullJob(doc, queue)),
+    );
 
     // .lean() strips Mongoose virtuals/transforms, so ObjectId fields remain
     // as raw buffer objects. Sanitize them to plain strings for the API.

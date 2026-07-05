@@ -25,7 +25,7 @@ export class ExportMaskingService {
     groupId: string | undefined,
     resource: string,
   ): Promise<ExportMasker> {
-    const effectiveGroup = groupId || 'default';
+    const effectiveGroup = groupId ?? 'default';
     const layoutSettings = await this.settingsService.getSetting(
       'layout_settings',
       tenantId,

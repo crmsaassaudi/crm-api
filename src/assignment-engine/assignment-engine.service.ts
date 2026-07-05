@@ -95,8 +95,10 @@ export class AssignmentEngineService {
   //  CORE: assign() — the brain of the engine
   // ════════════════════════════════════════════════════════════════════════
 
-  async assign(context: AssignmentContext): Promise<AssignmentResult> {
-    // Step 0: Loop prevention
+  /** Step 0–1: short-circuit for bypass flag and manual override. */
+  private async handleBypassOrManual(
+    context: AssignmentContext,
+  ): Promise<AssignmentResult | null> {
     if (context.bypassAssignmentEngine) {
       return {
         ownerId: null,
@@ -106,7 +108,6 @@ export class AssignmentEngineService {
       };
     }
 
-    // Step 1: Manual override
     if (context.manualOwnerId) {
       if (!context.dryRun) {
         await this.audit.write(context, {
@@ -124,23 +125,26 @@ export class AssignmentEngineService {
       };
     }
 
-    // Step 2: Load settings
-    const settings = await this.getOrCreateSettings(
-      context.tenantId,
-      context.module,
-    );
+    return null;
+  }
 
-    // Step 3: Check if auto-assign is enabled
-    if (!settings.autoAssignEnabled) {
-      return {
-        ownerId: null,
-        strategy: 'manual',
-        reason: 'Auto-assignment disabled for this module',
-        fallback: false,
-      };
-    }
-
-    // Step 4: Evaluate rules
+  /**
+   * Steps 4–5: evaluate rules, resolve the candidate pool.
+   * Returns the matched rule, resolved strategy, candidate pool, required skills,
+   * or an AssignmentResult directly (direct-user assignment fast path).
+   */
+  private async resolveCandidatePool(
+    context: AssignmentContext,
+    settings: any,
+  ): Promise<
+    | {
+        matchedRule: any;
+        strategy: string;
+        candidatePool: string[];
+        requiredSkills: string[];
+      }
+    | AssignmentResult
+  > {
     const rules = await this.ruleModel
       .find({
         tenantId: context.tenantId,
@@ -155,12 +159,10 @@ export class AssignmentEngineService {
     for (const rule of rules) {
       if (this.ruleEvaluator.evaluateRule(rule, context.attributes)) {
         matchedRule = rule;
-        break; // First match wins
+        break;
       }
     }
 
-    // Step 5: Resolve candidate pool
-    let candidatePool: string[] = [];
     let strategy = settings.defaultStrategy ?? 'round-robin';
     let requiredSkills: string[] = [];
     let teamId = settings.defaultTeamId;
@@ -168,8 +170,8 @@ export class AssignmentEngineService {
     if (matchedRule) {
       strategy = matchedRule.actions.strategy ?? strategy;
       requiredSkills = matchedRule.actions.requiredSkills ?? [];
+
       if (matchedRule.actions.assignToUserId) {
-        // Direct user assignment
         const result: AssignmentResult = {
           ownerId: matchedRule.actions.assignToUserId.toString(),
           ruleMatched: {
@@ -192,99 +194,92 @@ export class AssignmentEngineService {
         }
         return result;
       }
+
       if (matchedRule.actions.assignToTeamId) {
         teamId = matchedRule.actions.assignToTeamId.toString();
       }
     }
 
-    // Resolve team members
-    if (teamId) {
-      candidatePool = await this.resolveGroupMembers(teamId);
-    }
+    const candidatePool: string[] = teamId
+      ? await this.resolveGroupMembers(teamId)
+      : [];
 
-    if (candidatePool.length === 0) {
-      this.logger.warn(
-        `No candidates in pool for ${context.module} (team=${teamId}) — attempting fallback`,
-      );
-      return this.handleFallback(context, matchedRule, strategy);
-    }
+    return { matchedRule, strategy, candidatePool, requiredSkills };
+  }
 
-    // Step 6: Filter candidates (capacity + skills).
-    // filterEligible also returns the loadMap it computed, so the least-busy
-    // strategy below can reuse it instead of re-querying Mongo (HIGH-04).
-    const maxCapacity = settings.defaultMaxCapacity ?? 50;
-    const { eligible, loadMap: eligibleLoadMap } =
-      await this.capacityFilter.filterEligible(
-        context.tenantId,
-        context.module,
-        candidatePool,
-        maxCapacity,
-        requiredSkills.length > 0 ? requiredSkills : undefined,
-      );
-
-    // Sticky hint: boost current owner if in eligible pool
+  /** Step 6 sub-step: sticky-hint check — returns result if the hint wins. */
+  private async applyStickyHint(
+    context: AssignmentContext,
+    settings: any,
+    eligible: string[],
+    matchedRule: any,
+    candidatePool: string[],
+  ): Promise<AssignmentResult | null> {
     if (
-      settings.prioritizeCurrentOwner &&
-      context.currentOwnerHint &&
-      eligible.includes(context.currentOwnerHint)
+      !settings.prioritizeCurrentOwner ||
+      !context.currentOwnerHint ||
+      !eligible.includes(context.currentOwnerHint)
     ) {
-      this.logger.debug(
-        `Sticky hint: prioritizing currentOwnerHint=${context.currentOwnerHint}`,
-      );
-      const result: AssignmentResult = {
-        ownerId: context.currentOwnerHint,
-        ruleMatched: matchedRule
-          ? { id: matchedRule._id.toString(), name: matchedRule.name }
-          : undefined,
+      return null;
+    }
+
+    this.logger.debug(
+      `Sticky hint: prioritizing currentOwnerHint=${context.currentOwnerHint}`,
+    );
+    const result: AssignmentResult = {
+      ownerId: context.currentOwnerHint,
+      ruleMatched: matchedRule
+        ? { id: matchedRule._id.toString(), name: matchedRule.name }
+        : undefined,
+      strategy: 'sticky',
+      reason: 'Sticky: prioritized current owner from Omni-Channel',
+      fallback: false,
+    };
+    if (!context.dryRun) {
+      await this.audit.write(context, {
+        assignedUserId: result.ownerId ?? undefined,
+        ruleId: matchedRule?._id?.toString(),
+        ruleName: matchedRule?.name,
         strategy: 'sticky',
-        reason: 'Sticky: prioritized current owner from Omni-Channel',
-        fallback: false,
-      };
-      if (!context.dryRun) {
-        await this.audit.write(context, {
-          assignedUserId: result.ownerId ?? undefined,
-          ruleId: matchedRule?._id?.toString(),
-          ruleName: matchedRule?.name,
-          strategy: 'sticky',
-          reason: result.reason,
-          candidatesEvaluated: candidatePool.length,
-          candidatesFiltered: eligible.length,
-          isFallback: false,
-        });
-      }
-      return result;
+        reason: result.reason,
+        candidatesEvaluated: candidatePool.length,
+        candidatesFiltered: eligible.length,
+        isFallback: false,
+      });
     }
+    return result;
+  }
 
-    if (eligible.length === 0) {
-      this.logger.warn(
-        `All candidates filtered out for ${context.module} (capacity/skills) — fallback`,
-      );
-      return this.handleFallback(context, matchedRule, strategy);
-    }
-
-    // Step 7: Apply strategy.
-    // dry-run runs read-only: do not reserve the Redis cursor / load counter.
+  /** Steps 7–9: dispatch strategy, write audit, return final result. */
+  private async executeStrategy(
+    context: AssignmentContext,
+    settings: any,
+    eligible: string[],
+    eligibleLoadMap: Map<string, number>,
+    matchedRule: any,
+    strategy: string,
+    candidatePool: string[],
+    teamId: string | undefined,
+  ): Promise<AssignmentResult> {
     const reserve = !context.dryRun;
-    let selectedId: string | null;
     const rrScope = `${context.tenantId}:${context.module}:${teamId ?? 'default'}`;
 
+    let selectedId: string | null;
+
     if (strategy === 'least-busy') {
-      // Reuse the loadMap from filterEligible, narrowed to the still-eligible
-      // candidates — avoids a second getActiveLoads() round-trip (HIGH-04).
       const loadMap = new Map(
         eligible.map((id) => [id, eligibleLoadMap.get(id) ?? 0]),
       );
-      const result = await this.strategyExecutor.leastBusyAtomic(
+      const res = await this.strategyExecutor.leastBusyAtomic(
         rrScope,
         loadMap,
         undefined,
         reserve,
       );
-      selectedId = result?.candidateId ?? null;
+      selectedId = res?.candidateId ?? null;
     } else if (strategy === 'manual') {
       return this.handleFallback(context, matchedRule, 'manual');
     } else {
-      // Default: round-robin
       selectedId = await this.strategyExecutor.roundRobin(
         rrScope,
         eligible,
@@ -292,8 +287,6 @@ export class AssignmentEngineService {
       );
     }
 
-    // CRIT-08: the strategy executors now return null on an empty/unresolvable
-    // pool instead of throwing — fall back gracefully rather than 500.
     if (!selectedId) {
       this.logger.warn(
         `Strategy ${strategy} could not select a candidate for ${context.module} — fallback`,
@@ -313,7 +306,6 @@ export class AssignmentEngineService {
       fallback: false,
     };
 
-    // Step 9: Write audit log (skipped for dry-run — CRIT-06)
     if (!context.dryRun) {
       await this.audit.write(context, {
         assignedUserId: selectedId,
@@ -332,6 +324,85 @@ export class AssignmentEngineService {
     );
 
     return result;
+  }
+
+  async assign(context: AssignmentContext): Promise<AssignmentResult> {
+    // Steps 0–1: bypass / manual override
+    const earlyResult = await this.handleBypassOrManual(context);
+    if (earlyResult) return earlyResult;
+
+    // Step 2: Load settings
+    const settings = await this.getOrCreateSettings(
+      context.tenantId,
+      context.module,
+    );
+
+    // Step 3: Check if auto-assign is enabled
+    if (!settings.autoAssignEnabled) {
+      return {
+        ownerId: null,
+        strategy: 'manual',
+        reason: 'Auto-assignment disabled for this module',
+        fallback: false,
+      };
+    }
+
+    // Steps 4–5: evaluate rules + resolve candidate pool
+    const poolResult = await this.resolveCandidatePool(context, settings);
+    // Direct-user assignment short-circuit
+    if ('ownerId' in poolResult) return poolResult;
+
+    const { matchedRule, strategy, candidatePool, requiredSkills } = poolResult;
+    const teamId =
+      matchedRule?.actions?.assignToTeamId?.toString() ??
+      settings.defaultTeamId;
+
+    if (candidatePool.length === 0) {
+      this.logger.warn(
+        `No candidates in pool for ${context.module} (team=${teamId}) — attempting fallback`,
+      );
+      return this.handleFallback(context, matchedRule, strategy);
+    }
+
+    // Step 6: Filter candidates (capacity + skills)
+    const maxCapacity = settings.defaultMaxCapacity ?? 50;
+    const { eligible, loadMap: eligibleLoadMap } =
+      await this.capacityFilter.filterEligible(
+        context.tenantId,
+        context.module,
+        candidatePool,
+        maxCapacity,
+        requiredSkills.length > 0 ? requiredSkills : undefined,
+      );
+
+    // Sticky hint: boost current owner if in eligible pool
+    const stickyResult = await this.applyStickyHint(
+      context,
+      settings,
+      eligible,
+      matchedRule,
+      candidatePool,
+    );
+    if (stickyResult) return stickyResult;
+
+    if (eligible.length === 0) {
+      this.logger.warn(
+        `All candidates filtered out for ${context.module} (capacity/skills) — fallback`,
+      );
+      return this.handleFallback(context, matchedRule, strategy);
+    }
+
+    // Steps 7–9: execute strategy, audit, return
+    return this.executeStrategy(
+      context,
+      settings,
+      eligible,
+      eligibleLoadMap,
+      matchedRule,
+      strategy,
+      candidatePool,
+      teamId,
+    );
   }
 
   // ════════════════════════════════════════════════════════════════════════
