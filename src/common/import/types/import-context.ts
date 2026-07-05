@@ -4,13 +4,6 @@ import { TenantJobData } from '../../../queue/base-tenant.consumer';
 export type DedupPolicy = 'skip' | 'overwrite' | 'merge' | 'create_new';
 
 /**
- * Opaque alias kept for readability at call-sites that declare matching fields.
- * Each module defines its own valid values; the shared engine treats them as
- * plain strings.
- */
-export type DedupMatchingField = string;
-
-/**
  * Base job data interface for ALL import jobs across every module.
  * Module-specific processors extend this with their own fields.
  *
@@ -23,7 +16,7 @@ export interface BaseImportJobData extends TenantJobData {
   mapping: Record<string, string>;
   /** Dedup configuration (optional — some modules never dedup). */
   deduplication?: {
-    matchingFields: DedupMatchingField[];
+    matchingFields: string[];
     policy: DedupPolicy;
   };
   /** When true, parse+validate+dedup but never write to DB. */

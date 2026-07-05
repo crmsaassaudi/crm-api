@@ -151,11 +151,14 @@ export class LivechatGateway
 
     // Domain whitelist enforcement (check Origin header from handshake)
     if (widgetId) {
-      const origin =
+      const originHeader =
         client.handshake?.headers?.origin ?? client.handshake?.headers?.referer;
+      const origin = Array.isArray(originHeader)
+        ? originHeader[0]
+        : originHeader;
       const allowed = await this.widgetService.isDomainAllowed(
         widgetId,
-        origin as string | undefined,
+        origin,
       );
       if (!allowed) {
         this.logger.warn(`Domain blocked for widget ${widgetId}: ${origin}`);

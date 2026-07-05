@@ -551,7 +551,7 @@ export class OutboundMediaHandler {
       try {
         const pathname = new URL(mediaUrl).pathname;
         const basename = pathname.split('/').pop();
-        if (basename && basename.includes('.')) fileName = basename;
+        if (basename?.includes('.')) fileName = basename;
       } catch {
         /* ignore */
       }

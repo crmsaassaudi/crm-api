@@ -5,7 +5,6 @@ export {
   type ImportResult,
 } from './import-result';
 export {
-  type DedupMatchingField,
   type DedupPolicy,
   type BaseImportJobData,
   type MappedRow,

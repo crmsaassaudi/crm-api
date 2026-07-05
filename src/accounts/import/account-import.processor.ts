@@ -15,7 +15,6 @@ import {
   BaseImportJobData,
   MappedRow,
   ImportRowError,
-  DedupMatchingField,
   ImportJobSchemaClass,
   ImportJobDocument,
 } from '../../common/import';
@@ -209,10 +208,7 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
 
   // ── Dedup value extraction ──
 
-  protected extractDedupValues(
-    row: MappedRow,
-    field: DedupMatchingField,
-  ): string[] {
+  protected extractDedupValues(row: MappedRow, field: string): string[] {
     switch (field) {
       case 'name':
         return row.fields.name ? [row.fields.name] : [];

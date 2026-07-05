@@ -81,8 +81,8 @@ export class LivechatVisitorBridge {
             [agent.firstName, agent.lastName]
               .filter(Boolean)
               .join(' ')
-              .trim() ||
-            agent.email ||
+              .trim() ??
+            agent.email ??
             'Support Agent';
 
           // FIX: Use typed `agent.photo` field (FileType | null) instead of
@@ -106,7 +106,7 @@ export class LivechatVisitorBridge {
         `[Bridge] Notify visitor ${visitorId} — agent "${agentName}" assigned to ${event.conversationId}`,
       );
 
-      await this.livechatGateway.notifyAgentJoined(
+      this.livechatGateway.notifyAgentJoined(
         visitorId,
         agentName,
         agentAvatarUrl,
@@ -137,41 +137,12 @@ export class LivechatVisitorBridge {
 
       // PERF FIX #3: Check cache before DB lookup
       if (!visitorId) {
-        const cached = await this.getCachedVisitorId(event.conversationId);
-        if (cached) {
-          visitorId = cached;
-        } else {
-          if (!event.tenantId) {
-            this.logger.warn(
-              '[Bridge] handleAgentTyping: no tenantId in event, cannot resolve visitorId',
-            );
-            return;
-          }
-          const conv = await runWithTenantContext(
-            this.cls,
-            event.tenantId,
-            () => this.conversationRepo.findById(event.conversationId),
-          );
-          if (!conv) {
-            this.logger.debug(
-              `[Bridge] handleAgentTyping: conversation ${event.conversationId} not found, skipping`,
-            );
-            return;
-          }
-          if (conv.channelType !== 'livechat') return; // silently skip non-livechat
-          visitorId = conv.externalConversationId;
-          // Populate cache for future lookups
-          if (visitorId) {
-            this.cacheVisitorId(event.conversationId, visitorId);
-          }
-        }
-      }
-
-      if (!visitorId) {
-        this.logger.warn(
-          `[Bridge] handleAgentTyping: could not resolve visitorId for conversation ${event.conversationId}`,
+        const resolved = await this.resolveVisitorIdForTyping(
+          event.conversationId,
+          event.tenantId,
         );
-        return;
+        if (!resolved) return;
+        visitorId = resolved;
       }
 
       this.logger.debug(
@@ -410,6 +381,40 @@ export class LivechatVisitorBridge {
           `[Bridge] Failed to cache visitorId for ${conversationId}: ${(err as Error)?.message}`,
         ),
       );
+  }
+
+  private async resolveVisitorIdForTyping(
+    conversationId: string,
+    tenantId?: string,
+  ): Promise<string | null> {
+    const cached = await this.getCachedVisitorId(conversationId);
+    if (cached) return cached;
+
+    if (!tenantId) {
+      this.logger.warn(
+        '[Bridge] handleAgentTyping: no tenantId in event, cannot resolve visitorId',
+      );
+      return null;
+    }
+
+    const conv = await runWithTenantContext(this.cls, tenantId, () =>
+      this.conversationRepo.findById(conversationId),
+    );
+
+    if (!conv) {
+      this.logger.debug(
+        `[Bridge] handleAgentTyping: conversation ${conversationId} not found, skipping`,
+      );
+      return null;
+    }
+
+    if (conv.channelType !== 'livechat') return null;
+
+    const visitorId = conv.externalConversationId;
+    if (visitorId) {
+      this.cacheVisitorId(conversationId, visitorId);
+    }
+    return visitorId ?? null;
   }
 
   /**

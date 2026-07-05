@@ -123,41 +123,44 @@ export class ChannelsService {
         name: dto.name,
         account,
         status: 'Connected',
-        config: {
-          // Content
-          greeting: dto.greeting ?? 'Hi there 👋 How can we help you today?',
-          agentName: dto.agentName ?? 'Support Team',
-          agentAvatar: dto.agentAvatar ?? null,
-          launcherIconUrl: dto.launcherIconUrl ?? null,
-          offlineMessage:
-            dto.offlineMessage ?? 'We are offline. Leave a message!',
-          // Colors
-          brandColor: dto.brandColor ?? '#6366f1',
-          launcherColor: dto.launcherColor ?? null,
-          agentBubbleColor: dto.agentBubbleColor ?? null,
-          agentTextColor: dto.agentTextColor ?? null,
-          // Typography / Shape
-          fontFamily: dto.fontFamily ?? null,
-          borderRadius: dto.borderRadius ?? 16,
-          launcherSize: dto.launcherSize ?? 56,
-          // Behavior
-          position: dto.position ?? 'bottom-right',
-          allowedOrigins: dto.allowedOrigins ?? [],
-          autoOpen: dto.autoOpen ?? false,
-          autoOpenDelay: dto.autoOpenDelay ?? 3000,
-          showBranding: dto.showBranding ?? true,
-          // Advanced
-          customCSS: dto.customCSS ?? null,
-          // Internal
-          businessHoursOverride: false,
-          autoReplyMessage: '',
-          webhookStatus: 'Active',
-        },
+        config: this.buildLivechatDefaultConfig(dto),
         credentials: {},
       },
     );
 
     return channel;
+  }
+
+  private buildLivechatDefaultConfig(dto: CreateLivechatChannelDto) {
+    return {
+      // Content
+      greeting: dto.greeting ?? 'Hi there 👋 How can we help you today?',
+      agentName: dto.agentName ?? 'Support Team',
+      agentAvatar: dto.agentAvatar ?? null,
+      launcherIconUrl: dto.launcherIconUrl ?? null,
+      offlineMessage: dto.offlineMessage ?? 'We are offline. Leave a message!',
+      // Colors
+      brandColor: dto.brandColor ?? '#6366f1',
+      launcherColor: dto.launcherColor ?? null,
+      agentBubbleColor: dto.agentBubbleColor ?? null,
+      agentTextColor: dto.agentTextColor ?? null,
+      // Typography / Shape
+      fontFamily: dto.fontFamily ?? null,
+      borderRadius: dto.borderRadius ?? 16,
+      launcherSize: dto.launcherSize ?? 56,
+      // Behavior
+      position: dto.position ?? 'bottom-right',
+      allowedOrigins: dto.allowedOrigins ?? [],
+      autoOpen: dto.autoOpen ?? false,
+      autoOpenDelay: dto.autoOpenDelay ?? 3000,
+      showBranding: dto.showBranding ?? true,
+      // Advanced
+      customCSS: dto.customCSS ?? null,
+      // Internal
+      businessHoursOverride: false,
+      autoReplyMessage: '',
+      webhookStatus: 'Active',
+    };
   }
 
   /**
@@ -171,6 +174,10 @@ export class ChannelsService {
     if (!channel || channel.type !== 'livechat') {
       throw new NotFoundException('Livechat channel not found');
     }
+    return this.mapLivechatPublicConfig(channel);
+  }
+
+  private mapLivechatPublicConfig(channel: Channel): Record<string, any> {
     const cfg = channel.config ?? {};
     return {
       channelId: channel.id,

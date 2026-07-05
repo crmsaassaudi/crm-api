@@ -400,7 +400,7 @@ export class TicketsService {
       dryRun: dto.dryRun ?? false,
       triggerAutomations: dto.triggerAutomations ?? false,
       estimatedRows: dto.estimatedRows,
-      fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
+      fileName: dto.fileName ?? dto.fileKey.split('/').pop() ?? 'unknown',
     });
 
     try {
@@ -408,9 +408,9 @@ export class TicketsService {
         tenantId,
         userId,
         entityType: 'ticket',
-        fileName: dto.fileName || dto.fileKey.split('/').pop() || 'unknown',
+        fileName: dto.fileName ?? dto.fileKey.split('/').pop() ?? 'unknown',
         fileFormat:
-          dto.fileFormat || (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv'),
+          dto.fileFormat ?? (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv'),
         rowCount: dto.estimatedRows ?? 0,
         status: 'queued',
         bullJobId: String(job.id),

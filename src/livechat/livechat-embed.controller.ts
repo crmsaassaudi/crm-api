@@ -498,13 +498,13 @@ export class LivechatEmbedController {
     const afterDate = afterStr ? new Date(afterStr) : null;
     const useIncremental = afterDate && !isNaN(afterDate.getTime());
 
-    if (useIncremental) {
+    if (useIncremental && afterDate) {
       const cursorResult = await runWithTenantContext(this.cls, tenantId, () =>
         this.messageRepo.findByConversationIdWithCursor({
           conversationId: convId,
           limit,
           direction: 'future',
-          cursor: { createdAt: afterDate!, id: '' },
+          cursor: { createdAt: afterDate, id: '' },
         }),
       );
       return cursorResult.data;

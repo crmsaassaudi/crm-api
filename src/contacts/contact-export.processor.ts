@@ -158,21 +158,29 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
         tenantId,
       );
       const stages = Array.isArray(setting?.stages) ? setting.stages : [];
-      for (const stage of stages) {
-        if (stage.id) this.stageMap.set(stage.id, stage.name ?? stage.apiName);
-        if (stage.apiName)
-          this.stageMap.set(stage.apiName, stage.name ?? stage.apiName);
-        // Flatten statuses within each stage
-        const statuses = Array.isArray(stage.statuses) ? stage.statuses : [];
-        for (const status of statuses) {
-          if (status.id)
-            this.statusMap.set(status.id, status.label ?? status.apiName);
-          if (status.apiName)
-            this.statusMap.set(status.apiName, status.label ?? status.apiName);
-        }
-      }
+      this.parseStagesAndStatuses(stages);
     } catch {
       // Setting not found — maps stay empty, raw IDs are used as fallback.
+    }
+  }
+
+  private parseStagesAndStatuses(stages: any[]) {
+    for (const stage of stages) {
+      if (stage.id) this.stageMap.set(stage.id, stage.name ?? stage.apiName);
+      if (stage.apiName)
+        this.stageMap.set(stage.apiName, stage.name ?? stage.apiName);
+
+      this.parseStatuses(stage.statuses);
+    }
+  }
+
+  private parseStatuses(statuses: any) {
+    if (!Array.isArray(statuses)) return;
+    for (const status of statuses) {
+      if (status.id)
+        this.statusMap.set(status.id, status.label ?? status.apiName);
+      if (status.apiName)
+        this.statusMap.set(status.apiName, status.label ?? status.apiName);
     }
   }
 

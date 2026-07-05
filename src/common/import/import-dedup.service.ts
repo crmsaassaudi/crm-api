@@ -1,7 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { Model } from 'mongoose';
 import {
-  DedupMatchingField,
   DedupPolicy,
   ImportErrorCode,
   ImportRowError,
@@ -13,7 +12,7 @@ import {
  */
 export interface DedupConfig {
   /** Fields to match on (e.g. ['emails', 'phones'] for contacts). */
-  matchingFields: DedupMatchingField[];
+  matchingFields: string[];
   /** How to handle a match: skip, overwrite, merge, create_new. */
   policy: DedupPolicy;
 }
@@ -62,7 +61,7 @@ export class ImportDedupEngine {
     tenantId: string,
     batch: MappedRow[],
     config: DedupConfig,
-    extractValues: (row: MappedRow, field: DedupMatchingField) => string[],
+    extractValues: (row: MappedRow, field: string) => string[],
   ): Promise<Map<number, DedupMatch>> {
     const results = new Map<number, DedupMatch>();
 
@@ -92,9 +91,9 @@ export class ImportDedupEngine {
   private collectFieldValues(
     batch: MappedRow[],
     config: DedupConfig,
-    extractValues: (row: MappedRow, field: DedupMatchingField) => string[],
-  ): Map<DedupMatchingField, string[]> {
-    const fieldValues = new Map<DedupMatchingField, string[]>();
+    extractValues: (row: MappedRow, field: string) => string[],
+  ): Map<string, string[]> {
+    const fieldValues = new Map<string, string[]>();
     for (const field of config.matchingFields) {
       const allVals: string[] = [];
       for (const m of batch) {
@@ -109,7 +108,7 @@ export class ImportDedupEngine {
   private async fetchExistingDocs(
     model: Model<any>,
     tenantId: string,
-    fieldValues: Map<DedupMatchingField, string[]>,
+    fieldValues: Map<string, string[]>,
   ): Promise<any[]> {
     const or: any[] = [];
     for (const [field, values] of fieldValues) {
@@ -126,10 +125,10 @@ export class ImportDedupEngine {
 
   /** Build a per-field normalized-value → document lookup map. */
   private buildLookupMaps(
-    matchingFields: DedupMatchingField[],
+    matchingFields: string[],
     existingDocs: any[],
-  ): Map<DedupMatchingField, Map<string, any>> {
-    const lookupMaps = new Map<DedupMatchingField, Map<string, any>>();
+  ): Map<string, Map<string, any>> {
+    const lookupMaps = new Map<string, Map<string, any>>();
     for (const field of matchingFields) {
       const lookup = new Map<string, any>();
       for (const doc of existingDocs) {
@@ -153,8 +152,8 @@ export class ImportDedupEngine {
   private matchRows(
     batch: MappedRow[],
     config: DedupConfig,
-    extractValues: (row: MappedRow, field: DedupMatchingField) => string[],
-    lookupMaps: Map<DedupMatchingField, Map<string, any>>,
+    extractValues: (row: MappedRow, field: string) => string[],
+    lookupMaps: Map<string, Map<string, any>>,
     results: Map<number, DedupMatch>,
   ): void {
     for (const m of batch) {
@@ -194,8 +193,8 @@ export class ImportDedupEngine {
    */
   private buildDedupKeys(
     row: MappedRow,
-    fields: DedupMatchingField[],
-    extractValues: (row: MappedRow, field: DedupMatchingField) => string[],
+    fields: string[],
+    extractValues: (row: MappedRow, field: string) => string[],
   ): string[] {
     const keys: string[] = [];
     for (const field of fields) {

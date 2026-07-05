@@ -70,6 +70,14 @@ export class LivechatWidgetService {
     data: Partial<LivechatWidget>,
   ): Partial<LivechatWidget> {
     return {
+      ...this.getDefaultUiSettings(data),
+      ...this.getDefaultBehaviorSettings(data),
+      ...this.getDefaultAdvancedSettings(data),
+    };
+  }
+
+  private getDefaultUiSettings(data: Partial<LivechatWidget>) {
+    return {
       branding: data.branding ?? {},
       theme: data.theme ?? { primaryColor: '#6366f1' },
       layout: data.layout ?? {
@@ -79,6 +87,20 @@ export class LivechatWidgetService {
         offsetY: 20,
       },
       welcome: data.welcome ?? {},
+      launcher: data.launcher ?? {
+        showUnreadBadge: true,
+        pulseAnimation: false,
+      },
+      mobile: data.mobile ?? {
+        enabled: true,
+        fullscreen: false,
+        launcherBottomOffset: 16,
+      },
+    };
+  }
+
+  private getDefaultBehaviorSettings(data: Partial<LivechatWidget>) {
+    return {
       conversationStarters: data.conversationStarters ?? [],
       offline: data.offline ?? {},
       preChatForm: data.preChatForm ?? {
@@ -88,6 +110,13 @@ export class LivechatWidgetService {
       routing: data.routing ?? {},
       automation: data.automation ?? {},
       proactiveChat: data.proactiveChat ?? { enabled: false, rules: [] },
+      displayRules: data.displayRules ?? {},
+      csat: data.csat ?? { enabled: false },
+    };
+  }
+
+  private getDefaultAdvancedSettings(data: Partial<LivechatWidget>) {
+    return {
       security: data.security ?? { allowedDomains: [] },
       localization: data.localization ?? {
         locale: 'en',
@@ -102,17 +131,6 @@ export class LivechatWidgetService {
         dragDrop: false,
         cameraCapture: false,
         maxFilesPerMessage: 1,
-      },
-      csat: data.csat ?? { enabled: false },
-      mobile: data.mobile ?? {
-        enabled: true,
-        fullscreen: false,
-        launcherBottomOffset: 16,
-      },
-      displayRules: data.displayRules ?? {},
-      launcher: data.launcher ?? {
-        showUnreadBadge: true,
-        pulseAnimation: false,
       },
       notifications: data.notifications ?? { sound: true, vibration: false },
       statePersistence: data.statePersistence ?? {
@@ -188,8 +206,14 @@ export class LivechatWidgetService {
       widgetId: widget.widgetId,
       channelId: widget.channelId,
       tenantId: widget.tenantId,
+      ...this.buildPublicUiConfig(widget),
+      ...this.buildPublicBehaviorConfig(widget),
+      ...this.buildPublicAdvancedConfig(widget),
+    };
+  }
 
-      // Branding
+  private buildPublicUiConfig(widget: LivechatWidget) {
+    return {
       branding: {
         logo: widget.branding?.logo,
         companyName: widget.branding?.companyName,
@@ -197,8 +221,6 @@ export class LivechatWidgetService {
         agentAvatar: widget.branding?.agentAvatar,
         removeBranding: widget.branding?.removeBranding ?? false,
       },
-
-      // Theme
       theme: {
         primaryColor: widget.theme?.primaryColor ?? '#6366f1',
         secondaryColor: widget.theme?.secondaryColor,
@@ -209,8 +231,6 @@ export class LivechatWidgetService {
         borderRadius: widget.theme?.borderRadius ?? 16,
         fontFamily: widget.theme?.fontFamily,
       },
-
-      // Layout
       layout: {
         position: widget.layout?.position ?? 'bottom-right',
         launcherType: widget.layout?.launcherType ?? 'circle',
@@ -225,8 +245,6 @@ export class LivechatWidgetService {
         zIndex: widget.layout?.zIndex ?? 2147483640,
         attentionGrabber: widget.layout?.attentionGrabber,
       },
-
-      // Welcome
       welcome: {
         greeting: widget.welcome?.greeting,
         subtitle: widget.welcome?.subtitle,
@@ -238,11 +256,22 @@ export class LivechatWidgetService {
         offlineGreeting: widget.welcome?.offlineGreeting,
         offlineSubtitle: widget.welcome?.offlineSubtitle,
       },
+      launcher: {
+        label: widget.launcher?.label,
+        showUnreadBadge: widget.launcher?.showUnreadBadge ?? true,
+        pulseAnimation: widget.launcher?.pulseAnimation ?? false,
+      },
+      mobile: {
+        enabled: widget.mobile?.enabled ?? true,
+        fullscreen: widget.mobile?.fullscreen ?? false,
+        launcherBottomOffset: widget.mobile?.launcherBottomOffset ?? 16,
+      },
+    };
+  }
 
-      // Conversation starters
+  private buildPublicBehaviorConfig(widget: LivechatWidget) {
+    return {
       conversationStarters: widget.conversationStarters ?? [],
-
-      // Offline / business hours
       offline: {
         enabled: widget.offline?.enabled ?? false,
         timezone: widget.offline?.timezone,
@@ -250,8 +279,6 @@ export class LivechatWidgetService {
         offlineMessage: widget.offline?.offlineMessage,
         captureLeadWhenOffline: widget.offline?.captureLeadWhenOffline ?? true,
       },
-
-      // Pre-chat form
       preChatForm: {
         enabled: widget.preChatForm?.enabled ?? false,
         trigger: widget.preChatForm?.trigger ?? 'before_chat',
@@ -259,8 +286,6 @@ export class LivechatWidgetService {
         showOnlyOffline: widget.preChatForm?.showOnlyOffline ?? false,
         fields: widget.preChatForm?.fields ?? [],
       },
-
-      // Routing (public subset — department selector only)
       routing: {
         enableDepartmentSelector:
           widget.routing?.enableDepartmentSelector ?? false,
@@ -269,14 +294,30 @@ export class LivechatWidgetService {
         queueMessage:
           widget.routing?.queueMessage ?? 'You are #{position} in queue',
       },
-
-      // Proactive chat
       proactiveChat: {
         enabled: widget.proactiveChat?.enabled ?? false,
         rules: widget.proactiveChat?.rules ?? [],
       },
+      displayRules: {
+        includePages: widget.displayRules?.includePages ?? [],
+        excludePages: widget.displayRules?.excludePages ?? [],
+        devices: widget.displayRules?.devices ?? [
+          'desktop',
+          'mobile',
+          'tablet',
+        ],
+        loggedInOnly: widget.displayRules?.loggedInOnly ?? false,
+      },
+      csat: {
+        enabled: widget.csat?.enabled ?? false,
+        question: widget.csat?.question,
+        thankYouMessage: widget.csat?.thankYouMessage,
+      },
+    };
+  }
 
-      // Localization
+  private buildPublicAdvancedConfig(widget: LivechatWidget) {
+    return {
       localization: {
         locale: widget.localization?.locale ?? 'en',
         autoDetect: widget.localization?.autoDetect ?? true,
@@ -285,8 +326,6 @@ export class LivechatWidgetService {
         rtl: this.resolveRtlDirection(widget.localization),
         translations: widget.localization?.translations ?? {},
       },
-
-      // Advanced (public subset)
       advanced: {
         customCSS: widget.advanced?.customCSS,
         enableSoundNotification:
@@ -299,41 +338,6 @@ export class LivechatWidgetService {
         cameraCapture: widget.advanced?.cameraCapture ?? false,
         maxFilesPerMessage: widget.advanced?.maxFilesPerMessage ?? 1,
       },
-
-      // CSAT
-      csat: {
-        enabled: widget.csat?.enabled ?? false,
-        question: widget.csat?.question,
-        thankYouMessage: widget.csat?.thankYouMessage,
-      },
-
-      // Mobile behavior
-      mobile: {
-        enabled: widget.mobile?.enabled ?? true,
-        fullscreen: widget.mobile?.fullscreen ?? false,
-        launcherBottomOffset: widget.mobile?.launcherBottomOffset ?? 16,
-      },
-
-      // Display rules (client-side targeting)
-      displayRules: {
-        includePages: widget.displayRules?.includePages ?? [],
-        excludePages: widget.displayRules?.excludePages ?? [],
-        devices: widget.displayRules?.devices ?? [
-          'desktop',
-          'mobile',
-          'tablet',
-        ],
-        loggedInOnly: widget.displayRules?.loggedInOnly ?? false,
-      },
-
-      // Launcher customisation
-      launcher: {
-        label: widget.launcher?.label,
-        showUnreadBadge: widget.launcher?.showUnreadBadge ?? true,
-        pulseAnimation: widget.launcher?.pulseAnimation ?? false,
-      },
-
-      // Notifications (sound migrated from advanced; browser push is Phase 2)
       notifications: {
         sound:
           widget.notifications?.sound ??
@@ -341,15 +345,11 @@ export class LivechatWidgetService {
           true,
         vibration: widget.notifications?.vibration ?? false,
       },
-
-      // State persistence
       statePersistence: {
         rememberOpenState: widget.statePersistence?.rememberOpenState ?? false,
         rememberDraftMessage:
           widget.statePersistence?.rememberDraftMessage ?? true,
       },
-
-      // NOTE: security.hmacSecret, routing internals, automation are NOT exposed.
     };
   }
 

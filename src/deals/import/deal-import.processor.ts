@@ -15,7 +15,6 @@ import {
   BaseImportJobData,
   MappedRow,
   ImportRowError,
-  DedupMatchingField,
   ImportJobSchemaClass,
   ImportJobDocument,
 } from '../../common/import';
@@ -155,17 +154,7 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
       const value = (raw[header] ?? '').toString().trim();
       if (!value) continue;
 
-      if (field === 'tags') {
-        arrayFields.tags.push(...this.splitMulti(value));
-      } else if (field === 'value' || field === 'probability') {
-        const num = Number(value);
-        if (!isNaN(num)) fields[field] = num;
-      } else if (field === 'closeDate') {
-        const date = new Date(value);
-        if (!isNaN(date.getTime())) fields[field] = date;
-      } else if ((SCALAR_FIELDS as readonly string[]).includes(field)) {
-        fields[field] = value;
-      }
+      this.mapSingleField(field, value, fields, arrayFields);
     }
 
     // Use title as name if name not mapped.
@@ -178,6 +167,25 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
     return { row, fields, arrayFields };
   }
 
+  private mapSingleField(
+    field: string,
+    value: string,
+    fields: Record<string, any>,
+    arrayFields: Record<string, string[]>,
+  ): void {
+    if (field === 'tags') {
+      arrayFields.tags.push(...this.splitMulti(value));
+    } else if (field === 'value' || field === 'probability') {
+      const num = Number(value);
+      if (!isNaN(num)) fields[field] = num;
+    } else if (field === 'closeDate') {
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) fields[field] = date;
+    } else if ((SCALAR_FIELDS as readonly string[]).includes(field)) {
+      fields[field] = value;
+    }
+  }
+
   protected validateRow(
     _mapped: MappedRow,
     _data: DealImportJobData,
@@ -185,10 +193,7 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
     return [];
   }
 
-  protected extractDedupValues(
-    row: MappedRow,
-    field: DedupMatchingField,
-  ): string[] {
+  protected extractDedupValues(row: MappedRow, field: string): string[] {
     switch (field) {
       case 'title':
         return row.fields.title ? [row.fields.title] : [];

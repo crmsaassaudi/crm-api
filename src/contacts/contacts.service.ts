@@ -884,56 +884,14 @@ export class ContactsService {
   async startImport(
     dto: StartImportDto,
   ): Promise<{ jobId: string; status: 'queued' }> {
-    // 1. Required-field mapping: schema marks firstName + lastName required.
-    const mappedFields = new Set(Object.values(dto.mapping ?? {}));
-    if (!mappedFields.has('firstName') || !mappedFields.has('lastName')) {
-      throw new BadRequestException(
-        'mapping must include both firstName and lastName',
-      );
-    }
+    const mappedFields = this.validateImportMapping(dto.mapping);
+    this.validateDedupConfig(dto.deduplication, mappedFields);
 
-    // 2. Dedup matching fields must be index-backed (emails / phones only).
-    if (dto.deduplication) {
-      const allowed = new Set(['emails', 'phones']);
-      const bad = dto.deduplication.matchingFields.filter(
-        (f) => !allowed.has(f),
-      );
-      if (bad.length) {
-        throw new BadRequestException(
-          `Unsupported dedup matchingFields: ${bad.join(', ')}`,
-        );
-      }
-      // A dedup field is meaningless unless some column maps onto it.
-      const missing = dto.deduplication.matchingFields.filter(
-        (f) => !mappedFields.has(f),
-      );
-      if (missing.length) {
-        throw new BadRequestException(
-          `Dedup field(s) [${missing.join(', ')}] are not present in the column mapping`,
-        );
-      }
-    }
-
-    // 3. The uploaded file must still exist in storage.
-    const exists = await this.exportStorageService.importFileExists(
-      dto.fileKey,
-    );
-    if (!exists) {
-      throw new BadRequestException(
-        'fileKey not found in storage — upload the file again',
-      );
-    }
+    await this.validateFileExists(dto.fileKey);
 
     // 4. Snapshot tenant identity settings AT ENQUEUE TIME so the worker never
     //    queries crm_settings inside its hot loop (latency + consistency).
-    const identity =
-      (await this.settingsService.getSetting('contact_identity')) ?? {};
-    const tenantSettings: ImportTenantSettings = {
-      uniqueEmail: identity.uniqueEmail ?? true,
-      uniquePhone: identity.uniquePhone ?? true,
-      multipleEmailsAllowed: identity.multipleEmailsAllowed ?? false,
-      multiplePhonesAllowed: identity.multiplePhonesAllowed ?? false,
-    };
+    const tenantSettings = await this.fetchImportTenantSettings();
 
     const job = await this.importQueue.add('import', {
       tenantId: this.resolveTenantId(),
@@ -1051,6 +1009,57 @@ export class ContactsService {
     }
 
     return doc;
+  }
+
+  private validateImportMapping(
+    mapping: Record<string, string> | undefined,
+  ): Set<string> {
+    const mappedFields = new Set(Object.values(mapping ?? {}));
+    if (!mappedFields.has('firstName') || !mappedFields.has('lastName')) {
+      throw new BadRequestException(
+        'mapping must include both firstName and lastName',
+      );
+    }
+    return mappedFields;
+  }
+
+  private validateDedupConfig(dedup: any, mappedFields: Set<string>): void {
+    if (!dedup) return;
+    const allowed = new Set(['emails', 'phones']);
+    const bad = dedup.matchingFields.filter((f: string) => !allowed.has(f));
+    if (bad.length) {
+      throw new BadRequestException(
+        `Unsupported dedup matchingFields: ${bad.join(', ')}`,
+      );
+    }
+    const missing = dedup.matchingFields.filter(
+      (f: string) => !mappedFields.has(f),
+    );
+    if (missing.length) {
+      throw new BadRequestException(
+        `Dedup field(s) [${missing.join(', ')}] are not present in the column mapping`,
+      );
+    }
+  }
+
+  private async validateFileExists(fileKey: string): Promise<void> {
+    const exists = await this.exportStorageService.importFileExists(fileKey);
+    if (!exists) {
+      throw new BadRequestException(
+        'fileKey not found in storage — upload the file again',
+      );
+    }
+  }
+
+  private async fetchImportTenantSettings(): Promise<ImportTenantSettings> {
+    const identity =
+      (await this.settingsService.getSetting('contact_identity')) ?? {};
+    return {
+      uniqueEmail: identity.uniqueEmail ?? true,
+      uniquePhone: identity.uniquePhone ?? true,
+      multipleEmailsAllowed: identity.multipleEmailsAllowed ?? false,
+      multiplePhonesAllowed: identity.multiplePhonesAllowed ?? false,
+    };
   }
 
   async getImportStatus(jobId: string): Promise<{

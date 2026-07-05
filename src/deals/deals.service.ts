@@ -407,33 +407,36 @@ export class DealsService {
     ]);
 
     for (const doc of data) {
-      const record = doc as Record<string, any>;
-      if (record.status === 'active' || record.status === 'queued') {
-        try {
-          const bullJob = await this.importQueue.getJob(record.bullJobId);
-          if (bullJob) {
-            record.status = await bullJob.getState();
-            if (bullJob.progress && typeof bullJob.progress === 'object')
-              record.progress = bullJob.progress;
-          }
-        } catch {}
-      }
-      // Extract populated user object
-      if (
-        record.userId &&
-        typeof record.userId === 'object' &&
-        record.userId.firstName
-      ) {
-        record.user = {
-          firstName: record.userId.firstName,
-          lastName: record.userId.lastName,
-          email: record.userId.email,
-          avatar: record.userId.avatar,
-        };
-        record.userId = String(record.userId._id);
-      }
+      await this.enrichImportJobRecord(doc as Record<string, any>);
     }
     return { data, total, page, limit };
+  }
+
+  private async enrichImportJobRecord(record: Record<string, any>) {
+    if (record.status === 'active' || record.status === 'queued') {
+      try {
+        const bullJob = await this.importQueue.getJob(record.bullJobId);
+        if (bullJob) {
+          record.status = await bullJob.getState();
+          if (bullJob.progress && typeof bullJob.progress === 'object')
+            record.progress = bullJob.progress;
+        }
+      } catch {}
+    }
+    // Extract populated user object
+    if (
+      record.userId &&
+      typeof record.userId === 'object' &&
+      record.userId.firstName
+    ) {
+      record.user = {
+        firstName: record.userId.firstName,
+        lastName: record.userId.lastName,
+        email: record.userId.email,
+        avatar: record.userId.avatar,
+      };
+      record.userId = String(record.userId._id);
+    }
   }
 
   async getImportJobDetail(id: string) {

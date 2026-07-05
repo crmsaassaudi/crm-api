@@ -16,7 +16,6 @@ import {
   BaseImportJobData,
   MappedRow,
   ImportRowError,
-  DedupMatchingField,
   ImportJobSchemaClass,
   ImportJobDocument,
 } from '../../common/import';
@@ -196,10 +195,7 @@ export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobDa
     return [];
   }
 
-  protected extractDedupValues(
-    row: MappedRow,
-    field: DedupMatchingField,
-  ): string[] {
+  protected extractDedupValues(row: MappedRow, field: string): string[] {
     switch (field) {
       case 'externalId':
         return row.fields.externalId ? [row.fields.externalId] : [];

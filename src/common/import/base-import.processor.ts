@@ -10,7 +10,6 @@ import { Readable } from 'stream';
 import { BaseTenantConsumer } from '../../queue/base-tenant.consumer';
 import {
   BaseImportJobData,
-  DedupMatchingField,
   ImportErrorCode,
   ImportModuleConfig,
   ImportPreview,
@@ -115,7 +114,7 @@ export abstract class BaseImportProcessor<
    */
   protected abstract extractDedupValues(
     row: MappedRow,
-    field: DedupMatchingField,
+    field: string,
   ): string[];
 
   /**
@@ -244,16 +243,14 @@ export abstract class BaseImportProcessor<
         batch.push(mapped);
 
         if (batch.length >= this.moduleConfig.batchSize) {
-          await this.processBatch(
-            batch,
-            data,
+          await this.processBatch(batch, data, {
             dedupEngine,
             dedupConfig,
             refResolver,
             summary,
             report,
             dryRun,
-          );
+          });
           batch = [];
           await progress.report(job, summary.total, data.estimatedRows);
           await this.delay(DEFAULT_THROTTLE_MS);
@@ -261,16 +258,14 @@ export abstract class BaseImportProcessor<
       }
 
       if (batch.length > 0) {
-        await this.processBatch(
-          batch,
-          data,
+        await this.processBatch(batch, data, {
           dedupEngine,
           dedupConfig,
           refResolver,
           summary,
           report,
           dryRun,
-        );
+        });
       }
     } finally {
       stream?.destroy();
@@ -341,12 +336,14 @@ export abstract class BaseImportProcessor<
   private async processBatch(
     batch: MappedRow[],
     data: TJobData,
-    dedupEngine: ImportDedupEngine,
-    dedupConfig: DedupConfig | undefined,
-    refResolver: ImportReferenceResolver | undefined,
-    summary: ImportSummary,
-    report: ImportReportWriter,
-    dryRun: boolean,
+    context: {
+      dedupEngine: ImportDedupEngine;
+      dedupConfig: DedupConfig | undefined;
+      refResolver: ImportReferenceResolver | undefined;
+      summary: ImportSummary;
+      report: ImportReportWriter;
+      dryRun: boolean;
+    },
   ): Promise<void> {
     const errors: ImportRowError[] = [];
     const ops: any[] = [];
@@ -357,26 +354,26 @@ export abstract class BaseImportProcessor<
       row: number;
     }> = [];
 
-    summary.total += batch.length;
+    context.summary.total += batch.length;
 
     // ── Step 1: Required-field validation ──
-    const valid = this.validateBatchRows(batch, data, summary, errors);
+    const valid = this.validateBatchRows(batch, data, context.summary, errors);
 
     // ── Step 2: Reference resolution ──
     const { validWithRefs, resolvedRefs } = this.resolveRefs(
       valid,
-      refResolver,
-      summary,
+      context.refResolver,
+      context.summary,
       errors,
     );
 
     // ── Step 3: Dedup lookup ──
-    const dedupMatches = dedupConfig
-      ? await dedupEngine.lookupBatch(
+    const dedupMatches = context.dedupConfig
+      ? await context.dedupEngine.lookupBatch(
           this.getEntityModel(),
           data.tenantId,
           validWithRefs,
-          dedupConfig,
+          context.dedupConfig,
           (row, field) => this.extractDedupValues(row, field),
         )
       : null;
@@ -385,11 +382,11 @@ export abstract class BaseImportProcessor<
     this.buildBatchOps(
       validWithRefs,
       data,
-      dedupEngine,
+      context.dedupEngine,
       dedupMatches,
-      dedupConfig,
+      context.dedupConfig,
       resolvedRefs,
-      summary,
+      context.summary,
       errors,
       ops,
       opMeta,
@@ -397,16 +394,7 @@ export abstract class BaseImportProcessor<
     );
 
     // ── Step 5: Execute (skip for dry-run) ──
-    await this.executeBatchOps(
-      ops,
-      opMeta,
-      affected,
-      data,
-      summary,
-      report,
-      errors,
-      dryRun,
-    );
+    await this.executeBatchOps(ops, opMeta, affected, data, context, errors);
   }
 
   /** Step 1: Filter out rows missing required fields or failing module validation. */
@@ -539,21 +527,28 @@ export abstract class BaseImportProcessor<
     opMeta: Array<{ row: number; type: 'insert' | 'update' }>,
     affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
     data: TJobData,
-    summary: ImportSummary,
-    report: ImportReportWriter,
+    context: {
+      summary: ImportSummary;
+      report: ImportReportWriter;
+      dryRun: boolean;
+    },
     errors: ImportRowError[],
-    dryRun: boolean,
   ): Promise<void> {
-    if (dryRun) {
-      await report.appendErrors(errors);
+    if (context.dryRun) {
+      await context.report.appendErrors(errors);
       return;
     }
 
     if (ops.length > 0) {
-      const failed = await this.executeBulk(ops, opMeta, errors, summary);
+      const failed = await this.executeBulk(
+        ops,
+        opMeta,
+        errors,
+        context.summary,
+      );
       for (const meta of failed) {
-        if (meta.type === 'insert') summary.inserted--;
-        else summary.updated--;
+        if (meta.type === 'insert') context.summary.inserted--;
+        else context.summary.updated--;
       }
       if (data.triggerAutomations) {
         const failedRows = new Set(failed.map((f) => f.row));
@@ -564,7 +559,7 @@ export abstract class BaseImportProcessor<
       }
     }
 
-    await report.appendErrors(errors);
+    await context.report.appendErrors(errors);
   }
 
   private async executeBulk(
