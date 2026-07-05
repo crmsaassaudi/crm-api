@@ -821,12 +821,8 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     if (!selectedAgent) return null;
     let committed: any;
     try {
-      if (options.allowReassignment) {
-        committed = await this.conversationRepo.updateAssignment(
-          conversationId,
-          selectedAgent,
-        );
-      } else if (
+      if (
+        !options.allowReassignment &&
         typeof (this.conversationRepo as any).assignIfUnassigned === 'function'
       ) {
         committed = await this.conversationRepo.assignIfUnassigned(
@@ -1061,12 +1057,8 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     lookupSource: string,
   ): Promise<string | null> {
     let committed: any;
-    if (options.allowReassignment) {
-      committed = await this.conversationRepo.updateAssignment(
-        conversationId,
-        previousAgentId,
-      );
-    } else if (
+    if (
+      !options.allowReassignment &&
       typeof (this.conversationRepo as any).assignIfUnassigned === 'function'
     ) {
       committed = await this.conversationRepo.assignIfUnassigned(
