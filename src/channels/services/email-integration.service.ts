@@ -259,7 +259,7 @@ export class EmailIntegrationService {
     | 'error_needs_admin_action' {
     if (config.status === 'active') return 'connected';
     if (config.status === 'disabled') return 'disconnected';
-    const error = (config.lastHealthError || '').toLowerCase();
+    const error = (config.lastHealthError ?? '').toLowerCase();
     if (
       error.includes('auth') ||
       error.includes('credential') ||

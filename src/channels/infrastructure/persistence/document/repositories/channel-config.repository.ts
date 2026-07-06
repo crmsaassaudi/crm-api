@@ -334,7 +334,7 @@ export class ChannelConfigRepository {
     if (schema && currentVersion < schema.schemaVersion) {
       update.schemaVersion = schema.schemaVersion;
     } else if (!(raw as any).schemaVersion) {
-      update.schemaVersion = schema?.schemaVersion || 1;
+      update.schemaVersion = schema?.schemaVersion ?? 1;
     }
 
     if (!(raw as any).authType) update.authType = 'app_password';

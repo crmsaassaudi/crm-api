@@ -418,7 +418,7 @@ export class AutomationWorkflowService {
         workflow._id.toString(),
         update,
       );
-      return updatedWorkflow || workflow;
+      return updatedWorkflow ?? workflow;
     }
 
     return workflow;
