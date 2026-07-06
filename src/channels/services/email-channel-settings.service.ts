@@ -90,9 +90,20 @@ export class EmailChannelSettingsService {
     tenantId?: string,
   ): Promise<EmailSettings> {
     const current = await this.getSettings(tenantId);
-
     this.validateSettingsUpdates(updates);
 
+    const merged = this.mergeSettings(current, updates);
+
+    await this.crmSettings.updateSetting(SETTINGS_KEY, merged, tenantId);
+    this.logUpdate(tenantId);
+
+    return merged;
+  }
+
+  private mergeSettings(
+    current: EmailSettings,
+    updates: Partial<EmailSettings>,
+  ): EmailSettings {
     const readStateStrategy = {
       ...current.readStateStrategy,
       ...(updates.readStateStrategy ?? {}),
@@ -106,18 +117,18 @@ export class EmailChannelSettingsService {
       updates.syncReadState = readStateStrategy.syncToProvider;
     }
 
-    const merged: EmailSettings = {
+    return {
       ...current,
       ...updates,
       readStateStrategy,
       syncReadState: readStateStrategy.syncToProvider,
     };
-    await this.crmSettings.updateSetting(SETTINGS_KEY, merged, tenantId);
+  }
 
+  private logUpdate(tenantId?: string): void {
     this.logger.log(
       `[EmailSettings] Updated for tenant ${tenantId ?? 'current'}`,
     );
-    return merged;
   }
 
   /**

@@ -107,7 +107,7 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
     data: ReadStateSyncJobData,
     config: any,
   ): Promise<void> {
-    const { configId, emailMessageId, imapUid, targetState } = data;
+    const { configId, emailMessageId } = data;
 
     const credentials = await this.loadAndDecryptCredentials(config);
     if (!credentials) return; // Status already updated in helper
@@ -220,7 +220,6 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
     );
     throw err;
   }
-  }
 
   /**
    * Handle a permanent (non-retryable) provider error:
@@ -265,7 +264,7 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
   ): Promise<number | null> {
     try {
       // Clean the message ID — remove angle brackets if present
-      const cleanId = messageId.replace(/(?:^<)|(?:>$)/g, '');
+      const cleanId = messageId.replace(/^</, '').replace(/>$/, '');
 
       const results = await client.search({
         header: { 'message-id': cleanId },

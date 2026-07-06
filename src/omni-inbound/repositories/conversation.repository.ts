@@ -195,36 +195,62 @@ export class ConversationRepository {
       tenantId: query.tenantId,
     };
 
-    if (query.status) {
-      filter.status = Array.isArray(query.status)
-        ? { $in: query.status }
-        : query.status;
-    }
-    if (query.channels && query.channels.length > 0) {
-      filter.channelType = { $in: query.channels };
-    }
-
+    this.applyStatusFilter(filter, query.status);
+    this.applyChannelFilter(filter, query.channels);
     this.buildAssignmentFilter(query, filter);
+    this.applySlaFilter(filter, query.sla);
+    this.applyTagsFilter(filter, query.tags);
+    this.applyVipFilter(filter, query.isVip);
+    this.applyUnreadFilter(filter, query.hasUnread);
+    this.applySearchFilter(filter, query.search);
 
-    const slaConditions = this.buildSlaFilter(query.sla);
+    return filter;
+  }
+
+  private applyStatusFilter(filter: any, status: any): void {
+    if (status) {
+      filter.status = Array.isArray(status) ? { $in: status } : status;
+    }
+  }
+
+  private applyChannelFilter(
+    filter: any,
+    channels: string[] | undefined,
+  ): void {
+    if (channels && channels.length > 0) {
+      filter.channelType = { $in: channels };
+    }
+  }
+
+  private applySlaFilter(filter: any, sla: string[] | undefined): void {
+    const slaConditions = this.buildSlaFilter(sla);
     if (slaConditions.length > 0) {
       filter.$or = slaConditions;
     }
+  }
 
-    if (query.tags && query.tags.length > 0) {
-      filter.tags = { $in: query.tags };
+  private applyTagsFilter(filter: any, tags: string[] | undefined): void {
+    if (tags && tags.length > 0) {
+      filter.tags = { $in: tags };
     }
-    if (query.isVip !== undefined) {
-      filter.isVip = query.isVip;
-    }
-    if (query.hasUnread !== undefined) {
-      filter.unreadCount = query.hasUnread ? { $gt: 0 } : 0;
-    }
-    if (query.search) {
-      filter.$text = { $search: query.search };
-    }
+  }
 
-    return filter;
+  private applyVipFilter(filter: any, isVip: boolean | undefined): void {
+    if (isVip !== undefined) {
+      filter.isVip = isVip;
+    }
+  }
+
+  private applyUnreadFilter(filter: any, hasUnread: boolean | undefined): void {
+    if (hasUnread !== undefined) {
+      filter.unreadCount = hasUnread ? { $gt: 0 } : 0;
+    }
+  }
+
+  private applySearchFilter(filter: any, search: string | undefined): void {
+    if (search) {
+      filter.$text = { $search: search };
+    }
   }
 
   /**
