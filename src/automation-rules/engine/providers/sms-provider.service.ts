@@ -81,7 +81,7 @@ export class TwilioSmsProvider implements SmsProviderService {
 
       const body = new URLSearchParams({
         To: params.to,
-        From: this.fromNumber || '',
+        From: this.fromNumber ?? '',
         Body: params.message,
       });
 

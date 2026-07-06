@@ -86,7 +86,7 @@ export class OnboardingController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const { email, fullName, password } = dto;
-    let step = 'checking existing account';
+    const step = 'checking existing account';
     let createdKcUserId: string | null = null;
 
     try {
@@ -102,7 +102,7 @@ export class OnboardingController {
       }
 
       // 2. Create Keycloak user (emailVerified=false for later banner)
-      step = 'creating Keycloak user';
+
       const kcUser = await this.keycloakAdminService.createUser(
         email,
         password,
@@ -111,7 +111,7 @@ export class OnboardingController {
       createdKcUserId = kcUser.id;
 
       // 3. Create MongoDB user with INCOMPLETE tag
-      step = 'creating local user';
+
       const spaceIdx = fullName.indexOf(' ');
       const firstName = spaceIdx > -1 ? fullName.slice(0, spaceIdx) : fullName;
       const lastName = spaceIdx > -1 ? fullName.slice(spaceIdx + 1) : '';
@@ -129,7 +129,7 @@ export class OnboardingController {
       } as any);
 
       // 4. Create session (lightweight — no full OAuth token exchange)
-      step = 'creating session';
+
       const sid = await this.sessionService.createSession(
         {
           access_token: '',
@@ -149,7 +149,7 @@ export class OnboardingController {
       );
 
       // 6. Create onboarding session in Redis
-      step = 'creating onboarding session';
+
       await this.onboardingService.createSession(localUser.id as string);
 
       this.logger.log(

@@ -44,7 +44,7 @@ const infrastructurePersistenceModule = DocumentFilePersistenceModule;
 
         return {
           fileFilter: (request, file, callback) => {
-            if (!file.originalname.match(/\.(jpg|jpeg|png|gif)$/i)) {
+            if (!/\.(jpg|jpeg|png|gif)$/i.exec(file.originalname)) {
               return callback(
                 new UnprocessableEntityException({
                   status: HttpStatus.UNPROCESSABLE_ENTITY,

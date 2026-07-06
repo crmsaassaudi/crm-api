@@ -35,7 +35,7 @@ export class TenantResolverMiddleware implements NestMiddleware {
   use(req: Request, _res: Response, next: NextFunction): void {
     const host = this.normalizeHost(req.hostname); // e.g. "toancorp.crmsaudi.dev" (strips port)
 
-    if (host && host.endsWith(`.${this.rootDomain}`)) {
+    if (host?.endsWith(`.${this.rootDomain}`)) {
       // Extract the leading subdomain segment
       const subdomain = host.slice(0, host.length - this.rootDomain.length - 1);
 

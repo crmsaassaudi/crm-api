@@ -360,7 +360,7 @@ export class TenantsService {
       try {
         localUser = await this.userRepository.upsertWithTenants(
           keycloakUserId as string,
-          email || '',
+          email ?? '',
           {
             firstName,
             lastName,
@@ -408,7 +408,7 @@ export class TenantsService {
         new TenantCreatedEvent(
           tenant!.id as string,
           organizationName,
-          email || '',
+          email ?? '',
         ),
       );
 

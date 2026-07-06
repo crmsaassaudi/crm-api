@@ -40,13 +40,13 @@ export class AuthService {
 
   constructor(
     @Inject(forwardRef(() => UsersService))
-    private usersService: UsersService,
+    private readonly usersService: UsersService,
     @Inject(forwardRef(() => TenantsService))
-    private tenantsService: TenantsService,
-    private configService: ConfigService<AllConfigType>,
-    private httpService: HttpService,
-    private redisService: RedisService,
-    private sessionService: SessionService,
+    private readonly tenantsService: TenantsService,
+    private readonly configService: ConfigService<AllConfigType>,
+    private readonly httpService: HttpService,
+    private readonly redisService: RedisService,
+    private readonly sessionService: SessionService,
   ) {}
 
   // ─── Step 1: Build login URL with CSRF state ──────────────────────────────
@@ -518,7 +518,7 @@ export class AuthService {
       const tenantId = tenants[0].tenantId;
       try {
         const tenant = await this.tenantsService.findById(tenantId);
-        if (tenant && tenant.alias) {
+        if (tenant?.alias) {
           const rootDomain =
             this.configService.get('app.rootDomain', { infer: true }) ||
             'crmsaudi.dev';

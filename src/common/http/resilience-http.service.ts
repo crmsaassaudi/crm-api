@@ -36,7 +36,7 @@ export class ResilienceHttpService {
     context: { url: string; method: string },
     config?: ResilienceConfig,
   ): Promise<AxiosResponse<T>> {
-    const serviceName = config?.resilience?.service || 'none';
+    const serviceName = config?.resilience?.service ?? 'none';
     const start = Date.now();
     // Reset retry count for this request scope
     this.cls.set('resilienceRetries', 0);
@@ -96,7 +96,7 @@ export class ResilienceHttpService {
   ): Promise<AxiosResponse<T>> {
     return this.execute(
       () => firstValueFrom(this.httpService.request<T>(config)),
-      { url: config.url || '', method: config.method || 'GET' },
+      { url: config.url ?? '', method: config.method ?? 'GET' },
       resilienceConfig,
     );
   }

@@ -1,12 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { OnEvent } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { ChannelConfigRepository } from './infrastructure/persistence/document/repositories/channel-config.repository';
 import { AdapterRegistryService } from './adapters/adapter-registry.service';
-import { ICryptoService, CRYPTO_SERVICE_TOKEN } from './domain/crypto.service';
-import { Inject } from '@nestjs/common';
+import { CRYPTO_SERVICE_TOKEN, ICryptoService } from './domain/crypto.service';
 import { ChannelConfig } from './domain/channel-config';
 import { OAuth2TokenManager } from './services/oauth2-token-manager.service';
 import { RedisLockService } from '../redis/redis-lock.service';

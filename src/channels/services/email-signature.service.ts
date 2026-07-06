@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { InjectModel, Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument, Model, Schema as MongooseSchema } from 'mongoose';
 
 /**
  * Email Signature Service — Manages per-user, per-channel email signatures.
@@ -36,9 +36,6 @@ export interface EmailSignature {
 // ── MongoDB Schema Registration ────────────────────────────────────────────
 // The schema is defined inline since it's a simple document.
 // For production, move to a separate schema file in entities/ directory.
-
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 
 export type EmailSignatureDocument =
   HydratedDocument<EmailSignatureSchemaClass>;

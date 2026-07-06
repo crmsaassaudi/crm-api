@@ -127,10 +127,10 @@ export class ChannelConfigAuditService {
         configId: payload.configId,
         action,
         configName: payload.configName,
-        providerType: payload.providerType || null,
+        providerType: payload.providerType ?? null,
         changes: payload.changes || {},
-        ipAddress: payload.ipAddress || null,
-        userAgent: payload.userAgent || null,
+        ipAddress: payload.ipAddress ?? null,
+        userAgent: payload.userAgent ?? null,
       });
 
       this.logger.debug(

@@ -18,7 +18,7 @@ import { WorkflowOrchestratorService } from '../engine/workflow-orchestrator.ser
  * Concurrency is configured via BULK_QUEUE_CONCURRENCY env var (default: 5).
  */
 @Processor(AUTOMATION_BULK_QUEUE, {
-  concurrency: parseInt(process.env.BULK_QUEUE_CONCURRENCY || '5', 10),
+  concurrency: parseInt(process.env.BULK_QUEUE_CONCURRENCY ?? '5', 10),
 })
 export class AutomationBulkProcessor extends BaseTenantConsumer<TenantJobData> {
   protected readonly logger = new Logger(AutomationBulkProcessor.name);

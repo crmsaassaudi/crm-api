@@ -239,7 +239,7 @@ export class ChannelAlertService {
    * Prevents notification spam when configs are flaky (network jitter).
    */
   private shouldAlert(configId: string): boolean {
-    const lastAlert = this.alertCooldowns.get(configId) || 0;
+    const lastAlert = this.alertCooldowns.get(configId) ?? 0;
     const now = Date.now();
 
     if (now - lastAlert < this.ALERT_COOLDOWN_MS) {

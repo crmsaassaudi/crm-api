@@ -305,7 +305,7 @@ export class TenantInterceptor implements NestInterceptor {
     this.resolveJwtIdentity(raw);
 
     const currentUserId = this.cls.get('userId');
-    if (currentUserId && currentUserId.includes('-')) {
+    if (currentUserId?.includes('-')) {
       await this.resolveKeycloakUser(currentUserId);
     }
   }

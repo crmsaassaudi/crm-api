@@ -61,7 +61,7 @@ export class BusinessHoursService {
       // ── Weekly schedule check ──────────────────────────────────────
       // Support both legacy format (schedule.{dayName}) and new format (workingDays[])
       const daySchedule = this.getDaySchedule(now, businessHours);
-      if (!daySchedule || !daySchedule.enabled) {
+      if (!daySchedule?.enabled) {
         // This day is not a working day
         return false;
       }
@@ -82,8 +82,8 @@ export class BusinessHoursService {
       }
 
       // Legacy: single start/end per day
-      const startMinutes = this.timeToMinutes(daySchedule.start || '09:00');
-      const endMinutes = this.timeToMinutes(daySchedule.end || '18:00');
+      const startMinutes = this.timeToMinutes(daySchedule.start ?? '09:00');
+      const endMinutes = this.timeToMinutes(daySchedule.end ?? '18:00');
       return currentMinutes >= startMinutes && currentMinutes < endMinutes;
     } catch (err) {
       this.logger.warn(
@@ -315,7 +315,7 @@ export class BusinessHoursService {
 
       // Get today's schedule
       const daySchedule = this.getDaySchedule(cursor, businessHours);
-      if (!daySchedule || !daySchedule.enabled) {
+      if (!daySchedule?.enabled) {
         cursor = this.advanceToNextDay(cursor);
         continue;
       }

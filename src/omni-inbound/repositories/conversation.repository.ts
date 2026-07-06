@@ -177,7 +177,7 @@ export class ConversationRepository {
 
     const nextCursor =
       pageItems.length > 0 && pageItems[pageItems.length - 1].lastMessageAt
-        ? pageItems[pageItems.length - 1].lastMessageAt?.toISOString() || null
+        ? (pageItems[pageItems.length - 1].lastMessageAt?.toISOString() ?? null)
         : null;
 
     return {

@@ -7,8 +7,8 @@ import { AuthProvidersEnum } from '../auth/auth-providers.enum';
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(
-    private reflector: Reflector,
-    private usersService: UsersService,
+    private readonly reflector: Reflector,
+    private readonly usersService: UsersService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -16,13 +16,13 @@ export class RolesGuard implements CanActivate {
       'roles',
       [context.getClass(), context.getHandler()],
     );
-    if (!roles || !roles.length) {
+    if (!roles?.length) {
       return true;
     }
     const request = context.switchToHttp().getRequest();
     const payload = request.user;
 
-    if (!payload || !payload.sub) {
+    if (!payload?.sub) {
       return false;
     }
 

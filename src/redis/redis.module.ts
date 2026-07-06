@@ -37,7 +37,7 @@ import { IOREDIS_CLIENT } from './redis.tokens';
         const client = new Redis({
           host: configService.get<string>('redis.host') ?? 'localhost',
           port: configService.get<number>('redis.port') ?? 6379,
-          password: configService.get<string>('redis.password') || undefined,
+          password: configService.get<string>('redis.password') ?? undefined,
           db: configService.get<number>('redis.db') ?? 0,
           lazyConnect: false,
           // CRIT-06: Required for BullMQ blocking commands

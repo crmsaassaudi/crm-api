@@ -313,7 +313,7 @@ export class UsersService {
       throw new UnprocessableEntityException('Tenant not found');
     }
 
-    const tenantRole = inviteUserDto.tenantRole || 'MEMBER';
+    const tenantRole = inviteUserDto.tenantRole ?? 'MEMBER';
 
     // ── Case 1: User already exists in the system ───────────────────────────
     const existingUser = await this.usersRepository.findByEmail(
@@ -350,7 +350,7 @@ export class UsersService {
 
       // Add tenant membership via upsertWithTenants
       const updated = await this.usersRepository.upsertWithTenants(
-        existingUser.keycloakId || '',
+        existingUser.keycloakId ?? '',
         inviteUserDto.email,
         {},
         [{ tenantId: tenantId, roles: [tenantRole], joinedAt: new Date() }],
@@ -593,7 +593,7 @@ export class UsersService {
       });
     }
 
-    const tenantRole = dto.tenantRole || 'MEMBER';
+    const tenantRole = dto.tenantRole ?? 'MEMBER';
     let keycloakUserCreated = false;
     let keycloakUser: { id: string; email: string };
 

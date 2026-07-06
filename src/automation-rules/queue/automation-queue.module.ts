@@ -38,7 +38,7 @@ import {
           removeOnFail: 1000,
         },
         limiter: {
-          max: parseInt(process.env.AUTOMATION_EMAIL_RATE_LIMIT || '500', 10),
+          max: parseInt(process.env.AUTOMATION_EMAIL_RATE_LIMIT ?? '500', 10),
           duration: 60_000, // per minute
         },
       }),
@@ -55,7 +55,7 @@ import {
           removeOnFail: 1000,
         },
         limiter: {
-          max: parseInt(process.env.AUTOMATION_SMS_RATE_LIMIT || '60', 10),
+          max: parseInt(process.env.AUTOMATION_SMS_RATE_LIMIT ?? '60', 10),
           duration: 60_000,
         },
       }),
@@ -83,7 +83,7 @@ import {
           removeOnFail: 1000,
         },
         limiter: {
-          max: parseInt(process.env.AUTOMATION_WEBHOOK_RATE_LIMIT || '200', 10),
+          max: parseInt(process.env.AUTOMATION_WEBHOOK_RATE_LIMIT ?? '200', 10),
           duration: 60_000,
         },
       }),

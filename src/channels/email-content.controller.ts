@@ -100,11 +100,11 @@ export class EmailContentController {
       htmlBody: content.htmlBody,
       textBody: content.textBody,
       attachments: content.attachments || [],
-      from: metadata?.from || '',
+      from: metadata?.from ?? '',
       to: metadata?.to || [],
       cc: metadata?.cc || [],
       bcc: visibleBcc,
-      inReplyTo: metadata?.inReplyTo || null,
+      inReplyTo: metadata?.inReplyTo ?? null,
       references: metadata?.references || [],
       sourceDeleted,
     };

@@ -76,7 +76,7 @@ export class EmailNormalizerService {
     // We only want to drop 'auto-replied' (Out-of-Office).
     // 'auto-generated' (GitHub, Jira, etc.) should be ALLOWED.
     const autoSubmitted = (
-      this.getHeader(headers, 'auto-submitted') || ''
+      this.getHeader(headers, 'auto-submitted') ?? ''
     ).toLowerCase();
     if (autoSubmitted === 'auto-replied') {
       this.logger.debug(
@@ -88,7 +88,7 @@ export class EmailNormalizerService {
     // Microsoft/Exchange: X-Auto-Response-Suppress
     // Only drop if it specifically suppresses all or OOF
     const autoResponse = (
-      this.getHeader(headers, 'x-auto-response-suppress') || ''
+      this.getHeader(headers, 'x-auto-response-suppress') ?? ''
     ).toLowerCase();
     if (
       autoResponse &&
@@ -112,7 +112,7 @@ export class EmailNormalizerService {
     // We NO LONGER drop 'bulk' or 'list' because many important system notifications
     // (like GitHub launch codes, password resets) use these headers.
     const precedence = (
-      this.getHeader(headers, 'precedence') || ''
+      this.getHeader(headers, 'precedence') ?? ''
     ).toLowerCase();
     if (precedence === 'junk') {
       return true;
@@ -135,7 +135,7 @@ export class EmailNormalizerService {
     originalMessageId: string | null;
     reason: string;
   } | null {
-    const contentType = this.getHeader(headers, 'content-type') || '';
+    const contentType = this.getHeader(headers, 'content-type') ?? '';
 
     // Standard DSN content type
     const isDSN =
@@ -143,7 +143,7 @@ export class EmailNormalizerService {
       contentType.includes('delivery-status');
 
     // From Mailer-Daemon
-    const from = (this.getHeader(headers, 'from') || '').toLowerCase();
+    const from = (this.getHeader(headers, 'from') ?? '').toLowerCase();
     const isMailerDaemon =
       from.includes('mailer-daemon') ||
       from.includes('postmaster') ||
@@ -164,7 +164,7 @@ export class EmailNormalizerService {
     const reason = this.extractBounceReason(textBody);
 
     this.logger.log(
-      `[EmailNormalizer] 🔴 Bounce detected — Original Message-ID: ${originalMessageId || 'unknown'}, Reason: ${reason}`,
+      `[EmailNormalizer] 🔴 Bounce detected — Original Message-ID: ${originalMessageId ?? 'unknown'}, Reason: ${reason}`,
     );
 
     return {
@@ -211,9 +211,9 @@ export class EmailNormalizerService {
     const messageId =
       this.getHeader(headers, 'message-id') ||
       `<generated-${Date.now()}@crm.local>`;
-    const inReplyTo = this.getHeader(headers, 'in-reply-to') || null;
+    const inReplyTo = this.getHeader(headers, 'in-reply-to') ?? null;
 
-    const referencesRaw = this.getHeader(headers, 'references') || '';
+    const referencesRaw = this.getHeader(headers, 'references') ?? '';
     const references = referencesRaw
       .split(/\s+/)
       .filter((ref) => ref.startsWith('<') && ref.endsWith('>'));
@@ -229,7 +229,7 @@ export class EmailNormalizerService {
   extractCrmThreadId(
     headers: Record<string, string | string[]>,
   ): string | null {
-    return this.getHeader(headers, 'x-crm-thread-id') || null;
+    return this.getHeader(headers, 'x-crm-thread-id') ?? null;
   }
 
   /**
@@ -244,7 +244,7 @@ export class EmailNormalizerService {
     if (!htmlBody) return null;
 
     // Match [ref:CRM-{conversationId}:ref] pattern
-    const match = htmlBody.match(/\[ref:CRM-([a-f0-9]{24}):ref\]/i);
+    const match = /\[ref:CRM-([a-f0-9]{24}):ref\]/i.exec(htmlBody);
     return match ? match[1] : null;
   }
 
@@ -381,10 +381,10 @@ export class EmailNormalizerService {
     cc: string[];
     bcc: string[];
   } {
-    const from = this.normalizeEmail(this.getHeader(headers, 'from') || '');
-    const to = this.parseEmailList(this.getHeader(headers, 'to') || '');
-    const cc = this.parseEmailList(this.getHeader(headers, 'cc') || '');
-    const bcc = this.parseEmailList(this.getHeader(headers, 'bcc') || '');
+    const from = this.normalizeEmail(this.getHeader(headers, 'from') ?? '');
+    const to = this.parseEmailList(this.getHeader(headers, 'to') ?? '');
+    const cc = this.parseEmailList(this.getHeader(headers, 'cc') ?? '');
+    const bcc = this.parseEmailList(this.getHeader(headers, 'bcc') ?? '');
 
     return { from, to, cc, bcc };
   }
@@ -434,7 +434,7 @@ export class EmailNormalizerService {
     if (inReplyTo) return inReplyTo;
 
     // Search body for Message-ID patterns
-    const match = textBody.match(/Message-ID:\s*(<[^>]+>)/i);
+    const match = /Message-ID:\s*(<[^>]+>)/i.exec(textBody);
     return match ? match[1] : null;
   }
 
@@ -476,7 +476,7 @@ export class EmailNormalizerService {
 
   normalizeEmail(raw: string): string {
     // Extract email from "Name <email@example.com>" format
-    const match = raw.match(/<([^>]+)>/);
+    const match = /<([^>]+)>/.exec(raw);
     return (match ? match[1] : raw).toLowerCase().trim();
   }
 

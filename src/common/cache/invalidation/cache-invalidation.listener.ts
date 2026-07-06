@@ -18,7 +18,7 @@ export class CacheInvalidationListener {
     tenantId?: string;
   }) {
     await this.invalidateEntityCache(
-      payload.tenantId || 'global',
+      payload.tenantId ?? 'global',
       payload.entity,
     );
   }
@@ -30,7 +30,7 @@ export class CacheInvalidationListener {
     tenantId?: string;
   }) {
     await this.invalidateEntityCache(
-      payload.tenantId || 'global',
+      payload.tenantId ?? 'global',
       payload.entity,
     );
   }
@@ -42,7 +42,7 @@ export class CacheInvalidationListener {
     tenantId?: string;
   }) {
     await this.invalidateEntityCache(
-      payload.tenantId || 'global',
+      payload.tenantId ?? 'global',
       payload.entity,
     );
   }

@@ -110,7 +110,7 @@ export class TransportPoolService implements OnModuleDestroy {
     // 2. Cache miss or expired — fetch from DB
     const config =
       await this.repository.findByIdWithCredentialsNoTenant(configId);
-    if (!config || !config.encryptedCredentials) {
+    if (!config?.encryptedCredentials) {
       // Config deleted or missing — evict stale cache entry if exists
       this.pool.delete(configId);
       return null;

@@ -1,4 +1,4 @@
-import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TenantThrottlerGuard } from './common/throttler/tenant-throttler.guard';
 import { UsersModule } from './users/users.module';
@@ -103,9 +103,8 @@ const infrastructureDatabaseModule = MongooseModule.forRootAsync({
 
 import { DatabaseModule } from './database/database.module';
 import { ClsModule, ClsService } from 'nestjs-cls';
-import { WinstonModule } from 'nest-winston';
+import { WinstonModule, utilities as nestWinstonUtilities } from 'nest-winston';
 import * as winston from 'winston';
-import { utilities as nestWinstonUtilities } from 'nest-winston';
 import { ulid } from 'ulid';
 import { Request } from 'express';
 

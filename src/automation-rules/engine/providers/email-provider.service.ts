@@ -104,7 +104,7 @@ export class SendGridEmailProvider implements EmailProviderService {
     body: string;
     from?: string;
   }): Promise<ActionExecutionResult> {
-    const from = params.from || `"${this.fromName}" <${this.fromEmail}>`;
+    const from = params.from ?? `"${this.fromName}" <${this.fromEmail}>`;
 
     if (this.isDryRun) {
       this.logger.log(

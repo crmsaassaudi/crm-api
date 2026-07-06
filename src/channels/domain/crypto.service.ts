@@ -279,9 +279,9 @@ export function cryptoServiceFactory(
   configService: ConfigService,
 ): ICryptoService {
   const provider =
-    configService.get<string>('ENCRYPTION_PROVIDER', { infer: true }) || 'env';
+    configService.get<string>('ENCRYPTION_PROVIDER', { infer: true }) ?? 'env';
   const nodeEnv =
-    configService.get<string>('NODE_ENV', { infer: true }) || 'development';
+    configService.get<string>('NODE_ENV', { infer: true }) ?? 'development';
 
   // TODO(encryption): Re-enable bootstrap halt after KMS is configured for production.
   if (nodeEnv === 'production' && provider === 'env') {

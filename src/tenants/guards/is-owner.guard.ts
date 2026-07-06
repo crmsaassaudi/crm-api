@@ -15,7 +15,7 @@ export class IsOwnerGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 
-    if (!user || !user.id) {
+    if (!user?.id) {
       throw new ForbiddenException('User not authenticated');
     }
 

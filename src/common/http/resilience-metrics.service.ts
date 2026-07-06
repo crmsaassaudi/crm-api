@@ -45,7 +45,7 @@ export class ResilienceMetricsService {
     this.lastErrors.unshift({
       timestamp: new Date(),
       service,
-      error: error || 'Unknown Error',
+      error: error ?? 'Unknown Error',
       correlationId,
     });
 

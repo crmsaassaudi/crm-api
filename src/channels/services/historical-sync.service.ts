@@ -246,7 +246,7 @@ export class HistoricalSyncService {
     const channelConfig = await this.configRepo.findByIdWithCredentialsNoTenant(
       config.configId,
     );
-    if (!channelConfig || !channelConfig.encryptedCredentials) {
+    if (!channelConfig?.encryptedCredentials) {
       throw new Error('Channel config not found or credentials missing');
     }
 

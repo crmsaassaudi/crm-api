@@ -144,7 +144,7 @@ export class CrmRecordUpdateService {
         };
       }
 
-      const previousValue = (currentRecord as any)[field];
+      const previousValue = currentRecord[field];
 
       // ── Type cast the value ───────────────────────────────────────────
       const castedValue = this.castValue(params.value, previousValue);
@@ -168,7 +168,7 @@ export class CrmRecordUpdateService {
         tenantId,
         recordType,
         recordId,
-        record: updated as any,
+        record: updated,
         changedFields: [field],
         sourceWorkflowId,
         automationDepth: (params.automationDepth ?? 0) + 1,
@@ -212,7 +212,7 @@ export class CrmRecordUpdateService {
     if (!service) return null;
 
     const record = await service.findOne(recordId);
-    return record ? (record as any) : null;
+    return record ? record : null;
   }
 
   // ── Private Helpers ──────────────────────────────────────────────────────

@@ -565,8 +565,8 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
 
     const parsed = await this.parseEmail(rawSource, msg.uid, rawSize);
     const htmlBody = parsed.html || '';
-    const textBody = parsed.text || '';
-    const subject = parsed.subject || msg.envelope?.subject || '(no subject)';
+    const textBody = parsed.text ?? '';
+    const subject = (parsed.subject || msg.envelope?.subject) ?? '(no subject)';
 
     const { fromAddr, fromName, toAddrs, ccAddrs, bccAddrs } =
       this.extractParticipants(parsed);

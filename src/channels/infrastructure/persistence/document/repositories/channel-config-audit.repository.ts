@@ -38,8 +38,8 @@ export class ChannelConfigAuditRepository {
     configId: string,
     options?: { limit?: number; skip?: number },
   ): Promise<{ logs: any[]; total: number }> {
-    const limit = options?.limit || 20;
-    const skip = options?.skip || 0;
+    const limit = options?.limit ?? 20;
+    const skip = options?.skip ?? 0;
 
     const [logs, total] = await Promise.all([
       this.model
@@ -82,8 +82,8 @@ export class ChannelConfigAuditRepository {
     tenantId: string,
     options?: { limit?: number; skip?: number },
   ): Promise<{ logs: any[]; total: number }> {
-    const limit = options?.limit || 50;
-    const skip = options?.skip || 0;
+    const limit = options?.limit ?? 50;
+    const skip = options?.skip ?? 0;
 
     const [logs, total] = await Promise.all([
       this.model

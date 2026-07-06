@@ -196,7 +196,7 @@ function setupSwagger(
       .addGlobalParameters({
         in: 'header',
         required: false,
-        name: process.env.APP_HEADER_LANGUAGE || 'x-custom-lang',
+        name: process.env.APP_HEADER_LANGUAGE ?? 'x-custom-lang',
         schema: { example: 'en' },
       })
       .build();

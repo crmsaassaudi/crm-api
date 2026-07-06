@@ -23,7 +23,7 @@ const SAFE_EXT = /^[a-z0-9]{1,8}$/;
 
 @Injectable()
 export class FilesS3PresignedService {
-  private s3: S3Client;
+  private readonly s3: S3Client;
 
   constructor(
     private readonly fileRepository: FileRepository,

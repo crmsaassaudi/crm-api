@@ -10,9 +10,11 @@ import { InstagramAdapter } from './adapters/instagram.adapter';
 import { LivechatAdapter } from './adapters/livechat.adapter';
 import { TelegramAdapter } from '../channels/telegram/telegram.adapter';
 import { TikTokAdapter } from './adapters/tiktok.adapter';
-import { CHANNEL_ADAPTERS } from './adapters/channel-adapter.interface';
+import {
+  CHANNEL_ADAPTERS,
+  ChannelAdapter,
+} from './adapters/channel-adapter.interface';
 import { ChannelType } from './domain/omni-payload';
-import { ChannelAdapter } from './adapters/channel-adapter.interface';
 
 // Processors
 import { InboundProcessorService } from './processors/inbound-processor.service';
@@ -130,7 +132,7 @@ import { TicketsModule } from '../tickets/tickets.module';
 import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
 import { FilesModule } from '../files/files.module';
 import { ObservabilityModule } from '../observability/observability.module';
-import { isWorkerRuntime, isOmniRuntime } from '../config/runtime-role';
+import { isOmniRuntime, isWorkerRuntime } from '../config/runtime-role';
 // F3 fix: import LivechatModule so its LivechatAdapter instance (with gateway wired) is shared
 import { LivechatModule } from '../livechat/livechat.module';
 // Phase 1: Conversation Aggregate — sequential command processing

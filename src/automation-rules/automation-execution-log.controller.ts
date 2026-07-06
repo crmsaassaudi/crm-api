@@ -66,8 +66,8 @@ export class AutomationExecutionLogController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const pageNum = parseInt(page || '1', 10);
-    const limitNum = Math.min(parseInt(limit || '20', 10), 100);
+    const pageNum = parseInt(page ?? '1', 10);
+    const limitNum = Math.min(parseInt(limit ?? '20', 10), 100);
     const skip = (pageNum - 1) * limitNum;
 
     const filter: Record<string, any> = { tenantId: this.tenantId };

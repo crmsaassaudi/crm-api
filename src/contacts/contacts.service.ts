@@ -171,7 +171,7 @@ export class ContactsService {
 
     // Shadow contact promotion: when a shadow contact gets real data, promote it
     let additionalData: any = {};
-    if (existingContact && existingContact.isShadow) {
+    if (existingContact?.isShadow) {
       const hasNewEmail = emails && emails.length > 0;
       const hasNewPhone = phones && phones.length > 0;
       if (hasNewEmail || hasNewPhone) {

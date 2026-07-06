@@ -22,7 +22,7 @@ export class BulkEventThrottleService {
     private readonly redis: Redis,
   ) {
     this.threshold = parseInt(
-      process.env.AUTOMATION_RATE_LIMIT_PER_SECOND || '1000',
+      process.env.AUTOMATION_RATE_LIMIT_PER_SECOND ?? '1000',
       10,
     );
   }

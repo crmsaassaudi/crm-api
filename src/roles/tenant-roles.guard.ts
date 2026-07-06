@@ -17,9 +17,9 @@ import { AuthProvidersEnum } from '../auth/auth-providers.enum';
 @Injectable()
 export class TenantRolesGuard implements CanActivate {
   constructor(
-    private reflector: Reflector,
-    private usersService: UsersService,
-    private cls: ClsService,
+    private readonly reflector: Reflector,
+    private readonly usersService: UsersService,
+    private readonly cls: ClsService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -27,14 +27,14 @@ export class TenantRolesGuard implements CanActivate {
       'tenantRoles',
       [context.getClass(), context.getHandler()],
     );
-    if (!requiredRoles || !requiredRoles.length) {
+    if (!requiredRoles?.length) {
       return true;
     }
 
     const request = context.switchToHttp().getRequest();
     const payload = request.user;
 
-    if (!payload || !payload.sub) {
+    if (!payload?.sub) {
       return false;
     }
 
