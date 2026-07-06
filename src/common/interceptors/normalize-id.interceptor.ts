@@ -44,7 +44,11 @@ export class NormalizeIdInterceptor implements NestInterceptor {
       value = (value as any).toJSON();
     }
 
-    const obj = value as Record<string, unknown>;
+    return this.normalizeObject(value as Record<string, unknown>);
+  }
+
+  /** Transform a plain object: rename _id → id, strip __v, recurse into values. */
+  private normalizeObject(obj: Record<string, unknown>): Record<string, unknown> {
     const result: Record<string, unknown> = {};
 
     for (const key of Object.keys(obj)) {

@@ -187,7 +187,7 @@ export class ContactsService {
       ...(emails !== undefined ? { emails } : {}),
       ...(phones !== undefined ? { phones } : {}),
       ownerId,
-    } as any);
+    });
 
     // Emit automation event: field_updated.Contact
     if (updated) {
@@ -464,6 +464,46 @@ export class ContactsService {
     }
 
     // 2. Update stage (and optionally link to account) with optimistic locking
+    const updated = await this.applyStageUpdate(
+      id,
+      contact,
+      stage,
+      finalAccountId,
+    );
+
+    // 3-4. Record transition side effects + optionally create deal
+    const dealId = await this.recordStageTransitionSideEffects(id, {
+      contact,
+      updated,
+      previousStageName,
+      stage,
+      changedById,
+      reason: params?.reason,
+      direction,
+      skippedStages,
+      finalAccountId,
+      dealData: params?.dealData,
+    });
+
+    return {
+      success: true,
+      contact: id,
+      previousStage: previousStageName,
+      stage: stage.apiName,
+      direction,
+      skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
+      account: finalAccountId,
+      deal: dealId,
+    };
+  }
+
+  /** Apply the stage update with optimistic locking and default status resolution. */
+  private async applyStageUpdate(
+    id: string,
+    contact: Contact,
+    stage: any,
+    finalAccountId?: string,
+  ): Promise<Contact> {
     const sortedStatuses = this.sortBySortOrder<any>(stage.statuses ?? []);
     const defaultStatus =
       sortedStatuses.find((status: any) => status.isDefault) ??
@@ -482,17 +522,35 @@ export class ContactsService {
         'Stage was updated concurrently by another user. Please reload and try again.',
       );
     }
+    return updated;
+  }
 
-    // 3. Record transition side effects after the versioned update succeeds.
+  /** Record stage history, emit audit event, and optionally create a deal. */
+  private async recordStageTransitionSideEffects(
+    id: string,
+    ctx: {
+      contact: Contact;
+      updated: Contact;
+      previousStageName: string | null;
+      stage: any;
+      changedById: string;
+      reason?: string;
+      direction: 'forward' | 'backward' | 'lateral';
+      skippedStages: string[];
+      finalAccountId?: string;
+      dealData?: any;
+    },
+  ): Promise<string | undefined> {
     const occurredAt = new Date();
     await this.repository.pushStageHistory(id, {
-      fromStage: previousStageName,
-      toStage: stage.apiName,
+      fromStage: ctx.previousStageName,
+      toStage: ctx.stage.apiName,
       changedAt: occurredAt,
-      changedById,
-      reason: params?.reason,
-      direction,
-      skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
+      changedById: ctx.changedById,
+      reason: ctx.reason,
+      direction: ctx.direction,
+      skippedStages:
+        ctx.skippedStages.length > 0 ? ctx.skippedStages : undefined,
     });
     // Stage change is NOT written to Activity Log.
     // Sales timeline uses Virtual Activity (pulled from stageHistory[]).
@@ -505,33 +563,23 @@ export class ContactsService {
       entityType: 'CONTACT',
       entityId: id,
       kind: 'updated',
-      oldSnapshot: contact,
-      newSnapshot: updated,
+      oldSnapshot: ctx.contact,
+      newSnapshot: ctx.updated,
     });
 
     await this.repository.touchLastActivity(id, occurredAt);
 
-    // 4. Optionally create deal on stage transition
-    let dealId: string | undefined;
-    if (params?.dealData && updated) {
+    // Optionally create deal on stage transition
+    if (ctx.dealData && ctx.updated) {
       const deal = await this.dealsService.create({
-        ...params.dealData,
-        contactId: updated.id,
-        accountId: finalAccountId,
+        ...ctx.dealData,
+        contactId: ctx.updated.id,
+        accountId: ctx.finalAccountId,
       });
-      dealId = deal.id;
+      return deal.id;
     }
 
-    return {
-      success: true,
-      contact: id,
-      previousStage: previousStageName,
-      stage: stage.apiName,
-      direction,
-      skippedStages: skippedStages.length > 0 ? skippedStages : undefined,
-      account: finalAccountId,
-      deal: dealId,
-    };
+    return undefined;
   }
 
   /**

@@ -75,7 +75,7 @@ export class TenantInterceptor implements NestInterceptor {
     const forwardedIp = Array.isArray(forwardedFor)
       ? forwardedFor[0]
       : forwardedFor?.split(',')[0]?.trim();
-    this.cls.set('requestIp', forwardedIp || request.ip);
+    this.cls.set('requestIp', forwardedIp ?? request.ip);
     this.cls.set('userAgent', request.headers['user-agent']);
 
     // ── Step 1: Collect raw identifiers from all sources ──
@@ -220,7 +220,7 @@ export class TenantInterceptor implements NestInterceptor {
       } else if (userId.includes('-')) {
         user = await userRepo.findByKeycloakIdAndProvider({
           keycloakId: userId,
-          provider: (this.cls.get('user') as any)?.identity_provider ?? 'email',
+          provider: this.cls.get('user')?.identity_provider ?? 'email',
         });
       }
       const userPrefs = {
@@ -347,7 +347,7 @@ export class TenantInterceptor implements NestInterceptor {
           strict: false,
         });
         const provider =
-          (this.cls.get('user') as any)?.identity_provider ?? 'email';
+          this.cls.get('user')?.identity_provider ?? 'email';
         const dbUser = await userRepo.findByKeycloakIdAndProvider({
           keycloakId: currentUserId,
           provider,

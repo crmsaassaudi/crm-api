@@ -86,23 +86,7 @@ export class AuthzPermissionCacheService {
       }
     }
 
-    const userRepository = this.moduleRef.get(UserRepository, {
-      strict: false,
-    });
-    const tenantsRepository = this.moduleRef.get(TenantsRepository, {
-      strict: false,
-    });
-    const groupRepository = this.moduleRef.get(GroupRepository, {
-      strict: false,
-    });
-
-    const user = this.isObjectId(rawUserId)
-      ? (await userRepository.findByIdsGlobal([rawUserId]))[0] || null
-      : await userRepository.findByKeycloakIdAndProvider({
-          keycloakId: rawUserId,
-          provider: 'email',
-        });
-
+    const user = await this.resolveUser(rawUserId);
     if (!user) {
       this.logger.warn(
         `Permission denied: user not found rawUserId=${rawUserId} requiredPermission=${permissionKey}`,
@@ -114,6 +98,44 @@ export class AuthzPermissionCacheService {
         denyReason: 'user_not_found',
       };
     }
+
+    return this.evaluatePermissionForUser(
+      user,
+      params,
+      permissionKey,
+    );
+  }
+
+  /** Resolve a user from either MongoDB ObjectId or Keycloak UUID. */
+  private async resolveUser(rawUserId: string): Promise<any> {
+    const userRepository = this.moduleRef.get(UserRepository, {
+      strict: false,
+    });
+
+    return this.isObjectId(rawUserId)
+      ? (await userRepository.findByIdsGlobal([rawUserId]))[0] || null
+      : await userRepository.findByKeycloakIdAndProvider({
+          keycloakId: rawUserId,
+          provider: 'email',
+        });
+  }
+
+  /** Evaluate permissions for a resolved user against tenant context. */
+  private async evaluatePermissionForUser(
+    user: any,
+    params: {
+      rawUserId: string;
+      tenantHint?: string;
+      rule: PermissionRuleMetadata;
+    },
+    permissionKey: string,
+  ): Promise<AuthzPermissionCheckResult> {
+    const tenantsRepository = this.moduleRef.get(TenantsRepository, {
+      strict: false,
+    });
+    const groupRepository = this.moduleRef.get(GroupRepository, {
+      strict: false,
+    });
 
     const tenantHint = params.tenantHint ?? user.tenants?.[0]?.tenantId;
     const tenant = await this.resolveTenant(tenantsRepository, tenantHint);

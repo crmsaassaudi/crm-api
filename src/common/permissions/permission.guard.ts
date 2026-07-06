@@ -48,13 +48,7 @@ export class PermissionGuard implements CanActivate {
       return false;
     }
 
-    const tenantHint =
-      this.cls.get<string>('tenantId') ??
-      request.tenantAlias ??
-      (process.env.NODE_ENV !== 'production'
-        ? this.extractHeader(request, 'x-tenant-id')
-        : undefined) ??
-      payload?.tenantId;
+    const tenantHint = this.resolveTenantHint(request, payload);
 
     if (this.hasSuperAdminClaim(payload)) {
       this.setRequestContext(request, payload, {
@@ -65,6 +59,30 @@ export class PermissionGuard implements CanActivate {
       return true;
     }
 
+    return this.performAuthzCheck(context, request, payload, rule, rawUserId, tenantHint);
+  }
+
+  /** Resolve tenant hint from CLS, request, headers, or JWT payload. */
+  private resolveTenantHint(request: any, payload: any): string | undefined {
+    return (
+      this.cls.get<string>('tenantId') ??
+      request.tenantAlias ??
+      (process.env.NODE_ENV !== 'production'
+        ? this.extractHeader(request, 'x-tenant-id')
+        : undefined) ??
+      payload?.tenantId
+    );
+  }
+
+  /** Execute the authz cache check and set request context on success. */
+  private async performAuthzCheck(
+    context: ExecutionContext,
+    request: any,
+    payload: any,
+    rule: PermissionRuleMetadata,
+    rawUserId: string,
+    tenantHint: string | undefined,
+  ): Promise<boolean> {
     const result = await this.authzCache.canAccess({
       rawUserId: String(rawUserId),
       tenantHint: tenantHint ? String(tenantHint) : undefined,

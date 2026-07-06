@@ -21,7 +21,7 @@ export class ActivityLogService {
   async create(data: {
     targetType: string;
     targetId: string;
-    event: ActivityFeedType | string;
+    event: ActivityFeedType | (string & {});
     actorId?: string;
     payload?: Record<string, any>;
     occurredAt?: Date;

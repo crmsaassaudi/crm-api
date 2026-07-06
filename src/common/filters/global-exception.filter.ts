@@ -39,28 +39,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const correlationId = this.cls.getId();
 
     // Extract message and error code
-    let message: string | string[] = 'Internal server error';
-    let errorCode: string = COMMON_ERRORS.INTERNAL_ERROR;
-    let errors = null;
-
-    if (exception instanceof BusinessException) {
-      // ── Typed business errors with explicit errorCode ──
-      const response = exception.getResponse() as any;
-      errorCode = exception.errorCode;
-      message = response.message ?? exception.message;
-      errors = response.errors ?? null;
-    } else if (exception instanceof HttpException) {
-      // ── NestJS built-in exceptions → map to generic codes ──
-      const response = exception.getResponse() as any;
-      message = response.message || exception.message;
-      errorCode = response.errorCode ?? this.mapNestExceptionToCode(exception);
-      errors = response.errors || null;
-    } else if (exception instanceof Error) {
-      message =
-        process.env.NODE_ENV === 'production'
-          ? 'Internal server error'
-          : exception.message;
-    }
+    const { message, errorCode, errors } =
+      this.extractErrorMetadata(exception);
 
     const responseBody = {
       statusCode: httpStatus,
@@ -73,31 +53,98 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     };
 
     // Log the error with correlation ID and User ID
+    this.logException(
+      httpAdapter,
+      request,
+      correlationId,
+      httpStatus,
+      errorCode,
+      message,
+      exception,
+    );
+
+    httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
+  }
+
+  /** Extract structured error metadata from the caught exception. */
+  private extractErrorMetadata(exception: unknown): {
+    message: string | string[];
+    errorCode: string;
+    errors: any;
+  } {
+    if (exception instanceof BusinessException) {
+      const response = exception.getResponse() as any;
+      return {
+        errorCode: exception.errorCode,
+        message: response.message ?? exception.message,
+        errors: response.errors ?? null,
+      };
+    }
+
+    if (exception instanceof HttpException) {
+      const response = exception.getResponse() as any;
+      return {
+        message: response.message || exception.message,
+        errorCode:
+          response.errorCode ?? this.mapNestExceptionToCode(exception),
+        errors: response.errors || null,
+      };
+    }
+
+    if (exception instanceof Error) {
+      return {
+        message:
+          process.env.NODE_ENV === 'production'
+            ? 'Internal server error'
+            : exception.message,
+        errorCode: COMMON_ERRORS.INTERNAL_ERROR,
+        errors: null,
+      };
+    }
+
+    return {
+      message: 'Internal server error',
+      errorCode: COMMON_ERRORS.INTERNAL_ERROR,
+      errors: null,
+    };
+  }
+
+  /** Format and emit the appropriate log entry for the exception. */
+  private logException(
+    httpAdapter: any,
+    request: any,
+    correlationId: string | undefined,
+    httpStatus: number,
+    errorCode: string,
+    message: string | string[],
+    exception: unknown,
+  ): void {
     const userId = request.user?.id || 'anonymous';
-    const isProduction = process.env.NODE_ENV === 'production';
-    const exceptionName =
-      exception instanceof Error ? exception.name : typeof exception;
-    const exceptionMessage =
-      exception instanceof Error ? exception.message : String(exception);
-    const exceptionStack =
-      exception instanceof Error ? exception.stack : String(exception);
     const serializedMessage = Array.isArray(message)
       ? message.join(', ')
       : message;
+    const method = httpAdapter.getRequestMethod(request);
+    const url = httpAdapter.getRequestUrl(request);
 
     if (httpStatus >= 500) {
+      const exceptionName =
+        exception instanceof Error ? exception.name : typeof exception;
+      const exceptionMessage =
+        exception instanceof Error ? exception.message : String(exception);
+      const exceptionStack =
+        exception instanceof Error ? exception.stack : String(exception);
+      const isProduction = process.env.NODE_ENV === 'production';
+
       const logMessage =
-        `[${correlationId}] [User:${userId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)}` +
+        `[${correlationId}] [User:${userId}] ${method} ${url}` +
         ` - ${errorCode}: ${serializedMessage}; exception=${exceptionName}; detail=${exceptionMessage}`;
 
       this.logger.error(logMessage, isProduction ? undefined : exceptionStack);
     } else {
       this.logger.warn(
-        `[${correlationId}] [User:${userId}] ${httpAdapter.getRequestMethod(request)} ${httpAdapter.getRequestUrl(request)} - ${errorCode}: ${message}`,
+        `[${correlationId}] [User:${userId}] ${method} ${url} - ${errorCode}: ${message}`,
       );
     }
-
-    httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
   }
 
   /**
