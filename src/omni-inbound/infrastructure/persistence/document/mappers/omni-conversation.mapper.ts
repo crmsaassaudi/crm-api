@@ -12,31 +12,6 @@ export class OmniConversationMapper {
       ? UserMapper.toDomain((raw as any).resolvedByAgent)
       : undefined;
 
-    let assignedAgentIdStr = null;
-    if (raw.assignedAgentId) {
-      assignedAgentIdStr =
-        typeof raw.assignedAgentId === 'object' && '_id' in raw.assignedAgentId
-          ? (raw.assignedAgentId as any)._id.toString()
-          : raw.assignedAgentId.toString();
-    }
-
-    let claimedByIdStr = null;
-    if (raw.claimedById) {
-      claimedByIdStr =
-        typeof raw.claimedById === 'object' && '_id' in raw.claimedById
-          ? (raw.claimedById as any)._id.toString()
-          : raw.claimedById.toString();
-    }
-
-    let contactIdStr = null;
-    if ((raw as any).contactId) {
-      contactIdStr =
-        typeof (raw as any).contactId === 'object' &&
-        '_id' in (raw as any).contactId
-          ? ((raw as any).contactId as any)._id.toString()
-          : (raw as any).contactId.toString();
-    }
-
     return {
       id: raw._id.toString(),
       tenantId: raw.tenantId?.toString(),
@@ -44,28 +19,18 @@ export class OmniConversationMapper {
       channelType: raw.channelType as ChannelType,
       channelAccount: (raw as any).channelAccount,
       externalConversationId: raw.externalId,
-      contactId: contactIdStr,
+      contactId: this.normalizeId((raw as any).contactId),
       customer: raw.customer,
-      assignedAgentId: assignedAgentIdStr,
+      assignedAgentId: this.normalizeId(raw.assignedAgentId),
       assignedGroupId: raw.assignedGroupId?.toString() ?? null,
-      claimedBy: claimedByIdStr,
+      claimedBy: this.normalizeId(raw.claimedById),
       claimedAt: raw.claimedAt,
       status: raw.status as any,
-      bot: (raw as any).bot
-        ? {
-            enabled: Boolean((raw as any).bot.enabled),
-            provider: (raw as any).bot.provider ?? 'typebot',
-            flowId: (raw as any).bot.flowId ?? null,
-            sessionId: (raw as any).bot.sessionId ?? null,
-            status: (raw as any).bot.status ?? 'active',
-            lastError: (raw as any).bot.lastError ?? null,
-            lockedAt: (raw as any).bot.lockedAt ?? null,
-          }
-        : null,
+      bot: this.mapBotSettings((raw as any).bot),
       lastMessage: raw.lastMessage,
       lastMessageAt: raw.lastMessageAt,
       unreadCount: raw.unreadCount,
-      linkedLeadId: undefined, // Add if needed
+      linkedLeadId: undefined,
       tags: raw.tags || [],
       reopenCount: (raw as any).reopenCount ?? 0,
       previousConversationId: (raw as any).previousConversationId ?? null,
@@ -79,6 +44,26 @@ export class OmniConversationMapper {
       lastCustomerMessageAt: (raw as any).lastCustomerMessageAt ?? null,
       createdAt: (raw as any).createdAt,
       updatedAt: (raw as any).updatedAt,
+    };
+  }
+
+  private static normalizeId(id: any): string | null {
+    if (!id) return null;
+    return typeof id === 'object' && '_id' in id
+      ? id._id.toString()
+      : id.toString();
+  }
+
+  private static mapBotSettings(bot: any) {
+    if (!bot) return null;
+    return {
+      enabled: Boolean(bot.enabled),
+      provider: bot.provider ?? 'typebot',
+      flowId: bot.flowId ?? null,
+      sessionId: bot.sessionId ?? null,
+      status: bot.status ?? 'active',
+      lastError: bot.lastError ?? null,
+      lockedAt: bot.lockedAt ?? null,
     };
   }
 

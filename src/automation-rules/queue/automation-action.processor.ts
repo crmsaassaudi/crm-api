@@ -88,7 +88,7 @@ export class ActionProcessorMixin {
       const reason = `schema-invalid: ${validationError}`;
       this.logger.error(`[Processor] Job ${job.id} rejected: ${reason}`);
       await this.dlqProducer
-        .sendToDlq(data as AutomationActionJobData, reason)
+        .sendToDlq(data, reason)
         .catch((dlqErr) =>
           this.logger.error(
             `[Processor] Failed to send invalid job ${job.id} to DLQ: ${dlqErr.message}`,

@@ -37,14 +37,14 @@ class EnvironmentVariablesValidator {
 
 export default registerAs<QueueConfig>('queue', () => {
   validateConfig(process.env, EnvironmentVariablesValidator);
-  const url = process.env.REDIS_QUEUE_URL || process.env.REDIS_URL;
+  const url = process.env.REDIS_QUEUE_URL ?? process.env.REDIS_URL;
   const parsed = parseRedisUrl(url);
 
   return {
     url,
-    host: parsed.host || process.env.REDIS_HOST || 'localhost',
-    port: parsed.port ?? parseInt(process.env.REDIS_PORT || '6379', 10),
-    password: parsed.password || process.env.REDIS_PASSWORD || undefined,
+    host: parsed.host ?? process.env.REDIS_HOST ?? 'localhost',
+    port: parsed.port ?? parseInt(process.env.REDIS_PORT ?? '6379', 10),
+    password: parsed.password ?? process.env.REDIS_PASSWORD ?? undefined,
     db:
       parseOptionalInt(process.env.REDIS_QUEUE_DB) ??
       parsed.db ??

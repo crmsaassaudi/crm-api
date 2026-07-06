@@ -9,7 +9,7 @@ import { open, unlink } from 'fs/promises';
 import { FileRepository } from '../../persistence/file.repository';
 import { AllConfigType } from '../../../../config/config.type';
 import { FileType } from '../../../domain/file';
-import { detectAllowedImageMimeFromBuffer } from '../../../file-upload-security.util';
+import { detectMimeFromBuffer } from '../../../file-upload-security.util';
 
 @Injectable()
 export class FilesLocalService {
@@ -48,7 +48,7 @@ export class FilesLocalService {
       await handle.close();
     }
 
-    const detectedMime = detectAllowedImageMimeFromBuffer(buffer);
+    const detectedMime = detectMimeFromBuffer(buffer);
     if (!detectedMime) {
       await unlink(file.path).catch(() => undefined);
       throw new UnprocessableEntityException({

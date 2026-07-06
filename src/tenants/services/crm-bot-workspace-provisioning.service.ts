@@ -57,8 +57,8 @@ export class CrmBotWorkspaceProvisioningService {
 
   private resolveBuilderBaseUrl(): string {
     const raw =
-      this.configService.get<string>('CRM_BOT_BUILDER_URL', { infer: true }) ||
-      this.configService.get<string>('CRM_BOT_URL', { infer: true }) ||
+      this.configService.get<string>('CRM_BOT_BUILDER_URL', { infer: true }) ??
+      this.configService.get<string>('CRM_BOT_URL', { infer: true }) ??
       'http://localhost:4202';
     return raw.replace(/\/+$/, '');
   }
@@ -77,7 +77,7 @@ export class CrmBotWorkspaceProvisioningService {
     const raw =
       this.configService.get<string>('CRM_BOT_PROVISION_TIMEOUT_MS', {
         infer: true,
-      }) ||
+      }) ??
       this.configService.get<string>('CRM_BOT_TIMEOUT_MS', { infer: true });
     const parsed = Number.parseInt(raw ?? '', 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 8000;

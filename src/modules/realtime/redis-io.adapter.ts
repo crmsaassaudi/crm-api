@@ -80,7 +80,7 @@ export class RedisIoAdapter extends IoAdapter {
   private extractSid(socket: Socket): string | null {
     // Cookie-based sid (primary — BFF pattern)
     const cookieHeader = socket.handshake.headers.cookie ?? '';
-    const match = cookieHeader.match(/(?:^|;\s*)sid=([^;]+)/);
+    const match = /(?:^|;\s*)sid=([^;]+)/.exec(cookieHeader);
     if (match?.[1]) {
       try {
         return decodeURIComponent(match[1]);

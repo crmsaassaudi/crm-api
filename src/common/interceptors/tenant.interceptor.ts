@@ -297,81 +297,78 @@ export class TenantInterceptor implements NestInterceptor {
     userId?: string;
     email?: string;
   }): Promise<void> {
-    // Try BFF session first (has MongoDB userId already)
     const sid = this.cls.get('sid');
     if (sid) {
-      try {
-        const session = await this.sessionService.getSession(sid);
-        if (session) {
-          // session.userId is already a MongoDB ObjectId string
-          this.cls.set('userId', session.userId);
-
-          const payload = this.decodeJwt(session.accessToken);
-          if (payload?.email) this.cls.set('email', payload.email);
-          if (payload?.tenantId) raw.tenantHints.push(payload.tenantId);
-        }
-      } catch (e) {
-        this.logger.warn(
-          `BFF session resolution failed: ${(e as Error).message}`,
-        );
-      }
+      await this.resolveBffSession(sid, raw);
     }
 
-    // Fallback to Bearer JWT identity
+    this.resolveJwtIdentity(raw);
+
+    const currentUserId = this.cls.get('userId');
+    if (currentUserId && currentUserId.includes('-')) {
+      await this.resolveKeycloakUser(currentUserId);
+    }
+  }
+
+  private async resolveBffSession(
+    sid: string,
+    raw: { tenantHints: string[] },
+  ): Promise<void> {
+    try {
+      const session = await this.sessionService.getSession(sid);
+      if (session) {
+        this.cls.set('userId', session.userId);
+        const payload = this.decodeJwt(session.accessToken);
+        if (payload?.email) this.cls.set('email', payload.email);
+        if (payload?.tenantId) raw.tenantHints.push(payload.tenantId);
+      }
+    } catch (e) {
+      this.logger.warn(`BFF session resolution failed: ${(e as Error).message}`);
+    }
+  }
+
+  private resolveJwtIdentity(raw: { userId?: string; email?: string }): void {
     if (!this.cls.get('userId') && raw.userId) {
       this.cls.set('userId', raw.userId);
     }
     if (!this.cls.get('email') && raw.email) {
       this.cls.set('email', raw.email);
     }
+  }
 
-    // If userId is a Keycloak UUID (contains '-'), resolve to MongoDB ObjectId
-    const currentUserId = this.cls.get('userId');
-    if (currentUserId && currentUserId.includes('-')) {
-      // Check cache before hitting the DB
-      const kcCacheKey = `user:keycloak:${currentUserId}`;
-      try {
-        const cachedMongoId = await this.redisService.get<string>(kcCacheKey);
-        if (cachedMongoId) {
-          this.cls.set('userId', cachedMongoId);
-          this.logger.debug(
-            `Resolved Keycloak UUID → MongoDB userId (cache): ${cachedMongoId}`,
-          );
-          return;
-        }
-      } catch {
-        // Cache miss — fall through to DB
-      }
-      try {
-        const userRepo = this.moduleRef.get(UserRepository, {
-          strict: false,
-        });
-        const provider =
-          this.cls.get('user')?.identity_provider ?? 'email';
-        const dbUser = await userRepo.findByKeycloakIdAndProvider({
-          keycloakId: currentUserId,
-          provider,
-        });
-        if (dbUser) {
-          const mongoId = dbUser.id.toString();
-          this.cls.set('userId', mongoId);
-          await this.redisService
-            .set(kcCacheKey, mongoId, USER_KEYCLOAK_CACHE_TTL)
-            .catch(() => {
-              /* non-fatal */
-            });
-          this.logger.debug(
-            `Resolved Keycloak UUID → MongoDB userId: ${mongoId}`,
-          );
-
-          // Do not infer tenant from membership. Tenant context must come from
-          // request routing/header/session/JWT, never from tenants[0].
-        }
-      } catch (e) {
-        this.logger.error(
-          `Error resolving Keycloak user: ${(e as Error).message}`,
+  private async resolveKeycloakUser(currentUserId: string): Promise<void> {
+    const kcCacheKey = `user:keycloak:${currentUserId}`;
+    try {
+      const cachedMongoId = await this.redisService.get<string>(kcCacheKey);
+      if (cachedMongoId) {
+        this.cls.set('userId', cachedMongoId);
+        this.logger.debug(
+          `Resolved Keycloak UUID → MongoDB userId (cache): ${cachedMongoId}`,
         );
+        return;
       }
+    } catch {
+      // Cache miss
+    }
+
+    try {
+      const userRepo = this.moduleRef.get(UserRepository, { strict: false });
+      const provider = this.cls.get('user')?.identity_provider ?? 'email';
+      const dbUser = await userRepo.findByKeycloakIdAndProvider({
+        keycloakId: currentUserId,
+        provider,
+      });
+
+      if (dbUser) {
+        const mongoId = dbUser.id.toString();
+        this.cls.set('userId', mongoId);
+        await this.redisService
+          .set(kcCacheKey, mongoId, USER_KEYCLOAK_CACHE_TTL)
+          .catch(() => {});
+        this.logger.debug(`Resolved Keycloak UUID → MongoDB userId: ${mongoId}`);
+      }
+    } catch (e) {
+      this.logger.error(`Error resolving Keycloak user: ${(e as Error).message}`);
     }
   }
 

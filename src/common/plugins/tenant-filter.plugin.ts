@@ -25,7 +25,7 @@ export function tenantFilterPlugin(
   schema: Schema,
   options?: TenantFilterPluginOptions,
 ) {
-  const tenantField = options?.field || 'tenantId';
+  const tenantField = options?.field ?? 'tenantId';
   const enforceDocumentWrites =
     options?.enforceDocumentWrites ?? !tenantField.includes('.');
   const protectTenantWrites =
@@ -202,14 +202,10 @@ function applyTenantFilterToAggregate(
 
 function protectTenantMutation(query: any, tenantField: string) {
   const opts = query.getOptions?.() ?? {};
-  if (opts.isPlatformQuery === true) {
-    return;
-  }
+  if (opts.isPlatformQuery === true) return;
 
   const update = query.getUpdate?.();
-  if (!update) {
-    return;
-  }
+  if (!update) return;
 
   const activeTenantId = getActiveTenantId(query, tenantField);
 
@@ -220,9 +216,7 @@ function protectTenantMutation(query: any, tenantField: string) {
     return;
   }
 
-  if (!isPlainObject(update)) {
-    return;
-  }
+  if (!isPlainObject(update)) return;
 
   if (!hasAtomicUpdateOperator(update)) {
     enforceTenantOnPlainDocument(update, tenantField, activeTenantId);
@@ -230,30 +224,7 @@ function protectTenantMutation(query: any, tenantField: string) {
     return;
   }
 
-  for (const [operator, payload] of Object.entries(update)) {
-    if (!isPlainObject(payload)) {
-      continue;
-    }
-
-    if (operator === '$setOnInsert') {
-      update[operator] = stripTenantField(payload, tenantField);
-      continue;
-    }
-
-    if (operator === '$rename') {
-      const renameTouchesTenant = Object.entries(payload).some(
-        ([from, to]) => from === tenantField || to === tenantField,
-      );
-      if (renameTouchesTenant) {
-        throwTenantMutationError(query, tenantField);
-      }
-      continue;
-    }
-
-    if (containsTenantField(payload, tenantField)) {
-      throwTenantMutationError(query, tenantField);
-    }
-  }
+  handleAtomicUpdateOperators(update, tenantField, query);
 
   if (opts.upsert === true && !tenantField.includes('.')) {
     update.$setOnInsert = {
@@ -263,6 +234,28 @@ function protectTenantMutation(query: any, tenantField: string) {
   }
 
   query.setUpdate(update);
+}
+
+function handleAtomicUpdateOperators(update: any, tenantField: string, query: any) {
+  for (const [operator, payload] of Object.entries(update)) {
+    if (!isPlainObject(payload)) continue;
+
+    if (operator === '$setOnInsert') {
+      update[operator] = stripTenantField(payload, tenantField);
+    } else if (operator === '$rename') {
+      if (renameTouchesTenant(payload, tenantField)) {
+        throwTenantMutationError(query, tenantField);
+      }
+    } else if (containsTenantField(payload, tenantField)) {
+      throwTenantMutationError(query, tenantField);
+    }
+  }
+}
+
+function renameTouchesTenant(payload: any, tenantField: string): boolean {
+  return Object.entries(payload).some(
+    ([from, to]) => from === tenantField || to === tenantField,
+  );
 }
 
 function enforceTenantOnDocument(doc: any, tenantField: string) {
@@ -467,7 +460,10 @@ function containsTenantField(
   }
 
   for (const [key, childValue] of Object.entries(value)) {
-    const nextPath = key.startsWith('$') ? path : path ? `${path}.${key}` : key;
+    let nextPath = path;
+    if (!key.startsWith('$')) {
+      nextPath = path ? `${path}.${key}` : key;
+    }
 
     if (nextPath === tenantField) {
       return true;
@@ -495,7 +491,10 @@ function stripTenantField(value: any, tenantField: string, path = ''): any {
   const sanitized: Record<string, any> = {};
 
   for (const [key, childValue] of Object.entries(value)) {
-    const nextPath = key.startsWith('$') ? path : path ? `${path}.${key}` : key;
+    let nextPath = path;
+    if (!key.startsWith('$')) {
+      nextPath = path ? `${path}.${key}` : key;
+    }
 
     if (nextPath === tenantField) {
       continue;

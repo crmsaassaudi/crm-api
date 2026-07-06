@@ -374,193 +374,111 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
   private async pollMailbox(config: any): Promise<void> {
     let ImapFlow: any;
     try {
-      // Dynamic import — imapflow is an ESM package
       ImapFlow = (await import('imapflow')).ImapFlow;
     } catch {
-      this.logger.error(
-        '[ImapPoller] imapflow package not installed. Run: npm install imapflow',
-      );
+      this.logger.error('[ImapPoller] imapflow package not installed.');
       return;
     }
 
-    // Decrypt credentials
-    let credentials: Record<string, any>;
-    try {
-      credentials = JSON.parse(
-        await this.crypto.decrypt(config.encryptedCredentials),
-      );
-      credentials = await this.oauth2TokenManager.buildOAuth2Credentials(
-        config,
-        credentials,
-      );
-    } catch (err: any) {
-      this.logger.error(
-        `[ImapPoller] Failed to decrypt credentials for ${config.name}: ${err.message}`,
-      );
-      return;
-    }
+    const credentials = await this.getImapCredentials(config);
+    if (!credentials) return;
 
     const imapHost = config.publicSettings?.imapHost;
     const imapPort = Number(config.publicSettings?.imapPort || 993);
-
     if (!imapHost) return;
 
-    const auth =
-      (config.authType ?? 'app_password') === 'oauth2'
-        ? {
-            user: credentials.user,
-            accessToken: credentials.accessToken,
-          }
-        : {
-            user: credentials.user,
-            pass: credentials.password,
-          };
+    const auth = (config.authType ?? 'app_password') === 'oauth2'
+      ? { user: credentials.user, accessToken: credentials.accessToken }
+      : { user: credentials.user, pass: credentials.password };
 
     const client = new ImapFlow({
       host: imapHost,
       port: imapPort,
       secure: imapPort === 993,
       auth,
-      logger: false, // Suppress noisy IMAP protocol logs
-      // Network safety: without these, a half-open IMAP socket can hold the
-      // mailbox lock indefinitely and the poller never recovers until
-      // process restart.
+      logger: false,
       socketTimeout: 30_000,
       greetingTimeout: 15_000,
     } as any);
 
     try {
       await client.connect();
-
-      const syncTargetFolders = await this.emailSettings.getSyncTargetFolders(
-        config.tenantId,
-      );
-
+      const syncTargetFolders = await this.emailSettings.getSyncTargetFolders(config.tenantId);
       if (!syncTargetFolders.includes('INBOX')) {
-        this.logger.debug(
-          `[ImapPoller] ${config.name}: INBOX is not in syncTargetFolders; skipping mailbox poll`,
-        );
+        this.logger.debug(`[ImapPoller] ${config.name}: INBOX is not in syncTargetFolders; skipping`);
         return;
       }
 
-      // Open INBOX. Additional provider-specific folder paths can be layered
-      // here once Gmail/Graph adapters expose stable folder/label discovery.
       const lock = await client.getMailboxLock('INBOX');
-
       try {
-        // ── UID-based tracking (never miss read emails) ─────────────
-        // Instead of { seen: false } which misses emails the user already
-        // opened in Gmail/Outlook, track the last processed UID in Redis
-        // and fetch everything newer.
-        const uidCacheKey = `imap:lastuid:${config.id}`;
-        const redisClient = this.redisService.getClient();
-        const lastUidStr = await redisClient.get(uidCacheKey);
-        const lastUid = lastUidStr ? parseInt(lastUidStr, 10) : 0;
-
-        // Fetch tenant-specific settings from channel config
-        const initialSyncDays =
-          parseInt(config.publicSettings?.initialSyncDays) || 30;
-        const blockAutoResponders =
-          config.publicSettings?.blockAutoResponders === true ||
-          config.publicSettings?.blockAutoResponders === 'true';
-
-        // Build fetch range: all UIDs > lastUid, or ALL from last N days if first run
-        // First run fetches ALL emails (read + unread) to ensure complete mailbox sync.
-        // Subsequent runs use UID-based tracking to never miss emails.
-        const fetchQuery =
-          lastUid > 0
-            ? { uid: `${lastUid + 1}:*` }
-            : {
-                since: new Date(
-                  Date.now() - initialSyncDays * 24 * 60 * 60 * 1000,
-                ),
-              };
-
-        // Fetch messages
-        const messages: any[] = [];
-        for await (const msg of client.fetch(fetchQuery, {
-          envelope: true,
-          source: true,
-          bodyStructure: true,
-          labels: true,
-        })) {
-          messages.push(msg);
-          if (messages.length >= this.MAX_BATCH_SIZE) break;
-        }
-
-        if (messages.length === 0) {
-          return;
-        }
-
-        this.logger.log(
-          `[ImapPoller] ${config.name}: Found ${messages.length} new email(s)`,
-        );
-
-        // Cap batch size to avoid lock expiration and overload
-        const batch = messages.slice(0, this.MAX_BATCH_SIZE);
-        if (messages.length > this.MAX_BATCH_SIZE) {
-          this.logger.warn(
-            `[ImapPoller] ${config.name}: Processing first ${this.MAX_BATCH_SIZE} of ${messages.length} emails (rest will sync next cycle)`,
-          );
-        }
-
-        // Record tenant activity (keeps polling at 2min)
-        await this.recordActivity(config.tenantId);
-
-        // Process each message
-        let processed = 0;
-        const processedUids: number[] = [];
-        for (const msg of batch) {
-          // Graceful shutdown: stop processing remaining emails
-          if (this.destroying) {
-            this.logger.warn(
-              `[ImapPoller] Shutdown in progress — aborting remaining email(s) for ${config.name}`,
-            );
-            break;
-          }
-
-          try {
-            this.logger.log(
-              `[ImapPoller] ▶ Processing UID=${msg.uid} (${config.name})`,
-            );
-            const gmailLabels = this.buildGmailLabelContext(msg.labels);
-            await this.processEmail(config, msg, client, blockAutoResponders, {
-              crmFolder: 'INBOX',
-              providerFolder: 'INBOX',
-              providerLabelIds: gmailLabels.providerLabelIds,
-              providerLabels: gmailLabels.providerLabels,
-            });
-            processedUids.push(msg.uid);
-            processed++;
-          } catch (err: any) {
-            this.logger.error(
-              `[ImapPoller] Failed to process email UID=${msg.uid}: ${err.message}`,
-            );
-          }
-        }
-
-        if (processed > 0) {
-          this.logger.log(
-            `[ImapPoller] ${config.name}: Successfully processed ${processed}/${batch.length} email(s)`,
-          );
-        }
-
-        // Save highest UID from this batch for next poll cycle
-        // Crucial: Use 'batch' here, not 'messages'. If we use 'messages',
-        // we skip emails that were fetched but not yet processed due to batch limits.
-        const maxUid = Math.max(...batch.map((m: any) => m.uid));
-        if (maxUid > 0) {
-          await redisClient.set(uidCacheKey, maxUid.toString());
-        }
+        await this.processInbox(client, config);
       } finally {
         lock.release();
       }
     } catch (err: any) {
-      this.logger.error(
-        `[ImapPoller] IMAP connection failed for ${config.name} (${imapHost}:${imapPort}): ${err.message}`,
-      );
+      this.logger.error(`[ImapPoller] IMAP connection failed for ${config.name}: ${err.message}`);
     } finally {
       await client.logout().catch(() => {});
+    }
+  }
+
+  private async getImapCredentials(config: any): Promise<Record<string, any> | null> {
+    try {
+      let credentials = JSON.parse(await this.crypto.decrypt(config.encryptedCredentials));
+      credentials = await this.oauth2TokenManager.buildOAuth2Credentials(config, credentials);
+      return credentials;
+    } catch (err: any) {
+      this.logger.error(`[ImapPoller] Failed to decrypt credentials for ${config.name}: ${err.message}`);
+      return null;
+    }
+  }
+
+  private async processInbox(client: any, config: any): Promise<void> {
+    const uidCacheKey = `imap:lastuid:${config.id}`;
+    const redisClient = this.redisService.getClient();
+    const lastUidStr = await redisClient.get(uidCacheKey);
+    const lastUid = lastUidStr ? parseInt(lastUidStr, 10) : 0;
+
+    const initialSyncDays = parseInt(config.publicSettings?.initialSyncDays) || 30;
+    const blockAutoResponders = config.publicSettings?.blockAutoResponders === true ||
+      config.publicSettings?.blockAutoResponders === 'true';
+
+    const fetchQuery = lastUid > 0
+      ? { uid: `${lastUid + 1}:*` }
+      : { since: new Date(Date.now() - initialSyncDays * 24 * 60 * 60 * 1000) };
+
+    const messages: any[] = [];
+    for await (const msg of client.fetch(fetchQuery, { envelope: true, source: true, bodyStructure: true, labels: true })) {
+      messages.push(msg);
+      if (messages.length >= this.MAX_BATCH_SIZE) break;
+    }
+
+    if (messages.length === 0) return;
+
+    this.logger.log(`[ImapPoller] ${config.name}: Found ${messages.length} new email(s)`);
+    await this.recordActivity(config.tenantId);
+
+    let processed = 0;
+    for (const msg of messages) {
+      if (this.destroying) break;
+      try {
+        const gmailLabels = this.buildGmailLabelContext(msg.labels);
+        await this.processEmail(config, msg, client, blockAutoResponders, {
+          crmFolder: 'INBOX',
+          providerFolder: 'INBOX',
+          providerLabelIds: gmailLabels.providerLabelIds,
+          providerLabels: gmailLabels.providerLabels,
+        });
+        processed++;
+      } catch (err: any) {
+        this.logger.error(`[ImapPoller] Failed to process email UID=${msg.uid}: ${err.message}`);
+      }
+    }
+
+    if (processed > 0) {
+      this.logger.log(`[ImapPoller] ${config.name}: Successfully processed ${processed}/${messages.length} email(s)`);
+      const maxUid = Math.max(...messages.map((m: any) => m.uid));
+      await redisClient.set(uidCacheKey, maxUid.toString());
     }
   }
 
@@ -581,174 +499,53 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
       providerLabels: ['Inbox'],
     },
   ): Promise<void> {
-    // ── Early Duplicate Check (from envelope, no parsing needed) ──────
     const envelopeMessageId = msg.envelope?.messageId;
-    if (envelopeMessageId) {
-      const existing = await this.emailMetadataModel
-        .findOne({
-          tenantId: config.tenantId,
-          emailMessageId: envelopeMessageId,
-        })
-        .lean();
-      if (existing) {
-        await this.refreshDuplicateEmailLabels(
-          config,
-          msg,
-          existing,
-          mailboxContext,
-          envelopeMessageId,
-        );
-        this.logger.warn(
-          `[ImapPoller] UID=${msg.uid}: Skipped duplicate (envelope) — ${envelopeMessageId}`,
-        );
-        return;
-      }
+    if (envelopeMessageId && await this.checkDuplicate(config.tenantId, envelopeMessageId, config, msg, mailboxContext)) {
+      return;
     }
 
-    // ── Parse email using mailparser (proper MIME/QP/Base64 decoding) ──
     const rawSource = msg.source;
+    if (!rawSource) {
+      this.logger.warn(`[ImapPoller] UID=${msg.uid}: No source data — skipping`);
+      return;
+    }
+
     const rawSize = Buffer.isBuffer(rawSource)
       ? rawSource.length
-      : rawSource
-        ? Buffer.byteLength(String(rawSource))
-        : 0;
-    if (!rawSource) {
-      this.logger.warn(
-        `[ImapPoller] UID=${msg.uid}: No source data — skipping`,
-      );
-      return;
-    }
-
+      : Buffer.byteLength(String(rawSource));
     if (rawSize > this.MAX_RAW_EMAIL_BYTES) {
-      this.logger.warn(
-        `[ImapPoller] UID=${msg.uid}: Raw email too large (${rawSize} bytes) - skipping to avoid OOM`,
-      );
+      this.logger.warn(`[ImapPoller] UID=${msg.uid}: Raw email too large (${rawSize} bytes) - skipping`);
       return;
     }
 
-    this.logger.log(`[ImapPoller] UID=${msg.uid}: Parsing (${rawSize} bytes)`);
-    // simpleParser has no internal timeout — a malformed MIME or a
-    // pathological boundary section can hang the worker. Race it against a
-    // 30s timer so a single bad message does not stall the mailbox lock.
-    const parsePromise = simpleParser(rawSource, {
-      skipImageLinks: true,
-      skipHtmlToText: false,
-      skipTextToHtml: false,
-    });
-    const parsed: ParsedMail = await Promise.race([
-      parsePromise,
-      new Promise<ParsedMail>((_, reject) =>
-        setTimeout(
-          () => reject(new Error('simpleParser timed out after 30s')),
-          30_000,
-        ).unref(),
-      ),
-    ]);
-    this.logger.log(
-      `[ImapPoller] UID=${msg.uid}: Parsed OK — subject="${parsed.subject ?? '(none)'}"`,
-    );
-
-    // Extract properly decoded content
+    const parsed = await this.parseEmail(rawSource, msg.uid, rawSize);
     const htmlBody = parsed.html || '';
     const textBody = parsed.text || '';
     const subject = parsed.subject || msg.envelope?.subject || '(no subject)';
 
-    // ── Extract structured participant data from mailparser ──────────
-    // mailparser returns AddressObject with { value: [{ address, name }] }
-    // to/cc/bcc can be AddressObject | AddressObject[] — normalize to flat array
-    const extractAddresses = (field: any): string[] => {
-      if (!field) return [];
-      const items = Array.isArray(field) ? field : [field];
-      return items.flatMap((obj: any) =>
-        (obj.value || []).map((a: any) => a.address).filter(Boolean),
-      );
-    };
-    const fromAddr = parsed.from?.value?.[0]?.address || '';
-    const fromName =
-      parsed.from?.value?.[0]?.name || fromAddr.split('@')[0] || 'Unknown';
-    const toAddrs = extractAddresses(parsed.to);
-    const ccAddrs = extractAddresses(parsed.cc);
-    const bccAddrs = extractAddresses(parsed.bcc);
+    const { fromAddr, fromName, toAddrs, ccAddrs, bccAddrs } = this.extractParticipants(parsed);
+    const headers = this.extractHeaders(parsed);
 
-    // Build headers map for normalizer compatibility (auto-responder, bounce, thread)
-    // Only use string-safe headers — skip structured objects (from/to/cc)
-    const headers: Record<string, string> = {};
-    parsed.headers.forEach((value, key) => {
-      const k = key.toLowerCase();
-      // Skip address fields — we use parsed.from/to/cc directly
-      if (['from', 'to', 'cc', 'bcc', 'sender', 'reply-to'].includes(k)) {
-        headers[k] =
-          typeof value === 'object' && value !== null && 'text' in value
-            ? (value as any).text
-            : String(value ?? '');
-        return;
-      }
-      headers[k] =
-        typeof value === 'string'
-          ? value
-          : Array.isArray(value)
-            ? value.join(', ')
-            : String(value ?? '');
-    });
-
-    // ── Sad Path #1: Auto-Responder Filter ────────────────────────────
-    if (
-      blockAutoResponders &&
-      this.normalizer.isAutoResponder(headers, blockAutoResponders)
-    ) {
+    if (blockAutoResponders && this.normalizer.isAutoResponder(headers, blockAutoResponders)) {
       this.logger.warn(`[ImapPoller] Dropped auto-responder: ${subject}`);
       return;
     }
 
-    // ── Sad Path #2: Bounce Detection ─────────────────────────────────
     const bounce = this.normalizer.detectBounce(headers, textBody);
     if (bounce?.isBounce) {
-      this.normalizer.handleBounce(
-        config.tenantId,
-        bounce.originalMessageId,
-        bounce.reason,
-      );
+      this.normalizer.handleBounce(config.tenantId, bounce.originalMessageId, bounce.reason);
       return;
     }
 
-    // ── Extract Threading ───────────────────────────────────────────
     const threadInfo = this.normalizer.extractThreadInfo(headers);
-
-    // ── Generate clean snippet from plain text ────────────────────────
-    // Use parsed.text (already decoded by mailparser) — no CSS/HTML artifacts
-    const snippet = (textBody || '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .substring(0, 200);
-
-    // ── Idempotency Guard: skip if already imported ──────────────────
     const rfcMessageId = threadInfo.messageId;
-    if (rfcMessageId) {
-      const existing = await this.emailMetadataModel
-        .findOne({
-          tenantId: config.tenantId,
-          emailMessageId: rfcMessageId,
-        })
-        .lean();
-      if (existing) {
-        await this.refreshDuplicateEmailLabels(
-          config,
-          msg,
-          existing,
-          mailboxContext,
-          rfcMessageId,
-        );
-        this.logger.warn(
-          `[ImapPoller] Skipped duplicate: ${rfcMessageId} (already imported)`,
-        );
-        return;
-      }
+    if (rfcMessageId && await this.checkDuplicate(config.tenantId, rfcMessageId, config, msg, mailboxContext)) {
+      return;
     }
 
-    // ── Generate a placeholder messageId upfront ──────────────────────
+    const snippet = (textBody || '').replace(/\s+/g, ' ').trim().substring(0, 200);
     const generatedMessageId = new Types.ObjectId();
 
-    // ── Save heavy content to email_contents ───────────────────────────
     const emailContent = await this.emailContentModel.create({
       tenantId: config.tenantId,
       messageId: generatedMessageId,
@@ -763,17 +560,64 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
       rfc822MessageId: threadInfo.messageId || null,
     });
 
-    // ── Save metadata to email_metadata ────────────────────────────────
     const providerLabelDetails = this.buildProviderLabelDetails(mailboxContext);
+    await this.saveEmailMetadata(config, generatedMessageId, threadInfo, fromAddr, toAddrs, ccAddrs, bccAddrs, mailboxContext, providerLabelDetails, msg.uid, emailContent);
 
-    let emailMetadata: any;
+    this.emitInboundEvents(config, generatedMessageId, fromAddr, fromName, toAddrs, ccAddrs, subject, snippet, threadInfo, emailContent, mailboxContext, providerLabelDetails, msg.uid, parsed.date);
+  }
+
+  private async checkDuplicate(tenantId: string, messageId: string, config: any, msg: any, mailboxContext: MailboxLabelContext): Promise<boolean> {
+    const existing = await this.emailMetadataModel.findOne({ tenantId, emailMessageId: messageId }).lean();
+    if (existing) {
+      await this.refreshDuplicateEmailLabels(config, msg, existing, mailboxContext, messageId);
+      this.logger.warn(`[ImapPoller] UID=${msg.uid}: Skipped duplicate — ${messageId}`);
+      return true;
+    }
+    return false;
+  }
+
+  private async parseEmail(rawSource: any, msgUid: number, rawSize: number): Promise<ParsedMail> {
+    this.logger.log(`[ImapPoller] UID=${msgUid}: Parsing (${rawSize} bytes)`);
+    const parsePromise = simpleParser(rawSource, { skipImageLinks: true, skipHtmlToText: false, skipTextToHtml: false });
+    return await Promise.race([
+      parsePromise,
+      new Promise<ParsedMail>((_, reject) =>
+        setTimeout(() => reject(new Error('simpleParser timed out after 30s')), 30_000).unref(),
+      ),
+    ]);
+  }
+
+  private extractParticipants(parsed: ParsedMail) {
+    const extractAddresses = (field: any): string[] => {
+      if (!field) return [];
+      const items = Array.isArray(field) ? field : [field];
+      return items.flatMap((obj: any) => (obj.value || []).map((a: any) => a.address).filter(Boolean));
+    };
+    const fromAddr = parsed.from?.value?.[0]?.address || '';
+    const fromName = parsed.from?.value?.[0]?.name || fromAddr.split('@')[0] || 'Unknown';
+    return { fromAddr, fromName, toAddrs: extractAddresses(parsed.to), ccAddrs: extractAddresses(parsed.cc), bccAddrs: extractAddresses(parsed.bcc) };
+  }
+
+  private extractHeaders(parsed: ParsedMail): Record<string, string> {
+    const headers: Record<string, string> = {};
+    parsed.headers.forEach((value, key) => {
+      const k = key.toLowerCase();
+      if (['from', 'to', 'cc', 'bcc', 'sender', 'reply-to'].includes(k)) {
+        headers[k] = typeof value === 'object' && value !== null && 'text' in value ? (value as any).text : String(value ?? '');
+      } else {
+        headers[k] = typeof value === 'string' ? value : Array.isArray(value) ? value.join(', ') : String(value ?? '');
+      }
+    });
+    return headers;
+  }
+
+  private async saveEmailMetadata(config: any, generatedMessageId: Types.ObjectId, threadInfo: any, fromAddr: string, toAddrs: string[], ccAddrs: string[], bccAddrs: string[], mailboxContext: MailboxLabelContext, providerLabelDetails: any, imapUid: number, emailContent: any) {
     try {
-      emailMetadata = await this.emailMetadataModel.create({
+      await this.emailMetadataModel.create({
         tenantId: config.tenantId,
         mailboxId: config.id,
         messageId: generatedMessageId,
-        emailMessageId:
-          threadInfo.messageId || `<imap-${generatedMessageId}@local>`,
+        emailMessageId: threadInfo.messageId || `<imap-${generatedMessageId}@local>`,
         inReplyTo: threadInfo.inReplyTo,
         references: threadInfo.references,
         from: fromAddr,
@@ -786,42 +630,24 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
         providerLabels: mailboxContext.providerLabels,
         providerLabelDetails,
         deliveryStatus: 'unknown',
-        bounceReason: null,
-        imapUid: msg.uid || null,
-        syncStatus: null,
-        lastSyncError: null,
+        imapUid: imapUid || null,
       });
     } catch (err: any) {
       if (err.code === 11000) {
-        await this.emailContentModel
-          .deleteOne({ _id: emailContent._id })
-          .catch(() => {});
-        const existing = threadInfo.messageId
-          ? await this.emailMetadataModel
-              .findOne({
-                tenantId: config.tenantId,
-                emailMessageId: threadInfo.messageId,
-              })
-              .lean()
-          : null;
-        if (existing) {
-          await this.refreshDuplicateEmailLabels(
-            config,
-            msg,
-            existing,
-            mailboxContext,
-            threadInfo.messageId,
-          );
+        await this.emailContentModel.deleteOne({ _id: emailContent._id }).catch(() => {});
+        const messageId = threadInfo.messageId;
+        if (messageId) {
+          const existing = await this.emailMetadataModel.findOne({ tenantId: config.tenantId, emailMessageId: messageId }).lean();
+          if (existing) await this.refreshDuplicateEmailLabels(config, { uid: imapUid }, existing, mailboxContext, messageId);
         }
-        this.logger.debug(
-          `[ImapPoller] Skipped duplicate (race): ${threadInfo.messageId}`,
-        );
+        this.logger.debug(`[ImapPoller] Skipped duplicate (race): ${messageId}`);
         return;
       }
       throw err;
     }
+  }
 
-    // ── Emit lightweight payload to OmniInbound pipeline ───────────────
+  private emitInboundEvents(config: any, generatedMessageId: Types.ObjectId, fromAddr: string, fromName: string, toAddrs: string[], ccAddrs: string[], subject: string, snippet: string, threadInfo: any, emailContent: any, mailboxContext: MailboxLabelContext, providerLabelDetails: any, imapUid: number, date?: Date) {
     this.eventEmitter.emit('email.inbound.received', {
       tenantId: config.tenantId,
       configId: config.id,
@@ -835,15 +661,15 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
       snippet,
       threadInfo,
       emailContentId: emailContent._id?.toString(),
-      emailMetadataId: emailMetadata._id?.toString(),
+      emailMetadataId: null, // Set in downstream if needed
       mailboxId: config.id,
       crmFolder: mailboxContext.crmFolder,
       providerFolder: mailboxContext.providerFolder,
       providerLabelIds: mailboxContext.providerLabelIds,
       providerLabels: mailboxContext.providerLabels,
       providerLabelDetails,
-      imapUid: msg.uid || null,
-      timestamp: parsed.date || new Date(),
+      imapUid: imapUid || null,
+      timestamp: date || new Date(),
     });
 
     this.eventEmitter.emit('email.labels.observed', {
@@ -852,10 +678,6 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
       provider: config.providerType,
       labels: providerLabelDetails,
     });
-
-    this.logger.log(
-      `[ImapPoller] ✉️ Processed: "${subject}" from ${fromName} <${fromAddr}>`,
-    );
   }
 
   // ── Config Discovery ────────────────────────────────────────────────────

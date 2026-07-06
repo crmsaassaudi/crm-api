@@ -44,7 +44,7 @@ export class WebhookProcessor extends BaseConsumer {
 
   async process(job: Job<WebhookJobData>): Promise<void> {
     const { channelType, event } = job.data;
-    const accountId = job.data.accountId || this.extractAccountId(job.data);
+    const accountId = job.data.accountId ?? this.extractAccountId(job.data);
     // Dedup ONLY by provider message ID. A BullMQ retry gets a fresh job.id,
     // so falling back to job.id (the previous behaviour) silently allowed
     // duplicates when the same webhook was re-delivered later.
@@ -124,7 +124,7 @@ export class WebhookProcessor extends BaseConsumer {
       };
     }
 
-    const accountId = data.accountId || this.extractAccountId(data);
+    const accountId = data.accountId ?? this.extractAccountId(data);
     if (!accountId) {
       throw new Error(
         `Could not determine channel account ID from ${data.channelType} webhook`,

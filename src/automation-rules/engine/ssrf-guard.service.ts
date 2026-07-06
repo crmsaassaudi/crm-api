@@ -207,7 +207,7 @@ export class SsrfGuardService {
     const trimmed = hostnameOrIp.trim().replace(/(?:^\[)|(?:\]$)/g, '');
     if (isIP(trimmed)) return trimmed;
 
-    const ipv4Mapped = trimmed.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+    const ipv4Mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(trimmed);
     if (ipv4Mapped && isIP(ipv4Mapped[1]) === 4) {
       return ipv4Mapped[1];
     }
