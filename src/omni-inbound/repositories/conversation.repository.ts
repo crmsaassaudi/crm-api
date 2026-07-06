@@ -673,7 +673,7 @@ export class ConversationRepository {
 
     const hasMore = docs.length > safeLimit;
     const trimmed = hasMore ? docs.slice(0, safeLimit) : docs;
-    const ordered = trimmed.reverse();
+    const ordered = [...trimmed].reverse();
     const sessions = ordered.map((doc) => OmniConversationMapper.toDomain(doc));
     const oldest = sessions[0] ?? null;
 

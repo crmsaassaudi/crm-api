@@ -191,8 +191,9 @@ export class TenantsService {
       try {
         await this.tenantsRepository.updateOwner(
           tenant!.id,
-          localUser.id as string,
+          localUser.id,
         );
+
         stepLog(8, `Tenant owner set to ${localUser.id}`);
       } catch (e) {
         stepErr(8, e);
@@ -388,9 +389,10 @@ export class TenantsService {
       // ── Step 6: Set owner on the Tenant ──────────────────────────────────────
       try {
         await this.tenantsRepository.updateOwner(
-          tenant!.id as string,
-          localUser.id as string,
+          tenant!.id,
+          localUser.id,
         );
+
         stepLog(6, `Tenant owner set to ${localUser.id}`);
       } catch (e) {
         stepErr(6, e);

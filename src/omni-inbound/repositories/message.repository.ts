@@ -229,30 +229,9 @@ export class MessageRepository {
     const safeLimit = Math.max(1, Math.min(params.limit, 200));
     const filter: Record<string, any> = {
       conversationId: params.conversationId,
+      ...this.buildCursorFilter(params.cursor, params.direction),
     };
 
-    if (params.cursor) {
-      const cursorObjectId = Types.ObjectId.isValid(params.cursor.id)
-        ? new Types.ObjectId(params.cursor.id)
-        : null;
-
-      if (!cursorObjectId) {
-        filter.createdAt =
-          params.direction === 'past'
-            ? { $lt: params.cursor.createdAt }
-            : { $gt: params.cursor.createdAt };
-      } else if (params.direction === 'past') {
-        filter.$or = [
-          { createdAt: { $lt: params.cursor.createdAt } },
-          { createdAt: params.cursor.createdAt, _id: { $lt: cursorObjectId } },
-        ];
-      } else {
-        filter.$or = [
-          { createdAt: { $gt: params.cursor.createdAt } },
-          { createdAt: params.cursor.createdAt, _id: { $gt: cursorObjectId } },
-        ];
-      }
-    }
 
     const sort: Record<string, SortOrder> =
       params.direction === 'past'
@@ -306,4 +285,39 @@ export class MessageRepository {
 
     return docs.map((doc) => OmniMessageMapper.toDomain(doc as any));
   }
+
+  private buildCursorFilter(
+
+    cursor: { createdAt: Date; id: string } | null | undefined,
+    direction: 'past' | 'future',
+  ): Record<string, any> {
+    if (!cursor) return {};
+
+    const cursorObjectId = Types.ObjectId.isValid(cursor.id)
+      ? new Types.ObjectId(cursor.id)
+      : null;
+
+    if (!cursorObjectId) {
+      return {
+        createdAt: direction === 'past' ? { $lt: cursor.createdAt } : { $gt: cursor.createdAt },
+      };
+    }
+
+    if (direction === 'past') {
+      return {
+        $or: [
+          { createdAt: { $lt: cursor.createdAt } },
+          { createdAt: cursor.createdAt, _id: { $lt: cursorObjectId } },
+        ],
+      };
+    }
+
+    return {
+      $or: [
+        { createdAt: { $gt: cursor.createdAt } },
+        { createdAt: cursor.createdAt, _id: { $gt: cursorObjectId } },
+      ],
+    };
+  }
 }
+

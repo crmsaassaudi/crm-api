@@ -26,8 +26,9 @@ export class AccountMapper {
     }
     // Handle explicitly populated 'owner' virtual/aggregation field
     if ((raw as any).owner) {
-      domainEntity.owner = UserMapper.toDomain((raw as any).owner as any);
+      domainEntity.owner = UserMapper.toDomain((raw as any).owner);
     }
+
     domainEntity.statusId = raw.statusId?.toString();
     domainEntity.isArchived = raw.isArchived;
     domainEntity.customFields = raw.customFields;

@@ -53,15 +53,17 @@ export class SlaTriggerListener {
           .filter((p) => p.type === 'resolution')
           .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
 
+
         const updatePayload: Record<string, any> = {};
 
         // ── Schedule FRT ───────────────────────────────────────────
-        if (frtPolicy && frtPolicy.targets?.length) {
+        if (frtPolicy?.targets?.[0]) {
           const target = frtPolicy.targets[0];
           const durationMinutes = this.toMinutes(
             target.timeValue,
             target.timeUnit,
           );
+
 
           const frtDeadline =
             await this.businessHoursService.calculateSlaDeadline(
@@ -89,12 +91,13 @@ export class SlaTriggerListener {
         }
 
         // ── Schedule Resolution ────────────────────────────────────
-        if (resolutionPolicy && resolutionPolicy.targets?.length) {
+        if (resolutionPolicy?.targets?.[0]) {
           const target = resolutionPolicy.targets[0];
           const durationMinutes = this.toMinutes(
             target.timeValue,
             target.timeUnit,
           );
+
 
           const resolutionDeadline =
             await this.businessHoursService.calculateSlaDeadline(

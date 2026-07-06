@@ -47,27 +47,40 @@ export class DataMaskingInterceptor implements NestInterceptor {
     const baseMaskedFields = this.getMaskedFields(layoutConfig, resourceName);
 
     const request = context.switchToHttp().getRequest();
-    if (
-      ['POST', 'PATCH', 'PUT'].includes(request.method) &&
-      request.body &&
-      baseMaskedFields.size > 0
-    ) {
-      for (const [field] of baseMaskedFields.entries()) {
-        const value = request.body[field];
-        if (typeof value === 'string' && value.includes('***')) {
-          delete request.body[field];
-        } else if (Array.isArray(value)) {
-          if (value.some((v) => typeof v === 'string' && v.includes('***'))) {
-            delete request.body[field];
-          }
-        }
-      }
-    }
+    this.sanitizeRequest(request, baseMaskedFields);
 
     return next
       .handle()
       .pipe(map((data) => this.maskData(data, layoutConfig, resourceName)));
   }
+
+  private sanitizeRequest(request: any, maskedFields: Map<string, string>): void {
+    if (
+      !['POST', 'PATCH', 'PUT'].includes(request.method) ||
+      !request.body ||
+      maskedFields.size === 0
+    ) {
+      return;
+    }
+
+    for (const field of maskedFields.keys()) {
+      const value = request.body[field];
+      if (this.shouldDeleteField(value)) {
+        delete request.body[field];
+      }
+    }
+  }
+
+  private shouldDeleteField(value: any): boolean {
+    if (typeof value === 'string') {
+      return value.includes('***');
+    }
+    if (Array.isArray(value)) {
+      return value.some((v) => typeof v === 'string' && v.includes('***'));
+    }
+    return false;
+  }
+
 
   private maskData(data: any, layoutConfig: any, baseResource: string): any {
     if (!data) return data;

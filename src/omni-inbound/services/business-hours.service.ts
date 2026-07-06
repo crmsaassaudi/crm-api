@@ -320,47 +320,63 @@ export class BusinessHoursService {
         continue;
       }
 
-      // Get working slots for today
-      const slots = this.getWorkingSlots(daySchedule);
-      const currentMinutes = cursor.getHours() * 60 + cursor.getMinutes();
+      const { cursor: nextCursor, remainingMinutes: nextRemaining } =
+        this.consumeWorkingSlots(cursor, daySchedule, remainingMinutes);
 
-      for (const slot of slots) {
-        const slotStart = this.timeToMinutes(slot.start);
-        const slotEnd = this.timeToMinutes(slot.end);
-
-        // Skip slots that have already passed
-        if (currentMinutes >= slotEnd) continue;
-
-        // Calculate effective start (either now or slot start, whichever is later)
-        const effectiveStart = Math.max(currentMinutes, slotStart);
-        const availableMinutes = slotEnd - effectiveStart;
-
-        if (availableMinutes <= 0) continue;
-
-        if (remainingMinutes <= availableMinutes) {
-          // SLA expires within this slot
-          const deadlineMinutes = effectiveStart + remainingMinutes;
-          cursor.setHours(
-            Math.floor(deadlineMinutes / 60),
-            deadlineMinutes % 60,
-            0,
-            0,
-          );
-          remainingMinutes = 0;
-
-          break;
-        }
-
-        // Consume all available minutes in this slot
-        remainingMinutes -= availableMinutes;
-      }
+      cursor = nextCursor;
+      remainingMinutes = nextRemaining;
 
       if (remainingMinutes > 0) {
         cursor = this.advanceToNextDay(cursor);
       }
     }
 
+
     return cursor;
+  }
+
+  /**
+   * Consume available minutes in today's working slots.
+   */
+  private consumeWorkingSlots(
+    cursor: Date,
+    daySchedule: any,
+    remainingMinutes: number,
+  ): { cursor: Date; remainingMinutes: number } {
+    const slots = this.getWorkingSlots(daySchedule);
+    const currentMinutes = cursor.getHours() * 60 + cursor.getMinutes();
+    let currentRemaining = remainingMinutes;
+
+    for (const slot of slots) {
+      const slotStart = this.timeToMinutes(slot.start);
+      const slotEnd = this.timeToMinutes(slot.end);
+
+      // Skip slots that have already passed
+      if (currentMinutes >= slotEnd) continue;
+
+      // Calculate effective start (either now or slot start, whichever is later)
+      const effectiveStart = Math.max(currentMinutes, slotStart);
+      const availableMinutes = slotEnd - effectiveStart;
+
+      if (availableMinutes <= 0) continue;
+
+      if (currentRemaining <= availableMinutes) {
+        // SLA expires within this slot
+        const deadlineMinutes = effectiveStart + currentRemaining;
+        cursor.setHours(
+          Math.floor(deadlineMinutes / 60),
+          deadlineMinutes % 60,
+          0,
+          0,
+        );
+        return { cursor, remainingMinutes: 0 };
+      }
+
+      // Consume all available minutes in this slot
+      currentRemaining -= availableMinutes;
+    }
+
+    return { cursor, remainingMinutes: currentRemaining };
   }
 
   /**

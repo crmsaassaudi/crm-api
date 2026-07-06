@@ -23,8 +23,7 @@ export class BaseGateway
     protected readonly configService: ConfigService<AllConfigType>,
   ) {}
 
-  afterInit(server: Server) {
-    void server;
+  afterInit() {
     this.logger.log('WebSocket Gateway Initialized');
   }
 

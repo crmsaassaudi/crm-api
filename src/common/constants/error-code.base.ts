@@ -20,5 +20,3 @@ export const COMMON_ERRORS = {
 export type CommonErrorCode =
   (typeof COMMON_ERRORS)[keyof typeof COMMON_ERRORS];
 
-/** Any string-based error code — modules define their own constants */
-export type ErrorCodeValue = string;

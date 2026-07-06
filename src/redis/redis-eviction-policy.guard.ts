@@ -103,7 +103,7 @@ export class RedisEvictionPolicyGuard implements OnModuleInit {
 
     try {
       const info = await this.redis.info('memory');
-      const match = info.match(/^maxmemory_policy:([^\r\n]+)/m);
+      const match = /^maxmemory_policy:([^\r\n]+)/m.exec(info);
       return match?.[1]?.trim().toLowerCase() ?? null;
     } catch {
       return null;

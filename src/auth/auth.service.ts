@@ -515,7 +515,7 @@ export class AuthService {
     } else if (preferredRedirectUrl) {
       return preferredRedirectUrl;
     } else if (tenants.length === 1) {
-      const tenantId = tenants[0].tenantId as string;
+      const tenantId = tenants[0].tenantId;
       try {
         const tenant = await this.tenantsService.findById(tenantId);
         if (tenant && tenant.alias) {
@@ -691,7 +691,8 @@ export class AuthService {
       new Set(
         user.tenants.map((membership) => membership.tenantId?.toString()),
       ),
-    ).filter(Boolean) as string[];
+    ).filter(Boolean);
+
 
     return this.tenantsService.findByIds(tenantIds);
   }

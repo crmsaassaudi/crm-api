@@ -189,29 +189,37 @@ export class InboundController {
   private extractSenderIds(channelType: ChannelType, events: any[]): string[] {
     const ids = new Set<string>();
     for (const event of events) {
-      try {
-        switch (channelType) {
-          case 'facebook':
-          case 'instagram':
-            if (event?.sender?.id) ids.add(event.sender.id);
-            break;
-          case 'whatsapp':
-            for (const msg of event?.messages ?? []) {
-              if (msg?.from) ids.add(msg.from);
-            }
-            break;
-          case 'zalo':
-            if (event?.sender?.id) ids.add(event.sender.id);
-            break;
-          default:
-            break;
-        }
-      } catch {
-        // Skip malformed events.
+      const extractedIds = this.getSenderIdsFromEvent(channelType, event);
+      for (const id of extractedIds) {
+        ids.add(id);
       }
     }
     return Array.from(ids);
   }
+
+  private getSenderIdsFromEvent(
+    channelType: ChannelType,
+    event: any,
+  ): string[] {
+    try {
+      switch (channelType) {
+        case 'facebook':
+        case 'instagram':
+          return event?.sender?.id ? [event.sender.id] : [];
+        case 'whatsapp':
+          return (event?.messages ?? [])
+            .map((msg: any) => msg?.from)
+            .filter(Boolean);
+        case 'zalo':
+          return event?.sender?.id ? [event.sender.id] : [];
+        default:
+          return [];
+      }
+    } catch {
+      return [];
+    }
+  }
+
 
   private buildDeterministicJobId(
     channelType: ChannelType,

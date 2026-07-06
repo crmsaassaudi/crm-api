@@ -1,5 +1,4 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
-import { ErrorCodeValue } from '../constants/error-code.base';
 
 /**
  * BusinessException — typed exception that carries a machine-readable errorCode.
@@ -14,10 +13,10 @@ import { ErrorCodeValue } from '../constants/error-code.base';
  * Frontend maps `errorCode` to an i18n key → shows localised message.
  */
 export class BusinessException extends HttpException {
-  public readonly errorCode: ErrorCodeValue;
+  public readonly errorCode: string;
 
   constructor(
-    errorCode: ErrorCodeValue,
+    errorCode: string,
     status: HttpStatus = HttpStatus.BAD_REQUEST,
     message?: string,
   ) {

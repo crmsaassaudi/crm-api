@@ -16,7 +16,7 @@ export class OmniConversationMapper {
       id: raw._id.toString(),
       tenantId: raw.tenantId?.toString(),
       channelId: raw.channelId?.toString(),
-      channelType: raw.channelType as ChannelType,
+      channelType: raw.channelType,
       channelAccount: (raw as any).channelAccount,
       externalConversationId: raw.externalId,
       contactId: this.normalizeId((raw as any).contactId),

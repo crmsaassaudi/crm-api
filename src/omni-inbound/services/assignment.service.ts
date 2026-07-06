@@ -98,8 +98,9 @@ export function mergeRoutingConfig(
   return {
     defaultStrategy:
       c.defaultStrategy ??
-      (g.defaultStrategy as AssignmentStrategy) ??
+      g.defaultStrategy ??
       'round-robin',
+
     defaultMaxCapacity:
       c.defaultMaxCapacity ?? g.defaultMaxCapacity ?? FALLBACK_MAX_CAPACITY,
     stickyRoutingEnabled:
@@ -110,8 +111,9 @@ export function mergeRoutingConfig(
       c.stickyWaitTimeMinutes ?? g.stickyWaitTimeMinutes ?? 0,
     fallbackStrategy:
       c.fallbackStrategy ??
-      (g.fallbackStrategy as AssignmentStrategy) ??
+      g.fallbackStrategy ??
       'round-robin',
+
     skillBasedRoutingEnabled:
       c.skillBasedRoutingEnabled ?? g.skillBasedRoutingEnabled ?? false,
   };
@@ -127,7 +129,8 @@ function normalizeStrategy(s: string | undefined): AssignmentStrategy {
     least_busy: 'least-busy',
     capacity_based: 'capacity-based',
   };
-  return (map[s as string] ?? s ?? 'round-robin') as AssignmentStrategy;
+  return (map[s ?? ''] ?? s ?? 'round-robin') as AssignmentStrategy;
+
 }
 
 export interface AssignmentOptions {

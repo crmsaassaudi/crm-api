@@ -159,7 +159,6 @@ export class ActivityService {
     oldGroupId?: string | null;
     strategy?: string;
     reason?: string;
-    /** The user who triggered this via REST API — null means system/auto-routing */
     performedByUserId?: string | null;
   }) {
     this.logger.debug(
@@ -167,109 +166,32 @@ export class ActivityService {
         `groupId=${event.groupId}, oldGroupId=${event.oldGroupId}, performedBy=${event.performedByUserId}`,
     );
 
-    // Resolve who performed the action
     const isManual = !!event.performedByUserId && !event.strategy;
     const isAutoRoutingRule = !!event.strategy;
     const performerName = event.performedByUserId
       ? await this.resolveActorName(event.performedByUserId)
       : null;
 
-    const strategyText = event.strategy
-      ? ` (luật: ${this.strategyLabel(event.strategy)})`
-      : '';
+    const actorPrefix = this.buildActorPrefix(
+      isManual,
+      isAutoRoutingRule,
+      performerName,
+      event.strategy,
+    );
 
-    // Prefix: who/what did the assignment
-    const actorPrefix = isManual
-      ? `${performerName}` // "Nguyễn Văn A"
-      : isAutoRoutingRule
-        ? `Hệ thống routing${strategyText}` // "Hệ thống routing (luật: round-robin)"
-        : `Hệ thống`; // fallback
+    const commonContext = {
+      isManual,
+      performerName,
+      actorPrefix,
+    };
 
     // ── Agent assignment activity ─────────────────────────────────
-    if (event.agentId !== undefined && event.agentId !== event.oldAgentId) {
-      if (event.agentId) {
-        const agentName = await this.resolveActorName(event.agentId);
-        await this.log(
-          event.tenantId,
-          event.conversationId,
-          isManual ? 'agent' : 'system',
-          event.performedByUserId ?? event.agentId,
-          'agent_assigned',
-          event.oldAgentId,
-          event.agentId,
-          {
-            strategy: event.strategy,
-            reason: event.reason,
-            agentName,
-            performedByUserId: event.performedByUserId,
-            performerName,
-          },
-          `${actorPrefix} đã phân công hội thoại cho tư vấn viên ${agentName}`,
-        );
-      } else if (event.oldAgentId) {
-        const oldAgentName = await this.resolveActorName(event.oldAgentId);
-        await this.log(
-          event.tenantId,
-          event.conversationId,
-          isManual ? 'agent' : 'system',
-          event.performedByUserId ?? event.oldAgentId,
-          'agent_unassigned',
-          event.oldAgentId,
-          null,
-          {
-            reason: event.reason,
-            performedByUserId: event.performedByUserId,
-            performerName,
-          },
-          `${actorPrefix} đã gỡ tư vấn viên ${oldAgentName} khỏi hội thoại — chuyển về hàng chờ`,
-        );
-      }
-    }
+    await this.handleAgentAssignment(event, commonContext);
 
     // ── Group assignment activity ─────────────────────────────────
-    if (event.groupId !== undefined) {
-      if (event.groupId) {
-        const groupName = await this.resolveGroupName(event.groupId);
-        this.logger.debug(
-          `[onAssigned] logging group_assigned for ${event.groupId} → ${groupName}`,
-        );
-        await this.log(
-          event.tenantId,
-          event.conversationId,
-          isManual ? 'agent' : 'system',
-          event.performedByUserId ?? null,
-          'group_assigned',
-          event.oldGroupId ?? null,
-          event.groupId,
-          {
-            groupId: event.groupId,
-            groupName,
-            performedByUserId: event.performedByUserId,
-            performerName,
-          },
-          `${actorPrefix} đã phân công hội thoại cho nhóm ${groupName}`,
-        );
-      } else {
-        const oldGroupName = event.oldGroupId
-          ? await this.resolveGroupName(event.oldGroupId)
-          : 'nhóm';
-        this.logger.debug(
-          `[onAssigned] logging group_unassigned, oldGroup=${event.oldGroupId}`,
-        );
-        await this.log(
-          event.tenantId,
-          event.conversationId,
-          isManual ? 'agent' : 'system',
-          event.performedByUserId ?? null,
-          'group_unassigned',
-          event.oldGroupId ?? null,
-          null,
-          {},
-          `Đã gỡ ${oldGroupName} khỏi hội thoại`,
-        );
-      }
-    }
+    await this.handleGroupAssignment(event, commonContext);
   }
+
 
   @OnEvent('omni.conversation.tag_added')
   async onTagAdded(event: {
@@ -687,4 +609,134 @@ export class ActivityService {
     };
     return map[reason] ?? reason.replace(/_/g, ' ');
   }
+
+  private buildActorPrefix(
+    isManual: boolean,
+    isAutoRoutingRule: boolean,
+    performerName: string | null,
+    strategy?: string,
+  ): string {
+    if (isManual) return `${performerName}`;
+    if (isAutoRoutingRule) {
+      const strategyText = strategy
+        ? ` (luật: ${this.strategyLabel(strategy)})`
+        : '';
+      return `Hệ thống routing${strategyText}`;
+    }
+    return `Hệ thống`;
+  }
+
+  private async handleAgentAssignment(
+    event: any,
+    ctx: { isManual: boolean; performerName: string | null; actorPrefix: string },
+  ) {
+    const {
+      tenantId,
+      conversationId,
+      agentId,
+      oldAgentId,
+      strategy,
+      reason,
+      performedByUserId,
+    } = event;
+    const { isManual, performerName, actorPrefix } = ctx;
+
+    if (agentId === undefined || agentId === oldAgentId) return;
+
+    if (agentId) {
+      const agentName = await this.resolveActorName(agentId);
+      await this.log(
+        tenantId,
+        conversationId,
+        isManual ? 'agent' : 'system',
+        performedByUserId ?? agentId,
+        'agent_assigned',
+        oldAgentId,
+        agentId,
+        {
+          strategy,
+          reason,
+          agentName,
+          performedByUserId,
+          performerName,
+        },
+        `${actorPrefix} đã phân công hội thoại cho tư vấn viên ${agentName}`,
+      );
+    } else if (oldAgentId) {
+      const oldAgentName = await this.resolveActorName(oldAgentId);
+      await this.log(
+        tenantId,
+        conversationId,
+        isManual ? 'agent' : 'system',
+        performedByUserId ?? oldAgentId,
+        'agent_unassigned',
+        oldAgentId,
+        null,
+        {
+          reason,
+          performedByUserId,
+          performerName,
+        },
+        `${actorPrefix} đã gỡ tư vấn viên ${oldAgentName} khỏi hội thoại — chuyển về hàng chờ`,
+      );
+    }
+  }
+
+  private async handleGroupAssignment(
+    event: any,
+    ctx: { isManual: boolean; performerName: string | null; actorPrefix: string },
+  ) {
+    const {
+      tenantId,
+      conversationId,
+      groupId,
+      oldGroupId,
+      performedByUserId,
+    } = event;
+    const { isManual, performerName, actorPrefix } = ctx;
+
+    if (groupId === undefined) return;
+
+    if (groupId) {
+      const groupName = await this.resolveGroupName(groupId);
+      this.logger.debug(
+        `[onAssigned] logging group_assigned for ${groupId} → ${groupName}`,
+      );
+      await this.log(
+        tenantId,
+        conversationId,
+        isManual ? 'agent' : 'system',
+        performedByUserId ?? null,
+        'group_assigned',
+        oldGroupId ?? null,
+        groupId,
+        {
+          groupId,
+          groupName,
+          performedByUserId,
+          performerName,
+        },
+        `${actorPrefix} đã phân công hội thoại cho nhóm ${groupName}`,
+      );
+    } else if (oldGroupId) {
+      const oldGroupName = await this.resolveGroupName(oldGroupId);
+      await this.log(
+        tenantId,
+        conversationId,
+        isManual ? 'agent' : 'system',
+        performedByUserId ?? null,
+        'group_unassigned',
+        oldGroupId,
+        null,
+        {
+          groupId: null,
+          groupName: oldGroupName,
+          performedByUserId,
+          performerName,
+        },
+        `${actorPrefix} đã gỡ nhóm ${oldGroupName} khỏi hội thoại`,
+      );
+    }
+  }
 }
+

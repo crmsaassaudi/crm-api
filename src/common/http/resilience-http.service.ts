@@ -50,7 +50,7 @@ export class ResilienceHttpService {
       const response = await policy.execute(fn);
 
       const durationMs = Date.now() - start;
-      void this.integrationLogService.logRequest({
+      this.integrationLogService.logRequest({
         service: serviceName,
         url: context.url,
         method: context.method,
@@ -62,6 +62,7 @@ export class ResilienceHttpService {
         correlationId: this.cls.getId(),
       });
 
+
       return response;
     } catch (error) {
       const durationMs = Date.now() - start;
@@ -70,7 +71,7 @@ export class ResilienceHttpService {
         error.stack,
       );
 
-      void this.integrationLogService.logRequest({
+      this.integrationLogService.logRequest({
         service: serviceName,
         url: context.url,
         method: context.method,
@@ -81,6 +82,7 @@ export class ResilienceHttpService {
         durationMs,
         correlationId: this.cls.getId(),
       });
+
 
       throw new ServiceUnavailableException({
         service: serviceName,
