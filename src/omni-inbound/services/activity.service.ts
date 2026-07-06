@@ -534,7 +534,7 @@ export class ActivityService {
           .join(' ')
           .trim();
         if (fullName && u.email) return `${fullName} (${u.email})`;
-        return fullName || u.email || 'Agent';
+        return (fullName || u.email) ?? 'Agent';
       }
     } catch {
       // Fallback silently
