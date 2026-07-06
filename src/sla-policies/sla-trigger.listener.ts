@@ -53,7 +53,6 @@ export class SlaTriggerListener {
           .filter((p) => p.type === 'resolution')
           .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
 
-
         const updatePayload: Record<string, any> = {};
 
         // ── Schedule FRT ───────────────────────────────────────────
@@ -63,7 +62,6 @@ export class SlaTriggerListener {
             target.timeValue,
             target.timeUnit,
           );
-
 
           const frtDeadline =
             await this.businessHoursService.calculateSlaDeadline(
@@ -97,7 +95,6 @@ export class SlaTriggerListener {
             target.timeValue,
             target.timeUnit,
           );
-
 
           const resolutionDeadline =
             await this.businessHoursService.calculateSlaDeadline(

@@ -1,6 +1,5 @@
 import { OmniConversation } from '../../../../domain/omni-conversation';
 import { OmniConversationSchemaClass } from '../entities/omni-conversation.schema';
-import { ChannelType } from '../../../../domain/omni-payload';
 import { UserMapper } from '../../../../../users/infrastructure/persistence/document/mappers/user.mapper';
 
 export class OmniConversationMapper {

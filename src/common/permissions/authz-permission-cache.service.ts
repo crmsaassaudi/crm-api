@@ -99,11 +99,7 @@ export class AuthzPermissionCacheService {
       };
     }
 
-    return this.evaluatePermissionForUser(
-      user,
-      params,
-      permissionKey,
-    );
+    return this.evaluatePermissionForUser(user, params, permissionKey);
   }
 
   /** Resolve a user from either MongoDB ObjectId or Keycloak UUID. */

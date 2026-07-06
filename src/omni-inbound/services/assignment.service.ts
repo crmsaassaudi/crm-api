@@ -96,10 +96,7 @@ export function mergeRoutingConfig(
   const g = global ?? {};
   const c = channel ?? {};
   return {
-    defaultStrategy:
-      c.defaultStrategy ??
-      g.defaultStrategy ??
-      'round-robin',
+    defaultStrategy: c.defaultStrategy ?? g.defaultStrategy ?? 'round-robin',
 
     defaultMaxCapacity:
       c.defaultMaxCapacity ?? g.defaultMaxCapacity ?? FALLBACK_MAX_CAPACITY,
@@ -109,10 +106,7 @@ export function mergeRoutingConfig(
     // Default 0 preserves the legacy "unset → no wait window" gate semantics.
     stickyWaitTimeMinutes:
       c.stickyWaitTimeMinutes ?? g.stickyWaitTimeMinutes ?? 0,
-    fallbackStrategy:
-      c.fallbackStrategy ??
-      g.fallbackStrategy ??
-      'round-robin',
+    fallbackStrategy: c.fallbackStrategy ?? g.fallbackStrategy ?? 'round-robin',
 
     skillBasedRoutingEnabled:
       c.skillBasedRoutingEnabled ?? g.skillBasedRoutingEnabled ?? false,
@@ -129,8 +123,7 @@ function normalizeStrategy(s: string | undefined): AssignmentStrategy {
     least_busy: 'least-busy',
     capacity_based: 'capacity-based',
   };
-  return (map[s ?? ''] ?? s ?? 'round-robin') as AssignmentStrategy;
-
+  return map[s ?? ''] ?? s ?? 'round-robin';
 }
 
 export interface AssignmentOptions {

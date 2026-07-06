@@ -192,7 +192,6 @@ export class ActivityService {
     await this.handleGroupAssignment(event, commonContext);
   }
 
-
   @OnEvent('omni.conversation.tag_added')
   async onTagAdded(event: {
     tenantId: string;
@@ -628,7 +627,11 @@ export class ActivityService {
 
   private async handleAgentAssignment(
     event: any,
-    ctx: { isManual: boolean; performerName: string | null; actorPrefix: string },
+    ctx: {
+      isManual: boolean;
+      performerName: string | null;
+      actorPrefix: string;
+    },
   ) {
     const {
       tenantId,
@@ -684,15 +687,14 @@ export class ActivityService {
 
   private async handleGroupAssignment(
     event: any,
-    ctx: { isManual: boolean; performerName: string | null; actorPrefix: string },
+    ctx: {
+      isManual: boolean;
+      performerName: string | null;
+      actorPrefix: string;
+    },
   ) {
-    const {
-      tenantId,
-      conversationId,
-      groupId,
-      oldGroupId,
-      performedByUserId,
-    } = event;
+    const { tenantId, conversationId, groupId, oldGroupId, performedByUserId } =
+      event;
     const { isManual, performerName, actorPrefix } = ctx;
 
     if (groupId === undefined) return;
@@ -739,4 +741,3 @@ export class ActivityService {
     }
   }
 }
-

@@ -331,7 +331,6 @@ export class BusinessHoursService {
       }
     }
 
-
     return cursor;
   }
 

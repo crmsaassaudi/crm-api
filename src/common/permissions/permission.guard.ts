@@ -59,7 +59,14 @@ export class PermissionGuard implements CanActivate {
       return true;
     }
 
-    return this.performAuthzCheck(context, request, payload, rule, rawUserId, tenantHint);
+    return this.performAuthzCheck(
+      context,
+      request,
+      payload,
+      rule,
+      rawUserId,
+      tenantHint,
+    );
   }
 
   /** Resolve tenant hint from CLS, request, headers, or JWT payload. */

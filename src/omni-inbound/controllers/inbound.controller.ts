@@ -220,7 +220,6 @@ export class InboundController {
     }
   }
 
-
   private buildDeterministicJobId(
     channelType: ChannelType,
     accountId: string,

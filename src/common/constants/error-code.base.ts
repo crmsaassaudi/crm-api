@@ -19,4 +19,3 @@ export const COMMON_ERRORS = {
 /** Union of all common error code values */
 export type CommonErrorCode =
   (typeof COMMON_ERRORS)[keyof typeof COMMON_ERRORS];
-

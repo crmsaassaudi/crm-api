@@ -62,7 +62,6 @@ export class ResilienceHttpService {
         correlationId: this.cls.getId(),
       });
 
-
       return response;
     } catch (error) {
       const durationMs = Date.now() - start;
@@ -82,7 +81,6 @@ export class ResilienceHttpService {
         durationMs,
         correlationId: this.cls.getId(),
       });
-
 
       throw new ServiceUnavailableException({
         service: serviceName,

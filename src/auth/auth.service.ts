@@ -693,7 +693,6 @@ export class AuthService {
       ),
     ).filter(Boolean);
 
-
     return this.tenantsService.findByIds(tenantIds);
   }
 }

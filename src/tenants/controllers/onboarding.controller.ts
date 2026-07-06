@@ -86,12 +86,11 @@ export class OnboardingController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const { email, fullName, password } = dto;
-    let step = 'initializing';
+    let step = 'checking existing account';
     let createdKcUserId: string | null = null;
 
     try {
       // 1. Check if email already exists in MongoDB or Keycloak
-      step = 'checking existing account';
       const [existingLocalUser, existingKcUser] = await Promise.all([
         this.userRepository.findByEmail(email),
         this.keycloakAdminService.findUserByEmail(email),

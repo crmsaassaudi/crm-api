@@ -165,7 +165,7 @@ export class ContactRepository extends BaseDocumentRepository<
     }
   }
 
-  private buildListWhere(filterOptions?: any | null) {
+  private buildListWhere(filterOptions?: any) {
     const where: FilterQuery<ContactSchemaClass> = {
       deletedAt: { $exists: false },
     };

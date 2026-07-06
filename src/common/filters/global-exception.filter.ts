@@ -39,8 +39,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const correlationId = this.cls.getId();
 
     // Extract message and error code
-    const { message, errorCode, errors } =
-      this.extractErrorMetadata(exception);
+    const { message, errorCode, errors } = this.extractErrorMetadata(exception);
 
     const responseBody = {
       statusCode: httpStatus,
@@ -85,8 +84,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       const response = exception.getResponse() as any;
       return {
         message: response.message || exception.message,
-        errorCode:
-          response.errorCode ?? this.mapNestExceptionToCode(exception),
+        errorCode: response.errorCode ?? this.mapNestExceptionToCode(exception),
         errors: response.errors || null,
       };
     }

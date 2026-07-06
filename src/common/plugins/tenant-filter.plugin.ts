@@ -236,7 +236,11 @@ function protectTenantMutation(query: any, tenantField: string) {
   query.setUpdate(update);
 }
 
-function handleAtomicUpdateOperators(update: any, tenantField: string, query: any) {
+function handleAtomicUpdateOperators(
+  update: any,
+  tenantField: string,
+  query: any,
+) {
   for (const [operator, payload] of Object.entries(update)) {
     if (!isPlainObject(payload)) continue;
 

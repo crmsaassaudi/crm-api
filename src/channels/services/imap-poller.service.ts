@@ -387,9 +387,10 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     const imapPort = Number(config.publicSettings?.imapPort || 993);
     if (!imapHost) return;
 
-    const auth = (config.authType ?? 'app_password') === 'oauth2'
-      ? { user: credentials.user, accessToken: credentials.accessToken }
-      : { user: credentials.user, pass: credentials.password };
+    const auth =
+      (config.authType ?? 'app_password') === 'oauth2'
+        ? { user: credentials.user, accessToken: credentials.accessToken }
+        : { user: credentials.user, pass: credentials.password };
 
     const client = new ImapFlow({
       host: imapHost,
@@ -403,9 +404,13 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
 
     try {
       await client.connect();
-      const syncTargetFolders = await this.emailSettings.getSyncTargetFolders(config.tenantId);
+      const syncTargetFolders = await this.emailSettings.getSyncTargetFolders(
+        config.tenantId,
+      );
       if (!syncTargetFolders.includes('INBOX')) {
-        this.logger.debug(`[ImapPoller] ${config.name}: INBOX is not in syncTargetFolders; skipping`);
+        this.logger.debug(
+          `[ImapPoller] ${config.name}: INBOX is not in syncTargetFolders; skipping`,
+        );
         return;
       }
 
@@ -416,19 +421,30 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
         lock.release();
       }
     } catch (err: any) {
-      this.logger.error(`[ImapPoller] IMAP connection failed for ${config.name}: ${err.message}`);
+      this.logger.error(
+        `[ImapPoller] IMAP connection failed for ${config.name}: ${err.message}`,
+      );
     } finally {
       await client.logout().catch(() => {});
     }
   }
 
-  private async getImapCredentials(config: any): Promise<Record<string, any> | null> {
+  private async getImapCredentials(
+    config: any,
+  ): Promise<Record<string, any> | null> {
     try {
-      let credentials = JSON.parse(await this.crypto.decrypt(config.encryptedCredentials));
-      credentials = await this.oauth2TokenManager.buildOAuth2Credentials(config, credentials);
+      let credentials = JSON.parse(
+        await this.crypto.decrypt(config.encryptedCredentials),
+      );
+      credentials = await this.oauth2TokenManager.buildOAuth2Credentials(
+        config,
+        credentials,
+      );
       return credentials;
     } catch (err: any) {
-      this.logger.error(`[ImapPoller] Failed to decrypt credentials for ${config.name}: ${err.message}`);
+      this.logger.error(
+        `[ImapPoller] Failed to decrypt credentials for ${config.name}: ${err.message}`,
+      );
       return null;
     }
   }
@@ -439,23 +455,35 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     const lastUidStr = await redisClient.get(uidCacheKey);
     const lastUid = lastUidStr ? parseInt(lastUidStr, 10) : 0;
 
-    const initialSyncDays = parseInt(config.publicSettings?.initialSyncDays) || 30;
-    const blockAutoResponders = config.publicSettings?.blockAutoResponders === true ||
+    const initialSyncDays =
+      parseInt(config.publicSettings?.initialSyncDays) || 30;
+    const blockAutoResponders =
+      config.publicSettings?.blockAutoResponders === true ||
       config.publicSettings?.blockAutoResponders === 'true';
 
-    const fetchQuery = lastUid > 0
-      ? { uid: `${lastUid + 1}:*` }
-      : { since: new Date(Date.now() - initialSyncDays * 24 * 60 * 60 * 1000) };
+    const fetchQuery =
+      lastUid > 0
+        ? { uid: `${lastUid + 1}:*` }
+        : {
+            since: new Date(Date.now() - initialSyncDays * 24 * 60 * 60 * 1000),
+          };
 
     const messages: any[] = [];
-    for await (const msg of client.fetch(fetchQuery, { envelope: true, source: true, bodyStructure: true, labels: true })) {
+    for await (const msg of client.fetch(fetchQuery, {
+      envelope: true,
+      source: true,
+      bodyStructure: true,
+      labels: true,
+    })) {
       messages.push(msg);
       if (messages.length >= this.MAX_BATCH_SIZE) break;
     }
 
     if (messages.length === 0) return;
 
-    this.logger.log(`[ImapPoller] ${config.name}: Found ${messages.length} new email(s)`);
+    this.logger.log(
+      `[ImapPoller] ${config.name}: Found ${messages.length} new email(s)`,
+    );
     await this.recordActivity(config.tenantId);
 
     let processed = 0;
@@ -471,12 +499,16 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
         });
         processed++;
       } catch (err: any) {
-        this.logger.error(`[ImapPoller] Failed to process email UID=${msg.uid}: ${err.message}`);
+        this.logger.error(
+          `[ImapPoller] Failed to process email UID=${msg.uid}: ${err.message}`,
+        );
       }
     }
 
     if (processed > 0) {
-      this.logger.log(`[ImapPoller] ${config.name}: Successfully processed ${processed}/${messages.length} email(s)`);
+      this.logger.log(
+        `[ImapPoller] ${config.name}: Successfully processed ${processed}/${messages.length} email(s)`,
+      );
       const maxUid = Math.max(...messages.map((m: any) => m.uid));
       await redisClient.set(uidCacheKey, maxUid.toString());
     }
@@ -500,13 +532,24 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     },
   ): Promise<void> {
     const envelopeMessageId = msg.envelope?.messageId;
-    if (envelopeMessageId && await this.checkDuplicate(config.tenantId, envelopeMessageId, config, msg, mailboxContext)) {
+    if (
+      envelopeMessageId &&
+      (await this.checkDuplicate(
+        config.tenantId,
+        envelopeMessageId,
+        config,
+        msg,
+        mailboxContext,
+      ))
+    ) {
       return;
     }
 
     const rawSource = msg.source;
     if (!rawSource) {
-      this.logger.warn(`[ImapPoller] UID=${msg.uid}: No source data — skipping`);
+      this.logger.warn(
+        `[ImapPoller] UID=${msg.uid}: No source data — skipping`,
+      );
       return;
     }
 
@@ -514,7 +557,9 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
       ? rawSource.length
       : Buffer.byteLength(String(rawSource));
     if (rawSize > this.MAX_RAW_EMAIL_BYTES) {
-      this.logger.warn(`[ImapPoller] UID=${msg.uid}: Raw email too large (${rawSize} bytes) - skipping`);
+      this.logger.warn(
+        `[ImapPoller] UID=${msg.uid}: Raw email too large (${rawSize} bytes) - skipping`,
+      );
       return;
     }
 
@@ -523,27 +568,47 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     const textBody = parsed.text || '';
     const subject = parsed.subject || msg.envelope?.subject || '(no subject)';
 
-    const { fromAddr, fromName, toAddrs, ccAddrs, bccAddrs } = this.extractParticipants(parsed);
+    const { fromAddr, fromName, toAddrs, ccAddrs, bccAddrs } =
+      this.extractParticipants(parsed);
     const headers = this.extractHeaders(parsed);
 
-    if (blockAutoResponders && this.normalizer.isAutoResponder(headers, blockAutoResponders)) {
+    if (
+      blockAutoResponders &&
+      this.normalizer.isAutoResponder(headers, blockAutoResponders)
+    ) {
       this.logger.warn(`[ImapPoller] Dropped auto-responder: ${subject}`);
       return;
     }
 
     const bounce = this.normalizer.detectBounce(headers, textBody);
     if (bounce?.isBounce) {
-      this.normalizer.handleBounce(config.tenantId, bounce.originalMessageId, bounce.reason);
+      this.normalizer.handleBounce(
+        config.tenantId,
+        bounce.originalMessageId,
+        bounce.reason,
+      );
       return;
     }
 
     const threadInfo = this.normalizer.extractThreadInfo(headers);
     const rfcMessageId = threadInfo.messageId;
-    if (rfcMessageId && await this.checkDuplicate(config.tenantId, rfcMessageId, config, msg, mailboxContext)) {
+    if (
+      rfcMessageId &&
+      (await this.checkDuplicate(
+        config.tenantId,
+        rfcMessageId,
+        config,
+        msg,
+        mailboxContext,
+      ))
+    ) {
       return;
     }
 
-    const snippet = (textBody || '').replace(/\s+/g, ' ').trim().substring(0, 200);
+    const snippet = (textBody || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 200);
     const generatedMessageId = new Types.ObjectId();
 
     const emailContent = await this.emailContentModel.create({
@@ -561,28 +626,82 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     });
 
     const providerLabelDetails = this.buildProviderLabelDetails(mailboxContext);
-    await this.saveEmailMetadata(config, generatedMessageId, threadInfo, fromAddr, toAddrs, ccAddrs, bccAddrs, mailboxContext, providerLabelDetails, msg.uid, emailContent);
+    await this.saveEmailMetadata({
+      config,
+      generatedMessageId,
+      threadInfo,
+      fromAddr,
+      toAddrs,
+      ccAddrs,
+      bccAddrs,
+      mailboxContext,
+      providerLabelDetails,
+      imapUid: msg.uid,
+      emailContent,
+    });
 
-    this.emitInboundEvents(config, generatedMessageId, fromAddr, fromName, toAddrs, ccAddrs, subject, snippet, threadInfo, emailContent, mailboxContext, providerLabelDetails, msg.uid, parsed.date);
+    this.emitInboundEvents({
+      config,
+      generatedMessageId,
+      fromAddr,
+      fromName,
+      toAddrs,
+      ccAddrs,
+      subject,
+      snippet,
+      threadInfo,
+      emailContent,
+      mailboxContext,
+      providerLabelDetails,
+      imapUid: msg.uid,
+      date: parsed.date,
+    });
   }
 
-  private async checkDuplicate(tenantId: string, messageId: string, config: any, msg: any, mailboxContext: MailboxLabelContext): Promise<boolean> {
-    const existing = await this.emailMetadataModel.findOne({ tenantId, emailMessageId: messageId }).lean();
+  private async checkDuplicate(
+    tenantId: string,
+    messageId: string,
+    config: any,
+    msg: any,
+    mailboxContext: MailboxLabelContext,
+  ): Promise<boolean> {
+    const existing = await this.emailMetadataModel
+      .findOne({ tenantId, emailMessageId: messageId })
+      .lean();
     if (existing) {
-      await this.refreshDuplicateEmailLabels(config, msg, existing, mailboxContext, messageId);
-      this.logger.warn(`[ImapPoller] UID=${msg.uid}: Skipped duplicate — ${messageId}`);
+      await this.refreshDuplicateEmailLabels(
+        config,
+        msg,
+        existing,
+        mailboxContext,
+        messageId,
+      );
+      this.logger.warn(
+        `[ImapPoller] UID=${msg.uid}: Skipped duplicate — ${messageId}`,
+      );
       return true;
     }
     return false;
   }
 
-  private async parseEmail(rawSource: any, msgUid: number, rawSize: number): Promise<ParsedMail> {
+  private async parseEmail(
+    rawSource: any,
+    msgUid: number,
+    rawSize: number,
+  ): Promise<ParsedMail> {
     this.logger.log(`[ImapPoller] UID=${msgUid}: Parsing (${rawSize} bytes)`);
-    const parsePromise = simpleParser(rawSource, { skipImageLinks: true, skipHtmlToText: false, skipTextToHtml: false });
+    const parsePromise = simpleParser(rawSource, {
+      skipImageLinks: true,
+      skipHtmlToText: false,
+      skipTextToHtml: false,
+    });
     return await Promise.race([
       parsePromise,
       new Promise<ParsedMail>((_, reject) =>
-        setTimeout(() => reject(new Error('simpleParser timed out after 30s')), 30_000).unref(),
+        setTimeout(
+          () => reject(new Error('simpleParser timed out after 30s')),
+          30_000,
+        ).unref(),
       ),
     ]);
   }
@@ -591,11 +710,20 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     const extractAddresses = (field: any): string[] => {
       if (!field) return [];
       const items = Array.isArray(field) ? field : [field];
-      return items.flatMap((obj: any) => (obj.value || []).map((a: any) => a.address).filter(Boolean));
+      return items.flatMap((obj: any) =>
+        (obj.value || []).map((a: any) => a.address).filter(Boolean),
+      );
     };
-    const fromAddr = parsed.from?.value?.[0]?.address || '';
-    const fromName = parsed.from?.value?.[0]?.name || fromAddr.split('@')[0] || 'Unknown';
-    return { fromAddr, fromName, toAddrs: extractAddresses(parsed.to), ccAddrs: extractAddresses(parsed.cc), bccAddrs: extractAddresses(parsed.bcc) };
+    const fromAddr = parsed.from?.value?.[0]?.address ?? '';
+    const fromName =
+      parsed.from?.value?.[0]?.name || fromAddr.split('@')[0] || 'Unknown';
+    return {
+      fromAddr,
+      fromName,
+      toAddrs: extractAddresses(parsed.to),
+      ccAddrs: extractAddresses(parsed.cc),
+      bccAddrs: extractAddresses(parsed.bcc),
+    };
   }
 
   private extractHeaders(parsed: ParsedMail): Record<string, string> {
@@ -603,21 +731,57 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     parsed.headers.forEach((value, key) => {
       const k = key.toLowerCase();
       if (['from', 'to', 'cc', 'bcc', 'sender', 'reply-to'].includes(k)) {
-        headers[k] = typeof value === 'object' && value !== null && 'text' in value ? (value as any).text : String(value ?? '');
+        if (typeof value === 'object' && value !== null && 'text' in value) {
+          headers[k] = (value as any).text;
+        } else {
+          headers[k] = String(value ?? '');
+        }
       } else {
-        headers[k] = typeof value === 'string' ? value : Array.isArray(value) ? value.join(', ') : String(value ?? '');
+        if (typeof value === 'string') {
+          headers[k] = value;
+        } else if (Array.isArray(value)) {
+          headers[k] = value.join(', ');
+        } else {
+          headers[k] = String(value ?? '');
+        }
       }
     });
     return headers;
   }
 
-  private async saveEmailMetadata(config: any, generatedMessageId: Types.ObjectId, threadInfo: any, fromAddr: string, toAddrs: string[], ccAddrs: string[], bccAddrs: string[], mailboxContext: MailboxLabelContext, providerLabelDetails: any, imapUid: number, emailContent: any) {
+  private async saveEmailMetadata(params: {
+    config: any;
+    generatedMessageId: Types.ObjectId;
+    threadInfo: any;
+    fromAddr: string;
+    toAddrs: string[];
+    ccAddrs: string[];
+    bccAddrs: string[];
+    mailboxContext: MailboxLabelContext;
+    providerLabelDetails: any;
+    imapUid: number;
+    emailContent: any;
+  }) {
+    const {
+      config,
+      generatedMessageId,
+      threadInfo,
+      fromAddr,
+      toAddrs,
+      ccAddrs,
+      bccAddrs,
+      mailboxContext,
+      providerLabelDetails,
+      imapUid,
+      emailContent,
+    } = params;
     try {
       await this.emailMetadataModel.create({
         tenantId: config.tenantId,
         mailboxId: config.id,
         messageId: generatedMessageId,
-        emailMessageId: threadInfo.messageId || `<imap-${generatedMessageId}@local>`,
+        emailMessageId:
+          threadInfo.messageId || `<imap-${generatedMessageId}@local>`,
         inReplyTo: threadInfo.inReplyTo,
         references: threadInfo.references,
         from: fromAddr,
@@ -634,20 +798,64 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
       });
     } catch (err: any) {
       if (err.code === 11000) {
-        await this.emailContentModel.deleteOne({ _id: emailContent._id }).catch(() => {});
+        await this.emailContentModel
+          .deleteOne({ _id: emailContent._id })
+          .catch(() => {});
         const messageId = threadInfo.messageId;
         if (messageId) {
-          const existing = await this.emailMetadataModel.findOne({ tenantId: config.tenantId, emailMessageId: messageId }).lean();
-          if (existing) await this.refreshDuplicateEmailLabels(config, { uid: imapUid }, existing, mailboxContext, messageId);
+          const existing = await this.emailMetadataModel
+            .findOne({ tenantId: config.tenantId, emailMessageId: messageId })
+            .lean();
+          if (existing)
+            await this.refreshDuplicateEmailLabels(
+              config,
+              { uid: imapUid },
+              existing,
+              mailboxContext,
+              messageId,
+            );
         }
-        this.logger.debug(`[ImapPoller] Skipped duplicate (race): ${messageId}`);
+        this.logger.debug(
+          `[ImapPoller] Skipped duplicate (race): ${messageId}`,
+        );
         return;
       }
       throw err;
     }
   }
 
-  private emitInboundEvents(config: any, generatedMessageId: Types.ObjectId, fromAddr: string, fromName: string, toAddrs: string[], ccAddrs: string[], subject: string, snippet: string, threadInfo: any, emailContent: any, mailboxContext: MailboxLabelContext, providerLabelDetails: any, imapUid: number, date?: Date) {
+  private emitInboundEvents(params: {
+    config: any;
+    generatedMessageId: Types.ObjectId;
+    fromAddr: string;
+    fromName: string;
+    toAddrs: string[];
+    ccAddrs: string[];
+    subject: string;
+    snippet: string;
+    threadInfo: any;
+    emailContent: any;
+    mailboxContext: MailboxLabelContext;
+    providerLabelDetails: any;
+    imapUid: number;
+    date?: Date;
+  }) {
+    const {
+      config,
+      generatedMessageId,
+      fromAddr,
+      fromName,
+      toAddrs,
+      ccAddrs,
+      subject,
+      snippet,
+      threadInfo,
+      emailContent,
+      mailboxContext,
+      providerLabelDetails,
+      imapUid,
+      date,
+    } = params;
     this.eventEmitter.emit('email.inbound.received', {
       tenantId: config.tenantId,
       configId: config.id,

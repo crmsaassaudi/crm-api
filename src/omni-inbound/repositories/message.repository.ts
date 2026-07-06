@@ -232,7 +232,6 @@ export class MessageRepository {
       ...this.buildCursorFilter(params.cursor, params.direction),
     };
 
-
     const sort: Record<string, SortOrder> =
       params.direction === 'past'
         ? { createdAt: -1, _id: -1 }
@@ -287,7 +286,6 @@ export class MessageRepository {
   }
 
   private buildCursorFilter(
-
     cursor: { createdAt: Date; id: string } | null | undefined,
     direction: 'past' | 'future',
   ): Record<string, any> {
@@ -299,7 +297,10 @@ export class MessageRepository {
 
     if (!cursorObjectId) {
       return {
-        createdAt: direction === 'past' ? { $lt: cursor.createdAt } : { $gt: cursor.createdAt },
+        createdAt:
+          direction === 'past'
+            ? { $lt: cursor.createdAt }
+            : { $gt: cursor.createdAt },
       };
     }
 
@@ -320,4 +321,3 @@ export class MessageRepository {
     };
   }
 }
-

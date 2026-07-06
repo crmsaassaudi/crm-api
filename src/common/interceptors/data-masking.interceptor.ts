@@ -54,7 +54,10 @@ export class DataMaskingInterceptor implements NestInterceptor {
       .pipe(map((data) => this.maskData(data, layoutConfig, resourceName)));
   }
 
-  private sanitizeRequest(request: any, maskedFields: Map<string, string>): void {
+  private sanitizeRequest(
+    request: any,
+    maskedFields: Map<string, string>,
+  ): void {
     if (
       !['POST', 'PATCH', 'PUT'].includes(request.method) ||
       !request.body ||
@@ -80,7 +83,6 @@ export class DataMaskingInterceptor implements NestInterceptor {
     }
     return false;
   }
-
 
   private maskData(data: any, layoutConfig: any, baseResource: string): any {
     if (!data) return data;

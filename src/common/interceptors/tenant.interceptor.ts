@@ -323,7 +323,9 @@ export class TenantInterceptor implements NestInterceptor {
         if (payload?.tenantId) raw.tenantHints.push(payload.tenantId);
       }
     } catch (e) {
-      this.logger.warn(`BFF session resolution failed: ${(e as Error).message}`);
+      this.logger.warn(
+        `BFF session resolution failed: ${(e as Error).message}`,
+      );
     }
   }
 
@@ -365,10 +367,14 @@ export class TenantInterceptor implements NestInterceptor {
         await this.redisService
           .set(kcCacheKey, mongoId, USER_KEYCLOAK_CACHE_TTL)
           .catch(() => {});
-        this.logger.debug(`Resolved Keycloak UUID → MongoDB userId: ${mongoId}`);
+        this.logger.debug(
+          `Resolved Keycloak UUID → MongoDB userId: ${mongoId}`,
+        );
       }
     } catch (e) {
-      this.logger.error(`Error resolving Keycloak user: ${(e as Error).message}`);
+      this.logger.error(
+        `Error resolving Keycloak user: ${(e as Error).message}`,
+      );
     }
   }
 

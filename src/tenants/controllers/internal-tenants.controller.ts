@@ -218,8 +218,8 @@ export class InternalTenantsController {
       kcUserId,
       email,
       {
-        firstName: kcUser.firstName || email.split('@')[0],
-        lastName: kcUser.lastName || '',
+        firstName: kcUser.firstName ?? email.split('@')[0],
+        lastName: kcUser.lastName ?? '',
         provider: AuthProvidersEnum.email,
         platformRole: { id: PlatformRoleEnum.USER } as any,
         status: { id: StatusEnum.active } as any,

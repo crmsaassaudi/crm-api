@@ -1,7 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-export type ActivityLogTargetType = string;
-
 export class ActivityLog {
   @ApiProperty({ example: '60d0fe4f5311236168a109ca' })
   id: string;
@@ -10,7 +8,7 @@ export class ActivityLog {
   tenantId: string;
 
   @ApiProperty({ example: 'contact' })
-  targetType: ActivityLogTargetType;
+  targetType: string;
 
   @ApiProperty({ example: '60d0fe4f5311236168a109cb' })
   targetId: string;
