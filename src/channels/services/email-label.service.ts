@@ -80,7 +80,7 @@ export class EmailLabelService {
     }
 
     const page = Math.max(1, options.page ?? 1);
-    const limit = Math.min(100, Math.max(1, options.limit || 50));
+    const limit = Math.min(100, Math.max(1, options.limit ?? 50));
     const filter: Record<string, any> = {
       tenantId,
       mailboxId,
@@ -158,11 +158,11 @@ export class EmailLabelService {
       ids.forEach((id, index) => {
         if (!id) return;
         const detail = details.find((item) => item.id === id);
-        const label = observed.get(id) || {
+        const label = observed.get(id) ?? {
           id,
-          name: detail?.name || names[index] || id,
-          type: detail?.type || this.detectLabelType(id),
-          color: detail?.color || null,
+          name: detail?.name ?? names[index] ?? id,
+          type: detail?.type ?? this.detectLabelType(id),
+          color: detail?.color ?? null,
           usageCount: 0,
         };
         label.usageCount += 1;
@@ -177,11 +177,11 @@ export class EmailLabelService {
         provider: mailbox.providerType,
         providerLabelId: label.id,
         name: label.name,
-        type: label.type || this.detectLabelType(label.id),
-        color: label.color || null,
+        type: label.type ?? this.detectLabelType(label.id),
+        color: label.color ?? null,
         normalizedColor: this.normalizeColor(
           label.color,
-          label.name || label.id,
+          label.name ?? label.id,
         ),
         lastSeenAt: now,
         usageCount: label.usageCount,
@@ -246,12 +246,12 @@ export class EmailLabelService {
           mailboxId: payload.mailboxId,
           provider: payload.provider,
           providerLabelId: label.id,
-          name: label.name || label.id,
-          type: label.type || this.detectLabelType(label.id),
-          color: label.color || null,
+          name: label.name ?? label.id,
+          type: label.type ?? this.detectLabelType(label.id),
+          color: label.color ?? null,
           normalizedColor: this.normalizeColor(
             label.color,
-            label.name || label.id,
+            label.name ?? label.id,
           ),
           lastSeenAt: now,
           usageCount: 1,
@@ -271,7 +271,7 @@ export class EmailLabelService {
   ): ObservedLabel[] {
     return providerLabelIds.map((id, index) => ({
       id,
-      name: providerLabels[index] || id,
+      name: providerLabels[index] ?? id,
       type: this.detectLabelType(id),
       color: null,
     }));

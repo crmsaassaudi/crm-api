@@ -976,7 +976,7 @@ export class OutboundService {
         .trim();
 
       return {
-        name: fullName || user.email || 'Agent',
+        name: (fullName || user.email) ?? 'Agent',
         avatarUrl: user.photo?.path ?? null,
       };
     } catch (error) {

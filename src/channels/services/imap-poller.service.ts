@@ -716,7 +716,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     };
     const fromAddr = parsed.from?.value?.[0]?.address ?? '';
     const fromName =
-      parsed.from?.value?.[0]?.name || fromAddr.split('@')[0] || 'Unknown';
+      parsed.from?.value?.[0]?.name ?? fromAddr.split('@')[0] ?? 'Unknown';
     return {
       fromAddr,
       fromName,
