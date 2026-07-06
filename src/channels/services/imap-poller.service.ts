@@ -736,14 +736,12 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
         } else {
           headers[k] = String(value ?? '');
         }
+      } else if (typeof value === 'string') {
+        headers[k] = value;
+      } else if (Array.isArray(value)) {
+        headers[k] = value.join(', ');
       } else {
-        if (typeof value === 'string') {
-          headers[k] = value;
-        } else if (Array.isArray(value)) {
-          headers[k] = value.join(', ');
-        } else {
-          headers[k] = String(value ?? '');
-        }
+        headers[k] = String(value ?? '');
       }
     });
     return headers;

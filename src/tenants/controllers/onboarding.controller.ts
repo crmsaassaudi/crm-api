@@ -260,7 +260,7 @@ export class OnboardingController {
   async complete(@Request() req: any) {
     const userId = this.extractUserId(req);
     const session = await this.onboardingService.getSession(userId);
-    if (!session || !session.companyName) {
+    if (!session?.companyName) {
       throw new NotFoundException(
         'No active onboarding session or missing company name',
       );

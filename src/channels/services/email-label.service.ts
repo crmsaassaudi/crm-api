@@ -5,11 +5,10 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ChannelConfigRepository } from '../infrastructure/persistence/document/repositories/channel-config.repository';
 import { EmailMetadataSchemaClass } from '../infrastructure/persistence/document/entities/email-metadata.schema';
 import {
@@ -80,7 +79,7 @@ export class EmailLabelService {
       await this.reconcile(mailboxId);
     }
 
-    const page = Math.max(1, options.page || 1);
+    const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(100, Math.max(1, options.limit || 50));
     const filter: Record<string, any> = {
       tenantId,

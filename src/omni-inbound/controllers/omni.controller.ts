@@ -26,6 +26,7 @@ import { ConversationQueryService } from '../services/conversation-query.service
 import { ConversionService } from '../services/conversion.service';
 import { ConversationLockService } from '../services/conversation-lock.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
+import { ListConversationsQueryDto } from '../dto/list-conversations-query.dto';
 import { LinkMessagesDto } from '../dto/link-messages.dto';
 import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
@@ -163,20 +164,21 @@ export class OmniController {
    */
   @Get('conversations')
   @RequirePermission('view', 'contacts')
-  async listConversations(
-    @Query('cursor') cursor?: string,
-    @Query('limit') limit = '20',
-    @Query('status') status?: string,
-    @Query('channels') channels?: string,
-    @Query('assignedTo') assignedTo?: string,
-    @Query('sla') sla?: string,
-    @Query('tags') tags?: string,
-    @Query('isVip') isVip?: string,
-    @Query('hasUnread') hasUnread?: string,
-    @Query('search') search?: string,
-    @Query('contactId') contactId?: string,
-    @Query('page') page?: string,
-  ) {
+  async listConversations(@Query() query: ListConversationsQueryDto) {
+    const {
+      cursor,
+      limit = '20',
+      status,
+      channels,
+      assignedTo,
+      sla,
+      tags,
+      isVip,
+      hasUnread,
+      search,
+      contactId,
+      page,
+    } = query;
     const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
     if (!tenantId) {

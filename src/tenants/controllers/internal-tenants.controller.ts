@@ -231,7 +231,7 @@ export class InternalTenantsController {
     // 5. Trigger Keycloak Execute Actions Email (UPDATE_PASSWORD)
     //    Keycloak sends the email with a secure link to set password.
     const rootDomain =
-      this.configService.get('app.rootDomain', { infer: true }) ||
+      this.configService.get('app.rootDomain', { infer: true }) ??
       'crmsaudi.dev';
     const redirectUri = `https://${tenant.alias}.${rootDomain}/login`;
 

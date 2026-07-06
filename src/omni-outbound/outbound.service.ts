@@ -876,7 +876,7 @@ export class OutboundService {
         providerTimestamp: botTimestamp,
       });
     } catch (error) {
-      if (idempotencyKey && (error as any)?.code === 11000) {
+      if (idempotencyKey && error?.code === 11000) {
         const existing = await this.messageRepo.findByIdempotencyKey(
           tenantId,
           idempotencyKey,

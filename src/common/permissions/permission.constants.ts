@@ -253,7 +253,7 @@ export const PERMISSION_REGISTRY: Record<
  * Used as the superset for type-checking and seeding.
  */
 export const ALL_PERMISSIONS = Object.values(PERMISSION_REGISTRY).flatMap(
-  (resource) => Object.values(resource).filter(Boolean) as string[],
+  (resource) => Object.values(resource).filter(Boolean),
 );
 
 /**
