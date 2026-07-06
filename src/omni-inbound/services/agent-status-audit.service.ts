@@ -43,6 +43,24 @@ export interface AgentWorkTimeSummary {
   }>;
 }
 
+/** Bundled parameters for computeWorkTime (S107: reduces param count below 7). */
+interface WorkTimeComputeContext {
+  agentId: string;
+  agentName: string;
+  agentEmail: string;
+  date: string;
+  logs: Array<{
+    fromStatus: string;
+    toStatus: string;
+    trigger: string;
+    timestamp: Date;
+  }>;
+  startOfDay: Date;
+  capEnd: Date;
+  currentPresence?: AgentPresence;
+  midnightBaselineStatus?: string;
+}
+
 /**
  * AgentStatusAuditService — logs intentStatus transitions and computes
  * daily work time reports for agent KPI tracking.
@@ -173,17 +191,17 @@ export class AgentStatusAuditService implements OnModuleInit {
       }
 
       summaries.push(
-        this.computeWorkTime(
+        this.computeWorkTime({
           agentId,
-          user.name,
-          user.email,
+          agentName: user.name,
+          agentEmail: user.email,
           date,
           logs,
           startOfDay,
           capEnd,
-          isToday ? currentPresence : undefined,
+          currentPresence: isToday ? currentPresence : undefined,
           midnightBaselineStatus,
-        ),
+        }),
       );
     }
 
@@ -240,17 +258,17 @@ export class AgentStatusAuditService implements OnModuleInit {
       }
     }
 
-    return this.computeWorkTime(
+    return this.computeWorkTime({
       agentId,
-      name || 'Unknown Agent',
-      email,
+      agentName: name || 'Unknown Agent',
+      agentEmail: email,
       date,
       logs,
       startOfDay,
       capEnd,
-      currentPresence || undefined,
+      currentPresence: currentPresence || undefined,
       midnightBaselineStatus,
-    );
+    });
   }
 
   // ─── Internal Helpers ───────────────────────────────────────────────
@@ -272,22 +290,18 @@ export class AgentStatusAuditService implements OnModuleInit {
   /**
    * Core work time computation from a sorted list of transitions.
    */
-  private computeWorkTime(
-    agentId: string,
-    agentName: string,
-    agentEmail: string,
-    date: string,
-    logs: Array<{
-      fromStatus: string;
-      toStatus: string;
-      trigger: string;
-      timestamp: Date;
-    }>,
-    startOfDay: Date,
-    capEnd: Date,
-    currentPresence?: AgentPresence,
-    midnightBaselineStatus?: string,
-  ): AgentWorkTimeSummary {
+  private computeWorkTime(ctx: WorkTimeComputeContext): AgentWorkTimeSummary {
+    const {
+      agentId,
+      agentName,
+      agentEmail,
+      date,
+      logs,
+      startOfDay,
+      capEnd,
+      currentPresence,
+      midnightBaselineStatus,
+    } = ctx;
     const durations: Record<string, number> = {
       available: 0,
       busy: 0,

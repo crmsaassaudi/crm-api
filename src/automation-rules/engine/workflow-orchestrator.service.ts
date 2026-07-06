@@ -264,18 +264,19 @@ export class WorkflowOrchestratorService {
    * Called by AutomationDelayedProcessor after a wait timer expires.
    *
    * @param nodeId - Node ID to resume from (downstream of the wait node)
+   * @param ctx - Bundled execution context (S107: keeps param count ≤ 7)
    */
-  async resumeFromNode(
-    nodeId: string,
-    nodes: any[],
-    edges: any[],
-    payload: AutomationEventPayload,
-    executionId: string,
-    workflowId: string,
-    tenantId: string,
-    executionSessionId: string,
-    depth: number,
-  ): Promise<void> {
+  async resumeFromNode(nodeId: string, ctx: ResumeContext): Promise<void> {
+    const {
+      nodes,
+      edges,
+      payload,
+      executionId,
+      workflowId,
+      tenantId,
+      executionSessionId,
+      depth,
+    } = ctx;
     const stepLogs: ExecutionStep[] = [];
     // Pre-build O(1) lookup maps (SCALE-02)
     const graph = this.buildGraphIndex(nodes, edges);
@@ -727,4 +728,19 @@ interface TraversalContext {
   executionSessionId: string;
   depth: number;
   stepLogs: ExecutionStep[];
+}
+
+/**
+ * Context object for resuming a hibernated workflow execution.
+ * Wraps the parameters needed by resumeFromNode to stay within S107 limits.
+ */
+export interface ResumeContext {
+  nodes: any[];
+  edges: any[];
+  payload: AutomationEventPayload;
+  executionId: string;
+  workflowId: string;
+  tenantId: string;
+  executionSessionId: string;
+  depth: number;
 }

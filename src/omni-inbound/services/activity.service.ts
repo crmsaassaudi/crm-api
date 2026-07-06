@@ -10,6 +10,19 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { OmniEvents } from '../domain/omni-events';
 
+/** Bundled parameters for the private log helper (S107: keeps param count ≤ 7). */
+interface ActivityLogParams {
+  tenantId: string | null;
+  conversationId: string;
+  actorType: string;
+  actorId: string | null;
+  action: string;
+  oldValue: string | null;
+  newValue: string | null;
+  metadata?: Record<string, any>;
+  description?: string | null;
+}
+
 /**
  * ActivityService — listens to all conversation lifecycle events and
  * persists immutable audit trail entries with human-readable descriptions.
@@ -64,17 +77,17 @@ export class ActivityService {
     senderId: string;
   }) {
     const channelLabel = this.channelLabel(event.channelType);
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'system',
-      null,
-      'conversation_created',
-      null,
-      'open',
-      { channelType: event.channelType, senderId: event.senderId },
-      `Cuộc hội thoại mới từ kênh ${channelLabel}`,
-    );
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'system',
+      actorId: null,
+      action: 'conversation_created',
+      oldValue: null,
+      newValue: 'open',
+      metadata: { channelType: event.channelType, senderId: event.senderId },
+      description: `Cuộc hội thoại mới từ kênh ${channelLabel}`,
+    });
   }
 
   @OnEvent('omni.conversation.reopened')
@@ -84,20 +97,20 @@ export class ActivityService {
     previousConversationId: string;
     reopenCount: number;
   }) {
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'system',
-      null,
-      'conversation_reopened',
-      event.previousConversationId,
-      event.conversationId,
-      {
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'system',
+      actorId: null,
+      action: 'conversation_reopened',
+      oldValue: event.previousConversationId,
+      newValue: event.conversationId,
+      metadata: {
         previousConversationId: event.previousConversationId,
         reopenCount: event.reopenCount,
       },
-      `Khách hàng quay lại — cuộc hội thoại được mở lại (lần thứ ${event.reopenCount})`,
-    );
+      description: `Khách hàng quay lại — cuộc hội thoại được mở lại (lần thứ ${event.reopenCount})`,
+    });
   }
 
   @OnEvent('omni.conversation.status_changed')
@@ -115,17 +128,17 @@ export class ActivityService {
       const reasonText = event.reason
         ? ` (${this.humanizeReason(event.reason)})`
         : '';
-      await this.log(
-        event.tenantId,
-        event.conversationId,
-        'system',
-        null,
-        'auto_resolved',
-        event.oldStatus,
-        event.status,
-        { reason: event.reason, resolveSource: event.resolveSource },
-        `Hệ thống đã tự động resolve cuộc hội thoại${reasonText}`,
-      );
+      await this.log({
+        tenantId: event.tenantId,
+        conversationId: event.conversationId,
+        actorType: 'system',
+        actorId: null,
+        action: 'auto_resolved',
+        oldValue: event.oldStatus,
+        newValue: event.status,
+        metadata: { reason: event.reason, resolveSource: event.resolveSource },
+        description: `Hệ thống đã tự động resolve cuộc hội thoại${reasonText}`,
+      });
       return;
     }
 
@@ -135,17 +148,17 @@ export class ActivityService {
       ? ` (${this.humanizeReason(event.reason)})`
       : '';
 
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'agent',
-      event.agentId,
-      'status_changed',
-      event.oldStatus,
-      event.status,
-      { reason: event.reason, resolveSource: event.resolveSource },
-      `${actorName} đã ${statusLabel} cuộc hội thoại${reasonText}`,
-    );
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'agent',
+      actorId: event.agentId,
+      action: 'status_changed',
+      oldValue: event.oldStatus,
+      newValue: event.status,
+      metadata: { reason: event.reason, resolveSource: event.resolveSource },
+      description: `${actorName} đã ${statusLabel} cuộc hội thoại${reasonText}`,
+    });
   }
 
   @OnEvent('omni.conversation.assigned')
@@ -199,17 +212,17 @@ export class ActivityService {
     agentId: string;
   }) {
     const actorName = await this.resolveActorName(event.agentId);
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'agent',
-      event.agentId,
-      'tag_added',
-      null,
-      event.tag,
-      {},
-      `${actorName} đã thêm thẻ "${event.tag}"`,
-    );
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'agent',
+      actorId: event.agentId,
+      action: 'tag_added',
+      oldValue: null,
+      newValue: event.tag,
+      metadata: {},
+      description: `${actorName} đã thêm thẻ "${event.tag}"`,
+    });
   }
 
   @OnEvent('omni.conversation.tag_removed')
@@ -220,17 +233,17 @@ export class ActivityService {
     agentId: string;
   }) {
     const actorName = await this.resolveActorName(event.agentId);
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'agent',
-      event.agentId,
-      'tag_removed',
-      event.tag,
-      null,
-      {},
-      `${actorName} đã gỡ thẻ "${event.tag}"`,
-    );
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'agent',
+      actorId: event.agentId,
+      action: 'tag_removed',
+      oldValue: event.tag,
+      newValue: null,
+      metadata: {},
+      description: `${actorName} đã gỡ thẻ "${event.tag}"`,
+    });
   }
 
   @OnEvent('omni.conversation.note_added')
@@ -244,17 +257,17 @@ export class ActivityService {
   }) {
     const actorName = await this.resolveActorName(event.authorId);
     const visibility = event.isPrivate ? 'nội bộ' : 'công khai';
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'agent',
-      event.authorId,
-      'note_added',
-      null,
-      event.noteId,
-      { content: event.content, isPrivate: event.isPrivate },
-      `${actorName} đã thêm ghi chú ${visibility}`,
-    );
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'agent',
+      actorId: event.authorId,
+      action: 'note_added',
+      oldValue: null,
+      newValue: event.noteId,
+      metadata: { content: event.content, isPrivate: event.isPrivate },
+      description: `${actorName} đã thêm ghi chú ${visibility}`,
+    });
   }
 
   // ─── New event listeners ────────────────────────────────────────
@@ -270,17 +283,17 @@ export class ActivityService {
       event.slaType === 'first_response'
         ? 'Thời gian phản hồi đầu tiên (FRT)'
         : 'Thời gian xử lý';
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'system',
-      null,
-      'sla_breached',
-      null,
-      event.slaType,
-      { deadline: event.deadline, slaType: event.slaType },
-      `⚠️ Vi phạm SLA: ${slaLabel} đã quá hạn`,
-    );
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'system',
+      actorId: null,
+      action: 'sla_breached',
+      oldValue: null,
+      newValue: event.slaType,
+      metadata: { deadline: event.deadline, slaType: event.slaType },
+      description: `⚠️ Vi phạm SLA: ${slaLabel} đã quá hạn`,
+    });
   }
 
   @OnEvent('omni.conversation.escalated')
@@ -294,21 +307,21 @@ export class ActivityService {
     const targetName = event.escalatedTo
       ? await this.resolveActorName(event.escalatedTo)
       : 'quản lý';
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'system',
-      null,
-      'escalated',
-      null,
-      String(event.level),
-      {
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'system',
+      actorId: null,
+      action: 'escalated',
+      oldValue: null,
+      newValue: String(event.level),
+      metadata: {
         level: event.level,
         escalatedTo: event.escalatedTo,
         reason: event.reason,
       },
-      `Cuộc hội thoại đã được leo thang (cấp ${event.level}) tới ${targetName}`,
-    );
+      description: `Cuộc hội thoại đã được leo thang (cấp ${event.level}) tới ${targetName}`,
+    });
   }
 
   @OnEvent('omni.conversation.ticket_created')
@@ -320,17 +333,17 @@ export class ActivityService {
     agentId: string;
   }) {
     const actorName = await this.resolveActorName(event.agentId);
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'agent',
-      event.agentId,
-      'ticket_created',
-      null,
-      event.ticketId,
-      { ticketId: event.ticketId, subject: event.subject },
-      `${actorName} đã tạo Ticket: "${event.subject}"`,
-    );
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'agent',
+      actorId: event.agentId,
+      action: 'ticket_created',
+      oldValue: null,
+      newValue: event.ticketId,
+      metadata: { ticketId: event.ticketId, subject: event.subject },
+      description: `${actorName} đã tạo Ticket: "${event.subject}"`,
+    });
   }
 
   @OnEvent('omni.conversation.deal_created')
@@ -342,17 +355,17 @@ export class ActivityService {
     agentId: string;
   }) {
     const actorName = await this.resolveActorName(event.agentId);
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'agent',
-      event.agentId,
-      'deal_created',
-      null,
-      event.dealId,
-      { dealId: event.dealId, title: event.title },
-      `${actorName} đã tạo Deal: "${event.title}"`,
-    );
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'agent',
+      actorId: event.agentId,
+      action: 'deal_created',
+      oldValue: null,
+      newValue: event.dealId,
+      metadata: { dealId: event.dealId, title: event.title },
+      description: `${actorName} đã tạo Deal: "${event.title}"`,
+    });
   }
 
   @OnEvent('omni.contact.auto_merged')
@@ -366,22 +379,22 @@ export class ActivityService {
   }) {
     if (!event.conversationId) return;
     const channelLabel = this.channelLabel(event.channelType);
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'system',
-      null,
-      'identity_merged',
-      null,
-      event.existingContactId,
-      {
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'system',
+      actorId: null,
+      action: 'identity_merged',
+      oldValue: null,
+      newValue: event.existingContactId,
+      metadata: {
         existingContactId: event.existingContactId,
         senderId: event.senderId,
         channelType: event.channelType,
         matchedBy: event.matchedBy,
       },
-      `Hệ thống đã tự động liên kết danh tính ${channelLabel} với hồ sơ khách hàng (khớp ${event.matchedBy})`,
-    );
+      description: `Hệ thống đã tự động liên kết danh tính ${channelLabel} với hồ sơ khách hàng (khớp ${event.matchedBy})`,
+    });
   }
 
   @OnEvent('omni.conversation.takeover')
@@ -404,15 +417,15 @@ export class ActivityService {
       : 'chưa có agent';
     const reasonText = event.reason ? ` (${event.reason})` : '';
 
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'agent',
-      event.newAgentId,
-      'conversation_takeover',
-      event.previousAgentId,
-      event.newAgentId,
-      {
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'agent',
+      actorId: event.newAgentId,
+      action: 'conversation_takeover',
+      oldValue: event.previousAgentId,
+      newValue: event.newAgentId,
+      metadata: {
         previousAgentId: event.previousAgentId,
         previousAgentName,
         newAgentId: event.newAgentId,
@@ -421,8 +434,8 @@ export class ActivityService {
         force: event.force,
         lockExpiresAt: event.lockExpiresAt,
       },
-      `${newAgentName} đã tiếp quản hội thoại từ ${previousAgentName}${reasonText}`,
-    );
+      description: `${newAgentName} đã tiếp quản hội thoại từ ${previousAgentName}${reasonText}`,
+    });
   }
 
   @OnEvent(OmniEvents.CONVERSATION_QUEUED)
@@ -435,22 +448,22 @@ export class ActivityService {
     queuedSince: Date;
     agentPoolSize: number;
   }) {
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'system',
-      null,
-      'status_changed',
-      null,
-      'queued',
-      {
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'system',
+      actorId: null,
+      action: 'status_changed',
+      oldValue: null,
+      newValue: 'queued',
+      metadata: {
         strategy: event.strategy,
         reason: event.reason,
         channelType: event.channelType,
         agentPoolSize: event.agentPoolSize,
       },
-      `Hội thoại đang chờ phân công (${event.strategy}) — ${event.reason}`,
-    );
+      description: `Hội thoại đang chờ phân công (${event.strategy}) — ${event.reason}`,
+    });
   }
 
   @OnEvent(OmniEvents.BOT_HANDOFF)
@@ -461,36 +474,37 @@ export class ActivityService {
     channelAccount: string;
     contactId: string | null;
   }) {
-    await this.log(
-      event.tenantId,
-      event.conversationId,
-      'system',
-      null,
-      'bot_handoff',
-      'active',
-      'handoff',
-      {
+    await this.log({
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      actorType: 'system',
+      actorId: null,
+      action: 'bot_handoff',
+      oldValue: 'active',
+      newValue: 'handoff',
+      metadata: {
         channelType: event.channelType,
         channelAccount: event.channelAccount,
         contactId: event.contactId,
       },
-      'Bot đã hoàn tất flow và chuyển hội thoại cho tư vấn viên',
-    );
+      description: 'Bot đã hoàn tất flow và chuyển hội thoại cho tư vấn viên',
+    });
   }
 
   // ─── Helpers ────────────────────────────────────────────────────
 
-  private async log(
-    tenantId: string | null,
-    conversationId: string,
-    actorType: string,
-    actorId: string | null,
-    action: string,
-    oldValue: string | null,
-    newValue: string | null,
-    metadata: Record<string, any> = {},
-    description: string | null = null,
-  ): Promise<void> {
+  private async log(params: ActivityLogParams): Promise<void> {
+    const {
+      tenantId,
+      conversationId,
+      actorType,
+      actorId,
+      action,
+      oldValue,
+      newValue,
+      metadata = {},
+      description = null,
+    } = params;
     try {
       const activity = await this.activityRepo.create({
         tenantId: tenantId ?? undefined,
@@ -647,40 +661,40 @@ export class ActivityService {
 
     if (agentId) {
       const agentName = await this.resolveActorName(agentId);
-      await this.log(
+      await this.log({
         tenantId,
         conversationId,
-        isManual ? 'agent' : 'system',
-        performedByUserId ?? agentId,
-        'agent_assigned',
-        oldAgentId,
-        agentId,
-        {
+        actorType: isManual ? 'agent' : 'system',
+        actorId: performedByUserId ?? agentId,
+        action: 'agent_assigned',
+        oldValue: oldAgentId,
+        newValue: agentId,
+        metadata: {
           strategy,
           reason,
           agentName,
           performedByUserId,
           performerName,
         },
-        `${actorPrefix} đã phân công hội thoại cho tư vấn viên ${agentName}`,
-      );
+        description: `${actorPrefix} đã phân công hội thoại cho tư vấn viên ${agentName}`,
+      });
     } else if (oldAgentId) {
       const oldAgentName = await this.resolveActorName(oldAgentId);
-      await this.log(
+      await this.log({
         tenantId,
         conversationId,
-        isManual ? 'agent' : 'system',
-        performedByUserId ?? oldAgentId,
-        'agent_unassigned',
-        oldAgentId,
-        null,
-        {
+        actorType: isManual ? 'agent' : 'system',
+        actorId: performedByUserId ?? oldAgentId,
+        action: 'agent_unassigned',
+        oldValue: oldAgentId,
+        newValue: null,
+        metadata: {
           reason,
           performedByUserId,
           performerName,
         },
-        `${actorPrefix} đã gỡ tư vấn viên ${oldAgentName} khỏi hội thoại — chuyển về hàng chờ`,
-      );
+        description: `${actorPrefix} đã gỡ tư vấn viên ${oldAgentName} khỏi hội thoại — chuyển về hàng chờ`,
+      });
     }
   }
 
@@ -703,40 +717,40 @@ export class ActivityService {
       this.logger.debug(
         `[onAssigned] logging group_assigned for ${groupId} → ${groupName}`,
       );
-      await this.log(
+      await this.log({
         tenantId,
         conversationId,
-        isManual ? 'agent' : 'system',
-        performedByUserId ?? null,
-        'group_assigned',
-        oldGroupId ?? null,
-        groupId,
-        {
+        actorType: isManual ? 'agent' : 'system',
+        actorId: performedByUserId ?? null,
+        action: 'group_assigned',
+        oldValue: oldGroupId ?? null,
+        newValue: groupId,
+        metadata: {
           groupId,
           groupName,
           performedByUserId,
           performerName,
         },
-        `${actorPrefix} đã phân công hội thoại cho nhóm ${groupName}`,
-      );
+        description: `${actorPrefix} đã phân công hội thoại cho nhóm ${groupName}`,
+      });
     } else if (oldGroupId) {
       const oldGroupName = await this.resolveGroupName(oldGroupId);
-      await this.log(
+      await this.log({
         tenantId,
         conversationId,
-        isManual ? 'agent' : 'system',
-        performedByUserId ?? null,
-        'group_unassigned',
-        oldGroupId,
-        null,
-        {
+        actorType: isManual ? 'agent' : 'system',
+        actorId: performedByUserId ?? null,
+        action: 'group_unassigned',
+        oldValue: oldGroupId,
+        newValue: null,
+        metadata: {
           groupId: null,
           groupName: oldGroupName,
           performedByUserId,
           performerName,
         },
-        `${actorPrefix} đã gỡ nhóm ${oldGroupName} khỏi hội thoại`,
-      );
+        description: `${actorPrefix} đã gỡ nhóm ${oldGroupName} khỏi hội thoại`,
+      });
     }
   }
 }

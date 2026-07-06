@@ -8,7 +8,10 @@ import {
   AutomationDelayedJobData,
   AutomationDelayedQueueJobData,
 } from './automation-queue.constants';
-import { WorkflowOrchestratorService } from '../engine/workflow-orchestrator.service';
+import {
+  WorkflowOrchestratorService,
+  ResumeContext,
+} from '../engine/workflow-orchestrator.service';
 import { CrmRecordUpdateService } from '../engine/crm-record-update.service';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationWorkflowRepository } from '../infrastructure/persistence/document/repositories/automation-workflow.repository';
@@ -184,11 +187,10 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
       throw new Error(`UNPUBLISHED_WORKFLOW: ${data.workflowId}`);
     }
 
-    await this.orchestrator.resumeFromNode(
-      data.resumeFromNodeId,
-      publishedNodes,
-      publishedEdges,
-      {
+    const resumeCtx: ResumeContext = {
+      nodes: publishedNodes,
+      edges: publishedEdges,
+      payload: {
         tenantId: data.tenantId,
         event: 'record_created',
         object: data.recordType,
@@ -198,12 +200,13 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
         automationBreadcrumbs: data.automationBreadcrumbs,
         _automationSourceWorkflowId: data.sourceWorkflowId,
       },
-      data.executionId,
-      data.workflowId,
-      data.tenantId,
-      data.executionSessionId,
-      data.automationDepth,
-    );
+      executionId: data.executionId,
+      workflowId: data.workflowId,
+      tenantId: data.tenantId,
+      executionSessionId: data.executionSessionId,
+      depth: data.automationDepth,
+    };
+    await this.orchestrator.resumeFromNode(data.resumeFromNodeId, resumeCtx);
 
     this.logger.log(
       `[DelayedResume] Resumed and completed execution=${data.executionId}`,

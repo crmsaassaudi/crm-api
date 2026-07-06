@@ -49,8 +49,8 @@ export class EmailTrackingController {
     // Extract fingerprint data for bot detection
     const userAgent = req.headers['user-agent'] ?? null;
     const ipAddress =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      req.socket?.remoteAddress ||
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
+      req.socket?.remoteAddress ??
       null;
 
     // Process hit asynchronously — don't block the pixel response
