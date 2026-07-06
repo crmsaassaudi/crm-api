@@ -399,56 +399,15 @@ export class HistoricalSyncService {
     let importedCount = 0;
 
     for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      const envelope = msg.envelope;
+      const envelope = messages[i]?.envelope;
       if (!envelope) continue;
 
-      // Extract all participants
-      const allParticipants = [
-        ...(envelope.from ?? []),
-        ...(envelope.to ?? []),
-        ...(envelope.cc ?? []),
-      ];
-
-      const emails = allParticipants
-        .map((addr: any) => addr.address?.toLowerCase())
-        .filter(Boolean);
-
       if (config.mode === 'auto_discover') {
-        for (const email of emails) {
-          if (this.isDomainBlacklisted(email)) continue;
-
-          const domain = email.split('@')[1];
-          const existing = pendingContacts.get(email);
-
-          if (existing) {
-            existing.seenCount++;
-            existing.lastSeenAt = envelope.date ?? new Date();
-            if (existing.sampleSubjects.length < 3) {
-              existing.sampleSubjects.push(envelope.subject ?? '');
-            }
-          } else {
-            const name =
-              allParticipants.find(
-                (a: any) => a.address?.toLowerCase() === email,
-              )?.name ?? email.split('@')[0];
-
-            pendingContacts.set(email, {
-              email,
-              displayName: name,
-              domain,
-              seenCount: 1,
-              firstSeenAt: envelope.date ?? new Date(),
-              lastSeenAt: envelope.date ?? new Date(),
-              sampleSubjects: [envelope.subject ?? ''],
-            });
-          }
-        }
+        this.processEnvelopeForAutoDiscover(envelope, pendingContacts);
       }
 
       importedCount++;
 
-      // Update progress every 50 messages
       if (i % 50 === 0) {
         await this.updateProgress(jobId, {
           phase: `Processing email ${i + 1} of ${messages.length}...`,
@@ -457,7 +416,6 @@ export class HistoricalSyncService {
           pendingContactsCreated: pendingContacts.size,
         } as SyncProgress);
 
-        // Slow-burn: add jitter between processing batches
         if (i > 0 && i % this.MAX_REQUESTS_PER_MINUTE === 0) {
           await this.sleep(this.randomJitter());
         }
@@ -465,6 +423,71 @@ export class HistoricalSyncService {
     }
 
     return { pendingContacts, importedCount };
+  }
+
+  /**
+   * Process a single email envelope for auto-discover mode:
+   * extracts non-blacklisted participant emails and upserts them
+   * into the pendingContacts map.
+   */
+  private processEnvelopeForAutoDiscover(
+    envelope: any,
+    pendingContacts: Map<string, PendingContact>,
+  ): void {
+    const allParticipants = [
+      ...(envelope.from ?? []),
+      ...(envelope.to ?? []),
+      ...(envelope.cc ?? []),
+    ];
+
+    const emails: string[] = allParticipants
+      .map((addr: any) => addr.address?.toLowerCase())
+      .filter(Boolean);
+
+    for (const email of emails) {
+      if (this.isDomainBlacklisted(email)) continue;
+      this.accumulatePendingContact(
+        email,
+        envelope,
+        allParticipants,
+        pendingContacts,
+      );
+    }
+  }
+
+  /**
+   * Upsert a single email address into the pending-contact accumulator.
+   */
+  private accumulatePendingContact(
+    email: string,
+    envelope: any,
+    allParticipants: any[],
+    pendingContacts: Map<string, PendingContact>,
+  ): void {
+    const existing = pendingContacts.get(email);
+    if (existing) {
+      existing.seenCount++;
+      existing.lastSeenAt = envelope.date ?? new Date();
+      if (existing.sampleSubjects.length < 3) {
+        existing.sampleSubjects.push(envelope.subject ?? '');
+      }
+      return;
+    }
+
+    const domain = email.split('@')[1];
+    const name =
+      allParticipants.find((a: any) => a.address?.toLowerCase() === email)
+        ?.name ?? email.split('@')[0];
+
+    pendingContacts.set(email, {
+      email,
+      displayName: name,
+      domain,
+      seenCount: 1,
+      firstSeenAt: envelope.date ?? new Date(),
+      lastSeenAt: envelope.date ?? new Date(),
+      sampleSubjects: [envelope.subject ?? ''],
+    });
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────

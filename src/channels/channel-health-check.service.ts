@@ -17,6 +17,9 @@ const BACKOFF_INTERVALS_MS = [
   6 * 60 * 60 * 1000, // 6 hours    (4th+ failure — capped)
 ] as const;
 
+/** Result of a single channel config health verification. */
+type HealthCheckResult = 'passed' | 'failed' | 'skipped';
+
 /**
  * Channel Health Check Service — Adaptive credential verification.
  *
@@ -222,7 +225,7 @@ export class ChannelHealthCheckService {
         `[AdaptiveCheck] Processing ${dueConfigs.length} due config(s)`,
       );
 
-      const results: Array<'passed' | 'failed' | 'skipped'> = [];
+      const results: Array<HealthCheckResult> = [];
       for (
         let i = 0;
         i < dueConfigs.length;
@@ -293,7 +296,7 @@ export class ChannelHealthCheckService {
    */
   private async verifyAndUpdateConfig(
     config: ChannelConfig,
-  ): Promise<'passed' | 'failed' | 'skipped'> {
+  ): Promise<HealthCheckResult> {
     if (!config.encryptedCredentials) {
       this.logger.warn(
         `[HealthCheck] Config "${config.name}" (${config.id}) has no encrypted credentials — skipping`,
@@ -415,7 +418,7 @@ export class ChannelHealthCheckService {
    * Tally the results of a Promise.allSettled batch into pass/fail/skip counts.
    */
   private tallyBatchResults(
-    results: PromiseSettledResult<'passed' | 'failed' | 'skipped'>[],
+    results: PromiseSettledResult<HealthCheckResult>[],
   ): { passed: number; failed: number; skipped: number } {
     let passed = 0;
     let failed = 0;

@@ -125,60 +125,70 @@ export class EmailChannelSettingsService {
    * Throws an error for any value that is out of the allowed range/set.
    */
   private validateSettingsUpdates(updates: Partial<EmailSettings>): void {
-    if (updates.lazyReplyBreakDays !== undefined) {
-      if (updates.lazyReplyBreakDays < 1 || updates.lazyReplyBreakDays > 365) {
-        throw new Error('lazyReplyBreakDays must be between 1 and 365');
-      }
+    this.validateLazyReplyBreakDays(updates.lazyReplyBreakDays);
+    this.validateDailyQuotaOverride(updates.dailyQuotaOverride);
+    this.validateBulkRecipientLimit(updates.bulkRecipientLimit);
+    this.validateGdprAutoRedactDays(updates.gdprAutoRedactDays);
+    this.validateInitialSyncDays(updates.initialSyncDays);
+    this.validateMailboxType(updates.mailboxType);
+    this.validateLabelSyncMode(updates.labelSyncMode);
+    this.validateSyncTargetFolders(updates.syncTargetFolders);
+  }
+
+  private validateLazyReplyBreakDays(value: number | undefined): void {
+    if (value !== undefined && (value < 1 || value > 365)) {
+      throw new Error('lazyReplyBreakDays must be between 1 and 365');
     }
-    if (updates.dailyQuotaOverride !== undefined) {
-      if (
-        updates.dailyQuotaOverride < 0 ||
-        updates.dailyQuotaOverride > 50000
-      ) {
-        throw new Error('dailyQuotaOverride must be between 0 and 50000');
-      }
+  }
+
+  private validateDailyQuotaOverride(value: number | undefined): void {
+    if (value !== undefined && (value < 0 || value > 50000)) {
+      throw new Error('dailyQuotaOverride must be between 0 and 50000');
     }
-    if (updates.bulkRecipientLimit !== undefined) {
-      if (updates.bulkRecipientLimit < 1 || updates.bulkRecipientLimit > 2000) {
-        throw new Error('bulkRecipientLimit must be between 1 and 2000');
-      }
+  }
+
+  private validateBulkRecipientLimit(value: number | undefined): void {
+    if (value !== undefined && (value < 1 || value > 2000)) {
+      throw new Error('bulkRecipientLimit must be between 1 and 2000');
     }
-    if (updates.gdprAutoRedactDays !== undefined) {
-      if (updates.gdprAutoRedactDays < 0 || updates.gdprAutoRedactDays > 3650) {
-        throw new Error(
-          'gdprAutoRedactDays must be between 0 and 3650 (10 years)',
-        );
-      }
+  }
+
+  private validateGdprAutoRedactDays(value: number | undefined): void {
+    if (value !== undefined && (value < 0 || value > 3650)) {
+      throw new Error(
+        'gdprAutoRedactDays must be between 0 and 3650 (10 years)',
+      );
     }
-    if (updates.initialSyncDays !== undefined) {
-      if (updates.initialSyncDays < 1 || updates.initialSyncDays > 365) {
-        throw new Error('initialSyncDays must be between 1 and 365');
-      }
+  }
+
+  private validateInitialSyncDays(value: number | undefined): void {
+    if (value !== undefined && (value < 1 || value > 365)) {
+      throw new Error('initialSyncDays must be between 1 and 365');
     }
-    if (
-      updates.mailboxType !== undefined &&
-      !VALID_MAILBOX_TYPES.has(updates.mailboxType)
-    ) {
+  }
+
+  private validateMailboxType(value: string | undefined): void {
+    if (value !== undefined && !VALID_MAILBOX_TYPES.has(value)) {
       throw new Error('mailboxType must be one of: personal, shared');
     }
-    if (
-      updates.labelSyncMode !== undefined &&
-      !VALID_LABEL_SYNC_MODES.has(updates.labelSyncMode)
-    ) {
+  }
+
+  private validateLabelSyncMode(value: string | undefined): void {
+    if (value !== undefined && !VALID_LABEL_SYNC_MODES.has(value)) {
       throw new Error('labelSyncMode must be one of: none, pull_only, two_way');
     }
-    if (updates.syncTargetFolders !== undefined) {
-      if (
-        !Array.isArray(updates.syncTargetFolders) ||
-        updates.syncTargetFolders.length === 0 ||
-        !updates.syncTargetFolders.every((folder) =>
-          VALID_SYNC_TARGET_FOLDERS.has(folder),
-        )
-      ) {
-        throw new Error(
-          'syncTargetFolders must contain one or more of: INBOX, SENT, DRAFTS, TRASH, SPAM',
-        );
-      }
+  }
+
+  private validateSyncTargetFolders(value: string[] | undefined): void {
+    if (value === undefined) return;
+    const isValid =
+      Array.isArray(value) &&
+      value.length > 0 &&
+      value.every((folder) => VALID_SYNC_TARGET_FOLDERS.has(folder));
+    if (!isValid) {
+      throw new Error(
+        'syncTargetFolders must contain one or more of: INBOX, SENT, DRAFTS, TRASH, SPAM',
+      );
     }
   }
 
