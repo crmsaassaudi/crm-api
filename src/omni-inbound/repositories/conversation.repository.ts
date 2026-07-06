@@ -203,60 +203,74 @@ export class ConversationRepository {
     if (query.channels && query.channels.length > 0) {
       filter.channelType = { $in: query.channels };
     }
-    if (query.unassigned) {
-      filter.assignedAgentId = null;
-      filter.assignedGroupId = null;
-    } else {
-      if (query.assignedAgent !== undefined) {
-        filter.assignedAgentId = query.assignedAgent;
-      }
-      if (query.assignedGroup !== undefined) {
-        filter.assignedGroupId = query.assignedGroup;
-      }
-    }
 
-    if (query.sla && query.sla.length > 0) {
-      // Logic for sla: 'warning' or 'breached'
-      // Assuming we map 'warning' to some criteria and 'breached' to frtBreached / resolutionBreached
-      const slaOrConditions: any[] = [];
-      if (query.sla.includes('breached')) {
-        slaOrConditions.push({ frtBreached: true });
-        slaOrConditions.push({ resolutionBreached: true });
-      }
-      if (query.sla.includes('warning')) {
-        // Find documents where deadline is soon (e.g. within 15 minutes) but not breached
-        const warningTime = new Date(Date.now() + 15 * 60000);
-        slaOrConditions.push({
-          frtBreached: false,
-          frtDeadline: { $lte: warningTime },
-        });
-        slaOrConditions.push({
-          resolutionBreached: false,
-          resolutionDeadline: { $lte: warningTime },
-        });
-      }
-      if (slaOrConditions.length > 0) {
-        filter.$or = slaOrConditions;
-      }
+    this.buildAssignmentFilter(query, filter);
+
+    const slaConditions = this.buildSlaFilter(query.sla);
+    if (slaConditions.length > 0) {
+      filter.$or = slaConditions;
     }
 
     if (query.tags && query.tags.length > 0) {
       filter.tags = { $in: query.tags };
     }
-
     if (query.isVip !== undefined) {
       filter.isVip = query.isVip;
     }
-
     if (query.hasUnread !== undefined) {
       filter.unreadCount = query.hasUnread ? { $gt: 0 } : 0;
     }
-
     if (query.search) {
       filter.$text = { $search: query.search };
     }
 
     return filter;
+  }
+
+  /**
+   * Apply assignment-related filters: unassigned takes precedence over
+   * specific agent / group filters.
+   */
+  private buildAssignmentFilter(
+    query: ConversationQuery,
+    filter: FilterQuery<OmniConversationDocument>,
+  ): void {
+    if (query.unassigned) {
+      filter.assignedAgentId = null;
+      filter.assignedGroupId = null;
+      return;
+    }
+    if (query.assignedAgent !== undefined) {
+      filter.assignedAgentId = query.assignedAgent;
+    }
+    if (query.assignedGroup !== undefined) {
+      filter.assignedGroupId = query.assignedGroup;
+    }
+  }
+
+  /**
+   * Build the SLA $or condition array from the requested SLA labels
+   * ('breached' and/or 'warning'). Returns an empty array when no SLA
+   * filter is requested.
+   */
+  private buildSlaFilter(sla: string[] | undefined): any[] {
+    if (!sla || sla.length === 0) return [];
+
+    const conditions: any[] = [];
+
+    if (sla.includes('breached')) {
+      conditions.push({ frtBreached: true });
+      conditions.push({ resolutionBreached: true });
+    }
+
+    if (sla.includes('warning')) {
+      // Documents where SLA deadline is within 15 minutes but not yet breached
+      const warningTime = new Date(Date.now() + 15 * 60000);
+      conditions.push({ frtBreached: false, frtDeadline: { $lte: warningTime } });
+      conditions.push({ resolutionBreached: false, resolutionDeadline: { $lte: warningTime } });
+    }
+
+    return conditions;
   }
 
   async updateStatus(

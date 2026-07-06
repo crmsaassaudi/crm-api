@@ -448,19 +448,23 @@ export class EmailLabelService {
     return this.systemLabels.has(labelId.toUpperCase()) ? 'system' : 'user';
   }
 
+  private colorFromHint(lower: string): string | null {
+    if (lower.includes('red') || lower.includes('rose')) return 'rose';
+    if (lower.includes('green') || lower.includes('emerald')) return 'emerald';
+    if (lower.includes('yellow') || lower.includes('orange')) return 'amber';
+    if (lower.includes('purple') || lower.includes('violet')) return 'violet';
+    if (lower.includes('cyan') || lower.includes('teal')) return 'cyan';
+    if (lower.includes('blue')) return 'blue';
+    return null;
+  }
+
   private normalizeColor(
     color: string | null | undefined,
     seed: string,
   ): string {
     if (color) {
-      const lower = color.toLowerCase();
-      if (lower.includes('red') || lower.includes('rose')) return 'rose';
-      if (lower.includes('green') || lower.includes('emerald'))
-        return 'emerald';
-      if (lower.includes('yellow') || lower.includes('orange')) return 'amber';
-      if (lower.includes('purple') || lower.includes('violet')) return 'violet';
-      if (lower.includes('cyan') || lower.includes('teal')) return 'cyan';
-      if (lower.includes('blue')) return 'blue';
+      const matched = this.colorFromHint(color.toLowerCase());
+      if (matched) return matched;
     }
 
     let hash = 0;

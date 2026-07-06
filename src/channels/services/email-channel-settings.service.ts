@@ -91,7 +91,40 @@ export class EmailChannelSettingsService {
   ): Promise<EmailSettings> {
     const current = await this.getSettings(tenantId);
 
-    // Validate
+    this.validateSettingsUpdates(updates);
+
+    const readStateStrategy = {
+      ...current.readStateStrategy,
+      ...(updates.readStateStrategy ?? {}),
+    };
+
+    if (updates.syncReadState !== undefined) {
+      readStateStrategy.syncToProvider = updates.syncReadState;
+    }
+
+    if (updates.readStateStrategy !== undefined) {
+      updates.syncReadState = readStateStrategy.syncToProvider;
+    }
+
+    const merged: EmailSettings = {
+      ...current,
+      ...updates,
+      readStateStrategy,
+      syncReadState: readStateStrategy.syncToProvider,
+    };
+    await this.crmSettings.updateSetting(SETTINGS_KEY, merged, tenantId);
+
+    this.logger.log(
+      `[EmailSettings] Updated for tenant ${tenantId ?? 'current'}`,
+    );
+    return merged;
+  }
+
+  /**
+   * Validate individual email setting fields before persisting.
+   * Throws an error for any value that is out of the allowed range/set.
+   */
+  private validateSettingsUpdates(updates: Partial<EmailSettings>): void {
     if (updates.lazyReplyBreakDays !== undefined) {
       if (updates.lazyReplyBreakDays < 1 || updates.lazyReplyBreakDays > 365) {
         throw new Error('lazyReplyBreakDays must be between 1 and 365');
@@ -147,32 +180,6 @@ export class EmailChannelSettingsService {
         );
       }
     }
-
-    const readStateStrategy = {
-      ...current.readStateStrategy,
-      ...(updates.readStateStrategy ?? {}),
-    };
-
-    if (updates.syncReadState !== undefined) {
-      readStateStrategy.syncToProvider = updates.syncReadState;
-    }
-
-    if (updates.readStateStrategy !== undefined) {
-      updates.syncReadState = readStateStrategy.syncToProvider;
-    }
-
-    const merged: EmailSettings = {
-      ...current,
-      ...updates,
-      readStateStrategy,
-      syncReadState: readStateStrategy.syncToProvider,
-    };
-    await this.crmSettings.updateSetting(SETTINGS_KEY, merged, tenantId);
-
-    this.logger.log(
-      `[EmailSettings] Updated for tenant ${tenantId ?? 'current'}`,
-    );
-    return merged;
   }
 
   /**

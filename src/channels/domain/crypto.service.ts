@@ -283,7 +283,9 @@ export function cryptoServiceFactory(
   const nodeEnv =
     configService.get<string>('NODE_ENV', { infer: true }) ?? 'development';
 
-  // TODO(encryption): Re-enable bootstrap halt after KMS is configured for production.
+  // NOTE(encryption): KMS bootstrap halt is intentionally deferred until KMS
+  // is provisioned for production. The warning below replaces the hard halt
+  // temporarily. Re-enable the `throw` once KMS is configured.
   if (nodeEnv === 'production' && provider === 'env') {
     Logger.warn(
       '[CryptoService] ENCRYPTION_PROVIDER=env is temporarily allowed in production. ' +

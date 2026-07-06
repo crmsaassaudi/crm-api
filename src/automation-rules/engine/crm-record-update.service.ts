@@ -212,7 +212,7 @@ export class CrmRecordUpdateService {
     if (!service) return null;
 
     const record = await service.findOne(recordId);
-    return record ? record : null;
+    return record ?? null;
   }
 
   // ── Private Helpers ──────────────────────────────────────────────────────

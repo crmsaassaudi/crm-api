@@ -206,6 +206,14 @@ export class OmniController {
     const { assignedAgent, assignedGroup, unassigned } =
       this.resolveAssignedToFilter(assignedTo, userId);
 
+    let isVipFilter: boolean | undefined;
+    if (isVip === 'true') isVipFilter = true;
+    else if (isVip === 'false') isVipFilter = false;
+
+    let hasUnreadFilter: boolean | undefined;
+    if (hasUnread === 'true') hasUnreadFilter = true;
+    else if (hasUnread === 'false') hasUnreadFilter = false;
+
     const result = await this.conversationRepo.findCursorPaginated(
       {
         tenantId,
@@ -216,13 +224,8 @@ export class OmniController {
         unassigned,
         sla: slaFilter,
         tags: tagsFilter,
-        isVip: isVip === 'true' ? true : isVip === 'false' ? false : undefined,
-        hasUnread:
-          hasUnread === 'true'
-            ? true
-            : hasUnread === 'false'
-              ? false
-              : undefined,
+        isVip: isVipFilter,
+        hasUnread: hasUnreadFilter,
         search,
         cursor,
       },
