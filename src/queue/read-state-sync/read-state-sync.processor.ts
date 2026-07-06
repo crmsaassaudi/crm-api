@@ -109,153 +109,117 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
   ): Promise<void> {
     const { configId, emailMessageId, imapUid, targetState } = data;
 
-    // ── Step 3: Check credentials and active status ───────────────────
-    if (!config.encryptedCredentials) {
-      this.logger.error(
-        `[ReadStateSync] Credentials missing for config ${configId} — dropping job`,
-      );
-      await this.updateSyncStatus(
-        emailMessageId,
-        'failed',
-        'Credentials missing',
-      );
-      return;
-    }
+    const credentials = await this.loadAndDecryptCredentials(config);
+    if (!credentials) return; // Status already updated in helper
 
-    // Check if config is still active
-    if (config.status === 'error' || config.status === 'disabled') {
-      this.logger.warn(
-        `[ReadStateSync] Config ${configId} is ${config.status} — dropping job`,
-      );
-      await this.updateSyncStatus(
-        emailMessageId,
-        'failed',
-        `Config status: ${config.status}`,
-      );
-      return;
-    }
-
-    let credentials: Record<string, any>;
-    try {
-      credentials = JSON.parse(
-        await this.crypto.decrypt(config.encryptedCredentials),
-      );
-    } catch (err: any) {
-      this.logger.error(
-        `[ReadStateSync] Failed to decrypt credentials for ${configId}: ${err.message}`,
-      );
-      await this.updateSyncStatus(
-        emailMessageId,
-        'failed',
-        'Credential decryption failed',
-      );
-      return;
-    }
-
-    // ── Step 4: Connect to IMAP ──────────────────────────────────────
-    const imapHost = config.publicSettings?.imapHost;
-    const imapPort = Number(config.publicSettings?.imapPort ?? 993);
-
-    if (!imapHost) {
-      this.logger.error(
-        `[ReadStateSync] No IMAP host configured for ${configId}`,
-      );
-      await this.updateSyncStatus(
-        emailMessageId,
-        'failed',
-        'IMAP host not configured',
-      );
-      return;
-    }
-
-    let ImapFlow: any;
-    try {
-      ImapFlow = (await import('imapflow')).ImapFlow;
-    } catch {
-      this.logger.error(
-        '[ReadStateSync] imapflow package not installed. Run: npm install imapflow',
-      );
-      throw new Error('imapflow package not installed');
-    }
-
-    const client = new ImapFlow({
-      host: imapHost,
-      port: imapPort,
-      secure: imapPort === 993,
-      auth: {
-        user: credentials.user,
-        pass: credentials.password,
-      },
-      logger: false,
-    });
+    const client = await this.createImapClient(config, credentials);
+    if (!client) return; // Status already updated
 
     try {
       await client.connect();
       const mailboxLock = await client.getMailboxLock('INBOX');
 
       try {
-        // ── Step 5: Resolve target UID ────────────────────────────────
-        let targetUid = imapUid;
-
-        if (!targetUid) {
-          // UID not available — search by Message-ID header (UID validity fallback)
-          targetUid = await this.searchByMessageId(client, emailMessageId);
-        }
-
-        if (!targetUid) {
-          this.logger.warn(
-            `[ReadStateSync] Could not find UID for ${emailMessageId} — dropping`,
-          );
-          await this.updateSyncStatus(
-            emailMessageId,
-            'failed',
-            'Email not found in mailbox',
-          );
-          return;
-        }
-
-        // ── Step 6: Execute flag mutation ─────────────────────────────
-        if (targetState === 'read') {
-          await client.messageFlagsAdd({ uid: targetUid }, ['\\Seen']);
-          this.logger.log(
-            `[ReadStateSync] ✅ Marked as READ: UID=${targetUid} (${emailMessageId})`,
-          );
-        } else {
-          await client.messageFlagsRemove({ uid: targetUid }, ['\\Seen']);
-          this.logger.log(
-            `[ReadStateSync] ✅ Marked as UNREAD: UID=${targetUid} (${emailMessageId})`,
-          );
-        }
-
-        // ── Step 7: Update sync status ────────────────────────────────
-        await this.updateSyncStatus(emailMessageId, 'synced', null);
+        await this.performMutation(client, data);
       } finally {
         mailboxLock.release();
       }
     } catch (err: any) {
-      // ── Step 8: Error classification ────────────────────────────────
-      const classified = classifyProviderError(err);
-
-      if (classified.severity === ErrorSeverity.PERMANENT) {
-        await this.handlePermanentError(configId, emailMessageId, classified);
-        // Don't throw — BullMQ would retry. We want to drop permanently.
-        return;
-      }
-
-      // Transient error: let BullMQ retry with exponential backoff
-      this.logger.warn(
-        `[ReadStateSync] TRANSIENT error for ${emailMessageId}: ${classified.code} — retrying`,
-      );
-      await this.updateSyncStatus(
-        emailMessageId,
-        'pending',
-        `Retry: ${classified.code}`,
-      );
-
-      throw err; // Re-throw so BullMQ retries
+      await this.handleSyncError(configId, emailMessageId, err);
     } finally {
       await client.logout().catch(() => {});
     }
+  }
+
+  private async loadAndDecryptCredentials(
+    config: any,
+  ): Promise<Record<string, any> | null> {
+    const configId = String(config._id);
+    if (!config.encryptedCredentials) {
+      this.logger.error(`Credentials missing for config ${configId}`);
+      return null;
+    }
+
+    if (config.status === 'error' || config.status === 'disabled') {
+      this.logger.warn(`Config ${configId} is ${config.status}`);
+      return null;
+    }
+
+    try {
+      return JSON.parse(await this.crypto.decrypt(config.encryptedCredentials));
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to decrypt credentials for ${configId}: ${err.message}`,
+      );
+      return null;
+    }
+  }
+
+  private async createImapClient(
+    config: any,
+    credentials: any,
+  ): Promise<any | null> {
+    const imapHost = config.publicSettings?.imapHost;
+    const imapPort = Number(config.publicSettings?.imapPort ?? 993);
+
+    if (!imapHost) {
+      this.logger.error(`No IMAP host for ${config._id}`);
+      return null;
+    }
+
+    const { ImapFlow } = await import('imapflow');
+    return new ImapFlow({
+      host: imapHost,
+      port: imapPort,
+      secure: imapPort === 993,
+      auth: { user: credentials.user, pass: credentials.password },
+      logger: false,
+    });
+  }
+
+  private async performMutation(
+    client: any,
+    data: ReadStateSyncJobData,
+  ): Promise<void> {
+    const { emailMessageId, imapUid, targetState } = data;
+    let targetUid = imapUid;
+
+    if (!targetUid) {
+      targetUid = await this.searchByMessageId(client, emailMessageId);
+    }
+
+    if (!targetUid) {
+      await this.updateSyncStatus(emailMessageId, 'failed', 'Email not found');
+      return;
+    }
+
+    if (targetState === 'read') {
+      await client.messageFlagsAdd({ uid: targetUid }, ['\\Seen']);
+    } else {
+      await client.messageFlagsRemove({ uid: targetUid }, ['\\Seen']);
+    }
+
+    await this.updateSyncStatus(emailMessageId, 'synced', null);
+  }
+
+  private async handleSyncError(
+    configId: string,
+    emailMessageId: string,
+    err: any,
+  ): Promise<void> {
+    const classified = classifyProviderError(err);
+    if (classified.severity === ErrorSeverity.PERMANENT) {
+      await this.handlePermanentError(configId, emailMessageId, classified);
+      return;
+    }
+
+    await this.updateSyncStatus(
+      emailMessageId,
+      'pending',
+      `Retry: ${classified.code}`,
+    );
+    throw err;
+  }
   }
 
   /**

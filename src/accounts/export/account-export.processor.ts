@@ -153,7 +153,7 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
       .exec();
     for (const u of users as any[]) {
       const name = [u.firstName, u.lastName].filter(Boolean).join(' ');
-      this.userMap.set(String(u._id), name || u.email || String(u._id));
+      this.userMap.set(String(u._id), (name || u.email) ?? String(u._id));
     }
   }
 

@@ -449,12 +449,20 @@ export class EmailLabelService {
   }
 
   private colorFromHint(lower: string): string | null {
-    if (lower.includes('red') || lower.includes('rose')) return 'rose';
-    if (lower.includes('green') || lower.includes('emerald')) return 'emerald';
-    if (lower.includes('yellow') || lower.includes('orange')) return 'amber';
-    if (lower.includes('purple') || lower.includes('violet')) return 'violet';
-    if (lower.includes('cyan') || lower.includes('teal')) return 'cyan';
-    if (lower.includes('blue')) return 'blue';
+    const hints: Array<{ keywords: string[]; color: string }> = [
+      { keywords: ['red', 'rose'], color: 'rose' },
+      { keywords: ['green', 'emerald'], color: 'emerald' },
+      { keywords: ['yellow', 'orange'], color: 'amber' },
+      { keywords: ['purple', 'violet'], color: 'violet' },
+      { keywords: ['cyan', 'teal'], color: 'cyan' },
+      { keywords: ['blue'], color: 'blue' },
+    ];
+
+    for (const hint of hints) {
+      if (hint.keywords.some((kw) => lower.includes(kw))) {
+        return hint.color;
+      }
+    }
     return null;
   }
 

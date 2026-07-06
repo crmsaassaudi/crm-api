@@ -48,7 +48,7 @@ export class ActivityLogService {
       targetType: params.targetType,
       targetId: params.targetId,
       event: params.type,
-      limit: Math.min(Math.max(Number(params.limit) || 20, 1), 100),
+      limit: Math.min(Math.max(Number(params.limit ?? 20) || 20, 1), 100),
       cursor: params.cursor,
     });
 

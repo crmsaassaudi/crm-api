@@ -147,7 +147,7 @@ export class AccountsService {
     return this.repository.findManyWithPagination({
       filterOptions: filter,
       paginationOptions: {
-        page: Number(filter.page) || 1,
+        page: Number(filter.page ?? 1) || 1,
         limit,
       },
     });
