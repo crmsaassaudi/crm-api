@@ -138,7 +138,7 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
     let credentials: Record<string, any>;
     try {
       credentials = JSON.parse(
-        await this.crypto.decrypt(config.encryptedCredentials!),
+        await this.crypto.decrypt(config.encryptedCredentials),
       );
     } catch (err: any) {
       this.logger.error(
@@ -154,7 +154,7 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
 
     // ── Step 4: Connect to IMAP ──────────────────────────────────────
     const imapHost = config.publicSettings?.imapHost;
-    const imapPort = Number(config.publicSettings?.imapPort || 993);
+    const imapPort = Number(config.publicSettings?.imapPort ?? 993);
 
     if (!imapHost) {
       this.logger.error(
@@ -237,29 +237,7 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
       const classified = classifyProviderError(err);
 
       if (classified.severity === ErrorSeverity.PERMANENT) {
-        // Auth error: DO NOT RETRY — halt processing
-        this.logger.error(
-          `[ReadStateSync] PERMANENT error for ${emailMessageId}: ${classified.code} — ${classified.message}`,
-        );
-
-        if (classified.shouldUpdateConfigStatus) {
-          // Mark config as invalid to prevent further sync attempts
-          await this.configRepo.updateHealthStatus(configId, {
-            status: 'error',
-            lastHealthError: `Read state sync auth failure: ${classified.message}`,
-            consecutiveFailures: 99, // Force error state
-          });
-          this.logger.error(
-            `[ReadStateSync] Config ${configId} marked as ERROR due to auth failure`,
-          );
-        }
-
-        await this.updateSyncStatus(
-          emailMessageId,
-          'failed',
-          `${classified.code}: ${classified.message}`,
-        );
-
+        await this.handlePermanentError(configId, emailMessageId, classified);
         // Don't throw — BullMQ would retry. We want to drop permanently.
         return;
       }
@@ -278,6 +256,38 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
     } finally {
       await client.logout().catch(() => {});
     }
+  }
+
+  /**
+   * Handle a permanent (non-retryable) provider error:
+   * marks the config as invalid and drops the job without throwing.
+   */
+  private async handlePermanentError(
+    configId: string,
+    emailMessageId: string,
+    classified: ReturnType<typeof classifyProviderError>,
+  ): Promise<void> {
+    this.logger.error(
+      `[ReadStateSync] PERMANENT error for ${emailMessageId}: ${classified.code} — ${classified.message}`,
+    );
+
+    if (classified.shouldUpdateConfigStatus) {
+      // Mark config as invalid to prevent further sync attempts
+      await this.configRepo.updateHealthStatus(configId, {
+        status: 'error',
+        lastHealthError: `Read state sync auth failure: ${classified.message}`,
+        consecutiveFailures: 99, // Force error state
+      });
+      this.logger.error(
+        `[ReadStateSync] Config ${configId} marked as ERROR due to auth failure`,
+      );
+    }
+
+    await this.updateSyncStatus(
+      emailMessageId,
+      'failed',
+      `${classified.code}: ${classified.message}`,
+    );
   }
 
   /**

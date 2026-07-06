@@ -199,31 +199,11 @@ export class AutomationWorkflowRepository {
           .exec();
 
         for (const workflow of workflows) {
-          let modified = false;
-
-          // Update draft nodes
-          if (workflow.nodes && Array.isArray(workflow.nodes)) {
-            for (const node of workflow.nodes as any[]) {
-              if (node.config?.configId === sourceConfigId) {
-                node.config.configId = targetConfigId;
-                modified = true;
-              }
-            }
-          }
-
-          // Update published nodes
-          if (
-            workflow.publishedNodes &&
-            Array.isArray(workflow.publishedNodes)
-          ) {
-            for (const node of workflow.publishedNodes as any[]) {
-              if (node.config?.configId === sourceConfigId) {
-                node.config.configId = targetConfigId;
-                modified = true;
-              }
-            }
-          }
-
+          const modified = this.patchNodesConfigId(
+            workflow,
+            sourceConfigId,
+            targetConfigId,
+          );
           if (modified) {
             workflow.markModified('nodes');
             workflow.markModified('publishedNodes');
@@ -237,5 +217,42 @@ export class AutomationWorkflowRepository {
     }
 
     return updatedCount;
+  }
+
+  /**
+   * Mutate a single workflow document, replacing sourceConfigId with
+   * targetConfigId in both draft nodes and published-snapshot nodes.
+   *
+   * Returns true when at least one node was patched so the caller knows
+   * whether to save the document.
+   */
+  private patchNodesConfigId(
+    workflow: AutomationWorkflowSchemaClass,
+    sourceConfigId: string,
+    targetConfigId: string,
+  ): boolean {
+    let modified = false;
+
+    // Patch draft nodes
+    if (workflow.nodes && Array.isArray(workflow.nodes)) {
+      for (const node of workflow.nodes as any[]) {
+        if (node.config?.configId === sourceConfigId) {
+          node.config.configId = targetConfigId;
+          modified = true;
+        }
+      }
+    }
+
+    // Patch published-snapshot nodes
+    if (workflow.publishedNodes && Array.isArray(workflow.publishedNodes)) {
+      for (const node of workflow.publishedNodes as any[]) {
+        if (node.config?.configId === sourceConfigId) {
+          node.config.configId = targetConfigId;
+          modified = true;
+        }
+      }
+    }
+
+    return modified;
   }
 }

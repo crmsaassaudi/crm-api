@@ -242,33 +242,15 @@ export class HistoricalSyncService {
       throw new Error('imapflow package not installed');
     }
 
-    // Resolve IMAP credentials
-    const channelConfig = await this.configRepo.findByIdWithCredentialsNoTenant(
-      config.configId,
-    );
-    if (!channelConfig?.encryptedCredentials) {
-      throw new Error('Channel config not found or credentials missing');
-    }
-
-    let credentials: Record<string, any>;
-    try {
-      credentials = JSON.parse(
-        await this.crypto.decrypt(channelConfig.encryptedCredentials!),
-      );
-    } catch {
-      throw new Error('Failed to decrypt credentials');
-    }
-
-    const imapHost = channelConfig.publicSettings?.imapHost;
-    const imapPort = Number(channelConfig.publicSettings?.imapPort || 993);
-    if (!imapHost) throw new Error('IMAP host not configured');
+    // Resolve credentials and IMAP settings
+    const { credentials, imapHost, imapPort } =
+      await this.resolveSyncCredentials(config.configId);
 
     await this.updateProgress(jobId, {
       status: 'running',
       phase: 'Connecting to mailbox...',
     } as SyncProgress);
 
-    // Connect to IMAP
     const client = new ImapFlow({
       host: imapHost,
       port: imapPort,
@@ -286,33 +268,8 @@ export class HistoricalSyncService {
           phase: 'Scanning mailbox...',
         } as SyncProgress);
 
-        // Calculate date range: last N days
-        const sinceDate = new Date();
-        sinceDate.setDate(sinceDate.getDate() - config.maxAgeDays);
-
-        // Fetch message envelopes (headers only — no body yet)
-        const messages: any[] = [];
-        let requestCount = 0;
-
-        for await (const msg of client.fetch(
-          { since: sinceDate },
-          { envelope: true, uid: true },
-        )) {
-          messages.push(msg);
-          requestCount++;
-
-          // Slow-burn: pause after each batch of MAX_REQUESTS_PER_MINUTE
-          if (requestCount % this.MAX_REQUESTS_PER_MINUTE === 0) {
-            const jitter = this.randomJitter();
-            this.logger.debug(
-              `[HistoricalSync] Slow-burn pause: ${jitter}ms after ${requestCount} requests`,
-            );
-            await this.sleep(jitter);
-          }
-
-          // Cap at maxThreads
-          if (messages.length >= config.maxThreads) break;
-        }
+        // Collect message envelopes (slow-burn paced)
+        const messages = await this.scanMailboxMessages(client, config);
 
         this.logger.log(
           `[HistoricalSync] Scanned ${messages.length} messages in last ${config.maxAgeDays} days`,
@@ -323,90 +280,21 @@ export class HistoricalSyncService {
           totalEstimate: messages.length,
         } as SyncProgress);
 
-        // Process messages based on sync mode
-        const pendingContacts = new Map<string, PendingContact>();
-        let importedCount = 0;
+        // Process and accumulate pending contacts
+        const { pendingContacts, importedCount } =
+          await this.processMessageBatch(jobId, messages, config);
 
-        for (let i = 0; i < messages.length; i++) {
-          const msg = messages[i];
-          const envelope = msg.envelope;
-          if (!envelope) continue;
-
-          // Extract all participants
-          const allParticipants = [
-            ...(envelope.from || []),
-            ...(envelope.to || []),
-            ...(envelope.cc || []),
-          ];
-
-          const emails = allParticipants
-            .map((addr: any) => addr.address?.toLowerCase())
-            .filter(Boolean);
-
-          if (config.mode === 'auto_discover') {
-            // Mode B: Create PendingContacts for corporate domains
-            for (const email of emails) {
-              if (this.isDomainBlacklisted(email)) continue;
-
-              const domain = email.split('@')[1];
-              const existing = pendingContacts.get(email);
-
-              if (existing) {
-                existing.seenCount++;
-                existing.lastSeenAt = envelope.date || new Date();
-                if (existing.sampleSubjects.length < 3) {
-                  existing.sampleSubjects.push(envelope.subject || '');
-                }
-              } else {
-                const name =
-                  allParticipants.find(
-                    (a: any) => a.address?.toLowerCase() === email,
-                  )?.name || email.split('@')[0];
-
-                pendingContacts.set(email, {
-                  email,
-                  displayName: name,
-                  domain,
-                  seenCount: 1,
-                  firstSeenAt: envelope.date || new Date(),
-                  lastSeenAt: envelope.date || new Date(),
-                  sampleSubjects: [envelope.subject || ''],
-                });
-              }
-            }
-          }
-
-          importedCount++;
-
-          // Update progress every 50 messages
-          if (i % 50 === 0) {
-            await this.updateProgress(jobId, {
-              phase: `Processing email ${i + 1} of ${messages.length}...`,
-              processedThreads: i + 1,
-              emailsImported: importedCount,
-              pendingContactsCreated: pendingContacts.size,
-            } as SyncProgress);
-
-            // Slow-burn: add jitter between processing batches
-            if (i > 0 && i % this.MAX_REQUESTS_PER_MINUTE === 0) {
-              await this.sleep(this.randomJitter());
-            }
-          }
-        }
-
-        // Save PendingContacts to Redis (for UI review screen)
+        // Persist PendingContacts to Redis for the UI review screen
         if (pendingContacts.size > 0) {
           const pendingKey = `hsync:pending:${config.tenantId}:${config.configId}`;
-          const pendingData = Array.from(pendingContacts.values());
           await this.redisService.getClient().set(
             pendingKey,
-            JSON.stringify(pendingData),
+            JSON.stringify(Array.from(pendingContacts.values())),
             'EX',
             7 * 24 * 60 * 60, // TTL: 7 days
           );
         }
 
-        // Final progress update
         await this.updateProgress(jobId, {
           status: 'completed',
           phase: 'Completed',
@@ -426,6 +314,157 @@ export class HistoricalSyncService {
     } finally {
       await client.logout().catch(() => {});
     }
+  }
+
+  /**
+   * Resolve IMAP credentials for the given channel config.
+   * Throws if config is missing, credentials are absent, or IMAP host is not set.
+   */
+  private async resolveSyncCredentials(configId: string): Promise<{
+    credentials: Record<string, any>;
+    imapHost: string;
+    imapPort: number;
+  }> {
+    const channelConfig =
+      await this.configRepo.findByIdWithCredentialsNoTenant(configId);
+    if (!channelConfig?.encryptedCredentials) {
+      throw new Error('Channel config not found or credentials missing');
+    }
+
+    let credentials: Record<string, any>;
+    try {
+      credentials = JSON.parse(
+        await this.crypto.decrypt(channelConfig.encryptedCredentials),
+      );
+    } catch {
+      throw new Error('Failed to decrypt credentials');
+    }
+
+    const imapHost = channelConfig.publicSettings?.imapHost;
+    const imapPort = Number(channelConfig.publicSettings?.imapPort ?? 993);
+    if (!imapHost) throw new Error('IMAP host not configured');
+
+    return { credentials, imapHost, imapPort };
+  }
+
+  /**
+   * Fetch all message envelopes in the given date range using a slow-burn
+   * pacing strategy (max 10 IMAP requests per minute with random jitter).
+   */
+  private async scanMailboxMessages(
+    client: any,
+    config: HistoricalSyncConfig,
+  ): Promise<any[]> {
+    const sinceDate = new Date();
+    sinceDate.setDate(sinceDate.getDate() - config.maxAgeDays);
+
+    const messages: any[] = [];
+    let requestCount = 0;
+
+    for await (const msg of client.fetch(
+      { since: sinceDate },
+      { envelope: true, uid: true },
+    )) {
+      messages.push(msg);
+      requestCount++;
+
+      // Slow-burn: pause after each batch of MAX_REQUESTS_PER_MINUTE
+      if (requestCount % this.MAX_REQUESTS_PER_MINUTE === 0) {
+        const jitter = this.randomJitter();
+        this.logger.debug(
+          `[HistoricalSync] Slow-burn pause: ${jitter}ms after ${requestCount} requests`,
+        );
+        await this.sleep(jitter);
+      }
+
+      if (messages.length >= config.maxThreads) break;
+    }
+
+    return messages;
+  }
+
+  /**
+   * Iterate the scanned messages, accumulate PendingContacts (Mode B),
+   * and emit progress updates every 50 messages.
+   */
+  private async processMessageBatch(
+    jobId: string,
+    messages: any[],
+    config: HistoricalSyncConfig,
+  ): Promise<{
+    pendingContacts: Map<string, PendingContact>;
+    importedCount: number;
+  }> {
+    const pendingContacts = new Map<string, PendingContact>();
+    let importedCount = 0;
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      const envelope = msg.envelope;
+      if (!envelope) continue;
+
+      // Extract all participants
+      const allParticipants = [
+        ...(envelope.from ?? []),
+        ...(envelope.to ?? []),
+        ...(envelope.cc ?? []),
+      ];
+
+      const emails = allParticipants
+        .map((addr: any) => addr.address?.toLowerCase())
+        .filter(Boolean);
+
+      if (config.mode === 'auto_discover') {
+        for (const email of emails) {
+          if (this.isDomainBlacklisted(email)) continue;
+
+          const domain = email.split('@')[1];
+          const existing = pendingContacts.get(email);
+
+          if (existing) {
+            existing.seenCount++;
+            existing.lastSeenAt = envelope.date ?? new Date();
+            if (existing.sampleSubjects.length < 3) {
+              existing.sampleSubjects.push(envelope.subject ?? '');
+            }
+          } else {
+            const name =
+              allParticipants.find(
+                (a: any) => a.address?.toLowerCase() === email,
+              )?.name ?? email.split('@')[0];
+
+            pendingContacts.set(email, {
+              email,
+              displayName: name,
+              domain,
+              seenCount: 1,
+              firstSeenAt: envelope.date ?? new Date(),
+              lastSeenAt: envelope.date ?? new Date(),
+              sampleSubjects: [envelope.subject ?? ''],
+            });
+          }
+        }
+      }
+
+      importedCount++;
+
+      // Update progress every 50 messages
+      if (i % 50 === 0) {
+        await this.updateProgress(jobId, {
+          phase: `Processing email ${i + 1} of ${messages.length}...`,
+          processedThreads: i + 1,
+          emailsImported: importedCount,
+          pendingContactsCreated: pendingContacts.size,
+        } as SyncProgress);
+
+        // Slow-burn: add jitter between processing batches
+        if (i > 0 && i % this.MAX_REQUESTS_PER_MINUTE === 0) {
+          await this.sleep(this.randomJitter());
+        }
+      }
+    }
+
+    return { pendingContacts, importedCount };
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────

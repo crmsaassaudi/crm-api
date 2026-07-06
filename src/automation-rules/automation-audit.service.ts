@@ -65,45 +65,54 @@ export class AutomationAuditService {
       }
     }
 
-    // Trigger config changes
-    if (after.triggerConfig && before.triggerConfig) {
-      const tc = after.triggerConfig;
-      const btc = before.triggerConfig;
-      if (tc.event !== btc.event || tc.object !== btc.object) {
-        diffs.push({
-          field: 'triggerConfig',
-          before: { event: btc.event, object: btc.object },
-          after: { event: tc.event, object: tc.object },
-        });
-      }
-    }
+    const triggerDiff = this.buildTriggerConfigDiff(before, after);
+    if (triggerDiff) diffs.push(triggerDiff);
 
-    // Nodes — track count change
-    if (after.nodes && before.nodes) {
-      const beforeCount = (before.nodes || []).length;
-      const afterCount = (after.nodes || []).length;
-      if (beforeCount !== afterCount) {
-        diffs.push({
-          field: 'nodes',
-          before: `${beforeCount} nodes`,
-          after: `${afterCount} nodes`,
-        });
-      }
-    }
+    const nodesDiff = this.buildCountDiff('nodes', before, after);
+    if (nodesDiff) diffs.push(nodesDiff);
 
-    // Edges — track count change
-    if (after.edges && before.edges) {
-      const beforeCount = (before.edges || []).length;
-      const afterCount = (after.edges || []).length;
-      if (beforeCount !== afterCount) {
-        diffs.push({
-          field: 'edges',
-          before: `${beforeCount} edges`,
-          after: `${afterCount} edges`,
-        });
-      }
-    }
+    const edgesDiff = this.buildCountDiff('edges', before, after);
+    if (edgesDiff) diffs.push(edgesDiff);
 
     return diffs;
+  }
+
+  /**
+   * Diff the triggerConfig event/object pair.
+   * Returns undefined when triggerConfig is absent or unchanged.
+   */
+  private buildTriggerConfigDiff(
+    before: Record<string, any>,
+    after: Record<string, any>,
+  ): AuditDiffEntry | undefined {
+    if (!after.triggerConfig || !before.triggerConfig) return undefined;
+    const tc = after.triggerConfig;
+    const btc = before.triggerConfig;
+    if (tc.event === btc.event && tc.object === btc.object) return undefined;
+    return {
+      field: 'triggerConfig',
+      before: { event: btc.event, object: btc.object },
+      after: { event: tc.event, object: tc.object },
+    };
+  }
+
+  /**
+   * Diff a list-type field (nodes/edges) by count only.
+   * Returns undefined when the field is absent or the count is unchanged.
+   */
+  private buildCountDiff(
+    field: string,
+    before: Record<string, any>,
+    after: Record<string, any>,
+  ): AuditDiffEntry | undefined {
+    if (!after[field] || !before[field]) return undefined;
+    const beforeCount = (before[field] ?? []).length;
+    const afterCount = (after[field] ?? []).length;
+    if (beforeCount === afterCount) return undefined;
+    return {
+      field,
+      before: `${beforeCount} ${field}`,
+      after: `${afterCount} ${field}`,
+    };
   }
 }

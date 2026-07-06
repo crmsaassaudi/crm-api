@@ -266,8 +266,14 @@ export class ConversationRepository {
     if (sla.includes('warning')) {
       // Documents where SLA deadline is within 15 minutes but not yet breached
       const warningTime = new Date(Date.now() + 15 * 60000);
-      conditions.push({ frtBreached: false, frtDeadline: { $lte: warningTime } });
-      conditions.push({ resolutionBreached: false, resolutionDeadline: { $lte: warningTime } });
+      conditions.push({
+        frtBreached: false,
+        frtDeadline: { $lte: warningTime },
+      });
+      conditions.push({
+        resolutionBreached: false,
+        resolutionDeadline: { $lte: warningTime },
+      });
     }
 
     return conditions;

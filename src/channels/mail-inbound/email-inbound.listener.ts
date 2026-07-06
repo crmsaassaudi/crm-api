@@ -70,9 +70,9 @@ export class EmailInboundListener {
         mailboxId: event.mailboxId,
         crmFolder: event.crmFolder,
         providerFolder: event.providerFolder,
-        providerLabelIds: event.providerLabelIds || [],
-        providerLabels: event.providerLabels || [],
-        providerLabelDetails: event.providerLabelDetails || [],
+        providerLabelIds: event.providerLabelIds ?? [],
+        providerLabels: event.providerLabels ?? [],
+        providerLabelDetails: event.providerLabelDetails ?? [],
         subject: event.subject,
         from: event.from,
         fromName: event.fromName,
@@ -82,15 +82,15 @@ export class EmailInboundListener {
         contactName: event.fromName,
       },
 
-      externalMessageId: event.threadInfo.messageId || event.generatedMessageId,
+      externalMessageId: event.threadInfo.messageId ?? event.generatedMessageId,
 
       // CRIT-04: Use references[0] as the thread key — it's the root
       // Message-ID and is constant across the entire email thread.
       // inReplyTo differs for every reply, which scattered threads
       // across multiple conversations.
       externalConversationId:
-        event.threadInfo.references?.[0] ||
-        event.threadInfo.messageId ||
+        event.threadInfo.references?.[0] ??
+        event.threadInfo.messageId ??
         `email:${event.from}:${event.configId}`,
 
       timestamp: event.timestamp,

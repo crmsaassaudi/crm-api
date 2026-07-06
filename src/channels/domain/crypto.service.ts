@@ -158,8 +158,8 @@ export class KmsCryptoService implements ICryptoService, OnModuleInit {
       infer: true,
     });
     const region =
-      this.configService.get<string>('AWS_KMS_REGION', { infer: true }) ||
-      this.configService.get<string>('AWS_REGION', { infer: true }) ||
+      this.configService.get<string>('AWS_KMS_REGION', { infer: true }) ??
+      this.configService.get<string>('AWS_REGION', { infer: true }) ??
       'ap-southeast-1';
 
     // Dynamic import to avoid bundling KMS SDK when using env mode
@@ -182,8 +182,8 @@ export class KmsCryptoService implements ICryptoService, OnModuleInit {
       }),
     );
 
-    const dataKeyPlaintext = Buffer.from(response.Plaintext!);
-    const encryptedDataKey = Buffer.from(response.CiphertextBlob!);
+    const dataKeyPlaintext = Buffer.from(response.Plaintext);
+    const encryptedDataKey = Buffer.from(response.CiphertextBlob);
 
     try {
       // 2. Local AES-256-GCM with the plaintext DataKey
@@ -233,7 +233,7 @@ export class KmsCryptoService implements ICryptoService, OnModuleInit {
       }),
     );
 
-    const dataKeyPlaintext = Buffer.from(response.Plaintext!);
+    const dataKeyPlaintext = Buffer.from(response.Plaintext);
 
     try {
       // 2. Local AES-256-GCM decrypt

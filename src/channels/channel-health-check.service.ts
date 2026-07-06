@@ -137,18 +137,10 @@ export class ChannelHealthCheckService {
           batch.map((config) => this.verifyAndUpdateConfig(config)),
         );
 
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            if (result.value === 'passed') passed++;
-            else if (result.value === 'failed') failed++;
-            else skipped++;
-          } else {
-            skipped++;
-            this.logger.error(
-              `[HealthCheck] Unexpected error in batch: ${result.reason}`,
-            );
-          }
-        }
+        const tally = this.tallyBatchResults(results);
+        passed += tally.passed;
+        failed += tally.failed;
+        skipped += tally.skipped;
 
         this.logger.debug(
           `[HealthCheck] Batch ${Math.floor(i / this.BATCH_SIZE) + 1}: processed ${batch.length} configs`,
@@ -417,7 +409,31 @@ export class ChannelHealthCheckService {
     return 'failed';
   }
 
-  // ── Backoff Calculator ────────────────────────────────────────────────────
+  // ── Backoff Calculator ────────────────────────────────────────────
+
+  /**
+   * Tally the results of a Promise.allSettled batch into pass/fail/skip counts.
+   */
+  private tallyBatchResults(
+    results: PromiseSettledResult<'passed' | 'failed' | 'skipped'>[],
+  ): { passed: number; failed: number; skipped: number } {
+    let passed = 0;
+    let failed = 0;
+    let skipped = 0;
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        if (result.value === 'passed') passed++;
+        else if (result.value === 'failed') failed++;
+        else skipped++;
+      } else {
+        skipped++;
+        this.logger.error(
+          `[HealthCheck] Unexpected error in batch: ${result.reason}`,
+        );
+      }
+    }
+    return { passed, failed, skipped };
+  }
 
   /**
    * Calculate next check interval based on consecutive failures.

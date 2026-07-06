@@ -500,7 +500,7 @@ export class UpdateFieldExecutor implements ActionExecutor {
         error: {
           code: 'UPDATE_FIELD_FAILED',
           message:
-            result.error ||
+            result.error ??
             `Failed to update ${recordType}(${recordId}).${field}`,
         },
       };
@@ -569,7 +569,7 @@ export class RouteToTeamExecutor implements ActionExecutor {
           error: {
             code: 'ROUTE_FAILED',
             message:
-              result.error ||
+              result.error ??
               `Failed to assign ${recordType}(${recordId}) to user ${userId}`,
           },
         };
