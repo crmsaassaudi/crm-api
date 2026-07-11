@@ -20,7 +20,7 @@ services:
       NODE_ENV: production
       APP_PORT: 3000
       NPM_CONFIG_CACHE: /tmp/.npm
-      REDIS_HOST: host.docker.internal
+      REDIS_HOST: 10.104.0.5
       REDIS_PORT: 6379
       REDIS_CACHE_DB: 0
       REDIS_QUEUE_DB: 1
