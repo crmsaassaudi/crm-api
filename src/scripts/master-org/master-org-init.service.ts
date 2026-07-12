@@ -191,12 +191,19 @@ export class MasterOrgInitService {
     const tenantId = tenant._id.toString();
 
     // ── Step 5: Mongo user (upsert as SUPER_ADMIN + OWNER of master tenant) ──────
+    // Platform-level bootstrap query: the users collection is tenant-scoped by
+    // tenantFilterPlugin, which fails closed without CLS context. isPlatformQuery
+    // is the sanctioned opt-in for intentional cross-tenant/platform operations.
     let user = await this.userModel
       .findOne({ keycloakId: keycloakUserId })
+      .setOptions({ isPlatformQuery: true })
       .exec();
     if (!user) {
       // Fall back to email in case a doc exists without keycloakId linked yet.
-      user = await this.userModel.findOne({ email: cfg.adminEmail }).exec();
+      user = await this.userModel
+        .findOne({ email: cfg.adminEmail })
+        .setOptions({ isPlatformQuery: true })
+        .exec();
     }
 
     const spaceIdx = cfg.adminFullName.indexOf(' ');
