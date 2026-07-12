@@ -175,6 +175,32 @@ export class KeycloakAdminService implements OnModuleInit {
     this.logger.log(`Organizations enabled for realm "${realm}"`);
   }
 
+  /**
+   * Look up an existing organization by its alias. Returns null if none.
+   * Used for idempotent bootstrap flows (e.g. master-org init) so re-running
+   * never creates a duplicate organization.
+   */
+  async findOrganizationByAlias(
+    alias: string,
+  ): Promise<KeycloakOrganization | null> {
+    return this.ensureClient(async () => {
+      await this.ensureOrganizationsEnabled();
+      // `search` is a broad text match; narrow to an exact alias match locally.
+      const orgs = await this.kcAdminClient.organizations.find({
+        search: alias,
+      });
+      const match = (orgs ?? []).find((o: any) => o.alias === alias);
+      if (!match) {
+        return null;
+      }
+      return {
+        id: match.id!,
+        name: match.name!,
+        alias: match.alias!,
+      };
+    });
+  }
+
   async deleteOrganization(orgId: string): Promise<void> {
     return this.ensureClient(async () => {
       await this.kcAdminClient.organizations.delById({ id: orgId });
