@@ -368,23 +368,49 @@ export class OmniGateway
       }
     }
 
-    // 2. Explicit hint from token or non-prod handshake
+    // 2. Explicit hint — from the JWT, or the socket handshake.
+    //
+    // The handshake hint (auth.tenantId / x-tenant-id) is honored in ALL envs,
+    // including production. This is required because the client may connect the
+    // socket to a non-tenant host (e.g. wss://api.crmsaudi.dev, configured via
+    // VITE_SOCKET_URL) where the subdomain branch above cannot apply — the
+    // frontend then passes the tenant it is viewing via `auth.tenantId`.
+    //
+    // Trusting a client-supplied hint here is safe: validateTenantMembership()
+    // re-checks that the resolved tenant is one this user actually belongs to
+    // before the socket is accepted, so a user cannot claim a foreign tenant.
     const hint =
       decoded.tenantId ??
       decoded.tenant_id ??
-      (process.env.NODE_ENV !== 'production'
-        ? (client.handshake.auth?.tenantId ??
-          client.handshake.headers['x-tenant-id'])
-        : null);
+      client.handshake.auth?.tenantId ??
+      client.handshake.headers['x-tenant-id'];
 
-    if (typeof hint === 'string' && hint) {
-      const tenant = /^[0-9a-fA-F]{24}$/.test(hint)
-        ? await this.tenantsService.findById(hint)
-        : await this.tenantsService.findByAlias(hint);
-      return tenant?.id ?? null;
+    const fromHint = await this.resolveTenantHint(hint);
+    if (fromHint) return fromHint;
+
+    // 3. Last resort: if the JWT exposes exactly one tenant membership, use it.
+    // Tokens carry memberships as a `tenants` / `tenant_ids` array (see
+    // auth.service jitProvision). This keeps single-tenant users working even
+    // when neither a subdomain nor an explicit hint is available.
+    const claimTenants: unknown = decoded.tenants ?? decoded.tenant_ids;
+    if (Array.isArray(claimTenants) && claimTenants.length === 1) {
+      const fromClaim = await this.resolveTenantHint(claimTenants[0]);
+      if (fromClaim) return fromClaim;
     }
 
     return null;
+  }
+
+  /**
+   * Resolve a tenant hint (a 24-hex ObjectId or an alias) to a tenant id.
+   * Returns null when the hint is missing, malformed, or matches no tenant.
+   */
+  private async resolveTenantHint(hint: unknown): Promise<string | null> {
+    if (typeof hint !== 'string' || !hint) return null;
+    const tenant = /^[0-9a-fA-F]{24}$/.test(hint)
+      ? await this.tenantsService.findById(hint)
+      : await this.tenantsService.findByAlias(hint);
+    return tenant?.id ?? null;
   }
 
   private isValidSubdomain(subdomain: string): boolean {
