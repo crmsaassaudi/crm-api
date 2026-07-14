@@ -114,10 +114,38 @@ function setupGlobalCors(
   const frontendDomain = configService.get('app.frontendDomain', {
     infer: true,
   });
+  const rootDomain = configService.get('app.rootDomain', { infer: true });
+
   const allowedFrontendOrigins =
     isProduction && frontendDomain
-      ? frontendDomain.split(',').map((d) => d.trim())
+      ? frontendDomain
+          .split(',')
+          .map((d) => d.trim())
+          .filter(Boolean)
       : null;
+
+  const normalizedRootDomain = rootDomain?.trim().toLowerCase() || null;
+
+  // Multi-tenant: every tenant is served at its own subdomain of the root
+  // domain (e.g. master.crmsaudi.dev), so all subdomains of app.rootDomain
+  // must pass CORS — not just the single FRONTEND_DOMAIN entry.
+  const isAllowedOrigin = (origin: string): boolean => {
+    let host: string;
+    try {
+      host = new URL(origin).hostname.toLowerCase();
+    } catch {
+      return false;
+    }
+    if (
+      normalizedRootDomain &&
+      (host === normalizedRootDomain ||
+        host.endsWith(`.${normalizedRootDomain}`))
+    ) {
+      return true;
+    }
+    // Explicit allowlist — exact origin match (no loose substring check).
+    return Boolean(allowedFrontendOrigins?.includes(origin));
+  };
 
   app.enableCors({
     origin: (
@@ -125,7 +153,7 @@ function setupGlobalCors(
       callback: (err: Error | null, allow?: boolean | string) => void,
     ) => {
       if (!origin || !isProduction) return callback(null, true);
-      if (allowedFrontendOrigins?.some((d) => origin.includes(d))) {
+      if (isAllowedOrigin(origin)) {
         return callback(null, true);
       }
       // SECURITY: Reject non-allowlisted origins in production

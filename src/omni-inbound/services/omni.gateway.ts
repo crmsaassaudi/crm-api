@@ -56,15 +56,49 @@ import {
  * │ omni:collision                   │ S → C      │ Two agents claim the same conv.    │
  * └──────────────────────────────────┴────────────┴────────────────────────────────────┘
  */
+// MED-08b: env-driven allowlist instead of origin: '*'. origin: '*' +
+// credentials: true would let any site open a socket with the user's cookies.
+const OMNI_CORS_ALLOWLIST = process.env.FRONTEND_DOMAIN
+  ? process.env.FRONTEND_DOMAIN.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  : ['http://localhost:3000'];
+const OMNI_CORS_ROOT_DOMAIN =
+  process.env.APP_ROOT_DOMAIN?.trim().toLowerCase() || null;
+
+/**
+ * CORS origin check for the /omni socket. Multi-tenant: every tenant is served
+ * at its own subdomain of APP_ROOT_DOMAIN (e.g. master.crmsaudi.dev), so the
+ * root domain and all of its subdomains must be allowed — not just the single
+ * FRONTEND_DOMAIN entry. Explicit FRONTEND_DOMAIN origins are also honored.
+ */
+function omniCorsOrigin(
+  origin: string | undefined,
+  callback: (err: Error | null, allow?: boolean) => void,
+): void {
+  if (!origin) return callback(null, true);
+  let host: string | null = null;
+  try {
+    host = new URL(origin).hostname.toLowerCase();
+  } catch {
+    host = null;
+  }
+  if (
+    host &&
+    OMNI_CORS_ROOT_DOMAIN &&
+    (host === OMNI_CORS_ROOT_DOMAIN ||
+      host.endsWith(`.${OMNI_CORS_ROOT_DOMAIN}`))
+  ) {
+    return callback(null, true);
+  }
+  if (OMNI_CORS_ALLOWLIST.includes(origin)) return callback(null, true);
+  return callback(new Error(`Origin ${origin} not allowed by CORS`));
+}
+
 @WebSocketGateway({
   namespace: '/omni',
-  // MED-08b: Replace origin: '*' with an env-driven allowlist.
-  // origin: '*' + credentials: true allows any site to open a socket with
-  // the user's cookies, enabling session hijacking and cross-site data exfil.
   cors: {
-    origin: process.env.FRONTEND_DOMAIN
-      ? process.env.FRONTEND_DOMAIN.split(',').map((s) => s.trim())
-      : ['http://localhost:3000'],
+    origin: omniCorsOrigin,
     credentials: true,
   },
 })
