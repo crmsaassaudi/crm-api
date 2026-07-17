@@ -37,6 +37,11 @@ export class ListConversationsQueryDto {
   @IsString()
   tags?: string;
 
+  @ApiPropertyOptional({ enum: ['any', 'all'] })
+  @IsOptional()
+  @IsString()
+  tagsMatchMode?: 'any' | 'all';
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -61,4 +66,33 @@ export class ListConversationsQueryDto {
   @IsOptional()
   @IsString()
   page?: string;
+
+  @ApiPropertyOptional({ description: 'ISO date — lower bound (inclusive)' })
+  @IsOptional()
+  @IsString()
+  dateFrom?: string;
+
+  @ApiPropertyOptional({ description: 'ISO date — upper bound (inclusive)' })
+  @IsOptional()
+  @IsString()
+  dateTo?: string;
+
+  @ApiPropertyOptional({
+    description: 'Which timestamp dateFrom/dateTo filter against',
+    enum: ['createdAt', 'updatedAt'],
+  })
+  @IsOptional()
+  @IsString()
+  dateField?: 'createdAt' | 'updatedAt';
+
+  @ApiPropertyOptional({
+    description:
+      'Filters conversations whose last message is still from the customer ' +
+      '(i.e. the agent has not replied yet). "longestWaiting" sorts oldest-first ' +
+      'instead of the default newest-first; "readNotReplied" additionally requires unreadCount=0.',
+    enum: ['recent', 'longestWaiting', 'readNotReplied'],
+  })
+  @IsOptional()
+  @IsString()
+  unansweredMode?: 'recent' | 'longestWaiting' | 'readNotReplied';
 }

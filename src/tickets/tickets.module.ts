@@ -39,6 +39,7 @@ import {
   GroupSchema,
   GroupSchemaClass,
 } from '../groups/infrastructure/persistence/document/entities/group.schema';
+import { TagsModule } from '../tags/tags.module';
 
 const workerProviders = isWorkerRuntime()
   ? [TicketImportProcessor, TicketExportProcessor]
@@ -81,6 +82,7 @@ const workerProviders = isWorkerRuntime()
       adapter: BullMQAdapter,
     }),
     TicketSettingsModule,
+    TagsModule,
   ],
   controllers: [TicketsController],
   providers: [TicketsService, TicketRepository, ...workerProviders],

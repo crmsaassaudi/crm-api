@@ -36,6 +36,7 @@ import { AssignmentAuditLogRepository } from '../repositories/omni-assignment-au
 import { AgentPresenceService } from '../services/agent-presence.service';
 import { AssignmentService } from '../services/assignment.service';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
+import { TagsService } from '../../tags/tags.service';
 
 /**
  * REST API for omni-channel conversations and messages.
@@ -74,6 +75,7 @@ export class OmniController {
     private readonly agentPresenceService: AgentPresenceService,
     private readonly assignmentService: AssignmentService,
     private readonly conversationCommandService: ConversationCommandService,
+    private readonly tagsService: TagsService,
   ) {}
 
   // ─── Routing Trace (production debugging) ────────────────────
@@ -173,11 +175,16 @@ export class OmniController {
       assignedTo,
       sla,
       tags,
+      tagsMatchMode,
       isVip,
       hasUnread,
       search,
       contactId,
       page,
+      dateFrom,
+      dateTo,
+      dateField,
+      unansweredMode,
     } = query;
     const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
@@ -214,6 +221,8 @@ export class OmniController {
     if (hasUnread === 'true') hasUnreadFilter = true;
     else if (hasUnread === 'false') hasUnreadFilter = false;
 
+    const dateRange = this.resolveDateRangeFilter(dateFrom, dateTo, dateField);
+
     const result = await this.conversationRepo.findCursorPaginated(
       {
         tenantId,
@@ -224,10 +233,13 @@ export class OmniController {
         unassigned,
         sla: slaFilter,
         tags: tagsFilter,
+        tagsMatchMode: tagsMatchMode === 'all' ? 'all' : 'any',
         isVip: isVipFilter,
         hasUnread: hasUnreadFilter,
         search,
         cursor,
+        dateRange,
+        unansweredMode,
       },
       parseInt(limit, 10), // cap will be applied in repo
     );
@@ -280,7 +292,7 @@ export class OmniController {
     assignedTo: string | undefined,
     userId: string,
   ): {
-    assignedAgent: string | null | undefined;
+    assignedAgent: string | string[] | null | undefined;
     assignedGroup: string | null | undefined;
     unassigned: boolean;
   } {
@@ -296,6 +308,22 @@ export class OmniController {
         assignedGroup: undefined,
         unassigned: true,
       };
+    // Monitor-workload use case: filter conversations owned by one or more
+    // specific agents (e.g. "agent:<id1>,<id2>" — OR semantics). A single
+    // conversation only ever has one assignedAgentId, so "must match BOTH A
+    // AND B at once" is not representable here.
+    if (assignedTo?.startsWith('agent:')) {
+      const ids = assignedTo
+        .substring(6)
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean);
+      return {
+        assignedAgent: ids.length > 1 ? ids : (ids[0] ?? undefined),
+        assignedGroup: undefined,
+        unassigned: false,
+      };
+    }
     if (assignedTo?.startsWith('group:'))
       return {
         assignedAgent: undefined,
@@ -306,6 +334,30 @@ export class OmniController {
       assignedAgent: undefined,
       assignedGroup: undefined,
       unassigned: false,
+    };
+  }
+
+  /** Parse dateFrom/dateTo into a repo-ready range filter, defaulting to createdAt. */
+  private resolveDateRangeFilter(
+    dateFrom: string | undefined,
+    dateTo: string | undefined,
+    dateField: 'createdAt' | 'updatedAt' | undefined,
+  ): { field: 'createdAt' | 'updatedAt'; from?: Date; to?: Date } | undefined {
+    if (!dateFrom && !dateTo) return undefined;
+
+    const from = dateFrom ? new Date(dateFrom) : undefined;
+    const to = dateTo ? new Date(dateTo) : undefined;
+    if (
+      (from && Number.isNaN(from.getTime())) ||
+      (to && Number.isNaN(to.getTime()))
+    ) {
+      throw new BadRequestException('Invalid dateFrom/dateTo');
+    }
+
+    return {
+      field: dateField === 'updatedAt' ? 'updatedAt' : 'createdAt',
+      from,
+      to,
     };
   }
 
@@ -1144,6 +1196,47 @@ export class OmniController {
     }
 
     return updated;
+  }
+
+  /**
+   * Bulk variant of addTag: applies a single catalog tag id to many
+   * conversations at once, validated against the tag catalog first.
+   */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('conversations/bulk-tag')
+  @HttpCode(HttpStatus.OK)
+  async bulkTag(
+    @Body() body: { conversationIds: string[]; tagId: string },
+  ): Promise<{ success: true; matchedCount: number; modifiedCount: number }> {
+    const conversationIds = Array.from(
+      new Set(body?.conversationIds || []),
+    ).filter(Boolean);
+    const tagId = (body?.tagId || '').trim();
+
+    if (conversationIds.length === 0) {
+      throw new BadRequestException('conversationIds is required');
+    }
+    if (!tagId) {
+      throw new BadRequestException('tagId is required');
+    }
+
+    await this.tagsService.validateTagIds('Conversation', [tagId]);
+
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+
+    const result = await this.conversationRepo.addTagToMany(
+      conversationIds,
+      tenantId,
+      tagId,
+    );
+
+    return {
+      success: true,
+      ...result,
+    };
   }
 
   @Delete('conversations/:id/tags/:tag')

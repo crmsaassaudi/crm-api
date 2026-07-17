@@ -20,6 +20,7 @@ import {
 } from '../../common/import';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import { RedisLockService } from '../../redis/redis-lock.service';
+import { TagsService } from '../../tags/tags.service';
 import {
   DealSchemaClass,
   DealSchemaDocument,
@@ -108,6 +109,7 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
     @InjectModel(ImportJobSchemaClass.name)
     private readonly importJobModel: Model<ImportJobDocument>,
     @InjectConnection() private readonly connection: Connection,
+    private readonly tagsService: TagsService,
   ) {
     super();
     this.cls = cls;
@@ -191,6 +193,37 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
     _data: DealImportJobData,
   ): ImportRowError[] {
     return [];
+  }
+
+  /**
+   * Batch-wide resolution of raw "tags" CSV names → catalog Tag ids.
+   * Collects every unique name across the whole batch and resolves them in
+   * a single call, so a name repeated across many rows only creates (or
+   * looks up) one catalog Tag instead of racing per row.
+   */
+  protected async beforeBuildOps(
+    rows: MappedRow[],
+    _data: DealImportJobData,
+  ): Promise<void> {
+    const names = new Set<string>();
+    for (const row of rows) {
+      for (const name of row.arrayFields.tags ?? []) names.add(name);
+    }
+    if (names.size === 0) return;
+
+    const nameToId = await this.tagsService.resolveOrCreateByNames('Deal', [
+      ...names,
+    ]);
+
+    for (const row of rows) {
+      const tags = row.arrayFields.tags;
+      if (!tags?.length) continue;
+      row.arrayFields.tags = this.uniq(
+        tags
+          .map((name) => nameToId.get(name))
+          .filter((id): id is string => !!id),
+      );
+    }
   }
 
   protected extractDedupValues(row: MappedRow, field: string): string[] {

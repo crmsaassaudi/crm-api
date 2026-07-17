@@ -56,6 +56,7 @@ describe('TicketsService', () => {
         list: jest.fn(),
         download: jest.fn(),
       } as any, // exportRequest
+      { validateTagIds: jest.fn().mockResolvedValue(undefined) } as any, // tagsService
       { getSetting: jest.fn().mockResolvedValue(null) } as any, // crmSettings
     );
   });

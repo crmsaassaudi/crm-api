@@ -139,6 +139,7 @@ import { LivechatModule } from '../livechat/livechat.module';
 import { ConversationOpsModule } from './aggregate/conversation-ops.module';
 import { ConversationOpsProcessor } from './aggregate/conversation-ops.processor';
 import { ConversationCommandService } from './aggregate/conversation-command.service';
+import { TagsModule } from '../tags/tags.module';
 
 const workerProviders =
   isWorkerRuntime() || isOmniRuntime()
@@ -190,6 +191,7 @@ const workerProviders =
     forwardRef(() => LivechatModule),
     // Phase 1: Conversation Aggregate — sequential command processing
     ConversationOpsModule,
+    TagsModule,
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,

@@ -89,6 +89,8 @@ export interface PeakHoursCell {
 
 export interface TagAnalyticsItem {
   tag: string;
+  tagId: string;
+  color?: string;
   count: number;
   percentage: number;
 }

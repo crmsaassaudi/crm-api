@@ -20,6 +20,7 @@ import {
 } from '../../common/import';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import { RedisLockService } from '../../redis/redis-lock.service';
+import { TagsService } from '../../tags/tags.service';
 import {
   AccountSchemaClass,
   AccountSchemaDocument,
@@ -110,6 +111,7 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     @InjectModel(ImportJobSchemaClass.name)
     private readonly importJobModel: Model<ImportJobDocument>,
     @InjectConnection() private readonly connection: Connection,
+    private readonly tagsService: TagsService,
   ) {
     super();
     this.cls = cls;
@@ -204,6 +206,42 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     // Account has minimal validation beyond required fields.
     // Email/phone format validation could be added here.
     return [];
+  }
+
+  /**
+   * Batch-wide resolution of raw "tags" CSV names → catalog Tag ids.
+   * Collects every unique name across the whole batch and resolves them in
+   * a single call, so a name repeated across many rows only creates (or
+   * looks up) one catalog Tag instead of racing per row.
+   *
+   * Must run before buildMerge/buildOverwrite/buildInsert so the merge-mode
+   * dedup comparison (`existingArr.includes(v)` in buildMerge) compares
+   * resolved ids against the account's existing (id-based) `tags` array,
+   * never a raw name against an id or vice versa.
+   */
+  protected async beforeBuildOps(
+    rows: MappedRow[],
+    _data: AccountImportJobData,
+  ): Promise<void> {
+    const names = new Set<string>();
+    for (const row of rows) {
+      for (const name of row.arrayFields.tags ?? []) names.add(name);
+    }
+    if (names.size === 0) return;
+
+    const nameToId = await this.tagsService.resolveOrCreateByNames('Account', [
+      ...names,
+    ]);
+
+    for (const row of rows) {
+      const tags = row.arrayFields.tags;
+      if (!tags?.length) continue;
+      row.arrayFields.tags = this.uniq(
+        tags
+          .map((name) => nameToId.get(name))
+          .filter((id): id is string => !!id),
+      );
+    }
   }
 
   // ── Dedup value extraction ──

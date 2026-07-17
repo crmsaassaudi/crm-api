@@ -2,12 +2,15 @@ import {
   IsString,
   IsOptional,
   IsEnum,
+  IsInt,
+  IsArray,
+  Matches,
   MinLength,
   MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-const TAG_SCOPES = [
+export const TAG_SCOPES = [
   'Contact',
   'Account',
   'Deal',
@@ -15,6 +18,9 @@ const TAG_SCOPES = [
   'Conversation',
   'Task',
 ] as const;
+
+const HEX_COLOR_REGEX = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
+const HEX_COLOR_MESSAGE = 'color must be a hex value like #ef4444 or #f00';
 
 export class CreateTagDto {
   @ApiProperty({ example: 'VIP' })
@@ -26,16 +32,23 @@ export class CreateTagDto {
   @ApiPropertyOptional({ example: '#ef4444' })
   @IsString()
   @IsOptional()
+  @Matches(HEX_COLOR_REGEX, { message: HEX_COLOR_MESSAGE })
   color?: string;
 
   @ApiProperty({ enum: TAG_SCOPES, example: 'Contact' })
   @IsEnum(TAG_SCOPES)
   scope: string;
 
-  @ApiPropertyOptional({ example: 'Spend > 1000' })
-  @IsString()
+  @ApiPropertyOptional({ type: [String], example: [] })
+  @IsArray()
+  @IsString({ each: true })
   @IsOptional()
-  autoRule?: string;
+  channelIds?: string[];
+
+  @ApiPropertyOptional({ example: 0 })
+  @IsInt()
+  @IsOptional()
+  order?: number;
 }
 
 export class UpdateTagDto {
@@ -49,6 +62,7 @@ export class UpdateTagDto {
   @ApiPropertyOptional({ example: '#f59e0b' })
   @IsString()
   @IsOptional()
+  @Matches(HEX_COLOR_REGEX, { message: HEX_COLOR_MESSAGE })
   color?: string;
 
   @ApiPropertyOptional({ enum: TAG_SCOPES, example: 'Contact' })
@@ -56,10 +70,16 @@ export class UpdateTagDto {
   @IsOptional()
   scope?: string;
 
-  @ApiPropertyOptional({ example: 'Spend > 5000' })
-  @IsString()
+  @ApiPropertyOptional({ type: [String] })
+  @IsArray()
+  @IsString({ each: true })
   @IsOptional()
-  autoRule?: string;
+  channelIds?: string[];
+
+  @ApiPropertyOptional({ example: 0 })
+  @IsInt()
+  @IsOptional()
+  order?: number;
 }
 
 export class QueryTagDto {
@@ -72,4 +92,21 @@ export class QueryTagDto {
   @IsString()
   @IsOptional()
   search?: string;
+}
+
+export class ReorderTagsDto {
+  @ApiProperty({ enum: TAG_SCOPES, example: 'Contact' })
+  @IsEnum(TAG_SCOPES)
+  scope: string;
+
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  orderedIds: string[];
+}
+
+export class MergeTagDto {
+  @ApiProperty({ example: '507f1f77bcf86cd799439099' })
+  @IsString()
+  targetTagId: string;
 }

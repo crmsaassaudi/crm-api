@@ -183,4 +183,24 @@ export class DealRepository extends BaseDocumentRepository<
       .exec();
     return doc ? this.mapToDomain(doc) : null;
   }
+
+  async addTagsToDeals(
+    dealIds: string[],
+    tags: string[],
+  ): Promise<{ matchedCount: number; modifiedCount: number }> {
+    const scopedFilter = this.applyTenantFilter({
+      _id: { $in: dealIds },
+      deletedAt: { $exists: false },
+    } as FilterQuery<DealSchemaClass>);
+    const result = await this.model
+      .updateMany(scopedFilter, {
+        $addToSet: { tags: { $each: tags } },
+      })
+      .exec();
+
+    return {
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    };
+  }
 }

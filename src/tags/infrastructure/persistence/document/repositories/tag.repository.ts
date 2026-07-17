@@ -22,12 +22,36 @@ export class TagRepository {
     if (query?.search) {
       filter.name = { $regex: escapeRegex(query.search), $options: 'i' };
     }
-    const docs = await this.model.find(filter).sort({ name: 1 }).exec();
+    const docs = await this.model
+      .find(filter)
+      .sort({ scope: 1, order: 1, name: 1 })
+      .exec();
     return docs.map(TagMapper.toDomain);
   }
 
   async findById(tenantId: string, id: string): Promise<Tag | null> {
     const doc = await this.model.findOne({ _id: id, tenantId }).exec();
+    return doc ? TagMapper.toDomain(doc) : null;
+  }
+
+  async findByIds(
+    tenantId: string,
+    scope: string,
+    ids: string[],
+  ): Promise<Tag[]> {
+    if (!ids.length) return [];
+    const docs = await this.model
+      .find({ tenantId, scope, _id: { $in: ids } })
+      .exec();
+    return docs.map(TagMapper.toDomain);
+  }
+
+  async findByExactName(
+    tenantId: string,
+    scope: string,
+    name: string,
+  ): Promise<Tag | null> {
+    const doc = await this.model.findOne({ tenantId, scope, name }).exec();
     return doc ? TagMapper.toDomain(doc) : null;
   }
 
@@ -50,5 +74,21 @@ export class TagRepository {
   async delete(tenantId: string, id: string): Promise<boolean> {
     const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;
+  }
+
+  async reorder(
+    tenantId: string,
+    scope: string,
+    orderedIds: string[],
+  ): Promise<void> {
+    if (!orderedIds.length) return;
+    await this.model.bulkWrite(
+      orderedIds.map((id, index) => ({
+        updateOne: {
+          filter: { _id: id, tenantId, scope },
+          update: { $set: { order: index } },
+        },
+      })),
+    );
   }
 }

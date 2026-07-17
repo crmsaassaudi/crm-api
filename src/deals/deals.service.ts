@@ -28,10 +28,12 @@ import {
   DEAL_EXPORT_QUEUE,
   DEAL_IMPORT_MAX_FILE_BYTES,
   DEAL_IMPORT_MAPPABLE_FIELDS,
+  DEAL_MAX_BULK_TAG_SIZE,
 } from './deals.constants';
 import { StartDealImportDto } from './dto/start-deal-import.dto';
 import { ExportRequestService, ExportRequestDto } from '../common/export';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
+import { TagsService } from '../tags/tags.service';
 
 @Injectable()
 export class DealsService {
@@ -52,8 +54,40 @@ export class DealsService {
     private readonly importJobModel: Model<ImportJobDocument>,
     private readonly exportRequest: ExportRequestService,
     private readonly crmSettings: CrmSettingsService,
+    private readonly tagsService: TagsService,
   ) {
     this.importStorage = this.storageFactory.create('deals');
+  }
+
+  async bulkTagDeals(params: {
+    dealIds: string[];
+    tags: string[];
+  }): Promise<{ success: true; matchedCount: number; modifiedCount: number }> {
+    const dealIds = Array.from(new Set(params.dealIds || [])).filter(Boolean);
+    const tags = Array.from(
+      new Set((params.tags || []).map((tag) => tag.trim()).filter(Boolean)),
+    );
+
+    if (dealIds.length === 0) {
+      throw new BadRequestException('dealIds is required');
+    }
+    if (dealIds.length > DEAL_MAX_BULK_TAG_SIZE) {
+      throw new BadRequestException(
+        `Bulk operation exceeds maximum of ${DEAL_MAX_BULK_TAG_SIZE} deals per request. Received: ${dealIds.length}`,
+      );
+    }
+    if (tags.length === 0) {
+      throw new BadRequestException('tags is required');
+    }
+
+    await this.tagsService.validateTagIds('Deal', tags);
+
+    const result = await this.repository.addTagsToDeals(dealIds, tags);
+
+    return {
+      success: true,
+      ...result,
+    };
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────

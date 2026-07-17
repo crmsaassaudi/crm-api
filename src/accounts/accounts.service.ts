@@ -31,9 +31,11 @@ import {
   ACCOUNT_EXPORT_QUEUE,
   ACCOUNT_IMPORT_MAX_FILE_BYTES,
   ACCOUNT_IMPORT_MAPPABLE_FIELDS,
+  ACCOUNT_MAX_BULK_TAG_SIZE,
 } from './accounts.constants';
 import { StartAccountImportDto } from './dto/start-account-import.dto';
 import { ExportRequestService, ExportRequestDto } from '../common/export';
+import { TagsService } from '../tags/tags.service';
 
 @Injectable()
 export class AccountsService {
@@ -52,8 +54,42 @@ export class AccountsService {
     @InjectModel(ImportJobSchemaClass.name)
     private readonly importJobModel: Model<ImportJobDocument>,
     private readonly exportRequest: ExportRequestService,
+    private readonly tagsService: TagsService,
   ) {
     this.importStorage = this.storageFactory.create('accounts');
+  }
+
+  async bulkTagAccounts(params: {
+    accountIds: string[];
+    tags: string[];
+  }): Promise<{ success: true; matchedCount: number; modifiedCount: number }> {
+    const accountIds = Array.from(new Set(params.accountIds || [])).filter(
+      Boolean,
+    );
+    const tags = Array.from(
+      new Set((params.tags || []).map((tag) => tag.trim()).filter(Boolean)),
+    );
+
+    if (accountIds.length === 0) {
+      throw new BadRequestException('accountIds is required');
+    }
+    if (accountIds.length > ACCOUNT_MAX_BULK_TAG_SIZE) {
+      throw new BadRequestException(
+        `Bulk operation exceeds maximum of ${ACCOUNT_MAX_BULK_TAG_SIZE} accounts per request. Received: ${accountIds.length}`,
+      );
+    }
+    if (tags.length === 0) {
+      throw new BadRequestException('tags is required');
+    }
+
+    await this.tagsService.validateTagIds('Account', tags);
+
+    const result = await this.repository.addTagsToAccounts(accountIds, tags);
+
+    return {
+      success: true,
+      ...result,
+    };
   }
 
   // ─────────────────────────── EXPORT ───────────────────────────

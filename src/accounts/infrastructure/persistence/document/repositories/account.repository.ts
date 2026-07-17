@@ -379,4 +379,24 @@ export class AccountRepository extends BaseDocumentRepository<
       .exec();
     return doc ? this.mapToDomain(doc) : null;
   }
+
+  async addTagsToAccounts(
+    accountIds: string[],
+    tags: string[],
+  ): Promise<{ matchedCount: number; modifiedCount: number }> {
+    const scopedFilter = this.applyTenantFilter({
+      _id: { $in: accountIds },
+      deletedAt: { $exists: false },
+    } as FilterQuery<AccountSchemaClass>);
+    const result = await this.model
+      .updateMany(scopedFilter, {
+        $addToSet: { tags: { $each: tags } },
+      })
+      .exec();
+
+    return {
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    };
+  }
 }

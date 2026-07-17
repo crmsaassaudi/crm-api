@@ -100,6 +100,7 @@ export class MasterOrgInitService {
     const pick = (set: string, n: number) =>
       Array.from(
         { length: n },
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         (_, i) => set[randomBytes(1)[0] % set.length],
       ).join('');
     const lower = 'abcdefghijkmnpqrstuvwxyz';

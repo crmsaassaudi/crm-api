@@ -32,11 +32,15 @@ export class TagSchemaClass extends EntityDocumentHelper {
   })
   scope: string;
 
-  @Prop({ type: String, default: null })
-  autoRule: string | null;
+  @Prop({ type: Number, default: 0 })
+  order: number;
+
+  @Prop({ type: [String], default: [] })
+  channelIds: string[];
 }
 
 export const TagSchema = SchemaFactory.createForClass(TagSchemaClass);
 
 TagSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 TagSchema.index({ tenantId: 1, name: 1, scope: 1 }, { unique: true });
+TagSchema.index({ tenantId: 1, scope: 1, order: 1 });

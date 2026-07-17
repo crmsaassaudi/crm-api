@@ -35,6 +35,7 @@ import {
   AccountSchemaClass,
 } from '../accounts/infrastructure/persistence/document/entities/account.schema';
 import { ActivityLogModule } from '../activity-log/activity-log.module';
+import { TagsModule } from '../tags/tags.module';
 
 const workerProviders = isWorkerRuntime()
   ? [DealImportProcessor, DealExportProcessor]
@@ -76,6 +77,7 @@ const workerProviders = isWorkerRuntime()
       adapter: BullMQAdapter,
     }),
     ActivityLogModule,
+    TagsModule,
   ],
   controllers: [DealsController],
   providers: [DealsService, DealRepository, ...workerProviders],

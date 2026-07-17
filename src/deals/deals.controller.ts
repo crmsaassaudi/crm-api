@@ -34,6 +34,7 @@ import { StartDealImportDto } from './dto/start-deal-import.dto';
 import { ExportRequestDto } from '../common/export';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { IsString, IsOptional, IsEnum } from 'class-validator';
+import { Throttle } from '@nestjs/throttler';
 
 /** Map a safe file extension to its HTTP Content-Type. */
 function resolveContentType(ext: string | undefined): string {
@@ -101,6 +102,13 @@ export class DealsController {
   @RequirePermission('delete', 'deals')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
+  }
+
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('bulk-tag')
+  @RequirePermission('edit', 'deals')
+  bulkTag(@Body() body: { dealIds: string[]; tags: string[] }) {
+    return this.service.bulkTagDeals(body);
   }
 
   // ──────────────────────────── TICKET LINK ────────────────────────────

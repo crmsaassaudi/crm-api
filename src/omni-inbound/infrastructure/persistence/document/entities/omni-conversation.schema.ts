@@ -374,6 +374,13 @@ OmniConversationSchema.index(
   { name: 'conversation_list' },
 );
 
+// "Unanswered" filter — conversations whose last message is still from the
+// customer (agent hasn't replied), sorted newest or oldest first.
+OmniConversationSchema.index(
+  { tenantId: 1, status: 1, lastMessageSenderType: 1, lastMessageAt: -1 },
+  { name: 'conversation_unanswered' },
+);
+
 // Agent load checks for assignment and fallback.
 OmniConversationSchema.index(
   { tenantId: 1, assignedAgentId: 1, status: 1 },

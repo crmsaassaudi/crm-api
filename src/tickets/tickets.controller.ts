@@ -25,6 +25,7 @@ import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.p
 import { RequirePermission } from '../common/permissions';
 import { StartTicketImportDto } from './dto/start-ticket-import.dto';
 import { ExportRequestDto } from '../common/export';
+import { Throttle } from '@nestjs/throttler';
 
 /** Map a safe file extension to its HTTP Content-Type. */
 function resolveContentType(ext: string | undefined): string {
@@ -71,6 +72,13 @@ export class TicketsController {
   @RequirePermission('delete', 'tickets')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
+  }
+
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('bulk-tag')
+  @RequirePermission('edit', 'tickets')
+  bulkTag(@Body() body: { ticketIds: string[]; tags: string[] }) {
+    return this.service.bulkTagTickets(body);
   }
 
   @Post(':id/merge')

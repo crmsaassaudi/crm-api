@@ -33,10 +33,12 @@ import {
   TICKET_EXPORT_QUEUE,
   TICKET_IMPORT_MAX_FILE_BYTES,
   TICKET_IMPORT_MAPPABLE_FIELDS,
+  TICKET_MAX_BULK_TAG_SIZE,
 } from './tickets.constants';
 import { StartTicketImportDto } from './dto/start-ticket-import.dto';
 import { ExportRequestService, ExportRequestDto } from '../common/export';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
+import { TagsService } from '../tags/tags.service';
 
 @Injectable()
 export class TicketsService {
@@ -57,9 +59,43 @@ export class TicketsService {
     @InjectModel(ImportJobSchemaClass.name)
     private readonly importJobModel: Model<ImportJobDocument>,
     private readonly exportRequest: ExportRequestService,
+    private readonly tagsService: TagsService,
     private readonly crmSettings: CrmSettingsService,
   ) {
     this.importStorage = this.storageFactory.create('tickets');
+  }
+
+  async bulkTagTickets(params: {
+    ticketIds: string[];
+    tags: string[];
+  }): Promise<{ success: true; matchedCount: number; modifiedCount: number }> {
+    const ticketIds = Array.from(new Set(params.ticketIds || [])).filter(
+      Boolean,
+    );
+    const tags = Array.from(
+      new Set((params.tags || []).map((tag) => tag.trim()).filter(Boolean)),
+    );
+
+    if (ticketIds.length === 0) {
+      throw new BadRequestException('ticketIds is required');
+    }
+    if (ticketIds.length > TICKET_MAX_BULK_TAG_SIZE) {
+      throw new BadRequestException(
+        `Bulk operation exceeds maximum of ${TICKET_MAX_BULK_TAG_SIZE} tickets per request. Received: ${ticketIds.length}`,
+      );
+    }
+    if (tags.length === 0) {
+      throw new BadRequestException('tags is required');
+    }
+
+    await this.tagsService.validateTagIds('Ticket', tags);
+
+    const result = await this.repository.addTagsToTickets(ticketIds, tags);
+
+    return {
+      success: true,
+      ...result,
+    };
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────

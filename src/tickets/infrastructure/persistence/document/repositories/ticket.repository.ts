@@ -195,4 +195,24 @@ export class TicketRepository extends BaseDocumentRepository<
     const seq = (counterResult as any)?.seq ?? 1;
     return `TKT-${seq.toString().padStart(5, '0')}`;
   }
+
+  async addTagsToTickets(
+    ticketIds: string[],
+    tags: string[],
+  ): Promise<{ matchedCount: number; modifiedCount: number }> {
+    const scopedFilter = this.applyTenantFilter({
+      _id: { $in: ticketIds },
+      deletedAt: { $exists: false },
+    } as FilterQuery<TicketSchemaClass>);
+    const result = await this.model
+      .updateMany(scopedFilter, {
+        $addToSet: { tags: { $each: tags } },
+      })
+      .exec();
+
+    return {
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    };
+  }
 }

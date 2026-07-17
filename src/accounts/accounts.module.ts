@@ -33,6 +33,7 @@ import {
   AccountTypeSchema,
   AccountTypeSchemaClass,
 } from '../account-settings/entities/account-type.schema';
+import { TagsModule } from '../tags/tags.module';
 
 const workerProviders = isWorkerRuntime()
   ? [AccountImportProcessor, AccountExportProcessor]
@@ -73,6 +74,7 @@ const workerProviders = isWorkerRuntime()
       name: ACCOUNT_EXPORT_QUEUE,
       adapter: BullMQAdapter,
     }),
+    TagsModule,
   ],
   controllers: [AccountsController],
   providers: [AccountsService, AccountRepository, ...workerProviders],

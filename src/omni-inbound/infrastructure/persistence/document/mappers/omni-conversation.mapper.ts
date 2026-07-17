@@ -41,6 +41,12 @@ export class OmniConversationMapper {
       assignedAgent: assignedAgentObj,
       resolvedByAgent: resolvedByAgentObj,
       lastCustomerMessageAt: (raw as any).lastCustomerMessageAt ?? null,
+      frtDeadline: (raw as any).frtDeadline ?? null,
+      frtBreached: (raw as any).frtBreached ?? false,
+      resolutionDeadline: (raw as any).resolutionDeadline ?? null,
+      resolutionBreached: (raw as any).resolutionBreached ?? false,
+      escalationLevel: (raw as any).escalationLevel ?? null,
+      snoozeUntil: (raw as any).snoozeUntil ?? null,
       createdAt: (raw as any).createdAt,
       updatedAt: (raw as any).updatedAt,
     };

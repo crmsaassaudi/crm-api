@@ -16,8 +16,11 @@ export class Tag {
   @ApiProperty({ example: 'Contact' })
   scope: string;
 
-  @ApiProperty({ example: 'Spend > 1000', nullable: true })
-  autoRule: string | null;
+  @ApiProperty({ example: 0 })
+  order: number;
+
+  @ApiProperty({ example: [], type: [String] })
+  channelIds: string[];
 
   @ApiProperty()
   createdAt: Date;

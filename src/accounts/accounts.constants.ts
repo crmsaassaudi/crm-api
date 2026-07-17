@@ -4,6 +4,9 @@ export const ACCOUNT_IMPORT_QUEUE = 'account-import';
 /** BullMQ queue name for account exports. */
 export const ACCOUNT_EXPORT_QUEUE = 'account-export';
 
+/** Max number of accounts allowed in a single bulk-tag request. */
+export const ACCOUNT_MAX_BULK_TAG_SIZE = 500;
+
 /** Batch size for stream-import bulkWrite. Balances memory vs round-trips. */
 export const ACCOUNT_IMPORT_BATCH_SIZE = 1_000;
 

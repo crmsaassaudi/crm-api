@@ -94,6 +94,16 @@ export interface OmniConversation {
   // ── Platform Reply Window ──────────────────────────────────────
   lastCustomerMessageAt: Date | null;
 
+  // ── SLA Tracking ─────────────────────────────────────────────────
+  frtDeadline: Date | null;
+  frtBreached: boolean;
+  resolutionDeadline: Date | null;
+  resolutionBreached: boolean;
+  escalationLevel: 'warning' | 'critical' | null;
+
+  // ── Snooze ───────────────────────────────────────────────────────
+  snoozeUntil: Date | null;
+
   createdAt: Date;
   updatedAt: Date;
 }

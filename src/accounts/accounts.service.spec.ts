@@ -96,6 +96,7 @@ describe('AccountsService', () => {
       exportQueue as any,
       importJobModel,
       exportRequest,
+      { validateTagIds: jest.fn().mockResolvedValue(undefined) } as any, // tagsService
     );
   });
 

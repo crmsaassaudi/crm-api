@@ -91,6 +91,7 @@ describe('DealsService', () => {
       importJobModel,
       exportRequest,
       { getSetting: jest.fn().mockResolvedValue(null) } as any, // crmSettings
+      { validateTagIds: jest.fn().mockResolvedValue(undefined) } as any, // tagsService
     );
   });
 

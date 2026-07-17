@@ -47,6 +47,8 @@
     "init:master-org:prod": "node dist/scripts/master-org/init-master-org.js",
     "migrate:list-view-labels": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-list-view-labels.ts",
     "migrate:phone-strip-plus": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-phone-strip-plus.ts",
+    "migrate:tags-to-catalog": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-tags-to-catalog.ts",
+    "seed:livechat-channel": "ts-node -r tsconfig-paths/register ./src/scripts/seed-livechat-channel.ts",
     "test:e2e:document:docker": "docker compose -f docker-compose.document.test.yaml --env-file env-example-document -p tests up -d --build && docker compose -f docker-compose.document.test.yaml -p tests exec api /opt/wait-for-it.sh -t 0 localhost:3000 -- npm run test:e2e -- --watchAll --runInBand && docker compose -f docker-compose.document.test.yaml -p tests down && docker compose -p tests rm -svf",
     "prepare": "is-ci || husky",
     "release": "release-it"

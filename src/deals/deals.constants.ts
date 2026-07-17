@@ -4,6 +4,9 @@ export const DEAL_IMPORT_QUEUE = 'deal-import';
 /** BullMQ queue name for deal exports. */
 export const DEAL_EXPORT_QUEUE = 'deal-export';
 
+/** Max number of deals allowed in a single bulk-tag request. */
+export const DEAL_MAX_BULK_TAG_SIZE = 500;
+
 /** Batch size for stream-import bulkWrite. */
 export const DEAL_IMPORT_BATCH_SIZE = 1_000;
 

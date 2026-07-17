@@ -161,6 +161,22 @@ export abstract class BaseImportProcessor<
     // Default: no-op. Override in subclass if needed.
   }
 
+  /**
+   * Optional hook called once per batch, after dedup lookup but before
+   * buildInsert/buildOverwrite/buildMerge build the write documents.
+   *
+   * Rows are passed by reference — mutate `row.fields` / `row.arrayFields`
+   * in place to rewrite values that need a batch-wide resolution pass
+   * (e.g. resolving free-text tag names to catalog tag ids exactly once
+   * per batch instead of once per row).
+   */
+  protected async beforeBuildOps(
+    _rows: MappedRow[],
+    _data: TJobData,
+  ): Promise<void> {
+    // Default: no-op. Override in subclass if needed.
+  }
+
   // ─────────────────────── LIFECYCLE HOOKS ────────────────────────────
 
   /** Update MongoDB history when a job fails. */
@@ -377,6 +393,9 @@ export abstract class BaseImportProcessor<
           (row, field) => this.extractDedupValues(row, field),
         )
       : null;
+
+    // ── Step 3.5: Batch-wide pre-write resolution (e.g. tag name → id) ──
+    await this.beforeBuildOps(validWithRefs, data);
 
     // ── Step 4: Build bulk-write ops ──
     this.buildBatchOps({

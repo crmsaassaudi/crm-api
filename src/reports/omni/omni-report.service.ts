@@ -638,6 +638,34 @@ export class OmniReportService {
               { $group: { _id: '$tags', count: { $sum: 1 } } },
               { $sort: { count: -1 } },
               { $limit: 50 },
+              {
+                $addFields: {
+                  tagObjectId: {
+                    $convert: {
+                      input: '$_id',
+                      to: 'objectId',
+                      onError: null,
+                      onNull: null,
+                    },
+                  },
+                },
+              },
+              {
+                $lookup: {
+                  from: 'tags',
+                  localField: 'tagObjectId',
+                  foreignField: '_id',
+                  as: 'tagDoc',
+                },
+              },
+              {
+                $addFields: {
+                  tagName: {
+                    $ifNull: [{ $arrayElemAt: ['$tagDoc.name', 0] }, '$_id'],
+                  },
+                  tagColor: { $arrayElemAt: ['$tagDoc.color', 0] },
+                },
+              },
             ],
           },
         },
@@ -647,7 +675,9 @@ export class OmniReportService {
     const total: number = facetResult?.total?.[0]?.count ?? 0;
     const data: TagAnalyticsItem[] = (facetResult?.rows ?? []).map(
       (row: any) => ({
-        tag: row._id ?? 'unknown',
+        tag: row.tagName ?? row._id ?? 'unknown',
+        tagId: row._id,
+        color: row.tagColor,
         count: row.count,
         percentage: safePercent(row.count, total),
       }),

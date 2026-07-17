@@ -11,19 +11,30 @@ import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
 import { pagination } from '../../utils/pagination';
 import { cappedCount } from '../../utils/capped-count';
 
+export interface ConversationDateRange {
+  field: 'createdAt' | 'updatedAt';
+  from?: Date;
+  to?: Date;
+}
+
+export type UnansweredMode = 'recent' | 'longestWaiting' | 'readNotReplied';
+
 export interface ConversationQuery {
   tenantId: string;
   status?: string | string[];
   channels?: string[];
-  assignedAgent?: string | null;
+  assignedAgent?: string | string[] | null;
   assignedGroup?: string | null;
   unassigned?: boolean;
   sla?: string[];
   tags?: string[];
+  tagsMatchMode?: 'any' | 'all';
   isVip?: boolean;
   hasUnread?: boolean;
   search?: string;
   cursor?: string;
+  dateRange?: ConversationDateRange;
+  unansweredMode?: UnansweredMode;
 }
 
 export interface ConversationTimelineCursor {
@@ -152,8 +163,15 @@ export class ConversationRepository {
   async findCursorPaginated(query: ConversationQuery, limit: number) {
     const filter = this.buildFilter(query);
 
+    // "Longest waiting" flips the sort to oldest-first so the most
+    // overdue unanswered conversations surface at the top of the list.
+    const sortDir: 1 | -1 = query.unansweredMode === 'longestWaiting' ? 1 : -1;
+
     if (query.cursor) {
-      filter.lastMessageAt = { $lt: new Date(query.cursor) };
+      filter.lastMessageAt =
+        sortDir === -1
+          ? { $lt: new Date(query.cursor) }
+          : { $gt: new Date(query.cursor) };
     }
 
     const safeLimit = Math.max(1, Math.min(limit, 50));
@@ -161,7 +179,7 @@ export class ConversationRepository {
     // Fetch limit + 1 to check if there are more items
     const items = await this.model
       .find(filter)
-      .sort({ lastMessageAt: -1, _id: -1 })
+      .sort({ lastMessageAt: sortDir, _id: sortDir })
       .limit(safeLimit + 1)
       .populate('assignedAgent')
       .populate('resolvedByAgent')
@@ -199,12 +217,42 @@ export class ConversationRepository {
     this.applyChannelFilter(filter, query.channels);
     this.buildAssignmentFilter(query, filter);
     this.applySlaFilter(filter, query.sla);
-    this.applyTagsFilter(filter, query.tags);
+    this.applyTagsFilter(filter, query.tags, query.tagsMatchMode);
     this.applyVipFilter(filter, query.isVip);
     this.applyUnreadFilter(filter, query.hasUnread);
     this.applySearchFilter(filter, query.search);
+    this.applyDateRangeFilter(filter, query.dateRange);
+    this.applyUnansweredFilter(filter, query.unansweredMode);
 
     return filter;
+  }
+
+  /** Filter on createdAt/updatedAt within an inclusive [from, to] range. */
+  private applyDateRangeFilter(
+    filter: any,
+    dateRange: ConversationDateRange | undefined,
+  ): void {
+    if (!dateRange || (!dateRange.from && !dateRange.to)) return;
+    const condition: Record<string, Date> = {};
+    if (dateRange.from) condition.$gte = dateRange.from;
+    if (dateRange.to) condition.$lte = dateRange.to;
+    filter[dateRange.field] = condition;
+  }
+
+  /**
+   * "Unanswered" = the conversation's last message came from the customer,
+   * i.e. the agent has not replied since. `readNotReplied` additionally
+   * requires unreadCount=0 (agent opened it but never sent a reply).
+   */
+  private applyUnansweredFilter(
+    filter: any,
+    mode: UnansweredMode | undefined,
+  ): void {
+    if (!mode) return;
+    filter.lastMessageSenderType = 'customer';
+    if (mode === 'readNotReplied') {
+      filter.unreadCount = 0;
+    }
   }
 
   private applyStatusFilter(filter: any, status: any): void {
@@ -229,9 +277,13 @@ export class ConversationRepository {
     }
   }
 
-  private applyTagsFilter(filter: any, tags: string[] | undefined): void {
+  private applyTagsFilter(
+    filter: any,
+    tags: string[] | undefined,
+    matchMode?: 'any' | 'all',
+  ): void {
     if (tags && tags.length > 0) {
-      filter.tags = { $in: tags };
+      filter.tags = matchMode === 'all' ? { $all: tags } : { $in: tags };
     }
   }
 
@@ -267,7 +319,9 @@ export class ConversationRepository {
       return;
     }
     if (query.assignedAgent !== undefined) {
-      filter.assignedAgentId = query.assignedAgent;
+      filter.assignedAgentId = Array.isArray(query.assignedAgent)
+        ? { $in: query.assignedAgent }
+        : query.assignedAgent;
     }
     if (query.assignedGroup !== undefined) {
       filter.assignedGroupId = query.assignedGroup;
@@ -528,6 +582,28 @@ export class ConversationRepository {
       .findByIdAndUpdate(id, { $pull: { tags: tag } }, { new: true })
       .exec();
     return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Bulk variant of addTag — adds a single tag id to many conversations at once.
+   * Tenant-scoped: only conversations belonging to `tenantId` are updated.
+   */
+  async addTagToMany(
+    conversationIds: string[],
+    tenantId: string,
+    tagId: string,
+  ): Promise<{ matchedCount: number; modifiedCount: number }> {
+    const result = await this.model
+      .updateMany(
+        { _id: { $in: conversationIds }, tenantId },
+        { $addToSet: { tags: tagId } },
+      )
+      .exec();
+
+    return {
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    };
   }
 
   async claimConversation(
