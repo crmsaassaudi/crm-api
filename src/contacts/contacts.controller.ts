@@ -38,6 +38,7 @@ import { ChangeStageDto } from './dto/change-stage.dto';
 import { SubResourceQueryDto } from './dto/sub-resource-query.dto';
 import { ListViewsService } from '../list-views/list-views.service';
 import { RequirePermission } from '../common/permissions';
+import { SensitiveResource } from '../common/permissions';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { NotesService } from '../notes/notes.service';
 import { CreateNoteDto } from '../notes/dto/create-note.dto';
@@ -47,6 +48,7 @@ import { TicketsService } from '../tickets/tickets.service';
 @ApiTags('Contacts')
 @ApiBearerAuth()
 @UseInterceptors(DataMaskingInterceptor)
+@SensitiveResource('contacts')
 @Controller({
   path: 'contacts',
   version: '1',

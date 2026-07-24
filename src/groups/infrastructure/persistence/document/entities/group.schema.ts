@@ -48,6 +48,10 @@ export class GroupSchemaClass extends EntityDocumentHelper {
   @Prop({ type: [String], default: [] })
   permissions: string[];
 
+  // Custom-role references granted to all members of this group (RBAC).
+  @Prop({ type: [String], default: [] })
+  roleIds: string[];
+
   @Prop({ default: true })
   isActive: boolean;
 

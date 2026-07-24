@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery, SortOrder, Types } from 'mongoose';
+import { ClsService } from 'nestjs-cls';
 import {
   OmniConversationSchemaClass,
   OmniConversationDocument,
@@ -62,6 +63,7 @@ export class ConversationRepository {
   constructor(
     @InjectModel(OmniConversationSchemaClass.name)
     private readonly model: Model<OmniConversationDocument>,
+    private readonly cls: ClsService,
   ) {}
 
   async findById(id: string): Promise<OmniConversation | null> {
@@ -71,7 +73,37 @@ export class ConversationRepository {
       .populate('resolvedByAgent')
       .lean()
       .exec();
-    return doc ? OmniConversationMapper.toDomain(doc as any) : null;
+    if (!doc) return null;
+    // C4: record-level scope — a scoped user must not read a conversation
+    // outside their visibility just by knowing its id (tenant isolation alone
+    // is not enough). Fail-closed to null (looks like "not found").
+    if (!this.isConversationInScope(doc)) return null;
+    return OmniConversationMapper.toDomain(doc as any);
+  }
+
+  /**
+   * Whether the current CLS principal may see this conversation, mirroring
+   * applyVisibilityScope() for a single already-fetched document.
+   */
+  private isConversationInScope(doc: any): boolean {
+    const visibleOwnerIds = this.cls.get('visibleOwnerIds');
+    if (!Array.isArray(visibleOwnerIds)) return true; // bypass / system path
+
+    const owners = new Set(visibleOwnerIds.map(String));
+    const groups = new Set(
+      ((this.cls.get('visibleGroupIds') as string[]) ?? []).map(String),
+    );
+    const agent = doc.assignedAgentId ? String(doc.assignedAgentId) : null;
+    const claimer = doc.claimedById ? String(doc.claimedById) : null;
+    const group = doc.assignedGroupId ? String(doc.assignedGroupId) : null;
+
+    if (agent && owners.has(agent)) return true;
+    if (claimer && owners.has(claimer)) return true;
+    if (group && groups.has(group)) return true;
+    if (!agent && !group && this.cls.get('includeUnownedInScope') === true) {
+      return true;
+    }
+    return false;
   }
 
   async findByIds(
@@ -223,8 +255,46 @@ export class ConversationRepository {
     this.applySearchFilter(filter, query.search);
     this.applyDateRangeFilter(filter, query.dateRange);
     this.applyUnansweredFilter(filter, query.unansweredMode);
+    this.applyVisibilityScope(filter);
 
     return filter;
+  }
+
+  /**
+   * C4: enforce data-visibility scope on conversations. Conversations have no
+   * `ownerId`, so scope maps onto assignment: a scoped (non-admin) user may
+   * only see conversations assigned to a visible agent (self + subordinates),
+   * assigned to one of their groups, or claimed by a visible agent.
+   *
+   * Read from CLS (set by DataVisibilityInterceptor):
+   *   - visibleOwnerIds: null → admin/owner bypass (no restriction)
+   *                      string[] → restrict to these agent IDs
+   *   - visibleGroupIds: groups the user belongs to
+   *   - includeUnownedInScope: whether unassigned conversations are visible
+   *
+   * The clause is ANDed on top of any caller-supplied assignment filter, so a
+   * scoped user cannot widen their view by passing assignedAgent/assignedGroup.
+   */
+  private applyVisibilityScope(
+    filter: FilterQuery<OmniConversationDocument>,
+  ): void {
+    const visibleOwnerIds = this.cls.get('visibleOwnerIds');
+    // null → bypass (admin/owner); undefined → not evaluated (system path)
+    if (!Array.isArray(visibleOwnerIds)) return;
+
+    const visibleGroupIds = (this.cls.get('visibleGroupIds') as string[]) ?? [];
+    const scopeClauses: FilterQuery<OmniConversationDocument>[] = [
+      { assignedAgentId: { $in: visibleOwnerIds } },
+      { claimedById: { $in: visibleOwnerIds } },
+    ];
+    if (visibleGroupIds.length > 0) {
+      scopeClauses.push({ assignedGroupId: { $in: visibleGroupIds } });
+    }
+    if (this.cls.get('includeUnownedInScope') === true) {
+      scopeClauses.push({ assignedAgentId: null, assignedGroupId: null });
+    }
+
+    (filter.$and ??= []).push({ $or: scopeClauses });
   }
 
   /** Filter on createdAt/updatedAt within an inclusive [from, to] range. */

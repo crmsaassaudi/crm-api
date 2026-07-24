@@ -14,6 +14,7 @@ import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 import { TenantRoleEnum } from '../roles/tenant-role.enum';
 import { ModuleRef } from '@nestjs/core';
 import { UsersDocumentRepository } from '../users/infrastructure/persistence/document/repositories/user.repository';
+import { GroupRepository } from '../groups/infrastructure/persistence/document/repositories/group.repository';
 import { isValidObjectId } from 'mongoose';
 
 /**
@@ -78,10 +79,27 @@ export class DataVisibilityInterceptor implements NestInterceptor {
         return;
       }
 
+      // C3: unowned (ownerId null/missing) records are hidden from scoped
+      // users by default — they must NOT leak to everyone. Tenants that rely
+      // on an "unassigned pool" pattern (e.g. shared lead/ticket queue) can
+      // opt in via data_visibility.unownedRecordsVisibleToAll. Admins/Owners
+      // always see them (they bypass the owner filter entirely, step 2).
+      this.cls.set(
+        'includeUnownedInScope',
+        settings?.unownedRecordsVisibleToAll === true,
+      );
+
       // 3. For MEMBER/VIEWER: resolve hierarchy
       const visibleIds = await this.hierarchyService.getVisibleOwnerIds(
         tenantId,
         userId,
+      );
+
+      // 3b. Resolve the groups the user belongs to. Used by entities scoped
+      // by group assignment rather than ownerId (e.g. omni conversations, C4).
+      this.cls.set(
+        'visibleGroupIds',
+        await this.resolveUserGroupIds(tenantId, userId),
       );
 
       // 4. Check sharing rules for additional shared IDs
@@ -131,6 +149,23 @@ export class DataVisibilityInterceptor implements NestInterceptor {
         (t: any) => t.tenantId === tenantId,
       );
       return membership?.roles ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Resolve the IDs of groups the user is a direct member of. Fail-soft:
+   * returns [] on error (scoping then simply omits group-assigned records).
+   */
+  private async resolveUserGroupIds(
+    tenantId: string,
+    userId: string,
+  ): Promise<string[]> {
+    try {
+      const groupRepo = this.moduleRef.get(GroupRepository, { strict: false });
+      const groups = await groupRepo.findGroupsByMember(tenantId, userId);
+      return groups.map((g: any) => String(g.id ?? g._id)).filter(Boolean);
     } catch {
       return [];
     }

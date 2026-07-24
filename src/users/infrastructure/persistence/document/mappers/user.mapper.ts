@@ -19,6 +19,7 @@ export class UserMapper {
             (t as any).tenant?.toString() ||
             '',
           roles: t.roles,
+          roleIds: ((t as any).roleIds || []).map((r: any) => r.toString()),
           permissions: (t as any).permissions || [],
           permissionOverrides: (t as any).permissionOverrides || {},
           joinedAt: t.joinedAt,
@@ -89,6 +90,7 @@ export class UserMapper {
       ? domainEntity.tenants.map((t) => ({
           tenantId: t.tenantId as any,
           roles: t.roles,
+          roleIds: t.roleIds || [],
           permissions: t.permissions || [],
           permissionOverrides: t.permissionOverrides || {},
           joinedAt: t.joinedAt,

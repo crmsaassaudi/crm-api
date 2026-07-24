@@ -43,17 +43,18 @@ export abstract class BaseDocumentRepository<
     if (this.enableDataVisibility()) {
       const visibleOwnerIds = this.cls.get('visibleOwnerIds');
       if (Array.isArray(visibleOwnerIds)) {
+        // C3: by default, unowned records (ownerId null/missing) are NOT
+        // visible to scoped users — they only leak when the tenant explicitly
+        // opts in (includeUnownedInScope). Admins bypass this entirely
+        // (visibleOwnerIds === null). This closes the "null owner → visible to
+        // everyone" data leak.
+        const ownerClauses: any[] = [{ ownerId: { $in: visibleOwnerIds } }];
+        if (this.cls.get('includeUnownedInScope') === true) {
+          ownerClauses.push({ ownerId: null }); // covers null and missing field
+        }
         enriched = {
           ...enriched,
-          $and: [
-            ...(enriched.$and || []),
-            {
-              $or: [
-                { ownerId: { $in: visibleOwnerIds } },
-                { ownerId: null }, // covers both null and missing ownerId field
-              ],
-            },
-          ],
+          $and: [...(enriched.$and || []), { $or: ownerClauses }],
         };
       }
       // null or undefined → no additional filter

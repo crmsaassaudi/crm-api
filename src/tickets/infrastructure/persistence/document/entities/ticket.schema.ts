@@ -117,6 +117,10 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   })
   ownerId?: string;
 
+  // Business Unit sub-partition (reserved; nullable & inert for now).
+  @Prop({ type: MongooseSchema.Types.ObjectId, default: null, index: true })
+  businessUnitId?: string | null;
+
   @Prop({
     type: [{ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' }],
   })

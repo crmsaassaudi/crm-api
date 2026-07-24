@@ -6,20 +6,25 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ClsService } from 'nestjs-cls';
-import { PlatformRoleEnum } from '../../roles/platform-role.enum';
 import {
   PERMISSION_RULE_METADATA,
   PermissionRuleMetadata,
 } from './permission.decorator';
-import { AuthzPermissionCacheService } from './authz-permission-cache.service';
+import { AuthorizationService } from './authorization.service';
+import { resolvePrincipalType } from './principal';
 
+/**
+ * Thin adapter over {@link AuthorizationService} (the single PDP). It resolves
+ * request context (userId / tenant hint), delegates the RBAC + platform
+ * super-admin decision, then writes CLS context and logs denials.
+ */
 @Injectable()
 export class PermissionGuard implements CanActivate {
   private readonly logger = new Logger(PermissionGuard.name);
 
   constructor(
     private readonly reflector: Reflector,
-    private readonly authzCache: AuthzPermissionCacheService,
+    private readonly authz: AuthorizationService,
     private readonly cls: ClsService,
   ) {}
 
@@ -50,23 +55,43 @@ export class PermissionGuard implements CanActivate {
 
     const tenantHint = this.resolveTenantHint(request, payload);
 
-    if (this.hasSuperAdminClaim(payload)) {
+    const decision = await this.authz.canPerformAction({
+      rule,
+      rawUserId: String(rawUserId),
+      tenantHint: tenantHint ? String(tenantHint) : undefined,
+      claims: payload,
+    });
+
+    if (decision.allowed) {
+      const resolvedUserId = decision.superAdmin
+        ? String(payload?.userId ?? payload?.id ?? payload?.sub)
+        : (decision.userId ?? String(rawUserId));
       this.setRequestContext(request, payload, {
-        userId: String(payload?.userId ?? payload?.id ?? payload?.sub),
-        tenantId: tenantHint ? String(tenantHint) : '',
-        email: payload?.email,
+        userId: resolvedUserId,
+        tenantId: decision.superAdmin
+          ? tenantHint
+            ? String(tenantHint)
+            : ''
+          : (decision.tenantId ?? (tenantHint ? String(tenantHint) : '')),
+        email: decision.email ?? payload?.email,
+        principalType: resolvePrincipalType(payload),
+        principalId: resolvedUserId,
       });
       return true;
     }
 
-    return this.performAuthzCheck(
-      context,
-      request,
-      payload,
-      rule,
-      rawUserId,
-      tenantHint,
-    );
+    this.logDenied(context, request, {
+      reason: decision.denyReason ?? 'permission_denied',
+      action: rule.action,
+      resource: rule.resource,
+      requiredPermission: decision.requiredPermission,
+      rawUserId: String(rawUserId),
+      userId: decision.userId,
+      tenantHint: tenantHint ? String(tenantHint) : undefined,
+      tenantId: decision.tenantId,
+      cacheHit: decision.cacheHit,
+    });
+    return false;
   }
 
   /** Resolve tenant hint from CLS, request, headers, or JWT payload. */
@@ -81,76 +106,36 @@ export class PermissionGuard implements CanActivate {
     );
   }
 
-  /** Execute the authz cache check and set request context on success. */
-  private async performAuthzCheck(
-    context: ExecutionContext,
-    request: any,
-    payload: any,
-    rule: PermissionRuleMetadata,
-    rawUserId: string,
-    tenantHint: string | undefined,
-  ): Promise<boolean> {
-    const result = await this.authzCache.canAccess({
-      rawUserId: String(rawUserId),
-      tenantHint: tenantHint ? String(tenantHint) : undefined,
-      rule,
-    });
-
-    if (result.allowed) {
-      this.setRequestContext(request, payload, {
-        userId: result.userId ?? String(rawUserId),
-        tenantId: result.tenantId ?? (tenantHint ? String(tenantHint) : ''),
-        email: result.email ?? payload?.email,
-      });
-    } else {
-      this.logDenied(context, request, {
-        reason: result.denyReason ?? 'permission_denied',
-        action: rule.action,
-        resource: rule.resource,
-        requiredPermission: result.requiredPermission,
-        rawUserId: String(rawUserId),
-        userId: result.userId,
-        tenantHint: tenantHint ? String(tenantHint) : undefined,
-        tenantId: result.tenantId,
-        cacheHit: result.cacheHit,
-      });
-    }
-
-    return result.allowed;
-  }
-
   private extractHeader(request: any, name: string): string | undefined {
     const value = request.headers?.[name];
     if (Array.isArray(value)) return value[0];
     return value;
   }
 
-  private hasSuperAdminClaim(payload: any): boolean {
-    const roles = [
-      ...(payload?.realm_access?.roles ?? []),
-      ...Object.values(payload?.resource_access ?? {}).flatMap(
-        (resource: any) => resource?.roles ?? [],
-      ),
-      ...(payload?.roles ?? []),
-    ].map(String);
-
-    return roles.includes(PlatformRoleEnum.SUPER_ADMIN);
-  }
-
   private setRequestContext(
     request: any,
     payload: any,
-    context: { userId: string; tenantId: string; email?: string | null },
+    context: {
+      userId: string;
+      tenantId: string;
+      email?: string | null;
+      principalType: string;
+      principalId: string;
+    },
   ): void {
     this.cls.set('userId', context.userId);
     this.cls.set('email', context.email);
     this.cls.set('tenantId', context.tenantId);
     this.cls.set('activeTenantId', context.tenantId);
     this.cls.set('user', payload);
+    // Actor identity for audit / ABAC / masking (Phase A: principal model).
+    this.cls.set('principalType', context.principalType);
+    this.cls.set('principalId', context.principalId);
     request.user = {
       ...payload,
       id: context.userId,
       userId: context.userId,
+      principalType: context.principalType,
     };
   }
 

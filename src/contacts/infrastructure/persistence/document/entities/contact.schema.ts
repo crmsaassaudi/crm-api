@@ -87,6 +87,12 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   ownerId?: string;
 
+  // Business Unit sub-partition (tenant model = Org; BU is an intra-tenant
+  // partition). Nullable & inert for now — reserved for future BU scoping so
+  // the field exists before there is data to backfill.
+  @Prop({ type: MongooseSchema.Types.ObjectId, default: null, index: true })
+  businessUnitId?: string | null;
+
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',

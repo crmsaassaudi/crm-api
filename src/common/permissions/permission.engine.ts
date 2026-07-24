@@ -23,6 +23,9 @@ export interface PermissionTenant {
 export interface PermissionUserMembership {
   tenantId: string;
   roles?: string[];
+  /** Custom-role references assigned directly to the user (RBAC). */
+  roleIds?: string[];
+  /** Ad-hoc permission keys granted directly to the user (ABAC-ish escape hatch). */
   permissions?: string[];
   permissionOverrides?: Record<string, boolean>;
 }
@@ -34,6 +37,14 @@ export interface PermissionUser {
 
 export interface PermissionGroup {
   memberIds?: string[];
+  permissions?: string[];
+  /** Custom-role references assigned to the group (RBAC). */
+  roleIds?: string[];
+}
+
+/** A tenant custom role (a named, reusable set of permission keys). */
+export interface PermissionRole {
+  id: string;
   permissions?: string[];
 }
 
@@ -67,6 +78,7 @@ export const calculateEffectivePermissions = (
   tenant: PermissionTenant,
   user: PermissionUser,
   userGroups: PermissionGroup[] = [],
+  tenantRoles: PermissionRole[] = [],
 ): Set<string> => {
   // The ceiling for this tenant — Core + explicitly granted feature permissions
   const tenantPermissions = getTenantPermissions(tenant);
@@ -85,22 +97,32 @@ export const calculateEffectivePermissions = (
     return tenantPermissions;
   }
 
-  // Regular members: intersect group + personal permissions with tenant ceiling
+  // Map roleId → permission keys for expanding role references (RBAC).
+  const roleMap = new Map<string, string[]>(
+    tenantRoles.map((role) => [String(role.id), role.permissions ?? []]),
+  );
+  const expandRoleIds = (roleIds?: string[]): string[] =>
+    (roleIds ?? []).flatMap((roleId) => roleMap.get(String(roleId)) ?? []);
+
+  // Regular members: union of
+  //   - group permissions + group role references
+  //   - personal permissions + personal role references
+  // intersected with the tenant ceiling, then per-key overrides.
   const effectivePermissions = new Set<string>();
 
-  userGroups.forEach((group) => {
-    group.permissions?.forEach((permission) => {
-      if (tenantPermissions.has(permission)) {
-        effectivePermissions.add(permission);
-      }
-    });
-  });
-
-  membership?.permissions?.forEach((permission) => {
+  const addWithinCeiling = (permission: string) => {
     if (tenantPermissions.has(permission)) {
       effectivePermissions.add(permission);
     }
+  };
+
+  userGroups.forEach((group) => {
+    group.permissions?.forEach(addWithinCeiling);
+    expandRoleIds(group.roleIds).forEach(addWithinCeiling);
   });
+
+  membership?.permissions?.forEach(addWithinCeiling);
+  expandRoleIds(membership?.roleIds).forEach(addWithinCeiling);
 
   Object.entries(membership?.permissionOverrides ?? {}).forEach(
     ([permission, isGranted]) => {
