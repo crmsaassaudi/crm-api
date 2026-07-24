@@ -28,6 +28,9 @@ export class Group {
   @ApiProperty({ type: [String], example: ['leads:view', 'leads:create'] })
   permissions: string[];
 
+  @ApiProperty({ type: [String], example: ['507f1f77bcf86cd799439011'] })
+  roleIds: string[];
+
   @ApiProperty({ example: true })
   isActive: boolean;
 

@@ -16,7 +16,6 @@ import { AuthModule } from '../auth/auth.module';
 import { UsersModule } from '../users/users.module';
 import { RedisModule } from '../redis/redis.module';
 import { isWorkerRuntime } from '../config/runtime-role';
-import { AuthzPermissionCacheService } from '../common/permissions/authz-permission-cache.service';
 
 // Schema imports for sample data seeder
 import {
@@ -82,7 +81,6 @@ import { ProvisioningJobRepository } from './infrastructure/persistence/document
     SampleDataSeederService,
     TenantProvisioningProducer,
     ProvisioningJobRepository,
-    AuthzPermissionCacheService,
     ...(isWorkerRuntime() ? [TenantProvisioningWorker, OrphanCleanupCron] : []),
   ],
   exports: [

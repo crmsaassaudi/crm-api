@@ -3,6 +3,7 @@ import { AuthzPermissionCacheService } from './authz-permission-cache.service';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
 import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
+import { CustomRolesService } from './custom-roles.service';
 
 describe('AuthzPermissionCacheService', () => {
   const tenantId = '507f1f77bcf86cd799439011';
@@ -12,6 +13,7 @@ describe('AuthzPermissionCacheService', () => {
   let userRepository: any;
   let tenantsRepository: any;
   let groupRepository: any;
+  let customRolesService: any;
   let cls: { set: jest.Mock };
   let service: AuthzPermissionCacheService;
 
@@ -50,17 +52,21 @@ describe('AuthzPermissionCacheService', () => {
       findByKeycloakOrgId: jest.fn(),
     };
     groupRepository = {
-      findGroupsByMember: jest
+      findGroupsByMemberWithAncestors: jest
         .fn()
         .mockResolvedValue([
           { memberIds: [userId], permissions: ['contacts:view'] },
         ]),
+    };
+    customRolesService = {
+      findAll: jest.fn().mockResolvedValue([]),
     };
     moduleRef = {
       get: jest.fn((token) => {
         if (token === UserRepository) return userRepository;
         if (token === TenantsRepository) return tenantsRepository;
         if (token === GroupRepository) return groupRepository;
+        if (token === CustomRolesService) return customRolesService;
         return null;
       }),
     } as any;
@@ -95,7 +101,9 @@ describe('AuthzPermissionCacheService', () => {
       'contacts:view',
     );
     expect(userRepository.findByIdsGlobal).not.toHaveBeenCalled();
-    expect(groupRepository.findGroupsByMember).not.toHaveBeenCalled();
+    expect(
+      groupRepository.findGroupsByMemberWithAncestors,
+    ).not.toHaveBeenCalled();
   });
 
   it('should populate Redis SET on cache miss', async () => {
@@ -108,7 +116,7 @@ describe('AuthzPermissionCacheService', () => {
     const pipeline = redisClient.pipeline.mock.results[0].value;
     expect(result.allowed).toBe(true);
     expect(result.cacheHit).toBe(false);
-    expect(groupRepository.findGroupsByMember).toHaveBeenCalledWith(
+    expect(groupRepository.findGroupsByMemberWithAncestors).toHaveBeenCalledWith(
       tenantId,
       userId,
     );
@@ -135,7 +143,7 @@ describe('AuthzPermissionCacheService', () => {
     expect(result.allowed).toBe(true);
     expect(result.cacheHit).toBe(false);
     expect(userRepository.findByIdsGlobal).toHaveBeenCalledWith([userId]);
-    expect(groupRepository.findGroupsByMember).toHaveBeenCalledWith(
+    expect(groupRepository.findGroupsByMemberWithAncestors).toHaveBeenCalledWith(
       tenantId,
       userId,
     );

@@ -29,6 +29,8 @@ import { InviteUserDto } from './dto/invite-user.dto';
 import { PaginationResponseDto } from '../utils/dto/pagination-response.dto';
 import { TenantsRepository } from '../tenants/infrastructure/persistence/document/repositories/tenant.repository';
 import { GroupRepository } from '../groups/infrastructure/persistence/document/repositories/group.repository';
+import { AuthzAuditService } from '../common/authz-audit/authz-audit.service';
+import { CustomRolesService } from '../common/permissions/custom-roles.service';
 
 @Injectable()
 export class UsersService {
@@ -43,7 +45,32 @@ export class UsersService {
     private readonly tenantsRepository: TenantsRepository,
     private readonly groupRepository: GroupRepository,
     private readonly eventEmitter: EventEmitter2,
+    private readonly audit: AuthzAuditService,
+    private readonly customRoles: CustomRolesService,
   ) {}
+
+  /**
+   * Reject role references that do not exist in the active tenant's custom-role
+   * catalog. Prevents dangling / cross-tenant roleIds being persisted on a
+   * membership (they would otherwise resolve to no permissions silently).
+   */
+  private async assertRoleIdsBelongToTenant(
+    tenantId: string,
+    roleIds?: string[],
+  ): Promise<void> {
+    if (!roleIds?.length) return;
+    const tenantRoles = await this.customRoles.findAll(tenantId);
+    const validIds = new Set(tenantRoles.map((r: any) => String(r._id ?? r.id)));
+    const unknown = roleIds.filter((id) => !validIds.has(String(id)));
+    if (unknown.length) {
+      throw new UnprocessableEntityException({
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        errors: {
+          roleIds: `Unknown role(s) for this tenant: ${unknown.join(', ')}`,
+        },
+      });
+    }
+  }
 
   async create(
     createUserDto: CreateUserDto,
@@ -211,6 +238,27 @@ export class UsersService {
         ? { id: updateUserDto.status.id }
         : undefined;
 
+    // Target's prior state — single source for membership + platformRole audit.
+    const targetBefore = await this.usersRepository.findById(id);
+
+    // RBAC assignment: allow updating the ACTIVE tenant membership's role
+    // references / ad-hoc permissions / overrides only. Other tenants and the
+    // tenant-`roles` (OWNER/ADMIN…) are NOT mutable via this path — that
+    // prevents cross-tenant tampering and self-escalation of tenant role.
+    const activeTenantId = this.cls.get<string>('tenantId');
+    const incomingMembership = Array.isArray((updateUserDto as any).tenants)
+      ? (updateUserDto as any).tenants.find(
+          (t: any) => String(t.tenantId) === String(activeTenantId),
+        )
+      : undefined;
+    if (activeTenantId && incomingMembership?.roleIds) {
+      await this.assertRoleIdsBelongToTenant(
+        activeTenantId,
+        incomingMembership.roleIds,
+      );
+    }
+    const tenants = this.resolveMembershipUpdate(targetBefore, updateUserDto);
+
     const updated = await this.usersRepository.update(id, {
       // Do not remove comment below.
       // <updating-property-payload />
@@ -227,6 +275,9 @@ export class UsersService {
       omniMaxCapacity: updateUserDto.omniMaxCapacity,
       skills: updateUserDto.skills,
       reportsToId: updateUserDto.reportsToId,
+      // Only include when there is an actual membership change — passing
+      // tenants: undefined would wipe all memberships via the mapper.
+      ...(tenants !== undefined ? { tenants } : {}),
     });
     if (updated) {
       this.emitUserPermissionsUpdated(updated);
@@ -239,8 +290,94 @@ export class UsersService {
           omniMaxCapacity: updateUserDto.omniMaxCapacity,
         });
       }
+      this.auditUpdate(String(id), targetBefore, updated, {
+        membershipChanged: tenants !== undefined,
+        platformRoleChanged: platformRole !== undefined,
+      });
     }
     return updated;
+  }
+
+  /** Record MEMBERSHIP / PLATFORM_ROLE governance events (best-effort). */
+  private auditUpdate(
+    userId: string,
+    before: User | null,
+    after: User,
+    changed: { membershipChanged: boolean; platformRoleChanged: boolean },
+  ): void {
+    const activeTenantId = this.cls.get<string>('tenantId');
+    const membershipOf = (u: User | null) =>
+      u?.tenants?.find((t) => String(t.tenantId) === String(activeTenantId));
+
+    if (changed.membershipChanged) {
+      const b = membershipOf(before);
+      const a = membershipOf(after);
+      void this.audit.record({
+        category: 'MEMBERSHIP',
+        action: 'assign',
+        targetType: 'user',
+        targetId: userId,
+        summary: `updated tenant roles/permissions for user ${userId}`,
+        before: b && {
+          roleIds: b.roleIds,
+          permissions: b.permissions,
+          permissionOverrides: b.permissionOverrides,
+        },
+        after: a && {
+          roleIds: a.roleIds,
+          permissions: a.permissions,
+          permissionOverrides: a.permissionOverrides,
+        },
+      });
+    }
+
+    if (changed.platformRoleChanged) {
+      void this.audit.record({
+        category: 'PLATFORM_ROLE',
+        action: 'update',
+        targetType: 'user',
+        targetId: userId,
+        summary: `changed platformRole for user ${userId}`,
+        before: { platformRole: before?.platformRole?.id ?? null },
+        after: { platformRole: after.platformRole?.id ?? null },
+      });
+    }
+  }
+
+  /**
+   * Merge an incoming membership update for the ACTIVE tenant only.
+   * Returns the full tenants array to persist, or undefined when there is
+   * nothing to change. Only roleIds / permissions / permissionOverrides are
+   * mutable here — tenant `roles` and other tenants are left untouched.
+   */
+  private resolveMembershipUpdate(
+    existing: User | null,
+    dto: UpdateUserDto,
+  ): User['tenants'] | undefined {
+    const incomingTenants = (dto as any).tenants;
+    if (!Array.isArray(incomingTenants)) return undefined;
+
+    const activeTenantId = this.cls.get('tenantId');
+    if (!activeTenantId) return undefined;
+
+    if (!existing?.tenants?.length) return undefined;
+
+    const incoming: any = incomingTenants.find(
+      (t: any) => String(t.tenantId) === String(activeTenantId),
+    );
+    if (!incoming) return undefined;
+
+    return existing.tenants.map((m) =>
+      String(m.tenantId) === String(activeTenantId)
+        ? {
+            ...m,
+            roleIds: incoming.roleIds ?? m.roleIds,
+            permissions: incoming.permissions ?? m.permissions,
+            permissionOverrides:
+              incoming.permissionOverrides ?? m.permissionOverrides,
+          }
+        : m,
+    );
   }
 
   private async resolveUpdatedPassword(

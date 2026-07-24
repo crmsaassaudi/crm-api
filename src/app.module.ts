@@ -78,7 +78,8 @@ import { HealthModule } from './health/health.module';
 import { SharedImportModule } from './common/import/import.module';
 import { SharedExportModule } from './common/export/export.module';
 import { MessageTemplatesModule } from './message-templates/message-templates.module';
-import { ObjectAclModule } from './common/permissions/object-acl.module';
+import { AuthorizationModule } from './common/permissions/authorization.module';
+import { AuthzAuditModule } from './common/authz-audit/authz-audit.module';
 import { LivechatModule } from './livechat/livechat.module';
 import { TelegramModule } from './channels/telegram/telegram.module';
 import { DashboardsModule } from './dashboards/dashboards.module';
@@ -89,11 +90,7 @@ import {
   RoleGuard,
 } from 'nest-keycloak-connect';
 import { HybridAuthGuard } from './auth/guards/hybrid-auth.guard';
-import {
-  AuthzPermissionCacheService,
-  AuthzPermissionInvalidationListener,
-  PermissionGuard,
-} from './common/permissions';
+import { PermissionGuard } from './common/permissions';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { DataVisibilityInterceptor } from './data-visibility/data-visibility.interceptor';
 
@@ -357,7 +354,8 @@ function bullBoardBasicAuth() {
     SharedImportModule,
     SharedExportModule,
     MessageTemplatesModule,
-    ObjectAclModule,
+    AuthorizationModule,
+    AuthzAuditModule,
     LivechatModule,
     TelegramModule,
     DashboardsModule,
@@ -390,8 +388,6 @@ function bullBoardBasicAuth() {
       provide: APP_GUARD,
       useClass: PermissionGuard,
     },
-    AuthzPermissionCacheService,
-    AuthzPermissionInvalidationListener,
     {
       provide: APP_INTERCEPTOR,
       useClass: TenantInterceptor,

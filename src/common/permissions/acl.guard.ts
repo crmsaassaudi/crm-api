@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ObjectAclService } from './object-acl.service';
+import { AuthorizationService } from './authorization.service';
 import { ACL_METADATA_KEY, type AclMetadata } from './use-acl.decorator';
 
 /**
@@ -23,7 +23,7 @@ import { ACL_METADATA_KEY, type AclMetadata } from './use-acl.decorator';
 export class AclGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    private readonly aclService: ObjectAclService,
+    private readonly authz: AuthorizationService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -46,19 +46,16 @@ export class AclGuard implements CanActivate {
 
     if (!resourceId) return true; // no resource ID → skip ACL (e.g. list endpoints)
 
-    const result = await this.aclService.can(
+    const allowed = await this.authz.canAccessRecord({
       tenantId,
       userId,
-      meta.action,
-      meta.resource,
+      action: meta.action,
+      resource: meta.resource,
       resourceId,
       groupIds,
-    );
+    });
 
-    // null → no explicit ACL, allow (resource-level guard already ran)
-    if (result === null) return true;
-
-    if (result === false) {
+    if (!allowed) {
       throw new ForbiddenException(
         `Access denied: insufficient permissions for ${meta.action} on ${meta.resource}/${resourceId}`,
       );

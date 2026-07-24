@@ -14,6 +14,7 @@ export class GroupMapper {
     entity.managerId = raw.managerId ? raw.managerId.toString() : null;
     entity.memberIds = (raw.memberIds || []).map((m: any) => m.toString());
     entity.permissions = raw.permissions || [];
+    entity.roleIds = ((raw as any).roleIds || []).map((r: any) => r.toString());
     entity.isActive = raw.isActive;
     entity.color = raw.color ?? null;
     entity.createdAt = raw.createdAt;
@@ -31,6 +32,7 @@ export class GroupMapper {
     if (domain.managerId !== undefined) doc.managerId = domain.managerId;
     if (domain.memberIds !== undefined) doc.memberIds = domain.memberIds;
     if (domain.permissions !== undefined) doc.permissions = domain.permissions;
+    if (domain.roleIds !== undefined) doc.roleIds = domain.roleIds;
     if (domain.isActive !== undefined) doc.isActive = domain.isActive;
     if (domain.color !== undefined) doc.color = domain.color;
     return doc;

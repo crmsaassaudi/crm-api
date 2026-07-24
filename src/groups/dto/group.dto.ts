@@ -51,6 +51,12 @@ export class CreateGroupDto {
   @IsOptional()
   permissions?: string[];
 
+  @ApiPropertyOptional({ type: [String], description: 'Custom role IDs' })
+  @IsArray()
+  @IsMongoId({ each: true })
+  @IsOptional()
+  roleIds?: string[];
+
   @ApiPropertyOptional({ example: true })
   @IsBoolean()
   @IsOptional()
@@ -97,6 +103,12 @@ export class UpdateGroupDto {
   @IsString({ each: true })
   @IsOptional()
   permissions?: string[];
+
+  @ApiPropertyOptional({ type: [String], description: 'Custom role IDs' })
+  @IsArray()
+  @IsMongoId({ each: true })
+  @IsOptional()
+  roleIds?: string[];
 
   @ApiPropertyOptional({ example: true })
   @IsBoolean()

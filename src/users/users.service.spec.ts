@@ -99,6 +99,8 @@ describe('UsersService', () => {
       tenantsRepository,
       groupRepository,
       eventEmitter as any,
+      { record: jest.fn().mockResolvedValue(undefined) } as any,
+      { findAll: jest.fn().mockResolvedValue([]) } as any,
     );
   });
 
