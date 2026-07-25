@@ -32,6 +32,8 @@ import { GroupRepository } from '../groups/infrastructure/persistence/document/r
 import { AuthzAuditService } from '../common/authz-audit/authz-audit.service';
 import { CustomRolesService } from '../common/permissions/custom-roles.service';
 import { ALL_PERMISSIONS } from '../common/permissions/permission.constants';
+import { getTenantId, getUserId } from '../common/cls/cls-context.helper';
+import { DEFAULT_BASELINE_SYSTEM_KEY } from '../common/permissions/system-role-templates';
 
 @Injectable()
 export class UsersService {
@@ -73,6 +75,37 @@ export class UsersService {
         },
       });
     }
+  }
+
+  /**
+   * Decide which role references a brand-new membership starts with.
+   *
+   * A membership with no roleIds resolves to ZERO permissions (only OWNER/ADMIN
+   * short-circuit), so an invite without a role produces a user who logs in and
+   * sees nothing. When the caller picks nothing we fall back to the built-in
+   * Read Only baseline — the same least-privilege default Salesforce moved to
+   * with its "Minimum Access" profile.
+   */
+  private async resolveBaselineRoleIds(
+    tenantId: string,
+    roleIds?: string[],
+  ): Promise<string[]> {
+    if (roleIds?.length) {
+      await this.assertRoleIdsBelongToTenant(tenantId, roleIds);
+      return roleIds.map(String);
+    }
+    const baseline = await this.customRoles.findBySystemKey(
+      tenantId,
+      DEFAULT_BASELINE_SYSTEM_KEY,
+    );
+    if (baseline)
+      return [String((baseline as any)._id ?? (baseline as any).id)];
+
+    // Tenant predates system roles and hasn't been backfilled yet.
+    this.logger.warn(
+      `Tenant ${tenantId} has no "${DEFAULT_BASELINE_SYSTEM_KEY}" role — new member starts with no permissions. Run: npm run seed:system-roles`,
+    );
+    return [];
   }
 
   /**
@@ -490,6 +523,10 @@ export class UsersService {
     }
 
     const tenantRole = inviteUserDto.tenantRole ?? 'MEMBER';
+    const roleIds = await this.resolveBaselineRoleIds(
+      String(tenantId),
+      inviteUserDto.roleIds,
+    );
 
     // ── Case 1: User already exists in the system ───────────────────────────
     const existingUser = await this.usersRepository.findByEmail(
@@ -529,7 +566,14 @@ export class UsersService {
         existingUser.keycloakId ?? '',
         inviteUserDto.email,
         {},
-        [{ tenantId: tenantId, roles: [tenantRole], joinedAt: new Date() }],
+        [
+          {
+            tenantId: tenantId,
+            roles: [tenantRole],
+            roleIds,
+            joinedAt: new Date(),
+          },
+        ],
       );
       this.emitUserTenantMembershipUpdated(updated, tenantId);
       return updated;
@@ -597,7 +641,12 @@ export class UsersService {
         platformRole: { id: PlatformRoleEnum.USER },
         status: { id: StatusEnum.active },
         tenants: [
-          { tenantId: tenantId, roles: [tenantRole], joinedAt: new Date() },
+          {
+            tenantId: tenantId,
+            roles: [tenantRole],
+            roleIds,
+            joinedAt: new Date(),
+          },
         ],
       });
       this.emitUserTenantMembershipUpdated(created, tenantId);
@@ -747,6 +796,7 @@ export class UsersService {
     firstName: string;
     lastName: string;
     tenantRole?: string;
+    roleIds?: string[];
   }): Promise<User> {
     const tenantId = this.cls.get('tenantId');
     if (!tenantId) {
@@ -770,6 +820,10 @@ export class UsersService {
     }
 
     const tenantRole = dto.tenantRole ?? 'MEMBER';
+    const roleIds = await this.resolveBaselineRoleIds(
+      String(tenantId),
+      dto.roleIds,
+    );
     let keycloakUserCreated = false;
     let keycloakUser: { id: string; email: string };
 
@@ -829,7 +883,12 @@ export class UsersService {
         platformRole: { id: PlatformRoleEnum.USER },
         status: { id: StatusEnum.active },
         tenants: [
-          { tenantId: tenantId, roles: [tenantRole], joinedAt: new Date() },
+          {
+            tenantId: tenantId,
+            roles: [tenantRole],
+            roleIds,
+            joinedAt: new Date(),
+          },
         ],
       });
       this.emitUserTenantMembershipUpdated(created, tenantId);
@@ -971,6 +1030,77 @@ export class UsersService {
     });
 
     return updated?.i18nPreferences ?? null;
+  }
+
+  /**
+   * Promote/demote a user's tenant role (ADMIN ⇄ MEMBER) in the ACTIVE tenant.
+   *
+   * Deliberately a dedicated endpoint rather than part of `update()`: the ADMIN
+   * flag short-circuits to the whole tenant ceiling in permission.engine.ts, so
+   * it must not be settable through the generic membership payload (that path
+   * intentionally refuses it to prevent self-escalation).
+   */
+  async setTenantRole(
+    userId: string,
+    tenantRole: 'ADMIN' | 'MEMBER',
+  ): Promise<User> {
+    const activeTenantId = getTenantId(this.cls);
+    if (!activeTenantId) {
+      throw new UnprocessableEntityException('No active tenant in context');
+    }
+
+    const actorId = getUserId(this.cls);
+    if (actorId && String(actorId) === String(userId)) {
+      throw new UnprocessableEntityException(
+        'You cannot change your own tenant role',
+      );
+    }
+
+    const user = await this.usersRepository.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
+    const membership = user.tenants?.find(
+      (t) => String(t.tenantId) === String(activeTenantId),
+    );
+    if (!membership) {
+      throw new NotFoundException('User is not a member of this tenant');
+    }
+
+    // The owner's access is derived from tenant.ownerId, not from this flag —
+    // demoting them here would be a no-op that reads like a security change.
+    const tenant = await this.tenantsRepository.findById(activeTenantId);
+    if (tenant && String((tenant as any).ownerId ?? '') === String(user.id)) {
+      throw new UnprocessableEntityException(
+        'The workspace owner always has full access. Transfer ownership instead.',
+      );
+    }
+
+    const before = [...(membership.roles ?? [])];
+    if (before.length === 1 && before[0] === tenantRole) return user;
+
+    const tenants = (user.tenants ?? []).map((m) =>
+      String(m.tenantId) === String(activeTenantId)
+        ? { ...m, roles: [tenantRole] }
+        : m,
+    );
+
+    const updated = await this.usersRepository.update(user.id, {
+      tenants,
+    } as any);
+    if (!updated) throw new NotFoundException('User not found');
+
+    void this.audit.record({
+      category: 'MEMBERSHIP',
+      action: 'assign',
+      targetType: 'user',
+      targetId: String(user.id),
+      summary: `changed tenant role of user ${String(user.id)} to ${tenantRole}`,
+      before: { roles: before },
+      after: { roles: [tenantRole] },
+    });
+    this.emitUserTenantMembershipUpdated(updated, activeTenantId);
+
+    return updated;
   }
 
   private emitUserPermissionsUpdated(user: User): void {

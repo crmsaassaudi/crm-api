@@ -207,9 +207,16 @@ export class TenantsService {
       }
 
       // ── Emit event ────────────────────────────────────────────────────────────
+      // ownerId must be passed — TenantCreatedListener skips sample-data
+      // seeding without it.
       this.eventEmitter.emit(
         'tenant.created',
-        new TenantCreatedEvent(tenant!.id, organizationName, email),
+        new TenantCreatedEvent(
+          tenant!.id,
+          organizationName,
+          email,
+          localUser?.id ? String(localUser.id) : undefined,
+        ),
       );
 
       return {
@@ -409,6 +416,7 @@ export class TenantsService {
           tenant!.id as string,
           organizationName,
           email ?? '',
+          localUser?.id ? String(localUser.id) : undefined,
         ),
       );
 

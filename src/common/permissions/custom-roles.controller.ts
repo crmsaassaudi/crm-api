@@ -10,7 +10,11 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { CustomRolesService } from './custom-roles.service';
-import { CreateCustomRoleDto, UpdateCustomRoleDto } from './custom-roles.dto';
+import {
+  CloneCustomRoleDto,
+  CreateCustomRoleDto,
+  UpdateCustomRoleDto,
+} from './custom-roles.dto';
 import { RequirePermission } from './index';
 
 @ApiTags('Roles')
@@ -22,10 +26,14 @@ export class CustomRolesController {
   // ── Permission matrix meta ─────────────────────────────────────────────────
 
   @Get('permission-matrix')
-  @ApiOperation({ summary: 'Get full permission registry grouped by resource' })
+  @ApiOperation({
+    summary:
+      "Get the permission registry grouped by resource, plus this tenant's ceiling",
+  })
   @RequirePermission('view', 'settings')
-  getPermissionMatrix() {
-    return this.service.getPermissionMatrix();
+  getPermissionMatrix(@Req() req: any) {
+    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    return this.service.getPermissionMatrix(tenantId);
   }
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
@@ -44,6 +52,21 @@ export class CustomRolesController {
   create(@Req() req: any, @Body() dto: CreateCustomRoleDto) {
     const tenantId: string = req.user?.tenantId ?? req.tenantId;
     return this.service.create(tenantId, dto);
+  }
+
+  @Post(':id/clone')
+  @ApiOperation({
+    summary:
+      'Clone a role (the supported way to customise an immutable system role)',
+  })
+  @RequirePermission('manage_system', 'settings')
+  clone(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() dto: CloneCustomRoleDto,
+  ) {
+    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    return this.service.clone(id, tenantId, dto);
   }
 
   @Patch(':id')

@@ -4,15 +4,27 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ModuleRef } from '@nestjs/core';
 import { Model } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   CustomRoleSchemaClass,
   CustomRoleDocument,
 } from './custom-role.schema';
-import { CreateCustomRoleDto, UpdateCustomRoleDto } from './custom-roles.dto';
-import { PERMISSION_REGISTRY, ALL_PERMISSIONS } from './permission.constants';
+import {
+  CloneCustomRoleDto,
+  CreateCustomRoleDto,
+  UpdateCustomRoleDto,
+} from './custom-roles.dto';
+import {
+  PERMISSION_REGISTRY,
+  ALL_PERMISSIONS,
+  CORE_PERMISSIONS,
+} from './permission.constants';
+import { getTenantPermissions, PermissionTenant } from './permission.engine';
+import { ADMINISTRATOR_PSEUDO_ROLE } from './system-role-templates';
 import { AuthzAuditService } from '../authz-audit/authz-audit.service';
+import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
 
 @Injectable()
 export class CustomRolesService {
@@ -21,6 +33,7 @@ export class CustomRolesService {
     private readonly model: Model<CustomRoleDocument>,
     private readonly eventEmitter: EventEmitter2,
     private readonly audit: AuthzAuditService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
@@ -57,6 +70,17 @@ export class CustomRolesService {
       .exec() as any;
   }
 
+  /** Look up a materialised system role by its stable template key. */
+  findBySystemKey(
+    tenantId: string,
+    systemKey: string,
+  ): Promise<CustomRoleDocument | null> {
+    return this.model
+      .findOne({ tenantId, systemKey })
+      .lean()
+      .exec() as Promise<CustomRoleDocument | null>;
+  }
+
   async findById(id: string, tenantId: string): Promise<CustomRoleDocument> {
     const role = (await this.model
       .findOne({ _id: id, tenantId })
@@ -66,6 +90,48 @@ export class CustomRolesService {
     return role;
   }
 
+  /**
+   * Clone any role — including a system one — into a fresh tenant-owned role.
+   * This is how a tenant customises a built-in role: the original stays
+   * immutable so it can keep receiving central updates.
+   */
+  async clone(
+    id: string,
+    tenantId: string,
+    dto: CloneCustomRoleDto,
+  ): Promise<CustomRoleDocument> {
+    const source = await this.model
+      .findOne({ _id: id, tenantId })
+      .lean()
+      .exec();
+    if (!source) throw new NotFoundException(`Custom role ${id} not found`);
+
+    const baseName = dto.name?.trim() || `Copy of ${source.name}`;
+    const name = await this.uniqueName(tenantId, baseName);
+
+    const saved = await this.model.create({
+      tenantId,
+      name,
+      description: source.description ?? '',
+      permissions: [...(source.permissions ?? [])],
+      color: source.color,
+      // A clone is always tenant-owned and fully editable.
+      isSystem: false,
+      systemKey: null,
+      templateVersion: null,
+    });
+
+    void this.audit.record({
+      category: 'ROLE',
+      action: 'create',
+      targetType: 'custom_role',
+      targetId: String(saved._id),
+      summary: `cloned role "${source.name}" into "${saved.name}"`,
+      after: { name: saved.name, permissions: saved.permissions },
+    });
+    return saved;
+  }
+
   async update(
     id: string,
     tenantId: string,
@@ -73,6 +139,14 @@ export class CustomRolesService {
   ): Promise<CustomRoleDocument> {
     const role = await this.model.findOne({ _id: id, tenantId }).exec();
     if (!role) throw new NotFoundException(`Custom role ${id} not found`);
+
+    // System roles are immutable by design — that is what makes central
+    // re-syncing of their permission sets safe. Clone to customise.
+    if (role.isSystem) {
+      throw new BadRequestException(
+        'System roles cannot be edited. Clone this role to customise it.',
+      );
+    }
 
     if (dto.permissions) this.validatePermissions(dto.permissions);
 
@@ -115,10 +189,15 @@ export class CustomRolesService {
   // ── Permission matrix ──────────────────────────────────────────────────────
 
   /**
-   * Returns the permission registry grouped by resource,
-   * enriched with labels for frontend display.
+   * Returns the permission registry grouped by resource, plus the calling
+   * tenant's actual ceiling.
+   *
+   * `allKeys` is the whole registry (what the product can express) while
+   * `tenantCeiling` is what THIS tenant is entitled to. The UI must render keys
+   * outside the ceiling as unavailable: the engine silently drops them, so
+   * without this an admin can grant a permission that never takes effect.
    */
-  getPermissionMatrix() {
+  async getPermissionMatrix(tenantId?: string) {
     const matrix: Record<string, Array<{ action: string; key: string }>> = {};
 
     for (const [resource, actions] of Object.entries(PERMISSION_REGISTRY)) {
@@ -127,13 +206,61 @@ export class CustomRolesService {
         .map(([action, key]) => ({ action, key }));
     }
 
+    const ceiling = await this.resolveTenantCeiling(tenantId);
+
     return {
       matrix,
       allKeys: ALL_PERMISSIONS,
+      /** Keys this tenant may actually use (CORE ∪ granted features ∖ disabled). */
+      tenantCeiling: ceiling ? [...ceiling].sort() : ALL_PERMISSIONS,
+      /** Baseline every tenant has — anything else is plan-gated. */
+      corePermissions: CORE_PERMISSIONS,
+      /** Read-only entry the roles UI renders for the ADMIN tenant-role flag. */
+      administrator: ADMINISTRATOR_PSEUDO_ROLE,
     };
   }
 
+  private async resolveTenantCeiling(
+    tenantId?: string,
+  ): Promise<Set<string> | null> {
+    if (!tenantId) return null;
+    try {
+      const tenantsRepository = this.moduleRef.get(TenantsRepository, {
+        strict: false,
+      });
+      const tenant = await tenantsRepository.findById(tenantId);
+      if (!tenant) return null;
+      const permissionTenant: PermissionTenant = {
+        id: String(tenant.id),
+        availablePermissions: (tenant as any).availablePermissions ?? null,
+        disabledCorePermissions:
+          (tenant as any).disabledCorePermissions ?? null,
+      };
+      return getTenantPermissions(permissionTenant);
+    } catch {
+      // Never fail the matrix over ceiling resolution — degrade to "everything
+      // the registry knows", which is the pre-existing behaviour.
+      return null;
+    }
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
+
+  /**
+   * `tenantId + name` is unique, so a clone needs a free name. Appends " (2)",
+   * " (3)" … rather than rejecting the request.
+   */
+  private async uniqueName(tenantId: string, base: string): Promise<string> {
+    const trimmed = base.slice(0, 76);
+    for (let suffix = 0; suffix < 50; suffix++) {
+      const candidate = suffix === 0 ? trimmed : `${trimmed} (${suffix + 1})`;
+      const taken = await this.model.exists({ tenantId, name: candidate });
+      if (!taken) return candidate;
+    }
+    throw new BadRequestException(
+      `Too many roles named like "${base}" — pick a different name.`,
+    );
+  }
 
   private validatePermissions(permissions?: string[]) {
     if (!permissions?.length) return;

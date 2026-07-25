@@ -22,6 +22,7 @@ import { InviteUserDto } from './dto/invite-user.dto';
 import { CreateUserForTenantDto } from './dto/create-user-for-tenant.dto';
 import { CheckEmailDto } from './dto/check-email.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { SetTenantRoleDto } from './dto/set-tenant-role.dto';
 import { UpdateUserI18nPreferencesDto } from './dto/user-i18n-preferences.dto';
 import {
   ApiBearerAuth,
@@ -221,6 +222,23 @@ export class UsersController {
   getEffectivePermissions(@Param('id') id: string) {
     const tenantId = this.cls.get<string>('tenantId');
     return this.authzCache.explainForUser(id, tenantId);
+  }
+
+  @ApiOperation({
+    summary:
+      'Promote/demote a member (ADMIN ⇄ MEMBER) in the current tenant. ADMIN grants the full tenant ceiling.',
+  })
+  @ApiOkResponse({ type: User })
+  @SerializeOptions({ groups: ['admin'] })
+  @RequirePermission('manage_roles', 'users')
+  @Patch(':id/tenant-role')
+  @HttpCode(HttpStatus.OK)
+  @ApiParam({ name: 'id', type: String, required: true })
+  setTenantRole(
+    @Param('id') id: string,
+    @Body() dto: SetTenantRoleDto,
+  ): Promise<User> {
+    return this.usersService.setTenantRole(id, dto.tenantRole);
   }
 
   @ApiOkResponse({

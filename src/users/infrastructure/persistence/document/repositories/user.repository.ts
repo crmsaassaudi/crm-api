@@ -261,7 +261,12 @@ export class UsersDocumentRepository
     keycloakId: string,
     email: string,
     userData: Partial<User>,
-    newTenants: { tenantId: string; roles: string[]; joinedAt: Date }[],
+    newTenants: {
+      tenantId: string;
+      roles: string[];
+      roleIds?: string[];
+      joinedAt: Date;
+    }[],
     session?: any,
   ): Promise<User> {
     const persistenceData: any = {

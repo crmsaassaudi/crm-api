@@ -8,6 +8,7 @@ import { AclGuard } from './acl.guard';
 import { CustomRoleSchemaClass, CustomRoleSchema } from './custom-role.schema';
 import { CustomRolesService } from './custom-roles.service';
 import { CustomRolesController } from './custom-roles.controller';
+import { SystemRolesSeederService } from './system-roles-seeder.service';
 import { AuthzPermissionCacheService } from './authz-permission-cache.service';
 import { AuthzPermissionInvalidationListener } from './authz-permission-invalidation.listener';
 import { AuthorizationService } from './authorization.service';
@@ -59,6 +60,7 @@ import { FieldMaskingInterceptor } from './field-masking.interceptor';
   providers: [
     ObjectAclService,
     CustomRolesService,
+    SystemRolesSeederService,
     RoleAssignmentService,
     AccessPolicyService,
     AuthzPermissionCacheService,
@@ -75,6 +77,7 @@ import { FieldMaskingInterceptor } from './field-masking.interceptor';
     AuthzPermissionCacheService,
     ObjectAclService,
     CustomRolesService,
+    SystemRolesSeederService,
     RoleAssignmentService,
     AccessPolicyService,
     AclGuard,

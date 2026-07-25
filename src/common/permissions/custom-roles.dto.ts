@@ -34,6 +34,18 @@ export class CreateCustomRoleDto {
   color?: string;
 }
 
+export class CloneCustomRoleDto {
+  @ApiPropertyOptional({
+    example: 'Sales Rep (EMEA)',
+    description: 'Defaults to "Copy of <source role>".',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  name?: string;
+}
+
 export class UpdateCustomRoleDto {
   @ApiPropertyOptional({ example: 'Updated Role Name' })
   @IsOptional()
