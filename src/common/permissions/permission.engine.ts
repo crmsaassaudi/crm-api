@@ -147,3 +147,158 @@ export const canAccess = (
   const permissionKey = getPermissionKey(action, resource);
   return permissionKey ? effectivePermissions.has(permissionKey) : false;
 };
+
+// ── Effective-permission explanation (source attribution for admin preview) ──
+
+export interface ExplainRole {
+  id: string;
+  name?: string;
+  permissions?: string[];
+}
+export interface ExplainGroup {
+  id?: string;
+  name?: string;
+  permissions?: string[];
+  roleIds?: string[];
+}
+export interface PermissionSource {
+  kind:
+    | 'owner'
+    | 'admin'
+    | 'role'
+    | 'group'
+    | 'group-role'
+    | 'direct'
+    | 'override';
+  label: string;
+}
+export interface EffectivePermissionExplanation {
+  /** Sorted list of permission keys the user effectively has (bounded by ceiling). */
+  effective: string[];
+  /** permissionKey → list of sources that grant it. */
+  sources: Record<string, PermissionSource[]>;
+  /** The tenant ceiling (Core − disabledCore ∪ availableFeature), sorted. */
+  tenantCeiling: string[];
+  /** True when the user has the full ceiling (owner / admin / super-admin). */
+  fullAccess: boolean;
+  fullAccessReason?: 'owner' | 'admin' | 'super_admin';
+}
+
+/**
+ * Same union logic as calculateEffectivePermissions, but records WHERE each
+ * effective permission comes from (role / group / group-role / direct /
+ * override) so an admin UI can render "what can this user do, and why".
+ * Pure & total.
+ */
+export const explainEffectivePermissions = (
+  tenant: PermissionTenant,
+  user: PermissionUser,
+  userGroups: ExplainGroup[] = [],
+  tenantRoles: ExplainRole[] = [],
+  opts: { superAdmin?: boolean } = {},
+): EffectivePermissionExplanation => {
+  const tenantPermissions = getTenantPermissions(tenant);
+  const ceiling = [...tenantPermissions].sort();
+
+  const membership = user.tenants?.find((m) => idsEqual(m.tenantId, tenant.id));
+  const isOwner = idsEqual(tenant.ownerId, user.id);
+  const hasAdminRole =
+    membership?.roles?.includes('OWNER') ||
+    membership?.roles?.includes('ADMIN');
+
+  if (opts.superAdmin || isOwner || hasAdminRole) {
+    const reason: 'owner' | 'admin' | 'super_admin' = opts.superAdmin
+      ? 'super_admin'
+      : isOwner
+        ? 'owner'
+        : 'admin';
+    const label =
+      reason === 'super_admin'
+        ? 'Super Admin'
+        : reason === 'owner'
+          ? 'Owner'
+          : 'Admin';
+    const sources: Record<string, PermissionSource[]> = {};
+    for (const key of ceiling) {
+      sources[key] = [
+        {
+          kind:
+            reason === 'admin'
+              ? 'admin'
+              : reason === 'owner'
+                ? 'owner'
+                : 'admin',
+          label,
+        },
+      ];
+    }
+    return {
+      effective: ceiling,
+      sources,
+      tenantCeiling: ceiling,
+      fullAccess: true,
+      fullAccessReason: reason,
+    };
+  }
+
+  const roleMap = new Map<string, ExplainRole>(
+    tenantRoles.map((role) => [String(role.id), role]),
+  );
+
+  const effective = new Set<string>();
+  const sources: Record<string, PermissionSource[]> = {};
+  const addSource = (perm: string, source: PermissionSource) => {
+    if (!tenantPermissions.has(perm)) return;
+    effective.add(perm);
+    (sources[perm] ??= []).push(source);
+  };
+
+  userGroups.forEach((group) => {
+    const gname = group.name || 'group';
+    group.permissions?.forEach((p) =>
+      addSource(p, { kind: 'group', label: `Group: ${gname}` }),
+    );
+    (group.roleIds ?? []).forEach((rid) => {
+      const role = roleMap.get(String(rid));
+      role?.permissions?.forEach((p) =>
+        addSource(p, {
+          kind: 'group-role',
+          label: `Group ${gname} · Role ${role.name || rid}`,
+        }),
+      );
+    });
+  });
+
+  membership?.permissions?.forEach((p) =>
+    addSource(p, { kind: 'direct', label: 'Direct grant' }),
+  );
+  (membership?.roleIds ?? []).forEach((rid) => {
+    const role = roleMap.get(String(rid));
+    role?.permissions?.forEach((p) =>
+      addSource(p, { kind: 'role', label: `Role: ${role.name || rid}` }),
+    );
+  });
+
+  Object.entries(membership?.permissionOverrides ?? {}).forEach(
+    ([perm, granted]) => {
+      if (!tenantPermissions.has(perm)) return;
+      if (granted) {
+        effective.add(perm);
+        (sources[perm] ??= []).push({
+          kind: 'override',
+          label: 'Override: allow',
+        });
+      } else {
+        effective.delete(perm);
+        delete sources[perm];
+      }
+    },
+  );
+
+  return {
+    effective: [...effective].sort(),
+    sources,
+    tenantCeiling: ceiling,
+    fullAccess: false,
+  };
+};

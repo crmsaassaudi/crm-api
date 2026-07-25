@@ -23,10 +23,15 @@ describe('RoleAssignmentService', () => {
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
     eventEmitter = { emit: jest.fn() };
-    service = new RoleAssignmentService(model, customRoles, audit, eventEmitter);
+    service = new RoleAssignmentService(
+      model,
+      customRoles,
+      audit,
+      eventEmitter,
+    );
   });
 
-  it('grant validates the role exists in the tenant', async () => {
+  it('should grant validates the role exists in the tenant', async () => {
     customRoles.findById.mockRejectedValueOnce(new NotFoundException());
     await expect(
       service.grant({
@@ -40,7 +45,7 @@ describe('RoleAssignmentService', () => {
     expect(model.create).not.toHaveBeenCalled();
   });
 
-  it('grant persists, invalidates the principal cache, and audits', async () => {
+  it('should grant persists, invalidates the principal cache, and audits', async () => {
     const expiresAt = new Date('2999-01-01T00:00:00.000Z');
     await service.grant({
       tenantId,
@@ -53,7 +58,12 @@ describe('RoleAssignmentService', () => {
     });
 
     expect(model.create).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantId, principalId: userId, roleId, expiresAt }),
+      expect.objectContaining({
+        tenantId,
+        principalId: userId,
+        roleId,
+        expiresAt,
+      }),
     );
     expect(eventEmitter.emit).toHaveBeenCalledWith('user.permissions.updated', {
       tenantId,
@@ -64,7 +74,7 @@ describe('RoleAssignmentService', () => {
     );
   });
 
-  it('grant to a group emits a group invalidation event', async () => {
+  it('should grant to a group emits a group invalidation event', async () => {
     await service.grant({
       tenantId,
       principalType: 'group',
@@ -78,11 +88,15 @@ describe('RoleAssignmentService', () => {
     });
   });
 
-  it('activeRoleIdsForPrincipals queries out revoked and expired grants', async () => {
+  it('should activeRoleIdsForPrincipals queries out revoked and expired grants', async () => {
     model.find.mockReturnValue({
       lean: () => ({
         exec: () =>
-          Promise.resolve([{ roleId: 'r1' }, { roleId: 'r2' }, { roleId: 'r1' }]),
+          Promise.resolve([
+            { roleId: 'r1' },
+            { roleId: 'r2' },
+            { roleId: 'r1' },
+          ]),
       }),
     });
     const now = new Date('2026-07-24T00:00:00.000Z');
@@ -103,13 +117,17 @@ describe('RoleAssignmentService', () => {
     expect(where.principalId.$in.sort()).toEqual([userId, 'group_1'].sort());
   });
 
-  it('activeRoleIdsForPrincipals short-circuits on empty input', async () => {
-    const result = await service.activeRoleIdsForPrincipals(tenantId, [], new Date());
+  it('should activeRoleIdsForPrincipals short-circuits on empty input', async () => {
+    const result = await service.activeRoleIdsForPrincipals(
+      tenantId,
+      [],
+      new Date(),
+    );
     expect(result).toEqual([]);
     expect(model.find).not.toHaveBeenCalled();
   });
 
-  it('revoke is idempotent on an already-revoked assignment', async () => {
+  it('should revoke is idempotent on an already-revoked assignment', async () => {
     const save = jest.fn().mockResolvedValue(undefined);
     model.findOne.mockReturnValue({
       exec: () =>
@@ -126,7 +144,7 @@ describe('RoleAssignmentService', () => {
     expect(eventEmitter.emit).not.toHaveBeenCalled();
   });
 
-  it('revoke soft-marks, invalidates, and audits', async () => {
+  it('should revoke soft-marks, invalidates, and audits', async () => {
     const save = jest.fn().mockResolvedValue(undefined);
     const doc: any = {
       principalType: 'user',
@@ -152,7 +170,7 @@ describe('RoleAssignmentService', () => {
     );
   });
 
-  it('revoke throws when the assignment does not exist', async () => {
+  it('should revoke throws when the assignment does not exist', async () => {
     model.findOne.mockReturnValue({ exec: () => Promise.resolve(null) });
     await expect(
       service.revoke(tenantId, 'missing', 'admin_1', new Date()),

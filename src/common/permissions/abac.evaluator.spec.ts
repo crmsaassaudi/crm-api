@@ -18,7 +18,7 @@ describe('ABAC evaluator', () => {
   };
 
   describe('evaluateCondition', () => {
-    it('eq / ne with literal and valueAttribute', () => {
+    it('should eq / ne with literal and valueAttribute', () => {
       expect(
         evaluateCondition(
           { attribute: 'resource.stage', operator: 'eq', value: 'closed' },
@@ -44,7 +44,7 @@ describe('ABAC evaluator', () => {
       ).toBe(true);
     });
 
-    it('in / nin against arrays', () => {
+    it('should in / nin against arrays', () => {
       expect(
         evaluateCondition(
           {
@@ -67,7 +67,7 @@ describe('ABAC evaluator', () => {
       ).toBe(true);
     });
 
-    it('numeric comparisons', () => {
+    it('should numeric comparisons', () => {
       expect(
         evaluateCondition(
           { attribute: 'resource.amount', operator: 'gt', value: 1000 },
@@ -89,7 +89,7 @@ describe('ABAC evaluator', () => {
       ).toBe(false);
     });
 
-    it('contains on arrays and strings', () => {
+    it('should contains on arrays and strings', () => {
       expect(
         evaluateCondition(
           { attribute: 'resource.tags', operator: 'contains', value: 'vip' },
@@ -98,13 +98,17 @@ describe('ABAC evaluator', () => {
       ).toBe(true);
       expect(
         evaluateCondition(
-          { attribute: 'subject.roleIds', operator: 'contains', value: 'admin' },
+          {
+            attribute: 'subject.roleIds',
+            operator: 'contains',
+            value: 'admin',
+          },
           ctx,
         ),
       ).toBe(false);
     });
 
-    it('exists', () => {
+    it('should exists', () => {
       expect(
         evaluateCondition(
           { attribute: 'resource.ownerId', operator: 'exists', value: true },
@@ -119,7 +123,7 @@ describe('ABAC evaluator', () => {
       ).toBe(true);
     });
 
-    it('missing attribute paths never throw and fail the condition', () => {
+    it('should missing attribute paths never throw and fail the condition', () => {
       expect(
         evaluateCondition(
           { attribute: 'resource.deep.nope', operator: 'eq', value: 1 },
@@ -136,7 +140,7 @@ describe('ABAC evaluator', () => {
   });
 
   describe('policyApplies (AND semantics)', () => {
-    it('requires all conditions to hold; empty = always applies', () => {
+    it('should requires all conditions to hold; empty = always applies', () => {
       expect(policyApplies({ effect: 'deny', conditions: [] }, ctx)).toBe(true);
       expect(
         policyApplies(
@@ -166,7 +170,7 @@ describe('ABAC evaluator', () => {
   });
 
   describe('evaluatePolicies (deny-overrides)', () => {
-    it('deny wins over allow', () => {
+    it('should deny wins over allow', () => {
       const effect = evaluatePolicies(
         [
           { effect: 'allow', conditions: [] },
@@ -182,7 +186,7 @@ describe('ABAC evaluator', () => {
       expect(effect).toBe('deny');
     });
 
-    it('allow when only allow policies apply', () => {
+    it('should allow when only allow policies apply', () => {
       expect(
         evaluatePolicies(
           [
@@ -202,7 +206,7 @@ describe('ABAC evaluator', () => {
       ).toBe('allow');
     });
 
-    it('null when no policy applies', () => {
+    it('should null when no policy applies', () => {
       expect(
         evaluatePolicies(
           [

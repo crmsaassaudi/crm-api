@@ -31,6 +31,7 @@ import { TenantsRepository } from '../tenants/infrastructure/persistence/documen
 import { GroupRepository } from '../groups/infrastructure/persistence/document/repositories/group.repository';
 import { AuthzAuditService } from '../common/authz-audit/authz-audit.service';
 import { CustomRolesService } from '../common/permissions/custom-roles.service';
+import { ALL_PERMISSIONS } from '../common/permissions/permission.constants';
 
 @Injectable()
 export class UsersService {
@@ -60,13 +61,41 @@ export class UsersService {
   ): Promise<void> {
     if (!roleIds?.length) return;
     const tenantRoles = await this.customRoles.findAll(tenantId);
-    const validIds = new Set(tenantRoles.map((r: any) => String(r._id ?? r.id)));
+    const validIds = new Set(
+      tenantRoles.map((r: any) => String(r._id ?? r.id)),
+    );
     const unknown = roleIds.filter((id) => !validIds.has(String(id)));
     if (unknown.length) {
       throw new UnprocessableEntityException({
         status: HttpStatus.UNPROCESSABLE_ENTITY,
         errors: {
           roleIds: `Unknown role(s) for this tenant: ${unknown.join(', ')}`,
+        },
+      });
+    }
+  }
+
+  /**
+   * Reject ad-hoc permission keys / override keys that are not in the permission
+   * registry. The engine already bounds effective perms by the tenant ceiling at
+   * read time, but invalid keys should never be persisted (typos, stale keys,
+   * cross-app strings). Mirrors custom-roles.validatePermissions for the
+   * membership write path.
+   */
+  private assertPermissionKeysValid(
+    permissions?: string[],
+    permissionOverrides?: Record<string, boolean>,
+  ): void {
+    const registry = new Set(ALL_PERMISSIONS);
+    const invalid = [
+      ...(permissions ?? []),
+      ...Object.keys(permissionOverrides ?? {}),
+    ].filter((key) => !registry.has(key));
+    if (invalid.length) {
+      throw new UnprocessableEntityException({
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        errors: {
+          permissions: `Unknown permission key(s): ${[...new Set(invalid)].join(', ')}`,
         },
       });
     }
@@ -255,6 +284,16 @@ export class UsersService {
       await this.assertRoleIdsBelongToTenant(
         activeTenantId,
         incomingMembership.roleIds,
+      );
+    }
+    if (
+      activeTenantId &&
+      (incomingMembership?.permissions ||
+        incomingMembership?.permissionOverrides)
+    ) {
+      this.assertPermissionKeysValid(
+        incomingMembership.permissions,
+        incomingMembership.permissionOverrides,
       );
     }
     const tenants = this.resolveMembershipUpdate(targetBefore, updateUserDto);

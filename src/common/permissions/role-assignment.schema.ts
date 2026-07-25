@@ -1,7 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
-export type RoleAssignmentDocument = HydratedDocument<RoleAssignmentSchemaClass>;
+export type RoleAssignmentDocument =
+  HydratedDocument<RoleAssignmentSchemaClass>;
 
 /** Who a role is granted to. Mirrors the two RBAC subject kinds. */
 export type AssignmentPrincipalType = 'user' | 'group';

@@ -75,7 +75,9 @@ function maskFull(value: string): string {
 export function maskValue(value: unknown, strategy: MaskStrategy): unknown {
   if (typeof value === 'string') return applyMask(value, strategy);
   if (Array.isArray(value)) {
-    return value.map((v) => (typeof v === 'string' ? applyMask(v, strategy) : v));
+    return value.map((v) =>
+      typeof v === 'string' ? applyMask(v, strategy) : v,
+    );
   }
   return value;
 }

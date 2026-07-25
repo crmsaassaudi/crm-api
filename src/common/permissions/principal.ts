@@ -50,10 +50,7 @@ export function resolvePrincipalType(claims: any): PrincipalType {
   }
 
   const username: string | undefined = claims?.preferred_username;
-  if (
-    typeof username === 'string' &&
-    username.startsWith('service-account-')
-  ) {
+  if (typeof username === 'string' && username.startsWith('service-account-')) {
     return PrincipalType.SERVICE;
   }
 

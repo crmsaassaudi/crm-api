@@ -34,7 +34,9 @@ export class GroupsService {
   ): Promise<void> {
     if (!roleIds?.length) return;
     const tenantRoles = await this.customRoles.findAll(tenantId);
-    const validIds = new Set(tenantRoles.map((r: any) => String(r._id ?? r.id)));
+    const validIds = new Set(
+      tenantRoles.map((r: any) => String(r._id ?? r.id)),
+    );
     const unknown = roleIds.filter((id) => !validIds.has(String(id)));
     if (unknown.length) {
       throw new UnprocessableEntityException(
@@ -166,7 +168,9 @@ export class GroupsService {
     parentGroupId: string,
   ): Promise<void> {
     if (String(parentGroupId) === String(groupId)) {
-      throw new UnprocessableEntityException('A group cannot be its own parent');
+      throw new UnprocessableEntityException(
+        'A group cannot be its own parent',
+      );
     }
     const parent = await this.repository.findById(tenantId, parentGroupId);
     if (!parent) {

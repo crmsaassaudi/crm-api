@@ -121,13 +121,11 @@ async function upsertWidget(
   channelId: ObjectId,
   name: string,
 ): Promise<string> {
-  const existing = await db
-    .collection('livechat_widgets')
-    .findOne({
-      tenantId: tenantId.toString(),
-      channelId: channelId.toString(),
-      name,
-    });
+  const existing = await db.collection('livechat_widgets').findOne({
+    tenantId: tenantId.toString(),
+    channelId: channelId.toString(),
+    name,
+  });
   if (existing) {
     console.log(`  ↳ reusing existing widget ${existing.widgetId}`);
     return existing.widgetId;

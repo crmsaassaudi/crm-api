@@ -137,7 +137,10 @@ export class AuthzAuditService {
       const { t, _id } = JSON.parse(Buffer.from(cursor, 'base64').toString());
       where.$or = [
         { t: { $lt: new Date(t) } },
-        { t: new Date(t), _id: { $lt: Types.ObjectId.createFromHexString(_id) } },
+        {
+          t: new Date(t),
+          _id: { $lt: Types.ObjectId.createFromHexString(_id) },
+        },
       ];
     } catch {
       // invalid cursor → start from newest

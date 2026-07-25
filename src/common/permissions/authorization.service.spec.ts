@@ -13,7 +13,9 @@ describe('AuthorizationService (PDP)', () => {
   let accessPolicy: any;
   let svc: AuthorizationService;
 
-  const superClaim = { realm_access: { roles: [PlatformRoleEnum.SUPER_ADMIN] } };
+  const superClaim = {
+    realm_access: { roles: [PlatformRoleEnum.SUPER_ADMIN] },
+  };
 
   beforeEach(() => {
     cache = {
@@ -27,7 +29,7 @@ describe('AuthorizationService (PDP)', () => {
   });
 
   // ── super-admin (C5) ──────────────────────────────────────────────────
-  it('detects a super-admin claim in realm_access / resource_access / roles', () => {
+  it('should detects a super-admin claim in realm_access / resource_access / roles', () => {
     expect(svc.hasSuperAdminClaim(superClaim)).toBe(true);
     expect(
       svc.hasSuperAdminClaim({
@@ -39,7 +41,7 @@ describe('AuthorizationService (PDP)', () => {
     expect(svc.hasSuperAdminClaim(undefined)).toBe(false);
   });
 
-  it('requires BOTH claim AND DB confirmation for super-admin', async () => {
+  it('should requires BOTH claim AND DB confirmation for super-admin', async () => {
     cache.isPlatformSuperAdmin.mockResolvedValue(true);
     expect(await svc.isSuperAdmin('u1', superClaim)).toBe(true);
 
@@ -47,12 +49,12 @@ describe('AuthorizationService (PDP)', () => {
     expect(await svc.isSuperAdmin('u1', superClaim)).toBe(false);
   });
 
-  it('never hits the DB when there is no super-admin claim', async () => {
+  it('should never hits the DB when there is no super-admin claim', async () => {
     expect(await svc.isSuperAdmin('u1', { roles: ['USER'] })).toBe(false);
     expect(cache.isPlatformSuperAdmin).not.toHaveBeenCalled();
   });
 
-  it('grants a verified super-admin without an RBAC check', async () => {
+  it('should grants a verified super-admin without an RBAC check', async () => {
     cache.isPlatformSuperAdmin.mockResolvedValue(true);
     const decision = await svc.canPerformAction({
       rule: { action: 'delete', resource: 'contacts' },
@@ -63,7 +65,7 @@ describe('AuthorizationService (PDP)', () => {
     expect(cache.canAccess).not.toHaveBeenCalled();
   });
 
-  it('falls through to RBAC for a forged claim (DB says not super-admin)', async () => {
+  it('should falls through to RBAC for a forged claim (DB says not super-admin)', async () => {
     cache.isPlatformSuperAdmin.mockResolvedValue(false);
     cache.canAccess.mockResolvedValue({ allowed: false, cacheHit: false });
 
@@ -76,7 +78,7 @@ describe('AuthorizationService (PDP)', () => {
     expect(cache.canAccess).toHaveBeenCalled();
   });
 
-  it('delegates a normal action to the RBAC cache', async () => {
+  it('should delegates a normal action to the RBAC cache', async () => {
     cache.canAccess.mockResolvedValue({
       allowed: true,
       userId: 'u1',
@@ -106,17 +108,17 @@ describe('AuthorizationService (PDP)', () => {
     groupIds: ['g1'],
   };
 
-  it('denies a record on an explicit ACL deny', async () => {
+  it('should denies a record on an explicit ACL deny', async () => {
     objectAcl.can.mockResolvedValue(false);
     expect(await svc.canAccessRecord(recordParams)).toBe(false);
   });
 
-  it('allows a record on an explicit ACL allow (sharing widens scope)', async () => {
+  it('should allows a record on an explicit ACL allow (sharing widens scope)', async () => {
     objectAcl.can.mockResolvedValue(true);
     expect(await svc.canAccessRecord(recordParams)).toBe(true);
   });
 
-  it('allows a record when there is no explicit ACL entry (null → fallback)', async () => {
+  it('should allows a record when there is no explicit ACL entry (null → fallback)', async () => {
     objectAcl.can.mockResolvedValue(null);
     expect(await svc.canAccessRecord(recordParams)).toBe(true);
     expect(objectAcl.can).toHaveBeenCalledWith(
@@ -130,7 +132,7 @@ describe('AuthorizationService (PDP)', () => {
   });
 
   // ── ABAC composition (deny-overrides on top of ACL) ───────────────────
-  it('denies a record when an ABAC policy evaluates to deny (even if ACL is null)', async () => {
+  it('should denies a record when an ABAC policy evaluates to deny (even if ACL is null)', async () => {
     objectAcl.can.mockResolvedValue(null);
     accessPolicy.evaluate.mockResolvedValue('deny');
     expect(
@@ -141,7 +143,7 @@ describe('AuthorizationService (PDP)', () => {
     ).toBe(false);
   });
 
-  it('passes subject/resource/env context to the ABAC evaluator', async () => {
+  it('should passes subject/resource/env context to the ABAC evaluator', async () => {
     objectAcl.can.mockResolvedValue(null);
     accessPolicy.evaluate.mockResolvedValue('allow');
     await svc.canAccessRecord({
@@ -167,7 +169,7 @@ describe('AuthorizationService (PDP)', () => {
     );
   });
 
-  it('short-circuits ABAC when ACL already denies', async () => {
+  it('should short-circuits ABAC when ACL already denies', async () => {
     objectAcl.can.mockResolvedValue(false);
     expect(await svc.canAccessRecord(recordParams)).toBe(false);
     expect(accessPolicy.evaluate).not.toHaveBeenCalled();

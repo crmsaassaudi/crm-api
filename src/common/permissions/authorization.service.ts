@@ -8,7 +8,8 @@ import { ObjectAclService } from './object-acl.service';
 import { AccessPolicyService } from './access-policy.service';
 import { PermissionRuleMetadata } from './permission.decorator';
 
-export interface AuthzActionDecision extends Partial<AuthzPermissionCheckResult> {
+export interface AuthzActionDecision
+  extends Partial<AuthzPermissionCheckResult> {
   allowed: boolean;
   /** True when granted via a verified platform SUPER_ADMIN bypass. */
   superAdmin?: boolean;
