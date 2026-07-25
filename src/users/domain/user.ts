@@ -123,6 +123,14 @@ export class User {
   reportsToId?: string | null;
 
   @ApiProperty({
+    description:
+      'The single org unit this user belongs to. Basis of the org_unit data scopes.',
+    example: '60d0fe4f5311236168a109ca',
+    required: false,
+  })
+  orgUnitId?: string | null;
+
+  @ApiProperty({
     description: 'Onboarding lifecycle tag for orphan cleanup',
     enum: ['INCOMPLETE_ONBOARDING', 'COMPLETED'],
     required: false,

@@ -98,9 +98,11 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   })
   assignedGroupId: string | null;
 
-  // Business Unit sub-partition (reserved; nullable & inert for now).
+  // Org-unit ownership: the node of the tenant's org tree this record belongs
+  // to. Populated at create time from the record owner's org unit; read by the
+  // 'org_unit' and 'org_unit_subtree' data scopes.
   @Prop({ type: MongooseSchema.Types.ObjectId, default: null, index: true })
-  businessUnitId?: string | null;
+  orgUnitId?: string | null;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,

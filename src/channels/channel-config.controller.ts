@@ -20,6 +20,7 @@ import {
   UpdateChannelConfigDto,
 } from './dto/channel-config.dto';
 import { ChannelConfigAuditRepository } from './infrastructure/persistence/document/repositories/channel-config-audit.repository';
+import { RequirePermission } from '../common/permissions';
 
 @ApiTags('Channel Config')
 @ApiBearerAuth()
@@ -34,6 +35,7 @@ export class ChannelConfigController {
   // -- Provider Schema Registry --
 
   @Get('channel-providers/schemas')
+  @RequirePermission('view', 'channels')
   getProviderSchemas() {
     return this.service.getProviderSchemas();
   }
@@ -41,16 +43,19 @@ export class ChannelConfigController {
   // -- CRUD --
 
   @Get('channel-configs')
+  @RequirePermission('view', 'channels')
   findAll() {
     return this.service.findAll();
   }
 
   @Get('channel-configs/:id')
+  @RequirePermission('view', 'channels')
   findById(@Param('id') id: string) {
     return this.service.findById(id);
   }
 
   @Post('channel-configs/verify-and-save')
+  @RequirePermission('manage_system', 'channels')
   verifyAndSave(
     @Req() req: Request,
     @Body() dto: VerifyAndSaveChannelConfigDto,
@@ -60,6 +65,7 @@ export class ChannelConfigController {
   }
 
   @Patch('channel-configs/:id')
+  @RequirePermission('edit', 'channels')
   update(
     @Req() req: Request,
     @Param('id') id: string,
@@ -70,6 +76,7 @@ export class ChannelConfigController {
   }
 
   @Delete('channel-configs/:id')
+  @RequirePermission('delete', 'channels')
   @HttpCode(HttpStatus.OK)
   deleteConfig(@Req() req: Request, @Param('id') id: string) {
     this.setRequestContext(req);
@@ -77,6 +84,7 @@ export class ChannelConfigController {
   }
 
   @Post('channel-configs/:id/set-default')
+  @RequirePermission('manage_system', 'channels')
   @HttpCode(HttpStatus.OK)
   setDefault(@Req() req: Request, @Param('id') id: string) {
     this.setRequestContext(req);
@@ -90,6 +98,7 @@ export class ChannelConfigController {
    * Frontend uses this to decide whether to show the migration modal.
    */
   @Get('channel-configs/:id/pre-delete-check')
+  @RequirePermission('view', 'channels')
   preDeleteCheck(@Param('id') id: string) {
     return this.service.preDeleteCheck(id);
   }
@@ -99,6 +108,7 @@ export class ChannelConfigController {
    * Uses MongoDB transaction for atomicity.
    */
   @Post('channel-configs/:id/migrate-and-delete')
+  @RequirePermission('delete', 'channels')
   @HttpCode(HttpStatus.OK)
   migrateAndDelete(
     @Req() req: Request,
@@ -116,6 +126,7 @@ export class ChannelConfigController {
    * Used by the per-config "Activity Log" tab in UI (contextual audit).
    */
   @Get('channel-configs/:id/audit-log')
+  @RequirePermission('view', 'audit_logs')
   async getAuditLog(
     @Param('id') id: string,
     @Query('limit') limit?: string,

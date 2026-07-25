@@ -80,7 +80,8 @@ describe('ABAC evaluator', () => {
           ctx,
         ),
       ).toBe(true);
-      // type mismatch → false, never throws
+      // Incomparable kinds ("won" vs 3) stay un-evaluable → false, never throws.
+      // policyApplies() inverts this for a DENY policy so it fails closed (H-05).
       expect(
         evaluateCondition(
           { attribute: 'resource.stage', operator: 'gt', value: 3 },

@@ -1,4 +1,10 @@
-import { Injectable, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { ulid } from 'ulid';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
@@ -21,15 +27,56 @@ interface LruEntry {
   cachedAt: number;
 }
 
+/** Pub/Sub channel carrying cross-instance session invalidations. */
+const SESSION_INVALIDATION_CHANNEL = 'session:invalidated';
+
 @Injectable()
-export class SessionService {
+export class SessionService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(SessionService.name);
+
   // lru-cache: evicts by true least-recently-used access order + TTL auto-expiry
   private readonly lru = new LRUCache<string, LruEntry>({
     max: 1000,
     ttl: LRU_TTL_MS,
   });
 
+  /** Dedicated connection — a subscribed client cannot serve normal commands. */
+  private subscriber?: Redis;
+
   constructor(@Inject(IOREDIS_CLIENT) private readonly ioredis: Redis) {}
+
+  /**
+   * Subscribe to cross-instance session invalidation (H-02).
+   *
+   * `getSession` reads a 60 s in-process LRU before Redis, and `deleteSession`
+   * could only clear the LRU of the instance that handled the logout. Behind a
+   * load balancer that meant a logged-out or deactivated session stayed valid on
+   * every other replica for up to a minute — a revocation gap that no amount of
+   * Redis correctness could close from one process.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      this.subscriber = this.ioredis.duplicate();
+      await this.subscriber.subscribe(SESSION_INVALIDATION_CHANNEL);
+      this.subscriber.on('message', (_channel, sid) => {
+        if (sid) this.lru.delete(sid);
+      });
+    } catch (error) {
+      // A failed subscription must be loud: without it, revocation is silently
+      // only local again. The service still works, but the operator has to know.
+      this.logger.error(
+        `Failed to subscribe to ${SESSION_INVALIDATION_CHANNEL}; session revocation will NOT propagate across instances: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.subscriber?.quit().catch(() => {
+      /* shutting down anyway */
+    });
+  }
 
   async createSession(
     tokens: {
@@ -109,6 +156,16 @@ export class SessionService {
   async deleteSession(sid: string): Promise<void> {
     await this.ioredis.del(`${SESSION_PREFIX}${sid}`);
     this.lru.delete(sid);
+    // Tell every other instance to drop its cached copy immediately (H-02).
+    await this.ioredis
+      .publish(SESSION_INVALIDATION_CHANNEL, sid)
+      .catch((error) =>
+        this.logger.warn(
+          `Failed to publish session invalidation for ${sid}; other instances may serve it for up to ${
+            LRU_TTL_MS / 1000
+          }s: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
   }
 
   private setLru(sid: string, data: SessionData): void {

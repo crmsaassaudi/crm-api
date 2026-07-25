@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DATA_SCOPE_ORDER, DataScope } from '../data-scope.enum';
 
 /**
  * CustomRole — a named, reusable permission set inside one tenant.
@@ -39,6 +40,14 @@ export class CustomRole {
 
   @ApiPropertyOptional({ example: 1 })
   templateVersion?: number | null;
+
+  @ApiPropertyOptional({
+    enum: DATA_SCOPE_ORDER,
+    nullable: true,
+    description:
+      'Read breadth this role grants inside the tenant. Null = no opinion; the tenant default applies. A user with several roles gets the widest.',
+  })
+  dataScope?: DataScope | null;
 
   @ApiProperty({ example: '#6366f1' })
   color: string;

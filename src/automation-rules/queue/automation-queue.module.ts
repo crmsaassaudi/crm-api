@@ -61,7 +61,7 @@ import {
       }),
     }),
 
-    // Internal queue — UpdateField + RouteToTeam (no rate limit, fast DB ops)
+    // Internal queue — UpdateField + RouteToGroup (no rate limit, fast DB ops)
     BullModule.registerQueue({
       name: AUTOMATION_INTERNAL_QUEUE,
       defaultJobOptions: {

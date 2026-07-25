@@ -14,7 +14,7 @@ import {
 /**
  * CrmRecordUpdateService — unified record update for automation actions.
  *
- * Provides a single entry point for UpdateFieldExecutor and RouteToTeamExecutor
+ * Provides a single entry point for UpdateFieldExecutor and RouteToGroupExecutor
  * to update any CRM record. Handles:
  *   - Module resolution (Contact/Ticket/Deal/Account/Task)
  *   - Type casting (String → Number/Boolean/Date) to avoid schema errors
@@ -42,7 +42,7 @@ export class CrmRecordUpdateService {
 
   /**
    * Ownership fields that only privileged internal executors (e.g.
-   * RouteToTeamExecutor) may write. External `update_field` actions are
+   * RouteToGroupExecutor) may write. External `update_field` actions are
    * blocked unless the caller explicitly opts in via `allowRestricted`.
    */
   private static readonly RESTRICTED_FIELDS = new Set<string>(['ownerId']);
@@ -93,7 +93,7 @@ export class CrmRecordUpdateService {
     // MED-01: Two-tier field protection.
     // Tier 1 (PROTECTED): system/identity fields — NEVER writable by automation.
     // Tier 2 (RESTRICTED): ownership fields — writable only by privileged
-    //   internal executors (e.g. RouteToTeamExecutor) via allowRestricted flag.
+    //   internal executors (e.g. RouteToGroupExecutor) via allowRestricted flag.
     if (CrmRecordUpdateService.PROTECTED_FIELDS.has(field)) {
       this.logger.warn(
         `[CrmUpdate] Blocked attempt to set protected field "${field}" on ${recordType}(${recordId})`,

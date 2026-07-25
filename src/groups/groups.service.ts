@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   UnprocessableEntityException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -12,6 +13,7 @@ import { CreateGroupDto, QueryGroupDto, UpdateGroupDto } from './dto/group.dto';
 import { UserRepository } from '../users/infrastructure/persistence/user.repository';
 import { AuthzAuditService } from '../common/authz-audit/authz-audit.service';
 import { CustomRolesService } from '../common/permissions/custom-roles.service';
+import { AuthzPermissionCacheService } from '../common/permissions/authz-permission-cache.service';
 
 @Injectable()
 export class GroupsService {
@@ -22,6 +24,7 @@ export class GroupsService {
     private readonly eventEmitter: EventEmitter2,
     private readonly audit: AuthzAuditService,
     private readonly customRoles: CustomRolesService,
+    private readonly authzCache: AuthzPermissionCacheService,
   ) {}
 
   /**
@@ -39,6 +42,52 @@ export class GroupsService {
     if (unknown.length) {
       throw new UnprocessableEntityException(
         `Unknown role(s) for this tenant: ${unknown.join(', ')}`,
+      );
+    }
+  }
+
+  /**
+   * C-04, third grant path: a group's `permissions` / `roleIds` cascade to every
+   * member and every descendant group's members, so writing them is a grant and
+   * is bound by the same invariant as a direct or role grant —
+   * *you cannot grant what you do not hold*.
+   *
+   * Without this, `groups:update` is an escalation primitive: attach a powerful
+   * role to a group you belong to and inherit it on the next request.
+   */
+  private async assertCallerCanGrantToGroup(
+    tenantId: string,
+    permissions?: string[],
+    roleIds?: string[],
+  ): Promise<void> {
+    const roleKeys = roleIds?.length
+      ? (await this.customRoles.findAll(tenantId))
+          .filter((role) => roleIds.map(String).includes(String(role.id)))
+          .flatMap((role) => role.permissions ?? [])
+      : [];
+
+    const requested = [...new Set([...(permissions ?? []), ...roleKeys])];
+    if (!requested.length) return;
+
+    const callerId = this.cls.get<string>('userId');
+    if (!callerId) {
+      throw new ForbiddenException(
+        'Cannot resolve the acting principal; group permission change refused',
+      );
+    }
+
+    const explanation = await this.authzCache.explainForUser(
+      String(callerId),
+      tenantId,
+    );
+    const held = explanation.fullAccess
+      ? new Set(explanation.tenantCeiling)
+      : new Set(explanation.effective);
+
+    const escalating = requested.filter((key) => !held.has(key));
+    if (escalating.length) {
+      throw new ForbiddenException(
+        `You cannot grant permission(s) you do not hold yourself: ${escalating.join(', ')}`,
       );
     }
   }
@@ -68,6 +117,11 @@ export class GroupsService {
         }
       }
       await this.assertRoleIdsBelongToTenant(tenantId, dto.roleIds);
+      await this.assertCallerCanGrantToGroup(
+        tenantId,
+        dto.permissions,
+        dto.roleIds,
+      );
       const group = await this.repository.create({ ...dto, tenantId });
       await this.emitGroupUpdated(tenantId, group);
       void this.audit.record({
@@ -102,6 +156,19 @@ export class GroupsService {
       }
       await this.assertRoleIdsBelongToTenant(tenantId, dto.roleIds);
       const previous = await this.repository.findById(tenantId, id);
+      // Only newly ADDED keys need to be held — removing is de-escalation.
+      const addedPermissions = (dto.permissions ?? []).filter(
+        (key) => !(previous?.permissions ?? []).includes(key),
+      );
+      const addedRoleIds = (dto.roleIds ?? []).filter(
+        (roleId) =>
+          !(previous?.roleIds ?? []).map(String).includes(String(roleId)),
+      );
+      await this.assertCallerCanGrantToGroup(
+        tenantId,
+        addedPermissions,
+        addedRoleIds,
+      );
       const group = await this.repository.update(tenantId, id, dto);
       if (!group) throw new NotFoundException('Group not found');
       await this.emitGroupUpdated(tenantId, group, previous?.memberIds);

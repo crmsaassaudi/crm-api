@@ -90,6 +90,15 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
   reportsToId?: string | null;
 
   @ApiPropertyOptional({
+    example: '507f1f77bcf86cd799439011',
+    description:
+      'The single org unit this user belongs to. Null to unassign — an unassigned user gains no org-unit scope.',
+  })
+  @IsOptional()
+  @IsString()
+  orgUnitId?: string | null;
+
+  @ApiPropertyOptional({
     description:
       'User-level i18n overrides. Set fields to null to inherit from tenant defaults.',
     example: { locale: 'vi', timezone: 'Asia/Ho_Chi_Minh' },

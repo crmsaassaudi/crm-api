@@ -365,8 +365,19 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
   }
 
   private normalizePhone(value: string): string {
-    // Strip everything except digits — no '+' prefix
-    return value.replace(/\D/g, '');
+    // Strip separators but PRESERVE a leading '+'.
+    //
+    // This value is what gets stored in `phones`, not merely what dedup compares
+    // on, so dropping the '+' is data loss rather than normalisation: it erases
+    // the difference between the E.164 number +84901112222 and the national
+    // string 84901112222. WhatsApp and most SMS gateways require E.164, so an
+    // imported contact whose '+' was stripped becomes unsendable — and
+    // unrecoverably so, since the original CSV is gone by then.
+    //
+    // Dedup is unaffected: both the incoming and the stored side go through this
+    // same function, so comparison stays consistent.
+    const digits = value.replace(/\D/g, '');
+    return value.trim().startsWith('+') ? `+${digits}` : digits;
   }
 
   private uniq(values: string[]): string[] {

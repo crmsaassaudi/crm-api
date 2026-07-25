@@ -49,22 +49,18 @@ export class HybridAuthGuard extends AuthGuard {
     }
 
     const request = context.switchToHttp().getRequest<Request>();
-    const sidCandidates = this.getSidCandidates(request);
+    const sid = this.getSid(request);
 
-    for (const sid of sidCandidates) {
+    if (sid) {
       try {
-        const activated = await this.tryActivateSession(request, sid);
-        if (activated) return true;
+        if (await this.tryActivateSession(request, sid)) return true;
       } catch (e) {
         this.guardLogger.warn(
-          `[canActivate] Ignoring invalid sid candidate: ${
+          `[canActivate] Session activation failed: ${
             e instanceof Error ? e.message : String(e)
           }`,
         );
       }
-    }
-
-    if (sidCandidates.length > 0) {
       throw new UnauthorizedException('Session invalid or expired');
     }
 
@@ -124,35 +120,56 @@ export class HybridAuthGuard extends AuthGuard {
     }
   }
 
-  private getSidCandidates(request: Request): string[] {
-    const candidates: string[] = [];
-    const parsedSid = request.cookies?.['sid'];
-    if (typeof parsedSid === 'string' && parsedSid) {
-      candidates.push(parsedSid);
-    }
-
+  /**
+   * Exactly one session cookie is accepted (H-01).
+   *
+   * This used to collect EVERY `sid` cookie from the raw header and try each
+   * until one activated. Combined with a `.crmsaudi.dev`-scoped cookie, that was
+   * a session-fixation primitive: any sibling subdomain — including the
+   * third-party bot/chat apps — can set a `sid` on the parent domain, the
+   * victim's browser sends both, and the guard would happily authenticate the
+   * attacker's session instead. The victim then works inside it.
+   *
+   * With a single accepted value, a duplicate `sid` is an anomaly, not a menu:
+   * the request is rejected and the user re-authenticates with a clean cookie.
+   */
+  private getSid(request: Request): string | undefined {
     const rawCookieHeader = request.headers.cookie;
     const rawCookie = Array.isArray(rawCookieHeader)
       ? rawCookieHeader.join(';')
       : rawCookieHeader;
 
+    const values: string[] = [];
     if (rawCookie) {
       for (const part of rawCookie.split(';')) {
         const [rawName, ...rawValueParts] = part.trim().split('=');
         if (rawName !== 'sid') continue;
-
         const rawValue = rawValueParts.join('=');
         if (!rawValue) continue;
-
         try {
-          candidates.push(decodeURIComponent(rawValue));
+          values.push(decodeURIComponent(rawValue));
         } catch {
-          candidates.push(rawValue);
+          values.push(rawValue);
         }
       }
     }
 
-    return Array.from(new Set(candidates));
+    const distinct = Array.from(new Set(values));
+
+    if (distinct.length > 1) {
+      this.guardLogger.warn(
+        `[canActivate] Rejecting request carrying ${distinct.length} distinct sid cookies (possible cookie-tossing / session fixation attempt)`,
+      );
+      throw new UnauthorizedException(
+        'Ambiguous session. Clear your cookies and sign in again.',
+      );
+    }
+
+    if (distinct.length === 1) return distinct[0];
+
+    // Fall back to the parsed cookie (cookie-parser) when no raw header exists.
+    const parsedSid = request.cookies?.['sid'];
+    return typeof parsedSid === 'string' && parsedSid ? parsedSid : undefined;
   }
 
   private setSelectedSid(request: Request, sid: string): void {

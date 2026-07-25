@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { ClsService } from 'nestjs-cls';
 import { LivechatWidgetService } from './livechat-widget.service';
 import { LivechatWidget } from './domain/livechat-widget';
+import { RequirePermission } from '../common/permissions';
 
 /**
  * Admin CRUD controller for livechat widgets.
@@ -36,12 +37,14 @@ export class LivechatWidgetController {
   }
 
   @Post()
+  @RequirePermission('create', 'channels')
   @ApiOperation({ summary: 'Create a new livechat widget' })
   async create(@Body() body: Partial<LivechatWidget>): Promise<LivechatWidget> {
     return this.service.create(this.getTenantId(), body);
   }
 
   @Get()
+  @RequirePermission('view', 'channels')
   @ApiOperation({ summary: 'List all widgets for tenant' })
   @ApiQuery({ name: 'channelId', required: false })
   async findAll(
@@ -55,12 +58,14 @@ export class LivechatWidgetController {
   }
 
   @Get(':id')
+  @RequirePermission('view', 'channels')
   @ApiOperation({ summary: 'Get widget by ID' })
   async findOne(@Param('id') id: string): Promise<LivechatWidget> {
     return this.service.findById(this.getTenantId(), id);
   }
 
   @Patch(':id')
+  @RequirePermission('edit', 'channels')
   @ApiOperation({ summary: 'Update widget settings' })
   async update(
     @Param('id') id: string,
@@ -70,6 +75,7 @@ export class LivechatWidgetController {
   }
 
   @Delete(':id')
+  @RequirePermission('delete', 'channels')
   @ApiOperation({ summary: 'Delete a widget' })
   async remove(@Param('id') id: string): Promise<{ deleted: boolean }> {
     await this.service.delete(this.getTenantId(), id);

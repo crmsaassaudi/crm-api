@@ -6,7 +6,7 @@ import { User } from '../../../../domain/user';
 import { UserRepository } from '../../user.repository';
 import { UserSchemaClass, UserSchemaDocument } from '../entities/user.schema';
 import { InjectModel } from '@nestjs/mongoose';
-import { FilterQuery, Model } from 'mongoose';
+import { FilterQuery, Model, Types } from 'mongoose';
 import { UserMapper } from '../mappers/user.mapper';
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
@@ -144,6 +144,38 @@ export class UsersDocumentRepository
     const filter = { 'tenants.tenantId': tenantId };
     const userObjects = await this.model.find(filter);
     return userObjects.map((userObject) => UserMapper.toDomain(userObject));
+  }
+
+  /**
+   * Member count per org unit for the tenant, as `{ [orgUnitId]: count }`.
+   *
+   * One aggregate rather than a count per node: the tree view needs every
+   * node's count at once, and the org-unit delete guard needs one of them, so a
+   * per-node query would be N round-trips to render a settings page.
+   * Unassigned users (orgUnitId null) are simply absent from the map.
+   */
+  async countByOrgUnit(tenantId: string): Promise<Record<string, number>> {
+    // An aggregate pipeline gets no schema casting, unlike a query — a raw
+    // string here would silently match nothing against the stored ObjectId and
+    // report every unit as empty, which would let the delete guard pass on a
+    // unit that still has members.
+    if (!Types.ObjectId.isValid(tenantId)) return {};
+
+    const rows = await this.model.aggregate([
+      {
+        $match: {
+          'tenants.tenantId': new Types.ObjectId(tenantId),
+          orgUnitId: { $ne: null },
+        },
+      },
+      { $group: { _id: '$orgUnitId', count: { $sum: 1 } } },
+    ]);
+
+    const counts: Record<string, number> = {};
+    for (const row of rows as Array<{ _id: unknown; count: number }>) {
+      counts[String(row._id)] = row.count;
+    }
+    return counts;
   }
 
   async findByEmail(email: User['email']): Promise<NullableType<User>> {

@@ -1,5 +1,5 @@
 import { Module, Global } from '@nestjs/common';
-import { APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ObjectAcl, ObjectAclSchema } from './object-acl.schema';
 import { ObjectAclService } from './object-acl.service';
@@ -25,6 +25,9 @@ import {
 import { AccessPolicyService } from './access-policy.service';
 import { AccessPolicyController } from './access-policy.controller';
 import { FieldMaskingInterceptor } from './field-masking.interceptor';
+import { CommonCacheModule } from '../cache/common-cache.module';
+import { ResourceLoaderRegistry } from './resource-loader.registry';
+import { MePermissionsController } from './me-permissions.controller';
 
 /**
  * AuthorizationModule — the single home of the authorization stack.
@@ -44,6 +47,9 @@ import { FieldMaskingInterceptor } from './field-masking.interceptor';
 @Global()
 @Module({
   imports: [
+    // Permission changes must purge the per-user HTTP response cache too (C-03),
+    // otherwise a revoked principal keeps being served pre-revocation payloads.
+    CommonCacheModule,
     MongooseModule.forFeature([
       { name: ObjectAcl.name, schema: ObjectAclSchema },
       { name: CustomRoleSchemaClass.name, schema: CustomRoleSchema },
@@ -56,6 +62,7 @@ import { FieldMaskingInterceptor } from './field-masking.interceptor';
     CustomRolesController,
     RoleAssignmentController,
     AccessPolicyController,
+    MePermissionsController,
   ],
   providers: [
     ObjectAclService,
@@ -66,7 +73,18 @@ import { FieldMaskingInterceptor } from './field-masking.interceptor';
     AuthzPermissionCacheService,
     AuthorizationService,
     AuthzPermissionInvalidationListener,
+    ResourceLoaderRegistry,
     AclGuard,
+    {
+      // C-01: the record-level PEP is now part of the global guard chain. It is
+      // a no-op on handlers without @UseAcl, so this cannot break existing
+      // routes — but it does mean opting a route into record-level ACL/ABAC is
+      // a one-line decorator instead of a wiring change that was never done.
+      // Runs after PermissionGuard (declaration order in app.module.ts is the
+      // execution order), so the resource-level grant is already established.
+      provide: APP_GUARD,
+      useClass: AclGuard,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: FieldMaskingInterceptor,
@@ -81,6 +99,7 @@ import { FieldMaskingInterceptor } from './field-masking.interceptor';
     RoleAssignmentService,
     AccessPolicyService,
     AclGuard,
+    ResourceLoaderRegistry,
   ],
 })
 export class AuthorizationModule {}

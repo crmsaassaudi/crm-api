@@ -41,7 +41,7 @@ class RoutingConditionDto {
 class RoutingActionsDto {
   @ApiProperty({ example: '507f1f77bcf86cd799439011' })
   @IsString()
-  teamId: string;
+  groupId: string;
 
   @ApiProperty({ enum: STRATEGIES, example: 'round_robin' })
   @IsEnum(STRATEGIES)

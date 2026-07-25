@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
+import { DATA_SCOPE_ORDER, DataScope } from './data-scope.enum';
 
 export type CustomRoleDocument = CustomRoleSchemaClass & Document;
 
@@ -44,6 +45,29 @@ export class CustomRoleSchemaClass {
    */
   @Prop({ type: Number, default: null })
   templateVersion?: number | null;
+
+  /**
+   * How wide a read scope this role grants inside the tenant.
+   *
+   * Scope lives on the role, not on the user, because it is part of what a job
+   * title means: "Sales Manager" implies seeing the team's pipeline the same way
+   * it implies `deals:edit`. Putting it on the user instead would make it
+   * invisible in the role catalogue and unauditable — you could not answer "who
+   * can see the whole branch?" by reading roles.
+   *
+   * A user holding several roles gets the WIDEST of their scopes (`maxScope`),
+   * matching how `permissions` unions rather than intersects. Narrowing is
+   * expressed with an explicit ABAC deny policy, never by adding a role.
+   *
+   * Null means the role expresses no opinion and contributes nothing, so the
+   * tenant default applies. It is not a synonym for TENANT.
+   */
+  @Prop({
+    type: String,
+    enum: DATA_SCOPE_ORDER,
+    default: null,
+  })
+  dataScope?: DataScope | null;
 
   /** Color accent for UI display */
   @Prop({ default: '#6366f1' })

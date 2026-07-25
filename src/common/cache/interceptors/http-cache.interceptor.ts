@@ -14,30 +14,45 @@ export class HttpCacheInterceptor extends CacheInterceptor {
   }
 
   trackBy(context: ExecutionContext): string | undefined {
-    // Check if caching is disabled or skipped (optional custom logic)
-
     const entityName =
       this.reflector.get<string>(CACHE_ENTITY_KEY, context.getHandler()) ||
       this.reflector.get<string>(CACHE_ENTITY_KEY, context.getClass());
 
-    if (entityName) {
-      const request = context.switchToHttp().getRequest();
-      const id = request.params.id;
-
-      let tenantId = 'global';
-      try {
-        const cls = ClsServiceManager.getClsService();
-        tenantId = cls.get('activeTenantId') || cls.get('tenantId') || 'global';
-      } catch {}
-
-      if (id) {
-        return `tenant:${tenantId}:${entityName}:${id}`;
-      }
-
-      // For list/queries, using the URL allows unique caching for different filters/pages
-      return `tenant:${tenantId}:${entityName}:${request.url}`;
+    if (!entityName) {
+      return super.trackBy(context);
     }
 
-    return super.trackBy(context);
+    // SECURITY (C-03): the cache key MUST include the principal.
+    //
+    // Response payloads are shaped per-user by data visibility
+    // (`visibleOwnerIds`) and by field masking. A key scoped only to the tenant
+    // serves an admin's full result set to a scoped agent who requests the same
+    // URL within the TTL — a horizontal privilege escalation through the cache.
+    //
+    // Missing tenant or user context means the response cannot be safely
+    // attributed to anyone, so it is NOT cached at all (returning undefined
+    // bypasses the cache). Previously this fell back to the literal 'global',
+    // which merged unrelated tenants into one cache entry.
+    let tenantId: string | undefined;
+    let userId: string | undefined;
+    try {
+      const cls = ClsServiceManager.getClsService();
+      tenantId = cls.get('activeTenantId') || cls.get('tenantId');
+      userId = cls.get('userId');
+    } catch {
+      return undefined;
+    }
+
+    if (!tenantId || !userId) {
+      return undefined;
+    }
+
+    const request = context.switchToHttp().getRequest();
+    const id = request.params?.id;
+    const scope = `tenant:${tenantId}:user:${userId}:${entityName}`;
+
+    // For list/queries the URL carries the filters/pagination that shape the
+    // response, so it belongs in the key.
+    return id ? `${scope}:${id}` : `${scope}:${request.url}`;
   }
 }

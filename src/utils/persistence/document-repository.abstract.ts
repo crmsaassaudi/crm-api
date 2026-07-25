@@ -52,6 +52,24 @@ export abstract class BaseDocumentRepository<
         if (this.cls.get('includeUnownedInScope') === true) {
           ownerClauses.push({ ownerId: null }); // covers null and missing field
         }
+
+        // H-07: the org-unit axis, UNIONED with the owner axis.
+        //
+        // Union, not intersection. ORG_UNIT scope means "my records AND my
+        // unit's records" — a manager keeps seeing what they own even if they
+        // are personally unassigned to a unit, and keeps seeing a subordinate in
+        // another unit. Intersecting would make a wider scope return fewer rows,
+        // which is the surprise that makes scope models untrustworthy.
+        //
+        // An EMPTY array adds nothing: it is what an unassigned user, or a
+        // SELF/SUBORDINATES scope, produces. It must not be turned into an
+        // `$in: []` clause of its own, which matches no rows and would erase the
+        // owner clause it was meant to widen.
+        const visibleOrgUnitIds = this.cls.get('visibleOrgUnitIds');
+        if (Array.isArray(visibleOrgUnitIds) && visibleOrgUnitIds.length > 0) {
+          ownerClauses.push({ orgUnitId: { $in: visibleOrgUnitIds } });
+        }
+
         enriched = {
           ...enriched,
           $and: [...(enriched.$and || []), { $or: ownerClauses }],
@@ -192,6 +210,20 @@ export abstract class BaseDocumentRepository<
       // Auto-assign data owner to creator if not explicitly set
       if (userId && !enriched.ownerId) {
         enriched.ownerId = userId;
+      }
+
+      // H-07: stamp the record with the creator's org unit so ORG_UNIT scopes
+      // have something to match on. Taken from CLS — resolved once per request
+      // by DataVisibilityInterceptor — rather than re-read per insert.
+      //
+      // Not overwritten when already present: an importer or a transfer flow may
+      // legitimately place a record in another unit, and silently rewriting that
+      // to the acting user's unit would move data between scopes as a side
+      // effect of touching it. Left unset when the creator has no unit, which
+      // keeps the record visible via ownerId only — the fail-closed direction.
+      const creatorOrgUnitId = this.cls.get('userOrgUnitId');
+      if (creatorOrgUnitId && !enriched.orgUnitId) {
+        enriched.orgUnitId = creatorOrgUnitId;
       }
     }
 

@@ -15,6 +15,7 @@ import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 import { InboundOrchestrationService } from './inbound-orchestration.service';
 import { ShadowContactService } from './shadow-contact.service';
 import { ConversationLifecycleService } from './conversation-lifecycle.service';
+import { ConversationCommandService } from '../aggregate/conversation-command.service';
 
 describe('ConversationService Concurrency', () => {
   let service: ConversationService;
@@ -25,6 +26,7 @@ describe('ConversationService Concurrency', () => {
   let messageRepoMock: any;
   let orchestrationMock: any;
   let shadowContactMock: any;
+  let conversationCommandMock: any;
 
   beforeEach(async () => {
     // Mock Redis for idempotency check
@@ -73,6 +75,10 @@ describe('ConversationService Concurrency', () => {
     // Mock InboundOrchestrationService (replaces AssignmentService, BotQueueService,
     // BusinessHoursService, AutoResolveService, AgentPresenceService)
     orchestrationMock = {
+      // Added when bot-first routing landed: the service asks whether the
+      // channel is configured to let the bot answer before any agent is
+      // assigned, and skips auto-assignment when it is.
+      isBotFirstActive: jest.fn().mockResolvedValue(false),
       triggerAutoAssignment: jest.fn().mockResolvedValue(undefined),
       checkAndReassignIfNeeded: jest.fn().mockResolvedValue(undefined),
       resolveInitialBotState: jest.fn().mockResolvedValue({
@@ -94,6 +100,15 @@ describe('ConversationService Concurrency', () => {
     // Mock ShadowContactService (replaces ContactsService, TenantsService)
     shadowContactMock = {
       createShadowContact: jest.fn().mockResolvedValue('contact_123'),
+      // Fills a visitor profile from an already-linked Contact. Returns the
+      // enriched profile, or null when there is nothing to add — the service
+      // falls back to the original profile on null, so the default here must be
+      // a value the caller can use rather than undefined.
+      enrichProfileFromContact: jest
+        .fn()
+        .mockImplementation((_contactId: string, profile: any) =>
+          Promise.resolve(profile),
+        ),
       getIdentityResolutionConfig: jest.fn().mockResolvedValue({
         autoCreateShadowContact: true,
         autoEnrichProfile: true,
@@ -101,6 +116,11 @@ describe('ConversationService Concurrency', () => {
         autoMergeShadowContact: true,
         autoMergeStrategy: 'phone_email_match',
       }),
+    };
+
+    conversationCommandMock = {
+      enqueueCustomerMessage: jest.fn().mockResolvedValue(undefined),
+      enqueueAssignAgent: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -142,6 +162,13 @@ describe('ConversationService Concurrency', () => {
         {
           provide: getQueueToken(OMNI_MEDIA_CACHE_QUEUE),
           useValue: { add: jest.fn().mockResolvedValue({}) },
+        },
+        // The conversation aggregate is updated through a serialised command
+        // queue rather than written directly, so the inbound path enqueues a
+        // customer-message command instead of mutating the document.
+        {
+          provide: ConversationCommandService,
+          useValue: conversationCommandMock,
         },
       ],
     }).compile();

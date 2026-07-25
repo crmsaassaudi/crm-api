@@ -19,9 +19,6 @@ export class Group {
   })
   parentGroupId: string | null;
 
-  @ApiPropertyOptional({ example: '507f1f77bcf86cd799439011', nullable: true })
-  managerId?: string | null;
-
   @ApiProperty({ type: [String] })
   memberIds: string[];
 

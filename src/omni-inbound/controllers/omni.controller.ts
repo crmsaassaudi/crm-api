@@ -12,6 +12,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -77,6 +78,34 @@ export class OmniController {
     private readonly conversationCommandService: ConversationCommandService,
     private readonly tagsService: TagsService,
   ) {}
+
+  /**
+   * An assignment target must be a member of the active tenant.
+   *
+   * Without this, `agentId` is an unvalidated body field that writes a foreign
+   * (or non-existent) user id onto a conversation — cross-tenant assignment,
+   * and a capacity/routing corruption vector. Null/undefined means "unassign",
+   * which is always allowed.
+   */
+  private async assertAgentInTenant(agentId?: string | null): Promise<void> {
+    if (!agentId) return;
+
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+
+    const agent = await this.usersService.findById(agentId);
+    const belongs = agent?.tenants?.some(
+      (membership: any) => String(membership.tenantId) === String(tenantId),
+    );
+
+    if (!belongs) {
+      throw new UnprocessableEntityException(
+        `Agent ${agentId} is not a member of this workspace`,
+      );
+    }
+  }
 
   // ─── Routing Trace (production debugging) ────────────────────
 
@@ -1163,6 +1192,7 @@ export class OmniController {
   }
 
   @Post('conversations/:id/tags')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async addTag(@Param('id') id: string, @Body('tag') tag: string) {
     if (!tag || typeof tag !== 'string') {
@@ -1204,6 +1234,7 @@ export class OmniController {
    */
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('conversations/bulk-tag')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async bulkTag(
     @Body() body: { conversationIds: string[]; tagId: string },
@@ -1240,6 +1271,7 @@ export class OmniController {
   }
 
   @Delete('conversations/:id/tags/:tag')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async removeTag(@Param('id') id: string, @Param('tag') tag: string) {
     const normalizedTag = decodeURIComponent(tag).trim();
@@ -1263,6 +1295,7 @@ export class OmniController {
   // ─── Claim / Assign ────────────────────────────────────────────
 
   @Patch('conversations/:id/claim')
+  @RequirePermission('assign', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async claimConversation(
     @Param('id') id: string,
@@ -1271,6 +1304,7 @@ export class OmniController {
     if (!agentId) {
       throw new BadRequestException('agentId is required');
     }
+    await this.assertAgentInTenant(agentId);
 
     const updated = await this.conversationRepo.claimConversation(id, agentId);
     if (!updated) {
@@ -1286,6 +1320,7 @@ export class OmniController {
    * Supports setting agentId or groupId to null to unassign.
    */
   @Patch('conversations/:id/assign')
+  @RequirePermission('assign', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async assignAgent(
     @Param('id') id: string,
@@ -1296,6 +1331,7 @@ export class OmniController {
     if (agentId === undefined && groupId === undefined) {
       throw new BadRequestException('agentId or groupId is required');
     }
+    await this.assertAgentInTenant(agentId);
 
     const conversation = await this.conversationRepo.findById(id);
     if (!conversation) {
@@ -1356,6 +1392,7 @@ export class OmniController {
    * Remove agent assignment from a conversation (back to queue).
    */
   @Patch('conversations/:id/unassign')
+  @RequirePermission('assign', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async unassignAgent(@Param('id') id: string) {
     const conversation = await this.conversationRepo.findById(id);
@@ -1391,6 +1428,7 @@ export class OmniController {
   // ─── Notes ──────────────────────────────────────────────────────
 
   @Post('conversations/:id/notes')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.CREATED)
   async createNote(
     @Param('id') conversationId: string,
@@ -1418,6 +1456,7 @@ export class OmniController {
   }
 
   @Get('conversations/:id/notes')
+  @RequirePermission('view', 'omni_channel')
   async getNotes(
     @Param('id') conversationId: string,
     @Query('page') page = '1',
@@ -1431,6 +1470,7 @@ export class OmniController {
   }
 
   @Get('conversations/:id/notes/pinned')
+  @RequirePermission('view', 'omni_channel')
   async getPinnedNote(@Param('id') conversationId: string) {
     const note = await this.noteService.getPinnedNote(conversationId);
     // Return empty object with null so frontend can handle gracefully
@@ -1438,6 +1478,7 @@ export class OmniController {
   }
 
   @Patch('conversations/:convId/notes/:noteId')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async updateNote(
     @Param('noteId') noteId: string,
@@ -1462,6 +1503,7 @@ export class OmniController {
   }
 
   @Delete('conversations/:convId/notes/:noteId')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteNote(@Param('noteId') noteId: string) {
     const deleted = await this.noteService.deleteNote(noteId);
@@ -1475,6 +1517,7 @@ export class OmniController {
   // ─── Activities (Audit Trail) ───────────────────────────────────
 
   @Get('conversations/:id/activities')
+  @RequirePermission('view', 'omni_channel')
   async getActivities(
     @Param('id') conversationId: string,
     @Query('page') page = '1',
@@ -1490,6 +1533,7 @@ export class OmniController {
   // ─── Read / Unread ─────────────────────────────────────────────
 
   @Patch('conversations/:id/read')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.NO_CONTENT)
   async markAsRead(@Param('id') id: string) {
     const conversation = await this.conversationRepo.findById(id);
@@ -1540,6 +1584,7 @@ export class OmniController {
    * Returns current omni-channel settings for the tenant.
    */
   @Get('settings')
+  @RequirePermission('view', 'omni_channel')
   async getSettings() {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) throw new BadRequestException('Tenant context not found');
@@ -1557,6 +1602,7 @@ export class OmniController {
    * Updates omni-channel settings (resolveNoteMode and/or notificationSound).
    */
   @Patch('settings')
+  @RequirePermission('manage_system', 'omni_channel')
   async updateSettings(
     @Body('resolveNoteMode') resolveNoteMode?: string,
     @Body('notificationSound')
@@ -1615,6 +1661,7 @@ export class OmniController {
    * Returns the current tenant's storage usage and limit.
    */
   @Get('settings/storage-quota')
+  @RequirePermission('view', 'omni_channel')
   async getStorageQuota() {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) throw new BadRequestException('Tenant context not found');
@@ -1640,6 +1687,7 @@ export class OmniController {
    * Accepts limitBytes or limitMB for backward compat.
    */
   @Patch('settings/storage-quota')
+  @RequirePermission('manage_system', 'omni_channel')
   async updateStorageQuota(
     @Body('limitBytes') limitBytes?: number,
     @Body('limitMB') limitMB?: number,
@@ -1769,6 +1817,7 @@ export class OmniController {
    * Link specific messages to an existing Deal or Ticket.
    */
   @Post('conversations/:id/link-messages')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async linkMessages(
     @Param('id') conversationId: string,

@@ -16,6 +16,13 @@ import { ModuleRef } from '@nestjs/core';
 import { UsersDocumentRepository } from '../users/infrastructure/persistence/document/repositories/user.repository';
 import { GroupRepository } from '../groups/infrastructure/persistence/document/repositories/group.repository';
 import { isValidObjectId } from 'mongoose';
+import {
+  DataScope,
+  isDataScope,
+  maxScope,
+} from '../common/permissions/data-scope.enum';
+import { AuthzPermissionCacheService } from '../common/permissions/authz-permission-cache.service';
+import { OrgUnitsService } from '../org-units/org-units.service';
 
 /**
  * DataVisibilityInterceptor — Enriches CLS with `visibleOwnerIds`.
@@ -44,6 +51,21 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     private readonly moduleRef: ModuleRef,
   ) {}
 
+  /**
+   * Resolved lazily, like the repositories below. This interceptor is provided
+   * by a @Global module that runs on every request, so constructor-injecting
+   * services from AuthorizationModule / OrgUnitsModule would force those into
+   * the global module's dependency graph and produce a cycle — both of them
+   * transitively depend on the CLS context this interceptor populates.
+   */
+  private get authzCache(): AuthzPermissionCacheService {
+    return this.moduleRef.get(AuthzPermissionCacheService, { strict: false });
+  }
+
+  private get orgUnits(): OrgUnitsService {
+    return this.moduleRef.get(OrgUnitsService, { strict: false });
+  }
+
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     return from(this.resolveVisibility()).pipe(switchMap(() => next.handle()));
   }
@@ -65,6 +87,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       // If public_read, everyone sees everything
       if (defaultAccess === 'public_read') {
         this.cls.set('visibleOwnerIds', null);
+        this.cls.set('visibleOrgUnitIds', null);
         return;
       }
 
@@ -75,6 +98,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
         userRoles.includes(TenantRoleEnum.OWNER)
       ) {
         this.cls.set('visibleOwnerIds', null); // See all
+        this.cls.set('visibleOrgUnitIds', null);
         this.logger.debug(`Admin/Owner bypass for user ${userId}`);
         return;
       }
@@ -89,10 +113,46 @@ export class DataVisibilityInterceptor implements NestInterceptor {
         settings?.unownedRecordsVisibleToAll === true,
       );
 
-      // 3. For MEMBER/VIEWER: resolve hierarchy
-      const visibleIds = await this.hierarchyService.getVisibleOwnerIds(
+      // 3. Resolve the principal's DataScope, then translate it into filters.
+      //
+      // H-07: this is where "Department / Branch / Organization scope" actually
+      // becomes enforcement. Before, the only scope that existed was the
+      // reportsToId subtree, so a role labelled "sees the whole department" in
+      // the admin UI behaved identically to one labelled "sees own records".
+      const { scope, orgUnitId } = await this.resolveScope(
         tenantId,
         userId,
+        settings?.defaultScope,
+      );
+
+      // TENANT scope is the old "Organization" level. It is not a bypass of the
+      // tenant boundary — tenantFilterPlugin still applies underneath — it just
+      // adds no owner restriction on top.
+      if (scope === DataScope.TENANT) {
+        this.cls.set('visibleOwnerIds', null);
+        this.cls.set('visibleOrgUnitIds', null);
+        this.cls.set(
+          'visibleGroupIds',
+          await this.resolveUserGroupIds(tenantId, userId),
+        );
+        return;
+      }
+
+      // SELF stops at the principal; anything wider follows the reportsToId
+      // chain. Org-unit scopes include the hierarchy too: a unit head normally
+      // also has direct reports, and dropping them would make a WIDER scope
+      // show FEWER records than a narrower one.
+      const visibleIds =
+        scope === DataScope.SELF
+          ? [userId]
+          : await this.hierarchyService.getVisibleOwnerIds(tenantId, userId);
+
+      // The org-unit axis, unioned with the owner axis at query time. Empty for
+      // SELF / SUBORDINATES, and empty for an unassigned user under any scope —
+      // an empty list contributes no rows rather than matching everything.
+      this.cls.set(
+        'visibleOrgUnitIds',
+        await this.orgUnits.resolveScopeUnitIds(tenantId, orgUnitId, scope),
       );
 
       // 3b. Resolve the groups the user belongs to. Used by entities scoped
@@ -120,10 +180,45 @@ export class DataVisibilityInterceptor implements NestInterceptor {
         `Visibility resolution failed, fail-closed: ${(e as Error).message}`,
       );
       this.cls.set('visibleOwnerIds', []);
+      this.cls.set('visibleOrgUnitIds', []);
       throw new InternalServerErrorException(
         'Data visibility resolution failed',
       );
     }
+  }
+
+  /**
+   * The principal's effective DataScope, and the org unit it is anchored to.
+   *
+   * Two inputs, unioned:
+   *   - the widest `dataScope` among the roles the principal actually holds
+   *     (membership, inherited groups, active JIT grants);
+   *   - the tenant's default scope, for principals whose roles express none.
+   *
+   * The tenant default exists to preserve the pre-H-07 contract. Before scope
+   * was a first-class field, `defaultAccess: 'private'` meant "own records plus
+   * subordinates", and every role implied exactly that. If an unset `dataScope`
+   * resolved to SELF instead, rolling this out would silently narrow every
+   * existing role in every tenant — users would open the app to an empty list
+   * and the cause would look like data loss, not a policy change. So an unset
+   * scope means "no opinion", and the tenant default supplies SUBORDINATES.
+   *
+   * A malformed configured default is ignored by `maxScope`, which floors at
+   * SELF; the explicit fallback below keeps that from silently narrowing too.
+   */
+  private async resolveScope(
+    tenantId: string,
+    userId: string,
+    configuredDefault: unknown,
+  ): Promise<{ scope: DataScope; orgUnitId: string | null }> {
+    const tenantDefault = isDataScope(configuredDefault)
+      ? configuredDefault
+      : DataScope.SUBORDINATES;
+
+    const { scope: roleScope, orgUnitId } =
+      await this.authzCache.resolveDataScope(userId, tenantId);
+
+    return { scope: maxScope([roleScope, tenantDefault]), orgUnitId };
   }
 
   /**
@@ -133,6 +228,12 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     tenantId: string,
     userId: string,
   ): Promise<string[]> {
+    // TenantInterceptor runs first and has already resolved AND verified the
+    // membership, so the roles are in CLS. Reusing them avoids a second user
+    // read per request and removes the divergence that used to exist here.
+    const fromCls = this.cls.get<string[]>('tenantRoles');
+    if (Array.isArray(fromCls)) return fromCls;
+
     try {
       const userRepo = this.moduleRef.get(UsersDocumentRepository, {
         strict: false,
@@ -145,8 +246,11 @@ export class DataVisibilityInterceptor implements NestInterceptor {
 
       if (!user) return [];
 
+      // M-06: compare as strings. `tenantId` is an ObjectId on the document but
+      // a string in CLS, so the previous `===` silently returned no roles —
+      // which meant an admin was scoped like a regular member.
       const membership = user.tenants?.find(
-        (t: any) => t.tenantId === tenantId,
+        (t: any) => String(t.tenantId) === String(tenantId),
       );
       return membership?.roles ?? [];
     } catch {
@@ -213,8 +317,48 @@ export class DataVisibilityInterceptor implements NestInterceptor {
         }
       }
 
-      return [...new Set(sharedUserIds)];
+      // H-08: sharing rules come from tenant SETTINGS, which is a lower trust
+      // boundary than the authorization model — whoever can write settings could
+      // otherwise widen anyone's read scope to arbitrary user ids, including ids
+      // belonging to another tenant. Only ids that are real members of THIS
+      // tenant may enter the visibility scope.
+      return this.keepTenantMembers(tenantId, [...new Set(sharedUserIds)]);
     } catch {
+      return [];
+    }
+  }
+
+  /** Filter a candidate id list down to verified members of the tenant. */
+  private async keepTenantMembers(
+    tenantId: string,
+    candidateIds: string[],
+  ): Promise<string[]> {
+    const validIds = candidateIds.filter((id) => isValidObjectId(id));
+    if (validIds.length === 0) return [];
+
+    try {
+      const userRepo = this.moduleRef.get(UsersDocumentRepository, {
+        strict: false,
+      });
+      const users = await userRepo.findByIds(validIds);
+      const members = users
+        .filter((user: any) =>
+          user?.tenants?.some(
+            (membership: any) =>
+              String(membership.tenantId) === String(tenantId),
+          ),
+        )
+        .map((user: any) => String(user.id ?? user._id));
+
+      const rejected = validIds.length - members.length;
+      if (rejected > 0) {
+        this.logger.warn(
+          `Sharing rules referenced ${rejected} id(s) that are not members of tenant ${tenantId}; ignored`,
+        );
+      }
+      return members;
+    } catch {
+      // Fail closed: an unverifiable id must not widen visibility.
       return [];
     }
   }

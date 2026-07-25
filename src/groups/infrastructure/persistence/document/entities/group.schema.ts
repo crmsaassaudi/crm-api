@@ -33,13 +33,6 @@ export class GroupSchemaClass extends EntityDocumentHelper {
   parentGroupId: string | null;
 
   @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: 'UserSchemaClass',
-    default: null,
-  })
-  managerId?: string | null;
-
-  @Prop({
     type: [{ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' }],
     default: [],
   })

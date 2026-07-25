@@ -49,7 +49,7 @@ export class RoutingRuleSchemaClass extends EntityDocumentHelper {
 
   @Prop({
     type: {
-      teamId: String,
+      groupId: String,
       strategy: {
         type: String,
         enum: ASSIGNMENT_STRATEGIES,
@@ -60,7 +60,7 @@ export class RoutingRuleSchemaClass extends EntityDocumentHelper {
     required: true,
   })
   actions: {
-    teamId: string;
+    groupId: string;
     strategy: string;
     sticky: boolean;
     requiredSkills?: string[];

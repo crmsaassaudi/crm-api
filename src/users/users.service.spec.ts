@@ -105,6 +105,28 @@ describe('UsersService', () => {
         // Tenant without seeded system roles → invite falls back to no baseline.
         findBySystemKey: jest.fn().mockResolvedValue(null),
       } as any,
+      // AuthzPermissionCacheService — backs the C-04 anti-escalation check.
+      // Default: the caller has full access, so grants are permitted and these
+      // tests exercise the behaviour they were written for. Escalation-specific
+      // cases override explainForUser per test.
+      {
+        explainForUser: jest.fn().mockResolvedValue({
+          effective: [],
+          sources: {},
+          tenantCeiling: [],
+          fullAccess: true,
+          fullAccessReason: 'admin',
+        }),
+      } as any,
+      // ModuleRef — used only for the lazy OrgUnitRepository lookup that
+      // validates `orgUnitId`. Resolves to a unit by default so the existing
+      // update tests, which do not set orgUnitId, are unaffected; a test that
+      // needs the rejection path overrides `findById` to return null.
+      {
+        get: jest.fn().mockReturnValue({
+          findById: jest.fn().mockResolvedValue({ id: 'unit_1' }),
+        }),
+      } as any,
     );
   });
 

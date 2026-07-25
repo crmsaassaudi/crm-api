@@ -39,7 +39,7 @@ export class AssignmentSettingSchemaClass extends EntityDocumentHelper {
   defaultStrategy: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'GroupSchemaClass' })
-  defaultTeamId?: string;
+  defaultGroupId?: string;
 
   // Capacity
   @Prop({ default: 50 })

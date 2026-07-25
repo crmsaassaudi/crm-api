@@ -49,7 +49,7 @@ const normalizeOutboundSource = (source?: string | null): string => {
 };
 
 /**
- * OutboundService â€” handles messages sent from Agents to Customers.
+ * OutboundService — handles messages sent from Agents to Customers.
  *
  * Responsibilities:
  * 1. Persist the agent's message to the database.
@@ -153,18 +153,33 @@ export class OutboundService {
     if (message) {
       await this.messageRepo.updateStatus(message.id, 'sending');
     } else {
-      message = await this.persistOutboundMessage({
-        tenantId,
-        conversationId,
-        agentId,
-        senderContext,
-        source,
-        messageType,
-        content,
-        idempotencyKey,
-        clientMessageId,
-        transport,
-      });
+      try {
+        message = await this.persistOutboundMessage({
+          tenantId,
+          conversationId,
+          agentId,
+          senderContext,
+          source,
+          messageType,
+          content,
+          idempotencyKey,
+          clientMessageId,
+          transport,
+        });
+      } catch (error) {
+        // The unique index rejected us, so another request won the race. Return
+        // ITS message and stop here — falling through to dispatch would send the
+        // customer a second copy of a message the winner is already sending.
+        const recovered = await this.recoverFromDuplicateKey(
+          error,
+          tenantId,
+          idempotencyKey,
+          senderContext,
+          source,
+        );
+        if (recovered) return recovered;
+        throw error;
+      }
     }
 
     if (!idempotency.retryMessage) {
@@ -227,6 +242,81 @@ export class OutboundService {
     }
   }
 
+  /**
+   * The response shape for "this message already exists — here it is".
+   *
+   * One builder for all three routes that reach it (the pre-flight cache hit,
+   * and the duplicate-key recovery on the agent and bot paths) so a caller
+   * cannot tell them apart. They are the same event from the client's point of
+   * view, and a client that has to distinguish them will get it wrong.
+   */
+  private buildReusedResponse(
+    existing: any,
+    idempotencyKey: string | undefined,
+    senderContext: any,
+    source: string,
+  ): any {
+    return {
+      ok: true,
+      messageId: existing.id,
+      externalMessageId: existing.externalMessageId,
+      status: existing.status,
+      idempotencyKey,
+      clientMessageId: existing.clientMessageId,
+      senderId: existing.senderId,
+      senderName: existing.senderName ?? senderContext?.name,
+      senderAvatarUrl:
+        existing.senderAvatarUrl ?? senderContext?.avatarUrl ?? null,
+      source: existing.source ?? source,
+      reused: true,
+    };
+  }
+
+  /**
+   * Recover from a unique-index violation on `idempotencyKey`.
+   *
+   * The Redis reservation in `checkOutboundIdempotency` is a fast path, not a
+   * guarantee: its key can expire, be evicted under memory pressure, or be
+   * unavailable during a Redis blip, and two concurrent sends then both reach
+   * Mongo. The unique index is what actually prevents a double insert — this
+   * turns its rejection into the correct answer instead of a 500.
+   *
+   * Returns null when the error is not a duplicate key, or when the winning row
+   * cannot be read back. Both cases must fall through to `throw`: inventing a
+   * success for a message that may not exist would tell an agent their reply was
+   * sent when it was not.
+   */
+  private async recoverFromDuplicateKey(
+    error: any,
+    tenantId: string,
+    idempotencyKey: string | undefined,
+    senderContext: any,
+    source: string,
+  ): Promise<any | null> {
+    if (!idempotencyKey || error?.code !== 11000) return null;
+
+    const existing = await this.messageRepo.findByIdempotencyKey(
+      tenantId,
+      idempotencyKey,
+    );
+    if (!existing) {
+      this.logger.error(
+        `Duplicate key on idempotencyKey=${idempotencyKey} but no row found on re-read; surfacing the original error`,
+      );
+      return null;
+    }
+
+    this.logger.warn(
+      `Concurrent send collapsed by the unique index (idempotencyKey=${idempotencyKey}); returning message ${existing.id}`,
+    );
+    return this.buildReusedResponse(
+      existing,
+      idempotencyKey,
+      senderContext,
+      source,
+    );
+  }
+
   private async checkOutboundIdempotency(
     tenantId: string,
     idempotencyKey: string | undefined,
@@ -249,20 +339,12 @@ export class OutboundService {
     if (existing && existing.status !== 'failed') {
       return {
         reused: true,
-        response: {
-          ok: true,
-          messageId: existing.id,
-          externalMessageId: existing.externalMessageId,
-          status: existing.status,
+        response: this.buildReusedResponse(
+          existing,
           idempotencyKey,
-          clientMessageId: existing.clientMessageId,
-          senderId: existing.senderId,
-          senderName: existing.senderName ?? senderContext.name,
-          senderAvatarUrl:
-            existing.senderAvatarUrl ?? senderContext.avatarUrl ?? null,
-          source: existing.source ?? source,
-          reused: true,
-        },
+          senderContext,
+          source,
+        ),
       };
     }
 
@@ -501,7 +583,7 @@ export class OutboundService {
    * 1. Validate template exists and is APPROVED
    * 2. Resolve conversation + channel
    * 3. Persist message with type 'template'
-   * 4. Call adapter.sendTemplate() â†’ WhatsApp Cloud API
+   * 4. Call adapter.sendTemplate() → WhatsApp Cloud API
    * 5. Update status and emit events
    */
   async sendAgentTemplate(params: {
@@ -532,7 +614,7 @@ export class OutboundService {
     const source = normalizeOutboundSource(rawSource);
     const senderContext = await this.resolveSenderContext(agentId);
 
-    // â”€â”€ Idempotency check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Idempotency check ──────────────────────────────────────────
     const idempotencyResult = idempotencyKey
       ? await this.checkOutboundIdempotency(
           tenantId,
@@ -567,7 +649,7 @@ export class OutboundService {
     // message type allowed outside the 24-hour customer reply window.
 
     // 2. Build content summary for display in conversation timeline
-    const contentSummary = `ðŸ“‹ Template: ${templateName}`;
+    const contentSummary = `📋 Template: ${templateName}`;
 
     this.logger.log(
       `Agent ${agentId} sending template '${templateName}' to conversation ${conversationId}`,
@@ -682,12 +764,12 @@ export class OutboundService {
    * Send a media message from an agent to a customer.
    *
    * Flow:
-   * 1. Resolve file (from fileId â†’ S3 download, or from buffer)
+   * 1. Resolve file (from fileId → S3 download, or from buffer)
    * 2. ACL check (if fileId)
    * 3. Validate against platform limits
    * 4. Compress for platform if image
    * 5. Persist message with status 'sending'
-   * 6. Call adapter.sendMedia() â†’ update status
+   * 6. Call adapter.sendMedia() → update status
    * 7. Create outbound file record
    * 8. Emit events
    */
@@ -779,6 +861,13 @@ export class OutboundService {
       idempotencyKey,
       botTimestamp,
     });
+
+    // A concurrent send already persisted AND is dispatching this message.
+    // Return its result rather than dispatching again.
+    if (message?.__reusedResponse) {
+      const { __reusedResponse: _flag, ...response } = message;
+      return response;
+    }
 
     // Skip aggregate update when processor handles it (avoids double write)
     if (!params.skipAggregateUpdate) {
@@ -876,13 +965,18 @@ export class OutboundService {
         providerTimestamp: botTimestamp,
       });
     } catch (error) {
-      if (idempotencyKey && error?.code === 11000) {
-        const existing = await this.messageRepo.findByIdempotencyKey(
-          tenantId,
-          idempotencyKey,
-        );
-        if (existing) return existing;
-      }
+      // Mirrors the agent path. `reused` is what lets sendBotMessage return
+      // immediately instead of dispatching a second copy — the previous version
+      // returned the bare row, indistinguishable from a fresh insert, so the bot
+      // reply went out twice.
+      const recovered = await this.recoverFromDuplicateKey(
+        error,
+        tenantId,
+        idempotencyKey,
+        { name: 'Bot', avatarUrl: null },
+        'bot',
+      );
+      if (recovered) return { ...recovered, __reusedResponse: true };
       throw error;
     }
   }
@@ -1022,7 +1116,7 @@ export class OutboundService {
       };
     }
 
-    // No customer message yet â€” window is closed
+    // No customer message yet — window is closed
     if (!conversation.lastCustomerMessageAt) {
       return {
         isOpen: false,

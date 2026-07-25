@@ -131,7 +131,13 @@ describe('WhatsAppAdapter', () => {
       expect(result.mediaUrl).toBeUndefined();
     });
 
-    it('should throw if no messages in payload', () => {
+    it('should return null — NOT throw — when the payload has no messages', () => {
+      // This test previously expected a throw. Returning null is the correct
+      // design and the reason is the delivery contract, not style: Meta retries
+      // any non-2xx webhook with backoff, so throwing on a payload we simply
+      // have nothing to do with would turn every status receipt into a retry
+      // storm against our own endpoint. `normalize` returns `OmniPayload | null`
+      // and the caller treats null as "acknowledge and skip".
       const raw = {
         messaging_product: 'whatsapp',
         metadata: {},
@@ -139,9 +145,31 @@ describe('WhatsAppAdapter', () => {
         messages: [],
       };
 
-      expect(() => adapter.normalize(raw, 'tenant_1', 'channel_1')).toThrow(
-        'WhatsApp webhook has no messages',
-      );
+      expect(adapter.normalize(raw, 'tenant_1', 'channel_1')).toBeNull();
+    });
+
+    it('should return null for a delivery-status webhook', () => {
+      // The common shape of the above: WhatsApp sends delivered/read/failed
+      // receipts in `statuses` with no `messages` at all.
+      const raw = {
+        messaging_product: 'whatsapp',
+        metadata: {},
+        statuses: [{ id: 'wamid.1', status: 'delivered' }],
+      };
+
+      expect(adapter.normalize(raw, 'tenant_1', 'channel_1')).toBeNull();
+    });
+
+    it('should return null when the payload omits messages entirely', () => {
+      // Not the same as an empty array — an absent key must not throw on
+      // property access either.
+      expect(
+        adapter.normalize(
+          { messaging_product: 'whatsapp', metadata: {} },
+          'tenant_1',
+          'channel_1',
+        ),
+      ).toBeNull();
     });
   });
 });

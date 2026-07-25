@@ -797,7 +797,7 @@ describe('AssignmentService', () => {
       evaluatorMock.evaluateForTenant.mockResolvedValue({
         ruleId: 'rule_1',
         ruleName: 'Facebook VIP',
-        teamId: 'team_sales',
+        groupId: 'team_sales',
         strategy: 'least-busy',
         sticky: false,
         requiredSkills: [],
@@ -830,7 +830,7 @@ describe('AssignmentService', () => {
       evaluatorMock.evaluateForTenant.mockResolvedValue({
         ruleId: 'rule_2',
         ruleName: 'Spanish Support',
-        teamId: 'team_support',
+        groupId: 'team_support',
         strategy: 'round-robin',
         sticky: false,
         requiredSkills: ['spanish'],

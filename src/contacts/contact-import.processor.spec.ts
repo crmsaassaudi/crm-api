@@ -3,6 +3,7 @@ import {
   ContactImportProcessor,
 } from './contact-import.processor';
 import { ImportSummary } from './contact-import-report.service';
+import { ImportDedupEngine } from '../common/import/import-dedup.service';
 
 /** Minimal report-writer stub capturing appended errors. */
 function makeReport() {
@@ -30,17 +31,49 @@ function makeModel(existingDocs: any[] = []) {
   };
 }
 
+/**
+ * Object-storage stub. The constructor calls `storageFactory.create()` eagerly
+ * to build its report service, so this one cannot be an empty object — passing
+ * `{}` was what produced "this.storageFactory.create is not a function".
+ */
+function makeStorageFactory() {
+  return {
+    create: jest.fn(() => ({
+      getObjectStream: jest.fn(),
+      putObject: jest.fn(),
+      deleteObject: jest.fn(),
+    })),
+  };
+}
+
 function makeProcessor(model: any) {
-  // Only model is exercised by the methods under test; the rest are stubs.
+  // Named locals rather than a row of positional `{} as any` stubs. The previous
+  // version was silently one position out of step from argument 5 onward,
+  // because `eventEmitter` had been inserted into the constructor and every
+  // stub is cast to `any` — so TypeScript could not object, and the CLS mock
+  // ended up being injected as the Redis client. Naming them means the next
+  // signature change is a compile error or an obvious mismatch here, not a
+  // mystery at runtime.
+  const contactModel = model;
+  const storageFactory = makeStorageFactory();
+  const lockService = { acquire: jest.fn(), release: jest.fn() };
+  const eventEmitter = { emit: jest.fn(), emitAsync: jest.fn() };
+  const cls = { set: jest.fn(), get: jest.fn(), runWith: jest.fn() };
+  const redis = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
+  const importJobModel = { updateOne: jest.fn(() => ({})) };
+  const connection = { startSession: jest.fn() };
+
+  // Only `contactModel` is exercised by the methods under test; the rest exist
+  // to satisfy construction.
   return new ContactImportProcessor(
-    model,
-    {} as any,
-    {} as any,
-    {} as any,
-    {} as any,
-    { set: jest.fn(), get: jest.fn(), runWith: jest.fn() } as any,
-    {} as any,
-    { updateOne: jest.fn(() => ({})) } as any,
+    contactModel,
+    storageFactory as any,
+    lockService as any,
+    eventEmitter as any,
+    cls as any,
+    redis as any,
+    importJobModel as any,
+    connection as any,
   );
 }
 
@@ -73,6 +106,37 @@ const emptySummary = (): ImportSummary => ({
   errors: 0,
 });
 
+/**
+ * `processBatch` takes a context object, not the eight positional arguments this
+ * suite was written against. The dedup fields / policy / seen-key set that used
+ * to be separate parameters now live inside ImportDedupEngine + DedupConfig, and
+ * the engine keeps the within-file claimed-key state that `new Set()` used to
+ * stand in for — so one engine must be shared across a run, exactly as the real
+ * processor does.
+ */
+function makeContext(
+  overrides: {
+    matchingFields?: string[];
+    policy?: string;
+    summary?: ImportSummary;
+    report?: ReturnType<typeof makeReport>;
+    dryRun?: boolean;
+    dedupEngine?: ImportDedupEngine;
+  } = {},
+) {
+  return {
+    dedupEngine: overrides.dedupEngine ?? new ImportDedupEngine(),
+    dedupConfig: {
+      matchingFields: overrides.matchingFields ?? ['emails'],
+      policy: (overrides.policy ?? 'merge') as any,
+    },
+    refResolver: undefined,
+    summary: overrides.summary ?? emptySummary(),
+    report: (overrides.report ?? makeReport()) as any,
+    dryRun: overrides.dryRun ?? false,
+  };
+}
+
 describe('ContactImportProcessor — mapping', () => {
   const proc: any = makeProcessor(makeModel());
 
@@ -87,9 +151,12 @@ describe('ContactImportProcessor — mapping', () => {
       baseData().mapping,
       1,
     );
+    // `mapRow` returns { row, fields, arrayFields }. Multi-value columns live
+    // under `arrayFields`, not at the top level — the assertions below used to
+    // read `m.emails` and silently compared undefined.
     expect(m.fields.firstName).toBe('Alice');
-    expect(m.emails).toEqual(['a@x.com', 'b@x.com']);
-    expect(m.phones).toEqual(['0901234567']);
+    expect(m.arrayFields.emails).toEqual(['a@x.com', 'b@x.com']);
+    expect(m.arrayFields.phones).toEqual(['0901234567']);
   });
 
   it('should keeps a leading + on phone numbers', () => {
@@ -98,7 +165,7 @@ describe('ContactImportProcessor — mapping', () => {
       baseData().mapping,
       1,
     );
-    expect(m.phones).toEqual(['+84901112222']);
+    expect(m.arrayFields.phones).toEqual(['+84901112222']);
   });
 });
 
@@ -184,12 +251,11 @@ describe('ContactImportProcessor — processBatch', () => {
     await proc.processBatch(
       rows(proc),
       baseData(),
-      dedup,
-      'merge',
-      new Set(),
-      summary,
-      makeReport(),
-      false,
+      makeContext({
+        policy: 'merge',
+        summary: summary,
+        dryRun: false,
+      }),
     );
     expect(summary.inserted).toBe(2);
     const call = (model.bulkWrite as jest.Mock).mock.calls[0] as any[];
@@ -207,12 +273,11 @@ describe('ContactImportProcessor — processBatch', () => {
     await proc.processBatch(
       rows(proc),
       baseData(),
-      dedup,
-      'skip',
-      new Set(),
-      summary,
-      makeReport(),
-      false,
+      makeContext({
+        policy: 'skip',
+        summary: summary,
+        dryRun: false,
+      }),
     );
     // a@x.com matches existing → skipped; c@x.com is new → inserted.
     expect(summary.skipped).toBe(1);
@@ -226,12 +291,11 @@ describe('ContactImportProcessor — processBatch', () => {
     await proc.processBatch(
       rows(proc),
       baseData(),
-      dedup,
-      'merge',
-      new Set(),
-      summary,
-      makeReport(),
-      true,
+      makeContext({
+        policy: 'merge',
+        summary: summary,
+        dryRun: true,
+      }),
     );
     expect(model.bulkWrite).not.toHaveBeenCalled();
     expect(summary.inserted).toBe(2);
@@ -252,12 +316,12 @@ describe('ContactImportProcessor — processBatch', () => {
     await proc.processBatch(
       batch,
       baseData(),
-      dedup,
-      'merge',
-      new Set(),
-      summary,
-      report,
-      false,
+      makeContext({
+        policy: 'merge',
+        summary: summary,
+        dryRun: false,
+        report: report,
+      }),
     );
     expect(summary.errors).toBe(1);
     expect(summary.inserted).toBe(0);
@@ -283,12 +347,11 @@ describe('ContactImportProcessor — processBatch', () => {
     await proc.processBatch(
       batch,
       baseData(),
-      dedup,
-      'merge',
-      new Set(),
-      summary,
-      makeReport(),
-      false,
+      makeContext({
+        policy: 'merge',
+        summary: summary,
+        dryRun: false,
+      }),
     );
     expect(summary.inserted).toBe(1);
     expect(summary.skipped).toBe(1);

@@ -1,4 +1,7 @@
-import { NotFoundException } from '@nestjs/common';
+import {
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { RoleAssignmentService } from './role-assignment.service';
 
 describe('RoleAssignmentService', () => {
@@ -10,6 +13,9 @@ describe('RoleAssignmentService', () => {
   let customRoles: any;
   let audit: any;
   let eventEmitter: any;
+  let moduleRef: any;
+  let userRepository: any;
+  let groupRepository: any;
   let service: RoleAssignmentService;
 
   beforeEach(() => {
@@ -23,12 +29,67 @@ describe('RoleAssignmentService', () => {
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
     eventEmitter = { emit: jest.fn() };
+
+    // ModuleRef stub backing the H-03 principal-membership check. Default: the
+    // principal IS a member of the tenant, so the pre-existing tests keep
+    // exercising the grant/revoke behaviour they were written for.
+    userRepository = {
+      findByIdsGlobal: jest
+        .fn()
+        .mockResolvedValue([{ id: userId, tenants: [{ tenantId }] }]),
+    };
+    groupRepository = {
+      findById: jest.fn().mockResolvedValue({ id: 'group_1' }),
+    };
+    moduleRef = {
+      get: jest.fn((token: any) =>
+        String(token?.name).includes('Group')
+          ? groupRepository
+          : userRepository,
+      ),
+    };
+
     service = new RoleAssignmentService(
       model,
       customRoles,
       audit,
       eventEmitter,
+      moduleRef,
     );
+  });
+
+  it('should H-03: refuses to grant a role to a non-member of the tenant', async () => {
+    // A user of another workspace. Previously this created a working grant,
+    // because the evaluator synthesized the missing membership row.
+    userRepository.findByIdsGlobal.mockResolvedValueOnce([
+      { id: userId, tenants: [{ tenantId: 'some_other_tenant' }] },
+    ]);
+
+    await expect(
+      service.grant({
+        tenantId,
+        principalType: 'user',
+        principalId: userId,
+        roleId,
+        grantedById: 'admin_1',
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(model.create).not.toHaveBeenCalled();
+  });
+
+  it('should H-03: refuses to grant a role to a group of another tenant', async () => {
+    groupRepository.findById.mockResolvedValueOnce(null);
+
+    await expect(
+      service.grant({
+        tenantId,
+        principalType: 'group',
+        principalId: 'group_from_elsewhere',
+        roleId,
+        grantedById: 'admin_1',
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(model.create).not.toHaveBeenCalled();
   });
 
   it('should grant validates the role exists in the tenant', async () => {

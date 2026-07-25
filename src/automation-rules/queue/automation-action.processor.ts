@@ -17,7 +17,7 @@ import {
   SendEmailExecutor,
   SendSmsExecutor,
   UpdateFieldExecutor,
-  RouteToTeamExecutor,
+  RouteToGroupExecutor,
   WebhookExecutor,
   CreateTaskExecutor,
   CreateTicketExecutor,
@@ -47,7 +47,7 @@ export class ActionProcessorMixin {
     'send_email',
     'send_sms',
     'update_field',
-    'route_to_team',
+    'route_to_group',
     'webhook',
     'create_task',
     'create_ticket',
@@ -316,7 +316,7 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
     sendEmail: SendEmailExecutor,
     sendSms: SendSmsExecutor,
     updateField: UpdateFieldExecutor,
-    routeToTeam: RouteToTeamExecutor,
+    routeToGroup: RouteToGroupExecutor,
     webhook: WebhookExecutor,
     createTask: CreateTaskExecutor,
     createTicket: CreateTicketExecutor,
@@ -337,7 +337,7 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
       [sendEmail.actionType, sendEmail],
       [sendSms.actionType, sendSms],
       [updateField.actionType, updateField],
-      [routeToTeam.actionType, routeToTeam],
+      [routeToGroup.actionType, routeToGroup],
       [webhook.actionType, webhook],
       [createTask.actionType, createTask],
       [createTicket.actionType, createTicket],
@@ -457,7 +457,7 @@ export class AutomationSmsProcessor extends BaseTenantConsumer<AutomationActionJ
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Internal Queue Processor (UpdateField + RouteToTeam)
+// Internal Queue Processor (UpdateField + RouteToGroup)
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Processor(AUTOMATION_INTERNAL_QUEUE)
@@ -470,7 +470,7 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
     executionLogRepo: AutomationExecutionLogRepository,
     dlqProducer: AutomationDlqProducer,
     updateField: UpdateFieldExecutor,
-    routeToTeam: RouteToTeamExecutor,
+    routeToGroup: RouteToGroupExecutor,
     createTask: CreateTaskExecutor,
     createTicket: CreateTicketExecutor,
     addTag: AddTagExecutor,
@@ -484,7 +484,7 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
     this.cls = cls;
     const executors = new Map<string, ActionExecutor>([
       [updateField.actionType, updateField],
-      [routeToTeam.actionType, routeToTeam],
+      [routeToGroup.actionType, routeToGroup],
       [createTask.actionType, createTask],
       [createTicket.actionType, createTicket],
       [addTag.actionType, addTag],

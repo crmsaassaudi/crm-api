@@ -8,6 +8,7 @@ export class CustomRoleMapper {
     entity.name = raw.name;
     entity.description = raw.description ?? '';
     entity.permissions = raw.permissions ?? [];
+    entity.dataScope = raw.dataScope ?? null;
     entity.isSystem = Boolean(raw.isSystem);
     entity.systemKey = raw.systemKey ?? null;
     entity.templateVersion = raw.templateVersion ?? null;
