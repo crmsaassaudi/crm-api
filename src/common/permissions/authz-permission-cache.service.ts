@@ -143,8 +143,8 @@ export class AuthzPermissionCacheService {
         strict: false,
       });
       const roles = await rolesService.findAll(tenantId);
-      return (roles ?? []).map((role: any) => ({
-        id: String(role._id ?? role.id),
+      return (roles ?? []).map((role) => ({
+        id: String(role.id),
         name: role.name,
         permissions: role.permissions ?? [],
       }));

@@ -34,9 +34,7 @@ export class GroupsService {
   ): Promise<void> {
     if (!roleIds?.length) return;
     const tenantRoles = await this.customRoles.findAll(tenantId);
-    const validIds = new Set(
-      tenantRoles.map((r: any) => String(r._id ?? r.id)),
-    );
+    const validIds = new Set(tenantRoles.map((r) => String(r.id)));
     const unknown = roleIds.filter((id) => !validIds.has(String(id)));
     if (unknown.length) {
       throw new UnprocessableEntityException(

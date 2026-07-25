@@ -19,7 +19,7 @@ describe('RoleAssignmentService', () => {
       findOne: jest.fn(),
     };
     customRoles = {
-      findById: jest.fn().mockResolvedValue({ _id: roleId }),
+      findById: jest.fn().mockResolvedValue({ id: roleId }),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
     eventEmitter = { emit: jest.fn() };

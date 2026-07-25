@@ -9,6 +9,7 @@ import {
   AuthzAuditCategory,
   AuthzAuditAction,
 } from './authz-audit-log.schema';
+import { AuthzAuditLogMapper } from './mappers/authz-audit-log.mapper';
 
 export interface AuthzAuditEntry {
   category: AuthzAuditCategory;
@@ -128,7 +129,11 @@ export class AuthzAuditService {
           ).toString('base64')
         : null;
 
-    return { data: page, nextCursor, hasMore };
+    return {
+      data: AuthzAuditLogMapper.toDomainList(page),
+      nextCursor,
+      hasMore,
+    };
   }
 
   private applyCursor(where: any, cursor?: string): void {

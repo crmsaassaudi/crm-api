@@ -14,6 +14,8 @@ import {
 } from './role-assignment.schema';
 import { CustomRolesService } from './custom-roles.service';
 import { AuthzAuditService } from '../authz-audit/authz-audit.service';
+import { RoleAssignment } from './domain/role-assignment';
+import { RoleAssignmentMapper } from './mappers/role-assignment.mapper';
 
 export interface GrantRoleParams {
   tenantId: string;
@@ -46,7 +48,7 @@ export class RoleAssignmentService {
   ) {}
 
   /** Grant a role to a principal (optionally time-bounded). */
-  async grant(params: GrantRoleParams): Promise<RoleAssignmentDocument> {
+  async grant(params: GrantRoleParams): Promise<RoleAssignment> {
     // The role must exist in this tenant — reject dangling / cross-tenant ids.
     await this.customRoles.findById(params.roleId, params.tenantId);
 
@@ -81,7 +83,7 @@ export class RoleAssignmentService {
         reason: params.reason ?? null,
       },
     });
-    return doc;
+    return RoleAssignmentMapper.toDomain(doc);
   }
 
   /** Soft-revoke an active assignment (preserves the grant history). */
@@ -138,13 +140,18 @@ export class RoleAssignmentService {
   }
 
   /** Admin listing for a tenant, newest first (includes expired/revoked). */
-  listForTenant(
+  async listForTenant(
     tenantId: string,
     filter?: { principalId?: string },
-  ): Promise<RoleAssignmentDocument[]> {
+  ): Promise<RoleAssignment[]> {
     const where: any = { tenantId };
     if (filter?.principalId) where.principalId = filter.principalId;
-    return this.model.find(where).sort({ createdAt: -1 }).lean().exec() as any;
+    const rows = await this.model
+      .find(where)
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+    return RoleAssignmentMapper.toDomainList(rows);
   }
 
   private invalidate(

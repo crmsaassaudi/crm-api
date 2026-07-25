@@ -19,6 +19,8 @@ import {
   evaluatePolicies,
 } from './abac.evaluator';
 import { AuthzAuditService } from '../authz-audit/authz-audit.service';
+import { AccessPolicy } from './domain/access-policy';
+import { AccessPolicyMapper } from './mappers/access-policy.mapper';
 
 const VALID_OPERATORS: AbacOperator[] = [
   'eq',
@@ -102,18 +104,19 @@ export class AccessPolicyService {
 
   // ── CRUD ────────────────────────────────────────────────────────────────────
 
-  findAll(tenantId: string): Promise<AccessPolicyDocument[]> {
-    return this.model
+  async findAll(tenantId: string): Promise<AccessPolicy[]> {
+    const rows = await this.model
       .find({ tenantId })
       .sort({ resource: 1, action: 1, priority: 1 })
       .lean()
-      .exec() as any;
+      .exec();
+    return AccessPolicyMapper.toDomainList(rows);
   }
 
   async create(
     tenantId: string,
     input: UpsertAccessPolicyInput,
-  ): Promise<AccessPolicyDocument> {
+  ): Promise<AccessPolicy> {
     this.validateConditions(input.conditions);
     const doc = await this.model.create({ tenantId, ...input });
     void this.audit.record({
@@ -124,14 +127,14 @@ export class AccessPolicyService {
       summary: `created ABAC policy "${input.name}" (${input.effect} ${input.resource}:${input.action})`,
       after: { effect: input.effect, conditions: input.conditions },
     });
-    return doc;
+    return AccessPolicyMapper.toDomain(doc);
   }
 
   async update(
     id: string,
     tenantId: string,
     input: Partial<UpsertAccessPolicyInput>,
-  ): Promise<AccessPolicyDocument> {
+  ): Promise<AccessPolicy> {
     if (input.conditions) this.validateConditions(input.conditions);
     const existing = await this.model.findOne({ _id: id, tenantId }).exec();
     if (!existing) throw new NotFoundException(`Access policy ${id} not found`);
@@ -155,7 +158,7 @@ export class AccessPolicyService {
         active: saved.active,
       },
     });
-    return saved;
+    return AccessPolicyMapper.toDomain(saved);
   }
 
   async remove(id: string, tenantId: string): Promise<void> {

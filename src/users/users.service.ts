@@ -63,9 +63,7 @@ export class UsersService {
   ): Promise<void> {
     if (!roleIds?.length) return;
     const tenantRoles = await this.customRoles.findAll(tenantId);
-    const validIds = new Set(
-      tenantRoles.map((r: any) => String(r._id ?? r.id)),
-    );
+    const validIds = new Set(tenantRoles.map((r) => String(r.id)));
     const unknown = roleIds.filter((id) => !validIds.has(String(id)));
     if (unknown.length) {
       throw new UnprocessableEntityException({
@@ -98,8 +96,7 @@ export class UsersService {
       tenantId,
       DEFAULT_BASELINE_SYSTEM_KEY,
     );
-    if (baseline)
-      return [String((baseline as any)._id ?? (baseline as any).id)];
+    if (baseline) return [String(baseline.id)];
 
     // Tenant predates system roles and hasn't been backfilled yet.
     this.logger.warn(

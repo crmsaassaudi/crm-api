@@ -78,9 +78,10 @@ describe('Authorization PDP (integration)', () => {
     // The tenant owns a "Sales" custom role that grants contacts:view and an
     // "Editor" role that grants contacts:edit (used by the JIT test).
     customRolesService = {
+      // CustomRolesService returns domain objects (`id`), not raw documents.
       findAll: jest.fn().mockResolvedValue([
-        { _id: salesRoleId, permissions: ['contacts:view'] },
-        { _id: editorRoleId, permissions: ['contacts:edit'] },
+        { id: salesRoleId, permissions: ['contacts:view'] },
+        { id: editorRoleId, permissions: ['contacts:edit'] },
       ]),
     };
     // No active grants by default.

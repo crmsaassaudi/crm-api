@@ -23,6 +23,8 @@ import {
 } from './permission.constants';
 import { getTenantPermissions, PermissionTenant } from './permission.engine';
 import { ADMINISTRATOR_PSEUDO_ROLE } from './system-role-templates';
+import { CustomRole } from './domain/custom-role';
+import { CustomRoleMapper } from './mappers/custom-role.mapper';
 import { AuthzAuditService } from '../authz-audit/authz-audit.service';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
 
@@ -41,7 +43,7 @@ export class CustomRolesService {
   async create(
     tenantId: string,
     dto: CreateCustomRoleDto,
-  ): Promise<CustomRoleDocument> {
+  ): Promise<CustomRole> {
     this.validatePermissions(dto.permissions);
     const role = new this.model({
       tenantId,
@@ -59,35 +61,34 @@ export class CustomRolesService {
       summary: `created role "${saved.name}"`,
       after: { name: saved.name, permissions: saved.permissions },
     });
-    return saved;
+    return CustomRoleMapper.toDomain(saved);
   }
 
-  findAll(tenantId: string): Promise<CustomRoleDocument[]> {
-    return this.model
+  async findAll(tenantId: string): Promise<CustomRole[]> {
+    const rows = await this.model
       .find({ tenantId })
       .sort({ isSystem: -1, name: 1 })
       .lean()
-      .exec() as any;
+      .exec();
+    return CustomRoleMapper.toDomainList(rows);
   }
 
   /** Look up a materialised system role by its stable template key. */
-  findBySystemKey(
+  async findBySystemKey(
     tenantId: string,
     systemKey: string,
-  ): Promise<CustomRoleDocument | null> {
-    return this.model
-      .findOne({ tenantId, systemKey })
-      .lean()
-      .exec() as Promise<CustomRoleDocument | null>;
+  ): Promise<CustomRole | null> {
+    const row = await this.model.findOne({ tenantId, systemKey }).lean().exec();
+    return row ? CustomRoleMapper.toDomain(row) : null;
   }
 
-  async findById(id: string, tenantId: string): Promise<CustomRoleDocument> {
+  async findById(id: string, tenantId: string): Promise<CustomRole> {
     const role = (await this.model
       .findOne({ _id: id, tenantId })
       .lean()
       .exec()) as any;
     if (!role) throw new NotFoundException(`Custom role ${id} not found`);
-    return role;
+    return CustomRoleMapper.toDomain(role);
   }
 
   /**
@@ -99,7 +100,7 @@ export class CustomRolesService {
     id: string,
     tenantId: string,
     dto: CloneCustomRoleDto,
-  ): Promise<CustomRoleDocument> {
+  ): Promise<CustomRole> {
     const source = await this.model
       .findOne({ _id: id, tenantId })
       .lean()
@@ -129,14 +130,14 @@ export class CustomRolesService {
       summary: `cloned role "${source.name}" into "${saved.name}"`,
       after: { name: saved.name, permissions: saved.permissions },
     });
-    return saved;
+    return CustomRoleMapper.toDomain(saved);
   }
 
   async update(
     id: string,
     tenantId: string,
     dto: UpdateCustomRoleDto,
-  ): Promise<CustomRoleDocument> {
+  ): Promise<CustomRole> {
     const role = await this.model.findOne({ _id: id, tenantId }).exec();
     if (!role) throw new NotFoundException(`Custom role ${id} not found`);
 
@@ -165,7 +166,7 @@ export class CustomRolesService {
       before,
       after: { name: saved.name, permissions: saved.permissions },
     });
-    return saved;
+    return CustomRoleMapper.toDomain(saved);
   }
 
   async remove(id: string, tenantId: string): Promise<void> {
