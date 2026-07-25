@@ -17,19 +17,19 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
     (repo as any).isConversationInScope(doc);
 
   // ── list scope ────────────────────────────────────────────────────────
-  it('adds NO scope clause when the user is an admin (visibleOwnerIds = null)', () => {
+  it('should adds NO scope clause when the user is an admin (visibleOwnerIds = null)', () => {
     const cls = createClsMock({ visibleOwnerIds: null });
     const filter = buildFilter(build(cls), { tenantId: 't1' });
     expect(filter.$and).toBeUndefined();
   });
 
-  it('adds NO scope clause on the system path (visibleOwnerIds undefined)', () => {
+  it('should adds NO scope clause on the system path (visibleOwnerIds undefined)', () => {
     const cls = createClsMock({ visibleOwnerIds: undefined });
     const filter = buildFilter(build(cls), { tenantId: 't1' });
     expect(filter.$and).toBeUndefined();
   });
 
-  it('restricts a scoped user to assigned-agent / claimer / group', () => {
+  it('should restricts a scoped user to assigned-agent / claimer / group', () => {
     const cls = createClsMock({
       visibleOwnerIds: ['u1', 'u2'],
       visibleGroupIds: ['g1'],
@@ -52,7 +52,7 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
     });
   });
 
-  it('includes the unassigned pool only when opted in', () => {
+  it('should includes the unassigned pool only when opted in', () => {
     const cls = createClsMock({
       visibleOwnerIds: ['u1'],
       visibleGroupIds: [],
@@ -65,7 +65,7 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
     });
   });
 
-  it('ANDs the scope on top of a caller-supplied assignment filter (cannot widen)', () => {
+  it('should ANDs the scope on top of a caller-supplied assignment filter (cannot widen)', () => {
     const cls = createClsMock({ visibleOwnerIds: ['u1'], visibleGroupIds: [] });
     const filter = buildFilter(build(cls), {
       tenantId: 't1',
@@ -80,12 +80,12 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
   });
 
   // ── single-record scope ────────────────────────────────────────────────
-  it('allows an in-scope conversation by assigned agent', () => {
+  it('should allows an in-scope conversation by assigned agent', () => {
     const cls = createClsMock({ visibleOwnerIds: ['u1'], visibleGroupIds: [] });
     expect(inScope(build(cls), { assignedAgentId: 'u1' })).toBe(true);
   });
 
-  it('allows an in-scope conversation by group', () => {
+  it('should allows an in-scope conversation by group', () => {
     const cls = createClsMock({
       visibleOwnerIds: ['u1'],
       visibleGroupIds: ['g9'],
@@ -93,7 +93,7 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
     expect(inScope(build(cls), { assignedGroupId: 'g9' })).toBe(true);
   });
 
-  it('DENIES an out-of-scope conversation (assigned to a stranger)', () => {
+  it('should DENIES an out-of-scope conversation (assigned to a stranger)', () => {
     const cls = createClsMock({
       visibleOwnerIds: ['u1'],
       visibleGroupIds: ['g1'],
@@ -101,7 +101,7 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
     expect(inScope(build(cls), { assignedAgentId: 'stranger' })).toBe(false);
   });
 
-  it('DENIES an unassigned conversation unless the pool is opted in', () => {
+  it('should DENIES an unassigned conversation unless the pool is opted in', () => {
     const off = createClsMock({ visibleOwnerIds: ['u1'], visibleGroupIds: [] });
     expect(
       inScope(build(off), { assignedAgentId: null, assignedGroupId: null }),
@@ -117,7 +117,7 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
     ).toBe(true);
   });
 
-  it('allows any conversation for an admin (visibleOwnerIds null)', () => {
+  it('should allows any conversation for an admin (visibleOwnerIds null)', () => {
     const cls = createClsMock({ visibleOwnerIds: null });
     expect(inScope(build(cls), { assignedAgentId: 'anyone' })).toBe(true);
   });

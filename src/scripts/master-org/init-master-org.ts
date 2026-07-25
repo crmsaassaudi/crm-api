@@ -26,7 +26,6 @@ async function main() {
     const svc = app.get(MasterOrgInitService);
     const result = await svc.run(cfg);
 
-    // eslint-disable-next-line no-console
     console.log(
       [
         '',
@@ -60,7 +59,6 @@ async function main() {
 main()
   .then(() => process.exit(0))
   .catch((err) => {
-    // eslint-disable-next-line no-console
     console.error('[init-master-org] FAILED:', err?.message || err);
     if (err?.stack) console.error(err.stack);
     process.exit(1);

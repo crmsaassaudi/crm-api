@@ -52,11 +52,11 @@ export class FieldMaskingInterceptor implements NestInterceptor {
 
     const request = context.switchToHttp().getRequest();
 
-    return next.handle().pipe(
-      switchMap((data) =>
-        from(this.maskResponse(data, fields, request)),
-      ),
-    );
+    return next
+      .handle()
+      .pipe(
+        switchMap((data) => from(this.maskResponse(data, fields, request))),
+      );
   }
 
   private async maskResponse(
@@ -145,7 +145,10 @@ export class FieldMaskingInterceptor implements NestInterceptor {
   private maskData(data: any, fields: SensitiveField[]): any {
     if (Array.isArray(data)) return data.map((i) => this.maskItem(i, fields));
     if (data?.data && Array.isArray(data.data)) {
-      return { ...data, data: data.data.map((i: any) => this.maskItem(i, fields)) };
+      return {
+        ...data,
+        data: data.data.map((i: any) => this.maskItem(i, fields)),
+      };
     }
     return this.maskItem(data, fields);
   }

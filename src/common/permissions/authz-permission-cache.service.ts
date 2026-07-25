@@ -12,6 +12,8 @@ import { RoleAssignmentService } from './role-assignment.service';
 import {
   calculateEffectivePermissions,
   canAccess,
+  explainEffectivePermissions,
+  EffectivePermissionExplanation,
   PermissionTenant,
 } from './permission.engine';
 import { PermissionRuleMetadata } from './permission.decorator';
@@ -132,10 +134,10 @@ export class AuthzPermissionCacheService {
     return Boolean(statusId) && statusId !== StatusEnum.active;
   }
 
-  /** Load the tenant's custom roles as {id, permissions} for engine expansion. */
+  /** Load the tenant's custom roles as {id, name, permissions} for engine expansion. */
   private async loadTenantRoles(
     tenantId: string,
-  ): Promise<{ id: string; permissions: string[] }[]> {
+  ): Promise<{ id: string; name?: string; permissions: string[] }[]> {
     try {
       const rolesService = this.moduleRef.get(CustomRolesService, {
         strict: false,
@@ -143,6 +145,7 @@ export class AuthzPermissionCacheService {
       const roles = await rolesService.findAll(tenantId);
       return (roles ?? []).map((role: any) => ({
         id: String(role._id ?? role.id),
+        name: role.name,
         permissions: role.permissions ?? [],
       }));
     } catch (error) {
@@ -505,6 +508,104 @@ export class AuthzPermissionCacheService {
     return (
       (await tenantsRepository.findByAlias(tenantHintString)) ??
       (await tenantsRepository.findByKeycloakOrgId(tenantHintString))
+    );
+  }
+
+  /**
+   * Resolve a user's EFFECTIVE permissions with source attribution, for admin
+   * preview ("what can this user do, and why"). Not cached — always computed
+   * fresh from roles/groups/JIT so the preview reflects the true current state.
+   */
+  async explainForUser(
+    rawUserId: string,
+    tenantHint?: string,
+  ): Promise<EffectivePermissionExplanation> {
+    const tenantsRepository = this.moduleRef.get(TenantsRepository, {
+      strict: false,
+    });
+    const groupRepository = this.moduleRef.get(GroupRepository, {
+      strict: false,
+    });
+
+    const user = await this.resolveUser(rawUserId);
+    if (!user) {
+      return {
+        effective: [],
+        sources: {},
+        tenantCeiling: [],
+        fullAccess: false,
+      };
+    }
+
+    const resolvedHint = tenantHint ?? user.tenants?.[0]?.tenantId;
+    const tenant = await this.resolveTenant(
+      tenantsRepository,
+      resolvedHint ? String(resolvedHint) : undefined,
+    );
+    if (!tenant) {
+      return {
+        effective: [],
+        sources: {},
+        tenantCeiling: [],
+        fullAccess: false,
+      };
+    }
+
+    const permissionTenant: PermissionTenant = {
+      id: String(tenant.id),
+      ownerId: (tenant as any).ownerId ?? null,
+      availablePermissions: (tenant as any).availablePermissions ?? null,
+      disabledCorePermissions: (tenant as any).disabledCorePermissions ?? null,
+    };
+
+    // Deactivated user → no permissions (mirror the runtime deny).
+    if (this.isInactive(user)) {
+      return {
+        effective: [],
+        sources: {},
+        tenantCeiling: explainEffectivePermissions(permissionTenant, {
+          id: String(user.id),
+          tenants: [],
+        }).tenantCeiling,
+        fullAccess: false,
+      };
+    }
+
+    const superAdmin = user.platformRole?.id === PlatformRoleEnum.SUPER_ADMIN;
+
+    const [userGroups, tenantRoles] = await Promise.all([
+      groupRepository.findGroupsByMemberWithAncestors(
+        String(tenant.id),
+        String(user.id),
+      ),
+      this.loadTenantRoles(String(tenant.id)),
+    ]);
+
+    const groupIds = userGroups
+      .map((group: any) => group?.id)
+      .filter(Boolean)
+      .map(String);
+    const assignmentRoleIds = await this.loadActiveAssignmentRoleIds(
+      String(tenant.id),
+      [String(user.id), ...groupIds],
+    );
+    const subject = this.withAssignmentRoles(
+      user,
+      String(tenant.id),
+      assignmentRoleIds,
+    );
+
+    return explainEffectivePermissions(
+      permissionTenant,
+      { id: String(subject.id), tenants: subject.tenants },
+      userGroups.map((group: any) => ({
+        id: group?.id ? String(group.id) : undefined,
+        name: group?.name,
+        permissions: group?.permissions ?? [],
+        roleIds: (group?.roleIds ?? []).map(String),
+      })),
+      tenantRoles,
+      { superAdmin },
     );
   }
 

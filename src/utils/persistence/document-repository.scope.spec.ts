@@ -24,19 +24,19 @@ describe('BaseDocumentRepository.applyTenantFilter — unowned scope (C3)', () =
 
   const ownerOr = (filter: any) => filter.$and?.[0]?.$or as any[] | undefined;
 
-  it('adds NO owner filter for an admin (visibleOwnerIds = null)', () => {
+  it('should adds NO owner filter for an admin (visibleOwnerIds = null)', () => {
     const filter = repo(createClsMock({ visibleOwnerIds: null })).applyFilter();
     expect(filter.$and).toBeUndefined();
   });
 
-  it('adds NO owner filter on the system path (undefined)', () => {
+  it('should adds NO owner filter on the system path (undefined)', () => {
     const filter = repo(
       createClsMock({ visibleOwnerIds: undefined }),
     ).applyFilter();
     expect(filter.$and).toBeUndefined();
   });
 
-  it('restricts a scoped user to visible owners WITHOUT unowned records by default', () => {
+  it('should restricts a scoped user to visible owners WITHOUT unowned records by default', () => {
     const filter = repo(
       createClsMock({
         visibleOwnerIds: ['u1', 'u2'],
@@ -49,7 +49,7 @@ describe('BaseDocumentRepository.applyTenantFilter — unowned scope (C3)', () =
     expect(or).not.toContainEqual({ ownerId: null });
   });
 
-  it('includes unowned records only when the tenant opts in', () => {
+  it('should includes unowned records only when the tenant opts in', () => {
     const filter = repo(
       createClsMock({
         visibleOwnerIds: ['u1'],
@@ -62,7 +62,7 @@ describe('BaseDocumentRepository.applyTenantFilter — unowned scope (C3)', () =
     expect(or).toContainEqual({ ownerId: null });
   });
 
-  it('preserves an existing caller filter alongside the scope clause', () => {
+  it('should preserves an existing caller filter alongside the scope clause', () => {
     const filter = repo(
       createClsMock({ visibleOwnerIds: ['u1'], includeUnownedInScope: false }),
     ).applyFilter({ deletedAt: { $exists: false } });

@@ -36,7 +36,9 @@ describe('Authorization PDP (integration)', () => {
   const buildUser = (overrides: any = {}) => ({
     id: userId,
     email: 'agent@example.com',
-    tenants: [{ tenantId, roles: [], roleIds: [salesRoleId], joinedAt: new Date() }],
+    tenants: [
+      { tenantId, roles: [], roleIds: [salesRoleId], joinedAt: new Date() },
+    ],
     ...overrides,
   });
 
@@ -108,7 +110,7 @@ describe('Authorization PDP (integration)', () => {
     authz = new AuthorizationService(cache, objectAcl, accessPolicy);
   });
 
-  it('grants a member access via a tenant custom-role reference (RBAC expansion)', async () => {
+  it('should grants a member access via a tenant custom-role reference (RBAC expansion)', async () => {
     const decision = await authz.canPerformAction({
       rule: { action: 'view', resource: 'contacts' },
       rawUserId: userId,
@@ -121,7 +123,7 @@ describe('Authorization PDP (integration)', () => {
     expect(customRolesService.findAll).toHaveBeenCalledWith(tenantId);
   });
 
-  it('denies an action the resolved role does not grant', async () => {
+  it('should denies an action the resolved role does not grant', async () => {
     const decision = await authz.canPerformAction({
       rule: { action: 'edit', resource: 'contacts' },
       rawUserId: userId,
@@ -132,7 +134,7 @@ describe('Authorization PDP (integration)', () => {
     expect(decision.allowed).toBe(false);
   });
 
-  it('denies a DEACTIVATED user even though their role grants the action', async () => {
+  it('should denies a DEACTIVATED user even though their role grants the action', async () => {
     userRepository.findByIdsGlobal.mockResolvedValue([
       buildUser({ status: { id: 'inactive' } }),
     ]);
@@ -148,7 +150,7 @@ describe('Authorization PDP (integration)', () => {
     expect(decision.denyReason).toBe('user_inactive');
   });
 
-  it('grants platform super-admin only with BOTH claim and DB confirmation (C5)', async () => {
+  it('should grants platform super-admin only with BOTH claim and DB confirmation (C5)', async () => {
     userRepository.findByIdsGlobal.mockResolvedValue([
       buildUser({ platformRole: { id: PlatformRoleEnum.SUPER_ADMIN } }),
     ]);
@@ -164,7 +166,7 @@ describe('Authorization PDP (integration)', () => {
     expect(decision.superAdmin).toBe(true);
   });
 
-  it('rejects a forged super-admin CLAIM when the DB says the user is not one (C5)', async () => {
+  it('should rejects a forged super-admin CLAIM when the DB says the user is not one (C5)', async () => {
     // platformRole stays USER in the DB; only the (untrusted) token claims it.
     userRepository.findByIdsGlobal.mockResolvedValue([
       buildUser({ platformRole: { id: PlatformRoleEnum.USER }, tenants: [] }),
@@ -181,7 +183,7 @@ describe('Authorization PDP (integration)', () => {
     expect(decision.superAdmin).toBeUndefined();
   });
 
-  it('denies a DEACTIVATED super-admin (status wins over platformRole)', async () => {
+  it('should denies a DEACTIVATED super-admin (status wins over platformRole)', async () => {
     userRepository.findByIdsGlobal.mockResolvedValue([
       buildUser({
         platformRole: { id: PlatformRoleEnum.SUPER_ADMIN },
@@ -199,11 +201,16 @@ describe('Authorization PDP (integration)', () => {
     expect(decision.allowed).toBe(false);
   });
 
-  it('fails safe when a membership references an unknown / cross-tenant roleId', async () => {
+  it('should fails safe when a membership references an unknown / cross-tenant roleId', async () => {
     userRepository.findByIdsGlobal.mockResolvedValue([
       buildUser({
         tenants: [
-          { tenantId, roles: [], roleIds: ['deadbeefdeadbeefdeadbeef'], joinedAt: new Date() },
+          {
+            tenantId,
+            roles: [],
+            roleIds: ['deadbeefdeadbeefdeadbeef'],
+            joinedAt: new Date(),
+          },
         ],
       }),
     ]);
@@ -219,7 +226,7 @@ describe('Authorization PDP (integration)', () => {
     expect(decision.allowed).toBe(false);
   });
 
-  it('grants access via an active JIT role assignment on top of standing roles', async () => {
+  it('should grants access via an active JIT role assignment on top of standing roles', async () => {
     // Standing role only grants view; an active grant of the Editor role adds edit.
     roleAssignmentService.activeRoleIdsForPrincipals.mockResolvedValue([
       editorRoleId,
@@ -235,10 +242,14 @@ describe('Authorization PDP (integration)', () => {
     expect(decision.allowed).toBe(true);
     expect(
       roleAssignmentService.activeRoleIdsForPrincipals,
-    ).toHaveBeenCalledWith(tenantId, expect.arrayContaining([userId]), expect.any(Date));
+    ).toHaveBeenCalledWith(
+      tenantId,
+      expect.arrayContaining([userId]),
+      expect.any(Date),
+    );
   });
 
-  it('denies once the JIT assignment has lapsed (no active grants returned)', async () => {
+  it('should denies once the JIT assignment has lapsed (no active grants returned)', async () => {
     // Expired/revoked grants are filtered by the service → empty here.
     roleAssignmentService.activeRoleIdsForPrincipals.mockResolvedValue([]);
 

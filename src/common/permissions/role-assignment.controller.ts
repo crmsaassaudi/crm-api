@@ -20,7 +20,9 @@ export class RoleAssignmentController {
   constructor(private readonly service: RoleAssignmentService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List role assignments (JIT/permanent) for a tenant' })
+  @ApiOperation({
+    summary: 'List role assignments (JIT/permanent) for a tenant',
+  })
   @RequirePermission('view', 'settings')
   list(@Req() req: any, @Query('principalId') principalId?: string) {
     const tenantId: string = req.user?.tenantId ?? req.tenantId;
@@ -28,7 +30,9 @@ export class RoleAssignmentController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Grant a role to a principal (optionally time-bound)' })
+  @ApiOperation({
+    summary: 'Grant a role to a principal (optionally time-bound)',
+  })
   @RequirePermission('manage_system', 'settings')
   grant(@Req() req: any, @Body() dto: GrantRoleAssignmentDto) {
     const tenantId: string = req.user?.tenantId ?? req.tenantId;

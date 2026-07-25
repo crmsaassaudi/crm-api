@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ObjectAclService, type AclEntry } from './object-acl.service';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { RequirePermission } from './index';
 
 class UpsertAclDto {
   principalType: 'user' | 'group';
@@ -37,6 +38,7 @@ export class ObjectAclController {
 
   @Get()
   @ApiOperation({ summary: 'List all ACL entries for a resource record' })
+  @RequirePermission('view', 'settings')
   async list(
     @Param('resourceType') resourceType: string,
     @Param('resourceId') resourceId: string,
@@ -48,6 +50,7 @@ export class ObjectAclController {
 
   @Put()
   @ApiOperation({ summary: 'Upsert an ACL entry (grant or deny access)' })
+  @RequirePermission('manage_system', 'settings')
   async upsert(
     @Param('resourceType') resourceType: string,
     @Param('resourceId') resourceId: string,
@@ -70,6 +73,7 @@ export class ObjectAclController {
   @Delete(':principalId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Remove ACL entry for a principal' })
+  @RequirePermission('manage_system', 'settings')
   async remove(
     @Param('resourceType') resourceType: string,
     @Param('resourceId') resourceId: string,
@@ -90,6 +94,7 @@ export class ObjectAclController {
   @ApiOperation({
     summary: 'Remove ALL ACL entries for a resource record (on delete)',
   })
+  @RequirePermission('manage_system', 'settings')
   async removeAll(
     @Param('resourceType') resourceType: string,
     @Param('resourceId') resourceId: string,

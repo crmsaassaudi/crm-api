@@ -36,14 +36,14 @@ describe('PermissionGuard (adapter over AuthorizationService)', () => {
     guard = new PermissionGuard(reflector, authz as any, cls as any);
   });
 
-  it('allows access when no permission metadata is defined', async () => {
+  it('should allows access when no permission metadata is defined', async () => {
     reflector.getAllAndOverride.mockReturnValue(undefined);
     const result = await guard.canActivate(createContext({ sub: 'user_1' }));
     expect(result).toBe(true);
     expect(authz.canPerformAction).not.toHaveBeenCalled();
   });
 
-  it('denies access when user payload / userId is missing', async () => {
+  it('should denies access when user payload / userId is missing', async () => {
     reflector.getAllAndOverride.mockReturnValue({
       action: 'view',
       resource: 'contacts',
@@ -54,7 +54,7 @@ describe('PermissionGuard (adapter over AuthorizationService)', () => {
     expect(authz.canPerformAction).not.toHaveBeenCalled();
   });
 
-  it('delegates to AuthorizationService and allows when it allows', async () => {
+  it('should delegates to AuthorizationService and allows when it allows', async () => {
     reflector.getAllAndOverride.mockReturnValue({
       action: 'view',
       resource: 'contacts',
@@ -81,7 +81,7 @@ describe('PermissionGuard (adapter over AuthorizationService)', () => {
     expect(cls.set).toHaveBeenCalledWith('activeTenantId', 'tenant_1');
   });
 
-  it('denies when AuthorizationService denies', async () => {
+  it('should denies when AuthorizationService denies', async () => {
     reflector.getAllAndOverride.mockReturnValue({
       action: 'delete',
       resource: 'contacts',
@@ -96,12 +96,15 @@ describe('PermissionGuard (adapter over AuthorizationService)', () => {
     expect(result).toBe(false);
   });
 
-  it('uses payload-derived ids on a super-admin bypass', async () => {
+  it('should uses payload-derived ids on a super-admin bypass', async () => {
     reflector.getAllAndOverride.mockReturnValue({
       action: 'delete',
       resource: 'contacts',
     });
-    authz.canPerformAction.mockResolvedValue({ allowed: true, superAdmin: true });
+    authz.canPerformAction.mockResolvedValue({
+      allowed: true,
+      superAdmin: true,
+    });
 
     const result = await guard.canActivate(
       createContext({
@@ -115,7 +118,7 @@ describe('PermissionGuard (adapter over AuthorizationService)', () => {
     expect(cls.set).toHaveBeenCalledWith('userId', 'kc_op');
   });
 
-  it('passes tenantId hint from CLS to the service', async () => {
+  it('should passes tenantId hint from CLS to the service', async () => {
     reflector.getAllAndOverride.mockReturnValue({
       action: 'view',
       resource: 'contacts',
@@ -133,7 +136,7 @@ describe('PermissionGuard (adapter over AuthorizationService)', () => {
     );
   });
 
-  it('uses X-Tenant-Id header in non-production when CLS is empty', async () => {
+  it('should uses X-Tenant-Id header in non-production when CLS is empty', async () => {
     const originalEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'development';
     cls.get = jest.fn((key: string) =>

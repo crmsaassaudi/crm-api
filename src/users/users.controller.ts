@@ -41,6 +41,7 @@ import { UsersService } from './users.service';
 import { RolesGuard } from '../roles/roles.guard';
 import { ClsService } from 'nestjs-cls';
 import { RequirePermission } from '../common/permissions';
+import { AuthzPermissionCacheService } from '../common/permissions/authz-permission-cache.service';
 import {
   PaginationResponse,
   PaginationResponseDto,
@@ -59,6 +60,7 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly cls: ClsService,
+    private readonly authzCache: AuthzPermissionCacheService,
   ) {}
 
   @ApiCreatedResponse({
@@ -205,6 +207,20 @@ export class UsersController {
   @ApiParam({ name: 'id', type: String, required: true })
   getUserGroups(@Param('id') id: string) {
     return this.usersService.getUserGroups(id);
+  }
+
+  @ApiOperation({
+    summary:
+      "Resolve a user's effective permissions in the current tenant, with source attribution (role/group/direct/override) — for admin preview.",
+  })
+  @ApiOkResponse({ description: 'Effective permissions + per-key sources' })
+  @RequirePermission('view', 'users')
+  @Get(':id/effective-permissions')
+  @HttpCode(HttpStatus.OK)
+  @ApiParam({ name: 'id', type: String, required: true })
+  getEffectivePermissions(@Param('id') id: string) {
+    const tenantId = this.cls.get<string>('tenantId');
+    return this.authzCache.explainForUser(id, tenantId);
   }
 
   @ApiOkResponse({

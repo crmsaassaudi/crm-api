@@ -101,11 +101,7 @@ export class RoleAssignmentService {
     assignment.revokedById = revokedById;
     await assignment.save();
 
-    this.invalidate(
-      tenantId,
-      assignment.principalType,
-      assignment.principalId,
-    );
+    this.invalidate(tenantId, assignment.principalType, assignment.principalId);
     void this.audit.record({
       category: 'ASSIGNMENT',
       action: 'revoke',
@@ -142,17 +138,13 @@ export class RoleAssignmentService {
   }
 
   /** Admin listing for a tenant, newest first (includes expired/revoked). */
-  async listForTenant(
+  listForTenant(
     tenantId: string,
     filter?: { principalId?: string },
   ): Promise<RoleAssignmentDocument[]> {
     const where: any = { tenantId };
     if (filter?.principalId) where.principalId = filter.principalId;
-    return this.model
-      .find(where)
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec() as any;
+    return this.model.find(where).sort({ createdAt: -1 }).lean().exec() as any;
   }
 
   private invalidate(

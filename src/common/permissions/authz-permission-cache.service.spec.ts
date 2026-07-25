@@ -116,10 +116,9 @@ describe('AuthzPermissionCacheService', () => {
     const pipeline = redisClient.pipeline.mock.results[0].value;
     expect(result.allowed).toBe(true);
     expect(result.cacheHit).toBe(false);
-    expect(groupRepository.findGroupsByMemberWithAncestors).toHaveBeenCalledWith(
-      tenantId,
-      userId,
-    );
+    expect(
+      groupRepository.findGroupsByMemberWithAncestors,
+    ).toHaveBeenCalledWith(tenantId, userId);
     expect(cls.set).toHaveBeenCalledWith('activeTenantId', tenantId);
     expect(pipeline.sadd).toHaveBeenCalledWith(
       `authz:t:${tenantId}:u:${userId}:perms`,
@@ -143,10 +142,9 @@ describe('AuthzPermissionCacheService', () => {
     expect(result.allowed).toBe(true);
     expect(result.cacheHit).toBe(false);
     expect(userRepository.findByIdsGlobal).toHaveBeenCalledWith([userId]);
-    expect(groupRepository.findGroupsByMemberWithAncestors).toHaveBeenCalledWith(
-      tenantId,
-      userId,
-    );
+    expect(
+      groupRepository.findGroupsByMemberWithAncestors,
+    ).toHaveBeenCalledWith(tenantId, userId);
   });
 
   it('should not fail authorization when Redis populate fails', async () => {

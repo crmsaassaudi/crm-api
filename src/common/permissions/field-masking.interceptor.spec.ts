@@ -4,17 +4,17 @@ import { FieldMaskingInterceptor } from './field-masking.interceptor';
 import { PrincipalType } from './principal';
 
 describe('field-sensitivity strategies', () => {
-  it('masks email keeping first char + domain', () => {
+  it('should masks email keeping first char + domain', () => {
     expect(applyMask('alice@example.com', 'email')).toBe('a••••@example.com');
   });
-  it('masks phone keeping last 4', () => {
+  it('should masks phone keeping last 4', () => {
     expect(applyMask('+1 415 555 1234', 'phone')).toBe('••••1234');
   });
-  it('is idempotent (already-masked stays masked)', () => {
+  it('should is idempotent (already-masked stays masked)', () => {
     const once = applyMask('alice@example.com', 'email');
     expect(applyMask(once, 'email')).toBe(once);
   });
-  it('maskValue handles arrays of strings', () => {
+  it('should maskValue handles arrays of strings', () => {
     expect(maskValue(['a@b.com', 'c@d.com'], 'email')).toEqual([
       applyMask('a@b.com', 'email'),
       applyMask('c@d.com', 'email'),
@@ -54,40 +54,45 @@ describe('FieldMaskingInterceptor', () => {
     interceptor = new FieldMaskingInterceptor(reflector, authz, cls);
   });
 
-  it('is a no-op when the handler has no @SensitiveResource', async () => {
+  it('should is a no-op when the handler has no @SensitiveResource', async () => {
     reflector.get.mockReturnValue(undefined);
     const out = await lastValueFrom(
-      interceptor.intercept(
-        ctx(),
-        handlerReturning({ email: 'a@b.com' }),
-      ),
+      interceptor.intercept(ctx(), handlerReturning({ email: 'a@b.com' })),
     );
     expect(out).toEqual({ email: 'a@b.com' });
     expect(authz.canPerformAction).not.toHaveBeenCalled();
   });
 
-  it('masks PII when the principal lacks the unmask permission', async () => {
+  it('should masks PII when the principal lacks the unmask permission', async () => {
     reflector.get.mockReturnValue('contacts');
     authz.canPerformAction.mockResolvedValue({ allowed: false });
 
     const out = await lastValueFrom(
       interceptor.intercept(
         ctx(),
-        handlerReturning({ id: '1', email: 'alice@example.com', phone: '4155551234' }),
+        handlerReturning({
+          id: '1',
+          email: 'alice@example.com',
+          phone: '4155551234',
+        }),
       ),
     );
     expect(out.email).toBe('a••••@example.com');
     expect(out.phone).toBe('••••1234');
   });
 
-  it('leaves PII intact when the principal holds the unmask permission', async () => {
+  it('should leaves PII intact when the principal holds the unmask permission', async () => {
     reflector.get.mockReturnValue('contacts');
     authz.canPerformAction.mockResolvedValue({ allowed: true });
 
     const out = await lastValueFrom(
       interceptor.intercept(
         ctx(),
-        handlerReturning({ id: '1', email: 'alice@example.com', phone: '4155551234' }),
+        handlerReturning({
+          id: '1',
+          email: 'alice@example.com',
+          phone: '4155551234',
+        }),
       ),
     );
     expect(out.email).toBe('alice@example.com');
@@ -96,7 +101,7 @@ describe('FieldMaskingInterceptor', () => {
     expect(authz.canPerformAction).toHaveBeenCalledTimes(1);
   });
 
-  it('ALWAYS masks for an agent principal without any PDP call', async () => {
+  it('should ALWAYS masks for an agent principal without any PDP call', async () => {
     reflector.get.mockReturnValue('contacts');
     cls.get.mockImplementation((k: string) =>
       k === 'userId'
@@ -118,7 +123,7 @@ describe('FieldMaskingInterceptor', () => {
     expect(authz.canPerformAction).not.toHaveBeenCalled();
   });
 
-  it('masks inside a paginated { data: [...] } payload', async () => {
+  it('should masks inside a paginated { data: [...] } payload', async () => {
     reflector.get.mockReturnValue('contacts');
     authz.canPerformAction.mockResolvedValue({ allowed: false });
 

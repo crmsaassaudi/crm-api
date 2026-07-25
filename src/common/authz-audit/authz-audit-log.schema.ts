@@ -22,7 +22,10 @@ export type AuthzAuditAction =
  * about roles/permissions/assignments, and the before/after. Immutable:
  * only inserts, never updates/deletes (retention handled out of band).
  */
-@Schema({ collection: 'authz_audit_logs', timestamps: { createdAt: 't', updatedAt: false } })
+@Schema({
+  collection: 'authz_audit_logs',
+  timestamps: { createdAt: 't', updatedAt: false },
+})
 export class AuthzAuditLogSchemaClass {
   @Prop({ type: String, required: true, index: true })
   tenantId: string;
