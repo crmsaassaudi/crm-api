@@ -144,7 +144,7 @@ export class LivechatWidget {
 
   @ApiPropertyOptional()
   routing: {
-    defaultTeamId?: string;
+    defaultGroupId?: string;
     routingRuleId?: string;
     roundRobin?: boolean;
     skillBased?: boolean;
@@ -152,7 +152,7 @@ export class LivechatWidget {
     enableDepartmentSelector?: boolean;
     departments?: Array<{ id: string; label: string }>;
     // URL-based routing rules
-    urlRules?: Array<{ pattern: string; teamId: string; priority: number }>;
+    urlRules?: Array<{ pattern: string; groupId: string; priority: number }>;
     // Capacity-based auto-assignment
     capacityBased?: boolean;
     maxConversationsPerAgent?: number;

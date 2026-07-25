@@ -520,13 +520,13 @@ export class UpdateFieldExecutor implements ActionExecutor {
 }
 
 // ---------------------------------------------------------------------------
-// Route to Team Executor
+// Route to Group Executor
 // ---------------------------------------------------------------------------
 
 @Injectable()
-export class RouteToTeamExecutor implements ActionExecutor {
-  readonly actionType = 'route_to_team';
-  private readonly logger = new Logger(RouteToTeamExecutor.name);
+export class RouteToGroupExecutor implements ActionExecutor {
+  readonly actionType = 'route_to_group';
+  private readonly logger = new Logger(RouteToGroupExecutor.name);
 
   constructor(
     private readonly assignmentEngine: AssignmentEngineService,
@@ -535,18 +535,18 @@ export class RouteToTeamExecutor implements ActionExecutor {
 
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId } = job;
-    const teamId = actionConfig.teamId;
+    const groupId = actionConfig.groupId;
     const userId = actionConfig.userId;
 
-    if (!teamId && !userId) {
+    if (!groupId && !userId) {
       return {
         success: false,
-        error: { code: 'NO_TARGET', message: 'teamId or userId is required' },
+        error: { code: 'NO_TARGET', message: 'groupId or userId is required' },
       };
     }
 
     this.logger.log(
-      `[RouteToTeam] tenant=${tenantId} ${recordType}(${recordId}) > team=${teamId || 'N/A'} user=${userId || 'round-robin'}`,
+      `[RouteToGroup] tenant=${tenantId} ${recordType}(${recordId}) > group=${groupId || 'N/A'} user=${userId || 'round-robin'}`,
     );
 
     // Direct user assignment (skip assignment engine)
@@ -586,7 +586,7 @@ export class RouteToTeamExecutor implements ActionExecutor {
       };
     }
 
-    // Team-based assignment via AssignmentEngine (round-robin)
+    // Group-based assignment via AssignmentEngine (round-robin)
     try {
       const assignResult = await this.assignmentEngine.assign({
         module: recordType as any,
@@ -602,7 +602,7 @@ export class RouteToTeamExecutor implements ActionExecutor {
             code: 'NO_ELIGIBLE_AGENT',
             message:
               assignResult.reason ||
-              `No eligible agent found for team ${teamId}`,
+              `No eligible agent found for group ${groupId}`,
           },
         };
       }
@@ -636,7 +636,7 @@ export class RouteToTeamExecutor implements ActionExecutor {
         output: {
           recordType,
           recordId,
-          assignedTeam: teamId,
+          assignedGroup: groupId,
           assignedUser: assignResult.ownerId,
           strategy: assignResult.strategy,
           reason: assignResult.reason,
@@ -644,7 +644,7 @@ export class RouteToTeamExecutor implements ActionExecutor {
       };
     } catch (error: any) {
       this.logger.error(
-        `[RouteToTeam] AssignmentEngine error: ${error.message}`,
+        `[RouteToGroup] AssignmentEngine error: ${error.message}`,
         error.stack,
       );
       return {

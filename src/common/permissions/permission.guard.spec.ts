@@ -136,33 +136,73 @@ describe('PermissionGuard (adapter over AuthorizationService)', () => {
     );
   });
 
-  it('should uses X-Tenant-Id header in non-production when CLS is empty', async () => {
+  /**
+   * H-09: `NODE_ENV !== 'production'` is no longer sufficient to trust a
+   * client-supplied tenant. Staging / UAT / load-test environments all run with
+   * a non-production NODE_ENV while holding production-shaped data, so the
+   * header there was a live cross-tenant switch. It now requires an explicit
+   * `ALLOW_TENANT_HEADER=1` opt-in, which production refuses outright.
+   */
+  describe('X-Tenant-Id header trust (H-09)', () => {
     const originalEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'development';
-    cls.get = jest.fn((key: string) =>
-      key === 'userId' ? 'user_1' : undefined,
-    ) as any;
+    const originalFlag = process.env.ALLOW_TENANT_HEADER;
 
-    reflector.getAllAndOverride.mockReturnValue({
-      action: 'view',
-      resource: 'contacts',
+    const arrangeHeaderRequest = () => {
+      cls.get = jest.fn((key: string) =>
+        key === 'userId' ? 'user_1' : undefined,
+      ) as any;
+      reflector.getAllAndOverride.mockReturnValue({
+        action: 'view',
+        resource: 'contacts',
+      });
+      authz.canPerformAction.mockResolvedValue({
+        allowed: true,
+        userId: 'user_1',
+        tenantId: 'tenant_from_header',
+      });
+      const context = createContext({ sub: 'user_1' });
+      context.switchToHttp().getRequest().headers['x-tenant-id'] =
+        'tenant_from_header';
+      return context;
+    };
+
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv;
+      if (originalFlag === undefined) delete process.env.ALLOW_TENANT_HEADER;
+      else process.env.ALLOW_TENANT_HEADER = originalFlag;
     });
-    authz.canPerformAction.mockResolvedValue({
-      allowed: true,
-      userId: 'user_1',
-      tenantId: 'tenant_from_header',
+
+    it('should IGNORE the header in a non-production env without the opt-in', async () => {
+      process.env.NODE_ENV = 'development';
+      delete process.env.ALLOW_TENANT_HEADER;
+
+      await guard.canActivate(arrangeHeaderRequest());
+
+      expect(authz.canPerformAction).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantHint: undefined }),
+      );
     });
 
-    const context = createContext({ sub: 'user_1' });
-    context.switchToHttp().getRequest().headers['x-tenant-id'] =
-      'tenant_from_header';
+    it('should honour the header only when ALLOW_TENANT_HEADER=1', async () => {
+      process.env.NODE_ENV = 'development';
+      process.env.ALLOW_TENANT_HEADER = '1';
 
-    await guard.canActivate(context);
+      await guard.canActivate(arrangeHeaderRequest());
 
-    expect(authz.canPerformAction).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantHint: 'tenant_from_header' }),
-    );
+      expect(authz.canPerformAction).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantHint: 'tenant_from_header' }),
+      );
+    });
 
-    process.env.NODE_ENV = originalEnv;
+    it('should IGNORE the header in production even with the opt-in set', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.ALLOW_TENANT_HEADER = '1';
+
+      await guard.canActivate(arrangeHeaderRequest());
+
+      expect(authz.canPerformAction).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantHint: undefined }),
+      );
+    });
   });
 });

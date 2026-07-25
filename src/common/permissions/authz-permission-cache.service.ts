@@ -3,6 +3,8 @@ import { ModuleRef } from '@nestjs/core';
 import { ClsService } from 'nestjs-cls';
 import { RedisService } from '../../redis/redis.service';
 import { PlatformRoleEnum } from '../../roles/platform-role.enum';
+import { TenantRoleEnum } from '../../roles/tenant-role.enum';
+import { DataScope, maxScope } from './data-scope.enum';
 import { StatusEnum } from '../../statuses/statuses.enum';
 import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
@@ -135,9 +137,14 @@ export class AuthzPermissionCacheService {
   }
 
   /** Load the tenant's custom roles as {id, name, permissions} for engine expansion. */
-  private async loadTenantRoles(
-    tenantId: string,
-  ): Promise<{ id: string; name?: string; permissions: string[] }[]> {
+  private async loadTenantRoles(tenantId: string): Promise<
+    {
+      id: string;
+      name?: string;
+      permissions: string[];
+      dataScope?: DataScope | null;
+    }[]
+  > {
     try {
       const rolesService = this.moduleRef.get(CustomRolesService, {
         strict: false,
@@ -147,6 +154,7 @@ export class AuthzPermissionCacheService {
         id: String(role.id),
         name: role.name,
         permissions: role.permissions ?? [],
+        dataScope: role.dataScope ?? null,
       }));
     } catch (error) {
       this.logger.warn(
@@ -194,6 +202,25 @@ export class AuthzPermissionCacheService {
     assignmentRoleIds: string[],
   ): any {
     if (assignmentRoleIds.length === 0) return user;
+
+    // A JIT grant ELEVATES an existing member; it does not create membership
+    // (H-03). Synthesizing a membership row here meant a role assignment
+    // written against a non-member — including a user of another tenant —
+    // produced real, working access with no membership at all. Membership is
+    // established by the invite/onboarding path and verified by
+    // TenantInterceptor; authorization must never manufacture it.
+    const hasMembership = (user.tenants ?? []).some(
+      (membership: any) => String(membership.tenantId) === tenantId,
+    );
+    if (!hasMembership) {
+      this.logger.warn(
+        `Ignoring ${assignmentRoleIds.length} role assignment(s) for user=${String(
+          user.id,
+        )} in tenant=${tenantId}: the user is not a member of that tenant`,
+      );
+      return user;
+    }
+
     const tenants = (user.tenants ?? []).map((membership: any) => {
       if (String(membership.tenantId) !== tenantId) return membership;
       const merged = Array.from(
@@ -201,14 +228,7 @@ export class AuthzPermissionCacheService {
       );
       return { ...membership, roleIds: merged };
     });
-    // If the user had no membership row for this tenant, synthesize one so the
-    // granted roles still resolve (e.g. a pure JIT elevation).
-    const hasMembership = tenants.some(
-      (m: any) => String(m.tenantId) === tenantId,
-    );
-    if (!hasMembership) {
-      tenants.push({ tenantId, roles: [], roleIds: assignmentRoleIds });
-    }
+
     return { ...user, tenants };
   }
 
@@ -607,6 +627,96 @@ export class AuthzPermissionCacheService {
       tenantRoles,
       { superAdmin },
     );
+  }
+
+  /**
+   * The principal's effective DataScope in a tenant, plus the org unit it is
+   * anchored to.
+   *
+   * Deliberately built from the SAME grant sources as permissions — membership
+   * roleIds, inherited group roleIds, and active JIT assignments — because a
+   * scope that ignored one of those sources would disagree with the permission
+   * set derived from it. The classic version of that bug is a role granted via a
+   * group whose permissions apply but whose scope does not, leaving a manager
+   * able to run a query they can see no rows for.
+   *
+   * Full-access principals (tenant OWNER/ADMIN, super-admin) get TENANT: the
+   * permission engine already short-circuits them to the whole ceiling, so
+   * anything narrower here would contradict it.
+   *
+   * Fail-closed: an unresolvable user, tenant, or inactive account yields SELF
+   * with no org unit. `maxScope([])` is SELF, so a role catalogue that fails to
+   * load narrows rather than widens.
+   */
+  async resolveDataScope(
+    rawUserId: string,
+    tenantHint?: string,
+  ): Promise<{ scope: DataScope; orgUnitId: string | null }> {
+    const closed = { scope: DataScope.SELF, orgUnitId: null };
+
+    const tenantsRepository = this.moduleRef.get(TenantsRepository, {
+      strict: false,
+    });
+    const groupRepository = this.moduleRef.get(GroupRepository, {
+      strict: false,
+    });
+
+    const user = await this.resolveUser(rawUserId);
+    if (!user || this.isInactive(user)) return closed;
+
+    const resolvedHint = tenantHint ?? user.tenants?.[0]?.tenantId;
+    const tenant = await this.resolveTenant(
+      tenantsRepository,
+      resolvedHint ? String(resolvedHint) : undefined,
+    );
+    if (!tenant) return closed;
+
+    const orgUnitId = (user as any).orgUnitId
+      ? String((user as any).orgUnitId)
+      : null;
+
+    const membership = user.tenants?.find(
+      (row: any) => String(row.tenantId) === String(tenant.id),
+    );
+
+    const superAdmin = user.platformRole?.id === PlatformRoleEnum.SUPER_ADMIN;
+    const privileged =
+      superAdmin ||
+      String((tenant as any).ownerId ?? '') === String(user.id) ||
+      (membership?.roles ?? []).some(
+        (role: string) =>
+          role === TenantRoleEnum.OWNER || role === TenantRoleEnum.ADMIN,
+      );
+    if (privileged) return { scope: DataScope.TENANT, orgUnitId };
+
+    const [userGroups, tenantRoles] = await Promise.all([
+      groupRepository.findGroupsByMemberWithAncestors(
+        String(tenant.id),
+        String(user.id),
+      ),
+      this.loadTenantRoles(String(tenant.id)),
+    ]);
+
+    const groupIds = userGroups
+      .map((group: any) => group?.id)
+      .filter(Boolean)
+      .map(String);
+    const assignmentRoleIds = await this.loadActiveAssignmentRoleIds(
+      String(tenant.id),
+      [String(user.id), ...groupIds],
+    );
+
+    const heldRoleIds = new Set<string>([
+      ...(membership?.roleIds ?? []).map(String),
+      ...userGroups.flatMap((group: any) => (group?.roleIds ?? []).map(String)),
+      ...assignmentRoleIds.map(String),
+    ]);
+
+    const scopes = tenantRoles
+      .filter((role) => heldRoleIds.has(String(role.id)))
+      .map((role) => role.dataScope);
+
+    return { scope: maxScope(scopes), orgUnitId };
   }
 
   private buildKey(tenantId: string, userId: string): string {

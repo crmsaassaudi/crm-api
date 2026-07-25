@@ -40,7 +40,7 @@ describe('RoutingRuleEvaluatorService', () => {
     rule.matchType = overrides.matchType ?? 'all';
     rule.conditions = overrides.conditions ?? [];
     rule.actions = overrides.actions ?? {
-      teamId: 'team_1',
+      groupId: 'team_1',
       strategy: 'round-robin',
       sticky: false,
       requiredSkills: [],
@@ -74,14 +74,14 @@ describe('RoutingRuleEvaluatorService', () => {
 
       expect(result).not.toBeNull();
       expect(result!.ruleId).toBe('rule_1');
-      expect(result!.teamId).toBe('team_1');
+      expect(result!.groupId).toBe('team_1');
     });
 
     it('should return matched rule actions', async () => {
       repositoryMock.findEnabledByTenant.mockResolvedValue([
         createRule({
           actions: {
-            teamId: 'sales_team',
+            groupId: 'sales_team',
             strategy: 'least-busy',
             sticky: true,
             requiredSkills: ['spanish'],
@@ -94,7 +94,7 @@ describe('RoutingRuleEvaluatorService', () => {
       expect(result).toEqual({
         ruleId: 'rule_1',
         ruleName: 'Test Rule',
-        teamId: 'sales_team',
+        groupId: 'sales_team',
         strategy: 'least-busy',
         sticky: true,
         requiredSkills: ['spanish'],
@@ -328,7 +328,7 @@ describe('RoutingRuleEvaluatorService', () => {
           priority: 10,
           conditions: [{ field: 'channel', operator: 'eq', value: 'facebook' }],
           actions: {
-            teamId: 'team_low',
+            groupId: 'team_low',
             strategy: 'manual',
             sticky: false,
             requiredSkills: [],
@@ -340,7 +340,7 @@ describe('RoutingRuleEvaluatorService', () => {
           priority: 1,
           conditions: [{ field: 'channel', operator: 'eq', value: 'facebook' }],
           actions: {
-            teamId: 'team_high',
+            groupId: 'team_high',
             strategy: 'least-busy',
             sticky: false,
             requiredSkills: [],
@@ -361,7 +361,7 @@ describe('RoutingRuleEvaluatorService', () => {
           priority: 1,
           conditions: [{ field: 'channel', operator: 'eq', value: 'facebook' }],
           actions: {
-            teamId: 'team_high',
+            groupId: 'team_high',
             strategy: 'least-busy',
             sticky: false,
             requiredSkills: [],
@@ -373,7 +373,7 @@ describe('RoutingRuleEvaluatorService', () => {
           priority: 10,
           conditions: [{ field: 'channel', operator: 'eq', value: 'facebook' }],
           actions: {
-            teamId: 'team_low',
+            groupId: 'team_low',
             strategy: 'manual',
             sticky: false,
             requiredSkills: [],
@@ -389,7 +389,7 @@ describe('RoutingRuleEvaluatorService', () => {
       });
 
       expect(result2!.ruleId).toBe('rule_high_priority');
-      expect(result2!.teamId).toBe('team_high');
+      expect(result2!.groupId).toBe('team_high');
     });
 
     it('should skip non-matching rules and match next', async () => {
@@ -404,7 +404,7 @@ describe('RoutingRuleEvaluatorService', () => {
           priority: 2,
           conditions: [{ field: 'channel', operator: 'eq', value: 'facebook' }],
           actions: {
-            teamId: 'fb_team',
+            groupId: 'fb_team',
             strategy: 'round-robin',
             sticky: false,
             requiredSkills: [],

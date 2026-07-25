@@ -117,14 +117,27 @@ export class AuthorizationService {
    * conditions can match — resource conditions simply do not hold.
    */
   async canAccessRecord(params: CanAccessRecordParams): Promise<boolean> {
-    const acl = await this.objectAcl.can(
-      params.tenantId,
-      params.userId,
-      params.action,
-      params.resource,
-      params.resourceId,
-      params.groupIds ?? [],
-    );
+    // Both record-level layers fail CLOSED (H-04): a store that cannot be read
+    // must deny, never degrade to "no opinion" — which in a deny-overrides
+    // model is indistinguishable from having no restrictions at all.
+    let acl: boolean | null;
+    try {
+      acl = await this.objectAcl.can(
+        params.tenantId,
+        params.userId,
+        params.action,
+        params.resource,
+        params.resourceId,
+        params.groupIds ?? [],
+      );
+    } catch (error) {
+      this.logger.error(
+        `Object-ACL lookup failed for ${params.resource}/${params.resourceId} — denying (fail-closed): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
     if (acl === false) return false; // explicit ACL deny — short-circuit
 
     const effect = await this.accessPolicy.evaluate(

@@ -2,10 +2,12 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ModuleRef } from '@nestjs/core';
 import { Model } from 'mongoose';
+import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   CustomRoleSchemaClass,
@@ -22,11 +24,13 @@ import {
   CORE_PERMISSIONS,
 } from './permission.constants';
 import { getTenantPermissions, PermissionTenant } from './permission.engine';
+import { DataScope, scopeAtLeast } from './data-scope.enum';
 import { ADMINISTRATOR_PSEUDO_ROLE } from './system-role-templates';
 import { CustomRole } from './domain/custom-role';
 import { CustomRoleMapper } from './mappers/custom-role.mapper';
 import { AuthzAuditService } from '../authz-audit/authz-audit.service';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
+import { AuthzPermissionCacheService } from './authz-permission-cache.service';
 
 @Injectable()
 export class CustomRolesService {
@@ -36,6 +40,7 @@ export class CustomRolesService {
     private readonly eventEmitter: EventEmitter2,
     private readonly audit: AuthzAuditService,
     private readonly moduleRef: ModuleRef,
+    private readonly cls: ClsService,
   ) {}
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
@@ -45,11 +50,14 @@ export class CustomRolesService {
     dto: CreateCustomRoleDto,
   ): Promise<CustomRole> {
     this.validatePermissions(dto.permissions);
+    await this.assertCallerCanGrant(tenantId, dto.permissions);
+    await this.assertCallerCanGrantScope(tenantId, dto.dataScope, null);
     const role = new this.model({
       tenantId,
       name: dto.name,
       description: dto.description ?? '',
       permissions: dto.permissions ?? [],
+      dataScope: dto.dataScope ?? null,
       color: dto.color ?? '#6366f1',
     });
     const saved = await role.save();
@@ -115,6 +123,11 @@ export class CustomRolesService {
       name,
       description: source.description ?? '',
       permissions: [...(source.permissions ?? [])],
+      // A clone reproduces the source's scope. No escalation check: the source
+      // role already exists in this tenant, so copying it grants nothing that
+      // was not already grantable — and the clone is only useful as a starting
+      // point if it starts equivalent.
+      dataScope: source.dataScope ?? null,
       color: source.color,
       // A clone is always tenant-owned and fully editable.
       isSystem: false,
@@ -149,7 +162,23 @@ export class CustomRolesService {
       );
     }
 
-    if (dto.permissions) this.validatePermissions(dto.permissions);
+    if (dto.permissions) {
+      this.validatePermissions(dto.permissions);
+      // Only the keys being ADDED need to be held by the caller; removing a key
+      // is a de-escalation and is always allowed.
+      const added = dto.permissions.filter(
+        (key) => !role.permissions.includes(key),
+      );
+      await this.assertCallerCanGrant(tenantId, added);
+    }
+
+    if (dto.dataScope !== undefined) {
+      await this.assertCallerCanGrantScope(
+        tenantId,
+        dto.dataScope,
+        role.dataScope ?? null,
+      );
+    }
 
     const before = { name: role.name, permissions: [...role.permissions] };
     Object.assign(role, dto);
@@ -269,6 +298,100 @@ export class CustomRolesService {
     if (invalid.length) {
       throw new BadRequestException(
         `Unknown permission keys: ${invalid.join(', ')}`,
+      );
+    }
+  }
+
+  /**
+   * The anti-escalation invariant for the role path (C-04).
+   *
+   * Registry validation only rejects typos — it does nothing to stop a holder of
+   * `roles:update` from adding every key in the product to a role and assigning
+   * it to themselves. A role is a permission container, so creating or editing
+   * one is a grant and is bound by the same rule as a direct grant:
+   *
+   *   requested ⊆ callerEffective
+   *
+   * Owner / admin / super-admin hold the full ceiling and pass trivially.
+   */
+  private async assertCallerCanGrant(
+    tenantId: string,
+    permissions?: string[],
+  ): Promise<void> {
+    if (!permissions?.length) return;
+
+    const callerId = this.cls.get<string>('userId');
+    if (!callerId) {
+      throw new ForbiddenException(
+        'Cannot resolve the acting principal; role permission change refused',
+      );
+    }
+
+    // Resolved lazily: AuthzPermissionCacheService depends on this service, so
+    // a constructor injection would be a circular dependency.
+    const authzCache = this.moduleRef.get(AuthzPermissionCacheService, {
+      strict: false,
+    });
+    const explanation = await authzCache.explainForUser(
+      String(callerId),
+      tenantId,
+    );
+
+    const held = explanation.fullAccess
+      ? new Set(explanation.tenantCeiling)
+      : new Set(explanation.effective);
+
+    const escalating = [...new Set(permissions)].filter(
+      (key) => !held.has(key),
+    );
+
+    if (escalating.length) {
+      throw new ForbiddenException(
+        `You cannot grant permission(s) you do not hold yourself: ${escalating.join(', ')}`,
+      );
+    }
+  }
+
+  /**
+   * The same invariant on the OTHER axis a role grants.
+   *
+   * A role carries permissions *and* a data scope, and widening the scope is an
+   * escalation even when the permission set is untouched: an ORG_UNIT manager
+   * who can author roles could otherwise mint "Sales Rep (tenant scope)", assign
+   * it to themselves, and read the whole workspace while every permission key
+   * stayed within what they already hold. Guarding only `permissions` would
+   * leave that door open.
+   *
+   * Only *widening* is checked. Lowering a role's scope is de-escalation and is
+   * always allowed, mirroring how removing a permission key is.
+   */
+  private async assertCallerCanGrantScope(
+    tenantId: string,
+    requested: DataScope | null | undefined,
+    current: DataScope | null | undefined,
+  ): Promise<void> {
+    if (!requested) return;
+    if (current && !scopeAtLeast(requested, current)) return; // narrowing
+    if (current === requested) return;
+
+    const callerId = this.cls.get<string>('userId');
+    if (!callerId) {
+      throw new ForbiddenException(
+        'Cannot resolve the acting principal; role scope change refused',
+      );
+    }
+
+    const authzCache = this.moduleRef.get(AuthzPermissionCacheService, {
+      strict: false,
+    });
+    const { scope: held } = await authzCache.resolveDataScope(
+      String(callerId),
+      tenantId,
+    );
+
+    if (!scopeAtLeast(held, requested)) {
+      throw new ForbiddenException(
+        `You cannot grant data scope "${requested}"; your own scope is "${held}"`,
       );
     }
   }

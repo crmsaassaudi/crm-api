@@ -165,7 +165,7 @@ export class AssignmentEngineService {
 
     let strategy = settings.defaultStrategy ?? 'round-robin';
     let requiredSkills: string[] = [];
-    let teamId = settings.defaultTeamId;
+    let groupId = settings.defaultGroupId;
 
     if (matchedRule) {
       strategy = matchedRule.actions.strategy ?? strategy;
@@ -195,13 +195,13 @@ export class AssignmentEngineService {
         return result;
       }
 
-      if (matchedRule.actions.assignToTeamId) {
-        teamId = matchedRule.actions.assignToTeamId.toString();
+      if (matchedRule.actions.assignToGroupId) {
+        groupId = matchedRule.actions.assignToGroupId.toString();
       }
     }
 
-    const candidatePool: string[] = teamId
-      ? await this.resolveGroupMembers(teamId)
+    const candidatePool: string[] = groupId
+      ? await this.resolveGroupMembers(groupId)
       : [];
 
     return { matchedRule, strategy, candidatePool, requiredSkills };
@@ -260,13 +260,13 @@ export class AssignmentEngineService {
       eligibleLoadMap: Map<string, number>;
       strategy: string;
       candidatePool: string[];
-      teamId: string | undefined;
+      groupId: string | undefined;
     },
   ): Promise<AssignmentResult> {
-    const { eligible, eligibleLoadMap, strategy, candidatePool, teamId } =
+    const { eligible, eligibleLoadMap, strategy, candidatePool, groupId } =
       options;
     const reserve = !context.dryRun;
-    const rrScope = `${context.tenantId}:${context.module}:${teamId ?? 'default'}`;
+    const rrScope = `${context.tenantId}:${context.module}:${groupId ?? 'default'}`;
 
     let selectedId: string | null;
 
@@ -357,13 +357,13 @@ export class AssignmentEngineService {
     if ('ownerId' in poolResult) return poolResult;
 
     const { matchedRule, strategy, candidatePool, requiredSkills } = poolResult;
-    const teamId =
-      matchedRule?.actions?.assignToTeamId?.toString() ??
-      settings.defaultTeamId;
+    const groupId =
+      matchedRule?.actions?.assignToGroupId?.toString() ??
+      settings.defaultGroupId;
 
     if (candidatePool.length === 0) {
       this.logger.warn(
-        `No candidates in pool for ${context.module} (team=${teamId}) — attempting fallback`,
+        `No candidates in pool for ${context.module} (group=${groupId}) — attempting fallback`,
       );
       return this.handleFallback(context, matchedRule, strategy);
     }
@@ -402,7 +402,7 @@ export class AssignmentEngineService {
       eligibleLoadMap,
       strategy,
       candidatePool,
-      teamId,
+      groupId,
     });
   }
 
@@ -477,16 +477,16 @@ export class AssignmentEngineService {
    * otherwise the round-robin cursor / least-busy counter drifts.
    *
    * The scope mirrors the one assign() builds internally:
-   * `${tenantId}:${module}:${teamId || 'default'}`.
+   * `${tenantId}:${module}:${groupId || 'default'}`.
    */
   async compensate(params: {
     tenantId: string;
     module: string;
     candidateId: string;
     strategy: string;
-    teamId?: string | null;
+    groupId?: string | null;
   }): Promise<void> {
-    const scope = `${params.tenantId}:${params.module}:${params.teamId ?? 'default'}`;
+    const scope = `${params.tenantId}:${params.module}:${params.groupId ?? 'default'}`;
     await this.strategyExecutor.release(
       scope,
       params.candidateId,

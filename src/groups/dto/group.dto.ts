@@ -31,11 +31,6 @@ export class CreateGroupDto {
   @IsOptional()
   parentGroupId?: string | null;
 
-  @ApiPropertyOptional({ example: '507f1f77bcf86cd799439011' })
-  @IsMongoId()
-  @IsOptional()
-  managerId?: string;
-
   @ApiPropertyOptional({ type: [String] })
   @IsArray()
   @IsMongoId({ each: true })
@@ -86,11 +81,6 @@ export class UpdateGroupDto {
   @IsMongoId()
   @IsOptional()
   parentGroupId?: string | null;
-
-  @ApiPropertyOptional()
-  @IsMongoId()
-  @IsOptional()
-  managerId?: string | null;
 
   @ApiPropertyOptional({ type: [String] })
   @IsArray()

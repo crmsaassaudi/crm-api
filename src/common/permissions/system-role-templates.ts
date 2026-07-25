@@ -60,7 +60,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     description:
       'Full operational access across CRM modules, including delete and assignment.',
     color: '#8b5cf6',
-    version: 1,
+    version: 2,
     permissions: [
       'leads:view',
       'leads:create',
@@ -103,6 +103,9 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'files:create',
       'files:edit',
       'omni_channel:view',
+      'omni_channel:edit',
+      'omni_channel:assign',
+      'omni_channel:manage_system',
       'omni_reports:view',
     ],
   },
@@ -141,7 +144,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     name: 'Support Agent',
     description: 'Handle tickets and customer conversations.',
     color: '#06b6d4',
-    version: 1,
+    version: 2,
     permissions: [
       'tickets:view',
       'tickets:create',
@@ -157,6 +160,8 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'tags:view',
       'files:view',
       'omni_channel:view',
+      'omni_channel:edit',
+      'omni_channel:assign',
       'omni_reports:view',
     ],
   },

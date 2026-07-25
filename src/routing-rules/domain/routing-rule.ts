@@ -25,7 +25,7 @@ export class RoutingRule {
 
   @ApiProperty()
   actions: {
-    teamId: string;
+    groupId: string;
     strategy: string;
     sticky: boolean;
     requiredSkills?: string[];

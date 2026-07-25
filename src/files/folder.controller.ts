@@ -176,6 +176,7 @@ export class FolderController {
   // ── Hard Delete (OWNER only) ──────────────────────────────────────
 
   @Delete(':id/purge')
+  @RequirePermission('delete', 'files')
   @HttpCode(HttpStatus.OK)
   async hardDelete(@Param('id') id: string) {
     const tenantId = this.cls.get<string>('tenantId');

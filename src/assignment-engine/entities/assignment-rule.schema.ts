@@ -62,7 +62,7 @@ export class AssignmentRuleSchemaClass extends EntityDocumentHelper {
         type: MongooseSchema.Types.ObjectId,
         ref: 'UserSchemaClass',
       },
-      assignToTeamId: {
+      assignToGroupId: {
         type: MongooseSchema.Types.ObjectId,
         ref: 'GroupSchemaClass',
       },
@@ -77,7 +77,7 @@ export class AssignmentRuleSchemaClass extends EntityDocumentHelper {
   })
   actions: {
     assignToUserId?: string;
-    assignToTeamId?: string;
+    assignToGroupId?: string;
     strategy: string;
     requiredSkills?: string[];
   };

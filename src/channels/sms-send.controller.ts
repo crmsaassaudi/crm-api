@@ -10,6 +10,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ClsService } from 'nestjs-cls';
 import { ChannelConfigRepository } from './infrastructure/persistence/document/repositories/channel-config.repository';
 import { CRYPTO_SERVICE_TOKEN, ICryptoService } from './domain/crypto.service';
+import { RequirePermission } from '../common/permissions';
 
 class SendSmsDto {
   configId: string;
@@ -39,6 +40,7 @@ export class SmsSendController {
   ) {}
 
   @Post('sms/send')
+  @RequirePermission('edit', 'omni_channel')
   @ApiOperation({ summary: 'Send standalone SMS (no conversation required)' })
   async sendSms(@Body() dto: SendSmsDto) {
     const tenantId = this.cls.get('tenantId');

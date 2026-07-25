@@ -17,7 +17,7 @@ export {
   SendEmailExecutor,
   SendSmsExecutor,
   UpdateFieldExecutor,
-  RouteToTeamExecutor,
+  RouteToGroupExecutor,
   WebhookExecutor,
   CreateTaskExecutor,
   CreateTicketExecutor,

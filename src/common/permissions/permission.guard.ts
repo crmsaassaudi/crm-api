@@ -12,6 +12,7 @@ import {
 } from './permission.decorator';
 import { AuthorizationService } from './authorization.service';
 import { resolvePrincipalType } from './principal';
+import { readTrustedTenantHeader } from '../tenant/tenant-header.policy';
 
 /**
  * Thin adapter over {@link AuthorizationService} (the single PDP). It resolves
@@ -94,22 +95,21 @@ export class PermissionGuard implements CanActivate {
     return false;
   }
 
-  /** Resolve tenant hint from CLS, request, headers, or JWT payload. */
+  /**
+   * Resolve the tenant hint from CLS, the resolved subdomain alias, an opt-in
+   * dev header, or the JWT claim — in that order of trustworthiness.
+   *
+   * The header is gated by a single explicit policy rather than a local
+   * `NODE_ENV` check (H-09), so staging/UAT no longer accept a client-chosen
+   * tenant just because they are not literally `production`.
+   */
   private resolveTenantHint(request: any, payload: any): string | undefined {
     return (
       this.cls.get<string>('tenantId') ??
       request.tenantAlias ??
-      (process.env.NODE_ENV !== 'production'
-        ? this.extractHeader(request, 'x-tenant-id')
-        : undefined) ??
+      readTrustedTenantHeader(request) ??
       payload?.tenantId
     );
-  }
-
-  private extractHeader(request: any, name: string): string | undefined {
-    const value = request.headers?.[name];
-    if (Array.isArray(value)) return value[0];
-    return value;
   }
 
   private setRequestContext(

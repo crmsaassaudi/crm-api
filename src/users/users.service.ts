@@ -5,6 +5,7 @@ import {
   forwardRef,
   UnprocessableEntityException,
   NotFoundException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -23,6 +24,8 @@ import { Role } from '../roles/domain/role';
 import { Status } from '../statuses/domain/status';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ClsService } from 'nestjs-cls';
+import { ModuleRef } from '@nestjs/core';
+import { OrgUnitRepository } from '../org-units/infrastructure/persistence/document/repositories/org-unit.repository';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
 import { InviteUserDto } from './dto/invite-user.dto';
@@ -31,6 +34,7 @@ import { TenantsRepository } from '../tenants/infrastructure/persistence/documen
 import { GroupRepository } from '../groups/infrastructure/persistence/document/repositories/group.repository';
 import { AuthzAuditService } from '../common/authz-audit/authz-audit.service';
 import { CustomRolesService } from '../common/permissions/custom-roles.service';
+import { AuthzPermissionCacheService } from '../common/permissions/authz-permission-cache.service';
 import { ALL_PERMISSIONS } from '../common/permissions/permission.constants';
 import { getTenantId, getUserId } from '../common/cls/cls-context.helper';
 import { DEFAULT_BASELINE_SYSTEM_KEY } from '../common/permissions/system-role-templates';
@@ -50,6 +54,10 @@ export class UsersService {
     private readonly eventEmitter: EventEmitter2,
     private readonly audit: AuthzAuditService,
     private readonly customRoles: CustomRolesService,
+    private readonly authzCache: AuthzPermissionCacheService,
+    // Lazy lookups only (OrgUnitRepository). OrgUnitsModule already imports
+    // UsersModule, so a direct injection here would close the cycle.
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   /**
@@ -71,6 +79,29 @@ export class UsersService {
         errors: {
           roleIds: `Unknown role(s) for this tenant: ${unknown.join(', ')}`,
         },
+      });
+    }
+  }
+
+  /**
+   * An `orgUnitId` must name a unit in the tenant the caller is acting in.
+   *
+   * Resolved through OrgUnitRepository with the tenant supplied explicitly, so
+   * the lookup cannot be satisfied by a unit from another workspace even if the
+   * caller knows a valid id. A missing unit is a 422, not a silent null: quietly
+   * dropping the value would leave the user unassigned while the UI reported
+   * success.
+   */
+  private async assertOrgUnitInTenant(
+    tenantId: string,
+    orgUnitId: string,
+  ): Promise<void> {
+    const orgUnits = this.moduleRef.get(OrgUnitRepository, { strict: false });
+    const unit = await orgUnits.findById(tenantId, String(orgUnitId));
+    if (!unit) {
+      throw new UnprocessableEntityException({
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        errors: { orgUnitId: 'Unknown org unit for this tenant' },
       });
     }
   }
@@ -129,6 +160,93 @@ export class UsersService {
         },
       });
     }
+  }
+
+  /**
+   * The core anti-escalation invariant (C-04):
+   *
+   *   A principal may never grant a permission it does not itself hold.
+   *
+   * Without this, `users:update` is equivalent to full tenant admin: the holder
+   * writes any registry key onto their own — or anyone's — membership and
+   * re-reads it as an effective permission on the next request. Key-registry
+   * validation alone does not constrain this at all; it only rejects typos.
+   *
+   * The caller's own effective set is the authority, so the check is:
+   *   requested ⊆ callerEffective
+   *
+   * Owner / tenant-ADMIN / platform SUPER_ADMIN hold the whole tenant ceiling,
+   * so they pass trivially and need no special case.
+   */
+  private async assertCallerCanGrant(
+    tenantId: string,
+    requestedKeys: string[],
+  ): Promise<void> {
+    if (!requestedKeys.length) return;
+
+    const callerId = this.cls.get<string>('userId');
+    if (!callerId) {
+      throw new ForbiddenException(
+        'Cannot resolve the acting principal; permission grant refused',
+      );
+    }
+
+    const explanation = await this.authzCache.explainForUser(
+      String(callerId),
+      tenantId,
+    );
+
+    // fullAccess = owner / admin / super-admin → holds the entire ceiling.
+    const held = explanation.fullAccess
+      ? new Set(explanation.tenantCeiling)
+      : new Set(explanation.effective);
+
+    const escalating = [...new Set(requestedKeys)].filter(
+      (key) => !held.has(key),
+    );
+
+    if (escalating.length) {
+      throw new ForbiddenException({
+        status: HttpStatus.FORBIDDEN,
+        errors: {
+          permissions: `You cannot grant permission(s) you do not hold yourself: ${escalating.join(', ')}`,
+        },
+      });
+    }
+  }
+
+  /**
+   * Editing your own membership is always privilege self-service, so it is
+   * refused outright — even when the caller holds `users:update`. Separation of
+   * duties: another admin makes the change, and the audit log names them.
+   */
+  private assertNotSelfPrivilegeEdit(targetUserId: string): void {
+    const callerId = this.cls.get<string>('userId');
+    if (callerId && String(callerId) === String(targetUserId)) {
+      throw new ForbiddenException({
+        status: HttpStatus.FORBIDDEN,
+        errors: {
+          id: 'You cannot change your own roles or permissions. Ask another administrator.',
+        },
+      });
+    }
+  }
+
+  /**
+   * Expand role references into the permission keys they carry, so granting a
+   * role is held to the same ceiling as granting the keys directly. Otherwise
+   * the invariant is trivially bypassed by wrapping keys in a role.
+   */
+  private async expandRoleIdsToKeys(
+    tenantId: string,
+    roleIds?: string[],
+  ): Promise<string[]> {
+    if (!roleIds?.length) return [];
+    const tenantRoles = await this.customRoles.findAll(tenantId);
+    const byId = new Map(tenantRoles.map((role) => [String(role.id), role]));
+    return roleIds.flatMap(
+      (roleId) => byId.get(String(roleId))?.permissions ?? [],
+    );
   }
 
   async create(
@@ -326,6 +444,39 @@ export class UsersService {
         incomingMembership.permissionOverrides,
       );
     }
+
+    // ── C-04: anti-escalation ────────────────────────────────────────────────
+    // Any membership change that widens privilege is held to two rules:
+    //   1. you cannot edit your own privileges at all;
+    //   2. you cannot grant a key you do not hold.
+    // Roles are expanded to their keys so wrapping keys in a role is not a
+    // bypass. Only ALLOW directions are checked — revoking is not escalation.
+    if (activeTenantId && incomingMembership) {
+      const grantedKeys = [
+        ...(incomingMembership.permissions ?? []),
+        ...Object.entries(incomingMembership.permissionOverrides ?? {})
+          .filter(([, isGranted]) => isGranted === true)
+          .map(([key]) => key),
+        ...(await this.expandRoleIdsToKeys(
+          activeTenantId,
+          incomingMembership.roleIds,
+        )),
+      ];
+
+      if (grantedKeys.length) {
+        this.assertNotSelfPrivilegeEdit(String(id));
+        await this.assertCallerCanGrant(activeTenantId, grantedKeys);
+      }
+    }
+
+    // H-07: an org unit id must belong to the ACTIVE tenant. Without this, an
+    // admin could file a user under a unit from another workspace, and once
+    // ORG_UNIT scope resolves that unit's subtree the user would read across the
+    // tenant boundary — through a field that looks like plain HR metadata.
+    if (activeTenantId && updateUserDto.orgUnitId) {
+      await this.assertOrgUnitInTenant(activeTenantId, updateUserDto.orgUnitId);
+    }
+
     const tenants = this.resolveMembershipUpdate(targetBefore, updateUserDto);
 
     const updated = await this.usersRepository.update(id, {
@@ -344,6 +495,7 @@ export class UsersService {
       omniMaxCapacity: updateUserDto.omniMaxCapacity,
       skills: updateUserDto.skills,
       reportsToId: updateUserDto.reportsToId,
+      orgUnitId: updateUserDto.orgUnitId,
       // Only include when there is an actual membership change — passing
       // tenants: undefined would wipe all memberships via the mapper.
       ...(tenants !== undefined ? { tenants } : {}),

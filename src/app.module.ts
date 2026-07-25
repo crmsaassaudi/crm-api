@@ -61,6 +61,7 @@ import { EscalationPoliciesModule } from './escalation-policies/escalation-polic
 import { RoutingRulesModule } from './routing-rules/routing-rules.module';
 import { AutomationRulesModule } from './automation-rules/automation-rules.module';
 import { GroupsModule } from './groups/groups.module';
+import { OrgUnitsModule } from './org-units/org-units.module';
 import { OmniInboundModule } from './omni-inbound/omni-inbound.module';
 import { DataVisibilityModule } from './data-visibility/data-visibility.module';
 import { ListViewsModule } from './list-views/list-views.module';
@@ -338,6 +339,7 @@ function bullBoardBasicAuth() {
     RoutingRulesModule,
     AutomationRulesModule,
     GroupsModule,
+    OrgUnitsModule,
     OmniInboundModule,
     DataVisibilityModule,
     ListViewsModule,

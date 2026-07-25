@@ -14,7 +14,7 @@ import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
  * The Automation Engine already handles:
  *   - Workflow matching via WorkflowOrchestratorService
  *   - Condition evaluation
- *   - Action execution (email, SMS, webhook, update_field, route_to_team)
+ *   - Action execution (email, SMS, webhook, update_field, route_to_group)
  *   - Loop prevention and bulk throttling
  *
  * This bridge simply translates omni events into the existing format.

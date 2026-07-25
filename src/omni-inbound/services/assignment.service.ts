@@ -557,7 +557,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
         options.routingContext,
       );
       this.logger.debug(
-        `Routing rule matched: strategy=${match?.strategy ?? 'none'}, teamId=${match?.teamId ?? 'none'}`,
+        `Routing rule matched: strategy=${match?.strategy ?? 'none'}, groupId=${match?.groupId ?? 'none'}`,
       );
       return match;
     } catch (err: any) {
@@ -573,21 +573,25 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
    * team members with the channel-scoped pool.
    */
   private async resolveEffectivePool(
-    ruleMatch: { teamId?: string; ruleName?: string; strategy?: string } | null,
+    ruleMatch: {
+      groupId?: string;
+      ruleName?: string;
+      strategy?: string;
+    } | null,
     channelPool: string[] | undefined,
   ): Promise<string[] | undefined> {
-    if (!ruleMatch?.teamId) return channelPool;
+    if (!ruleMatch?.groupId) return channelPool;
 
     this.logger.debug(
-      `Routing rule "${ruleMatch.ruleName}" matched — teamId=${ruleMatch.teamId}, strategy=${ruleMatch.strategy}`,
+      `Routing rule "${ruleMatch.ruleName}" matched — groupId=${ruleMatch.groupId}, strategy=${ruleMatch.strategy}`,
     );
-    const teamMembers = await this.resolveGroupMembers(ruleMatch.teamId);
-    if (teamMembers.length === 0) return channelPool;
+    const groupMembers = await this.resolveGroupMembers(ruleMatch.groupId);
+    if (groupMembers.length === 0) return channelPool;
 
-    if (!channelPool || channelPool.length === 0) return teamMembers;
+    if (!channelPool || channelPool.length === 0) return groupMembers;
 
     // Intersect: only agents in BOTH channel pool AND routing rule team
-    const teamSet = new Set(teamMembers);
+    const teamSet = new Set(groupMembers);
     const intersected = channelPool.filter((id) => teamSet.has(id));
     this.logger.debug(
       `Team pool intersected with channel pool: ${intersected.length} agents eligible`,
@@ -752,7 +756,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
         const ordered = await this.roundRobinOrder(
           tenantId,
           eligibleAgents,
-          ruleMatch?.teamId,
+          ruleMatch?.groupId,
         );
         selectedAgent = await this.reserveCandidate(
           tenantId,
@@ -1202,12 +1206,12 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
   private async roundRobinOrder(
     tenantId: string,
     agents: string[],
-    teamId?: string,
+    groupId?: string,
   ): Promise<string[]> {
     // Per-team counter ensures fair distribution within each team pool.
     // Falls back to tenant-level counter when no team is specified.
-    const key = teamId
-      ? `omni:rr:${tenantId}:${teamId}`
+    const key = groupId
+      ? `omni:rr:${tenantId}:${groupId}`
       : `omni:rr:${tenantId}`;
     const counter = await this.redis.incr(key);
     // Set TTL on first creation (24h)

@@ -129,6 +129,24 @@ export class UserSchemaClass extends EntityDocumentHelper {
   })
   reportsToId?: string | null;
 
+  /**
+   * The single org unit this user sits in.
+   *
+   * Single-valued on purpose, and that is the definition rather than a
+   * simplification: a record carries one `orgUnitId`, so "records belonging to
+   * my unit" only has a determinate answer if a person has one unit. Many-to-many
+   * membership is what Groups are for. Nullable because a user can exist before
+   * the org chart is drawn — an unassigned user contributes no org-unit scope
+   * and therefore sees nothing extra, which is the fail-closed direction.
+   */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'OrgUnitSchemaClass',
+    default: null,
+    index: true,
+  })
+  orgUnitId?: string | null;
+
   /** Onboarding lifecycle tag: INCOMPLETE_ONBOARDING | COMPLETED | null */
   @Prop({
     type: String,

@@ -3,8 +3,10 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ModuleRef } from '@nestjs/core';
 import { Model } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -16,6 +18,8 @@ import { CustomRolesService } from './custom-roles.service';
 import { AuthzAuditService } from '../authz-audit/authz-audit.service';
 import { RoleAssignment } from './domain/role-assignment';
 import { RoleAssignmentMapper } from './mappers/role-assignment.mapper';
+import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
+import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 
 export interface GrantRoleParams {
   tenantId: string;
@@ -45,12 +49,24 @@ export class RoleAssignmentService {
     private readonly customRoles: CustomRolesService,
     private readonly audit: AuthzAuditService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   /** Grant a role to a principal (optionally time-bounded). */
   async grant(params: GrantRoleParams): Promise<RoleAssignment> {
     // The role must exist in this tenant — reject dangling / cross-tenant ids.
     await this.customRoles.findById(params.roleId, params.tenantId);
+
+    // The PRINCIPAL must also belong to this tenant (H-03). Validating only the
+    // role left the other half open: a grant written against a user or group of
+    // another tenant used to resolve into real access, because the evaluator
+    // synthesized the missing membership. Both halves are now checked — here at
+    // the write, and again at evaluation time.
+    await this.assertPrincipalInTenant(
+      params.tenantId,
+      params.principalType,
+      params.principalId,
+    );
 
     if (params.expiresAt && !(params.expiresAt instanceof Date)) {
       throw new BadRequestException('expiresAt must be a valid date');
@@ -152,6 +168,39 @@ export class RoleAssignmentService {
       .lean()
       .exec();
     return RoleAssignmentMapper.toDomainList(rows);
+  }
+
+  /**
+   * A grant target must already be a member of the tenant (users) or a group
+   * owned by it (groups). Resolved through ModuleRef because the user and group
+   * repositories live in feature modules that themselves consume the PDP.
+   */
+  private async assertPrincipalInTenant(
+    tenantId: string,
+    principalType: AssignmentPrincipalType,
+    principalId: string,
+  ): Promise<void> {
+    if (principalType === 'group') {
+      const groupRepo = this.moduleRef.get(GroupRepository, { strict: false });
+      const group = await groupRepo.findById(tenantId, principalId);
+      if (!group) {
+        throw new UnprocessableEntityException(
+          `Group ${principalId} does not belong to this workspace`,
+        );
+      }
+      return;
+    }
+
+    const userRepo = this.moduleRef.get(UserRepository, { strict: false });
+    const [user] = await userRepo.findByIdsGlobal([principalId]);
+    const belongs = user?.tenants?.some(
+      (membership: any) => String(membership.tenantId) === String(tenantId),
+    );
+    if (!belongs) {
+      throw new UnprocessableEntityException(
+        `User ${principalId} is not a member of this workspace`,
+      );
+    }
   }
 
   private invalidate(

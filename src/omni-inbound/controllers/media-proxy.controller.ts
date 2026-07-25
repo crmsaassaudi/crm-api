@@ -12,6 +12,7 @@ import { Response } from 'express';
 import { ClsService } from 'nestjs-cls';
 import { MediaProxyService } from '../services/media-proxy.service';
 import { FilesService } from '../../files/files.service';
+import { RequirePermission } from '../../common/permissions';
 
 /**
  * Serves cached/proxied media files.
@@ -44,6 +45,7 @@ export class MediaProxyController {
    * This is the preferred approach — S3/CDN handles the bandwidth.
    */
   @Get('redirect/*storageKey')
+  @RequirePermission('view', 'omni_channel')
   async redirectToMedia(
     @Param('storageKey') storageKey: string,
     @Res() res: Response,
@@ -67,6 +69,7 @@ export class MediaProxyController {
    * Used as a fallback or for specific security requirements.
    */
   @Get('*storageKey')
+  @RequirePermission('view', 'omni_channel')
   async getMedia(
     @Param('storageKey') storageKey: string,
     @Res() res: Response,

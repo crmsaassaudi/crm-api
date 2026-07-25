@@ -11,7 +11,6 @@ export class GroupMapper {
     entity.parentGroupId = raw.parentGroupId
       ? raw.parentGroupId.toString()
       : null;
-    entity.managerId = raw.managerId ? raw.managerId.toString() : null;
     entity.memberIds = (raw.memberIds || []).map((m: any) => m.toString());
     entity.permissions = raw.permissions || [];
     entity.roleIds = ((raw as any).roleIds || []).map((r: any) => r.toString());
@@ -29,7 +28,6 @@ export class GroupMapper {
     if (domain.description !== undefined) doc.description = domain.description;
     if (domain.parentGroupId !== undefined)
       doc.parentGroupId = domain.parentGroupId;
-    if (domain.managerId !== undefined) doc.managerId = domain.managerId;
     if (domain.memberIds !== undefined) doc.memberIds = domain.memberIds;
     if (domain.permissions !== undefined) doc.permissions = domain.permissions;
     if (domain.roleIds !== undefined) doc.roleIds = domain.roleIds;

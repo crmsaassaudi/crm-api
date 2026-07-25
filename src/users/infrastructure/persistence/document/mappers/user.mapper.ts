@@ -61,6 +61,7 @@ export class UserMapper {
         }
       : null;
     domainEntity.reportsToId = raw.reportsToId?.toString() ?? null;
+    domainEntity.orgUnitId = raw.orgUnitId?.toString() ?? null;
     domainEntity.onboardingStatus = raw.onboardingStatus as
       | 'INCOMPLETE_ONBOARDING'
       | 'COMPLETED'
@@ -124,6 +125,9 @@ export class UserMapper {
     }
     if (domainEntity.reportsToId !== undefined) {
       persistenceSchema.reportsToId = domainEntity.reportsToId;
+    }
+    if (domainEntity.orgUnitId !== undefined) {
+      persistenceSchema.orgUnitId = domainEntity.orgUnitId;
     }
     if (domainEntity.onboardingStatus !== undefined) {
       persistenceSchema.onboardingStatus = domainEntity.onboardingStatus;

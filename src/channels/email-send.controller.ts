@@ -15,6 +15,7 @@ import { EmailContentSchemaClass } from './infrastructure/persistence/document/e
 import { EmailMetadataSchemaClass } from './infrastructure/persistence/document/entities/email-metadata.schema';
 import { OutboundQueueService } from './services/outbound-queue.service';
 import nodemailer from 'nodemailer';
+import { RequirePermission } from '../common/permissions';
 
 class SendEmailDto {
   configId: string;
@@ -54,6 +55,7 @@ export class EmailSendController {
   ) {}
 
   @Post('email/send')
+  @RequirePermission('edit', 'omni_channel')
   @ApiOperation({ summary: 'Send standalone email (no conversation required)' })
   async sendEmail(@Body() dto: SendEmailDto) {
     const tenantId = this.cls.get('tenantId');

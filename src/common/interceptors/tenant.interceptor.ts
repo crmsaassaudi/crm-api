@@ -20,10 +20,21 @@ import { ModuleRef } from '@nestjs/core';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
 import { RedisService } from '../../redis/redis.service';
+import { readTrustedTenantHeader } from '../tenant/tenant-header.policy';
 
 const TENANT_ALIAS_CACHE_TTL = 300; // 5 minutes
 const TENANT_I18N_CACHE_TTL = 300;
 const USER_KEYCLOAK_CACHE_TTL = 300;
+
+/**
+ * What one membership check resolves, and what gets cached under
+ * `tenant:member:v2:*`. `roles: null` encodes "not a member" — distinct from
+ * `[]`, a member holding no elevated tenant role.
+ */
+interface CachedMembership {
+  roles: string[] | null;
+  orgUnitId: string | null;
+}
 
 /**
  * TenantInterceptor — Resolves multitenant context for every request.
@@ -38,7 +49,7 @@ const USER_KEYCLOAK_CACHE_TTL = 300;
  *
  *   tenantId:
  *     1. Subdomain alias  (daitoan.crmsaudi.dev -> lookup -> ObjectId)
- *     2. x-tenant-id header (DEV/TEST only)
+ *     2. x-tenant-id header (opt-in via ALLOW_TENANT_HEADER=1, never in prod)
  *     3. BFF session JWT claim (tenantId)
  *     4. Bearer JWT claim (tenantId)
  *     5. Missing tenant context is rejected for tenant-scoped operations
@@ -262,12 +273,11 @@ export class TenantInterceptor implements NestInterceptor {
       tenantHints.push(alias);
     }
 
-    // Source 2: x-tenant-id header (DEV/TEST only)
-    if (process.env.NODE_ENV !== 'production') {
-      const headerVal = this.extractHeader(request, 'x-tenant-id');
-      if (headerVal) {
-        tenantHints.push(headerVal);
-      }
+    // Source 2: x-tenant-id header — opt-in per environment, off by default
+    // and impossible to enable under NODE_ENV=production (H-09).
+    const headerVal = readTrustedTenantHeader(request);
+    if (headerVal) {
+      tenantHints.push(headerVal);
     }
 
     // Source 3: BFF session cookie
@@ -445,29 +455,52 @@ export class TenantInterceptor implements NestInterceptor {
     tenantId: string,
     userId: string,
   ): Promise<void> {
-    const cacheKey = `tenant:member:${tenantId}:${userId}`;
+    // `:v2` because the cached shape changed from `string[] | null` to an
+    // object. Without the bump, a running Redis would hand a v1 array to code
+    // that reads `.roles` off it and every member would look role-less.
+    const cacheKey = `tenant:member:v2:${tenantId}:${userId}`;
     try {
-      const cached = await this.redisService.get<boolean>(cacheKey);
-      if (cached === true) return;
-      if (cached === false) {
+      // Cache the verified tenant ROLES and the user's ORG UNIT rather than a
+      // bare boolean: all three come from the same read, and downstream code
+      // needs the role (M-15) and the unit (H-07). `roles: []` is a valid member
+      // with no elevated tenant role; `roles: null` means not a member.
+      const cached = await this.redisService.get<CachedMembership | null>(
+        cacheKey,
+      );
+      if (cached && Array.isArray(cached.roles)) {
+        this.applyMembership(cached);
+        return;
+      }
+      if (cached === null) {
         throw new UnauthorizedException('User is not a member of this tenant');
       }
 
       const userRepo = this.moduleRef.get(UserRepository, { strict: false });
       const user = await userRepo.findById(userId);
-      const isMember =
-        user?.tenants?.some((t: any) => t.tenantId?.toString() === tenantId) ??
-        false;
+      const membership = user?.tenants?.find(
+        (t: any) => t.tenantId?.toString() === tenantId,
+      );
+      const resolved: CachedMembership = {
+        roles: membership ? ((membership as any).roles ?? []) : null,
+        orgUnitId: (user as any)?.orgUnitId
+          ? String((user as any).orgUnitId)
+          : null,
+      };
 
       await this.redisService
-        .set(cacheKey, isMember, USER_KEYCLOAK_CACHE_TTL)
+        .set(
+          cacheKey,
+          resolved.roles === null ? null : resolved,
+          USER_KEYCLOAK_CACHE_TTL,
+        )
         .catch(() => {
           /* non-fatal */
         });
 
-      if (!isMember) {
+      if (resolved.roles === null) {
         throw new UnauthorizedException('User is not a member of this tenant');
       }
+      this.applyMembership(resolved);
     } catch (err) {
       if (err instanceof UnauthorizedException) throw err;
       // HIGH-02: Fail CLOSED on transient errors. The previous behavior
@@ -480,6 +513,41 @@ export class TenantInterceptor implements NestInterceptor {
         'Tenant membership verification temporarily unavailable',
       );
     }
+  }
+
+  /**
+   * Publish the caller's VERIFIED tenant roles into CLS (M-15).
+   *
+   * `tenantRole` / `tenantRoles` were read by the files and folders modules in
+   * ~14 authorization branches, but nothing ever wrote them — so every
+   * `['OWNER','ADMIN'].includes(userRole)` test was permanently false. That
+   * failed closed (admins silently lost file elevation, and `purge` rejected
+   * everyone including the owner), but it left dead authorization logic that
+   * would spring to life, unexercised, the moment anyone set the key.
+   *
+   * Written here because this is the only place that has already proven the
+   * membership is real, so the value cannot be spoofed by a client.
+   */
+  private applyMembership(membership: CachedMembership): void {
+    this.setTenantRoles(membership.roles ?? []);
+
+    // H-07: the acting user's org unit, stamped onto records they create so
+    // ORG_UNIT scopes have something to match. Published here rather than in
+    // DataVisibilityInterceptor because that interceptor returns early for
+    // admins and for `public_read` tenants — and creates happen on those paths
+    // too, so a record made by an admin would otherwise carry no unit at all.
+    this.cls.set('userOrgUnitId', membership.orgUnitId ?? null);
+  }
+
+  private setTenantRoles(roles: string[]): void {
+    this.cls.set('tenantRoles', roles);
+    // Single primary role for the legacy `cls.get('tenantRole')` call sites.
+    const primary = roles.includes('OWNER')
+      ? 'OWNER'
+      : roles.includes('ADMIN')
+        ? 'ADMIN'
+        : (roles[0] ?? '');
+    this.cls.set('tenantRole', primary);
   }
 
   // ──────────────────────────────────────────────────────────────────────────

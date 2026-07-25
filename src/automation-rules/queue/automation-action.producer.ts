@@ -54,7 +54,7 @@ export class AutomationActionProducer {
       'send_email',
       'send_sms',
       'update_field',
-      'route_to_team',
+      'route_to_group',
       'webhook',
       'create_task',
       'create_ticket',
@@ -132,7 +132,7 @@ export class AutomationActionProducer {
       case 'send_zns':
       case 'send_livechat':
         return 1;
-      case 'route_to_team':
+      case 'route_to_group':
       case 'internal_notification':
         return 2;
       case 'update_field':

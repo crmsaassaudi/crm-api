@@ -10,6 +10,7 @@ import {
   AgentStatusAuditService,
   AgentWorkTimeSummary,
 } from '../services/agent-status-audit.service';
+import { RequirePermission } from '../../common/permissions';
 
 /**
  * REST endpoints for agent work time reporting.
@@ -32,6 +33,7 @@ export class AgentStatusAuditController {
    * Used for the team dashboard / daily KPI overview.
    */
   @Get('work-time')
+  @RequirePermission('view', 'agent_reports')
   async getTeamWorkTime(
     @Query('date') date?: string,
   ): Promise<{ data: AgentWorkTimeSummary[] }> {
@@ -55,6 +57,7 @@ export class AgentStatusAuditController {
    * Used for individual agent KPI detail view.
    */
   @Get(':agentId/work-time')
+  @RequirePermission('view', 'agent_reports')
   async getAgentWorkTime(
     @Param('agentId') agentId: string,
     @Query('date') date?: string,

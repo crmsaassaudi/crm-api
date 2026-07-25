@@ -6,7 +6,7 @@ import { AutomationCrmModule } from '../events/automation-event.payload';
  * Phase 4 Queue Architecture (5 queues):
  *   - automation-actions-email:     Email-specific, rate-limited for SendGrid
  *   - automation-actions-sms:       SMS-specific, rate-limited for Twilio (1/s)
- *   - automation-actions-internal:  UpdateField + RouteToTeam (fast, no external API)
+ *   - automation-actions-internal:  UpdateField + RouteToGroup (fast, no external API)
  *   - automation-actions-webhook:   Webhook calls, rate-limited
  *   - automation-actions-dlq:       Dead Letter Queue (manual retry)
  *   - automation-actions-bulk:      Throttled events (low priority)
@@ -60,7 +60,7 @@ export function resolveJobNameForAction(actionType: string): AutomationJobName {
     send_email: AutomationJobName.SEND_EMAIL,
     send_sms: AutomationJobName.SEND_SMS,
     update_field: AutomationJobName.UPDATE_FIELD,
-    route_to_team: AutomationJobName.ROUTE_TO_TEAM,
+    route_to_group: AutomationJobName.ROUTE_TO_TEAM,
     webhook: AutomationJobName.WEBHOOK,
     create_task: AutomationJobName.CREATE_TASK,
     create_ticket: AutomationJobName.CREATE_TICKET,
@@ -99,7 +99,7 @@ export interface AutomationActionJobData {
     | 'send_email'
     | 'send_sms'
     | 'update_field'
-    | 'route_to_team'
+    | 'route_to_group'
     | 'webhook'
     | 'create_task'
     | 'create_ticket'
@@ -202,7 +202,7 @@ export function resolveQueueForAction(actionType: string): string {
     case 'send_livechat':
       return AUTOMATION_SMS_QUEUE;
     case 'update_field':
-    case 'route_to_team':
+    case 'route_to_group':
     case 'create_task':
     case 'create_ticket':
     case 'add_tag':

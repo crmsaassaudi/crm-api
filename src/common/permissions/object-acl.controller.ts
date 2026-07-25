@@ -1,14 +1,15 @@
 import {
   Controller,
+  ForbiddenException,
   Get,
   Put,
   Delete,
   Param,
   Body,
-  Req,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
 import { ObjectAclService, type AclEntry } from './object-acl.service';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { RequirePermission } from './index';
@@ -34,7 +35,26 @@ class UpsertAclDto {
 @ApiBearerAuth()
 @Controller('acl/:resourceType/:resourceId')
 export class ObjectAclController {
-  constructor(private readonly aclService: ObjectAclService) {}
+  constructor(
+    private readonly aclService: ObjectAclService,
+    private readonly cls: ClsService,
+  ) {}
+
+  /**
+   * The tenant comes from CLS only (C-02).
+   *
+   * These endpoints WRITE access-control entries, so a header-derived tenant
+   * would let an admin of one workspace plant ACL rows — including `isDeny` —
+   * into another. CLS is populated by TenantInterceptor from the subdomain /
+   * session / JWT and is membership-verified.
+   */
+  private requireTenantId(): string {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new ForbiddenException('No tenant context');
+    }
+    return tenantId;
+  }
 
   @Get()
   @ApiOperation({ summary: 'List all ACL entries for a resource record' })
@@ -42,9 +62,8 @@ export class ObjectAclController {
   async list(
     @Param('resourceType') resourceType: string,
     @Param('resourceId') resourceId: string,
-    @Req() req: any,
   ) {
-    const tenantId = req.user?.tenantId ?? req.headers['x-tenant-id'];
+    const tenantId = this.requireTenantId();
     return this.aclService.getForResource(tenantId, resourceType, resourceId);
   }
 
@@ -55,9 +74,8 @@ export class ObjectAclController {
     @Param('resourceType') resourceType: string,
     @Param('resourceId') resourceId: string,
     @Body() dto: UpsertAclDto,
-    @Req() req: any,
   ) {
-    const tenantId = req.user?.tenantId ?? req.headers['x-tenant-id'];
+    const tenantId = this.requireTenantId();
     const entry: AclEntry = {
       tenantId,
       resourceType,
@@ -78,9 +96,8 @@ export class ObjectAclController {
     @Param('resourceType') resourceType: string,
     @Param('resourceId') resourceId: string,
     @Param('principalId') principalId: string,
-    @Req() req: any,
   ) {
-    const tenantId = req.user?.tenantId ?? req.headers['x-tenant-id'];
+    const tenantId = this.requireTenantId();
     await this.aclService.remove(
       tenantId,
       resourceType,
@@ -98,9 +115,8 @@ export class ObjectAclController {
   async removeAll(
     @Param('resourceType') resourceType: string,
     @Param('resourceId') resourceId: string,
-    @Req() req: any,
   ) {
-    const tenantId = req.user?.tenantId ?? req.headers['x-tenant-id'];
+    const tenantId = this.requireTenantId();
     await this.aclService.removeAllForResource(
       tenantId,
       resourceType,

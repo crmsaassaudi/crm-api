@@ -36,7 +36,7 @@ class ActionsDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  assignToTeamId?: string;
+  assignToGroupId?: string;
 
   @ApiProperty({ enum: ['round-robin', 'least-busy', 'manual'] })
   @IsEnum(['round-robin', 'least-busy', 'manual'])
@@ -55,7 +55,7 @@ export class CreateAssignmentRuleDto {
   @IsEnum(['Contact', 'Ticket', 'Task', 'Deal'])
   module: string;
 
-  @ApiProperty({ example: 'Urgent Tickets → Senior Team' })
+  @ApiProperty({ example: 'Urgent Tickets → Senior Group' })
   @IsString()
   name: string;
 
@@ -107,7 +107,7 @@ export class UpdateAssignmentSettingDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  defaultTeamId?: string;
+  defaultGroupId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

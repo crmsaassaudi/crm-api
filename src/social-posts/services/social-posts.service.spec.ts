@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { SocialContentAssetsService } from './social-posts.service';
+import { createEventBusMock } from '../../test/mocks/event-bus.mock';
 
 describe('SocialContentAssetsService', () => {
   const tenantId = 'tenant_1';
@@ -65,7 +66,11 @@ describe('SocialContentAssetsService', () => {
   let publisherRegistry: Record<string, jest.Mock>;
   let queueProducer: Record<string, jest.Mock>;
   let aiVideoJobService: Record<string, jest.Mock>;
-  let auditLogService: Record<string, jest.Mock>;
+  // The service's 8th dependency is EventEmitter2, not the audit service it
+  // used to take. Passing the audit mock there is what produced
+  // "this.eventEmitter.emit is not a function" — a positional-argument mismatch
+  // that TypeScript could not catch because every mock is cast to `any`.
+  let eventEmitter: ReturnType<typeof createEventBusMock>;
   let cls: Record<string, jest.Mock>;
   let service: SocialContentAssetsService;
 
@@ -109,9 +114,7 @@ describe('SocialContentAssetsService', () => {
     aiVideoJobService = {
       resolveApprovedVideoUrls: jest.fn(),
     };
-    auditLogService = {
-      record: jest.fn(),
-    };
+    eventEmitter = createEventBusMock();
     cls = {
       get: jest.fn((key: string) => {
         if (key === 'tenantId') return tenantId;
@@ -128,7 +131,7 @@ describe('SocialContentAssetsService', () => {
       publisherRegistry as any,
       queueProducer as any,
       aiVideoJobService as any,
-      auditLogService as any,
+      eventEmitter as any,
       cls as any,
     );
   });

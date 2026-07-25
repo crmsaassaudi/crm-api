@@ -2,10 +2,27 @@ import {
   IsString,
   IsArray,
   IsOptional,
+  IsIn,
   MaxLength,
   MinLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DATA_SCOPE_ORDER, DataScope } from './data-scope.enum';
+
+/**
+ * `dataScope` is validated against DATA_SCOPE_ORDER rather than accepted as a
+ * free string. An unrecognised value would be ignored by `maxScope()` at
+ * evaluation time, so the role would silently grant less than the admin who
+ * typed it believes -- a scope the UI displays but the engine never applies.
+ * Rejecting it at the write boundary keeps the catalogue honest.
+ */
+const DATA_SCOPE_DOC = {
+  enum: DATA_SCOPE_ORDER,
+  nullable: true,
+  example: DataScope.ORG_UNIT,
+  description:
+    'Read breadth inside the tenant. Null = no opinion, tenant default applies. Users with several roles get the widest.',
+} as const;
 
 export class CreateCustomRoleDto {
   @ApiProperty({ example: 'Sales Agent' })
@@ -32,6 +49,11 @@ export class CreateCustomRoleDto {
   @IsOptional()
   @IsString()
   color?: string;
+
+  @ApiPropertyOptional(DATA_SCOPE_DOC)
+  @IsOptional()
+  @IsIn([...DATA_SCOPE_ORDER, null])
+  dataScope?: DataScope | null;
 }
 
 export class CloneCustomRoleDto {
@@ -72,4 +94,9 @@ export class UpdateCustomRoleDto {
   @IsOptional()
   @IsString()
   color?: string;
+
+  @ApiPropertyOptional(DATA_SCOPE_DOC)
+  @IsOptional()
+  @IsIn([...DATA_SCOPE_ORDER, null])
+  dataScope?: DataScope | null;
 }

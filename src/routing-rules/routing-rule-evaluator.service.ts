@@ -29,7 +29,7 @@ export interface RoutingContext {
 export interface RoutingRuleMatch {
   ruleId: string;
   ruleName: string;
-  teamId: string;
+  groupId: string;
   strategy: string;
   sticky: boolean;
   requiredSkills: string[];
@@ -113,7 +113,7 @@ export class RoutingRuleEvaluatorService {
         return {
           ruleId: rule.id,
           ruleName: rule.name,
-          teamId: rule.actions.teamId,
+          groupId: rule.actions.groupId,
           strategy: rule.actions.strategy,
           sticky: rule.actions.sticky,
           requiredSkills: rule.actions.requiredSkills ?? [],

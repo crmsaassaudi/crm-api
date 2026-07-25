@@ -13,6 +13,7 @@ import { Throttle } from '@nestjs/throttler';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { WidgetEventRepository } from './infrastructure/persistence/document/repositories/widget-event.repository';
 import { LivechatWidgetService } from './livechat-widget.service';
+import { RequirePermission } from '../common/permissions';
 
 @ApiTags('Livechat Analytics')
 @Controller({ path: 'livechat/analytics', version: '1' })
@@ -124,6 +125,7 @@ export class LivechatAnalyticsController {
   // ── Admin: Dashboard queries ─────────────────────────────────────────────
 
   @Get(':widgetId/summary')
+  @RequirePermission('view', 'reports')
   @ApiOperation({ summary: 'Get widget analytics summary' })
   async getSummary(
     @Param('widgetId') widgetId: string,

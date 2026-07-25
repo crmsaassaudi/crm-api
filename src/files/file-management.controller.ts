@@ -439,6 +439,7 @@ export class FileManagementController {
   // ── Hard Delete (SUPER_ADMIN) ─────────────────────────────────────
 
   @Delete(':id/purge')
+  @RequirePermission('delete', 'files')
   @HttpCode(HttpStatus.OK)
   async hardDeleteFile(@Param('id') id: string) {
     const userRole = this.cls.get<string>('tenantRole') ?? '';

@@ -3,10 +3,12 @@ import { ClsService } from 'nestjs-cls';
 import { RoutingRulesService } from './routing-rules.service';
 import { RoutingRuleRepository } from './infrastructure/persistence/document/repositories/routing-rule.repository';
 import { RoutingRule } from './domain/routing-rule';
+import { RoutingRuleEvaluatorService } from './routing-rule-evaluator.service';
 
 describe('RoutingRulesService', () => {
   let service: RoutingRulesService;
   let repositoryMock: any;
+  let evaluatorMock: { invalidateCache: jest.Mock };
   let clsMock: any;
 
   const sampleRule = (): RoutingRule => {
@@ -18,7 +20,7 @@ describe('RoutingRulesService', () => {
     rule.matchType = 'all';
     rule.conditions = [{ field: 'channel', operator: 'eq', value: 'facebook' }];
     rule.actions = {
-      teamId: 'sales',
+      groupId: 'sales',
       strategy: 'round-robin',
       sticky: false,
       requiredSkills: [],
@@ -47,6 +49,8 @@ describe('RoutingRulesService', () => {
       findEnabledByTenant: jest.fn().mockResolvedValue([sampleRule()]),
     };
 
+    evaluatorMock = { invalidateCache: jest.fn() };
+
     clsMock = {
       get: jest.fn().mockReturnValue('tenant_1'),
     };
@@ -55,6 +59,12 @@ describe('RoutingRulesService', () => {
       providers: [
         RoutingRulesService,
         { provide: RoutingRuleRepository, useValue: repositoryMock },
+        // Every write invalidates the evaluator's per-tenant rule cache, so the
+        // service depends on it. Asserted in the write tests below rather than
+        // merely stubbed: a missed invalidation means edited rules keep routing
+        // conversations by the previous configuration until the cache expires,
+        // which looks like the edit simply did not save.
+        { provide: RoutingRuleEvaluatorService, useValue: evaluatorMock },
         { provide: ClsService, useValue: clsMock },
       ],
     }).compile();
@@ -111,7 +121,7 @@ describe('RoutingRulesService', () => {
         matchType: 'all' as const,
         conditions: [{ field: 'channel', operator: 'eq', value: 'zalo' }],
         actions: {
-          teamId: 'support',
+          groupId: 'support',
           strategy: 'least-busy',
           sticky: false,
           requiredSkills: [],
@@ -125,6 +135,48 @@ describe('RoutingRulesService', () => {
         tenantId: 'tenant_1',
       });
       expect(result).toBeDefined();
+    });
+  });
+
+  describe('evaluator cache invalidation', () => {
+    const dto = () => ({
+      name: 'Rule',
+      enabled: true,
+      priority: 1,
+      matchType: 'all' as const,
+      conditions: [{ field: 'channel', operator: 'eq', value: 'zalo' }],
+      actions: {
+        groupId: 'support',
+        strategy: 'least-busy',
+        sticky: false,
+        requiredSkills: [],
+      },
+    });
+
+    it('should invalidate the tenant cache on create', async () => {
+      await service.create(dto());
+      expect(evaluatorMock.invalidateCache).toHaveBeenCalledWith('tenant_1');
+    });
+
+    it('should invalidate the tenant cache on update', async () => {
+      await service.update('rule_1', { name: 'Renamed' });
+      expect(evaluatorMock.invalidateCache).toHaveBeenCalledWith('tenant_1');
+    });
+
+    it('should invalidate the tenant cache on delete', async () => {
+      await service.delete('rule_1');
+      expect(evaluatorMock.invalidateCache).toHaveBeenCalledWith('tenant_1');
+    });
+
+    it('should invalidate the tenant cache on reorder', async () => {
+      await service.reorder(['rule_1']);
+      expect(evaluatorMock.invalidateCache).toHaveBeenCalledWith('tenant_1');
+    });
+
+    it('should NOT invalidate on a read', async () => {
+      await service.findAll();
+      await service.findById('rule_1');
+      expect(evaluatorMock.invalidateCache).not.toHaveBeenCalled();
     });
   });
 
@@ -206,7 +258,7 @@ describe('RoutingRulesService', () => {
         matchType: 'all',
         conditions: [],
         actions: {
-          teamId: '',
+          groupId: '',
           strategy: 'round-robin',
           sticky: false,
           requiredSkills: [],

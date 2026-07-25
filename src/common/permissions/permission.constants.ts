@@ -12,6 +12,7 @@ export type PermissionResource =
   | 'agent_reports'
   | 'users'
   | 'groups'
+  | 'org_units'
   | 'settings'
   | 'tasks'
   | 'ai_video'
@@ -143,6 +144,15 @@ export const PERMISSION_REGISTRY: Record<
     delete: 'groups:delete',
     manage_members: 'groups:manage_members',
   },
+  // The org tree that ORG_UNIT / ORG_UNIT_SUBTREE data scopes are keyed on.
+  // Separate from `groups` on purpose: a group is a collaboration set, an org
+  // unit decides who owns which records, so the two must be grantable apart.
+  org_units: {
+    view: 'org_units:view',
+    create: 'org_units:create',
+    edit: 'org_units:edit',
+    delete: 'org_units:delete',
+  },
   settings: {
     view: 'settings:view',
     manage_billing: 'settings:manage_billing',
@@ -241,6 +251,12 @@ export const PERMISSION_REGISTRY: Record<
   },
   omni_channel: {
     view: 'omni_channel:view',
+    /** Mutate a conversation: tags, notes, read state, message linking. */
+    edit: 'omni_channel:edit',
+    /** Claim / assign / unassign a conversation to an agent or group. */
+    assign: 'omni_channel:assign',
+    /** Tenant-wide omni settings and storage quota. */
+    manage_system: 'omni_channel:manage_system',
   },
   omni_reports: {
     view: 'omni_reports:view',
@@ -304,7 +320,7 @@ export const CORE_PERMISSIONS: string[] = [
   'reports:deal:view',
   'reports:ticket:view',
   'reports:agent:view',
-  // Users & Groups management
+  // Users, Groups & Org units management
   'users:view',
   'users:create',
   'users:edit',
@@ -315,6 +331,10 @@ export const CORE_PERMISSIONS: string[] = [
   'groups:edit',
   'groups:delete',
   'groups:manage_members',
+  'org_units:view',
+  'org_units:create',
+  'org_units:edit',
+  'org_units:delete',
   // Settings
   'settings:view',
   'settings:manage_billing',
@@ -375,6 +395,9 @@ export const CORE_PERMISSIONS: string[] = [
   'storage:view',
   // Omni-Channel page access
   'omni_channel:view',
+  'omni_channel:edit',
+  'omni_channel:assign',
+  'omni_channel:manage_system',
   // Omni-Channel Reports
   'omni_reports:view',
 ];
