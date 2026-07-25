@@ -8,6 +8,7 @@ import {
   Body,
   Req,
 } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AccessPolicyService } from './access-policy.service';
 import {
@@ -15,18 +16,22 @@ import {
   UpdateAccessPolicyDto,
 } from './access-policy.dto';
 import { RequirePermission } from './index';
+import { resolveRequestTenantId } from '../tenancy/resolve-request-tenant';
 
 @ApiTags('Access Policies (ABAC)')
 @ApiBearerAuth()
 @Controller({ path: 'access-policies', version: '1' })
 export class AccessPolicyController {
-  constructor(private readonly service: AccessPolicyService) {}
+  constructor(
+    private readonly service: AccessPolicyService,
+    private readonly cls: ClsService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List ABAC access policies for the tenant' })
   @RequirePermission('view', 'settings')
   findAll(@Req() req: any) {
-    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    const tenantId = resolveRequestTenantId(this.cls, req);
     return this.service.findAll(tenantId);
   }
 
@@ -34,7 +39,7 @@ export class AccessPolicyController {
   @ApiOperation({ summary: 'Create an ABAC access policy' })
   @RequirePermission('manage_system', 'settings')
   create(@Req() req: any, @Body() dto: CreateAccessPolicyDto) {
-    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    const tenantId = resolveRequestTenantId(this.cls, req);
     return this.service.create(tenantId, dto);
   }
 
@@ -46,7 +51,7 @@ export class AccessPolicyController {
     @Param('id') id: string,
     @Body() dto: UpdateAccessPolicyDto,
   ) {
-    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    const tenantId = resolveRequestTenantId(this.cls, req);
     return this.service.update(id, tenantId, dto);
   }
 
@@ -54,7 +59,7 @@ export class AccessPolicyController {
   @ApiOperation({ summary: 'Delete an ABAC access policy' })
   @RequirePermission('manage_system', 'settings')
   async remove(@Req() req: any, @Param('id') id: string) {
-    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    const tenantId = resolveRequestTenantId(this.cls, req);
     await this.service.remove(id, tenantId);
     return { success: true };
   }

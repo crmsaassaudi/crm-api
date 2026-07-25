@@ -8,6 +8,7 @@ import {
   Body,
   Req,
 } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { CustomRolesService } from './custom-roles.service';
 import {
@@ -16,12 +17,16 @@ import {
   UpdateCustomRoleDto,
 } from './custom-roles.dto';
 import { RequirePermission } from './index';
+import { resolveRequestTenantId } from '../tenancy/resolve-request-tenant';
 
 @ApiTags('Roles')
 @ApiBearerAuth()
 @Controller({ path: 'roles', version: '1' })
 export class CustomRolesController {
-  constructor(private readonly service: CustomRolesService) {}
+  constructor(
+    private readonly service: CustomRolesService,
+    private readonly cls: ClsService,
+  ) {}
 
   // ── Permission matrix meta ─────────────────────────────────────────────────
 
@@ -32,7 +37,7 @@ export class CustomRolesController {
   })
   @RequirePermission('view', 'settings')
   getPermissionMatrix(@Req() req: any) {
-    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    const tenantId = resolveRequestTenantId(this.cls, req);
     return this.service.getPermissionMatrix(tenantId);
   }
 
@@ -42,7 +47,7 @@ export class CustomRolesController {
   @ApiOperation({ summary: 'List all custom roles for the current tenant' })
   @RequirePermission('view', 'settings')
   findAll(@Req() req: any) {
-    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    const tenantId = resolveRequestTenantId(this.cls, req);
     return this.service.findAll(tenantId);
   }
 
@@ -50,7 +55,7 @@ export class CustomRolesController {
   @ApiOperation({ summary: 'Create a new custom role' })
   @RequirePermission('manage_system', 'settings')
   create(@Req() req: any, @Body() dto: CreateCustomRoleDto) {
-    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    const tenantId = resolveRequestTenantId(this.cls, req);
     return this.service.create(tenantId, dto);
   }
 
@@ -65,7 +70,7 @@ export class CustomRolesController {
     @Param('id') id: string,
     @Body() dto: CloneCustomRoleDto,
   ) {
-    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    const tenantId = resolveRequestTenantId(this.cls, req);
     return this.service.clone(id, tenantId, dto);
   }
 
@@ -79,7 +84,7 @@ export class CustomRolesController {
     @Param('id') id: string,
     @Body() dto: UpdateCustomRoleDto,
   ) {
-    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    const tenantId = resolveRequestTenantId(this.cls, req);
     return this.service.update(id, tenantId, dto);
   }
 
@@ -89,7 +94,7 @@ export class CustomRolesController {
   })
   @RequirePermission('manage_system', 'settings')
   async remove(@Req() req: any, @Param('id') id: string) {
-    const tenantId: string = req.user?.tenantId ?? req.tenantId;
+    const tenantId = resolveRequestTenantId(this.cls, req);
     await this.service.remove(id, tenantId);
     return { success: true };
   }
