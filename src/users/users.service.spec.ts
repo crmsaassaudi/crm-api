@@ -100,7 +100,11 @@ describe('UsersService', () => {
       groupRepository,
       eventEmitter as any,
       { record: jest.fn().mockResolvedValue(undefined) } as any,
-      { findAll: jest.fn().mockResolvedValue([]) } as any,
+      {
+        findAll: jest.fn().mockResolvedValue([]),
+        // Tenant without seeded system roles → invite falls back to no baseline.
+        findBySystemKey: jest.fn().mockResolvedValue(null),
+      } as any,
     );
   });
 
