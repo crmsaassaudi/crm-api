@@ -153,7 +153,9 @@ describe('FallbackReassignProcessor', () => {
       await run();
 
       expect(assignmentService.assignConversation).not.toHaveBeenCalled();
-      expect(conversationCommandService.enqueueAssignAgent).not.toHaveBeenCalled();
+      expect(
+        conversationCommandService.enqueueAssignAgent,
+      ).not.toHaveBeenCalled();
       expect(redis.del).toHaveBeenCalledWith(MARKER);
     });
   });
@@ -278,7 +280,9 @@ describe('FallbackReassignProcessor', () => {
         .mockRejectedValueOnce(new Error('conversation locked'))
         .mockResolvedValueOnce('new_agent_2');
 
-      await expect(run(job({ strategy: 'next-available' }))).resolves.toBeUndefined();
+      await expect(
+        run(job({ strategy: 'next-available' })),
+      ).resolves.toBeUndefined();
 
       expect(assignmentService.assignConversation).toHaveBeenCalledTimes(2);
       // Still cleaned up, so a retry does not re-run the whole batch.

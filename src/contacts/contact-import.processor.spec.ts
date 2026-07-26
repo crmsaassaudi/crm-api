@@ -229,7 +229,7 @@ describe('ContactImportProcessor — buildMerge', () => {
 });
 
 describe('ContactImportProcessor — processBatch', () => {
-  const dedup = ['emails'] as ('emails' | 'phones')[];
+  const _dedup = ['emails'] as ('emails' | 'phones')[];
 
   const rows = (proc: any) => [
     proc.mapRow(
