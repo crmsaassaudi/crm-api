@@ -72,8 +72,9 @@ describe('ConversationService Concurrency', () => {
       }),
     };
 
-    // Mock InboundOrchestrationService (replaces AssignmentService, BotQueueService,
-    // BusinessHoursService, AutoResolveService, AgentPresenceService)
+    // Mock InboundOrchestrationService. Only the parts of orchestration that
+    // still run on the inbound path live here — bot processing, business-hours
+    // and auto-resolve moved behind the command queue (ConversationOpsProcessor).
     orchestrationMock = {
       // Added when bot-first routing landed: the service asks whether the
       // channel is configured to let the bot answer before any agent is
@@ -90,9 +91,6 @@ describe('ConversationService Concurrency', () => {
         lastError: null,
         lockedAt: null,
       }),
-      enqueueBotProcessingIfNeeded: jest.fn().mockResolvedValue(undefined),
-      handleBusinessHoursCheck: jest.fn().mockResolvedValue(undefined),
-      rescheduleAutoResolve: jest.fn().mockResolvedValue(undefined),
       cancelAutoResolve: jest.fn().mockResolvedValue(undefined),
       releaseConversation: jest.fn().mockResolvedValue(undefined),
     };
@@ -155,6 +153,9 @@ describe('ConversationService Concurrency', () => {
             toSchemaChannelType: jest
               .fn()
               .mockImplementation((type: string) => type.toLowerCase()),
+            getSessionLifecycleConfig: jest
+              .fn()
+              .mockResolvedValue({ reopenWindowHours: 24 }),
           },
         },
         { provide: IOREDIS_CLIENT, useValue: redisMock },
@@ -218,10 +219,16 @@ describe('ConversationService Concurrency', () => {
       { contactId: 'contact_123', conversationId: 'conv_123' },
       'tenant_1',
     );
-    expect(messageRepoMock.upsertInboundByExternalId).toHaveBeenCalled();
-    expect(redisMock.expire).toHaveBeenCalledWith(
+    // Message persistence, bot processing, business hours and auto-resolve all
+    // happen in ConversationOpsProcessor now — the inbound path only enqueues
+    // the CUSTOMER_MESSAGE command and hands the idempotency key over with it.
+    expect(messageRepoMock.upsertInboundByExternalId).not.toHaveBeenCalled();
+    expect(conversationCommandMock.enqueueCustomerMessage).toHaveBeenCalledWith(
+      'conv_123',
+      'tenant_1',
+      payload,
+      'msg_001',
       'omni:processed:tenant_1:msg_001',
-      3600,
     );
   });
 
@@ -235,40 +242,18 @@ describe('ConversationService Concurrency', () => {
       'conv_123',
       'contact_123',
       'new_conversation',
-      expect.any(Object),
     );
   });
 
-  it('should delegate to orchestration for bot processing', async () => {
+  it('should skip auto-assignment when the channel is bot-first', async () => {
+    orchestrationMock.isBotFirstActive.mockResolvedValueOnce(true);
+
     const payload = createPayload('msg_004');
 
     await service.handleInboundMessage(payload);
 
-    expect(orchestrationMock.enqueueBotProcessingIfNeeded).toHaveBeenCalledWith(
-      payload,
-      'conv_123',
-      'msg_123',
-    );
-  });
-
-  it('should delegate to orchestration for business hours check', async () => {
-    const payload = createPayload('msg_005');
-
-    await service.handleInboundMessage(payload);
-
-    expect(orchestrationMock.handleBusinessHoursCheck).toHaveBeenCalledWith(
-      payload,
-      'conv_123',
-    );
-  });
-
-  it('should delegate to orchestration for auto-resolve scheduling', async () => {
-    const payload = createPayload('msg_006');
-
-    await service.handleInboundMessage(payload);
-
-    // Called twice: once for new conversation schedule, once for message reschedule
-    expect(orchestrationMock.rescheduleAutoResolve).toHaveBeenCalledTimes(2);
+    expect(orchestrationMock.triggerAutoAssignment).not.toHaveBeenCalled();
+    expect(conversationCommandMock.enqueueCustomerMessage).toHaveBeenCalled();
   });
 
   it('should delegate to shadowContactService for contact creation', async () => {
@@ -297,7 +282,9 @@ describe('ConversationService Concurrency', () => {
     );
     expect(lockServiceMock.acquire).not.toHaveBeenCalled();
     expect(conversationRepoMock.create).not.toHaveBeenCalled();
-    expect(messageRepoMock.upsertInboundByExternalId).not.toHaveBeenCalled();
+    expect(
+      conversationCommandMock.enqueueCustomerMessage,
+    ).not.toHaveBeenCalled();
   });
 
   it('should skip processing if E11000 is thrown during save', async () => {
@@ -341,26 +328,24 @@ describe('ConversationService Concurrency', () => {
     await service.handleInboundMessage(payload);
 
     expect(conversationRepoMock.create).not.toHaveBeenCalled(); // No creation
-    expect(messageRepoMock.upsertInboundByExternalId).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationId: 'existing_conv_456' }),
+    expect(conversationCommandMock.enqueueCustomerMessage).toHaveBeenCalledWith(
+      'existing_conv_456',
+      'tenant_1',
+      payload,
+      'msg_002',
+      'omni:processed:tenant_1:msg_002',
     );
   });
 
-  it('should skip duplicate side effects when inbound upsert finds existing message', async () => {
-    messageRepoMock.upsertInboundByExternalId.mockResolvedValueOnce({
-      message: { id: 'msg_existing' },
-      inserted: false,
-    });
+  it('should release the idempotency key when processing fails', async () => {
+    lockServiceMock.acquire.mockRejectedValueOnce(new Error('boom'));
 
-    const eventEmitter = (service as any).eventEmitter;
-    const payload = createPayload('msg_duplicate');
+    const payload = createPayload('msg_fail');
 
-    await service.handleInboundMessage(payload);
+    await expect(service.handleInboundMessage(payload)).rejects.toThrow('boom');
 
-    expect(messageRepoMock.upsertInboundByExternalId).toHaveBeenCalled();
-    expect(eventEmitter.emit).not.toHaveBeenCalledWith(
-      'omni.message.persisted',
-      expect.anything(),
+    expect(redisMock.del).toHaveBeenCalledWith(
+      'omni:processed:tenant_1:msg_fail',
     );
   });
 
@@ -375,12 +360,12 @@ describe('ConversationService Concurrency', () => {
         conversationId: null,
       });
 
-      // Mock findContact to return the enriched contact data
-      shadowContactMock.findContact = jest.fn().mockResolvedValue({
-        firstName: 'Nguyen',
-        lastName: 'Toan',
-        emails: ['toan@example.com'],
-        phones: ['0901234567'],
+      // The service asks ShadowContactService to fold the linked Contact into
+      // the (empty) profile it built from the payload.
+      shadowContactMock.enrichProfileFromContact.mockResolvedValueOnce({
+        name: 'Nguyen Toan',
+        email: 'toan@example.com',
+        phone: '0901234567',
       });
 
       const payload = createPayload('msg_pre_identified');
@@ -423,11 +408,9 @@ describe('ConversationService Concurrency', () => {
         conversationId: null,
       });
 
-      shadowContactMock.findContact = jest.fn().mockResolvedValue({
-        firstName: 'Test',
-        lastName: 'User',
-        emails: ['test.user@company.com'],
-        phones: [],
+      shadowContactMock.enrichProfileFromContact.mockResolvedValueOnce({
+        name: 'Test User',
+        email: 'test.user@company.com',
       });
 
       const payload = createPayload('msg_email_test');
