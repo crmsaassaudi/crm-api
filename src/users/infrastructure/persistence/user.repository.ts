@@ -26,6 +26,12 @@ export abstract class UserRepository {
   /** Find by IDs without tenant scoping — use when resolving cross-tenant references (e.g. agent names in history) */
   abstract findByIdsGlobal(ids: User['id'][]): Promise<User[]>;
   abstract findManyByTenant(tenantId: string): Promise<User[]>;
+
+  /**
+   * Member count per org unit for one tenant, keyed by org-unit id.
+   * Units with no members are absent from the map rather than zero.
+   */
+  abstract countByOrgUnit(tenantId: string): Promise<Record<string, number>>;
   abstract findByEmail(email: User['email']): Promise<NullableType<User>>;
   abstract findByKeycloakIdAndProvider({
     keycloakId,

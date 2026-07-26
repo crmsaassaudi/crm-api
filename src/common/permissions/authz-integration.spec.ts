@@ -4,8 +4,7 @@ import { AuthzPermissionCacheService } from './authz-permission-cache.service';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
 import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
-import { CustomRolesService } from './custom-roles.service';
-import { RoleAssignmentService } from './role-assignment.service';
+import { CUSTOM_ROLES_SERVICE, ROLE_ASSIGNMENT_SERVICE } from './authz.tokens';
 import { PlatformRoleEnum } from '../../roles/platform-role.enum';
 
 /**
@@ -94,8 +93,8 @@ describe('Authorization PDP (integration)', () => {
         if (token === UserRepository) return userRepository;
         if (token === TenantsRepository) return tenantsRepository;
         if (token === GroupRepository) return groupRepository;
-        if (token === CustomRolesService) return customRolesService;
-        if (token === RoleAssignmentService) return roleAssignmentService;
+        if (token === CUSTOM_ROLES_SERVICE) return customRolesService;
+        if (token === ROLE_ASSIGNMENT_SERVICE) return roleAssignmentService;
         return null;
       }),
     } as unknown as ModuleRef;

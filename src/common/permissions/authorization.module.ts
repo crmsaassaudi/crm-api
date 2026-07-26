@@ -28,6 +28,11 @@ import { FieldMaskingInterceptor } from './field-masking.interceptor';
 import { CommonCacheModule } from '../cache/common-cache.module';
 import { ResourceLoaderRegistry } from './resource-loader.registry';
 import { MePermissionsController } from './me-permissions.controller';
+import {
+  AUTHZ_PERMISSION_CACHE,
+  CUSTOM_ROLES_SERVICE,
+  ROLE_ASSIGNMENT_SERVICE,
+} from './authz.tokens';
 
 /**
  * AuthorizationModule — the single home of the authorization stack.
@@ -75,6 +80,15 @@ import { MePermissionsController } from './me-permissions.controller';
     AuthzPermissionInvalidationListener,
     ResourceLoaderRegistry,
     AclGuard,
+    // Token aliases for the three services that resolve each other lazily via
+    // ModuleRef. Looking them up by class would re-introduce the import cycle
+    // that crashes bootstrap with a TDZ ReferenceError — see ./authz.tokens.
+    {
+      provide: AUTHZ_PERMISSION_CACHE,
+      useExisting: AuthzPermissionCacheService,
+    },
+    { provide: CUSTOM_ROLES_SERVICE, useExisting: CustomRolesService },
+    { provide: ROLE_ASSIGNMENT_SERVICE, useExisting: RoleAssignmentService },
     {
       // C-01: the record-level PEP is now part of the global guard chain. It is
       // a no-op on handlers without @UseAcl, so this cannot break existing

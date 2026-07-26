@@ -30,7 +30,8 @@ import { CustomRole } from './domain/custom-role';
 import { CustomRoleMapper } from './mappers/custom-role.mapper';
 import { AuthzAuditService } from '../authz-audit/authz-audit.service';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
-import { AuthzPermissionCacheService } from './authz-permission-cache.service';
+import type { AuthzPermissionCacheService } from './authz-permission-cache.service';
+import { AUTHZ_PERMISSION_CACHE } from './authz.tokens';
 
 @Injectable()
 export class CustomRolesService {
@@ -328,10 +329,13 @@ export class CustomRolesService {
     }
 
     // Resolved lazily: AuthzPermissionCacheService depends on this service, so
-    // a constructor injection would be a circular dependency.
-    const authzCache = this.moduleRef.get(AuthzPermissionCacheService, {
-      strict: false,
-    });
+    // a constructor injection would be a circular dependency. Keyed on a token
+    // rather than the class so the module graph stays acyclic too — see
+    // ./authz.tokens.
+    const authzCache = this.moduleRef.get<AuthzPermissionCacheService>(
+      AUTHZ_PERMISSION_CACHE,
+      { strict: false },
+    );
     const explanation = await authzCache.explainForUser(
       String(callerId),
       tenantId,
@@ -381,9 +385,10 @@ export class CustomRolesService {
       );
     }
 
-    const authzCache = this.moduleRef.get(AuthzPermissionCacheService, {
-      strict: false,
-    });
+    const authzCache = this.moduleRef.get<AuthzPermissionCacheService>(
+      AUTHZ_PERMISSION_CACHE,
+      { strict: false },
+    );
     const { scope: held } = await authzCache.resolveDataScope(
       String(callerId),
       tenantId,
