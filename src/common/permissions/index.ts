@@ -19,4 +19,5 @@ export * from './object-acl.service';
 export * from './object-acl.controller';
 export * from './authorization.module';
 export * from './use-acl.decorator';
+export * from './load-resource.decorator';
 export * from './acl.guard';

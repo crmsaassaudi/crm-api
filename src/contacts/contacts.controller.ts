@@ -39,6 +39,7 @@ import { SubResourceQueryDto } from './dto/sub-resource-query.dto';
 import { ListViewsService } from '../list-views/list-views.service';
 import { RequirePermission } from '../common/permissions';
 import { SensitiveResource } from '../common/permissions';
+import { UseAcl, LoadResource } from '../common/permissions';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { NotesService } from '../notes/notes.service';
 import { CreateNoteDto } from '../notes/dto/create-note.dto';
@@ -293,6 +294,8 @@ export class ContactsController {
   @ApiOkResponse({ type: Contact })
   @Patch(':id')
   @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'contacts')
+  @LoadResource('contacts')
   @UsePipes(new SanitizeMaskedInputPipe())
   @MaskedResource('Contact')
   update(@Param('id') id: string, @Body() data: UpdateContactDto) {
@@ -301,6 +304,8 @@ export class ContactsController {
 
   @Delete(':id')
   @RequirePermission('delete', 'contacts')
+  @UseAcl('delete', 'contacts')
+  @LoadResource('contacts')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }
