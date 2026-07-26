@@ -9,8 +9,9 @@ import { StatusEnum } from '../../statuses/statuses.enum';
 import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
-import { CustomRolesService } from './custom-roles.service';
-import { RoleAssignmentService } from './role-assignment.service';
+import type { CustomRolesService } from './custom-roles.service';
+import type { RoleAssignmentService } from './role-assignment.service';
+import { CUSTOM_ROLES_SERVICE, ROLE_ASSIGNMENT_SERVICE } from './authz.tokens';
 import {
   calculateEffectivePermissions,
   canAccess,
@@ -146,9 +147,10 @@ export class AuthzPermissionCacheService {
     }[]
   > {
     try {
-      const rolesService = this.moduleRef.get(CustomRolesService, {
-        strict: false,
-      });
+      const rolesService = this.moduleRef.get<CustomRolesService>(
+        CUSTOM_ROLES_SERVICE,
+        { strict: false },
+      );
       const roles = await rolesService.findAll(tenantId);
       return (roles ?? []).map((role) => ({
         id: String(role.id),
@@ -172,9 +174,10 @@ export class AuthzPermissionCacheService {
     principalIds: string[],
   ): Promise<string[]> {
     try {
-      const service = this.moduleRef.get(RoleAssignmentService, {
-        strict: false,
-      });
+      const service = this.moduleRef.get<RoleAssignmentService>(
+        ROLE_ASSIGNMENT_SERVICE,
+        { strict: false },
+      );
       if (!service) return [];
       return await service.activeRoleIdsForPrincipals(
         tenantId,

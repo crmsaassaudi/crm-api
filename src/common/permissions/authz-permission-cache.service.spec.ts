@@ -3,7 +3,7 @@ import { AuthzPermissionCacheService } from './authz-permission-cache.service';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
 import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
-import { CustomRolesService } from './custom-roles.service';
+import { CUSTOM_ROLES_SERVICE } from './authz.tokens';
 
 describe('AuthzPermissionCacheService', () => {
   const tenantId = '507f1f77bcf86cd799439011';
@@ -66,7 +66,7 @@ describe('AuthzPermissionCacheService', () => {
         if (token === UserRepository) return userRepository;
         if (token === TenantsRepository) return tenantsRepository;
         if (token === GroupRepository) return groupRepository;
-        if (token === CustomRolesService) return customRolesService;
+        if (token === CUSTOM_ROLES_SERVICE) return customRolesService;
         return null;
       }),
     } as any;

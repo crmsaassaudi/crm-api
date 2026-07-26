@@ -10,7 +10,7 @@ import { ClsService } from 'nestjs-cls';
 import { OrgUnitRepository } from './infrastructure/persistence/document/repositories/org-unit.repository';
 import { OrgUnit, OrgUnitTreeNode } from './domain/org-unit';
 import { CreateOrgUnitDto, UpdateOrgUnitDto } from './dto/org-unit.dto';
-import { UsersDocumentRepository } from '../users/infrastructure/persistence/document/repositories/user.repository';
+import { UserRepository } from '../users/infrastructure/persistence/user.repository';
 import { DataScope } from '../common/permissions/data-scope.enum';
 
 /**
@@ -29,7 +29,10 @@ export class OrgUnitsService {
 
   constructor(
     private readonly repository: OrgUnitRepository,
-    private readonly userRepository: UsersDocumentRepository,
+    // The port, not the Mongo adapter: UsersModule only exports the abstract
+    // UserRepository token, so depending on the concrete class leaves it
+    // unresolvable in this module.
+    private readonly userRepository: UserRepository,
     private readonly cls: ClsService,
   ) {}
 
