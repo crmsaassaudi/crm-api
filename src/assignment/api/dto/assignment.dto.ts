@@ -178,12 +178,17 @@ export class UpdateAssignmentSettingDto {
   @ApiPropertyOptional({ enum: ASSIGNMENT_STRATEGIES })
   @IsOptional()
   @IsEnum(ASSIGNMENT_STRATEGIES)
-  fallbackStrategy?: string;
+  stickyFallbackStrategy?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsBoolean()
   skillBasedRoutingEnabled?: boolean;
+
+  @ApiPropertyOptional({ enum: ['strict', 'lenient'] })
+  @IsOptional()
+  @IsEnum(['strict', 'lenient'])
+  skillFallbackMode?: 'strict' | 'lenient';
 
   @ApiPropertyOptional()
   @IsOptional()

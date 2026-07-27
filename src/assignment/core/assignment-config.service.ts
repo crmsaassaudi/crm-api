@@ -28,8 +28,16 @@ export interface AssignmentConfigOverride {
   autoAssignEnabled?: boolean;
   defaultStrategy?: string;
   defaultMaxCapacity?: number;
-  fallbackStrategy?: string;
+  /** Strategy used when a preferred (sticky) assignee is unavailable and the attempt falls through. */
+  stickyFallbackStrategy?: string;
   skillBasedRoutingEnabled?: boolean;
+  /**
+   * What to do when no candidate holds every required skill.
+   * `lenient` (default) falls back to the full pool — availability over
+   * precision. `strict` queues the entity instead of assigning it to
+   * someone without the skill.
+   */
+  skillFallbackMode?: 'strict' | 'lenient';
   requireOnline?: boolean;
   preferPreviousAssignee?: boolean;
   previousAssigneeTimeoutHours?: number;
@@ -43,8 +51,9 @@ export interface ResolvedAssignmentConfig {
   defaultGroupId: string | null;
   defaultMaxCapacity: number;
   fallbackOwnerId: string | null;
-  fallbackStrategy: AssignmentStrategy;
+  stickyFallbackStrategy: AssignmentStrategy;
   skillBasedRoutingEnabled: boolean;
+  skillFallbackMode: 'strict' | 'lenient';
   requireOnline: boolean;
   preferPreviousAssignee: boolean;
   previousAssigneeTimeoutHours: number;
@@ -57,8 +66,9 @@ const HARD_DEFAULTS: ResolvedAssignmentConfig = {
   defaultGroupId: null,
   defaultMaxCapacity: 10,
   fallbackOwnerId: null,
-  fallbackStrategy: 'round-robin',
+  stickyFallbackStrategy: 'round-robin',
   skillBasedRoutingEnabled: false,
+  skillFallbackMode: 'lenient',
   requireOnline: false,
   preferPreviousAssignee: false,
   previousAssigneeTimeoutHours: 72,
@@ -107,14 +117,18 @@ export function mergeAssignmentConfig(
       pickNumber(o.defaultMaxCapacity, s.defaultMaxCapacity) ??
       HARD_DEFAULTS.defaultMaxCapacity,
     fallbackOwnerId: s.fallbackOwnerId ? String(s.fallbackOwnerId) : null,
-    fallbackStrategy: normalizeStrategy(
-      o.fallbackStrategy ?? s.fallbackStrategy,
-      HARD_DEFAULTS.fallbackStrategy,
+    stickyFallbackStrategy: normalizeStrategy(
+      o.stickyFallbackStrategy ?? s.stickyFallbackStrategy,
+      HARD_DEFAULTS.stickyFallbackStrategy,
     ),
     skillBasedRoutingEnabled:
       o.skillBasedRoutingEnabled ??
       s.skillBasedRoutingEnabled ??
       HARD_DEFAULTS.skillBasedRoutingEnabled,
+    skillFallbackMode:
+      o.skillFallbackMode ??
+      s.skillFallbackMode ??
+      HARD_DEFAULTS.skillFallbackMode,
     requireOnline:
       o.requireOnline ?? s.requireOnline ?? HARD_DEFAULTS.requireOnline,
     preferPreviousAssignee:

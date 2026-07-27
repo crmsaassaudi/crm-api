@@ -405,6 +405,29 @@ describe('AssignmentCoreService', () => {
       expect(decision.assigneeId).toBe('a');
     });
 
+    it('should queue instead of falling back when skillFallbackMode is strict', async () => {
+      const h = buildHarness({
+        pool: ['a'],
+        settings: {
+          autoAssignEnabled: true,
+          skillBasedRoutingEnabled: true,
+          skillFallbackMode: 'strict',
+        },
+        rules: [
+          {
+            ruleId: 'r1',
+            ruleName: 'English',
+            groupIds: ['g1'],
+            requiredSkills: ['klingon'],
+          },
+        ],
+      });
+      h.candidates.members.set('g1', ['a']);
+      const decision = await h.core.assign(base);
+      expect(decision.outcome).toBe('queued');
+      expect(decision.assigneeId).toBeNull();
+    });
+
     it('should ignore required skills when skill routing is off', async () => {
       const h = buildHarness({
         pool: ['a'],
@@ -725,8 +748,9 @@ describe('mergeAssignmentConfig', () => {
       defaultGroupId: null,
       defaultMaxCapacity: 10,
       fallbackOwnerId: null,
-      fallbackStrategy: 'round-robin',
+      stickyFallbackStrategy: 'round-robin',
       skillBasedRoutingEnabled: false,
+      skillFallbackMode: 'lenient',
       requireOnline: false,
       preferPreviousAssignee: false,
       previousAssigneeTimeoutHours: 72,

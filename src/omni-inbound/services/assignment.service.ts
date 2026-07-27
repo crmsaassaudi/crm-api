@@ -30,19 +30,25 @@ import { AgentPresenceService } from './agent-presence.service';
 /**
  * Per-channel routing override, stored on the channel as `channel.config.routing`.
  *
- * The field names are the channel-configuration vocabulary and are deliberately
- * left as they were: they are what the channel templates in the admin UI write,
- * and they describe a channel setting rather than the assignment core's model.
- * `channelOverrideToConfigOverride()` is the one place they are translated.
+ * The field names are the channel-configuration vocabulary; `channelOverrideToConfigOverride()`
+ * is the one place they are translated into the core's model.
+ *
+ * `stickyRoutingDefault` (renamed from `stickyRoutingEnabled`): this is an
+ * ambient default, not an absolute kill switch — 'sticky' has not been a
+ * selectable strategy since the assignment-core consolidation (see
+ * `assignment.types.ts`), so there is no longer a code path where an
+ * explicit strategy choice can bypass this setting. The old name implied a
+ * hard toggle it never was.
  */
 export interface ChannelRoutingOverride {
   defaultStrategy?: string;
   defaultMaxCapacity?: number;
-  stickyRoutingEnabled?: boolean;
+  stickyRoutingDefault?: boolean;
   stickyTimeoutHours?: number;
   stickyWaitTimeMinutes?: number;
-  fallbackStrategy?: string;
+  stickyFallbackStrategy?: string;
   skillBasedRoutingEnabled?: boolean;
+  skillFallbackMode?: 'strict' | 'lenient';
 }
 
 /**
@@ -63,8 +69,8 @@ export function channelOverrideToConfigOverride(
   if (override.defaultMaxCapacity !== undefined) {
     result.defaultMaxCapacity = override.defaultMaxCapacity;
   }
-  if (override.stickyRoutingEnabled !== undefined) {
-    result.preferPreviousAssignee = override.stickyRoutingEnabled;
+  if (override.stickyRoutingDefault !== undefined) {
+    result.preferPreviousAssignee = override.stickyRoutingDefault;
   }
   if (override.stickyTimeoutHours !== undefined) {
     result.previousAssigneeTimeoutHours = override.stickyTimeoutHours;
@@ -72,11 +78,16 @@ export function channelOverrideToConfigOverride(
   if (override.stickyWaitTimeMinutes !== undefined) {
     result.previousAssigneeWaitMinutes = override.stickyWaitTimeMinutes;
   }
-  if (override.fallbackStrategy !== undefined) {
-    result.fallbackStrategy = normalizeStrategy(override.fallbackStrategy);
+  if (override.stickyFallbackStrategy !== undefined) {
+    result.stickyFallbackStrategy = normalizeStrategy(
+      override.stickyFallbackStrategy,
+    );
   }
   if (override.skillBasedRoutingEnabled !== undefined) {
     result.skillBasedRoutingEnabled = override.skillBasedRoutingEnabled;
+  }
+  if (override.skillFallbackMode !== undefined) {
+    result.skillFallbackMode = override.skillFallbackMode;
   }
   return result;
 }

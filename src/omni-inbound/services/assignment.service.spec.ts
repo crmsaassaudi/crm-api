@@ -129,7 +129,7 @@ describe('channelOverrideToConfigOverride', () => {
   it('should translate the channel vocabulary onto the core vocabulary', () => {
     expect(
       channelOverrideToConfigOverride({
-        stickyRoutingEnabled: true,
+        stickyRoutingDefault: true,
         stickyTimeoutHours: 24,
         stickyWaitTimeMinutes: 5,
       }),
@@ -152,8 +152,10 @@ describe('channelOverrideToConfigOverride', () => {
 
   it('should normalise legacy snake_case strategies', () => {
     expect(
-      channelOverrideToConfigOverride({ fallbackStrategy: 'capacity_based' }),
-    ).toEqual({ fallbackStrategy: 'capacity-based' });
+      channelOverrideToConfigOverride({
+        stickyFallbackStrategy: 'capacity_based',
+      }),
+    ).toEqual({ stickyFallbackStrategy: 'capacity-based' });
   });
 
   it('should preserve an explicit false rather than dropping it', () => {

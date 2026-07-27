@@ -71,10 +71,18 @@ export class AssignmentSettingSchemaClass extends EntityDocumentHelper {
 
   /** Strategy used when the preferred-assignee preference falls through. */
   @Prop({ type: String, enum: ASSIGNMENT_STRATEGIES, default: 'round-robin' })
-  fallbackStrategy: string;
+  stickyFallbackStrategy: string;
 
   @Prop({ default: false })
   skillBasedRoutingEnabled: boolean;
+
+  /**
+   * What to do when no candidate holds every required skill. `lenient`
+   * (default, historical behaviour) falls back to the full pool; `strict`
+   * queues the entity instead of assigning it to an unskilled candidate.
+   */
+  @Prop({ type: String, enum: ['strict', 'lenient'], default: 'lenient' })
+  skillFallbackMode: 'strict' | 'lenient';
 
   /**
    * Hard-require an online assignee. Replaces
@@ -89,7 +97,7 @@ export class AssignmentSettingSchemaClass extends EntityDocumentHelper {
 
   // ── Preferred-assignee ("sticky") ────────────────────────────────────────
   //
-  // Unifies omni's `stickyRoutingEnabled` with the record engine's
+  // Unifies omni's `stickyRoutingDefault` with the record engine's
   // `prioritizeCurrentOwner`: both meant "give the person who handled this
   // customer/record last first refusal".
 

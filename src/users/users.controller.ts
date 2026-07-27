@@ -285,6 +285,8 @@ export class UsersController {
 
   // ─────────────────────────────────────────────────────────────────────────────
   // i18n Preferences (User-level override with tenant cascade)
+  // Self-scoped by CLS/token userId (never a path param) — no permission
+  // decorator needed, same as auth/me.
   // ─────────────────────────────────────────────────────────────────────────────
 
   @ApiOperation({

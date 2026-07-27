@@ -432,6 +432,7 @@ export class AssignmentCoreService {
       target.candidates,
       requiredSkills,
       config.skillBasedRoutingEnabled,
+      config.skillFallbackMode,
     );
 
     if (skilled.length === 0) {
@@ -505,6 +506,12 @@ export class AssignmentCoreService {
     }
 
     // ── Preferred assignee ─────────────────────────────────────────────────
+    // A failed preferred attempt falls through to `stickyFallbackStrategy`
+    // (the strategy meant for this case), not the rule/object default — a
+    // customer who lost their sticky agent should still land somewhere
+    // deliberate, not wherever the unrelated default strategy happens to put
+    // them.
+    let orderingStrategy: AssignmentStrategy = strategy;
     if (request.preferred && config.preferPreviousAssignee) {
       const preferredResult = await this.tryPreferred(
         request,
@@ -517,6 +524,7 @@ export class AssignmentCoreService {
         traces,
       );
       if (preferredResult) return preferredResult;
+      orderingStrategy = config.stickyFallbackStrategy;
     }
 
     // ── Reserve → commit → (release on failure) ─────────────────────────────
@@ -524,13 +532,13 @@ export class AssignmentCoreService {
       adapter,
       decisionScope,
       eligible,
-      strategy,
+      orderingStrategy,
     );
 
     const reserved = await adapter.load.reserve(
       decisionScope,
       ordered,
-      strategy,
+      orderingStrategy,
       config.defaultMaxCapacity,
     );
 
@@ -540,11 +548,11 @@ export class AssignmentCoreService {
         decisionScope,
         adapter,
         config,
-        strategy,
+        orderingStrategy,
         ruleRef,
         target.owningGroupId,
         'allAtCapacity',
-        `No candidate could be reserved under ${strategy} — every eligible candidate is at capacity`,
+        `No candidate could be reserved under ${orderingStrategy} — every eligible candidate is at capacity`,
         target.poolSize,
         eligible.length,
         traces,
@@ -565,7 +573,7 @@ export class AssignmentCoreService {
         decisionScope,
         adapter,
         config,
-        strategy,
+        orderingStrategy,
         ruleRef,
         target.owningGroupId,
         'commitRaceLost',
@@ -580,11 +588,11 @@ export class AssignmentCoreService {
       outcome: 'assigned',
       assigneeId: reserved,
       groupId: target.owningGroupId,
-      strategy,
+      strategy: orderingStrategy,
       reasonKey: 'assigned',
       reason: ruleRef
-        ? `Rule "${ruleRef.name}" matched → ${strategy} selected the assignee`
-        : `Default ${strategy} assignment`,
+        ? `Rule "${ruleRef.name}" matched → ${orderingStrategy} selected the assignee`
+        : `Default ${orderingStrategy} assignment`,
       rule: ruleRef,
       candidatePoolSize: target.poolSize,
       eligiblePoolSize: eligible.length,
@@ -705,11 +713,12 @@ export class AssignmentCoreService {
   /**
    * Keep only candidates holding every required skill.
    *
-   * When nobody qualifies the full pool is returned rather than queueing. That
-   * is a deliberate availability-over-precision trade-off carried over from the
-   * old omni behaviour — but it is now visible: the audit records
-   * `skillFallback` in metadata, where before it was a `logger.warn` and
-   * nothing else, which is how the skill-vocabulary mismatch stayed hidden.
+   * When nobody qualifies, `config.skillFallbackMode` decides what happens:
+   * `lenient` (default, historical behaviour) returns the full pool —
+   * availability over precision, now visible via the `skillFallback`
+   * metadata rather than a bare `logger.warn`. `strict` returns an empty
+   * list instead, so the caller's empty-pool check queues the entity rather
+   * than handing it to someone without the skill.
    */
   private async filterBySkills(
     adapter: AssignmentAdapter,
@@ -717,6 +726,7 @@ export class AssignmentCoreService {
     candidates: string[],
     requiredSkills: string[],
     enabled: boolean,
+    fallbackMode: 'strict' | 'lenient',
   ): Promise<string[]> {
     if (!enabled || requiredSkills.length === 0) return candidates;
 
@@ -729,6 +739,12 @@ export class AssignmentCoreService {
     });
 
     if (skilled.length === 0) {
+      if (fallbackMode === 'strict') {
+        this.logger.warn(
+          `No candidate holds all of [${requiredSkills.join(', ')}] — strict mode, queueing instead of falling back`,
+        );
+        return [];
+      }
       this.logger.warn(
         `No candidate holds all of [${requiredSkills.join(', ')}] — falling back to the full pool`,
       );

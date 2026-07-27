@@ -29,7 +29,7 @@ const SEED_DEFAULTS: Record<
     autoAssignEnabled: true,
     defaultStrategy: 'round-robin',
     defaultMaxCapacity: 10,
-    fallbackStrategy: 'least-busy',
+    stickyFallbackStrategy: 'least-busy',
     skillBasedRoutingEnabled: false,
     // Conversations are only useful with someone present to answer them.
     requireOnline: true,
@@ -52,7 +52,7 @@ function recordDefaults(
     autoAssignEnabled: false,
     defaultStrategy: 'round-robin',
     defaultMaxCapacity: capacity,
-    fallbackStrategy: 'round-robin',
+    stickyFallbackStrategy: 'round-robin',
     skillBasedRoutingEnabled: false,
     // Records can sit in a queue overnight; requiring an online owner would
     // leave them unassigned outside working hours for no benefit.

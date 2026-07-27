@@ -116,6 +116,10 @@ export class LivechatEmbedController {
   }
 
   // ── Embed snippet ────────────────────────────────────────────────────────
+  // No @RequirePermission: channelConfigService.findById() already scopes by
+  // the caller's tenantId (CLS), so this can only return snippets for the
+  // caller's own tenant's channels; content is non-sensitive branding config
+  // (color/greeting/name), not a permission a specific role should gate.
 
   @Get('embed/:channelId')
   @ApiOperation({ summary: 'Get embed snippet for a livechat channel' })

@@ -305,7 +305,7 @@ function seedDefaults(objectType: ObjectType): Document {
       defaultGroupId: null,
       defaultMaxCapacity: 10,
       fallbackOwnerId: null,
-      fallbackStrategy: 'least-busy',
+      stickyFallbackStrategy: 'least-busy',
       skillBasedRoutingEnabled: false,
       requireOnline: true,
       preferPreviousAssignee: false,
@@ -325,7 +325,7 @@ function seedDefaults(objectType: ObjectType): Document {
     defaultGroupId: null,
     defaultMaxCapacity: capacity,
     fallbackOwnerId: null,
-    fallbackStrategy: 'round-robin',
+    stickyFallbackStrategy: 'round-robin',
     skillBasedRoutingEnabled: false,
     requireOnline: false,
     preferPreviousAssignee: false,
@@ -381,7 +381,7 @@ async function migrateSettings(db: Db): Promise<void> {
           patch.defaultMaxCapacity = routing.defaultMaxCapacity;
         }
         if (routing.fallbackStrategy !== undefined) {
-          patch.fallbackStrategy = normalizeStrategy(
+          patch.stickyFallbackStrategy = normalizeStrategy(
             routing.fallbackStrategy,
             'least-busy',
           );

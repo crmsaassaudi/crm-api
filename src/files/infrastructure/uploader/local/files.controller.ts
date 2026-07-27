@@ -37,6 +37,9 @@ const SAFE_FILENAME = /^[A-Za-z0-9_-]{1,80}(?:\.[A-Za-z0-9]{1,10})?$/;
 export class FilesLocalController {
   constructor(private readonly filesService: FilesLocalService) {}
 
+  // Any authenticated user may upload — files are attached to other records
+  // (contacts, tickets, messages) whose own ACL/ABAC gates access; there is
+  // no permission model for "may upload a file" independent of that.
   @ApiCreatedResponse({
     type: FileResponseDto,
   })
@@ -62,6 +65,9 @@ export class FilesLocalController {
     return this.filesService.create(file);
   }
 
+  // Capability-token model: filenames are server-generated (uuid-derived),
+  // not enumerable, and the global auth guard still requires a valid
+  // session — same trust model as the onboarding status polling endpoints.
   @Get(':path')
   @ApiExcludeEndpoint()
   download(@Param('path') requested: string, @Response() response: any) {

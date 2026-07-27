@@ -140,6 +140,10 @@ export class AuthController {
     clearSessionCookieVariants(res, this.configService, req.hostname);
   }
 
+  // me/tenants/update/delete below take no permission decorator by design:
+  // the subject is always req.user from the verified token, never a path/
+  // query id, so there is no other principal's data reachable through them.
+
   @ApiBearerAuth()
   @SerializeOptions({ groups: ['me'] })
   @Get('me')

@@ -194,6 +194,9 @@ export class OnboardingController {
   // ─────────────────────────────────────────────────────────────────────────────
   // GET /api/v1/onboarding/context (Authenticated)
   // Hydrate frontend state on F5/refresh
+  //
+  // context/updateContext/complete are self-scoped via extractUserId(req) —
+  // no permission decorator needed, same rationale as auth/me.
   // ─────────────────────────────────────────────────────────────────────────────
 
   @ApiBearerAuth()
@@ -311,6 +314,13 @@ export class OnboardingController {
   // ─────────────────────────────────────────────────────────────────────────────
   // GET /api/v1/onboarding/status/:provisioningId (Authenticated)
   // Frontend polls every 2s during loading screen
+  //
+  // No ownership check against the caller: provisioningId is a capability
+  // token (`prov_${ulid()}`, ~80 bits of randomness, 24h Redis TTL), not an
+  // enumerable resource id — same trust model as a password-reset link. The
+  // status payload itself carries no PII (step/label only). Do not add a
+  // sequential or otherwise guessable id here without adding an ownership
+  // check to match.
   // ─────────────────────────────────────────────────────────────────────────────
 
   @ApiBearerAuth()
@@ -338,6 +348,12 @@ export class OnboardingController {
   // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/v1/onboarding/status/:provisioningId/retry (Authenticated)
   // Re-enqueue/retry a failed provisioning job
+  //
+  // Same capability-token trust model as GET status above — no ownership
+  // check, relies on provisioningId being unguessable. Retrying only re-runs
+  // the same provisioning payload already captured in the BullMQ job; it does
+  // not accept caller-supplied data, so a holder of the id can at most
+  // re-trigger (not redirect) someone else's signup.
   // ─────────────────────────────────────────────────────────────────────────────
 
   @ApiBearerAuth()

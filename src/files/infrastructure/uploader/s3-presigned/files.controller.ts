@@ -13,6 +13,8 @@ import { FileResponseDto } from './dto/file-response.dto';
 export class FilesS3PresignedController {
   constructor(private readonly filesService: FilesS3PresignedService) {}
 
+  // Any authenticated user may upload — see FilesLocalController for the
+  // rationale (per-record ACL gates access, not the upload action itself).
   @ApiCreatedResponse({
     type: FileResponseDto,
   })

@@ -71,6 +71,8 @@ export class TenantsAuthController {
    * POST /api/v1/auth/onboard-existing-user
    *
    * Creates a new tenant (Organization) and binds it to the already authenticated user.
+   * Self-scoped via request.user — no permission decorator needed, same
+   * rationale as auth/me.
    */
   @ApiBearerAuth()
   @Post('onboard-existing-user')

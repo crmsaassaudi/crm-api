@@ -89,7 +89,7 @@ export const tenantAgentLoadKey = (tenantId: string) =>
 // `omni_presence` tenant setting (heartbeatTimeout=60s, gracePeriod=120s).
 
 /** Heartbeat TTL — Redis expires the presence key if no heartbeat within this. */
-export const HEARTBEAT_TTL_SECONDS = 120;
+export const HEARTBEAT_TTL_SECONDS = 60;
 
 /** Grace period before marking a disconnected agent OFFLINE (ms). */
 export const GRACE_PERIOD_MS = 2 * 60 * 1000;
