@@ -5,7 +5,10 @@ import Redis from 'ioredis';
 
 import {
   ACLS,
+  CHANNELS,
   CONTACTS,
+  CONVERSATIONS,
+  ROUTING_RULES,
   DEMO_PASSWORD,
   DEMO_TENANT_ALIAS,
   EMAIL,
@@ -249,6 +252,15 @@ async function purge(
     contacts: await db
       .collection('contacts')
       .countDocuments({ tenantId: oid, ...seeded }),
+    conversations: await db
+      .collection('omni_conversations')
+      .countDocuments({ tenantId: oid, ...seeded }),
+    routingRules: await db
+      .collection('routing_rules')
+      .countDocuments({ tenantId: oid, ...seeded }),
+    channels: await db
+      .collection('channels')
+      .countDocuments({ tenantId: oid, ...seeded }),
     policies: await db
       .collection('access_policies')
       .countDocuments({ tenantId, ...seeded }),
@@ -276,6 +288,14 @@ async function purge(
   if (dryRun) return;
 
   await db.collection('contacts').deleteMany({ tenantId: oid, ...seeded });
+  // Conversations before channels: a conversation without its channel is an
+  // orphan that the channel-visibility filter can never match, so it would sit
+  // permanently invisible instead of being cleaned up.
+  await db
+    .collection('omni_conversations')
+    .deleteMany({ tenantId: oid, ...seeded });
+  await db.collection('routing_rules').deleteMany({ tenantId: oid, ...seeded });
+  await db.collection('channels').deleteMany({ tenantId: oid, ...seeded });
   await db.collection('object_acl').deleteMany({ tenantId, ...seeded });
   await db.collection('access_policies').deleteMany({ tenantId, ...seeded });
   await db.collection('role_assignments').deleteMany({ tenantId, ...seeded });
@@ -877,6 +897,253 @@ async function seedContacts(
   return idByKey;
 }
 
+/**
+ * Channels, with their support pool resolved from emails/group keys to ids.
+ *
+ * Matched on `(type, account)` because that pair is unique in the schema — and
+ * globally unique, not just per-tenant, so a rerun must adopt the existing row
+ * rather than attempt an insert the index would reject.
+ */
+async function seedChannels(
+  db: Db,
+  tenantId: string,
+  userIdByEmail: Map<string, ObjectId>,
+  groupIdByKey: Map<string, string>,
+  dryRun: boolean,
+) {
+  const idByKey = new Map<string, ObjectId>();
+
+  for (const spec of CHANNELS) {
+    const support = {
+      userIds: spec.supportUserEmails
+        .map((email) => userIdByEmail.get(email))
+        .filter((id): id is ObjectId => Boolean(id)),
+      groupIds: spec.supportGroupKeys
+        .map((key) => groupIdByKey.get(key))
+        .filter((id): id is string => Boolean(id))
+        .map((id) => new ObjectId(id)),
+      mode: spec.mode,
+    };
+
+    const existing = await db.collection('channels').findOne({
+      type: spec.type,
+      account: spec.account,
+    });
+
+    if (existing) {
+      assertSeeded(existing, 'channel', spec.key);
+      idByKey.set(spec.key, existing._id);
+      if (!dryRun) {
+        await db.collection('channels').updateOne(
+          { _id: existing._id },
+          {
+            $set: {
+              ...stamp,
+              name: spec.name,
+              status: 'Connected',
+              support,
+              updatedAt: new Date(),
+            },
+          },
+        );
+      }
+      log(`   ~ channel ${spec.key} re-synced (${spec.mode})`);
+      continue;
+    }
+
+    const _id = new ObjectId();
+    if (!dryRun) {
+      await db.collection('channels').insertOne({
+        _id,
+        tenantId: new ObjectId(tenantId),
+        ...stamp,
+        type: spec.type,
+        name: spec.name,
+        account: spec.account,
+        status: 'Connected',
+        config: {},
+        support,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        __v: 0,
+      });
+    }
+    idByKey.set(spec.key, _id);
+    log(
+      `   + channel ${spec.key} [${spec.mode}] ` +
+        `users=${support.userIds.length} groups=${support.groupIds.length}`,
+    );
+  }
+
+  return idByKey;
+}
+
+/** Resolve `{{channelId:<key>}}` inside a routing condition value. */
+function resolveChannelPlaceholder(
+  value: string,
+  channelIdByKey: Map<string, ObjectId>,
+): string {
+  const match = /^\{\{channelId:(.+)\}\}$/.exec(value);
+  if (!match) return value;
+  const id = channelIdByKey.get(match[1]);
+  if (!id) {
+    throw new Error(`Routing rule references unknown channel "${match[1]}"`);
+  }
+  return id.toString();
+}
+
+async function seedRoutingRules(
+  db: Db,
+  tenantId: string,
+  userIdByEmail: Map<string, ObjectId>,
+  groupIdByKey: Map<string, string>,
+  channelIdByKey: Map<string, ObjectId>,
+  dryRun: boolean,
+) {
+  for (const spec of ROUTING_RULES) {
+    const actions: Record<string, unknown> = {
+      strategy: spec.strategy,
+      sticky: false,
+      requiredSkills: [],
+    };
+    if (spec.targetUserEmail) {
+      actions.userId = userIdByEmail.get(spec.targetUserEmail)?.toString();
+    }
+    if (spec.targetGroupKey) {
+      actions.groupId = groupIdByKey.get(spec.targetGroupKey);
+    }
+    if (!actions.userId && !actions.groupId) {
+      throw new Error(`Routing rule ${spec.key} resolved to no target`);
+    }
+
+    const conditions = spec.conditions.map((c) => ({
+      ...c,
+      value: resolveChannelPlaceholder(c.value, channelIdByKey),
+    }));
+
+    const doc = {
+      ...stamp,
+      name: spec.name,
+      priority: spec.priority,
+      matchType: spec.matchType,
+      conditions,
+      actions,
+      enabled: true,
+      updatedAt: new Date(),
+    };
+
+    // Keyed on name: `(tenantId, name)` is the unique index on routing_rules.
+    const existing = await db.collection('routing_rules').findOne({
+      tenantId: new ObjectId(tenantId),
+      name: spec.name,
+    });
+
+    if (existing) {
+      assertSeeded(existing, 'routing rule', spec.key);
+      if (!dryRun) {
+        await db
+          .collection('routing_rules')
+          .updateOne({ _id: existing._id }, { $set: doc });
+      }
+      log(`   ~ routing rule ${spec.key} re-synced`);
+      continue;
+    }
+
+    if (!dryRun) {
+      await db.collection('routing_rules').insertOne({
+        _id: new ObjectId(),
+        tenantId: new ObjectId(tenantId),
+        ...doc,
+        createdAt: new Date(),
+        __v: 0,
+      });
+    }
+    log(
+      `   + routing rule ${spec.key} → ` +
+        `${spec.targetUserEmail ?? spec.targetGroupKey} (${spec.strategy})`,
+    );
+  }
+}
+
+async function seedConversations(
+  db: Db,
+  tenantId: string,
+  userIdByEmail: Map<string, ObjectId>,
+  groupIdByKey: Map<string, string>,
+  channelIdByKey: Map<string, ObjectId>,
+  dryRun: boolean,
+) {
+  const idByKey = new Map<string, ObjectId>();
+
+  for (const spec of CONVERSATIONS) {
+    const channel = CHANNELS.find((c) => c.key === spec.channelKey);
+    const channelId = channelIdByKey.get(spec.channelKey);
+    if (!channel || !channelId) {
+      throw new Error(`Conversation ${spec.key} references unknown channel`);
+    }
+
+    const doc = {
+      ...stamp,
+      channelId,
+      channelType: channel.type,
+      channelAccount: channel.account,
+      externalId: spec.externalId,
+      customerName: spec.customerName,
+      status: spec.status,
+      assignedAgentId: spec.assignedAgentEmail
+        ? (userIdByEmail.get(spec.assignedAgentEmail) ?? null)
+        : null,
+      assignedGroupId: spec.assignedGroupKey
+        ? (groupIdByKey.get(spec.assignedGroupKey) ?? null)
+        : null,
+      tags: spec.tags,
+      updatedAt: new Date(),
+    };
+
+    const existing = await db.collection('omni_conversations').findOne({
+      tenantId: new ObjectId(tenantId),
+      channelType: channel.type,
+      channelAccount: channel.account,
+      externalId: spec.externalId,
+    });
+
+    if (existing) {
+      assertSeeded(existing, 'conversation', spec.key);
+      idByKey.set(spec.key, existing._id);
+      if (!dryRun) {
+        await db
+          .collection('omni_conversations')
+          .updateOne({ _id: existing._id }, { $set: doc });
+      }
+      log(`   ~ conversation ${spec.key} re-synced`);
+      continue;
+    }
+
+    const _id = new ObjectId();
+    if (!dryRun) {
+      await db.collection('omni_conversations').insertOne({
+        _id,
+        tenantId: new ObjectId(tenantId),
+        ...doc,
+        senderId: spec.externalId,
+        unreadCount: 0,
+        messageCount: 0,
+        lastMessageAt: new Date(),
+        createdAt: new Date(),
+        __v: 0,
+      });
+    }
+    idByKey.set(spec.key, _id);
+    log(
+      `   + conversation ${spec.key} ` +
+        `[${spec.channelKey}] agent=${spec.assignedAgentEmail ?? 'none'} ` +
+        `group=${spec.assignedGroupKey ?? 'none'}`,
+    );
+  }
+
+  return idByKey;
+}
+
 async function seedPolicies(
   db: Db,
   tenantId: string,
@@ -1194,6 +1461,35 @@ async function run() {
       userIdByEmail,
       orgUnitIdByCode,
       grantedById,
+      dryRun,
+    );
+
+    log('\nOmni channels (the support pool authorization boundary)');
+    const channelIdByKey = await seedChannels(
+      db,
+      tenantId,
+      userIdByEmail,
+      groupIdByKey,
+      dryRun,
+    );
+
+    log('\nRouting rules');
+    await seedRoutingRules(
+      db,
+      tenantId,
+      userIdByEmail,
+      groupIdByKey,
+      channelIdByKey,
+      dryRun,
+    );
+
+    log('\nOmni conversations (the rows channel scope is measured on)');
+    await seedConversations(
+      db,
+      tenantId,
+      userIdByEmail,
+      groupIdByKey,
+      channelIdByKey,
       dryRun,
     );
 

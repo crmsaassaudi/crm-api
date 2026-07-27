@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ClsService } from 'nestjs-cls';
@@ -551,9 +552,34 @@ export class ChannelsService {
 
   async update(id: string, dto: UpdateChannelDto): Promise<Channel> {
     const tenantId = this.cls.get('tenantId');
+    this.assertNoSupportKeysInConfig(dto.config);
     const channel = await this.repository.update(tenantId, id, dto);
     if (!channel) throw new NotFoundException('Channel not found');
     return channel;
+  }
+
+  /**
+   * The support pool used to live as untyped keys inside the Mixed `config`
+   * blob, which meant any caller with `channels:edit` could widen who serves a
+   * channel and no validation ran on the ids. It now lives in `channel.support`
+   * behind `PATCH :id/support` and `channels:manage_system`.
+   *
+   * Reject the old keys loudly instead of ignoring them: a silently dropped
+   * pool update looks like it worked and leaves routing on the old value.
+   */
+  private assertNoSupportKeysInConfig(config?: Record<string, any>): void {
+    if (!config) return;
+    const legacy = ['supportUserIds', 'supportGroupIds'].filter(
+      (k) => k in config,
+    );
+    if (legacy.length > 0) {
+      throw new UnprocessableEntityException({
+        code: 'CHANNEL_SUPPORT_MOVED',
+        message:
+          `${legacy.join(', ')} are no longer part of channel.config. ` +
+          `Use PATCH /v1/channels/${'{id}'}/support instead.`,
+      });
+    }
   }
 
   async disconnect(id: string): Promise<Channel> {

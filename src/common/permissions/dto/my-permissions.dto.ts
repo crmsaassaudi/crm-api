@@ -55,4 +55,13 @@ export class MyPermissionsResponse {
 
   @ApiProperty({ nullable: true, example: '507f1f77bcf86cd799439011' })
   orgUnitId: string | null;
+
+  @ApiProperty({
+    type: [String],
+    description:
+      'Groups the caller belongs to. Returned so the client can label and filter ' +
+      'team-owned work (e.g. the omni "my team\'s queue" view) without deriving ' +
+      'membership itself — server-computed, like every other field here.',
+  })
+  groupIds: string[];
 }

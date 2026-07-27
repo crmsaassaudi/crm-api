@@ -3,9 +3,13 @@ import axios, { AxiosInstance } from 'axios';
 import { MongoClient, ObjectId } from 'mongodb';
 
 import {
+  ASSIGNMENT_PROBES,
   CONTACTS,
+  CONVERSATIONS,
+  CONVERSATION_EXPECTATIONS,
   DEMO_PASSWORD,
   DEMO_TENANT_ALIAS,
+  EMAIL,
   EXPECTATIONS,
   RECORD_PROBES,
   ROUTE_PROBES,
@@ -162,7 +166,48 @@ async function loadFixtureIds() {
       idByKey.set(spec.key, doc._id.toString());
       keyById.set(doc._id.toString(), spec.key);
     }
-    return { tenantId: tenant._id.toString(), idByKey, keyById };
+
+    // Conversations, keyed on externalId — unique per channel and, unlike the
+    // customer name, not something a reviewer would edit in the UI.
+    const conversationDocs = await db
+      .collection('omni_conversations')
+      .find({ tenantId: new ObjectId(tenant._id), seedTag: SEED_TAG })
+      .project({ externalId: 1 })
+      .toArray();
+
+    const conversationIdByKey = new Map<string, string>();
+    const conversationKeyById = new Map<string, string>();
+    for (const spec of CONVERSATIONS) {
+      const doc = conversationDocs.find(
+        (row) => row.externalId === spec.externalId,
+      );
+      if (!doc) {
+        throw new Error(
+          `Conversation fixture "${spec.key}" is missing. Run \`npm run seed:rbac-demo\` first.`,
+        );
+      }
+      conversationIdByKey.set(spec.key, doc._id.toString());
+      conversationKeyById.set(doc._id.toString(), spec.key);
+    }
+
+    // Users, so assignment probes can name a target by email.
+    const userDocs = await db
+      .collection('users')
+      .find({ email: { $in: Object.values(EMAIL) } })
+      .project({ email: 1 })
+      .toArray();
+    const userIdByEmail = new Map<string, string>(
+      userDocs.map((row) => [String(row.email), row._id.toString()]),
+    );
+
+    return {
+      tenantId: tenant._id.toString(),
+      idByKey,
+      keyById,
+      conversationIdByKey,
+      conversationKeyById,
+      userIdByEmail,
+    };
   } finally {
     await client.close();
   }
@@ -298,6 +343,101 @@ async function runRouteProbes(clients: Map<string, AxiosInstance>) {
   }
 }
 
+/**
+ * Conversation visibility — the channel axis crossed with the owner axis.
+ *
+ * Asserted on the list endpoint rather than per-record, because the failure
+ * this guards against is a leak: a row appearing that neither axis admits.
+ */
+async function runConversationVisibility(
+  clients: Map<string, AxiosInstance>,
+  conversationKeyById: Map<string, string>,
+) {
+  console.log('\n── Omni conversation visibility (channel × owner axis) ──');
+  for (const expectation of CONVERSATION_EXPECTATIONS) {
+    const client = clients.get(expectation.email);
+    if (!client) continue;
+
+    const list = await client.get('/omni/conversations?limit=200');
+
+    if (expectation.visibleConversations === null) {
+      if (list.status === 403) {
+        ok(expectation.email, 'GET /omni/conversations rejected (no module)');
+      } else {
+        fail(expectation.email, 'GET /omni/conversations', 403, list.status);
+      }
+      continue;
+    }
+
+    if (list.status !== 200) {
+      fail(expectation.email, 'GET /omni/conversations', 200, list.status);
+      continue;
+    }
+
+    const rows: any[] = list.data?.data ?? list.data?.items ?? list.data ?? [];
+    const seen = new Set(
+      (Array.isArray(rows) ? rows : [])
+        .map((row) => conversationKeyById.get(String(row.id ?? row._id)))
+        .filter((key): key is string => Boolean(key)),
+    );
+    const expected = new Set(expectation.visibleConversations);
+    const missing = [...expected].filter((key) => !seen.has(key));
+    const extra = [...seen].filter((key) => !expected.has(key));
+
+    if (!missing.length && !extra.length) {
+      ok(
+        expectation.email,
+        `sees exactly ${expected.size} conversation(s) — ${expectation.note}`,
+      );
+    } else {
+      fail(
+        expectation.email,
+        'visible fixture conversations',
+        [...expected].sort().join(',') || '(none)',
+        `${[...seen].sort().join(',') || '(none)'}${
+          missing.length ? ` [missing ${missing.join(',')}]` : ''
+        }${extra.length ? ` [LEAKED ${extra.join(',')}]` : ''}`,
+      );
+    }
+  }
+}
+
+/**
+ * Assignment probes — whether the channel support pool actually binds the
+ * assign endpoint, including for the tenant admin.
+ */
+async function runAssignmentProbes(
+  clients: Map<string, AxiosInstance>,
+  conversationIdByKey: Map<string, string>,
+  userIdByEmail: Map<string, string>,
+) {
+  console.log(
+    '\n── Assignment probes (PATCH /omni/conversations/:id/assign) ──',
+  );
+  for (const probe of ASSIGNMENT_PROBES) {
+    const client = clients.get(probe.email);
+    if (!client) continue;
+
+    const conversationId = conversationIdByKey.get(probe.conversationKey);
+    const agentId = userIdByEmail.get(probe.targetEmail);
+    if (!conversationId || !agentId) {
+      fail(probe.email, probe.label, 'fixture ids resolved', 'missing id');
+      continue;
+    }
+
+    const response = await client.patch(
+      `/omni/conversations/${conversationId}/assign`,
+      { agentId },
+    );
+
+    if (response.status === probe.expectedStatus) {
+      ok(probe.email, probe.label);
+    } else {
+      fail(probe.email, probe.label, probe.expectedStatus, response.status);
+    }
+  }
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 async function run() {
@@ -305,7 +445,13 @@ async function run() {
     `Verifying RBAC/ABAC fixture against ${API_ORIGIN}${API_PREFIX} (Host: ${TENANT_HOST})\n`,
   );
 
-  const { idByKey, keyById } = await loadFixtureIds();
+  const {
+    idByKey,
+    keyById,
+    conversationIdByKey,
+    conversationKeyById,
+    userIdByEmail,
+  } = await loadFixtureIds();
 
   const clients = new Map<string, AxiosInstance>();
   for (const spec of USERS) {
@@ -333,6 +479,10 @@ async function run() {
 
   await runRecordProbes(clients, idByKey);
   await runRouteProbes(clients);
+  // Visibility before assignment: the assignment probes mutate assignments and
+  // would otherwise change the very rows the visibility matrix asserts on.
+  await runConversationVisibility(clients, conversationKeyById);
+  await runAssignmentProbes(clients, conversationIdByKey, userIdByEmail);
 
   console.log('\n=== Summary ===');
   console.log(`  checks passed: ${passes.length}`);

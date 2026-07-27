@@ -1060,17 +1060,18 @@ const DEFAULT_OMNI_IDENTITY_RESOLUTION = {
 
 // ─── Omni Routing & Assignment defaults ──────────────────────────────────────
 
+/**
+ * What is left of `omni_routing` after the assignment consolidation.
+ *
+ * Every routing-decision field — the master switch, strategy, capacity, sticky
+ * and skill toggles — now lives in `assignment_settings` keyed by objectType,
+ * seeded by AssignmentSeederService and migrated for existing tenants by
+ * `migrate:assignment-consolidation`. What remains here is the one field that
+ * was never a routing decision: whether an agent's presence flips to available
+ * the moment their socket connects.
+ */
 const DEFAULT_OMNI_ROUTING = {
-  /** Master switch — when false, all conversations go to queue (no auto-assign) */
-  autoAssignmentEnabled: true,
-  defaultStrategy: 'round-robin',
-  defaultMaxCapacity: 10,
-  stickyRoutingEnabled: false,
-  stickyTimeoutHours: 72,
-  /** Minutes to wait for the preferred agent before falling back to another strategy */
-  stickyWaitTimeMinutes: 3,
-  fallbackStrategy: 'least-busy',
-  skillBasedRoutingEnabled: false,
+  autoAvailableOnConnect: false,
 };
 
 // ─── Omni Agent Presence / Workforce defaults ────────────────────────────────

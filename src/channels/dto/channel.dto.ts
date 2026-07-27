@@ -5,6 +5,8 @@ import {
   IsObject,
   MinLength,
   IsArray,
+  IsMongoId,
+  ArrayMaxSize,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -184,6 +186,42 @@ export class UpdateChannelDto {
   @IsEnum(['Connected', 'Disconnected', 'Error', 'Pending'])
   @IsOptional()
   status?: string;
+}
+
+/**
+ * Support pool of a channel — who may serve it.
+ *
+ * Deliberately a dedicated DTO on a dedicated route rather than a key inside
+ * `UpdateChannelDto.config`: this payload decides authorization, so it needs
+ * real id validation and a tenant-membership check in the service. Sending it
+ * through the Mixed `config` blob would let any string through.
+ *
+ * Every field is optional so a caller can flip only `mode` without resending
+ * the whole pool; an omitted list is left untouched.
+ */
+export class UpdateChannelSupportDto {
+  @ApiPropertyOptional({ type: [String], description: 'Agent user ids' })
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsMongoId({ each: true })
+  @IsOptional()
+  userIds?: string[];
+
+  @ApiPropertyOptional({ type: [String], description: 'Group ids' })
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsMongoId({ each: true })
+  @IsOptional()
+  groupIds?: string[];
+
+  @ApiPropertyOptional({
+    enum: ['restricted', 'open'],
+    description:
+      'restricted → pool is an authorization boundary; open → routing preference only',
+  })
+  @IsEnum(['restricted', 'open'])
+  @IsOptional()
+  mode?: 'restricted' | 'open';
 }
 
 export class MetaAuthUrlQueryDto {

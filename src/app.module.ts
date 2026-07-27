@@ -58,14 +58,13 @@ import { RichMessageTemplatesModule } from './rich-message-templates/rich-messag
 import { ChannelsModule } from './channels/channels.module';
 import { SlaPoliciesModule } from './sla-policies/sla-policies.module';
 import { EscalationPoliciesModule } from './escalation-policies/escalation-policies.module';
-import { RoutingRulesModule } from './routing-rules/routing-rules.module';
 import { AutomationRulesModule } from './automation-rules/automation-rules.module';
 import { GroupsModule } from './groups/groups.module';
 import { OrgUnitsModule } from './org-units/org-units.module';
 import { OmniInboundModule } from './omni-inbound/omni-inbound.module';
 import { DataVisibilityModule } from './data-visibility/data-visibility.module';
 import { ListViewsModule } from './list-views/list-views.module';
-import { AssignmentEngineModule } from './assignment-engine/assignment-engine.module';
+import { AssignmentModule } from './assignment/assignment.module';
 import { MailInboundModule } from './channels/mail-inbound/mail-inbound.module';
 import { ReadStateSyncModule } from './queue/read-state-sync/read-state-sync.module';
 import { OnboardingModule } from './tenants/onboarding.module';
@@ -336,14 +335,13 @@ function bullBoardBasicAuth() {
     ChannelsModule,
     SlaPoliciesModule,
     EscalationPoliciesModule,
-    RoutingRulesModule,
     AutomationRulesModule,
     GroupsModule,
     OrgUnitsModule,
     OmniInboundModule,
     DataVisibilityModule,
     ListViewsModule,
-    AssignmentEngineModule,
+    AssignmentModule,
     MailInboundModule,
     ReadStateSyncModule,
     OnboardingModule,

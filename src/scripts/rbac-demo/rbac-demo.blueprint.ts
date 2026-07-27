@@ -635,6 +635,235 @@ export const CONTACTS: ContactSpec[] = [
   },
 ];
 
+// ── Omni channels ───────────────────────────────────────────────────────────
+
+export interface ChannelSpec {
+  key: string;
+  type: string;
+  name: string;
+  /** Provider account id. Namespaced so it cannot collide with a real page. */
+  account: string;
+  /**
+   * 'restricted' makes the support pool an authorization boundary — only the
+   * listed users and groups may be assigned to, or read, this channel's
+   * conversations. 'open' leaves it a routing preference.
+   */
+  mode: 'restricted' | 'open';
+  supportUserEmails: string[];
+  supportGroupKeys: string[];
+  /** What this channel proves. Console output and reviewer orientation only. */
+  purpose: string;
+}
+
+/**
+ * Three channels spanning the interesting combinations: restricted-by-group,
+ * restricted-by-user, and open. Without an open channel in the set, a bug that
+ * restricted everything would still pass every probe.
+ */
+export const CHANNELS: ChannelSpec[] = [
+  {
+    key: 'ch_web_support',
+    type: 'livechat',
+    name: 'Website Support',
+    account: 'rbacdemo-web-support',
+    mode: 'restricted',
+    supportUserEmails: [],
+    supportGroupKeys: ['support_tier1'],
+    purpose:
+      'Restricted to one group. Support agents serve it; sales must not see it.',
+  },
+  {
+    key: 'ch_sales_page',
+    type: 'facebook',
+    name: 'Fanpage Kinh doanh',
+    account: 'rbacdemo-sales-page',
+    mode: 'restricted',
+    supportUserEmails: [EMAIL.repNorth1, EMAIL.mgrNorth],
+    supportGroupKeys: [],
+    purpose:
+      'Restricted to named users, no group. Proves the user axis works on its own.',
+  },
+  {
+    key: 'ch_shared_email',
+    type: 'email',
+    name: 'Hộp thư chung',
+    account: 'support@rbacdemo.example',
+    mode: 'open',
+    supportUserEmails: [],
+    supportGroupKeys: [],
+    purpose:
+      'Open channel: everyone with omni_channel:view may read it. The control case.',
+  },
+];
+
+// ── Routing rules ───────────────────────────────────────────────────────────
+
+export interface RoutingRuleSpec {
+  key: string;
+  name: string;
+  priority: number;
+  matchType: 'all' | 'any';
+  conditions: Array<{ field: string; operator: string; value: string }>;
+  /** Seeder resolves exactly one of these into the rule's actions. */
+  targetGroupKey?: string;
+  targetUserEmail?: string;
+  strategy: string;
+  purpose: string;
+}
+
+/**
+ * Rules are evaluated by ascending priority, first match wins. The
+ * `{{channelId:<key>}}` placeholder is resolved by the seeder once the channels
+ * have ids.
+ */
+export const ROUTING_RULES: RoutingRuleSpec[] = [
+  {
+    key: 'rr_vip_to_manager',
+    name: 'Khách VIP về Trưởng phòng CSKH',
+    priority: 0,
+    matchType: 'all',
+    conditions: [{ field: 'tag', operator: 'eq', value: 'vip' }],
+    targetUserEmail: EMAIL.mgrSupport,
+    strategy: 'manual',
+    purpose:
+      'Pins a single agent. Proves actions.userId short-circuits strategy selection.',
+  },
+  {
+    key: 'rr_web_to_tier1',
+    name: 'Livechat website về CSKH Tầng 1',
+    priority: 1,
+    matchType: 'all',
+    conditions: [
+      {
+        field: 'channel_id',
+        operator: 'eq',
+        value: '{{channelId:ch_web_support}}',
+      },
+    ],
+    targetGroupKey: 'support_tier1',
+    strategy: 'round_robin',
+    purpose:
+      'Matches one specific channel, not a channel type — the case channelType alone cannot express.',
+  },
+  {
+    key: 'rr_sales_page_to_north',
+    name: 'Fanpage kinh doanh về Đội Miền Bắc',
+    priority: 2,
+    matchType: 'all',
+    conditions: [{ field: 'channel', operator: 'eq', value: 'facebook' }],
+    targetGroupKey: 'sales_north_team',
+    strategy: 'round_robin',
+    purpose:
+      'Group routing whose members also sit in the channel pool — the happy path.',
+  },
+];
+
+// ── Omni conversations ──────────────────────────────────────────────────────
+
+export interface ConversationSpec {
+  key: string;
+  channelKey: string;
+  /** Provider-side thread id. Unique per channel. */
+  externalId: string;
+  customerName: string;
+  status: 'open' | 'pending' | 'resolved';
+  assignedAgentEmail: string | null;
+  assignedGroupKey: string | null;
+  tags: string[];
+  purpose: string;
+}
+
+/**
+ * Conversations chosen to exercise every branch of the visibility scope:
+ * assigned-to-me, assigned-to-a-colleague, group-queued with no agent, wholly
+ * unassigned, and cross-channel.
+ */
+export const CONVERSATIONS: ConversationSpec[] = [
+  {
+    key: 'cv_web_assigned_agent',
+    channelKey: 'ch_web_support',
+    externalId: 'rbacdemo-web-001',
+    customerName: 'Trần Thu Hà',
+    status: 'open',
+    assignedAgentEmail: EMAIL.agentSupport,
+    assignedGroupKey: 'support_tier1',
+    tags: [],
+    purpose: 'Assigned to the support agent — their own row.',
+  },
+  {
+    key: 'cv_web_group_queue',
+    channelKey: 'ch_web_support',
+    externalId: 'rbacdemo-web-002',
+    customerName: 'Lê Văn Sơn',
+    status: 'pending',
+    // No agent, but owned by the group: the case that was invisible before
+    // auto-routing started persisting assignedGroupId.
+    assignedAgentEmail: null,
+    assignedGroupKey: 'support_tier1',
+    tags: [],
+    purpose:
+      'Group queue with no agent. Visible to group members, not to outsiders.',
+  },
+  {
+    key: 'cv_web_unassigned',
+    channelKey: 'ch_web_support',
+    externalId: 'rbacdemo-web-003',
+    customerName: 'Đỗ Minh Khoa',
+    status: 'open',
+    assignedAgentEmail: null,
+    assignedGroupKey: null,
+    tags: [],
+    purpose:
+      'Wholly unassigned on a restricted channel — still hidden from non-pool users.',
+  },
+  {
+    key: 'cv_web_vip',
+    channelKey: 'ch_web_support',
+    externalId: 'rbacdemo-web-004',
+    customerName: 'Vũ Thị Lan',
+    status: 'open',
+    assignedAgentEmail: EMAIL.mgrSupport,
+    assignedGroupKey: 'support_tier1',
+    tags: ['vip'],
+    purpose: 'VIP-tagged, matching the highest-priority routing rule.',
+  },
+  {
+    key: 'cv_sales_assigned',
+    channelKey: 'ch_sales_page',
+    externalId: 'rbacdemo-fb-001',
+    customerName: 'Hoàng Anh Tuấn',
+    status: 'open',
+    assignedAgentEmail: EMAIL.repNorth1,
+    assignedGroupKey: 'sales_north_team',
+    tags: [],
+    purpose:
+      'On the user-restricted channel. repNorth2 is in the same group but NOT in the pool.',
+  },
+  {
+    key: 'cv_sales_unassigned',
+    channelKey: 'ch_sales_page',
+    externalId: 'rbacdemo-fb-002',
+    customerName: 'Bùi Kim Chi',
+    status: 'pending',
+    assignedAgentEmail: null,
+    assignedGroupKey: null,
+    tags: [],
+    purpose: 'Unassigned on the user-restricted channel.',
+  },
+  {
+    key: 'cv_email_open',
+    channelKey: 'ch_shared_email',
+    externalId: 'rbacdemo-email-001',
+    customerName: 'Phan Quốc Việt',
+    status: 'open',
+    assignedAgentEmail: null,
+    assignedGroupKey: null,
+    tags: [],
+    purpose:
+      'Open channel, unassigned. The control: hidden only by the owner axis, never by the channel axis.',
+  },
+];
+
 // ── ABAC policies ───────────────────────────────────────────────────────────
 
 export interface PolicySpec {
@@ -1054,5 +1283,137 @@ export const ROUTE_PROBES: RouteProbe[] = [
     email: EMAIL.jit,
     path: '/deals?limit=1',
     expectedStatus: 403,
+  },
+  {
+    label:
+      'sales rep has no omni module (omni no longer rides on contacts:view)',
+    email: EMAIL.repSouth,
+    path: '/omni/conversations?limit=1',
+    expectedStatus: 403,
+  },
+  {
+    label: 'support agent reaches the omni inbox',
+    email: EMAIL.agentSupport,
+    path: '/omni/conversations?limit=1',
+    expectedStatus: 200,
+  },
+  {
+    label: 'support agent cannot edit a channel support pool',
+    email: EMAIL.agentSupport,
+    path: '/channels',
+    expectedStatus: 403,
+  },
+];
+
+// ── Omni conversation visibility ────────────────────────────────────────────
+
+/**
+ * Which conversations each principal may list.
+ *
+ * Two axes are in play and they are independent: the channel axis (is this
+ * principal in the channel's support pool?) and the owner axis (is the
+ * conversation assigned to them, their subordinates or their group?). A row
+ * appears only when BOTH admit it, which is why the expectations below are
+ * narrower than either axis alone would suggest.
+ *
+ * `null` means the account cannot reach the endpoint at all.
+ */
+export interface ConversationExpectation {
+  email: string;
+  visibleConversations: string[] | null;
+  note: string;
+}
+
+export const CONVERSATION_EXPECTATIONS: ConversationExpectation[] = [
+  {
+    email: EMAIL.admin,
+    visibleConversations: CONVERSATIONS.map((c) => c.key),
+    note: 'Tenant ADMIN bypasses both axes.',
+  },
+  {
+    email: EMAIL.agentSupport,
+    visibleConversations: [
+      'cv_web_assigned_agent',
+      'cv_web_group_queue',
+      'cv_web_vip',
+    ],
+    note:
+      'In the web channel pool via CSKH Tầng 1. Sees their own row, the group queue ' +
+      'and the manager-assigned VIP row (same group). Not cv_web_unassigned — no group, ' +
+      'no agent. Not the sales channel — outside its pool.',
+  },
+  {
+    email: EMAIL.mgrSupport,
+    visibleConversations: [
+      'cv_web_assigned_agent',
+      'cv_web_group_queue',
+      'cv_web_vip',
+    ],
+    note: 'ORG_UNIT scope over the support unit, and in the web pool through the same group.',
+  },
+  {
+    email: EMAIL.repNorth1,
+    visibleConversations: ['cv_sales_assigned'],
+    note:
+      'Named directly in the sales-page pool. SELF scope, so only their own row — ' +
+      'and the web channel is invisible regardless of scope.',
+  },
+  {
+    email: EMAIL.repNorth2,
+    visibleConversations: [],
+    note:
+      'In the same GROUP as repNorth1 but NOT in the sales-page support pool, which ' +
+      'lists users individually. The channel axis alone hides everything.',
+  },
+  {
+    email: EMAIL.analyst,
+    visibleConversations: null,
+    note: 'TENANT data scope but no omni_channel:view — the module is closed.',
+  },
+];
+
+/**
+ * Assignment probes: PATCH /omni/conversations/:key/assign, and the status the
+ * channel support pool must produce.
+ */
+export interface AssignmentProbe {
+  label: string;
+  email: string;
+  conversationKey: string;
+  /** Target agent, by email. */
+  targetEmail: string;
+  expectedStatus: number;
+}
+
+export const ASSIGNMENT_PROBES: AssignmentProbe[] = [
+  {
+    label: 'support manager assigns within the channel pool',
+    email: EMAIL.mgrSupport,
+    conversationKey: 'cv_web_group_queue',
+    targetEmail: EMAIL.agentSupport,
+    expectedStatus: 200,
+  },
+  {
+    label:
+      'ADMIN cannot assign a sales rep to a support channel — the pool binds even the admin',
+    email: EMAIL.admin,
+    conversationKey: 'cv_web_group_queue',
+    targetEmail: EMAIL.repNorth1,
+    expectedStatus: 403,
+  },
+  {
+    label:
+      'ADMIN cannot assign repNorth2 to the sales page — same group, but not in the user pool',
+    email: EMAIL.admin,
+    conversationKey: 'cv_sales_unassigned',
+    targetEmail: EMAIL.repNorth2,
+    expectedStatus: 403,
+  },
+  {
+    label: 'ADMIN assigns anyone on the open channel',
+    email: EMAIL.admin,
+    conversationKey: 'cv_email_open',
+    targetEmail: EMAIL.repSouth,
+    expectedStatus: 200,
   },
 ];

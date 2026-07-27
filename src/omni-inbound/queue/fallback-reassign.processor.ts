@@ -16,6 +16,7 @@ import { ConversationRepository } from '../repositories/conversation.repository'
 import { OMNI_FALLBACK_QUEUE } from './omni-fallback-queue.constants';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
+import { AssignmentStrategy } from '../../assignment/domain/assignment.types';
 
 export interface FallbackReassignJobData extends TenantJobData {
   agentId: string;
@@ -149,12 +150,19 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
             },
           );
         } else {
+          // No pool or channel id is passed on purpose: the conversation's
+          // channel — and therefore its support pool — is resolved from the
+          // conversation. Previously neither was passed and none was resolved,
+          // so a restricted channel's conversations could be reassigned to
+          // agents outside its support pool.
           newAgentId = await this.assignmentService.assignConversation(
             tenantId,
             conversation.id,
             {
-              strategy: assignmentStrategy as any,
+              strategy: assignmentStrategy,
               allowReassignment: true,
+              skipSticky: true,
+              source: 'fallback',
             },
           );
         }
@@ -191,7 +199,14 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
     await this.redis.del(redisKey);
   }
 
-  private mapStrategy(configStrategy: string): string {
+  /**
+   * Map the auto-reassignment setting onto an assignment strategy.
+   *
+   * `unassign` is not a strategy — it is handled by the branch above, which
+   * clears the agent through the conversation aggregate rather than running a
+   * decision.
+   */
+  private mapStrategy(configStrategy: string): AssignmentStrategy | 'unassign' {
     switch (configStrategy) {
       case 'back-to-queue':
         return 'unassign';

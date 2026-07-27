@@ -21,14 +21,21 @@ import {
   CreateLivechatChannelDto,
   MetaAuthUrlQueryDto,
   UpdateChannelDto,
+  UpdateChannelSupportDto,
 } from './dto/channel.dto';
 import { RequirePermission } from '../common/permissions/permission.decorator';
+import { ChannelSupportService } from './services/channel-support.service';
+import { ClsService } from 'nestjs-cls';
 
 @ApiTags('Channels')
 @ApiBearerAuth()
 @Controller({ path: 'channels', version: '1' })
 export class ChannelsController {
-  constructor(private readonly service: ChannelsService) {}
+  constructor(
+    private readonly service: ChannelsService,
+    private readonly supportService: ChannelSupportService,
+    private readonly cls: ClsService,
+  ) {}
 
   @Get()
   @RequirePermission('view', 'channels')
@@ -109,6 +116,40 @@ export class ChannelsController {
   @RequirePermission('delete', 'channels')
   delete(@Param('id') id: string) {
     return this.service.delete(id);
+  }
+
+  /**
+   * Replace the channel's support pool.
+   *
+   * Deliberately a separate route from `PATCH :id` with a stricter permission:
+   * this payload decides who may be assigned to the channel's conversations, so
+   * it is an authorization change, not a settings tweak. Editing a channel's
+   * name must not imply the right to widen who can read its inbox.
+   */
+  @Patch(':id/support')
+  @RequirePermission('manage_system', 'channels')
+  updateSupport(@Param('id') id: string, @Body() dto: UpdateChannelSupportDto) {
+    return this.supportService.updateSupport(id, dto);
+  }
+
+  /**
+   * Agents allowed to serve this channel. The UI's assignee picker reads this
+   * instead of filtering a full user list client-side, so what it offers and
+   * what the server accepts cannot drift apart.
+   *
+   * `agentIds: null` means the channel does not restrict.
+   */
+  @Get(':id/eligible-agents')
+  @RequirePermission('view', 'channels')
+  async getEligibleAgents(@Param('id') id: string) {
+    const tenantId = this.cls.get<string>('tenantId');
+    const pool = await this.supportService.resolvePool(tenantId, id);
+    return {
+      channelId: id,
+      mode: pool?.mode ?? 'open',
+      agentIds: pool?.agentIds ?? null,
+      groupIds: pool?.groupIds ?? [],
+    };
   }
 
   @Post(':id/disconnect')

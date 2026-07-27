@@ -207,6 +207,9 @@ export class GroupsService {
     if (!deleted) throw new NotFoundException('Group not found');
     if (previous) {
       await this.emitGroupUpdated(tenantId, previous);
+      // Channels reference groups in their support pool; a dangling id there
+      // would silently shrink the eligible agent pool.
+      this.eventEmitter.emit('group.deleted', { tenantId, groupId: id });
       void this.audit.record({
         category: 'GROUP',
         action: 'delete',

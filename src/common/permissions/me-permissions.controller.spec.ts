@@ -20,7 +20,12 @@ describe('MePermissionsController', () => {
   let clsValues: Record<string, unknown>;
 
   beforeEach(() => {
-    clsValues = { userId: USER, tenantId: TENANT };
+    clsValues = {
+      userId: USER,
+      tenantId: TENANT,
+      // Written by DataVisibilityInterceptor before the handler runs.
+      visibleGroupIds: ['group_a'],
+    };
 
     authzCache = {
       explainForUser: jest.fn().mockResolvedValue({
@@ -55,6 +60,7 @@ describe('MePermissionsController', () => {
       fullAccessReason: undefined,
       dataScope: DataScope.ORG_UNIT,
       orgUnitId: 'unit_b',
+      groupIds: ['group_a'],
     });
   });
 

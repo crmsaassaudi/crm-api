@@ -33,11 +33,14 @@ import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
 import { FilesService } from '../../files/files.service';
 import { RequirePermission } from '../../common/permissions';
+import { UseAcl } from '../../common/permissions/use-acl.decorator';
+import { LoadResource } from '../../common/permissions/load-resource.decorator';
 import { AssignmentAuditLogRepository } from '../repositories/omni-assignment-audit-log.repository';
 import { AgentPresenceService } from '../services/agent-presence.service';
 import { AssignmentService } from '../services/assignment.service';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
 import { TagsService } from '../../tags/tags.service';
+import { ChannelSupportService } from '../../channels/services/channel-support.service';
 
 /**
  * REST API for omni-channel conversations and messages.
@@ -77,6 +80,7 @@ export class OmniController {
     private readonly assignmentService: AssignmentService,
     private readonly conversationCommandService: ConversationCommandService,
     private readonly tagsService: TagsService,
+    private readonly channelSupportService: ChannelSupportService,
   ) {}
 
   /**
@@ -118,7 +122,7 @@ export class OmniController {
    * without reading logs or code.
    */
   @Get('conversations/:id/routing-trace')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getRoutingTrace(
     @Param('id') conversationId: string,
     @Query('limit') limit = '10',
@@ -161,7 +165,7 @@ export class OmniController {
    * knowing the exact conversation.
    */
   @Get('routing-history')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getRoutingHistory(
     @Query('search') search?: string,
     @Query('outcome') outcome?: 'assigned' | 'queued' | 'failed',
@@ -194,7 +198,7 @@ export class OmniController {
    * Supports filtering by status, channelType, assignedAgent, and search.
    */
   @Get('conversations')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async listConversations(@Query() query: ListConversationsQueryDto) {
     const {
       cursor,
@@ -239,7 +243,7 @@ export class OmniController {
     const slaFilter = sla ? sla.split(',') : undefined;
     const tagsFilter = tags ? tags.split(',') : undefined;
 
-    const { assignedAgent, assignedGroup, unassigned } =
+    const { assignedAgent, assignedGroup, unassigned, groupQueueOnly } =
       this.resolveAssignedToFilter(assignedTo, userId);
 
     let isVipFilter: boolean | undefined;
@@ -260,6 +264,7 @@ export class OmniController {
         assignedAgent,
         assignedGroup,
         unassigned,
+        groupQueueOnly,
         sla: slaFilter,
         tags: tagsFilter,
         tagsMatchMode: tagsMatchMode === 'all' ? 'all' : 'any',
@@ -322,8 +327,9 @@ export class OmniController {
     userId: string,
   ): {
     assignedAgent: string | string[] | null | undefined;
-    assignedGroup: string | null | undefined;
+    assignedGroup: string | string[] | null | undefined;
     unassigned: boolean;
+    groupQueueOnly?: boolean;
   } {
     if (assignedTo === 'me')
       return {
@@ -331,6 +337,25 @@ export class OmniController {
         assignedGroup: undefined,
         unassigned: false,
       };
+    // The queue of every team the caller belongs to: owned by one of their
+    // groups, not yet picked up. Distinct from 'unassigned', which is the
+    // tenant-wide pool with no owner at all — before auto-routing persisted
+    // `assignedGroupId`, these two were indistinguishable and a team lead had
+    // no way to see work waiting on their team specifically.
+    //
+    // Group membership comes from CLS (resolved server-side by
+    // DataVisibilityInterceptor), never from the query string.
+    if (assignedTo === 'myGroupQueue') {
+      const myGroups = this.cls.get<string[]>('visibleGroupIds') ?? [];
+      return {
+        assignedAgent: undefined,
+        // No groups → an empty $in, which matches nothing. Correct: someone in
+        // no team has no team queue.
+        assignedGroup: myGroups,
+        unassigned: false,
+        groupQueueOnly: true,
+      };
+    }
     if (assignedTo === 'unassigned')
       return {
         assignedAgent: undefined,
@@ -418,7 +443,7 @@ export class OmniController {
    * Used by Deal/Ticket detail pages to display linked chat messages.
    */
   @Get('messages/batch')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getMessagesBatch(@Query('ids') ids?: string) {
     if (!ids) {
       throw new BadRequestException('ids query parameter is required');
@@ -437,7 +462,7 @@ export class OmniController {
    * Get a single conversation by ID (with customer info).
    */
   @Get('conversations/:id')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getConversation(@Param('id') id: string) {
     const conversation = await this.conversationRepo.findById(id);
     if (!conversation) {
@@ -450,7 +475,9 @@ export class OmniController {
    * Update customer info (name, email, phone) for a conversation.
    */
   @Patch('conversations/:id/customer')
-  @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async updateCustomer(
     @Param('id') id: string,
@@ -486,7 +513,7 @@ export class OmniController {
    * presigned S3 download URLs so the frontend can render them.
    */
   @Get('conversations/:id/messages')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getMessages(
     @Param('id') conversationId: string,
     @Query('page') page = '1',
@@ -511,7 +538,7 @@ export class OmniController {
   }
 
   @Get('conversations/:id/sync')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async syncConversation(
     @Param('id') conversationId: string,
     @Query('afterVersion') afterVersion?: string,
@@ -571,7 +598,7 @@ export class OmniController {
   }
 
   @Post('conversations/batch-sync')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async batchSyncConversations(
     @Body()
@@ -623,7 +650,7 @@ export class OmniController {
   }
 
   @Get('conversations/:id/timeline')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getConversationTimeline(
     @Param('id') conversationId: string,
     @Query() query: TimelineQueryDto,
@@ -654,7 +681,7 @@ export class OmniController {
    * @param limit     Messages per page
    */
   @Get('conversations/:id/history')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getConversationHistory(
     @Param('id') conversationId: string,
     @Query('convPage') convPage = '1',
@@ -777,12 +804,14 @@ export class OmniController {
   }
 
   @Post('conversations/:id/messages')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
   // Per-tenant cap: 60 outbound messages / minute / user. Prevents one
   // agent (or compromised session) from spam-sending across providers
   // and tripping provider-side rate limits that would block the whole
   // tenant.
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.CREATED)
   async sendMessage(
     @Param('id') conversationId: string,
@@ -824,8 +853,10 @@ export class OmniController {
   }
 
   @Post('conversations/:id/email-reply')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.CREATED)
   async emailReply(
     @Param('id') conversationId: string,
@@ -875,7 +906,7 @@ export class OmniController {
    * The frontend uses this to lock/unlock the chat input.
    */
   @Get('conversations/:id/reply-window')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getReplyWindowStatus(@Param('id') conversationId: string) {
     const conversation = await this.conversationRepo.findById(conversationId);
     if (!conversation) {
@@ -886,7 +917,7 @@ export class OmniController {
   }
 
   @Get('conversations/:id/lock')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getConversationLock(@Param('id') conversationId: string) {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) {
@@ -902,7 +933,7 @@ export class OmniController {
   }
 
   @Post('conversations/:id/lock')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async acquireConversationLock(
     @Param('id') conversationId: string,
@@ -924,7 +955,7 @@ export class OmniController {
   }
 
   @Post('conversations/:id/lock/heartbeat')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async heartbeatConversationLock(@Param('id') conversationId: string) {
     const tenantId = this.cls.get<string>('tenantId');
@@ -944,7 +975,7 @@ export class OmniController {
   }
 
   @Delete('conversations/:id/lock')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async releaseConversationLock(@Param('id') conversationId: string) {
     const tenantId = this.cls.get<string>('tenantId');
@@ -963,7 +994,9 @@ export class OmniController {
   }
 
   @Post('conversations/:id/takeover')
-  @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async takeoverConversation(
     @Param('id') conversationId: string,
@@ -980,6 +1013,14 @@ export class OmniController {
     if (!conversation) {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
+    // Takeover ends with the caller assigned, so it is gated on the same pool.
+    // Checked before the lock is seized, so a rejected takeover leaves the
+    // existing agent's lock intact.
+    await this.channelSupportService.assertAgentEligible(
+      tenantId,
+      conversation.channelId,
+      agentId,
+    );
 
     const result = await this.conversationLockService.takeover({
       tenantId,
@@ -1022,7 +1063,9 @@ export class OmniController {
    *   - WebSocket broadcast
    */
   @Patch('conversations/:id/status')
-  @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async updateStatus(
     @Param('id') id: string,
@@ -1080,7 +1123,9 @@ export class OmniController {
    *   2. A scheduled job polls and reopens past-deadline snoozed conversations.
    */
   @Post('conversations/:id/snooze')
-  @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async snoozeConversation(
     @Param('id') id: string,
@@ -1122,7 +1167,9 @@ export class OmniController {
    * Sets bot.enabled=false, bot.status='ended' and emits BOT_DISABLED event.
    */
   @Post('conversations/:id/bot/disable')
-  @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async disableBotOnConversation(@Param('id') id: string) {
     const tenantId = this.cls.get<string>('tenantId');
@@ -1161,7 +1208,9 @@ export class OmniController {
    * Sets bot.enabled=true, bot.status='active' and emits BOT_ENABLED event.
    */
   @Post('conversations/:id/bot/enable')
-  @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
+  @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async enableBotOnConversation(@Param('id') id: string) {
     const tenantId = this.cls.get<string>('tenantId');
@@ -1192,6 +1241,8 @@ export class OmniController {
   }
 
   @Post('conversations/:id/tags')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
   @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async addTag(@Param('id') id: string, @Body('tag') tag: string) {
@@ -1271,6 +1322,8 @@ export class OmniController {
   }
 
   @Delete('conversations/:id/tags/:tag')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
   @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async removeTag(@Param('id') id: string, @Param('tag') tag: string) {
@@ -1295,6 +1348,8 @@ export class OmniController {
   // ─── Claim / Assign ────────────────────────────────────────────
 
   @Patch('conversations/:id/claim')
+  @UseAcl('assign', 'omni_channel')
+  @LoadResource('omni_channel')
   @RequirePermission('assign', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async claimConversation(
@@ -1305,6 +1360,17 @@ export class OmniController {
       throw new BadRequestException('agentId is required');
     }
     await this.assertAgentInTenant(agentId);
+
+    const conversation = await this.conversationRepo.findById(id);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${id} not found`);
+    }
+    // Claiming is self-assignment — same channel pool rule as being assigned.
+    await this.channelSupportService.assertAgentEligible(
+      conversation.tenantId,
+      conversation.channelId,
+      agentId,
+    );
 
     const updated = await this.conversationRepo.claimConversation(id, agentId);
     if (!updated) {
@@ -1320,6 +1386,8 @@ export class OmniController {
    * Supports setting agentId or groupId to null to unassign.
    */
   @Patch('conversations/:id/assign')
+  @UseAcl('assign', 'omni_channel')
+  @LoadResource('omni_channel')
   @RequirePermission('assign', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async assignAgent(
@@ -1337,6 +1405,21 @@ export class OmniController {
     if (!conversation) {
       throw new NotFoundException(`Conversation ${id} not found`);
     }
+
+    // Being a member of the tenant is not enough: on a restricted channel only
+    // its support pool may be assigned. Without this the agent picker's
+    // client-side filter was the only thing standing between a direct API call
+    // and any user in the tenant.
+    await this.channelSupportService.assertAgentEligible(
+      conversation.tenantId,
+      conversation.channelId,
+      agentId,
+    );
+    await this.channelSupportService.assertGroupEligible(
+      conversation.tenantId,
+      conversation.channelId,
+      groupId,
+    );
 
     const oldAgentId = conversation.assignedAgentId;
     const oldGroupId = conversation.assignedGroupId;
@@ -1392,6 +1475,8 @@ export class OmniController {
    * Remove agent assignment from a conversation (back to queue).
    */
   @Patch('conversations/:id/unassign')
+  @UseAcl('assign', 'omni_channel')
+  @LoadResource('omni_channel')
   @RequirePermission('assign', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async unassignAgent(@Param('id') id: string) {
@@ -1428,6 +1513,8 @@ export class OmniController {
   // ─── Notes ──────────────────────────────────────────────────────
 
   @Post('conversations/:id/notes')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
   @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.CREATED)
   async createNote(
@@ -1478,6 +1565,8 @@ export class OmniController {
   }
 
   @Patch('conversations/:convId/notes/:noteId')
+  @UseAcl('edit', 'omni_channel', 'convId')
+  @LoadResource('omni_channel')
   @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.OK)
   async updateNote(
@@ -1503,6 +1592,8 @@ export class OmniController {
   }
 
   @Delete('conversations/:convId/notes/:noteId')
+  @UseAcl('edit', 'omni_channel', 'convId')
+  @LoadResource('omni_channel')
   @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteNote(@Param('noteId') noteId: string) {
@@ -1729,7 +1820,7 @@ export class OmniController {
    * Returns paginated list with presigned URLs (never exposes storageKey).
    */
   @Get('conversations/:id/files')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getConversationFiles(
     @Param('id') conversationId: string,
     @Query('type') type?: string,
@@ -1801,7 +1892,7 @@ export class OmniController {
    * Image gallery shortcut — only returns image files.
    */
   @Get('conversations/:id/files/images')
-  @RequirePermission('view', 'contacts')
+  @RequirePermission('view', 'omni_channel')
   async getConversationImages(
     @Param('id') conversationId: string,
     @Query('page') page = '1',
@@ -1818,6 +1909,8 @@ export class OmniController {
    */
   @Post('conversations/:id/link-messages')
   @RequirePermission('edit', 'omni_channel')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
   @HttpCode(HttpStatus.OK)
   async linkMessages(
     @Param('id') conversationId: string,
