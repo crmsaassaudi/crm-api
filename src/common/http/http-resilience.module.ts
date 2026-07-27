@@ -1,4 +1,4 @@
-import { Module, Global } from '@nestjs/common';
+import { Module, Global, forwardRef } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ResilienceService } from './resilience.service';
@@ -9,6 +9,7 @@ import { IntegrationLog, IntegrationLogSchema } from './integration-log.schema';
 import { IntegrationLogService } from './integration-log.service';
 
 import { IntegrationLogController } from './integration-log.controller';
+import { UsersModule } from '../../users/users.module';
 
 @Global()
 @Module({
@@ -17,6 +18,7 @@ import { IntegrationLogController } from './integration-log.controller';
     MongooseModule.forFeature([
       { name: IntegrationLog.name, schema: IntegrationLogSchema },
     ]),
+    forwardRef(() => UsersModule),
   ],
   controllers: [ResilienceMetricsController, IntegrationLogController],
   providers: [
