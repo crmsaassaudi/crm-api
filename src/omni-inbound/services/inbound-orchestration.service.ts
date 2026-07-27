@@ -8,7 +8,10 @@ import {
 } from '../domain/omni-events';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { ChannelsService } from '../../channels/channels.service';
+import { Channel } from '../../channels/domain/channel';
+import { ChannelSupportService } from '../../channels/services/channel-support.service';
 import { AssignmentService } from './assignment.service';
+import { RoutingContext } from './routing-context.types';
 import { AgentPresenceService } from './agent-presence.service';
 import { AutoResolveService } from './auto-resolve.service';
 import { BusinessHoursService } from './business-hours.service';
@@ -38,6 +41,7 @@ export class InboundOrchestrationService {
   constructor(
     private readonly conversationRepo: ConversationRepository,
     private readonly channelsService: ChannelsService,
+    private readonly channelSupportService: ChannelSupportService,
     private readonly assignmentService: AssignmentService,
     private readonly agentPresenceService: AgentPresenceService,
     private readonly autoResolveService: AutoResolveService,
@@ -56,14 +60,14 @@ export class InboundOrchestrationService {
    * Trigger auto-assignment for a conversation.
    *
    * Flow:
-   * 1. Load channel config → supportUserIds + supportGroupIds
-   * 2. Resolve group members into individual user IDs
-   * 3. Merge into a deduplicated agent pool
-   * 4. Call AssignmentService with routing context + agent pool
-   * 5. Emit assignment event for real-time broadcast + activity trail
+   * 1. Load the channel and resolve its support pool (direct users ∪ group
+   *    members) via ChannelSupportService
+   * 2. Build the routing context, including the channel id
+   * 3. Call AssignmentService with the pool, the owning group and the channel
+   * 4. Emit assignment event for real-time broadcast + activity trail
    *
    * If the channel has autoAssignmentEnabled = false, skip assignment.
-   * If supportUserIds AND supportGroupIds are both empty, use all online agents.
+   * A channel with no pool (`agentIds: null`) routes over all online agents.
    */
   async triggerAutoAssignment(
     payload: OmniPayload,
@@ -77,7 +81,8 @@ export class InboundOrchestrationService {
         `[AUTO-ASSIGN] triggerAutoAssignment for conversation=${conversationId}, reason=${reason}`,
       );
 
-      const channelConfig = await this.loadChannelConfig(payload);
+      const channel = await this.loadChannel(payload);
+      const channelConfig = channel?.config ?? {};
       if (channelConfig.autoAssignmentEnabled === false) {
         this.logger.log(
           `Auto-assignment explicitly disabled for channel ${payload.channelAccount} — skipping`,
@@ -85,24 +90,37 @@ export class InboundOrchestrationService {
         return;
       }
 
-      const agentPool = await this.resolveAgentPool(channelConfig);
+      const pool = channel
+        ? await this.channelSupportService.resolvePool(
+            payload.tenantId,
+            channel.id,
+          )
+        : null;
       const routingContext = await this.buildRoutingContext(
         payload,
         conversationId,
         enrichedProfile,
+        channel?.id ?? null,
       );
 
       const assignedAgentId = await this.assignmentService.assignConversation(
         payload.tenantId,
         conversationId,
         {
-          agentPool,
+          agentPool: pool?.agentIds ?? undefined,
           contactId,
           externalSenderId: payload.senderId,
           channelAutoAssignOverride: channelConfig.autoAssignmentEnabled,
           channelRoutingOverride: channelConfig.routing,
           routingContext,
           allowReassignment: reason === 'reopen_agent_offline',
+          // A channel served by exactly one group has an unambiguous owner, so
+          // the conversation can be filed under it even when no routing rule
+          // matches. With several groups there is no defensible default —
+          // leave it to the routing rules.
+          owningGroupId:
+            pool?.groupIds.length === 1 ? pool.groupIds[0] : undefined,
+          channelId: channel?.id ?? null,
         },
       );
 
@@ -126,42 +144,49 @@ export class InboundOrchestrationService {
     }
   }
 
-  private async loadChannelConfig(payload: OmniPayload): Promise<any> {
+  private async loadChannel(payload: OmniPayload): Promise<Channel | null> {
     try {
-      const channel = await this.channelsService.findAnyByAccount(
+      return await this.channelsService.findAnyByAccount(
         this.toSchemaChannelType(payload.channelType),
         payload.channelAccount,
       );
-      return channel?.config ?? {};
     } catch (_channelErr: any) {
       this.logger.debug(
         `Channel not found for ${payload.channelType}/${payload.channelAccount} — using default routing`,
       );
-      return {};
+      return null;
     }
   }
 
-  private async resolveAgentPool(
-    channelConfig: any,
-  ): Promise<string[] | undefined> {
-    const supportUserIds: string[] = channelConfig.supportUserIds ?? [];
-    const supportGroupIds: string[] = channelConfig.supportGroupIds ?? [];
-
-    if (supportUserIds.length === 0 && supportGroupIds.length === 0) {
+  /**
+   * 'inside' / 'outside' for the `business_hours` routing condition, or
+   * undefined when the schedule cannot be read.
+   *
+   * Undefined rather than a guess: a condition that cannot be evaluated must
+   * not match, and defaulting to 'inside' would route after-hours traffic to
+   * the day team every time the settings read hiccups.
+   */
+  private async resolveBusinessHoursFlag(
+    tenantId: string,
+  ): Promise<'inside' | 'outside' | undefined> {
+    try {
+      const within =
+        await this.businessHoursService.isWithinBusinessHours(tenantId);
+      return within ? 'inside' : 'outside';
+    } catch (err: any) {
+      this.logger.debug(
+        `Business-hours flag unavailable for routing: ${err.message}`,
+      );
       return undefined;
     }
-
-    const groupMemberIds =
-      await this.resolveGroupMembersForAssignment(supportGroupIds);
-    const allSupportIds = [...new Set([...supportUserIds, ...groupMemberIds])];
-    return allSupportIds.length > 0 ? allSupportIds : undefined;
   }
 
   private async buildRoutingContext(
     payload: OmniPayload,
     conversationId: string,
     enrichedProfile?: { name?: string },
-  ): Promise<any> {
+    channelId?: string | null,
+  ): Promise<RoutingContext> {
     const customerName =
       enrichedProfile?.name ??
       payload.metadata?.contactName ??
@@ -169,22 +194,29 @@ export class InboundOrchestrationService {
 
     let conversationTags: string[] = [];
     let conversationIsVip: boolean | undefined;
+    let orgUnitId: string | undefined;
 
     try {
       const conv = await this.conversationRepo.findById(conversationId);
       conversationTags = conv?.tags ?? [];
       conversationIsVip = (conv as any)?.isVip;
+      orgUnitId = (conv as any)?.orgUnitId
+        ? String((conv as any).orgUnitId)
+        : undefined;
     } catch {
       // Non-fatal
     }
 
     return {
       channel: payload.channelType,
+      channelId: channelId ?? undefined,
       tags: conversationTags,
       customerName,
       content: payload.content ?? '',
       time: this.getCurrentTimeHHmm(),
       segment: conversationIsVip === true ? 'VIP' : undefined,
+      businessHours: await this.resolveBusinessHoursFlag(payload.tenantId),
+      orgUnitId,
     };
   }
 

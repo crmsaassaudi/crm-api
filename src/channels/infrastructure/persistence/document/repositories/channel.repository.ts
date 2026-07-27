@@ -132,6 +132,21 @@ export class ChannelRepository {
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
+  /**
+   * Strip a deleted user/group out of every channel's support pool in one
+   * write. Called from the user/group deletion listeners — a dangling id would
+   * otherwise shrink the eligible pool with nothing in the UI to explain it.
+   */
+  async pullSupportMembers(
+    tenantId: string,
+    pull: Record<string, unknown>,
+  ): Promise<number> {
+    const result = await this.model
+      .updateMany({ tenantId }, { $pull: pull } as any)
+      .exec();
+    return result.modifiedCount ?? 0;
+  }
+
   async delete(tenantId: string, id: string): Promise<boolean> {
     const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
     return result.deletedCount > 0;

@@ -1,1131 +1,667 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { getQueueToken } from '@nestjs/bullmq';
-import { getModelToken } from '@nestjs/mongoose';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { AssignmentService, mergeRoutingConfig } from './assignment.service';
-import { ConversationRepository } from '../repositories/conversation.repository';
-import { AgentPresenceService } from './agent-presence.service';
-import { AssignmentAuditLogRepository } from '../repositories/omni-assignment-audit-log.repository';
-import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
-import { UsersService } from '../../users/users.service';
-import { RoutingRuleEvaluatorService } from '../../routing-rules/routing-rule-evaluator.service';
-import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
-import { OMNI_STICKY_RETRY_QUEUE } from '../queue/omni-sticky-queue.constants';
+/* eslint-disable @typescript-eslint/require-await -- mock factories model async
+   collaborators; an await inside them would be noise. */
+import {
+  AssignmentService,
+  channelOverrideToConfigOverride,
+} from './assignment.service';
+import { mergeAssignmentConfig } from '../../assignment/core/assignment-config.service';
+import { AssignDecision } from '../../assignment/core/assignment-core.service';
 
 /**
- * Smart AgentPresenceService mock that emulates the atomic Lua reservation
- * behaviour without a real Redis. It keeps an in-memory load/capacity map so
- * least-busy and capacity-based selection stay meaningful in unit tests.
- *
- * - reserveAgentFromCandidates  → least-busy: pick lowest-load candidate under
- *   capacity, then increment its load (mirrors the Lua reserve + ZADD).
- * - reserveCapacityBasedAgent   → same, but the capacity gate uses the tenant
- *   fallback when the agent has no per-agent capacity.
- * - releaseConversation         → decrement load (rollback path).
+ * The routing pipeline itself is tested in
+ * `assignment/core/assignment-core.service.spec.ts`. What is left to verify here
+ * is the conversation-specific half: the channel-override translation, the
+ * preferred-agent lookup, and how each outcome is turned into a side effect.
  */
-function createPresenceMock() {
-  const loads: Record<string, number> = {};
-  const caps: Record<string, number> = {};
-  const skills: Record<string, string[]> = {};
 
-  const effectiveCap = (id: string, tenantCap: number) =>
-    caps[id] && caps[id] > 0 ? caps[id] : tenantCap > 0 ? tenantCap : 10;
-
-  const reserve = (ids: string[], tenantCap: number): string | null => {
-    const eligible = ids.filter(
-      (id) => (loads[id] ?? 0) < effectiveCap(id, tenantCap),
-    );
-    if (eligible.length === 0) return null;
-    eligible.sort((a, b) => (loads[a] ?? 0) - (loads[b] ?? 0));
-    const chosen = eligible[0];
-    loads[chosen] = (loads[chosen] ?? 0) + 1;
-    return chosen;
+function buildService(overrides?: {
+  config?: Partial<Record<string, unknown>>;
+  decision?: Partial<AssignDecision>;
+  conversation?: Record<string, unknown> | null;
+  lastResolvedByContact?: Record<string, unknown> | null;
+  lastResolvedBySender?: Record<string, unknown> | null;
+  cached?: string | null;
+}) {
+  const decision: AssignDecision = {
+    outcome: 'assigned',
+    assigneeId: 'agent-1',
+    groupId: null,
+    strategy: 'round-robin',
+    reasonKey: 'assigned',
+    reason: 'ok',
+    rule: null,
+    candidatePoolSize: 2,
+    eligiblePoolSize: 2,
+    ...overrides?.decision,
   };
 
-  return {
-    // ── test helpers ──────────────────────────────────────────────
-    __setLoad: (id: string, n: number) => {
-      loads[id] = n;
-    },
-    __setCapacity: (id: string, n: number) => {
-      caps[id] = n;
-    },
-    __setSkills: (id: string, s: string[]) => {
-      skills[id] = s;
-    },
-    __reset: () => {
-      for (const k of Object.keys(loads)) delete loads[k];
-      for (const k of Object.keys(caps)) delete caps[k];
-      for (const k of Object.keys(skills)) delete skills[k];
-    },
-    __loads: loads,
+  const core = {
+    // Typed with a parameter so assertions can read mock.calls[n][0].
+    assign: jest.fn(async (_request: any) => decision),
+    registerAdapter: jest.fn(),
+    recordExternalDecision: jest.fn(async (_entry: any) => undefined),
+  };
 
-    // ── service surface used by AssignmentService ─────────────────
-    getOnlineAgents: jest
-      .fn()
-      .mockResolvedValue(['agent_1', 'agent_2', 'agent_3']),
-    getPresence: jest.fn((_t: string, id: string) =>
-      Promise.resolve(
-        caps[id] !== undefined || skills[id] !== undefined
-          ? {
-              maxCapacity: caps[id] ?? 10,
-              activeConversations: loads[id] ?? 0,
-              skills: skills[id], // undefined → caller falls back to Mongo
-            }
-          : null,
-      ),
+  const config = {
+    resolve: jest.fn(async (_t: string, _o: string, override?: any) =>
+      mergeAssignmentConfig(overrides?.config as any, override),
     ),
-    reserveAgentFromCandidates: jest.fn((_t: string, ids: string[]) =>
-      Promise.resolve(reserve(ids, 10)),
+    get: jest.fn(async () =>
+      mergeAssignmentConfig(overrides?.config as any, null),
     ),
-    // First-fit: reserve the FIRST eligible (under-capacity) candidate in order.
-    reserveFirstEligibleAgent: jest.fn((_t: string, ids: string[]) => {
-      for (const id of ids) {
-        if ((loads[id] ?? 0) < effectiveCap(id, 10)) {
-          loads[id] = (loads[id] ?? 0) + 1;
-          return Promise.resolve(id);
-        }
-      }
-      return Promise.resolve(null);
-    }),
-    reserveCapacityBasedAgent: jest.fn(
-      (_t: string, ids: string[], tenantCap: number) =>
-        Promise.resolve(reserve(ids, tenantCap)),
+    invalidate: jest.fn(async () => undefined),
+  };
+
+  const load = { release: jest.fn(async () => undefined) };
+  const adapter = { objectTypes: ['Conversation'], load };
+  const commitPort = {
+    reassign: jest.fn(async () => true),
+    commit: jest.fn(async () => true),
+    park: jest.fn(async () => undefined),
+  };
+  const candidatePort = { groupMembers: jest.fn(async () => ['m1', 'm2']) };
+  const recordCandidatePort = { setPresenceProvider: jest.fn() };
+  const presenceService = { getAllAgents: jest.fn(async () => []) };
+
+  const conversationRepo = {
+    findById: jest.fn(async () =>
+      overrides?.conversation === undefined
+        ? { id: 'c1', channelId: 'ch1', assignedAgentId: null }
+        : overrides.conversation,
     ),
-    releaseConversation: jest.fn((_t: string, id: string) => {
-      loads[id] = Math.max(0, (loads[id] ?? 0) - 1);
-      return Promise.resolve();
-    }),
+    findLastResolvedByContact: jest.fn(
+      async () => overrides?.lastResolvedByContact ?? null,
+    ),
+    findLastResolvedBySender: jest.fn(
+      async () => overrides?.lastResolvedBySender ?? null,
+    ),
+  };
+
+  const channelSupport = {
+    assertAgentEligible: jest.fn(async () => undefined),
+    assertGroupEligible: jest.fn(async () => undefined),
+  };
+
+  const eventEmitter = { emit: jest.fn() };
+  const redis = {
+    get: jest.fn(async () => overrides?.cached ?? null),
+    set: jest.fn(async () => 'OK'),
+  };
+  const stickyQueue = { add: jest.fn(async () => ({ id: 'j1' })) };
+
+  const service = new AssignmentService(
+    core as any,
+    config as any,
+    adapter as any,
+    commitPort as any,
+    candidatePort as any,
+    recordCandidatePort as any,
+    presenceService as any,
+    conversationRepo as any,
+    channelSupport as any,
+    eventEmitter as any,
+    redis as any,
+    stickyQueue as any,
+  );
+
+  return {
+    service,
+    core,
+    config,
+    load,
+    commitPort,
+    candidatePort,
+    recordCandidatePort,
+    conversationRepo,
+    channelSupport,
+    eventEmitter,
+    redis,
+    stickyQueue,
   };
 }
 
-describe('AssignmentService', () => {
-  let service: AssignmentService;
-  let conversationRepoMock: any;
-  let presenceServiceMock: ReturnType<typeof createPresenceMock>;
-  let auditLogRepoMock: any;
-  let settingsServiceMock: any;
-  let usersServiceMock: any;
-  let evaluatorMock: any;
-  let redisMock: any;
-  let stickyRetryQueueMock: any;
-  let eventEmitterMock: any;
-
-  beforeEach(async () => {
-    conversationRepoMock = {
-      // Return a truthy committed doc so the reservation→commit guard does not
-      // treat the write as a failure and roll back.
-      updateAssignment: jest
-        .fn()
-        .mockResolvedValue({ _id: 'conv', assignedAgentId: 'agent' }),
-      countOpenByAgent: jest.fn().mockResolvedValue(0),
-      findLastResolvedByContact: jest.fn().mockResolvedValue(null),
-      findLastResolvedBySender: jest.fn().mockResolvedValue(null),
-      findById: jest.fn().mockResolvedValue(null),
-    };
-
-    presenceServiceMock = createPresenceMock();
-
-    auditLogRepoMock = {
-      create: jest.fn().mockResolvedValue(undefined),
-    };
-
-    settingsServiceMock = {
-      getSetting: jest.fn().mockResolvedValue({
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: true,
-        stickyTimeoutHours: 72,
-        stickyWaitTimeMinutes: 3,
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
-      }),
-    };
-
-    usersServiceMock = {
-      findByIds: jest.fn().mockResolvedValue([]),
-    };
-
-    evaluatorMock = {
-      evaluateForTenant: jest.fn().mockResolvedValue(null),
-    };
-
-    redisMock = {
-      incr: jest.fn().mockResolvedValue(1),
-      expire: jest.fn().mockResolvedValue(1),
-      get: jest.fn().mockResolvedValue(null),
-      set: jest.fn().mockResolvedValue('OK'),
-      publish: jest.fn().mockResolvedValue(1),
-      duplicate: jest.fn(),
-    };
-
-    stickyRetryQueueMock = {
-      add: jest.fn().mockResolvedValue({}),
-    };
-
-    eventEmitterMock = {
-      emit: jest.fn(),
-    };
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        AssignmentService,
-        { provide: ConversationRepository, useValue: conversationRepoMock },
-        { provide: AgentPresenceService, useValue: presenceServiceMock },
-        { provide: AssignmentAuditLogRepository, useValue: auditLogRepoMock },
-        { provide: CrmSettingsService, useValue: settingsServiceMock },
-        { provide: UsersService, useValue: usersServiceMock },
-        { provide: RoutingRuleEvaluatorService, useValue: evaluatorMock },
-        { provide: IOREDIS_CLIENT, useValue: redisMock },
-        {
-          provide: getQueueToken(OMNI_STICKY_RETRY_QUEUE),
-          useValue: stickyRetryQueueMock,
-        },
-        {
-          provide: getModelToken('GroupSchemaClass'),
-          useValue: {
-            find: jest.fn().mockReturnValue({
-              lean: () => ({ exec: () => Promise.resolve([]) }),
-            }),
-          },
-        },
-        { provide: EventEmitter2, useValue: eventEmitterMock },
-      ],
-    }).compile();
-
-    service = module.get<AssignmentService>(AssignmentService);
+describe('channelOverrideToConfigOverride', () => {
+  it('should return null when the channel sets nothing', () => {
+    expect(channelOverrideToConfigOverride(undefined)).toBeNull();
+    expect(channelOverrideToConfigOverride(null)).toBeNull();
   });
 
-  // ────────────────────────────────────────────────────────────────────────
-  // Round-Robin Strategy
-  // ────────────────────────────────────────────────────────────────────────
+  it('should translate the channel vocabulary onto the core vocabulary', () => {
+    expect(
+      channelOverrideToConfigOverride({
+        stickyRoutingEnabled: true,
+        stickyTimeoutHours: 24,
+        stickyWaitTimeMinutes: 5,
+      }),
+    ).toEqual({
+      preferPreviousAssignee: true,
+      previousAssigneeTimeoutHours: 24,
+      previousAssigneeWaitMinutes: 5,
+    });
+  });
 
-  describe('round-robin strategy', () => {
-    it('should assign first agent when counter is 1', async () => {
-      redisMock.incr.mockResolvedValue(1);
+  it('should leave unset fields undefined so they inherit per field', () => {
+    const result = channelOverrideToConfigOverride({
+      defaultStrategy: 'least_busy',
+    });
+    expect(result).toEqual({ defaultStrategy: 'least-busy' });
+    // Not `defaultMaxCapacity: undefined` — the key must be absent so the merge
+    // falls through to the stored value rather than the hard default.
+    expect(Object.keys(result ?? {})).toEqual(['defaultStrategy']);
+  });
 
-      const result = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'round-robin',
+  it('should normalise legacy snake_case strategies', () => {
+    expect(
+      channelOverrideToConfigOverride({ fallbackStrategy: 'capacity_based' }),
+    ).toEqual({ fallbackStrategy: 'capacity-based' });
+  });
+
+  it('should preserve an explicit false rather than dropping it', () => {
+    expect(
+      channelOverrideToConfigOverride({ skillBasedRoutingEnabled: false }),
+    ).toEqual({ skillBasedRoutingEnabled: false });
+  });
+});
+
+describe('AssignmentService', () => {
+  describe('registration', () => {
+    it('should register the conversation adapter with the core on init', () => {
+      const h = buildService();
+      h.service.onModuleInit();
+      expect(h.core.registerAdapter).toHaveBeenCalledWith(
+        expect.objectContaining({ objectTypes: ['Conversation'] }),
       );
+    });
+  });
 
-      expect(result).toBe('agent_1');
-      expect(conversationRepoMock.updateAssignment).toHaveBeenCalledWith(
-        'conv_1',
-        'agent_1',
-      );
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
+  describe('assignConversation', () => {
+    it('should pass the channel id as the scope so the support pool applies', async () => {
+      const h = buildService();
+      await h.service.assignConversation('t1', 'c1', { channelId: 'ch9' });
+      expect(h.core.assign).toHaveBeenCalledWith(
         expect.objectContaining({
-          strategy: 'round-robin',
-          outcome: 'assigned',
-          assignedAgentId: 'agent_1',
+          objectType: 'Conversation',
+          entityId: 'c1',
+          scopeId: 'ch9',
         }),
       );
     });
 
-    it('should cycle through agents on sequential calls', async () => {
-      redisMock.incr
-        .mockResolvedValueOnce(1)
-        .mockResolvedValueOnce(2)
-        .mockResolvedValueOnce(3)
-        .mockResolvedValueOnce(4); // wraps back to agent_1
-
-      const r1 = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'round-robin',
+    it('should accept the legacy positional strategy form', async () => {
+      const h = buildService();
+      await h.service.assignConversation('t1', 'c1', 'least-busy');
+      expect(h.core.assign).toHaveBeenCalledWith(
+        expect.objectContaining({ strategy: 'least-busy' }),
       );
-      const r2 = await service.assignConversation(
-        'tenant_1',
-        'conv_2',
-        'round-robin',
-      );
-      const r3 = await service.assignConversation(
-        'tenant_1',
-        'conv_3',
-        'round-robin',
-      );
-      const r4 = await service.assignConversation(
-        'tenant_1',
-        'conv_4',
-        'round-robin',
-      );
-
-      expect(r1).toBe('agent_1');
-      expect(r2).toBe('agent_2');
-      expect(r3).toBe('agent_3');
-      expect(r4).toBe('agent_1'); // wrap-around
     });
 
-    it('should reserve candidates in rotation order, NOT by lowest load', async () => {
-      // Regression guard for the N+1 "fix": round-robin must use first-fit on the
-      // rotated list, not collapse into least-busy. agent_1 is the heaviest but
-      // the rotation puts it first, so it must still be chosen.
-      redisMock.incr.mockResolvedValue(1); // index 0 → agent_1 first
-      presenceServiceMock.__setLoad('agent_1', 8);
-      presenceServiceMock.__setLoad('agent_2', 0);
-      presenceServiceMock.__setLoad('agent_3', 0);
-
-      const result = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'round-robin',
+    it('should forward an explicit agent pool as an extra restriction', async () => {
+      const h = buildService();
+      await h.service.assignConversation('t1', 'c1', {
+        agentPool: ['a', 'b'],
+      });
+      expect(h.core.assign).toHaveBeenCalledWith(
+        expect.objectContaining({ restrictToCandidates: ['a', 'b'] }),
       );
+    });
 
-      // First eligible in rotation order is agent_1 (still under cap 10).
-      expect(result).toBe('agent_1');
-      // Single first-fit call over the rotated list — NOT N per-agent calls,
-      // and NOT the lowest-load (least-busy) reserve.
+    it('should flatten the routing context into rule-condition field names', async () => {
+      const h = buildService();
+      await h.service.assignConversation('t1', 'c1', {
+        routingContext: {
+          channel: 'facebook',
+          channelId: 'ch1',
+          tags: ['VIP'],
+          businessHours: 'outside',
+        },
+      });
+      const request = h.core.assign.mock.calls[0][0] as any;
+      expect(request.attributes).toMatchObject({
+        channel: 'facebook',
+        channel_id: 'ch1',
+        tag: ['VIP'],
+        business_hours: 'outside',
+      });
+    });
+
+    it('should let a channel that explicitly enabled auto-assign override the setting', async () => {
+      const h = buildService({ config: { autoAssignEnabled: false } });
+      await h.service.assignConversation('t1', 'c1', {
+        channelAutoAssignOverride: true,
+      });
+      const request = h.core.assign.mock.calls[0][0] as any;
+      expect(request.configOverride).toMatchObject({ autoAssignEnabled: true });
+    });
+
+    it('should supply an unconditional commit only when reassignment is allowed', async () => {
+      const plain = buildService();
+      await plain.service.assignConversation('t1', 'c1', {});
       expect(
-        presenceServiceMock.reserveFirstEligibleAgent,
-      ).toHaveBeenCalledWith('tenant_1', ['agent_1', 'agent_2', 'agent_3']);
+        (plain.core.assign.mock.calls[0][0] as any).commit,
+      ).toBeUndefined();
+
+      const reassign = buildService();
+      await reassign.service.assignConversation('t1', 'c1', {
+        allowReassignment: true,
+      });
+      const request = reassign.core.assign.mock.calls[0][0] as any;
+      expect(typeof request.commit).toBe('function');
+      await request.commit('agent-9', 'g1');
+      expect(reassign.commitPort.reassign).toHaveBeenCalledWith(
+        expect.objectContaining({ entityId: 'c1' }),
+        'agent-9',
+        'g1',
+      );
+    });
+  });
+
+  describe('preferred-agent lookup', () => {
+    const enabled = { autoAssignEnabled: true, preferPreviousAssignee: true };
+
+    it('should be skipped when the preference is disabled', async () => {
+      const h = buildService();
+      await h.service.assignConversation('t1', 'c1', { contactId: 'k1' });
+      expect((h.core.assign.mock.calls[0][0] as any).preferred).toBeNull();
       expect(
-        presenceServiceMock.reserveAgentFromCandidates,
+        h.conversationRepo.findLastResolvedByContact,
       ).not.toHaveBeenCalled();
     });
 
-    it('should use default strategy from settings when none specified', async () => {
-      redisMock.incr.mockResolvedValue(1);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1');
-
-      expect(result).toBe('agent_1');
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({ strategy: 'round-robin' }),
-      );
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Least-Busy Strategy
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('least-busy strategy', () => {
-    it('should assign to agent with fewest open chats', async () => {
-      presenceServiceMock.__setLoad('agent_1', 5);
-      presenceServiceMock.__setLoad('agent_2', 2); // fewest
-      presenceServiceMock.__setLoad('agent_3', 8);
-
-      const result = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'least-busy',
-      );
-
-      expect(result).toBe('agent_2');
-      expect(
-        presenceServiceMock.reserveAgentFromCandidates,
-      ).toHaveBeenCalledWith('tenant_1', ['agent_1', 'agent_2', 'agent_3']);
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          strategy: 'least-busy',
-          outcome: 'assigned',
-          assignedAgentId: 'agent_2',
-        }),
-      );
+    it('should be skipped when the caller asks to skip it', async () => {
+      const h = buildService({ config: enabled });
+      await h.service.assignConversation('t1', 'c1', {
+        contactId: 'k1',
+        skipSticky: true,
+      });
+      expect((h.core.assign.mock.calls[0][0] as any).preferred).toBeNull();
     });
 
-    it('should assign first agent if all have equal load', async () => {
-      const result = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'least-busy',
-      );
-
-      expect(result).toBe('agent_1');
-      expect(conversationRepoMock.updateAssignment).toHaveBeenCalled();
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Capacity-Based Strategy (atomic Redis reserve — P1 fix)
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('capacity-based strategy', () => {
-    it('should assign to agent with available capacity via atomic reserve', async () => {
-      presenceServiceMock.__setLoad('agent_1', 9); // 9/10
-      presenceServiceMock.__setLoad('agent_2', 3); // 3/10 (most capacity)
-      presenceServiceMock.__setLoad('agent_3', 7); // 7/10
-
-      const result = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'capacity-based',
-      );
-
-      expect(result).toBe('agent_2');
-      // Must go through the atomic capacity reserve, NOT the old Mongo path.
-      expect(
-        presenceServiceMock.reserveCapacityBasedAgent,
-      ).toHaveBeenCalledWith('tenant_1', ['agent_1', 'agent_2', 'agent_3'], 10);
-    });
-
-    it('should queue conversation when all agents are at max capacity', async () => {
-      presenceServiceMock.__setLoad('agent_1', 10);
-      presenceServiceMock.__setLoad('agent_2', 10);
-      presenceServiceMock.__setLoad('agent_3', 10);
-
-      const result = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'capacity-based',
-      );
-
-      expect(result).toBeNull();
-      expect(conversationRepoMock.updateAssignment).not.toHaveBeenCalled();
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          strategy: 'capacity-based',
-          outcome: 'queued',
-        }),
-      );
-    });
-
-    it('should respect per-agent capacity from presence data', async () => {
-      presenceServiceMock.__setCapacity('agent_1', 5);
-      presenceServiceMock.__setLoad('agent_1', 5); // 5/5 — at capacity
-      presenceServiceMock.__setLoad('agent_2', 4); // 4/10
-      presenceServiceMock.__setLoad('agent_3', 6); // 6/10
-
-      const result = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'capacity-based',
-      );
-
-      expect(result).toBe('agent_2');
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Sticky Routing
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('sticky strategy', () => {
-    beforeEach(() => {
-      settingsServiceMock.getSetting.mockResolvedValue({
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: true,
-        stickyTimeoutHours: 72,
-        stickyWaitTimeMinutes: 3,
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
-      });
-    });
-
-    it('should assign to previous agent when available and has capacity', async () => {
-      conversationRepoMock.findLastResolvedByContact.mockResolvedValue({
-        assignedAgentId: 'agent_2',
-        resolvedAt: new Date(), // just resolved
-      });
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'sticky',
-        contactId: 'contact_1',
-      });
-
-      expect(result).toBe('agent_2');
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          strategy: 'sticky',
-          outcome: 'assigned',
-        }),
-      );
-    });
-
-    it('should fall back to least-busy when previous agent is not available', async () => {
-      conversationRepoMock.findLastResolvedByContact.mockResolvedValue({
-        assignedAgentId: 'agent_999', // not in available pool
-        resolvedAt: new Date(),
-      });
-      presenceServiceMock.__setLoad('agent_1', 5);
-      presenceServiceMock.__setLoad('agent_2', 1); // fewest
-      presenceServiceMock.__setLoad('agent_3', 3);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'sticky',
-        contactId: 'contact_1',
-      });
-
-      expect(result).toBe('agent_2'); // fallback to least-busy
-    });
-
-    it('should schedule sticky retry or fall back when agent at capacity and stickyWaitTime > 0', async () => {
-      conversationRepoMock.findLastResolvedByContact.mockResolvedValue({
-        assignedAgentId: 'agent_1',
-        resolvedAt: new Date(),
-      });
-      // agent_1 at capacity → sticky reserve fails.
-      presenceServiceMock.__setCapacity('agent_1', 10);
-      presenceServiceMock.__setLoad('agent_1', 10);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'sticky',
-        contactId: 'contact_1',
-      });
-
-      if (result === '__sticky_waiting__') {
-        expect(stickyRetryQueueMock.add).toHaveBeenCalled();
-      } else {
-        expect(result).not.toBe('agent_1'); // NOT the at-capacity agent
-        expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-          expect.objectContaining({
-            outcome: expect.stringMatching(/assigned|queued/),
-          }),
-        );
-      }
-    });
-
-    it('should skip sticky when contact resolved outside timeout window', async () => {
-      conversationRepoMock.findLastResolvedByContact.mockResolvedValue({
-        assignedAgentId: 'agent_2',
-        resolvedAt: new Date(Date.now() - 100 * 60 * 60 * 1000), // 100h ago (> 72h)
-      });
-      redisMock.incr.mockResolvedValue(1);
-
-      await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'sticky',
-        contactId: 'contact_1',
-      });
-
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          strategy: expect.not.stringContaining('sticky'),
-        }),
-      );
-    });
-
-    it('should NOT trigger sticky when a rule sets strategy=sticky but global stickyRoutingEnabled=false (P0 fix)', async () => {
-      // P0 fix: the global stickyRoutingEnabled toggle is now a hard kill-switch.
-      // A routing rule requesting strategy='sticky' is honoured only when the
-      // tenant has enabled sticky routing. When disabled, the assignment falls
-      // through to the default strategy (round-robin here).
-      settingsServiceMock.getSetting.mockResolvedValue({
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: false, // global OFF
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
-      });
-      conversationRepoMock.findLastResolvedByContact.mockResolvedValue({
-        assignedAgentId: 'agent_3',
-        resolvedAt: new Date(),
-      });
-      redisMock.incr.mockResolvedValue(1);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'sticky',
-        contactId: 'contact_1',
-      });
-
-      // Sticky disabled → falls through to default (round-robin) → agent_1.
-      expect(result).toBe('agent_1');
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          strategy: expect.not.stringContaining('sticky'),
-        }),
-      );
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Sticky-history cache (Task 3.3)
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('sticky-history cache', () => {
-    beforeEach(() => {
-      settingsServiceMock.getSetting.mockResolvedValue({
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: true,
-        stickyTimeoutHours: 72,
-        stickyWaitTimeMinutes: 3,
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
-      });
-    });
-
-    it('should resolve the previous agent from the Redis cache without a MongoDB lookup', async () => {
-      redisMock.get.mockResolvedValue(
-        JSON.stringify({
-          agentId: 'agent_2',
+    it('should read the Redis cache before touching MongoDB', async () => {
+      const h = buildService({
+        config: enabled,
+        cached: JSON.stringify({
+          agentId: 'agent-7',
           resolvedAt: new Date().toISOString(),
         }),
-      );
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'sticky',
-        contactId: 'contact_1',
       });
-
-      expect(result).toBe('agent_2');
+      await h.service.assignConversation('t1', 'c1', { contactId: 'k1' });
+      expect((h.core.assign.mock.calls[0][0] as any).preferred).toMatchObject({
+        assigneeId: 'agent-7',
+        source: 'contactId:cache',
+      });
       expect(
-        conversationRepoMock.findLastResolvedByContact,
+        h.conversationRepo.findLastResolvedByContact,
       ).not.toHaveBeenCalled();
     });
 
-    it('should ignore a cached entry older than the sticky timeout (fall back to Mongo)', async () => {
-      redisMock.get.mockResolvedValue(
-        JSON.stringify({
-          agentId: 'agent_2',
-          resolvedAt: new Date(Date.now() - 100 * 3600 * 1000).toISOString(), // 100h > 72h
-        }),
-      );
-      conversationRepoMock.findLastResolvedByContact.mockResolvedValue(null);
-      redisMock.incr.mockResolvedValue(1);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'sticky',
-        contactId: 'contact_1',
-      });
-
-      // Stale cache ignored → Mongo consulted → no previous agent → fallback.
-      expect(conversationRepoMock.findLastResolvedByContact).toHaveBeenCalled();
-      expect(result).toBe('agent_1'); // least-busy fallback
-    });
-
-    it('should write contact + sender cache keys with TTL on resolve', async () => {
-      conversationRepoMock.findById.mockResolvedValue({
-        assignedAgentId: 'agent_7',
-        contactId: 'contact_42',
-        externalSenderId: 'sender_99',
-        resolvedAt: new Date(),
-      });
-
-      await service.handleConversationResolvedForSticky({
-        tenantId: 'tenant_1',
-        conversationId: 'conv_1',
-        status: 'resolved',
-      });
-
-      expect(redisMock.set).toHaveBeenCalledWith(
-        'omni:sticky:tenant_1:c:contact_42',
-        expect.stringContaining('agent_7'),
-        'EX',
-        72 * 3600,
-      );
-      expect(redisMock.set).toHaveBeenCalledWith(
-        'omni:sticky:tenant_1:s:sender_99',
-        expect.stringContaining('agent_7'),
-        'EX',
-        72 * 3600,
-      );
-    });
-
-    it('should not write a sticky cache entry for an unassigned resolved conversation', async () => {
-      conversationRepoMock.findById.mockResolvedValue({
-        assignedAgentId: null,
-        contactId: 'contact_42',
-      });
-
-      await service.handleConversationResolvedForSticky({
-        tenantId: 'tenant_1',
-        conversationId: 'conv_1',
-        status: 'resolved',
-      });
-
-      expect(redisMock.set).not.toHaveBeenCalled();
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Reservation → commit rollback (P1 invariant)
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('reservation rollback', () => {
-    it('should release the Redis reservation when the MongoDB commit is rejected', async () => {
-      presenceServiceMock.__setLoad('agent_1', 2);
-      presenceServiceMock.__setLoad('agent_2', 2);
-      presenceServiceMock.__setLoad('agent_3', 2);
-      // Simulate the conversation already being assigned (CAS rejects).
-      conversationRepoMock.updateAssignment.mockResolvedValue(null);
-
-      const result = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'least-busy',
-      );
-
-      expect(result).toBeNull();
-      // The reserved agent must be released exactly once.
-      expect(presenceServiceMock.releaseConversation).toHaveBeenCalledTimes(1);
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'queued' }),
-      );
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Manual Strategy
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('manual strategy', () => {
-    it('should return null and log as queued', async () => {
-      const result = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'manual',
-      );
-
-      expect(result).toBeNull();
-      expect(conversationRepoMock.updateAssignment).not.toHaveBeenCalled();
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          strategy: 'manual',
-          outcome: 'queued',
-        }),
-      );
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // No Agents Available
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('no available agents', () => {
-    it('should queue conversation when no agents are online', async () => {
-      presenceServiceMock.getOnlineAgents.mockResolvedValue([]);
-
-      const result = await service.assignConversation(
-        'tenant_1',
-        'conv_1',
-        'round-robin',
-      );
-
-      expect(result).toBeNull();
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'queued' }),
-      );
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Skill-Based Filtering
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('skill-based filtering', () => {
-    beforeEach(() => {
-      settingsServiceMock.getSetting.mockResolvedValue({
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        skillBasedRoutingEnabled: true,
-        stickyRoutingEnabled: false,
-        fallbackStrategy: 'round-robin',
-      });
-    });
-
-    it('should filter agents by required skills', async () => {
-      usersServiceMock.findByIds.mockResolvedValue([
-        { id: 'agent_1', skills: ['billing'] },
-        { id: 'agent_2', skills: ['billing', 'spanish'] },
-        { id: 'agent_3', skills: ['technical'] },
-      ]);
-      redisMock.incr.mockResolvedValue(1);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'round-robin',
-        requiredSkills: ['billing', 'spanish'],
-      });
-
-      // Only agent_2 has both skills
-      expect(result).toBe('agent_2');
-    });
-
-    it('should read skills from presence cache without hitting MongoDB', async () => {
-      // All agents hydrated in presence → no findByIds call.
-      presenceServiceMock.__setSkills('agent_1', ['billing']);
-      presenceServiceMock.__setSkills('agent_2', ['billing', 'spanish']);
-      presenceServiceMock.__setSkills('agent_3', ['technical']);
-      redisMock.incr.mockResolvedValue(1);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'round-robin',
-        requiredSkills: ['billing', 'spanish'],
-      });
-
-      expect(result).toBe('agent_2');
-      expect(usersServiceMock.findByIds).not.toHaveBeenCalled();
-    });
-
-    it('should fall back to MongoDB for agents whose skills are not cached', async () => {
-      // Only agent_2 cached; agent_1/agent_3 require a Mongo read.
-      presenceServiceMock.__setSkills('agent_2', ['billing', 'spanish']);
-      usersServiceMock.findByIds.mockResolvedValue([
-        { id: 'agent_1', skills: ['billing'] },
-        { id: 'agent_3', skills: ['technical'] },
-      ]);
-      redisMock.incr.mockResolvedValue(1);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'round-robin',
-        requiredSkills: ['billing', 'spanish'],
-      });
-
-      expect(result).toBe('agent_2');
-      // Fallback fetched only the un-cached agents.
-      expect(usersServiceMock.findByIds).toHaveBeenCalledWith([
-        'agent_1',
-        'agent_3',
-      ]);
-    });
-
-    it('should fall back to full pool when no agents match skills', async () => {
-      usersServiceMock.findByIds.mockResolvedValue([
-        { id: 'agent_1', skills: ['billing'] },
-        { id: 'agent_2', skills: ['support'] },
-        { id: 'agent_3', skills: ['technical'] },
-      ]);
-      redisMock.incr.mockResolvedValue(1);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'round-robin',
-        requiredSkills: ['japanese'],
-      });
-
-      expect(result).toBeDefined();
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Routing Rule Integration
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('routing rule evaluation', () => {
-    it('should use rule-matched strategy instead of default', async () => {
-      evaluatorMock.evaluateForTenant.mockResolvedValue({
-        ruleId: 'rule_1',
-        ruleName: 'Facebook VIP',
-        groupId: 'team_sales',
-        strategy: 'least-busy',
-        sticky: false,
-        requiredSkills: [],
-      });
-
-      presenceServiceMock.__setLoad('agent_1', 5);
-      presenceServiceMock.__setLoad('agent_2', 1); // fewest
-      presenceServiceMock.__setLoad('agent_3', 3);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'round-robin',
-        routingContext: { channel: 'facebook', segment: 'VIP' },
-      });
-
-      expect(result).toBe('agent_2'); // least-busy from rule, not round-robin
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({ strategy: 'least-busy' }),
-      );
-    });
-
-    it('should use rule-matched required skills', async () => {
-      settingsServiceMock.getSetting.mockResolvedValue({
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        skillBasedRoutingEnabled: true,
-        stickyRoutingEnabled: false,
-        fallbackStrategy: 'round-robin',
-      });
-
-      evaluatorMock.evaluateForTenant.mockResolvedValue({
-        ruleId: 'rule_2',
-        ruleName: 'Spanish Support',
-        groupId: 'team_support',
-        strategy: 'round-robin',
-        sticky: false,
-        requiredSkills: ['spanish'],
-      });
-
-      usersServiceMock.findByIds.mockResolvedValue([
-        { id: 'agent_1', skills: ['english'] },
-        { id: 'agent_2', skills: ['spanish', 'english'] },
-        { id: 'agent_3', skills: ['english'] },
-      ]);
-      redisMock.incr.mockResolvedValue(1);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'round-robin',
-        routingContext: { channel: 'facebook', content: 'Hola' },
-      });
-
-      expect(result).toBe('agent_2');
-    });
-
-    it('should gracefully fall back when evaluator throws', async () => {
-      evaluatorMock.evaluateForTenant.mockRejectedValue(new Error('DB error'));
-      redisMock.incr.mockResolvedValue(1);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        strategy: 'round-robin',
-        routingContext: { channel: 'facebook' },
-      });
-
-      expect(result).toBe('agent_1');
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Channel-first Auto-Assignment Hierarchy
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('channel-first auto-assignment hierarchy', () => {
-    it('should assign using channel agent pool when channel explicitly enables', async () => {
-      redisMock.incr.mockResolvedValue(1);
-      presenceServiceMock.getOnlineAgents.mockResolvedValue(['agent_2']);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        channelAutoAssignOverride: true,
-        agentPool: ['agent_2'],
-      });
-
-      expect(result).toBe('agent_2');
-      expect(conversationRepoMock.updateAssignment).toHaveBeenCalledWith(
-        'conv_1',
-        'agent_2',
-      );
-    });
-
-    it('should use global strategy when channel has no own pool and global is ON', async () => {
-      redisMock.incr.mockResolvedValue(1);
-      settingsServiceMock.getSetting.mockResolvedValue({
-        autoAssignmentEnabled: true,
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: false,
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
-      });
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        channelAutoAssignOverride: true,
-      });
-
-      expect(result).toBe('agent_1');
-    });
-
-    it('should STILL assign when channel explicitly ON even if global is OFF', async () => {
-      redisMock.incr.mockResolvedValue(1);
-      settingsServiceMock.getSetting.mockResolvedValue({
-        autoAssignmentEnabled: false, // Global OFF
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: false,
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
-      });
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        channelAutoAssignOverride: true,
-      });
-
-      expect(result).toBe('agent_1');
-      expect(conversationRepoMock.updateAssignment).toHaveBeenCalled();
-    });
-
-    it('should use global strategy when channel did not set and global is ON', async () => {
-      redisMock.incr.mockResolvedValue(1);
-      settingsServiceMock.getSetting.mockResolvedValue({
-        autoAssignmentEnabled: true,
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: false,
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
-      });
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        channelAutoAssignOverride: undefined,
-      });
-
-      expect(result).toBe('agent_1');
-    });
-
-    it('should queue when channel did not set and global is OFF', async () => {
-      settingsServiceMock.getSetting.mockResolvedValue({
-        autoAssignmentEnabled: false, // Global OFF
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: false,
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
-      });
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        channelAutoAssignOverride: undefined,
-      });
-
-      expect(result).toBeNull();
-      expect(conversationRepoMock.updateAssignment).not.toHaveBeenCalled();
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          strategy: 'manual',
-          outcome: 'queued',
-          reason: expect.stringContaining('globally disabled'),
-        }),
-      );
-    });
-
-    it('should treat missing global setting as enabled (backward compat)', async () => {
-      redisMock.incr.mockResolvedValue(1);
-      settingsServiceMock.getSetting.mockResolvedValue({
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: false,
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
-      });
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        channelAutoAssignOverride: undefined,
-      });
-
-      expect(result).toBe('agent_1');
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Channel routing override (Phase 4 — mergeRoutingConfig)
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('per-channel routing override', () => {
-    it('should handle mergeRoutingConfig: channel ?? global ?? hardcoded, field-by-field', () => {
-      const resolved = mergeRoutingConfig(
-        {
-          defaultStrategy: 'round-robin',
-          defaultMaxCapacity: 10,
-          stickyRoutingEnabled: false,
-          fallbackStrategy: 'least-busy',
+    it('should fall back to MongoDB on a cache miss', async () => {
+      const h = buildService({
+        config: enabled,
+        lastResolvedByContact: {
+          assignedAgentId: 'agent-3',
+          resolvedAt: new Date(),
         },
-        { defaultStrategy: 'capacity-based', stickyRoutingEnabled: true },
+      });
+      await h.service.assignConversation('t1', 'c1', { contactId: 'k1' });
+      expect((h.core.assign.mock.calls[0][0] as any).preferred).toMatchObject({
+        assigneeId: 'agent-3',
+        source: 'contactId',
+      });
+    });
+
+    it('should ignore an agent whose last contact is older than the timeout', async () => {
+      const h = buildService({
+        config: { ...enabled, previousAssigneeTimeoutHours: 1 },
+        lastResolvedByContact: {
+          assignedAgentId: 'agent-3',
+          resolvedAt: new Date(Date.now() - 5 * 3_600_000),
+        },
+      });
+      await h.service.assignConversation('t1', 'c1', { contactId: 'k1' });
+      expect((h.core.assign.mock.calls[0][0] as any).preferred).toBeNull();
+    });
+
+    it('should fall back to the sender id when there is no contact match', async () => {
+      const h = buildService({
+        config: enabled,
+        lastResolvedBySender: {
+          assignedAgentId: 'agent-4',
+          updatedAt: new Date(),
+        },
+      });
+      await h.service.assignConversation('t1', 'c1', {
+        contactId: 'k1',
+        externalSenderId: 'psid-1',
+      });
+      expect((h.core.assign.mock.calls[0][0] as any).preferred).toMatchObject({
+        assigneeId: 'agent-4',
+        source: 'externalSenderId',
+      });
+    });
+
+    it('should ask the core to wait only when a wait window is configured', async () => {
+      const waiting = buildService({
+        config: { ...enabled, previousAssigneeWaitMinutes: 3 },
+        cached: JSON.stringify({
+          agentId: 'agent-7',
+          resolvedAt: new Date().toISOString(),
+        }),
+      });
+      await waiting.service.assignConversation('t1', 'c1', { contactId: 'k1' });
+      expect(
+        (waiting.core.assign.mock.calls[0][0] as any).preferred.onBusy,
+      ).toBe('wait');
+
+      const immediate = buildService({
+        config: { ...enabled, previousAssigneeWaitMinutes: 0 },
+        cached: JSON.stringify({
+          agentId: 'agent-7',
+          resolvedAt: new Date().toISOString(),
+        }),
+      });
+      await immediate.service.assignConversation('t1', 'c1', {
+        contactId: 'k1',
+      });
+      expect(
+        (immediate.core.assign.mock.calls[0][0] as any).preferred.onBusy,
+      ).toBe('fall-through');
+    });
+  });
+
+  describe('outcome side effects', () => {
+    it('should schedule one idempotent retry job for a deferred decision', async () => {
+      const h = buildService({
+        decision: {
+          outcome: 'deferred',
+          assigneeId: null,
+          deferred: { assigneeId: 'agent-2', waitMinutes: 4 },
+        },
+      });
+      const result = await h.service.assignConversation('t1', 'c1', {});
+      expect(result).toBeNull();
+      expect(h.stickyQueue.add).toHaveBeenCalledWith(
+        'sticky-retry',
+        expect.objectContaining({
+          conversationId: 'c1',
+          stickyAgentId: 'agent-2',
+        }),
+        expect.objectContaining({
+          jobId: 'sticky-retry-c1',
+          delay: 4 * 60_000,
+        }),
+      );
+      expect(h.eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it('should emit the queued event so the inbox can show the backlog', async () => {
+      const h = buildService({
+        decision: {
+          outcome: 'queued',
+          assigneeId: null,
+          reason: 'nobody online',
+          candidatePoolSize: 4,
+        },
+      });
+      await h.service.assignConversation('t1', 'c1', {
+        routingContext: { channel: 'zalo' },
+      });
+      expect(h.eventEmitter.emit).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          conversationId: 'c1',
+          channelType: 'zalo',
+          agentPoolSize: 4,
+        }),
+      );
+    });
+
+    it('should emit nothing for an assigned decision', async () => {
+      const h = buildService();
+      const result = await h.service.assignConversation('t1', 'c1', {});
+      expect(result).toBe('agent-1');
+      expect(h.eventEmitter.emit).not.toHaveBeenCalled();
+      expect(h.stickyQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('should survive a failed retry schedule without throwing', async () => {
+      const h = buildService({
+        decision: {
+          outcome: 'deferred',
+          assigneeId: null,
+          deferred: { assigneeId: 'agent-2', waitMinutes: 4 },
+        },
+      });
+      h.stickyQueue.add.mockRejectedValueOnce(new Error('redis down'));
+      await expect(
+        h.service.assignConversation('t1', 'c1', {}),
+      ).resolves.toBeNull();
+    });
+  });
+
+  describe('assignConversationExternally', () => {
+    it('should check the channel pool before a direct agent assignment', async () => {
+      const h = buildService();
+      await h.service.assignConversationExternally(
+        't1',
+        'c1',
+        { agentId: 'agent-5' },
+        'automation:w1',
+      );
+      expect(h.channelSupport.assertAgentEligible).toHaveBeenCalledWith(
+        't1',
+        'ch1',
+        'agent-5',
+      );
+      expect(h.core.assign).toHaveBeenCalledWith(
+        expect.objectContaining({ manualAssigneeId: 'agent-5' }),
+      );
+    });
+
+    it('should hand the previous agent capacity slot back', async () => {
+      const h = buildService({
+        conversation: {
+          id: 'c1',
+          channelId: 'ch1',
+          assignedAgentId: 'agent-old',
+        },
+      });
+      await h.service.assignConversationExternally(
+        't1',
+        'c1',
+        { agentId: 'agent-5' },
+        'automation:w1',
+      );
+      expect(h.load.release).toHaveBeenCalledWith(
+        expect.objectContaining({ entityId: 'c1' }),
+        'agent-old',
+      );
+    });
+
+    it('should not release when the target is already the assigned agent', async () => {
+      const h = buildService({
+        conversation: {
+          id: 'c1',
+          channelId: 'ch1',
+          assignedAgentId: 'agent-5',
+        },
+      });
+      await h.service.assignConversationExternally(
+        't1',
+        'c1',
+        { agentId: 'agent-5' },
+        'automation:w1',
+      );
+      expect(h.load.release).not.toHaveBeenCalled();
+    });
+
+    it('should check the channel pool and skips rules for a group assignment', async () => {
+      const h = buildService();
+      const result = await h.service.assignConversationExternally(
+        't1',
+        'c1',
+        { groupId: 'g1' },
+        'automation:w1',
+      );
+      expect(h.channelSupport.assertGroupEligible).toHaveBeenCalledWith(
+        't1',
+        'ch1',
+        'g1',
+      );
+      expect(h.core.assign).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetGroupIds: ['g1'],
+          skipRules: true,
+        }),
+      );
+      expect(result.groupId).toBe('g1');
+    });
+
+    it('should reject a target that names neither an agent nor a group', async () => {
+      const h = buildService();
+      await expect(
+        h.service.assignConversationExternally('t1', 'c1', {}, 'automation:w1'),
+      ).rejects.toThrow('requires agentId or groupId');
+    });
+
+    it('should throw when the conversation does not exist', async () => {
+      const h = buildService({ conversation: null });
+      await expect(
+        h.service.assignConversationExternally(
+          't1',
+          'missing',
+          { agentId: 'a' },
+          'automation:w1',
+        ),
+      ).rejects.toThrow('not found');
+    });
+  });
+
+  describe('audit for decisions the core did not make', () => {
+    it('should distinguish assign, reassign and unassign', async () => {
+      const h = buildService();
+
+      await h.service.logManualAssignment({
+        conversationId: 'c1',
+        tenantId: 't1',
+        newAgentId: 'a1',
+        previousAgentId: null,
+        performedByUserId: 'u1',
+      });
+      expect(h.core.recordExternalDecision).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          reasonKey: 'manualAssigned',
+          outcome: 'assigned',
+        }),
       );
 
-      // Overridden fields take the channel value …
-      expect(resolved.defaultStrategy).toBe('capacity-based');
-      expect(resolved.stickyRoutingEnabled).toBe(true);
-      // … unset channel fields inherit global …
-      expect(resolved.defaultMaxCapacity).toBe(10);
-      expect(resolved.fallbackStrategy).toBe('least-busy');
-      // … and fields absent from both fall back to hardcoded defaults.
-      expect(resolved.stickyTimeoutHours).toBe(72);
-      expect(resolved.skillBasedRoutingEnabled).toBe(false);
-    });
-
-    it('should handle mergeRoutingConfig: empty inputs produce all hardcoded defaults', () => {
-      const resolved = mergeRoutingConfig(undefined, undefined);
-      expect(resolved).toEqual({
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: false,
-        stickyTimeoutHours: 72,
-        stickyWaitTimeMinutes: 0,
-        fallbackStrategy: 'round-robin',
-        skillBasedRoutingEnabled: false,
+      await h.service.logManualAssignment({
+        conversationId: 'c1',
+        tenantId: 't1',
+        newAgentId: 'a2',
+        previousAgentId: 'a1',
+        performedByUserId: 'u1',
       });
-    });
+      expect(h.core.recordExternalDecision).toHaveBeenLastCalledWith(
+        expect.objectContaining({ reasonKey: 'manualReassigned' }),
+      );
 
-    it('should apply the channel strategy override over the global default', async () => {
-      // Global default is round-robin; channel forces capacity-based.
-      settingsServiceMock.getSetting.mockResolvedValue({
-        autoAssignmentEnabled: true,
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: false,
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
+      await h.service.logManualAssignment({
+        conversationId: 'c1',
+        tenantId: 't1',
+        newAgentId: null,
+        previousAgentId: 'a2',
+        performedByUserId: 'u1',
       });
-      presenceServiceMock.__setLoad('agent_1', 9);
-      presenceServiceMock.__setLoad('agent_2', 2); // lowest under cap
-      presenceServiceMock.__setLoad('agent_3', 7);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        channelAutoAssignOverride: true,
-        channelRoutingOverride: { defaultStrategy: 'capacity-based' },
-      });
-
-      expect(result).toBe('agent_2');
-      expect(presenceServiceMock.reserveCapacityBasedAgent).toHaveBeenCalled();
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({ strategy: 'capacity-based' }),
+      expect(h.core.recordExternalDecision).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          reasonKey: 'manualUnassigned',
+          outcome: 'queued',
+        }),
       );
     });
 
-    it('should let a routing rule strategy win over the channel override', async () => {
-      settingsServiceMock.getSetting.mockResolvedValue({
-        autoAssignmentEnabled: true,
-        defaultStrategy: 'round-robin',
-        defaultMaxCapacity: 10,
-        stickyRoutingEnabled: false,
-        fallbackStrategy: 'least-busy',
-        skillBasedRoutingEnabled: false,
+    it('should record a reply-triggered assignment as its own source', async () => {
+      const h = buildService();
+      await h.service.logReplyAutoAssignment({
+        conversationId: 'c1',
+        tenantId: 't1',
+        agentId: 'a1',
       });
-      evaluatorMock.evaluateForTenant.mockResolvedValue({
-        ruleId: 'rule_1',
-        ruleName: 'VIP least-busy',
-        strategy: 'least-busy',
-        sticky: false,
-        requiredSkills: [],
-      });
-      presenceServiceMock.__setLoad('agent_1', 5);
-      presenceServiceMock.__setLoad('agent_2', 1); // fewest
-      presenceServiceMock.__setLoad('agent_3', 3);
-
-      const result = await service.assignConversation('tenant_1', 'conv_1', {
-        channelAutoAssignOverride: true,
-        channelRoutingOverride: { defaultStrategy: 'capacity-based' },
-        routingContext: { channel: 'whatsapp' },
-      });
-
-      // rule (least-busy) > channel (capacity-based) > global (round-robin)
-      expect(result).toBe('agent_2');
-      expect(auditLogRepoMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({ strategy: 'least-busy' }),
+      expect(h.core.recordExternalDecision).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'reply',
+          reasonKey: 'replyAutoAssign',
+        }),
       );
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
-  // Config cache invalidation (Task 2.1)
-  // ────────────────────────────────────────────────────────────────────────
-
-  describe('routing config cache invalidation', () => {
-    it('should cache the routing config across calls (single DB read)', async () => {
-      await service.assignConversation('tenant_1', 'conv_1', 'round-robin');
-      await service.assignConversation('tenant_1', 'conv_2', 'round-robin');
-
-      expect(settingsServiceMock.getSetting).toHaveBeenCalledTimes(1);
-    });
-
-    it('should drop the cache and re-read after an omni_routing settings change', async () => {
-      await service.assignConversation('tenant_1', 'conv_1', 'round-robin');
-      expect(settingsServiceMock.getSetting).toHaveBeenCalledTimes(1);
-
-      await service.handleSettingsChanged({
-        key: 'omni_routing',
-        tenantId: 'tenant_1',
+  describe('sticky cache', () => {
+    it('should cache the resolving agent under both identities with the timeout as TTL', async () => {
+      const h = buildService({
+        config: { previousAssigneeTimeoutHours: 2 },
+        conversation: {
+          id: 'c1',
+          assignedAgentId: 'a1',
+          contactId: 'k1',
+          externalSenderId: 'psid-1',
+          resolvedAt: new Date(),
+        },
       });
-
-      // Fans out to all pods via Redis pub/sub.
-      expect(redisMock.publish).toHaveBeenCalledWith(
-        'omni:routing-config:invalidate',
-        'tenant_1',
+      await h.service.handleConversationResolvedForSticky({
+        tenantId: 't1',
+        conversationId: 'c1',
+        status: 'resolved',
+      });
+      expect(h.redis.set).toHaveBeenCalledTimes(2);
+      expect(h.redis.set).toHaveBeenCalledWith(
+        'omni:sticky:t1:c:k1',
+        expect.any(String),
+        'EX',
+        7200,
       );
-
-      await service.assignConversation('tenant_1', 'conv_3', 'round-robin');
-      expect(settingsServiceMock.getSetting).toHaveBeenCalledTimes(2);
     });
 
-    it('should ignore settings changes for unrelated keys', async () => {
-      await service.assignConversation('tenant_1', 'conv_1', 'round-robin');
-
-      await service.handleSettingsChanged({
-        key: 'contact_settings',
-        tenantId: 'tenant_1',
+    it('should ignore status changes that are not a close', async () => {
+      const h = buildService();
+      await h.service.handleConversationResolvedForSticky({
+        tenantId: 't1',
+        conversationId: 'c1',
+        status: 'open',
       });
+      expect(h.redis.set).not.toHaveBeenCalled();
+    });
 
-      expect(redisMock.publish).not.toHaveBeenCalled();
-      await service.assignConversation('tenant_1', 'conv_2', 'round-robin');
-      // Still cached → no second read.
-      expect(settingsServiceMock.getSetting).toHaveBeenCalledTimes(1);
+    it('should write nothing when the conversation had no agent', async () => {
+      const h = buildService({
+        conversation: { id: 'c1', assignedAgentId: null, contactId: 'k1' },
+      });
+      await h.service.handleConversationResolvedForSticky({
+        tenantId: 't1',
+        conversationId: 'c1',
+        status: 'closed',
+      });
+      expect(h.redis.set).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('config invalidation', () => {
+    it('should drop the cached Conversation config when omni_routing changes', async () => {
+      const h = buildService();
+      await h.service.handleSettingsChanged({
+        key: 'omni_routing',
+        tenantId: 't1',
+      });
+      expect(h.config.invalidate).toHaveBeenCalledWith('t1', 'Conversation');
+    });
+
+    it('should ignore unrelated settings keys', async () => {
+      const h = buildService();
+      await h.service.handleSettingsChanged({
+        key: 'deal_pipeline',
+        tenantId: 't1',
+      });
+      expect(h.config.invalidate).not.toHaveBeenCalled();
     });
   });
 });

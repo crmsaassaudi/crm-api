@@ -11,7 +11,14 @@ import {
   SmsProviderService,
   SMS_PROVIDER_TOKEN,
 } from './providers/sms-provider.service';
-import { AssignmentEngineService } from '../../assignment-engine/assignment-engine.service';
+import { ModuleRef } from '@nestjs/core';
+import { AssignmentCoreService } from '../../assignment/core/assignment-core.service';
+import { isAssignmentObjectType } from '../../assignment/domain/assignment.types';
+import { AssignmentService } from '../../omni-inbound/services/assignment.service';
+import {
+  AGENT_NOT_IN_CHANNEL_POOL,
+  GROUP_NOT_IN_CHANNEL_POOL,
+} from '../../channels/services/channel-support.service';
 import { ChannelConfigRepository } from '../../channels/infrastructure/persistence/document/repositories/channel-config.repository';
 import {
   ICryptoService,
@@ -529,8 +536,9 @@ export class RouteToGroupExecutor implements ActionExecutor {
   private readonly logger = new Logger(RouteToGroupExecutor.name);
 
   constructor(
-    private readonly assignmentEngine: AssignmentEngineService,
+    private readonly assignmentCore: AssignmentCoreService,
     private readonly crmUpdate: CrmRecordUpdateService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
@@ -545,88 +553,94 @@ export class RouteToGroupExecutor implements ActionExecutor {
       };
     }
 
-    this.logger.log(
-      `[RouteToGroup] tenant=${tenantId} ${recordType}(${recordId}) > group=${groupId || 'N/A'} user=${userId || 'round-robin'}`,
-    );
+    // Conversations are not owned via `ownerId` and their assignment has to
+    // move presence/capacity state, so they take the omni path rather than the
+    // generic CRM field write below.
+    if (recordType === 'Conversation') {
+      return this.routeConversation(job, groupId, userId);
+    }
 
-    // Direct user assignment (skip assignment engine)
-    if (userId) {
-      const result = await this.crmUpdate.updateField({
-        tenantId,
-        recordType,
-        recordId,
-        field: 'ownerId',
-        value: userId,
-        sourceWorkflowId: job.sourceWorkflowId,
-        automationDepth: job.automationDepth,
-        automationBreadcrumbs: job.automationBreadcrumbs,
-        allowRestricted: true,
-      });
-
-      if (!result.success) {
-        return {
-          success: false,
-          error: {
-            code: 'ROUTE_FAILED',
-            message:
-              result.error ??
-              `Failed to assign ${recordType}(${recordId}) to user ${userId}`,
-          },
-        };
-      }
-
+    if (!isAssignmentObjectType(recordType)) {
       return {
-        success: true,
-        output: {
-          recordType,
-          recordId,
-          assignedUser: userId,
-          strategy: 'direct',
+        success: false,
+        error: {
+          code: 'UNSUPPORTED_RECORD_TYPE',
+          message: `route_to_group does not support ${recordType}`,
         },
       };
     }
 
-    // Group-based assignment via AssignmentEngine (round-robin)
+    this.logger.log(
+      `[RouteToGroup] tenant=${tenantId} ${recordType}(${recordId}) → group=${groupId ?? 'N/A'} user=${userId ?? 'strategy'}`,
+    );
+
     try {
-      const assignResult = await this.assignmentEngine.assign({
-        module: recordType as any,
+      /**
+       * Commit through CrmRecordUpdateService rather than writing `ownerId`
+       * directly, so field-level authorisation, the activity trail and the
+       * automation breadcrumbs still apply. The assignment core owns the
+       * reservation around this call, so a failed write releases the slot
+       * automatically — the previous version returned an error here and left
+       * the round-robin cursor and load counter advanced for a record nobody
+       * received.
+       */
+      const commit = async (assigneeId: string): Promise<boolean> => {
+        const result = await this.crmUpdate.updateField({
+          tenantId,
+          recordType,
+          recordId,
+          field: 'ownerId',
+          value: assigneeId,
+          sourceWorkflowId: job.sourceWorkflowId,
+          automationDepth: job.automationDepth,
+          automationBreadcrumbs: job.automationBreadcrumbs,
+          allowRestricted: true,
+        });
+        if (!result.success) {
+          throw new Error(
+            result.error ??
+              `Failed to set ownerId on ${recordType}(${recordId})`,
+          );
+        }
+        return true;
+      };
+
+      /**
+       * The configured target is passed to the core.
+       *
+       * This is the fix for the defect that made this action unusable: the
+       * `groupId` an admin chose was never handed to the engine, which then
+       * re-evaluated its own rules and fell back to the default group — so
+       * "route to team A" assigned to a member of team B, and the error message
+       * still named team A.
+       *
+       * `targetUserId` goes through the same eligibility checks as any other
+       * candidate, so pinning a person is not a way around them.
+       */
+      const decision = await this.assignmentCore.assign({
         tenantId,
+        objectType: recordType,
         entityId: recordId,
         attributes: job.recordData,
+        targetUserId: userId ?? null,
+        targetGroupIds: groupId ? [groupId] : null,
+        owningGroupId: groupId ?? null,
+        skipRules: true,
+        commit,
+        source: 'automation',
+        sourceWorkflowId: job.sourceWorkflowId ?? null,
+        metadata: { actionType: this.actionType },
       });
 
-      if (!assignResult.ownerId) {
+      if (!decision.assigneeId) {
         return {
           success: false,
           error: {
-            code: 'NO_ELIGIBLE_AGENT',
-            message:
-              assignResult.reason ||
-              `No eligible agent found for group ${groupId}`,
-          },
-        };
-      }
-
-      // Update the ownerId on the record
-      const updateResult = await this.crmUpdate.updateField({
-        tenantId,
-        recordType,
-        recordId,
-        field: 'ownerId',
-        value: assignResult.ownerId,
-        sourceWorkflowId: job.sourceWorkflowId,
-        automationDepth: job.automationDepth,
-        automationBreadcrumbs: job.automationBreadcrumbs,
-        allowRestricted: true,
-      });
-
-      if (!updateResult.success) {
-        return {
-          success: false,
-          error: {
-            code: 'ROUTE_UPDATE_FAILED',
-            message:
-              updateResult.error ?? 'Failed to update ownerId after assignment',
+            code:
+              decision.outcome === 'skipped'
+                ? 'AUTO_ASSIGN_DISABLED'
+                : 'NO_ELIGIBLE_AGENT',
+            message: decision.reason,
           },
         };
       }
@@ -636,21 +650,94 @@ export class RouteToGroupExecutor implements ActionExecutor {
         output: {
           recordType,
           recordId,
-          assignedGroup: groupId,
-          assignedUser: assignResult.ownerId,
-          strategy: assignResult.strategy,
-          reason: assignResult.reason,
+          assignedGroup: decision.groupId,
+          assignedUser: decision.assigneeId,
+          strategy: decision.strategy,
+          reason: decision.reason,
         },
       };
     } catch (error: any) {
       this.logger.error(
-        `[RouteToGroup] AssignmentEngine error: ${error.message}`,
+        `[RouteToGroup] assignment failed for ${recordType}(${recordId}): ${error.message}`,
+        error.stack,
+      );
+      return {
+        success: false,
+        error: { code: 'ASSIGNMENT_FAILED', message: error.message },
+      };
+    }
+  }
+
+  /**
+   * Assign an omni conversation to a user or group.
+   *
+   * Delegates to the omni AssignmentService rather than AssignmentEngine so the
+   * assignment goes through the same presence, capacity and channel-support
+   * rules as an inbound-triggered one — an automation must not be able to hand
+   * a conversation to an agent the channel does not authorize.
+   *
+   * AssignmentService is resolved lazily: AutomationRulesModule is imported by
+   * ChannelsModule (behind a forwardRef), and adding a static edge to
+   * OmniInboundModule — which imports ChannelsModule — would put a heavyweight
+   * queue-owning module inside that cycle.
+   */
+  private async routeConversation(
+    job: AutomationActionJobData,
+    groupId: string | undefined,
+    userId: string | undefined,
+  ): Promise<ActionExecutionResult> {
+    const { recordId, tenantId } = job;
+    try {
+      const assignmentService = this.moduleRef.get(AssignmentService, {
+        strict: false,
+      });
+
+      const result = await assignmentService.assignConversationExternally(
+        tenantId,
+        recordId,
+        { agentId: userId ?? null, groupId: groupId ?? null },
+        `automation:${job.sourceWorkflowId ?? 'rule'}`,
+      );
+
+      if (!result.agentId && !result.groupId) {
+        return {
+          success: false,
+          error: {
+            code: 'NO_ELIGIBLE_AGENT',
+            message: `No eligible agent for conversation ${recordId}`,
+          },
+        };
+      }
+
+      this.logger.log(
+        `[RouteToGroup] conversation=${recordId} → agent=${result.agentId ?? 'queued'} group=${result.groupId ?? 'none'}`,
+      );
+
+      return {
+        success: true,
+        output: {
+          recordType: 'Conversation',
+          recordId,
+          assignedUser: result.agentId,
+          assignedGroup: result.groupId,
+          strategy: userId ? 'direct' : 'group',
+        },
+      };
+    } catch (error: any) {
+      this.logger.error(
+        `[RouteToGroup] conversation assignment failed: ${error.message}`,
         error.stack,
       );
       return {
         success: false,
         error: {
-          code: 'ASSIGNMENT_ENGINE_ERROR',
+          // A pool rejection is a configuration problem, not a transient
+          // failure — surface it distinctly so it is not retried forever.
+          code:
+            error?.response?.code === AGENT_NOT_IN_CHANNEL_POOL ||
+            error?.response?.code === GROUP_NOT_IN_CHANNEL_POOL
+              ? 'NOT_IN_CHANNEL_POOL'
+              : 'CONVERSATION_ASSIGN_FAILED',
           message: error.message,
         },
       };

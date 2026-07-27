@@ -6,6 +6,7 @@ import { TenantSettingsSeedingService } from '../../crm-settings/tenant-settings
 import { SampleDataSeederService } from '../services/sample-data-seeder.service';
 import { SystemRolesSeederService } from '../../common/permissions/system-roles-seeder.service';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
+import { AssignmentSeederService } from '../../assignment/assignment-seeder.service';
 
 @Injectable()
 export class TenantCreatedListener {
@@ -15,6 +16,7 @@ export class TenantCreatedListener {
     private readonly settingsSeeding: TenantSettingsSeedingService,
     private readonly sampleDataSeeder: SampleDataSeederService,
     private readonly systemRolesSeeder: SystemRolesSeederService,
+    private readonly assignmentSeeder: AssignmentSeederService,
     private readonly cls: ClsService,
   ) {}
 
@@ -27,6 +29,18 @@ export class TenantCreatedListener {
 
       // Seed CRM settings (pipelines, lifecycle stages, etc.)
       await this.settingsSeeding.seedDefaults(event.tenantId);
+
+      // Assignment settings live in their own collection, one row per
+      // objectType. Seeded here so a new workspace has a routing configuration
+      // rather than falling through to the hard-coded defaults.
+      try {
+        await this.assignmentSeeder.seedForTenant(event.tenantId);
+      } catch (error: unknown) {
+        this.logger.error(
+          `Failed to seed assignment settings for tenant ${event.tenantId}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
 
       // Materialise the built-in roles so the workspace is never role-less.
       // Failure here must not fail provisioning — the backfill script and the

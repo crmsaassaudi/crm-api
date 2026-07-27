@@ -61,6 +61,18 @@ import { ChannelAlertService } from './channel-alert.service';
 // -- Phase 3: Transport Pool (LRU cache for decrypted credentials) --
 import { TransportPoolService } from './transport-pool.service';
 
+// -- Channel support pool (who may serve a channel) --
+import { ChannelSupportService } from './services/channel-support.service';
+import { ChannelSupportCleanupListener } from './services/channel-support-cleanup.listener';
+import {
+  GroupSchema,
+  GroupSchemaClass,
+} from '../groups/infrastructure/persistence/document/entities/group.schema';
+import {
+  UserSchema,
+  UserSchemaClass,
+} from '../users/infrastructure/persistence/document/entities/user.schema';
+
 // -- Phase 1 Enterprise Email Services --
 import { AttachmentSecurityService } from './services/attachment-security.service';
 import { OutboundQueueService } from './services/outbound-queue.service';
@@ -122,6 +134,10 @@ import { isWorkerRuntime, isEmailWorkerRuntime } from '../config/runtime-role';
       },
       { name: EmailSignatureSchemaClass.name, schema: EmailSignatureSchema },
       { name: EmailTrackingSchemaClass.name, schema: EmailTrackingSchema },
+      // Read-only here: ChannelSupportService validates pool members against
+      // the tenant and expands groups into agent ids.
+      { name: GroupSchemaClass.name, schema: GroupSchema },
+      { name: UserSchemaClass.name, schema: UserSchema },
     ]),
     // forwardRef to avoid circular dependency
     forwardRef(() => AutomationRulesModule),
@@ -178,6 +194,10 @@ import { isWorkerRuntime, isEmailWorkerRuntime } from '../config/runtime-role';
     // Phase 3: Transport Pool (LRU cache for decrypted credentials)
     TransportPoolService,
 
+    // Channel support pool — the authorization seam for omni assignment
+    ChannelSupportService,
+    ChannelSupportCleanupListener,
+
     // Phase 1 Enterprise Email Services
     AttachmentSecurityService,
     OutboundQueueService,
@@ -197,6 +217,7 @@ import { isWorkerRuntime, isEmailWorkerRuntime } from '../config/runtime-role';
   exports: [
     ChannelsService,
     ChannelRepository,
+    ChannelSupportService,
     ChannelConfigService,
     ChannelConfigRepository,
     ChannelConfigAuditRepository,

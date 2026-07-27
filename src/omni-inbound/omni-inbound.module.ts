@@ -36,6 +36,11 @@ import { OmniOutboundModule } from '../omni-outbound/omni-outbound.module';
 import { IdentityService } from './services/identity.service';
 import { NoteService } from './services/note.service';
 import { AssignmentService } from './services/assignment.service';
+// Assignment core adapter — registered with AssignmentCoreService at init
+import { ConversationAssignmentAdapter } from './assignment/conversation-assignment.adapter';
+import { ConversationCandidatePort } from './assignment/conversation-candidate.port';
+import { ConversationLoadPort } from './assignment/conversation-load.port';
+import { ConversationCommitPort } from './assignment/conversation-commit.port';
 import { ActivityService } from './services/activity.service';
 import { AgentFallbackService } from './services/agent-fallback.service';
 import { AutoResolveService } from './services/auto-resolve.service';
@@ -100,10 +105,6 @@ import {
   ConversationActivitySchema,
 } from './infrastructure/persistence/document/entities/conversation-activity.schema';
 import {
-  OmniAssignmentAuditLogSchemaClass,
-  OmniAssignmentAuditLogSchema,
-} from './infrastructure/persistence/document/entities/omni-assignment-audit-log.schema';
-import {
   GroupSchemaClass,
   GroupSchema,
 } from '../groups/infrastructure/persistence/document/entities/group.schema';
@@ -129,7 +130,6 @@ import { TenantsModule } from '../tenants/tenants.module';
 import { AuthModule } from '../auth/auth.module';
 import { DealsModule } from '../deals/deals.module';
 import { TicketsModule } from '../tickets/tickets.module';
-import { RoutingRulesModule } from '../routing-rules/routing-rules.module';
 import { FilesModule } from '../files/files.module';
 import { ObservabilityModule } from '../observability/observability.module';
 import { isOmniRuntime, isWorkerRuntime } from '../config/runtime-role';
@@ -183,7 +183,6 @@ const workerProviders =
     OmniOutboundModule,
     DealsModule,
     TicketsModule,
-    RoutingRulesModule,
     FilesModule,
     CsatModule,
     ObservabilityModule,
@@ -202,10 +201,6 @@ const workerProviders =
       {
         name: ConversationActivitySchemaClass.name,
         schema: ConversationActivitySchema,
-      },
-      {
-        name: OmniAssignmentAuditLogSchemaClass.name,
-        schema: OmniAssignmentAuditLogSchema,
       },
       {
         name: GroupSchemaClass.name,
@@ -319,7 +314,13 @@ const workerProviders =
     NoteRepository,
     NoteService,
 
-    // ── Pillar 8: Assignment Engine ───────────────────────────────
+    // ── Pillar 8: Assignment ──────────────────────────────────────
+    // The decision pipeline lives in AssignmentModule; these three ports plus
+    // the adapter are the conversation-specific half of it.
+    ConversationCandidatePort,
+    ConversationLoadPort,
+    ConversationCommitPort,
+    ConversationAssignmentAdapter,
     AssignmentService,
 
     // ── Pillar 9: Audit Trail ─────────────────────────────────────

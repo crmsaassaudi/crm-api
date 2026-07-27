@@ -861,6 +861,9 @@ export class UsersService {
       tenantId,
       userId,
     });
+    // Channels reference users in their support pool; leaving the id behind
+    // would keep routing to someone who is no longer in the tenant.
+    this.eventEmitter.emit('user.removed-from-tenant', { tenantId, userId });
     return updated;
   }
 

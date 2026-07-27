@@ -11,19 +11,25 @@ import { OMNI_STICKY_RETRY_QUEUE } from './omni-sticky-queue.constants';
 
 export interface StickyRetryJobData extends TenantJobData {
   conversationId: string;
-  /** The sticky agent who was at-capacity when originally attempted */
+  /** The preferred agent who was at capacity when the decision was deferred. */
   stickyAgentId: string;
-  /** Strategy to use for fallback (skips sticky) */
-  fallbackStrategy: string;
+  /**
+   * Legacy field. The retry no longer picks a strategy: it re-runs the normal
+   * decision with the preference disabled, so the tenant's configured
+   * `fallbackStrategy` applies. Kept on the interface so jobs enqueued before
+   * this change still deserialise.
+   */
+  fallbackStrategy?: string;
 }
 
 /**
- * BullMQ processor that retries assignment after the sticky wait-time expires.
+ * Retries assignment once the preferred-agent wait window has expired.
  *
- * When a customer's preferred (sticky) agent is at capacity, the system
- * waits for a configurable period (e.g. 3 minutes) before falling back
- * to another assignment strategy. This processor runs when that delay
- * expires and assigns the conversation via the fallback strategy.
+ * The retry deliberately passes neither a strategy nor a pool: the
+ * conversation's channel — and therefore its support pool — is resolved from the
+ * conversation itself. Passing neither previously meant the strategy ran with no
+ * channel context at all, so a restricted channel's conversation could be handed
+ * to an agent outside its support pool on retry.
  */
 @Processor(OMNI_STICKY_RETRY_QUEUE)
 export class StickyRetryProcessor extends BaseTenantConsumer<StickyRetryJobData> {
@@ -39,12 +45,11 @@ export class StickyRetryProcessor extends BaseTenantConsumer<StickyRetryJobData>
   }
 
   protected async handle(job: Job<StickyRetryJobData>): Promise<void> {
-    const { tenantId, conversationId, stickyAgentId, fallbackStrategy } =
-      job.data;
+    const { tenantId, conversationId, stickyAgentId } = job.data;
 
     this.logger.log(
-      `Sticky wait-time expired for conversation ${conversationId} ` +
-        `(sticky agent: ${stickyAgentId}) — retrying with ${fallbackStrategy}`,
+      `Preferred-agent wait expired for conversation ${conversationId} ` +
+        `(agent ${stickyAgentId}) — re-running assignment without the preference`,
     );
 
     try {
@@ -52,21 +57,21 @@ export class StickyRetryProcessor extends BaseTenantConsumer<StickyRetryJobData>
         tenantId,
         conversationId,
         {
-          strategy: fallbackStrategy as any,
           skipSticky: true,
+          source: 'retry',
         },
       );
 
       this.logger.log(
-        `Sticky retry: conversation ${conversationId} assigned to ` +
-          `${assignedAgentId ?? 'queue (no agents available)'}`,
+        `Preferred-agent retry: conversation ${conversationId} → ` +
+          `${assignedAgentId ?? 'queue (nobody available)'}`,
       );
     } catch (error: any) {
       this.logger.error(
-        `Sticky retry failed for conversation ${conversationId}: ${error.message}`,
+        `Preferred-agent retry failed for conversation ${conversationId}: ${error.message}`,
         error.stack,
       );
-      throw error; // Re-throw so BullMQ retries
+      throw error; // let BullMQ retry
     }
   }
 }

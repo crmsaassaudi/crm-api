@@ -23,6 +23,7 @@ import {
 } from '../common/permissions/data-scope.enum';
 import { AuthzPermissionCacheService } from '../common/permissions/authz-permission-cache.service';
 import { OrgUnitsService } from '../org-units/org-units.service';
+import { ChannelSupportService } from '../channels/services/channel-support.service';
 
 /**
  * DataVisibilityInterceptor — Enriches CLS with `visibleOwnerIds`.
@@ -80,18 +81,13 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     }
 
     try {
-      // 1. Check data_visibility settings
-      const settings = await this.settingsService.getSetting('data_visibility');
-      const defaultAccess = settings?.defaultAccess ?? 'private';
-
-      // If public_read, everyone sees everything
-      if (defaultAccess === 'public_read') {
-        this.cls.set('visibleOwnerIds', null);
-        this.cls.set('visibleOrgUnitIds', null);
-        return;
-      }
-
-      // 2. Check if user is ADMIN or OWNER → bypass
+      // 1. Check if user is ADMIN or OWNER → bypass every axis.
+      //
+      // Resolved before the settings read because the channel axis below must
+      // apply even under `public_read`: `public_read` is a statement about
+      // record ownership, whereas a restricted channel is an explicit access
+      // grant made by whoever configured the channel. Only a tenant admin
+      // overrides that.
       const userRoles = await this.getUserTenantRoles(tenantId, userId);
       if (
         userRoles.includes(TenantRoleEnum.ADMIN) ||
@@ -99,7 +95,38 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       ) {
         this.cls.set('visibleOwnerIds', null); // See all
         this.cls.set('visibleOrgUnitIds', null);
+        this.cls.set('servableChannelIds', null);
+        // Resolved even though nothing is being restricted: an admin can also
+        // be a member of a team, and features that mean "the team I am in"
+        // (the omni team queue, group-scoped ACL rows) read this list. Leaving
+        // it unset made those silently empty for admins only.
+        this.cls.set(
+          'visibleGroupIds',
+          await this.resolveUserGroupIds(tenantId, userId),
+        );
         this.logger.debug(`Admin/Owner bypass for user ${userId}`);
+        return;
+      }
+
+      // 2. The channel axis: which channels this principal may serve at all.
+      //    Independent of the owner axis — an agent outside a restricted
+      //    channel's support pool must not read its conversations even when
+      //    they are unassigned or assigned to a visible colleague.
+      //    null → no restriction (every channel in the tenant is open).
+      const userGroupIds = await this.resolveUserGroupIds(tenantId, userId);
+      this.cls.set(
+        'servableChannelIds',
+        await this.resolveServableChannelIds(tenantId, userId, userGroupIds),
+      );
+
+      // 3. Check data_visibility settings
+      const settings = await this.settingsService.getSetting('data_visibility');
+      const defaultAccess = settings?.defaultAccess ?? 'private';
+
+      // If public_read, everyone sees everything (subject to the channel axis)
+      if (defaultAccess === 'public_read') {
+        this.cls.set('visibleOwnerIds', null);
+        this.cls.set('visibleOrgUnitIds', null);
         return;
       }
 
@@ -131,10 +158,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       if (scope === DataScope.TENANT) {
         this.cls.set('visibleOwnerIds', null);
         this.cls.set('visibleOrgUnitIds', null);
-        this.cls.set(
-          'visibleGroupIds',
-          await this.resolveUserGroupIds(tenantId, userId),
-        );
+        this.cls.set('visibleGroupIds', userGroupIds);
         return;
       }
 
@@ -155,12 +179,9 @@ export class DataVisibilityInterceptor implements NestInterceptor {
         await this.orgUnits.resolveScopeUnitIds(tenantId, orgUnitId, scope),
       );
 
-      // 3b. Resolve the groups the user belongs to. Used by entities scoped
-      // by group assignment rather than ownerId (e.g. omni conversations, C4).
-      this.cls.set(
-        'visibleGroupIds',
-        await this.resolveUserGroupIds(tenantId, userId),
-      );
+      // 3b. Groups the user belongs to. Used by entities scoped by group
+      // assignment rather than ownerId (e.g. omni conversations, C4).
+      this.cls.set('visibleGroupIds', userGroupIds);
 
       // 4. Check sharing rules for additional shared IDs
       const sharedIds = await this.resolveSharedIds(tenantId, userId);
@@ -181,6 +202,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       );
       this.cls.set('visibleOwnerIds', []);
       this.cls.set('visibleOrgUnitIds', []);
+      this.cls.set('servableChannelIds', []);
       throw new InternalServerErrorException(
         'Data visibility resolution failed',
       );
@@ -271,6 +293,37 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       const groups = await groupRepo.findGroupsByMember(tenantId, userId);
       return groups.map((g: any) => String(g.id ?? g._id)).filter(Boolean);
     } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Channels this principal may serve, or null when nothing restricts them.
+   *
+   * Fail-closed on error: an unresolvable channel policy returns `[]`, which
+   * hides every conversation, rather than null, which would show all of them.
+   * The outer catch already fails the request, but this method is also the
+   * boundary that decides "restriction unknown" — and unknown must not mean
+   * "unrestricted".
+   */
+  private async resolveServableChannelIds(
+    tenantId: string,
+    userId: string,
+    userGroupIds: string[],
+  ): Promise<string[] | null> {
+    try {
+      const support = this.moduleRef.get(ChannelSupportService, {
+        strict: false,
+      });
+      return await support.listServableChannelIds(
+        tenantId,
+        userId,
+        userGroupIds,
+      );
+    } catch (e) {
+      this.logger.error(
+        `Channel visibility resolution failed, fail-closed: ${(e as Error).message}`,
+      );
       return [];
     }
   }

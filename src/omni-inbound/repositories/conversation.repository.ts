@@ -25,8 +25,10 @@ export interface ConversationQuery {
   status?: string | string[];
   channels?: string[];
   assignedAgent?: string | string[] | null;
-  assignedGroup?: string | null;
+  assignedGroup?: string | string[] | null;
   unassigned?: boolean;
+  /** Narrow to rows the group owns but no agent has picked up yet. */
+  groupQueueOnly?: boolean;
   sla?: string[];
   tags?: string[];
   tagsMatchMode?: 'any' | 'all';
@@ -86,6 +88,15 @@ export class ConversationRepository {
    * applyVisibilityScope() for a single already-fetched document.
    */
   private isConversationInScope(doc: any): boolean {
+    // Channel axis first — it holds regardless of the owner axis, so a
+    // principal outside a restricted channel's pool cannot read its
+    // conversations even with an unrestricted owner scope.
+    const servable = this.cls.get('servableChannelIds');
+    if (Array.isArray(servable)) {
+      const channel = doc.channelId ? String(doc.channelId) : null;
+      if (!channel || !servable.map(String).includes(channel)) return false;
+    }
+
     const visibleOwnerIds = this.cls.get('visibleOwnerIds');
     if (!Array.isArray(visibleOwnerIds)) return true; // bypass / system path
 
@@ -278,6 +289,8 @@ export class ConversationRepository {
   private applyVisibilityScope(
     filter: FilterQuery<OmniConversationDocument>,
   ): void {
+    this.applyChannelScope(filter);
+
     const visibleOwnerIds = this.cls.get('visibleOwnerIds');
     // null → bypass (admin/owner); undefined → not evaluated (system path)
     if (!Array.isArray(visibleOwnerIds)) return;
@@ -295,6 +308,30 @@ export class ConversationRepository {
     }
 
     (filter.$and ??= []).push({ $or: scopeClauses });
+  }
+
+  /**
+   * Narrow to the channels the principal may serve.
+   *
+   * A separate axis from the owner scope on purpose: a restricted channel is an
+   * explicit grant made when configuring the channel, so it must hold even for
+   * a principal whose owner scope is unrestricted, and even for conversations
+   * that are unassigned. Set by DataVisibilityInterceptor.
+   *   - undefined → not evaluated (system/worker path)
+   *   - null      → nothing restricts this principal
+   *   - string[]  → only these channels
+   */
+  private applyChannelScope(
+    filter: FilterQuery<OmniConversationDocument>,
+  ): void {
+    const servable = this.cls.get('servableChannelIds');
+    if (!Array.isArray(servable)) return;
+
+    const ids = servable
+      .filter((id: string) => Types.ObjectId.isValid(id))
+      .map((id: string) => new Types.ObjectId(id));
+
+    (filter.$and ??= []).push({ channelId: { $in: ids } });
   }
 
   /** Filter on createdAt/updatedAt within an inclusive [from, to] range. */
@@ -394,7 +431,15 @@ export class ConversationRepository {
         : query.assignedAgent;
     }
     if (query.assignedGroup !== undefined) {
-      filter.assignedGroupId = query.assignedGroup;
+      filter.assignedGroupId = Array.isArray(query.assignedGroup)
+        ? { $in: query.assignedGroup }
+        : query.assignedGroup;
+    }
+    // "The queue of the group(s) I'm in": owned by the team but not yet picked
+    // up by anyone. Combined with assignedGroup rather than replacing it, so
+    // `groupQueueOnly` narrows whichever group filter is already in play.
+    if (query.groupQueueOnly) {
+      filter.assignedAgentId = null;
     }
   }
 
@@ -699,14 +744,23 @@ export class ConversationRepository {
   }
 
   /**
-   * Update the assigned agent for a conversation.
+   * Update the assigned agent for a conversation, and optionally the owning
+   * group in the same write.
+   *
+   * `groupId` is written whenever it is not undefined — including `null`, which
+   * clears the group. Agent and group must move together: a conversation left
+   * pointing at the group of a previous routing decision is visible to the
+   * wrong team lead.
    */
   async updateAssignment(
     id: string,
     agentId: string | null,
+    groupId?: string | null,
   ): Promise<OmniConversation | null> {
+    const update: Record<string, unknown> = { assignedAgentId: agentId };
+    if (groupId !== undefined) update.assignedGroupId = groupId;
     const doc = await this.model
-      .findByIdAndUpdate(id, { assignedAgentId: agentId }, { new: true })
+      .findByIdAndUpdate(id, update, { new: true })
       .exec();
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
@@ -718,7 +772,10 @@ export class ConversationRepository {
   async assignIfUnassigned(
     id: string,
     agentId: string,
+    groupId?: string | null,
   ): Promise<OmniConversation | null> {
+    const set: Record<string, unknown> = { assignedAgentId: agentId };
+    if (groupId !== undefined) set.assignedGroupId = groupId;
     const doc = await this.model
       .findOneAndUpdate(
         {
@@ -729,7 +786,7 @@ export class ConversationRepository {
             { assignedAgentId: { $exists: false } },
           ],
         },
-        { $set: { assignedAgentId: agentId } },
+        { $set: set },
         { new: true },
       )
       .exec();

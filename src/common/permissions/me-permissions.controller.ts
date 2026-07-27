@@ -75,6 +75,7 @@ export class MePermissionsController {
         fullAccess: false,
         dataScope: DataScope.SELF,
         orgUnitId: null,
+        groupIds: [],
       };
     }
 
@@ -94,6 +95,10 @@ export class MePermissionsController {
       fullAccessReason: explanation.fullAccessReason,
       dataScope: scope.scope,
       orgUnitId: scope.orgUnitId,
+      // Already resolved for this request by DataVisibilityInterceptor; reading
+      // it from CLS keeps this endpoint's answer identical to the one the query
+      // filters use, instead of a second lookup that could disagree.
+      groupIds: this.cls.get<string[]>('visibleGroupIds') ?? [],
     };
   }
 }

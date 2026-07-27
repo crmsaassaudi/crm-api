@@ -188,7 +188,14 @@ describe('FallbackReassignProcessor', () => {
       expect(assignmentService.assignConversation).toHaveBeenCalledWith(
         TENANT,
         'conv_1',
-        { strategy: 'round-robin', allowReassignment: true },
+        {
+          strategy: 'round-robin',
+          allowReassignment: true,
+          // The fallback path re-runs the decision without the preferred-agent
+          // preference, and resolves the channel pool from the conversation.
+          skipSticky: true,
+          source: 'fallback',
+        },
       );
       expect(
         conversationCommandService.enqueueAssignAgent,
@@ -201,7 +208,12 @@ describe('FallbackReassignProcessor', () => {
       expect(assignmentService.assignConversation).toHaveBeenCalledWith(
         TENANT,
         'conv_1',
-        { strategy: 'manual', allowReassignment: true },
+        {
+          strategy: 'manual',
+          allowReassignment: true,
+          skipSticky: true,
+          source: 'fallback',
+        },
       );
     });
 
@@ -213,7 +225,14 @@ describe('FallbackReassignProcessor', () => {
       expect(assignmentService.assignConversation).toHaveBeenCalledWith(
         TENANT,
         'conv_1',
-        { strategy: 'round-robin', allowReassignment: true },
+        {
+          strategy: 'round-robin',
+          allowReassignment: true,
+          // The fallback path re-runs the decision without the preferred-agent
+          // preference, and resolves the channel pool from the conversation.
+          skipSticky: true,
+          source: 'fallback',
+        },
       );
     });
   });

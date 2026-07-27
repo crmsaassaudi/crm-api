@@ -103,7 +103,6 @@ import { TicketsModule } from '../tickets/tickets.module';
 import { DealsModule } from '../deals/deals.module';
 import { AccountsModule } from '../accounts/accounts.module';
 import { TasksModule } from '../tasks/tasks.module';
-import { AssignmentEngineModule } from '../assignment-engine/assignment-engine.module';
 import { ChannelsModule } from '../channels/channels.module';
 import { NotesModule } from '../notes/notes.module';
 import { isWorkerRuntime } from '../config/runtime-role';
@@ -160,7 +159,6 @@ const workerProviders = isWorkerRuntime()
     forwardRef(() => DealsModule),
     forwardRef(() => AccountsModule),
     forwardRef(() => TasksModule),
-    forwardRef(() => AssignmentEngineModule),
     // Channel Config — needed by SendEmailExecutor/SendSmsExecutor for dynamic credentials
     forwardRef(() => ChannelsModule),
     // Notes — needed by AddNoteExecutor for contact notes
