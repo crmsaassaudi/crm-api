@@ -1544,23 +1544,19 @@ export class OmniGateway
       return { ok: false, error: 'Already claimed (race)' };
     }
 
-    // Pre-check capacity before incrementing to avoid over-assigning.
-    // The old assignConversation returned boolean — the new void version
-    // always increments, so we guard here first.
-    const agentPresence = await this.presenceService.getPresence(
+    // Atomic check-and-increment. The previous getPresence()-then-compare-
+    // then-assignConversation() sequence was a check-then-act race: the same
+    // agent winning the claim lock on two different conversations in quick
+    // succession could pass the capacity check twice before either increment
+    // landed, exceeding maxCapacity.
+    const claimed = await this.presenceService.claimIfUnderCapacity(
       tenantId,
       userId,
     );
-    if (
-      agentPresence &&
-      agentPresence.activeConversations >= agentPresence.maxCapacity
-    ) {
+    if (!claimed) {
       await this.redis.del(claimKey).catch(() => undefined);
       return { ok: false, error: 'Agent at capacity' };
     }
-
-    // Atomically increment the conversation counter
-    await this.presenceService.assignConversation(tenantId, userId);
 
     try {
       await this.conversationLockService.acquireLock({
@@ -1741,6 +1737,25 @@ export class OmniGateway
         groupId: event.groupId,
         timestamp: new Date().toISOString(),
       });
+  }
+
+  /**
+   * Force-disconnect a removed/deactivated agent's live sockets.
+   *
+   * Without this, an already-open tab keeps sending heartbeats and can
+   * resurrect the presence entry `AgentPresenceService.removePresence()` just
+   * cleared, defeating the eviction.
+   */
+  @OnEvent('user.removed-from-tenant')
+  handleUserRemovedFromTenant(event: { tenantId: string; userId: string }) {
+    if (!event?.userId) return;
+    try {
+      this.server.in(`agent:${event.userId}`).disconnectSockets(true);
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to force-disconnect removed user ${event.userId}: ${err.message}`,
+      );
+    }
   }
 
   @OnEvent('omni.bot.disabled')

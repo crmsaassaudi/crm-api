@@ -479,29 +479,72 @@ export class ConversationOpsProcessor
     const conversation = await this.conversationRepo.findById(
       cmd.conversationId,
     );
+    const previousAgentId = conversation?.assignedAgentId
+      ? String(conversation.assignedAgentId)
+      : null;
+    const channelType = conversation?.channelType ?? 'unknown';
 
+    // Routed through the same primitives `handleAssignAgent` uses — this used
+    // to write `assignedAgentId`/`assignedGroupId` directly, so a targeted
+    // bot handoff never reached `assignment_audit_logs` and never moved the
+    // agent's Redis capacity counter, leaving them silently over capacity.
     if (handoffMeta?.target === 'agent' && handoffMeta.agentId) {
-      await this.conversationRepo.assignAgent(
+      const committed = await this.performAssignmentUpdate(
         cmd.conversationId,
         handoffMeta.agentId,
+        undefined,
+        false,
+        previousAgentId,
       );
-      await this.publishAssignmentEvent(
-        cmd,
-        handoffMeta.agentId,
-        null,
-        'bot_handoff_targeted',
-      );
+      if (committed) {
+        this.syncPresenceOnAssignment(cmd.tenantId, {
+          assignAgentId: handoffMeta.agentId,
+          releaseAgentId:
+            previousAgentId && previousAgentId !== handoffMeta.agentId
+              ? previousAgentId
+              : undefined,
+        });
+        this.logAssignmentAuditTrail(
+          cmd.tenantId,
+          cmd.conversationId,
+          handoffMeta.agentId,
+          previousAgentId,
+          null,
+          channelType,
+          'bot_handoff_targeted',
+        );
+        await this.publishAssignmentEvent(
+          cmd,
+          handoffMeta.agentId,
+          null,
+          'bot_handoff_targeted',
+        );
+      }
     } else if (handoffMeta?.target === 'group' && handoffMeta.groupId) {
-      await this.conversationRepo.assignGroup(
+      const committed = await this.performAssignmentUpdate(
         cmd.conversationId,
+        undefined,
         handoffMeta.groupId,
+        false,
       );
-      await this.publishAssignmentEvent(
-        cmd,
-        null,
-        handoffMeta.groupId,
-        'bot_handoff_targeted',
-      );
+      if (committed) {
+        this.logAssignmentAuditTrail(
+          cmd.tenantId,
+          cmd.conversationId,
+          undefined,
+          previousAgentId,
+          null,
+          channelType,
+          'bot_handoff_targeted',
+          handoffMeta.groupId,
+        );
+        await this.publishAssignmentEvent(
+          cmd,
+          null,
+          handoffMeta.groupId,
+          'bot_handoff_targeted',
+        );
+      }
     }
 
     this.eventEmitter.emit(OmniEvents.BOT_HANDOFF, {
@@ -557,6 +600,7 @@ export class ConversationOpsProcessor
       agentId,
       groupId,
       onlyIfUnassigned,
+      previousAgentId,
     );
     if (!committed) return;
 
@@ -576,7 +620,7 @@ export class ConversationOpsProcessor
 
     this.syncPresenceOnAssignment(cmd.tenantId, syncCapacity);
 
-    if (auditLog?.channelType && agentId !== undefined) {
+    if (auditLog?.channelType && (agentId !== undefined || groupId !== undefined)) {
       this.logAssignmentAuditTrail(
         cmd.tenantId,
         cmd.conversationId,
@@ -585,6 +629,7 @@ export class ConversationOpsProcessor
         performedByUserId,
         auditLog.channelType,
         reason,
+        groupId,
       );
     }
   }
@@ -594,6 +639,7 @@ export class ConversationOpsProcessor
     agentId: string | null | undefined,
     groupId: string | null | undefined,
     onlyIfUnassigned: boolean | undefined,
+    previousAgentId?: string | null,
   ): Promise<boolean> {
     if (onlyIfUnassigned && agentId) {
       const committed = await this.conversationRepo.assignIfUnassigned(
@@ -603,6 +649,23 @@ export class ConversationOpsProcessor
       if (!committed) {
         this.logger.debug(
           `[CONV-OPS] ASSIGN_AGENT skipped — conv ${conversationId} already assigned`,
+        );
+        return false;
+      }
+    } else if (agentId !== undefined && previousAgentId !== undefined) {
+      // The caller attested to the agent it observed before deciding to
+      // change it — CAS against that instead of writing unconditionally, so
+      // a stale decision (the assignee changed since the caller last read it)
+      // is rejected rather than silently clobbering a newer assignment.
+      const committed = await this.conversationRepo.reassignIfExpected(
+        conversationId,
+        agentId,
+        groupId,
+        previousAgentId,
+      );
+      if (!committed) {
+        this.logger.debug(
+          `[CONV-OPS] ASSIGN_AGENT conflict — conv ${conversationId} assignee changed since read, expected ${previousAgentId}`,
         );
         return false;
       }
@@ -668,6 +731,7 @@ export class ConversationOpsProcessor
     performedByUserId: string | null | undefined,
     channelType: string,
     reason: string,
+    groupId?: string | null,
   ): void {
     if (reason === 'reply_auto_assign') {
       this.assignmentService
@@ -683,10 +747,13 @@ export class ConversationOpsProcessor
         .logManualAssignment({
           conversationId,
           tenantId,
-          newAgentId: agentId ?? null,
+          // Preserve `undefined` (agent field untouched — a group-only
+          // change) rather than collapsing it to null (explicit unassign).
+          newAgentId: agentId,
           previousAgentId: previousAgentId ?? null,
           performedByUserId: performedByUserId ?? null,
           channelType,
+          groupId,
         })
         .catch(logSwallowed(this.logger, 'logManualAssignment'));
     }

@@ -595,8 +595,17 @@ export class RouteToGroupExecutor implements ActionExecutor {
           automationDepth: job.automationDepth,
           automationBreadcrumbs: job.automationBreadcrumbs,
           allowRestricted: true,
+          // route_to_group only ever claims an unowned record — a retried job
+          // whose earlier attempt already committed must see the race lost,
+          // not overwrite it again with a (possibly different) candidate.
+          expectedPreviousValue: null,
         });
         if (!result.success) {
+          if (result.raceLost) {
+            // Contract with the core: return false rather than throw so the
+            // reservation is released cleanly instead of surfacing as an error.
+            return false;
+          }
           throw new Error(
             result.error ??
               `Failed to set ownerId on ${recordType}(${recordId})`,

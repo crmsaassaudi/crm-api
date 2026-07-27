@@ -35,17 +35,25 @@ export class ConversationCommitPort implements CommitPort {
     return committed !== null;
   }
 
-  /** Unconditional write, for the paths that are explicitly reassigning. */
+  /**
+   * Conditional write for explicit reassignment: only commits when the
+   * conversation's current assignee still equals `expectedPreviousAgentId`
+   * (the value the caller observed before deciding to reassign). Returns
+   * false — a lost race, same contract as `commit()` — when it has since
+   * changed, so the core releases the reservation instead of leaking it.
+   */
   async reassign(
     scope: AssignmentScope,
     assigneeId: string,
     groupId: string | null,
+    expectedPreviousAgentId: string | null,
   ): Promise<boolean> {
     if (!scope.entityId) return false;
-    const committed = await this.conversationRepo.updateAssignment(
+    const committed = await this.conversationRepo.reassignIfExpected(
       scope.entityId,
       assigneeId,
       groupId,
+      expectedPreviousAgentId,
     );
     return committed !== null;
   }

@@ -154,6 +154,31 @@ return bestAgent
 `;
 
 /**
+ * Atomic check-and-increment for a single named agent, capacity only — no
+ * presence/routing-status gate. For manual claim, where the agent (not the
+ * routing engine) decided who receives the work; only the capacity ceiling
+ * still applies.
+ *
+ * KEYS[1]=presenceHash, KEYS[2]=loadZset, ARGV[1]=userId
+ */
+const LUA_CLAIM_IF_UNDER_CAPACITY = `
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+if not raw then return 0 end
+local data = cjson.decode(raw)
+local active = tonumber(data.activeConversations or 0)
+local capacity = tonumber(data.maxCapacity or 0)
+if capacity <= 0 or active >= capacity then return 0 end
+
+active = active + 1
+data.activeConversations = active
+if active >= capacity then data.capacityStatus = 'FULL' else data.capacityStatus = 'OK' end
+
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(data))
+redis.call('ZADD', KEYS[2], active, ARGV[1])
+return 1
+`;
+
+/**
  * Capacity-based reserve: like least-busy but the eligibility capacity uses the
  * tenant fallback when the agent has no per-agent capacity.
  *
@@ -946,6 +971,27 @@ export class AgentPresenceService {
     }
   }
 
+  /**
+   * Atomic check-and-increment for a manual claim: capacity only, no
+   * presence/routing-status gate (unlike `reserveAgentFromCandidates`, which
+   * also requires AVAILABLE + ACCEPTING — too strict for "this agent already
+   * decided to take it"). Replaces the old getPresence()-then-compare-then-
+   * assignConversation() sequence, whose gap let the same agent win the
+   * capacity check on two conversations claimed in quick succession before
+   * either increment landed.
+   */
+  async claimIfUnderCapacity(tenantId: string, userId: string): Promise<boolean> {
+    const client = this.redis.getClient();
+    const result = await client.eval(
+      LUA_CLAIM_IF_UNDER_CAPACITY,
+      2,
+      tenantPresenceHashKey(tenantId),
+      tenantAgentLoadKey(tenantId),
+      userId,
+    );
+    return result === 1;
+  }
+
   async reserveAgentFromCandidates(
     tenantId: string,
     candidateIds: string[],
@@ -1251,6 +1297,28 @@ export class AgentPresenceService {
     } catch (err: any) {
       this.logger.warn(
         `Failed to sync presence attributes for user ${event.userId}: ${err.message}`,
+      );
+    }
+  }
+
+  /**
+   * Evict presence the moment a user loses tenant access, instead of waiting
+   * out the heartbeat TTL. Without this, `removePresence()` had no caller at
+   * all — a removed/deactivated agent stayed a valid candidate for every
+   * routing strategy's eligibility check for up to `HEARTBEAT_TTL_SECONDS`
+   * after losing access.
+   */
+  @OnEvent('user.removed-from-tenant')
+  async handleUserRemovedFromTenant(event: {
+    tenantId: string;
+    userId: string;
+  }): Promise<void> {
+    if (!event?.tenantId || !event?.userId) return;
+    try {
+      await this.removePresence(event.tenantId, event.userId);
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to evict presence for removed user ${event.userId}: ${err.message}`,
       );
     }
   }

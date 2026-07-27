@@ -191,6 +191,7 @@ describe('FallbackReassignProcessor', () => {
         {
           strategy: 'round-robin',
           allowReassignment: true,
+          expectedPreviousAgentId: AGENT,
           // The fallback path re-runs the decision without the preferred-agent
           // preference, and resolves the channel pool from the conversation.
           skipSticky: true,
@@ -211,6 +212,7 @@ describe('FallbackReassignProcessor', () => {
         {
           strategy: 'manual',
           allowReassignment: true,
+          expectedPreviousAgentId: AGENT,
           skipSticky: true,
           source: 'fallback',
         },
@@ -228,6 +230,7 @@ describe('FallbackReassignProcessor', () => {
         {
           strategy: 'round-robin',
           allowReassignment: true,
+          expectedPreviousAgentId: AGENT,
           // The fallback path re-runs the decision without the preferred-agent
           // preference, and resolves the channel pool from the conversation.
           skipSticky: true,
@@ -250,8 +253,8 @@ describe('FallbackReassignProcessor', () => {
       expect(assignmentService.assignConversation).toHaveBeenCalledTimes(3);
     });
 
-    it('should RELEASE the offline agent Redis capacity per conversation (F-02)', async () => {
-      // A documented past bug: the counter stayed inflated after unassignment, so
+    it('should RELEASE the offline agent Redis capacity per conversation when reassigning to a new agent (F-02)', async () => {
+      // A documented past bug: the counter stayed inflated after reassignment, so
       // on reconnect the agent was stuck in 'full' routing status with zero real
       // conversations and received nothing.
       conversationRepo.findOpenByAgent.mockResolvedValue([
@@ -259,12 +262,35 @@ describe('FallbackReassignProcessor', () => {
         { id: 'conv_2' },
       ]);
 
-      await run();
+      await run(job({ strategy: 'next-available' }));
 
       expect(presenceService.releaseConversation).toHaveBeenCalledTimes(2);
       expect(presenceService.releaseConversation).toHaveBeenCalledWith(
         TENANT,
         AGENT,
+      );
+    });
+
+    it('should NOT double-release capacity for the back-to-queue (unassign) branch', async () => {
+      // syncCapacity.releaseAgentId on the enqueued command already releases
+      // this slot via ConversationOpsProcessor — a second, unconditional
+      // release() here used to double-decrement the same counter.
+      conversationRepo.findOpenByAgent.mockResolvedValue([
+        { id: 'conv_1' },
+        { id: 'conv_2' },
+      ]);
+
+      await run(); // default strategy: 'back-to-queue' → 'unassign'
+
+      expect(presenceService.releaseConversation).not.toHaveBeenCalled();
+      expect(
+        conversationCommandService.enqueueAssignAgent,
+      ).toHaveBeenCalledWith(
+        'conv_1',
+        TENANT,
+        expect.objectContaining({
+          syncCapacity: { releaseAgentId: AGENT },
+        }),
       );
     });
 

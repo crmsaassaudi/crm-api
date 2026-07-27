@@ -90,7 +90,7 @@ export class RecordCandidatePort implements CandidateSourcePort {
    * is a single projected read.
    */
   async skills(
-    _scope: AssignmentScope,
+    scope: AssignmentScope,
     candidateIds: string[],
   ): Promise<Map<string, string[]>> {
     const result = new Map<string, string[]>();
@@ -100,9 +100,19 @@ export class RecordCandidatePort implements CandidateSourcePort {
     if (ids.length === 0) return result;
 
     try {
+      // Defense-in-depth: `ids` are expected to already be tenant-scoped
+      // (they come from `groupMembers()`, which queries the tenant-filtered
+      // Group model), but this is a raw driver call bypassing that plugin —
+      // without its own filter, a future caller passing an externally-merged
+      // candidate list could leak skill data across tenants.
       const users = await this.connection
         .collection('users')
-        .find({ _id: { $in: ids } })
+        .find({
+          _id: { $in: ids },
+          'tenants.tenantId': Types.ObjectId.isValid(scope.tenantId)
+            ? new Types.ObjectId(scope.tenantId)
+            : scope.tenantId,
+        })
         .project({ _id: 1, skills: 1 })
         .toArray();
       for (const user of users) {

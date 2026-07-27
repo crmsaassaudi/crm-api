@@ -13,6 +13,7 @@ import {
   NotFoundException,
   BadRequestException,
   UnprocessableEntityException,
+  ConflictException,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -1372,9 +1373,31 @@ export class OmniController {
       agentId,
     );
 
-    const updated = await this.conversationRepo.claimConversation(id, agentId);
+    // Routed through the same audited path as `assignAgent`, with
+    // `onlyIfUnassigned: true` (CAS against "still unassigned") — previously
+    // this wrote `assignedAgentId` directly, so a claim was invisible to
+    // `assignment_audit_logs` and never incremented the agent's Redis
+    // capacity counter, and two simultaneous claims on the same conversation
+    // could both "succeed".
+    const updated = await this.conversationCommandService.executeAssignAgent(
+      id,
+      conversation.tenantId,
+      {
+        agentId,
+        reason: 'claim',
+        performedByUserId: agentId,
+        onlyIfUnassigned: true,
+        syncCapacity: { assignAgentId: agentId },
+        auditLog: { channelType: conversation.channelType },
+      },
+    );
     if (!updated) {
       throw new NotFoundException(`Conversation ${id} not found`);
+    }
+    if (String(updated.assignedAgentId) !== String(agentId)) {
+      throw new ConflictException(
+        `Conversation ${id} was already claimed by another agent`,
+      );
     }
 
     this.logger.log(`Conversation ${id} claimed by agent ${agentId}`);
@@ -1453,9 +1476,21 @@ export class OmniController {
       return updated;
     }
 
-    // Group-only assignment (no agent change)
+    // Group-only assignment (no agent change). Routed through the same
+    // audited path as an agent change — previously this wrote
+    // `assignedGroupId` directly and never reached `assignment_audit_logs`.
     if (groupId !== undefined) {
-      updated = await this.conversationRepo.updateGroupAssignment(id, groupId);
+      updated = await this.conversationCommandService.executeAssignAgent(
+        id,
+        conversation.tenantId,
+        {
+          groupId,
+          previousGroupId: oldGroupId,
+          reason: 'manual',
+          performedByUserId,
+          auditLog: { channelType: conversation.channelType },
+        },
+      );
 
       this.eventEmitter.emit('omni.conversation.assigned', {
         tenantId: conversation.tenantId,

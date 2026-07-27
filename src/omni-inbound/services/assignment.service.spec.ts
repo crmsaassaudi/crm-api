@@ -235,7 +235,7 @@ describe('AssignmentService', () => {
       expect(request.configOverride).toMatchObject({ autoAssignEnabled: true });
     });
 
-    it('should supply an unconditional commit only when reassignment is allowed', async () => {
+    it('should supply a reassignment commit (CAS against the observed previous agent) only when reassignment is allowed', async () => {
       const plain = buildService();
       await plain.service.assignConversation('t1', 'c1', {});
       expect(
@@ -245,14 +245,17 @@ describe('AssignmentService', () => {
       const reassign = buildService();
       await reassign.service.assignConversation('t1', 'c1', {
         allowReassignment: true,
+        expectedPreviousAgentId: 'agent-old',
       });
       const request = reassign.core.assign.mock.calls[0][0] as any;
+      expect(request.previousAssigneeId).toBe('agent-old');
       expect(typeof request.commit).toBe('function');
       await request.commit('agent-9', 'g1');
       expect(reassign.commitPort.reassign).toHaveBeenCalledWith(
         expect.objectContaining({ entityId: 'c1' }),
         'agent-9',
         'g1',
+        'agent-old',
       );
     });
   });

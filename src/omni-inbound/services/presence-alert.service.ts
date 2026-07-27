@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AgentPresenceService } from './agent-presence.service';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { RedisService } from '../../redis/redis.service';
+import { ConversationRepository } from '../repositories/conversation.repository';
 import { Server } from 'socket.io';
 
 /**
@@ -31,6 +32,7 @@ export class PresenceAlertService {
     private readonly presenceService: AgentPresenceService,
     private readonly settingsService: CrmSettingsService,
     private readonly redisService: RedisService,
+    private readonly conversationRepo: ConversationRepository,
   ) {}
 
   /** Called by OmniGateway afterInit to wire the Socket.IO server. */
@@ -73,6 +75,20 @@ export class PresenceAlertService {
         agentId: '*',
         detail: `All ${onlineCount} online agents at capacity`,
       });
+    } else if (onlineCount === 0) {
+      // The most common dead-queue scenario — after-hours, nobody online —
+      // was previously invisible: `all_full` requires onlineCount > 0, so it
+      // never fires here. Distinct alert type since the operational response
+      // differs ("everyone's slammed" vs "nobody's here").
+      const hasWaiting =
+        await this.conversationRepo.existsUnassignedOpen(tenantId);
+      if (hasWaiting) {
+        alerts.push({
+          type: 'no_agents_online',
+          agentId: '*',
+          detail: 'Conversations are queued but no agent is online',
+        });
+      }
     }
 
     for (const alert of alerts) {
@@ -230,7 +246,8 @@ interface AlertPayload {
     | 'over_break'
     | 'stuck_not_accepting'
     | 'long_away'
-    | 'all_full';
+    | 'all_full'
+    | 'no_agents_online';
   agentId: string;
   detail: string;
 }

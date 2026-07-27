@@ -113,6 +113,13 @@ export interface AssignmentOptions {
   channelRoutingOverride?: ChannelRoutingOverride;
   /** Allow replacing an agent who is already assigned. */
   allowReassignment?: boolean;
+  /**
+   * The agent the caller observed as currently assigned, when
+   * `allowReassignment` is set. The reassignment commit is a compare-and-swap
+   * against this value — `null` for "must still be unassigned" — so a second,
+   * concurrent reassignment decision loses cleanly instead of both winning.
+   */
+  expectedPreviousAgentId?: string | null;
   /** Team that owns the conversation when no rule names one. */
   owningGroupId?: string | null;
   channelId?: string | null;
@@ -418,8 +425,13 @@ export class AssignmentService implements OnModuleInit {
       restrictToCandidates: options.agentPool ?? null,
       preferred,
       configOverride: effectiveOverride,
-      // An explicit reassignment writes unconditionally; the default is a
-      // conditional claim that loses the race rather than stealing work.
+      previousAssigneeId: options.allowReassignment
+        ? (options.expectedPreviousAgentId ?? null)
+        : undefined,
+      // An explicit reassignment is a compare-and-swap against the agent the
+      // caller observed before deciding to reassign; the default is a
+      // conditional claim (against "still unassigned") that loses the race
+      // rather than stealing work.
       commit: options.allowReassignment
         ? (assigneeId, groupId) =>
             this.commitPort.reassign(
@@ -431,6 +443,7 @@ export class AssignmentService implements OnModuleInit {
               },
               assigneeId,
               groupId,
+              options.expectedPreviousAgentId ?? null,
             )
         : undefined,
       source: options.source ?? 'inbound',
@@ -597,6 +610,7 @@ export class AssignmentService implements OnModuleInit {
         scopeId: channelId,
         manualAssigneeId: target.agentId,
         owningGroupId: groupId,
+        previousAssigneeId: previousAgentId,
         commit: (assigneeId, gid) =>
           this.commitPort.reassign(
             {
@@ -607,6 +621,7 @@ export class AssignmentService implements OnModuleInit {
             },
             assigneeId,
             gid,
+            previousAgentId,
           ),
         source: 'automation',
         sourceWorkflowId: source,
@@ -643,6 +658,10 @@ export class AssignmentService implements OnModuleInit {
       target.groupId,
     );
 
+    const previousAgentIdForGroup = conversation.assignedAgentId
+      ? String(conversation.assignedAgentId)
+      : null;
+
     // The caller chose the team explicitly, so rules are skipped: re-running
     // them could override that choice with a different team.
     const decision = await this.core.assign({
@@ -653,6 +672,7 @@ export class AssignmentService implements OnModuleInit {
       targetGroupIds: [target.groupId],
       owningGroupId: target.groupId,
       skipRules: true,
+      previousAssigneeId: previousAgentIdForGroup,
       commit: (assigneeId, gid) =>
         this.commitPort.reassign(
           {
@@ -663,6 +683,7 @@ export class AssignmentService implements OnModuleInit {
           },
           assigneeId,
           gid,
+          previousAgentIdForGroup,
         ),
       source: 'automation',
       sourceWorkflowId: source,
@@ -687,13 +708,39 @@ export class AssignmentService implements OnModuleInit {
   async logManualAssignment(params: {
     conversationId: string;
     tenantId: string;
-    newAgentId: string | null;
+    /** `undefined` means the agent field was not touched — a group-only change. */
+    newAgentId?: string | null;
     previousAgentId: string | null;
     performedByUserId: string | null;
     channelType?: string | null;
+    groupId?: string | null;
   }): Promise<void> {
-    const { newAgentId, previousAgentId, performedByUserId } = params;
+    const { previousAgentId, performedByUserId } = params;
+    const newAgentId = params.newAgentId ?? null;
     const actor = performedByUserId ?? 'unknown';
+
+    if (params.newAgentId === undefined) {
+      // Group-only change: the agent was not touched, so 'reassigned'/
+      // 'unassigned' language would misdescribe what actually happened.
+      await this.core.recordExternalDecision({
+        tenantId: params.tenantId,
+        objectType: 'Conversation',
+        entityId: params.conversationId,
+        assigneeId: null,
+        previousAssigneeId: null,
+        groupId: params.groupId ?? null,
+        strategy: 'manual',
+        outcome: 'queued',
+        reason: `Group reassigned by user ${actor}`,
+        reasonKey: 'manualGroupReassigned',
+        reasonParams: { userId: actor },
+        source: 'manual',
+        performedByUserId,
+        channelType: params.channelType ?? null,
+      });
+      return;
+    }
+
     const verb = previousAgentId ? 'reassigned' : 'assigned';
 
     let reasonKey: 'manualAssigned' | 'manualReassigned' | 'manualUnassigned' =
@@ -708,7 +755,7 @@ export class AssignmentService implements OnModuleInit {
       entityId: params.conversationId,
       assigneeId: newAgentId,
       previousAssigneeId: previousAgentId,
-      groupId: null,
+      groupId: params.groupId ?? null,
       strategy: 'manual',
       outcome: newAgentId ? 'assigned' : 'queued',
       reason: newAgentId

@@ -177,6 +177,7 @@ export const ASSIGNMENT_REASON_KEYS = [
   'manualAssigned',
   'manualReassigned',
   'manualUnassigned',
+  'manualGroupReassigned',
   'stickyMatch',
   'stickyWait',
   'bypassed',

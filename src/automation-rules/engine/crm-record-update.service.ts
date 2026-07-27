@@ -78,11 +78,21 @@ export class CrmRecordUpdateService {
     automationBreadcrumbs?: string[];
     /** When true, allows writing RESTRICTED_FIELDS (e.g. ownerId). Internal use only. */
     allowRestricted?: boolean;
+    /**
+     * Optimistic-concurrency guard: the write is refused (not attempted) unless
+     * the record's current value for `field` still equals this. Used by
+     * route_to_group so a retried automation job — the write already landed,
+     * the job crashed before ack, BullMQ redelivers it — sees the field has
+     * moved and reports a lost race instead of assigning a second time.
+     */
+    expectedPreviousValue?: any;
   }): Promise<{
     success: boolean;
     previousValue: any;
     newValue: any;
     error?: string;
+    /** True when the write was refused because `expectedPreviousValue` no longer matched. */
+    raceLost?: boolean;
   }> {
     const { tenantId, recordType, recordId, field, sourceWorkflowId } = params;
 
@@ -145,6 +155,26 @@ export class CrmRecordUpdateService {
       }
 
       const previousValue = currentRecord[field];
+
+      // ── Optimistic-concurrency guard ──────────────────────────────────
+      if ('expectedPreviousValue' in params) {
+        const normalize = (v: any) =>
+          v === undefined || v === null ? null : String(v);
+        if (
+          normalize(previousValue) !== normalize(params.expectedPreviousValue)
+        ) {
+          this.logger.warn(
+            `[CrmUpdate] Lost race writing "${field}" on ${recordType}(${recordId}): expected ${normalize(params.expectedPreviousValue)}, found ${normalize(previousValue)}`,
+          );
+          return {
+            success: false,
+            previousValue,
+            newValue: params.value,
+            error: `Field "${field}" changed since the decision was made — write refused`,
+            raceLost: true,
+          };
+        }
+      }
 
       // ── Type cast the value ───────────────────────────────────────────
       const castedValue = this.castValue(params.value, previousValue);

@@ -766,6 +766,34 @@ export class ConversationRepository {
   }
 
   /**
+   * Conditional reassignment: only succeeds when the conversation's current
+   * `assignedAgentId` still equals `expectedPreviousAgentId`.
+   *
+   * This is the CAS primitive `reassign()` was missing — `updateAssignment()`
+   * writes unconditionally, so two concurrent reassignment decisions (e.g. a
+   * duplicated reopen-triggered webhook) could both "succeed", the loser's
+   * reservation never released. Passing `null` means "only if still
+   * unassigned", the same guarantee as `assignIfUnassigned`.
+   */
+  async reassignIfExpected(
+    id: string,
+    agentId: string | null,
+    groupId: string | null | undefined,
+    expectedPreviousAgentId: string | null,
+  ): Promise<OmniConversation | null> {
+    const set: Record<string, unknown> = { assignedAgentId: agentId };
+    if (groupId !== undefined) set.assignedGroupId = groupId;
+    const doc = await this.model
+      .findOneAndUpdate(
+        { _id: id, assignedAgentId: expectedPreviousAgentId },
+        { $set: set },
+        { new: true },
+      )
+      .exec();
+    return doc ? OmniConversationMapper.toDomain(doc) : null;
+  }
+
+  /**
    * Optimistic assignment used by the auto-assignment hot path.
    * It only succeeds when the conversation is still active and unassigned.
    */
@@ -994,6 +1022,28 @@ export class ConversationRepository {
       })
       .setOptions({ isPlatformQuery: true })
       .exec();
+  }
+
+  /**
+   * Whether any open/pending conversation is waiting with no agent, for a
+   * tenant. Used by the dead-queue alert (zero agents online) — an
+   * existence check via `.limit(1)`, not a count, so it stays cheap
+   * regardless of how deep the queue actually is.
+   */
+  async existsUnassignedOpen(tenantId: string): Promise<boolean> {
+    const doc = await this.model
+      .findOne(
+        {
+          tenantId,
+          assignedAgentId: null,
+          status: { $in: ['open', 'pending'] },
+        },
+        { _id: 1 },
+      )
+      .setOptions({ isPlatformQuery: true })
+      .lean()
+      .exec();
+    return !!doc;
   }
 
   /**

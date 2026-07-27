@@ -75,6 +75,7 @@ export class InboundOrchestrationService {
     contactId: string | null,
     reason: string,
     enrichedProfile?: { name?: string; avatarUrl?: string; phone?: string },
+    expectedPreviousAgentId?: string | null,
   ): Promise<void> {
     try {
       this.logger.debug(
@@ -114,6 +115,10 @@ export class InboundOrchestrationService {
           channelRoutingOverride: channelConfig.routing,
           routingContext,
           allowReassignment: reason === 'reopen_agent_offline',
+          expectedPreviousAgentId:
+            reason === 'reopen_agent_offline'
+              ? (expectedPreviousAgentId ?? null)
+              : undefined,
           // A channel served by exactly one group has an unambiguous owner, so
           // the conversation can be filed under it even when no routing rule
           // matches. With several groups there is no defensible default —
@@ -278,6 +283,8 @@ export class InboundOrchestrationService {
         conversationId,
         contactId,
         'reopen_agent_offline',
+        undefined,
+        assignedAgentId,
       );
     }
   }

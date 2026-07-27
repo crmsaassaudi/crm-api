@@ -55,6 +55,14 @@ export interface AssignRequest {
 
   /** Skip everything and use this assignee. Still audited. */
   manualAssigneeId?: string | null;
+  /**
+   * The assignee the caller observed before this decision, for reassignments.
+   * Recorded verbatim on the audit entry — `finish()` no longer hardcodes
+   * `null` — so `{tenantId, previousAssigneeId, createdAt}` stays a reliable
+   * index for core-driven reassignments, not just the manual external-decision
+   * path.
+   */
+  previousAssigneeId?: string | null;
   /** Skip assignment entirely — the caller has already decided not to. */
   bypass?: boolean;
 
@@ -1098,7 +1106,7 @@ export class AssignmentCoreService {
       objectType: request.objectType,
       entityId: request.entityId ?? 'pre-create',
       assigneeId: decision.assigneeId,
-      previousAssigneeId: null,
+      previousAssigneeId: request.previousAssigneeId ?? null,
       groupId: decision.groupId,
       ruleId: decision.rule?.id ?? null,
       ruleName: decision.rule?.name ?? null,

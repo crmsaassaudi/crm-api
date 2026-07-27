@@ -161,6 +161,7 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
             {
               strategy: assignmentStrategy,
               allowReassignment: true,
+              expectedPreviousAgentId: agentId,
               skipSticky: true,
               source: 'fallback',
             },
@@ -172,7 +173,15 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
         // counter inflated in Redis even after conversations were unassigned.
         // On reconnect the agent would be stuck in 'full' routing status
         // despite having 0 real conversations.
-        await this.presenceService.releaseConversation(tenantId, agentId);
+        //
+        // Skipped for the 'unassign' branch: `syncCapacity.releaseAgentId`
+        // above already releases this same slot via
+        // ConversationOpsProcessor.syncPresenceOnAssignment — calling it again
+        // here double-decremented the counter, under-counting the agent's
+        // real load until the next reconciliation pass.
+        if (assignmentStrategy !== 'unassign') {
+          await this.presenceService.releaseConversation(tenantId, agentId);
+        }
 
         // Emit event for realtime broadcast
         this.eventEmitter.emit('omni.conversation.assigned', {
