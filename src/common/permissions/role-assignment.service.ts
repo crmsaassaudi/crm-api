@@ -3,11 +3,13 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ModuleRef } from '@nestjs/core';
 import { Model } from 'mongoose';
+import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   RoleAssignmentSchemaClass,
@@ -20,6 +22,8 @@ import { RoleAssignment } from './domain/role-assignment';
 import { RoleAssignmentMapper } from './mappers/role-assignment.mapper';
 import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
+import type { AuthzPermissionCacheService } from './authz-permission-cache.service';
+import { AUTHZ_PERMISSION_CACHE } from './authz.tokens';
 
 export interface GrantRoleParams {
   tenantId: string;
@@ -50,12 +54,16 @@ export class RoleAssignmentService {
     private readonly audit: AuthzAuditService,
     private readonly eventEmitter: EventEmitter2,
     private readonly moduleRef: ModuleRef,
+    private readonly cls: ClsService,
   ) {}
 
   /** Grant a role to a principal (optionally time-bounded). */
   async grant(params: GrantRoleParams): Promise<RoleAssignment> {
     // The role must exist in this tenant — reject dangling / cross-tenant ids.
-    await this.customRoles.findById(params.roleId, params.tenantId);
+    const role = await this.customRoles.findById(
+      params.roleId,
+      params.tenantId,
+    );
 
     // The PRINCIPAL must also belong to this tenant (H-03). Validating only the
     // role left the other half open: a grant written against a user or group of
@@ -67,6 +75,17 @@ export class RoleAssignmentService {
       params.principalType,
       params.principalId,
     );
+
+    // A JIT grant is a role grant like any other — bound by the same
+    // anti-escalation invariant as the direct membership-edit path
+    // (users.service.ts) and the role-definition path (custom-roles.service.ts).
+    // Without this, granting a role was a second, unguarded door: a caller
+    // holding only settings:manage_system (needed just to reach this admin
+    // page) could grant themselves — or anyone — any tenant role, permanently.
+    if (params.principalType === 'user') {
+      this.assertNotSelfPrivilegeEdit(params.principalId);
+    }
+    await this.assertCallerCanGrant(params.tenantId, role.permissions);
 
     if (params.expiresAt && !(params.expiresAt instanceof Date)) {
       throw new BadRequestException('expiresAt must be a valid date');
@@ -199,6 +218,64 @@ export class RoleAssignmentService {
     if (!belongs) {
       throw new UnprocessableEntityException(
         `User ${principalId} is not a member of this workspace`,
+      );
+    }
+  }
+
+  /** Refuse a JIT grant that targets the caller themselves. */
+  private assertNotSelfPrivilegeEdit(targetUserId: string): void {
+    const callerId = this.cls.get<string>('userId');
+    if (callerId && String(callerId) === String(targetUserId)) {
+      throw new ForbiddenException({
+        status: 403,
+        errors: {
+          id: 'You cannot grant yourself a role. Ask another administrator.',
+        },
+      });
+    }
+  }
+
+  /**
+   * The anti-escalation invariant for the JIT grant path (mirrors
+   * users.service.ts / custom-roles.service.ts): requested ⊆ callerEffective.
+   * A grant is a permission-container handoff like any other and must be held
+   * to the same ceiling as granting the keys directly.
+   */
+  private async assertCallerCanGrant(
+    tenantId: string,
+    permissions?: string[],
+  ): Promise<void> {
+    if (!permissions?.length) return;
+
+    const callerId = this.cls.get<string>('userId');
+    if (!callerId) {
+      throw new ForbiddenException(
+        'Cannot resolve the acting principal; role grant refused',
+      );
+    }
+
+    // Resolved lazily via ModuleRef: AuthzPermissionCacheService depends on
+    // this module's services, so a constructor injection would be circular.
+    const authzCache = this.moduleRef.get<AuthzPermissionCacheService>(
+      AUTHZ_PERMISSION_CACHE,
+      { strict: false },
+    );
+    const explanation = await authzCache.explainForUser(
+      String(callerId),
+      tenantId,
+    );
+
+    const held = explanation.fullAccess
+      ? new Set(explanation.tenantCeiling)
+      : new Set(explanation.effective);
+
+    const escalating = [...new Set(permissions)].filter(
+      (key) => !held.has(key),
+    );
+
+    if (escalating.length) {
+      throw new ForbiddenException(
+        `You cannot grant permission(s) you do not hold yourself: ${escalating.join(', ')}`,
       );
     }
   }

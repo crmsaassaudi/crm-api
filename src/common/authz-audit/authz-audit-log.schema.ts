@@ -8,7 +8,8 @@ export type AuthzAuditCategory =
   | 'MEMBERSHIP' // a user's tenant roleIds / permissions / overrides changed
   | 'GROUP' // group permissions / roleIds / hierarchy changed
   | 'PLATFORM_ROLE' // platformRole (SUPER_ADMIN) changed
-  | 'ASSIGNMENT'; // a governed role grant (JIT/time-bound) or its revocation
+  | 'ASSIGNMENT' // a governed role grant (JIT/time-bound) or its revocation
+  | 'OBJECT_ACL'; // a record-level ACL entry granted or revoked
 
 export type AuthzAuditAction =
   | 'create'

@@ -17,7 +17,7 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
-import { RequirePermission } from '../common/permissions';
+import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
 
 @ApiTags('Tasks')
 @ApiBearerAuth()
@@ -50,6 +50,8 @@ export class TasksController {
 
   @Patch(':id')
   @RequirePermission('edit', 'tasks')
+  @UseAcl('edit', 'tasks')
+  @LoadResource('tasks')
   @UsePipes(new SanitizeMaskedInputPipe())
   update(@Param('id') id: string, @Body() data: UpdateTaskDto) {
     return this.service.update(id, data);
@@ -57,6 +59,8 @@ export class TasksController {
 
   @Delete(':id')
   @RequirePermission('delete', 'tasks')
+  @UseAcl('delete', 'tasks')
+  @LoadResource('tasks')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

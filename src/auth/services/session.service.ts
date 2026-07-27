@@ -19,6 +19,7 @@ export interface SessionData {
 }
 
 const SESSION_PREFIX = 'session:';
+const SESSION_BY_USER_PREFIX = 'session:byuser:';
 const SESSION_TTL_SECONDS = 86_400; // 24 hours — long-lived to allow many refresh cycles
 const LRU_TTL_MS = 60_000; // 1-minute in-memory cache per entry
 
@@ -107,6 +108,13 @@ export class SessionService implements OnModuleInit, OnModuleDestroy {
       SESSION_TTL_SECONDS,
     );
 
+    // Reverse index so an admin action (deactivate, platformRole downgrade,
+    // tenant removal) can kill this user's live sessions instead of waiting
+    // out the 24h TTL.
+    const byUserKey = `${SESSION_BY_USER_PREFIX}${userId}`;
+    await this.ioredis.sadd(byUserKey, sid);
+    await this.ioredis.expire(byUserKey, SESSION_TTL_SECONDS);
+
     this.setLru(sid, session);
     return sid;
   }
@@ -154,8 +162,24 @@ export class SessionService implements OnModuleInit, OnModuleDestroy {
   }
 
   async deleteSession(sid: string): Promise<void> {
+    // Read before delete so the by-user index can be cleaned up too — best
+    // effort: a stale entry in that set is harmless (deleteAllSessionsForUser
+    // just no-ops on an already-gone key), missing the DEL below is not.
+    const cached = this.lru.get(sid)?.data;
+    const userId =
+      cached?.userId ??
+      (await this.ioredis
+        .get(`${SESSION_PREFIX}${sid}`)
+        .then((raw) => (raw ? (JSON.parse(raw) as SessionData).userId : null))
+        .catch(() => null));
+
     await this.ioredis.del(`${SESSION_PREFIX}${sid}`);
     this.lru.delete(sid);
+    if (userId) {
+      await this.ioredis
+        .srem(`${SESSION_BY_USER_PREFIX}${userId}`, sid)
+        .catch(() => undefined);
+    }
     // Tell every other instance to drop its cached copy immediately (H-02).
     await this.ioredis
       .publish(SESSION_INVALIDATION_CHANNEL, sid)
@@ -166,6 +190,18 @@ export class SessionService implements OnModuleInit, OnModuleDestroy {
           }s: ${error instanceof Error ? error.message : String(error)}`,
         ),
       );
+  }
+
+  /**
+   * Kill every live session for a user — used when an admin action revokes
+   * their standing access (deactivation, platformRole downgrade, removal from
+   * a tenant) so they cannot keep acting on a still-valid 24h session/token.
+   */
+  async deleteAllSessionsForUser(userId: string): Promise<void> {
+    const byUserKey = `${SESSION_BY_USER_PREFIX}${userId}`;
+    const sids = await this.ioredis.smembers(byUserKey);
+    await Promise.all(sids.map((sid) => this.deleteSession(sid)));
+    await this.ioredis.del(byUserKey);
   }
 
   private setLru(sid: string, data: SessionData): void {

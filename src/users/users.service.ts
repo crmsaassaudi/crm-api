@@ -28,6 +28,7 @@ import { ModuleRef } from '@nestjs/core';
 import { OrgUnitRepository } from '../org-units/infrastructure/persistence/document/repositories/org-unit.repository';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
+import { SessionService } from '../auth/services/session.service';
 import { InviteUserDto } from './dto/invite-user.dto';
 import { PaginationResponseDto } from '../utils/dto/pagination-response.dto';
 import { TenantsRepository } from '../tenants/infrastructure/persistence/document/repositories/tenant.repository';
@@ -49,6 +50,8 @@ export class UsersService {
     private readonly cls: ClsService,
     @Inject(forwardRef(() => KeycloakAdminService))
     private readonly keycloakAdminService: KeycloakAdminService,
+    @Inject(forwardRef(() => SessionService))
+    private readonly sessionService: SessionService,
     private readonly tenantsRepository: TenantsRepository,
     private readonly groupRepository: GroupRepository,
     private readonly eventEmitter: EventEmitter2,
@@ -229,6 +232,35 @@ export class UsersService {
           id: 'You cannot change your own roles or permissions. Ask another administrator.',
         },
       });
+    }
+  }
+
+  /**
+   * Kill live sessions when an update takes away standing access — deactivation
+   * or a platformRole downgrade from SUPER_ADMIN — so the change takes effect
+   * immediately instead of waiting out the session's 24h TTL.
+   */
+  private async revokeSessionsOnPrivilegeDowngrade(
+    before: User | null,
+    after: User,
+  ): Promise<void> {
+    const deactivated =
+      before?.status?.id === StatusEnum.active &&
+      after.status?.id !== undefined &&
+      after.status.id !== StatusEnum.active;
+    const superAdminDowngraded =
+      before?.platformRole?.id === PlatformRoleEnum.SUPER_ADMIN &&
+      after.platformRole?.id !== undefined &&
+      after.platformRole.id !== PlatformRoleEnum.SUPER_ADMIN;
+
+    if (!deactivated && !superAdminDowngraded) return;
+
+    try {
+      await this.sessionService.deleteAllSessionsForUser(String(after.id));
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to revoke sessions for user ${after.id}: ${err.message}`,
+      );
     }
   }
 
@@ -515,6 +547,7 @@ export class UsersService {
         membershipChanged: tenants !== undefined,
         platformRoleChanged: platformRole !== undefined,
       });
+      await this.revokeSessionsOnPrivilegeDowngrade(targetBefore, updated);
     }
     return updated;
   }
@@ -864,6 +897,16 @@ export class UsersService {
     // Channels reference users in their support pool; leaving the id behind
     // would keep routing to someone who is no longer in the tenant.
     this.eventEmitter.emit('user.removed-from-tenant', { tenantId, userId });
+    // Losing tenant access without a fresh login is an acceptable UX cost for
+    // closing the gap: the user just logs in again for whatever tenants they
+    // retain, rather than keeping a live session against the tenant they lost.
+    try {
+      await this.sessionService.deleteAllSessionsForUser(String(userId));
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to revoke sessions for user ${userId} after tenant removal: ${err.message}`,
+      );
+    }
     return updated;
   }
 
@@ -1093,7 +1136,10 @@ export class UsersService {
 
     // 2. Update Local DB
     const updated = await this.usersRepository.update(id, { status });
-    if (updated) this.emitUserPermissionsUpdated(updated);
+    if (updated) {
+      this.emitUserPermissionsUpdated(updated);
+      await this.revokeSessionsOnPrivilegeDowngrade(user, updated);
+    }
     return updated;
   }
 

@@ -22,7 +22,7 @@ import { ApiTags, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
-import { RequirePermission } from '../common/permissions';
+import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
 import { StartTicketImportDto } from './dto/start-ticket-import.dto';
 import { ExportRequestDto } from '../common/export';
 import { Throttle } from '@nestjs/throttler';
@@ -63,6 +63,8 @@ export class TicketsController {
 
   @Patch(':id')
   @RequirePermission('edit', 'tickets')
+  @UseAcl('edit', 'tickets')
+  @LoadResource('tickets')
   @UsePipes(new SanitizeMaskedInputPipe())
   update(@Param('id') id: string, @Body() data: UpdateTicketDto) {
     return this.service.update(id, data as Partial<Ticket>);
@@ -70,6 +72,8 @@ export class TicketsController {
 
   @Delete(':id')
   @RequirePermission('delete', 'tickets')
+  @UseAcl('delete', 'tickets')
+  @LoadResource('tickets')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

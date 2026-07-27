@@ -20,7 +20,7 @@ import { ApiTags, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
-import { RequirePermission } from '../common/permissions';
+import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
 import { StartAccountImportDto } from './dto/start-account-import.dto';
 import { ExportRequestDto } from '../common/export';
 import { Throttle } from '@nestjs/throttler';
@@ -61,6 +61,8 @@ export class AccountsController {
 
   @Patch(':id')
   @RequirePermission('edit', 'accounts')
+  @UseAcl('edit', 'accounts')
+  @LoadResource('accounts')
   @UsePipes(new SanitizeMaskedInputPipe())
   update(@Param('id') id: string, @Body() data: Partial<Account>) {
     return this.service.update(id, data);
@@ -68,6 +70,8 @@ export class AccountsController {
 
   @Delete(':id')
   @RequirePermission('delete', 'accounts')
+  @UseAcl('delete', 'accounts')
+  @LoadResource('accounts')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

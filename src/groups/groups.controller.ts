@@ -13,7 +13,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { GroupsService } from './groups.service';
 import { CreateGroupDto, QueryGroupDto, UpdateGroupDto } from './dto/group.dto';
-import { RequirePermission } from '../common/permissions';
+import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
 
 @ApiTags('Groups')
 @ApiBearerAuth()
@@ -44,6 +44,8 @@ export class GroupsController {
 
   @Patch(':id')
   @RequirePermission('edit', 'groups')
+  @UseAcl('edit', 'groups')
+  @LoadResource('groups')
   @ApiOperation({ summary: 'Update a group' })
   update(@Param('id') id: string, @Body() dto: UpdateGroupDto) {
     return this.service.update(id, dto);
@@ -51,6 +53,8 @@ export class GroupsController {
 
   @Delete(':id')
   @RequirePermission('delete', 'groups')
+  @UseAcl('delete', 'groups')
+  @LoadResource('groups')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a group' })
   delete(@Param('id') id: string) {

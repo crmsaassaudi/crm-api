@@ -41,7 +41,7 @@ import { User } from './domain/user';
 import { UsersService } from './users.service';
 import { RolesGuard } from '../roles/roles.guard';
 import { ClsService } from 'nestjs-cls';
-import { RequirePermission } from '../common/permissions';
+import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
 import { AuthzPermissionCacheService } from '../common/permissions/authz-permission-cache.service';
 import {
   PaginationResponse,
@@ -249,6 +249,8 @@ export class UsersController {
   })
   @Patch(':id')
   @RequirePermission('edit', 'users')
+  @UseAcl('edit', 'users')
+  @LoadResource('users')
   @HttpCode(HttpStatus.OK)
   @ApiParam({
     name: 'id',
@@ -264,6 +266,8 @@ export class UsersController {
 
   @ApiOperation({ summary: 'Remove a user from the current tenant' })
   @RequirePermission('delete', 'users')
+  @UseAcl('delete', 'users')
+  @LoadResource('users')
   @Delete(':id/tenant')
   @ApiParam({ name: 'id', type: String, required: true })
   @HttpCode(HttpStatus.OK)
@@ -273,6 +277,8 @@ export class UsersController {
 
   @Delete(':id')
   @RequirePermission('delete', 'users')
+  @UseAcl('delete', 'users')
+  @LoadResource('users')
   @ApiParam({
     name: 'id',
     type: String,

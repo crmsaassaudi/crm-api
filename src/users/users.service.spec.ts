@@ -24,6 +24,7 @@ describe('UsersService', () => {
   let tenantsRepository: any;
   let groupRepository: any;
   let eventEmitter: ReturnType<typeof createEventBusMock>;
+  let sessionService: any;
 
   beforeEach(() => {
     usersRepository = {
@@ -91,11 +92,16 @@ describe('UsersService', () => {
 
     eventEmitter = createEventBusMock();
 
+    sessionService = {
+      deleteAllSessionsForUser: jest.fn().mockResolvedValue(undefined),
+    };
+
     service = new UsersService(
       usersRepository,
       filesService,
       cls as any,
       keycloakAdminService,
+      sessionService,
       tenantsRepository,
       groupRepository,
       eventEmitter as any,
@@ -391,12 +397,50 @@ describe('UsersService', () => {
         'user_to_remove',
         'tenant_1',
       );
+      // Losing tenant access revokes their live session rather than waiting
+      // out the 24h TTL.
+      expect(sessionService.deleteAllSessionsForUser).toHaveBeenCalledWith(
+        'user_to_remove',
+      );
     });
 
     it('should throw when user not found', async () => {
       await expect(service.removeFromTenant('nonexistent')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // UPDATE STATUS — session revocation on deactivation
+  // ═══════════════════════════════════════════════════════════════════
+  describe('updateStatus', () => {
+    it('should revoke sessions when a user is deactivated', async () => {
+      usersRepository.findById.mockResolvedValueOnce(
+        createUser({ id: 'user_1', status: { id: 'active' } as any }),
+      );
+      usersRepository.update.mockResolvedValueOnce(
+        createUser({ id: 'user_1', status: { id: 'inactive' } as any }),
+      );
+
+      await service.updateStatus('user_1', { id: 'inactive' } as any);
+
+      expect(sessionService.deleteAllSessionsForUser).toHaveBeenCalledWith(
+        'user_1',
+      );
+    });
+
+    it('should not revoke sessions when a user stays active', async () => {
+      usersRepository.findById.mockResolvedValueOnce(
+        createUser({ id: 'user_1', status: { id: 'active' } as any }),
+      );
+      usersRepository.update.mockResolvedValueOnce(
+        createUser({ id: 'user_1', status: { id: 'active' } as any }),
+      );
+
+      await service.updateStatus('user_1', { id: 'active' } as any);
+
+      expect(sessionService.deleteAllSessionsForUser).not.toHaveBeenCalled();
     });
   });
 

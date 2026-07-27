@@ -65,6 +65,8 @@ export class AssignmentAdminService {
     private readonly audit: AssignmentAuditLogRepository,
     @InjectModel(AssignmentSkillSchemaClass.name)
     private readonly skillModel: Model<AssignmentSkillDocument>,
+    @InjectModel('GroupSchemaClass')
+    private readonly groupModel: Model<any>,
     private readonly cls: ClsService,
   ) {}
 
@@ -147,6 +149,39 @@ export class AssignmentAdminService {
     }
   }
 
+  /**
+   * A rule's `groupIds` must belong to this tenant. At runtime the group
+   * lookup is already tenant-scoped by `tenantFilterPlugin`, so a foreign or
+   * dangling id just resolves to zero candidates rather than leaking anything
+   * — but that failure is silent and confusing. Reject it here instead, the
+   * same way `ChannelSupportService.assertGroupsInTenant` does for channel
+   * support pools.
+   */
+  private async assertGroupsInTenant(
+    tenantId: string,
+    groupIds: string[],
+  ): Promise<void> {
+    if (groupIds.length === 0) return;
+
+    const objectIds = groupIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    const found = await this.groupModel
+      .find({ _id: { $in: objectIds }, tenantId: new Types.ObjectId(tenantId) })
+      .select('_id')
+      .lean()
+      .exec();
+
+    const foundSet = new Set(found.map((g: any) => String(g._id)));
+    const missing = groupIds.filter((id) => !foundSet.has(String(id)));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Team(s) not found in this workspace: ${missing.join(', ')}`,
+      );
+    }
+  }
+
   async listRules(objectType?: string) {
     const tenantId = this.tenantId;
     return this.rules.findAll(
@@ -160,6 +195,7 @@ export class AssignmentAdminService {
     const objectType = this.objectTypeOf(dto.objectType);
     this.validateConditions(objectType, dto.conditions ?? []);
     this.validateActions(dto.actions ?? {});
+    await this.assertGroupsInTenant(tenantId, dto.actions?.groupIds ?? []);
 
     const priority =
       dto.priority ?? (await this.rules.nextPriority(tenantId, objectType));
@@ -212,6 +248,10 @@ export class AssignmentAdminService {
         groupIds: dto.actions.groupIds ?? existing.actions.groupIds,
         strategy: dto.actions.strategy ?? existing.actions.strategy,
       });
+      await this.assertGroupsInTenant(
+        tenantId,
+        dto.actions.groupIds ?? existing.actions.groupIds,
+      );
     }
 
     const patch: Record<string, unknown> = {};

@@ -1,8 +1,10 @@
 import {
+  ForbiddenException,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { RoleAssignmentService } from './role-assignment.service';
+import { AUTHZ_PERMISSION_CACHE } from './authz.tokens';
 
 describe('RoleAssignmentService', () => {
   const tenantId = 'tenant_1';
@@ -16,7 +18,11 @@ describe('RoleAssignmentService', () => {
   let moduleRef: any;
   let userRepository: any;
   let groupRepository: any;
+  let authzCache: any;
+  let cls: any;
   let service: RoleAssignmentService;
+
+  const callerId = 'admin_1';
 
   beforeEach(() => {
     model = {
@@ -25,10 +31,23 @@ describe('RoleAssignmentService', () => {
       findOne: jest.fn(),
     };
     customRoles = {
-      findById: jest.fn().mockResolvedValue({ id: roleId }),
+      findById: jest.fn().mockResolvedValue({ id: roleId, permissions: [] }),
     };
     audit = { record: jest.fn().mockResolvedValue(undefined) };
     eventEmitter = { emit: jest.fn() };
+
+    // The caller (grantedById in most tests, resolved here via CLS) is
+    // distinct from every principal these pre-existing tests target, and
+    // holds full access by default so the escalation check is a no-op for
+    // them unless a test overrides authzCache.explainForUser.
+    cls = { get: jest.fn().mockReturnValue(callerId) };
+    authzCache = {
+      explainForUser: jest.fn().mockResolvedValue({
+        fullAccess: true,
+        tenantCeiling: [],
+        effective: [],
+      }),
+    };
 
     // ModuleRef stub backing the H-03 principal-membership check. Default: the
     // principal IS a member of the tenant, so the pre-existing tests keep
@@ -42,11 +61,11 @@ describe('RoleAssignmentService', () => {
       findById: jest.fn().mockResolvedValue({ id: 'group_1' }),
     };
     moduleRef = {
-      get: jest.fn((token: any) =>
-        String(token?.name).includes('Group')
-          ? groupRepository
-          : userRepository,
-      ),
+      get: jest.fn((token: any) => {
+        if (String(token?.name).includes('Group')) return groupRepository;
+        if (token === AUTHZ_PERMISSION_CACHE) return authzCache;
+        return userRepository;
+      }),
     };
 
     service = new RoleAssignmentService(
@@ -55,6 +74,7 @@ describe('RoleAssignmentService', () => {
       audit,
       eventEmitter,
       moduleRef,
+      cls,
     );
   });
 
@@ -146,6 +166,72 @@ describe('RoleAssignmentService', () => {
     expect(eventEmitter.emit).toHaveBeenCalledWith('group.updated', {
       tenantId,
       groupId: 'group_1',
+    });
+  });
+
+  describe('anti-escalation invariant', () => {
+    it('should refuse a self-grant', async () => {
+      cls.get.mockReturnValue(userId); // caller === target
+
+      await expect(
+        service.grant({
+          tenantId,
+          principalType: 'user',
+          principalId: userId,
+          roleId,
+          grantedById: userId,
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(model.create).not.toHaveBeenCalled();
+    });
+
+    it('should refuse to grant a role carrying keys the caller does not hold', async () => {
+      customRoles.findById.mockResolvedValueOnce({
+        id: roleId,
+        permissions: ['contacts:view', 'settings:manage_system'],
+      });
+      authzCache.explainForUser.mockResolvedValueOnce({
+        fullAccess: false,
+        tenantCeiling: [
+          'contacts:view',
+          'settings:manage_system',
+          'settings:view',
+        ],
+        effective: ['contacts:view'], // caller lacks settings:manage_system
+      });
+
+      await expect(
+        service.grant({
+          tenantId,
+          principalType: 'user',
+          principalId: userId,
+          roleId,
+          grantedById: callerId,
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(model.create).not.toHaveBeenCalled();
+    });
+
+    it('should allow granting a role whose keys are all within the caller effective set', async () => {
+      customRoles.findById.mockResolvedValueOnce({
+        id: roleId,
+        permissions: ['contacts:view'],
+      });
+      authzCache.explainForUser.mockResolvedValueOnce({
+        fullAccess: false,
+        tenantCeiling: ['contacts:view', 'settings:manage_system'],
+        effective: ['contacts:view'],
+      });
+
+      await service.grant({
+        tenantId,
+        principalType: 'user',
+        principalId: userId,
+        roleId,
+        grantedById: callerId,
+      });
+
+      expect(model.create).toHaveBeenCalled();
     });
   });
 

@@ -189,9 +189,19 @@ export class ConversationCandidatePort implements CandidateSourcePort {
         .map((id) => new Types.ObjectId(id));
       if (ids.length > 0) {
         try {
+          // Raw driver call — bypasses the Mongoose model's tenantFilterPlugin,
+          // unlike groupMembers() above. Explicit filter needed here (mirrors
+          // record-candidate.port.ts's fix for the same gap): without it, a
+          // candidate id that falls through to this fallback (cold/evicted
+          // presence cache) could disclose another tenant's user data.
           const users = await this.connection
             .collection('users')
-            .find({ _id: { $in: ids } })
+            .find({
+              _id: { $in: ids },
+              'tenants.tenantId': Types.ObjectId.isValid(scope.tenantId)
+                ? new Types.ObjectId(scope.tenantId)
+                : scope.tenantId,
+            })
             .project({ _id: 1, skills: 1 })
             .toArray();
           for (const user of users) {

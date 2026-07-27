@@ -29,7 +29,7 @@ import {
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
-import { RequirePermission } from '../common/permissions';
+import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
 import { StartDealImportDto } from './dto/start-deal-import.dto';
 import { ExportRequestDto } from '../common/export';
 import { ActivityLogService } from '../activity-log/activity-log.service';
@@ -93,6 +93,8 @@ export class DealsController {
 
   @Patch(':id')
   @RequirePermission('edit', 'deals')
+  @UseAcl('edit', 'deals')
+  @LoadResource('deals')
   @UsePipes(new SanitizeMaskedInputPipe())
   update(@Param('id') id: string, @Body() data: UpdateDealDto) {
     return this.service.update(id, data as Partial<Deal>);
@@ -100,6 +102,8 @@ export class DealsController {
 
   @Delete(':id')
   @RequirePermission('delete', 'deals')
+  @UseAcl('delete', 'deals')
+  @LoadResource('deals')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

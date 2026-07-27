@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ObjectAcl, ObjectAclDocument } from './object-acl.schema';
+import { AuthzAuditService } from '../authz-audit/authz-audit.service';
 
 export interface AclEntry {
   resourceType: string;
@@ -36,6 +37,7 @@ export class ObjectAclService {
   constructor(
     @InjectModel(ObjectAcl.name)
     private readonly aclModel: Model<ObjectAclDocument>,
+    private readonly audit: AuthzAuditService,
   ) {}
 
   // ── Read ────────────────────────────────────────────────────────────────
@@ -127,7 +129,17 @@ export class ObjectAclService {
   async upsert(entry: AclEntry): Promise<ObjectAcl> {
     const { resourceType, resourceId, principalType, principalId, tenantId } =
       entry;
-    return this.aclModel
+    const before = await this.aclModel
+      .findOne({
+        resourceType,
+        resourceId,
+        principalType,
+        principalId,
+        tenantId,
+      })
+      .lean()
+      .exec();
+    const saved = (await this.aclModel
       .findOneAndUpdate(
         { resourceType, resourceId, principalType, principalId, tenantId },
         {
@@ -139,7 +151,19 @@ export class ObjectAclService {
         { upsert: true, new: true },
       )
       .lean()
-      .exec() as Promise<ObjectAcl>;
+      .exec()) as ObjectAcl;
+
+    void this.audit.record({
+      category: 'OBJECT_ACL',
+      action: before ? 'update' : 'create',
+      targetType: resourceType,
+      targetId: resourceId,
+      summary: `${entry.isDeny ? 'denied' : 'granted'} ${entry.permissions.join(',')} to ${principalType} ${principalId}`,
+      before,
+      after: saved,
+    });
+
+    return saved;
   }
 
   /**
@@ -151,9 +175,21 @@ export class ObjectAclService {
     resourceId: string,
     principalId: string,
   ): Promise<void> {
-    await this.aclModel
-      .deleteOne({ tenantId, resourceType, resourceId, principalId })
+    const removed = await this.aclModel
+      .findOneAndDelete({ tenantId, resourceType, resourceId, principalId })
+      .lean()
       .exec();
+
+    if (removed) {
+      void this.audit.record({
+        category: 'OBJECT_ACL',
+        action: 'delete',
+        targetType: resourceType,
+        targetId: resourceId,
+        summary: `revoked ACL entry for ${principalId}`,
+        before: removed,
+      });
+    }
   }
 
   /**
@@ -164,9 +200,24 @@ export class ObjectAclService {
     resourceType: string,
     resourceId: string,
   ): Promise<void> {
+    const removed = await this.aclModel
+      .find({ tenantId, resourceType, resourceId })
+      .lean()
+      .exec();
     await this.aclModel
       .deleteMany({ tenantId, resourceType, resourceId })
       .exec();
     this.logger.debug(`Purged ACL for ${resourceType}/${resourceId}`);
+
+    if (removed.length) {
+      void this.audit.record({
+        category: 'OBJECT_ACL',
+        action: 'delete',
+        targetType: resourceType,
+        targetId: resourceId,
+        summary: `purged all ${removed.length} ACL entries`,
+        before: removed,
+      });
+    }
   }
 }
