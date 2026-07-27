@@ -620,7 +620,10 @@ export class ConversationOpsProcessor
 
     this.syncPresenceOnAssignment(cmd.tenantId, syncCapacity);
 
-    if (auditLog?.channelType && (agentId !== undefined || groupId !== undefined)) {
+    if (
+      auditLog?.channelType &&
+      (agentId !== undefined || groupId !== undefined)
+    ) {
       this.logAssignmentAuditTrail(
         cmd.tenantId,
         cmd.conversationId,

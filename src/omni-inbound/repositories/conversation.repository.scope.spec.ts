@@ -1,5 +1,9 @@
+import { Types } from 'mongoose';
 import { ConversationRepository } from './conversation.repository';
 import { createClsMock } from '../../test/mocks/cls.mock';
+
+const CH_PRIVATE = new Types.ObjectId().toString();
+const CH_PUBLIC = new Types.ObjectId().toString();
 
 /**
  * C4 regression suite: conversations (which have no ownerId) must be scoped
@@ -120,5 +124,98 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
   it('should allows any conversation for an admin (visibleOwnerIds null)', () => {
     const cls = createClsMock({ visibleOwnerIds: null });
     expect(inScope(build(cls), { assignedAgentId: 'anyone' })).toBe(true);
+  });
+
+  // ── M18: per-channel visibility overrides ──────────────────────────────
+  describe('per-channel visibility overrides (M18)', () => {
+    it('should bypass everyone but still restrict an explicitly-private channel (list)', () => {
+      const cls = createClsMock({
+        visibleOwnerIds: null, // e.g. public_read tenant
+        strictOwnerIds: ['u1'],
+        visibleGroupIds: [],
+        channelVisibilityOverrides: { [CH_PRIVATE]: 'private' },
+      });
+      const filter = buildFilter(build(cls), { tenantId: 't1' });
+      const clause = filter.$and[0].$or;
+
+      expect(clause).toContainEqual({
+        channelId: { $nin: [expect.anything()] },
+      });
+      const restricted = clause.find((c: any) => c.$and);
+      expect(restricted.$and[1].$or).toContainEqual({
+        assignedAgentId: { $in: ['u1'] },
+      });
+    });
+
+    it('should skip the restriction entirely when bypassed and the strict scope itself is unrestricted (list)', () => {
+      const cls = createClsMock({
+        visibleOwnerIds: null,
+        strictOwnerIds: null, // e.g. the viewer's own role scope is TENANT
+        channelVisibilityOverrides: { [CH_PRIVATE]: 'private' },
+      });
+      const filter = buildFilter(build(cls), { tenantId: 't1' });
+      expect(filter.$and).toBeUndefined();
+    });
+
+    it('should add a public_read channel as an extra OR branch under a scoped default (list)', () => {
+      const cls = createClsMock({
+        visibleOwnerIds: ['u1'],
+        visibleGroupIds: [],
+        channelVisibilityOverrides: { [CH_PUBLIC]: 'public_read' },
+      });
+      const filter = buildFilter(build(cls), { tenantId: 't1' });
+      const clause = filter.$and[0].$or;
+
+      expect(clause).toContainEqual({
+        channelId: { $in: [expect.anything()] },
+      });
+      expect(clause).toContainEqual({ assignedAgentId: { $in: ['u1'] } });
+    });
+
+    it('should deny a conversation outside the strict scope on a strictly-private channel even when globally bypassed (single-record)', () => {
+      const cls = createClsMock({
+        visibleOwnerIds: null,
+        strictOwnerIds: ['u1'],
+        visibleGroupIds: [],
+        channelVisibilityOverrides: { [CH_PRIVATE]: 'private' },
+      });
+      expect(
+        inScope(build(cls), {
+          channelId: CH_PRIVATE,
+          assignedAgentId: 'stranger',
+        }),
+      ).toBe(false);
+      expect(
+        inScope(build(cls), { channelId: CH_PRIVATE, assignedAgentId: 'u1' }),
+      ).toBe(true);
+    });
+
+    it('should admit a conversation even outside the scoped default on a public_read channel (single-record)', () => {
+      const cls = createClsMock({
+        visibleOwnerIds: ['u1'],
+        visibleGroupIds: [],
+        channelVisibilityOverrides: { [CH_PUBLIC]: 'public_read' },
+      });
+      expect(
+        inScope(build(cls), {
+          channelId: CH_PUBLIC,
+          assignedAgentId: 'stranger',
+        }),
+      ).toBe(true);
+    });
+
+    it('should follow the normal scope for a channel with no override, unaffected by other channels overriding (single-record)', () => {
+      const cls = createClsMock({
+        visibleOwnerIds: ['u1'],
+        visibleGroupIds: [],
+        channelVisibilityOverrides: { [CH_PUBLIC]: 'public_read' },
+      });
+      expect(
+        inScope(build(cls), {
+          channelId: 'ch_unrelated',
+          assignedAgentId: 'stranger',
+        }),
+      ).toBe(false);
+    });
   });
 });

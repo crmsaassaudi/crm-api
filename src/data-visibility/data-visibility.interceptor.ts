@@ -114,21 +114,27 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       //    they are unassigned or assigned to a visible colleague.
       //    null → no restriction (every channel in the tenant is open).
       const userGroupIds = await this.resolveUserGroupIds(tenantId, userId);
+      this.cls.set('visibleGroupIds', userGroupIds);
       this.cls.set(
         'servableChannelIds',
-        await this.resolveServableChannelIds(tenantId, userId, userGroupIds),
+        await this.resolveServableChannelIds(tenantId, userId),
       );
+
+      // 2b. Per-channel override of the tenant default (M18): a channel can
+      // force 'private' or 'public_read' regardless of the tenant-wide
+      // setting below. Not wrapped in its own try/catch — an unresolvable
+      // override must fail the whole request closed via the outer catch,
+      // not silently fall back to {} (which would widen a channel that was
+      // deliberately set to 'private').
+      const visibilityOverrides =
+        await this.resolveChannelVisibilityOverrides(tenantId);
+      this.cls.set('channelVisibilityOverrides', visibilityOverrides);
+      const needsStrictScope =
+        Object.values(visibilityOverrides).includes('private');
 
       // 3. Check data_visibility settings
       const settings = await this.settingsService.getSetting('data_visibility');
       const defaultAccess = settings?.defaultAccess ?? 'private';
-
-      // If public_read, everyone sees everything (subject to the channel axis)
-      if (defaultAccess === 'public_read') {
-        this.cls.set('visibleOwnerIds', null);
-        this.cls.set('visibleOrgUnitIds', null);
-        return;
-      }
 
       // C3: unowned (ownerId null/missing) records are hidden from scoped
       // users by default — they must NOT leak to everyone. Tenants that rely
@@ -140,60 +146,45 @@ export class DataVisibilityInterceptor implements NestInterceptor {
         settings?.unownedRecordsVisibleToAll === true,
       );
 
-      // 3. Resolve the principal's DataScope, then translate it into filters.
-      //
+      // If public_read, everyone sees everything (subject to the channel
+      // axis) UNLESS a specific channel forces 'private' — that channel then
+      // needs the scope computed below applied just to it, so only pay for it
+      // when at least one channel actually asks for it.
+      if (defaultAccess === 'public_read') {
+        this.cls.set('visibleOwnerIds', null);
+        this.cls.set('visibleOrgUnitIds', null);
+        if (needsStrictScope) {
+          const strict = await this.computeScopeBasedVisibility(
+            tenantId,
+            userId,
+            settings?.defaultScope,
+          );
+          this.cls.set('strictOwnerIds', strict.ownerIds);
+          this.cls.set('strictOrgUnitIds', strict.orgUnitIds);
+        }
+        return;
+      }
+
       // H-07: this is where "Department / Branch / Organization scope" actually
       // becomes enforcement. Before, the only scope that existed was the
       // reportsToId subtree, so a role labelled "sees the whole department" in
       // the admin UI behaved identically to one labelled "sees own records".
-      const { scope, orgUnitId } = await this.resolveScope(
+      const scoped = await this.computeScopeBasedVisibility(
         tenantId,
         userId,
         settings?.defaultScope,
       );
-
-      // TENANT scope is the old "Organization" level. It is not a bypass of the
-      // tenant boundary — tenantFilterPlugin still applies underneath — it just
-      // adds no owner restriction on top.
-      if (scope === DataScope.TENANT) {
-        this.cls.set('visibleOwnerIds', null);
-        this.cls.set('visibleOrgUnitIds', null);
-        this.cls.set('visibleGroupIds', userGroupIds);
-        return;
-      }
-
-      // SELF stops at the principal; anything wider follows the reportsToId
-      // chain. Org-unit scopes include the hierarchy too: a unit head normally
-      // also has direct reports, and dropping them would make a WIDER scope
-      // show FEWER records than a narrower one.
-      const visibleIds =
-        scope === DataScope.SELF
-          ? [userId]
-          : await this.hierarchyService.getVisibleOwnerIds(tenantId, userId);
-
-      // The org-unit axis, unioned with the owner axis at query time. Empty for
-      // SELF / SUBORDINATES, and empty for an unassigned user under any scope —
-      // an empty list contributes no rows rather than matching everything.
-      this.cls.set(
-        'visibleOrgUnitIds',
-        await this.orgUnits.resolveScopeUnitIds(tenantId, orgUnitId, scope),
-      );
-
-      // 3b. Groups the user belongs to. Used by entities scoped by group
-      // assignment rather than ownerId (e.g. omni conversations, C4).
-      this.cls.set('visibleGroupIds', userGroupIds);
-
-      // 4. Check sharing rules for additional shared IDs
-      const sharedIds = await this.resolveSharedIds(tenantId, userId);
-      if (sharedIds.length > 0) {
-        const combined = [...new Set([...visibleIds, ...sharedIds])];
-        this.cls.set('visibleOwnerIds', combined);
-      } else {
-        this.cls.set('visibleOwnerIds', visibleIds);
+      this.cls.set('visibleOwnerIds', scoped.ownerIds);
+      this.cls.set('visibleOrgUnitIds', scoped.orgUnitIds);
+      // defaultAccess isn't 'public_read' in this branch, so the scope-based
+      // result IS the strict result already — no extra query needed.
+      if (needsStrictScope) {
+        this.cls.set('strictOwnerIds', scoped.ownerIds);
+        this.cls.set('strictOrgUnitIds', scoped.orgUnitIds);
       }
 
       this.logger.debug(
-        `Visibility for user ${userId}: ${visibleIds.length} owner IDs`,
+        `Visibility for user ${userId}: ${scoped.ownerIds?.length ?? 'unrestricted'} owner IDs`,
       );
     } catch (e) {
       // Fail-closed: visibility failures must never widen access.
@@ -203,10 +194,66 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       this.cls.set('visibleOwnerIds', []);
       this.cls.set('visibleOrgUnitIds', []);
       this.cls.set('servableChannelIds', []);
+      this.cls.set('channelVisibilityOverrides', {});
+      this.cls.set('strictOwnerIds', []);
+      this.cls.set('strictOrgUnitIds', []);
       throw new InternalServerErrorException(
         'Data visibility resolution failed',
       );
     }
+  }
+
+  /**
+   * DataScope → CLS-shaped visibility, independent of the tenant's
+   * `defaultAccess` setting. Shared by the normal (non public_read) path and
+   * by the per-channel 'private' override, which needs this exact
+   * computation even when the tenant default would otherwise bypass it.
+   *
+   * TENANT scope is the old "Organization" level. It is not a bypass of the
+   * tenant boundary — tenantFilterPlugin still applies underneath — it just
+   * adds no owner restriction on top.
+   *
+   * SELF stops at the principal; anything wider follows the reportsToId
+   * chain. Org-unit scopes include the hierarchy too: a unit head normally
+   * also has direct reports, and dropping them would make a WIDER scope show
+   * FEWER records than a narrower one.
+   */
+  private async computeScopeBasedVisibility(
+    tenantId: string,
+    userId: string,
+    configuredDefaultScope: unknown,
+  ): Promise<{ ownerIds: string[] | null; orgUnitIds: string[] | null }> {
+    const { scope, orgUnitId } = await this.resolveScope(
+      tenantId,
+      userId,
+      configuredDefaultScope,
+    );
+
+    if (scope === DataScope.TENANT) {
+      return { ownerIds: null, orgUnitIds: null };
+    }
+
+    const visibleIds =
+      scope === DataScope.SELF
+        ? [userId]
+        : await this.hierarchyService.getVisibleOwnerIds(tenantId, userId);
+
+    // Empty for SELF / SUBORDINATES, and empty for an unassigned user under
+    // any scope — an empty list contributes no rows rather than matching
+    // everything, so it is unioned with the owner axis at query time.
+    const orgUnitIds = await this.orgUnits.resolveScopeUnitIds(
+      tenantId,
+      orgUnitId,
+      scope,
+    );
+
+    const sharedIds = await this.resolveSharedIds(tenantId, userId);
+    const ownerIds =
+      sharedIds.length > 0
+        ? [...new Set([...visibleIds, ...sharedIds])]
+        : visibleIds;
+
+    return { ownerIds, orgUnitIds };
   }
 
   /**
@@ -309,23 +356,36 @@ export class DataVisibilityInterceptor implements NestInterceptor {
   private async resolveServableChannelIds(
     tenantId: string,
     userId: string,
-    userGroupIds: string[],
   ): Promise<string[] | null> {
     try {
       const support = this.moduleRef.get(ChannelSupportService, {
         strict: false,
       });
-      return await support.listServableChannelIds(
-        tenantId,
-        userId,
-        userGroupIds,
-      );
+      return await support.listServableChannelIds(tenantId, userId);
     } catch (e) {
       this.logger.error(
         `Channel visibility resolution failed, fail-closed: ${(e as Error).message}`,
       );
       return [];
     }
+  }
+
+  /**
+   * Channels that explicitly override the tenant's data_visibility default
+   * (M18), keyed by channel id. Deliberately NOT fail-soft like
+   * resolveServableChannelIds above: defaulting to {} on error would make a
+   * channel someone explicitly set to 'private' quietly inherit whatever the
+   * tenant-wide default is instead — a widening failure. Errors propagate to
+   * the outer catch, which fails the whole request closed.
+   */
+  private async resolveChannelVisibilityOverrides(
+    tenantId: string,
+  ): Promise<Record<string, 'private' | 'public_read'>> {
+    const support = this.moduleRef.get(ChannelSupportService, {
+      strict: false,
+    });
+    const overrides = await support.listVisibilityOverrides(tenantId);
+    return Object.fromEntries(overrides);
   }
 
   /**

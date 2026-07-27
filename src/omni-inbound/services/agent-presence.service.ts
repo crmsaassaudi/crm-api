@@ -980,7 +980,10 @@ export class AgentPresenceService {
    * capacity check on two conversations claimed in quick succession before
    * either increment landed.
    */
-  async claimIfUnderCapacity(tenantId: string, userId: string): Promise<boolean> {
+  async claimIfUnderCapacity(
+    tenantId: string,
+    userId: string,
+  ): Promise<boolean> {
     const client = this.redis.getClient();
     const result = await client.eval(
       LUA_CLAIM_IF_UNDER_CAPACITY,

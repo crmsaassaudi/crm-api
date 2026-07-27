@@ -1275,7 +1275,6 @@ async function setDataVisibilitySettings(
     defaultAccess: 'private',
     defaultScope: 'self',
     unownedRecordsVisibleToAll: false,
-    moduleOverrides: existing?.value?.moduleOverrides ?? {},
   };
 
   if (!dryRun) {

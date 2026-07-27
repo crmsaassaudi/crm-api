@@ -97,10 +97,45 @@ export class ConversationRepository {
       if (!channel || !servable.map(String).includes(channel)) return false;
     }
 
-    const visibleOwnerIds = this.cls.get('visibleOwnerIds');
-    if (!Array.isArray(visibleOwnerIds)) return true; // bypass / system path
+    // M18: a channel can force 'private' or 'public_read' regardless of the
+    // tenant-wide default the rest of this method would otherwise apply.
+    const channelId = doc.channelId ? String(doc.channelId) : null;
+    const overrides =
+      (this.cls.get('channelVisibilityOverrides') as Record<
+        string,
+        'private' | 'public_read'
+      >) ?? {};
+    const override = channelId ? overrides[channelId] : undefined;
 
-    const owners = new Set(visibleOwnerIds.map(String));
+    const visibleOwnerIds = this.cls.get('visibleOwnerIds');
+
+    if (!Array.isArray(visibleOwnerIds)) {
+      // bypass (admin / public_read / TENANT scope)
+      if (override !== 'private') return true;
+      const strictOwnerIds = this.cls.get('strictOwnerIds');
+      if (!Array.isArray(strictOwnerIds)) return true; // the strict scope itself is unrestricted
+      return this.isWithinOwnerScope(
+        doc,
+        strictOwnerIds,
+        this.cls.get('strictOrgUnitIds'),
+      );
+    }
+
+    if (override === 'public_read') return true;
+    return this.isWithinOwnerScope(
+      doc,
+      visibleOwnerIds,
+      this.cls.get('visibleOrgUnitIds'),
+    );
+  }
+
+  /** Owner/org-unit/group scope check shared by the normal and strict (M18) paths. */
+  private isWithinOwnerScope(
+    doc: any,
+    ownerIds: string[],
+    orgUnitIds: unknown,
+  ): boolean {
+    const owners = new Set(ownerIds.map(String));
     const groups = new Set(
       ((this.cls.get('visibleGroupIds') as string[]) ?? []).map(String),
     );
@@ -113,6 +148,11 @@ export class ConversationRepository {
     if (group && groups.has(group)) return true;
     if (!agent && !group && this.cls.get('includeUnownedInScope') === true) {
       return true;
+    }
+
+    if (Array.isArray(orgUnitIds) && orgUnitIds.length > 0) {
+      const orgUnit = doc.orgUnitId ? String(doc.orgUnitId) : null;
+      if (orgUnit && orgUnitIds.map(String).includes(orgUnit)) return true;
     }
     return false;
   }
@@ -291,23 +331,104 @@ export class ConversationRepository {
   ): void {
     this.applyChannelScope(filter);
 
-    const visibleOwnerIds = this.cls.get('visibleOwnerIds');
-    // null → bypass (admin/owner); undefined → not evaluated (system path)
-    if (!Array.isArray(visibleOwnerIds)) return;
+    const overrides =
+      (this.cls.get('channelVisibilityOverrides') as Record<
+        string,
+        'private' | 'public_read'
+      >) ?? {};
+    const publicReadChannelIds = this.channelObjectIds(
+      overrides,
+      'public_read',
+    );
+    const privateChannelIds = this.channelObjectIds(overrides, 'private');
 
-    const visibleGroupIds = (this.cls.get('visibleGroupIds') as string[]) ?? [];
-    const scopeClauses: FilterQuery<OmniConversationDocument>[] = [
-      { assignedAgentId: { $in: visibleOwnerIds } },
-      { claimedById: { $in: visibleOwnerIds } },
-    ];
-    if (visibleGroupIds.length > 0) {
-      scopeClauses.push({ assignedGroupId: { $in: visibleGroupIds } });
+    const visibleOwnerIds = this.cls.get('visibleOwnerIds');
+
+    if (!Array.isArray(visibleOwnerIds)) {
+      // Bypass (admin/owner, public_read, or TENANT scope) — undefined means
+      // "not evaluated" (system path), which never has overrides either.
+      if (privateChannelIds.length === 0) return;
+
+      // M18: one or more channels force 'private' regardless of the bypass
+      // above. Everything outside those channels stays unrestricted; inside
+      // them, the viewer's own scope (computed as `strictOwnerIds` by
+      // DataVisibilityInterceptor) applies.
+      const strictOwnerIds = this.cls.get('strictOwnerIds');
+      if (!Array.isArray(strictOwnerIds)) return; // strict scope itself unrestricted
+
+      const strictClauses = this.buildOwnerScopeClauses(
+        strictOwnerIds,
+        this.cls.get('strictOrgUnitIds'),
+      );
+      (filter.$and ??= []).push({
+        $or: [
+          { channelId: { $nin: privateChannelIds } },
+          {
+            $and: [
+              { channelId: { $in: privateChannelIds } },
+              { $or: strictClauses },
+            ],
+          },
+        ],
+      });
+      return;
     }
-    if (this.cls.get('includeUnownedInScope') === true) {
-      scopeClauses.push({ assignedAgentId: null, assignedGroupId: null });
+
+    const scopeClauses = this.buildOwnerScopeClauses(
+      visibleOwnerIds,
+      this.cls.get('visibleOrgUnitIds'),
+    );
+    if (publicReadChannelIds.length > 0) {
+      // M18: these channels bypass the owner scope regardless of it.
+      scopeClauses.push({ channelId: { $in: publicReadChannelIds } });
     }
 
     (filter.$and ??= []).push({ $or: scopeClauses });
+  }
+
+  /**
+   * C4: the owner/group/org-unit scope clauses, shared by the normal path and
+   * the strict (M18 per-channel 'private' override) path.
+   *
+   *   - visibleGroupIds: groups the user belongs to
+   *   - includeUnownedInScope: whether unassigned conversations are visible
+   *
+   * H16: the org-unit axis is unioned like document-repository does for CRM
+   * records — "my assignments AND my unit's conversations", not an
+   * intersection. Without this a manager scoped to ORG_UNIT saw the
+   * department's contacts/deals but none of its conversations.
+   */
+  private buildOwnerScopeClauses(
+    ownerIds: string[],
+    orgUnitIds: unknown,
+  ): FilterQuery<OmniConversationDocument>[] {
+    const visibleGroupIds = (this.cls.get('visibleGroupIds') as string[]) ?? [];
+    const clauses: FilterQuery<OmniConversationDocument>[] = [
+      { assignedAgentId: { $in: ownerIds } },
+      { claimedById: { $in: ownerIds } },
+    ];
+    if (visibleGroupIds.length > 0) {
+      clauses.push({ assignedGroupId: { $in: visibleGroupIds } });
+    }
+    if (this.cls.get('includeUnownedInScope') === true) {
+      clauses.push({ assignedAgentId: null, assignedGroupId: null });
+    }
+    if (Array.isArray(orgUnitIds) && orgUnitIds.length > 0) {
+      clauses.push({ orgUnitId: { $in: orgUnitIds } });
+    }
+    return clauses;
+  }
+
+  /** Channel ids with a given visibility override, as valid ObjectIds. */
+  private channelObjectIds(
+    overrides: Record<string, 'private' | 'public_read'>,
+    kind: 'private' | 'public_read',
+  ): Types.ObjectId[] {
+    return Object.entries(overrides)
+      .filter(([, v]) => v === kind)
+      .map(([id]) => id)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
   }
 
   /**
@@ -1329,6 +1450,12 @@ export class ConversationRepository {
       tenantId,
       contactId,
     };
+    // C14: this lookup used to skip applyVisibilityScope entirely, so any
+    // principal with view:omni_channel could read every conversation for a
+    // contact via ?contactId=, including ones on a restricted channel they
+    // are not in the support pool for, and ones owned by someone outside
+    // their scope. Same enforcement as the main list/detail paths.
+    this.applyVisibilityScope(filter);
     const sort: Record<string, SortOrder> = { lastMessageAt: -1 };
 
     const safePage = Math.max(1, page);

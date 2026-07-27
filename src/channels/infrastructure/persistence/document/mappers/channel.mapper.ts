@@ -1,6 +1,7 @@
 ﻿import {
   Channel,
   ChannelSupport,
+  ChannelVisibility,
   DEFAULT_CHANNEL_SUPPORT,
 } from '../../../../domain/channel';
 import { ChannelSchemaClass } from '../entities/channel.schema';
@@ -19,6 +20,12 @@ function toDomainSupport(raw: ChannelSchemaClass['support']): ChannelSupport {
   };
 }
 
+function toDomainVisibility(
+  raw: ChannelSchemaClass['visibility'],
+): ChannelVisibility {
+  return raw === 'private' || raw === 'public_read' ? raw : 'inherit';
+}
+
 export class ChannelMapper {
   static toDomain(raw: ChannelSchemaClass): Channel {
     const entity = new Channel();
@@ -30,6 +37,7 @@ export class ChannelMapper {
     entity.status = raw.status;
     entity.config = raw.config;
     entity.support = toDomainSupport(raw.support);
+    entity.visibility = toDomainVisibility(raw.visibility);
     if (raw.credentials) {
       entity.credentials = raw.credentials;
     }
@@ -48,6 +56,7 @@ export class ChannelMapper {
     p.status = entity.status;
     p.config = entity.config;
     if (entity.support) p.support = entity.support;
+    if (entity.visibility) p.visibility = entity.visibility;
     if (entity.credentials) p.credentials = entity.credentials;
     return p;
   }

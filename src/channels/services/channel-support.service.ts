@@ -10,7 +10,11 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Model, Types } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
 import { ChannelRepository } from '../infrastructure/persistence/document/repositories/channel.repository';
-import { ChannelSupport, ChannelSupportMode } from '../domain/channel';
+import {
+  ChannelSupport,
+  ChannelSupportMode,
+  ChannelVisibility,
+} from '../domain/channel';
 import { UpdateChannelSupportDto } from '../dto/channel.dto';
 
 /**
@@ -34,6 +38,8 @@ export interface ResolvedChannelPool {
   mode: ChannelSupportMode;
   agentIds: string[] | null;
   groupIds: string[];
+  /** 'inherit' unless the channel explicitly overrides the tenant default (M18). */
+  visibility: ChannelVisibility;
 }
 
 /**
@@ -99,6 +105,10 @@ export class ChannelSupportService {
       groupIds: dto.groupIds ?? current.groupIds,
       mode: dto.mode ?? current.mode,
     };
+    const currentVisibility: ChannelVisibility =
+      channel.visibility ?? 'inherit';
+    const nextVisibility: ChannelVisibility =
+      dto.visibility ?? currentVisibility;
 
     // Dedupe before validating so a repeated id is not reported twice.
     next.userIds = [...new Set(next.userIds.map(String))];
@@ -109,6 +119,7 @@ export class ChannelSupportService {
 
     const updated = await this.channelRepository.update(tenantId, channelId, {
       support: next,
+      visibility: nextVisibility,
     } as any);
     if (!updated) throw new NotFoundException('Channel not found');
 
@@ -123,12 +134,16 @@ export class ChannelSupportService {
       providerType: channel.type,
       tenantId,
       userId: this.cls.get('userId') ?? 'system',
-      changes: { support: { before: current, after: next } },
+      changes: {
+        support: { before: current, after: next },
+        visibility: { before: currentVisibility, after: nextVisibility },
+      },
     });
 
     this.logger.log(
       `Channel ${channelId} support updated: mode=${next.mode}, ` +
-        `users=${next.userIds.length}, groups=${next.groupIds.length}`,
+        `users=${next.userIds.length}, groups=${next.groupIds.length}, ` +
+        `visibility=${nextVisibility}`,
     );
     return updated.support;
   }
@@ -252,12 +267,10 @@ export class ChannelSupportService {
   async listServableChannelIds(
     tenantId: string,
     userId: string,
-    userGroupIds: string[],
   ): Promise<string[] | null> {
     const pools = await this.getPoolsCached(tenantId);
     if (pools.size === 0) return null;
 
-    const groupSet = new Set(userGroupIds.map(String));
     const servable: string[] = [];
     let restrictedExists = false;
 
@@ -267,13 +280,36 @@ export class ChannelSupportService {
         continue;
       }
       restrictedExists = true;
-      const byUser = pool.agentIds.includes(String(userId));
-      const byGroup = pool.groupIds.some((g) => groupSet.has(String(g)));
-      if (byUser || byGroup) servable.push(pool.channelId);
+      // L19: `agentIds` is already the union of direct userIds and active
+      // group members (buildPools). Checking `pool.groupIds` again here used
+      // to let a channel stay "visible" through a group that had gone
+      // inactive — a group buildPools had already dropped from the pool a
+      // user could actually be assigned in. One source of truth: membership
+      // in the resolved pool, same as assertAgentEligible / routing use.
+      if (pool.agentIds.includes(String(userId))) servable.push(pool.channelId);
     }
 
     // Nothing restricts this tenant — skip the extra filter clause entirely.
     return restrictedExists ? servable : null;
+  }
+
+  /**
+   * Channels that explicitly override the tenant's data_visibility default
+   * (M18), keyed by channel id. Channels left at 'inherit' are omitted so
+   * callers can cheaply check "does anything override here at all" via
+   * `.size === 0` before doing any extra scope work.
+   */
+  async listVisibilityOverrides(
+    tenantId: string,
+  ): Promise<Map<string, 'private' | 'public_read'>> {
+    const pools = await this.getPoolsCached(tenantId);
+    const overrides = new Map<string, 'private' | 'public_read'>();
+    for (const pool of pools.values()) {
+      if (pool.visibility === 'private' || pool.visibility === 'public_read') {
+        overrides.set(pool.channelId, pool.visibility);
+      }
+    }
+    return overrides;
   }
 
   invalidate(tenantId: string): void {
@@ -333,15 +369,14 @@ export class ChannelSupportService {
       result.set(String(channel.id), {
         channelId: String(channel.id),
         mode: support.mode === 'restricted' ? 'restricted' : 'open',
-        // An empty pool on a restricted channel means nobody — keep it as [],
-        // not null, so `assertAgentEligible` rejects rather than admits.
-        agentIds:
-          support.mode === 'restricted'
-            ? union
-            : union.length > 0
-              ? union
-              : null,
+        // 'open' always means unrestricted, even if userIds/groupIds still
+        // hold a stale list (e.g. left over from a prior 'restricted' period).
+        // Only 'restricted' pools are ever bounded — an empty one then means
+        // nobody ([], not null), so `assertAgentEligible` rejects rather than
+        // admits.
+        agentIds: support.mode === 'restricted' ? union : null,
         groupIds,
+        visibility: channel.visibility ?? 'inherit',
       });
     }
 

@@ -88,6 +88,27 @@ export class ChannelSchemaClass extends EntityDocumentHelper {
     mode: 'restricted' | 'open';
   };
 
+  /**
+   * Per-channel override of the tenant's `data_visibility.defaultAccess`
+   * setting (M18). Independent of `support`: `support.mode` decides who may
+   * be ASSIGNED to / SERVE this channel at all; `visibility` decides, among
+   * those who can serve it, whether they see only their own scope's
+   * conversations or every conversation on the channel.
+   *
+   * - 'inherit'     → use the tenant-wide `defaultAccess` (default).
+   * - 'private'     → this channel's conversations always follow the
+   *   viewer's normal owner/org-unit scope, even under a tenant-wide
+   *   `public_read` default.
+   * - 'public_read' → this channel's conversations are visible to anyone who
+   *   can serve the channel, even under a tenant-wide `private` default.
+   */
+  @Prop({
+    type: String,
+    enum: ['inherit', 'private', 'public_read'],
+    default: 'inherit',
+  })
+  visibility: 'inherit' | 'private' | 'public_read';
+
   // Sensitive credentials — never returned in list API
   @Prop({ type: MongooseSchema.Types.Mixed, select: false })
   credentials: Record<string, any>;

@@ -11,6 +11,7 @@ import { AuthzPermissionCacheService } from '../common/permissions/authz-permiss
 import { OrgUnitsService } from '../org-units/org-units.service';
 import { UsersDocumentRepository } from '../users/infrastructure/persistence/document/repositories/user.repository';
 import { GroupRepository } from '../groups/infrastructure/persistence/document/repositories/group.repository';
+import { ChannelSupportService } from '../channels/services/channel-support.service';
 
 const USER = '507f1f77bcf86cd799439011';
 const SUBORDINATE = '507f1f77bcf86cd799439022';
@@ -23,6 +24,10 @@ describe('DataVisibilityInterceptor', () => {
   let groupRepository: { findGroupsByMember: jest.Mock };
   let authzCache: { resolveDataScope: jest.Mock };
   let orgUnits: { resolveScopeUnitIds: jest.Mock };
+  let channelSupport: {
+    listServableChannelIds: jest.Mock;
+    listVisibilityOverrides: jest.Mock;
+  };
   let moduleRef: { get: jest.Mock };
   let interceptor: DataVisibilityInterceptor;
 
@@ -69,8 +74,12 @@ describe('DataVisibilityInterceptor', () => {
     orgUnits = {
       resolveScopeUnitIds: jest.fn().mockResolvedValue([]),
     };
+    channelSupport = {
+      listServableChannelIds: jest.fn().mockResolvedValue(null),
+      listVisibilityOverrides: jest.fn().mockResolvedValue(new Map()),
+    };
 
-    // Dispatch on the requested token — the interceptor resolves four different
+    // Dispatch on the requested token — the interceptor resolves five different
     // providers lazily through the same ModuleRef.
     moduleRef = {
       get: jest.fn((token: unknown) => {
@@ -78,6 +87,7 @@ describe('DataVisibilityInterceptor', () => {
         if (token === OrgUnitsService) return orgUnits;
         if (token === UsersDocumentRepository) return userRepository;
         if (token === GroupRepository) return groupRepository;
+        if (token === ChannelSupportService) return channelSupport;
         throw new Error(`Unexpected provider requested: ${String(token)}`);
       }),
     };
@@ -298,6 +308,89 @@ describe('DataVisibilityInterceptor', () => {
 
       // Falls back to SUBORDINATES, not to TENANT.
       expect(written('visibleOwnerIds')).toEqual([USER, SUBORDINATE]);
+    });
+  });
+
+  describe('M18: per-channel visibility overrides', () => {
+    it('should compute the strict scope under a public_read tenant when a channel forces private', async () => {
+      settingsService.getSetting.mockResolvedValue({
+        defaultAccess: 'public_read',
+      });
+      channelSupport.listVisibilityOverrides.mockResolvedValue(
+        new Map([['ch_private', 'private']]),
+      );
+      authzCache.resolveDataScope.mockResolvedValue({
+        scope: DataScope.SUBORDINATES,
+        orgUnitId: null,
+      });
+
+      await run();
+
+      // The tenant-wide axes still bypass everyone...
+      expect(written('visibleOwnerIds')).toBeNull();
+      expect(written('visibleOrgUnitIds')).toBeNull();
+      // ...but the strict scope is computed and stashed for the repository to
+      // apply just to ch_private.
+      expect(written('strictOwnerIds')).toEqual([USER, SUBORDINATE]);
+      expect(written('channelVisibilityOverrides')).toEqual({
+        ch_private: 'private',
+      });
+    });
+
+    it('should not pay for the strict scope when no channel overrides to private', async () => {
+      settingsService.getSetting.mockResolvedValue({
+        defaultAccess: 'public_read',
+      });
+      channelSupport.listVisibilityOverrides.mockResolvedValue(
+        new Map([['ch_public', 'public_read']]),
+      );
+
+      await run();
+
+      expect(hierarchyService.getVisibleOwnerIds).not.toHaveBeenCalled();
+      expect(written('strictOwnerIds')).toBeUndefined();
+      expect(written('channelVisibilityOverrides')).toEqual({
+        ch_public: 'public_read',
+      });
+    });
+
+    it('should reuse the scoped result as the strict result under a private tenant default', async () => {
+      channelSupport.listVisibilityOverrides.mockResolvedValue(
+        new Map([['ch_private', 'private']]),
+      );
+      authzCache.resolveDataScope.mockResolvedValue({
+        scope: DataScope.SUBORDINATES,
+        orgUnitId: null,
+      });
+
+      await run();
+
+      expect(written('visibleOwnerIds')).toEqual([USER, SUBORDINATE]);
+      expect(written('strictOwnerIds')).toEqual([USER, SUBORDINATE]);
+    });
+
+    it('should fail the whole request closed if overrides cannot be resolved, rather than defaulting to none', async () => {
+      channelSupport.listVisibilityOverrides.mockRejectedValueOnce(
+        new Error('cache miss'),
+      );
+
+      await expect(run()).rejects.toBeInstanceOf(InternalServerErrorException);
+      expect(written('visibleOwnerIds')).toEqual([]);
+      expect(written('channelVisibilityOverrides')).toEqual({});
+    });
+
+    it('should have admin bypass ignore overrides entirely', async () => {
+      userRepository.findById.mockResolvedValue({
+        tenants: [{ tenantId: 'tenant_1', roles: [TenantRoleEnum.ADMIN] }],
+      });
+      channelSupport.listVisibilityOverrides.mockResolvedValue(
+        new Map([['ch_private', 'private']]),
+      );
+
+      await run();
+
+      expect(channelSupport.listVisibilityOverrides).not.toHaveBeenCalled();
+      expect(written('visibleOwnerIds')).toBeNull();
     });
   });
 

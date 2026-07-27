@@ -1184,13 +1184,9 @@ const DEFAULT_OMNI_SESSION_LIFECYCLE = {
  *   - 'private':     Users see only records they own + subordinates' records (role hierarchy).
  *                    Admin/Owner roles bypass this restriction.
  *   - 'public_read': All users can see all records across the tenant (no ownerId filtering).
- *
- * moduleOverrides: Per-module overrides. e.g. Tickets might be 'public_read'
- *                  even if the default is 'private'.
  */
 const DEFAULT_DATA_VISIBILITY = {
   defaultAccess: 'private',
-  moduleOverrides: {} as Record<string, 'private' | 'public_read'>,
 };
 
 /**

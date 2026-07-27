@@ -129,6 +129,23 @@ describe('ChannelSupportService', () => {
       expect(pool?.agentIds).toBeNull();
     });
 
+    it('should return null agentIds for an open channel even with a stale populated list', async () => {
+      // H15: an 'open' channel must never let auto-routing narrow down to a
+      // leftover userIds/groupIds list from a prior 'restricted' period —
+      // mode is the single source of truth, not "is the list empty".
+      channelRepo.findAll.mockResolvedValue([
+        channel('ch1', {
+          userIds: [AGENT_IN_POOL],
+          groupIds: [GROUP_A],
+          mode: 'open',
+        }),
+      ]);
+
+      const pool = await service.resolvePool(TENANT, 'ch1');
+
+      expect(pool?.agentIds).toBeNull();
+    });
+
     it('should return an EMPTY pool for a restricted channel with no members', async () => {
       // The distinction that matters: [] admits nobody, null admits everyone.
       // Collapsing the two would silently open a channel that was locked down
@@ -234,7 +251,7 @@ describe('ChannelSupportService', () => {
       ]);
 
       await expect(
-        service.listServableChannelIds(TENANT, AGENT_OUTSIDE, []),
+        service.listServableChannelIds(TENANT, AGENT_OUTSIDE),
       ).resolves.toBeNull();
     });
 
@@ -245,23 +262,21 @@ describe('ChannelSupportService', () => {
         channel('ch_other', { userIds: [AGENT_OUTSIDE], mode: 'restricted' }),
       ]);
 
-      const ids = await service.listServableChannelIds(
-        TENANT,
-        AGENT_IN_POOL,
-        [],
-      );
+      const ids = await service.listServableChannelIds(TENANT, AGENT_IN_POOL);
 
       expect(ids?.sort()).toEqual(['ch_mine', 'ch_open']);
     });
 
     it('should admit a restricted channel through group membership', async () => {
+      // L19: membership now comes solely from the pool's own resolved
+      // agentIds (userIds ∪ actual group members), not a caller-supplied
+      // group list — AGENT_IN_GROUP is a real member of GROUP_A per the
+      // group lookup mock (`groupMembers`).
       channelRepo.findAll.mockResolvedValue([
         channel('ch_group', { groupIds: [GROUP_A], mode: 'restricted' }),
       ]);
 
-      const ids = await service.listServableChannelIds(TENANT, AGENT_OUTSIDE, [
-        GROUP_A,
-      ]);
+      const ids = await service.listServableChannelIds(TENANT, AGENT_IN_GROUP);
 
       expect(ids).toEqual(['ch_group']);
     });
@@ -271,9 +286,7 @@ describe('ChannelSupportService', () => {
         channel('ch_group', { groupIds: [GROUP_A], mode: 'restricted' }),
       ]);
 
-      const ids = await service.listServableChannelIds(TENANT, AGENT_OUTSIDE, [
-        GROUP_B,
-      ]);
+      const ids = await service.listServableChannelIds(TENANT, AGENT_OUTSIDE);
 
       expect(ids).toEqual([]);
     });

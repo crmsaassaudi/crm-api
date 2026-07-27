@@ -222,6 +222,16 @@ export class UpdateChannelSupportDto {
   @IsEnum(['restricted', 'open'])
   @IsOptional()
   mode?: 'restricted' | 'open';
+
+  @ApiPropertyOptional({
+    enum: ['inherit', 'private', 'public_read'],
+    description:
+      "Per-channel override of the tenant's data_visibility default. " +
+      "'inherit' defers to the tenant setting.",
+  })
+  @IsEnum(['inherit', 'private', 'public_read'])
+  @IsOptional()
+  visibility?: 'inherit' | 'private' | 'public_read';
 }
 
 export class MetaAuthUrlQueryDto {

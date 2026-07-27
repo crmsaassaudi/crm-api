@@ -21,6 +21,9 @@ export const DEFAULT_CHANNEL_SUPPORT: ChannelSupport = {
   mode: 'open',
 };
 
+/** Per-channel override of the tenant `data_visibility.defaultAccess` setting. */
+export type ChannelVisibility = 'inherit' | 'private' | 'public_read';
+
 export class Channel {
   @ApiProperty()
   id: string;
@@ -60,6 +63,15 @@ export class Channel {
       'authorization boundary; mode=open makes them a routing preference only.',
   })
   support: ChannelSupport;
+
+  @ApiProperty({
+    enum: ['inherit', 'private', 'public_read'],
+    description:
+      'Per-channel override of the tenant-wide data_visibility default. ' +
+      "'inherit' defers to the tenant setting; 'private'/'public_read' force " +
+      'the owner-scope behaviour for this channel regardless of it.',
+  })
+  visibility: ChannelVisibility;
 
   credentials?: Record<string, any>;
 
