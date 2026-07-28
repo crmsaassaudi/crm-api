@@ -108,6 +108,14 @@ export class ContactsService {
       ownerId,
     } as any);
 
+    this.entityAudit.emit({
+      entity: 'contact',
+      entityType: 'CONTACT',
+      entityId: contact.id,
+      kind: 'created',
+      newSnapshot: contact,
+    });
+
     // Emit automation event: record_created.Contact
     this.emitAutomationEvent('record_created', contact);
 

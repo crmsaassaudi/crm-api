@@ -29,8 +29,10 @@
 export const LUA_RESERVE_FIRST_ELIGIBLE = `
 local loadKey = KEYS[1]
 local capKey = KEYS[2]
+local leaseKey = KEYS[3]
 local n = tonumber(ARGV[1])
 local defaultCap = tonumber(ARGV[n + 2])
+local leaseTtl = tonumber(ARGV[n + 3])
 
 for i = 1, n do
   local id = ARGV[i + 1]
@@ -44,6 +46,9 @@ for i = 1, n do
     if cap == nil or cap <= 0 then cap = defaultCap end
     if tonumber(score) < cap then
       redis.call('ZINCRBY', loadKey, 1, id)
+      if leaseKey ~= '' then
+        redis.call('SET', leaseKey, id, 'EX', leaseTtl)
+      end
       return id
     end
   end
@@ -58,7 +63,9 @@ return nil
  */
 export const LUA_RESERVE_LEAST_BUSY = `
 local loadKey = KEYS[1]
+local leaseKey = KEYS[3]
 local n = tonumber(ARGV[1])
+local leaseTtl = tonumber(ARGV[n + 3])
 local bestId = nil
 local bestLoad = nil
 
@@ -76,6 +83,9 @@ end
 
 if not bestId then return nil end
 redis.call('ZINCRBY', loadKey, 1, bestId)
+if leaseKey ~= '' then
+  redis.call('SET', leaseKey, bestId, 'EX', leaseTtl)
+end
 return bestId
 `;
 
@@ -83,8 +93,10 @@ return bestId
 export const LUA_RESERVE_CAPACITY_BASED = `
 local loadKey = KEYS[1]
 local capKey = KEYS[2]
+local leaseKey = KEYS[3]
 local n = tonumber(ARGV[1])
 local defaultCap = tonumber(ARGV[n + 2])
+local leaseTtl = tonumber(ARGV[n + 3])
 local bestId = nil
 local bestLoad = nil
 
@@ -108,6 +120,9 @@ end
 
 if not bestId then return nil end
 redis.call('ZINCRBY', loadKey, 1, bestId)
+if leaseKey ~= '' then
+  redis.call('SET', leaseKey, bestId, 'EX', leaseTtl)
+end
 return bestId
 `;
 

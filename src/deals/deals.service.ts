@@ -214,10 +214,18 @@ export class DealsService {
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'create');
 
-    return this.repository.create({
+    const deal = await this.repository.create({
       ...data,
       name: data.title || data.name,
     } as any);
+    this.entityAudit.emit({
+      entity: 'deal',
+      entityType: 'DEAL',
+      entityId: deal.id,
+      kind: 'created',
+      newSnapshot: deal,
+    });
+    return deal;
   }
 
   async findAll(filter: any): Promise<any> {
@@ -262,7 +270,16 @@ export class DealsService {
   }
 
   async remove(id: string): Promise<void> {
-    return this.repository.remove(id);
+    const existing = await this.repository.findOne({ _id: id });
+    await this.repository.remove(id);
+    this.entityAudit.emit({
+      entity: 'deal',
+      entityType: 'DEAL',
+      entityId: id,
+      kind: 'updated',
+      oldSnapshot: existing ?? {},
+      newSnapshot: { _deleted: true } as any,
+    });
   }
 
   /**

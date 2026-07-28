@@ -125,6 +125,10 @@ export class AssignmentAuditLogSchemaClass extends EntityDocumentHelper {
 
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   metadata: Record<string, any>;
+
+  /** Set only after the immutable archive copy commits successfully. */
+  @Prop({ type: Date, default: null })
+  archivedAt: Date | null;
 }
 
 export const AssignmentAuditLogSchema = SchemaFactory.createForClass(
@@ -167,4 +171,8 @@ AssignmentAuditLogSchema.index(
 AssignmentAuditLogSchema.index(
   { createdAt: 1 },
   { expireAfterSeconds: 90 * 24 * 60 * 60, name: 'assignment_audit_ttl_90d' },
+);
+AssignmentAuditLogSchema.index(
+  { archivedAt: 1, createdAt: 1 },
+  { name: 'assignment_audit_archive_due' },
 );

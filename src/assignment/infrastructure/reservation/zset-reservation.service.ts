@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type Redis from 'ioredis';
 import { IOREDIS_CLIENT } from '../../../redis/redis.tokens';
 import { AssignmentStrategy } from '../../domain/assignment.types';
@@ -10,6 +10,7 @@ import {
   LUA_RESERVE_FIRST_ELIGIBLE,
   LUA_RESERVE_LEAST_BUSY,
 } from './reservation.lua';
+import { AssignmentStrategyRegistry } from '../../core/assignment-strategy.registry';
 
 /**
  * Atomic reservation over a Redis ZSET of open-work counts.
@@ -38,10 +39,12 @@ export class ZsetReservationService {
    * morning's increments and reverted the pool to a raw MongoDB count.
    */
   private readonly LOAD_TTL_SECONDS = 24 * 3600;
+  private readonly LEASE_TTL_SECONDS = 10 * 60;
 
   constructor(
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     private readonly cursor: RoundRobinCursorService,
+    @Optional() private readonly strategies?: AssignmentStrategyRegistry,
   ) {}
 
   private loadKey(loadScope: string): string {
@@ -50,6 +53,10 @@ export class ZsetReservationService {
 
   private capKey(loadScope: string): string {
     return `assign:cap:${loadScope}`;
+  }
+
+  private leaseKey(commandId: string): string {
+    return `assign:lease:${commandId}`;
   }
 
   /**
@@ -132,7 +139,11 @@ export class ZsetReservationService {
    * in one round trip instead of one EVAL per candidate.
    */
   async reserve(
-    scopes: { loadScope: string; cursorScope: string },
+    scopes: {
+      loadScope: string;
+      cursorScope: string;
+      commandId?: string | null;
+    },
     orderedCandidateIds: string[],
     strategy: AssignmentStrategy,
     defaultCapacity: number,
@@ -140,10 +151,31 @@ export class ZsetReservationService {
   ): Promise<string | null> {
     if (orderedCandidateIds.length === 0) return null;
 
-    const script =
-      strategy === 'least-busy'
-        ? LUA_RESERVE_LEAST_BUSY
+    const leaseKey = scopes.commandId ? this.leaseKey(scopes.commandId) : '';
+    if (scopes.commandId) {
+      const leased = await this.redis.get(leaseKey);
+      if (leased && orderedCandidateIds.includes(leased)) {
+        await this.redis.expire(leaseKey, this.LEASE_TTL_SECONDS);
+        return leased;
+      }
+      if (leased) {
+        // The policy/candidate pool changed between attempts. Return the stale
+        // slot before selecting under the new eligible pool.
+        await this.release(scopes.loadScope, leased, scopes.commandId);
+      }
+    }
+
+    const mode =
+      this.strategies?.get(strategy)?.reservationMode ??
+      (strategy === 'least-busy'
+        ? 'least-load'
         : strategy === 'capacity-based'
+          ? 'capacity-load'
+          : 'first-eligible');
+    const script =
+      mode === 'least-load'
+        ? LUA_RESERVE_LEAST_BUSY
+        : mode === 'capacity-load'
           ? LUA_RESERVE_CAPACITY_BASED
           : LUA_RESERVE_FIRST_ELIGIBLE;
 
@@ -161,12 +193,14 @@ export class ZsetReservationService {
     try {
       const result = await this.redis.eval(
         script,
-        2,
+        3,
         this.loadKey(scopes.loadScope),
         capKeyArg,
+        leaseKey,
         String(orderedCandidateIds.length),
         ...orderedCandidateIds,
         String(capacity),
+        String(this.LEASE_TTL_SECONDS),
       );
       const reserved = typeof result === 'string' ? result : null;
       if (reserved) await this.cursor.advance(scopes.cursorScope, reserved);
@@ -221,7 +255,11 @@ export class ZsetReservationService {
   }
 
   /** Exact inverse of one `reserve()`. Never throws. */
-  async release(loadScope: string, candidateId: string): Promise<void> {
+  async release(
+    loadScope: string,
+    candidateId: string,
+    commandId?: string | null,
+  ): Promise<void> {
     try {
       await this.redis.eval(
         LUA_RELEASE,
@@ -229,10 +267,91 @@ export class ZsetReservationService {
         this.loadKey(loadScope),
         candidateId,
       );
+      if (commandId) await this.redis.del(this.leaseKey(commandId));
     } catch (err: any) {
       this.logger.error(
         `Failed to release reservation for ${candidateId} in ${loadScope}: ${err.message}`,
       );
     }
+  }
+
+  async completeLease(commandId?: string | null): Promise<void> {
+    if (!commandId) return;
+    await this.redis.del(this.leaseKey(commandId));
+  }
+
+  /**
+   * Adjust an already-seeded workload projection.
+   *
+   * Missing members are deliberately left missing: their first assignment read
+   * will seed the authoritative Mongo count. This avoids racing a lifecycle
+   * event against the initial aggregate and double-counting the same record.
+   */
+  async adjustIfTracked(
+    loadScope: string,
+    candidateId: string,
+    delta: number,
+  ): Promise<boolean> {
+    if (!candidateId || !Number.isFinite(delta) || delta === 0) return false;
+    const script = `
+local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if not score then return 0 end
+local next = tonumber(score) + tonumber(ARGV[2])
+if next < 0 then next = 0 end
+redis.call('ZADD', KEYS[1], next, ARGV[1])
+return 1
+`;
+    try {
+      const result = await this.redis.eval(
+        script,
+        1,
+        this.loadKey(loadScope),
+        candidateId,
+        String(Math.trunc(delta)),
+      );
+      return Number(result) === 1;
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to adjust tracked load for ${candidateId} in ${loadScope}: ${err.message}`,
+      );
+      return false;
+    }
+  }
+
+  /** Discover active record workload scopes without using Redis KEYS. */
+  async trackedLoadScopes(): Promise<string[]> {
+    const scopes: string[] = [];
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.redis.scan(
+        cursor,
+        'MATCH',
+        'assign:load:*',
+        'COUNT',
+        100,
+      );
+      cursor = next;
+      for (const key of keys) scopes.push(key.slice('assign:load:'.length));
+    } while (cursor !== '0');
+    return [...new Set(scopes)];
+  }
+
+  async trackedMembers(loadScope: string): Promise<string[]> {
+    return this.redis.zrange(this.loadKey(loadScope), 0, -1);
+  }
+
+  /** Replace only existing scores with an authoritative workload snapshot. */
+  async overwriteTracked(
+    loadScope: string,
+    loads: Map<string, number>,
+  ): Promise<void> {
+    if (loads.size === 0) return;
+    const pipeline = this.redis.pipeline();
+    const key = this.loadKey(loadScope);
+    for (const [candidateId, load] of loads) {
+      pipeline.zadd(key, 'XX', Math.max(0, load), candidateId);
+    }
+    pipeline.expire(key, this.LOAD_TTL_SECONDS);
+    await pipeline.exec();
   }
 }

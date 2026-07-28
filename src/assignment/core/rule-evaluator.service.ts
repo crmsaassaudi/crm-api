@@ -24,6 +24,8 @@ export interface RuleEvaluationResult {
   match: RuleMatch | null;
   /** Every rule considered, in priority order — the dry-run explain output. */
   traces: RuleTrace[];
+  /** Exact immutable inputs evaluated, used for reproducible policy snapshots. */
+  rules: AssignmentRule[];
 }
 
 /**
@@ -174,6 +176,6 @@ export class AssignmentRuleEvaluatorService
       }
     }
 
-    return { match, traces };
+    return { match, traces, rules };
   }
 }

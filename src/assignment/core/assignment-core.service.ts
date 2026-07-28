@@ -23,6 +23,8 @@ import {
 } from '../domain/assignment.types';
 import { RuleMatch } from '../domain/assignment-rule';
 import { AssignmentAttributes, RuleTrace } from '../domain/condition-evaluator';
+import { AssignmentPolicyVersionService } from '../application/assignment-policy-version.service';
+import { AssignmentStrategyRegistry } from './assignment-strategy.registry';
 
 // ── Request / response ─────────────────────────────────────────────────────
 
@@ -48,6 +50,7 @@ export interface AssignRequest {
   objectType: AssignmentObjectType;
   /** Absent for a pre-create or dry-run decision. */
   entityId?: string;
+  commandId?: string | null;
   /** Narrower settings/rotation scope — the omni channel id today. */
   scopeId?: string | null;
   /** Bag the rule conditions are matched against. */
@@ -135,6 +138,7 @@ export interface AssignDecision {
   rule: { id: string; name: string } | null;
   candidatePoolSize: number;
   eligiblePoolSize: number;
+  policyVersionId?: string | null;
   /** Present when `outcome === 'deferred'` — who to wait for and for how long. */
   deferred?: { assigneeId: string; waitMinutes: number };
   /** Present when `explain` was requested. */
@@ -197,6 +201,10 @@ export class AssignmentCoreService {
     @Optional()
     @Inject(ASSIGNMENT_ADAPTER)
     adapters: AssignmentAdapter[] | AssignmentAdapter | null,
+    @Optional()
+    private readonly policyVersions?: AssignmentPolicyVersionService,
+    @Optional()
+    private readonly strategies?: AssignmentStrategyRegistry,
   ) {
     const list = Array.isArray(adapters)
       ? adapters
@@ -228,6 +236,29 @@ export class AssignmentCoreService {
     return this.adapters.has(objectType);
   }
 
+  private queuePriority(attributes?: AssignmentAttributes): number {
+    const raw = attributes?.priority;
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+      return Math.max(0, Math.min(100, Math.floor(raw)));
+    }
+    const named: Record<string, number> = {
+      urgent: 100,
+      critical: 100,
+      high: 75,
+      normal: 50,
+      medium: 50,
+      low: 25,
+    };
+    return named[String(raw ?? '').toLowerCase()] ?? 50;
+  }
+
+  private slaDueAt(attributes?: AssignmentAttributes): Date | null {
+    const raw = attributes?.slaDueAt ?? attributes?.dueAt;
+    if (!raw) return null;
+    const date = new Date(raw as any);
+    return Number.isFinite(date.getTime()) ? date : null;
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
 
   async assign(request: AssignRequest): Promise<AssignDecision> {
@@ -236,6 +267,9 @@ export class AssignmentCoreService {
       objectType: request.objectType,
       entityId: request.entityId,
       scopeId: request.scopeId ?? null,
+      commandId: request.commandId ?? null,
+      queuePriority: this.queuePriority(request.attributes),
+      slaDueAt: this.slaDueAt(request.attributes),
     };
 
     if (request.bypass) {
@@ -322,6 +356,15 @@ export class AssignmentCoreService {
         request.attributes ?? {},
         request.explain === true,
       );
+      if (this.policyVersions && !request.dryRun) {
+        const policyVersionId = await this.policyVersions.capture(
+          request.tenantId,
+          request.objectType,
+          config,
+          evaluation.rules,
+        );
+        request.metadata = { ...(request.metadata ?? {}), policyVersionId };
+      }
       ruleMatch = evaluation.match;
       if (request.explain) traces = evaluation.traces;
     }
@@ -773,7 +816,10 @@ export class AssignmentCoreService {
     candidates: string[],
     strategy: AssignmentStrategy,
   ): Promise<string[]> {
-    if (strategy !== 'round-robin') return candidates;
+    const plugin = this.strategies?.get(strategy);
+    if (!(plugin?.rotateCandidates ?? strategy === 'round-robin')) {
+      return candidates;
+    }
     if (!adapter.load.rotate) return candidates;
     return adapter.load.rotate(scope, candidates);
   }
@@ -815,8 +861,14 @@ export class AssignmentCoreService {
 
     // Mirrors the reservation scripts: least-busy ignores capacity by design,
     // the other two respect it.
-    if (strategy === 'least-busy') return byLoad(candidates);
-    if (strategy === 'capacity-based') return byLoad(underCapacity);
+    const plugin = this.strategies?.get(strategy);
+    if (plugin?.loadOrdered ?? strategy !== 'round-robin') {
+      return byLoad(
+        (plugin?.enforceCapacity ?? strategy === 'capacity-based')
+          ? underCapacity
+          : candidates,
+      );
+    }
     return ordered.find((id) => underCapacity.includes(id)) ?? null;
   }
 
@@ -927,6 +979,23 @@ export class AssignmentCoreService {
         this.logger.warn(
           `Commit lost the race for ${scope.objectType} ${scope.entityId} — released ${assigneeId}`,
         );
+      } else if (adapter.commit.complete) {
+        try {
+          await adapter.commit.complete(scope);
+        } catch (cleanupError: any) {
+          this.logger.warn(
+            `Assignment committed but queue cleanup failed for ${scope.objectType} ${scope.entityId}: ${cleanupError.message}`,
+          );
+        }
+      }
+      if (ok && adapter.load.complete) {
+        try {
+          await adapter.load.complete(scope, assigneeId);
+        } catch (leaseError: any) {
+          this.logger.warn(
+            `Assignment committed but reservation lease cleanup failed for ${scope.objectType} ${scope.entityId}: ${leaseError.message}`,
+          );
+        }
       }
       return ok;
     } catch (err: any) {
@@ -1099,6 +1168,8 @@ export class AssignmentCoreService {
     request: AssignRequest,
     decision: AssignDecision,
   ): Promise<AssignDecision> {
+    decision.policyVersionId =
+      (request.metadata?.policyVersionId as string | undefined) ?? null;
     if (request.dryRun) return decision;
 
     const entry: WriteAuditEntry = {
@@ -1123,6 +1194,7 @@ export class AssignmentCoreService {
       eligiblePoolSize: decision.eligiblePoolSize,
       metadata: {
         scopeId: request.scopeId ?? null,
+        commandId: request.commandId ?? null,
         ...(request.metadata ?? {}),
       },
     };

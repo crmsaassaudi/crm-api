@@ -54,6 +54,10 @@ export class RecordCandidatePort implements CandidateSourcePort {
     this.logger.log('Presence provider wired for record assignment');
   }
 
+  isPresenceProviderConfigured(): boolean {
+    return this.presence !== null;
+  }
+
   basePool(_scope: AssignmentScope): Promise<string[] | undefined> {
     return Promise.resolve(undefined);
   }
@@ -136,7 +140,16 @@ export class RecordCandidatePort implements CandidateSourcePort {
     candidateIds: string[],
     requireOnline: boolean,
   ): Promise<string[]> {
-    if (candidateIds.length === 0 || !this.presence) return candidateIds;
+    if (candidateIds.length === 0) return candidateIds;
+    if (!this.presence) {
+      if (requireOnline) {
+        this.logger.warn(
+          'Online assignment is required but no presence provider is available',
+        );
+        return [];
+      }
+      return candidateIds;
+    }
 
     let onlineSet: Set<string>;
     try {
@@ -151,13 +164,12 @@ export class RecordCandidatePort implements CandidateSourcePort {
           .map((p) => p.userId),
       );
     } catch (err: any) {
-      // Fail open on the availability axis only: an unreachable presence layer
-      // must not stop records being assigned. `requireOnline` is a preference
-      // about *who*, not an authorisation boundary.
+      // A hard online requirement fails closed. Soft preference mode keeps the
+      // original candidates when presence is temporarily unavailable.
       this.logger.warn(
         `Presence unavailable while filtering candidates: ${err.message} — skipping the availability filter`,
       );
-      return candidateIds;
+      return requireOnline ? [] : candidateIds;
     }
 
     if (requireOnline) {

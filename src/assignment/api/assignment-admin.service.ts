@@ -5,7 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Connection, Model, Types } from 'mongoose';
+import { InjectConnection } from '@nestjs/mongoose';
 import { ClsService } from 'nestjs-cls';
 import { AssignmentRuleRepository } from '../infrastructure/persistence/assignment-rule.repository';
 import {
@@ -37,6 +38,10 @@ import {
   UpdateAssignmentSettingDto,
   UpdateAssignmentSkillDto,
 } from './dto/assignment.dto';
+import {
+  AssignmentQueueItemDocument,
+  AssignmentQueueItemSchemaClass,
+} from '../infrastructure/persistence/assignment-queue-item.schema';
 
 /** Serialisable skill, so no Mongoose document type leaks into the API. */
 export interface AssignmentSkillView {
@@ -45,6 +50,19 @@ export interface AssignmentSkillView {
   apiName: string;
   category: string | null;
   description: string | null;
+}
+
+export interface AssignmentQueueItemView {
+  _id: unknown;
+  objectType: string;
+  entityId: string;
+  groupId: unknown;
+  status: 'queued';
+  queuedAt: Date;
+  priority?: number;
+  slaDueAt?: Date | null;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 /**
@@ -67,6 +85,10 @@ export class AssignmentAdminService {
     private readonly skillModel: Model<AssignmentSkillDocument>,
     @InjectModel('GroupSchemaClass')
     private readonly groupModel: Model<any>,
+    @InjectModel(AssignmentQueueItemSchemaClass.name)
+    private readonly queueItemModel: Model<AssignmentQueueItemDocument>,
+    @InjectConnection()
+    private readonly connection: Connection,
     private readonly cls: ClsService,
   ) {}
 
@@ -182,6 +204,35 @@ export class AssignmentAdminService {
     }
   }
 
+  private async assertUsersInTenant(
+    tenantId: string,
+    userIds: Array<string | null | undefined>,
+  ): Promise<void> {
+    const ids = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
+    if (ids.length === 0) return;
+    const objectIds = ids
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    const tenantObjectId = Types.ObjectId.isValid(tenantId)
+      ? new Types.ObjectId(tenantId)
+      : tenantId;
+    const found = await this.connection
+      .collection('users')
+      .find({
+        _id: { $in: objectIds },
+        'tenants.tenantId': tenantObjectId,
+      })
+      .project({ _id: 1 })
+      .toArray();
+    const foundSet = new Set(found.map((user) => String(user._id)));
+    const missing = ids.filter((id) => !foundSet.has(id));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `User(s) are not members of this workspace: ${missing.join(', ')}`,
+      );
+    }
+  }
+
   async listRules(objectType?: string) {
     const tenantId = this.tenantId;
     return this.rules.findAll(
@@ -196,6 +247,7 @@ export class AssignmentAdminService {
     this.validateConditions(objectType, dto.conditions ?? []);
     this.validateActions(dto.actions ?? {});
     await this.assertGroupsInTenant(tenantId, dto.actions?.groupIds ?? []);
+    await this.assertUsersInTenant(tenantId, [dto.actions?.userId]);
 
     const priority =
       dto.priority ?? (await this.rules.nextPriority(tenantId, objectType));
@@ -252,6 +304,9 @@ export class AssignmentAdminService {
         tenantId,
         dto.actions.groupIds ?? existing.actions.groupIds,
       );
+      await this.assertUsersInTenant(tenantId, [
+        dto.actions.userId ?? existing.actions.userId,
+      ]);
     }
 
     const patch: Record<string, unknown> = {};
@@ -322,6 +377,11 @@ export class AssignmentAdminService {
 
   async updateSettings(objectType: string, dto: UpdateAssignmentSettingDto) {
     const type = this.objectTypeOf(objectType);
+    await this.assertGroupsInTenant(
+      this.tenantId,
+      dto.defaultGroupId ? [dto.defaultGroupId] : [],
+    );
+    await this.assertUsersInTenant(this.tenantId, [dto.fallbackOwnerId]);
     const patch: Record<string, unknown> = { ...dto };
     // An explicit null clears the reference; undefined must not overwrite it.
     for (const key of Object.keys(patch)) {
@@ -479,28 +539,96 @@ export class AssignmentAdminService {
     ruleId?: string;
     limit?: number;
   }) {
+    const requestedType = query.objectType
+      ? this.objectTypeOf(query.objectType)
+      : undefined;
     return this.audit.search(
       this.tenantId,
       {
-        objectType: query.objectType
-          ? this.objectTypeOf(query.objectType)
-          : undefined,
+        objectType: requestedType,
         entityId: query.entityId,
         assigneeId: query.assigneeId,
         outcome: query.outcome as AssignmentOutcome | undefined,
         source: query.source as AssignmentSource | undefined,
         ruleId: query.ruleId,
+        visibility: this.auditVisibility(requestedType),
       },
       query.limit ?? 50,
     );
   }
 
   async auditForEntity(objectType: string, entityId: string) {
-    return this.audit.findByEntity(
+    const type = this.objectTypeOf(objectType);
+    const visible = await this.audit.search(
       this.tenantId,
-      this.objectTypeOf(objectType),
-      entityId,
+      {
+        objectType: type,
+        entityId,
+        visibility: this.auditVisibility(type),
+      },
+      50,
     );
+    return visible.reverse();
+  }
+
+  async listQueue(query: {
+    objectType?: string;
+    groupId?: string;
+    limit?: number;
+  }): Promise<AssignmentQueueItemView[]> {
+    const filter: Record<string, unknown> = {
+      tenantId: this.tenantId,
+      status: 'queued',
+    };
+    const visibleGroups = this.cls.get<string[] | null>('visibleGroupIds');
+    if (visibleGroups !== null) {
+      filter.groupId = { $in: visibleGroups ?? [] };
+    }
+    if (query.objectType) {
+      filter.objectType = this.objectTypeOf(query.objectType);
+    }
+    if (query.groupId) {
+      if (!Types.ObjectId.isValid(query.groupId)) {
+        throw new BadRequestException('Invalid groupId');
+      }
+      if (visibleGroups !== null && !visibleGroups?.includes(query.groupId)) {
+        return [];
+      }
+      filter.groupId = new Types.ObjectId(query.groupId);
+    }
+    const limit = Math.max(1, Math.min(query.limit ?? 50, 200));
+    return this.queueItemModel
+      .find(filter)
+      .sort({ priority: -1, slaDueAt: 1, queuedAt: 1, _id: 1 })
+      .limit(limit)
+      .lean<AssignmentQueueItemView[]>()
+      .exec();
+  }
+
+  private auditVisibility(objectType?: AssignmentObjectType) {
+    const types = objectType ? [objectType] : builtInObjectTypes();
+    const byModule =
+      this.cls.get<
+        Record<
+          string,
+          { ownerIds: string[] | null; orgUnitIds: string[] | null }
+        >
+      >('dataVisibilityByModule') ?? {};
+    const baseOwnerIds = this.cls.get<string[] | null>('visibleOwnerIds');
+    const groupIds = this.cls.get<string[] | null>('visibleGroupIds');
+    return types.map((type) => {
+      const moduleOwnerIds = byModule[type]?.ownerIds;
+      return {
+        objectType: type,
+        ownerIds:
+          moduleOwnerIds !== undefined
+            ? moduleOwnerIds
+            : baseOwnerIds !== undefined
+              ? baseOwnerIds
+              : [],
+        groupIds: groupIds !== undefined ? groupIds : [],
+      };
+    });
   }
 }
 

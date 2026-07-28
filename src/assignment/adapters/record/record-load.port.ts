@@ -38,11 +38,17 @@ const LOAD_SOURCES: Record<string, ObjectTypeLoadSource> = {
   },
   Ticket: {
     collection: 'tickets',
-    activeFilter: { deletedAt: { $exists: false }, isClosed: { $ne: true } },
+    activeFilter: {
+      deletedAt: { $exists: false },
+      closedAt: { $exists: false },
+    },
   },
   Task: {
     collection: 'tasks',
-    activeFilter: { deletedAt: { $exists: false }, isClosed: { $ne: true } },
+    activeFilter: {
+      deletedAt: { $exists: false },
+      completedAt: { $exists: false },
+    },
   },
   Deal: {
     collection: 'deals',
@@ -185,6 +191,7 @@ export class RecordLoadPort implements LoadPort {
       {
         loadScope: this.loadScope(scope),
         cursorScope: this.cursorScope(scope),
+        commandId: scope.commandId,
       },
       orderedCandidateIds,
       strategy,
@@ -208,6 +215,41 @@ export class RecordLoadPort implements LoadPort {
   }
 
   async release(scope: AssignmentScope, candidateId: string): Promise<void> {
-    await this.reservation.release(this.loadScope(scope), candidateId);
+    await this.reservation.release(
+      this.loadScope(scope),
+      candidateId,
+      scope.commandId,
+    );
+  }
+
+  async complete(scope: AssignmentScope, _candidateId: string): Promise<void> {
+    await this.reservation.completeLease(scope.commandId);
+  }
+
+  async reconcileTrackedScope(
+    scope: AssignmentScope,
+  ): Promise<{ candidates: number; drifted: number; absoluteDrift: number }> {
+    const loadScope = this.loadScope(scope);
+    const candidateIds = await this.reservation.trackedMembers(loadScope);
+    if (candidateIds.length === 0) {
+      return { candidates: 0, drifted: 0, absoluteDrift: 0 };
+    }
+    const [stored, actual] = await Promise.all([
+      this.reservation.scores(loadScope, candidateIds),
+      this.countOpenWork(scope, candidateIds),
+    ]);
+    let drifted = 0;
+    let absoluteDrift = 0;
+    for (const id of candidateIds) {
+      const delta = (stored.get(id) ?? 0) - (actual.get(id) ?? 0);
+      if (delta !== 0) {
+        drifted++;
+        absoluteDrift += Math.abs(delta);
+      }
+    }
+    if (drifted > 0) {
+      await this.reservation.overwriteTracked(loadScope, actual);
+    }
+    return { candidates: candidateIds.length, drifted, absoluteDrift };
   }
 }

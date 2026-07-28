@@ -21,11 +21,11 @@ import { RequirePermission } from '../../common/permissions/permission.decorator
 import { AssignmentAdminService } from './assignment-admin.service';
 import {
   ASSIGNMENT_OBJECT_TYPES,
-  ASSIGNMENT_STRATEGIES,
   CONDITION_OPERATORS,
 } from '../domain/assignment.types';
 import {
   AuditQueryDto,
+  ClaimAssignmentQueueItemDto,
   CreateAssignmentRuleDto,
   CreateAssignmentSkillDto,
   DryRunDto,
@@ -34,6 +34,10 @@ import {
   UpdateAssignmentSettingDto,
   UpdateAssignmentSkillDto,
 } from './dto/assignment.dto';
+import { AssignmentQueueCommandService } from '../application/assignment-queue-command.service';
+import { Idempotent } from '../../common/decorators/idempotent.decorator';
+import { AssignableTypeRegistry } from '../core/assignable-type.registry';
+import { AssignmentStrategyRegistry } from '../core/assignment-strategy.registry';
 
 /**
  * The one assignment API, for every objectType.
@@ -49,25 +53,38 @@ import {
 @ApiBearerAuth()
 @Controller('assignment')
 export class AssignmentController {
-  constructor(private readonly service: AssignmentAdminService) {}
+  constructor(
+    private readonly service: AssignmentAdminService,
+    private readonly queueCommands: AssignmentQueueCommandService,
+    private readonly assignableTypes: AssignableTypeRegistry,
+    private readonly strategyRegistry: AssignmentStrategyRegistry,
+  ) {}
 
   // ── Vocabulary (UI metadata) ───────────────────────────────────────────
 
   @Get('meta')
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'routing_rules')
   @ApiOperation({
     summary: 'Enumerations the UI needs: objectTypes, strategies, operators',
   })
   meta() {
     return {
-      objectTypes: ASSIGNMENT_OBJECT_TYPES,
-      strategies: ASSIGNMENT_STRATEGIES,
+      objectTypes: this.assignableTypes.list().map((item) => item.objectType),
+      strategies: [
+        ...this.strategyRegistry.list().map((plugin) => plugin.name),
+        'manual',
+      ],
       operators: CONDITION_OPERATORS,
+      capabilities: Object.fromEntries(
+        this.assignableTypes
+          .list()
+          .map(({ objectType, ...capabilities }) => [objectType, capabilities]),
+      ),
     };
   }
 
   @Get('fields/:objectType')
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'routing_rules')
   @ApiParam({ name: 'objectType', enum: ASSIGNMENT_OBJECT_TYPES })
   @ApiOperation({ summary: 'Conditionable fields and their valid operators' })
   fields(@Param('objectType') objectType: string) {
@@ -77,21 +94,21 @@ export class AssignmentController {
   // ── Settings ───────────────────────────────────────────────────────────
 
   @Get('settings')
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'routing_rules')
   @ApiOperation({ summary: 'Resolved settings for every objectType' })
   getAllSettings() {
     return this.service.getAllSettings();
   }
 
   @Get('settings/:objectType')
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'routing_rules')
   @ApiParam({ name: 'objectType', enum: ASSIGNMENT_OBJECT_TYPES })
   getSettings(@Param('objectType') objectType: string) {
     return this.service.getSettings(objectType);
   }
 
   @Put('settings/:objectType')
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('edit', 'routing_rules')
   @ApiParam({ name: 'objectType', enum: ASSIGNMENT_OBJECT_TYPES })
   updateSettings(
     @Param('objectType') objectType: string,
@@ -103,33 +120,33 @@ export class AssignmentController {
   // ── Rules ──────────────────────────────────────────────────────────────
 
   @Get('rules')
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'routing_rules')
   @ApiOperation({ summary: 'List rules, optionally filtered by objectType' })
   listRules(@Query('objectType') objectType?: string) {
     return this.service.listRules(objectType);
   }
 
   @Post('rules')
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('create', 'routing_rules')
   createRule(@Body() dto: CreateAssignmentRuleDto) {
     return this.service.createRule(dto);
   }
 
   @Patch('rules/:id')
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('edit', 'routing_rules')
   updateRule(@Param('id') id: string, @Body() dto: UpdateAssignmentRuleDto) {
     return this.service.updateRule(id, dto);
   }
 
   @Delete('rules/:id')
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('delete', 'routing_rules')
   @HttpCode(HttpStatus.NO_CONTENT)
   deleteRule(@Param('id') id: string) {
     return this.service.deleteRule(id);
   }
 
   @Post('rules/reorder')
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('edit', 'routing_rules')
   @ApiOperation({ summary: 'Reorder rules within one objectType' })
   reorderRules(@Body() dto: ReorderRulesDto) {
     return this.service.reorderRules(dto.objectType, dto.orderedIds);
@@ -138,25 +155,25 @@ export class AssignmentController {
   // ── Skills ─────────────────────────────────────────────────────────────
 
   @Get('skills')
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'routing_rules')
   listSkills() {
     return this.service.listSkills();
   }
 
   @Post('skills')
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('create', 'routing_rules')
   createSkill(@Body() dto: CreateAssignmentSkillDto) {
     return this.service.createSkill(dto);
   }
 
   @Patch('skills/:id')
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('edit', 'routing_rules')
   updateSkill(@Param('id') id: string, @Body() dto: UpdateAssignmentSkillDto) {
     return this.service.updateSkill(id, dto);
   }
 
   @Delete('skills/:id')
-  @RequirePermission('manage_system', 'settings')
+  @RequirePermission('delete', 'routing_rules')
   @HttpCode(HttpStatus.NO_CONTENT)
   deleteSkill(@Param('id') id: string) {
     return this.service.deleteSkill(id);
@@ -165,7 +182,7 @@ export class AssignmentController {
   // ── Dry run ────────────────────────────────────────────────────────────
 
   @Post('dry-run')
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'routing_rules')
   @ApiOperation({
     summary: 'Simulate a decision — no reservation, no write, no audit row',
   })
@@ -175,15 +192,49 @@ export class AssignmentController {
 
   // ── Audit ──────────────────────────────────────────────────────────────
 
+  @Get('queue')
+  @RequirePermission('view', 'routing_rules')
+  @ApiOperation({ summary: 'Oldest-first durable CRM assignment queue' })
+  listQueue(
+    @Query('objectType') objectType?: string,
+    @Query('groupId') groupId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.service.listQueue({
+      objectType,
+      groupId,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Post('queue/:id/claim')
+  @RequirePermission('edit', 'routing_rules')
+  @Idempotent()
+  @ApiOperation({ summary: 'Atomically claim a queued CRM record' })
+  claimQueueItem(
+    @Param('id') id: string,
+    @Body() dto: ClaimAssignmentQueueItemDto,
+  ) {
+    return this.queueCommands.claim(id, dto.assigneeId);
+  }
+
+  @Post('queue/:id/retry')
+  @RequirePermission('edit', 'routing_rules')
+  @Idempotent()
+  @ApiOperation({ summary: 'Retry automatic assignment for a queued record' })
+  retryQueueItem(@Param('id') id: string) {
+    return this.queueCommands.retry(id);
+  }
+
   @Get('audit')
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'audit_logs')
   @ApiOperation({ summary: 'Assignment decision history across objectTypes' })
   searchAudit(@Query() query: AuditQueryDto) {
     return this.service.searchAudit(query);
   }
 
   @Get('audit/:objectType/:entityId')
-  @RequirePermission('view', 'settings')
+  @RequirePermission('view', 'audit_logs')
   @ApiParam({ name: 'objectType', enum: ASSIGNMENT_OBJECT_TYPES })
   @ApiOperation({ summary: 'Decision chain for one record, oldest first' })
   auditForEntity(

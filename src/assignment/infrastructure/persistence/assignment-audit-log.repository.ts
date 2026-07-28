@@ -67,6 +67,11 @@ export interface AuditSearchFilters {
   outcome?: AssignmentOutcome;
   ruleId?: string;
   source?: AssignmentSource;
+  visibility?: Array<{
+    objectType: AssignmentObjectType;
+    ownerIds: string[] | null;
+    groupIds: string[] | null;
+  }>;
 }
 
 function toHex(value: any): string | null {
@@ -194,6 +199,28 @@ export class AssignmentAuditLogRepository {
     if (filters.outcome) query.outcome = filters.outcome;
     if (filters.ruleId) query.ruleId = filters.ruleId;
     if (filters.source) query.source = filters.source;
+    if (filters.visibility) {
+      const clauses = filters.visibility.flatMap((scope) => {
+        if (scope.ownerIds === null && scope.groupIds === null) {
+          return [{ objectType: scope.objectType }];
+        }
+        const grants: Record<string, any>[] = [];
+        if (scope.ownerIds?.length) {
+          grants.push(
+            { assigneeId: { $in: scope.ownerIds } },
+            { previousAssigneeId: { $in: scope.ownerIds } },
+          );
+        }
+        if (scope.groupIds?.length) {
+          grants.push({ groupId: { $in: scope.groupIds } });
+        }
+        return grants.length
+          ? [{ objectType: scope.objectType, $or: grants }]
+          : [];
+      });
+      // Empty means the caller has no visible assignment records: fail closed.
+      query.$or = clauses.length ? clauses : [{ _id: { $exists: false } }];
+    }
     if (filters.entityId) {
       // entityId is a plain string here (it can be 'pre-create'), so an exact
       // match is safe and no ObjectId cast can throw.

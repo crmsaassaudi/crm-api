@@ -58,7 +58,13 @@ export class RecordCommitPort implements CommitPort {
         // Claim-only CAS: refuse to overwrite a record someone else already
         // owns. Without this, matchedCount was true regardless of the prior
         // owner, so a lost race was never detected or released.
-        $or: [{ ownerId: null }, { ownerId: { $exists: false } }],
+        $or: [
+          { ownerId: null },
+          { ownerId: { $exists: false } },
+          ...(scope.commandId
+            ? [{ lastAssignmentCommandId: scope.commandId }]
+            : []),
+        ],
       },
       {
         $set: {
@@ -66,6 +72,9 @@ export class RecordCommitPort implements CommitPort {
             ? new Types.ObjectId(assigneeId)
             : assigneeId,
           updatedAt: new Date(),
+          ...(scope.commandId
+            ? { lastAssignmentCommandId: scope.commandId }
+            : {}),
         },
       },
     );
@@ -76,13 +85,48 @@ export class RecordCommitPort implements CommitPort {
     return res.matchedCount > 0;
   }
 
-  /**
-   * Records have no group-queue field today, so there is nothing to park.
-   *
-   * Declared explicitly rather than omitted so that the day `assignedGroupId`
-   * (or an equivalent) lands on records, this is the one place to implement it.
-   */
-  park(_scope: AssignmentScope, _groupId: string): Promise<void> {
-    return Promise.resolve();
+  /** Persist durable team queue membership for an unassigned CRM record. */
+  async park(scope: AssignmentScope, groupId: string): Promise<void> {
+    if (!scope.entityId) return;
+    const tenantId = Types.ObjectId.isValid(scope.tenantId)
+      ? new Types.ObjectId(scope.tenantId)
+      : scope.tenantId;
+    await this.connection.collection('assignment_queue_items').updateOne(
+      {
+        tenantId,
+        objectType: scope.objectType,
+        entityId: scope.entityId,
+      },
+      {
+        $set: {
+          groupId: Types.ObjectId.isValid(groupId)
+            ? new Types.ObjectId(groupId)
+            : groupId,
+          status: 'queued',
+          priority: scope.queuePriority ?? 50,
+          slaDueAt: scope.slaDueAt ?? null,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: {
+          tenantId,
+          objectType: scope.objectType,
+          entityId: scope.entityId,
+          queuedAt: new Date(),
+          createdAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+  }
+
+  async complete(scope: AssignmentScope): Promise<void> {
+    if (!scope.entityId) return;
+    await this.connection.collection('assignment_queue_items').deleteOne({
+      tenantId: Types.ObjectId.isValid(scope.tenantId)
+        ? new Types.ObjectId(scope.tenantId)
+        : scope.tenantId,
+      objectType: scope.objectType,
+      entityId: scope.entityId,
+    });
   }
 }

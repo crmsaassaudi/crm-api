@@ -26,6 +26,10 @@ export interface AssignmentScope {
    * is fair within a team; capacity belongs to a person.
    */
   groupId?: string | null;
+  /** Durable command identity used by adapters for idempotent commits. */
+  commandId?: string | null;
+  queuePriority?: number;
+  slaDueAt?: Date | null;
 }
 
 /**
@@ -125,6 +129,9 @@ export interface LoadPort {
   /** Undo one reservation. Must be safe to call when nothing was reserved. */
   release(scope: AssignmentScope, candidateId: string): Promise<void>;
 
+  /** Finalize a successful reservation without decrementing durable workload. */
+  complete?(scope: AssignmentScope, candidateId: string): Promise<void>;
+
   /**
    * Who `reserve()` would pick, without reserving anything. Powers the dry run.
    *
@@ -172,6 +179,9 @@ export interface CommitPort {
    * failing to tag a queue must not turn a `queued` outcome into an error.
    */
   park?(scope: AssignmentScope, groupId: string): Promise<void>;
+
+  /** Remove any durable queue projection after a successful assignment. */
+  complete?(scope: AssignmentScope): Promise<void>;
 }
 
 /**

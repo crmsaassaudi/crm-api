@@ -146,6 +146,15 @@ export class ReorderRulesDto {
   orderedIds: string[];
 }
 
+export class ClaimAssignmentQueueItemDto {
+  @ApiPropertyOptional({
+    description: 'Assignee; omitted to claim for the current user',
+  })
+  @IsOptional()
+  @IsMongoId()
+  assigneeId?: string;
+}
+
 // ── Settings ───────────────────────────────────────────────────────────────
 
 export class UpdateAssignmentSettingDto {

@@ -219,6 +219,14 @@ export class TicketsService {
       timeSpentSeconds: 0,
     } as any);
 
+    this.entityAudit.emit({
+      entity: 'ticket',
+      entityType: 'TICKET',
+      entityId: ticket.id,
+      kind: 'created',
+      newSnapshot: ticket,
+    });
+
     // Emit automation event: record_created.Ticket
     this.emitAutomationEvent('record_created', ticket);
 
@@ -343,7 +351,16 @@ export class TicketsService {
   }
 
   async remove(id: string): Promise<void> {
-    return this.repository.remove(id);
+    const existing = await this.repository.findOne({ _id: id });
+    await this.repository.remove(id);
+    this.entityAudit.emit({
+      entity: 'ticket',
+      entityType: 'TICKET',
+      entityId: id,
+      kind: 'updated',
+      oldSnapshot: existing ?? {},
+      newSnapshot: { _deleted: true } as any,
+    });
   }
 
   // ── Automation Event Emitter ─────────────────────────────────────────────
