@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PlatformRoleEnum } from '../../roles/platform-role.enum';
 import {
   AuthzPermissionCacheService,
@@ -7,12 +7,16 @@ import {
 import { ObjectAclService } from './object-acl.service';
 import { AccessPolicyService } from './access-policy.service';
 import { PermissionRuleMetadata } from './permission.decorator';
+import { AuthorizationContextFactory } from './authorization-context.factory';
+import { AuthzAuditService } from '../authz-audit/authz-audit.service';
 
 export interface AuthzActionDecision
   extends Partial<AuthzPermissionCheckResult> {
   allowed: boolean;
   /** True when granted via a verified platform SUPER_ADMIN bypass. */
   superAdmin?: boolean;
+  /** Mongo predicate that subtracts rows denied by resource ABAC policies. */
+  resourceFilter?: Record<string, unknown> | null;
 }
 
 export interface CanPerformActionParams {
@@ -21,6 +25,8 @@ export interface CanPerformActionParams {
   tenantHint?: string;
   /** Raw JWT/Keycloak payload — used only to detect a super-admin claim. */
   claims?: any;
+  /** Trusted request environment resolved by server middleware. */
+  env?: Record<string, unknown>;
 }
 
 export interface CanAccessRecordParams {
@@ -61,6 +67,8 @@ export class AuthorizationService {
     private readonly cache: AuthzPermissionCacheService,
     private readonly objectAcl: ObjectAclService,
     private readonly accessPolicy: AccessPolicyService,
+    private readonly contextFactory: AuthorizationContextFactory,
+    @Optional() private readonly decisionAudit?: AuthzAuditService,
   ) {}
 
   /** Does the (signed) token carry a platform SUPER_ADMIN role claim? */
@@ -93,6 +101,15 @@ export class AuthorizationService {
     params: CanPerformActionParams,
   ): Promise<AuthzActionDecision> {
     if (await this.isSuperAdmin(params.rawUserId, params.claims)) {
+      this.recordDecision({
+        tenantId: params.tenantHint,
+        userId: params.rawUserId,
+        action: params.rule.action,
+        resource: params.rule.resource,
+        allowed: true,
+        reason: 'platform_super_admin',
+        grantSource: 'platform_role',
+      });
       return { allowed: true, superAdmin: true };
     }
     const result = await this.cache.canAccess({
@@ -100,7 +117,69 @@ export class AuthorizationService {
       tenantHint: params.tenantHint,
       rule: params.rule,
     });
-    return { ...result };
+    if (!result.allowed || !result.tenantId || !result.userId) {
+      this.recordDecision({
+        tenantId: result.tenantId ?? params.tenantHint,
+        userId: result.userId ?? params.rawUserId,
+        action: params.rule.action,
+        resource: params.rule.resource,
+        allowed: false,
+        reason: result.denyReason ?? 'rbac_denied',
+        grantSource: 'rbac',
+      });
+      return { ...result };
+    }
+
+    // Collection/action ABAC: enforce policies that depend only on trusted
+    // subject/environment attributes. Resource-dependent policies are handled
+    // later by canAccessRecord or by a query predicate compiler.
+    const context = this.contextFactory.forAction(
+      {
+        userId: result.userId,
+        tenantId: result.tenantId,
+        principalType: params.claims?.principalType ?? 'user',
+      },
+      { attributes: params.env },
+    );
+    const effect = await this.accessPolicy.evaluateActionContext(
+      result.tenantId,
+      params.rule.resource,
+      params.rule.action,
+      context,
+    );
+    if (effect === 'deny') {
+      this.recordDecision({
+        tenantId: result.tenantId,
+        userId: result.userId,
+        action: params.rule.action,
+        resource: params.rule.resource,
+        allowed: false,
+        reason: 'abac_action_denied',
+        grantSource: 'abac',
+      });
+      return {
+        ...result,
+        allowed: false,
+        denyReason: 'abac_action_denied',
+      };
+    }
+    const resourceFilter =
+      await this.accessPolicy.compileResourceDenyFilter(
+        result.tenantId,
+        params.rule.resource,
+        params.rule.action,
+        context,
+      );
+    this.recordDecision({
+      tenantId: result.tenantId,
+      userId: result.userId,
+      action: params.rule.action,
+      resource: params.rule.resource,
+      allowed: true,
+      reason: resourceFilter ? 'rbac_with_abac_filter' : 'rbac_granted',
+      grantSource: resourceFilter ? 'rbac+abac' : 'rbac',
+    });
+    return { ...result, resourceFilter };
   }
 
   /**
@@ -138,27 +217,93 @@ export class AuthorizationService {
       );
       return false;
     }
-    if (acl === false) return false; // explicit ACL deny — short-circuit
+    if (acl === false) {
+      this.recordRecordDecision(params, false, 'object_acl_denied', 'object_acl');
+      return false;
+    }
 
     const effect = await this.accessPolicy.evaluate(
       params.tenantId,
       params.resource,
       params.action,
-      {
-        subject: {
-          id: params.userId,
+      this.contextFactory.forRecord(
+        {
+          userId: params.userId,
           tenantId: params.tenantId,
-          principalType: params.principalType ?? 'user',
-          groupIds: params.groupIds ?? [],
-          ...(params.subject ?? {}),
-        },
-        resource: params.record ?? { id: params.resourceId },
-        env: { now: new Date(), ...(params.env ?? {}) },
-      },
+          principalType: params.principalType,
+          groupIds: params.groupIds,
+          attributes: params.subject,
+        } as any,
+        params.resourceId,
+        params.record,
+        { attributes: params.env },
+      ),
     );
-    if (effect === 'deny') return false; // ABAC deny-overrides
+    if (effect === 'deny') {
+      this.recordRecordDecision(params, false, 'abac_record_denied', 'abac');
+      return false;
+    }
 
     // acl is true or null, ABAC is allow or null → access stands.
+    this.recordRecordDecision(
+      params,
+      true,
+      effect === 'allow'
+        ? 'abac_record_allowed'
+        : acl === true
+          ? 'object_acl_allowed'
+          : 'record_grant_stands',
+      effect === 'allow' ? 'abac' : acl === true ? 'object_acl' : 'rbac',
+    );
     return true;
+  }
+
+  private recordRecordDecision(
+    params: CanAccessRecordParams,
+    allowed: boolean,
+    reason: string,
+    grantSource: string,
+  ): void {
+    this.recordDecision({
+      tenantId: params.tenantId,
+      userId: params.userId,
+      action: params.action,
+      resource: params.resource,
+      resourceId: params.resourceId,
+      allowed,
+      reason,
+      grantSource,
+    });
+  }
+
+  private recordDecision(input: {
+    tenantId?: string;
+    userId: string;
+    action: string;
+    resource: string;
+    resourceId?: string;
+    allowed: boolean;
+    reason: string;
+    grantSource: string;
+  }): void {
+    if (!this.decisionAudit || !input.tenantId) return;
+    void this.decisionAudit.record({
+      category: 'DECISION',
+      action: input.allowed ? 'allow' : 'deny',
+      tenantId: input.tenantId,
+      actorId: input.userId,
+      targetType: input.resource,
+      targetId: input.resourceId ?? '*',
+      summary: `${input.action} ${input.resource}: ${input.allowed ? 'allow' : 'deny'} (${input.reason})`,
+      after: {
+        subjectId: input.userId,
+        action: input.action,
+        resource: input.resource,
+        resourceId: input.resourceId ?? null,
+        result: input.allowed ? 'allow' : 'deny',
+        reason: input.reason,
+        grantSource: input.grantSource,
+      },
+    });
   }
 }

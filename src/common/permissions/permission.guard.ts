@@ -64,6 +64,10 @@ export class PermissionGuard implements CanActivate {
     });
 
     if (decision.allowed) {
+      this.cls.set('abacResourceFilter', {
+        resource: rule.resource,
+        filter: decision.resourceFilter ?? null,
+      });
       const resolvedUserId = decision.superAdmin
         ? String(payload?.userId ?? payload?.id ?? payload?.sub)
         : (decision.userId ?? String(rawUserId));

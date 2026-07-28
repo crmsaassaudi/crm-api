@@ -14,6 +14,7 @@ import {
 } from '../shared/utils/report-date.util';
 import { safePercent } from '../shared/utils/report-percentage.util';
 import { buildReportResponse } from '../shared/utils/report-response.util';
+import { buildCrmReportVisibilityFilter } from '../shared/utils/report-visibility-filter.util';
 import { GetTicketReportDto } from './dto/get-ticket-report.dto';
 import {
   AgentWorkloadItem,
@@ -628,6 +629,7 @@ export class TicketReportService {
     const match: Record<string, any> = {
       tenantId: this.tenantObjectId(),
       deletedAt: { $exists: false },
+      ...buildCrmReportVisibilityFilter(this.cls, 'Ticket'),
     };
     if (dto.ownerId) match.ownerId = new Types.ObjectId(dto.ownerId);
     if (dto.statusId) match.statusId = new Types.ObjectId(dto.statusId);

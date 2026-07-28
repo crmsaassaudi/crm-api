@@ -193,6 +193,8 @@ export class AccountsController {
 
   @Get(':id')
   @RequirePermission('view', 'accounts')
+  @UseAcl('view', 'accounts')
+  @LoadResource('accounts')
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }

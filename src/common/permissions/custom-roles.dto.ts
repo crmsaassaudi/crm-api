@@ -5,6 +5,8 @@ import {
   IsIn,
   MaxLength,
   MinLength,
+  IsInt,
+  Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DATA_SCOPE_ORDER, DataScope } from './data-scope.enum';
@@ -99,4 +101,11 @@ export class UpdateCustomRoleDto {
   @IsOptional()
   @IsIn([...DATA_SCOPE_ORDER, null])
   dataScope?: DataScope | null;
+}
+
+export class RollbackCustomRoleDto {
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  revision: number;
 }

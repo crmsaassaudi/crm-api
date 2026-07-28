@@ -44,6 +44,8 @@ export class TasksController {
 
   @Get(':id')
   @RequirePermission('view', 'tasks')
+  @UseAcl('view', 'tasks')
+  @LoadResource('tasks')
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }

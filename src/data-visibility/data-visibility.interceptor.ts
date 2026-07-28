@@ -5,6 +5,7 @@ import {
   CallHandler,
   Logger,
   InternalServerErrorException,
+  Optional,
 } from '@nestjs/common';
 import { Observable, from } from 'rxjs';
 import { switchMap } from 'rxjs/operators';
@@ -28,6 +29,19 @@ import {
 import { AuthzPermissionCacheService } from '../common/permissions/authz-permission-cache.service';
 import { OrgUnitsService } from '../org-units/org-units.service';
 import { ChannelSupportService } from '../channels/services/channel-support.service';
+import { RedisService } from '../redis/redis.service';
+
+const VISIBILITY_CACHE_KEYS = [
+  'visibleOwnerIds',
+  'visibleOrgUnitIds',
+  'visibleGroupIds',
+  'servableChannelIds',
+  'dataVisibilityByModule',
+  'channelVisibilityOverrides',
+  'strictOwnerIds',
+  'strictOrgUnitIds',
+  'includeUnownedInScope',
+] as const;
 
 /** The pair of axes the repositories AND/OR together at query time. */
 interface VisibilityAxes {
@@ -80,6 +94,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     private readonly hierarchyService: RoleHierarchyService,
     private readonly settingsService: CrmSettingsService,
     private readonly moduleRef: ModuleRef,
+    @Optional() private readonly redis?: RedisService,
   ) {}
 
   /**
@@ -111,6 +126,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     }
 
     try {
+      if (await this.restoreCachedVisibility(tenantId, userId)) return;
       // 1. Check if user is ADMIN or OWNER → bypass every axis.
       //
       // Resolved before the settings read because the channel axis below must
@@ -139,6 +155,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
           'visibleGroupIds',
           await this.resolveUserGroupIds(tenantId, userId),
         );
+        await this.cacheResolvedVisibility(tenantId, userId);
         this.logger.debug(`Admin/Owner bypass for user ${userId}`);
         return;
       }
@@ -216,6 +233,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
           base.ownerIds?.length ?? 'unrestricted'
         } owner IDs, ${Object.keys(byModule).length} module override(s)`,
       );
+      await this.cacheResolvedVisibility(tenantId, userId);
     } catch (e) {
       // Fail-closed: visibility failures must never widen access.
       this.logger.error(
@@ -230,6 +248,74 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       this.cls.set('strictOrgUnitIds', []);
       throw new InternalServerErrorException(
         'Data visibility resolution failed',
+      );
+    }
+  }
+
+  private visibilityVersionKey(tenantId: string): string {
+    return `authz:scope:${tenantId}:version`;
+  }
+
+  private async visibilityVersion(tenantId: string): Promise<string> {
+    const client = this.redis!.getClient();
+    const key = this.visibilityVersionKey(tenantId);
+    let version = await client.get(key);
+    if (version === null) {
+      await client.set(key, '1', 'EX', 300, 'NX');
+      version = (await client.get(key)) ?? '1';
+    }
+    return version;
+  }
+
+  private async restoreCachedVisibility(
+    tenantId: string,
+    userId: string,
+  ): Promise<boolean> {
+    if (!this.redis) return false;
+    try {
+      const version = await this.visibilityVersion(tenantId);
+      const cached = await this.redis.get<Record<string, unknown>>(
+        `authz:scope:${tenantId}:${userId}:v${version}`,
+      );
+      if (!cached) return false;
+      for (const key of VISIBILITY_CACHE_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(cached, key)) {
+          this.cls.set(key, cached[key]);
+        }
+      }
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Visibility cache read failed; resolving live: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
+  }
+
+  private async cacheResolvedVisibility(
+    tenantId: string,
+    userId: string,
+  ): Promise<void> {
+    if (!this.redis) return;
+    try {
+      const snapshot: Record<string, unknown> = {};
+      for (const key of VISIBILITY_CACHE_KEYS) {
+        const value = this.cls.get(key);
+        if (value !== undefined) snapshot[key] = value;
+      }
+      const version = await this.visibilityVersion(tenantId);
+      await this.redis.set(
+        `authz:scope:${tenantId}:${userId}:v${version}`,
+        snapshot,
+        60,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Visibility cache write failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
     }
   }

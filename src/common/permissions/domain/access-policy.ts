@@ -33,6 +33,9 @@ export class AccessPolicy {
   @ApiProperty({ example: 100 })
   priority: number;
 
+  @ApiProperty({ example: 3 })
+  revision: number;
+
   @ApiPropertyOptional()
   createdAt?: Date;
 

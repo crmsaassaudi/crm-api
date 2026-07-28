@@ -14,6 +14,7 @@ import {
 } from '../shared/utils/report-date.util';
 import { safePercent } from '../shared/utils/report-percentage.util';
 import { buildReportResponse } from '../shared/utils/report-response.util';
+import { buildCrmReportVisibilityFilter } from '../shared/utils/report-visibility-filter.util';
 import { GetDealReportDto } from './dto/get-deal-report.dto';
 import {
   DealAgingBucket,
@@ -590,6 +591,7 @@ export class DealReportService {
     const match: Record<string, any> = {
       tenantId: this.tenantObjectId(),
       deletedAt: { $exists: false },
+      ...buildCrmReportVisibilityFilter(this.cls, 'Deal'),
     };
     if (dto.ownerId) match.ownerId = new Types.ObjectId(dto.ownerId);
     if (dto.stageId) match.stageId = new Types.ObjectId(dto.stageId);

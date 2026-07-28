@@ -2,7 +2,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEnum,
   IsMongoId,
-  IsOptional,
   IsString,
   IsDateString,
   MaxLength,
@@ -21,18 +20,16 @@ export class GrantRoleAssignmentDto {
   @IsMongoId()
   roleId: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description:
       'ISO timestamp when the grant lapses (JIT). Omit for a permanent grant.',
     example: '2026-08-01T00:00:00.000Z',
   })
-  @IsOptional()
   @IsDateString()
-  expiresAt?: string;
+  expiresAt: string;
 
-  @ApiPropertyOptional({ example: 'On-call escalation for incident #4821' })
-  @IsOptional()
+  @ApiProperty({ example: 'On-call escalation for incident #4821' })
   @IsString()
   @MaxLength(500)
-  reason?: string;
+  reason: string;
 }

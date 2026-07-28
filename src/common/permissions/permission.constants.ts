@@ -158,6 +158,7 @@ export const PERMISSION_REGISTRY: Record<
     view: 'settings:view',
     manage_billing: 'settings:manage_billing',
     manage_system: 'settings:manage_system',
+    approve: 'settings:approve_access',
   },
   /**
    * Read every record in the tenant, bypassing the data-visibility axes.
@@ -353,6 +354,7 @@ export const CORE_PERMISSIONS: string[] = [
   'settings:view',
   'settings:manage_billing',
   'settings:manage_system',
+  'settings:approve_access',
   // AI Video
   'ai_video:view',
   'ai_video:create',

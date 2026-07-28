@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Schema as MongooseSchema } from 'mongoose';
 import { DATA_SCOPE_ORDER, DataScope } from './data-scope.enum';
+import { tenantFilterPlugin } from '../plugins/tenant-filter.plugin';
 
 export type CustomRoleDocument = CustomRoleSchemaClass & Document;
 
@@ -72,6 +73,18 @@ export class CustomRoleSchemaClass {
   /** Color accent for UI display */
   @Prop({ default: '#6366f1' })
   color: string;
+
+  @Prop({ type: Number, default: 1 })
+  revision: number;
+
+  @Prop({ type: [MongooseSchema.Types.Mixed], default: [] })
+  versions: Array<{
+    revision: number;
+    snapshot: Record<string, unknown>;
+    publishedAt: Date;
+    publishedById: string;
+    sourceRevision?: number | null;
+  }>;
 }
 
 export const CustomRoleSchema = SchemaFactory.createForClass(
@@ -90,3 +103,4 @@ CustomRoleSchema.index(
     partialFilterExpression: { systemKey: { $type: 'string' } },
   },
 );
+CustomRoleSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });

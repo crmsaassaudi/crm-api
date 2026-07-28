@@ -77,7 +77,40 @@ export abstract class BaseDocumentRepository<
       // null or undefined → no additional filter
     }
 
+    // Resource-dependent ABAC denies are compiled once by PermissionGuard and
+    // intersected here with every query for the matching CRM module.
+    const abac = this.cls.get<{
+      resource?: string;
+      filter?: Record<string, unknown> | null;
+    }>('abacResourceFilter');
+    const moduleKey = this.visibilityModule();
+    if (
+      moduleKey &&
+      abac?.filter &&
+      this.matchesAuthorizationResource(moduleKey, abac.resource)
+    ) {
+      enriched = {
+        ...enriched,
+        $and: [...(enriched.$and || []), abac.filter],
+      };
+    }
+
     return enriched;
+  }
+
+  private matchesAuthorizationResource(
+    moduleKey: string,
+    resource?: string,
+  ): boolean {
+    if (!resource) return false;
+    const moduleName = moduleKey.toLowerCase();
+    const resourceName = resource.toLowerCase();
+    return (
+      resourceName === moduleName ||
+      resourceName === `${moduleName}s` ||
+      (moduleName.endsWith('y') &&
+        resourceName === `${moduleName.slice(0, -1)}ies`)
+    );
   }
 
   /**

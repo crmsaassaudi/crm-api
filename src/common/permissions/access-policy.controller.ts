@@ -14,6 +14,8 @@ import { AccessPolicyService } from './access-policy.service';
 import {
   CreateAccessPolicyDto,
   UpdateAccessPolicyDto,
+  SimulateAccessPolicyDto,
+  RollbackAccessPolicyDto,
 } from './access-policy.dto';
 import { RequirePermission } from './index';
 import { resolveRequestTenantId } from '../tenancy/resolve-request-tenant';
@@ -33,6 +35,38 @@ export class AccessPolicyController {
   findAll(@Req() req: any) {
     const tenantId = resolveRequestTenantId(this.cls, req);
     return this.service.findAll(tenantId);
+  }
+
+  @Post('simulate')
+  @ApiOperation({ summary: 'Simulate an ABAC policy without publishing it' })
+  @RequirePermission('manage_system', 'settings')
+  simulate(@Body() dto: SimulateAccessPolicyDto) {
+    return this.service.simulate(dto.policy, dto.context);
+  }
+
+  @Get(':id/versions')
+  @ApiOperation({ summary: 'List immutable policy revisions' })
+  @RequirePermission('view', 'settings')
+  versions(@Req() req: any, @Param('id') id: string) {
+    return this.service.listVersions(
+      id,
+      resolveRequestTenantId(this.cls, req),
+    );
+  }
+
+  @Post(':id/rollback')
+  @ApiOperation({ summary: 'Publish a rollback as a new policy revision' })
+  @RequirePermission('manage_system', 'settings')
+  rollback(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() dto: RollbackAccessPolicyDto,
+  ) {
+    return this.service.rollback(
+      id,
+      resolveRequestTenantId(this.cls, req),
+      dto.revision,
+    );
   }
 
   @Post()

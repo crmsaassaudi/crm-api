@@ -11,6 +11,7 @@ import {
   UseInterceptors,
   UsePipes,
   UploadedFile,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
@@ -119,6 +120,8 @@ export class DealsController {
 
   @Get(':id/tickets')
   @RequirePermission('view', 'deals')
+  @UseAcl('view', 'deals')
+  @LoadResource('deals')
   getLinkedTickets(@Param('id') id: string) {
     return this.service.getLinkedTickets(id);
   }
@@ -233,6 +236,8 @@ export class DealsController {
 
   @Get(':id')
   @RequirePermission('view', 'deals')
+  @UseAcl('view', 'deals')
+  @LoadResource('deals')
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }
@@ -241,12 +246,17 @@ export class DealsController {
 
   @Get(':id/activities')
   @RequirePermission('view', 'deals')
+  @UseAcl('view', 'deals')
+  @LoadResource('deals')
   async getActivities(
     @Param('id') id: string,
     @Query('type') type?: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
   ) {
+    if (!(await this.service.findOne(id))) {
+      throw new NotFoundException(`Deal ${id} not found`);
+    }
     return this.activityLog.getFeed({
       targetType: 'Deal',
       targetId: id,
@@ -257,7 +267,9 @@ export class DealsController {
   }
 
   @Post(':id/activities')
-  @RequirePermission('view', 'deals')
+  @RequirePermission('edit', 'deals')
+  @UseAcl('edit', 'deals')
+  @LoadResource('deals')
   async createActivity(
     @Param('id') id: string,
     @Body() dto: CreateDealActivityDto,

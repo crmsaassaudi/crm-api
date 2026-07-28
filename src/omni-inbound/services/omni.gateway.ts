@@ -1954,6 +1954,21 @@ export class OmniGateway
     }
   }
 
+  @OnEvent('user.permissions.updated')
+  @OnEvent('group.updated')
+  @OnEvent('group.membership.updated')
+  @OnEvent('tenant.permissions.updated')
+  handleAuthorizationChanged(event: {
+    tenantId?: string;
+    userId?: string;
+  }): void {
+    if (!event?.tenantId) return;
+    this.server.to(`tenant:${event.tenantId}`).emit('authz:permissions:changed', {
+      tenantId: event.tenantId,
+      userId: event.userId ?? null,
+    });
+  }
+
   /** Resolve any thrown value to a human-readable error string. */
   private extractErrorMessage(error: unknown): string {
     if (error instanceof Error) return error.message;

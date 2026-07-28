@@ -337,7 +337,7 @@ describe('RBAC edge cases the matrix cannot express', () => {
     expect(result.has(KEY.CONTACTS_VIEW)).toBe(true);
   });
 
-  it('should let the ADMIN flag beat an explicit deny override — documents M-01', () => {
+  it('should apply an explicit deny override to an ADMIN', () => {
     const result = calculateEffectivePermissions(
       tenant,
       {
@@ -353,11 +353,8 @@ describe('RBAC edge cases the matrix cannot express', () => {
       [],
       ROLE_CATALOG,
     );
-    // KNOWN LIMITATION (M-01): the OWNER/ADMIN short-circuit returns the whole
-    // ceiling before overrides are read, so an admin cannot be restricted.
-    // Asserted so the limitation is explicit, dated, and cannot regress
-    // silently in either direction.
-    expect(result.has(KEY.CONTACTS_VIEW)).toBe(true);
+    // Explicit deny is the final policy layer even for tenant administrators.
+    expect(result.has(KEY.CONTACTS_VIEW)).toBe(false);
   });
 
   it('should not let a group deny — documents M-01', () => {

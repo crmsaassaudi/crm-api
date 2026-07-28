@@ -2,7 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { ClsService } from 'nestjs-cls';
 import { addDays, addWeeks, addMonths, addYears } from 'date-fns';
+import { runWithTenantContext } from '../common/tenancy/tenant-context';
 import {
   TaskSchemaClass,
   TaskSchemaDocument,
@@ -16,6 +18,11 @@ import {
  *  1. Creates a new concrete child task (with same title/assignee/etc.)
  *  2. Advances nextOccurrenceAt by the recurrence interval
  *  3. If recurrenceEndsAt is exceeded — disables the template
+ *
+ * Tenancy: the cron runs outside any request, so there is no CLS tenant
+ * context. The discovery scan is an explicit platform query across tenants;
+ * every per-template write then runs inside that template's own tenant
+ * context so tenantFilterPlugin scopes it correctly.
  */
 @Injectable()
 export class RecurringTaskService {
@@ -24,6 +31,7 @@ export class RecurringTaskService {
   constructor(
     @InjectModel(TaskSchemaClass.name)
     private readonly taskModel: Model<TaskSchemaDocument>,
+    private readonly cls: ClsService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -36,6 +44,8 @@ export class RecurringTaskService {
         deletedAt: { $exists: false },
         nextOccurrenceAt: { $lte: now },
       })
+      // Platform-level scan: recurring templates of every tenant are due here.
+      .setOptions({ isPlatformQuery: true })
       .lean()
       .exec();
 
@@ -46,8 +56,21 @@ export class RecurringTaskService {
     );
 
     for (const template of dueTasks) {
+      const tenantId = (template as any).tenantId
+        ? String((template as any).tenantId)
+        : '';
+
+      if (!tenantId) {
+        this.logger.error(
+          `[RecurringTask] Skipping template ${String(template._id)}: missing tenantId`,
+        );
+        continue;
+      }
+
       try {
-        await this.processTemplate(template, now);
+        await runWithTenantContext(this.cls, tenantId, () =>
+          this.processTemplate(template, now),
+        );
       } catch (err) {
         this.logger.error(
           `[RecurringTask] Failed for template ${String(template._id)}: ${(err as Error).message}`,
@@ -115,12 +138,9 @@ export class RecurringTaskService {
 
     await this.taskModel.updateOne(
       { _id },
-      {
-        $set: {
-          nextOccurrenceAt: ended ? undefined : next,
-          ...(ended ? { isRecurring: false } : {}),
-        },
-      },
+      ended
+        ? { $set: { isRecurring: false }, $unset: { nextOccurrenceAt: '' } }
+        : { $set: { nextOccurrenceAt: next } },
     );
 
     this.logger.log(

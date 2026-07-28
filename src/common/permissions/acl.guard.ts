@@ -3,6 +3,8 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  InternalServerErrorException,
+  NotFoundException,
 } from '@nestjs/common';
 import { ModuleRef, Reflector } from '@nestjs/core';
 import { ClsService } from 'nestjs-cls';
@@ -77,6 +79,12 @@ export class AclGuard implements CanActivate {
     if (!resourceId) return true;
 
     const record = await this.loadRecord(context, tenantId, resourceId);
+    if (!record) {
+      // Do not evaluate resource policies against a synthetic `{ id }` when a
+      // route explicitly targets a record. A missing/out-of-tenant record is
+      // a 404; continuing would turn every `resource.*` deny into "no match".
+      throw new NotFoundException(`${meta.resource} record not found`);
+    }
 
     const allowed = await this.authz.canAccessRecord({
       tenantId,
@@ -165,14 +173,23 @@ export class AclGuard implements CanActivate {
     context: ExecutionContext,
     tenantId: string,
     resourceId: string,
-  ): Promise<Record<string, unknown> | undefined> {
+  ): Promise<Record<string, unknown>> {
     const loaderKey = this.reflector.getAllAndOverride<string | undefined>(
       LOAD_RESOURCE_METADATA_KEY,
       [context.getHandler(), context.getClass()],
     );
 
-    if (!loaderKey) return undefined;
+    if (!loaderKey) {
+      // @UseAcl on a record route without a PIP is a deployment error, not a
+      // weaker authorization mode. Fail closed and make the wiring defect loud.
+      throw new InternalServerErrorException(
+        `Record-level authorization for ${resourceId} has no @LoadResource metadata`,
+      );
+    }
 
-    return this.loaders.load(loaderKey, tenantId, resourceId);
+    return (await this.loaders.load(loaderKey, tenantId, resourceId)) as Record<
+      string,
+      unknown
+    >;
   }
 }

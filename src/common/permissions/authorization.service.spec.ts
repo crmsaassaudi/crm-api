@@ -1,5 +1,6 @@
 import { AuthorizationService } from './authorization.service';
 import { PlatformRoleEnum } from '../../roles/platform-role.enum';
+import { AuthorizationContextFactory } from './authorization-context.factory';
 
 /**
  * AuthorizationService is the single PDP. These tests cover:
@@ -11,6 +12,7 @@ describe('AuthorizationService (PDP)', () => {
   let cache: any;
   let objectAcl: any;
   let accessPolicy: any;
+  let decisionAudit: any;
   let svc: AuthorizationService;
 
   const superClaim = {
@@ -24,8 +26,50 @@ describe('AuthorizationService (PDP)', () => {
     };
     objectAcl = { can: jest.fn() };
     // Default: no ABAC opinion (null) so existing ACL tests are unaffected.
-    accessPolicy = { evaluate: jest.fn().mockResolvedValue(null) };
-    svc = new AuthorizationService(cache, objectAcl, accessPolicy);
+    accessPolicy = {
+      evaluate: jest.fn().mockResolvedValue(null),
+      evaluateActionContext: jest.fn().mockResolvedValue(null),
+      compileResourceDenyFilter: jest.fn().mockResolvedValue(null),
+    };
+    decisionAudit = { record: jest.fn().mockResolvedValue(undefined) };
+    svc = new AuthorizationService(
+      cache,
+      objectAcl,
+      accessPolicy,
+      new AuthorizationContextFactory(),
+      decisionAudit,
+    );
+  });
+
+  it('writes explainable action allow/deny decisions to the audit stream', async () => {
+    cache.isPlatformSuperAdmin.mockResolvedValue(false);
+    cache.canAccess.mockResolvedValue({
+      allowed: true,
+      tenantId: 't1',
+      userId: 'u1',
+      cacheHit: false,
+    });
+
+    await svc.canPerformAction({
+      rawUserId: 'u1',
+      tenantHint: 't1',
+      rule: { action: 'view', resource: 'contacts' },
+    });
+
+    expect(decisionAudit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'DECISION',
+        action: 'allow',
+        tenantId: 't1',
+        targetType: 'contacts',
+        after: expect.objectContaining({
+          subjectId: 'u1',
+          result: 'allow',
+          reason: 'rbac_granted',
+          grantSource: 'rbac',
+        }),
+      }),
+    );
   });
 
   // ── super-admin (C5) ──────────────────────────────────────────────────
@@ -63,6 +107,7 @@ describe('AuthorizationService (PDP)', () => {
     });
     expect(decision).toEqual({ allowed: true, superAdmin: true });
     expect(cache.canAccess).not.toHaveBeenCalled();
+    expect(accessPolicy.evaluateActionContext).not.toHaveBeenCalled();
   });
 
   it('should falls through to RBAC for a forged claim (DB says not super-admin)', async () => {
@@ -96,6 +141,54 @@ describe('AuthorizationService (PDP)', () => {
       tenantHint: 't1',
       rule: { action: 'view', resource: 'contacts' },
     });
+    expect(accessPolicy.evaluateActionContext).toHaveBeenCalledWith(
+      't1',
+      'contacts',
+      'view',
+      expect.objectContaining({
+        subject: expect.objectContaining({
+          id: 'u1',
+          tenantId: 't1',
+          principalType: 'user',
+        }),
+        env: expect.objectContaining({ now: expect.any(Date) }),
+      }),
+    );
+  });
+
+  it('should deny a collection action when subject/env ABAC denies', async () => {
+    cache.canAccess.mockResolvedValue({
+      allowed: true,
+      userId: 'u1',
+      tenantId: 't1',
+      cacheHit: false,
+    });
+    accessPolicy.evaluateActionContext.mockResolvedValue('deny');
+
+    const decision = await svc.canPerformAction({
+      rule: { action: 'export', resource: 'contacts' },
+      rawUserId: 'u1',
+      tenantHint: 't1',
+      claims: { principalType: 'user' },
+    });
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.denyReason).toBe('abac_action_denied');
+  });
+
+  it('should not evaluate action ABAC after RBAC already denies', async () => {
+    cache.canAccess.mockResolvedValue({
+      allowed: false,
+      userId: 'u1',
+      tenantId: 't1',
+      cacheHit: false,
+    });
+    await svc.canPerformAction({
+      rule: { action: 'export', resource: 'contacts' },
+      rawUserId: 'u1',
+      tenantHint: 't1',
+    });
+    expect(accessPolicy.evaluateActionContext).not.toHaveBeenCalled();
   });
 
   // ── record-level ACL composition ──────────────────────────────────────
@@ -163,7 +256,11 @@ describe('AuthorizationService (PDP)', () => {
           groupIds: ['g1'],
           roleIds: ['r1'],
         }),
-        resource: { ownerId: 'u2', stage: 'open' },
+        resource: expect.objectContaining({
+          id: 'deal_1',
+          ownerId: 'u2',
+          stage: 'open',
+        }),
         env: expect.objectContaining({ now: expect.any(Date) }),
       }),
     );

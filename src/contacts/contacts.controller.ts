@@ -11,6 +11,7 @@ import {
   UsePipes,
   Res,
   UploadedFile,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -231,19 +232,29 @@ export class ContactsController {
 
   @Post(':id/merge')
   @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'contacts')
+  @LoadResource('contacts')
   mergeContacts(@Param('id') id: string, @Query('targetId') targetId: string) {
     return this.service.mergeContacts(id, targetId);
   }
 
   @Post(':id/unmask-fields')
   @RequirePermission('unmask', 'contacts')
+  @UseAcl('unmask', 'contacts')
+  @LoadResource('contacts')
   unmaskFields(@Param('id') id: string, @Body() body: { fields?: string[] }) {
     return this.service.unmaskFields(id, body?.fields);
   }
 
   @Get(':id/activities')
   @RequirePermission('view', 'contacts')
-  getActivities(@Param('id') id: string, @Query() query: SubResourceQueryDto) {
+  @UseAcl('view', 'contacts')
+  @LoadResource('contacts')
+  async getActivities(
+    @Param('id') id: string,
+    @Query() query: SubResourceQueryDto,
+  ) {
+    await this.assertVisibleContact(id);
     return this.activityLogService.getFeed({
       targetType: 'contact',
       targetId: id,
@@ -255,37 +266,59 @@ export class ContactsController {
 
   @Get(':id/notes')
   @RequirePermission('view', 'contacts')
-  getNotes(@Param('id') id: string, @Query() query: SubResourceQueryDto) {
+  @UseAcl('view', 'contacts')
+  @LoadResource('contacts')
+  async getNotes(@Param('id') id: string, @Query() query: SubResourceQueryDto) {
+    await this.assertVisibleContact(id);
     return this.notesService.findByContact(id, query);
   }
 
   @Post(':id/notes')
   @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'contacts')
+  @LoadResource('contacts')
   createNote(@Param('id') id: string, @Body() body: CreateNoteDto) {
     return this.notesService.createForContact(id, body);
   }
 
   @Delete(':id/notes/:noteId')
   @RequirePermission('delete', 'contacts')
-  deleteContactNote(@Param('noteId') noteId: string) {
-    return this.notesService.delete(noteId);
+  @UseAcl('delete', 'contacts')
+  @LoadResource('contacts')
+  async deleteContactNote(
+    @Param('id') id: string,
+    @Param('noteId') noteId: string,
+  ) {
+    await this.assertVisibleContact(id);
+    return this.notesService.delete(noteId, id);
   }
 
   @Get(':id/tasks')
   @RequirePermission('view', 'tasks')
-  getTasks(@Param('id') id: string, @Query() query: SubResourceQueryDto) {
+  @UseAcl('view', 'contacts')
+  @LoadResource('contacts')
+  async getTasks(@Param('id') id: string, @Query() query: SubResourceQueryDto) {
+    await this.assertVisibleContact(id);
     return this.tasksService.findAll({ ...query, contactId: id });
   }
 
   @Get(':id/tickets')
   @RequirePermission('view', 'tickets')
-  getTickets(@Param('id') id: string, @Query() query: SubResourceQueryDto) {
+  @UseAcl('view', 'contacts')
+  @LoadResource('contacts')
+  async getTickets(
+    @Param('id') id: string,
+    @Query() query: SubResourceQueryDto,
+  ) {
+    await this.assertVisibleContact(id);
     return this.ticketsService.findAll({ ...query, contactId: id });
   }
 
   @ApiOkResponse({ type: Contact })
   @Get(':id')
   @RequirePermission('view', 'contacts')
+  @UseAcl('view', 'contacts')
+  @LoadResource('contacts')
   @MaskedResource('Contact') // Fallback to Contact if specific resource not identified
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
@@ -312,6 +345,8 @@ export class ContactsController {
 
   @Post(':id/change-stage')
   @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'contacts')
+  @LoadResource('contacts')
   changeStage(@Param('id') id: string, @Body() body: ChangeStageDto) {
     return this.service.changeStage(id, body.stage, body);
   }
@@ -319,7 +354,10 @@ export class ContactsController {
   @ApiOkResponse({ description: 'Stage transition history for a contact' })
   @Get(':id/stage-history')
   @RequirePermission('view', 'contacts')
-  getStageHistory(@Param('id') id: string) {
+  @UseAcl('view', 'contacts')
+  @LoadResource('contacts')
+  async getStageHistory(@Param('id') id: string) {
+    await this.assertVisibleContact(id);
     return this.service.getStageHistory(id);
   }
 
@@ -329,11 +367,19 @@ export class ContactsController {
    */
   @Post(':id/merge-identity')
   @RequirePermission('edit', 'contacts')
+  @UseAcl('edit', 'contacts')
+  @LoadResource('contacts')
   @ApiOkResponse({ type: Contact })
   mergeIdentity(
     @Param('id') id: string,
     @Body() body: { channelType: string; senderId: string },
   ) {
     return this.service.mergeIdentity(id, body);
+  }
+
+  private async assertVisibleContact(id: string): Promise<void> {
+    if (!(await this.service.findOne(id))) {
+      throw new NotFoundException(`Contact ${id} not found`);
+    }
   }
 }

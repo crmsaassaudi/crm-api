@@ -36,6 +36,9 @@ export interface GrantRoleParams {
   reason?: string | null;
 }
 
+const REQUIRED_APPROVALS = 2;
+const MAX_GRANT_DURATION_MS = 90 * 24 * 60 * 60 * 1000;
+
 /**
  * RoleAssignmentService — governed, auditable role grants with JIT expiry.
  *
@@ -87,8 +90,25 @@ export class RoleAssignmentService {
     }
     await this.assertCallerCanGrant(params.tenantId, role.permissions);
 
-    if (params.expiresAt && !(params.expiresAt instanceof Date)) {
-      throw new BadRequestException('expiresAt must be a valid date');
+    if (
+      !(params.expiresAt instanceof Date) ||
+      Number.isNaN(params.expiresAt.getTime())
+    ) {
+      throw new BadRequestException(
+        'expiresAt is required for governed role assignments',
+      );
+    }
+    const now = new Date();
+    if (
+      params.expiresAt <= now ||
+      params.expiresAt.getTime() - now.getTime() > MAX_GRANT_DURATION_MS
+    ) {
+      throw new BadRequestException(
+        'expiresAt must be in the future and no more than 90 days away',
+      );
+    }
+    if (!params.reason?.trim()) {
+      throw new BadRequestException('reason is required');
     }
 
     const doc = await this.model.create({
@@ -97,21 +117,23 @@ export class RoleAssignmentService {
       principalId: params.principalId,
       roleId: params.roleId,
       grantedById: params.grantedById,
-      expiresAt: params.expiresAt ?? null,
-      reason: params.reason ?? null,
+      expiresAt: params.expiresAt,
+      reason: params.reason.trim(),
+      approvalStatus: 'pending',
+      approvals: [],
+      approvedAt: null,
+      rejectedById: null,
+      rejectedAt: null,
       revokedAt: null,
       revokedById: null,
     });
 
-    this.invalidate(params.tenantId, params.principalType, params.principalId);
     void this.audit.record({
       category: 'ASSIGNMENT',
-      action: 'assign',
+      action: 'request',
       targetType: params.principalType,
       targetId: params.principalId,
-      summary: params.expiresAt
-        ? `granted role ${params.roleId} until ${params.expiresAt.toISOString()}`
-        : `granted role ${params.roleId} (permanent)`,
+      summary: `requested role ${params.roleId} until ${params.expiresAt.toISOString()}`,
       after: {
         roleId: params.roleId,
         expiresAt: params.expiresAt ?? null,
@@ -119,6 +141,102 @@ export class RoleAssignmentService {
       },
     });
     return RoleAssignmentMapper.toDomain(doc);
+  }
+
+  /** Add one independent approval; the second approval activates the grant. */
+  async approve(
+    tenantId: string,
+    assignmentId: string,
+    approverId: string,
+    now: Date,
+  ): Promise<RoleAssignment> {
+    const assignment = await this.model
+      .findOne({ _id: assignmentId, tenantId })
+      .exec();
+    if (!assignment) throw new NotFoundException('Role assignment not found');
+    if (assignment.approvalStatus !== 'pending') {
+      throw new BadRequestException('Role assignment is not pending approval');
+    }
+    if (
+      String(assignment.grantedById) === String(approverId) ||
+      (assignment.principalType === 'user' &&
+        String(assignment.principalId) === String(approverId))
+    ) {
+      throw new ForbiddenException(
+        'Requester and target cannot approve this assignment',
+      );
+    }
+    if (
+      (assignment.approvals ?? []).some(
+        (approval) => String(approval.approverId) === String(approverId),
+      )
+    ) {
+      throw new BadRequestException('Approver has already approved');
+    }
+
+    const role = await this.customRoles.findById(
+      assignment.roleId,
+      tenantId,
+    );
+    await this.assertCallerCanGrant(tenantId, role.permissions);
+
+    assignment.approvals = [
+      ...(assignment.approvals ?? []),
+      { approverId, approvedAt: now },
+    ];
+    if (assignment.approvals.length >= REQUIRED_APPROVALS) {
+      assignment.approvalStatus = 'approved';
+      assignment.approvedAt = now;
+    }
+    const saved = await assignment.save();
+    if (saved.approvalStatus === 'approved') {
+      this.invalidate(tenantId, saved.principalType, saved.principalId);
+    }
+    void this.audit.record({
+      category: 'ASSIGNMENT',
+      action:
+        saved.approvalStatus === 'approved' ? 'approve' : 'approval_recorded',
+      targetType: saved.principalType,
+      targetId: saved.principalId,
+      summary: `approval ${saved.approvals.length}/${REQUIRED_APPROVALS} for role ${saved.roleId}`,
+      after: {
+        assignmentId,
+        approverId,
+        approvalStatus: saved.approvalStatus,
+      },
+    });
+    return RoleAssignmentMapper.toDomain(saved);
+  }
+
+  async reject(
+    tenantId: string,
+    assignmentId: string,
+    rejectedById: string,
+    now: Date,
+  ): Promise<RoleAssignment> {
+    const assignment = await this.model
+      .findOne({ _id: assignmentId, tenantId })
+      .exec();
+    if (!assignment) throw new NotFoundException('Role assignment not found');
+    if (assignment.approvalStatus !== 'pending') {
+      throw new BadRequestException('Role assignment is not pending approval');
+    }
+    if (String(assignment.grantedById) === String(rejectedById)) {
+      throw new ForbiddenException('Requester cannot reject their own request');
+    }
+    assignment.approvalStatus = 'rejected';
+    assignment.rejectedById = rejectedById;
+    assignment.rejectedAt = now;
+    const saved = await assignment.save();
+    void this.audit.record({
+      category: 'ASSIGNMENT',
+      action: 'reject',
+      targetType: saved.principalType,
+      targetId: saved.principalId,
+      summary: `rejected role assignment ${assignmentId}`,
+      after: { assignmentId, rejectedById },
+    });
+    return RoleAssignmentMapper.toDomain(saved);
   }
 
   /** Soft-revoke an active assignment (preserves the grant history). */
@@ -165,6 +283,14 @@ export class RoleAssignmentService {
       .find({
         tenantId,
         principalId: { $in: ids },
+        $and: [
+          {
+            $or: [
+              { approvalStatus: 'approved' },
+              { approvalStatus: { $exists: false } },
+            ],
+          },
+        ],
         revokedAt: null,
         $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
       })
@@ -187,6 +313,99 @@ export class RoleAssignmentService {
       .lean()
       .exec();
     return RoleAssignmentMapper.toDomainList(rows);
+  }
+
+  /**
+   * Point-in-time evidence for periodic access certification. The aggregation
+   * detects grants whose custom role was deleted without deleting history,
+   * pending requests, expired-but-not-revoked rows, and grandfathered permanent
+   * assignments that should be converted to governed time-bound requests.
+   */
+  async certificationReport(tenantId: string, now: Date) {
+    const [report] = await this.model
+      .aggregate([
+        { $match: { tenantId } },
+        {
+          $lookup: {
+            from: 'custom_roles',
+            let: { assignedRoleId: '$roleId' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $eq: [{ $toString: '$_id' }, '$$assignedRoleId'],
+                  },
+                },
+              },
+              { $project: { _id: 1, name: 1 } },
+            ],
+            as: 'resolvedRole',
+          },
+        },
+        {
+          $facet: {
+            pending: [
+              { $match: { approvalStatus: 'pending', revokedAt: null } },
+              { $project: { resolvedRole: 0 } },
+            ],
+            expiredNotRevoked: [
+              { $match: { expiresAt: { $lte: now }, revokedAt: null } },
+              { $project: { resolvedRole: 0 } },
+            ],
+            legacyPermanent: [
+              {
+                $match: {
+                  expiresAt: null,
+                  revokedAt: null,
+                  approvalStatus: { $exists: false },
+                },
+              },
+              { $project: { resolvedRole: 0 } },
+            ],
+            orphanedRoleAssignments: [
+              { $match: { resolvedRole: { $size: 0 } } },
+              { $project: { resolvedRole: 0 } },
+            ],
+            totals: [
+              {
+                $group: {
+                  _id: null,
+                  assignments: { $sum: 1 },
+                  activeApproved: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $and: [
+                            { $eq: ['$approvalStatus', 'approved'] },
+                            { $eq: ['$revokedAt', null] },
+                            { $gt: ['$expiresAt', now] },
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ])
+      .exec();
+
+    return {
+      generatedAt: now,
+      tenantId,
+      totals: report?.totals?.[0] ?? {
+        assignments: 0,
+        activeApproved: 0,
+      },
+      pending: report?.pending ?? [],
+      expiredNotRevoked: report?.expiredNotRevoked ?? [],
+      legacyPermanent: report?.legacyPermanent ?? [],
+      orphanedRoleAssignments: report?.orphanedRoleAssignments ?? [],
+    };
   }
 
   /**

@@ -22,6 +22,7 @@ import {
   formatDuration,
   minMaxNormalize,
 } from './agent-kpi.util';
+import { buildAgentReportVisibilityFilter } from '../shared/utils/report-visibility-filter.util';
 
 const CHANNELS = ['chat', 'ticket', 'email', 'call'] as const;
 type Channel = (typeof CHANNELS)[number];
@@ -195,7 +196,10 @@ export class AgentReportService {
     const fromDay = dto.fromDate.slice(0, 10);
     const toDay = dto.toDate.slice(0, 10);
     const dayKey = { $gte: fromDay, $lte: toDay };
-    const agentMatch = dto.agentId ? { agentId: dto.agentId } : {};
+    const agentMatch = {
+      ...buildAgentReportVisibilityFilter(this.cls),
+      ...(dto.agentId ? { $and: [{ agentId: dto.agentId }] } : {}),
+    };
 
     const [stateRows, interactionRows] = await Promise.all([
       this.stateModel.aggregate<{

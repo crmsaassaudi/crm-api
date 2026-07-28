@@ -34,6 +34,7 @@ import { StartDealImportDto } from './dto/start-deal-import.dto';
 import { ExportRequestService, ExportRequestDto } from '../common/export';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 import { TagsService } from '../tags/tags.service';
+import { buildCrmReportVisibilityFilter } from '../reports/shared/utils/report-visibility-filter.util';
 
 @Injectable()
 export class DealsService {
@@ -290,6 +291,9 @@ export class DealsService {
   async getLinkedTickets(
     dealId: string,
   ): Promise<{ data: any[]; total: number }> {
+    if (!(await this.repository.findOne({ _id: dealId }))) {
+      throw new NotFoundException(`Deal ${dealId} not found`);
+    }
     // The tickets collection stores dealId as a field — query it directly
     // through this service's own DB connection by casting to any.
     const ticketCollection = (this.repository as any).model?.db?.collection
@@ -303,7 +307,11 @@ export class DealsService {
     const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     const { Types } = await import('mongoose');
 
-    const filter: any = { dealId: dealId, deletedAt: null };
+    const filter: any = {
+      dealId,
+      deletedAt: null,
+      ...buildCrmReportVisibilityFilter(this.cls, 'Ticket'),
+    };
     if (tenantId) {
       try {
         filter.tenantId = new Types.ObjectId(String(tenantId));

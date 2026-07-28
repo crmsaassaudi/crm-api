@@ -60,6 +60,16 @@ export class CustomRolesService {
       permissions: dto.permissions ?? [],
       dataScope: dto.dataScope ?? null,
       color: dto.color ?? '#6366f1',
+      revision: 1,
+      versions: [
+        {
+          revision: 1,
+          snapshot: this.roleSnapshot(dto),
+          publishedAt: new Date(),
+          publishedById: this.actorId(),
+          sourceRevision: null,
+        },
+      ],
     });
     const saved = await role.save();
     void this.audit.record({
@@ -134,6 +144,22 @@ export class CustomRolesService {
       isSystem: false,
       systemKey: null,
       templateVersion: null,
+      revision: 1,
+      versions: [
+        {
+          revision: 1,
+          snapshot: this.roleSnapshot({
+            name,
+            description: source.description ?? '',
+            permissions: [...(source.permissions ?? [])],
+            dataScope: source.dataScope ?? null,
+            color: source.color,
+          }),
+          publishedAt: new Date(),
+          publishedById: this.actorId(),
+          sourceRevision: null,
+        },
+      ],
     });
 
     void this.audit.record({
@@ -182,7 +208,26 @@ export class CustomRolesService {
     }
 
     const before = { name: role.name, permissions: [...role.permissions] };
+    if (!Array.isArray(role.versions) || role.versions.length === 0) {
+      role.versions = [
+        {
+          revision: role.revision ?? 1,
+          snapshot: this.roleSnapshot(role as any),
+          publishedAt: (role as any).createdAt ?? new Date(),
+          publishedById: 'legacy',
+          sourceRevision: null,
+        },
+      ];
+    }
     Object.assign(role, dto);
+    role.revision = (role.revision ?? 1) + 1;
+    role.versions.push({
+      revision: role.revision,
+      snapshot: this.roleSnapshot(role as any),
+      publishedAt: new Date(),
+      publishedById: this.actorId(),
+      sourceRevision: null,
+    });
     const saved = await role.save();
     // A role's permission set changed → any user/group referencing it may now
     // resolve differently. Roles change rarely, so invalidate the whole tenant.
@@ -215,6 +260,65 @@ export class CustomRolesService {
       summary: `deleted role "${role.name}"`,
       before: { name: role.name, permissions: role.permissions },
     });
+  }
+
+  async listVersions(id: string, tenantId: string) {
+    const role = await this.model
+      .findOne({ _id: id, tenantId })
+      .select({ versions: 1, revision: 1, isSystem: 1 })
+      .lean()
+      .exec();
+    if (!role) throw new NotFoundException(`Custom role ${id} not found`);
+    return {
+      currentRevision: role.revision ?? 1,
+      versions: role.versions ?? [],
+    };
+  }
+
+  async rollback(
+    id: string,
+    tenantId: string,
+    sourceRevision: number,
+  ): Promise<CustomRole> {
+    const role = await this.model.findOne({ _id: id, tenantId }).exec();
+    if (!role) throw new NotFoundException(`Custom role ${id} not found`);
+    if (role.isSystem) {
+      throw new BadRequestException('System roles cannot be rolled back');
+    }
+    const source = (role.versions ?? []).find(
+      (entry) => entry.revision === sourceRevision,
+    );
+    if (!source) {
+      throw new NotFoundException(`Role revision ${sourceRevision} not found`);
+    }
+    const snapshot = source.snapshot as any;
+    this.validatePermissions(snapshot.permissions);
+    await this.assertCallerCanGrant(tenantId, snapshot.permissions);
+    await this.assertCallerCanGrantScope(
+      tenantId,
+      snapshot.dataScope,
+      role.dataScope,
+    );
+    Object.assign(role, snapshot);
+    role.revision = (role.revision ?? 1) + 1;
+    role.versions.push({
+      revision: role.revision,
+      snapshot: this.roleSnapshot(role as any),
+      publishedAt: new Date(),
+      publishedById: this.actorId(),
+      sourceRevision,
+    });
+    const saved = await role.save();
+    this.eventEmitter.emit('tenant.permissions.updated', { tenantId });
+    void this.audit.record({
+      category: 'ROLE',
+      action: 'update',
+      targetType: 'custom_role',
+      targetId: String(saved._id),
+      summary: `rolled back role to revision ${sourceRevision} as revision ${saved.revision}`,
+      after: { sourceRevision, revision: saved.revision },
+    });
+    return CustomRoleMapper.toDomain(saved);
   }
 
   // ── Permission matrix ──────────────────────────────────────────────────────
@@ -291,6 +395,20 @@ export class CustomRolesService {
     throw new BadRequestException(
       `Too many roles named like "${base}" — pick a different name.`,
     );
+  }
+
+  private actorId(): string {
+    return String(this.cls.get<string>('userId') ?? 'system');
+  }
+
+  private roleSnapshot(input: Record<string, any>): Record<string, unknown> {
+    return {
+      name: input.name,
+      description: input.description ?? '',
+      permissions: [...(input.permissions ?? [])],
+      dataScope: input.dataScope ?? null,
+      color: input.color ?? '#6366f1',
+    };
   }
 
   private validatePermissions(permissions?: string[]) {

@@ -1,5 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AssignmentPrincipalType } from '../role-assignment.schema';
+import {
+  AssignmentApproval,
+  AssignmentApprovalStatus,
+} from '../role-assignment.schema';
 
 /** RoleAssignment — an auditable, optionally time-bound grant of a role. */
 export class RoleAssignment {
@@ -20,6 +24,21 @@ export class RoleAssignment {
 
   @ApiProperty({ example: '507f1f77bcf86cd799439014' })
   grantedById: string;
+
+  @ApiProperty({ enum: ['pending', 'approved', 'rejected'] })
+  approvalStatus: AssignmentApprovalStatus;
+
+  @ApiProperty({ type: Array })
+  approvals: AssignmentApproval[];
+
+  @ApiPropertyOptional()
+  approvedAt?: Date | null;
+
+  @ApiPropertyOptional()
+  rejectedById?: string | null;
+
+  @ApiPropertyOptional()
+  rejectedAt?: Date | null;
 
   @ApiPropertyOptional({ description: 'null → permanent grant' })
   expiresAt?: Date | null;

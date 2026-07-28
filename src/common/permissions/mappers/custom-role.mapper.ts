@@ -13,6 +13,7 @@ export class CustomRoleMapper {
     entity.systemKey = raw.systemKey ?? null;
     entity.templateVersion = raw.templateVersion ?? null;
     entity.color = raw.color;
+    entity.revision = raw.revision ?? 1;
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;
     return entity;

@@ -15,6 +15,7 @@ import {
   CloneCustomRoleDto,
   CreateCustomRoleDto,
   UpdateCustomRoleDto,
+  RollbackCustomRoleDto,
 } from './custom-roles.dto';
 import { RequirePermission } from './index';
 import { resolveRequestTenantId } from '../tenancy/resolve-request-tenant';
@@ -72,6 +73,31 @@ export class CustomRolesController {
   ) {
     const tenantId = resolveRequestTenantId(this.cls, req);
     return this.service.clone(id, tenantId, dto);
+  }
+
+  @Get(':id/versions')
+  @ApiOperation({ summary: 'List immutable custom-role revisions' })
+  @RequirePermission('view', 'settings')
+  versions(@Req() req: any, @Param('id') id: string) {
+    return this.service.listVersions(
+      id,
+      resolveRequestTenantId(this.cls, req),
+    );
+  }
+
+  @Post(':id/rollback')
+  @ApiOperation({ summary: 'Publish a rollback as a new role revision' })
+  @RequirePermission('manage_system', 'settings')
+  rollback(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() dto: RollbackCustomRoleDto,
+  ) {
+    return this.service.rollback(
+      id,
+      resolveRequestTenantId(this.cls, req),
+      dto.revision,
+    );
   }
 
   @Patch(':id')

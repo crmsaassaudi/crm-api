@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   UnprocessableEntityException,
   NotFoundException,
 } from '@nestjs/common';
@@ -321,6 +322,40 @@ describe('UsersService', () => {
   // ═══════════════════════════════════════════════════════════════════
   // REMOVE — tenant owner protection, event emission
   // ═══════════════════════════════════════════════════════════════════
+  describe('update authorization grants', () => {
+    it('rejects a newly added direct allow permission', async () => {
+      const existing = createUser({
+        id: 'target_user',
+        tenants: [
+          {
+            tenantId: 'tenant_1',
+            roles: ['MEMBER'],
+            permissions: [],
+            permissionOverrides: {},
+            joinedAt: new Date(),
+          } as any,
+        ],
+      });
+      usersRepository.findById.mockResolvedValue(existing);
+
+      await expect(
+        service.update('target_user', {
+          tenants: [
+            {
+              tenantId: 'tenant_1',
+              roles: ['MEMBER'],
+              permissions: ['contacts:delete'],
+              permissionOverrides: {},
+              joinedAt: new Date(),
+            },
+          ],
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(usersRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('remove', () => {
     it('should prevent deleting a user who owns a tenant', async () => {
       tenantsRepository.findByOwnerId.mockResolvedValueOnce([

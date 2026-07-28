@@ -1,5 +1,6 @@
 import { ModuleRef } from '@nestjs/core';
 import { AuthorizationService } from './authorization.service';
+import { AuthorizationContextFactory } from './authorization-context.factory';
 import { AuthzPermissionCacheService } from './authz-permission-cache.service';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
@@ -106,8 +107,17 @@ describe('Authorization PDP (integration)', () => {
     );
 
     const objectAcl = { can: jest.fn().mockResolvedValue(null) } as any;
-    const accessPolicy = { evaluate: jest.fn().mockResolvedValue(null) } as any;
-    authz = new AuthorizationService(cache, objectAcl, accessPolicy);
+    const accessPolicy = {
+      evaluate: jest.fn().mockResolvedValue(null),
+      evaluateActionContext: jest.fn().mockResolvedValue(null),
+      compileResourceDenyFilter: jest.fn().mockResolvedValue(null),
+    } as any;
+    authz = new AuthorizationService(
+      cache,
+      objectAcl,
+      accessPolicy,
+      new AuthorizationContextFactory(),
+    );
   });
 
   it('should grants a member access via a tenant custom-role reference (RBAC expansion)', async () => {

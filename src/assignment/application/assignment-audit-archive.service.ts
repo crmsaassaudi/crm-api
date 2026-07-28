@@ -28,6 +28,8 @@ export class AssignmentAuditArchiveService {
 
   @Cron(CronExpression.EVERY_DAY_AT_2AM)
   async archiveDue(): Promise<number> {
+    // @platform-query: global retention sweep; each archived upsert preserves
+    // row.tenantId and the update phase is restricted to the exact fetched ids.
     const rows = await this.hot.collection
       .find({
         createdAt: { $lt: new Date(Date.now() - ARCHIVE_AFTER_MS) },
@@ -60,6 +62,8 @@ export class AssignmentAuditArchiveService {
           })),
           { ordered: false, session },
         );
+        // @platform-query: ids come exclusively from the bounded global sweep
+        // above; no caller-controlled ids enter this maintenance operation.
         await this.hot.collection.updateMany(
           { _id: { $in: rows.map((row) => row._id) }, archivedAt: null },
           { $set: { archivedAt: new Date() } },

@@ -56,9 +56,14 @@ export class NotesService {
     return note;
   }
 
-  async delete(noteId: string): Promise<void> {
+  async delete(noteId: string, expectedContactId?: string): Promise<void> {
     const note = await this.repository.findOne({ _id: noteId } as any);
-    if (!note || note.deletedAt) {
+    if (
+      !note ||
+      note.deletedAt ||
+      (expectedContactId &&
+        String(note.contactId) !== String(expectedContactId))
+    ) {
       throw new NotFoundException('Note not found');
     }
 

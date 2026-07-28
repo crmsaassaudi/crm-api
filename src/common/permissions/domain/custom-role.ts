@@ -52,6 +52,9 @@ export class CustomRole {
   @ApiProperty({ example: '#6366f1' })
   color: string;
 
+  @ApiProperty({ example: 3 })
+  revision: number;
+
   @ApiPropertyOptional()
   createdAt?: Date;
 

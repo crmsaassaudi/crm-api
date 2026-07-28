@@ -92,11 +92,6 @@ export const calculateEffectivePermissions = (
     membership?.roles?.includes('OWNER') ||
     membership?.roles?.includes('ADMIN');
 
-  // Owner / Admin gets everything the tenant is allowed to use
-  if (isOwner || hasAdminRole) {
-    return tenantPermissions;
-  }
-
   // Map roleId → permission keys for expanding role references (RBAC).
   const roleMap = new Map<string, string[]>(
     tenantRoles.map((role) => [String(role.id), role.permissions ?? []]),
@@ -108,7 +103,11 @@ export const calculateEffectivePermissions = (
   //   - group permissions + group role references
   //   - personal permissions + personal role references
   // intersected with the tenant ceiling, then per-key overrides.
-  const effectivePermissions = new Set<string>();
+  // Elevated tenant roles start from the whole ceiling, but explicit
+  // per-principal denies are still applied below as the final policy layer.
+  const effectivePermissions = new Set<string>(
+    isOwner || hasAdminRole ? tenantPermissions : [],
+  );
 
   const addWithinCeiling = (permission: string) => {
     if (tenantPermissions.has(permission)) {
@@ -232,12 +231,25 @@ export const explainEffectivePermissions = (
         },
       ];
     }
+    const effective = new Set(ceiling);
+    // Platform super-admin is the break-glass principal. Tenant OWNER/ADMIN is
+    // constrainable, so explicit denies must also be reflected by explanations.
+    if (!opts.superAdmin) {
+      Object.entries(membership?.permissionOverrides ?? {}).forEach(
+        ([permission, granted]) => {
+          if (granted !== false || !tenantPermissions.has(permission)) return;
+          effective.delete(permission);
+          delete sources[permission];
+        },
+      );
+    }
+    const fullAccess = effective.size === ceiling.length;
     return {
-      effective: ceiling,
+      effective: [...effective].sort(),
       sources,
       tenantCeiling: ceiling,
-      fullAccess: true,
-      fullAccessReason: reason,
+      fullAccess,
+      fullAccessReason: fullAccess ? reason : undefined,
     };
   }
 

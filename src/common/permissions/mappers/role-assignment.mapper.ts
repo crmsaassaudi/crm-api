@@ -9,6 +9,14 @@ export class RoleAssignmentMapper {
     entity.principalId = raw.principalId?.toString();
     entity.roleId = raw.roleId?.toString();
     entity.grantedById = raw.grantedById?.toString();
+    entity.approvalStatus = raw.approvalStatus ?? 'approved';
+    entity.approvals = (raw.approvals ?? []).map((approval: any) => ({
+      approverId: String(approval.approverId),
+      approvedAt: approval.approvedAt,
+    }));
+    entity.approvedAt = raw.approvedAt ?? null;
+    entity.rejectedById = raw.rejectedById ?? null;
+    entity.rejectedAt = raw.rejectedAt ?? null;
     entity.expiresAt = raw.expiresAt ?? null;
     entity.reason = raw.reason ?? null;
     entity.revokedAt = raw.revokedAt ?? null;

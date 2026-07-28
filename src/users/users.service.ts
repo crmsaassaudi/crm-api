@@ -7,6 +7,7 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  BadRequestException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { NullableType } from '../utils/types/nullable.type';
@@ -475,6 +476,39 @@ export class UsersService {
         incomingMembership.permissions,
         incomingMembership.permissionOverrides,
       );
+    }
+
+    // Standing direct ALLOW grants are deprecated: they have no approval,
+    // expiry, or reusable role identity. Existing keys may be removed and deny
+    // overrides remain valid for narrowing, but new allows must use a custom
+    // role / governed RoleAssignment.
+    if (activeTenantId && incomingMembership) {
+      const previousMembership = targetBefore?.tenants?.find(
+        (membership) =>
+          String(membership.tenantId) === String(activeTenantId),
+      );
+      const previousDirect = new Set(previousMembership?.permissions ?? []);
+      const addedDirect = (incomingMembership.permissions ?? []).filter(
+        (key: string) => !previousDirect.has(key),
+      );
+      const addedAllowOverrides = Object.entries(
+        incomingMembership.permissionOverrides ?? {},
+      )
+        .filter(
+          ([key, value]) =>
+            value === true &&
+            previousMembership?.permissionOverrides?.[key] !== true,
+        )
+        .map(([key]) => key);
+      if (addedDirect.length || addedAllowOverrides.length) {
+        throw new BadRequestException({
+          status: 400,
+          errors: {
+            permissions:
+              'Direct allow grants are disabled. Assign a custom role or submit a governed time-bound role assignment.',
+          },
+        });
+      }
     }
 
     // ── C-04: anti-escalation ────────────────────────────────────────────────

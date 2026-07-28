@@ -87,6 +87,8 @@ export class TicketsController {
 
   @Post(':id/merge')
   @RequirePermission('edit', 'tickets')
+  @UseAcl('edit', 'tickets')
+  @LoadResource('tickets')
   mergeTickets(
     @Param('id') targetId: string,
     @Body() body: { sourceId: string },
@@ -98,12 +100,16 @@ export class TicketsController {
 
   @Post(':id/sla/pause')
   @RequirePermission('edit', 'tickets')
+  @UseAcl('edit', 'tickets')
+  @LoadResource('tickets')
   pauseSla(@Param('id') id: string) {
     return this.service.pauseSla(id);
   }
 
   @Post(':id/sla/resume')
   @RequirePermission('edit', 'tickets')
+  @UseAcl('edit', 'tickets')
+  @LoadResource('tickets')
   resumeSla(@Param('id') id: string) {
     return this.service.resumeSla(id);
   }
@@ -112,18 +118,24 @@ export class TicketsController {
 
   @Patch(':id/link-deal')
   @RequirePermission('edit', 'tickets')
+  @UseAcl('edit', 'tickets')
+  @LoadResource('tickets')
   linkDeal(@Param('id') id: string, @Body() body: { dealId: string }) {
     return this.service.linkDeal(id, body.dealId);
   }
 
   @Delete(':id/unlink-deal')
   @RequirePermission('edit', 'tickets')
+  @UseAcl('edit', 'tickets')
+  @LoadResource('tickets')
   unlinkDeal(@Param('id') id: string) {
     return this.service.unlinkDeal(id);
   }
 
   @Get('by-deal/:dealId')
   @RequirePermission('view', 'tickets')
+  @UseAcl('view', 'deals', 'dealId')
+  @LoadResource('deals')
   findByDeal(@Param('dealId') dealId: string) {
     return this.service.findByDeal(dealId);
   }
@@ -132,18 +144,24 @@ export class TicketsController {
 
   @Patch(':id/set-parent')
   @RequirePermission('edit', 'tickets')
+  @UseAcl('edit', 'tickets')
+  @LoadResource('tickets')
   setParent(@Param('id') id: string, @Body() body: { parentTicketId: string }) {
     return this.service.setParent(id, body.parentTicketId);
   }
 
   @Delete(':id/remove-parent')
   @RequirePermission('edit', 'tickets')
+  @UseAcl('edit', 'tickets')
+  @LoadResource('tickets')
   removeParent(@Param('id') id: string) {
     return this.service.removeParent(id);
   }
 
   @Get(':id/children')
   @RequirePermission('view', 'tickets')
+  @UseAcl('view', 'tickets')
+  @LoadResource('tickets')
   getChildren(@Param('id') id: string) {
     return this.service.getChildren(id);
   }
@@ -258,6 +276,8 @@ export class TicketsController {
 
   @Get(':id')
   @RequirePermission('view', 'tickets')
+  @UseAcl('view', 'tickets')
+  @LoadResource('tickets')
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }

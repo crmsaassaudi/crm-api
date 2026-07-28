@@ -13,6 +13,7 @@ export class AccessPolicyMapper {
     entity.conditions = raw.conditions ?? [];
     entity.active = raw.active !== false;
     entity.priority = raw.priority ?? 100;
+    entity.revision = raw.revision ?? 1;
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;
     return entity;

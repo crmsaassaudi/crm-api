@@ -19,6 +19,7 @@ import {
 } from '../shared/utils/report-date.util';
 import { safePercent } from '../shared/utils/report-percentage.util';
 import { buildReportResponse } from '../shared/utils/report-response.util';
+import { buildCrmReportVisibilityFilter } from '../shared/utils/report-visibility-filter.util';
 import { GetContactReportDto } from './dto/get-contact-report.dto';
 import {
   AssignmentItem,
@@ -904,21 +905,9 @@ export class ContactReportService {
     if (dto.channel) match['omniIdentities.channelType'] = dto.channel;
     if (dto.isVIP !== undefined) match.isVIP = dto.isVIP;
 
-    const visibleOwnerIds = this.cls.get('visibleOwnerIds');
-    if (Array.isArray(visibleOwnerIds)) {
-      match.$and = [
-        ...(match.$and ?? []),
-        {
-          $or: [
-            {
-              ownerId: {
-                $in: visibleOwnerIds.map((id) => this.toObjectIdIfValid(id)),
-              },
-            },
-            { ownerId: null },
-          ],
-        },
-      ];
+    const visibility = buildCrmReportVisibilityFilter(this.cls, 'Contact');
+    if (Object.keys(visibility).length > 0) {
+      match.$and = [...(match.$and ?? []), visibility];
     }
 
     return match;

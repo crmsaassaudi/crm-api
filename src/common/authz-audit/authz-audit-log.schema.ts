@@ -9,6 +9,7 @@ export type AuthzAuditCategory =
   | 'GROUP' // group permissions / roleIds / hierarchy changed
   | 'PLATFORM_ROLE' // platformRole (SUPER_ADMIN) changed
   | 'ASSIGNMENT' // a governed role grant (JIT/time-bound) or its revocation
+  | 'DECISION' // PDP allow/deny result
   | 'OBJECT_ACL'; // a record-level ACL entry granted or revoked
 
 export type AuthzAuditAction =
@@ -16,6 +17,12 @@ export type AuthzAuditAction =
   | 'update'
   | 'delete'
   | 'assign'
+  | 'request'
+  | 'approval_recorded'
+  | 'approve'
+  | 'reject'
+  | 'allow'
+  | 'deny'
   | 'revoke';
 
 /**

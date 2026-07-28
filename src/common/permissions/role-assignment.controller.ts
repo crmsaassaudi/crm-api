@@ -43,9 +43,21 @@ export class RoleAssignmentController {
     return this.service.listForTenant(tenantId, { principalId });
   }
 
+  @Get('certification')
+  @ApiOperation({
+    summary: 'Generate an access-certification and orphaned-grant report',
+  })
+  @RequirePermission('approve', 'settings')
+  certification(@Req() req: any) {
+    return this.service.certificationReport(
+      resolveRequestTenantId(this.cls, req),
+      new Date(),
+    );
+  }
+
   @Post()
   @ApiOperation({
-    summary: 'Grant a role to a principal (optionally time-bound)',
+    summary: 'Request a time-bound role assignment (requires two approvals)',
   })
   @RequirePermission('manage_system', 'settings')
   grant(@Req() req: any, @Body() dto: GrantRoleAssignmentDto) {
@@ -57,9 +69,35 @@ export class RoleAssignmentController {
       principalId: dto.principalId,
       roleId: dto.roleId,
       grantedById,
-      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+      expiresAt: new Date(dto.expiresAt),
       reason: dto.reason,
     });
+  }
+
+  @Post(':id/approve')
+  @ApiOperation({ summary: 'Record an independent assignment approval' })
+  @RequirePermission('approve', 'settings')
+  approve(@Req() req: any, @Param('id') id: string) {
+    const tenantId = resolveRequestTenantId(this.cls, req);
+    return this.service.approve(
+      tenantId,
+      id,
+      resolveActorId(this.cls, req),
+      new Date(),
+    );
+  }
+
+  @Post(':id/reject')
+  @ApiOperation({ summary: 'Reject a pending role assignment' })
+  @RequirePermission('approve', 'settings')
+  reject(@Req() req: any, @Param('id') id: string) {
+    const tenantId = resolveRequestTenantId(this.cls, req);
+    return this.service.reject(
+      tenantId,
+      id,
+      resolveActorId(this.cls, req),
+      new Date(),
+    );
   }
 
   @Delete(':id')

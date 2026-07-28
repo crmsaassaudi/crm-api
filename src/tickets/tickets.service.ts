@@ -715,6 +715,9 @@ export class TicketsService {
    * Get all child tickets (sub-tickets) of a given parent ticket.
    */
   async getChildren(parentTicketId: string): Promise<Ticket[]> {
+    if (!(await this.repository.findOne({ _id: parentTicketId }))) {
+      throw new NotFoundException(`Ticket ${parentTicketId} not found`);
+    }
     const result = await this.repository.findManyWithPagination({
       filterOptions: { parentTicketId },
       paginationOptions: { page: 1, limit: 100 },

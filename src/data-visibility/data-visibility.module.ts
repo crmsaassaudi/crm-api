@@ -7,6 +7,7 @@ import {
 import { RoleHierarchyService } from './role-hierarchy.service';
 import { DataVisibilityInterceptor } from './data-visibility.interceptor';
 import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
+import { DataVisibilityCacheInvalidationListener } from './data-visibility-cache-invalidation.listener';
 
 @Global()
 @Module({
@@ -16,7 +17,11 @@ import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
     ]),
     CrmSettingsModule,
   ],
-  providers: [RoleHierarchyService, DataVisibilityInterceptor],
+  providers: [
+    RoleHierarchyService,
+    DataVisibilityInterceptor,
+    DataVisibilityCacheInvalidationListener,
+  ],
   exports: [RoleHierarchyService, DataVisibilityInterceptor],
 })
 export class DataVisibilityModule {}

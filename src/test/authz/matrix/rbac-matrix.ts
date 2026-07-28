@@ -175,10 +175,6 @@ export function oracleEffectiveKeys(input: OracleInput): Set<string> {
     coreKeys.filter((key) => !(sources.disabledCore && key === KEY.USERS_VIEW)),
   );
 
-  if (sources.tenantOwner || sources.adminFlag) {
-    return ceiling;
-  }
-
   const layers: string[][] = [
     sources.groupPermission ? [KEY.TICKETS_VIEW] : [],
     sources.groupRole ? [KEY.USERS_VIEW] : [],
@@ -193,7 +189,9 @@ export function oracleEffectiveKeys(input: OracleInput): Set<string> {
     .reduce<string[]>((accumulator, layer) => [...accumulator, ...layer], [])
     .filter((key) => ceiling.has(key));
 
-  const result = new Set(granted);
+  const result = new Set(
+    sources.tenantOwner || sources.adminFlag ? ceiling : granted,
+  );
 
   // Overrides are the last word, and are themselves clamped by the ceiling.
   if (sources.overrideAllow && ceiling.has(KEY.TICKETS_EDIT)) {

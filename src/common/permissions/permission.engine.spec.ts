@@ -1,6 +1,7 @@
 import {
   calculateEffectivePermissions,
   canAccess,
+  explainEffectivePermissions,
   getTenantPermissions,
   PermissionTenant,
   PermissionUser,
@@ -50,6 +51,58 @@ describe('permission.engine (authz matrix)', () => {
       user('admin_user', { roles: ['ADMIN'] }),
     );
     expect(canAccess(perms, 'view', 'deals')).toBe(true);
+  });
+
+  it('should lets an explicit deny constrain an ADMIN permission', () => {
+    const perms = calculateEffectivePermissions(
+      tenant(),
+      user('admin_user', {
+        roles: ['ADMIN'],
+        permissionOverrides: { 'contacts:delete': false },
+      }),
+    );
+    expect(canAccess(perms, 'view', 'contacts')).toBe(true);
+    expect(canAccess(perms, 'delete', 'contacts')).toBe(false);
+  });
+
+  it('should lets an explicit deny constrain the tenant owner', () => {
+    const perms = calculateEffectivePermissions(
+      tenant(),
+      user('owner_user', {
+        permissionOverrides: { 'contacts:delete': false },
+      }),
+    );
+    expect(canAccess(perms, 'delete', 'contacts')).toBe(false);
+  });
+
+  it('should explain a constrained ADMIN as not having full access', () => {
+    const explanation = explainEffectivePermissions(
+      tenant(),
+      user('admin_user', {
+        roles: ['ADMIN'],
+        permissionOverrides: { 'contacts:delete': false },
+      }),
+    );
+    expect(explanation.effective).not.toContain('contacts:delete');
+    expect(explanation.sources['contacts:delete']).toBeUndefined();
+    expect(explanation.fullAccess).toBe(false);
+    expect(explanation.fullAccessReason).toBeUndefined();
+  });
+
+  it('should keep platform super-admin as the break-glass full-access principal', () => {
+    const explanation = explainEffectivePermissions(
+      tenant(),
+      user('admin_user', {
+        roles: ['ADMIN'],
+        permissionOverrides: { 'contacts:delete': false },
+      }),
+      [],
+      [],
+      { superAdmin: true },
+    );
+    expect(explanation.effective).toContain('contacts:delete');
+    expect(explanation.fullAccess).toBe(true);
+    expect(explanation.fullAccessReason).toBe('super_admin');
   });
 
   it('should does NOT grant feature permissions the tenant has not enabled, even to Owner', () => {

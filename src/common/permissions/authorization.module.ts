@@ -33,6 +33,7 @@ import {
   CUSTOM_ROLES_SERVICE,
   ROLE_ASSIGNMENT_SERVICE,
 } from './authz.tokens';
+import { AuthorizationContextFactory } from './authorization-context.factory';
 
 /**
  * AuthorizationModule — the single home of the authorization stack.
@@ -75,6 +76,7 @@ import {
     SystemRolesSeederService,
     RoleAssignmentService,
     AccessPolicyService,
+    AuthorizationContextFactory,
     AuthzPermissionCacheService,
     AuthorizationService,
     AuthzPermissionInvalidationListener,

@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
+import { tenantFilterPlugin } from '../plugins/tenant-filter.plugin';
 
 export type ObjectAclDocument = ObjectAcl & Document;
 
@@ -55,3 +56,4 @@ export const ObjectAclSchema = SchemaFactory.createForClass(ObjectAcl);
 ObjectAclSchema.index({ resourceType: 1, resourceId: 1, tenantId: 1 });
 // Compound index for per-principal look-up (e.g. "which records can this user view?")
 ObjectAclSchema.index({ principalType: 1, principalId: 1, tenantId: 1 });
+ObjectAclSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });

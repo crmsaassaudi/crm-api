@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   NotFoundException,
   UnprocessableEntityException,
@@ -10,6 +11,8 @@ describe('RoleAssignmentService', () => {
   const tenantId = 'tenant_1';
   const userId = 'user_1';
   const roleId = 'role_sales';
+  const governedExpiry = () =>
+    new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   let model: any;
   let customRoles: any;
@@ -92,6 +95,8 @@ describe('RoleAssignmentService', () => {
         principalId: userId,
         roleId,
         grantedById: 'admin_1',
+        expiresAt: governedExpiry(),
+        reason: 'test request',
       }),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
     expect(model.create).not.toHaveBeenCalled();
@@ -107,6 +112,8 @@ describe('RoleAssignmentService', () => {
         principalId: 'group_from_elsewhere',
         roleId,
         grantedById: 'admin_1',
+        expiresAt: governedExpiry(),
+        reason: 'test request',
       }),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
     expect(model.create).not.toHaveBeenCalled();
@@ -121,13 +128,15 @@ describe('RoleAssignmentService', () => {
         principalId: userId,
         roleId,
         grantedById: 'admin_1',
+        expiresAt: governedExpiry(),
+        reason: 'test request',
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(model.create).not.toHaveBeenCalled();
   });
 
-  it('should grant persists, invalidates the principal cache, and audits', async () => {
-    const expiresAt = new Date('2999-01-01T00:00:00.000Z');
+  it('should create a pending request without activating permissions', async () => {
+    const expiresAt = governedExpiry();
     await service.grant({
       tenantId,
       principalType: 'user',
@@ -144,29 +153,27 @@ describe('RoleAssignmentService', () => {
         principalId: userId,
         roleId,
         expiresAt,
+        approvalStatus: 'pending',
+        approvals: [],
       }),
     );
-    expect(eventEmitter.emit).toHaveBeenCalledWith('user.permissions.updated', {
-      tenantId,
-      userId,
-    });
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
     expect(audit.record).toHaveBeenCalledWith(
-      expect.objectContaining({ category: 'ASSIGNMENT', action: 'assign' }),
+      expect.objectContaining({ category: 'ASSIGNMENT', action: 'request' }),
     );
   });
 
-  it('should grant to a group emits a group invalidation event', async () => {
+  it('should keep a group request inert until approval', async () => {
     await service.grant({
       tenantId,
       principalType: 'group',
       principalId: 'group_1',
       roleId,
       grantedById: 'admin_1',
+      expiresAt: governedExpiry(),
+      reason: 'test request',
     });
-    expect(eventEmitter.emit).toHaveBeenCalledWith('group.updated', {
-      tenantId,
-      groupId: 'group_1',
-    });
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
   });
 
   describe('anti-escalation invariant', () => {
@@ -180,6 +187,8 @@ describe('RoleAssignmentService', () => {
           principalId: userId,
           roleId,
           grantedById: userId,
+          expiresAt: governedExpiry(),
+          reason: 'test request',
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(model.create).not.toHaveBeenCalled();
@@ -207,6 +216,8 @@ describe('RoleAssignmentService', () => {
           principalId: userId,
           roleId,
           grantedById: callerId,
+          expiresAt: governedExpiry(),
+          reason: 'test request',
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(model.create).not.toHaveBeenCalled();
@@ -229,6 +240,8 @@ describe('RoleAssignmentService', () => {
         principalId: userId,
         roleId,
         grantedById: callerId,
+        expiresAt: governedExpiry(),
+        reason: 'test request',
       });
 
       expect(model.create).toHaveBeenCalled();
@@ -257,11 +270,80 @@ describe('RoleAssignmentService', () => {
     expect(result.sort()).toEqual(['r1', 'r2']); // de-duped
     const where = model.find.mock.calls[0][0];
     expect(where.revokedAt).toBeNull();
+    expect(where.$and).toEqual([
+      {
+        $or: [
+          { approvalStatus: 'approved' },
+          { approvalStatus: { $exists: false } },
+        ],
+      },
+    ]);
     expect(where.$or).toEqual([
       { expiresAt: null },
       { expiresAt: { $gt: now } },
     ]);
     expect(where.principalId.$in.sort()).toEqual([userId, 'group_1'].sort());
+  });
+
+  it('requires two distinct approvals before activating a request', async () => {
+    const save = jest.fn();
+    const doc: any = {
+      tenantId,
+      principalType: 'user',
+      principalId: userId,
+      roleId,
+      grantedById: 'requester_1',
+      approvalStatus: 'pending',
+      approvals: [],
+      save,
+    };
+    save.mockImplementation(async () => doc);
+    model.findOne.mockReturnValue({ exec: () => Promise.resolve(doc) });
+
+    const first = await service.approve(
+      tenantId,
+      'a1',
+      'approver_1',
+      new Date(),
+    );
+    expect(first.approvalStatus).toBe('pending');
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
+
+    const second = await service.approve(
+      tenantId,
+      'a1',
+      'approver_2',
+      new Date(),
+    );
+    expect(second.approvalStatus).toBe('approved');
+    expect(eventEmitter.emit).toHaveBeenCalledWith(
+      'user.permissions.updated',
+      { tenantId, userId },
+    );
+  });
+
+  it('prevents requester, target, and duplicate approver participation', async () => {
+    const doc: any = {
+      tenantId,
+      principalType: 'user',
+      principalId: userId,
+      roleId,
+      grantedById: 'requester_1',
+      approvalStatus: 'pending',
+      approvals: [{ approverId: 'approver_1', approvedAt: new Date() }],
+      save: jest.fn(),
+    };
+    model.findOne.mockReturnValue({ exec: () => Promise.resolve(doc) });
+
+    await expect(
+      service.approve(tenantId, 'a1', 'requester_1', new Date()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.approve(tenantId, 'a1', userId, new Date()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.approve(tenantId, 'a1', 'approver_1', new Date()),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('should activeRoleIdsForPrincipals short-circuits on empty input', async () => {

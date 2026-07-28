@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { AbacCondition, PolicyEffect } from './abac.evaluator';
+import { tenantFilterPlugin } from '../plugins/tenant-filter.plugin';
 
 export type AccessPolicyDocument = HydratedDocument<AccessPolicySchemaClass>;
 
@@ -44,6 +45,19 @@ export class AccessPolicySchemaClass {
   /** Lower runs first; deny-overrides makes order non-critical but stable. */
   @Prop({ type: Number, default: 100 })
   priority: number;
+
+  /** Monotonic published revision; history entries are append-only snapshots. */
+  @Prop({ type: Number, default: 1 })
+  revision: number;
+
+  @Prop({ type: [MongooseSchema.Types.Mixed], default: [] })
+  versions: Array<{
+    revision: number;
+    snapshot: Record<string, unknown>;
+    publishedAt: Date;
+    publishedById: string;
+    sourceRevision?: number | null;
+  }>;
 }
 
 export const AccessPolicySchema = SchemaFactory.createForClass(
@@ -52,3 +66,4 @@ export const AccessPolicySchema = SchemaFactory.createForClass(
 
 // Hot path: fetch a tenant's active policies for a resource/action.
 AccessPolicySchema.index({ tenantId: 1, resource: 1, action: 1, active: 1 });
+AccessPolicySchema.plugin(tenantFilterPlugin, { field: 'tenantId' });

@@ -1,11 +1,18 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import { tenantFilterPlugin } from '../plugins/tenant-filter.plugin';
 
 export type RoleAssignmentDocument =
   HydratedDocument<RoleAssignmentSchemaClass>;
 
 /** Who a role is granted to. Mirrors the two RBAC subject kinds. */
 export type AssignmentPrincipalType = 'user' | 'group';
+export type AssignmentApprovalStatus = 'pending' | 'approved' | 'rejected';
+
+export interface AssignmentApproval {
+  approverId: string;
+  approvedAt: Date;
+}
 
 /**
  * RoleAssignment — a first-class, auditable grant of a custom role to a
@@ -40,6 +47,35 @@ export class RoleAssignmentSchemaClass {
   @Prop({ type: String, required: true })
   grantedById: string;
 
+  /** New grants remain inert until two independent administrators approve. */
+  @Prop({
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending',
+    index: true,
+  })
+  approvalStatus: AssignmentApprovalStatus;
+
+  @Prop({
+    type: [
+      {
+        approverId: { type: String, required: true },
+        approvedAt: { type: Date, required: true },
+      },
+    ],
+    default: [],
+  })
+  approvals: AssignmentApproval[];
+
+  @Prop({ type: Date, default: null })
+  approvedAt?: Date | null;
+
+  @Prop({ type: String, default: null })
+  rejectedById?: string | null;
+
+  @Prop({ type: Date, default: null })
+  rejectedAt?: Date | null;
+
   /** null → permanent grant; a Date → JIT/temporary, lapses at this instant. */
   @Prop({ type: Date, default: null })
   expiresAt?: Date | null;
@@ -63,3 +99,10 @@ export const RoleAssignmentSchema = SchemaFactory.createForClass(
 RoleAssignmentSchema.index({ tenantId: 1, principalId: 1, revokedAt: 1 });
 // Admin listing + role-scoped invalidation.
 RoleAssignmentSchema.index({ tenantId: 1, roleId: 1 });
+RoleAssignmentSchema.index({
+  tenantId: 1,
+  approvalStatus: 1,
+  revokedAt: 1,
+  expiresAt: 1,
+});
+RoleAssignmentSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });

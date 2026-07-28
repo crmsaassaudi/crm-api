@@ -4,6 +4,7 @@ import {
   ConflictException,
   UnprocessableEntityException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -107,6 +108,11 @@ export class GroupsService {
   async create(dto: CreateGroupDto): Promise<Group> {
     const tenantId = this.cls.get('tenantId');
     try {
+      if (dto.permissions?.length) {
+        throw new BadRequestException(
+          'Direct group permissions are disabled. Attach a custom role instead.',
+        );
+      }
       if (dto.parentGroupId) {
         const parent = await this.repository.findById(
           tenantId,
@@ -160,6 +166,11 @@ export class GroupsService {
       const addedPermissions = (dto.permissions ?? []).filter(
         (key) => !(previous?.permissions ?? []).includes(key),
       );
+      if (addedPermissions.length) {
+        throw new BadRequestException(
+          'Direct group permissions are disabled. Attach a custom role instead.',
+        );
+      }
       const addedRoleIds = (dto.roleIds ?? []).filter(
         (roleId) =>
           !(previous?.roleIds ?? []).map(String).includes(String(roleId)),

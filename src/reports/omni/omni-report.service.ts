@@ -19,6 +19,7 @@ import {
 } from '../shared/utils/report-date.util';
 import { safePercent } from '../shared/utils/report-percentage.util';
 import { buildReportResponse } from '../shared/utils/report-response.util';
+import { buildConversationReportVisibilityFilter } from '../shared/utils/report-visibility-filter.util';
 import { GetOmniReportDto } from './dto/get-omni-report.dto';
 import {
   AgentPerformanceItem,
@@ -774,6 +775,7 @@ export class OmniReportService {
   private buildBaseMatch(dto: GetOmniReportDto): Record<string, any> {
     const match: Record<string, any> = {
       tenantId: this.tenantObjectId(),
+      ...buildConversationReportVisibilityFilter(this.cls),
     };
 
     if (dto.channelType) {
