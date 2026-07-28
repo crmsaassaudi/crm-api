@@ -83,7 +83,14 @@ describe('DealsService', () => {
     service = new DealsService(
       repository,
       cls as any,
-      eventEmitter as any,
+      {
+        runWithEvent: jest.fn(async (mutate: any, build: any) => {
+          const result = await mutate(undefined);
+          const payload = build(result);
+          if (payload) await eventEmitter.emitAsync('automation', payload);
+          return result;
+        }),
+      } as any,
       entityAudit,
       storageFactory as any,
       importQueue,
@@ -107,6 +114,7 @@ describe('DealsService', () => {
 
       expect(repository.create).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'Enterprise License' }),
+        undefined,
       );
       expect(result.id).toBe('deal_new');
     });
@@ -116,6 +124,7 @@ describe('DealsService', () => {
 
       expect(repository.create).toHaveBeenCalledWith(
         expect.objectContaining({ ownerId: undefined }),
+        undefined,
       );
     });
   });

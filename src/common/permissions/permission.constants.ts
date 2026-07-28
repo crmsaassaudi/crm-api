@@ -22,6 +22,7 @@ export type PermissionResource =
   | 'email_settings'
   | 'email_integrations'
   | 'automation_rules'
+  | 'automation_workflows'
   | 'automation_logs'
   | 'integration_monitoring'
   | 'channels'
@@ -53,7 +54,10 @@ export type PermissionAction =
   | 'approve'
   | 'cancel'
   | 'retry'
-  | 'publish';
+  | 'publish'
+  | 'activate'
+  | 'test'
+  | 'run_as_system';
 
 export type PermissionRule = {
   action: PermissionAction;
@@ -222,6 +226,34 @@ export const PERMISSION_REGISTRY: Record<
     edit: 'automation_rules:edit',
     delete: 'automation_rules:delete',
   },
+  /**
+   * The visual workflow builder.
+   *
+   * Split out of `settings:manage_system` because designing an automation is a
+   * data-plane power, not a settings one: an executed workflow reads and writes
+   * every record in the tenant, bypassing the owner/org-unit/ABAC axes that
+   * constrain the author's own requests. Welding it to `settings:manage_system`
+   * meant "may build automations" could not be granted without also granting
+   * role, ACL and access-policy administration — and could not be withheld from
+   * anyone who needed those.
+   *
+   * `publish` and `activate` are separate from `edit` so a tenant can require a
+   * second pair of eyes before a rule starts rewriting production records.
+   *
+   * `run_as_system` is the privilege to build a workflow that executes with full
+   * tenant scope instead of as a real user. Deliberately its own key: it is the
+   * escalation, and it should be visible and grantable as one.
+   */
+  automation_workflows: {
+    view: 'automation_workflows:view',
+    create: 'automation_workflows:create',
+    edit: 'automation_workflows:edit',
+    delete: 'automation_workflows:delete',
+    publish: 'automation_workflows:publish',
+    activate: 'automation_workflows:activate',
+    test: 'automation_workflows:test',
+    run_as_system: 'automation_workflows:run_as_system',
+  },
   automation_logs: {
     view: 'automation_logs:view',
     retry: 'automation_logs:retry',
@@ -282,9 +314,39 @@ export const PERMISSION_REGISTRY: Record<
 /**
  * ALL_PERMISSIONS: Complete set of every permission key in the registry.
  * Used as the superset for type-checking and seeding.
+ *
+ * Includes DEPRECATED_PERMISSIONS on purpose — this set is what
+ * `CustomRolesService.validatePermissions` and
+ * `UsersService.assertPermissionKeysValid` check against, so dropping a key
+ * outright would make every stored role that still holds it fail validation the
+ * next time anyone edits it.
  */
 export const ALL_PERMISSIONS = Object.values(PERMISSION_REGISTRY).flatMap(
   (resource) => Object.values(resource).filter(Boolean),
+);
+
+/**
+ * Keys that remain valid for stored roles but must not be offered for new
+ * grants. A key lands here when the feature behind it is gone.
+ *
+ * `automation_rules:*` — the `automation_rules` collection was CRUD-only with no
+ * evaluator anywhere, so a tenant could grant these and author rules that could
+ * never run. The API surface was removed 2026-07-28; the keys stay valid until
+ * `migrate:strip-deprecated-permissions` has been run in every environment, at
+ * which point they can be deleted from PERMISSION_REGISTRY.
+ *
+ * @see docs/audit/WORKFLOW_AUTOMATION_SECURITY_AUDIT.md — finding M6
+ */
+export const DEPRECATED_PERMISSIONS: readonly string[] = [
+  'automation_rules:view',
+  'automation_rules:create',
+  'automation_rules:edit',
+  'automation_rules:delete',
+];
+
+/** Keys a tenant may be offered when building a role. */
+export const GRANTABLE_PERMISSIONS = ALL_PERMISSIONS.filter(
+  (key) => !DEPRECATED_PERMISSIONS.includes(key),
 );
 
 /**
@@ -379,6 +441,20 @@ export const CORE_PERMISSIONS: string[] = [
   'automation_rules:delete',
   'automation_logs:view',
   'automation_logs:retry',
+  // Automation Workflows. Listed in CORE so a tenant Owner/Admin keeps the
+  // access they had when these routes were gated on `settings:manage_system` —
+  // splitting the permission out must not lock existing admins out of the
+  // builder. `run_as_system` is included because that is the behaviour every
+  // existing workflow already has; a tenant that wants to withhold it now can,
+  // which is the point.
+  'automation_workflows:view',
+  'automation_workflows:create',
+  'automation_workflows:edit',
+  'automation_workflows:delete',
+  'automation_workflows:publish',
+  'automation_workflows:activate',
+  'automation_workflows:test',
+  'automation_workflows:run_as_system',
   // Integration Monitoring
   'integration_monitoring:view',
   // Channels (Omni messaging providers)

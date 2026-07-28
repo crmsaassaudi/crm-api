@@ -182,15 +182,27 @@ export class LoopPreventionService {
    * Clear all loop prevention keys for a tenant.
    * Used in integration tests only.
    *
-   * MED-05: refuses to run in production (KEYS/SCAN over a shared keyspace is a
-   * footgun there) and uses a non-blocking SCAN cursor instead of the
-   * O(N)-blocking KEYS command.
+   * MED-05: uses a non-blocking SCAN cursor instead of the O(N)-blocking KEYS
+   * command.
+   *
+   * Gated on `NODE_ENV === 'test'` rather than merely "not production". Deleting
+   * another environment's loop guards is not a production-only hazard: staging,
+   * UAT and a developer machine routinely share a Redis instance, and any of
+   * them would have passed a `!== 'production'` check while wiping the run-once
+   * and strict-loop keys of whatever else was pointed at that keyspace —
+   * re-enabling workflows that were supposed to run once per record.
    */
   async clearTenantKeys(tenantId: string): Promise<void> {
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV !== 'test') {
       throw new Error(
-        'clearTenantKeys() is a test-only helper and must not run in production',
+        `clearTenantKeys() is a test-only helper (NODE_ENV=${process.env.NODE_ENV ?? 'unset'}). ` +
+          'It deletes run-once and loop-guard keys, which are shared with any ' +
+          'other environment using the same Redis instance.',
       );
+    }
+    if (!tenantId) {
+      // A blank tenant makes the pattern `automation:loop:*` — every tenant.
+      throw new Error('clearTenantKeys() requires an explicit tenantId');
     }
 
     const patterns = [

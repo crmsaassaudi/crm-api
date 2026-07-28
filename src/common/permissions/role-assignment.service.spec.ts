@@ -11,8 +11,7 @@ describe('RoleAssignmentService', () => {
   const tenantId = 'tenant_1';
   const userId = 'user_1';
   const roleId = 'role_sales';
-  const governedExpiry = () =>
-    new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const governedExpiry = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   let model: any;
   let customRoles: any;
@@ -316,10 +315,10 @@ describe('RoleAssignmentService', () => {
       new Date(),
     );
     expect(second.approvalStatus).toBe('approved');
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      'user.permissions.updated',
-      { tenantId, userId },
-    );
+    expect(eventEmitter.emit).toHaveBeenCalledWith('user.permissions.updated', {
+      tenantId,
+      userId,
+    });
   });
 
   it('prevents requester, target, and duplicate approver participation', async () => {

@@ -347,7 +347,9 @@ export class AccessPolicyService {
       (entry) => entry.revision === sourceRevision,
     );
     if (!source) {
-      throw new NotFoundException(`Policy revision ${sourceRevision} not found`);
+      throw new NotFoundException(
+        `Policy revision ${sourceRevision} not found`,
+      );
     }
     const snapshot = source.snapshot as Partial<UpsertAccessPolicyInput>;
     this.validateConditions(snapshot.conditions ?? []);

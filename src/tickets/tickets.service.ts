@@ -13,12 +13,9 @@ import { Readable } from 'stream';
 import { TicketRepository } from './infrastructure/persistence/document/repositories/ticket.repository';
 import { Ticket } from './domain/ticket';
 import { TicketSettingsService } from '../ticket-settings/ticket-settings.service';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
-import {
-  AutomationEventPayload,
-  buildAutomationEventName,
-} from '../automation-rules/events/automation-event.payload';
+import { AutomationEventPayload } from '../automation-rules/events/automation-event.payload';
+import { AutomationOutboxService } from '../automation-rules/events/automation-outbox.service';
 import { EntityAuditService } from '../common/audit/entity-audit.service';
 import {
   ImportStorageService,
@@ -48,7 +45,7 @@ export class TicketsService {
   constructor(
     private readonly repository: TicketRepository,
     private readonly ticketSettingsService: TicketSettingsService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly automationOutbox: AutomationOutboxService,
     private readonly cls: ClsService,
     private readonly entityAudit: EntityAuditService,
     private readonly storageFactory: ImportStorageFactory,
@@ -212,12 +209,19 @@ export class TicketsService {
 
     const ticketNumber = await this.repository.generateTicketNumber();
 
-    const ticket = await this.repository.create({
-      ...data,
-      ticketNumber,
-      isSlaBreached: false,
-      timeSpentSeconds: 0,
-    } as any);
+    const ticket = await this.automationOutbox.runWithEvent(
+      (session) =>
+        this.repository.create(
+          {
+            ...data,
+            ticketNumber,
+            isSlaBreached: false,
+            timeSpentSeconds: 0,
+          } as any,
+          session,
+        ),
+      (created) => this.buildAutomationEvent('record_created', created),
+    );
 
     this.entityAudit.emit({
       entity: 'ticket',
@@ -226,9 +230,6 @@ export class TicketsService {
       kind: 'created',
       newSnapshot: ticket,
     });
-
-    // Emit automation event: record_created.Ticket
-    this.emitAutomationEvent('record_created', ticket);
 
     return ticket;
   }
@@ -258,13 +259,17 @@ export class TicketsService {
 
     await this.handleStatusChange(existingTicket, data, updateData);
 
-    const updated = await this.repository.update(id, updateData);
+    const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
+    const updated = await this.automationOutbox.runWithEvent(
+      (session) => this.repository.update(id, updateData, session),
+      (result) =>
+        result
+          ? this.buildAutomationEvent('field_updated', result, changedFields)
+          : null,
+    );
 
     // Emit automation event: field_updated.Ticket
     if (updated) {
-      const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
-      this.emitAutomationEvent('field_updated', updated, changedFields);
-
       // Emit audit trail event: field-level change tracking
       this.entityAudit.emit({
         entity: 'ticket',
@@ -365,13 +370,15 @@ export class TicketsService {
 
   // ── Automation Event Emitter ─────────────────────────────────────────────
 
-  private emitAutomationEvent(
+  private buildAutomationEvent(
     event: 'record_created' | 'field_updated',
     record: Ticket,
     changedFields?: string[],
-  ): void {
+  ): AutomationEventPayload | null {
     const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
-    if (!tenantId) return;
+    if (!tenantId) {
+      throw new Error('Tenant context is required for Ticket automation.');
+    }
 
     const payload: AutomationEventPayload = {
       tenantId,
@@ -381,9 +388,12 @@ export class TicketsService {
       data: record as any,
       ...(changedFields ? { changedFields } : {}),
       automationDepth: 0,
+      // Feeds `runAs: 'trigger_user'`. Read from CLS at emit time because the
+      // queue worker that evaluates this event has no request to read it from.
+      triggerUserId: this.cls.get('userId') ?? null,
     };
 
-    this.eventEmitter.emit(buildAutomationEventName(event, 'Ticket'), payload);
+    return payload;
   }
 
   private getCurrentUserId(): string | undefined {

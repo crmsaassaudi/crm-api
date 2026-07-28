@@ -55,13 +55,40 @@ export class AutomationExecutionLogSchemaClass {
   @Prop({ required: true })
   workflowName: string;
 
+  /**
+   * The published version that actually ran.
+   *
+   * `publish()` increments `version` and overwrites `publishedNodes` in place, so
+   * without this the log could say which workflow ran but never which of its
+   * versions — the difference between "the rule did that" and "the rule as it
+   * was last Tuesday did that".
+   */
+  @Prop({ type: Number, default: null })
+  workflowVersion: number | null;
+
   @Prop({ required: true })
   recordId: string;
 
+  /**
+   * Must stay in step with `AutomationCrmModule` and the repository's
+   * `startExecution` signature. It omitted Conversation and Message while both
+   * the type and the signature accepted them, so an omni-triggered workflow
+   * would have thrown a Mongoose validation error on the very first write of its
+   * execution log — the engine's own audit record was the thing that blocked it.
+   */
   @Prop({
     type: String,
     required: true,
-    enum: ['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'],
+    enum: [
+      'Lead',
+      'Contact',
+      'Ticket',
+      'Deal',
+      'Account',
+      'Task',
+      'Conversation',
+      'Message',
+    ],
   })
   recordType: string;
 

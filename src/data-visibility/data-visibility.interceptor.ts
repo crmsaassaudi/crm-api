@@ -116,7 +116,20 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     return from(this.resolveVisibility()).pipe(switchMap(() => next.handle()));
   }
 
-  private async resolveVisibility(): Promise<void> {
+  /**
+   * Resolve every visibility axis for the `tenantId` + `userId` already in CLS.
+   *
+   * Public so non-HTTP entry points can reuse the exact same computation. The
+   * automation worker calls it after establishing a principal, which is what
+   * lets an automation be subject to the owner, org-unit, sharing-rule and
+   * channel axes instead of running unscoped: the repository layer keys off
+   * these CLS values and treats their absence as "no filter", so a queue
+   * consumer that never populated them read and wrote the whole tenant.
+   *
+   * Deliberately shared rather than reimplemented — two copies of a visibility
+   * calculation is two answers to the same question.
+   */
+  async resolveVisibility(): Promise<void> {
     const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
 

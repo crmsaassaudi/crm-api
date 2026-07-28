@@ -16,10 +16,15 @@ describe('AuthorizationContextFactory', () => {
       now: new Date('2026-07-28T12:00:00Z'),
       ip: '10.0.0.1',
     });
-    const record = factory.forRecord(subject, 'r1', { ownerId: 'u1' }, {
-      now: new Date('2026-07-28T12:00:00Z'),
-      ip: '10.0.0.1',
-    });
+    const record = factory.forRecord(
+      subject,
+      'r1',
+      { ownerId: 'u1' },
+      {
+        now: new Date('2026-07-28T12:00:00Z'),
+        ip: '10.0.0.1',
+      },
+    );
 
     expect(record.subject).toEqual(action.subject);
     expect(record.env).toEqual(action.env);

@@ -6,6 +6,8 @@ import {
   Param,
   Query,
   BadRequestException,
+  ForbiddenException,
+  Inject,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -15,12 +17,22 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { ClsService } from 'nestjs-cls';
+import Redis from 'ioredis';
 import { AutomationExecutionLogRepository } from './infrastructure/persistence/document/repositories/automation-execution-log.repository';
+import { AutomationWorkflowRepository } from './infrastructure/persistence/document/repositories/automation-workflow.repository';
 import { AutomationActionProducer } from './queue/automation-action.producer';
 import { CrmRecordUpdateService } from './engine/crm-record-update.service';
+import { AutomationAuditService } from './automation-audit.service';
 import { RetryStepDto } from './dto/workflow.dto';
 import { RequirePermission } from '../common/permissions';
+import { AuthorizationService } from '../common/permissions/authorization.service';
+import { IOREDIS_CLIENT } from '../redis/redis.tokens';
+import { POISON_THRESHOLD } from './queue/automation-dlq.processor';
+import { ActionIdempotencyService } from './engine/action-idempotency.service';
 import { AutomationActionJobData } from './queue/automation-queue.constants';
+
+/** Minimum gap between two manual retries of the same step. */
+const RETRY_COOLDOWN_SECONDS = 60;
 
 /**
  * AutomationExecutionLogController — REST API for querying execution logs.
@@ -37,6 +49,11 @@ export class AutomationExecutionLogController {
     private readonly cls: ClsService,
     private readonly actionProducer: AutomationActionProducer,
     private readonly crmRecordUpdate: CrmRecordUpdateService,
+    private readonly workflowRepo: AutomationWorkflowRepository,
+    private readonly auditService: AutomationAuditService,
+    private readonly authz: AuthorizationService,
+    private readonly idempotency: ActionIdempotencyService,
+    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   private get tenantId(): string {
@@ -82,7 +99,7 @@ export class AutomationExecutionLogController {
       if (to) filter.startedAt.$lte = new Date(to);
     }
 
-    const [data, total] = await this.repo.findWithPagination(
+    const { data, total, totalIsCapped } = await this.repo.findWithPagination(
       filter,
       skip,
       limitNum,
@@ -95,6 +112,12 @@ export class AutomationExecutionLogController {
         limit: limitNum,
         total,
         totalPages: Math.ceil(total / limitNum),
+        /**
+         * True when the match set is larger than the counting cap, so `total` is
+         * a floor rather than an exact figure. Surfaced rather than hidden: a
+         * page count that silently lies is worse than one that says "10,000+".
+         */
+        totalIsCapped,
       },
     };
   }
@@ -122,13 +145,42 @@ export class AutomationExecutionLogController {
   })
   @RequirePermission('retry', 'automation_logs')
   async retryStep(@Param('id') id: string, @Body() dto: RetryStepDto) {
-    // 1. Verify execution log and step exist
+    // 1. Retrying an action executes it for real, with the engine's full
+    //    tenant-wide reach and none of the request-scoped authorization the
+    //    caller is otherwise subject to. `automation_logs:retry` alone is a
+    //    grant a "support can re-run failed jobs" role would plausibly get, so
+    //    require the workflow-administration permission on top of it.
+    await this.assertMayExecuteAutomation();
+
+    // 2. Verify execution log and step exist
     const { step, executionLog } = await this.fetchRetryStepData(
       id,
       dto.nodeId,
     );
 
-    // 2. Atomic idempotency guard: only failed/dlq steps can be retried
+    // 3. Re-resolve the action from the workflow's CURRENT published snapshot.
+    //    Reading the config back out of the log made retry un-revocable: an
+    //    action stayed executable for the log's 30-day retention even after the
+    //    node was edited, the workflow unpublished, paused or deleted.
+    const node = await this.resolveLivePublishedNode(
+      executionLog.workflowId?.toString(),
+      dto.nodeId,
+    );
+
+    // 4. Refuse to re-fire a node the DLQ processor has quarantined. Retrying a
+    //    node that has already dead-lettered dozens of times in the last hour
+    //    sends the same doomed request again; the config is what needs fixing.
+    await this.assertNodeNotQuarantined(
+      executionLog.workflowId?.toString(),
+      dto.nodeId,
+    );
+
+    // 5. One retry per step per window. The step-state transition below already
+    //    serialises retries, but an action that keeps failing can be re-fired in
+    //    a tight loop — and a webhook sends its request before it fails.
+    await this.assertRetryNotRateLimited(id, dto.nodeId);
+
+    // 6. Atomic state guard: only failed/dlq steps can be retried
     const transitioned = await this.repo.retryStep(id, dto.nodeId);
     if (!transitioned) {
       throw new BadRequestException(
@@ -136,12 +188,22 @@ export class AutomationExecutionLogController {
       );
     }
 
-    // 3. Re-dispatch the action job using original data from the step.
+    // 7. Clear the exactly-once claim. A step that reached the DLQ still holds a
+    //    confirmed claim, so without this the redispatched job would be skipped
+    //    as a duplicate and the retry would silently do nothing.
+    await this.idempotency.release({
+      tenantId: this.tenantId,
+      executionId: id,
+      nodeId: dto.nodeId,
+    } as any);
+
+    // 8. Re-dispatch the action job.
     const jobData = await this.buildRetryJobData(
       id,
       dto.nodeId,
       step,
       executionLog,
+      node,
     );
     await this.actionProducer.dispatch(
       jobData,
@@ -150,10 +212,140 @@ export class AutomationExecutionLogController {
       { jobId: `${id}:${dto.nodeId}:retry:${Date.now()}` },
     );
 
+    // 9. A manual re-execution is a privileged act; record who did it.
+    await this.auditService.logAction({
+      tenantId: this.tenantId,
+      userId: this.actorId,
+      workflowId: executionLog.workflowId?.toString() ?? '',
+      workflowName: executionLog.workflowName ?? '(unknown)',
+      action: 'step_retried',
+      metadata: {
+        executionId: id,
+        nodeId: dto.nodeId,
+        actionType: node.config?.actionType,
+        recordType: executionLog.recordType,
+        recordId: executionLog.recordId,
+      },
+    });
+
     return {
       message: 'Step retry dispatched successfully',
       nodeId: dto.nodeId,
     };
+  }
+
+  private get actorId(): string {
+    return this.cls.get('userId') ?? this.cls.get('user.id') ?? 'system';
+  }
+
+  /**
+   * Require `settings:manage_system` in addition to the route's
+   * `automation_logs:retry`. `RequirePermission` carries a single rule, so the
+   * second check is made here against the same PDP the guard uses.
+   */
+  private async assertMayExecuteAutomation(): Promise<void> {
+    const rawUserId = this.actorId;
+    const decision = await this.authz.canPerformAction({
+      rule: { action: 'manage_system', resource: 'settings' },
+      rawUserId,
+      tenantHint: this.tenantId,
+      claims: this.cls.get('user'),
+    });
+
+    if (!decision.allowed) {
+      throw new ForbiddenException(
+        'Retrying an automation step re-executes it with engine privileges and ' +
+          'additionally requires settings:manage_system.',
+      );
+    }
+  }
+
+  /**
+   * Fetch the node as it exists in the workflow's live published snapshot.
+   * Refuses when the workflow is gone, no longer published, not active, or the
+   * node has been removed — so revoking a workflow revokes its retries too.
+   */
+  private async resolveLivePublishedNode(
+    workflowId: string | undefined,
+    nodeId: string,
+  ): Promise<any> {
+    if (!workflowId) {
+      throw new BadRequestException(
+        'Execution log has no workflow reference; it cannot be retried.',
+      );
+    }
+
+    const workflow = await this.workflowRepo.findById(
+      this.tenantId,
+      workflowId,
+    );
+    if (!workflow) {
+      throw new NotFoundException(
+        'The workflow this step belongs to no longer exists; retry refused.',
+      );
+    }
+    if (workflow.status !== 'active') {
+      throw new BadRequestException(
+        `Workflow is "${workflow.status}". Only steps of an active workflow can be retried.`,
+      );
+    }
+
+    const node = ((workflow as any).publishedNodes ?? []).find(
+      (n: any) => n.id === nodeId,
+    );
+    if (!node) {
+      throw new BadRequestException(
+        `Node "${nodeId}" is not part of the workflow's current published version; ` +
+          'it may have been edited or removed. Republish before retrying.',
+      );
+    }
+    if (node.type !== 'action') {
+      throw new BadRequestException(
+        `Node "${nodeId}" is a ${node.type} node; only action nodes can be retried.`,
+      );
+    }
+    return node;
+  }
+
+  /**
+   * Refuse a retry for a node the DLQ processor has flagged as poison. Mirrors
+   * the key written by AutomationDlqProcessor.trackPoisonNode.
+   */
+  private async assertNodeNotQuarantined(
+    workflowId: string | undefined,
+    nodeId: string,
+  ): Promise<void> {
+    if (!workflowId) return;
+
+    const key = `automation:poison:${this.tenantId}:${workflowId}:${nodeId}`;
+    const failures = Number((await this.redis.get(key)) ?? 0);
+    if (failures >= POISON_THRESHOLD) {
+      throw new BadRequestException(
+        `This step has dead-lettered ${failures} times in the last hour and is ` +
+          'quarantined. Fix the node configuration and republish the workflow ' +
+          'instead of retrying.',
+      );
+    }
+  }
+
+  private async assertRetryNotRateLimited(
+    executionId: string,
+    nodeId: string,
+  ): Promise<void> {
+    const key = `automation:retry:${this.tenantId}:${executionId}:${nodeId}`;
+    const acquired = await this.redis.set(
+      key,
+      '1',
+      'EX',
+      RETRY_COOLDOWN_SECONDS,
+      'NX',
+    );
+    if (acquired !== 'OK') {
+      throw new BadRequestException(
+        `This step was retried in the last ${RETRY_COOLDOWN_SECONDS}s. ` +
+          'Wait for the dispatched attempt to finish before retrying again.',
+      );
+    }
   }
 
   /** Validate that the execution log and requested step both exist. */
@@ -176,12 +368,18 @@ export class AutomationExecutionLogController {
   /**
    * Build the action job payload for retry, re-fetching the latest record
    * so templates and recipient resolution have real data (CRIT-03).
+   *
+   * The action type and config come from `node` — the live published snapshot —
+   * not from the log, so an edited or revoked action is not resurrected. Loop
+   * metadata is carried over so a retried action cannot restart the chain with
+   * an empty breadcrumb trail.
    */
   private async buildRetryJobData(
     executionId: string,
     nodeId: string,
     step: any,
     executionLog: any,
+    node: any,
   ): Promise<AutomationActionJobData> {
     let recordData: Record<string, any> =
       step.input?.recordData && typeof step.input.recordData === 'object'
@@ -200,19 +398,25 @@ export class AutomationExecutionLogController {
       }
     }
 
+    const workflowId = executionLog.workflowId?.toString() ?? '';
+    const actionConfig = node.config ?? {};
+
     return {
       executionId,
-      workflowId: executionLog.workflowId?.toString() ?? '',
+      workflowId,
       tenantId: this.tenantId,
       nodeId,
-      nodeName: step.nodeName,
-      actionType: step.input?.actionType ?? 'send_email',
-      actionConfig: step.input?.config ?? {},
+      nodeName: actionConfig.name ?? step.nodeName,
+      actionType: actionConfig.actionType,
+      actionConfig,
       recordId: executionLog.recordId,
       recordType: executionLog.recordType,
       recordData,
       automationDepth: executionLog.automationDepth ?? 0,
-      sourceWorkflowId: executionLog.workflowId?.toString() ?? '',
+      // Without the breadcrumb the retried action's own cascade would look like
+      // a fresh chain to the loop guard.
+      automationBreadcrumbs: [workflowId],
+      sourceWorkflowId: workflowId,
     };
   }
 }

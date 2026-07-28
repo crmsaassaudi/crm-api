@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+import { WorkflowRunAs } from '../../../../domain/execution-principal';
 
 // ── Sub-document types ─────────────────────────────────────────────────────
 
@@ -139,18 +140,34 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
   @Prop({ type: Date, default: null })
   lastExecutedAt: Date | null;
 
+  /**
+   * Which principal this workflow's actions execute as. See {@link WorkflowRunAs}.
+   *
+   * Defaults to `system` — what every workflow authored before this field existed
+   * did implicitly. Narrowing a live workflow's scope during an upgrade would
+   * break it in ways that look like missing data rather than missing permission,
+   * so the default preserves behaviour and new workflows opt into `creator`.
+   */
   @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: 'UserSchemaClass',
-    required: true,
+    type: String,
+    enum: ['system', 'creator', 'trigger_user', 'record_owner'],
+    default: 'system',
   })
+  runAs: WorkflowRunAs;
+
+  /**
+   * Acting user's Mongo id, or a non-user label like `system`.
+   *
+   * String rather than a required ObjectId ref for the same reason as
+   * `automation_audit_logs.userId`: the service's actor fallback is the literal
+   * `'system'`, which an ObjectId field cannot store — it throws a CastError.
+   * A field that cannot represent every actor the code passes is a field that
+   * loses writes.
+   */
+  @Prop({ type: String, required: true })
   createdBy: string;
 
-  @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: 'UserSchemaClass',
-    required: true,
-  })
+  @Prop({ type: String, required: true })
   updatedBy: string;
 
   // ── Published Snapshot (Immutable Execution State) ──────────────────────

@@ -34,6 +34,7 @@ import {
   AccountTypeSchemaClass,
 } from '../account-settings/entities/account-type.schema';
 import { TagsModule } from '../tags/tags.module';
+import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
 
 const workerProviders = isWorkerRuntime()
   ? [AccountImportProcessor, AccountExportProcessor]
@@ -75,6 +76,7 @@ const workerProviders = isWorkerRuntime()
       adapter: BullMQAdapter,
     }),
     TagsModule,
+    AutomationOutboxModule,
   ],
   controllers: [AccountsController],
   providers: [AccountsService, AccountRepository, ...workerProviders],

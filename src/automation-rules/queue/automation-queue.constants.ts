@@ -1,3 +1,4 @@
+import { ExecutionPrincipal } from '../domain/execution-principal';
 import { AutomationCrmModule } from '../events/automation-event.payload';
 
 /**
@@ -25,6 +26,21 @@ export const AUTOMATION_ACTION_QUEUE = 'automation-actions';
 // ── System Queues ─────────────────────────────────────────────────────────
 export const AUTOMATION_ACTION_DLQ = 'automation-actions-dlq';
 export const AUTOMATION_BULK_QUEUE = 'automation-actions-bulk';
+
+/**
+ * Trigger-evaluation queue.
+ *
+ * Trigger matching and DAG traversal used to run inline, un-awaited, on the
+ * emitting process — so a `PATCH /contacts/:id` paid for the workflow lookup,
+ * the loop-prevention Redis round-trips, the condition evaluation and the
+ * execution-log writes of every matching workflow on its own event loop, after
+ * the response had gone out. The 30s `Promise.race` bounded the promise, not the
+ * CPU, and if the process died between the DB commit and the action dispatch the
+ * automation was simply lost with nothing recording that it should have run.
+ *
+ * @see docs/audit/WORKFLOW_AUTOMATION_SECURITY_AUDIT.md — finding M5
+ */
+export const AUTOMATION_TRIGGER_QUEUE = 'automation-triggers';
 export const AUTOMATION_DELAYED_QUEUE = 'automation-delayed-resume';
 
 /**
@@ -78,6 +94,52 @@ export function resolveJobNameForAction(actionType: string): AutomationJobName {
 }
 
 /**
+ * One CRM event awaiting trigger evaluation.
+ *
+ * Carries the event, not a workflow: which workflows match is decided by the
+ * worker, against the state of the world when it runs.
+ */
+export interface AutomationTriggerJobData {
+  eventId?: string;
+  tenantId: string;
+  event: 'record_created' | 'field_updated';
+  object: string;
+  recordId: string;
+  data: Record<string, any>;
+  changedFields?: string[];
+  automationDepth?: number;
+  automationBreadcrumbs?: string[];
+  _automationSourceWorkflowId?: string;
+  triggerUserId?: string | null;
+}
+
+/**
+ * Payload dispatched to the low-priority bulk queue when a tenant exceeds the
+ * event-rate threshold.
+ *
+ * `tenantId` is at the TOP LEVEL deliberately: BaseTenantConsumer reads it from
+ * `job.data.tenantId` to establish CLS before `handle()` runs and throws when it
+ * is absent. The original payload nested the tenant inside `payload`, so every
+ * bulk job failed its three attempts and died — silently losing all automation
+ * for exactly the high-volume import this queue exists to absorb.
+ *
+ * `workflowId` is carried instead of the whole workflow document so the
+ * processor re-reads the current published snapshot rather than executing a
+ * definition that has been sitting in Redis.
+ */
+export interface AutomationBulkJobData {
+  tenantId: string;
+  workflowId: string;
+  payload: {
+    tenantId: string;
+    event: string;
+    object: string;
+    recordId: string;
+    [key: string]: any;
+  };
+}
+
+/**
  * Payload dispatched to the automation action queues.
  */
 export interface AutomationActionJobData {
@@ -115,6 +177,14 @@ export interface AutomationActionJobData {
 
   /** Action-specific config set by the admin in the Visual Builder */
   actionConfig: Record<string, any>;
+
+  /**
+   * Who this action executes as.
+   *
+   * Optional so jobs enqueued before the principal existed still process (they
+   * fall back to the system principal, which is what they were already doing).
+   */
+  principal?: ExecutionPrincipal;
 
   /** The record that triggered the workflow */
   recordId: string;
@@ -175,6 +245,27 @@ export interface AutomationDelayedJobData {
 
   /** Session ID for strict loop prevention Layer 1 */
   executionSessionId: string;
+
+  /** Principal the resumed actions execute as. See ExecutionPrincipal. */
+  principal?: ExecutionPrincipal;
+
+  /**
+   * The workflow version this execution started on, and the graph it started on.
+   *
+   * Both are pinned here because `publish()` overwrites `publishedNodes` in
+   * place. A wait node can hibernate for up to 90 days, and resume re-read the
+   * CURRENT published snapshot — so a workflow edited during the wait resumed a
+   * half-finished execution into a different graph, at a node id that might mean
+   * something else or not exist. Carrying the graph lets an in-flight execution
+   * finish on the version it began on, which is the whole point of publishing a
+   * snapshot in the first place.
+   *
+   * Optional so delayed jobs written before this field existed still resume
+   * (falling back to the live snapshot, with a warning).
+   */
+  workflowVersion?: number;
+  publishedNodes?: any[];
+  publishedEdges?: any[];
 }
 
 /**

@@ -2,7 +2,7 @@ import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { AutomationActionJobData } from '../queue/automation-queue.constants';
 import { TemplateInterpolationService } from './template-interpolation.service';
 import { CrmRecordUpdateService } from './crm-record-update.service';
-import { SsrfGuardService } from './ssrf-guard.service';
+import { SsrfBlockedError, SsrfGuardService } from './ssrf-guard.service';
 import {
   EmailProviderService,
   EMAIL_PROVIDER_TOKEN,
@@ -135,8 +135,12 @@ export class SendEmailExecutor implements ActionExecutor {
       try {
         // P0: Transport Pool (LRU Cache)
         // Cache hit: ~0.01ms | Cache miss: DB + decrypt (~50ms)
+        // The tenant guard is not optional here: `configId` comes from a
+        // workflow node config, which is free-form JSON an admin can point at
+        // any ObjectId. Without it a tenant can send mail with another
+        // tenant's decrypted SMTP credentials and verified sender domain.
         const transport = this.transportPool
-          ? await this.transportPool.resolve(configId)
+          ? await this.transportPool.resolveWithTenantGuard(configId, tenantId)
           : await this.fallbackResolve(configId, tenantId);
 
         if (!transport) {
@@ -335,8 +339,13 @@ export class SendSmsExecutor implements ActionExecutor {
     if (configId) {
       try {
         // P0: Transport Pool (LRU Cache) - same pattern as SendEmailExecutor
+        // Tenant-guarded for the same reason as SendEmailExecutor: the pool is
+        // keyed on configId alone and reads across tenants by design.
         const transport = this.smsTransportPool
-          ? await this.smsTransportPool.resolve(configId)
+          ? await this.smsTransportPool.resolveWithTenantGuard(
+              configId,
+              tenantId,
+            )
           : await this.smsFallbackResolve(configId, tenantId);
 
         if (!transport) {
@@ -791,31 +800,6 @@ export class WebhookExecutor implements ActionExecutor {
       };
     }
 
-    // SSRF Guard
-    const ssrfCheck = await this.ssrfGuard.validate(url);
-    if (!ssrfCheck.safe) {
-      this.logger.warn(`[Webhook] SSRF BLOCKED: ${url} - ${ssrfCheck.reason}`);
-      return {
-        success: false,
-        error: { code: 'SSRF_BLOCKED', message: ssrfCheck.reason! },
-      };
-    }
-
-    // DNS Pinning: connect to the pre-verified IP to prevent DNS rebinding.
-    // The original hostname travels as the Host header so the server routes correctly.
-    let fetchUrl = url;
-    const pinnedHeaders: Record<string, string> = {};
-    if (ssrfCheck.resolvedIp) {
-      const parsedUrl = new URL(url);
-      const originalHost = parsedUrl.host;
-      const ipLiteral = ssrfCheck.resolvedIp.includes(':')
-        ? `[${ssrfCheck.resolvedIp}]`
-        : ssrfCheck.resolvedIp;
-      parsedUrl.hostname = ipLiteral;
-      fetchUrl = parsedUrl.toString();
-      pinnedHeaders['Host'] = originalHost;
-    }
-
     // Interpolate body template
     let bodyStr: string;
     if (actionConfig.bodyTemplate) {
@@ -844,7 +828,6 @@ export class WebhookExecutor implements ActionExecutor {
         headers: {
           'Content-Type': 'application/json',
           ...headers,
-          ...pinnedHeaders, // DNS-pinned Host overrides any user-supplied Host
         },
         signal: controller.signal,
       };
@@ -854,7 +837,10 @@ export class WebhookExecutor implements ActionExecutor {
         fetchOptions.body = bodyStr;
       }
 
-      const response = await fetch(fetchUrl, fetchOptions);
+      // safeFetch owns SSRF validation and DNS pinning for the initial URL AND
+      // for every redirect hop — a public host cannot bounce us to the metadata
+      // service. It never sets `redirect: 'follow'`.
+      const response = await this.ssrfGuard.safeFetch(url, fetchOptions);
 
       if (!response.ok) {
         // Read body BEFORE clearing the timer: a Slowloris server could stall
@@ -894,6 +880,17 @@ export class WebhookExecutor implements ActionExecutor {
         };
       }
 
+      if (error instanceof SsrfBlockedError) {
+        this.logger.warn(`[Webhook] SSRF BLOCKED: ${url} - ${error.message}`);
+        return {
+          success: false,
+          // A blocked destination is a configuration problem, not a transient
+          // one — retrying it 3× just repeats the same denial.
+          retryable: false,
+          error: { code: 'SSRF_BLOCKED', message: error.message },
+        };
+      }
+
       this.logger.error(
         `[Webhook] Request failed: ${error.message}`,
         error.stack,
@@ -910,6 +907,119 @@ export class WebhookExecutor implements ActionExecutor {
 }
 
 // ---------------------------------------------------------------------------
+// Assignee resolution for record-creating actions
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates the assignee/team a `create_task` / `create_ticket` node names,
+ * before the record is written.
+ *
+ * `route_to_group` was deliberately routed through AssignmentCoreService so
+ * that "pinning a person is not a way around" the eligibility checks. The
+ * create actions reached the same outcome — an assigned record — while setting
+ * `ownerId` directly from `actionConfig.assigneeId`, skipping capacity, skills,
+ * presence, channel-support pools and even tenant membership. This closes that
+ * door by asking the core to make the decision.
+ *
+ * A dry-run decision is used rather than a post-create `assign()` for two
+ * reasons: it keeps `ownerId` present at insert time, so
+ * `RecordAutoAssignmentListener` (which fires on `*.created` when the record is
+ * unowned) does not race this decision with a rule-based one; and there is no
+ * entity id to reserve against until the record exists. The consequence is that
+ * the workload counter is not incremented here — the existing
+ * `RecordWorkloadReconciliationService` (every 15 min) is what corrects that.
+ */
+@Injectable()
+export class AutomationAssigneeResolver {
+  private readonly logger = new Logger(AutomationAssigneeResolver.name);
+
+  constructor(private readonly assignmentCore: AssignmentCoreService) {}
+
+  /**
+   * @returns `{ ok: true, ownerId, groupId }` when the target is eligible (or
+   *          when the node names no target at all), `{ ok: false, error }` when
+   *          the core refuses it.
+   */
+  async resolve(params: {
+    tenantId: string;
+    objectType: string;
+    assigneeId?: string | null;
+    groupId?: string | null;
+    attributes: Record<string, any>;
+    sourceWorkflowId?: string | null;
+    /** Owner inherited from the triggering record when no target is named. */
+    fallbackOwnerId?: string | null;
+  }): Promise<
+    | { ok: true; ownerId: string | null; groupId: string | null }
+    | { ok: false; error: { code: string; message: string } }
+  > {
+    const { assigneeId, groupId } = params;
+
+    // No explicit target: inherit the trigger record's owner, whose eligibility
+    // was already established when that record was assigned. When there is no
+    // owner either, leave the record unowned so RecordAutoAssignmentListener
+    // picks it up through the normal rules.
+    if (!assigneeId && !groupId) {
+      return {
+        ok: true,
+        ownerId: params.fallbackOwnerId ?? null,
+        groupId: null,
+      };
+    }
+
+    if (!isAssignmentObjectType(params.objectType)) {
+      return {
+        ok: false,
+        error: {
+          code: 'UNSUPPORTED_RECORD_TYPE',
+          message: `Assignment is not supported for ${params.objectType}`,
+        },
+      };
+    }
+
+    const decision = await this.assignmentCore.assign({
+      tenantId: params.tenantId,
+      objectType: params.objectType,
+      attributes: params.attributes,
+      // `targetUserId`, never `manualAssigneeId`: the latter is honoured
+      // verbatim by the core ("nothing to decide — only to record"), which is
+      // exactly the check-skipping we are removing.
+      targetUserId: assigneeId ?? null,
+      targetGroupIds: groupId ? [groupId] : null,
+      owningGroupId: groupId ?? null,
+      skipRules: true,
+      dryRun: true,
+      source: 'automation',
+      sourceWorkflowId: params.sourceWorkflowId ?? null,
+      metadata: { trigger: 'automation_create_record' },
+    });
+
+    if (!decision.assigneeId) {
+      this.logger.warn(
+        `[AssigneeResolver] ${params.objectType} target rejected ` +
+          `(user=${assigneeId ?? 'none'} group=${groupId ?? 'none'}): ${decision.reason}`,
+      );
+      return {
+        ok: false,
+        error: {
+          code:
+            decision.outcome === 'skipped'
+              ? 'AUTO_ASSIGN_DISABLED'
+              : 'NO_ELIGIBLE_AGENT',
+          message: decision.reason,
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      ownerId: decision.assigneeId,
+      groupId: decision.groupId ?? groupId ?? null,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Create Task Executor
 // ---------------------------------------------------------------------------
 
@@ -921,6 +1031,7 @@ export class CreateTaskExecutor implements ActionExecutor {
   constructor(
     private readonly tasksService: TasksService,
     private readonly templateEngine: TemplateInterpolationService,
+    private readonly assigneeResolver: AutomationAssigneeResolver,
   ) {}
 
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
@@ -943,8 +1054,23 @@ export class CreateTaskExecutor implements ActionExecutor {
       dueDateRaw = new Date(Date.now() + 86_400_000); // default: tomorrow
     }
 
+    // Eligibility is decided by the assignment core, not by whatever id the
+    // node config names — see AutomationAssigneeResolver.
+    const assignment = await this.assigneeResolver.resolve({
+      tenantId,
+      objectType: 'Task',
+      assigneeId: actionConfig.assigneeId,
+      groupId: actionConfig.groupId,
+      attributes: recordData,
+      sourceWorkflowId: job.sourceWorkflowId,
+      fallbackOwnerId: recordData.ownerId,
+    });
+    if (!assignment.ok) {
+      return { success: false, retryable: false, error: assignment.error };
+    }
+
     this.logger.log(
-      `[CreateTask] tenant=${tenantId} title="${title}" dueDate=${dueDateRaw.toISOString()} triggeredBy=${recordType}(${recordId})`,
+      `[CreateTask] tenant=${tenantId} title="${title}" dueDate=${dueDateRaw.toISOString()} owner=${assignment.ownerId ?? 'unassigned'} triggeredBy=${recordType}(${recordId})`,
     );
 
     try {
@@ -958,7 +1084,7 @@ export class CreateTaskExecutor implements ActionExecutor {
           : undefined,
         dueDate: dueDateRaw,
         priority: actionConfig.priority ?? 'MEDIUM',
-        ownerId: actionConfig.assigneeId || recordData.ownerId,
+        ownerId: assignment.ownerId ?? undefined,
         categoryId: actionConfig.categoryId,
         relatedTo: {
           type: recordType,
@@ -1003,6 +1129,7 @@ export class CreateTicketExecutor implements ActionExecutor {
   constructor(
     private readonly ticketsService: TicketsService,
     private readonly templateEngine: TemplateInterpolationService,
+    private readonly assigneeResolver: AutomationAssigneeResolver,
   ) {}
 
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
@@ -1028,8 +1155,24 @@ export class CreateTicketExecutor implements ActionExecutor {
         : recordData.omniConversationId) ||
       undefined;
 
+    // Same eligibility gate as create_task. A ticket handed to an agent who is
+    // not in the channel's support pool (or not even in this tenant) is exactly
+    // what route_to_group was fixed to prevent.
+    const assignment = await this.assigneeResolver.resolve({
+      tenantId,
+      objectType: 'Ticket',
+      assigneeId: actionConfig.assigneeId,
+      groupId: actionConfig.groupId,
+      attributes: recordData,
+      sourceWorkflowId: job.sourceWorkflowId,
+      fallbackOwnerId: recordData.ownerId,
+    });
+    if (!assignment.ok) {
+      return { success: false, retryable: false, error: assignment.error };
+    }
+
     this.logger.log(
-      `[CreateTicket] tenant=${tenantId} subject="${subject}" contactId=${contactId} triggeredBy=${recordType}(${recordId})`,
+      `[CreateTicket] tenant=${tenantId} subject="${subject}" contactId=${contactId} owner=${assignment.ownerId ?? 'unassigned'} triggeredBy=${recordType}(${recordId})`,
     );
 
     try {
@@ -1045,8 +1188,8 @@ export class CreateTicketExecutor implements ActionExecutor {
         statusId: actionConfig.statusId,
         typeId: actionConfig.typeId,
         sourceId: actionConfig.sourceId,
-        ownerId: actionConfig.assigneeId || recordData.ownerId,
-        groupId: actionConfig.groupId,
+        ownerId: assignment.ownerId ?? undefined,
+        groupId: assignment.groupId ?? undefined,
         contactId,
         accountId: recordData.accountId,
         omniConversationId,
@@ -1424,6 +1567,28 @@ export class CreateRecordExecutor implements ActionExecutor {
       };
     }
 
+    // Identity / tenancy / audit / ownership fields are refused here. Without
+    // this the create path was a way around the update path's denylist: an
+    // author could set `ownerId` at birth (an ownership grant that skips the
+    // assignment engine) or `orgUnitId` (which decides who can see the record).
+    const denied = CrmRecordUpdateService.findDeniedCreateFields(fieldData);
+    if (denied.length > 0) {
+      this.logger.warn(
+        `[CreateRecord] Blocked protected field(s) [${denied.join(', ')}] on ${targetType}`,
+      );
+      return {
+        success: false,
+        retryable: false,
+        error: {
+          code: 'PROTECTED_FIELD',
+          message:
+            `Field(s) ${denied.join(', ')} cannot be set by automation. ` +
+            'To assign a record use a "Route to Team" action, or the assignee ' +
+            'option on Create Task / Create Ticket.',
+        },
+      };
+    }
+
     this.logger.log(
       `[CreateRecord] tenant=${tenantId} type=${targetType} fields=${Object.keys(fieldData).length} triggeredBy=${recordType}(${recordId})`,
     );
@@ -1515,19 +1680,6 @@ export class HttpRequestExecutor implements ActionExecutor {
       };
     }
 
-    const ssrfCheck = await this.ssrfGuard.validate(url);
-    if (!ssrfCheck.safe) {
-      this.logger.warn(
-        `[HttpRequest] SSRF BLOCKED: ${url} - ${ssrfCheck.reason}`,
-      );
-      return {
-        success: false,
-        retryable: false,
-        error: { code: 'SSRF_BLOCKED', message: ssrfCheck.reason! },
-      };
-    }
-
-    const { fetchUrl, pinnedHeaders } = this.buildFetchContext(url, ssrfCheck);
     const userHeaders = this.buildUserHeaders(actionConfig.headers, recordData);
     const bodyStr = this.buildRequestBody(
       method,
@@ -1541,10 +1693,9 @@ export class HttpRequestExecutor implements ActionExecutor {
 
     try {
       const responseData = await this.performFetch(
-        fetchUrl,
+        url,
         method,
         userHeaders,
-        pinnedHeaders,
         bodyStr,
       );
       if (!responseData.ok) {
@@ -1578,22 +1729,6 @@ export class HttpRequestExecutor implements ActionExecutor {
     }
   }
 
-  private buildFetchContext(url: string, ssrfCheck: any) {
-    let fetchUrl = url;
-    const pinnedHeaders: Record<string, string> = {};
-    if (ssrfCheck.resolvedIp) {
-      const parsedUrl = new URL(url);
-      const originalHost = parsedUrl.host;
-      const ipLiteral = ssrfCheck.resolvedIp.includes(':')
-        ? `[${ssrfCheck.resolvedIp}]`
-        : ssrfCheck.resolvedIp;
-      parsedUrl.hostname = ipLiteral;
-      fetchUrl = parsedUrl.toString();
-      pinnedHeaders['Host'] = originalHost;
-    }
-    return { fetchUrl, pinnedHeaders };
-  }
-
   private buildUserHeaders(
     headersConfig: any[],
     recordData: any,
@@ -1621,10 +1756,9 @@ export class HttpRequestExecutor implements ActionExecutor {
   }
 
   private async performFetch(
-    fetchUrl: string,
+    url: string,
     method: string,
     userHeaders: any,
-    pinnedHeaders: any,
     body: string | undefined,
   ) {
     const controller = new AbortController();
@@ -1634,12 +1768,14 @@ export class HttpRequestExecutor implements ActionExecutor {
     );
 
     try {
-      const response = await fetch(fetchUrl, {
+      // SSRF validation + DNS pinning happen inside safeFetch, per hop, so a
+      // redirect cannot walk us onto a private address. The timeout stays here
+      // and covers the whole chain.
+      const response = await this.ssrfGuard.safeFetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
           ...userHeaders,
-          ...pinnedHeaders,
         },
         body,
         signal: controller.signal,
@@ -1667,6 +1803,14 @@ export class HttpRequestExecutor implements ActionExecutor {
   }
 
   private handleFetchError(error: any, url: string): ActionExecutionResult {
+    if (error instanceof SsrfBlockedError) {
+      this.logger.warn(`[HttpRequest] SSRF BLOCKED: ${url} - ${error.message}`);
+      return {
+        success: false,
+        retryable: false,
+        error: { code: 'SSRF_BLOCKED', message: error.message },
+      };
+    }
     if (error.name === 'AbortError') {
       this.logger.warn(
         `[HttpRequest] TIMEOUT after ${HTTP_REQUEST_HARD_TIMEOUT_MS}ms: ${url}`,
@@ -1834,22 +1978,28 @@ export class SendWhatsAppExecutor implements ActionExecutor {
       };
     }
 
-    this.logger.log(
-      `[SendWhatsApp] DRY-RUN tenant=${tenantId} to=${phone} template="${templateName}" lang=${actionConfig.language ?? 'vi'}`,
+    this.logger.warn(
+      `[SendWhatsApp] NOT IMPLEMENTED tenant=${tenantId} to=${phone} template="${templateName}" lang=${actionConfig.language ?? 'vi'}`,
     );
 
-    // Meta Cloud API integration (v17.0+)
-    // For now, log and return success (dry-run mode)
+    // Meta Cloud API (v17.0+) integration is not built yet.
+    //
+    // This used to `return { success: true, output: { dryRun: true } }`, which
+    // told the tenant — and the execution log, and the workflow's success
+    // counter — that a customer message had been delivered when nothing had been
+    // sent. A missing integration must fail loudly; `retryable: false` routes it
+    // straight to the DLQ so it is visible without burning three attempts.
     return {
-      success: true,
-      output: {
-        dryRun: true,
-        to: phone,
-        templateName,
-        language: actionConfig.language ?? 'vi',
-        recordType,
-        recordId,
+      success: false,
+      retryable: false,
+      error: {
+        code: 'ACTION_NOT_IMPLEMENTED',
+        message:
+          'send_whatsapp is not implemented: the Meta WhatsApp Cloud API ' +
+          'integration is not available yet. Remove this action from the ' +
+          'workflow or use send_sms / send_livechat instead.',
       },
+      output: { to: phone, templateName, recordType, recordId },
     };
   }
 }
@@ -1914,21 +2064,23 @@ export class SendZnsExecutor implements ActionExecutor {
       params = {};
     }
 
-    this.logger.log(
-      `[SendZNS] DRY-RUN tenant=${tenantId} to=${phone} templateId=${templateId} params=${JSON.stringify(params)}`,
+    this.logger.warn(
+      `[SendZNS] NOT IMPLEMENTED tenant=${tenantId} to=${phone} templateId=${templateId}`,
     );
 
-    // Zalo OA API integration
+    // Zalo OA / ZNS integration is not built yet — see SendWhatsAppExecutor for
+    // why this reports failure instead of a dry-run success.
     return {
-      success: true,
-      output: {
-        dryRun: true,
-        to: phone,
-        templateId,
-        params,
-        recordType,
-        recordId,
+      success: false,
+      retryable: false,
+      error: {
+        code: 'ACTION_NOT_IMPLEMENTED',
+        message:
+          'send_zns is not implemented: the Zalo OA integration is not ' +
+          'available yet. Remove this action from the workflow or use ' +
+          'send_sms / send_livechat instead.',
       },
+      output: { to: phone, templateId, recordType, recordId },
     };
   }
 }

@@ -17,13 +17,22 @@ export class TransactionManager {
 
     const session = await this.connection.startSession();
     try {
-      session.startTransaction();
-      const result = await work(session);
-      await session.commitTransaction();
+      let result: T | undefined;
+      await session.withTransaction(
+        async () => {
+          result = await work(session);
+        },
+        {
+          readConcern: { level: 'snapshot' },
+          writeConcern: { w: 'majority' },
+          readPreference: 'primary',
+          maxCommitTimeMS: 10_000,
+        },
+      );
+      if (result === undefined) {
+        throw new Error('MongoDB transaction completed without a result.');
+      }
       return result;
-    } catch (error) {
-      await session.abortTransaction();
-      throw error; // Re-throw để phía Service xử lý lỗi nghiệp vụ
     } finally {
       await session.endSession();
     }

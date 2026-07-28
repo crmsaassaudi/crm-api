@@ -29,13 +29,13 @@ export class OmniAutomationBridgeService {
    * When a new conversation is created, emit as automation record_created.
    */
   @OnEvent('omni.conversation.created')
-  onConversationCreated(payload: {
+  async onConversationCreated(payload: {
     tenantId: string;
     conversationId: string;
     channelType: string;
     senderId: string;
     conversation?: any;
-  }): void {
+  }): Promise<void> {
     if (!payload.tenantId || !payload.conversationId) return;
 
     const data = payload.conversation ?? {
@@ -49,24 +49,27 @@ export class OmniAutomationBridgeService {
         `(tenant=${payload.tenantId}, conv=${payload.conversationId})`,
     );
 
-    this.eventEmitter.emit('automation.record_created.Conversation', {
-      tenantId: payload.tenantId,
-      event: 'record_created',
-      object: 'Conversation',
-      recordId: payload.conversationId,
-      data: {
-        id: payload.conversationId,
-        channelType: data.channelType,
-        senderId: payload.senderId,
-        customerName: data.customer?.name ?? payload.senderId,
-        customerEmail: data.customer?.email ?? null,
-        customerPhone: data.customer?.phone ?? null,
-        status: data.status ?? 'open',
-        contactId: data.contactId ?? null,
-        ...data,
+    await this.eventEmitter.emitAsync(
+      'automation.record_created.Conversation',
+      {
+        tenantId: payload.tenantId,
+        event: 'record_created',
+        object: 'Conversation',
+        recordId: payload.conversationId,
+        data: {
+          id: payload.conversationId,
+          channelType: data.channelType,
+          senderId: payload.senderId,
+          customerName: data.customer?.name ?? payload.senderId,
+          customerEmail: data.customer?.email ?? null,
+          customerPhone: data.customer?.phone ?? null,
+          status: data.status ?? 'open',
+          contactId: data.contactId ?? null,
+          ...data,
+        },
+        automationDepth: 0,
       },
-      automationDepth: 0,
-    });
+    );
   }
 
   /**
@@ -74,7 +77,7 @@ export class OmniAutomationBridgeService {
    * emit as automation field_updated.
    */
   @OnEvent('omni.conversation.status_changed')
-  onConversationStatusChanged(payload: {
+  async onConversationStatusChanged(payload: {
     tenantId: string;
     conversationId: string;
     status: string;
@@ -82,7 +85,7 @@ export class OmniAutomationBridgeService {
     agentId: string | null;
     reason?: string;
     channelType?: string;
-  }): void {
+  }): Promise<void> {
     if (!payload.tenantId || !payload.conversationId) return;
 
     this.logger.log(
@@ -90,7 +93,7 @@ export class OmniAutomationBridgeService {
         `(tenant=${payload.tenantId}, conv=${payload.conversationId}, ${payload.oldStatus} → ${payload.status})`,
     );
 
-    this.eventEmitter.emit('automation.field_updated.Conversation', {
+    await this.eventEmitter.emitAsync('automation.field_updated.Conversation', {
       tenantId: payload.tenantId,
       event: 'field_updated',
       object: 'Conversation',
@@ -112,7 +115,7 @@ export class OmniAutomationBridgeService {
    * This enables keyword-based triggers (e.g. "if message contains 'urgent' → create ticket").
    */
   @OnEvent('omni.message.persisted')
-  onMessagePersisted(payload: {
+  async onMessagePersisted(payload: {
     tenantId: string;
     conversationId: string;
     messageId?: string;
@@ -122,7 +125,7 @@ export class OmniAutomationBridgeService {
     senderType?: string;
     senderId?: string;
     channelType?: string;
-  }): void {
+  }): Promise<void> {
     if (!payload.tenantId || !payload.conversationId) return;
 
     // Only trigger automations for customer messages (not agent replies)
@@ -136,7 +139,7 @@ export class OmniAutomationBridgeService {
         `(tenant=${payload.tenantId}, msg=${messageId})`,
     );
 
-    this.eventEmitter.emit('automation.record_created.Message', {
+    await this.eventEmitter.emitAsync('automation.record_created.Message', {
       tenantId: payload.tenantId,
       event: 'record_created',
       object: 'Message',

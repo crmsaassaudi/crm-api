@@ -78,7 +78,7 @@ export class OutboxPublisherService {
       }
 
       try {
-        this.eventEmitter.emit(entry.eventType, entry.payload);
+        await this.eventEmitter.emitAsync(entry.eventType, entry.payload);
 
         await this.outboxModel.updateOne(
           { _id: entry._id },

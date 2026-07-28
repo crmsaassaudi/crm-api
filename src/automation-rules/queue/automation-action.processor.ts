@@ -33,6 +33,9 @@ import {
 } from '../engine/action-executors';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationDlqProducer } from './automation-dlq.producer';
+import { slimOutputForLog } from '../engine/execution-log-redaction';
+import { ActionIdempotencyService } from '../engine/action-idempotency.service';
+import { ExecutionContextService } from '../engine/execution-context.service';
 
 /**
  * Shared action processing logic used by all typed queue processors.
@@ -78,6 +81,8 @@ export class ActionProcessorMixin {
     protected readonly executionLogRepo: AutomationExecutionLogRepository,
     protected readonly dlqProducer: AutomationDlqProducer,
     protected readonly logger: Logger,
+    protected readonly idempotency: ActionIdempotencyService,
+    protected readonly executionContext: ExecutionContextService,
   ) {}
 
   async processAction(job: Job<AutomationActionJobData>): Promise<void> {
@@ -97,8 +102,11 @@ export class ActionProcessorMixin {
       return;
     }
 
-    // CLS tenant context is already set by BaseTenantConsumer.process()
-    return this.processActionInTenantContext(job);
+    // BaseTenantConsumer established the tenant; this establishes WHO the action
+    // acts as, and with it the data-visibility axes the repository layer reads.
+    return this.executionContext.runAs(data.principal, data.workflowId, () =>
+      this.processActionInTenantContext(job),
+    );
   }
 
   private validateJobData(data: unknown): string | null {
@@ -179,6 +187,19 @@ export class ActionProcessorMixin {
       `[Processor] Job ${job.id} | action=${data.actionType} workflow=${data.workflowId} node=${data.nodeId}`,
     );
 
+    // Exactly-once claim. The deterministic BullMQ jobId only dedupes while the
+    // completed job is still in Redis, which at this engine's volumes is
+    // seconds — and a redelivered send_email or create_ticket is a second email
+    // or a second ticket. Claimed before the executor runs and released below if
+    // the failure is retryable.
+    if (!(await this.idempotency.claim(data))) {
+      this.logger.warn(
+        `[Processor] Job ${job.id} skipped — action already executed for ` +
+          `execution=${data.executionId} node=${data.nodeId}`,
+      );
+      return;
+    }
+
     const executor = this.executors.get(data.actionType);
 
     if (!executor) {
@@ -190,6 +211,10 @@ export class ActionProcessorMixin {
         error: { code: 'UNKNOWN_ACTION_TYPE', message: errorMsg },
       });
 
+      // No executor is a permanent condition, so the claim stays — but the job
+      // is about to be retried by BullMQ, and a retry that gets skipped as a
+      // duplicate would hide the real error. Release it.
+      await this.idempotency.release(data);
       throw new Error(errorMsg);
     }
 
@@ -204,6 +229,9 @@ export class ActionProcessorMixin {
           this.logger.warn(
             `[Processor] Non-retryable failure for node=${data.nodeId}: ${result.error?.code} — routing to DLQ (skip BullMQ retry)`,
           );
+          // Keep the claim: this will not be retried automatically, and the
+          // manual-retry endpoint clears the key when an operator asks for it.
+          await this.idempotency.confirm(data);
           await this.dlqProducer
             .sendToDlq(data, result.error?.message ?? 'Non-retryable failure')
             .catch((dlqErr) =>
@@ -218,9 +246,13 @@ export class ActionProcessorMixin {
         this.logger.warn(
           `[Processor] Action ${data.actionType} failed for node=${data.nodeId}: ${result.error?.message}`,
         );
+        // Retryable: give the claim back or every retry is skipped as a
+        // duplicate and the failure looks like a success.
+        await this.idempotency.release(data);
         throw new Error(result.error?.message ?? 'Action execution failed');
       }
 
+      await this.idempotency.confirm(data);
       this.logger.log(
         `[Processor] ✅ Action ${data.actionType} completed for node=${data.nodeId}`,
       );
@@ -231,6 +263,12 @@ export class ActionProcessorMixin {
           success: false,
           error: { code: 'EXECUTOR_EXCEPTION', message: error.message },
         });
+        // An exception mid-flight is ambiguous — the side effect may or may not
+        // have landed. Release so BullMQ's retry can run: for this engine a
+        // possible duplicate is preferable to an action silently never
+        // completing, and `route_to_group` / `add_tag` carry their own CAS and
+        // merge semantics for exactly this case.
+        await this.idempotency.release(data);
       }
 
       throw error; // Re-throw for BullMQ retry
@@ -274,7 +312,9 @@ export class ActionProcessorMixin {
           recordId: data.recordId,
           recordType: data.recordType,
         },
-        output: result.output,
+        // Executor outputs echo the recipient back (`to: '+8490…'`), which does
+        // not belong in a 30-day log readable with automation_logs:view.
+        output: slimOutputForLog(result.output),
         error: result.error
           ? { code: result.error.code, message: result.error.message }
           : undefined,
@@ -289,13 +329,15 @@ export class ActionProcessorMixin {
     }
   }
   /** Common handle implementation — sets CLS context and delegates to mixin. */
+  /**
+   * Common handle implementation. Audit source and principal are established by
+   * ExecutionContextService inside processAction, which knows the principal.
+   */
   static async handleWithClsContext(
     mixin: ActionProcessorMixin,
-    cls: ClsService,
+    _cls: ClsService,
     job: Job<AutomationActionJobData>,
   ): Promise<void> {
-    cls.set('executionSource', 'A_F');
-    cls.set('sourceContext', { flowId: job.data.workflowId });
     return mixin.processAction(job);
   }
 }
@@ -330,6 +372,8 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
     sendLivechat: SendLivechatExecutor,
     internalNotification: InternalNotificationExecutor,
     cls: ClsService,
+    idempotency: ActionIdempotencyService,
+    executionContext: ExecutionContextService,
   ) {
     super();
     this.cls = cls;
@@ -356,6 +400,8 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
       executionLogRepo,
       dlqProducer,
       this.logger,
+      idempotency,
+      executionContext,
     );
   }
 
@@ -385,6 +431,8 @@ export class AutomationEmailProcessor extends BaseTenantConsumer<AutomationActio
     dlqProducer: AutomationDlqProducer,
     sendEmail: SendEmailExecutor,
     cls: ClsService,
+    idempotency: ActionIdempotencyService,
+    executionContext: ExecutionContextService,
   ) {
     super();
     this.cls = cls;
@@ -396,6 +444,8 @@ export class AutomationEmailProcessor extends BaseTenantConsumer<AutomationActio
       executionLogRepo,
       dlqProducer,
       this.logger,
+      idempotency,
+      executionContext,
     );
   }
 
@@ -428,6 +478,8 @@ export class AutomationSmsProcessor extends BaseTenantConsumer<AutomationActionJ
     sendZns: SendZnsExecutor,
     sendLivechat: SendLivechatExecutor,
     cls: ClsService,
+    idempotency: ActionIdempotencyService,
+    executionContext: ExecutionContextService,
   ) {
     super();
     this.cls = cls;
@@ -442,6 +494,8 @@ export class AutomationSmsProcessor extends BaseTenantConsumer<AutomationActionJ
       executionLogRepo,
       dlqProducer,
       this.logger,
+      idempotency,
+      executionContext,
     );
   }
 
@@ -479,6 +533,8 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
     createRecord: CreateRecordExecutor,
     internalNotification: InternalNotificationExecutor,
     cls: ClsService,
+    idempotency: ActionIdempotencyService,
+    executionContext: ExecutionContextService,
   ) {
     super();
     this.cls = cls;
@@ -498,6 +554,8 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
       executionLogRepo,
       dlqProducer,
       this.logger,
+      idempotency,
+      executionContext,
     );
   }
 
@@ -528,6 +586,8 @@ export class AutomationWebhookProcessor extends BaseTenantConsumer<AutomationAct
     webhook: WebhookExecutor,
     httpRequest: HttpRequestExecutor,
     cls: ClsService,
+    idempotency: ActionIdempotencyService,
+    executionContext: ExecutionContextService,
   ) {
     super();
     this.cls = cls;
@@ -540,6 +600,8 @@ export class AutomationWebhookProcessor extends BaseTenantConsumer<AutomationAct
       executionLogRepo,
       dlqProducer,
       this.logger,
+      idempotency,
+      executionContext,
     );
   }
 

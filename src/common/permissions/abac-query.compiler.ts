@@ -47,7 +47,10 @@ function compileCondition(
       `ABAC query received non-resource condition "${condition.attribute}"`,
     );
   }
-  if (!field || field.split('.').some((part) => !part || part.startsWith('$'))) {
+  if (
+    !field ||
+    field.split('.').some((part) => !part || part.startsWith('$'))
+  ) {
     throw new ServiceUnavailableException(
       `ABAC query received unsafe resource path "${condition.attribute}"`,
     );

@@ -50,6 +50,19 @@ describe('ContactsService', () => {
       settingsService as any,
       cls as any,
       eventEmitter as any,
+      {
+        runWithEvent: jest.fn(async (mutate: any, build: any) => {
+          const result = await mutate(undefined);
+          const payload = build(result);
+          if (payload) {
+            await eventEmitter.emitAsync(
+              `${payload.event}.${payload.object}`,
+              payload,
+            );
+          }
+          return result;
+        }),
+      } as any,
       {} as any, // exportStorageService
       {} as any, // lockService
       { emit: jest.fn() } as any, // entityAudit
@@ -81,6 +94,7 @@ describe('ContactsService', () => {
           emails: dto.emails,
           phones: dto.phones,
         }),
+        undefined,
       );
       expect(result).toEqual(expected);
     });
@@ -91,7 +105,7 @@ describe('ContactsService', () => {
 
       await service.create(createContactDto() as any);
 
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
+      expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
         expect.stringContaining('record_created'),
         expect.objectContaining({
           tenantId: 'tenant_1',
@@ -111,6 +125,7 @@ describe('ContactsService', () => {
         expect.objectContaining({
           ownerId: undefined,
         }),
+        undefined,
       );
     });
 
@@ -125,6 +140,7 @@ describe('ContactsService', () => {
           emails: [],
           phones: [],
         }),
+        undefined,
       );
     });
   });
@@ -169,6 +185,7 @@ describe('ContactsService', () => {
       expect(repository.update).toHaveBeenCalledWith(
         'contact_1',
         expect.objectContaining({ firstName: 'Updated' }),
+        undefined,
       );
       expect(result?.firstName).toBe('Updated');
     });
@@ -179,7 +196,7 @@ describe('ContactsService', () => {
 
       await service.update('contact_1', { firstName: 'New' } as any);
 
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
+      expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
         expect.stringContaining('field_updated'),
         expect.objectContaining({
           event: 'field_updated',
@@ -200,6 +217,7 @@ describe('ContactsService', () => {
       expect(repository.update).toHaveBeenCalledWith(
         'contact_1',
         expect.objectContaining({ isShadow: false }),
+        undefined,
       );
     });
   });

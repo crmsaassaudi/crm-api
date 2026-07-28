@@ -48,6 +48,23 @@ const expectedIndexes: ExpectedIndex[] = [
     key: { expireAt: 1 },
     expireAfterSeconds: 0,
   },
+  {
+    collection: 'automation_outbox_events',
+    name: 'automation_outbox_event_unique',
+    key: { tenantId: 1, eventId: 1 },
+    unique: true,
+  },
+  {
+    collection: 'automation_outbox_events',
+    name: 'automation_outbox_pending',
+    key: { status: 1, createdAt: 1 },
+  },
+  {
+    collection: 'automation_outbox_events',
+    name: 'automation_outbox_published_ttl',
+    key: { publishedAt: 1 },
+    expireAfterSeconds: 7 * 86_400,
+  },
 ];
 
 async function main() {

@@ -22,6 +22,8 @@ import {
   PERMISSION_REGISTRY,
   ALL_PERMISSIONS,
   CORE_PERMISSIONS,
+  DEPRECATED_PERMISSIONS,
+  GRANTABLE_PERMISSIONS,
 } from './permission.constants';
 import { getTenantPermissions, PermissionTenant } from './permission.engine';
 import { DataScope, scopeAtLeast } from './data-scope.enum';
@@ -335,19 +337,30 @@ export class CustomRolesService {
   async getPermissionMatrix(tenantId?: string) {
     const matrix: Record<string, Array<{ action: string; key: string }>> = {};
 
+    // Deprecated keys are excluded from the matrix so the roles UI stops
+    // offering permissions whose feature no longer exists. They remain in
+    // ALL_PERMISSIONS (and therefore still validate) for roles that already
+    // hold them — see DEPRECATED_PERMISSIONS.
     for (const [resource, actions] of Object.entries(PERMISSION_REGISTRY)) {
-      matrix[resource] = Object.entries(actions)
+      const entries = Object.entries(actions)
         .filter(([, key]) => Boolean(key))
+        .filter(([, key]) => !DEPRECATED_PERMISSIONS.includes(key as string))
         .map(([action, key]) => ({ action, key }));
+
+      // Drop a resource that is entirely deprecated rather than rendering an
+      // empty group.
+      if (entries.length > 0) matrix[resource] = entries;
     }
 
     const ceiling = await this.resolveTenantCeiling(tenantId);
 
     return {
       matrix,
-      allKeys: ALL_PERMISSIONS,
+      allKeys: GRANTABLE_PERMISSIONS,
       /** Keys this tenant may actually use (CORE ∪ granted features ∖ disabled). */
-      tenantCeiling: ceiling ? [...ceiling].sort() : ALL_PERMISSIONS,
+      tenantCeiling: ceiling
+        ? [...ceiling].filter((k) => !DEPRECATED_PERMISSIONS.includes(k)).sort()
+        : GRANTABLE_PERMISSIONS,
       /** Baseline every tenant has — anything else is plan-gated. */
       corePermissions: CORE_PERMISSIONS,
       /** Read-only entry the roles UI renders for the ADMIN tenant-role flag. */

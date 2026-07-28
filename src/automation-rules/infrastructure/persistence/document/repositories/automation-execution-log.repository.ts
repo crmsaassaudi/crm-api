@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import {
@@ -8,6 +8,28 @@ import {
 } from '../entities/automation-execution-log.schema';
 
 const LOG_RETENTION_DAYS = 30;
+
+/**
+ * Hard ceiling on the embedded `steps` array, applied with `$slice` so the oldest
+ * steps are dropped rather than the write failing.
+ *
+ * `steps` is an unbounded embedded array whose entries carry Mixed input/output.
+ * The orchestrator's own MAX_TOTAL_STEPS is 1000, and a wait-node execution can
+ * append across many resumes, so a single document could grow past MongoDB's
+ * 16 MB limit — at which point every further write on that execution fails.
+ * Keeping the most recent 200 keeps the trace useful and the document bounded.
+ */
+const MAX_LOGGED_STEPS = 200;
+
+/**
+ * Stop counting matched logs at this point. The list view only needs a page
+ * count, and an exact `countDocuments` over this collection is a full index scan
+ * per request.
+ */
+const COUNT_CAP = 10_000;
+
+/** Deepest offset the list view will serve — past this, filtering is the answer. */
+const MAX_SKIP = 10_000;
 
 @Injectable()
 export class AutomationExecutionLogRepository {
@@ -72,7 +94,14 @@ export class AutomationExecutionLogRepository {
     filter: Record<string, any>,
     skip: number,
     limit: number,
-  ): Promise<[any[], number]> {
+  ): Promise<{ data: any[]; total: number; totalIsCapped: boolean }> {
+    if (skip > MAX_SKIP) {
+      throw new BadRequestException(
+        `Cannot page beyond ${MAX_SKIP} execution logs. Narrow the range with ` +
+          'workflowId, status or a from/to window instead of paging deeper.',
+      );
+    }
+
     const [data, total] = await Promise.all([
       this.model
         .find(filter)
@@ -82,9 +111,14 @@ export class AutomationExecutionLogRepository {
         .select('-steps') // Exclude steps for list view performance
         .lean()
         .exec(),
-      this.model.countDocuments(filter).exec(),
+      // Bounded count: an exact count over a collection sized for the automation
+      // engine's write volume is a full index scan on every page render, and its
+      // only consumer is a page-number widget. Stop counting at the cap and say
+      // so.
+      this.model.countDocuments(filter).limit(COUNT_CAP).exec(),
     ]);
-    return [data, total];
+
+    return { data, total, totalIsCapped: total >= COUNT_CAP };
   }
 
   /**
@@ -162,6 +196,8 @@ export class AutomationExecutionLogRepository {
       | 'Conversation'
       | 'Message';
     automationDepth: number;
+    /** Published version being executed; null for a pre-versioning execution. */
+    workflowVersion?: number | null;
   }) {
     const now = new Date();
     const expireAt = new Date(
@@ -170,6 +206,7 @@ export class AutomationExecutionLogRepository {
 
     const doc = await this.model.create({
       ...data,
+      workflowVersion: data.workflowVersion ?? null,
       status: 'running',
       startedAt: now,
       completedAt: null,
@@ -184,11 +221,14 @@ export class AutomationExecutionLogRepository {
 
   /**
    * Append a step to an existing execution log.
-   * Uses $push for atomic array append.
+   * Uses $push for atomic array append, bounded by MAX_LOGGED_STEPS.
    */
   async logStep(executionId: string, step: ExecutionStep): Promise<void> {
     await this.model
-      .updateOne({ _id: executionId }, { $push: { steps: step } })
+      .updateOne(
+        { _id: executionId },
+        { $push: { steps: { $each: [step], $slice: -MAX_LOGGED_STEPS } } },
+      )
       .exec();
   }
 
@@ -200,7 +240,10 @@ export class AutomationExecutionLogRepository {
     if (steps.length === 0) return;
 
     await this.model
-      .updateOne({ _id: executionId }, { $push: { steps: { $each: steps } } })
+      .updateOne(
+        { _id: executionId },
+        { $push: { steps: { $each: steps, $slice: -MAX_LOGGED_STEPS } } },
+      )
       .exec();
   }
 

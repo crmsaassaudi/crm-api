@@ -36,6 +36,7 @@ import {
   CONTACT_EXPORT_QUEUE,
   CONTACT_IMPORT_QUEUE,
 } from './contacts.constants';
+import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
 
 const workerProviders = isWorkerRuntime()
   ? [
@@ -86,6 +87,7 @@ const workerProviders = isWorkerRuntime()
     NotesModule,
     TasksModule,
     TicketsModule,
+    AutomationOutboxModule,
   ],
   controllers: [ContactsController],
   providers: [

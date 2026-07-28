@@ -1,6 +1,7 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import Redis from 'ioredis';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
+import { MetricsService } from '../../observability/metrics.service';
 
 /**
  * BulkEventThrottleService — token-bucket rate limiter using Redis.
@@ -20,6 +21,7 @@ export class BulkEventThrottleService {
   constructor(
     @Inject(IOREDIS_CLIENT)
     private readonly redis: Redis,
+    @Optional() private readonly metrics?: MetricsService,
   ) {
     this.threshold = parseInt(
       process.env.AUTOMATION_RATE_LIMIT_PER_SECOND ?? '1000',
@@ -61,13 +63,29 @@ export class BulkEventThrottleService {
         this.logger.warn(
           `[Throttle] Tenant ${tenantId} exceeded ${this.threshold} events/sec — routing to bulk queue`,
         );
+        this.metrics?.incrementCounter(
+          'crm_automation_throttle_engaged_total',
+          {
+            tenant: tenantId,
+          },
+        );
       }
 
       return { throttled, currentRate: current };
     } catch (error: any) {
-      // On Redis error, default to NOT throttling (fail-open)
+      // Fail OPEN: a Redis outage must not stop automations from running. The
+      // trade-off is that the bulk-queue safety valve is unavailable at exactly
+      // the moment the system is already degraded, so this path is counted —
+      // silently failing open is how a protection turns into a surprise.
       this.logger.error(
-        `[Throttle] Redis error for tenant ${tenantId}: ${error.message}`,
+        `[Throttle] Redis error for tenant ${tenantId} — failing OPEN ` +
+          `(no throttling applied): ${error.message}`,
+      );
+      this.metrics?.incrementCounter(
+        'crm_automation_throttle_fail_open_total',
+        {
+          tenant: tenantId,
+        },
       );
       return { throttled: false, currentRate: 0 };
     }

@@ -163,13 +163,12 @@ export class AuthorizationService {
         denyReason: 'abac_action_denied',
       };
     }
-    const resourceFilter =
-      await this.accessPolicy.compileResourceDenyFilter(
-        result.tenantId,
-        params.rule.resource,
-        params.rule.action,
-        context,
-      );
+    const resourceFilter = await this.accessPolicy.compileResourceDenyFilter(
+      result.tenantId,
+      params.rule.resource,
+      params.rule.action,
+      context,
+    );
     this.recordDecision({
       tenantId: result.tenantId,
       userId: result.userId,
@@ -218,7 +217,12 @@ export class AuthorizationService {
       return false;
     }
     if (acl === false) {
-      this.recordRecordDecision(params, false, 'object_acl_denied', 'object_acl');
+      this.recordRecordDecision(
+        params,
+        false,
+        'object_acl_denied',
+        'object_acl',
+      );
       return false;
     }
 

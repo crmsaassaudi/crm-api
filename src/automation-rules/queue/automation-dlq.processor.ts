@@ -12,6 +12,15 @@ import { AutomationExecutionLogRepository } from '../infrastructure/persistence/
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 
 /**
+ * Dead-letters from one node within the window before it counts as poison.
+ * Exported so the manual-retry endpoint refuses a quarantined node using the
+ * same threshold that set the flag.
+ */
+export const POISON_THRESHOLD = 25;
+/** Rolling window for the poison counter (1 hour). */
+const POISON_WINDOW_SECONDS = 3600;
+
+/**
  * AutomationDlqProcessor — consumes dead-lettered automation jobs.
  *
  * When a job exhausts its retry limit and lands in the DLQ, this processor:
@@ -55,6 +64,8 @@ export class AutomationDlqProcessor extends BaseTenantConsumer<TenantJobData> {
         ),
       );
 
+    await this.trackPoisonNode(data);
+
     // Mark the step as 'dlq' in the execution log
     try {
       await this.executionLogRepo.markStepDlq(data.executionId, data.nodeId);
@@ -64,6 +75,48 @@ export class AutomationDlqProcessor extends BaseTenantConsumer<TenantJobData> {
     } catch (error: any) {
       this.logger.error(
         `[DLQ Processor] Failed to mark step as dlq: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Count dead-letters per workflow node and quarantine a node that keeps
+   * failing.
+   *
+   * The per-tenant counter answers "is this tenant unhealthy"; it cannot answer
+   * "which node is poison". A single broken node — a webhook pointing at a host
+   * that always 500s, a template referencing a field that no longer exists —
+   * dead-letters once per triggering record, so on a busy object it produces
+   * thousands of identical DLQ entries and buries everything else.
+   *
+   * Quarantine is advisory: the key is what the alerting path and the retry
+   * endpoint can read to say "this node is broken, stop re-firing it and go fix
+   * the config". It intentionally does not disable the workflow — that is the
+   * tenant's decision, not the queue's.
+   */
+  private async trackPoisonNode(data: any): Promise<void> {
+    if (!data.workflowId || !data.nodeId) return;
+
+    const key = `automation:poison:${data.tenantId}:${data.workflowId}:${data.nodeId}`;
+    try {
+      const failures = await this.redis.incr(key);
+      if (failures === 1) {
+        await this.redis.expire(key, POISON_WINDOW_SECONDS);
+      }
+
+      if (failures === POISON_THRESHOLD) {
+        // Log at error level exactly once, on the crossing, so the alerting
+        // path fires once per window instead of per dead-lettered record.
+        this.logger.error(
+          `[DLQ Processor] POISON NODE quarantined: workflow=${data.workflowId} ` +
+            `node=${data.nodeId} action=${data.actionType} reached ` +
+            `${POISON_THRESHOLD} dead-letters in ${POISON_WINDOW_SECONDS}s. ` +
+            'The node config is almost certainly broken — fix it rather than retrying.',
+        );
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `[DLQ Processor] Failed to track poison node: ${err.message}`,
       );
     }
   }

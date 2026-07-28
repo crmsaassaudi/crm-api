@@ -19,6 +19,9 @@ export type AutomationCrmModule =
  * TasksService, and LeadsService after successful DB writes.
  */
 export interface AutomationEventPayload {
+  /** Stable identity used by the durable outbox and BullMQ deduplication. */
+  eventId?: string;
+
   /** Tenant that owns the record */
   tenantId: string;
 
@@ -57,6 +60,14 @@ export interface AutomationEventPayload {
    * that caused the update (self-loop prevention).
    */
   _automationSourceWorkflowId?: string;
+
+  /**
+   * The user whose request produced this event, when there was one.
+   *
+   * Feeds `runAs: 'trigger_user'`. Absent for cron-, webhook- and
+   * automation-initiated events, which have no acting user.
+   */
+  triggerUserId?: string | null;
 }
 
 /**

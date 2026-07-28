@@ -1,146 +1,80 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { AutomationEventPayload } from './automation-event.payload';
-import { AutomationWorkflowRepository } from '../infrastructure/persistence/document/repositories/automation-workflow.repository';
-import { WorkflowOrchestratorService } from '../engine/workflow-orchestrator.service';
-import { BulkEventThrottleService } from '../engine/bulk-event-throttle.service';
-import { AutomationBulkProducer } from '../queue/automation-bulk.producer';
-import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
+import { AutomationOutboxService } from './automation-outbox.service';
 
 /**
- * AutomationEventListenerService — listens for CRM object events
- * and finds matching active workflows.
+ * AutomationEventListenerService — the Automation Engine's entry point.
  *
- * This is the entry point of the Automation Engine. When ContactsService
- * or TicketsService emit an event, this listener:
- *   1. Queries active workflows matching the PUBLISHED event + object type
- *   2. Filters out self-triggered workflows (loop prevention Layer 0)
- *   3. Checks bulk event throttling (Phase 3)
- *   4. Delegates to WorkflowOrchestratorService for normal execution,
- *      or routes to bulk queue when rate limit exceeded
+ * It validates the emitted payload and hands it to the trigger queue. That is
+ * all it does: workflow matching, condition evaluation and DAG traversal happen
+ * in `AutomationTriggerProcessor` / `TriggerEvaluatorService`.
+ *
+ * It used to do all of that here, synchronously on the emitting process. Because
+ * `EventEmitter2.emit` is fire-and-forget and these handlers are async, every
+ * `PATCH /contacts/:id` ended up paying for the workflow lookup, the
+ * loop-prevention Redis round-trips and the execution-log writes of every
+ * matching workflow on its own event loop, after the response had been sent — and
+ * a crash in that window lost the automation with no record that it should have
+ * run.
+ *
+ * @see docs/audit/WORKFLOW_AUTOMATION_SECURITY_AUDIT.md — finding M5
  */
 @Injectable()
 export class AutomationEventListenerService {
   private readonly logger = new Logger(AutomationEventListenerService.name);
 
-  constructor(
-    private readonly workflowRepo: AutomationWorkflowRepository,
-    private readonly orchestrator: WorkflowOrchestratorService,
-    private readonly throttle: BulkEventThrottleService,
-    private readonly bulkProducer: AutomationBulkProducer,
-    private readonly executionLogRepo: AutomationExecutionLogRepository,
-  ) {}
+  constructor(private readonly outbox: AutomationOutboxService) {}
 
-  // ── Wildcard listener for all automation events ───────────────────────
+  // ── Trigger-event listeners ───────────────────────────────────────────
+  //
+  // Subscribed per (event, object) rather than with a wildcard. `automation.**`
+  // also swallowed `automation.trigger` (emitted by ScheduledTriggerService and
+  // EscalationAutomationListener) and `automation.note-fallback`, whose payloads
+  // have no `event`/`object`/`recordId`. Mongoose strips `undefined` query
+  // values, so `findActiveByTrigger(tenantId, undefined, undefined)` collapsed
+  // to `{tenantId, status:'active'}` — EVERY active workflow matched and was
+  // executed hourly against an empty record, flooding the DLQ with
+  // schema-invalid jobs and writing bogus execution history.
 
-  @OnEvent('automation.**')
+  @OnEvent('automation.record_created.Lead')
+  @OnEvent('automation.record_created.Contact')
+  @OnEvent('automation.record_created.Ticket')
+  @OnEvent('automation.record_created.Deal')
+  @OnEvent('automation.record_created.Account')
+  @OnEvent('automation.record_created.Task')
+  @OnEvent('automation.record_created.Conversation')
+  @OnEvent('automation.record_created.Message')
+  @OnEvent('automation.field_updated.Lead')
+  @OnEvent('automation.field_updated.Contact')
+  @OnEvent('automation.field_updated.Ticket')
+  @OnEvent('automation.field_updated.Deal')
+  @OnEvent('automation.field_updated.Account')
+  @OnEvent('automation.field_updated.Task')
+  @OnEvent('automation.field_updated.Conversation')
+  @OnEvent('automation.field_updated.Message')
   async handleAutomationEvent(payload: AutomationEventPayload): Promise<void> {
     const { tenantId, event, object, recordId } = payload;
-    const depth = payload.automationDepth ?? 0;
 
-    this.logger.log(
-      `[Event] ${event}.${object} | tenant=${tenantId} record=${recordId} depth=${depth}`,
-    );
+    // Defence in depth against a malformed emit: a partial payload must not be
+    // allowed to widen the trigger query into "all active workflows".
+    if (!tenantId || !event || !object || !recordId) {
+      this.logger.error(
+        `[Event] Ignoring malformed automation payload: ` +
+          `tenant=${tenantId ?? 'missing'} event=${event ?? 'missing'} ` +
+          `object=${object ?? 'missing'} record=${recordId ?? 'missing'}`,
+      );
+      return;
+    }
 
     try {
-      // Find all active workflows that match this event + object (using PUBLISHED config)
-      const workflows = await this.workflowRepo.findActiveByTrigger(
-        tenantId,
-        event,
-        object,
-      );
-
-      if (workflows.length === 0) {
-        this.logger.debug(
-          `No active workflows match ${event}.${object} for tenant ${tenantId}`,
-        );
-        return;
-      }
-
-      // Filter out self-triggered workflows (Layer 0: same-workflow prevention)
-      const eligibleWorkflows = workflows.filter((wf) => {
-        if (
-          payload._automationSourceWorkflowId &&
-          wf._id.toString() === payload._automationSourceWorkflowId
-        ) {
-          this.logger.debug(
-            `Skipping workflow "${wf.name}" (${wf._id}) — self-trigger from automation`,
-          );
-          return false;
-        }
-
-        // For field_updated triggers with specific field, check if the changed
-        // field matches the configured trigger field (using PUBLISHED config)
-        if (
-          event === 'field_updated' &&
-          (wf as any).publishedTriggerConfig?.field &&
-          payload.changedFields
-        ) {
-          return payload.changedFields.includes(
-            (wf as any).publishedTriggerConfig.field,
-          );
-        }
-
-        return true;
-      });
-
-      this.logger.log(
-        `Found ${eligibleWorkflows.length} eligible workflow(s) for ${event}.${object} (record=${recordId})`,
-      );
-
-      // ── Bulk Event Throttling (Phase 3) ──────────────────────────────
-      const { throttled } = await this.throttle.shouldThrottle(tenantId);
-
-      // Delegate to WorkflowOrchestratorService for each eligible workflow
-      for (const wf of eligibleWorkflows) {
-        this.logger.log(
-          `  → Triggering workflow "${wf.name}" (${wf._id}) [depth=${depth}] ${throttled ? '[THROTTLED → bulk queue]' : ''}`,
-        );
-
-        try {
-          if (throttled) {
-            // Over threshold: route to low-priority bulk queue
-            await this.bulkProducer.dispatch({
-              workflow: wf,
-              payload,
-            });
-          } else {
-            // Normal path: execute directly via orchestrator
-            await this.orchestrator.execute(wf, payload);
-          }
-        } catch (wfError: any) {
-          this.logger.error(
-            `Workflow "${wf.name}" (${wf._id}) execution failed: ${wfError.message}`,
-          );
-
-          // Track the failure in execution log so admins can see it in the dashboard.
-          // The orchestrator may have already created its own log entry, but if it
-          // threw before that (e.g. EXECUTION_TIMEOUT), this is the only record.
-          try {
-            const execLog = await this.executionLogRepo.startExecution({
-              tenantId,
-              workflowId: wf._id.toString(),
-              workflowName: wf.name,
-              recordId,
-              recordType: object,
-              automationDepth: depth,
-            });
-            await this.executionLogRepo.failExecution(execLog._id.toString(), {
-              code: 'LISTENER_ERROR',
-              message: wfError.message,
-            });
-          } catch (logErr: any) {
-            this.logger.error(
-              `[Event] Failed to log listener error: ${logErr.message}`,
-            );
-          }
-        }
-      }
+      await this.outbox.capture(payload);
     } catch (error: any) {
       this.logger.error(
-        `Error handling automation event ${event}.${object} for record ${recordId}: ${error.message}`,
+        `[Event] Failed to persist ${event}.${object} for record ${recordId}: ${error.message}`,
         error.stack,
       );
+      throw error;
     }
   }
 }

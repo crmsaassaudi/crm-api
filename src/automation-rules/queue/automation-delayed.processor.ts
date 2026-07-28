@@ -17,6 +17,7 @@ import { AutomationExecutionLogRepository } from '../infrastructure/persistence/
 import { AutomationWorkflowRepository } from '../infrastructure/persistence/document/repositories/automation-workflow.repository';
 import { AutomationDelayedJobRepository } from '../infrastructure/persistence/document/repositories/automation-delayed-job.repository';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
+import { ExecutionContextService } from '../engine/execution-context.service';
 
 /**
  * Consumes hot resume jobs from Redis. The source of truth is MongoDB when
@@ -34,6 +35,7 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
     private readonly executionLogRepo: AutomationExecutionLogRepository,
     private readonly workflowRepo: AutomationWorkflowRepository,
     private readonly delayedJobRepo: AutomationDelayedJobRepository,
+    private readonly executionContext: ExecutionContextService,
     cls: ClsService,
   ) {
     super();
@@ -47,11 +49,11 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
     if (!data) return;
 
     try {
-      // Audit trail: mark as automation flow execution
-      this.cls.set('executionSource', 'A_F');
-      this.cls.set('sourceContext', { flowId: data.workflowId });
-
-      await this.resumeWorkflow(data);
+      // Resume under the principal pinned when the execution started — not
+      // whatever the workflow declares now, and not unscoped.
+      await this.executionContext.runAs(data.principal, data.workflowId, () =>
+        this.resumeWorkflow(data),
+      );
 
       if (job.data.delayedJobId) {
         await this.delayedJobRepo.markCompleted(job.data.delayedJobId);
@@ -157,39 +159,14 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
       );
     }
 
-    const workflow = await this.workflowRepo.findById(
-      data.tenantId,
-      data.workflowId,
-    );
-
-    if (!workflow) {
-      this.logger.error(
-        `[DelayedResume] Workflow ${data.workflowId} not found; cannot resume`,
-      );
-      await this.executionLogRepo.failExecution(data.executionId, {
-        code: 'WORKFLOW_NOT_FOUND',
-        message: `Workflow ${data.workflowId} was deleted during delay; cannot resume`,
-      });
-      throw new Error(`WORKFLOW_NOT_FOUND: ${data.workflowId}`);
-    }
-
-    const publishedNodes = (workflow as any).publishedNodes || [];
-    const publishedEdges = (workflow as any).publishedEdges || [];
-
-    if (publishedNodes.length === 0) {
-      this.logger.warn(
-        `[DelayedResume] Workflow ${data.workflowId} has no published nodes`,
-      );
-      await this.executionLogRepo.failExecution(data.executionId, {
-        code: 'UNPUBLISHED_WORKFLOW',
-        message: 'Workflow was unpublished during delay period',
-      });
-      throw new Error(`UNPUBLISHED_WORKFLOW: ${data.workflowId}`);
-    }
+    const { publishedNodes, publishedEdges, workflowVersion } =
+      await this.resolveGraphForResume(data);
 
     const resumeCtx: ResumeContext = {
       nodes: publishedNodes,
       edges: publishedEdges,
+      workflowVersion,
+      principal: data.principal,
       payload: {
         tenantId: data.tenantId,
         event: 'record_created',
@@ -211,5 +188,76 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
     this.logger.log(
       `[DelayedResume] Resumed and completed execution=${data.executionId}`,
     );
+  }
+
+  /**
+   * Prefer the graph pinned into the delayed job over the workflow's current
+   * published snapshot.
+   *
+   * `publish()` overwrites `publishedNodes` in place, so re-reading it meant a
+   * workflow edited during a wait — which can last up to 90 days — resumed a
+   * half-finished execution into a different graph, at a node id that may have
+   * been repurposed or removed. An execution now finishes on the version it
+   * started on.
+   *
+   * Jobs written before the snapshot was pinned fall back to the live workflow,
+   * which is the old behaviour and is logged as such.
+   */
+  private async resolveGraphForResume(data: AutomationDelayedJobData): Promise<{
+    publishedNodes: any[];
+    publishedEdges: any[];
+    workflowVersion?: number;
+  }> {
+    if (data.publishedNodes?.length) {
+      this.logger.debug(
+        `[DelayedResume] Using pinned snapshot v${data.workflowVersion ?? '?'} ` +
+          `for execution=${data.executionId}`,
+      );
+      return {
+        publishedNodes: data.publishedNodes,
+        publishedEdges: data.publishedEdges ?? [],
+        workflowVersion: data.workflowVersion,
+      };
+    }
+
+    const workflow = await this.workflowRepo.findById(
+      data.tenantId,
+      data.workflowId,
+    );
+
+    if (!workflow) {
+      this.logger.error(
+        `[DelayedResume] Workflow ${data.workflowId} not found; cannot resume`,
+      );
+      await this.executionLogRepo.failExecution(data.executionId, {
+        code: 'WORKFLOW_NOT_FOUND',
+        message: `Workflow ${data.workflowId} was deleted during delay; cannot resume`,
+      });
+      throw new Error(`WORKFLOW_NOT_FOUND: ${data.workflowId}`);
+    }
+
+    const publishedNodes = (workflow as any).publishedNodes || [];
+    if (publishedNodes.length === 0) {
+      this.logger.warn(
+        `[DelayedResume] Workflow ${data.workflowId} has no published nodes`,
+      );
+      await this.executionLogRepo.failExecution(data.executionId, {
+        code: 'UNPUBLISHED_WORKFLOW',
+        message: 'Workflow was unpublished during delay period',
+      });
+      throw new Error(`UNPUBLISHED_WORKFLOW: ${data.workflowId}`);
+    }
+
+    this.logger.warn(
+      `[DelayedResume] Delayed job for execution=${data.executionId} carries no ` +
+        'pinned snapshot (created before version pinning); resuming against the ' +
+        'CURRENT published version, which may differ from the one it started on.',
+    );
+
+    return {
+      publishedNodes,
+      publishedEdges: (workflow as any).publishedEdges || [],
+      workflowVersion: (workflow as any).version,
+    };
   }
 }

@@ -13,7 +13,8 @@ import { Readable } from 'stream';
 import { DealRepository } from './infrastructure/persistence/document/repositories/deal.repository';
 import { Deal } from './domain/deal';
 import { ClsService } from 'nestjs-cls';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { AutomationEventPayload } from '../automation-rules/events/automation-event.payload';
+import { AutomationOutboxService } from '../automation-rules/events/automation-outbox.service';
 import { EntityAuditService } from '../common/audit/entity-audit.service';
 import {
   ImportStorageService,
@@ -44,7 +45,7 @@ export class DealsService {
   constructor(
     private readonly repository: DealRepository,
     private readonly cls: ClsService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly automationOutbox: AutomationOutboxService,
     private readonly entityAudit: EntityAuditService,
     private readonly storageFactory: ImportStorageFactory,
     @InjectQueue(DEAL_IMPORT_QUEUE)
@@ -215,10 +216,14 @@ export class DealsService {
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'create');
 
-    const deal = await this.repository.create({
-      ...data,
-      name: data.title || data.name,
-    } as any);
+    const deal = await this.automationOutbox.runWithEvent(
+      (session) =>
+        this.repository.create(
+          { ...data, name: data.title || data.name } as any,
+          session,
+        ),
+      (created) => this.buildAutomationEvent('record_created', created),
+    );
     this.entityAudit.emit({
       entity: 'deal',
       entityType: 'DEAL',
@@ -226,6 +231,7 @@ export class DealsService {
       kind: 'created',
       newSnapshot: deal,
     });
+
     return deal;
   }
 
@@ -250,10 +256,19 @@ export class DealsService {
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'update');
 
-    const updated = await this.repository.update(id, {
-      ...data,
-      name: data.title || data.name,
-    } as any);
+    const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
+    const updated = await this.automationOutbox.runWithEvent(
+      (session) =>
+        this.repository.update(
+          id,
+          { ...data, name: data.title || data.name } as any,
+          session,
+        ),
+      (result) =>
+        result
+          ? this.buildAutomationEvent('field_updated', result, changedFields)
+          : null,
+    );
 
     // Emit audit trail event: field-level change tracking
     if (updated) {
@@ -540,5 +555,40 @@ export class DealsService {
 
   getImportReport(token: string) {
     return this.importStorage.readLocalReport(token);
+  }
+
+  /**
+   * Notify the Automation Engine after a successful write.
+   *
+   * Deal triggers were selectable in the workflow builder but this service
+   * never emitted the event, so `record_created.Deal` and
+   * `field_updated.Deal` workflows could be authored, published and
+   * activated without ever firing. AutomationEventPayload's own docblock claimed
+   * this service was an emitter.
+   */
+  private buildAutomationEvent(
+    event: 'record_created' | 'field_updated',
+    record: Deal,
+    changedFields?: string[],
+  ): AutomationEventPayload | null {
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    if (!tenantId) {
+      throw new Error('Tenant context is required for Deal automation.');
+    }
+
+    const payload: AutomationEventPayload = {
+      tenantId,
+      event,
+      object: 'Deal',
+      recordId: record.id,
+      data: record as any,
+      ...(changedFields ? { changedFields } : {}),
+      automationDepth: 0,
+      // Feeds `runAs: 'trigger_user'`. Read from CLS at emit time because the
+      // queue worker that evaluates this event has no request to read it from.
+      triggerUserId: this.cls.get('userId') ?? null,
+    };
+
+    return payload;
   }
 }

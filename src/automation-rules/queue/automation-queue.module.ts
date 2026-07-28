@@ -9,6 +9,7 @@ import {
   AUTOMATION_INTERNAL_QUEUE,
   AUTOMATION_WEBHOOK_QUEUE,
   AUTOMATION_DELAYED_QUEUE,
+  AUTOMATION_TRIGGER_QUEUE,
 } from './automation-queue.constants';
 
 /**
@@ -25,6 +26,17 @@ import {
  */
 @Module({
   imports: [
+    // ── Trigger evaluation — keeps workflow matching off the API event loop ──
+    BullModule.registerQueue({
+      name: AUTOMATION_TRIGGER_QUEUE,
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: 500,
+        removeOnFail: 2000,
+      },
+    }),
+
     // ── Per-type action queues (Phase 4) ──────────────────────────────
 
     // Email queue — rate-limited for SendGrid

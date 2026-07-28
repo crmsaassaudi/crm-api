@@ -1,9 +1,8 @@
 import { Logger } from '@nestjs/common';
 import { OnWorkerEvent } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
-import { Model, Connection } from 'mongoose';
+import { Model, Connection, ClientSession, Types } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import Redis from 'ioredis';
 import { Readable } from 'stream';
 
@@ -28,6 +27,8 @@ import { ImportReferenceResolver } from './import-reference-resolver.service';
 import { ImportProgressTracker } from './import-progress.service';
 import { createParser, detectFormat } from './import-parser.factory';
 import { RedisLockService } from '../../redis/redis-lock.service';
+import { AutomationOutboxService } from '../../automation-rules/events/automation-outbox.service';
+import { AutomationEventPayload } from '../../automation-rules/events/automation-event.payload';
 
 const LOCK_TTL_MS = 10 * 60 * 1000; // 10 min, heartbeat-renewed by lock service
 const DEFAULT_THROTTLE_MS = 60; // pause between batches to spare MongoDB CPU
@@ -42,7 +43,7 @@ const DEFAULT_THROTTLE_MS = 60; // pause between batches to spare MongoDB CPU
  *   - Row validation (validateRow)
  *   - Insert/Update document building (buildInsert, buildOverwrite, buildMerge)
  *   - Dedup value extraction (extractDedupValues)
- *   - Post-write hooks (afterBatchWrite)
+ *   - Durable automation event generation
  *
  * Subclass convention:
  *   1. Extend this class with your module's job data type
@@ -74,9 +75,6 @@ export abstract class BaseImportProcessor<
   /** Redis lock service. */
   protected abstract getLockService(): RedisLockService;
 
-  /** Event emitter for automation events. */
-  protected abstract getEventEmitter(): EventEmitter2;
-
   /** Redis client for pub/sub. */
   protected abstract getRedis(): Redis;
 
@@ -85,6 +83,9 @@ export abstract class BaseImportProcessor<
 
   /** Import job model for progress tracking. */
   protected abstract getImportJobModel(): Model<any>;
+
+  /** Durable workflow outbox used to atomically bridge imported records. */
+  protected abstract getAutomationOutbox(): AutomationOutboxService;
 
   // ─────────────────────── ABSTRACT: Module-specific logic ────────────────
 
@@ -148,18 +149,6 @@ export abstract class BaseImportProcessor<
     errors: ImportRowError[],
     resolvedRefs: Record<string, string>,
   ): Record<string, any> | null;
-
-  /**
-   * Optional hook called after a successful batch write.
-   * Use for emitting automation events, activity logs, etc.
-   */
-
-  protected async afterBatchWrite(
-    _affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
-    _data: TJobData,
-  ): Promise<void> {
-    // Default: no-op. Override in subclass if needed.
-  }
 
   /**
    * Optional hook called once per batch, after dedup lookup but before
@@ -505,12 +494,18 @@ export abstract class BaseImportProcessor<
       }
 
       if (!match?.existing || policy === 'create_new') {
+        const document = this.buildInsert(m, ctx.data, now, refs);
+        document._id ??= new Types.ObjectId();
         ctx.ops.push({
-          insertOne: { document: this.buildInsert(m, ctx.data, now, refs) },
+          insertOne: { document },
         });
         ctx.opMeta.push({ row: m.row, type: 'insert' });
         ctx.summary.inserted++;
-        ctx.affected.push({ type: 'insert', row: m.row });
+        ctx.affected.push({
+          type: 'insert',
+          id: String(document._id),
+          row: m.row,
+        });
         continue;
       }
 
@@ -542,7 +537,7 @@ export abstract class BaseImportProcessor<
     }
   }
 
-  /** Step 5: Run bulkWrite and call post-write hooks. */
+  /** Step 5: atomically run bulkWrite and persist workflow events. */
   private async executeBatchOps(
     ops: any[],
     opMeta: Array<{ row: number; type: 'insert' | 'update' }>,
@@ -561,9 +556,11 @@ export abstract class BaseImportProcessor<
     }
 
     if (ops.length > 0) {
-      const failed = await this.executeBulk(
+      const failed = await this.executeBulkWithOutbox(
         ops,
         opMeta,
+        affected,
+        data,
         errors,
         context.summary,
       );
@@ -571,46 +568,133 @@ export abstract class BaseImportProcessor<
         if (meta.type === 'insert') context.summary.inserted--;
         else context.summary.updated--;
       }
-      if (data.triggerAutomations) {
-        const failedRows = new Set(failed.map((f) => f.row));
-        const successfulAffected = affected.filter(
-          (a) => !failedRows.has(a.row),
-        );
-        await this.afterBatchWrite(successfulAffected, data);
-      }
     }
 
     await context.report.appendErrors(errors);
   }
 
-  private async executeBulk(
+  private async executeBulkWithOutbox(
     ops: any[],
     opMeta: Array<{ row: number; type: 'insert' | 'update' }>,
+    affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
+    data: TJobData,
     errors: ImportRowError[],
     summary: ImportSummary,
   ): Promise<Array<{ row: number; type: 'insert' | 'update' }>> {
-    const failed: Array<{ row: number; type: 'insert' | 'update' }> = [];
+    const outbox = this.getAutomationOutbox();
     try {
-      await this.getEntityModel().bulkWrite(ops, { ordered: false });
-    } catch (err: any) {
+      await outbox.runWithEvents(async (session) => {
+        await this.getEntityModel().bulkWrite(ops, {
+          ordered: false,
+          session,
+        });
+        return {
+          result: true,
+          payloads: data.triggerAutomations
+            ? await this.buildAutomationPayloads(affected, data, session)
+            : [],
+        };
+      });
+      return [];
+    } catch (error: any) {
       const writeErrors: any[] =
-        err?.writeErrors ?? err?.result?.writeErrors ?? [];
-      if (writeErrors.length === 0) {
-        throw err;
-      }
-      for (const we of writeErrors) {
-        const index = we.index ?? we.err?.index;
-        const meta = opMeta[index];
+        error?.writeErrors ?? error?.result?.writeErrors ?? [];
+      if (writeErrors.length === 0) throw error;
+      // A write error aborts a Mongo transaction. Retry rows independently so
+      // valid rows still import while every successful row remains atomic with
+      // its outbox event.
+      return this.retryOpsIndividually(
+        ops,
+        opMeta,
+        affected,
+        data,
+        errors,
+        summary,
+        outbox,
+      );
+    }
+  }
+
+  private async retryOpsIndividually(
+    ops: any[],
+    opMeta: Array<{ row: number; type: 'insert' | 'update' }>,
+    affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
+    data: TJobData,
+    errors: ImportRowError[],
+    summary: ImportSummary,
+    outbox: AutomationOutboxService,
+  ): Promise<Array<{ row: number; type: 'insert' | 'update' }>> {
+    const failed: Array<{ row: number; type: 'insert' | 'update' }> = [];
+    for (let index = 0; index < ops.length; index++) {
+      const meta = opMeta[index];
+      try {
+        await outbox.runWithEvents(async (session) => {
+          await this.getEntityModel().bulkWrite([ops[index]], {
+            ordered: true,
+            session,
+          });
+          return {
+            result: true,
+            payloads: data.triggerAutomations
+              ? await this.buildAutomationPayloads(
+                  [affected[index]],
+                  data,
+                  session,
+                )
+              : [],
+          };
+        });
+      } catch (error: any) {
         summary.errors++;
         failed.push(meta);
         errors.push({
           row: meta?.row ?? -1,
           code: ImportErrorCode.DB_WRITE_FAILED,
-          reason: `DB write failed: ${we.errmsg ?? we.err?.errmsg ?? 'unknown'}`,
+          reason: `DB write failed: ${error?.message ?? 'unknown'}`,
         });
       }
     }
     return failed;
+  }
+
+  private async buildAutomationPayloads(
+    affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
+    data: TJobData,
+    session: ClientSession,
+  ): Promise<AutomationEventPayload[]> {
+    const ids = affected.map((item) => item.id).filter(Boolean) as string[];
+    if (ids.length !== affected.length) {
+      throw new Error(
+        'Import write is missing an aggregate id for automation.',
+      );
+    }
+    const records = await this.getEntityModel()
+      .find({ _id: { $in: ids }, tenantId: data.tenantId })
+      .session(session)
+      .lean()
+      .exec();
+    const byId = new Map(
+      records.map((record: any) => [String(record._id), record]),
+    );
+    const object = this.moduleConfig
+      .displayName as AutomationEventPayload['object'];
+    return affected.map((item) => {
+      const record = byId.get(item.id!);
+      if (!record) {
+        throw new Error(
+          `Imported ${object} ${item.id} was not found after write.`,
+        );
+      }
+      return {
+        tenantId: data.tenantId,
+        event: item.type === 'insert' ? 'record_created' : 'field_updated',
+        object,
+        recordId: item.id!,
+        data: record,
+        automationDepth: 0,
+        triggerUserId: data.userId,
+      };
+    });
   }
 
   // ─────────────────────── HELPERS ────────────────────────────

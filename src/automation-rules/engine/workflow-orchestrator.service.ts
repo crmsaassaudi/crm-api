@@ -16,6 +16,15 @@ import {
   AutomationDelayedJobData,
 } from '../queue/automation-queue.constants';
 import { WebhookHeaderCryptoService } from './webhook-header-crypto.service';
+import {
+  slimActionConfigForLog,
+  slimRecordForLog,
+} from './execution-log-redaction';
+import {
+  ExecutionPrincipal,
+  resolvePrincipal,
+  systemPrincipal,
+} from '../domain/execution-principal';
 
 /** Hard cap on wait-node delays — 90 days in milliseconds (MED-04). */
 export const MAX_WAIT_DELAY_MS = 90 * 24 * 60 * 60 * 1000;
@@ -23,11 +32,6 @@ export const MAX_WAIT_DELAY_MS = 90 * 24 * 60 * 60 * 1000;
 /** Hard timeout for a single workflow execution (PERF-03). */
 const MAX_EXECUTION_TIMEOUT_MS = 30_000;
 
-/**
- * Fields preserved when slimming a record before it is queued / logged.
- * Keeps just what templates and recipient-resolution need, dropping the
- * rest of the record to avoid persisting unnecessary PII (HIGH-07).
- */
 /**
  * Wait/Delay node configuration schema.
  */
@@ -109,8 +113,22 @@ export class WorkflowOrchestratorService {
     const breadcrumbs = payload.automationBreadcrumbs ?? [];
     const executionSessionId = ulid();
 
+    // Resolve WHO this execution acts as, once, before anything runs. Every
+    // action job carries it so the worker can rebuild the same authorization
+    // context an HTTP request would have had.
+    const principal = resolvePrincipal({
+      runAs: workflow.runAs,
+      workflowId,
+      workflowCreatedBy: workflow.createdBy,
+      triggerUserId: payload.triggerUserId,
+      recordOwnerId: payload.data?.ownerId,
+    });
+
     this.logger.log(
-      `[Orchestrator] Starting workflow "${workflow.name}" (${workflowId}) for record=${recordId} depth=${depth}`,
+      `[Orchestrator] Starting workflow "${workflow.name}" (${workflowId}) for ` +
+        `record=${recordId} depth=${depth} runAs=${principal.runAs}` +
+        `${principal.kind === 'user' ? ` as user=${principal.userId}` : ' as system'}` +
+        `${principal.fallbackReason ? ` (fallback: ${principal.fallbackReason})` : ''}`,
     );
 
     // ── Layer 2: Depth limit check (synchronous) ──────────────────────────
@@ -124,6 +142,7 @@ export class WorkflowOrchestratorService {
         recordId,
         recordType: payload.object,
         automationDepth: depth,
+        workflowVersion: workflow.version ?? null,
       });
       await this.executionLogRepo.blockExecution(execLog._id.toString(), {
         code: 'LOOP_DEPTH_EXCEEDED',
@@ -147,6 +166,7 @@ export class WorkflowOrchestratorService {
         recordId,
         recordType: payload.object,
         automationDepth: depth,
+        workflowVersion: workflow.version ?? null,
       });
       await this.executionLogRepo.blockExecution(execLog._id.toString(), {
         code: 'LOOP_BREADCRUMB_DETECTED',
@@ -176,6 +196,7 @@ export class WorkflowOrchestratorService {
           recordId,
           recordType: payload.object,
           automationDepth: depth,
+          workflowVersion: workflow.version ?? null,
         });
         await this.executionLogRepo.skipExecution(execLog._id.toString());
         return;
@@ -190,6 +211,7 @@ export class WorkflowOrchestratorService {
       recordId,
       recordType: payload.object,
       automationDepth: depth,
+      workflowVersion: workflow.version ?? null,
     });
     const executionId = execLog._id.toString();
     const stepLogs: ExecutionStep[] = [];
@@ -207,7 +229,12 @@ export class WorkflowOrchestratorService {
       }
 
       // Pre-build O(1) lookup maps (SCALE-02)
-      const graph = this.buildGraphIndex(nodes, edges);
+      const graph = this.buildGraphIndex(
+        nodes,
+        edges,
+        workflow.version,
+        principal,
+      );
 
       // Find the trigger node (entry point)
       const triggerNode = graph.nodeMap.get(
@@ -279,7 +306,12 @@ export class WorkflowOrchestratorService {
     } = ctx;
     const stepLogs: ExecutionStep[] = [];
     // Pre-build O(1) lookup maps (SCALE-02)
-    const graph = this.buildGraphIndex(nodes, edges);
+    const graph = this.buildGraphIndex(
+      nodes,
+      edges,
+      ctx.workflowVersion,
+      ctx.principal ?? systemPrincipal(ctx.workflowId),
+    );
     try {
       const hibernated = await this.traverseFromNode(
         nodeId,
@@ -470,7 +502,11 @@ export class WorkflowOrchestratorService {
       nodeType: 'condition',
       branch,
       status: 'success',
-      input: { conditionConfig, recordData: payload.data },
+      // Slimmed: this used to persist the whole record for 30 days.
+      input: {
+        conditionConfig,
+        recordData: slimRecordForLog(payload.data),
+      },
       output: { matched, branch },
       startedAt: stepStart,
       completedAt: new Date(),
@@ -534,6 +570,7 @@ export class WorkflowOrchestratorService {
         workflowId,
       ),
       sourceWorkflowId: workflowId,
+      principal: graph.principal,
     };
 
     try {
@@ -543,7 +580,12 @@ export class WorkflowOrchestratorService {
         nodeName: actionData.nodeName,
         nodeType: 'action',
         status: 'queued' as any,
-        input: { actionType: actionConfig?.actionType, config: actionConfig },
+        input: {
+          actionType: actionConfig?.actionType,
+          // Credentials and message bodies are redacted; the retry path reads
+          // the real config from the published snapshot, not from here.
+          config: slimActionConfigForLog(actionConfig),
+        },
         output: { queued: true },
         startedAt: stepStart,
         completedAt: new Date(),
@@ -640,6 +682,15 @@ export class WorkflowOrchestratorService {
         ),
         sourceWorkflowId: workflowId,
         executionSessionId,
+        // Pin the version AND the graph: publish() overwrites publishedNodes in
+        // place, so without this the resume would walk whatever is published
+        // days later rather than what this execution started on.
+        workflowVersion: graph.version,
+        publishedNodes: graph.nodes,
+        publishedEdges: graph.edges,
+        // The principal is pinned with the graph: a resumed execution must act
+        // as whoever it started as, not as whatever the workflow says now.
+        principal: graph.principal,
       };
       await this.delayedProducer.scheduleResume(delayedData, delayMs);
     }
@@ -669,21 +720,40 @@ export class WorkflowOrchestratorService {
   }
 
   /**
-   * Compute delay in milliseconds from a WaitNodeConfig.
+   * Compute delay in milliseconds from a WaitNodeConfig, capped at
+   * {@link MAX_WAIT_DELAY_MS}.
+   *
+   * The cap was declared but never applied, so `{delayValue: 100000, delayUnit:
+   * 'days'}` was accepted and produced a resume date centuries out — a delayed
+   * job row that can never be cleaned up by anything but the TTL it does not
+   * have.
    */
   private computeDelayMs(config: WaitNodeConfig): number {
     const value = Math.max(1, config.delayValue || 1);
 
+    let ms: number;
     switch (config.delayUnit) {
       case 'minutes':
-        return value * 60 * 1000;
+        ms = value * 60 * 1000;
+        break;
       case 'hours':
-        return value * 60 * 60 * 1000;
+        ms = value * 60 * 60 * 1000;
+        break;
       case 'days':
-        return value * 24 * 60 * 60 * 1000;
+        ms = value * 24 * 60 * 60 * 1000;
+        break;
       default:
-        return value * 60 * 1000; // default to minutes
+        ms = value * 60 * 1000; // default to minutes
     }
+
+    if (ms > MAX_WAIT_DELAY_MS) {
+      this.logger.warn(
+        `[Orchestrator] Wait delay ${config.delayValue} ${config.delayUnit} ` +
+          `exceeds the ${MAX_WAIT_DELAY_MS}ms cap — clamping`,
+      );
+      return MAX_WAIT_DELAY_MS;
+    }
+    return ms;
   }
 
   private async encryptActionConfigForQueue(
@@ -697,7 +767,12 @@ export class WorkflowOrchestratorService {
    * Pre-build O(1) lookup structures for nodes and edges.
    * Replaces O(n) find/filter on every traversal step (SCALE-02).
    */
-  private buildGraphIndex(nodes: any[], edges: any[]): GraphIndex {
+  private buildGraphIndex(
+    nodes: any[],
+    edges: any[],
+    version?: number,
+    principal?: ExecutionPrincipal,
+  ): GraphIndex {
     const nodeMap = new Map<string, any>();
     for (const n of nodes) nodeMap.set(n.id, n);
 
@@ -708,14 +783,27 @@ export class WorkflowOrchestratorService {
       edgeMap.set(e.source, list);
     }
 
-    return { nodeMap, edgeMap };
+    return { nodeMap, edgeMap, nodes, edges, version, principal };
   }
 }
 
-/** Pre-computed graph index for O(1) lookups during DAG traversal. */
+/**
+ * Pre-computed graph index for O(1) lookups during DAG traversal.
+ *
+ * Also carries the snapshot it was built from, so a wait node can pin the exact
+ * graph and version into its delayed job without threading three more positional
+ * arguments through the traversal (which is already at the S107 parameter limit).
+ */
 interface GraphIndex {
   nodeMap: Map<string, any>;
   edgeMap: Map<string, any[]>;
+  /** The published snapshot this index was built from. */
+  nodes: any[];
+  edges: any[];
+  /** Published version of that snapshot, when known. */
+  version?: number;
+  /** Principal every action dispatched from this graph executes as. */
+  principal?: ExecutionPrincipal;
 }
 
 /** Shared traversal state passed to each node-type handler. */
@@ -743,4 +831,8 @@ export interface ResumeContext {
   tenantId: string;
   executionSessionId: string;
   depth: number;
+  /** Version of the pinned snapshot, carried forward to any further wait node. */
+  workflowVersion?: number;
+  /** Principal pinned at the start of the execution being resumed. */
+  principal?: ExecutionPrincipal;
 }

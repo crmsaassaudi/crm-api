@@ -12,6 +12,7 @@ import {
   TaskStatusSchema,
   TaskStatusSchemaClass,
 } from '../task-settings/entities/task-status.schema';
+import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import {
       { name: TaskSchemaClass.name, schema: TaskSchema },
       { name: TaskStatusSchemaClass.name, schema: TaskStatusSchema },
     ]),
+    AutomationOutboxModule,
   ],
   controllers: [TasksController],
   providers: [TasksService, TaskRepository, RecurringTaskService],

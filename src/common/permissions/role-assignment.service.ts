@@ -174,10 +174,7 @@ export class RoleAssignmentService {
       throw new BadRequestException('Approver has already approved');
     }
 
-    const role = await this.customRoles.findById(
-      assignment.roleId,
-      tenantId,
-    );
+    const role = await this.customRoles.findById(assignment.roleId, tenantId);
     await this.assertCallerCanGrant(tenantId, role.permissions);
 
     assignment.approvals = [

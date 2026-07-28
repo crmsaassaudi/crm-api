@@ -10,7 +10,8 @@ export type AuditAction =
   | 'published'
   | 'status_changed'
   | 'deleted'
-  | 'duplicated';
+  | 'duplicated'
+  | 'step_retried';
 
 export interface AuditDiffEntry {
   field: string; // e.g. "nodes", "name", "triggerConfig.object"
@@ -59,14 +60,26 @@ export class AutomationAuditLogSchemaClass {
       'status_changed',
       'deleted',
       'duplicated',
+      'step_retried',
     ],
   })
   action: AuditAction;
 
+  /**
+   * Acting principal: a user's Mongo id, or a non-user label like `system` for
+   * a cron- or engine-initiated change.
+   *
+   * String, not ObjectId-with-ref, on purpose. It used to be a required
+   * ObjectId, which meant the `'system'` fallback in
+   * AutomationWorkflowService.userId produced a CastError on every insert —
+   * swallowed by AutomationAuditService.logAction's catch, so the workflow
+   * audit trail silently wrote nothing at all. A field that cannot represent
+   * every actor the code passes is a field that loses records.
+   */
   @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: 'UserSchemaClass',
+    type: String,
     required: true,
+    index: true,
   })
   userId: string;
 

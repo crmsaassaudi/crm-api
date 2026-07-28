@@ -5,6 +5,7 @@ import { Model } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
+import { RedisLockService } from '../../redis/redis-lock.service';
 import {
   TicketSchemaClass,
   TicketSchemaDocument,
@@ -15,8 +16,28 @@ import {
 } from '../../deals/infrastructure/persistence/document/entities/deal.schema';
 
 /**
- * ScheduledTriggerService — runs a cron job every hour to scan for CRM records
- * that match time-based automation conditions.
+ * ScheduledTriggerService — hourly scan for CRM records that match time-based
+ * automation conditions.
+ *
+ * ── NOT WIRED TO THE ENGINE ────────────────────────────────────────────────
+ * The scan emits `automation.trigger`, which nothing consumes. The engine only
+ * matches workflows on `publishedTriggerConfig.event`, whose only values are
+ * `record_created` and `field_updated` (TriggerConfigDto), so a "ticket has been
+ * open for 3 days" workflow cannot even be authored today. Previously the
+ * emitted event was picked up by an `automation.**` wildcard listener whose
+ * handler expected a different payload shape, which made EVERY active workflow
+ * of every tenant match and execute hourly against an empty record — DLQ flood
+ * and bogus execution history, not working time-based automation.
+ *
+ * The scan is therefore disabled rather than left to burn a full-collection read
+ * per replica per hour for no effect. The query logic is kept because it is the
+ * right query: enabling this needs a `time_based` trigger type end to end
+ * (DTO enum → publishedTriggerConfig matching → AutomationEventPayload), and
+ * `ENABLE_TIME_BASED_TRIGGERS=true` flips it on once that exists.
+ *
+ * Also note when enabling: BATCH_LIMIT is a GLOBAL cap across all tenants, so
+ * at any real tenant count most tenants would never be scanned. It needs to
+ * become a per-tenant sharded scan first.
  *
  * Queries include explicit status filters to avoid triggering on resolved/closed
  * records. Results are iterated via cursor to handle large result sets without
@@ -32,6 +53,10 @@ export class ScheduledTriggerService {
   /** Max records per entity type per cron tick to prevent CPU starvation. */
   private readonly BATCH_LIMIT = 1000;
 
+  /** Cluster-wide singleton lock — see runTimeBasedTriggers. */
+  private static readonly LOCK_KEY = 'cron:automation:time-based-triggers';
+  private static readonly LOCK_TTL_MS = 10 * 60 * 1000;
+
   constructor(
     @InjectModel(TicketSchemaClass.name)
     private readonly ticketModel: Model<TicketSchemaDocument>,
@@ -39,14 +64,49 @@ export class ScheduledTriggerService {
     private readonly dealModel: Model<DealSchemaDocument>,
     private readonly eventEmitter: EventEmitter2,
     private readonly cls: ClsService,
+    private readonly lockService: RedisLockService,
   ) {}
+
+  private get enabled(): boolean {
+    return process.env.ENABLE_TIME_BASED_TRIGGERS === 'true';
+  }
 
   /**
    * Run every hour at the top of the hour.
    * Scans tickets and deals with status filters to only match active records.
+   *
+   * Cluster-singleton: `@Cron` fires in every process that loaded
+   * ScheduleModule, so without the lock this scan runs once per API replica plus
+   * once per worker replica, multiplying every emitted trigger by the replica
+   * count.
    */
   @Cron(CronExpression.EVERY_HOUR)
   async runTimeBasedTriggers(): Promise<void> {
+    if (!this.enabled) {
+      this.logger.debug(
+        '[ScheduledTrigger] Skipped — time-based triggers are not wired to the ' +
+          'automation engine (set ENABLE_TIME_BASED_TRIGGERS=true only once a ' +
+          'time_based trigger type exists end to end).',
+      );
+      return;
+    }
+
+    await this.lockService
+      .acquire(
+        ScheduledTriggerService.LOCK_KEY,
+        { ttl: ScheduledTriggerService.LOCK_TTL_MS, maxRetries: 0 },
+        () => this.scanAll(),
+      )
+      .catch((err) =>
+        // Another replica holds the lock, or lost it mid-scan. Either way this
+        // tick is someone else's; the next hour will try again.
+        this.logger.debug(
+          `[ScheduledTrigger] Skipping tick: ${(err as Error).message}`,
+        ),
+      );
+  }
+
+  private async scanAll(): Promise<void> {
     this.logger.log(
       '[ScheduledTrigger] Running hourly time-based trigger scan',
     );

@@ -22,10 +22,8 @@ import { DealsService } from '../deals/deals.service';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import {
-  AutomationEventPayload,
-  buildAutomationEventName,
-} from '../automation-rules/events/automation-event.payload';
+import { AutomationEventPayload } from '../automation-rules/events/automation-event.payload';
+import { AutomationOutboxService } from '../automation-rules/events/automation-outbox.service';
 import {
   DEFAULT_CURSOR_COUNT_LIMIT,
   clampPaginationLimit,
@@ -71,6 +69,7 @@ export class ContactsService {
     private readonly settingsService: CrmSettingsService,
     private readonly cls: ClsService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly automationOutbox: AutomationOutboxService,
     private readonly exportStorageService: ContactExportStorageService,
     private readonly lockService: RedisLockService,
     private readonly entityAudit: EntityAuditService,
@@ -100,13 +99,20 @@ export class ContactsService {
     const phones = data.phones ?? [];
 
     // tenant, createdBy, updatedBy are auto-injected by BaseDocumentRepository from CLS
-    const contact = await this.repository.create({
-      ...data,
-      ...normalizedLifecycle,
-      emails,
-      phones,
-      ownerId,
-    } as any);
+    const contact = await this.automationOutbox.runWithEvent(
+      (session) =>
+        this.repository.create(
+          {
+            ...data,
+            ...normalizedLifecycle,
+            emails,
+            phones,
+            ownerId,
+          } as any,
+          session,
+        ),
+      (created) => this.buildAutomationEvent('record_created', created),
+    );
 
     this.entityAudit.emit({
       entity: 'contact',
@@ -115,9 +121,6 @@ export class ContactsService {
       kind: 'created',
       newSnapshot: contact,
     });
-
-    // Emit automation event: record_created.Contact
-    this.emitAutomationEvent('record_created', contact);
 
     // Emit lead-scoring event
     this.eventEmitter.emit('contact.created', {
@@ -188,20 +191,29 @@ export class ContactsService {
     }
 
     // updatedBy is auto-injected by BaseDocumentRepository from CLS
-    const updated = await this.repository.update(id, {
-      ...data,
-      ...normalizedLifecycle,
-      ...additionalData,
-      ...(emails !== undefined ? { emails } : {}),
-      ...(phones !== undefined ? { phones } : {}),
-      ownerId,
-    });
+    const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
+    const updated = await this.automationOutbox.runWithEvent(
+      (session) =>
+        this.repository.update(
+          id,
+          {
+            ...data,
+            ...normalizedLifecycle,
+            ...additionalData,
+            ...(emails !== undefined ? { emails } : {}),
+            ...(phones !== undefined ? { phones } : {}),
+            ownerId,
+          },
+          session,
+        ),
+      (result) =>
+        result
+          ? this.buildAutomationEvent('field_updated', result, changedFields)
+          : null,
+    );
 
     // Emit automation event: field_updated.Contact
     if (updated) {
-      const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
-      this.emitAutomationEvent('field_updated', updated, changedFields);
-
       this.entityAudit.emit({
         entity: 'contact',
         entityType: 'CONTACT',
@@ -1259,13 +1271,15 @@ export class ContactsService {
     };
   }
 
-  private emitAutomationEvent(
+  private buildAutomationEvent(
     event: 'record_created' | 'field_updated',
     record: Contact,
     changedFields?: string[],
-  ): void {
+  ): AutomationEventPayload | null {
     const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
-    if (!tenantId) return; // No tenant context (e.g. seeder, migration)
+    if (!tenantId) {
+      throw new Error('Tenant context is required for Contact automation.');
+    }
 
     const payload: AutomationEventPayload = {
       tenantId,
@@ -1275,10 +1289,12 @@ export class ContactsService {
       data: record as any,
       ...(changedFields ? { changedFields } : {}),
       automationDepth: 0,
+      // Feeds `runAs: 'trigger_user'`. Read from CLS at emit time because the
+      // queue worker that evaluates this event has no request to read it from.
+      triggerUserId: this.cls.get('userId') ?? null,
     };
 
-    // Fire-and-forget — errors are caught by the listener
-    this.eventEmitter.emit(buildAutomationEventName(event, 'Contact'), payload);
+    return payload;
   }
 
   /**

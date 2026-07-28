@@ -47,6 +47,49 @@ export class CrmRecordUpdateService {
    */
   private static readonly RESTRICTED_FIELDS = new Set<string>(['ownerId']);
 
+  /**
+   * Fields no automation may set when CREATING a record.
+   *
+   * The update path has had a denylist since MED-01, but `create_record` fed
+   * an unvalidated field map straight into `service.create()`, so everything
+   * the update path refused could be set at birth instead — including
+   * `ownerId` (an ownership grant that skips the assignment engine entirely)
+   * and `orgUnitId` (which decides who can see the record).
+   *
+   * Superset of PROTECTED_FIELDS + RESTRICTED_FIELDS, plus the `*ById`
+   * variants the repositories actually persist and the org-unit axis.
+   */
+  private static readonly CREATE_DENIED_FIELDS = new Set<string>([
+    '_id',
+    'id',
+    'tenantId',
+    'createdAt',
+    'updatedAt',
+    'createdBy',
+    'createdById',
+    'updatedBy',
+    'updatedById',
+    '__v',
+    'ownerId',
+    'orgUnitId',
+  ]);
+
+  /**
+   * Reject a create payload that touches identity, tenancy, audit or ownership
+   * fields. Returns the offending keys; an empty array means the payload is
+   * safe to hand to a `create()`.
+   *
+   * Deliberately a hard rejection rather than a silent strip: an author who
+   * mapped `ownerId` needs to see that it did not happen, and see it in the
+   * execution log, instead of quietly getting an unowned record.
+   */
+  static findDeniedCreateFields(data: Record<string, unknown>): string[] {
+    return Object.keys(data).filter((key) =>
+      // Dot-paths are checked on their root so `ownerId.foo` cannot slip past.
+      CrmRecordUpdateService.CREATE_DENIED_FIELDS.has(key.split('.')[0]),
+    );
+  }
+
   constructor(
     private readonly contactsService: ContactsService,
     private readonly ticketsService: TicketsService,
@@ -194,7 +237,7 @@ export class CrmRecordUpdateService {
 
       // ── Emit automation event with loop prevention metadata ───────────
       // The EventListener will skip workflows whose _id matches sourceWorkflowId
-      this.emitFieldUpdatedEvent({
+      await this.emitFieldUpdatedEvent({
         tenantId,
         recordType,
         recordId,
@@ -338,7 +381,7 @@ export class CrmRecordUpdateService {
     sourceWorkflowId: string;
     automationDepth: number;
     automationBreadcrumbs?: string[];
-  }): void {
+  }): Promise<void> {
     const payload: AutomationEventPayload = {
       tenantId: params.tenantId,
       event: 'field_updated',
@@ -351,10 +394,11 @@ export class CrmRecordUpdateService {
       _automationSourceWorkflowId: params.sourceWorkflowId,
     };
 
-    // Fire-and-forget — EventListener catches errors internally
-    this.eventEmitter.emit(
-      buildAutomationEventName('field_updated', params.recordType),
-      payload,
-    );
+    return this.eventEmitter
+      .emitAsync(
+        buildAutomationEventName('field_updated', params.recordType),
+        payload,
+      )
+      .then(() => undefined);
   }
 }

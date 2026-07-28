@@ -2,10 +2,10 @@ import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 // ── Schemas ──────────────────────────────────────────────────────────────
-import {
-  AutomationRuleSchema,
-  AutomationRuleSchemaClass,
-} from './infrastructure/persistence/document/entities/automation-rule.schema';
+// NOTE: the legacy `automation_rules` collection is intentionally NOT registered
+// here. It was a CRUD-only feature with no evaluator anywhere in the codebase —
+// tenants could author rules that could never run. Removed 2026-07-28; the
+// collection itself is left in place so historical rows are not destroyed.
 import {
   AutomationWorkflowSchema,
   AutomationWorkflowSchemaClass,
@@ -24,15 +24,12 @@ import {
 } from './infrastructure/persistence/document/entities/automation-delayed-job.schema';
 
 // ── Repositories ─────────────────────────────────────────────────────────
-import { AutomationRuleRepository } from './infrastructure/persistence/document/repositories/automation-rule.repository';
 import { AutomationWorkflowRepository } from './infrastructure/persistence/document/repositories/automation-workflow.repository';
 import { AutomationExecutionLogRepository } from './infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationAuditLogRepository } from './infrastructure/persistence/document/repositories/automation-audit-log.repository';
 import { AutomationDelayedJobRepository } from './infrastructure/persistence/document/repositories/automation-delayed-job.repository';
 
 // ── Controllers & Services ───────────────────────────────────────────────
-import { AutomationRulesController } from './automation-rules.controller';
-import { AutomationRulesService } from './automation-rules.service';
 import { AutomationWorkflowController } from './automation-workflow.controller';
 import { AutomationWorkflowService } from './automation-workflow.service';
 import { AutomationExecutionLogController } from './automation-execution-log.controller';
@@ -40,6 +37,7 @@ import { AutomationAuditService } from './automation-audit.service';
 
 // ── Engine ───────────────────────────────────────────────────────────────
 import { AutomationEventListenerService } from './events/automation-event-listener.service';
+import { AutomationOutboxModule } from './events/automation-outbox.module';
 import { OmniAutomationBridgeService } from './events/omni-automation-bridge.service';
 import { ConditionEvaluatorService } from './engine/condition-evaluator.service';
 import { LoopPreventionService } from './engine/loop-prevention.service';
@@ -50,7 +48,11 @@ import { CrmRecordUpdateService } from './engine/crm-record-update.service';
 import { SsrfGuardService } from './engine/ssrf-guard.service';
 import { WebhookHeaderCryptoService } from './engine/webhook-header-crypto.service';
 import { ScheduledTriggerService } from './engine/scheduled-trigger.service';
+import { ActionIdempotencyService } from './engine/action-idempotency.service';
+import { TriggerEvaluatorService } from './engine/trigger-evaluator.service';
+import { ExecutionContextService } from './engine/execution-context.service';
 import {
+  AutomationAssigneeResolver,
   SendEmailExecutor,
   SendSmsExecutor,
   UpdateFieldExecutor,
@@ -82,6 +84,7 @@ import {
 // ── Queue ────────────────────────────────────────────────────────────────
 import { AutomationQueueModule } from './queue/automation-queue.module';
 import { AutomationActionProducer } from './queue/automation-action.producer';
+import { AutomationTriggerProcessor } from './queue/automation-trigger.processor';
 import {
   AutomationActionProcessor,
   AutomationEmailProcessor,
@@ -106,6 +109,7 @@ import { TasksModule } from '../tasks/tasks.module';
 import { ChannelsModule } from '../channels/channels.module';
 import { NotesModule } from '../notes/notes.module';
 import { isWorkerRuntime } from '../config/runtime-role';
+import { ObservabilityModule } from '../observability/observability.module';
 import {
   TicketSchemaClass,
   TicketSchema,
@@ -126,13 +130,13 @@ const workerProviders = isWorkerRuntime()
       AutomationBulkProcessor,
       AutomationDelayedProcessor,
       AutomationDelayedScheduler,
+      AutomationTriggerProcessor,
     ]
   : [];
 
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: AutomationRuleSchemaClass.name, schema: AutomationRuleSchema },
       {
         name: AutomationWorkflowSchemaClass.name,
         schema: AutomationWorkflowSchema,
@@ -153,6 +157,9 @@ const workerProviders = isWorkerRuntime()
       { name: DealSchemaClass.name, schema: DealSchema },
     ]),
     AutomationQueueModule,
+    AutomationOutboxModule,
+    // MetricsService — throttle fail-open / engagement counters
+    ObservabilityModule,
     // CRM modules — needed by CrmRecordUpdateService for real DB updates
     forwardRef(() => ContactsModule),
     forwardRef(() => TicketsModule),
@@ -164,18 +171,12 @@ const workerProviders = isWorkerRuntime()
     // Notes — needed by AddNoteExecutor for contact notes
     forwardRef(() => NotesModule),
   ],
-  controllers: [
-    AutomationRulesController,
-    AutomationWorkflowController,
-    AutomationExecutionLogController,
-  ],
+  controllers: [AutomationWorkflowController, AutomationExecutionLogController],
   providers: [
     // Services
-    AutomationRulesService,
     AutomationWorkflowService,
     AutomationAuditService,
     // Repositories
-    AutomationRuleRepository,
     AutomationWorkflowRepository,
     AutomationExecutionLogRepository,
     AutomationAuditLogRepository,
@@ -192,6 +193,14 @@ const workerProviders = isWorkerRuntime()
     CrmRecordUpdateService,
     SsrfGuardService,
     WebhookHeaderCryptoService,
+    // Exactly-once guard for action jobs
+    ActionIdempotencyService,
+    // Establishes the principal + data-visibility axes for an execution
+    ExecutionContextService,
+    // Trigger matching, moved out of the event listener
+    TriggerEvaluatorService,
+    // Eligibility gate shared by the record-creating executors
+    AutomationAssigneeResolver,
     // Action Executors (all 15 types)
     SendEmailExecutor,
     SendSmsExecutor,
@@ -229,7 +238,6 @@ const workerProviders = isWorkerRuntime()
     ScheduledTriggerService,
   ],
   exports: [
-    AutomationRulesService,
     AutomationWorkflowService,
     AutomationWorkflowRepository,
     AutomationExecutionLogRepository,

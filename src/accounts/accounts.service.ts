@@ -9,6 +9,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
+import { AutomationEventPayload } from '../automation-rules/events/automation-event.payload';
+import { AutomationOutboxService } from '../automation-rules/events/automation-outbox.service';
 import { Readable } from 'stream';
 import { AccountRepository } from './infrastructure/persistence/document/repositories/account.repository';
 import { Account } from './domain/account';
@@ -46,6 +48,7 @@ export class AccountsService {
     private readonly repository: AccountRepository,
     private readonly entityAudit: EntityAuditService,
     private readonly cls: ClsService,
+    private readonly automationOutbox: AutomationOutboxService,
     private readonly storageFactory: ImportStorageFactory,
     @InjectQueue(ACCOUNT_IMPORT_QUEUE)
     private readonly importQueue: Queue,
@@ -145,12 +148,14 @@ export class AccountsService {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const phones = data.phones ?? [];
     const emails = data.emails ?? [];
-    const account = await this.repository.create({
-      ...data,
-      phones,
-      emails,
-      ownerId,
-    } as any);
+    const account = await this.automationOutbox.runWithEvent(
+      (session) =>
+        this.repository.create(
+          { ...data, phones, emails, ownerId } as any,
+          session,
+        ),
+      (created) => this.buildAutomationEvent('record_created', created),
+    );
 
     this.entityAudit.emit({
       entity: 'account',
@@ -201,12 +206,24 @@ export class AccountsService {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const phones = data.phones;
     const emails = data.emails;
-    const updated = await this.repository.update(id, {
-      ...data,
-      ...(phones !== undefined ? { phones } : {}),
-      ...(emails !== undefined ? { emails } : {}),
-      ownerId,
-    } as any);
+    const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
+    const updated = await this.automationOutbox.runWithEvent(
+      (session) =>
+        this.repository.update(
+          id,
+          {
+            ...data,
+            ...(phones !== undefined ? { phones } : {}),
+            ...(emails !== undefined ? { emails } : {}),
+            ownerId,
+          } as any,
+          session,
+        ),
+      (result) =>
+        result
+          ? this.buildAutomationEvent('field_updated', result, changedFields)
+          : null,
+    );
 
     if (updated) {
       this.entityAudit.emit({
@@ -500,5 +517,39 @@ export class AccountsService {
     token: string,
   ): Promise<{ buffer: Buffer; filename: string }> {
     return this.importStorage.readLocalReport(token);
+  }
+
+  /**
+   * Notify the Automation Engine after a successful write.
+   *
+   * Account triggers were selectable in the workflow builder but this service never
+   * emitted the event, so `record_created.Account` and `field_updated.Account`
+   * workflows could be authored, published and activated without ever firing.
+   * AutomationEventPayload's own docblock claimed this service was an emitter.
+   */
+  private buildAutomationEvent(
+    event: 'record_created' | 'field_updated',
+    record: Account,
+    changedFields?: string[],
+  ): AutomationEventPayload | null {
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    if (!tenantId) {
+      throw new Error('Tenant context is required for Account automation.');
+    }
+
+    const payload: AutomationEventPayload = {
+      tenantId,
+      event,
+      object: 'Account',
+      recordId: record.id,
+      data: record as any,
+      ...(changedFields ? { changedFields } : {}),
+      automationDepth: 0,
+      // Feeds `runAs: 'trigger_user'`. Read from CLS at emit time because the
+      // queue worker that evaluates this event has no request to read it from.
+      triggerUserId: this.cls.get('userId') ?? null,
+    };
+
+    return payload;
   }
 }

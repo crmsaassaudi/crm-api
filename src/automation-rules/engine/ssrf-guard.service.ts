@@ -3,6 +3,18 @@ import { isIP } from 'net';
 import { lookup } from 'dns/promises';
 
 /**
+ * Thrown by {@link SsrfGuardService.safeFetch} when the initial URL or any
+ * redirect hop targets a blocked address. Distinct from a transport error so
+ * callers can report it as a permanent (non-retryable) failure.
+ */
+export class SsrfBlockedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'SsrfBlockedError';
+  }
+}
+
+/**
  * SsrfGuardService — Server-Side Request Forgery protection for webhook URLs.
  *
  * Prevents users from configuring webhooks that hit internal/private IP addresses.
@@ -72,6 +84,8 @@ export class SsrfGuardService {
    */
   private readonly DNS_TIMEOUT_MS = 5_000;
   private readonly MAX_URL_LENGTH = 2_048;
+  /** Redirect hops allowed by {@link safeFetch}; each one is re-validated. */
+  private readonly MAX_REDIRECTS = 3;
 
   async validate(
     url: string,
@@ -151,6 +165,118 @@ export class SsrfGuardService {
         reason: `DNS resolution failed for ${hostname}: ${dnsError.message}`,
       };
     }
+  }
+
+  /**
+   * Fetch a URL with SSRF protection that survives redirects.
+   *
+   * `fetch` defaults to `redirect: 'follow'`, which means validating only the
+   * URL the user configured protects nothing: a public host answering
+   * `302 Location: http://169.254.169.254/…` gets followed to the metadata
+   * service without any further check. So redirects are handled here instead —
+   * every hop is re-validated and re-pinned exactly like the first one.
+   *
+   * The caller keeps ownership of the abort signal (its own timeout), so a
+   * redirect chain cannot extend the overall deadline.
+   */
+  async safeFetch(
+    url: string,
+    init: RequestInit,
+    options?: { maxRedirects?: number },
+  ): Promise<Response> {
+    const maxRedirects = options?.maxRedirects ?? this.MAX_REDIRECTS;
+    let currentUrl = url;
+    let currentInit: RequestInit = { ...init, redirect: 'manual' };
+
+    for (let hop = 0; hop <= maxRedirects; hop++) {
+      const check = await this.validate(currentUrl);
+      if (!check.safe) {
+        throw new SsrfBlockedError(
+          hop === 0
+            ? check.reason!
+            : `redirect hop ${hop} to ${currentUrl} blocked: ${check.reason}`,
+        );
+      }
+
+      const { fetchUrl, hostHeader } = this.pin(currentUrl, check.resolvedIp);
+      const response = await fetch(fetchUrl, {
+        ...currentInit,
+        headers: hostHeader
+          ? {
+              ...(currentInit.headers as Record<string, string>),
+              Host: hostHeader,
+            }
+          : currentInit.headers,
+      });
+
+      if (!this.isRedirect(response.status)) {
+        return response;
+      }
+
+      const location = response.headers.get('location');
+      // Release the connection before following: the body is never useful on a
+      // redirect and leaving it open leaks a socket per hop.
+      await response.body?.cancel().catch(() => {});
+
+      if (!location) {
+        throw new SsrfBlockedError(
+          `HTTP ${response.status} redirect without a Location header`,
+        );
+      }
+
+      currentUrl = new URL(location, currentUrl).toString();
+      currentInit = this.rewriteForRedirect(currentInit, response.status);
+    }
+
+    throw new SsrfBlockedError(
+      `Exceeded the maximum of ${maxRedirects} redirects starting from ${url}`,
+    );
+  }
+
+  /**
+   * Rewrite the request for the next hop, mirroring what `fetch` would do:
+   * 303 (and 301/302 for anything other than GET/HEAD, per browser behaviour)
+   * downgrade to GET and drop the body.
+   */
+  private rewriteForRedirect(init: RequestInit, status: number): RequestInit {
+    const method = (init.method ?? 'GET').toUpperCase();
+    const downgrades =
+      status === 303 ||
+      ((status === 301 || status === 302) &&
+        method !== 'GET' &&
+        method !== 'HEAD');
+
+    if (!downgrades) return init;
+
+    const { body: _dropped, ...rest } = init;
+    return { ...rest, method: 'GET' };
+  }
+
+  /**
+   * Swap the hostname for the IP we just validated and carry the original host
+   * in a `Host` header, so DNS cannot be re-resolved to a different address
+   * between the check and the connection (DNS rebinding).
+   */
+  private pin(
+    url: string,
+    resolvedIp?: string,
+  ): { fetchUrl: string; hostHeader?: string } {
+    if (!resolvedIp) return { fetchUrl: url };
+
+    const parsed = new URL(url);
+    const originalHost = parsed.host;
+    parsed.hostname = resolvedIp.includes(':') ? `[${resolvedIp}]` : resolvedIp;
+    return { fetchUrl: parsed.toString(), hostHeader: originalHost };
+  }
+
+  private isRedirect(status: number): boolean {
+    return (
+      status === 301 ||
+      status === 302 ||
+      status === 303 ||
+      status === 307 ||
+      status === 308
+    );
   }
 
   private async lookupWithTimeout(

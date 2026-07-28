@@ -15,6 +15,62 @@ import {
 import { ConditionEvaluatorService } from './engine/condition-evaluator.service';
 import { AutomationAuditService } from './automation-audit.service';
 import { WebhookHeaderCryptoService } from './engine/webhook-header-crypto.service';
+import { ChannelConfigRepository } from '../channels/infrastructure/persistence/document/repositories/channel-config.repository';
+import { AuthorizationService } from '../common/permissions/authorization.service';
+import { DEFAULT_RUN_AS, WorkflowRunAs } from './domain/execution-principal';
+
+/** Node types the orchestrator's traversal actually handles. */
+const SUPPORTED_NODE_TYPES = new Set([
+  'trigger',
+  'condition',
+  'action',
+  'wait',
+] as const);
+type SupportedNodeType = 'trigger' | 'condition' | 'action' | 'wait';
+
+/**
+ * Action types with a registered executor. Mirrors
+ * ActionProcessorMixin.VALID_ACTIONS — that check dead-letters the job at
+ * runtime; this one rejects the save.
+ */
+const SUPPORTED_ACTION_TYPES = new Set([
+  'send_email',
+  'send_sms',
+  'update_field',
+  'route_to_group',
+  'webhook',
+  'create_task',
+  'create_ticket',
+  'add_tag',
+  'remove_tag',
+  'add_note',
+  'create_record',
+  'http_request',
+  'send_whatsapp',
+  'send_zns',
+  'send_livechat',
+  'internal_notification',
+]);
+
+const WAIT_UNITS = new Set(['minutes', 'hours', 'days']);
+
+/**
+ * Action types that have an executor registered but no provider behind it. They
+ * stay in SUPPORTED_ACTION_TYPES so an existing workflow still loads and reports
+ * a clear runtime error, but no new node may use them.
+ */
+const NOT_IMPLEMENTED_ACTION_TYPES = new Set(['send_whatsapp', 'send_zns']);
+
+/** Trigger objects that live in omni-inbound, not in the CRM record services. */
+const OMNI_TRIGGER_OBJECTS = new Set(['Conversation', 'Message']);
+
+/** Actions that write through CrmRecordUpdateService / a CRM record service. */
+const CRM_RECORD_ACTIONS = new Set([
+  'update_field',
+  'add_tag',
+  'remove_tag',
+  'add_note',
+]);
 
 /**
  * AutomationWorkflowService — business logic for workflow CRUD.
@@ -38,14 +94,60 @@ export class AutomationWorkflowService {
     private readonly conditionEvaluator: ConditionEvaluatorService,
     private readonly auditService: AutomationAuditService,
     private readonly webhookHeaderCrypto: WebhookHeaderCryptoService,
+    private readonly channelConfigRepo: ChannelConfigRepository,
+    private readonly authz: AuthorizationService,
   ) {}
 
   private get tenantId(): string {
     return this.cls.get('tenantId');
   }
 
+  /**
+   * The acting user's Mongo id.
+   *
+   * `userId` first: CLS stores the resolved Mongo id under that key
+   * (TenantInterceptor / PermissionGuard), while `user` holds the raw JWT
+   * payload, which has `sub` and no `id`. Reading only `user.id` meant this
+   * always fell through to `'system'` — every workflow's `createdBy` and every
+   * audit row was attributed to nobody. Same precedence as ContactsService,
+   * DealsService and TicketsService use.
+   */
   private get userId(): string {
-    return this.cls.get('user.id') ?? 'system';
+    return this.cls.get('userId') ?? this.cls.get('user.id') ?? 'system';
+  }
+
+  /**
+   * `runAs: 'system'` is the escalation, so it needs its own grant.
+   *
+   * A workflow running as `system` acts with full tenant scope: none of the
+   * owner, org-unit, sharing-rule or ABAC axes that constrain the author's own
+   * requests apply to it. Anyone who can build workflows could therefore read and
+   * rewrite every record in the tenant — the finding this gate closes. The other
+   * three modes bind the execution to a real user, so `edit`/`create` is enough
+   * for them.
+   *
+   * Omitting `runAs` is treated as choosing `system` (that is the default), so it
+   * is gated too — otherwise the check would be trivially bypassed by leaving the
+   * field out.
+   */
+  private async assertMayUseRunAs(runAs?: WorkflowRunAs): Promise<void> {
+    const effective = runAs ?? DEFAULT_RUN_AS;
+    if (effective !== 'system') return;
+
+    const decision = await this.authz.canPerformAction({
+      rule: { action: 'run_as_system', resource: 'automation_workflows' },
+      rawUserId: this.userId,
+      tenantHint: this.tenantId,
+      claims: this.cls.get('user'),
+    });
+
+    if (!decision.allowed) {
+      throw new BadRequestException(
+        'This workflow would run with full tenant scope, which requires ' +
+          'automation_workflows:run_as_system. Set runAs to "creator", ' +
+          '"trigger_user" or "record_owner" to run it as a real user instead.',
+      );
+    }
   }
 
   // ── Queries ────────────────────────────────────────────────────────────
@@ -71,6 +173,12 @@ export class AutomationWorkflowService {
 
   async create(dto: CreateWorkflowDto) {
     this.validateWorkflow(dto);
+    const runAs = dto.runAs ?? 'creator';
+    await this.assertMayUseRunAs(runAs);
+    await this.validateNodeConfigs(
+      dto.nodes as any[],
+      dto.triggerConfig?.object,
+    );
     const encryptedDraftNodes = await this.webhookHeaderCrypto.encryptNodes(
       dto.nodes as any,
     );
@@ -80,6 +188,7 @@ export class AutomationWorkflowService {
       name: dto.name,
       description: dto.description ?? '',
       status: 'draft',
+      runAs,
       triggerConfig: dto.triggerConfig as any,
       nodes: encryptedDraftNodes.nodes as any,
       edges: dto.edges as any,
@@ -132,6 +241,18 @@ export class AutomationWorkflowService {
 
     if (dto.nodes || dto.edges) {
       this.validateWorkflow(dto as any);
+    }
+    if (dto.runAs && dto.runAs !== (existing as any).runAs) {
+      await this.assertMayUseRunAs(dto.runAs);
+    }
+
+    if (dto.nodes) {
+      // Fall back to the stored trigger when the patch does not carry one, so
+      // the object-specific action checks still apply to a nodes-only update.
+      await this.validateNodeConfigs(
+        dto.nodes as any[],
+        dto.triggerConfig?.object ?? (existing as any).triggerConfig?.object,
+      );
     }
 
     // Strip updatedAt from the payload — Mongoose timestamps: true handles it
@@ -358,6 +479,180 @@ export class AutomationWorkflowService {
     // runtime traversal recurse until the Redis strict-loop guard (or stack)
     // stops it. Catching it at save time is cheaper and clearer.
     this.assertNoCycle(nodes, edges);
+  }
+
+  /**
+   * Validate the parts of a node's `config` the runtime depends on.
+   *
+   * `WorkflowNodeDto.config` is an unvalidated `Record<string, any>` persisted
+   * as Mixed, and `type` is a free string. That deferred every mistake to the
+   * worker, where the consequences are invisible to the author:
+   *   - an unknown `actionType` is only caught by the queue consumer, which
+   *     dead-letters the job;
+   *   - an unknown node `type` makes the orchestrator's traversal fall through
+   *     and silently truncate that branch;
+   *   - a `configId` was never checked to belong to this tenant, which is how a
+   *     workflow could point a send_email node at another tenant's credentials.
+   *
+   * Save time is where these belong: the author is present and can be told.
+   */
+  private async validateNodeConfigs(
+    nodes: any[],
+    triggerObject?: string,
+  ): Promise<void> {
+    if (!Array.isArray(nodes)) return;
+
+    for (const node of nodes) {
+      const type = this.normalizeNodeType(node.type);
+      if (!type) {
+        throw new BadRequestException(
+          `Node "${node.id}" has unsupported type "${node.type}". ` +
+            `Supported: ${[...SUPPORTED_NODE_TYPES].join(', ')}.`,
+        );
+      }
+
+      if (type === 'action') {
+        this.validateActionNode(node);
+        this.assertActionSupportsTriggerObject(node, triggerObject);
+      }
+      if (type === 'wait') {
+        this.validateWaitNode(node);
+        this.assertWaitSupportsTriggerObject(node, triggerObject);
+      }
+    }
+
+    // Grouped after the shape checks so a workflow with a typo does not spend a
+    // DB round-trip per node first.
+    await this.validateChannelConfigRefs(nodes);
+  }
+
+  /** Map both the plain and `*Node` spellings the builder emits. */
+  private normalizeNodeType(raw: unknown): SupportedNodeType | null {
+    if (typeof raw !== 'string') return null;
+    const base = raw.endsWith('Node') ? raw.slice(0, -4) : raw;
+    return SUPPORTED_NODE_TYPES.has(base as SupportedNodeType)
+      ? (base as SupportedNodeType)
+      : null;
+  }
+
+  private validateActionNode(node: any): void {
+    const actionType = node.config?.actionType;
+    if (!actionType) {
+      throw new BadRequestException(
+        `Action node "${node.config?.name ?? node.id}" is missing actionType.`,
+      );
+    }
+    if (!SUPPORTED_ACTION_TYPES.has(actionType)) {
+      throw new BadRequestException(
+        `Action node "${node.config?.name ?? node.id}" has unknown actionType ` +
+          `"${actionType}". Supported: ${[...SUPPORTED_ACTION_TYPES].join(', ')}.`,
+      );
+    }
+    // Registered (so existing workflows still round-trip and report a clear
+    // runtime error) but not buildable: these executors have no integration
+    // behind them and used to report a fake success.
+    if (NOT_IMPLEMENTED_ACTION_TYPES.has(actionType)) {
+      throw new BadRequestException(
+        `Action "${actionType}" is not available yet — no provider integration ` +
+          'exists for it. Use send_sms or send_livechat instead.',
+      );
+    }
+  }
+
+  /**
+   * Conversation and Message records are not reachable through
+   * `CrmRecordUpdateService` — `getServiceForModule` has no case for them, so
+   * any action that goes through it fails at runtime with "Unsupported module"
+   * and lands in the DLQ. Refuse the combination at save time instead, where the
+   * author can pick a different action.
+   *
+   * `route_to_group` is fine: it has a dedicated conversation path through the
+   * omni AssignmentService.
+   */
+  private assertActionSupportsTriggerObject(
+    node: any,
+    triggerObject?: string,
+  ): void {
+    if (!triggerObject || !OMNI_TRIGGER_OBJECTS.has(triggerObject)) return;
+
+    const actionType = node.config?.actionType;
+    if (!CRM_RECORD_ACTIONS.has(actionType)) return;
+
+    throw new BadRequestException(
+      `Action "${actionType}" cannot run on a ${triggerObject} trigger: ` +
+        `${triggerObject} records are not writable through the CRM update path. ` +
+        'Use "Route to Team", "Create Ticket", "Send Livechat" or a webhook instead.',
+    );
+  }
+
+  /**
+   * A hibernated execution re-fetches its record on resume
+   * (`AutomationDelayedProcessor.resumeWorkflow` → `fetchRecord`), which returns
+   * null for Conversation/Message and is then reported as RECORD_NOT_FOUND. A
+   * wait node on those triggers would therefore always fail after the delay,
+   * hours or days later. Refuse it up front.
+   */
+  private assertWaitSupportsTriggerObject(
+    node: any,
+    triggerObject?: string,
+  ): void {
+    if (!triggerObject || !OMNI_TRIGGER_OBJECTS.has(triggerObject)) return;
+
+    throw new BadRequestException(
+      `Wait node "${node.config?.name ?? node.id}" is not supported on a ` +
+        `${triggerObject} trigger: the execution cannot re-read a ` +
+        `${triggerObject} when it resumes, so it would fail after the delay.`,
+    );
+  }
+
+  private validateWaitNode(node: any): void {
+    const { delayValue, delayUnit } = node.config ?? {};
+    if (delayUnit !== undefined && !WAIT_UNITS.has(delayUnit)) {
+      throw new BadRequestException(
+        `Wait node "${node.config?.name ?? node.id}" has unknown delayUnit ` +
+          `"${delayUnit}". Supported: ${[...WAIT_UNITS].join(', ')}.`,
+      );
+    }
+    if (
+      delayValue !== undefined &&
+      (typeof delayValue !== 'number' ||
+        !Number.isFinite(delayValue) ||
+        delayValue < 1)
+    ) {
+      throw new BadRequestException(
+        `Wait node "${node.config?.name ?? node.id}" needs delayValue to be a ` +
+          'positive number.',
+      );
+    }
+  }
+
+  /**
+   * Every `configId` a node references must be a channel config owned by THIS
+   * tenant. The executors now also guard at send time
+   * (TransportPool.resolveWithTenantGuard), but failing at save time is what
+   * makes the mistake fixable instead of a silent dead-lettered job.
+   */
+  private async validateChannelConfigRefs(nodes: any[]): Promise<void> {
+    const referenced = new Map<string, string>();
+    for (const node of nodes) {
+      const configId = node.config?.configId;
+      if (typeof configId === 'string' && configId.trim()) {
+        referenced.set(configId, node.config?.name ?? node.id);
+      }
+    }
+
+    for (const [configId, nodeLabel] of referenced) {
+      const config = await this.channelConfigRepo.findById(
+        this.tenantId,
+        configId,
+      );
+      if (!config) {
+        throw new BadRequestException(
+          `Node "${nodeLabel}" references channel config "${configId}", which ` +
+            'does not exist in this workspace.',
+        );
+      }
+    }
   }
 
   /**

@@ -10,17 +10,57 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import {
+  WORKFLOW_RUN_AS_VALUES,
+  WorkflowRunAs,
+} from '../domain/execution-principal';
 
 export class TriggerConfigDto {
   @ApiProperty({ enum: ['record_created', 'field_updated'] })
   @IsEnum(['record_created', 'field_updated'])
   event: 'record_created' | 'field_updated';
 
+  /**
+   * Conversation and Message are included because the engine already supports
+   * them end to end — OmniAutomationBridgeService emits
+   * `automation.record_created.Conversation` / `.Message`,
+   * ActionProcessorMixin.VALID_RECORD_TYPES accepts both, and
+   * RouteToGroupExecutor has a dedicated conversation path that goes through the
+   * omni AssignmentService. Only this enum (and the execution-log enum) kept
+   * them unauthorable, so "Omni Automation" existed everywhere except where a
+   * user could switch it on.
+   */
   @ApiProperty({
-    enum: ['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'],
+    enum: [
+      'Lead',
+      'Contact',
+      'Ticket',
+      'Deal',
+      'Account',
+      'Task',
+      'Conversation',
+      'Message',
+    ],
   })
-  @IsEnum(['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'])
-  object: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task';
+  @IsEnum([
+    'Lead',
+    'Contact',
+    'Ticket',
+    'Deal',
+    'Account',
+    'Task',
+    'Conversation',
+    'Message',
+  ])
+  object:
+    | 'Lead'
+    | 'Contact'
+    | 'Ticket'
+    | 'Deal'
+    | 'Account'
+    | 'Task'
+    | 'Conversation'
+    | 'Message';
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -92,6 +132,22 @@ export class CreateWorkflowDto {
   @ApiProperty()
   @IsString()
   name: string;
+
+  /**
+   * Which principal the workflow's actions execute as.
+   *
+   * Omitted means `system` — full tenant scope — which is what every workflow
+   * did before this field existed. Choosing `system` explicitly requires
+   * `automation_workflows:run_as_system`.
+   */
+  @ApiPropertyOptional({
+    enum: WORKFLOW_RUN_AS_VALUES as unknown as string[],
+    description:
+      'Principal the workflow executes as. Defaults to system (full tenant scope).',
+  })
+  @IsOptional()
+  @IsEnum(WORKFLOW_RUN_AS_VALUES as unknown as string[])
+  runAs?: WorkflowRunAs;
 
   @ApiPropertyOptional()
   @IsOptional()

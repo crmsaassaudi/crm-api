@@ -91,6 +91,9 @@ describe('AccountsService', () => {
       repository,
       entityAudit,
       cls as any,
+      {
+        runWithEvent: jest.fn((mutate: any) => mutate(undefined)),
+      } as any,
       storageFactory as any,
       importQueue,
       exportQueue as any,
@@ -126,6 +129,7 @@ describe('AccountsService', () => {
 
       expect(repository.create).toHaveBeenCalledWith(
         expect.objectContaining({ ownerId: undefined }),
+        undefined,
       );
     });
 
@@ -134,6 +138,7 @@ describe('AccountsService', () => {
 
       expect(repository.create).toHaveBeenCalledWith(
         expect.objectContaining({ phones: [], emails: [] }),
+        undefined,
       );
     });
   });

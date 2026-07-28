@@ -79,10 +79,7 @@ export class CustomRolesController {
   @ApiOperation({ summary: 'List immutable custom-role revisions' })
   @RequirePermission('view', 'settings')
   versions(@Req() req: any, @Param('id') id: string) {
-    return this.service.listVersions(
-      id,
-      resolveRequestTenantId(this.cls, req),
-    );
+    return this.service.listVersions(id, resolveRequestTenantId(this.cls, req));
   }
 
   @Post(':id/rollback')

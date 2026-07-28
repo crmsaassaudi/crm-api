@@ -20,15 +20,23 @@ function makeReport() {
 }
 
 function makeModel(existingDocs: any[] = []) {
-  const chain: any = {
-    select: () => chain,
-    lean: () => chain,
-    exec: () => existingDocs,
-  };
-  return {
-    find: jest.fn(() => chain),
+  const model: any = {
     bulkWrite: jest.fn(() => ({ insertedCount: 0, modifiedCount: 0 })),
   };
+  model.find = jest.fn((filter: any) => {
+    const chain: any = {
+      select: () => chain,
+      session: () => chain,
+      lean: () => chain,
+      exec: () => {
+        if (!filter?._id) return existingDocs;
+        const ops = model.bulkWrite.mock.calls.at(-1)?.[0] ?? [];
+        return ops.map((op: any) => op.insertOne?.document).filter(Boolean);
+      },
+    };
+    return chain;
+  });
+  return model;
 }
 
 /**
@@ -57,7 +65,13 @@ function makeProcessor(model: any) {
   const contactModel = model;
   const storageFactory = makeStorageFactory();
   const lockService = { acquire: jest.fn(), release: jest.fn() };
-  const eventEmitter = { emit: jest.fn(), emitAsync: jest.fn() };
+  const automationOutbox: any = {
+    runWithEvents: jest.fn(async (mutate: any) => {
+      const { result, payloads } = await mutate({ id: 'session' });
+      automationOutbox.payloads = payloads;
+      return result;
+    }),
+  };
   const cls = { set: jest.fn(), get: jest.fn(), runWith: jest.fn() };
   const redis = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
   const importJobModel = { updateOne: jest.fn(() => ({})) };
@@ -69,7 +83,7 @@ function makeProcessor(model: any) {
     contactModel,
     storageFactory as any,
     lockService as any,
-    eventEmitter as any,
+    automationOutbox as any,
     cls as any,
     redis as any,
     importJobModel as any,
@@ -263,7 +277,39 @@ describe('ContactImportProcessor — processBatch', () => {
     expect(ops).toHaveLength(2);
     expect(ops[0].insertOne.document.createdById).toBe('u1');
     expect(ops[0].insertOne.document.updatedById).toBe('u1');
-    expect(call[1]).toEqual({ ordered: false });
+    expect(call[1]).toEqual({
+      ordered: false,
+      session: { id: 'session' },
+    });
+  });
+
+  it('should atomically capture hydrated automation events for imported rows', async () => {
+    const model = makeModel([]);
+    const proc: any = makeProcessor(model);
+    await proc.processBatch(
+      rows(proc),
+      baseData({ triggerAutomations: true }),
+      makeContext({
+        policy: 'merge',
+        summary: emptySummary(),
+        dryRun: false,
+      }),
+    );
+
+    const outbox = proc.automationOutbox;
+    expect(outbox.payloads).toHaveLength(2);
+    expect(outbox.payloads[0]).toEqual(
+      expect.objectContaining({
+        tenantId: 't1',
+        event: 'record_created',
+        object: 'Contact',
+        triggerUserId: 'u1',
+        data: expect.objectContaining({
+          firstName: 'A',
+          lastName: 'B',
+        }),
+      }),
+    );
   });
 
   it('should skips duplicates under the skip policy', async () => {

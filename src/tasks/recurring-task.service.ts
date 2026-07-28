@@ -103,7 +103,29 @@ export class RecurringTaskService {
 
     const occurrenceDate: Date = new Date(nextOccurrenceAt ?? now);
 
-    // ── 1. Create the concrete occurrence task ──────────────────────
+    // ── 1. Claim the occurrence BEFORE creating it ──────────────────
+    // Advancing the cursor first means a replica that loses the race creates
+    // nothing, instead of every replica creating its own copy of the task.
+    const interval: number = recurrenceInterval ?? 1;
+    const next = this.calculateNext(occurrenceDate, recurrenceRule, interval);
+    const ended = Boolean(
+      recurrenceEndsAt && next > new Date(recurrenceEndsAt),
+    );
+
+    const claimed = await this.claimOccurrence(
+      String(_id),
+      occurrenceDate,
+      next,
+      ended,
+    );
+    if (!claimed) {
+      this.logger.debug(
+        `[RecurringTask] Template ${String(_id)} already claimed by another process; skipping`,
+      );
+      return;
+    }
+
+    // ── 2. Create the concrete occurrence task ──────────────────────
     const dueDateOffset =
       typeof (template as any).dueDate === 'object'
         ? new Date((template as any).dueDate).getTime() -
@@ -129,23 +151,33 @@ export class RecurringTaskService {
       updatedById: ownerId ?? 'system',
     });
 
-    // ── 2. Advance nextOccurrenceAt ───────────────────────────────────
-    const interval: number = recurrenceInterval ?? 1;
-    const next = this.calculateNext(occurrenceDate, recurrenceRule, interval);
+    this.logger.log(
+      `[RecurringTask] Spawned occurrence for "${title}" (template: ${String(_id)}). Next: ${ended ? 'ENDED' : next.toISOString()}`,
+    );
+  }
 
-    // ── 3. Check if recurrence has ended ─────────────────────────────
-    const ended = recurrenceEndsAt && next > new Date(recurrenceEndsAt);
-
-    await this.taskModel.updateOne(
-      { _id },
+  /**
+   * Claim this occurrence by advancing `nextOccurrenceAt`, but only if it still
+   * holds the value we read. Returns false when another process got there first.
+   *
+   * `@Cron` fires in every process that loaded ScheduleModule — every API
+   * replica and every worker — so a plain read-then-create spawned one duplicate
+   * task per replica. The compare-and-set makes the claim the thing that
+   * serialises, which also survives two ticks overlapping in one process.
+   */
+  private async claimOccurrence(
+    templateId: string,
+    occurrenceDate: Date,
+    next: Date,
+    ended: boolean,
+  ): Promise<boolean> {
+    const result = await this.taskModel.updateOne(
+      { _id: templateId, nextOccurrenceAt: occurrenceDate },
       ended
         ? { $set: { isRecurring: false }, $unset: { nextOccurrenceAt: '' } }
         : { $set: { nextOccurrenceAt: next } },
     );
-
-    this.logger.log(
-      `[RecurringTask] Spawned occurrence for "${title}" (template: ${String(_id)}). Next: ${ended ? 'ENDED' : next.toISOString()}`,
-    );
+    return result.modifiedCount > 0;
   }
 
   /** Compute the next occurrence date from `from` by applying recurrence rule + interval */

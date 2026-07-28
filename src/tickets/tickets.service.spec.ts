@@ -36,7 +36,19 @@ describe('TicketsService', () => {
     service = new TicketsService(
       repository,
       ticketSettingsService,
-      eventEmitter as any,
+      {
+        runWithEvent: jest.fn(async (mutate: any, build: any) => {
+          const result = await mutate(undefined);
+          const payload = build(result);
+          if (payload) {
+            await eventEmitter.emitAsync(
+              `${payload.event}.${payload.object}`,
+              payload,
+            );
+          }
+          return result;
+        }),
+      } as any,
       cls as any,
       { emit: jest.fn() } as any, // entityAudit
       {
@@ -79,6 +91,7 @@ describe('TicketsService', () => {
           isSlaBreached: false,
           timeSpentSeconds: 0,
         }),
+        undefined,
       );
       expect(result.ticketNumber).toBe('TKT-00001');
     });
@@ -88,7 +101,7 @@ describe('TicketsService', () => {
 
       await service.create(createTicketDto() as any);
 
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
+      expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
         expect.stringContaining('record_created'),
         expect.objectContaining({
           event: 'record_created',
@@ -104,6 +117,7 @@ describe('TicketsService', () => {
 
       expect(repository.create).toHaveBeenCalledWith(
         expect.objectContaining({ ownerId: undefined }),
+        undefined,
       );
     });
 
@@ -114,6 +128,7 @@ describe('TicketsService', () => {
 
       expect(repository.create).toHaveBeenCalledWith(
         expect.objectContaining({ groupId: undefined }),
+        undefined,
       );
     });
   });
@@ -228,6 +243,7 @@ describe('TicketsService', () => {
           resolvedAt: expect.any(Date),
           closedAt: expect.any(Date),
         }),
+        undefined,
       );
     });
 
@@ -237,7 +253,7 @@ describe('TicketsService', () => {
 
       await service.update('ticket_1', { priority: 'HIGH' } as any);
 
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
+      expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
         expect.stringContaining('field_updated'),
         expect.objectContaining({
           event: 'field_updated',

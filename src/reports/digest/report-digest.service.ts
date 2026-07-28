@@ -8,6 +8,7 @@ import { MailerService } from '../../mailer/mailer.service';
 import { OmniConversationSchemaClass } from '../../omni-inbound/infrastructure/persistence/document/entities/omni-conversation.schema';
 import { ContactSchemaClass } from '../../contacts/infrastructure/persistence/document/entities/contact.schema';
 import { AllConfigType } from '../../config/config.type';
+import { RedisLockService } from '../../redis/redis-lock.service';
 
 /**
  * ReportDigestService
@@ -34,11 +35,30 @@ export class ReportDigestService {
     private readonly contactModel: Model<any>,
     private readonly mailer: MailerService,
     private readonly config: ConfigService<AllConfigType>,
+    private readonly lockService: RedisLockService,
   ) {}
 
-  /** Every Monday at 08:00 UTC */
+  /**
+   * Every Monday at 08:00 UTC.
+   *
+   * Cluster-singleton: `@Cron` fires in every process that loaded
+   * ScheduleModule, so without the lock each API and worker replica sends its
+   * own copy of the digest to every recipient.
+   */
   @Cron('0 8 * * 1')
   async sendWeeklyDigest(): Promise<void> {
+    await this.lockService
+      .acquire(
+        'cron:reports:weekly-digest',
+        { ttl: 5 * 60 * 1000, maxRetries: 0 },
+        () => this.buildAndSendDigest(),
+      )
+      .catch((err) =>
+        this.logger.debug(`[Digest] Skipping tick: ${(err as Error).message}`),
+      );
+  }
+
+  private async buildAndSendDigest(): Promise<void> {
     const recipients = this.getRecipients();
     if (recipients.length === 0) {
       this.logger.warn(

@@ -36,6 +36,7 @@ import {
 } from '../accounts/infrastructure/persistence/document/entities/account.schema';
 import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { TagsModule } from '../tags/tags.module';
+import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
 
 const workerProviders = isWorkerRuntime()
   ? [DealImportProcessor, DealExportProcessor]
@@ -78,6 +79,7 @@ const workerProviders = isWorkerRuntime()
     }),
     ActivityLogModule,
     TagsModule,
+    AutomationOutboxModule,
   ],
   controllers: [DealsController],
   providers: [DealsService, DealRepository, ...workerProviders],

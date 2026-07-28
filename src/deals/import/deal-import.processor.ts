@@ -3,7 +3,6 @@ import { Inject, Logger } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import Redis from 'ioredis';
 
 import {
@@ -32,7 +31,7 @@ import {
   DEAL_IMPORT_MAPPABLE_FIELDS,
   DEAL_IMPORT_ARRAY_FIELDS,
 } from '../deals.constants';
-import { buildAutomationEventName } from '../../automation-rules/events/automation-event.payload';
+import { AutomationOutboxService } from '../../automation-rules/events/automation-outbox.service';
 
 // ── Module config ──────────────────────────────────────────────────
 
@@ -103,7 +102,7 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
     private readonly dealModel: Model<DealSchemaDocument>,
     private readonly storageFactory: ImportStorageFactory,
     private readonly lockService: RedisLockService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly automationOutbox: AutomationOutboxService,
     cls: ClsService,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectModel(ImportJobSchemaClass.name)
@@ -120,6 +119,10 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
   protected getEntityModel(): Model<any> {
     return this.dealModel;
   }
+
+  protected getAutomationOutbox(): AutomationOutboxService {
+    return this.automationOutbox;
+  }
   protected getStorage(): ImportStorageService {
     return this.storage;
   }
@@ -128,9 +131,6 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
   }
   protected getLockService(): RedisLockService {
     return this.lockService;
-  }
-  protected getEventEmitter(): EventEmitter2 {
-    return this.eventEmitter;
   }
   protected getRedis(): Redis {
     return this.redis;
@@ -285,24 +285,6 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
     // This should never be called because merge is not in dedupPolicies,
     // but implement as a safety net: treat as overwrite.
     return this.buildOverwrite(mapped, data, resolvedRefs);
-  }
-
-  // eslint-disable-next-line @typescript-eslint/require-await
-  protected async afterBatchWrite(
-    affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
-    data: DealImportJobData,
-  ): Promise<void> {
-    for (const a of affected) {
-      const event = a.type === 'insert' ? 'record_created' : 'field_updated';
-      this.eventEmitter.emit(buildAutomationEventName(event, 'Deal'), {
-        tenantId: data.tenantId,
-        event,
-        object: 'Deal',
-        recordId: a.id,
-        data: {},
-        automationDepth: 0,
-      });
-    }
   }
 
   private splitMulti(value: string): string[] {

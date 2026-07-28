@@ -3,7 +3,6 @@ import { Inject, Logger } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import Redis from 'ioredis';
 
 import {
@@ -32,7 +31,7 @@ import {
   ACCOUNT_IMPORT_MAPPABLE_FIELDS,
   ACCOUNT_IMPORT_ARRAY_FIELDS,
 } from '../accounts.constants';
-import { buildAutomationEventName } from '../../automation-rules/events/automation-event.payload';
+import { AutomationOutboxService } from '../../automation-rules/events/automation-outbox.service';
 
 // ── Module config ──────────────────────────────────────────────────
 
@@ -105,7 +104,7 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     private readonly accountModel: Model<AccountSchemaDocument>,
     private readonly storageFactory: ImportStorageFactory,
     private readonly lockService: RedisLockService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly automationOutbox: AutomationOutboxService,
     cls: ClsService,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectModel(ImportJobSchemaClass.name)
@@ -125,6 +124,10 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     return this.accountModel;
   }
 
+  protected getAutomationOutbox(): AutomationOutboxService {
+    return this.automationOutbox;
+  }
+
   protected getStorage(): ImportStorageService {
     return this.storage;
   }
@@ -135,10 +138,6 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
 
   protected getLockService(): RedisLockService {
     return this.lockService;
-  }
-
-  protected getEventEmitter(): EventEmitter2 {
-    return this.eventEmitter;
   }
 
   protected getRedis(): Redis {
@@ -348,24 +347,6 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
   }
 
   // ── Post-write hook: automation events ──
-
-  // eslint-disable-next-line @typescript-eslint/require-await
-  protected async afterBatchWrite(
-    affected: Array<{ id?: string; type: 'insert' | 'update'; row: number }>,
-    data: AccountImportJobData,
-  ): Promise<void> {
-    for (const a of affected) {
-      const event = a.type === 'insert' ? 'record_created' : 'field_updated';
-      this.eventEmitter.emit(buildAutomationEventName(event, 'Account'), {
-        tenantId: data.tenantId,
-        event,
-        object: 'Account',
-        recordId: a.id,
-        data: {},
-        automationDepth: 0,
-      });
-    }
-  }
 
   // ── Helpers ──
 

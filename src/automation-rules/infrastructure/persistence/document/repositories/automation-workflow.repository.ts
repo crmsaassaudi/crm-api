@@ -41,6 +41,17 @@ export class AutomationWorkflowRepository {
     event: 'record_created' | 'field_updated',
     object: string,
   ) {
+    // Mongoose strips `undefined` values out of a filter, so a falsy event or
+    // object would silently widen this to "every active workflow in the tenant"
+    // and execute all of them. Fail loudly instead — a caller with no trigger
+    // to match has a bug, not a query.
+    if (!tenantId || !event || !object) {
+      throw new Error(
+        `findActiveByTrigger requires tenantId, event and object ` +
+          `(got tenantId=${tenantId}, event=${event}, object=${object})`,
+      );
+    }
+
     return this.model
       .find({
         tenantId,

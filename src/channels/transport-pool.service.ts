@@ -96,10 +96,16 @@ export class TransportPoolService implements OnModuleDestroy {
    * Get resolved transport for a configId.
    * Returns cached entry if valid, otherwise fetches from DB + decrypts.
    *
+   * PRIVATE ON PURPOSE. The pool is keyed on `configId` alone and the DB read
+   * is deliberately tenant-blind (`findByIdWithCredentialsNoTenant`), so a
+   * caller that reaches this without knowing the expected tenant will happily
+   * hand out another tenant's decrypted credentials. Every caller must go
+   * through {@link resolveWithTenantGuard}.
+   *
    * @param configId - The channel config ID
    * @returns ResolvedTransport or null if config not found/deleted
    */
-  async resolve(configId: string): Promise<ResolvedTransport | null> {
+  private async resolve(configId: string): Promise<ResolvedTransport | null> {
     // 1. Check cache
     const cached = this.pool.get(configId);
     if (cached && !this.isExpired(cached)) {

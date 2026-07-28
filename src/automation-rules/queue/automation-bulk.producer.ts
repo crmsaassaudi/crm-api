@@ -1,8 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { AUTOMATION_BULK_QUEUE } from './automation-queue.constants';
+import {
+  AUTOMATION_BULK_QUEUE,
+  AutomationBulkJobData,
+} from './automation-queue.constants';
 import { AutomationEventPayload } from '../events/automation-event.payload';
+import { DEFAULT_JOB_OPTIONS } from '../../queue/config/default-job-options';
 
 /**
  * AutomationBulkProducer — dispatches throttled events to the low-priority bulk queue.
@@ -20,15 +24,28 @@ export class AutomationBulkProducer {
   ) {}
 
   async dispatch(data: {
-    workflow: any;
+    workflowId: string;
     payload: AutomationEventPayload;
   }): Promise<void> {
-    const job = await this.bulkQueue.add('automation.bulk-execute', data, {
+    const jobData: AutomationBulkJobData = {
+      // Top-level tenantId is the BaseTenantConsumer contract — see
+      // AutomationBulkJobData. Without it the consumer throws before handle().
+      tenantId: data.payload.tenantId,
+      workflowId: data.workflowId,
+      payload: data.payload as AutomationBulkJobData['payload'],
+    };
+
+    const job = await this.bulkQueue.add('automation.bulk-execute', jobData, {
+      ...DEFAULT_JOB_OPTIONS,
       priority: 10, // Low priority
+      // Deterministic id: the same workflow evaluating the same record for the
+      // same event is one unit of work, so a duplicate emission collapses
+      // instead of queueing a second execution.
+      jobId: `bulk:${data.payload.tenantId}:${data.workflowId}:${data.payload.event}:${data.payload.recordId}`,
     });
 
     this.logger.log(
-      `[Bulk] Queued throttled event: job=${job.id} workflow=${data.workflow._id} record=${data.payload.recordId}`,
+      `[Bulk] Queued throttled event: job=${job.id} workflow=${data.workflowId} record=${data.payload.recordId}`,
     );
   }
 }

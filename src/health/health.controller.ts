@@ -148,6 +148,8 @@ export class HealthController {
     'automation-actions-internal',
     'automation-actions-webhook',
     'automation-actions-dlq',
+    'automation-triggers',
+    'automation-actions-bulk',
     'automation-delayed-resume',
     // System
     'crm-dlq',
@@ -201,6 +203,44 @@ export class HealthController {
       totalWaiting,
       totalFailed,
       queues: results,
+    };
+  }
+
+  /**
+   * Durable automation hand-off health. A healthy Redis ping is insufficient:
+   * events can still be accumulating in Mongo because workers are absent,
+   * queue publication is failing, or a poison event exhausted its retries.
+   */
+  @Get('automation-outbox')
+  async automationOutbox() {
+    if (!this.mongo?.db) {
+      throw new ServiceUnavailableException('MongoDB not available');
+    }
+
+    const collection = this.mongo.db.collection('automation_outbox_events');
+    const [pending, publishing, failed, oldest] = await Promise.all([
+      collection.countDocuments({ status: 'pending' }),
+      collection.countDocuments({ status: 'publishing' }),
+      collection.countDocuments({ status: 'failed' }),
+      collection.findOne(
+        { status: { $in: ['pending', 'publishing'] } },
+        { sort: { createdAt: 1 }, projection: { createdAt: 1, eventId: 1 } },
+      ),
+    ]);
+
+    const oldestAgeSeconds = oldest?.createdAt
+      ? Math.floor((Date.now() - new Date(oldest.createdAt).getTime()) / 1000)
+      : 0;
+    const status =
+      failed > 0 || oldestAgeSeconds > 60 ? 'degraded' : ('ok' as const);
+
+    return {
+      status,
+      pending,
+      publishing,
+      failed,
+      oldestAgeSeconds,
+      oldestEventId: oldest?.eventId ?? null,
     };
   }
 

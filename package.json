@@ -40,6 +40,7 @@
     "test:report": "jest --maxWorkers=50% --reporters=default --reporters=jest-html-reporters",
     "test:report:cov": "jest --maxWorkers=2 --coverage --reporters=default --reporters=jest-html-reporters",
     "test:integration": "jest --testPathPatterns=integration.spec --maxWorkers=1 --testTimeout=30000",
+    "test:smoke:workflow": "ts-node -r tsconfig-paths/register ./src/scripts/smoke-workflow-runtime.ts",
     "test:debug": "jest --runInBand --detectOpenHandles",
     "test:e2e": "env-cmd jest --config ./test/jest-e2e.json",
     "ops:verify-indexes": "ts-node -r tsconfig-paths/register ./src/scripts/verify-operational-indexes.ts",
@@ -57,7 +58,8 @@
     "test:e2e:document:docker": "docker compose -f docker-compose.document.test.yaml --env-file env-example-document -p tests up -d --build && docker compose -f docker-compose.document.test.yaml -p tests exec api /opt/wait-for-it.sh -t 0 localhost:3000 -- npm run test:e2e -- --watchAll --runInBand && docker compose -f docker-compose.document.test.yaml -p tests down && docker compose -p tests rm -svf",
     "prepare": "is-ci || husky",
     "release": "release-it",
-    "migrate:assignment-consolidation": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-assignment-consolidation.ts"
+    "migrate:assignment-consolidation": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-assignment-consolidation.ts",
+    "migrate:strip-deprecated-permissions": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-strip-deprecated-permissions.ts"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1039.0",
