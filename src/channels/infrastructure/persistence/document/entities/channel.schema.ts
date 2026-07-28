@@ -61,8 +61,9 @@ export class ChannelSchemaClass extends EntityDocumentHelper {
    * Mixed and gives none of those.
    *
    * mode:
-   *   - 'restricted' → only userIds ∪ members(groupIds) may be assigned to, or
-   *     read, this channel's conversations. Empty pool means nobody but admins.
+   *   - 'restricted' → only (userIds ∪ members(groupIds)) \ excludedUserIds may
+   *     be assigned to, or read, this channel's conversations. Empty pool means
+   *     nobody but admins.
    *   - 'open'       → every agent in the tenant may serve the channel; the
    *     lists are then only a routing preference, not an authorization boundary.
    */
@@ -78,13 +79,23 @@ export class ChannelSchemaClass extends EntityDocumentHelper {
         ],
         default: [],
       },
+      excludedUserIds: {
+        type: [{ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' }],
+        default: [],
+      },
       mode: { type: String, enum: ['restricted', 'open'], default: 'open' },
     },
-    default: () => ({ userIds: [], groupIds: [], mode: 'open' }),
+    default: () => ({
+      userIds: [],
+      groupIds: [],
+      excludedUserIds: [],
+      mode: 'open',
+    }),
   })
   support: {
     userIds: string[];
     groupIds: string[];
+    excludedUserIds: string[];
     mode: 'restricted' | 'open';
   };
 

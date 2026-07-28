@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { ClsService } from 'nestjs-cls';
 import { ulid } from 'ulid';
 import { ChannelRepository } from './infrastructure/persistence/document/repositories/channel.repository';
-import { Channel } from './domain/channel';
+import { Channel, newChannelSupport } from './domain/channel';
 import {
   ConnectMetaChannelsDto,
   CreateChannelDto,
@@ -127,6 +127,7 @@ export class ChannelsService {
         config: this.buildLivechatDefaultConfig(dto),
         credentials: {},
       },
+      { support: newChannelSupport(this.cls.get('userId')) },
     );
 
     return channel;
@@ -421,6 +422,10 @@ export class ChannelsService {
         tenantId,
         status: 'Pending',
       },
+      // New channels start restricted to their creator (fail closed). Only on
+      // insert: re-running create for an existing account is how a channel is
+      // re-connected, and that must not reset its support pool.
+      { support: newChannelSupport(this.cls.get('userId')) },
     );
 
     if (
@@ -659,6 +664,7 @@ export class ChannelsService {
           avatarUrl: metaChannel.avatarUrl ?? '',
         },
       },
+      { support: newChannelSupport(this.cls.get('userId')) },
     );
 
     try {

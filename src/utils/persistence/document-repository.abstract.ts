@@ -41,7 +41,7 @@ export abstract class BaseDocumentRepository<
     //   null      → admin/owner bypass (see all)
     //   string[]  → filter to these owner IDs only
     if (this.enableDataVisibility()) {
-      const visibleOwnerIds = this.cls.get('visibleOwnerIds');
+      const { visibleOwnerIds, visibleOrgUnitIds } = this.resolveVisibility();
       if (Array.isArray(visibleOwnerIds)) {
         // C3: by default, unowned records (ownerId null/missing) are NOT
         // visible to scoped users — they only leak when the tenant explicitly
@@ -65,7 +65,6 @@ export abstract class BaseDocumentRepository<
         // SELF/SUBORDINATES scope, produces. It must not be turned into an
         // `$in: []` clause of its own, which matches no rows and would erase the
         // owner clause it was meant to widen.
-        const visibleOrgUnitIds = this.cls.get('visibleOrgUnitIds');
         if (Array.isArray(visibleOrgUnitIds) && visibleOrgUnitIds.length > 0) {
           ownerClauses.push({ orgUnitId: { $in: visibleOrgUnitIds } });
         }
@@ -87,6 +86,56 @@ export abstract class BaseDocumentRepository<
    */
   protected enableDataVisibility(): boolean {
     return true;
+  }
+
+  /**
+   * The module key this repository's records belong to ('Contact', 'Deal', …),
+   * or null when the repository is not part of a module a tenant can configure
+   * separately.
+   *
+   * Exists so one tenant can say "tickets are visible to the whole department,
+   * deals are not". Without it every module shares one scope, which forces an
+   * admin to pick the widest setting any module needs and apply it to all of
+   * them — the reason coarse visibility models get abandoned.
+   */
+  protected visibilityModule(): string | null {
+    return null;
+  }
+
+  /**
+   * The owner/org-unit axes to enforce for THIS repository.
+   *
+   * Falls back to the request-wide values whenever the tenant has configured
+   * nothing module-specific, so a repository that never overrides
+   * `visibilityModule()` behaves exactly as before. A per-module entry replaces
+   * the base pair wholesale rather than merging: the interceptor already
+   * computed it as a complete answer for that module, including sharing rules
+   * scoped to it.
+   */
+  private resolveVisibility(): {
+    visibleOwnerIds: unknown;
+    visibleOrgUnitIds: unknown;
+  } {
+    const moduleKey = this.visibilityModule();
+    if (moduleKey) {
+      const byModule = this.cls.get('dataVisibilityByModule') as
+        | Record<
+            string,
+            { ownerIds: string[] | null; orgUnitIds: string[] | null }
+          >
+        | undefined;
+      const override = byModule?.[moduleKey];
+      if (override) {
+        return {
+          visibleOwnerIds: override.ownerIds,
+          visibleOrgUnitIds: override.orgUnitIds,
+        };
+      }
+    }
+    return {
+      visibleOwnerIds: this.cls.get('visibleOwnerIds'),
+      visibleOrgUnitIds: this.cls.get('visibleOrgUnitIds'),
+    };
   }
 
   async find(filter: FilterQuery<TSchema>, options?: any): Promise<TDomain[]> {

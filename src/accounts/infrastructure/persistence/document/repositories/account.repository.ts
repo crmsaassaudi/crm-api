@@ -9,6 +9,7 @@ import { Account } from '../../../../domain/account';
 import { AccountMapper } from '../mappers/account.mapper';
 import { ClsService } from 'nestjs-cls';
 import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
+import { VisibilityModule } from '../../../../../common/permissions/visibility-modules';
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { ICursorPaginationOptions } from '../../../../../utils/types/cursor-pagination-options';
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
@@ -46,6 +47,11 @@ export class AccountRepository extends BaseDocumentRepository<
     cls: ClsService,
   ) {
     super(accountModel, cls);
+  }
+
+  /** Tagged so a tenant can scope accounts differently from other modules. */
+  protected visibilityModule(): VisibilityModule {
+    return 'Account';
   }
 
   protected mapToDomain(doc: AccountSchemaClass): Account {

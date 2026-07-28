@@ -7,6 +7,7 @@ import { Task } from '../../../../domain/task';
 import { TaskMapper } from '../mappers/task.mapper';
 import { ClsService } from 'nestjs-cls';
 import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
+import { VisibilityModule } from '../../../../../common/permissions/visibility-modules';
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
 import { pagination } from '../../../../../utils/pagination';
@@ -25,6 +26,11 @@ export class TaskRepository extends BaseDocumentRepository<
     cls: ClsService,
   ) {
     super(taskModel, cls);
+  }
+
+  /** Tagged so a tenant can scope tasks differently from other modules. */
+  protected visibilityModule(): VisibilityModule {
+    return 'Task';
   }
 
   protected mapToDomain(doc: TaskSchemaClass): Task {

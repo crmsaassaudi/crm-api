@@ -98,18 +98,30 @@ export class ChannelRepository {
     return ChannelMapper.toDomain(doc);
   }
 
+  /**
+   * @param onInsert fields written only when the document is created. Used for
+   *   state an operator owns after creation — the support pool above all: this
+   *   method is also how a channel is RE-connected, and a `$set` there would
+   *   silently reset who is allowed to serve it.
+   */
   async upsert(
     tenantId: string,
     type: string,
     account: string,
     data: Partial<Channel>,
+    onInsert?: Partial<Channel>,
   ): Promise<{ channel: Channel; isNew: boolean }> {
     const updateData = { ...data } as any;
     delete updateData.tenantId;
     const doc = await this.model
       .findOneAndUpdate(
         { tenantId, type, account },
-        { $set: { ...updateData, tenantId, type, account } },
+        {
+          $set: { ...updateData, tenantId, type, account },
+          ...(onInsert && Object.keys(onInsert).length > 0
+            ? { $setOnInsert: onInsert as any }
+            : {}),
+        },
         { new: true, upsert: true, setDefaultsOnInsert: true },
       )
       .setOptions({ isPlatformQuery: true } as any)

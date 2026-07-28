@@ -96,6 +96,7 @@ describe('OrgUnitsService', () => {
       delete: jest.fn().mockResolvedValue(true),
       countChildren: jest.fn().mockResolvedValue(0),
       rewriteSubtreePaths: jest.fn().mockResolvedValue(2),
+      findManagedSubtreeIds: jest.fn().mockResolvedValue([]),
     };
     userRepository = {
       countByOrgUnit: jest.fn().mockResolvedValue({}),
@@ -103,6 +104,7 @@ describe('OrgUnitsService', () => {
         id: 'u1',
         tenants: [{ tenantId: TENANT }],
       }),
+      findByIds: jest.fn().mockResolvedValue([]),
     };
     cls = { get: jest.fn().mockReturnValue(TENANT) };
 
@@ -334,6 +336,112 @@ describe('OrgUnitsService', () => {
       ]);
       const tree = await service.findTree(TENANT);
       expect(tree.map((n) => n.id)).toEqual(['t']);
+    });
+  });
+
+  describe('co-managers', () => {
+    beforeEach(() => {
+      userRepository.findByIds.mockResolvedValue([
+        { id: 'u1', firstName: 'Lan', lastName: 'Ng', email: 'lan@x.io' },
+        { id: 'u2', email: 'deputy@x.io' },
+      ]);
+    });
+
+    it('should list the primary head first, then co-managers, with names', async () => {
+      repository.findAll.mockResolvedValue([
+        { ...root, managerId: 'u1', managerIds: ['u2'] },
+      ]);
+
+      const tree = await service.findTree(TENANT);
+
+      expect(tree[0].managers).toEqual([
+        { id: 'u1', name: 'Lan Ng', isPrimary: true },
+        { id: 'u2', name: 'deputy@x.io', isPrimary: false },
+      ]);
+    });
+
+    it('should not list the primary twice when it is repeated in managerIds', async () => {
+      repository.findAll.mockResolvedValue([
+        { ...root, managerId: 'u1', managerIds: ['u1', 'u2'] },
+      ]);
+
+      const tree = await service.findTree(TENANT);
+
+      expect(tree[0].managers.map((m) => m.id)).toEqual(['u1', 'u2']);
+    });
+
+    it('should still list a manager whose user record is gone', async () => {
+      // A row that renders as an id is a prompt to fix the unit; a missing row
+      // would hide that the unit has no effective head.
+      userRepository.findByIds.mockResolvedValue([]);
+      repository.findAll.mockResolvedValue([{ ...root, managerId: 'ghost' }]);
+
+      const tree = await service.findTree(TENANT);
+
+      expect(tree[0].managers).toEqual([
+        { id: 'ghost', name: 'ghost', isPrimary: true },
+      ]);
+    });
+
+    it('should resolve every manager in ONE user read, not one per unit', async () => {
+      repository.findAll.mockResolvedValue([
+        { ...root, managerId: 'u1' },
+        { ...branch, managerIds: ['u2'] },
+        { ...team, managerId: 'u1' },
+      ]);
+
+      await service.findTree(TENANT);
+
+      expect(userRepository.findByIds).toHaveBeenCalledTimes(1);
+      expect(userRepository.findByIds).toHaveBeenCalledWith(['u1', 'u2']);
+    });
+
+    it('should skip the user read entirely when no unit has a manager', async () => {
+      await service.findTree(TENANT);
+      expect(userRepository.findByIds).not.toHaveBeenCalled();
+    });
+
+    it('should reject a co-manager who is not a member of the tenant', async () => {
+      userRepository.findById.mockResolvedValue({
+        id: 'outsider',
+        tenants: [{ tenantId: 'other_tenant' }],
+      });
+
+      await expect(
+        service.create(TENANT, { name: 'X', managerIds: ['outsider'] }),
+      ).rejects.toThrow('Manager must be a member of this workspace');
+      expect(repository.create).not.toHaveBeenCalled();
+    });
+
+    it('should dedupe the co-manager list on write', async () => {
+      await service.create(TENANT, {
+        name: 'X',
+        managerIds: ['u1', 'u1', 'u2'],
+      });
+
+      expect(repository.create.mock.calls[0][0].managerIds).toEqual([
+        'u1',
+        'u2',
+      ]);
+    });
+  });
+
+  describe('listManagedUnitIds — the managed-units visibility axis', () => {
+    it('should delegate to the indexed subtree query', async () => {
+      repository.findManagedSubtreeIds.mockResolvedValue(['b', 't']);
+
+      const ids = await service.listManagedUnitIds(TENANT, 'u1');
+
+      expect(ids).toEqual(['b', 't']);
+      expect(repository.findManagedSubtreeIds).toHaveBeenCalledWith(
+        TENANT,
+        'u1',
+      );
+    });
+
+    it('should contribute nothing for a principal with no user id', async () => {
+      expect(await service.listManagedUnitIds(TENANT, '')).toEqual([]);
+      expect(repository.findManagedSubtreeIds).not.toHaveBeenCalled();
     });
   });
 

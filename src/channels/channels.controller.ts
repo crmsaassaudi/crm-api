@@ -149,7 +149,22 @@ export class ChannelsController {
       mode: pool?.mode ?? 'open',
       agentIds: pool?.agentIds ?? null,
       groupIds: pool?.groupIds ?? [],
+      excludedUserIds: pool?.excludedUserIds ?? [],
     };
+  }
+
+  /**
+   * The support pool with names resolved and group membership expanded — what
+   * the admin UI renders. `manage_system` like the write route: it discloses
+   * exactly who can read a channel's inbox.
+   */
+  @Get(':id/support/preview')
+  @RequirePermission('manage_system', 'channels')
+  previewSupport(@Param('id') id: string) {
+    return this.supportService.describePool(
+      this.cls.get<string>('tenantId'),
+      id,
+    );
   }
 
   @Post(':id/disconnect')

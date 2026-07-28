@@ -23,6 +23,7 @@ function channel(
   support: {
     userIds?: string[];
     groupIds?: string[];
+    excludedUserIds?: string[];
     mode?: 'restricted' | 'open';
   },
 ) {
@@ -37,6 +38,7 @@ function channel(
     support: {
       userIds: support.userIds ?? [],
       groupIds: support.groupIds ?? [],
+      excludedUserIds: support.excludedUserIds ?? [],
       mode: support.mode ?? 'open',
     },
   } as any;
@@ -356,6 +358,126 @@ describe('ChannelSupportService', () => {
       await service.resolvePool(TENANT, 'ch1');
 
       expect(channelRepo.findAll).toHaveBeenCalledTimes(2);
+    });
+
+    it('should refuse a restricted pool that resolves to nobody', async () => {
+      await expect(
+        service.updateSupport('ch1', {
+          mode: 'restricted',
+          userIds: [],
+          groupIds: [],
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(channelRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('should allow an empty restricted pool when it is acknowledged', async () => {
+      // Taking a channel out of service is legitimate — it just must be a
+      // decision, not a side effect of removing the last agent.
+      await service.updateSupport('ch1', {
+        mode: 'restricted',
+        userIds: [],
+        groupIds: [],
+        allowEmptyPool: true,
+      });
+
+      expect(channelRepo.update).toHaveBeenCalled();
+    });
+
+    it('should refuse when every member of the chosen group is excluded', async () => {
+      // The empty check has to run on the RESOLVED pool, not on list lengths:
+      // this payload looks populated and admits nobody.
+      await expect(
+        service.updateSupport('ch1', {
+          mode: 'restricted',
+          userIds: [],
+          groupIds: [GROUP_A],
+          excludedUserIds: [AGENT_IN_GROUP],
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Exclusions
+  // ──────────────────────────────────────────────────────────────────────
+
+  describe('excludedUserIds', () => {
+    it('should subtract an excluded member from a group-derived pool', async () => {
+      channelRepo.findAll.mockResolvedValue([
+        channel('ch1', {
+          userIds: [AGENT_IN_POOL],
+          groupIds: [GROUP_A],
+          excludedUserIds: [AGENT_IN_GROUP],
+          mode: 'restricted',
+        }),
+      ]);
+
+      const pool = await service.resolvePool(TENANT, 'ch1');
+
+      expect(pool?.agentIds).toEqual([AGENT_IN_POOL]);
+      expect(pool?.excludedUserIds).toEqual([AGENT_IN_GROUP]);
+    });
+
+    it('should let an exclusion override a DIRECT listing — deny wins', async () => {
+      channelRepo.findAll.mockResolvedValue([
+        channel('ch1', {
+          userIds: [AGENT_IN_POOL],
+          excludedUserIds: [AGENT_IN_POOL],
+          mode: 'restricted',
+        }),
+      ]);
+
+      const pool = await service.resolvePool(TENANT, 'ch1');
+
+      expect(pool?.agentIds).toEqual([]);
+    });
+
+    it('should reject assignment of an excluded agent', async () => {
+      channelRepo.findAll.mockResolvedValue([
+        channel('ch1', {
+          groupIds: [GROUP_A],
+          excludedUserIds: [AGENT_IN_GROUP],
+          mode: 'restricted',
+        }),
+      ]);
+
+      await expect(
+        service.assertAgentEligible(TENANT, 'ch1', AGENT_IN_GROUP),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('should hide the channel from an excluded agent', async () => {
+      channelRepo.findAll.mockResolvedValue([
+        channel('ch1', {
+          groupIds: [GROUP_A],
+          excludedUserIds: [AGENT_IN_GROUP],
+          mode: 'restricted',
+        }),
+      ]);
+
+      const servable = await service.listServableChannelIds(
+        TENANT,
+        AGENT_IN_GROUP,
+      );
+
+      expect(servable).toEqual([]);
+    });
+
+    it('should ignore exclusions on an open channel', async () => {
+      // 'open' means unrestricted; the lists — including this one — are only a
+      // routing preference there, exactly as userIds/groupIds are.
+      channelRepo.findAll.mockResolvedValue([
+        channel('ch1', {
+          groupIds: [GROUP_A],
+          excludedUserIds: [AGENT_IN_GROUP],
+          mode: 'open',
+        }),
+      ]);
+
+      await expect(
+        service.assertAgentEligible(TENANT, 'ch1', AGENT_IN_GROUP),
+      ).resolves.toBeUndefined();
     });
   });
 });

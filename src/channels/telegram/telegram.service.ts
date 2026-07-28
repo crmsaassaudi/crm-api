@@ -3,6 +3,7 @@ import { ClsService } from 'nestjs-cls';
 import axios from 'axios';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ChannelRepository } from '../infrastructure/persistence/document/repositories/channel.repository';
+import { newChannelSupport } from '../domain/channel';
 import { TelegramAdapter } from './telegram.adapter';
 import { CreateTelegramChannelDto } from './telegram.controller';
 
@@ -58,6 +59,7 @@ export class TelegramService {
           botToken: dto.botToken,
         },
       },
+      { support: newChannelSupport(this.cls.get('userId')) },
     );
 
     this.logger.log(

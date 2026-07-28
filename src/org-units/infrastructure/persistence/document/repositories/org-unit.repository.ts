@@ -77,6 +77,54 @@ export class OrgUnitRepository {
     return docs.map((d: any) => String(d._id));
   }
 
+  /**
+   * Ids of every unit `userId` manages, plus everything beneath each of them.
+   *
+   * One query for the managed roots and one prefix query for their subtrees,
+   * regardless of how many units the principal manages. The alternative —
+   * calling findSubtreeIds per root — is two round trips per unit on a path
+   * that runs on every request.
+   *
+   * Both `managerId` (the primary head) and `managerIds` (co-managers) count:
+   * the two fields are one manager set, and a tenant that only ever set the
+   * legacy single field must keep working unchanged.
+   */
+  async findManagedSubtreeIds(
+    tenantId: string,
+    userId: string,
+  ): Promise<string[]> {
+    if (!Types.ObjectId.isValid(userId)) return [];
+    const asObjectId = new Types.ObjectId(userId);
+
+    const roots = await this.model
+      .find(
+        {
+          tenantId,
+          isActive: true,
+          $or: [{ managerId: asObjectId }, { managerIds: asObjectId }],
+        },
+        { _id: 1, path: 1 },
+      )
+      .lean()
+      .exec();
+    if (roots.length === 0) return [];
+
+    const docs = await this.model
+      .find(
+        {
+          tenantId,
+          $or: roots.map((r: any) => ({
+            path: { $regex: `^${escapeRegex(String(r.path))}` },
+          })),
+        },
+        { _id: 1 },
+      )
+      .lean()
+      .exec();
+
+    return [...new Set(docs.map((d: any) => String(d._id)))];
+  }
+
   /** Ancestor ids of a unit, self excluded, root-first. Read from `path`. */
   async findAncestorIds(tenantId: string, unitId: string): Promise<string[]> {
     const unit = await this.model

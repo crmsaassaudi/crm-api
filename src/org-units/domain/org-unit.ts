@@ -38,6 +38,14 @@ export class OrgUnit {
   @ApiPropertyOptional({ example: '507f1f77bcf86cd799439011', nullable: true })
   managerId?: string | null;
 
+  @ApiProperty({
+    type: [String],
+    description:
+      'Co-managers of this unit. The primary `managerId` is always included ' +
+      'in the effective manager set, whether or not it is repeated here.',
+  })
+  managerIds: string[];
+
   @ApiProperty({ example: true })
   isActive: boolean;
 
@@ -48,10 +56,31 @@ export class OrgUnit {
   updatedAt?: Date;
 }
 
+/** A manager as the org-chart UI needs to render them. */
+export class OrgUnitManagerRef {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ description: "The unit's primary head (`managerId`)." })
+  isPrimary: boolean;
+}
+
 /** One node of the tree response, with its children nested. */
 export class OrgUnitTreeNode extends OrgUnit {
   @ApiProperty({ type: () => [OrgUnitTreeNode] })
   children: OrgUnitTreeNode[];
+
+  @ApiProperty({
+    type: () => [OrgUnitManagerRef],
+    description:
+      'Primary head plus co-managers, with names resolved. Included because ' +
+      'the ids alone are unrenderable and the client has no user list to join ' +
+      'them against.',
+  })
+  managers: OrgUnitManagerRef[];
 
   @ApiProperty({
     example: 4,

@@ -9,6 +9,7 @@ import { Contact } from '../../../../domain/contact';
 import { ContactMapper } from '../mappers/contact.mapper';
 import { ClsService } from 'nestjs-cls';
 import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
+import { VisibilityModule } from '../../../../../common/permissions/visibility-modules';
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { ICursorPaginationOptions } from '../../../../../utils/types/cursor-pagination-options';
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
@@ -45,6 +46,11 @@ export class ContactRepository extends BaseDocumentRepository<
     cls: ClsService,
   ) {
     super(contactModel, cls);
+  }
+
+  /** Tagged so a tenant can scope contacts differently from other modules. */
+  protected visibilityModule(): VisibilityModule {
+    return 'Contact';
   }
 
   protected mapToDomain(doc: ContactSchemaClass): Contact {

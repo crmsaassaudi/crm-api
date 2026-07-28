@@ -21,25 +21,55 @@ import {
   isDataScope,
   maxScope,
 } from '../common/permissions/data-scope.enum';
+import {
+  VISIBILITY_MODULES,
+  VisibilityModule,
+} from '../common/permissions/visibility-modules';
 import { AuthzPermissionCacheService } from '../common/permissions/authz-permission-cache.service';
 import { OrgUnitsService } from '../org-units/org-units.service';
 import { ChannelSupportService } from '../channels/services/channel-support.service';
 
+/** The pair of axes the repositories AND/OR together at query time. */
+interface VisibilityAxes {
+  ownerIds: string[] | null;
+  orgUnitIds: string[] | null;
+}
+
+/** Extra visibility a sharing rule grants, already resolved to ids. */
+interface SharingGrant {
+  ownerIds: string[];
+  orgUnitIds: string[];
+  /** The rule shares EVERY record in the module — the axes drop entirely. */
+  all: boolean;
+}
+
+const EMPTY_GRANT: SharingGrant = { ownerIds: [], orgUnitIds: [], all: false };
+
 /**
- * DataVisibilityInterceptor — Enriches CLS with `visibleOwnerIds`.
+ * DataVisibilityInterceptor — resolves, once per request, everything the
+ * repositories need to scope a read.
  *
  * Runs AFTER TenantInterceptor (which sets tenantId, userId).
  *
  * CLS output:
- *   - `visibleOwnerIds`: string[] | null | undefined
- *     - undefined  → visibility not evaluated (system routes, no auth)
- *     - null       → see ALL records (admin/owner bypass)
- *     - string[]   → filter by these owner IDs
+ *   - `visibleOwnerIds` / `visibleOrgUnitIds`: the tenant-wide axes.
+ *       - undefined → visibility not evaluated (system routes, no auth)
+ *       - null      → see ALL records (bypass)
+ *       - string[]  → restrict to these ids
+ *   - `dataVisibilityByModule`: the same pair per module, present only for
+ *     modules the tenant configured differently (or that a sharing rule
+ *     targets specifically). Repositories tagged with `visibilityModule()`
+ *     prefer their entry; everything else keeps using the tenant-wide pair.
+ *   - `visibleGroupIds`, `servableChannelIds`, `channelVisibilityOverrides`,
+ *     `strictOwnerIds` / `strictOrgUnitIds`, `includeUnownedInScope`.
  *
- * Data visibility settings (from `crm-settings/data_visibility`):
- *   - defaultAccess: 'private' | 'public_read'
- *     - 'private':     users see own + subordinates' data only
- *     - 'public_read': all users see all data (no filter)
+ * Four independent axes make up "what can this person see":
+ *   1. role DataScope (self → tenant), unioned with the tenant default;
+ *   2. org units they MANAGE, which follows the person, not their job title;
+ *   3. sharing rules — explicit, optionally expiring exceptions;
+ *   4. the channel pool, for conversations only.
+ * They are unioned, never intersected: a wider grant must never return fewer
+ * rows than a narrower one, or the model becomes impossible to reason about.
  */
 @Injectable()
 export class DataVisibilityInterceptor implements NestInterceptor {
@@ -89,13 +119,18 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       // grant made by whoever configured the channel. Only a tenant admin
       // overrides that.
       const userRoles = await this.getUserTenantRoles(tenantId, userId);
-      if (
+      const bypass =
         userRoles.includes(TenantRoleEnum.ADMIN) ||
-        userRoles.includes(TenantRoleEnum.OWNER)
-      ) {
+        userRoles.includes(TenantRoleEnum.OWNER) ||
+        // A tenant-defined role may also carry the full-read grant, so "who
+        // sees everything" is not permanently welded to the two built-in
+        // roles. Checked after them because they short-circuit for free.
+        (await this.hasFullReadPermission(tenantId, userId));
+      if (bypass) {
         this.cls.set('visibleOwnerIds', null); // See all
         this.cls.set('visibleOrgUnitIds', null);
         this.cls.set('servableChannelIds', null);
+        this.cls.set('dataVisibilityByModule', {});
         // Resolved even though nothing is being restricted: an admin can also
         // be a member of a team, and features that mean "the team I am in"
         // (the omni team queue, group-scoped ACL rows) read this list. Leaving
@@ -132,59 +167,54 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       const needsStrictScope =
         Object.values(visibilityOverrides).includes('private');
 
-      // 3. Check data_visibility settings
+      // 3. Tenant policy.
       const settings = await this.settingsService.getSetting('data_visibility');
-      const defaultAccess = settings?.defaultAccess ?? 'private';
 
       // C3: unowned (ownerId null/missing) records are hidden from scoped
       // users by default — they must NOT leak to everyone. Tenants that rely
       // on an "unassigned pool" pattern (e.g. shared lead/ticket queue) can
       // opt in via data_visibility.unownedRecordsVisibleToAll. Admins/Owners
-      // always see them (they bypass the owner filter entirely, step 2).
+      // always see them (they bypass the owner filter entirely, step 1).
       this.cls.set(
         'includeUnownedInScope',
         settings?.unownedRecordsVisibleToAll === true,
       );
 
-      // If public_read, everyone sees everything (subject to the channel
-      // axis) UNLESS a specific channel forces 'private' — that channel then
-      // needs the scope computed below applied just to it, so only pay for it
-      // when at least one channel actually asks for it.
-      if (defaultAccess === 'public_read') {
-        this.cls.set('visibleOwnerIds', null);
-        this.cls.set('visibleOrgUnitIds', null);
-        if (needsStrictScope) {
-          const strict = await this.computeScopeBasedVisibility(
-            tenantId,
-            userId,
-            settings?.defaultScope,
-          );
-          this.cls.set('strictOwnerIds', strict.ownerIds);
-          this.cls.set('strictOrgUnitIds', strict.orgUnitIds);
-        }
-        return;
-      }
-
-      // H-07: this is where "Department / Branch / Organization scope" actually
-      // becomes enforcement. Before, the only scope that existed was the
-      // reportsToId subtree, so a role labelled "sees the whole department" in
-      // the admin UI behaved identically to one labelled "sees own records".
-      const scoped = await this.computeScopeBasedVisibility(
+      const ctx = await this.buildContext(
         tenantId,
         userId,
-        settings?.defaultScope,
+        userRoles,
+        userGroupIds,
+        settings,
       );
-      this.cls.set('visibleOwnerIds', scoped.ownerIds);
-      this.cls.set('visibleOrgUnitIds', scoped.orgUnitIds);
-      // defaultAccess isn't 'public_read' in this branch, so the scope-based
-      // result IS the strict result already — no extra query needed.
+
+      // 4. The tenant-wide pair, then only those modules that actually differ.
+      const base = await this.computeAxes(ctx, null);
+      this.cls.set('visibleOwnerIds', base.ownerIds);
+      this.cls.set('visibleOrgUnitIds', base.orgUnitIds);
+
+      const byModule: Record<string, VisibilityAxes> = {};
+      for (const moduleKey of VISIBILITY_MODULES) {
+        if (!this.moduleDiffers(ctx, moduleKey)) continue;
+        byModule[moduleKey] = await this.computeAxes(ctx, moduleKey);
+      }
+      this.cls.set('dataVisibilityByModule', byModule);
+
+      // 5. M18 strict scope: what a channel forced to 'private' must apply,
+      // even when everything above bypassed. Conversation-flavoured, since
+      // that is the only thing a channel override can affect.
       if (needsStrictScope) {
-        this.cls.set('strictOwnerIds', scoped.ownerIds);
-        this.cls.set('strictOrgUnitIds', scoped.orgUnitIds);
+        const strict = await this.computeAxes(ctx, 'Conversation', {
+          forceAccess: 'private',
+        });
+        this.cls.set('strictOwnerIds', strict.ownerIds);
+        this.cls.set('strictOrgUnitIds', strict.orgUnitIds);
       }
 
       this.logger.debug(
-        `Visibility for user ${userId}: ${scoped.ownerIds?.length ?? 'unrestricted'} owner IDs`,
+        `Visibility for user ${userId}: ${
+          base.ownerIds?.length ?? 'unrestricted'
+        } owner IDs, ${Object.keys(byModule).length} module override(s)`,
       );
     } catch (e) {
       // Fail-closed: visibility failures must never widen access.
@@ -193,6 +223,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       );
       this.cls.set('visibleOwnerIds', []);
       this.cls.set('visibleOrgUnitIds', []);
+      this.cls.set('dataVisibilityByModule', {});
       this.cls.set('servableChannelIds', []);
       this.cls.set('channelVisibilityOverrides', {});
       this.cls.set('strictOwnerIds', []);
@@ -204,91 +235,420 @@ export class DataVisibilityInterceptor implements NestInterceptor {
   }
 
   /**
-   * DataScope → CLS-shaped visibility, independent of the tenant's
-   * `defaultAccess` setting. Shared by the normal (non public_read) path and
-   * by the per-channel 'private' override, which needs this exact
-   * computation even when the tenant default would otherwise bypass it.
+   * Does a tenant-defined role grant this principal `all_data:view`?
    *
-   * TENANT scope is the old "Organization" level. It is not a bypass of the
-   * tenant boundary — tenantFilterPlugin still applies underneath — it just
-   * adds no owner restriction on top.
+   * Goes through the normal permission path, so it is served from the same
+   * Redis-cached effective-permission set every guard uses — not a second
+   * source of truth that could drift from it.
    *
-   * SELF stops at the principal; anything wider follows the reportsToId
-   * chain. Org-unit scopes include the hierarchy too: a unit head normally
-   * also has direct reports, and dropping them would make a WIDER scope show
-   * FEWER records than a narrower one.
+   * Fail-soft (false): a permission check that cannot complete must not hand
+   * out a full-tenant read. The narrow answer is the safe one here.
    */
-  private async computeScopeBasedVisibility(
+  private async hasFullReadPermission(
     tenantId: string,
     userId: string,
-    configuredDefaultScope: unknown,
-  ): Promise<{ ownerIds: string[] | null; orgUnitIds: string[] | null }> {
-    const { scope, orgUnitId } = await this.resolveScope(
+  ): Promise<boolean> {
+    try {
+      const result = await this.authzCache.canAccess({
+        rawUserId: userId,
+        tenantHint: tenantId,
+        rule: { action: 'view', resource: 'all_data' },
+      });
+      return result?.allowed === true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Resolution context
+  // ────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Everything the per-module computations share, resolved at most once each.
+   *
+   * The expensive parts — the reporting chain, org-unit subtrees, the managed
+   * units, the sharing rules — are memoised thunks rather than eager reads: a
+   * tenant on `public_read` with no overrides must not pay for a hierarchy walk
+   * it will never consult, and that is the common case.
+   */
+  private async buildContext(
+    tenantId: string,
+    userId: string,
+    userRoles: string[],
+    userGroupIds: string[],
+    settings: any,
+  ): Promise<ScopeContext> {
+    const { scope: roleScope, orgUnitId } =
+      await this.authzCache.resolveDataScope(userId, tenantId);
+
+    const tenantDefaultScope = isDataScope(settings?.defaultScope)
+      ? settings.defaultScope
+      : DataScope.SUBORDINATES;
+
+    const unitIdsByScope = new Map<DataScope, Promise<string[]>>();
+    let hierarchyIds: Promise<string[]> | null = null;
+    let managedUnitIds: Promise<string[]> | null = null;
+
+    // Resolved eagerly, unlike the axes below: `moduleDiffers` has to know
+    // which modules a rule names BEFORE deciding whether to compute them, and
+    // it cannot await. The cost is one cached settings read when no rule exists.
+    const grants = await this.resolveSharingGrants(
       tenantId,
       userId,
-      configuredDefaultScope,
+      userRoles,
+      userGroupIds,
     );
 
-    if (scope === DataScope.TENANT) {
-      return { ownerIds: null, orgUnitIds: null };
-    }
+    return {
+      moduleScopedGrantKeys: new Set(
+        [...grants.keys()].filter((key) => key !== '*'),
+      ),
+      grants: () => Promise.resolve(grants),
+      tenantId,
+      userId,
+      userRoles,
+      userGroupIds,
+      roleScope,
+      orgUnitId,
+      tenantDefaultScope,
+      defaultAccess:
+        settings?.defaultAccess === 'public_read' ? 'public_read' : 'private',
+      byModuleSettings:
+        settings?.byModule && typeof settings.byModule === 'object'
+          ? settings.byModule
+          : {},
+      managedUnitsEnabled: settings?.managedUnitsEnabled !== false,
+      hierarchyIds: () =>
+        (hierarchyIds ??= this.hierarchyService.getVisibleOwnerIds(
+          tenantId,
+          userId,
+        )),
+      scopeUnitIds: (scope: DataScope) => {
+        const cached = unitIdsByScope.get(scope);
+        if (cached) return cached;
+        const promise = this.orgUnits.resolveScopeUnitIds(
+          tenantId,
+          orgUnitId,
+          scope,
+        );
+        unitIdsByScope.set(scope, promise);
+        return promise;
+      },
+      managedUnitIds: () =>
+        (managedUnitIds ??= this.resolveManagedUnitIds(tenantId, userId)),
+    };
+  }
 
-    const visibleIds =
-      scope === DataScope.SELF
-        ? [userId]
-        : await this.hierarchyService.getVisibleOwnerIds(tenantId, userId);
+  /**
+   * Does this module need its own axes, or does the tenant-wide pair already
+   * describe it?
+   *
+   * Cheap and purely structural — it must not await anything, because it runs
+   * for every module on every request. A module qualifies when the tenant
+   * configured it explicitly, or when a sharing rule names it (a rule scoped to
+   * 'Deal' must not widen Contact, which is exactly the bug the old
+   * implementation shipped).
+   */
+  private moduleDiffers(
+    ctx: ScopeContext,
+    moduleKey: VisibilityModule,
+  ): boolean {
+    const configured = ctx.byModuleSettings[moduleKey];
+    if (configured?.access || configured?.scope) return true;
+    return ctx.moduleScopedGrantKeys.has(moduleKey);
+  }
+
+  /**
+   * One module's axes (or the tenant-wide pair when `moduleKey` is null).
+   *
+   * Order matters: the widening checks come first, because once the answer is
+   * "no restriction" there is nothing left to compute — and computing it anyway
+   * is what made the previous version walk the hierarchy for `public_read`
+   * tenants.
+   */
+  private async computeAxes(
+    ctx: ScopeContext,
+    moduleKey: VisibilityModule | null,
+    opts?: { forceAccess?: 'private' | 'public_read' },
+  ): Promise<VisibilityAxes> {
+    const configured = moduleKey ? ctx.byModuleSettings[moduleKey] : undefined;
+    const access =
+      opts?.forceAccess ??
+      (configured?.access === 'private' || configured?.access === 'public_read'
+        ? configured.access
+        : ctx.defaultAccess);
+
+    if (access === 'public_read') return { ownerIds: null, orgUnitIds: null };
+
+    const grant = await this.grantFor(ctx, moduleKey);
+    if (grant.all) return { ownerIds: null, orgUnitIds: null };
+
+    const moduleDefaultScope = isDataScope(configured?.scope)
+      ? configured.scope
+      : ctx.tenantDefaultScope;
+    const scope = maxScope([ctx.roleScope, moduleDefaultScope]);
+
+    if (scope === DataScope.TENANT) return { ownerIds: null, orgUnitIds: null };
+
+    // SELF stops at the principal; anything wider follows the reportsToId
+    // chain. Org-unit scopes include the hierarchy too: a unit head normally
+    // also has direct reports, and dropping them would make a WIDER scope show
+    // FEWER records than a narrower one.
+    const scopedOwnerIds =
+      scope === DataScope.SELF ? [ctx.userId] : await ctx.hierarchyIds();
 
     // Empty for SELF / SUBORDINATES, and empty for an unassigned user under
     // any scope — an empty list contributes no rows rather than matching
     // everything, so it is unioned with the owner axis at query time.
-    const orgUnitIds = await this.orgUnits.resolveScopeUnitIds(
-      tenantId,
-      orgUnitId,
-      scope,
-    );
+    const scopedUnitIds = await ctx.scopeUnitIds(scope);
+    const managed = ctx.managedUnitsEnabled ? await ctx.managedUnitIds() : [];
 
-    const sharedIds = await this.resolveSharedIds(tenantId, userId);
-    const ownerIds =
-      sharedIds.length > 0
-        ? [...new Set([...visibleIds, ...sharedIds])]
-        : visibleIds;
-
-    return { ownerIds, orgUnitIds };
+    return {
+      ownerIds: union(scopedOwnerIds, grant.ownerIds),
+      orgUnitIds: union(scopedUnitIds, managed, grant.orgUnitIds),
+    };
   }
+
+  /** The sharing grant that applies to a module: its own, plus the '*' rules. */
+  private async grantFor(
+    ctx: ScopeContext,
+    moduleKey: VisibilityModule | null,
+  ): Promise<SharingGrant> {
+    const grants = await ctx.grants();
+    const wildcard = grants.get('*') ?? EMPTY_GRANT;
+    if (!moduleKey) return wildcard;
+
+    const scoped = grants.get(moduleKey);
+    if (!scoped) return wildcard;
+    return {
+      ownerIds: union(wildcard.ownerIds, scoped.ownerIds),
+      orgUnitIds: union(wildcard.orgUnitIds, scoped.orgUnitIds),
+      all: wildcard.all || scoped.all,
+    };
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Axis: org units the principal manages
+  // ────────────────────────────────────────────────────────────────────────
 
   /**
-   * The principal's effective DataScope, and the org unit it is anchored to.
+   * Units this principal is named manager of, plus their subtrees.
    *
-   * Two inputs, unioned:
-   *   - the widest `dataScope` among the roles the principal actually holds
-   *     (membership, inherited groups, active JIT grants);
-   *   - the tenant's default scope, for principals whose roles express none.
-   *
-   * The tenant default exists to preserve the pre-H-07 contract. Before scope
-   * was a first-class field, `defaultAccess: 'private'` meant "own records plus
-   * subordinates", and every role implied exactly that. If an unset `dataScope`
-   * resolved to SELF instead, rolling this out would silently narrow every
-   * existing role in every tenant — users would open the app to an empty list
-   * and the cause would look like data loss, not a policy change. So an unset
-   * scope means "no opinion", and the tenant default supplies SUBORDINATES.
-   *
-   * A malformed configured default is ignored by `maxScope`, which floors at
-   * SELF; the explicit fallback below keeps that from silently narrowing too.
+   * Fail-soft ([]) rather than fail-closed: this axis only ever WIDENS, so a
+   * failure here costs a manager some rows but cannot leak any. Failing the
+   * request instead would take the whole app down for an org-tree hiccup.
    */
-  private async resolveScope(
+  private async resolveManagedUnitIds(
     tenantId: string,
     userId: string,
-    configuredDefault: unknown,
-  ): Promise<{ scope: DataScope; orgUnitId: string | null }> {
-    const tenantDefault = isDataScope(configuredDefault)
-      ? configuredDefault
-      : DataScope.SUBORDINATES;
-
-    const { scope: roleScope, orgUnitId } =
-      await this.authzCache.resolveDataScope(userId, tenantId);
-
-    return { scope: maxScope([roleScope, tenantDefault]), orgUnitId };
+  ): Promise<string[]> {
+    try {
+      return await this.orgUnits.listManagedUnitIds(tenantId, userId);
+    } catch (e) {
+      this.logger.warn(
+        `Managed-unit resolution failed for ${userId}; continuing without it: ${
+          (e as Error).message
+        }`,
+      );
+      return [];
+    }
   }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Axis: sharing rules
+  // ────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Sharing rules the principal is a TARGET of, resolved into ids and grouped
+   * by module ('*' for rules that apply everywhere).
+   *
+   * What each source type contributes:
+   *   - `user`     → those users' ids on the owner axis
+   *   - `group`    → the members of those groups, likewise
+   *   - `org_unit` → the unit ids on the ORG-UNIT axis, not an expanded user
+   *     list: records already carry `orgUnitId`, so this is both cheaper and
+   *     correct for a record whose owner has since moved elsewhere
+   *   - `all`      → the axes drop entirely for that module
+   *
+   * Expired and inactive rules are skipped. Everything is validated against
+   * tenant membership afterwards (H-08): settings are a lower trust boundary
+   * than the authorization model, so an id written there must not be able to
+   * name a principal from another workspace.
+   */
+  private async resolveSharingGrants(
+    tenantId: string,
+    userId: string,
+    userRoles: string[],
+    userGroupIds: string[],
+  ): Promise<Map<string, SharingGrant>> {
+    const byModule = new Map<string, SharingGrant>();
+    try {
+      const sharingRules =
+        await this.settingsService.getSetting('sharing_rules');
+      const rules = Array.isArray(sharingRules?.rules)
+        ? sharingRules.rules
+        : [];
+      if (rules.length === 0) return byModule;
+
+      const now = Date.now();
+      const myRoleIds = await this.resolveUserRoleIds(tenantId, userId);
+      const groupSet = new Set(userGroupIds.map(String));
+
+      const applicable = rules.filter((rule: any) =>
+        this.ruleTargetsPrincipal(rule, {
+          now,
+          userId,
+          userRoles,
+          myRoleIds,
+          groupSet,
+        }),
+      );
+      if (applicable.length === 0) return byModule;
+
+      // Group members are the only source needing a lookup; batch every rule's
+      // groups into one query rather than one per rule.
+      const sourceGroupIds = union(
+        applicable
+          .filter((r: any) => r.sharedFrom?.type === 'group')
+          .flatMap((r: any) => (r.sharedFrom?.ids ?? []).map(String)),
+      );
+      const membersByGroup = await this.loadGroupMemberIds(
+        tenantId,
+        sourceGroupIds,
+      );
+
+      for (const rule of applicable) {
+        const key =
+          typeof rule.module === 'string' && rule.module && rule.module !== '*'
+            ? rule.module
+            : '*';
+        const current = byModule.get(key) ?? {
+          ownerIds: [],
+          orgUnitIds: [],
+          all: false,
+        };
+        const source = rule.sharedFrom ?? {};
+        const ids = (source.ids ?? []).map(String);
+
+        if (source.type === 'all') current.all = true;
+        else if (source.type === 'user') current.ownerIds.push(...ids);
+        else if (source.type === 'group') {
+          current.ownerIds.push(
+            ...ids.flatMap((gid: string) => membersByGroup.get(gid) ?? []),
+          );
+        } else if (source.type === 'org_unit') current.orgUnitIds.push(...ids);
+
+        byModule.set(key, current);
+      }
+
+      // Verify the owner ids once, across every rule.
+      const allOwnerIds = [
+        ...new Set([...byModule.values()].flatMap((grant) => grant.ownerIds)),
+      ];
+      const verified = new Set(
+        await this.keepTenantMembers(tenantId, allOwnerIds),
+      );
+      for (const grant of byModule.values()) {
+        grant.ownerIds = [...new Set(grant.ownerIds)].filter((id) =>
+          verified.has(id),
+        );
+        grant.orgUnitIds = [...new Set(grant.orgUnitIds)];
+      }
+
+      return byModule;
+    } catch (e) {
+      // Fail-soft: sharing only widens, so losing it narrows — never leaks.
+      this.logger.warn(
+        `Sharing rules could not be resolved; continuing without them: ${
+          (e as Error).message
+        }`,
+      );
+      return new Map();
+    }
+  }
+
+  /** Is this principal on the receiving end of the rule, and is it live? */
+  private ruleTargetsPrincipal(
+    rule: any,
+    principal: {
+      now: number;
+      userId: string;
+      userRoles: string[];
+      myRoleIds: string[];
+      groupSet: Set<string>;
+    },
+  ): boolean {
+    if (!rule?.isActive) return false;
+
+    if (rule.expiresAt) {
+      const expiry = Date.parse(String(rule.expiresAt));
+      // An unparseable expiry is treated as expired: a rule whose lifetime
+      // cannot be read must not outlive it by defaulting to "forever".
+      if (Number.isNaN(expiry) || expiry <= principal.now) return false;
+    }
+
+    const target = rule.shareWith ?? {};
+    const ids = (target.ids ?? []).map(String);
+    if (ids.length === 0) return false;
+
+    if (target.type === 'user') return ids.includes(String(principal.userId));
+    if (target.type === 'group')
+      return ids.some((id: string) => principal.groupSet.has(id));
+    if (target.type === 'role') {
+      // Both vocabularies: built-in tenant roles are stored as names
+      // ('admin', 'member'), custom roles as ObjectIds on the membership.
+      return ids.some(
+        (id: string) =>
+          principal.userRoles.includes(id) || principal.myRoleIds.includes(id),
+      );
+    }
+    return false;
+  }
+
+  /** Custom-role ids on the principal's membership in this tenant. */
+  private async resolveUserRoleIds(
+    tenantId: string,
+    userId: string,
+  ): Promise<string[]> {
+    try {
+      const userRepo = this.moduleRef.get(UsersDocumentRepository, {
+        strict: false,
+      });
+      if (!isValidObjectId(userId)) return [];
+      const user: any = await userRepo.findById(userId);
+      const membership = user?.tenants?.find(
+        (t: any) => String(t.tenantId) === String(tenantId),
+      );
+      return (membership?.roleIds ?? []).map(String);
+    } catch {
+      return [];
+    }
+  }
+
+  private async loadGroupMemberIds(
+    tenantId: string,
+    groupIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    if (groupIds.length === 0) return map;
+    try {
+      const groupRepo = this.moduleRef.get(GroupRepository, { strict: false });
+      for (const groupId of groupIds) {
+        const members = await groupRepo.findMemberIdsForGroups(tenantId, [
+          groupId,
+        ]);
+        map.set(groupId, (members ?? []).map(String));
+      }
+    } catch {
+      // Widening-only axis: an unreadable group contributes nothing.
+    }
+    return map;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Shared lookups
+  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Get the user's roles within the current tenant.
@@ -388,59 +748,6 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     return Object.fromEntries(overrides);
   }
 
-  /**
-   * Resolve sharing rules: find additional user IDs whose records
-   * should be visible to this user based on configured sharing rules.
-   */
-  private async resolveSharedIds(
-    tenantId: string,
-    userId: string,
-  ): Promise<string[]> {
-    try {
-      const sharingRules =
-        await this.settingsService.getSetting('sharing_rules');
-      if (!sharingRules?.rules || !Array.isArray(sharingRules.rules)) {
-        return [];
-      }
-
-      const sharedUserIds: string[] = [];
-
-      for (const rule of sharingRules.rules) {
-        if (!rule.isActive) continue;
-
-        // Check if this user is a target of the sharing rule
-        if (rule.shareWith?.type === 'user') {
-          if (rule.shareWith.ids?.includes(userId)) {
-            // This rule shares records from specific owners with this user
-            if (rule.sharedFrom?.type === 'user') {
-              sharedUserIds.push(...(rule.sharedFrom.ids || []));
-            }
-          }
-        }
-
-        if (rule.shareWith?.type === 'role') {
-          // Check if the user has any of the shared-with roles
-          const userRoles = await this.getUserTenantRoles(tenantId, userId);
-          const hasRole = rule.shareWith.ids?.some((r: string) =>
-            userRoles.includes(r),
-          );
-          if (hasRole && rule.sharedFrom?.type === 'user') {
-            sharedUserIds.push(...(rule.sharedFrom.ids || []));
-          }
-        }
-      }
-
-      // H-08: sharing rules come from tenant SETTINGS, which is a lower trust
-      // boundary than the authorization model — whoever can write settings could
-      // otherwise widen anyone's read scope to arbitrary user ids, including ids
-      // belonging to another tenant. Only ids that are real members of THIS
-      // tenant may enter the visibility scope.
-      return this.keepTenantMembers(tenantId, [...new Set(sharedUserIds)]);
-    } catch {
-      return [];
-    }
-  }
-
   /** Filter a candidate id list down to verified members of the tenant. */
   private async keepTenantMembers(
     tenantId: string,
@@ -475,4 +782,32 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       return [];
     }
   }
+}
+
+/** Per-request state shared by every module computation. */
+interface ScopeContext {
+  tenantId: string;
+  userId: string;
+  userRoles: string[];
+  userGroupIds: string[];
+  roleScope: DataScope;
+  orgUnitId: string | null;
+  tenantDefaultScope: DataScope;
+  defaultAccess: 'private' | 'public_read';
+  byModuleSettings: Record<
+    string,
+    { access?: 'private' | 'public_read'; scope?: string } | undefined
+  >;
+  managedUnitsEnabled: boolean;
+  /** Modules named by at least one applicable sharing rule. */
+  moduleScopedGrantKeys: Set<string>;
+  hierarchyIds: () => Promise<string[]>;
+  scopeUnitIds: (scope: DataScope) => Promise<string[]>;
+  managedUnitIds: () => Promise<string[]>;
+  grants: () => Promise<Map<string, SharingGrant>>;
+}
+
+/** Union of id lists, de-duplicated, order-stable. */
+function union(...lists: (string[] | undefined)[]): string[] {
+  return [...new Set(lists.flatMap((list) => list ?? []).map(String))];
 }

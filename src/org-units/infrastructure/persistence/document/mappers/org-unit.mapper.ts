@@ -13,6 +13,7 @@ export class OrgUnitMapper {
     entity.path = raw.path;
     entity.depth = raw.depth ?? 0;
     entity.managerId = raw.managerId ? raw.managerId.toString() : null;
+    entity.managerIds = (raw.managerIds ?? []).map((id: any) => String(id));
     entity.isActive = raw.isActive;
     entity.createdAt = raw.createdAt;
     entity.updatedAt = raw.updatedAt;
@@ -35,6 +36,7 @@ export class OrgUnitMapper {
     if (domain.description !== undefined) doc.description = domain.description;
     if (domain.parentId !== undefined) doc.parentId = domain.parentId;
     if (domain.managerId !== undefined) doc.managerId = domain.managerId;
+    if (domain.managerIds !== undefined) doc.managerIds = domain.managerIds;
     if (domain.isActive !== undefined) doc.isActive = domain.isActive;
     return doc as Partial<OrgUnitSchemaClass> & Record<string, unknown>;
   }

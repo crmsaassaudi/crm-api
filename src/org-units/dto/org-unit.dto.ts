@@ -1,5 +1,7 @@
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsMongoId,
   IsOptional,
@@ -53,6 +55,18 @@ export class CreateOrgUnitDto {
   @IsMongoId()
   managerId?: string | null;
 
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Co-managers. Each of them sees this unit and everything under it once ' +
+      'their role enables the managed-units axis.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsMongoId({ each: true })
+  managerIds?: string[];
+
   @ApiPropertyOptional({ default: true })
   @IsOptional()
   @IsBoolean()
@@ -94,6 +108,16 @@ export class UpdateOrgUnitDto {
   @IsOptional()
   @IsMongoId()
   managerId?: string | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Replaces the whole set.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsMongoId({ each: true })
+  managerIds?: string[];
 
   @ApiPropertyOptional()
   @IsOptional()

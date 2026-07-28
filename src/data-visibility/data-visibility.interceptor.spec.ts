@@ -22,8 +22,11 @@ describe('DataVisibilityInterceptor', () => {
   let settingsService: { getSetting: jest.Mock };
   let userRepository: { findById: jest.Mock; findByIds: jest.Mock };
   let groupRepository: { findGroupsByMember: jest.Mock };
-  let authzCache: { resolveDataScope: jest.Mock };
-  let orgUnits: { resolveScopeUnitIds: jest.Mock };
+  let authzCache: { resolveDataScope: jest.Mock; canAccess: jest.Mock };
+  let orgUnits: {
+    resolveScopeUnitIds: jest.Mock;
+    listManagedUnitIds: jest.Mock;
+  };
   let channelSupport: {
     listServableChannelIds: jest.Mock;
     listVisibilityOverrides: jest.Mock;
@@ -70,9 +73,11 @@ describe('DataVisibilityInterceptor', () => {
       resolveDataScope: jest
         .fn()
         .mockResolvedValue({ scope: DataScope.SELF, orgUnitId: 'unit_b' }),
+      canAccess: jest.fn().mockResolvedValue({ allowed: false }),
     };
     orgUnits = {
       resolveScopeUnitIds: jest.fn().mockResolvedValue([]),
+      listManagedUnitIds: jest.fn().mockResolvedValue([]),
     };
     channelSupport = {
       listServableChannelIds: jest.fn().mockResolvedValue(null),
@@ -390,6 +395,239 @@ describe('DataVisibilityInterceptor', () => {
       await run();
 
       expect(channelSupport.listVisibilityOverrides).not.toHaveBeenCalled();
+      expect(written('visibleOwnerIds')).toBeNull();
+    });
+  });
+
+  describe('all_data:view — full read without being an admin', () => {
+    it('should bypass every axis for a role that grants it', async () => {
+      authzCache.canAccess.mockResolvedValue({ allowed: true });
+
+      await run();
+
+      expect(written('visibleOwnerIds')).toBeNull();
+      expect(written('visibleOrgUnitIds')).toBeNull();
+      expect(written('servableChannelIds')).toBeNull();
+      // Group membership is still resolved — an auditor can also be in a team.
+      expect(written('visibleGroupIds')).toEqual(['g1']);
+    });
+
+    it('should stay scoped when the permission check itself fails', async () => {
+      // Fail-soft must mean "no bypass", never "bypass".
+      authzCache.canAccess.mockRejectedValue(new Error('redis down'));
+
+      await run();
+
+      expect(written('visibleOwnerIds')).toEqual([USER, SUBORDINATE]);
+    });
+  });
+
+  describe('managed org units', () => {
+    it('should union the units a principal manages into the org-unit axis', async () => {
+      // The point of the axis: a SELF-scoped co-manager still sees their desks.
+      authzCache.resolveDataScope.mockResolvedValue({
+        scope: DataScope.SELF,
+        orgUnitId: null,
+      });
+      settingsService.getSetting.mockResolvedValue({
+        defaultAccess: 'private',
+        defaultScope: DataScope.SELF,
+      });
+      orgUnits.listManagedUnitIds.mockResolvedValue(['unit_x', 'unit_x_child']);
+
+      await run();
+
+      expect(written('visibleOwnerIds')).toEqual([USER]);
+      expect(written('visibleOrgUnitIds')).toEqual(['unit_x', 'unit_x_child']);
+    });
+
+    it('should honour the tenant switch that turns the axis off', async () => {
+      settingsService.getSetting.mockResolvedValue({
+        defaultAccess: 'private',
+        defaultScope: DataScope.SELF,
+        managedUnitsEnabled: false,
+      });
+      authzCache.resolveDataScope.mockResolvedValue({
+        scope: DataScope.SELF,
+        orgUnitId: null,
+      });
+      orgUnits.listManagedUnitIds.mockResolvedValue(['unit_x']);
+
+      await run();
+
+      expect(written('visibleOrgUnitIds')).toEqual([]);
+    });
+
+    it('should widen rather than fail when the org tree cannot be read', async () => {
+      orgUnits.listManagedUnitIds.mockRejectedValue(new Error('mongo down'));
+
+      await expect(run()).resolves.toEqual({ ok: true });
+      expect(written('visibleOwnerIds')).toEqual([USER, SUBORDINATE]);
+    });
+  });
+
+  describe('per-module overrides', () => {
+    const settingsFor = (byModule: Record<string, unknown>) =>
+      settingsService.getSetting.mockImplementation((key: string) =>
+        key === 'data_visibility'
+          ? { defaultAccess: 'private', defaultScope: DataScope.SELF, byModule }
+          : { rules: [] },
+      );
+
+    it('should emit an entry only for modules the tenant configured', async () => {
+      settingsFor({ Ticket: { access: 'public_read' } });
+      authzCache.resolveDataScope.mockResolvedValue({
+        scope: DataScope.SELF,
+        orgUnitId: null,
+      });
+
+      await run();
+
+      const byModule = written('dataVisibilityByModule') as Record<string, any>;
+      expect(Object.keys(byModule)).toEqual(['Ticket']);
+      expect(byModule.Ticket).toEqual({ ownerIds: null, orgUnitIds: null });
+      // The tenant-wide pair is untouched by a module override.
+      expect(written('visibleOwnerIds')).toEqual([USER]);
+    });
+
+    it('should let one module be WIDER in scope than the tenant default', async () => {
+      settingsFor({ Deal: { scope: DataScope.SUBORDINATES } });
+      authzCache.resolveDataScope.mockResolvedValue({
+        scope: DataScope.SELF,
+        orgUnitId: null,
+      });
+
+      await run();
+
+      const byModule = written('dataVisibilityByModule') as Record<string, any>;
+      expect(byModule.Deal.ownerIds).toEqual([USER, SUBORDINATE]);
+      expect(written('visibleOwnerIds')).toEqual([USER]);
+    });
+  });
+
+  describe('sharing rules', () => {
+    const OTHER = '507f1f77bcf86cd799439033';
+
+    const withRules = (rules: unknown[]) =>
+      settingsService.getSetting.mockImplementation((key: string) =>
+        key === 'sharing_rules'
+          ? { rules }
+          : { defaultAccess: 'private', defaultScope: DataScope.SELF },
+      );
+
+    beforeEach(() => {
+      authzCache.resolveDataScope.mockResolvedValue({
+        scope: DataScope.SELF,
+        orgUnitId: null,
+      });
+      userRepository.findByIds.mockResolvedValue([
+        { id: OTHER, tenants: [{ tenantId: 'tenant_1' }] },
+      ]);
+    });
+
+    it('should add the shared owner to the axis of the named module only', async () => {
+      withRules([
+        {
+          id: 'r1',
+          isActive: true,
+          module: 'Deal',
+          sharedFrom: { type: 'user', ids: [OTHER] },
+          shareWith: { type: 'user', ids: [USER] },
+        },
+      ]);
+
+      await run();
+
+      const byModule = written('dataVisibilityByModule') as Record<string, any>;
+      expect(byModule.Deal.ownerIds).toEqual([USER, OTHER]);
+      // The module was named, so Contact must NOT be widened — the bug the old
+      // implementation had, where `module` was stored and then ignored.
+      expect(written('visibleOwnerIds')).toEqual([USER]);
+    });
+
+    it('should apply a wildcard rule to the tenant-wide axis', async () => {
+      withRules([
+        {
+          id: 'r1',
+          isActive: true,
+          module: '*',
+          sharedFrom: { type: 'user', ids: [OTHER] },
+          shareWith: { type: 'group', ids: ['g1'] },
+        },
+      ]);
+
+      await run();
+
+      expect(written('visibleOwnerIds')).toEqual([USER, OTHER]);
+    });
+
+    it('should ignore an expired rule', async () => {
+      withRules([
+        {
+          id: 'r1',
+          isActive: true,
+          module: '*',
+          expiresAt: '2020-01-01T00:00:00.000Z',
+          sharedFrom: { type: 'user', ids: [OTHER] },
+          shareWith: { type: 'user', ids: [USER] },
+        },
+      ]);
+
+      await run();
+
+      expect(written('visibleOwnerIds')).toEqual([USER]);
+    });
+
+    it('should ignore a shared id that is not a member of the tenant', async () => {
+      // H-08: settings are a lower trust boundary than the authz model.
+      userRepository.findByIds.mockResolvedValue([
+        { id: OTHER, tenants: [{ tenantId: 'other_tenant' }] },
+      ]);
+      withRules([
+        {
+          id: 'r1',
+          isActive: true,
+          module: '*',
+          sharedFrom: { type: 'user', ids: [OTHER] },
+          shareWith: { type: 'user', ids: [USER] },
+        },
+      ]);
+
+      await run();
+
+      expect(written('visibleOwnerIds')).toEqual([USER]);
+    });
+
+    it('should put an org_unit source on the org-unit axis, not the owner axis', async () => {
+      withRules([
+        {
+          id: 'r1',
+          isActive: true,
+          module: '*',
+          sharedFrom: { type: 'org_unit', ids: ['unit_z'] },
+          shareWith: { type: 'user', ids: [USER] },
+        },
+      ]);
+
+      await run();
+
+      expect(written('visibleOwnerIds')).toEqual([USER]);
+      expect(written('visibleOrgUnitIds')).toEqual(['unit_z']);
+    });
+
+    it('should drop the axes entirely for an "all records" rule', async () => {
+      withRules([
+        {
+          id: 'r1',
+          isActive: true,
+          module: '*',
+          sharedFrom: { type: 'all' },
+          shareWith: { type: 'user', ids: [USER] },
+        },
+      ]);
+
+      await run();
+
       expect(written('visibleOwnerIds')).toBeNull();
     });
   });

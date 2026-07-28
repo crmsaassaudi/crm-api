@@ -15,6 +15,14 @@ import {
   ContactSchemaClass,
   ContactSchemaDocument,
 } from '../contacts/infrastructure/persistence/document/entities/contact.schema';
+import {
+  DATA_SCOPE_ORDER,
+  isDataScope,
+} from '../common/permissions/data-scope.enum';
+import {
+  VISIBILITY_MODULES,
+  isVisibilityModule,
+} from '../common/permissions/visibility-modules';
 
 const LIFECYCLE_STAGE_MUTABLE_FIELDS = new Set([
   'name',
@@ -103,6 +111,8 @@ export class CrmSettingsService {
     tenantId?: string,
   ): Promise<CrmSetting> {
     const tid = this.resolveTenantId(tenantId);
+
+    validateVisibilitySetting(key, value);
 
     // Invalidate cache on write so the next read fetches fresh data.
     this.settingsCache.delete(`${tid}:${key}`);
@@ -575,5 +585,102 @@ export class CrmSettingsService {
         `Cannot change or delete lifecycle status "${status.label}" because ${contactsCount} contact(s) still reference it. Move or merge those contacts first.`,
       );
     }
+  }
+}
+
+/**
+ * Reject data-visibility settings that the enforcement layer would silently
+ * ignore.
+ *
+ * The read path is deliberately forgiving — an unknown scope string falls back
+ * to the tenant default, an unknown module key is simply never consulted — so
+ * without this an admin could save "Deals: whole department", see it persisted,
+ * and never find out it does nothing. Every value offered by the settings UI
+ * has to be a value the interceptor actually understands, and the only place
+ * both sides meet is here.
+ */
+function validateVisibilitySetting(key: string, value: any): void {
+  if (key === 'data_visibility') {
+    assertAccess(value?.defaultAccess, 'defaultAccess');
+    assertScope(value?.defaultScope, 'defaultScope');
+
+    const byModule = value?.byModule;
+    if (byModule !== undefined && byModule !== null) {
+      if (typeof byModule !== 'object' || Array.isArray(byModule)) {
+        throw new BadRequestException('byModule must be an object');
+      }
+      for (const [moduleKey, override] of Object.entries<any>(byModule)) {
+        if (!isVisibilityModule(moduleKey)) {
+          throw new BadRequestException(
+            `Unknown module "${moduleKey}". Allowed: ${VISIBILITY_MODULES.join(', ')}`,
+          );
+        }
+        assertAccess(override?.access, `byModule.${moduleKey}.access`);
+        assertScope(override?.scope, `byModule.${moduleKey}.scope`);
+      }
+    }
+    return;
+  }
+
+  if (key === 'sharing_rules') {
+    const rules = value?.rules;
+    if (rules === undefined || rules === null) return;
+    if (!Array.isArray(rules)) {
+      throw new BadRequestException('sharing_rules.rules must be an array');
+    }
+    for (const rule of rules) {
+      const source = rule?.sharedFrom?.type;
+      if (!['user', 'group', 'org_unit', 'all'].includes(source)) {
+        throw new BadRequestException(
+          `sharedFrom.type must be one of user, group, org_unit, all (got "${source}")`,
+        );
+      }
+      const target = rule?.shareWith?.type;
+      if (!['user', 'group', 'role'].includes(target)) {
+        throw new BadRequestException(
+          `shareWith.type must be one of user, group, role (got "${target}")`,
+        );
+      }
+      // A rule with no recipients is inert; storing it just makes the sharing
+      // list lie about what is in effect.
+      if (!Array.isArray(rule?.shareWith?.ids) || !rule.shareWith.ids.length) {
+        throw new BadRequestException(
+          `Sharing rule "${rule?.name ?? rule?.id}" has no recipients`,
+        );
+      }
+      if (source !== 'all' && !rule?.sharedFrom?.ids?.length) {
+        throw new BadRequestException(
+          `Sharing rule "${rule?.name ?? rule?.id}" has no source`,
+        );
+      }
+      if (
+        rule?.module &&
+        rule.module !== '*' &&
+        !isVisibilityModule(rule.module)
+      ) {
+        throw new BadRequestException(`Unknown module "${rule.module}"`);
+      }
+      if (rule?.expiresAt && Number.isNaN(Date.parse(String(rule.expiresAt)))) {
+        throw new BadRequestException('expiresAt must be an ISO timestamp');
+      }
+    }
+  }
+}
+
+function assertAccess(value: unknown, field: string): void {
+  if (value === undefined || value === null) return;
+  if (value !== 'private' && value !== 'public_read') {
+    throw new BadRequestException(
+      `${field} must be "private" or "public_read"`,
+    );
+  }
+}
+
+function assertScope(value: unknown, field: string): void {
+  if (value === undefined || value === null) return;
+  if (!isDataScope(value)) {
+    throw new BadRequestException(
+      `${field} must be one of ${DATA_SCOPE_ORDER.join(', ')}`,
+    );
   }
 }

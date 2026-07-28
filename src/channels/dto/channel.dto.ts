@@ -7,6 +7,7 @@ import {
   IsArray,
   IsMongoId,
   ArrayMaxSize,
+  IsBoolean,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -215,6 +216,18 @@ export class UpdateChannelSupportDto {
   groupIds?: string[];
 
   @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Agents kept OUT of the pool even when a selected group contains them. ' +
+      'Applied after the union, so it also overrides a direct userIds entry.',
+  })
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsMongoId({ each: true })
+  @IsOptional()
+  excludedUserIds?: string[];
+
+  @ApiPropertyOptional({
     enum: ['restricted', 'open'],
     description:
       'restricted → pool is an authorization boundary; open → routing preference only',
@@ -232,6 +245,17 @@ export class UpdateChannelSupportDto {
   @IsEnum(['inherit', 'private', 'public_read'])
   @IsOptional()
   visibility?: 'inherit' | 'private' | 'public_read';
+
+  @ApiPropertyOptional({
+    description:
+      'Acknowledge that a restricted pool resolving to zero agents is intended ' +
+      '(the channel is being taken out of service). Without it such a save is ' +
+      'rejected: an empty restricted pool means nobody can serve or read the ' +
+      'channel, which is almost always an accident.',
+  })
+  @IsBoolean()
+  @IsOptional()
+  allowEmptyPool?: boolean;
 }
 
 export class MetaAuthUrlQueryDto {

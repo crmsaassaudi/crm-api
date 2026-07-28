@@ -31,7 +31,8 @@ export type PermissionResource =
   | 'files'
   | 'storage'
   | 'omni_channel'
-  | 'omni_reports';
+  | 'omni_reports'
+  | 'all_data';
 
 export type PermissionAction =
   | 'view'
@@ -157,6 +158,19 @@ export const PERMISSION_REGISTRY: Record<
     view: 'settings:view',
     manage_billing: 'settings:manage_billing',
     manage_system: 'settings:manage_system',
+  },
+  /**
+   * Read every record in the tenant, bypassing the data-visibility axes.
+   *
+   * Exists so "who can see everything" is a role a tenant can grant and audit,
+   * rather than being welded to the built-in ADMIN/OWNER roles. An auditor or a
+   * head of sales often needs a full read without also getting the ability to
+   * manage users and billing, which is the only thing ADMIN could express
+   * before. It grants READ breadth only — it is not a permission to act on
+   * those records, which each module still checks separately.
+   */
+  all_data: {
+    view: 'all_data:view',
   },
   tasks: {
     view: 'tasks:view',
@@ -447,6 +461,11 @@ export const FEATURE_PERMISSIONS: string[] = [
   'publication_instances:publish',
   // Omni-Channel Reports export
   'omni_reports:export',
+  // Bypass every data-visibility axis. Feature-gated rather than core on
+  // purpose: a permission that reveals the whole tenant should be something an
+  // operator turns on deliberately, not something sitting in every tenant's
+  // catalogue waiting to be ticked by accident.
+  'all_data:view',
 ];
 
 export const getPermissionKey = (

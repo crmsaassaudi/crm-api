@@ -9,6 +9,7 @@ import { Ticket } from '../../../../domain/ticket';
 import { TicketMapper } from '../mappers/ticket.mapper';
 import { ClsService } from 'nestjs-cls';
 import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
+import { VisibilityModule } from '../../../../../common/permissions/visibility-modules';
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
 import { pagination } from '../../../../../utils/pagination';
@@ -26,6 +27,11 @@ export class TicketRepository extends BaseDocumentRepository<
     cls: ClsService,
   ) {
     super(ticketModel, cls);
+  }
+
+  /** Tagged so a tenant can scope tickets differently from other modules. */
+  protected visibilityModule(): VisibilityModule {
+    return 'Ticket';
   }
 
   protected mapToDomain(doc: TicketSchemaClass): Ticket {

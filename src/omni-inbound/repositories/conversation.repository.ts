@@ -107,7 +107,7 @@ export class ConversationRepository {
       >) ?? {};
     const override = channelId ? overrides[channelId] : undefined;
 
-    const visibleOwnerIds = this.cls.get('visibleOwnerIds');
+    const visibleOwnerIds = this.moduleOwnerIds();
 
     if (!Array.isArray(visibleOwnerIds)) {
       // bypass (admin / public_read / TENANT scope)
@@ -125,8 +125,36 @@ export class ConversationRepository {
     return this.isWithinOwnerScope(
       doc,
       visibleOwnerIds,
-      this.cls.get('visibleOrgUnitIds'),
+      this.moduleOrgUnitIds(),
     );
+  }
+
+  /**
+   * The owner axis for conversations, honouring a per-module override.
+   *
+   * A tenant can scope Conversation differently from Contact/Deal — "agents see
+   * only their own inbox even though the department shares its pipeline" is a
+   * common ask, and before this the two had to be the same. When no override is
+   * configured this returns the request-wide value, so behaviour is unchanged.
+   */
+  private moduleOwnerIds(): unknown {
+    return this.moduleScope()?.ownerIds ?? this.cls.get('visibleOwnerIds');
+  }
+
+  private moduleOrgUnitIds(): unknown {
+    return this.moduleScope()?.orgUnitIds ?? this.cls.get('visibleOrgUnitIds');
+  }
+
+  private moduleScope():
+    | { ownerIds: string[] | null; orgUnitIds: string[] | null }
+    | undefined {
+    const byModule = this.cls.get('dataVisibilityByModule') as
+      | Record<
+          string,
+          { ownerIds: string[] | null; orgUnitIds: string[] | null }
+        >
+      | undefined;
+    return byModule?.Conversation;
   }
 
   /** Owner/org-unit/group scope check shared by the normal and strict (M18) paths. */
@@ -342,7 +370,7 @@ export class ConversationRepository {
     );
     const privateChannelIds = this.channelObjectIds(overrides, 'private');
 
-    const visibleOwnerIds = this.cls.get('visibleOwnerIds');
+    const visibleOwnerIds = this.moduleOwnerIds();
 
     if (!Array.isArray(visibleOwnerIds)) {
       // Bypass (admin/owner, public_read, or TENANT scope) — undefined means
@@ -376,7 +404,7 @@ export class ConversationRepository {
 
     const scopeClauses = this.buildOwnerScopeClauses(
       visibleOwnerIds,
-      this.cls.get('visibleOrgUnitIds'),
+      this.moduleOrgUnitIds(),
     );
     if (publicReadChannelIds.length > 0) {
       // M18: these channels bypass the owner scope regardless of it.

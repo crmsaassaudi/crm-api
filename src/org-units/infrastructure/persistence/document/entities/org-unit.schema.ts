@@ -86,6 +86,29 @@ export class OrgUnitSchemaClass extends EntityDocumentHelper {
   })
   managerId?: string | null;
 
+  /**
+   * Co-managers of this unit, beyond the single head above.
+   *
+   * A real org chart has more than one person who must see a whole team: a
+   * department head plus a deputy, two shift leads over one support desk, a
+   * team lead plus the QA manager auditing them. `managerId` alone forced
+   * tenants to model that by inventing extra units or by widening everyone's
+   * role scope to the whole tenant, which is the failure this closes.
+   *
+   * `managerId` stays the *primary* head (shown as the unit's owner in the UI);
+   * authorization treats it as one entry of the manager set — see
+   * `OrgUnitsService.listManagerUnitIds`.
+   *
+   * Indexed because the visibility path queries by it on every request for a
+   * principal who manages anything.
+   */
+  @Prop({
+    type: [{ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' }],
+    default: [],
+    index: true,
+  })
+  managerIds: string[];
+
   @Prop({ default: true })
   isActive: boolean;
 }

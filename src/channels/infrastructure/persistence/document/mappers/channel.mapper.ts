@@ -16,6 +16,7 @@ function toDomainSupport(raw: ChannelSchemaClass['support']): ChannelSupport {
   return {
     userIds: (raw.userIds ?? []).map(String),
     groupIds: (raw.groupIds ?? []).map(String),
+    excludedUserIds: (raw.excludedUserIds ?? []).map(String),
     mode: raw.mode === 'restricted' ? 'restricted' : 'open',
   };
 }

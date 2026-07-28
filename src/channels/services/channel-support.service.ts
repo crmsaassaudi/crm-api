@@ -14,8 +14,33 @@ import {
   ChannelSupport,
   ChannelSupportMode,
   ChannelVisibility,
+  DEFAULT_CHANNEL_SUPPORT,
 } from '../domain/channel';
 import { UpdateChannelSupportDto } from '../dto/channel.dto';
+
+/**
+ * (direct ∪ group members) \ excluded — the one definition of "who is in the
+ * pool", shared by the read path (buildPools) and the write-time validation so
+ * the two can never disagree about whether a pool is empty.
+ *
+ * Exclusions are subtracted last on purpose: an admin who both selects a group
+ * and excludes one of its members means the exclusion, and an id that appears
+ * in `userIds` and `excludedUserIds` at once is a contradiction that must
+ * resolve the safe way (denied).
+ */
+function unionMinusExclusions(
+  support: Pick<ChannelSupport, 'userIds' | 'groupIds' | 'excludedUserIds'>,
+  membersByGroup: Map<string, string[]>,
+): string[] {
+  const direct = (support.userIds ?? []).map(String);
+  const fromGroups = (support.groupIds ?? [])
+    .map(String)
+    .flatMap((gid) => membersByGroup.get(gid) ?? []);
+  const excluded = new Set((support.excludedUserIds ?? []).map(String));
+  return [...new Set([...direct, ...fromGroups])].filter(
+    (id) => !excluded.has(id),
+  );
+}
 
 /**
  * Error code returned when an agent outside a restricted channel's support pool
@@ -25,6 +50,12 @@ export const AGENT_NOT_IN_CHANNEL_POOL = 'OMNI_AGENT_NOT_IN_CHANNEL_POOL';
 
 /** Same, for a group that does not serve the channel. */
 export const GROUP_NOT_IN_CHANNEL_POOL = 'OMNI_GROUP_NOT_IN_CHANNEL_POOL';
+
+/**
+ * Returned when a save would leave a restricted channel with zero eligible
+ * agents. Recoverable by resending with `allowEmptyPool: true`.
+ */
+export const CHANNEL_SUPPORT_EMPTY_POOL = 'CHANNEL_SUPPORT_EMPTY_POOL';
 
 /**
  * The resolved serving pool of one channel.
@@ -38,8 +69,30 @@ export interface ResolvedChannelPool {
   mode: ChannelSupportMode;
   agentIds: string[] | null;
   groupIds: string[];
+  /** Ids subtracted from the union — kept for explainability in the admin UI. */
+  excludedUserIds: string[];
   /** 'inherit' unless the channel explicitly overrides the tenant default (M18). */
   visibility: ChannelVisibility;
+}
+
+/** A user as the admin pool UI needs to render them. */
+export interface PoolMemberRef {
+  id: string;
+  name: string;
+  email: string | null;
+  /** Soft-deleted, or no longer a member of the tenant. */
+  deleted: boolean;
+}
+
+/** A support group as the admin pool UI needs to render it. */
+export interface PoolGroupRef {
+  id: string;
+  name: string;
+  /** Members this group actually contributes (0 when inactive). */
+  memberCount: number;
+  isActive: boolean;
+  /** Referenced id no longer resolves to a group in this tenant. */
+  missing: boolean;
 }
 
 /**
@@ -103,6 +156,7 @@ export class ChannelSupportService {
     const next: ChannelSupport = {
       userIds: dto.userIds ?? current.userIds,
       groupIds: dto.groupIds ?? current.groupIds,
+      excludedUserIds: dto.excludedUserIds ?? current.excludedUserIds ?? [],
       mode: dto.mode ?? current.mode,
     };
     const currentVisibility: ChannelVisibility =
@@ -113,9 +167,29 @@ export class ChannelSupportService {
     // Dedupe before validating so a repeated id is not reported twice.
     next.userIds = [...new Set(next.userIds.map(String))];
     next.groupIds = [...new Set(next.groupIds.map(String))];
+    next.excludedUserIds = [...new Set(next.excludedUserIds.map(String))];
 
-    await this.assertUsersInTenant(tenantId, next.userIds);
+    await this.assertUsersInTenant(tenantId, [
+      ...next.userIds,
+      ...next.excludedUserIds,
+    ]);
     await this.assertGroupsInTenant(tenantId, next.groupIds);
+
+    // An empty restricted pool is a valid state — it takes a channel out of
+    // service — but never an accidental one. Resolved with the same code path
+    // routing uses, so what is validated here is exactly what will be enforced.
+    if (next.mode === 'restricted' && !dto.allowEmptyPool) {
+      const resolved = await this.resolveAgentIdsFor(tenantId, next);
+      if (resolved.length === 0) {
+        throw new UnprocessableEntityException({
+          code: CHANNEL_SUPPORT_EMPTY_POOL,
+          message:
+            'This channel is restricted but no agent resolves into its support ' +
+            'pool, so nobody would be able to serve or read it. Add an agent or ' +
+            'a group, switch the channel to open, or resend with allowEmptyPool.',
+        });
+      }
+    }
 
     const updated = await this.channelRepository.update(tenantId, channelId, {
       support: next,
@@ -158,7 +232,14 @@ export class ChannelSupportService {
     opts: { userId?: string; groupId?: string },
   ): Promise<void> {
     const pull: Record<string, unknown> = {};
-    if (opts.userId) pull['support.userIds'] = new Types.ObjectId(opts.userId);
+    if (opts.userId) {
+      pull['support.userIds'] = new Types.ObjectId(opts.userId);
+      // Also drop the exclusion entry: leaving it behind would silently deny a
+      // future user who is assigned the same id (recycled ObjectIds do not
+      // happen, but a restored user does) and clutters the admin UI with a
+      // tombstone it cannot render a name for.
+      pull['support.excludedUserIds'] = new Types.ObjectId(opts.userId);
+    }
     if (opts.groupId)
       pull['support.groupIds'] = new Types.ObjectId(opts.groupId);
     if (Object.keys(pull).length === 0) return;
@@ -312,6 +393,68 @@ export class ChannelSupportService {
     return overrides;
   }
 
+  /**
+   * The pool of a channel, resolved and annotated with display names.
+   *
+   * Exists because the admin UI cannot answer "who is actually in this pool?"
+   * from the raw id lists: the ids come from a paginated user list, so a
+   * selected agent who is not on the current page would render as nothing, and
+   * group membership is not client-side knowledge at all. The UI shows chips
+   * and an effective-agent count from this, which is the same computation
+   * routing performs.
+   */
+  async describePool(
+    tenantId: string,
+    channelId: string,
+  ): Promise<{
+    channelId: string;
+    mode: ChannelSupportMode;
+    visibility: ChannelVisibility;
+    users: PoolMemberRef[];
+    groups: PoolGroupRef[];
+    excludedUsers: PoolMemberRef[];
+    /** Everyone the pool resolves to; null when the channel is unrestricted. */
+    effectiveAgents: PoolMemberRef[] | null;
+  }> {
+    const channel = await this.channelRepository.findById(tenantId, channelId);
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const support = channel.support ?? { ...DEFAULT_CHANNEL_SUPPORT };
+    const membersByGroup = await this.loadGroupMembers(
+      tenantId,
+      (support.groupIds ?? []).map(String),
+    );
+    const effectiveIds = unionMinusExclusions(support, membersByGroup);
+
+    // One user read for every id the response mentions, rather than three.
+    const userIds = [
+      ...new Set([
+        ...(support.userIds ?? []).map(String),
+        ...(support.excludedUserIds ?? []).map(String),
+        ...effectiveIds,
+      ]),
+    ];
+    const namesById = await this.loadUserRefs(tenantId, userIds);
+    const groups = await this.loadGroupRefs(
+      tenantId,
+      (support.groupIds ?? []).map(String),
+      membersByGroup,
+    );
+    const ref = (id: string): PoolMemberRef =>
+      namesById.get(id) ?? { id, name: id, email: null, deleted: true };
+
+    return {
+      channelId: String(channel.id),
+      mode: support.mode === 'restricted' ? 'restricted' : 'open',
+      visibility: channel.visibility ?? 'inherit',
+      users: (support.userIds ?? []).map(String).map(ref),
+      groups,
+      excludedUsers: (support.excludedUserIds ?? []).map(String).map(ref),
+      effectiveAgents:
+        support.mode === 'restricted' ? effectiveIds.map(ref) : null,
+    };
+  }
+
   invalidate(tenantId: string): void {
     this.poolCache.delete(tenantId);
   }
@@ -354,17 +497,10 @@ export class ChannelSupportService {
     const membersByGroup = await this.loadGroupMembers(tenantId, allGroupIds);
 
     for (const channel of channels) {
-      const support = channel.support ?? {
-        userIds: [],
-        groupIds: [],
-        mode: 'open' as const,
-      };
+      const support = channel.support ?? { ...DEFAULT_CHANNEL_SUPPORT };
       const groupIds = (support.groupIds ?? []).map(String);
-      const direct = (support.userIds ?? []).map(String);
-      const fromGroups = groupIds.flatMap(
-        (gid) => membersByGroup.get(gid) ?? [],
-      );
-      const union = [...new Set([...direct, ...fromGroups])];
+      const excludedUserIds = (support.excludedUserIds ?? []).map(String);
+      const union = unionMinusExclusions(support, membersByGroup);
 
       result.set(String(channel.id), {
         channelId: String(channel.id),
@@ -376,11 +512,95 @@ export class ChannelSupportService {
         // admits.
         agentIds: support.mode === 'restricted' ? union : null,
         groupIds,
+        excludedUserIds,
         visibility: channel.visibility ?? 'inherit',
       });
     }
 
     return result;
+  }
+
+  /**
+   * Resolve one not-yet-persisted support shape into agent ids. Used by the
+   * write path so the empty-pool check sees exactly what buildPools would
+   * produce, without waiting for the cache to be rebuilt.
+   */
+  private async resolveAgentIdsFor(
+    tenantId: string,
+    support: ChannelSupport,
+  ): Promise<string[]> {
+    const membersByGroup = await this.loadGroupMembers(
+      tenantId,
+      (support.groupIds ?? []).map(String),
+    );
+    return unionMinusExclusions(support, membersByGroup);
+  }
+
+  /** Display refs for a set of user ids, keyed by id. Missing ids are absent. */
+  private async loadUserRefs(
+    tenantId: string,
+    userIds: string[],
+  ): Promise<Map<string, PoolMemberRef>> {
+    const map = new Map<string, PoolMemberRef>();
+    if (userIds.length === 0) return map;
+
+    const objectIds = userIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    const users = await this.userModel
+      .find({
+        _id: { $in: objectIds },
+        'tenants.tenantId': new Types.ObjectId(tenantId),
+      })
+      .select('_id firstName lastName email deletedAt')
+      .lean()
+      .exec();
+
+    for (const u of users as any[]) {
+      const name =
+        [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || '—';
+      map.set(String(u._id), {
+        id: String(u._id),
+        name,
+        email: u.email ?? null,
+        deleted: !!u.deletedAt,
+      });
+    }
+    return map;
+  }
+
+  private async loadGroupRefs(
+    tenantId: string,
+    groupIds: string[],
+    membersByGroup: Map<string, string[]>,
+  ): Promise<PoolGroupRef[]> {
+    if (groupIds.length === 0) return [];
+
+    const objectIds = groupIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    const groups = await this.groupModel
+      .find({ _id: { $in: objectIds }, tenantId: new Types.ObjectId(tenantId) })
+      .select('_id name isActive')
+      .lean()
+      .exec();
+
+    const byId = new Map(groups.map((g: any) => [String(g._id), g]));
+    return groupIds.map((id) => {
+      const g: any = byId.get(id);
+      return {
+        id,
+        name: g?.name ?? id,
+        // membersByGroup only contains ACTIVE groups (loadGroupMembers filters
+        // on isActive), so an inactive group correctly reports 0 contributed
+        // members rather than its roster — which is what routing sees.
+        memberCount: (membersByGroup.get(id) ?? []).length,
+        isActive: g ? g.isActive !== false : false,
+        missing: !g,
+      };
+    });
   }
 
   private async loadGroupMembers(

@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { OrgUnitRepository } from './infrastructure/persistence/document/repositories/org-unit.repository';
-import { OrgUnit, OrgUnitTreeNode } from './domain/org-unit';
+import { OrgUnit, OrgUnitManagerRef, OrgUnitTreeNode } from './domain/org-unit';
 import { CreateOrgUnitDto, UpdateOrgUnitDto } from './dto/org-unit.dto';
 import { UserRepository } from '../users/infrastructure/persistence/user.repository';
 import { DataScope } from '../common/permissions/data-scope.enum';
@@ -105,6 +105,8 @@ export class OrgUnitsService {
   async findTree(tenantId: string): Promise<OrgUnitTreeNode[]> {
     const units = await this.repository.findAll(tenantId);
     const counts = await this.userRepository.countByOrgUnit(tenantId);
+    // One user read for every manager in the tree, not one per unit.
+    const managerNames = await this.resolveManagerNames(units);
 
     const nodes = new Map<string, OrgUnitTreeNode>();
     for (const unit of units) {
@@ -112,6 +114,7 @@ export class OrgUnitsService {
         ...unit,
         children: [],
         memberCount: counts[unit.id] ?? 0,
+        managers: this.managerRefs(unit, managerNames),
       });
     }
 
@@ -139,7 +142,10 @@ export class OrgUnitsService {
       );
     }
     await this.assertCodeAvailable(tenantId, dto.code ?? null, null);
-    await this.assertManagerInTenant(tenantId, dto.managerId ?? null);
+    await this.assertManagersInTenant(tenantId, [
+      dto.managerId ?? null,
+      ...(dto.managerIds ?? []),
+    ]);
 
     return this.repository.create(
       {
@@ -149,6 +155,7 @@ export class OrgUnitsService {
         description: dto.description ?? null,
         parentId: parent?.id ?? null,
         managerId: dto.managerId ?? null,
+        managerIds: dedupeIds(dto.managerIds),
         isActive: dto.isActive ?? true,
       },
       parent ? parent.path : '/',
@@ -165,8 +172,11 @@ export class OrgUnitsService {
     if (dto.code !== undefined) {
       await this.assertCodeAvailable(tenantId, dto.code, id);
     }
-    if (dto.managerId !== undefined) {
-      await this.assertManagerInTenant(tenantId, dto.managerId);
+    if (dto.managerId !== undefined || dto.managerIds !== undefined) {
+      await this.assertManagersInTenant(tenantId, [
+        ...(dto.managerId !== undefined ? [dto.managerId] : []),
+        ...(dto.managerIds ?? []),
+      ]);
     }
 
     const reparenting =
@@ -184,6 +194,8 @@ export class OrgUnitsService {
       description: dto.description,
       parentId: reparenting ? (dto.parentId ?? null) : undefined,
       managerId: dto.managerId,
+      managerIds:
+        dto.managerIds !== undefined ? dedupeIds(dto.managerIds) : undefined,
       isActive: dto.isActive,
     });
 
@@ -254,6 +266,87 @@ export class OrgUnitsService {
     return [];
   }
 
+  /** id → display name, for every manager referenced anywhere in `units`. */
+  private async resolveManagerNames(
+    units: OrgUnit[],
+  ): Promise<Map<string, string>> {
+    const ids = [
+      ...new Set(
+        units
+          .flatMap((unit) => [unit.managerId, ...(unit.managerIds ?? [])])
+          .filter((id): id is string => !!id)
+          .map(String),
+      ),
+    ];
+    const names = new Map<string, string>();
+    if (ids.length === 0) return names;
+
+    const users = await this.userRepository.findByIds(ids);
+    for (const user of users as any[]) {
+      const name =
+        [user.firstName, user.lastName].filter(Boolean).join(' ') ||
+        user.email ||
+        String(user.id);
+      names.set(String(user.id ?? user._id), name);
+    }
+    return names;
+  }
+
+  /**
+   * The effective manager set of a unit: the primary head first, then the
+   * co-managers, de-duplicated.
+   *
+   * `managerId` is included whether or not it is repeated in `managerIds` —
+   * they are one manager set for authorization purposes, and a tenant that only
+   * ever set the legacy single field must still see its head listed here.
+   */
+  private managerRefs(
+    unit: OrgUnit,
+    names: Map<string, string>,
+  ): OrgUnitManagerRef[] {
+    const primary = unit.managerId ? String(unit.managerId) : null;
+    const seen = new Set<string>();
+    const refs: OrgUnitManagerRef[] = [];
+
+    for (const id of [primary, ...(unit.managerIds ?? []).map(String)]) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      // A manager who has left the workspace still shows, marked by their id,
+      // rather than vanishing — an unrenderable row is a prompt to fix the
+      // unit, a missing one hides that the unit has no effective head.
+      refs.push({
+        id,
+        name: names.get(id) ?? id,
+        isPrimary: id === primary,
+      });
+    }
+    return refs;
+  }
+
+  /**
+   * The org units a principal may see because they MANAGE them — an axis
+   * independent of their role's DataScope.
+   *
+   * Kept separate from `resolveScopeUnitIds` on purpose. Scope is a property of
+   * the job title ("a sales rep sees their own deals"); managing a unit is a
+   * property of the person ("Lan happens to run two support desks"). Folding
+   * the second into the DataScope ladder would force a false ordering: a
+   * co-manager is not "wider" or "narrower" than ORG_UNIT, they are anchored
+   * somewhere else in the tree. Unioning the two axes lets a tenant say
+   * "everyone is SELF by default, except managers, who see their own units"
+   * without inventing a role per unit.
+   *
+   * Returns [] for a principal who manages nothing — an empty list contributes
+   * no rows, it does not widen.
+   */
+  async listManagedUnitIds(
+    tenantId: string,
+    userId: string,
+  ): Promise<string[]> {
+    if (!userId) return [];
+    return this.repository.findManagedSubtreeIds(tenantId, userId);
+  }
+
   /**
    * Validate a move and return the destination path.
    *
@@ -318,23 +411,30 @@ export class OrgUnitsService {
   }
 
   /**
-   * A unit's manager must be a member of the same tenant. Without this, a
-   * caller could name an id from another workspace and — once manager-based
+   * Every manager of a unit must be a member of the same tenant. Without this,
+   * a caller could name an id from another workspace and — once manager-based
    * scope resolution reads it — hand that outsider a view into this tenant.
    */
-  private async assertManagerInTenant(
+  private async assertManagersInTenant(
     tenantId: string,
-    managerId: string | null,
+    managerIds: (string | null | undefined)[],
   ): Promise<void> {
-    if (!managerId) return;
-    const user = await this.userRepository.findById(managerId);
-    const isMember = user?.tenants?.some(
-      (membership: any) => String(membership.tenantId) === String(tenantId),
-    );
-    if (!isMember) {
-      throw new BadRequestException(
-        'Manager must be a member of this workspace',
+    const ids = dedupeIds(managerIds);
+    for (const managerId of ids) {
+      const user = await this.userRepository.findById(managerId);
+      const isMember = user?.tenants?.some(
+        (membership: any) => String(membership.tenantId) === String(tenantId),
       );
+      if (!isMember) {
+        throw new BadRequestException(
+          'Manager must be a member of this workspace',
+        );
+      }
     }
   }
+}
+
+/** Non-empty, de-duplicated string ids. */
+function dedupeIds(ids?: (string | null | undefined)[]): string[] {
+  return [...new Set((ids ?? []).filter(Boolean).map(String))];
 }

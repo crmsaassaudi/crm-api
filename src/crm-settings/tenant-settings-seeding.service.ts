@@ -1187,16 +1187,45 @@ const DEFAULT_OMNI_SESSION_LIFECYCLE = {
  */
 const DEFAULT_DATA_VISIBILITY = {
   defaultAccess: 'private',
+  /**
+   * Baseline DataScope for principals whose roles express none. SUBORDINATES
+   * preserves the pre-scope contract ("own records plus my reports'"); a tenant
+   * that wants strict per-user isolation sets 'self' here, which is the only
+   * way a role with dataScope=self actually behaves as self — the two are
+   * unioned, so a wide default silently widens narrow roles.
+   */
+  defaultScope: 'subordinates',
+  /** Unowned records (ownerId null) visible to everyone rather than nobody. */
+  unownedRecordsVisibleToAll: false,
+  /**
+   * Whether being named manager of an org unit lets someone see that unit's
+   * records, on top of whatever their role scope grants. Default on: naming a
+   * manager is already an explicit administrative act, and the alternative
+   * (a bespoke role per unit) is what tenants were doing instead.
+   */
+  managedUnitsEnabled: true,
+  /**
+   * Per-module overrides of `defaultAccess` / `defaultScope`, keyed by module
+   * name ('Contact', 'Deal', …). Absent keys inherit the tenant defaults.
+   */
+  byModule: {} as Record<
+    string,
+    { access?: 'private' | 'public_read'; scope?: string }
+  >,
 };
 
 /**
- * Sharing Rules — grant cross-hierarchy access to specific users/roles.
+ * Sharing Rules — the exception mechanism: grant someone visibility of records
+ * their scope would not otherwise reach, without changing their role.
  *
  * Each rule specifies:
- *   - sharedFrom: whose records to share (user IDs or "all")
- *   - shareWith:  who gets access (user IDs, role names)
- *   - module:     which CRM module this applies to ('*' = all)
+ *   - sharedFrom:  whose records ('user' / 'group' / 'org_unit' ids, or 'all')
+ *   - shareWith:   who gets access ('user' / 'group' / 'role' ids)
+ *   - module:      which CRM module, or '*' for every module
  *   - accessLevel: 'read_only' or 'read_write'
+ *   - expiresAt:   ISO timestamp; the rule stops applying after it (optional,
+ *                  because a temporary cover arrangement that never expires is
+ *                  how sharing models rot into everyone-sees-everything)
  */
 const DEFAULT_SHARING_RULES = {
   rules: [] as Array<{
@@ -1204,9 +1233,10 @@ const DEFAULT_SHARING_RULES = {
     name: string;
     module: string;
     isActive: boolean;
-    sharedFrom: { type: 'user' | 'all'; ids?: string[] };
-    shareWith: { type: 'user' | 'role'; ids: string[] };
+    sharedFrom: { type: 'user' | 'group' | 'org_unit' | 'all'; ids?: string[] };
+    shareWith: { type: 'user' | 'group' | 'role'; ids: string[] };
     accessLevel: 'read_only' | 'read_write';
+    expiresAt?: string | null;
   }>,
 };
 

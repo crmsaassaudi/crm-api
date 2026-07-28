@@ -6,6 +6,7 @@ import { Deal } from '../../../../domain/deal';
 import { DealMapper } from '../mappers/deal.mapper';
 import { ClsService } from 'nestjs-cls';
 import { BaseDocumentRepository } from '../../../../../utils/persistence/document-repository.abstract';
+import { VisibilityModule } from '../../../../../common/permissions/visibility-modules';
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
 import { pagination } from '../../../../../utils/pagination';
@@ -23,6 +24,11 @@ export class DealRepository extends BaseDocumentRepository<
     cls: ClsService,
   ) {
     super(dealModel, cls);
+  }
+
+  /** Tagged so a tenant can scope deals differently from other modules. */
+  protected visibilityModule(): VisibilityModule {
+    return 'Deal';
   }
 
   protected mapToDomain(doc: DealSchemaClass): Deal {
