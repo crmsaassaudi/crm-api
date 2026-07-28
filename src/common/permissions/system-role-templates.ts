@@ -176,6 +176,41 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     dynamic: 'all_view',
   },
   {
+    systemKey: 'sys.auditor',
+    name: 'Auditor',
+    description:
+      'Read every record in the workspace — no owner, unit or channel scope — and change nothing. For compliance reviewers and heads of function who need the full picture without the power to administer users or billing.',
+    color: '#0ea5e9',
+    version: 1,
+    // Gated so the role only appears where an operator has actually granted the
+    // full-read feature. Without the gate a tenant would see an "Auditor" role
+    // whose defining permission the engine silently drops — the exact
+    // looks-like-a-bug outcome `requiresFeature` exists to prevent.
+    requiresFeature: 'all_data:view',
+    // `all_data:view` widens READ BREADTH only; every module still checks its
+    // own `:view`, which is why they are listed alongside it rather than
+    // assumed. Deliberately no create/edit/delete anywhere: an auditor who can
+    // change what they audit is not an auditor.
+    permissions: [
+      'all_data:view',
+      'contacts:view',
+      'leads:view',
+      'accounts:view',
+      'deals:view',
+      'tickets:view',
+      'tasks:view',
+      'omni_channel:view',
+      'reports:view',
+      'reports:contact:view',
+      'reports:deal:view',
+      'reports:ticket:view',
+      'audit_logs:view',
+      'org_units:view',
+      'groups:view',
+      'users:view',
+    ],
+  },
+  {
     systemKey: 'sys.marketing',
     name: 'Marketing',
     description: 'Plan and launch campaigns, manage the content library.',
