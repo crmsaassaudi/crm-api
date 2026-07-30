@@ -4,6 +4,7 @@ import { OmniPayload } from '../domain/omni-payload';
 import {
   OmniEvents,
   ReplyAutoAssignEvent,
+  BotEndedEvent,
   BotHandoffEvent,
 } from '../domain/omni-events';
 import { ConversationRepository } from '../repositories/conversation.repository';
@@ -16,6 +17,7 @@ import { AgentPresenceService } from './agent-presence.service';
 import { AutoResolveService } from './auto-resolve.service';
 import { BusinessHoursService } from './business-hours.service';
 import { BotQueueService } from '../bot/bot-queue.service';
+import { shouldReleaseToHumanOnBotEnd } from '../bot/bot-end-policy';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
 import { ConversationBotState, BotMode } from '../domain/omni-conversation';
 
@@ -759,6 +761,74 @@ export class InboundOrchestrationService {
       // Non-blocking — handoff must still complete even if assignment fails
       this.logger.error(
         `[BOT-HANDOFF] Auto-assignment failed for conv=${conversationId}: ${err.message}`,
+        err.stack,
+      );
+    }
+  }
+
+  /**
+   * Bot session ended WITHOUT a handoff — flow ran to completion, or the channel
+   * has no flow bound at all.
+   *
+   * In `bot_first` mode assignment was deferred at conversation creation, so the
+   * conversation would otherwise stay with no bot and no agent: the customer's
+   * next message is skipped by the bot processor and never reaches a human.
+   * `bot_only` deliberately keeps conversations away from agents — except when
+   * there is no flow at all, where leaving it unassigned helps nobody.
+   */
+  @OnEvent(OmniEvents.BOT_ENDED)
+  async handleBotEnded(event: BotEndedEvent): Promise<void> {
+    const { tenantId, conversationId, channelType, channelAccount, contactId } =
+      event;
+
+    try {
+      const botConfig = await this.getChannelBotConfig(
+        tenantId,
+        channelType,
+        channelAccount,
+      );
+
+      const shouldAssign = shouldReleaseToHumanOnBotEnd(
+        botConfig.botMode,
+        event.reason,
+      );
+
+      if (!shouldAssign) {
+        this.logger.log(
+          `[BOT-ENDED] No deferred assignment for conv=${conversationId} ` +
+            `(botMode=${botConfig.botMode}, reason=${event.reason})`,
+        );
+        return;
+      }
+
+      this.logger.log(
+        `[BOT-ENDED] Releasing conv=${conversationId} to a human ` +
+          `(reason=${event.reason}, botMode=${botConfig.botMode})`,
+      );
+
+      const syntheticPayload = {
+        tenantId,
+        channelType,
+        channelAccount,
+        senderId: '',
+        channelId: '',
+        externalConversationId: '',
+        content: '',
+        messageType: 'text',
+        senderType: 'customer',
+        timestamp: new Date(),
+        metadata: {},
+      } as OmniPayload;
+
+      await this.triggerAutoAssignment(
+        syntheticPayload,
+        conversationId,
+        contactId,
+        `bot_ended_${event.reason}`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `[BOT-ENDED] Deferred assignment failed for conv=${conversationId}: ${err.message}`,
         err.stack,
       );
     }

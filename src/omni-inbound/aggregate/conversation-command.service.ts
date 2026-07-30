@@ -101,6 +101,7 @@ export class ConversationCommandService {
         handoffMeta: event.handoffMeta,
         sessionId: event.sessionId,
         status: event.status,
+        endReason: event.endReason,
         inboundMessageId: event.inboundMessageId,
         afterTimestamp: event.afterTimestamp,
       },

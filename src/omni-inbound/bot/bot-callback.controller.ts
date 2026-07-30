@@ -56,7 +56,7 @@ export class BotCallbackController {
 
     const { conversationId, org } = payload;
     // Message bodies are customer content — log shape, never text.
-    this.logger.log(
+    this.logger.debug(
       `[BOT-CALLBACK] ▶ Received callback — conv=${conversationId}, org=${org}, ` +
         `inboundMsg=${payload.inboundMessageId}, sessionId=${payload.sessionId}, ` +
         `status=${payload.status}, handoff=${!!payload.handoff}, ` +
@@ -81,9 +81,9 @@ export class BotCallbackController {
         throw new ForbiddenException('Tenant mismatch');
       }
 
-      this.logger.log(
+      this.logger.debug(
         `[BOT-CALLBACK] Conversation validated — channel=${conversation.channelType}, ` +
-          `status=${conversation.status}, bot=${JSON.stringify(conversation.bot ?? null)}`,
+          `status=${conversation.status}, botStatus=${conversation.bot?.status}`,
       );
 
       // 2. Resolve afterTimestamp from inbound message for causal ordering
@@ -109,13 +109,14 @@ export class BotCallbackController {
         handoffMeta: payload.handoffMeta,
         sessionId: payload.sessionId,
         status: payload.status ?? 'active',
+        endReason: payload.endReason,
         inboundMessageId: payload.inboundMessageId,
         afterTimestamp,
       };
 
       this.eventEmitter.emit(BOT_GENERATED_REPLY_EVENT, event);
 
-      this.logger.log(
+      this.logger.debug(
         `[BOT-CALLBACK] ✓ Emitted ${BOT_GENERATED_REPLY_EVENT} — conv=${conversationId}, ` +
           `msgs=${event.messages.length}, handoff=${event.handoff}`,
       );

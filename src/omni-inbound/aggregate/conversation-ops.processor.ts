@@ -350,6 +350,7 @@ export class ConversationOpsProcessor
       handoffMeta,
       sessionId,
       status,
+      endReason,
       inboundMessageId,
       afterTimestamp,
     } = cmd.payload;
@@ -418,7 +419,43 @@ export class ConversationOpsProcessor
 
     if (handoff) {
       await this.handleBotHandoff(cmd, handoffMeta);
+    } else if (status === 'ended') {
+      await this.handleBotEnded(cmd, endReason, sessionId);
     }
+  }
+
+  /**
+   * A bot session that ends without a handoff still has to release the
+   * conversation: in `bot_first` mode auto-assignment was deferred when the
+   * conversation was created, so without this the conversation is left with no
+   * bot and no agent and the customer's next message goes nowhere.
+   */
+  private async handleBotEnded(
+    cmd: ConversationCommand & { payload: BotReplyPayload },
+    endReason: BotReplyPayload['endReason'],
+    sessionId: string | undefined,
+  ): Promise<void> {
+    const conversation = await this.conversationRepo.findById(
+      cmd.conversationId,
+    );
+    if (!conversation) return;
+
+    await this.saveAndPublishOutboxEvent(
+      cmd.conversationId,
+      cmd.tenantId,
+      OmniEvents.BOT_ENDED,
+      {
+        tenantId: cmd.tenantId,
+        conversationId: cmd.conversationId,
+        channelType: conversation.channelType,
+        channelAccount:
+          conversation.channelAccount ?? conversation.channelId?.toString(),
+        contactId: conversation.contactId ?? null,
+        inboundMessageId: cmd.payload.inboundMessageId,
+        sessionId,
+        reason: endReason ?? 'flow_completed',
+      },
+    );
   }
 
   private async sendBotMessages(

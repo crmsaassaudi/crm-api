@@ -117,6 +117,11 @@ export class BotCallbackDto {
   @IsIn(['active', 'handoff', 'ended'])
   status!: 'active' | 'handoff' | 'ended';
 
+  /** Only meaningful when status is `ended` — see BotEndedEvent. */
+  @IsOptional()
+  @IsIn(['flow_completed', 'no_flow_bound'])
+  endReason?: 'flow_completed' | 'no_flow_bound';
+
   @IsBoolean()
   handoff!: boolean;
 
