@@ -13,14 +13,26 @@ export class RedisIoAdapter extends IoAdapter {
     super(app);
   }
 
+  /**
+   * Time budget for the Socket.IO Redis adapter connection.
+   *
+   * This runs during bootstrap, before `app.listen()`. Without a deadline a Redis
+   * endpoint that accepts the TCP connection but never completes the handshake
+   * (a DROP rule, a wrong port, a half-open NAT) leaves the process alive,
+   * listening on nothing, logging nothing — the container reports "Up" while
+   * every request 502s. Failing loudly is strictly better.
+   */
+  private static readonly CONNECT_TIMEOUT_MS = 15_000;
+
   async connectToRedis(): Promise<void> {
     const configService = this.app.get(ConfigService);
+    const host =
+      configService.get<string>('redis.host', { infer: true }) ?? 'localhost';
+    const port =
+      configService.get<number>('redis.port', { infer: true }) ?? 6379;
     const redisOptions = {
-      host:
-        configService.get<string>('redis.host', {
-          infer: true,
-        }) ?? 'localhost',
-      port: configService.get<number>('redis.port', { infer: true }) ?? 6379,
+      host,
+      port,
       password:
         configService.get<string>('redis.password', {
           infer: true,
@@ -31,16 +43,39 @@ export class RedisIoAdapter extends IoAdapter {
     const pubClient = new Redis(redisOptions);
     const subClient = pubClient.duplicate();
 
-    await Promise.all([
+    const waitForReady = (client: Redis, label: string) =>
       new Promise<void>((resolve, reject) => {
-        pubClient.once('ready', resolve);
-        pubClient.once('error', reject);
-      }),
-      new Promise<void>((resolve, reject) => {
-        subClient.once('ready', resolve);
-        subClient.once('error', reject);
-      }),
-    ]);
+        const timer = setTimeout(() => {
+          reject(
+            new Error(
+              `Socket.IO Redis adapter (${label}) not ready after ` +
+                `${RedisIoAdapter.CONNECT_TIMEOUT_MS}ms — host=${host} port=${port}`,
+            ),
+          );
+        }, RedisIoAdapter.CONNECT_TIMEOUT_MS);
+
+        client.once('ready', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        client.once('error', (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+      });
+
+    try {
+      await Promise.all([
+        waitForReady(pubClient, 'pub'),
+        waitForReady(subClient, 'sub'),
+      ]);
+    } catch (error) {
+      // Release the sockets so the failure does not leave two retrying clients
+      // behind for the lifetime of the process.
+      pubClient.disconnect();
+      subClient.disconnect();
+      throw error;
+    }
 
     this.adapterConstructor = createAdapter(pubClient, subClient);
   }

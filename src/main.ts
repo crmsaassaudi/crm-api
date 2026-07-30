@@ -37,13 +37,20 @@ async function bootstrap() {
   const configService = app.get(ConfigService<AllConfigType>);
   const isProduction = process.env.NODE_ENV === 'production';
 
+  // Phase logging: everything between "dependencies initialized" and
+  // "is running on port" used to be silent, so a stall here was indistinguishable
+  // from a crash — the container just sat there answering nothing.
+  Logger.log('Connecting Socket.IO Redis adapter...', 'Bootstrap');
   await setupWebSocket(app);
+  Logger.log('Socket.IO Redis adapter ready', 'Bootstrap');
+
   setupSecurityHeaders(app);
   setupWidgetCors(app);
   setupGlobalCors(app, configService, isProduction);
   setupGlobalMiddleware(app, AppModule);
   setupGlobalFiltersAndInterceptors(app);
   setupSwagger(app, configService, isProduction);
+  Logger.log('HTTP pipeline configured, starting listener...', 'Bootstrap');
 
   if (isProduction) {
     runProductionGuards();
