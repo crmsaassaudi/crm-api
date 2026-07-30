@@ -1,21 +1,20 @@
 import {
+  UseGuards,
   Body,
   Controller,
   ForbiddenException,
-  Headers,
   HttpCode,
   Logger,
   Post,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Unprotected } from 'nest-keycloak-connect';
+import { CrmBotInternalSecretGuard } from './crm-bot-internal-secret.guard';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
 import { BotCallbackDto } from './dto/bot-callback.dto';
-import { assertCrmBotInternalSecret } from './internal-secret.util';
 import { BotGeneratedReplyEvent } from '../aggregate/conversation-command.types';
 import { BOT_GENERATED_REPLY_EVENT } from '../aggregate/conversation-ops.constants';
 
@@ -33,12 +32,12 @@ import { BOT_GENERATED_REPLY_EVENT } from '../aggregate/conversation-ops.constan
  * - Allows future bot sources (AI Agent, Flow Builder) to use the same pattern
  * - Ensures all mutations go through the Conversation Aggregate Root
  */
+@UseGuards(CrmBotInternalSecretGuard)
 @Controller({ path: 'bot-callback', version: '1' })
 export class BotCallbackController {
   private readonly logger = new Logger(BotCallbackController.name);
 
   constructor(
-    private readonly configService: ConfigService,
     private readonly cls: ClsService,
     private readonly conversationRepo: ConversationRepository,
     private readonly messageRepo: MessageRepository,
@@ -49,10 +48,8 @@ export class BotCallbackController {
   @Unprotected()
   @HttpCode(200)
   async handleBotCallback(
-    @Headers('x-crm-internal-secret') secret: string,
     @Body() payload: BotCallbackDto,
   ) {
-    assertCrmBotInternalSecret(this.configService, secret);
 
     const { conversationId, org } = payload;
     // Message bodies are customer content — log shape, never text.

@@ -1,16 +1,15 @@
 import {
+  UseGuards,
   BadRequestException,
   Controller,
   Get,
-  Headers,
   Query,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Unprotected } from 'nest-keycloak-connect';
+import { CrmBotInternalSecretGuard } from './crm-bot-internal-secret.guard';
 import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
-import { assertCrmBotInternalSecret } from './internal-secret.util';
 
 /**
  * Internal endpoint for crm-bot Builder to fetch tenant channels.
@@ -19,10 +18,10 @@ import { assertCrmBotInternalSecret } from './internal-secret.util';
  * GET /api/v1/internal/channels?tenantId=xxx
  * Headers: x-crm-internal-secret
  */
+@UseGuards(CrmBotInternalSecretGuard)
 @Controller({ path: 'internal/channels', version: '1' })
 export class InternalChannelsController {
   constructor(
-    private readonly configService: ConfigService,
     private readonly cls: ClsService,
     private readonly channelRepo: ChannelRepository,
   ) {}
@@ -30,10 +29,8 @@ export class InternalChannelsController {
   @Get()
   @Unprotected()
   async listChannels(
-    @Headers('x-crm-internal-secret') secret: string,
     @Query('tenantId') tenantId: string,
   ) {
-    assertCrmBotInternalSecret(this.configService, secret);
 
     if (!tenantId) {
       throw new BadRequestException('tenantId query param is required');

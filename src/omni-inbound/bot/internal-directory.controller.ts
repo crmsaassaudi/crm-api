@@ -1,17 +1,16 @@
 import {
+  UseGuards,
   BadRequestException,
   Controller,
   Get,
-  Headers,
   Query,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Unprotected } from 'nest-keycloak-connect';
+import { CrmBotInternalSecretGuard } from './crm-bot-internal-secret.guard';
 import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
 import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
-import { assertCrmBotInternalSecret } from './internal-secret.util';
 
 /**
  * Internal directory endpoints for the crm-bot Builder's Handoff block, which
@@ -23,10 +22,10 @@ import { assertCrmBotInternalSecret } from './internal-secret.util';
  *
  * Returns only `{ id, name }` — enough to populate a picker, nothing more.
  */
+@UseGuards(CrmBotInternalSecretGuard)
 @Controller({ path: 'internal', version: '1' })
 export class InternalDirectoryController {
   constructor(
-    private readonly configService: ConfigService,
     private readonly cls: ClsService,
     private readonly userRepository: UserRepository,
     private readonly groupRepository: GroupRepository,
@@ -35,10 +34,8 @@ export class InternalDirectoryController {
   @Get('agents')
   @Unprotected()
   async listAgents(
-    @Headers('x-crm-internal-secret') secret: string,
     @Query('tenantId') tenantId: string,
   ): Promise<{ agents: { id: string; name: string }[] }> {
-    assertCrmBotInternalSecret(this.configService, secret);
     this.assertTenantId(tenantId);
 
     return runWithTenantContext(this.cls, tenantId, async () => {
@@ -59,10 +56,8 @@ export class InternalDirectoryController {
   @Get('groups')
   @Unprotected()
   async listGroups(
-    @Headers('x-crm-internal-secret') secret: string,
     @Query('tenantId') tenantId: string,
   ): Promise<{ groups: { id: string; name: string }[] }> {
-    assertCrmBotInternalSecret(this.configService, secret);
     this.assertTenantId(tenantId);
 
     return runWithTenantContext(this.cls, tenantId, async () => {
