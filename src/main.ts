@@ -24,14 +24,52 @@ import helmet from 'helmet';
 import { json, urlencoded } from 'express';
 import { TENANT_HEADER } from './common/tenant/tenant-header.policy';
 
+/**
+ * Reports what the process is still waiting on while bootstrap is unfinished.
+ *
+ * A boot that stalls inside `NestFactory.create()` (an async module factory that
+ * never settles) produces no output at all: Nest logs each module as it finishes,
+ * so the *missing* line is the evidence, and the container just sits there
+ * answering nothing. This turns that silence into a periodic report naming the
+ * pending resource types.
+ */
+function startBootstrapWatchdog(): () => void {
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+    // getActiveResourcesInfo(): e.g. ["TCPSocketWrap", "DNSChannel", "Timeout"]
+    const resources = (
+      process as unknown as { getActiveResourcesInfo?: () => string[] }
+    ).getActiveResourcesInfo?.() ?? [];
+    const counts = resources.reduce<Record<string, number>>((acc, name) => {
+      acc[name] = (acc[name] ?? 0) + 1;
+      return acc;
+    }, {});
+    Logger.warn(
+      `Still starting after ${elapsedSec}s — pending resources: ` +
+        (Object.entries(counts)
+          .map(([name, count]) => `${name}x${count}`)
+          .join(', ') || 'none'),
+      'Bootstrap',
+    );
+  }, 15_000);
+  // Never let the watchdog itself keep the process alive.
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 async function bootstrap() {
+  const stopWatchdog = startBootstrapWatchdog();
+
   const { initSentryIfConfigured } = await import(
     './common/observability/sentry.bootstrap'
   );
   await initSentryIfConfigured();
 
+  Logger.log('Creating Nest application...', 'Bootstrap');
   const { AppModule } = await import('./app.module');
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  Logger.log('Nest application created', 'Bootstrap');
   app.set('trust proxy', 1);
 
   const configService = app.get(ConfigService<AllConfigType>);
@@ -58,6 +96,7 @@ async function bootstrap() {
 
   const port = configService.getOrThrow('app.port', { infer: true });
   await app.listen(port);
+  stopWatchdog();
   Logger.log(`🚀 CRM API is running on port ${port}`, 'Bootstrap');
 }
 
