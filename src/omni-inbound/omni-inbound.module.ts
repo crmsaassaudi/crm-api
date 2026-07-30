@@ -144,6 +144,7 @@ import { LivechatModule } from '../livechat/livechat.module';
 // Phase 1: Conversation Aggregate — sequential command processing
 import { ConversationOpsModule } from './aggregate/conversation-ops.module';
 import { ConversationOpsProcessor } from './aggregate/conversation-ops.processor';
+import { CONVERSATION_OPS_PROCESSOR } from './aggregate/conversation-ops.constants';
 import { ConversationCommandService } from './aggregate/conversation-command.service';
 import { GroupsModule } from '../groups/groups.module';
 import { TagsModule } from '../tags/tags.module';
@@ -352,6 +353,13 @@ const workerProviders =
     // Note: RedisLockService + IOREDIS_CLIENT come from RedisModule (already imported).
     ConversationCommandService,
     ConversationOpsProcessor,
+    // Alias so ConversationCommandService can inject the processor by token and
+    // keep its import type-only — the class import closed a runtime require
+    // cycle that crashed the API at boot. See CONVERSATION_OPS_PROCESSOR.
+    {
+      provide: CONVERSATION_OPS_PROCESSOR,
+      useExisting: ConversationOpsProcessor,
+    },
 
     // ── Pillar 7: Notes ───────────────────────────────────────────
     NoteRepository,

@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { OnEvent } from '@nestjs/event-emitter';
@@ -17,8 +17,9 @@ import {
   CONV_OPS_QUEUE,
   CONV_OPS_MAX_ATTEMPTS,
   BOT_GENERATED_REPLY_EVENT,
+  CONVERSATION_OPS_PROCESSOR,
 } from './conversation-ops.constants';
-import { ConversationOpsProcessor } from './conversation-ops.processor';
+import type { ConversationOpsProcessor } from './conversation-ops.processor';
 
 /**
  * ConversationCommandService — builds and enqueues typed commands
@@ -37,7 +38,8 @@ export class ConversationCommandService {
 
   constructor(
     @InjectQueue(CONV_OPS_QUEUE) private readonly opsQueue: Queue,
-    @Inject(forwardRef(() => ConversationOpsProcessor))
+    // Injected by token, not by class: see CONVERSATION_OPS_PROCESSOR.
+    @Inject(CONVERSATION_OPS_PROCESSOR)
     private readonly processor: ConversationOpsProcessor,
   ) {}
 
