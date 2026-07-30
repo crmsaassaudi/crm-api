@@ -74,6 +74,11 @@ export interface BotReplyPayload {
   };
   sessionId?: string;
   status: 'active' | 'handoff' | 'ended';
+  /**
+   * Why an `ended` session ended. `no_flow_bound` means the channel has no bot
+   * flow at all, which must still release the conversation to a human.
+   */
+  endReason?: 'flow_completed' | 'no_flow_bound';
   inboundMessageId: string;
   /** providerTimestamp from triggering customer message — bot replies sort after this */
   afterTimestamp?: number;
@@ -116,6 +121,11 @@ export interface BotGeneratedReplyEvent {
   };
   sessionId?: string;
   status: 'active' | 'handoff' | 'ended';
+  /**
+   * Why an `ended` session ended. `no_flow_bound` means the channel has no bot
+   * flow at all, which must still release the conversation to a human.
+   */
+  endReason?: 'flow_completed' | 'no_flow_bound';
   inboundMessageId: string;
   /** providerTimestamp from triggering customer message */
   afterTimestamp?: number;

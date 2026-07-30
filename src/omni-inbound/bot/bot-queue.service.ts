@@ -14,24 +14,25 @@ export class BotQueueService {
   ) {}
 
   async enqueueInboundMessage(data: BotProcessingJobData): Promise<void> {
-    this.logger.log(
+    // Customer message bodies never go to the log — shape only.
+    this.logger.debug(
       `[BOT-QUEUE] Received enqueue request — conv=${data.conversationId}, msg=${data.messageId}, ` +
-        `channel=${data.channel}, text="${(data.text || '').substring(0, 50)}", messageType=${data.messageType}`,
+        `channel=${data.channel}, textLen=${data.text?.length ?? 0}, messageType=${data.messageType}`,
     );
 
     // Media messages may have empty text (caption) — allow them through
     const hasContent =
       data.text?.trim() || (data.messageType && data.messageType !== 'text');
     if (!hasContent) {
-      this.logger.log(
-        `[BOT-QUEUE] ✗ SKIP — empty content for msg=${data.messageId}, text="${data.text}", messageType=${data.messageType}`,
+      this.logger.debug(
+        `[BOT-QUEUE] ✗ SKIP — empty content for msg=${data.messageId}, messageType=${data.messageType}`,
       );
       return;
     }
 
     const jobId = `bot-${data.tenantId}-${data.messageId}`;
     await this.botQueue.add('process-bot-message', data, { jobId });
-    this.logger.log(
+    this.logger.debug(
       `[BOT-QUEUE] ✓ Job ADDED — jobId=${jobId}, conv=${data.conversationId}`,
     );
   }

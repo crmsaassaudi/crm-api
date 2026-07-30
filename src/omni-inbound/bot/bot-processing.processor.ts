@@ -35,9 +35,10 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
 
   protected async handle(job: Job<BotProcessingJobData>): Promise<void> {
     const data = job.data;
-    this.logger.log(
+    // Customer message bodies never go to the log — shape only.
+    this.logger.debug(
       `[BOT-PROCESSOR] ▶ Processing job ${job.id} — conv=${data.conversationId}, msg=${data.messageId}, ` +
-        `channel=${data.channel}, text="${(data.text || '').substring(0, 50)}"`,
+        `channel=${data.channel}, textLen=${data.text?.length ?? 0}`,
     );
 
     // 1. Validate conversation state
@@ -60,9 +61,9 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
     }
 
     const bot = conversation.bot;
-    this.logger.log(
+    this.logger.debug(
       `[BOT-PROCESSOR] Conversation state: status=${conversation.status}, ` +
-        `bot=${JSON.stringify(bot ?? null)}`,
+        `botEnabled=${bot?.enabled}, botStatus=${bot?.status}`,
     );
 
     const isDone =
@@ -72,7 +73,7 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
       bot?.status === 'ended';
 
     if (!bot?.enabled || isDone) {
-      this.logger.log(
+      this.logger.debug(
         `[BOT-PROCESSOR] ✗ SKIP — bot.enabled=${bot?.enabled}, isDone=${isDone} ` +
           `(conv.status=${conversation.status}, bot.status=${bot?.status}), job=${job.id}`,
       );
@@ -86,9 +87,9 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
     // 3. Fire-and-forget to crm-bot
     try {
       const callbackUrl = this.botApi.resolveCallbackUrl();
-      this.logger.log(
+      this.logger.debug(
         `[BOT-PROCESSOR] Dispatching to crm-bot — conv=${data.conversationId}, ` +
-          `sessionId=${bot.sessionId}, callbackUrl=${callbackUrl}`,
+          `sessionId=${bot.sessionId}`,
       );
 
       const result = await this.botApi.dispatch({
@@ -105,13 +106,13 @@ export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobD
       });
 
       if (result.duplicate) {
-        this.logger.log(
+        this.logger.debug(
           `[BOT-PROCESSOR] Bot reported DUPLICATE for msg=${data.messageId} — skipping`,
         );
         return;
       }
 
-      this.logger.log(
+      this.logger.debug(
         `[BOT-PROCESSOR] ✓ Bot ACCEPTED request for conv=${data.conversationId}, msg=${data.messageId}`,
       );
     } catch (error) {

@@ -65,6 +65,7 @@ export interface BotCallbackPayload {
   inboundMessageId: string;
   sessionId?: string;
   status: 'active' | 'handoff' | 'ended';
+  endReason?: 'flow_completed' | 'no_flow_bound';
   handoff: boolean;
   messages: BotReplyMessage[];
   handoffMeta?: {

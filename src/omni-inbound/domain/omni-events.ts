@@ -74,6 +74,13 @@ export const OmniEvents = {
   // ── Bot Lifecycle ────────────────────────────────────────────────────────
   /** Bot handed off conversation to human agent — trigger auto-assignment */
   BOT_HANDOFF: 'omni.bot.handoff',
+  /**
+   * Bot session finished WITHOUT a handoff (flow ran to its end, or no flow is
+   * bound to the channel). In `bot_first` mode auto-assignment was deferred at
+   * conversation creation, so this event is what releases the conversation to a
+   * human — otherwise it would sit with no bot and no agent.
+   */
+  BOT_ENDED: 'omni.bot.ended',
   /** Bot disabled on conversation (agent takeover or explicit toggle) */
   BOT_DISABLED: 'omni.bot.disabled',
   /** Bot re-enabled on conversation (agent undoes takeover) */
@@ -344,6 +351,18 @@ export interface BotHandoffEvent extends OmniEventBase {
     targetId: string | null;
     message: string | null;
   };
+}
+
+/** omni.bot.ended — Bot session finished without handing off */
+export interface BotEndedEvent extends OmniEventBase {
+  conversationId: string;
+  channelType: string;
+  channelAccount: string;
+  contactId: string | null;
+  inboundMessageId?: string;
+  sessionId?: string;
+  /** Why the session ended — `no_flow_bound` means the channel has no bot flow. */
+  reason: 'flow_completed' | 'no_flow_bound';
 }
 
 /** omni.reaction.inbound */

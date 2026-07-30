@@ -20,7 +20,7 @@ export class BotApiService {
       infer: true,
     });
 
-    this.logger.log(
+    this.logger.debug(
       `[BOT-API] Dispatching to crm-bot: endpoint=${endpoint}, ` +
         `conv=${payload.conversationId}, msg=${payload.inboundMessageId}, ` +
         `sessionId=${payload.sessionId}, channel=${payload.channel}`,
@@ -28,16 +28,24 @@ export class BotApiService {
 
     try {
       const response = await axios.post<BotAcceptResponse>(endpoint, payload, {
-        timeout: 3000, // Only waiting for acceptance, not processing
+        // Only waiting for acceptance, not processing — but the bot node also
+        // runs Postgres and (today) image builds, so 3s produced avoidable
+        // retries. BullMQ still retries on failure (attempts: 8).
+        timeout: Number(
+          this.configService.get<string>('CRM_BOT_TIMEOUT_MS', {
+            infer: true,
+          }) ?? 8000,
+        ),
         headers: {
           'content-type': 'application/json',
           ...(secret ? { 'x-crm-internal-secret': secret } : {}),
         },
       });
 
-      this.logger.log(
+      this.logger.debug(
         `[BOT-API] ✓ crm-bot response: status=${response.status}, ` +
-          `data=${JSON.stringify(response.data)}, conv=${payload.conversationId}`,
+          `accepted=${response.data?.accepted}, duplicate=${response.data?.duplicate}, ` +
+          `conv=${payload.conversationId}`,
       );
 
       return response.data;
