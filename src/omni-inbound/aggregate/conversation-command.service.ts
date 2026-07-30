@@ -38,9 +38,14 @@ export class ConversationCommandService {
 
   constructor(
     @InjectQueue(CONV_OPS_QUEUE) private readonly opsQueue: Queue,
-    // Injected by token, not by class: see CONVERSATION_OPS_PROCESSOR.
+    /**
+     * Resolved on first use, not injected. The processor depends on this service
+     * transitively (via assignment -> work-distribution), so taking it as a
+     * constructor dependency puts a cycle in the bootstrap path — see
+     * CONVERSATION_OPS_PROCESSOR.
+     */
     @Inject(CONVERSATION_OPS_PROCESSOR)
-    private readonly processor: ConversationOpsProcessor,
+    private readonly resolveProcessor: () => ConversationOpsProcessor,
   ) {}
 
   /**
@@ -239,7 +244,7 @@ export class ConversationCommandService {
     this.logger.debug(
       `[CONV-CMD] Inline ASSIGN_AGENT op=${operationId} conv=${conversationId} agent=${payload.agentId}`,
     );
-    return this.processor.executeInline(cmd);
+    return this.resolveProcessor().executeInline(cmd);
   }
 
   /**
@@ -263,7 +268,7 @@ export class ConversationCommandService {
     this.logger.debug(
       `[CONV-CMD] Inline CHANGE_STATUS op=${operationId} conv=${conversationId} status=${payload.newStatus}`,
     );
-    return this.processor.executeInline(cmd);
+    return this.resolveProcessor().executeInline(cmd);
   }
 
   /**
@@ -287,7 +292,7 @@ export class ConversationCommandService {
     this.logger.debug(
       `[CONV-CMD] Inline UPDATE_BOT_STATE op=${operationId} conv=${conversationId} reason=${payload.reason}`,
     );
-    return this.processor.executeInline(cmd);
+    return this.resolveProcessor().executeInline(cmd);
   }
 
   /**

@@ -144,6 +144,7 @@ import { LivechatModule } from '../livechat/livechat.module';
 // Phase 1: Conversation Aggregate — sequential command processing
 import { ConversationOpsModule } from './aggregate/conversation-ops.module';
 import { ConversationOpsProcessor } from './aggregate/conversation-ops.processor';
+import { ModuleRef } from '@nestjs/core';
 import { CONVERSATION_OPS_PROCESSOR } from './aggregate/conversation-ops.constants';
 import { ConversationCommandService } from './aggregate/conversation-command.service';
 import { GroupsModule } from '../groups/groups.module';
@@ -353,12 +354,22 @@ const workerProviders =
     // Note: RedisLockService + IOREDIS_CLIENT come from RedisModule (already imported).
     ConversationCommandService,
     ConversationOpsProcessor,
-    // Alias so ConversationCommandService can inject the processor by token and
-    // keep its import type-only — the class import closed a runtime require
-    // cycle that crashed the API at boot. See CONVERSATION_OPS_PROCESSOR.
+    // Lets ConversationCommandService reach the processor while keeping its
+    // import type-only (a class import closes a runtime require cycle).
+    //
+    // A thunk, NOT `useExisting`: the processor sits in a DI cycle
+    //   processor -> assignment -> work-distribution -> command service -> processor
+    // and an alias is resolved eagerly at module init, so Nest would try to
+    // resolve the processor while it is still being constructed and wait on a
+    // promise that never settles — OmniInboundModule never finishes initialising
+    // and the API never listens. Deferring to first use keeps the cycle out of
+    // bootstrap entirely (the same trick ConversationOpsProcessor already uses
+    // for InboundOrchestrationService via ModuleRef).
     {
       provide: CONVERSATION_OPS_PROCESSOR,
-      useExisting: ConversationOpsProcessor,
+      useFactory: (moduleRef: ModuleRef) => () =>
+        moduleRef.get(ConversationOpsProcessor, { strict: false }),
+      inject: [ModuleRef],
     },
 
     // ── Pillar 7: Notes ───────────────────────────────────────────
