@@ -33,6 +33,54 @@ import { TENANT_HEADER } from './common/tenant/tenant-header.policy';
  * answering nothing. This turns that silence into a periodic report naming the
  * pending resource types.
  */
+/**
+ * Groups the process's open sockets by destination.
+ *
+ * Resource *types* alone ("TCPSocketWrapx53") do not say which dependency is not
+ * answering. The destination port does: 27017 is Mongo, 6379 Redis, 8080/443 the
+ * IdP. Uses the internal handle list — guarded, and diagnostics only.
+ */
+function summarizePendingSockets(): string {
+  try {
+    const handles =
+      (
+        process as unknown as {
+          _getActiveHandles?: () => unknown[];
+        }
+      )._getActiveHandles?.() ?? [];
+
+    const counts = new Map<string, number>();
+    for (const handle of handles) {
+      const socket = handle as {
+        remoteAddress?: string;
+        remotePort?: number;
+        connecting?: boolean;
+        readyState?: string;
+        _host?: string;
+      };
+      if (socket.remotePort === undefined && socket._host === undefined) continue;
+
+      const target =
+        socket.remoteAddress !== undefined && socket.remotePort !== undefined
+          ? `${socket.remoteAddress}:${socket.remotePort}`
+          : `${socket._host ?? 'unknown'}:?`;
+      const state = socket.connecting
+        ? 'connecting'
+        : (socket.readyState ?? 'unknown');
+      const key = `${target}(${state})`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+
+    if (counts.size === 0) return 'none';
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([key, count]) => `${key}x${count}`)
+      .join(', ');
+  } catch (error) {
+    return `unavailable (${error instanceof Error ? error.message : 'unknown'})`;
+  }
+}
+
 function startBootstrapWatchdog(): () => void {
   const startedAt = Date.now();
   const timer = setInterval(() => {
@@ -49,7 +97,8 @@ function startBootstrapWatchdog(): () => void {
       `Still starting after ${elapsedSec}s — pending resources: ` +
         (Object.entries(counts)
           .map(([name, count]) => `${name}x${count}`)
-          .join(', ') || 'none'),
+          .join(', ') || 'none') +
+        ` | sockets: ${summarizePendingSockets()}`,
       'Bootstrap',
     );
   }, 15_000);
