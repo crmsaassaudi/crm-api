@@ -111,12 +111,17 @@ export class ContactTimelineService {
       wanted.has('conversation')
         ? this.fetchConversations(tenantId, oid)
         : empty(),
+      wanted.has('stage_change')
+        ? this.fetchStageTransitions(tenantId, oid)
+        : empty(),
     ]);
 
     // Stage history is embedded on the contact we already loaded — no query.
-    const stageEntries = wanted.has('stage_change')
-      ? this.mapStageHistory(contact)
-      : [];
+    const projectedStages = results.at(-1) ?? [];
+    const stageEntries =
+      wanted.has('stage_change') && projectedStages.length === 0
+        ? this.mapStageHistory(contact)
+        : [];
 
     const merged = [...results.flat(), ...stageEntries].sort(
       (a, b) =>
@@ -329,6 +334,43 @@ export class ContactTimelineService {
    * Folding them in here is what makes the feed a lifecycle story rather than a
    * list of attachments.
    */
+  private async fetchStageTransitions(
+    tenantId: string,
+    contactId: Types.ObjectId,
+  ): Promise<TimelineEntry[]> {
+    const rows = await this.find('contact_stage_transitions', {
+      filter: { tenantId: toId(tenantId), contactId },
+      projection: {
+        fromStage: 1,
+        toStage: 1,
+        occurredAt: 1,
+        changedById: 1,
+        reason: 1,
+        direction: 1,
+        skippedStages: 1,
+      },
+      sort: { occurredAt: -1 },
+    });
+
+    return rows.map((row) => ({
+      id: String(row._id),
+      source: 'stage_change' as const,
+      type: 'stage_change',
+      occurredAt: row.occurredAt,
+      actorId: row.changedById ? String(row.changedById) : null,
+      title: row.fromStage
+        ? `${String(row.fromStage)} → ${String(row.toStage)}`
+        : `Entered ${String(row.toStage)}`,
+      meta: {
+        fromStage: row.fromStage,
+        toStage: row.toStage,
+        direction: row.direction,
+        reason: row.reason,
+        skippedStages: row.skippedStages,
+      },
+    }));
+  }
+
   private mapStageHistory(contact: {
     id: string;
     stageHistory?: Array<{

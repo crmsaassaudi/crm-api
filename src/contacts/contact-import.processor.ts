@@ -37,6 +37,7 @@ import {
   normalizePhone,
   splitMultiValue,
 } from '../common/identity/identity-normalizer';
+import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
 
 // ── Module config ──────────────────────────────────────────────────
 
@@ -121,6 +122,7 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     private readonly storageFactory: ImportStorageFactory,
     private readonly lockService: RedisLockService,
     private readonly automationOutbox: AutomationOutboxService,
+    private readonly identitySync: ContactIdentitySyncService,
     cls: ClsService,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectModel(ImportJobSchemaClass.name)
@@ -157,6 +159,31 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
   }
   protected getImportJobModel(): Model<any> {
     return this.importJobModel;
+  }
+
+  protected async afterBatchWrite(
+    affected: Array<{
+      id?: string;
+      type: 'insert' | 'update';
+      row: number;
+    }>,
+    data: ContactImportJobData,
+  ): Promise<void> {
+    const ids = affected.map((item) => item.id).filter(Boolean) as string[];
+    if (ids.length === 0) return;
+
+    const contacts = await this.contactModel
+      .find({ _id: { $in: ids }, tenantId: data.tenantId })
+      .select({ emails: 1, phones: 1, omniIdentities: 1 })
+      .lean()
+      .exec();
+
+    for (const contact of contacts as any[]) {
+      await this.identitySync.syncFromContact(String(contact._id), contact, {
+        source: 'import',
+        defaultCountryCode: data.tenantSettings.defaultCountryCode,
+      });
+    }
   }
 
   // ── Row mapping ──

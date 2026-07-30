@@ -109,6 +109,42 @@ describe('ContactIdentitySyncService — derive', () => {
   });
 });
 
+describe('ContactIdentitySyncService strict transactional mode', () => {
+  it('should insert rather than upsert so a concurrent owner cannot be stolen', async () => {
+    const { service, bulkWrite } = makeHarness({ existing: [] });
+
+    await service.sync(
+      CONTACT,
+      [{ type: 'email', normalisedValue: 'a@x.com', rawValue: 'a@x.com' }],
+      { strict: true, tenantId: TENANT, userId: 'user-1' },
+    );
+
+    expect(bulkWrite.mock.calls[0][0][0]).toEqual(
+      expect.objectContaining({
+        insertOne: {
+          document: expect.objectContaining({
+            contactId: expect.anything(),
+            normalisedValue: 'a@x.com',
+          }),
+        },
+      }),
+    );
+  });
+
+  it('should propagate a unique-index race so the caller transaction aborts', async () => {
+    const { service, bulkWrite } = makeHarness({ existing: [] });
+    bulkWrite.mockRejectedValueOnce(new Error('E11000 duplicate key'));
+
+    await expect(
+      service.sync(
+        CONTACT,
+        [{ type: 'email', normalisedValue: 'a@x.com', rawValue: 'a@x.com' }],
+        { strict: true, tenantId: TENANT },
+      ),
+    ).rejects.toThrow(ConflictException);
+  });
+});
+
 describe('ContactIdentitySyncService — conflicts', () => {
   it('should report which contact already holds the value', async () => {
     // A raw E11000 cannot name the other contact; that message is the whole reason

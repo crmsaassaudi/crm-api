@@ -61,6 +61,11 @@ import {
   CONTACT_IMPORT_QUEUE,
 } from './contacts.constants';
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
+import {
+  ContactStageTransitionSchema,
+  ContactStageTransitionSchemaClass,
+} from './lifecycle/contact-stage-transition.schema';
+import { ContactStageTransitionListener } from './lifecycle/contact-stage-transition.listener';
 
 const workerProviders = isWorkerRuntime()
   ? [
@@ -84,6 +89,10 @@ const workerProviders = isWorkerRuntime()
       { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
       { name: UserSchemaClass.name, schema: UserSchema },
       { name: ContactMergeSchemaClass.name, schema: ContactMergeSchema },
+      {
+        name: ContactStageTransitionSchemaClass.name,
+        schema: ContactStageTransitionSchema,
+      },
       {
         name: ContactRelationSchemaClass.name,
         schema: ContactRelationSchema,
@@ -154,6 +163,7 @@ const workerProviders = isWorkerRuntime()
     ContactTimelineService,
     ContactRelationsService,
     ContactIdentitySyncService,
+    ContactStageTransitionListener,
     ...workerProviders,
   ],
   exports: [

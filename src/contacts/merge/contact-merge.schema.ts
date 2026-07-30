@@ -5,6 +5,33 @@ import { tenantFilterPlugin } from '../../common/plugins/tenant-filter.plugin';
 
 export type ContactMergeDocument = HydratedDocument<ContactMergeSchemaClass>;
 
+export const CONTACT_MERGE_STATUSES = [
+  'preparing',
+  'reparenting',
+  'completed',
+  'failed',
+  'compensating',
+  'compensated',
+  'reverting',
+  'reverted',
+] as const;
+export type ContactMergeStatus = (typeof CONTACT_MERGE_STATUSES)[number];
+
+export interface ContactMergeJournalDocument {
+  id: string;
+  /** Only used by array references: the survivor was already linked before merge. */
+  targetPresentBefore?: boolean;
+  /** Paired row was suppressed instead of re-parented to avoid self/unique conflict. */
+  softDeletedDuringMerge?: boolean;
+}
+
+export interface ContactMergeJournalEntry {
+  collection: string;
+  field: string;
+  kind: string;
+  documents: ContactMergeJournalDocument[];
+}
+
 /**
  * Ledger of contact merges — one row per merge, written inside the merge itself.
  *
@@ -50,6 +77,19 @@ export class ContactMergeSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   performedById?: string;
 
+  /** Durable saga state. A non-terminal row is repairable by an operator. */
+  @Prop({
+    type: String,
+    enum: CONTACT_MERGE_STATUSES,
+    default: 'preparing',
+    index: true,
+  })
+  status: ContactMergeStatus;
+
+  /** Last failed step/message; deliberately excludes record PII. */
+  @Prop({ type: String })
+  failureReason?: string;
+
   /**
    * Per-field survivorship outcome:
    * `{ field: { chosen, from: 'survivor'|'merged', discarded } }`.
@@ -64,6 +104,14 @@ export class ContactMergeSchemaClass extends EntityDocumentHelper {
   /** `{ collection: rowsMoved }` — the receipt for the re-parent pass. */
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   reparented: Record<string, number>;
+
+  /**
+   * Exact records selected before mutation. Counts are useful for display, but
+   * cannot safely compensate a merge: unmerge must never touch a survivor row
+   * merely because it lives in the same collection.
+   */
+  @Prop({ type: MongooseSchema.Types.Mixed, default: [] })
+  moveJournal: ContactMergeJournalEntry[];
 
   /** Full pre-merge snapshot of the loser, so an unmerge can restore it. */
   @Prop({ type: MongooseSchema.Types.Mixed })
@@ -88,3 +136,4 @@ ContactMergeSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 // "Show me this contact's merge history" — both directions, newest first.
 ContactMergeSchema.index({ tenantId: 1, survivorId: 1, createdAt: -1 });
 ContactMergeSchema.index({ tenantId: 1, mergedId: 1 });
+ContactMergeSchema.index({ tenantId: 1, status: 1, createdAt: 1 });

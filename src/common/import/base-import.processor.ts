@@ -171,6 +171,21 @@ export abstract class BaseImportProcessor<
     // Default: no-op. Override in subclass if needed.
   }
 
+  /**
+   * Optional projection hook after the batch's durable entity writes finish.
+   * Receives only rows that did not fail database persistence.
+   */
+  protected async afterBatchWrite(
+    _affected: Array<{
+      id?: string;
+      type: 'insert' | 'update';
+      row: number;
+    }>,
+    _data: TJobData,
+  ): Promise<void> {
+    // Default: no-op. Contact uses this to reconcile normalized identities.
+  }
+
   // ─────────────────────── LIFECYCLE HOOKS ────────────────────────────
 
   /** Update MongoDB history when a job fails. */
@@ -573,6 +588,11 @@ export abstract class BaseImportProcessor<
         if (meta.type === 'insert') context.summary.inserted--;
         else context.summary.updated--;
       }
+      const failedRows = new Set(failed.map((meta) => meta.row));
+      await this.afterBatchWrite(
+        affected.filter((item) => !failedRows.has(item.row)),
+        data,
+      );
     }
 
     await context.report.appendErrors(errors);

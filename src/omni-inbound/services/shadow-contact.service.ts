@@ -119,7 +119,12 @@ export class ShadowContactService {
     const byIdentityRow = await this.identitySync.findContactByIdentity(
       `${this.toSchemaChannelType(payload.channelType)}:${payload.senderId}`,
     );
-    if (byIdentityRow) return byIdentityRow;
+    if (byIdentityRow) {
+      // Identity rows remain reserved during the recycle-bin window. Never
+      // route a new conversation to a soft-deleted Contact.
+      const liveContact = await this.contactsService.findOne(byIdentityRow);
+      if (liveContact && !liveContact.deletedAt) return byIdentityRow;
+    }
 
     // 1. Email channel: the sender id IS an email address.
     if (payload.channelType === 'email' && payload.senderId) {

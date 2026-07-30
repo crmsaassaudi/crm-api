@@ -339,6 +339,13 @@ export class ContactsController {
     return this.service.unmergeContacts(mergeId);
   }
 
+  /** Operator action for a merge saga that stopped after partial re-parenting. */
+  @Post('merges/:mergeId/recover')
+  @RequirePermission('delete', 'contacts')
+  recoverFailedMerge(@Param('mergeId') mergeId: string) {
+    return this.service.recoverFailedMerge(mergeId);
+  }
+
   @Post(':id/unmask-fields')
   @RequirePermission('unmask', 'contacts')
   @UseAcl('unmask', 'contacts')

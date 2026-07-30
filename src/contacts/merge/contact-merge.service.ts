@@ -20,6 +20,7 @@ import { EntityAuditService } from '../../common/audit/entity-audit.service';
 import {
   ContactMergeSchemaClass,
   ContactMergeDocument,
+  ContactMergeJournalEntry,
 } from './contact-merge.schema';
 import {
   CONTACT_REFERENCES,
@@ -163,89 +164,110 @@ export class ContactMergeService {
     const { update, choices } = resolveSurvivorship(survivor, merged, options);
     const occurredAt = new Date();
 
-    // ── 1. Re-parent first (see the class comment on ordering) ──
-    const reparented = await this.reparentAll(survivorId, mergedId);
-
-    // ── 2. Apply survivorship to the survivor, with a version check ──
-    // The lock serialises merges of this pair but NOT an ordinary PATCH by an
-    // agent who had the contact open. Without the check that edit is silently
-    // overwritten by our pre-merge snapshot.
-    const updated = await this.repository.updateWithVersionCheck(
-      survivorId,
-      survivor.version ?? 0,
-      { ...update, lastActivityAt: occurredAt } as any,
-    );
-    if (!updated) {
-      throw new ConflictException(
-        'The surviving contact was modified while the merge was running. ' +
-          'Reload and try again — related records already moved and will not be moved twice.',
-      );
-    }
-
-    // ── 3. Soft-delete the loser (never a hard delete: unmerge needs it) ──
-    await this.repository.update(mergedId, {
-      deletedAt: occurredAt,
-      lastActivityAt: occurredAt,
-    } as any);
-
-    // ── 4. Ledger ──
+    // ── 1. Journal first, then re-parent (see the class comment on ordering) ──
+    const moveJournal = await this.buildMoveJournal(survivorId, mergedId);
     const ledger = await this.mergeModel.create({
       tenantId: this.tenantId(),
       survivorId,
       mergedId,
       performedById: this.userId(),
+      status: 'preparing',
       fieldChoices: choices,
-      reparented,
+      reparented: {},
+      moveJournal,
       mergedSnapshot: stripVolatile(merged),
     });
 
-    // ── 5. Invalidate the omni identity cache ──
-    // The cache maps a channel thread → contactId with a 24h TTL. Left alone,
-    // inbound messages keep resolving to the contact that no longer exists.
-    await this.invalidateOmniIdentityCache(merged);
+    try {
+      ledger.status = 'reparenting';
+      await ledger.save();
+      const reparented = await this.reparentAll(
+        survivorId,
+        mergedId,
+        moveJournal,
+      );
 
-    // ── 6. Audit + activity ──
-    this.entityAudit.emit({
-      entity: 'contact',
-      entityType: 'CONTACT',
-      entityId: survivorId,
-      kind: 'updated',
-      oldSnapshot: survivor,
-      newSnapshot: updated,
-    });
-    this.eventEmitter.emit('activity.create', {
-      tenantId: this.tenantId(),
-      actorId: this.userId(),
-      targetType: 'contact',
-      targetId: survivorId,
-      event: 'merge',
-      occurredAt,
-      payload: {
+      // ── 2. Apply survivorship to the survivor, with a version check ──
+      // The lock serialises merges of this pair but NOT an ordinary PATCH by an
+      // agent who had the contact open. Without the check that edit is silently
+      // overwritten by our pre-merge snapshot.
+      const updated = await this.repository.updateWithVersionCheck(
+        survivorId,
+        survivor.version ?? 0,
+        { ...update, lastActivityAt: occurredAt } as any,
+      );
+      if (!updated) {
+        throw new ConflictException(
+          'The surviving contact was modified while the merge was running. ' +
+            'Reload and try again — related records already moved and will not be moved twice.',
+        );
+      }
+
+      // ── 3. Soft-delete the loser (never a hard delete: unmerge needs it) ──
+      await this.repository.update(mergedId, {
+        deletedAt: occurredAt,
+        lastActivityAt: occurredAt,
+      } as any);
+
+      // ── 4. Ledger ──
+      ledger.reparented = reparented;
+      ledger.status = 'completed';
+      await ledger.save();
+
+      // ── 5. Invalidate the omni identity cache ──
+      // The cache maps a channel thread → contactId with a 24h TTL. Left alone,
+      // inbound messages keep resolving to the contact that no longer exists.
+      await this.invalidateOmniIdentityCache(merged);
+
+      // ── 6. Audit + activity ──
+      this.entityAudit.emit({
+        entity: 'contact',
+        entityType: 'CONTACT',
+        entityId: survivorId,
+        kind: 'updated',
+        oldSnapshot: survivor,
+        newSnapshot: updated,
+      });
+      this.eventEmitter.emit('activity.create', {
+        tenantId: this.tenantId(),
+        actorId: this.userId(),
+        targetType: 'contact',
+        targetId: survivorId,
+        event: 'merge',
+        occurredAt,
+        payload: {
+          mergedContactId: mergedId,
+          mergeId: String(ledger._id),
+          reparented,
+          emailsAdded: merged.emails ?? [],
+          phonesAdded: merged.phones ?? [],
+        },
+      });
+
+      this.logger.log(
+        `Merged contact ${mergedId} into ${survivorId}: ` +
+          `${
+            Object.entries(reparented)
+              .map(([k, v]) => `${v} ${k}`)
+              .join(', ') || 'no related records'
+          }`,
+      );
+
+      return {
+        success: true,
+        contact: updated,
         mergedContactId: mergedId,
         mergeId: String(ledger._id),
         reparented,
-        emailsAdded: merged.emails ?? [],
-        phonesAdded: merged.phones ?? [],
-      },
-    });
-
-    this.logger.log(
-      `Merged contact ${mergedId} into ${survivorId}: ` +
-        `${
-          Object.entries(reparented)
-            .map(([k, v]) => `${v} ${k}`)
-            .join(', ') || 'no related records'
-        }`,
-    );
-
-    return {
-      success: true,
-      contact: updated,
-      mergedContactId: mergedId,
-      mergeId: String(ledger._id),
-      reparented,
-      fieldChoices: choices,
-    };
+        fieldChoices: choices,
+      };
+    } catch (err) {
+      ledger.status = 'failed';
+      ledger.failureReason =
+        err instanceof Error ? err.message.slice(0, 1000) : String(err);
+      await ledger.save();
+      throw err;
+    }
   }
 
   /**
@@ -274,6 +296,12 @@ export class ContactMergeService {
       `lock:contact:merge:${a}:${b}`,
       30_000,
       async () => {
+        if (!Array.isArray(ledger.moveJournal)) {
+          throw new BadRequestException(
+            'This legacy merge has no exact move journal and cannot be safely reverted',
+          );
+        }
+
         // Restore the loser before moving rows back, so the rows never point at
         // a still-deleted contact. `restore()` UNSETS deletedAt rather than
         // writing null — a null would still be a present field, and the list
@@ -285,13 +313,15 @@ export class ContactMergeService {
           );
         }
 
-        for (const ref of MERGE_REFERENCES) {
-          if (!ledger.reparented?.[ref.collection]) continue;
-          await this.reparentOne(ref, survivorId, mergedId);
+        ledger.status = 'reverting';
+        await ledger.save();
+        for (const entry of ledger.moveJournal) {
+          await this.reverseJournalEntry(entry, survivorId, mergedId);
         }
 
         ledger.revertedAt = new Date();
         ledger.revertedById = this.userId();
+        ledger.status = 'reverted';
         await ledger.save();
 
         this.eventEmitter.emit('activity.create', {
@@ -306,6 +336,65 @@ export class ContactMergeService {
 
         this.logger.log(`Reverted merge ${mergeId}: restored ${mergedId}`);
         return { success: true as const, restoredId: mergedId };
+      },
+    );
+  }
+
+  /**
+   * Compensate a failed, partially-applied merge without guessing.
+   *
+   * Unlike unmerge, the loser may still be live because the failure can occur
+   * before the soft-delete step. The exact journal makes the child compensation
+   * idempotent; survivor scalar values are intentionally not rolled back because
+   * a successful optimistic update may already have been followed by user edits.
+   */
+  async recoverFailed(
+    mergeId: string,
+  ): Promise<{ success: true; status: 'compensated' }> {
+    const ledger = await this.mergeModel.findById(mergeId).exec();
+    if (!ledger) throw new NotFoundException('Merge record not found');
+    if (ledger.status === 'compensated') {
+      return { success: true, status: 'compensated' };
+    }
+    if (ledger.status !== 'failed') {
+      throw new BadRequestException(
+        `Only failed merges can be compensated (current status: ${ledger.status})`,
+      );
+    }
+    if (!Array.isArray(ledger.moveJournal)) {
+      throw new BadRequestException(
+        'This merge has no exact move journal and cannot be safely compensated',
+      );
+    }
+
+    const survivorId = String(ledger.survivorId);
+    const mergedId = String(ledger.mergedId);
+    const [a, b] = [survivorId, mergedId].sort((x, y) => x.localeCompare(y));
+
+    return this.lockService.acquire(
+      `lock:contact:merge:${a}:${b}`,
+      30_000,
+      async () => {
+        ledger.status = 'compensating';
+        await ledger.save();
+        try {
+          for (const entry of ledger.moveJournal) {
+            await this.reverseJournalEntry(entry, survivorId, mergedId);
+          }
+          // Harmless when the loser was never deleted; required when failure
+          // happened after the delete but before the final ledger save.
+          await this.repository.restore(mergedId);
+          ledger.status = 'compensated';
+          ledger.failureReason = undefined;
+          await ledger.save();
+          return { success: true as const, status: 'compensated' as const };
+        } catch (err) {
+          ledger.status = 'failed';
+          ledger.failureReason =
+            err instanceof Error ? err.message.slice(0, 1000) : String(err);
+          await ledger.save();
+          throw err;
+        }
       },
     );
   }
@@ -327,13 +416,121 @@ export class ContactMergeService {
   private async reparentAll(
     survivorId: string,
     mergedId: string,
+    journal: ContactMergeJournalEntry[],
   ): Promise<Record<string, number>> {
     const counts: Record<string, number> = {};
-    for (const ref of MERGE_REFERENCES) {
-      const moved = await this.reparentOne(ref, mergedId, survivorId);
-      if (moved > 0) counts[ref.collection] = moved;
+    for (const entry of journal) {
+      const ref = this.referenceFor(entry);
+      const moved = await this.reparentOne(
+        ref,
+        mergedId,
+        survivorId,
+        entry.documents.map((document) => document.id),
+      );
+      if (moved > 0) {
+        counts[ref.collection] = (counts[ref.collection] ?? 0) + moved;
+      }
     }
     return counts;
+  }
+
+  private async buildMoveJournal(
+    survivorId: string,
+    mergedId: string,
+  ): Promise<ContactMergeJournalEntry[]> {
+    const journal: ContactMergeJournalEntry[] = [];
+    let totalDocuments = 0;
+
+    for (const ref of MERGE_REFERENCES) {
+      const projection = {
+        _id: 1,
+        [ref.field]: 1,
+        ...(ref.pairedWith
+          ? Object.fromEntries(
+              [
+                ref.pairedWith.otherField,
+                ...ref.pairedWith.discriminantFields,
+              ].map((field) => [field, 1]),
+            )
+          : {}),
+      };
+      const rows = await this.connection
+        .collection(ref.collection)
+        .find(buildReferenceFilter(ref, mergedId, this.tenantId()), {
+          projection,
+        })
+        .limit(10_001)
+        .toArray();
+
+      if (rows.length > 10_000) {
+        throw new BadRequestException(
+          `Contact has too many ${ref.label} to merge synchronously`,
+        );
+      }
+      if (rows.length === 0) continue;
+      totalDocuments += rows.length;
+      if (totalDocuments > 10_000) {
+        throw new BadRequestException(
+          'Contact has too many related records to merge synchronously',
+        );
+      }
+      const suppressed = ref.pairedWith
+        ? await this.findSuppressedPairIds(ref, rows, survivorId)
+        : new Set<string>();
+
+      journal.push({
+        collection: ref.collection,
+        field: ref.field,
+        kind: ref.kind,
+        documents: rows.map((row: any) => ({
+          id: String(row._id),
+          ...(ref.kind === 'objectIdArray'
+            ? {
+                targetPresentBefore: Array.isArray(row[ref.field])
+                  ? row[ref.field].some(
+                      (value: unknown) => String(value) === survivorId,
+                    )
+                  : false,
+              }
+            : {}),
+          ...(suppressed.has(String(row._id))
+            ? { softDeletedDuringMerge: true }
+            : {}),
+        })),
+      });
+    }
+
+    return journal;
+  }
+
+  private async findSuppressedPairIds(
+    ref: ContactReference,
+    rows: any[],
+    survivorId: string,
+  ): Promise<Set<string>> {
+    const paired = ref.pairedWith!;
+    const collection = this.connection.collection(ref.collection);
+    const suppressed = new Set<string>();
+
+    for (const row of rows) {
+      if (String(row[paired.otherField]) === survivorId) {
+        suppressed.add(String(row._id));
+        continue;
+      }
+
+      const twin = await collection.findOne({
+        tenantId: new Types.ObjectId(this.tenantId()),
+        [ref.field]: new Types.ObjectId(survivorId),
+        [paired.otherField]: row[paired.otherField],
+        ...Object.fromEntries(
+          paired.discriminantFields.map((field) => [field, row[field]]),
+        ),
+        deletedAt: null,
+      });
+      if (twin) suppressed.add(String(row._id));
+    }
+
+    return suppressed;
   }
 
   /** Move every row referencing `fromId` so it references `toId` instead. */
@@ -341,46 +538,109 @@ export class ContactMergeService {
     ref: ContactReference,
     fromId: string,
     toId: string,
+    documentIds?: string[],
   ): Promise<number> {
     const collection = this.connection.collection(ref.collection);
-    const filter = buildReferenceFilter(ref, fromId, this.tenantId());
+    const filter = {
+      ...buildReferenceFilter(ref, fromId, this.tenantId()),
+      ...(documentIds
+        ? { _id: { $in: documentIds.map((id) => new Types.ObjectId(id)) } }
+        : {}),
+    };
 
-    try {
-      // Paired rows (relationships, affiliations) need conflicts cleared first or
-      // the whole updateMany fails on the unique index — see `pairedWith`.
-      if (ref.pairedWith) {
-        await this.resolvePairConflicts(ref, fromId, toId);
-      }
-
-      if (ref.kind === 'objectIdArray') {
-        // Add the target then drop the source, as two steps: `$set` of the whole
-        // array would clobber other contacts on the same deal/email, and Mongo
-        // rejects `$addToSet` and `$pull` on one field in a single update.
-        const added = await collection.updateMany(filter, {
-          $addToSet: { [ref.field]: new Types.ObjectId(toId) },
-        });
-        await collection.updateMany(
-          { ...filter },
-          { $pull: { [ref.field]: new Types.ObjectId(fromId) } as any },
-        );
-        return added.matchedCount;
-      }
-
-      const result = await collection.updateMany(
-        filter,
-        buildReparentUpdate(ref, toId) as any,
-      );
-      return result.matchedCount;
-    } catch (err) {
-      // A single collection failing must not abandon the merge half-done with no
-      // record of it: log loudly, keep going, and let the ledger show which
-      // collections did move.
-      this.logger.error(
-        `Failed to re-parent ${ref.collection}.${ref.field} from ${fromId} to ${toId}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
-      return 0;
+    // Paired rows (relationships, affiliations) need conflicts cleared first or
+    // the whole updateMany fails on the unique index — see `pairedWith`.
+    if (ref.pairedWith) {
+      await this.resolvePairConflicts(ref, fromId, toId);
     }
+
+    if (ref.kind === 'objectIdArray') {
+      // Add the target then drop the source, as two steps: `$set` of the whole
+      // array would clobber other contacts on the same deal/email, and Mongo
+      // rejects `$addToSet` and `$pull` on one field in a single update.
+      const added = await collection.updateMany(filter, {
+        $addToSet: { [ref.field]: new Types.ObjectId(toId) },
+      });
+      await collection.updateMany(
+        { ...filter },
+        { $pull: { [ref.field]: new Types.ObjectId(fromId) } as any },
+      );
+      return added.matchedCount;
+    }
+
+    const result = await collection.updateMany(
+      filter,
+      buildReparentUpdate(ref, toId) as any,
+    );
+    return result.matchedCount;
+  }
+
+  private referenceFor(entry: ContactMergeJournalEntry): ContactReference {
+    const ref = MERGE_REFERENCES.find(
+      (candidate) =>
+        candidate.collection === entry.collection &&
+        candidate.field === entry.field &&
+        candidate.kind === entry.kind,
+    );
+    if (!ref) {
+      throw new BadRequestException(
+        `Merge journal references unsupported field ${entry.collection}.${entry.field}`,
+      );
+    }
+    return ref;
+  }
+
+  private async reverseJournalEntry(
+    entry: ContactMergeJournalEntry,
+    survivorId: string,
+    mergedId: string,
+  ): Promise<void> {
+    if (entry.documents.length === 0) return;
+    const ref = this.referenceFor(entry);
+    const collection = this.connection.collection(ref.collection);
+    const suppressedIds = entry.documents
+      .filter((document) => document.softDeletedDuringMerge)
+      .map((document) => new Types.ObjectId(document.id));
+    if (suppressedIds.length > 0) {
+      await collection.updateMany(
+        { _id: { $in: suppressedIds } },
+        { $unset: { deletedAt: 1 } },
+      );
+    }
+
+    const ids = entry.documents
+      .filter((document) => !document.softDeletedDuringMerge)
+      .map((document) => new Types.ObjectId(document.id));
+    if (ids.length === 0) return;
+
+    if (ref.kind === 'objectIdArray') {
+      await collection.updateMany(
+        {
+          ...buildReferenceFilter(ref, survivorId, this.tenantId()),
+          _id: { $in: ids },
+        },
+        { $addToSet: { [ref.field]: new Types.ObjectId(mergedId) } },
+      );
+
+      const survivorWasAdded = entry.documents
+        .filter((document) => !document.targetPresentBefore)
+        .map((document) => new Types.ObjectId(document.id));
+      if (survivorWasAdded.length > 0) {
+        await collection.updateMany(
+          { _id: { $in: survivorWasAdded } },
+          { $pull: { [ref.field]: new Types.ObjectId(survivorId) } as any },
+        );
+      }
+      return;
+    }
+
+    await collection.updateMany(
+      {
+        ...buildReferenceFilter(ref, survivorId, this.tenantId()),
+        _id: { $in: ids },
+      },
+      buildReparentUpdate(ref, mergedId) as any,
+    );
   }
 
   /**

@@ -72,6 +72,7 @@ function makeProcessor(model: any) {
       return result;
     }),
   };
+  const identitySync = { syncFromContact: jest.fn() };
   const cls = { set: jest.fn(), get: jest.fn(), runWith: jest.fn() };
   const redis = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
   const importJobModel = { updateOne: jest.fn(() => ({})) };
@@ -79,16 +80,19 @@ function makeProcessor(model: any) {
 
   // Only `contactModel` is exercised by the methods under test; the rest exist
   // to satisfy construction.
-  return new ContactImportProcessor(
+  const processor = new ContactImportProcessor(
     contactModel,
     storageFactory as any,
     lockService as any,
     automationOutbox as any,
+    identitySync as any,
     cls as any,
     redis as any,
     importJobModel as any,
     connection as any,
   );
+  (processor as any).__identitySync = identitySync;
+  return processor;
 }
 
 const baseData = (
@@ -118,6 +122,45 @@ const emptySummary = (): ImportSummary => ({
   updated: 0,
   skipped: 0,
   errors: 0,
+});
+
+describe('ContactImportProcessor identity projection', () => {
+  it('should project every successfully written contact in the batch', async () => {
+    const model = makeModel();
+    model.find = jest.fn(() => {
+      const chain: any = {
+        select: () => chain,
+        lean: () => chain,
+        exec: () =>
+          Promise.resolve([
+            {
+              _id: '60d0fe4f5311236168a109ca',
+              emails: ['person@example.com'],
+              phones: ['+15551234567'],
+            },
+          ]),
+      };
+      return chain;
+    });
+    const processor = makeProcessor(model) as any;
+
+    await processor.afterBatchWrite(
+      [
+        {
+          id: '60d0fe4f5311236168a109ca',
+          type: 'insert',
+          row: 1,
+        },
+      ],
+      baseData(),
+    );
+
+    expect(processor.__identitySync.syncFromContact).toHaveBeenCalledWith(
+      '60d0fe4f5311236168a109ca',
+      expect.objectContaining({ emails: ['person@example.com'] }),
+      expect.objectContaining({ source: 'import' }),
+    );
+  });
 });
 
 /**

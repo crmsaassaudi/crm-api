@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
 import {
   normalizeEmail,
@@ -163,17 +163,24 @@ export class ContactIdentitySyncService {
   async sync(
     contactId: string,
     identities: DerivedIdentity[],
-    options: { source?: string } = {},
+    options: {
+      source?: string;
+      session?: ClientSession;
+      strict?: boolean;
+      tenantId?: string;
+      userId?: string;
+    } = {},
   ): Promise<{ added: number; removed: number }> {
     try {
-      const tenantId = this.tenantId();
+      const tenantId = options.tenantId ?? this.tenantId();
       if (!tenantId) return { added: 0, removed: 0 };
 
-      const existing = await this.model
+      let existingQuery = this.model
         .find({ contactId: new Types.ObjectId(contactId), deletedAt: null })
-        .select({ type: 1, normalisedValue: 1 })
-        .lean()
-        .exec();
+        .select({ type: 1, normalisedValue: 1 });
+      if (options.session)
+        existingQuery = existingQuery.session(options.session);
+      const existing = await existingQuery.lean().exec();
 
       const existingKeys = new Set(
         existing.map((row: any) => `${row.type}:${row.normalisedValue}`),
@@ -197,35 +204,59 @@ export class ContactIdentitySyncService {
       const operations: any[] = [];
 
       for (const identity of toAdd) {
-        operations.push({
-          updateOne: {
-            filter: {
-              tenantId,
-              type: identity.type,
-              normalisedValue: identity.normalisedValue,
-            },
-            update: {
-              $set: {
-                contactId: new Types.ObjectId(contactId),
-                rawValue: identity.rawValue,
-                ...(identity.channelType
-                  ? { channelType: identity.channelType }
-                  : {}),
-                // Re-adding a previously removed identity revives the row rather than
-                // colliding with its soft-deleted self on the unique index.
-                deletedAt: null,
+        operations.push(
+          options.strict
+            ? {
+                insertOne: {
+                  document: {
+                    tenantId,
+                    contactId: new Types.ObjectId(contactId),
+                    type: identity.type,
+                    normalisedValue: identity.normalisedValue,
+                    rawValue: identity.rawValue,
+                    ...(identity.channelType
+                      ? { channelType: identity.channelType }
+                      : {}),
+                    deletedAt: null,
+                    isPrimary: false,
+                    verified: false,
+                    optIn: null,
+                    source: options.source ?? 'sync',
+                    createdById: options.userId ?? this.userId(),
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                },
+              }
+            : {
+                updateOne: {
+                  filter: {
+                    tenantId,
+                    contactId: new Types.ObjectId(contactId),
+                    type: identity.type,
+                    normalisedValue: identity.normalisedValue,
+                  },
+                  update: {
+                    $set: {
+                      contactId: new Types.ObjectId(contactId),
+                      rawValue: identity.rawValue,
+                      ...(identity.channelType
+                        ? { channelType: identity.channelType }
+                        : {}),
+                      deletedAt: null,
+                    },
+                    $setOnInsert: {
+                      isPrimary: false,
+                      verified: false,
+                      optIn: null,
+                      source: options.source ?? 'sync',
+                      createdById: options.userId ?? this.userId(),
+                    },
+                  },
+                  upsert: true,
+                },
               },
-              $setOnInsert: {
-                isPrimary: false,
-                verified: false,
-                optIn: null,
-                source: options.source ?? 'sync',
-                createdById: this.userId(),
-              },
-            },
-            upsert: true,
-          },
-        });
+        );
       }
 
       for (const row of toRemove) {
@@ -237,15 +268,24 @@ export class ContactIdentitySyncService {
         });
       }
 
-      await this.model.bulkWrite(operations, { ordered: false });
+      await this.model.bulkWrite(operations, {
+        ordered: false,
+        ...(options.session ? { session: options.session } : {}),
+      });
 
       // Make sure each type has exactly one primary — the array's first element is
       // what the rest of the product treats as "the" email/phone, so the mirror
       // should agree with it.
-      await this.ensurePrimaries(contactId, identities);
+      await this.ensurePrimaries(contactId, identities, options.session);
 
       return { added: toAdd.length, removed: toRemove.length };
     } catch (err) {
+      if (options.strict) {
+        if ((err as any)?.code === 11000 || String(err).includes('E11000')) {
+          throw new ConflictException('Contact identity conflict');
+        }
+        throw err;
+      }
       // Never fail the contact write for the projection's sake: the arrays are
       // already saved and already correct, and `backfill:contact-identities` repairs
       // drift. A duplicate-key error here means another contact holds the value —
@@ -266,12 +306,25 @@ export class ContactIdentitySyncService {
       phones?: string[];
       omniIdentities?: Array<{ channelType: string; senderId: string }>;
     },
-    options: { source?: string; defaultCountryCode?: string } = {},
+    options: {
+      source?: string;
+      defaultCountryCode?: string;
+      session?: ClientSession;
+      strict?: boolean;
+      tenantId?: string;
+      userId?: string;
+    } = {},
   ): Promise<void> {
     await this.sync(
       contactId,
       this.derive(contact, options.defaultCountryCode),
-      { source: options.source },
+      {
+        source: options.source,
+        session: options.session,
+        strict: options.strict,
+        tenantId: options.tenantId,
+        userId: options.userId,
+      },
     );
   }
 
@@ -338,6 +391,7 @@ export class ContactIdentitySyncService {
   private async ensurePrimaries(
     contactId: string,
     identities: DerivedIdentity[],
+    session?: ClientSession,
   ): Promise<void> {
     const firstOfType = new Map<ContactIdentityType, string>();
     for (const identity of identities) {
@@ -351,18 +405,18 @@ export class ContactIdentitySyncService {
     for (const [type, normalisedValue] of firstOfType) {
       // Demote before promoting: the partial unique index rejects two primaries, so
       // the other order fails.
-      await this.model
-        .updateMany(
-          { contactId: oid, type, isPrimary: true, deletedAt: null },
-          { $set: { isPrimary: false } },
-        )
-        .exec();
-      await this.model
-        .updateOne(
-          { contactId: oid, type, normalisedValue, deletedAt: null },
-          { $set: { isPrimary: true } },
-        )
-        .exec();
+      let demote = this.model.updateMany(
+        { contactId: oid, type, isPrimary: true, deletedAt: null },
+        { $set: { isPrimary: false } },
+      );
+      if (session) demote = demote.session(session);
+      await demote.exec();
+      let promote = this.model.updateOne(
+        { contactId: oid, type, normalisedValue, deletedAt: null },
+        { $set: { isPrimary: true } },
+      );
+      if (session) promote = promote.session(session);
+      await promote.exec();
     }
   }
 

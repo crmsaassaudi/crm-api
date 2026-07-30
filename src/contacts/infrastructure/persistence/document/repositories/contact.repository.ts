@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery, Types } from 'mongoose';
+import { ClientSession, Model, FilterQuery, Types } from 'mongoose';
 import {
   ContactSchemaClass,
   ContactSchemaDocument,
@@ -803,22 +803,23 @@ export class ContactRepository extends BaseDocumentRepository<
     id: string,
     version: number,
     data: Partial<ContactSchemaClass>,
+    session?: ClientSession,
   ): Promise<Contact | null> {
     const scopedFilter = this.applyTenantFilter({ _id: id, __v: version });
     const updatedById = this.cls.get('userId') ?? this.cls.get('user.id');
-    const doc = await this.model
-      .findOneAndUpdate(
-        scopedFilter,
-        {
-          $set: {
-            ...data,
-            ...(updatedById ? { updatedById } : {}),
-          },
-          $inc: { __v: 1 },
+    let query = this.model.findOneAndUpdate(
+      scopedFilter,
+      {
+        $set: {
+          ...data,
+          ...(updatedById ? { updatedById } : {}),
         },
-        { new: true },
-      )
-      .exec();
+        $inc: { __v: 1 },
+      },
+      { new: true, ...(session ? { session } : {}) },
+    );
+    if (session) query = query.session(session);
+    const doc = await query.exec();
     return doc ? this.mapToDomain(doc) : null;
   }
 
@@ -945,7 +946,9 @@ export class ContactRepository extends BaseDocumentRepository<
     const scopedFilter = this.applyTenantFilter({ _id: contactId });
     await this.model
       .updateOne(scopedFilter, {
-        $push: { stageHistory: entry },
+        // Full history is projected to contact_stage_transitions. Keep only a
+        // bounded compatibility tail on the aggregate to avoid 16MB growth.
+        $push: { stageHistory: { $each: [entry], $slice: -100 } },
       })
       .exec();
   }

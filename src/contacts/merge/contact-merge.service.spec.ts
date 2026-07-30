@@ -6,6 +6,7 @@ import { MERGE_REFERENCES } from '../contact-references.registry';
 const SURVIVOR = '60d0fe4f5311236168a109ca';
 const LOSER = '60d0fe4f5311236168a109cb';
 const TENANT = '60d0fe4f5311236168a109cc';
+const RELATED_ROW = '60d0fe4f5311236168a109cd';
 
 const contact = (id: string, overrides: Partial<Contact> = {}): Contact =>
   ({
@@ -36,6 +37,7 @@ function makeHarness(
     versionConflict?: boolean;
     pairRows?: any[];
     twin?: any;
+    referenceRows?: any[];
   } = {},
 ) {
   const survivor = options.survivor ?? contact(SURVIVOR);
@@ -48,6 +50,7 @@ function makeHarness(
   // Paired collections (contact_relations, account_contact_relations) go through
   // resolvePairConflicts before re-parenting, which needs find/findOne/updateOne.
   const pairRows = options.pairRows ?? [];
+  const referenceRows = options.referenceRows ?? [{ _id: RELATED_ROW }];
   const twin = options.twin ?? null;
   const updateOne = jest.fn().mockResolvedValue({ modifiedCount: 1 });
   // The name parameter is declared so `collection.mock.calls` is typed as
@@ -59,8 +62,13 @@ function makeHarness(
     updateOne,
     findOne: jest.fn(() => Promise.resolve(twin)),
     countDocuments: jest.fn().mockResolvedValue(3),
-    find: () => ({
-      limit: () => ({ toArray: () => Promise.resolve(pairRows) }),
+    find: (_filter: any, findOptions?: any) => ({
+      limit: () => ({
+        toArray: () =>
+          Promise.resolve(
+            findOptions?.projection?._id === 1 ? referenceRows : pairRows,
+          ),
+      }),
       toArray: () => Promise.resolve(pairRows),
     }),
   }));
@@ -285,6 +293,23 @@ describe('ContactMergeService — guards', () => {
     );
   });
 
+  it('should persist a failed saga with its exact move journal', async () => {
+    const harness = makeHarness();
+    harness.updateMany.mockRejectedValueOnce(new Error('tickets unavailable'));
+
+    await expect(harness.service.merge(SURVIVOR, LOSER)).rejects.toThrow(
+      'tickets unavailable',
+    );
+
+    expect(harness.created).toHaveLength(1);
+    expect(harness.created[0].status).toBe('failed');
+    expect(harness.created[0].failureReason).toBe('tickets unavailable');
+    expect(harness.created[0].moveJournal[0].documents).toEqual([
+      { id: RELATED_ROW },
+    ]);
+    expect(harness.created[0].save).toHaveBeenCalled();
+  });
+
   it('should soft-delete, never hard-delete, the merged-away contact', async () => {
     const { service, repository } = makeHarness();
     await service.merge(SURVIVOR, LOSER);
@@ -324,6 +349,15 @@ describe('ContactMergeService — unmerge', () => {
     survivorId: SURVIVOR,
     mergedId: LOSER,
     reparented: { notes: 2 },
+    moveJournal: [
+      {
+        collection: 'notes',
+        field: 'contactId',
+        kind: 'objectId',
+        documents: [{ id: RELATED_ROW }],
+      },
+    ],
+    status: 'completed',
     revertedAt: null,
     save: jest.fn(),
     ...overrides,
@@ -356,6 +390,63 @@ describe('ContactMergeService — unmerge', () => {
     expect(touched).toEqual(['notes']);
   });
 
+  it('should constrain compensation to the exact journaled document ids', async () => {
+    const harness = makeHarness();
+    harness.mergeModel.findById = jest.fn(() => ({
+      exec: () => Promise.resolve(ledger()),
+    }));
+
+    await harness.service.unmerge('merge_1');
+
+    expect(harness.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: { $in: [expect.objectContaining({})] },
+      }),
+      expect.anything(),
+    );
+    const [filter] = harness.updateMany.mock.calls[0];
+    expect(String(filter._id.$in[0])).toBe(RELATED_ROW);
+  });
+
+  it('should revive paired rows suppressed by merge conflicts', async () => {
+    const harness = makeHarness();
+    harness.mergeModel.findById = jest.fn(() => ({
+      exec: () =>
+        Promise.resolve(
+          ledger({
+            moveJournal: [
+              {
+                collection: 'contact_relations',
+                field: 'fromContactId',
+                kind: 'objectId',
+                documents: [{ id: RELATED_ROW, softDeletedDuringMerge: true }],
+              },
+            ],
+          }),
+        ),
+    }));
+
+    await harness.service.unmerge('merge_1');
+
+    expect(harness.updateMany).toHaveBeenCalledWith(
+      { _id: { $in: [expect.anything()] } },
+      { $unset: { deletedAt: 1 } },
+    );
+  });
+
+  it('should reject legacy count-only ledgers rather than guessing', async () => {
+    const harness = makeHarness();
+    harness.mergeModel.findById = jest.fn(() => ({
+      exec: () => Promise.resolve(ledger({ moveJournal: undefined })),
+    }));
+
+    await expect(harness.service.unmerge('merge_1')).rejects.toThrow(
+      'no exact move journal',
+    );
+    expect(harness.repository.restore).not.toHaveBeenCalled();
+    expect(harness.updateMany).not.toHaveBeenCalled();
+  });
+
   it('should refuse to revert twice', async () => {
     const harness = makeHarness();
     harness.mergeModel.findById = jest.fn(() => ({
@@ -374,5 +465,59 @@ describe('ContactMergeService — unmerge', () => {
     harness.repository.restore.mockResolvedValue(null);
 
     await expect(harness.service.unmerge('merge_1')).rejects.toThrow('purged');
+  });
+});
+
+describe('ContactMergeService — failed-saga recovery', () => {
+  it('should compensate only exact journaled rows and become idempotent', async () => {
+    const harness = makeHarness();
+    const row: any = {
+      _id: 'merge_1',
+      survivorId: SURVIVOR,
+      mergedId: LOSER,
+      status: 'failed',
+      failureReason: 'tickets unavailable',
+      moveJournal: [
+        {
+          collection: 'notes',
+          field: 'contactId',
+          kind: 'objectId',
+          documents: [{ id: RELATED_ROW }],
+        },
+      ],
+      save: jest.fn(),
+    };
+    harness.mergeModel.findById = jest.fn(() => ({
+      exec: () => Promise.resolve(row),
+    }));
+
+    await expect(harness.service.recoverFailed('merge_1')).resolves.toEqual({
+      success: true,
+      status: 'compensated',
+    });
+    expect(row.status).toBe('compensated');
+    expect(row.failureReason).toBeUndefined();
+    expect(harness.repository.restore).toHaveBeenCalledWith(LOSER);
+
+    await expect(harness.service.recoverFailed('merge_1')).resolves.toEqual({
+      success: true,
+      status: 'compensated',
+    });
+  });
+
+  it('should refuse recovery for a completed merge', async () => {
+    const harness = makeHarness();
+    harness.mergeModel.findById = jest.fn(() => ({
+      exec: () =>
+        Promise.resolve({
+          status: 'completed',
+          survivorId: SURVIVOR,
+          mergedId: LOSER,
+        }),
+    }));
+
+    await expect(harness.service.recoverFailed('merge_1')).rejects.toThrow(
+      'Only failed merges',
+    );
   });
 });

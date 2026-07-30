@@ -48,6 +48,10 @@ describe('ContactsService', () => {
       restore: jest.fn(),
       findDeleted: jest.fn(),
     };
+    repository.updateWithVersionCheck.mockImplementation(
+      (id: string, _version: number, data: any, session?: any) =>
+        repository.update(id, data, session),
+    );
 
     cls = createClsMock();
     eventEmitter = createEventBusMock();

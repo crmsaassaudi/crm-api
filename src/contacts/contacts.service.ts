@@ -68,6 +68,7 @@ import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { TagsService } from '../tags/tags.service';
 import { AuthorizationService } from '../common/permissions/authorization.service';
 import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class ContactsService {
@@ -131,8 +132,8 @@ export class ContactsService {
 
     // tenant, createdBy, updatedBy are auto-injected by BaseDocumentRepository from CLS
     const contact = await this.automationOutbox.runWithEvent(
-      (session) =>
-        this.repository.create(
+      async (session) => {
+        const created = await this.repository.create(
           {
             ...data,
             ...normalizedLifecycle,
@@ -142,17 +143,18 @@ export class ContactsService {
             ...(customFields !== undefined ? { customFields } : {}),
           } as any,
           session,
-        ),
+        );
+        await this.identitySync.syncFromContact(created.id, created as any, {
+          source: 'api',
+          session,
+          strict: true,
+          tenantId: (created as any).tenantId,
+          userId: this.getCurrentUserId(),
+        });
+        return created;
+      },
       (created) => this.buildAutomationEvent('record_created', created),
     );
-
-    // Project the arrays into `contact_identities`. Deliberately after the write and
-    // non-throwing: the arrays are authoritative and already saved, so a mirror
-    // failure must not fail the create. Drift is repaired by
-    // `backfill:contact-identities`.
-    await this.identitySync.syncFromContact(contact.id, contact as any, {
-      source: 'api',
-    });
 
     this.entityAudit.emit({
       entity: 'contact',
@@ -285,9 +287,10 @@ export class ContactsService {
     // updatedBy is auto-injected by BaseDocumentRepository from CLS
     const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
     const updated = await this.automationOutbox.runWithEvent(
-      (session) =>
-        this.repository.update(
+      async (session) => {
+        const result = await this.repository.updateWithVersionCheck(
           id,
+          existingContact?.version ?? 0,
           {
             ...data,
             ...normalizedLifecycle,
@@ -298,7 +301,23 @@ export class ContactsService {
             ownerId,
           },
           session,
-        ),
+        );
+        if (!result) {
+          throw new ConflictException(
+            'The contact was modified by another request. Reload and try again.',
+          );
+        }
+        if (result && (emails !== undefined || phones !== undefined)) {
+          await this.identitySync.syncFromContact(result.id, result as any, {
+            source: 'api',
+            session,
+            strict: true,
+            tenantId: (result as any).tenantId,
+            userId: this.getCurrentUserId(),
+          });
+        }
+        return result;
+      },
       (result) =>
         result
           ? this.buildAutomationEvent('field_updated', result, changedFields)
@@ -307,12 +326,6 @@ export class ContactsService {
 
     // Re-project only when an identity array actually changed — reconciling on every
     // field edit would cost two queries per PATCH for no change.
-    if (updated && (emails !== undefined || phones !== undefined)) {
-      await this.identitySync.syncFromContact(updated.id, updated as any, {
-        source: 'api',
-      });
-    }
-
     // Emit automation event: field_updated.Contact
     if (updated) {
       this.entityAudit.emit({
@@ -471,41 +484,31 @@ export class ContactsService {
     phones?: string[];
     excludeId?: string;
   }): Promise<void> {
-    const identity =
-      (await this.settingsService.getSetting('contact_identity')) ?? {};
-    const uniqueEmail = identity.uniqueEmail ?? true;
-    const uniquePhone = identity.uniquePhone ?? true;
-    if (!uniqueEmail && !uniquePhone) return;
-
     const conflicts: string[] = [];
 
-    if (uniqueEmail) {
-      for (const email of params.emails ?? []) {
-        const existing = await this.repository.findDuplicateByIdentity(
-          'emails',
-          email,
-          params.excludeId,
+    for (const email of params.emails ?? []) {
+      const existing = await this.repository.findDuplicateByIdentity(
+        'emails',
+        email,
+        params.excludeId,
+      );
+      if (existing) {
+        conflicts.push(
+          `email ${email} already belongs to ${existing.firstName} ${existing.lastName}`,
         );
-        if (existing) {
-          conflicts.push(
-            `email ${email} already belongs to ${existing.firstName} ${existing.lastName}`,
-          );
-        }
       }
     }
 
-    if (uniquePhone) {
-      for (const phone of params.phones ?? []) {
-        const existing = await this.repository.findDuplicateByIdentity(
-          'phones',
-          phone,
-          params.excludeId,
+    for (const phone of params.phones ?? []) {
+      const existing = await this.repository.findDuplicateByIdentity(
+        'phones',
+        phone,
+        params.excludeId,
+      );
+      if (existing) {
+        conflicts.push(
+          `phone ${phone} already belongs to ${existing.firstName} ${existing.lastName}`,
         );
-        if (existing) {
-          conflicts.push(
-            `phone ${phone} already belongs to ${existing.firstName} ${existing.lastName}`,
-          );
-        }
       }
     }
 
@@ -805,6 +808,18 @@ export class ContactsService {
       direction: ctx.direction,
       skippedStages:
         ctx.skippedStages.length > 0 ? ctx.skippedStages : undefined,
+    });
+    this.eventEmitter.emit('contact.stage.changed', {
+      eventId: randomUUID(),
+      tenantId: this.resolveTenantId(),
+      contactId: id,
+      fromStage: ctx.previousStageName,
+      toStage: ctx.stage.apiName,
+      occurredAt,
+      changedById: ctx.changedById,
+      reason: ctx.reason,
+      direction: ctx.direction,
+      skippedStages: ctx.skippedStages,
     });
     // Stage change is NOT written to Activity Log.
     // Sales timeline uses Virtual Activity (pulled from stageHistory[]).
@@ -1391,8 +1406,11 @@ export class ContactsService {
     const identity =
       (await this.settingsService.getSetting('contact_identity')) ?? {};
     return {
-      uniqueEmail: identity.uniqueEmail ?? true,
-      uniquePhone: identity.uniquePhone ?? true,
+      // Normalized identities have an unconditional tenant-scoped unique index.
+      // Keeping these false in a queued snapshot would promise behavior Mongo
+      // correctly refuses, so exact identity uniqueness is now one invariant.
+      uniqueEmail: true,
+      uniquePhone: true,
       multipleEmailsAllowed: identity.multipleEmailsAllowed ?? false,
       multiplePhonesAllowed: identity.multiplePhonesAllowed ?? false,
       defaultCountryCode: identity.defaultCountryCode,
@@ -1468,6 +1486,12 @@ export class ContactsService {
     restoredId: string;
   }> {
     return this.mergeService.unmerge(mergeId);
+  }
+
+  recoverFailedMerge(
+    mergeId: string,
+  ): Promise<{ success: true; status: 'compensated' }> {
+    return this.mergeService.recoverFailed(mergeId);
   }
 
   /** Merge history for a contact, as survivor or as merged-away record. */
