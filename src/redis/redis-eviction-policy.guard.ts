@@ -8,11 +8,27 @@ export class RedisEvictionPolicyGuard implements OnModuleInit {
 
   constructor(@Inject(IOREDIS_CLIENT) private readonly redis: Redis) {}
 
+  /**
+   * Budget for the startup policy probe.
+   *
+   * The shared ioredis client runs with `maxRetriesPerRequest: null` (BullMQ needs
+   * it for blocking commands), which means a command issued while Redis is not
+   * answering is retried forever and **never rejects** — so the try/catch below
+   * can never fire. A Redis that accepts connections but does not reply therefore
+   * hung the whole API at boot: no error, no listener, container reporting "Up".
+   *
+   * This is an advisory check. It must never be able to prevent startup.
+   */
+  private static readonly PROBE_TIMEOUT_MS = 5_000;
+
   async onModuleInit(): Promise<void> {
     const requireNoEviction = this.isStrictModeEnabled();
     const autoFixEnabled = this.isAutoFixEnabled();
 
-    let policy = await this.readMaxMemoryPolicy();
+    let policy = await this.withTimeout(
+      this.readMaxMemoryPolicy(),
+      'read maxmemory-policy',
+    );
     if (!policy) {
       this.logger.warn(
         'Unable to determine Redis maxmemory-policy. ' +
@@ -23,9 +39,15 @@ export class RedisEvictionPolicyGuard implements OnModuleInit {
 
     if (policy !== 'noeviction') {
       if (autoFixEnabled) {
-        const fixed = await this.trySetNoEviction();
+        const fixed = await this.withTimeout(
+          this.trySetNoEviction(),
+          'set maxmemory-policy',
+        );
         if (fixed) {
-          policy = await this.readMaxMemoryPolicy();
+          policy = await this.withTimeout(
+            this.readMaxMemoryPolicy(),
+            'read maxmemory-policy',
+          );
         }
       }
 
@@ -86,6 +108,34 @@ export class RedisEvictionPolicyGuard implements OnModuleInit {
       return String(result).toUpperCase() === 'OK';
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Resolves to `null` if the Redis command does not answer in time, so a stuck
+   * Redis degrades this check instead of blocking the process from starting.
+   */
+  private async withTimeout<T>(
+    operation: Promise<T>,
+    label: string,
+  ): Promise<T | null> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => {
+            this.logger.warn(
+              `Redis did not answer "${label}" within ` +
+                `${RedisEvictionPolicyGuard.PROBE_TIMEOUT_MS}ms — skipping the ` +
+                'eviction-policy check. Redis may be blocked or unreachable.',
+            );
+            resolve(null);
+          }, RedisEvictionPolicyGuard.PROBE_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

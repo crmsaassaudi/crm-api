@@ -34,6 +34,87 @@ import { TENANT_HEADER } from './common/tenant/tenant-header.policy';
  * pending resource types.
  */
 /**
+ * Records where every still-unresolved promise was created, so a boot that hangs
+ * on a promise nobody settles can name the code responsible.
+ *
+ * All modules initialise in ~2s and every socket is `open`, yet
+ * NestFactory.create() never returns: the process is not waiting on I/O, it is
+ * waiting on a promise. Handle dumps cannot see that; async_hooks can.
+ *
+ * Enabled during bootstrap only, and skippable with BOOTSTRAP_ASYNC_TRACE=false.
+ * Capturing a stack per promise is expensive, so the map is capped and the hook
+ * is disabled as soon as the listener is up.
+ */
+const MAX_TRACKED_PROMISES = 20_000;
+
+type PendingPromise = { createdAt: number; stack: string };
+
+function startPendingPromiseTracker(): {
+  report: (limit: number) => string;
+  stop: () => void;
+} {
+  if (process.env.BOOTSTRAP_ASYNC_TRACE === 'false') {
+    return { report: () => 'disabled', stop: () => undefined };
+  }
+
+  // Required lazily: pulling async_hooks in unconditionally would pay the cost
+  // even when the trace is switched off.
+  const asyncHooks = require('node:async_hooks') as typeof import('node:async_hooks');
+  const pending = new Map<number, PendingPromise>();
+
+  const hook = asyncHooks.createHook({
+    init(asyncId, type) {
+      if (type !== 'PROMISE') return;
+      if (pending.size >= MAX_TRACKED_PROMISES) return;
+      const stack = new Error().stack ?? '';
+      pending.set(asyncId, { createdAt: Date.now(), stack });
+    },
+    promiseResolve(asyncId) {
+      pending.delete(asyncId);
+    },
+    destroy(asyncId) {
+      pending.delete(asyncId);
+    },
+  });
+  hook.enable();
+
+  const isInteresting = (stack: string) =>
+    // Frames from our own code or from the Nest/library layer that owns the await.
+    /\/usr\/src\/app\/dist\/|node_modules\/@nestjs\/|node_modules\/mongoose\/|node_modules\/ioredis\/|node_modules\/bullmq\//.test(
+      stack,
+    );
+
+  return {
+    report: (limit: number) => {
+      const oldest = [...pending.entries()]
+        .sort((a, b) => a[1].createdAt - b[1].createdAt)
+        .filter(([, value]) => isInteresting(value.stack))
+        .slice(0, limit);
+
+      if (oldest.length === 0) return 'no interesting pending promises';
+
+      return oldest
+        .map(([asyncId, value], index) => {
+          const frames = value.stack
+            .split('\n')
+            .filter((line) => line.includes('at '))
+            .filter(
+              (line) =>
+                !line.includes('async_hooks') && !line.includes('main.js'),
+            )
+            .slice(0, 6)
+            .map((line) => line.trim())
+            .join(' <- ');
+          const ageSec = Math.round((Date.now() - value.createdAt) / 1000);
+          return `#${index + 1} id=${asyncId} age=${ageSec}s ${frames}`;
+        })
+        .join('\n');
+    },
+    stop: () => hook.disable(),
+  };
+}
+
+/**
  * Groups the process's open sockets by destination.
  *
  * Resource *types* alone ("TCPSocketWrapx53") do not say which dependency is not
@@ -81,7 +162,9 @@ function summarizePendingSockets(): string {
   }
 }
 
-function startBootstrapWatchdog(): () => void {
+function startBootstrapWatchdog(tracker: {
+  report: (limit: number) => string;
+}): () => void {
   const startedAt = Date.now();
   const timer = setInterval(() => {
     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
@@ -101,6 +184,13 @@ function startBootstrapWatchdog(): () => void {
         ` | sockets: ${summarizePendingSockets()}`,
       'Bootstrap',
     );
+    // After the first tick the interesting promise is definitely the stuck one.
+    if (elapsedSec >= 30) {
+      Logger.warn(
+        `Oldest unresolved promises:\n${tracker.report(5)}`,
+        'Bootstrap',
+      );
+    }
   }, 15_000);
   // Never let the watchdog itself keep the process alive.
   timer.unref();
@@ -108,7 +198,8 @@ function startBootstrapWatchdog(): () => void {
 }
 
 async function bootstrap() {
-  const stopWatchdog = startBootstrapWatchdog();
+  const promiseTracker = startPendingPromiseTracker();
+  const stopWatchdog = startBootstrapWatchdog(promiseTracker);
 
   const { initSentryIfConfigured } = await import(
     './common/observability/sentry.bootstrap'
@@ -146,6 +237,7 @@ async function bootstrap() {
   const port = configService.getOrThrow('app.port', { infer: true });
   await app.listen(port);
   stopWatchdog();
+  promiseTracker.stop();
   Logger.log(`🚀 CRM API is running on port ${port}`, 'Bootstrap');
 }
 
