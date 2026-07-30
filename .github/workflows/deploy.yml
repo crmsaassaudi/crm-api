@@ -72,18 +72,24 @@ jobs:
             echo "Waiting for container to stabilize..."
             sleep 10
 
-            # Health check: wait up to 60s for the API to respond
-            for i in $(seq 1 12); do
+            # Health check: wait up to 240s. Module init alone takes ~30s on this
+            # node, so a 60s window failed deploys that were merely still booting.
+            for i in $(seq 1 48); do
               if docker compose -f docker-compose.yml exec -T crm-api wget -qO- http://localhost:3000/api/v1/health > /dev/null 2>&1; then
-                echo "Health check passed on attempt $i"
+                echo "Health check passed on attempt $i ($((i * 5))s)"
                 break
               fi
-              if [ "$i" -eq 12 ]; then
-                echo "Health check failed after 60s"
-                docker compose -f docker-compose.yml logs --tail=50 crm-api
+              if [ "$i" -eq 48 ]; then
+                echo "Health check failed after 240s"
+                echo "── container state ──"
+                docker compose -f docker-compose.yml ps
+                # Full log, not --tail=50: a boot that hangs after InstanceLoader
+                # leaves the useful lines above the tail window.
+                echo "── crm-api log (full) ──"
+                docker compose -f docker-compose.yml logs --no-color crm-api
                 exit 1
               fi
-              echo "Waiting for API to start... (attempt $i/12)"
+              echo "Waiting for API to start... (attempt $i/48)"
               sleep 5
             done
 
