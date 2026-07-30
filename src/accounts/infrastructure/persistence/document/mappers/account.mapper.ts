@@ -29,8 +29,15 @@ export class AccountMapper {
       domainEntity.owner = UserMapper.toDomain((raw as any).owner);
     }
 
+    domainEntity.orgUnitId = raw.orgUnitId ? raw.orgUnitId.toString() : null;
+    domainEntity.createdById = raw.createdById?.toString();
+    domainEntity.updatedById = raw.updatedById?.toString();
     domainEntity.statusId = raw.statusId?.toString();
     domainEntity.isArchived = raw.isArchived;
+    domainEntity.nameKey = raw.nameKey;
+    domainEntity.websiteDomain = raw.websiteDomain;
+    domainEntity.taxIdKey = raw.taxIdKey;
+    domainEntity.version = (raw as any).__v;
     domainEntity.customFields = raw.customFields;
     domainEntity.tags = raw.tags;
     if ((raw as any).accountStatus) {
@@ -76,10 +83,42 @@ export class AccountMapper {
     persistenceEntity.billingAddress = domainEntity.billingAddress;
     persistenceEntity.shippingAddress = domainEntity.shippingAddress;
     persistenceEntity.ownerId = domainEntity.ownerId;
+    // Both are required by the schema, and `create()` builds the document directly so
+    // inserts were fine. But `update()` writes only what this method emits — and the base
+    // repository adds `updatedById` to every patch expecting the mapper to carry it — so
+    // an account's "last changed by" stayed whoever created it, forever.
+    if (domainEntity.createdById !== undefined) {
+      persistenceEntity.createdById = domainEntity.createdById;
+    }
+    if (domainEntity.updatedById !== undefined) {
+      persistenceEntity.updatedById = domainEntity.updatedById;
+    }
+    if (domainEntity.orgUnitId !== undefined)
+      persistenceEntity.orgUnitId = domainEntity.orgUnitId;
     persistenceEntity.statusId = domainEntity.statusId;
     persistenceEntity.isArchived = domainEntity.isArchived;
     persistenceEntity.customFields = domainEntity.customFields;
     persistenceEntity.tags = domainEntity.tags;
+
+    // Identity keys must round-trip, or `update()` drops the keys AccountsService
+    // just derived and duplicate detection keeps comparing the pre-edit values.
+    // `''` is a meaningful value here — it is how "this account no longer has a
+    // usable key" is recorded — so these are copied whenever defined rather than
+    // when truthy.
+    if (domainEntity.nameKey !== undefined)
+      persistenceEntity.nameKey = domainEntity.nameKey;
+    if (domainEntity.websiteDomain !== undefined)
+      persistenceEntity.websiteDomain = domainEntity.websiteDomain;
+    if (domainEntity.taxIdKey !== undefined)
+      persistenceEntity.taxIdKey = domainEntity.taxIdKey;
+
+    // Only when the caller supplied one: `BaseDocumentRepository.update` turns a
+    // present `__v` into an optimistic-concurrency filter, and an ordinary PATCH
+    // must not start failing on a check nobody asked for.
+    if (domainEntity.version !== undefined) {
+      (persistenceEntity as any).__v = domainEntity.version;
+    }
+
     return persistenceEntity;
   }
 }

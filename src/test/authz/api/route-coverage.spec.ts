@@ -159,7 +159,18 @@ interface ControllerReport {
   handlerCount: number;
   gatedCount: number;
   ungatedHandlers: string[];
+  /** Members carrying two route decorators or two `@RequirePermission`s. */
+  doubledDecorators: string[];
+  /** Members using `@Param`/`@Body`/`@Query` with no method decorator at all. */
+  orphanedHandlers: string[];
 }
+
+/** Nest parameter decorators — only ever used on a route handler. */
+const PARAM_DECORATOR = /@(Param|Body|Query|Res|Req|UploadedFile|Headers)\s*\(/;
+
+/** `name(` / `async name(` at the start of a line: a class member declaration. */
+const MEMBER_DECLARATION =
+  /^(?:public\s+|async\s+|static\s+)*[A-Za-z_$][\w$]*\s*(?:<[^>]*>)?\s*\(/;
 
 function findControllers(dir: string, found: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -198,6 +209,8 @@ function analyzeController(absolutePath: string): ControllerReport {
   };
 
   const ungatedHandlers: string[] = [];
+  const doubledDecorators: string[] = [];
+  const orphanedHandlers: string[] = [];
   let handlerCount = 0;
   let gatedCount = 0;
   let classLevelAuthz = false;
@@ -245,24 +258,77 @@ function analyzeController(absolutePath: string): ControllerReport {
       continue;
     }
 
-    if (!hasHttp(block)) continue;
-
-    handlerCount++;
-    const handlerName =
+    const memberName =
       trimmed.match(
         /(?:public |private |protected |async |static )*(\w+)\s*\(/,
       )?.[1] ?? `line:${index + 1}`;
 
+    if (!hasHttp(block)) {
+      // A member using Nest parameter decorators with NO method decorator is not
+      // a route: Nest never registers it, and every caller silently 404s. Always
+      // a mistake — see `doubledDecorators` for how one is produced.
+      const signature = lines.slice(index, index + 5).join(' ');
+      if (
+        block.trim() === '' &&
+        // The line must itself open a member declaration. Without this, a
+        // continuation line inside a multi-line handler signature matches the
+        // window test and every wrapped parameter reads as an orphan.
+        MEMBER_DECLARATION.test(trimmed) &&
+        PARAM_DECORATOR.test(signature) &&
+        !/^(constructor|private |protected )/.test(trimmed)
+      ) {
+        orphanedHandlers.push(`${memberName} (line ${index + 1})`);
+      }
+      continue;
+    }
+
+    handlerCount++;
+
+    // Two route decorators, or two `@RequirePermission`s, on one member.
+    //
+    // How this happens: a JSDoc comment written BETWEEN a handler's decorators
+    // and its signature. Comments separate members here — exactly as Nest's own
+    // metadata does not — so the decorators above the comment fall through onto
+    // the NEXT member, which ends up with two of everything while the member
+    // they belonged to has none. `AccountsController` shipped in that state:
+    // `@Get()` + `@RequirePermission('view','accounts')` landed on
+    // `checkDuplicate`, `findAll` stopped being a route, and `GET /v1/accounts`
+    // answered `{ isDuplicate: false, duplicates: [] }` instead of the account
+    // list. Both halves are silent — Nest registers the last path decorator and
+    // the orphan simply never resolves — so nothing fails until a user notices
+    // an empty list.
+    HTTP_DECORATOR.lastIndex = 0;
+    const routeDecorators = block.match(HTTP_DECORATOR)?.length ?? 0;
+    const permissionDecorators =
+      block.match(/@RequirePermission\s*\(/g)?.length ?? 0;
+    if (routeDecorators > 1 || permissionDecorators > 1) {
+      doubledDecorators.push(
+        `${memberName} (line ${index + 1}): ${routeDecorators} route / ` +
+          `${permissionDecorators} permission decorators`,
+      );
+    }
+
     if (classLevelAuthz || hasAuthz(block)) gatedCount++;
-    else ungatedHandlers.push(`${handlerName} (line ${index + 1})`);
+    else ungatedHandlers.push(`${memberName} (line ${index + 1})`);
   }
 
-  return { file, handlerCount, gatedCount, ungatedHandlers };
+  return {
+    file,
+    handlerCount,
+    gatedCount,
+    ungatedHandlers,
+    doubledDecorators,
+    orphanedHandlers,
+  };
 }
 
 const REPORTS = findControllers(SRC_ROOT)
   .map(analyzeController)
-  .filter((report) => report.handlerCount > 0)
+  // Orphan-only controllers are kept: a file whose every route decorator drifted
+  // onto the wrong member is precisely what must not be filtered out of the report.
+  .filter(
+    (report) => report.handlerCount > 0 || report.orphanedHandlers.length > 0,
+  )
   .sort((left, right) => left.file.localeCompare(right.file));
 
 describe('API route authorization coverage (C-05)', () => {
@@ -374,6 +440,27 @@ describe('API route authorization coverage (C-05)', () => {
     expect(open).not.toContain('assignAgent');
     expect(open).not.toContain('claimConversation');
     expect(open).not.toContain('unassignAgent');
+  });
+
+  it('should not let a handler carry two route or two permission decorators', () => {
+    // Doubled decorators mean a neighbouring member lost its own — see the comment
+    // in analyzeController. Nest keeps only the last of each, so the extra path is
+    // dead and the permission that reads as protecting one route is protecting
+    // another. Zero across the codebase today; any new one is this bug.
+    const doubled = REPORTS.flatMap((report) =>
+      report.doubledDecorators.map((entry) => `${report.file}#${entry}`),
+    );
+    expect({ doubled }).toEqual({ doubled: [] });
+  });
+
+  it('should not leave a method with Nest param decorators unregistered as a route', () => {
+    // The other half of the same failure: the member the decorators drifted away
+    // from still takes `@Query()`/`@Param()` and still delegates to the service,
+    // but Nest never routes to it. It cannot be reached and nothing reports it.
+    const orphaned = REPORTS.flatMap((report) =>
+      report.orphanedHandlers.map((entry) => `${report.file}#${entry}`),
+    );
+    expect({ orphaned }).toEqual({ orphaned: [] });
   });
 
   it('should report the current coverage ratio', () => {

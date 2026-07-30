@@ -5,6 +5,12 @@ import { OmniEvents } from '../domain/omni-events';
 import { ContactsService } from '../../contacts/contacts.service';
 import { TenantsService } from '../../tenants/tenants.service';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
+import { RedisLockService } from '../../redis/redis-lock.service';
+import {
+  normalizeEmail,
+  normalizePhone,
+} from '../../common/identity/identity-normalizer';
+import { ContactIdentitySyncService } from '../../contacts/identities/contact-identity-sync.service';
 
 /**
  * ShadowContactService — handles automated contact creation and identity
@@ -28,6 +34,8 @@ export class ShadowContactService {
     private readonly tenantsService: TenantsService,
     private readonly settingsService: CrmSettingsService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly lockService: RedisLockService,
+    private readonly identitySync: ContactIdentitySyncService,
   ) {}
 
   /**
@@ -43,28 +51,26 @@ export class ShadowContactService {
     payload: OmniPayload,
     enrichedProfile: { name?: string; avatarUrl?: string; phone?: string } = {},
   ): Promise<string | null> {
+    // Serialise per (tenant, channel, sender).
+    //
+    // Nothing guarded this before, and this is the highest-volume contact write
+    // path in the product: Facebook and WhatsApp routinely deliver two webhooks
+    // for a new sender within milliseconds of each other. Both missed the
+    // lookup, both fell through to `create`, and the sender ended up with two
+    // contacts and a conversation history split between them. The import path —
+    // orders of magnitude lower volume — already took a lock; this one did not.
+    //
+    // The lock is keyed on the sender rather than the tenant so two different
+    // customers never wait on each other. TTL is short: everything inside is a
+    // handful of indexed queries plus one insert.
+    const lockKey =
+      `lock:shadow-contact:${payload.tenantId}:` +
+      `${this.toSchemaChannelType(payload.channelType)}:${payload.senderId}`;
+
     try {
-      const systemActorId = await this.resolveSystemActor(payload.tenantId);
-      if (!systemActorId) return null;
-
-      const identityConfig = await this.getIdentityResolutionConfig(
-        payload.tenantId,
+      return await this.lockService.acquire(lockKey, 10_000, () =>
+        this.resolveOrCreate(payload, enrichedProfile),
       );
-
-      // Email-specific deduplication
-      if (payload.channelType === 'email' && payload.senderId) {
-        const emailMatchId = await this.resolveEmailContact(payload);
-        if (emailMatchId) return emailMatchId;
-      }
-
-      // Auto-merge check
-      if (identityConfig.autoMergeShadowContact) {
-        const mergedId = await this.tryAutoMerge(payload);
-        if (mergedId) return mergedId;
-      }
-
-      // Create shadow contact
-      return this.persistShadowContact(payload, enrichedProfile, systemActorId);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       this.logger.error(
@@ -73,6 +79,62 @@ export class ShadowContactService {
       );
       return null;
     }
+  }
+
+  /**
+   * The resolution ladder, run under the lock: cheapest and most certain match
+   * first, creation only as a last resort.
+   */
+  private async resolveOrCreate(
+    payload: OmniPayload,
+    enrichedProfile: { name?: string; avatarUrl?: string; phone?: string },
+  ): Promise<string | null> {
+    const systemActorId = await this.resolveSystemActor(payload.tenantId);
+    if (!systemActorId) return null;
+
+    const identityConfig = await this.getIdentityResolutionConfig(
+      payload.tenantId,
+    );
+
+    // 0. Exact identity match. Re-checked INSIDE the lock: this is what makes
+    //    the whole routine idempotent. The loser of the race arrives here and
+    //    finds the contact the winner just created instead of creating a second.
+    const byIdentity = await this.contactsService.findBySenderId(
+      payload.tenantId,
+      this.toSchemaChannelType(payload.channelType),
+      payload.senderId,
+    );
+    if (byIdentity) return byIdentity.id;
+
+    // 0b. The same question against `contact_identities`, which holds the identity
+    //     set as indexed rows rather than as an array on the contact.
+    //
+    //     Additive on purpose: it runs AFTER the array lookup above, so it can only
+    //     find a match the arrays missed, never override one they found. That matters
+    //     because the arrays remain authoritative — this rung exists to catch the case
+    //     where an identity row exists (written by the mirror, an import, or a merge's
+    //     re-parenting) while the contact's array copy has drifted. Creating a second
+    //     contact for a person we can already identify is the expensive mistake here;
+    //     one extra indexed lookup is not.
+    const byIdentityRow = await this.identitySync.findContactByIdentity(
+      `${this.toSchemaChannelType(payload.channelType)}:${payload.senderId}`,
+    );
+    if (byIdentityRow) return byIdentityRow;
+
+    // 1. Email channel: the sender id IS an email address.
+    if (payload.channelType === 'email' && payload.senderId) {
+      const emailMatchId = await this.resolveEmailContact(payload);
+      if (emailMatchId) return emailMatchId;
+    }
+
+    // 2. Cross-channel match on a phone/email carried in the payload metadata.
+    if (identityConfig.autoMergeShadowContact) {
+      const mergedId = await this.tryAutoMerge(payload);
+      if (mergedId) return mergedId;
+    }
+
+    // 3. Nothing matched — this is a new person.
+    return this.persistShadowContact(payload, enrichedProfile, systemActorId);
   }
 
   /**
@@ -146,10 +208,23 @@ export class ShadowContactService {
    * by phone or email. Returns merged contact ID or null.
    */
   private async tryAutoMerge(payload: OmniPayload): Promise<string | null> {
-    const phone = payload.metadata?.phone;
-    const email =
+    // Normalise before matching. The raw metadata value is what the channel
+    // provider sent — `+84 90 111 2222` from one adapter, `0901112222` from
+    // another — while stored phones are compacted E.164. Comparing the raw form
+    // against the stored form simply never matched for any number containing a
+    // space, so auto-merge quietly did nothing on most channels and every
+    // returning customer got a fresh shadow contact.
+    const rawPhone = payload.metadata?.phone;
+    const phone = rawPhone
+      ? normalizePhone(
+          rawPhone,
+          await this.getDefaultCountryCode(payload.tenantId),
+        )
+      : undefined;
+    const rawEmail =
       payload.metadata?.email ??
       (payload.channelType === 'email' ? payload.senderId : undefined);
+    const email = rawEmail ? normalizeEmail(rawEmail) : undefined;
 
     if (!phone && !email) return null;
 
@@ -165,7 +240,25 @@ export class ShadowContactService {
       return null;
     }
 
-    const existingContact = duplicateResult.duplicates[0];
+    // Prefer an email match over a phone match, and a real contact over a
+    // shadow. `duplicates[0]` was whatever Mongo returned first — on a shared
+    // office phone number that attached the conversation to an arbitrary
+    // colleague. Ambiguity is now logged rather than silently resolved.
+    const existingContact = this.pickBestMatch(
+      duplicateResult.duplicates,
+      email,
+      phone,
+    );
+    if (!existingContact) return null;
+
+    if (duplicateResult.duplicates.length > 1) {
+      this.logger.warn(
+        `Auto-merge for sender ${payload.senderId} matched ` +
+          `${duplicateResult.duplicates.length} contacts; chose ${existingContact.id}. ` +
+          'Review these as potential duplicates.',
+      );
+    }
+
     try {
       await this.contactsService.mergeIdentity(existingContact.id, {
         channelType: this.toSchemaChannelType(payload.channelType),
@@ -333,6 +426,52 @@ export class ShadowContactService {
   }
 
   // ── Private Helpers ────────────────────────────────────────────
+
+  /**
+   * Choose which candidate an inbound message should attach to.
+   *
+   * Ranking, strongest signal first:
+   *   1. email match — an address identifies one person;
+   *   2. phone match on a non-shadow contact — a real record beats a placeholder;
+   *   3. phone match on a shadow contact.
+   * A phone number is the weaker signal because it is shared: reception desks,
+   * households, and one handset passed between colleagues.
+   */
+  private pickBestMatch(
+    candidates: Array<{ id: string; email?: string; phone?: string }>,
+    email?: string,
+    phone?: string,
+  ): { id: string } | null {
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0];
+
+    if (email) {
+      const byEmail = candidates.find(
+        (c) => c.email && c.email.toLowerCase() === email,
+      );
+      if (byEmail) return byEmail;
+    }
+    if (phone) {
+      const byPhone = candidates.find((c) => c.phone === phone);
+      if (byPhone) return byPhone;
+    }
+    return candidates[0];
+  }
+
+  /** Tenant dialling code used to promote national-format numbers to E.164. */
+  private async getDefaultCountryCode(
+    tenantId?: string,
+  ): Promise<string | undefined> {
+    try {
+      const identity = await this.settingsService.getSetting(
+        'contact_identity',
+        tenantId,
+      );
+      return identity?.defaultCountryCode;
+    } catch {
+      return undefined;
+    }
+  }
 
   private toSchemaChannelType(type: string): string {
     return type.toLowerCase();

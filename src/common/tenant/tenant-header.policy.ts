@@ -21,7 +21,13 @@
  */
 export const TENANT_HEADER = 'x-tenant-id';
 
-export function isTenantHeaderTrusted(): boolean {
+/**
+ * Deliberately NOT exported: `readTrustedTenantHeader` below is the only sanctioned
+ * way to consult this. An exported predicate invites `if (isTenantHeaderTrusted())
+ * { req.headers['x-tenant-id'] }` at a call site, which is the per-call-site
+ * decision this module was created to remove.
+ */
+function isTenantHeaderTrusted(): boolean {
   if (process.env.NODE_ENV === 'production') return false;
   return process.env.ALLOW_TENANT_HEADER === '1';
 }

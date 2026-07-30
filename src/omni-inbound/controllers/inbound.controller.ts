@@ -26,6 +26,7 @@ import {
   PRIORITY_NORMAL,
 } from '../queue/omni-queue.constants';
 import { WebhookJobData } from '../queue/webhook-processor';
+import { HIGH_THROUGHPUT_JOB_OPTIONS } from '../../queue/config/default-job-options';
 
 /**
  * Webhook receiver for all messaging providers.
@@ -134,10 +135,12 @@ export class InboundController {
           event,
           index,
         ),
+        // These were five inlined literals that happened to reproduce
+        // HIGH_THROUGHPUT_JOB_OPTIONS exactly, while the shared constant sat with
+        // no reader — the same drift risk as any copied config. Only removeOnFail
+        // differs from the preset (webhooks keep a deeper failure tail for RCA).
+        ...HIGH_THROUGHPUT_JOB_OPTIONS,
         priority: PRIORITY_NORMAL,
-        attempts: 5,
-        backoff: { type: 'exponential', delay: 5_000 },
-        removeOnComplete: { count: 1000, age: 60 * 60 * 6 },
         removeOnFail: { count: 5000, age: 60 * 60 * 24 * 7 },
       },
     }));

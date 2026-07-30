@@ -2,7 +2,7 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { compileAbacDenyFilter } from './abac-query.compiler';
 
 describe('compileAbacDenyFilter', () => {
-  it('compiles applicable resource denies with subject values', () => {
+  it('should compile applicable resource denies with subject values', () => {
     expect(
       compileAbacDenyFilter(
         [
@@ -41,7 +41,7 @@ describe('compileAbacDenyFilter', () => {
     });
   });
 
-  it('skips a deny whose subject/environment preconditions do not apply', () => {
+  it('should skip a deny whose subject/environment preconditions do not apply', () => {
     expect(
       compileAbacDenyFilter(
         [
@@ -66,7 +66,7 @@ describe('compileAbacDenyFilter', () => {
     ).toBeNull();
   });
 
-  it('does not use allow policies to widen the positive row scope', () => {
+  it('should not use allow policies to widen the positive row scope', () => {
     expect(
       compileAbacDenyFilter(
         [
@@ -86,7 +86,7 @@ describe('compileAbacDenyFilter', () => {
     ).toBeNull();
   });
 
-  it('fails closed for resource-to-resource comparisons', () => {
+  it('should fail closed for resource-to-resource comparisons', () => {
     expect(() =>
       compileAbacDenyFilter(
         [

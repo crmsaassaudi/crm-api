@@ -23,10 +23,13 @@ export interface PlatformMediaLimit {
 /**
  * Centralized platform file limits.
  *
- * Used by:
- * - OutboundService: validate + compress before sending
- * - Upload validation: warn users about platform-specific limits
- * - ImageProcessingService: target size for compression
+ * Read by `OutboundMediaHandler` (via `validateForPlatform`) to reject media the
+ * provider would refuse, with a message naming the actual reason.
+ *
+ * COVERAGE: this table holds 6 of the 11 entries in `KNOWN_CHANNELS` — telegram,
+ * tiktok, sms, voice and shopee have no published limits here. A missing entry
+ * means "no limits to enforce", NOT "channel unsupported"; see the note on
+ * `validateForPlatform`, which must not turn absence into a hard failure.
  *
  * Sources:
  * - Facebook Messenger API: 25 MB all types
@@ -260,6 +263,10 @@ export function getMediaTypeFromMime(
 /**
  * Validate a file against platform limits for outbound sending.
  *
+ * Call this with the mime type and size of what will ACTUALLY be sent. Outbound
+ * images are re-encoded per platform before dispatch, so validating the uploaded
+ * bytes rejects photos that compression was about to bring under the cap.
+ *
  * @returns `null` if valid, or an error message string if invalid.
  */
 export function validateForPlatform(
@@ -268,11 +275,19 @@ export function validateForPlatform(
   fileSize: number,
 ): string | null {
   const limits = PLATFORM_LIMITS[channelType];
-  if (!limits) return `Unsupported channel type: ${channelType}`;
+
+  // No published limits for this channel (telegram, tiktok, sms, voice, shopee).
+  // This is NOT an error: `ChannelType` is a branded string and `KNOWN_CHANNELS`
+  // is nearly twice this table's size, so returning an error here would reject
+  // every attachment on five live channels. The adapter remains the authority.
+  if (!limits) return null;
 
   const mediaType = getMediaTypeFromMime(mimeType);
   const limit = limits[mediaType];
 
+  // An explicit `null` in the table means the platform refuses this media type
+  // outright — Zalo takes no video or audio at all. Distinguishing this from
+  // "no table" is the whole point: one is a real rejection, the other is silence.
   if (!limit) {
     return `${channelType} does not support ${mediaType} messages`;
   }

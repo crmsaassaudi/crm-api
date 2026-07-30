@@ -38,6 +38,12 @@ import {
 import { StartAccountImportDto } from './dto/start-account-import.dto';
 import { ExportRequestService, ExportRequestDto } from '../common/export';
 import { TagsService } from '../tags/tags.service';
+import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
+import {
+  compareCompanyIdentity,
+  deriveCompanyIdentity,
+  type CompanyMatchConfidence,
+} from '../common/identity/company-identity';
 
 @Injectable()
 export class AccountsService {
@@ -46,6 +52,9 @@ export class AccountsService {
 
   constructor(
     private readonly repository: AccountRepository,
+    // Enforces the tenant's custom_fields registry on the Mixed `customFields`
+    // column — the same H-6 gap the contact audit found.
+    private readonly customFieldValidator: CustomFieldValueValidator,
     private readonly entityAudit: EntityAuditService,
     private readonly cls: ClsService,
     private readonly automationOutbox: AutomationOutboxService,
@@ -148,10 +157,27 @@ export class AccountsService {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const phones = data.phones ?? [];
     const emails = data.emails ?? [];
+
+    // Same Mixed-column gap as Contact (H-6) and Deal: the custom_fields registry
+    // declared types, picklists and required flags that no write path enforced.
+    const customFields = await this.customFieldValidator.validate(
+      'Account',
+      data.customFields,
+    );
+
     const account = await this.automationOutbox.runWithEvent(
       (session) =>
         this.repository.create(
-          { ...data, phones, emails, ownerId } as any,
+          {
+            ...data,
+            phones,
+            emails,
+            ownerId,
+            ...(customFields !== undefined ? { customFields } : {}),
+            // Comparison keys, derived from the display values the user typed. Stored
+            // so duplicate lookups are indexed rather than recomputed per query.
+            ...this.deriveIdentityKeys(data),
+          } as any,
           session,
         ),
       (created) => this.buildAutomationEvent('record_created', created),
@@ -166,6 +192,101 @@ export class AccountsService {
     });
 
     return account;
+  }
+
+  /**
+   * The stored comparison keys for an account payload.
+   *
+   * `partial` is for PATCH: only emit a key when its source field is actually present,
+   * because deriving from an absent field yields '' and would blank a key the record
+   * already had — turning an unrelated edit into a silent loss of duplicate detection.
+   */
+  private deriveIdentityKeys(
+    data: Partial<Account>,
+    options: { partial?: boolean } = {},
+  ): Record<string, string> {
+    const identity = deriveCompanyIdentity(data);
+    const keys: Record<string, string> = {};
+
+    if (!options.partial || data.name !== undefined) {
+      keys.nameKey = identity.nameKey;
+    }
+    if (!options.partial || data.website !== undefined) {
+      keys.websiteDomain = identity.domain;
+    }
+    if (!options.partial || data.taxId !== undefined) {
+      keys.taxIdKey = identity.taxIdKey;
+    }
+
+    return keys;
+  }
+
+  /**
+   * Accounts that look like the same organisation as the supplied one.
+   *
+   * Advisory, never blocking. A company has no key that settles the question the way an
+   * email address does: a shared tax id is conclusive, a shared domain nearly always
+   * is, and a matching name after suffix-stripping frequently is not — "Acme Ltd" and
+   * "Acme GmbH" reduce to the same key and are different legal entities. So this
+   * returns each candidate WITH its confidence and lets a human decide, rather than
+   * refusing the write on a signal that cannot be certain.
+   *
+   * Ranked strongest-first so the caller can show the best evidence without sorting.
+   */
+  async checkDuplicate(params: {
+    name?: string;
+    website?: string;
+    taxId?: string;
+    excludeId?: string;
+  }): Promise<{
+    isDuplicate: boolean;
+    duplicates: Array<{
+      id: string;
+      name: string;
+      website?: string;
+      confidence: CompanyMatchConfidence;
+      matchedOn: string;
+    }>;
+  }> {
+    const identity = deriveCompanyIdentity(params);
+    if (!identity.nameKey && !identity.domain && !identity.taxIdKey) {
+      return { isDuplicate: false, duplicates: [] };
+    }
+
+    const candidates = await this.repository.findIdentityCandidates(
+      {
+        nameKey: identity.nameKey || undefined,
+        websiteDomain: identity.domain || undefined,
+        taxIdKey: identity.taxIdKey || undefined,
+      },
+      params.excludeId,
+    );
+
+    const rank: Record<CompanyMatchConfidence, number> = {
+      exact: 0,
+      strong: 1,
+      weak: 2,
+    };
+
+    const duplicates = candidates
+      .map((candidate) => {
+        const match = compareCompanyIdentity(
+          identity,
+          deriveCompanyIdentity(candidate),
+        );
+        return match ? { candidate, match } : null;
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+      .sort((a, b) => rank[a.match.confidence] - rank[b.match.confidence])
+      .map(({ candidate, match }) => ({
+        id: candidate.id,
+        name: candidate.name,
+        website: candidate.website,
+        confidence: match.confidence,
+        matchedOn: match.matchedOn,
+      }));
+
+    return { isDuplicate: duplicates.length > 0, duplicates };
   }
 
   async findAll(filter: any): Promise<any> {
@@ -206,6 +327,11 @@ export class AccountsService {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const phones = data.phones;
     const emails = data.emails;
+    const customFields = await this.customFieldValidator.validate(
+      'Account',
+      data.customFields,
+      { partial: true },
+    );
     const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
     const updated = await this.automationOutbox.runWithEvent(
       (session) =>
@@ -215,6 +341,10 @@ export class AccountsService {
             ...data,
             ...(phones !== undefined ? { phones } : {}),
             ...(emails !== undefined ? { emails } : {}),
+            ...(customFields !== undefined ? { customFields } : {}),
+            // Only re-derive when an identity field is actually in the patch —
+            // deriving from an absent field would blank the stored key.
+            ...this.deriveIdentityKeys(data, { partial: true }),
             ownerId,
           } as any,
           session,
@@ -237,6 +367,45 @@ export class AccountsService {
     }
 
     return updated;
+  }
+
+  // ──────────────────────── RECYCLE BIN ────────────────────────
+  //
+  // `remove()` is a soft delete (the schema declares `deletedAt`), so without these
+  // two methods a deleted account was invisible everywhere and recoverable nowhere —
+  // strictly worse than the hard delete it replaced, because the row also stayed in
+  // the database forever.
+
+  async listDeleted(options: { page?: number; limit?: number }): Promise<{
+    data: Account[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(100, Math.max(1, options.limit ?? 25));
+    const { data, total } = await this.repository.findDeleted({ page, limit });
+    return { data, total, page, limit };
+  }
+
+  async restore(id: string): Promise<Account> {
+    const restored = await this.repository.restore(id);
+    if (!restored) {
+      throw new NotFoundException(
+        'Account not found in the recycle bin — it may already have been purged',
+      );
+    }
+
+    this.entityAudit.emit({
+      entity: 'account',
+      entityType: 'ACCOUNT',
+      entityId: id,
+      kind: 'updated',
+      oldSnapshot: { _deleted: true } as any,
+      newSnapshot: restored,
+    });
+
+    return restored;
   }
 
   async remove(id: string): Promise<void> {

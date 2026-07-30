@@ -6,8 +6,11 @@ import {
   IsDate,
   IsArray,
   IsObject,
+  Matches,
+  Max,
+  Min,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateDealDto {
@@ -31,17 +34,49 @@ export class CreateDealDto {
   @IsOptional()
   stageId?: string;
 
+  /**
+   * `@Min(0)`: a negative value is not a deal, and every report sums this field —
+   * `$sum: '$value'` in the pipeline, forecast and win-rate aggregations — so one
+   * negative row silently reduces a tenant's whole reported pipeline. `@IsNumber`
+   * alone accepted it.
+   */
   @ApiProperty({ example: 25000 })
   @IsNumber()
+  @Min(0)
   value: number;
 
+  /**
+   * ISO 4217, upper-cased.
+   *
+   * `@IsString()` alone accepted `'dollars'`, `'$'`, and `'usd'` alongside `'USD'` —
+   * and the case variants alone are enough to split one currency into several buckets
+   * the moment reports group by it. Normalising on the way in is the only place this
+   * can be fixed once; validating without normalising would just reject the same
+   * user's second entry.
+   */
   @ApiPropertyOptional({ example: 'USD' })
-  @IsString()
   @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @IsString()
+  @Matches(/^[A-Z]{3}$/, {
+    message: 'currency must be a 3-letter ISO 4217 code, e.g. USD',
+  })
   currency?: string;
 
+  /**
+   * Percent, 0–100.
+   *
+   * The forecast multiplies `value * probability / 100`, so an unbounded probability
+   * is an unbounded forecast: `probability: 500` reports five times the deal's value
+   * as expected revenue. Unbounded input into a multiplication that leaves the system
+   * as a number a human trusts.
+   */
   @ApiPropertyOptional({ example: 50 })
   @IsNumber()
+  @Min(0)
+  @Max(100)
   @IsOptional()
   probability?: number;
 

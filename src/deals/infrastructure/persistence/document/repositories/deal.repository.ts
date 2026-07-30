@@ -93,7 +93,17 @@ export class DealRepository extends BaseDocumentRepository<
     filterOptions?: any;
     paginationOptions: IPaginationOptions;
   }): Promise<PaginationResponseDto<Deal>> {
-    const where: FilterQuery<DealSchemaClass> = {};
+    // Exclude soft-deleted records.
+    //
+    // Missed twice before this. §20 made deletion a soft delete across six collections,
+    // and the inventory written afterwards only inspected `findOne` — so a LIST query
+    // that never filtered `deletedAt` stayed invisible to it. Accounts was found in §28
+    // and recorded there as "the only list query in the CRM" doing this; it was not.
+    //
+    // `null` rather than `$exists: false`, because `restore()` UNSETS the field: `null`
+    // matches both a missing field and an explicit null, so a restored row and a legacy
+    // row both read as live.
+    const where: FilterQuery<DealSchemaClass> = { deletedAt: null };
 
     if (filterOptions?.search) {
       const searchExpr = {
@@ -180,7 +190,20 @@ export class DealRepository extends BaseDocumentRepository<
   }
 
   async findOne(filter: FilterQuery<DealSchemaClass>): Promise<Deal | null> {
-    const scopedFilter = this.applyTenantFilter(filter);
+    // Exclude soft-deleted records unless the caller asks for one explicitly.
+    //
+    // Harmless while `remove()` hard-deleted: the row was gone, so the lookup
+    // returned null by itself. Once deletion became a soft delete the unfiltered
+    // lookup began SERVING deleted records — `GET /:id` answering 200 instead of
+    // 404, the detail page rendering a deleted record as editable, and automation's
+    // `fetchRecord` resuming delayed workflows against it, which is how a
+    // "wait 3 days then email" step ends up acting on something the user deleted.
+    //
+    // Passing `deletedAt` explicitly opts out, for merge and restore paths that
+    // legitimately need to load an archived row.
+    const scopedFilter = this.applyTenantFilter(
+      filter.deletedAt !== undefined ? filter : { ...filter, deletedAt: null },
+    );
     const doc = await this.model
       .findOne(scopedFilter)
       .populate('owner')
@@ -208,5 +231,40 @@ export class DealRepository extends BaseDocumentRepository<
       matchedCount: result.matchedCount,
       modifiedCount: result.modifiedCount,
     };
+  }
+
+  /**
+   * Records soft-deleted before `cutoff`, for the retention purge.
+   *
+   * `isPlatformQuery` because the caller is a cron: retention applies to every tenant, and
+   * without the flag `tenantFilterPlugin` throws on a missing CLS tenant — which is how
+   * four nightly jobs came to fail on their first query while logging "skipped".
+   *
+   * Oldest deletion first, so a backlog drains in the order it accumulated.
+   */
+  async findPurgeable(
+    cutoff: Date,
+    limit: number,
+  ): Promise<Array<{ id: string; tenantId: string }>> {
+    const docs = await this.model
+      .find({ deletedAt: { $ne: null, $lte: cutoff } })
+      .setOptions({ isPlatformQuery: true } as any)
+      .select({ _id: 1, tenantId: 1 })
+      .sort({ deletedAt: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    return docs.map((doc: any) => ({
+      id: String(doc._id),
+      tenantId: String(doc.tenantId),
+    }));
+  }
+
+  /** Hard-delete one deal. Only DealPurgeService may call this. */
+  async hardDelete(id: string): Promise<void> {
+    await this.model
+      .deleteOne({ _id: id })
+      .setOptions({ isPlatformQuery: true } as any)
+      .exec();
   }
 }

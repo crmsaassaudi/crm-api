@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Inject,
@@ -57,6 +58,16 @@ import {
   ImportJobSchemaClass,
   ImportJobDocument,
 } from './infrastructure/persistence/document/entities/import-job.schema';
+import {
+  ContactMergeService,
+  MergePreview,
+  MergeResult,
+} from './merge/contact-merge.service';
+import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
+import { TagsService } from '../tags/tags.service';
+import { AuthorizationService } from '../common/permissions/authorization.service';
+import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
 
 @Injectable()
 export class ContactsService {
@@ -75,6 +86,12 @@ export class ContactsService {
     private readonly entityAudit: EntityAuditService,
     private readonly activityLog: ActivityLogService,
     private readonly exportStorageFactory: ExportStorageFactory,
+    private readonly mergeService: ContactMergeService,
+    private readonly customFieldValidator: CustomFieldValueValidator,
+    private readonly customFields: CustomFieldsService,
+    private readonly tagsService: TagsService,
+    private readonly authorization: AuthorizationService,
+    private readonly identitySync: ContactIdentitySyncService,
     @Inject(IOREDIS_CLIENT)
     private readonly redis: Redis,
     @InjectQueue(CONTACT_EXPORT_QUEUE)
@@ -95,8 +112,22 @@ export class ContactsService {
   async create(data: CreateContactDto): Promise<Contact> {
     const normalizedLifecycle = await this.normalizeLifecycleFields(data);
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
+    // Already lower-cased / E.164-normalised by the DTO transforms, so these are
+    // directly comparable with what every other write path stores.
     const emails = data.emails ?? [];
     const phones = data.phones ?? [];
+
+    // The tenant's identity policy is now enforced on the API path too. It used
+    // to be honoured only by the import worker, so a workspace with "unique
+    // email" switched on still accumulated duplicates through the UI, the public
+    // API and the omni pipeline — the setting was visible in Settings and did
+    // nothing.
+    await this.assertIdentityIsUnique({ emails, phones });
+
+    const customFields = await this.customFieldValidator.validate(
+      'Contact',
+      data.customFields,
+    );
 
     // tenant, createdBy, updatedBy are auto-injected by BaseDocumentRepository from CLS
     const contact = await this.automationOutbox.runWithEvent(
@@ -108,11 +139,20 @@ export class ContactsService {
             emails,
             phones,
             ownerId,
+            ...(customFields !== undefined ? { customFields } : {}),
           } as any,
           session,
         ),
       (created) => this.buildAutomationEvent('record_created', created),
     );
+
+    // Project the arrays into `contact_identities`. Deliberately after the write and
+    // non-throwing: the arrays are authoritative and already saved, so a mirror
+    // failure must not fail the create. Drift is repaired by
+    // `backfill:contact-identities`.
+    await this.identitySync.syncFromContact(contact.id, contact as any, {
+      source: 'api',
+    });
 
     this.entityAudit.emit({
       entity: 'contact',
@@ -140,6 +180,12 @@ export class ContactsService {
       ...filter,
       __restrictToOwner: restrictToOwner,
       __currentUserId: this.getCurrentUserId(),
+      // Which `customFields.<key>` filters the repository may honour. Resolved
+      // here, once per request, from the tenant's registry: the repository must
+      // not accept an arbitrary dotted path (that would reopen the field-injection
+      // hole its whitelist exists to close), and an admin-defined field that
+      // cannot be filtered is a field the product cannot actually use.
+      __allowedCustomFieldKeys: await this.resolveCustomFieldKeys(filter),
     };
 
     if (resolvePaginationMode(filter) === 'cursor') {
@@ -169,6 +215,38 @@ export class ContactsService {
     return this.repository.findOne({ _id: id });
   }
 
+  /**
+   * The `customFields` keys this tenant has declared, or undefined when the
+   * request contains no custom-field filter.
+   *
+   * Skipping the registry read unless a `customFields.` filter is actually present
+   * keeps the common list request at its previous cost — this runs on every page
+   * of every contact list.
+   */
+  private async resolveCustomFieldKeys(
+    filter: any,
+  ): Promise<Set<string> | undefined> {
+    const raw = filter?.filters;
+    if (!raw) return undefined;
+    const serialized = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    if (!serialized.includes('customFields.')) return undefined;
+
+    try {
+      const fields = await this.customFields.getByModule('Contact');
+      return new Set(fields.map((f) => f.internalKey));
+    } catch (err) {
+      // Fail closed: an unreadable registry means custom-field filters are
+      // refused, which returns a wider result set than intended but never leaks
+      // a field the tenant did not define.
+      this.logger.warn(
+        `Could not load custom fields for filtering; custom-field filters ignored: ${
+          (err as Error).message
+        }`,
+      );
+      return undefined;
+    }
+  }
+
   async update(id: string, data: UpdateContactDto): Promise<Contact | null> {
     const existingContact = await this.repository.findOne({ _id: id });
     const normalizedLifecycle = await this.normalizeLifecycleFields(
@@ -179,6 +257,20 @@ export class ContactsService {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const emails = data.emails;
     const phones = data.phones;
+
+    if (emails !== undefined || phones !== undefined) {
+      await this.assertIdentityIsUnique({ emails, phones, excludeId: id });
+    }
+
+    await this.assertMayTransferOwnership(existingContact, ownerId);
+
+    // `partial: true` — a PATCH that does not mention a required custom field
+    // must not fail on it; the field was already satisfied at create time.
+    const customFields = await this.customFieldValidator.validate(
+      'Contact',
+      data.customFields,
+      { partial: true },
+    );
 
     // Shadow contact promotion: when a shadow contact gets real data, promote it
     let additionalData: any = {};
@@ -202,6 +294,7 @@ export class ContactsService {
             ...additionalData,
             ...(emails !== undefined ? { emails } : {}),
             ...(phones !== undefined ? { phones } : {}),
+            ...(customFields !== undefined ? { customFields } : {}),
             ownerId,
           },
           session,
@@ -211,6 +304,14 @@ export class ContactsService {
           ? this.buildAutomationEvent('field_updated', result, changedFields)
           : null,
     );
+
+    // Re-project only when an identity array actually changed — reconciling on every
+    // field edit would cost two queries per PATCH for no change.
+    if (updated && (emails !== undefined || phones !== undefined)) {
+      await this.identitySync.syncFromContact(updated.id, updated as any, {
+        source: 'api',
+      });
+    }
 
     // Emit automation event: field_updated.Contact
     if (updated) {
@@ -233,6 +334,49 @@ export class ContactsService {
     return updated;
   }
 
+  /**
+   * Reassigning a contact requires `contacts:assign`, not merely `contacts:edit`.
+   *
+   * Ownership is the primary data-visibility axis, so a transfer moves the record
+   * between people's scopes — an agent with only `edit` could quietly pull records
+   * into their own view or push a colleague's out of theirs, using the same
+   * permission they use to correct a phone number. Salesforce separates this as
+   * "Transfer Record" for the same reason.
+   *
+   * Gated behind the tenant setting `data_access_policy.enforce_transfer_permission`
+   * and OFF by default, deliberately. Turning it on globally would immediately break
+   * reassignment for every existing tenant whose roles predate the permission —
+   * changing live authorization semantics as a deploy side effect is worse than the
+   * gap it closes. `migrate:contact-assign-permission` grandfathers existing roles;
+   * an admin then flips this on when their roles are right.
+   */
+  private async assertMayTransferOwnership(
+    existing: Contact | null,
+    nextOwnerId: string | undefined,
+  ): Promise<void> {
+    // Not a transfer: field absent, or unchanged.
+    if (nextOwnerId === undefined) return;
+    if (!existing) return;
+    if (String(existing.ownerId ?? '') === String(nextOwnerId ?? '')) return;
+
+    const policy =
+      (await this.settingsService.getSetting('data_access_policy')) ?? {};
+    if (policy.enforce_transfer_permission !== true) return;
+
+    const userId = this.getCurrentUserId();
+    const decision = await this.authorization.canPerformAction({
+      rule: { action: 'assign', resource: 'contacts' },
+      rawUserId: String(userId ?? ''),
+      tenantHint: this.resolveTenantId(),
+    });
+
+    if (!decision.allowed) {
+      throw new ForbiddenException(
+        'Changing the owner of a contact requires the contacts:assign permission.',
+      );
+    }
+  }
+
   async remove(id: string): Promise<void> {
     const existing = await this.repository.findOne({ _id: id });
     await this.repository.remove(id);
@@ -253,8 +397,28 @@ export class ContactsService {
   /**
    * Merge a new omni-channel identity (e.g. Zalo account) into an existing Contact.
    * Agent workflow: find a contact by phone/email, then link a new channel account.
+   *
+   * Serialised on the identity, not the contact. The uniqueness rule below is a
+   * read-then-write with no unique index behind it — `omniIdentities` is an array,
+   * so a Mongo unique index on it would be per-element across the whole collection
+   * and could not be tenant-scoped. Two agents linking the same channel account to
+   * two different contacts therefore both passed the check and both wrote, which
+   * permanently split that customer's conversation history across two records with
+   * nothing to detect it. The lock is what the missing index would have done.
    */
-  async mergeIdentity(
+  mergeIdentity(
+    contactId: string,
+    identity: { channelType: string; senderId: string },
+  ): Promise<Contact> {
+    const lockKey =
+      `lock:contact:identity:${this.resolveTenantId()}:` +
+      `${identity.channelType}:${identity.senderId}`;
+    return this.lockService.acquire(lockKey, 10_000, () =>
+      this.linkIdentity(contactId, identity),
+    );
+  }
+
+  private async linkIdentity(
     contactId: string,
     identity: { channelType: string; senderId: string },
   ): Promise<Contact> {
@@ -281,6 +445,76 @@ export class ContactsService {
       );
     }
     return updated;
+  }
+
+  /**
+   * Enforce the tenant's `contact_identity` policy: reject a write that would
+   * give two contacts the same email or phone number.
+   *
+   * This existed only inside the import worker. The setting is surfaced in
+   * Settings → Object Manager → Advanced Contact as a workspace-wide identity
+   * policy, so a tenant that switched "unique email" on reasonably expected it to
+   * hold everywhere; instead every non-import path ignored it and the duplicates
+   * it was meant to prevent arrived through the UI, the API and the omni
+   * pipeline.
+   *
+   * Application-level rather than a unique index, deliberately: `emails` is an
+   * array, so a Mongo unique index on it is per-element across the collection
+   * and cannot be scoped to a tenant without a partial expression per tenant.
+   * The trade-off is a TOCTOU window under concurrent writes; that is acceptable
+   * for a data-quality rule (the duplicate is then reported by
+   * `checkDuplicate`), and is why the import path additionally holds a per-tenant
+   * lock.
+   */
+  private async assertIdentityIsUnique(params: {
+    emails?: string[];
+    phones?: string[];
+    excludeId?: string;
+  }): Promise<void> {
+    const identity =
+      (await this.settingsService.getSetting('contact_identity')) ?? {};
+    const uniqueEmail = identity.uniqueEmail ?? true;
+    const uniquePhone = identity.uniquePhone ?? true;
+    if (!uniqueEmail && !uniquePhone) return;
+
+    const conflicts: string[] = [];
+
+    if (uniqueEmail) {
+      for (const email of params.emails ?? []) {
+        const existing = await this.repository.findDuplicateByIdentity(
+          'emails',
+          email,
+          params.excludeId,
+        );
+        if (existing) {
+          conflicts.push(
+            `email ${email} already belongs to ${existing.firstName} ${existing.lastName}`,
+          );
+        }
+      }
+    }
+
+    if (uniquePhone) {
+      for (const phone of params.phones ?? []) {
+        const existing = await this.repository.findDuplicateByIdentity(
+          'phones',
+          phone,
+          params.excludeId,
+        );
+        if (existing) {
+          conflicts.push(
+            `phone ${phone} already belongs to ${existing.firstName} ${existing.lastName}`,
+          );
+        }
+      }
+    }
+
+    if (conflicts.length > 0) {
+      throw new ConflictException({
+        message: 'Contact identity conflict',
+        conflicts,
+      });
+    }
   }
 
   async checkDuplicate(params: {
@@ -671,6 +905,29 @@ export class ContactsService {
     return { fields: rawFields };
   }
 
+  /**
+   * Reject tag values that are not ids from the tenant's tag catalogue.
+   *
+   * `contact.tags[]` holds tag IDs — `TagUsageService` counts and cleans up
+   * references by id, and tag deletion rewrites them by id. This endpoint used to
+   * `$addToSet` whatever trimmed strings it was given, so `tags[]` ended up a
+   * mixture of ids and free-text labels depending on which endpoint had written
+   * last. The free-text entries were invisible to the tag catalogue: they could
+   * not be renamed, counted, or cleaned up when the tag was deleted, and they
+   * rendered as raw ids-that-aren't-ids in the UI.
+   */
+  private async assertTagsExist(tagIds: string[]): Promise<void> {
+    const catalogue = await this.tagsService.findAll({ scope: 'Contact' });
+    const known = new Set(catalogue.map((tag) => String(tag.id)));
+    const unknown = tagIds.filter((id) => !known.has(id));
+    if (unknown.length > 0) {
+      throw new BadRequestException(
+        `Unknown tag id(s): ${unknown.join(', ')}. ` +
+          'Create the tag in the tag catalogue first — contact.tags stores ids, not labels.',
+      );
+    }
+  }
+
   async bulkTagContacts(params: {
     contactIds: string[];
     tags: string[];
@@ -697,6 +954,8 @@ export class ContactsService {
     if (tags.length === 0) {
       throw new BadRequestException('tags is required');
     }
+
+    await this.assertTagsExist(tags);
 
     const result = await this.repository.addTagsToContacts(contactIds, tags);
     // bulk_tagged: field-level diff (tags) already captured by audit_logs.
@@ -725,6 +984,10 @@ export class ContactsService {
       ...((params.filters as unknown as Record<string, any>) || {}),
       __restrictToOwner: restrictToOwner,
       __currentUserId: userId,
+      // Export shares buildListWhere with the list view, so it needs the same
+      // registry allow-list or a custom-field filter would be silently dropped
+      // and the export would quietly cover more rows than the user selected.
+      __allowedCustomFieldKeys: await this.resolveCustomFieldKeys(params),
     };
 
     const filterSnapshot = {
@@ -964,6 +1227,11 @@ export class ContactsService {
     const job = await this.importQueue.add('import', {
       tenantId: this.resolveTenantId(),
       userId: this.getCurrentUserId(),
+      // Ownership is resolved HERE, in the request, and carried on the job.
+      // The worker has no CLS context to derive it from, and an unowned contact
+      // is invisible to every scoped user.
+      ownerId: dto.ownerId ?? this.getCurrentUserId(),
+      orgUnitId: this.cls.get('userOrgUnitId'),
       fileKey: dto.fileKey,
       mapping: dto.mapping,
       deduplication: dto.deduplication,
@@ -1127,6 +1395,7 @@ export class ContactsService {
       uniquePhone: identity.uniquePhone ?? true,
       multipleEmailsAllowed: identity.multipleEmailsAllowed ?? false,
       multiplePhonesAllowed: identity.multiplePhonesAllowed ?? false,
+      defaultCountryCode: identity.defaultCountryCode,
     };
   }
 
@@ -1166,109 +1435,83 @@ export class ContactsService {
     return this.exportStorageService.readLocalReport(token);
   }
 
-  async mergeContacts(
+  /**
+   * Merge two contacts.
+   *
+   * Delegates to ContactMergeService, which re-parents every related record,
+   * resolves field-level survivorship, and writes a reversible ledger entry.
+   * The previous inline implementation lived here and unioned four array fields
+   * without touching a single referencing collection — notes, tickets, deals,
+   * tasks, conversations and email bodies were left pointing at the archived
+   * contact, unreachable but not deleted.
+   */
+  mergeContacts(
     primaryId: string,
     targetId: string,
-  ): Promise<{ success: true; contact: Contact; mergedContactId: string }> {
-    if (primaryId === targetId) {
-      throw new BadRequestException('Cannot merge a contact into itself');
-    }
-
-    // Sorted lock key prevents deadlocks — always same order regardless of caller
-    const [a, b] = [primaryId, targetId].sort((x, y) => x.localeCompare(y));
-    const lockKey = `lock:contact:merge:${a}:${b}`;
-
-    return this.lockService.acquire(lockKey, 10_000, async () => {
-      return this.executeMerge(primaryId, targetId);
-    });
+    options?: { fieldWinners?: Record<string, 'survivor' | 'merged'> },
+  ): Promise<MergeResult> {
+    return this.mergeService.merge(primaryId, targetId, options ?? {});
   }
 
-  private async executeMerge(
+  /** Non-destructive merge preview — same code path, nothing written. */
+  previewMerge(
     primaryId: string,
     targetId: string,
-  ): Promise<{ success: true; contact: Contact; mergedContactId: string }> {
-    // Reads must happen INSIDE the merge lock so that a concurrent delete
-    // of either contact between acquire and read is caught by the deletedAt
-    // guard below. We use Promise.all so latency stays low — the lock
-    // already serializes us against other merges of the same pair.
-    const [primary, target] = await Promise.all([
-      this.repository.findOne({ _id: primaryId }),
-      this.repository.findOne({ _id: targetId }),
-    ]);
+    options?: { fieldWinners?: Record<string, 'survivor' | 'merged'> },
+  ): Promise<MergePreview> {
+    return this.mergeService.preview(primaryId, targetId, options ?? {});
+  }
 
-    if (!primary || primary.deletedAt) {
-      throw new NotFoundException('Primary contact not found');
-    }
-    if (!target || target.deletedAt) {
-      throw new NotFoundException('Target contact not found');
+  /** Reverse a merge, restoring the merged-away contact and its records. */
+  unmergeContacts(mergeId: string): Promise<{
+    success: true;
+    restoredId: string;
+  }> {
+    return this.mergeService.unmerge(mergeId);
+  }
+
+  /** Merge history for a contact, as survivor or as merged-away record. */
+  getMergeHistory(contactId: string): Promise<any[]> {
+    return this.mergeService.history(contactId);
+  }
+
+  // ──────────────────────── RECYCLE BIN ────────────────────────
+
+  /**
+   * List soft-deleted contacts. `remove()` is a soft delete, so a mis-click is
+   * recoverable for the retention window (CONTACT_PURGE_RETENTION_DAYS, 30 by
+   * default) after which ContactPurgeService removes it and cascades.
+   */
+  async listDeleted(options: { page?: number; limit?: number }): Promise<{
+    data: Contact[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(100, Math.max(1, options.limit ?? 25));
+    const { data, total } = await this.repository.findDeleted({ page, limit });
+    return { data, total, page, limit };
+  }
+
+  async restore(id: string): Promise<Contact> {
+    const restored = await this.repository.restore(id);
+    if (!restored) {
+      throw new NotFoundException(
+        'Contact not found in the recycle bin — it may already have been purged',
+      );
     }
 
-    const unionByValue = <T>(left: T[] = [], right: T[] = []) =>
-      Array.from(new Set([...left, ...right].filter(Boolean)));
-    const identityKey = (identity: { channelType: string; senderId: string }) =>
-      `${identity.channelType}:${identity.senderId}`;
-    const omniIdentities = [
-      ...(primary.omniIdentities || []),
-      ...(target.omniIdentities || []),
-    ].filter((identity, index, all) => {
-      const key = identityKey(identity);
-      return all.findIndex((item) => identityKey(item) === key) === index;
+    this.entityAudit.emit({
+      entity: 'contact',
+      entityType: 'CONTACT',
+      entityId: id,
+      kind: 'updated',
+      oldSnapshot: { _deleted: true } as any,
+      newSnapshot: restored,
     });
 
-    const occurredAt = new Date();
-
-    // Re-check both contacts immediately before mutation. A long-running
-    // merge could be preempted (heartbeat lost, GC pause), and another
-    // operation might have deleted the target in between. Without this
-    // re-check we could silently overwrite primary with stale data drawn
-    // from a target that is now gone.
-    const [primaryNow, targetNow] = await Promise.all([
-      this.repository.findOne({ _id: primaryId }),
-      this.repository.findOne({ _id: targetId }),
-    ]);
-    if (!primaryNow || primaryNow.deletedAt) {
-      throw new NotFoundException('Primary contact was deleted during merge');
-    }
-    if (!targetNow || targetNow.deletedAt) {
-      throw new NotFoundException('Target contact was deleted during merge');
-    }
-
-    const merged = await this.repository.update(primaryId, {
-      emails: unionByValue(primary.emails, target.emails),
-      phones: unionByValue(primary.phones, target.phones),
-      omniIdentities,
-      stageHistory: [
-        ...(primary.stageHistory || []),
-        ...(target.stageHistory || []),
-      ].sort(
-        (a, b) =>
-          new Date(a.changedAt).getTime() - new Date(b.changedAt).getTime(),
-      ),
-      lastActivityAt: occurredAt,
-    } as any);
-
-    await this.repository.update(targetId, {
-      deletedAt: occurredAt,
-      lastActivityAt: occurredAt,
-    } as any);
-
-    this.emitActivityLog({
-      targetType: 'contact',
-      targetId: primaryId,
-      event: 'merge',
-      occurredAt,
-      payload: {
-        mergedContactId: targetId,
-        emailsAdded: target.emails || [],
-        phonesAdded: target.phones || [],
-      },
-    });
-
-    return {
-      success: true,
-      contact: merged!,
-      mergedContactId: targetId,
-    };
+    return restored;
   }
 
   private buildAutomationEvent(

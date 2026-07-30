@@ -89,7 +89,6 @@ describe('ConversationService Concurrency', () => {
         sessionId: null,
         status: 'active',
         lastError: null,
-        lockedAt: null,
       }),
       cancelAutoResolve: jest.fn().mockResolvedValue(undefined),
       releaseConversation: jest.fn().mockResolvedValue(undefined),

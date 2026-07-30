@@ -24,6 +24,8 @@ import {
   RevenueTrendPoint,
   WinLossRateData,
 } from './interfaces/deal-report-types';
+import { reportAggregate } from '../shared/utils/report-aggregate.util';
+import { detectCurrencyMix } from '../shared/utils/report-currency.util';
 
 type DateContext = {
   from: Date;
@@ -50,37 +52,35 @@ export class DealReportService {
     const startedAt = process.hrtime.bigint();
     const match = this.buildBaseMatch(dto);
 
-    const rows = await this.dealModel
-      .aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: '$stageId',
-            dealCount: { $sum: 1 },
-            totalValue: { $sum: '$value' },
-            avgProbability: { $avg: { $ifNull: ['$probability', 0] } },
-            weightedValueSum: {
-              $sum: {
-                $multiply: [
-                  '$value',
-                  { $divide: [{ $ifNull: ['$probability', 0] }, 100] },
-                ],
-              },
+    const rows = await reportAggregate(this.dealModel, [
+      { $match: match },
+      {
+        $group: {
+          _id: '$stageId',
+          dealCount: { $sum: 1 },
+          totalValue: { $sum: '$value' },
+          avgProbability: { $avg: { $ifNull: ['$probability', 0] } },
+          weightedValueSum: {
+            $sum: {
+              $multiply: [
+                '$value',
+                { $divide: [{ $ifNull: ['$probability', 0] }, 100] },
+              ],
             },
           },
         },
-        {
-          $lookup: {
-            from: 'dealstages',
-            localField: '_id',
-            foreignField: '_id',
-            as: 'stage',
-          },
+      },
+      {
+        $lookup: {
+          from: 'dealstages',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'stage',
         },
-        { $unwind: { path: '$stage', preserveNullAndEmptyArrays: true } },
-        { $sort: { 'stage.order': 1, dealCount: -1 } },
-      ])
-      .exec();
+      },
+      { $unwind: { path: '$stage', preserveNullAndEmptyArrays: true } },
+      { $sort: { 'stage.order': 1, dealCount: -1 } },
+    ]).exec();
 
     const data: PipelineSummaryItem[] = rows.map((row) => ({
       stageId: row._id?.toString() ?? null,
@@ -94,12 +94,20 @@ export class DealReportService {
       weightedValue: Math.round(row.weightedValueSum ?? 0),
     }));
 
+    // Every total below is a `$sum: '$value'` with no currency dimension. For a
+    // single-currency tenant that is correct and this adds nothing; for a mixed one it
+    // is the sum of unlike units, and the warning is what stops the figure being
+    // trusted silently. Conversion needs a rate source and an accounting policy, which
+    // is a business decision rather than a util's.
+    const currencyMix = await detectCurrencyMix(this.dealModel, match);
+
     return buildReportResponse({
       report: 'pipeline_summary',
       dto,
       data,
       totalRecords: data.reduce((sum, item) => sum + item.dealCount, 0),
       startedAt,
+      warnings: currencyMix.warning ? [currencyMix.warning] : [],
     });
   }
 
@@ -113,55 +121,53 @@ export class DealReportService {
     const format = getMongoDateFormat(context.resolvedGranularity);
     const baseMatch = this.buildBaseMatch(dto);
 
-    const [facetResult] = await this.dealModel
-      .aggregate([
-        {
-          $match: {
-            ...baseMatch,
-            $or: [
-              { wonAt: { $gte: context.from, $lte: context.to } },
-              { lostAt: { $gte: context.from, $lte: context.to } },
-            ],
-          },
+    const [facetResult] = await reportAggregate(this.dealModel, [
+      {
+        $match: {
+          ...baseMatch,
+          $or: [
+            { wonAt: { $gte: context.from, $lte: context.to } },
+            { lostAt: { $gte: context.from, $lte: context.to } },
+          ],
         },
-        {
-          $facet: {
-            won: [
-              { $match: { wonAt: { $gte: context.from, $lte: context.to } } },
-              {
-                $group: {
-                  _id: {
-                    $dateToString: {
-                      format,
-                      date: '$wonAt',
-                      timezone: context.timezone,
-                    },
+      },
+      {
+        $facet: {
+          won: [
+            { $match: { wonAt: { $gte: context.from, $lte: context.to } } },
+            {
+              $group: {
+                _id: {
+                  $dateToString: {
+                    format,
+                    date: '$wonAt',
+                    timezone: context.timezone,
                   },
-                  count: { $sum: 1 },
-                  value: { $sum: '$value' },
                 },
+                count: { $sum: 1 },
+                value: { $sum: '$value' },
               },
-            ],
-            lost: [
-              { $match: { lostAt: { $gte: context.from, $lte: context.to } } },
-              {
-                $group: {
-                  _id: {
-                    $dateToString: {
-                      format,
-                      date: '$lostAt',
-                      timezone: context.timezone,
-                    },
+            },
+          ],
+          lost: [
+            { $match: { lostAt: { $gte: context.from, $lte: context.to } } },
+            {
+              $group: {
+                _id: {
+                  $dateToString: {
+                    format,
+                    date: '$lostAt',
+                    timezone: context.timezone,
                   },
-                  count: { $sum: 1 },
-                  value: { $sum: '$value' },
                 },
+                count: { $sum: 1 },
+                value: { $sum: '$value' },
               },
-            ],
-          },
+            },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const wonMap = new Map<string, { count: number; value: number }>(
       (facetResult?.won ?? []).map((r: any) => [
@@ -212,109 +218,91 @@ export class DealReportService {
     };
 
     const [overall, byStageRows, bySourceRows] = await Promise.all([
-      this.dealModel
-        .aggregate([
-          { $match: baseMatch },
-          {
-            $group: {
-              _id: null,
-              total: { $sum: 1 },
-              won: {
-                $sum: {
-                  $cond: [{ $ne: [{ $ifNull: ['$wonAt', null] }, null] }, 1, 0],
-                },
+      reportAggregate(this.dealModel, [
+        { $match: baseMatch },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            won: {
+              $sum: {
+                $cond: [{ $ne: [{ $ifNull: ['$wonAt', null] }, null] }, 1, 0],
               },
-              lost: {
-                $sum: {
-                  $cond: [
-                    { $ne: [{ $ifNull: ['$lostAt', null] }, null] },
-                    1,
-                    0,
-                  ],
-                },
+            },
+            lost: {
+              $sum: {
+                $cond: [{ $ne: [{ $ifNull: ['$lostAt', null] }, null] }, 1, 0],
               },
-              totalValue: { $sum: '$value' },
-              wonValue: {
-                $sum: {
-                  $cond: [
-                    { $ne: [{ $ifNull: ['$wonAt', null] }, null] },
-                    '$value',
-                    0,
-                  ],
-                },
+            },
+            totalValue: { $sum: '$value' },
+            wonValue: {
+              $sum: {
+                $cond: [
+                  { $ne: [{ $ifNull: ['$wonAt', null] }, null] },
+                  '$value',
+                  0,
+                ],
               },
             },
           },
-        ])
-        .exec(),
-      this.dealModel
-        .aggregate([
-          { $match: baseMatch },
-          {
-            $group: {
-              _id: '$stageId',
-              won: {
-                $sum: {
-                  $cond: [{ $ne: [{ $ifNull: ['$wonAt', null] }, null] }, 1, 0],
-                },
+        },
+      ]).exec(),
+      reportAggregate(this.dealModel, [
+        { $match: baseMatch },
+        {
+          $group: {
+            _id: '$stageId',
+            won: {
+              $sum: {
+                $cond: [{ $ne: [{ $ifNull: ['$wonAt', null] }, null] }, 1, 0],
               },
-              lost: {
-                $sum: {
-                  $cond: [
-                    { $ne: [{ $ifNull: ['$lostAt', null] }, null] },
-                    1,
-                    0,
-                  ],
-                },
+            },
+            lost: {
+              $sum: {
+                $cond: [{ $ne: [{ $ifNull: ['$lostAt', null] }, null] }, 1, 0],
               },
             },
           },
-          {
-            $lookup: {
-              from: 'dealstages',
-              localField: '_id',
-              foreignField: '_id',
-              as: 'stage',
-            },
+        },
+        {
+          $lookup: {
+            from: 'dealstages',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'stage',
           },
-          { $unwind: { path: '$stage', preserveNullAndEmptyArrays: true } },
-          { $sort: { won: -1 } },
-        ])
-        .exec(),
-      this.dealModel
-        .aggregate([
-          { $match: baseMatch },
-          {
-            $group: {
-              _id: '$sourceId',
-              won: {
-                $sum: {
-                  $cond: [{ $ne: [{ $ifNull: ['$wonAt', null] }, null] }, 1, 0],
-                },
+        },
+        { $unwind: { path: '$stage', preserveNullAndEmptyArrays: true } },
+        { $sort: { won: -1 } },
+      ]).exec(),
+      reportAggregate(this.dealModel, [
+        { $match: baseMatch },
+        {
+          $group: {
+            _id: '$sourceId',
+            won: {
+              $sum: {
+                $cond: [{ $ne: [{ $ifNull: ['$wonAt', null] }, null] }, 1, 0],
               },
-              lost: {
-                $sum: {
-                  $cond: [
-                    { $ne: [{ $ifNull: ['$lostAt', null] }, null] },
-                    1,
-                    0,
-                  ],
-                },
+            },
+            lost: {
+              $sum: {
+                $cond: [{ $ne: [{ $ifNull: ['$lostAt', null] }, null] }, 1, 0],
               },
             },
           },
-          {
-            $lookup: {
-              from: 'dealsources',
-              localField: '_id',
-              foreignField: '_id',
-              as: 'source',
-            },
+        },
+        {
+          $lookup: {
+            from: 'dealsources',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'source',
           },
-          { $unwind: { path: '$source', preserveNullAndEmptyArrays: true } },
-          { $sort: { won: -1 } },
-        ])
-        .exec(),
+        },
+        { $unwind: { path: '$source', preserveNullAndEmptyArrays: true } },
+        { $sort: { won: -1 } },
+      ]).exec(),
     ]);
 
     const o = overall[0] ?? {
@@ -351,12 +339,20 @@ export class DealReportService {
       })),
     };
 
+    // Every total below is a `$sum: '$value'` with no currency dimension. For a
+    // single-currency tenant that is correct and this adds nothing; for a mixed one it
+    // is the sum of unlike units, and the warning is what stops the figure being
+    // trusted silently. Conversion needs a rate source and an accounting policy, which
+    // is a business decision rather than a util's.
+    const currencyMix = await detectCurrencyMix(this.dealModel, baseMatch);
+
     return buildReportResponse({
       report: 'win_loss_rate',
       dto,
       data,
       totalRecords: o.total,
       startedAt,
+      warnings: currencyMix.warning ? [currencyMix.warning] : [],
     });
   }
 
@@ -373,36 +369,34 @@ export class DealReportService {
       lostAt: { $exists: false },
     };
 
-    const [facetResult] = await this.dealModel
-      .aggregate([
-        { $match: match },
-        {
-          $addFields: {
-            ageDays: {
-              $dateDiff: { startDate: '$createdAt', endDate: now, unit: 'day' },
-            },
+    const [facetResult] = await reportAggregate(this.dealModel, [
+      { $match: match },
+      {
+        $addFields: {
+          ageDays: {
+            $dateDiff: { startDate: '$createdAt', endDate: now, unit: 'day' },
           },
         },
-        {
-          $facet: {
-            total: [{ $count: 'count' }],
-            buckets: [
-              {
-                $bucket: {
-                  groupBy: '$ageDays',
-                  boundaries: [0, 7, 30, 90],
-                  default: '90+',
-                  output: {
-                    count: { $sum: 1 },
-                    totalValue: { $sum: '$value' },
-                  },
+      },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          buckets: [
+            {
+              $bucket: {
+                groupBy: '$ageDays',
+                boundaries: [0, 7, 30, 90],
+                default: '90+',
+                output: {
+                  count: { $sum: 1 },
+                  totalValue: { $sum: '$value' },
                 },
               },
-            ],
-          },
+            },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const total: number = facetResult?.total?.[0]?.count ?? 0;
     const rawBuckets: any[] = facetResult?.buckets ?? [];
@@ -461,46 +455,44 @@ export class DealReportService {
       createdAt: { $gte: context.from, $lte: context.to },
     };
 
-    const rows = await this.dealModel
-      .aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: '$ownerId',
-            totalDeals: { $sum: 1 },
-            wonDeals: {
-              $sum: {
-                $cond: [{ $ne: [{ $ifNull: ['$wonAt', null] }, null] }, 1, 0],
-              },
+    const rows = await reportAggregate(this.dealModel, [
+      { $match: match },
+      {
+        $group: {
+          _id: '$ownerId',
+          totalDeals: { $sum: 1 },
+          wonDeals: {
+            $sum: {
+              $cond: [{ $ne: [{ $ifNull: ['$wonAt', null] }, null] }, 1, 0],
             },
-            lostDeals: {
-              $sum: {
-                $cond: [{ $ne: [{ $ifNull: ['$lostAt', null] }, null] }, 1, 0],
-              },
+          },
+          lostDeals: {
+            $sum: {
+              $cond: [{ $ne: [{ $ifNull: ['$lostAt', null] }, null] }, 1, 0],
             },
-            totalWonValue: {
-              $sum: {
-                $cond: [
-                  { $ne: [{ $ifNull: ['$wonAt', null] }, null] },
-                  '$value',
-                  0,
-                ],
-              },
+          },
+          totalWonValue: {
+            $sum: {
+              $cond: [
+                { $ne: [{ $ifNull: ['$wonAt', null] }, null] },
+                '$value',
+                0,
+              ],
             },
           },
         },
-        {
-          $lookup: {
-            from: 'users',
-            localField: '_id',
-            foreignField: '_id',
-            as: 'owner',
-          },
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'owner',
         },
-        { $unwind: { path: '$owner', preserveNullAndEmptyArrays: true } },
-        { $sort: { wonDeals: -1 } },
-      ])
-      .exec();
+      },
+      { $unwind: { path: '$owner', preserveNullAndEmptyArrays: true } },
+      { $sort: { wonDeals: -1 } },
+    ]).exec();
 
     const data: OwnerPerformanceItem[] = rows.map((row) => {
       const ownerName = [row.owner?.firstName, row.owner?.lastName]
@@ -524,12 +516,20 @@ export class DealReportService {
       };
     });
 
+    // Every total below is a `$sum: '$value'` with no currency dimension. For a
+    // single-currency tenant that is correct and this adds nothing; for a mixed one it
+    // is the sum of unlike units, and the warning is what stops the figure being
+    // trusted silently. Conversion needs a rate source and an accounting policy, which
+    // is a business decision rather than a util's.
+    const currencyMix = await detectCurrencyMix(this.dealModel, match);
+
     return buildReportResponse({
       report: 'owner_performance',
       dto,
       data,
       totalRecords: data.reduce((sum, d) => sum + d.totalDeals, 0),
       startedAt,
+      warnings: currencyMix.warning ? [currencyMix.warning] : [],
     });
   }
 
@@ -576,12 +576,20 @@ export class DealReportService {
         rows.length > 0 ? Math.round(totalWonValue / rows.length) : 0,
     };
 
+    // Every total below is a `$sum: '$value'` with no currency dimension. For a
+    // single-currency tenant that is correct and this adds nothing; for a mixed one it
+    // is the sum of unlike units, and the warning is what stops the figure being
+    // trusted silently. Conversion needs a rate source and an accounting policy, which
+    // is a business decision rather than a util's.
+    const currencyMix = await detectCurrencyMix(this.dealModel, match);
+
     return buildReportResponse({
       report: 'deal_velocity',
       dto,
       data,
       totalRecords: rows.length,
       startedAt,
+      warnings: currencyMix.warning ? [currencyMix.warning] : [],
     });
   }
 

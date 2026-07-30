@@ -33,6 +33,16 @@ export interface BaseImportJobData extends TenantJobData {
   fileName?: string;
   /** Module-specific tenant settings snapshot, serialized at enqueue time. */
   tenantSettings?: Record<string, any>;
+  /**
+   * Record owner for every row this job writes. Captured at enqueue time from
+   * the requesting user (or an explicit override) because the worker writes via
+   * `bulkWrite`, which bypasses the repository's CLS-driven ownership stamping.
+   * Unowned records are hidden from scoped users, so an import that omits this
+   * is invisible to everyone but an admin.
+   */
+  ownerId?: string;
+  /** Org unit for every row this job writes; same rationale as `ownerId`. */
+  orgUnitId?: string;
 }
 
 /**

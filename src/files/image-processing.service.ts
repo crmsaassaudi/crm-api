@@ -16,7 +16,13 @@ interface CompressionPreset {
   minQuality: number;
   /** Target max output size in bytes */
   maxBytes: number;
-  /** Output format — JPEG for maximum platform compatibility */
+  /**
+   * Output format. Honoured by `compressForPlatform` via `encodeForPreset`.
+   *
+   * This field used to be read by nothing: every encode site hard-coded its own
+   * call. Storage and thumbnails happened to match their declaration, so the only
+   * visible effect was livechat asking for WebP and silently receiving JPEG.
+   */
   format: 'jpeg' | 'webp';
 }
 
@@ -79,6 +85,11 @@ const PLATFORM_PRESETS: Record<string, CompressionPreset> = {
     format: 'jpeg',
   },
 };
+
+/** The mime type a preset's declared format produces. */
+function presetMimeType(preset: CompressionPreset): string {
+  return preset.format === 'webp' ? 'image/webp' : 'image/jpeg';
+}
 
 const THUMBNAIL_SIZE = 200;
 const THUMBNAIL_QUALITY = 60;
@@ -194,14 +205,14 @@ export class ImageProcessingService {
       attempt++;
 
       try {
-        const result = await sharp(buffer)
-          .rotate()
-          .resize(currentWidth, currentHeight, {
+        const result = await this.encodeForPreset(
+          sharp(buffer).rotate().resize(currentWidth, currentHeight, {
             fit: 'inside',
             withoutEnlargement: true,
-          })
-          .jpeg({ quality: currentQuality, mozjpeg: true })
-          .toBuffer({ resolveWithObject: true });
+          }),
+          preset,
+          currentQuality,
+        ).toBuffer({ resolveWithObject: true });
 
         if (result.info.size <= preset.maxBytes) {
           this.logger.debug(
@@ -209,7 +220,7 @@ export class ImageProcessingService {
           );
           return {
             buffer: result.data,
-            mimeType: 'image/jpeg',
+            mimeType: presetMimeType(preset),
             width: result.info.width,
             height: result.info.height,
             originalSize,
@@ -240,18 +251,20 @@ export class ImageProcessingService {
       `compressForPlatform[${channelType}]: all ${maxAttempts} attempts exceeded limit — using most aggressive settings`,
     );
 
-    const finalResult = await sharp(buffer)
-      .rotate()
-      .resize(Math.min(currentWidth, 640), Math.min(currentHeight, 640), {
-        fit: 'inside',
-        withoutEnlargement: true,
-      })
-      .jpeg({ quality: Math.max(30, preset.minQuality - 10), mozjpeg: true })
-      .toBuffer({ resolveWithObject: true });
+    const finalResult = await this.encodeForPreset(
+      sharp(buffer)
+        .rotate()
+        .resize(Math.min(currentWidth, 640), Math.min(currentHeight, 640), {
+          fit: 'inside',
+          withoutEnlargement: true,
+        }),
+      preset,
+      Math.max(30, preset.minQuality - 10),
+    ).toBuffer({ resolveWithObject: true });
 
     return {
       buffer: finalResult.data,
-      mimeType: 'image/jpeg',
+      mimeType: presetMimeType(preset),
       width: finalResult.info.width,
       height: finalResult.info.height,
       originalSize,
@@ -291,6 +304,20 @@ export class ImageProcessingService {
   /**
    * Check if a MIME type is an image that sharp can process.
    */
+  /**
+   * Apply the preset's declared output format. `mozjpeg` is JPEG-only, so the two
+   * branches cannot share an options object.
+   */
+  private encodeForPreset(
+    pipeline: sharp.Sharp,
+    preset: CompressionPreset,
+    quality: number,
+  ): sharp.Sharp {
+    return preset.format === 'webp'
+      ? pipeline.webp({ quality, effort: 4 })
+      : pipeline.jpeg({ quality, mozjpeg: true });
+  }
+
   isProcessableImage(mimeType: string): boolean {
     return [
       'image/jpeg',

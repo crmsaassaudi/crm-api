@@ -2,6 +2,12 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 
+/**
+ * NOT YET WIRED. No repository, mapper or service touches this collection — see the
+ * note on the `AiVideoAsset` domain class. Registering it in `ai-video.module.ts` is
+ * what makes Mongoose build and maintain its indexes, so the cost of the unfinished
+ * feature is paid in every environment on every boot.
+ */
 export type AiVideoAssetSchemaDocument =
   HydratedDocument<AiVideoAssetSchemaClass>;
 

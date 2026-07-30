@@ -8,7 +8,11 @@ import { MailerService } from '../../mailer/mailer.service';
 import { OmniConversationSchemaClass } from '../../omni-inbound/infrastructure/persistence/document/entities/omni-conversation.schema';
 import { ContactSchemaClass } from '../../contacts/infrastructure/persistence/document/entities/contact.schema';
 import { AllConfigType } from '../../config/config.type';
-import { RedisLockService } from '../../redis/redis-lock.service';
+import {
+  RedisLockService,
+  isLockContention,
+} from '../../redis/redis-lock.service';
+import { reportAggregate } from '../shared/utils/report-aggregate.util';
 
 /**
  * ReportDigestService
@@ -53,9 +57,21 @@ export class ReportDigestService {
         { ttl: 5 * 60 * 1000, maxRetries: 0 },
         () => this.buildAndSendDigest(),
       )
-      .catch((err) =>
-        this.logger.debug(`[Digest] Skipping tick: ${(err as Error).message}`),
-      );
+      .catch((err) => {
+        // Contention is the normal case — N replicas tick, one wins — but a job that
+        // THREW must not be reported as "skipped" at debug level. That conflation is
+        // how four nightly jobs stayed dead for as long as they did.
+        if (isLockContention(err)) {
+          this.logger.debug(
+            `Weekly digest skipped: another replica holds the lock`,
+          );
+        } else {
+          this.logger.error(
+            `Weekly digest FAILED: ${err instanceof Error ? err.message : String(err)}`,
+            err instanceof Error ? err.stack : undefined,
+          );
+        }
+      });
   }
 
   private async buildAndSendDigest(): Promise<void> {
@@ -92,6 +108,14 @@ export class ReportDigestService {
 
   // ── Internals ────────────────────────────────────────────────────────────
 
+  /**
+   * Platform-wide counts across every tenant.
+   *
+   * Each read declares `isPlatformQuery`: the digest reports across all tenants by
+   * design, and a Monday-morning cron has no request context — so the tenant plugin
+   * threw on the first count and the weekly digest had never been sent. The failure was
+   * logged at debug as a skipped tick.
+   */
   private async buildKpi(): Promise<WeeklyKpi> {
     const now = new Date();
     const thisWeekStart = subDays(now, 7);
@@ -99,28 +123,36 @@ export class ReportDigestService {
 
     // ── New contacts ────────────────────────────────────────────────────────
     const [newContactsThisWeek, newContactsLastWeek] = await Promise.all([
-      this.contactModel.countDocuments({
-        createdAt: { $gte: thisWeekStart, $lte: now },
-        deletedAt: { $exists: false },
-      }),
-      this.contactModel.countDocuments({
-        createdAt: { $gte: lastWeekStart, $lt: thisWeekStart },
-        deletedAt: { $exists: false },
-      }),
+      this.contactModel
+        .countDocuments({
+          createdAt: { $gte: thisWeekStart, $lte: now },
+          deletedAt: { $exists: false },
+        })
+        .setOptions({ isPlatformQuery: true } as any),
+      this.contactModel
+        .countDocuments({
+          createdAt: { $gte: lastWeekStart, $lt: thisWeekStart },
+          deletedAt: { $exists: false },
+        })
+        .setOptions({ isPlatformQuery: true } as any),
     ]);
 
     // ── Conversations ───────────────────────────────────────────────────────
     const [totalConversations, resolvedConversations] = await Promise.all([
-      this.convModel.countDocuments({
-        createdAt: { $gte: thisWeekStart, $lte: now },
-      }),
-      this.convModel.countDocuments({
-        resolvedAt: { $gte: thisWeekStart, $lte: now },
-      }),
+      this.convModel
+        .countDocuments({
+          createdAt: { $gte: thisWeekStart, $lte: now },
+        })
+        .setOptions({ isPlatformQuery: true } as any),
+      this.convModel
+        .countDocuments({
+          resolvedAt: { $gte: thisWeekStart, $lte: now },
+        })
+        .setOptions({ isPlatformQuery: true } as any),
     ]);
 
     // ── Avg first response time (ms) ────────────────────────────────────────
-    const frtAgg = await this.convModel.aggregate([
+    const frtAgg = await reportAggregate(this.convModel, [
       {
         $match: {
           createdAt: { $gte: thisWeekStart, $lte: now },

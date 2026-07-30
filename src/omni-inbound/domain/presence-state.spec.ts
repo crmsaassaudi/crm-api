@@ -9,7 +9,9 @@
   isOnline,
   isRoutablePresence,
   LegacyIntentStatus,
+  OpenInteractions,
   toLegacyIntent,
+  WORK_STATUS_PRIORITY,
 } from './presence-state';
 
 const base: AgentState = {
@@ -169,5 +171,37 @@ describe('deriveWorkStatus priority (§2.4)', () => {
     expect(deriveWorkStatus({ email: true, wrapUp: true })).toBe('IN_EMAIL');
     expect(deriveWorkStatus({ wrapUp: true })).toBe('WRAP_UP');
     expect(deriveWorkStatus({})).toBe('IDLE');
+  });
+
+  it('should take its ranking FROM WORK_STATUS_PRIORITY', () => {
+    // The ranking used to be restated as an if-chain, so the documented constant
+    // was decorative: editing it changed nothing. Deriving the expectations from
+    // the constant means the two can no longer drift apart silently.
+    const flagFor: Record<string, keyof OpenInteractions> = {
+      IN_CALL: 'call',
+      IN_CHAT: 'chat',
+      IN_TICKET: 'ticket',
+      IN_EMAIL: 'email',
+      WRAP_UP: 'wrapUp',
+    };
+
+    // With every interaction open at once, the winner must be the constant's head.
+    const allOpen: OpenInteractions = {
+      call: true,
+      chat: true,
+      ticket: true,
+      email: true,
+      wrapUp: true,
+    };
+    expect(deriveWorkStatus(allOpen)).toBe(WORK_STATUS_PRIORITY[0]);
+
+    // Dropping the winner must promote exactly the next entry, all the way down.
+    const remaining = { ...allOpen };
+    for (const status of WORK_STATUS_PRIORITY) {
+      if (status === 'IDLE') break;
+      expect(deriveWorkStatus(remaining)).toBe(status);
+      delete remaining[flagFor[status]];
+    }
+    expect(deriveWorkStatus(remaining)).toBe('IDLE');
   });
 });

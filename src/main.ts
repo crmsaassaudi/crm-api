@@ -22,6 +22,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { RedisIoAdapter } from './modules/realtime/redis-io.adapter';
 import helmet from 'helmet';
 import { json, urlencoded } from 'express';
+import { TENANT_HEADER } from './common/tenant/tenant-header.policy';
 
 async function bootstrap() {
   const { initSentryIfConfigured } = await import(
@@ -166,7 +167,9 @@ function setupGlobalCors(
       'Authorization',
       'X-Idempotency-Key',
       'x-custom-lang',
-      'x-tenant-id',
+      // The constant, not the literal: this is a tenant-resolution input, and its name
+      // living in three files is how one of them gets missed.
+      TENANT_HEADER,
     ],
   });
 }

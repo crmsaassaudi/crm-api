@@ -6,6 +6,9 @@ import * as winston from 'winston';
 import { ClsService } from 'nestjs-cls';
 import { maskSecrets } from './secret-masker';
 
+/** Winston's own bookkeeping fields — never credentials, and `level` must survive. */
+const RESERVED_INFO_KEYS = new Set(['level', 'message', 'timestamp', 'ms']);
+
 // Winston `format` that walks the log meta and message and strips anything
 // that looks like a credential. Applied for every transport before any
 // formatter that serializes to string.
@@ -16,10 +19,23 @@ const maskFormat = winston.format((info) => {
   ) {
     info.message = maskSecrets(info.message);
   }
+
+  // Mask the meta as ONE object so `maskSecrets` can see the KEY names. Passing
+  // each value in separately (`maskSecrets(info[key])`) throws the key away, and
+  // `maskSecrets` only redacts by key while walking an object — so a top-level
+  // `logger.log('...', { access_token: '…' })` came through in full while the same
+  // field nested one level deeper was correctly redacted.
+  const meta: Record<string, any> = {};
   for (const key of Object.keys(info)) {
-    if (key === 'level' || key === 'message' || key === 'timestamp') continue;
-    info[key] = maskSecrets((info as any)[key]);
+    if (RESERVED_INFO_KEYS.has(key)) continue;
+    meta[key] = (info as any)[key];
   }
+
+  const masked = maskSecrets(meta);
+  for (const key of Object.keys(masked)) {
+    (info as any)[key] = masked[key];
+  }
+
   return info;
 })();
 

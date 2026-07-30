@@ -27,7 +27,7 @@ describe('core record read authorization wiring', () => {
   it.each(routes)(
     'should enforce object ACL and ABAC for $resource detail reads',
     ({ controller, resource }) => {
-      const handler = controller.prototype.findOne as Function;
+      const handler = controller.prototype.findOne as object;
       const acl = Reflect.getMetadata(ACL_METADATA_KEY, handler) as AclMetadata;
       const loader = Reflect.getMetadata(
         LOAD_RESOURCE_METADATA_KEY,
@@ -90,16 +90,35 @@ describe('core record read authorization wiring', () => {
 
 describe('core record mutation authorization wiring', () => {
   const routes: Array<{
-    controller: { prototype: Record<string, Function> };
+    controller: { prototype: Record<string, object> };
     handler: string;
     action: string;
     resource: string;
   }> = [
+    // Merge requires `delete`, not `edit`, on every object that has it.
+    //
+    // A merge soft-deletes the losing record, so an edit-only gate is a deletion path
+    // that skips the delete check — and for accounts the loser is the parent of deals
+    // and tickets, so it moves revenue records too. Salesforce draws the line in the
+    // same place. Contacts, tickets and accounts were aligned together; a merge route
+    // gated on `edit` should be treated as a finding, not a variation.
     {
       controller: ContactsController as any,
       handler: 'mergeContacts',
-      action: 'edit',
+      action: 'delete',
       resource: 'contacts',
+    },
+    {
+      controller: AccountsController as any,
+      handler: 'mergeAccounts',
+      action: 'delete',
+      resource: 'accounts',
+    },
+    {
+      controller: AccountsController as any,
+      handler: 'previewMerge',
+      action: 'edit',
+      resource: 'accounts',
     },
     {
       controller: ContactsController as any,
@@ -137,8 +156,13 @@ describe('core record mutation authorization wiring', () => {
       action: 'edit',
       resource: 'deals',
     },
+    {
+      controller: TicketsController as any,
+      handler: 'mergeTickets',
+      action: 'delete',
+      resource: 'tickets',
+    },
     ...[
-      'mergeTickets',
       'pauseSla',
       'resumeSla',
       'linkDeal',

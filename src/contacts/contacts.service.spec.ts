@@ -7,13 +7,23 @@ import { createClsMock } from '../test/mocks/cls.mock';
 import { createEventBusMock } from '../test/mocks/event-bus.mock';
 import { createQueueMock } from '../test/mocks/queue.mock';
 import { createMongooseModelMock } from '../test/mocks/mongoose-model.mock';
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 
 describe('ContactsService', () => {
   let service: ContactsService;
   let repository: any;
   let cls: ReturnType<typeof createClsMock>;
   let eventEmitter: ReturnType<typeof createEventBusMock>;
+  let mergeService: any;
+  let tagsService: any;
+  let settingsService: any;
+  let authorization: any;
+  let identitySync: any;
+  let customFieldValidator: any;
 
   beforeEach(() => {
     repository = {
@@ -32,13 +42,49 @@ describe('ContactsService', () => {
       pushStageHistory: jest.fn(),
       touchLastActivity: jest.fn(),
       getStageHistory: jest.fn(),
+      // Identity uniqueness is now enforced on the API path, not only in the
+      // import worker. Default: no conflict.
+      findDuplicateByIdentity: jest.fn().mockResolvedValue(null),
+      restore: jest.fn(),
+      findDeleted: jest.fn(),
     };
 
     cls = createClsMock();
     eventEmitter = createEventBusMock();
 
-    const settingsService = {
+    settingsService = {
       getSetting: jest.fn().mockResolvedValue(null),
+    };
+
+    authorization = {
+      canPerformAction: jest.fn(() => Promise.resolve({ allowed: true })),
+    };
+
+    mergeService = {
+      merge: jest.fn(),
+      preview: jest.fn(),
+      unmerge: jest.fn(),
+      history: jest.fn(),
+    };
+
+    // bulkTagContacts validates ids against the tag catalogue, so the catalogue
+    // has to contain whatever the tests tag with.
+    tagsService = {
+      findAll: jest.fn(() => Promise.resolve([{ id: 'vip' }, { id: 'lead' }])),
+    };
+
+    identitySync = {
+      syncFromContact: jest.fn(() => Promise.resolve()),
+      derive: jest.fn(() => []),
+      assertNoConflicts: jest.fn(() => Promise.resolve()),
+    };
+
+    // Pass-through by default: these tests are about the service, not the
+    // registry. The validator's own behaviour is covered in its spec.
+    customFieldValidator = {
+      validate: jest.fn((_module: string, values: any) =>
+        Promise.resolve(values),
+      ),
     };
 
     // Minimal construction — only fields needed for the methods under test.
@@ -64,10 +110,22 @@ describe('ContactsService', () => {
         }),
       } as any,
       {} as any, // exportStorageService
-      {} as any, // lockService
+      // mergeIdentity now serialises on the identity — the read-then-write
+      // uniqueness check has no unique index behind it. Run the callback through.
+      {
+        acquire: jest.fn((_key: string, _ttl: unknown, fn: any) => fn()),
+      } as any, // lockService
       { emit: jest.fn() } as any, // entityAudit
       {} as any, // activityLog
       { create: jest.fn().mockReturnValue({}) } as any, // exportStorageFactory
+      mergeService as any, // mergeService
+      customFieldValidator as any, // customFieldValidator
+      { getByModule: jest.fn(() => Promise.resolve([])) } as any, // customFields
+      tagsService as any, // tagsService
+      authorization as any, // authorization
+      // The identity mirror is a non-throwing projection; these tests assert the
+      // contact write, not the projection (covered in its own spec).
+      identitySync as any, // identitySync
       {} as any, // redis
       createQueueMock() as any, // exportQueue
       createQueueMock() as any, // importQueue
@@ -354,6 +412,87 @@ describe('ContactsService', () => {
         ['c1'],
         ['vip'],
       );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // OWNERSHIP TRANSFER (M-3)
+  // ═══════════════════════════════════════════════════════════════════
+  describe('ownership transfer', () => {
+    const withPolicy = (policy: Record<string, unknown> | null) =>
+      settingsService.getSetting.mockImplementation((key: string) =>
+        Promise.resolve(key === 'data_access_policy' ? policy : null),
+      );
+
+    beforeEach(() => {
+      repository.findOne.mockResolvedValue(
+        createContact({ id: 'c1', ownerId: 'owner_a' }),
+      );
+      repository.update.mockResolvedValue(
+        createContact({ ownerId: 'owner_b' }),
+      );
+    });
+
+    it('should NOT enforce the permission unless the tenant opted in', async () => {
+      // Enabling this globally on deploy would revoke a capability every existing
+      // tenant's roles grant in practice — changing live authorization semantics
+      // as a side effect of shipping.
+      withPolicy(null);
+      authorization.canPerformAction.mockResolvedValue({ allowed: false });
+
+      await expect(
+        service.update('c1', { ownerId: 'owner_b' } as any),
+      ).resolves.toBeTruthy();
+      expect(authorization.canPerformAction).not.toHaveBeenCalled();
+    });
+
+    it('should reject a transfer without contacts:assign once enforced', async () => {
+      withPolicy({ enforce_transfer_permission: true });
+      authorization.canPerformAction.mockResolvedValue({ allowed: false });
+
+      await expect(
+        service.update('c1', { ownerId: 'owner_b' } as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('should allow a transfer when the caller holds contacts:assign', async () => {
+      withPolicy({ enforce_transfer_permission: true });
+      authorization.canPerformAction.mockResolvedValue({ allowed: true });
+
+      await expect(
+        service.update('c1', { ownerId: 'owner_b' } as any),
+      ).resolves.toBeTruthy();
+      expect(authorization.canPerformAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rule: { action: 'assign', resource: 'contacts' },
+        }),
+      );
+    });
+
+    it('should not treat an unchanged ownerId as a transfer', async () => {
+      // Editing a phone number while the form round-trips the existing owner must
+      // not demand the transfer permission.
+      withPolicy({ enforce_transfer_permission: true });
+      authorization.canPerformAction.mockResolvedValue({ allowed: false });
+
+      await expect(
+        service.update('c1', {
+          ownerId: 'owner_a',
+          phones: ['+84901112222'],
+        } as any),
+      ).resolves.toBeTruthy();
+      expect(authorization.canPerformAction).not.toHaveBeenCalled();
+    });
+
+    it('should not check the permission when ownerId is absent from the patch', async () => {
+      withPolicy({ enforce_transfer_permission: true });
+      authorization.canPerformAction.mockResolvedValue({ allowed: false });
+
+      await expect(
+        service.update('c1', { firstName: 'Renamed' } as any),
+      ).resolves.toBeTruthy();
+      expect(authorization.canPerformAction).not.toHaveBeenCalled();
     });
   });
 

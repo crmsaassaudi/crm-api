@@ -40,6 +40,38 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   })
   contactId?: string;
 
+  /**
+   * The linked Deal.
+   *
+   * Declared here because `TicketsService.linkDeal` has always written it and Mongoose
+   * runs in strict mode by default — so every link was silently DROPPED at the driver
+   * boundary. `POST /tickets/:id/link-deal` returned 200 with a ticket that had no
+   * `dealId`, and `GET /tickets/by-deal/:dealId` (whose filter was also ignored) then
+   * answered with every ticket in the tenant, which read as "the link worked".
+   */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'DealSchemaClass',
+    index: true,
+  })
+  dealId?: string | null;
+
+  /**
+   * The parent ticket, for the parent/child hierarchy.
+   *
+   * Missing here for the same reason `dealId` was: `setParent` / `removeParent` /
+   * `getChildren` shipped with a service method, a route, an ACL rule and a log line,
+   * and strict mode dropped the field on every write — so the parent never persisted and
+   * `getChildren` (whose filter was also ignored) answered with the first 100 tickets in
+   * the tenant. Three layers of a feature, none of them connected.
+   */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'TicketSchemaClass',
+    index: true,
+  })
+  parentTicketId?: string | null;
+
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'AccountSchemaClass',

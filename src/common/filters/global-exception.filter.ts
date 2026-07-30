@@ -44,6 +44,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const responseBody = {
       statusCode: httpStatus,
       errorCode,
+      // `code` is an alias of `errorCode`, not a second concept. The frontend reads
+      // `data.code` in `normalizeApiError` and in the channel-support empty-pool
+      // retry; this response only ever carried `errorCode`, so `data.code` was
+      // always undefined and both readers silently fell through. Emitting both keeps
+      // either spelling working instead of requiring a synchronised rename across
+      // two apps.
+      code: errorCode,
       message,
       errors,
       timestamp: new Date().toISOString(),
@@ -84,7 +91,15 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       const response = exception.getResponse() as any;
       return {
         message: response.message || exception.message,
-        errorCode: response.errorCode ?? this.mapNestExceptionToCode(exception),
+        // Accept `code` as well as `errorCode`. Several services throw
+        // `new UnprocessableEntityException({ code: '…', message })` — channel
+        // support does it five times — and reading only `errorCode` silently
+        // discarded those specific codes and replaced them with the generic mapping,
+        // so the client could not tell an empty support pool from any other 422.
+        errorCode:
+          response.errorCode ??
+          response.code ??
+          this.mapNestExceptionToCode(exception),
         errors: response.errors || null,
       };
     }
@@ -159,7 +174,28 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (exception instanceof UnauthorizedException)
       return COMMON_ERRORS.UNAUTHORIZED;
 
-    // Fallback for other HttpExceptions
-    return COMMON_ERRORS.INTERNAL_ERROR;
+    // Status-based fallback rather than a longer `instanceof` chain: the chain only
+    // covered five classes, so a 422 and a 429 both reported INTERNAL_ERROR — the
+    // client could not distinguish a validation failure or a rate limit from a
+    // server fault, and `RATE_LIMIT_EXCEEDED` existed in COMMON_ERRORS (and in the
+    // frontend's error translations) while nothing could ever emit it. Throttler
+    // exceptions in particular never subclass the types above.
+    switch (exception.getStatus()) {
+      case HttpStatus.UNPROCESSABLE_ENTITY:
+      case HttpStatus.BAD_REQUEST:
+        return COMMON_ERRORS.VALIDATION_ERROR;
+      case HttpStatus.TOO_MANY_REQUESTS:
+        return COMMON_ERRORS.RATE_LIMIT_EXCEEDED;
+      case HttpStatus.NOT_FOUND:
+        return COMMON_ERRORS.ENTITY_NOT_FOUND;
+      case HttpStatus.CONFLICT:
+        return COMMON_ERRORS.CONFLICT;
+      case HttpStatus.FORBIDDEN:
+        return COMMON_ERRORS.FORBIDDEN;
+      case HttpStatus.UNAUTHORIZED:
+        return COMMON_ERRORS.UNAUTHORIZED;
+      default:
+        return COMMON_ERRORS.INTERNAL_ERROR;
+    }
   }
 }

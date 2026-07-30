@@ -32,6 +32,11 @@ import {
   IMPORT_ARRAY_FIELDS,
 } from './contacts.constants';
 import { AutomationOutboxService } from '../automation-rules/events/automation-outbox.service';
+import {
+  normalizeEmail,
+  normalizePhone,
+  splitMultiValue,
+} from '../common/identity/identity-normalizer';
 
 // ── Module config ──────────────────────────────────────────────────
 
@@ -63,6 +68,13 @@ export interface ImportTenantSettings {
   uniquePhone: boolean;
   multipleEmailsAllowed: boolean;
   multiplePhonesAllowed: boolean;
+  /**
+   * Dialling code (no '+') used to promote national-format phone numbers to
+   * E.164 during mapping, so an imported `0901112222` deduplicates against a
+   * UI-entered `+84901112222`. Snapshotted at enqueue time with the rest of the
+   * identity settings.
+   */
+  defaultCountryCode?: string;
 }
 
 // ── Job data ──────────────────────────────────────────────────────
@@ -153,7 +165,9 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     raw: Record<string, string>,
     mapping: Record<string, string>,
     row: number,
+    data: ContactImportJobData,
   ): MappedRow {
+    const defaultCountryCode = data.tenantSettings?.defaultCountryCode;
     const fields: Record<string, any> = {};
     const arrayFields: Record<string, string[]> = {
       emails: [],
@@ -165,11 +179,13 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
       if (!value) continue;
       if (field === 'emails') {
         arrayFields.emails.push(
-          ...this.splitMulti(value).map((e) => e.toLowerCase()),
+          ...splitMultiValue(value).map((e) => normalizeEmail(e)),
         );
       } else if (field === 'phones') {
         arrayFields.phones.push(
-          ...this.splitMulti(value).map((p) => this.normalizePhone(p)),
+          ...splitMultiValue(value).map((p) =>
+            normalizePhone(p, defaultCountryCode),
+          ),
         );
       } else if ((SCALAR_FIELDS as readonly string[]).includes(field)) {
         fields[field] = value;
@@ -220,6 +236,15 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
       tenantId: data.tenantId,
       createdById: data.userId,
       updatedById: data.userId,
+      // Ownership MUST be stamped here. The worker writes through
+      // `bulkWrite`, which bypasses BaseDocumentRepository.enrichWithContext —
+      // the only place that assigns ownerId/orgUnitId. Without these two lines
+      // every imported contact is unowned, and unowned records are invisible to
+      // scoped users by design (the C3 fix in
+      // document-repository.abstract.ts), so a 50k-row import landed in the
+      // database and showed up for nobody but an admin.
+      ownerId: data.ownerId ?? data.userId,
+      ...(data.orgUnitId ? { orgUnitId: data.orgUnitId } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -337,29 +362,6 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
         value: conflicting.join('; '),
       });
     }
-  }
-
-  private splitMulti(value: string): string[] {
-    return value
-      .split(/[,;]/)
-      .map((v) => v.trim())
-      .filter(Boolean);
-  }
-
-  private normalizePhone(value: string): string {
-    // Strip separators but PRESERVE a leading '+'.
-    //
-    // This value is what gets stored in `phones`, not merely what dedup compares
-    // on, so dropping the '+' is data loss rather than normalisation: it erases
-    // the difference between the E.164 number +84901112222 and the national
-    // string 84901112222. WhatsApp and most SMS gateways require E.164, so an
-    // imported contact whose '+' was stripped becomes unsendable — and
-    // unrecoverably so, since the original CSV is gone by then.
-    //
-    // Dedup is unaffected: both the incoming and the stored side go through this
-    // same function, so comparison stays consistent.
-    const digits = value.replace(/\D/g, '');
-    return value.trim().startsWith('+') ? `+${digits}` : digits;
   }
 
   private uniq(values: string[]): string[] {

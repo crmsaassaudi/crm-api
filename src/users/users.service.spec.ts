@@ -1,8 +1,9 @@
 import {
   BadRequestException,
+  HttpStatus,
   UnprocessableEntityException,
-  NotFoundException,
 } from '@nestjs/common';
+import { USER_ERRORS } from './constants/user-error-codes';
 import { UsersService } from './users.service';
 import { createUser } from '../test/factories/user.factory';
 import { createClsMock } from '../test/mocks/cls.mock';
@@ -323,7 +324,7 @@ describe('UsersService', () => {
   // REMOVE — tenant owner protection, event emission
   // ═══════════════════════════════════════════════════════════════════
   describe('update authorization grants', () => {
-    it('rejects a newly added direct allow permission', async () => {
+    it('should reject a newly added direct allow permission', async () => {
       const existing = createUser({
         id: 'target_user',
         tenants: [
@@ -439,10 +440,16 @@ describe('UsersService', () => {
       );
     });
 
-    it('should throw when user not found', async () => {
-      await expect(service.removeFromTenant('nonexistent')).rejects.toThrow(
-        NotFoundException,
-      );
+    it('should throw a 404 carrying USER_NOT_FOUND when user not found', async () => {
+      // Asserting the STATUS and CODE rather than the exception class: the class is an
+      // implementation detail, while the 404 and the code are the contract the client
+      // and its localised message depend on.
+      await expect(
+        service.removeFromTenant('nonexistent'),
+      ).rejects.toMatchObject({
+        errorCode: USER_ERRORS.NOT_FOUND,
+        status: HttpStatus.NOT_FOUND,
+      });
     });
   });
 

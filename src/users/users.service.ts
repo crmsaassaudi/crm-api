@@ -4,11 +4,12 @@ import {
   Inject,
   forwardRef,
   UnprocessableEntityException,
-  NotFoundException,
   ForbiddenException,
   Logger,
   BadRequestException,
 } from '@nestjs/common';
+import { BusinessException } from '../common/exceptions/business.exception';
+import { USER_ERRORS } from './constants/user-error-codes';
 import { CreateUserDto } from './dto/create-user.dto';
 import { NullableType } from '../utils/types/nullable.type';
 import { FilterUserDto, SortUserDto } from './dto/query-user.dto';
@@ -484,8 +485,7 @@ export class UsersService {
     // role / governed RoleAssignment.
     if (activeTenantId && incomingMembership) {
       const previousMembership = targetBefore?.tenants?.find(
-        (membership) =>
-          String(membership.tenantId) === String(activeTenantId),
+        (membership) => String(membership.tenantId) === String(activeTenantId),
       );
       const previousDirect = new Set(previousMembership?.permissions ?? []);
       const addedDirect = (incomingMembership.permissions ?? []).filter(
@@ -898,7 +898,11 @@ export class UsersService {
 
     const user = await this.usersRepository.findById(userId);
     if (!user) {
-      throw new NotFoundException('User not found');
+      throw new BusinessException(
+        USER_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'User not found',
+      );
     }
 
     const tenant = await this.tenantsRepository.findById(tenantId);
@@ -957,7 +961,11 @@ export class UsersService {
     // Verify user belongs to tenant
     const user = await this.usersRepository.findById(userId);
     if (!user) {
-      throw new NotFoundException('User not found');
+      throw new BusinessException(
+        USER_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'User not found',
+      );
     }
 
     const belongsToTenant = user.tenants?.some(
@@ -1249,7 +1257,11 @@ export class UsersService {
     }
 
     if (!user) {
-      throw new NotFoundException('User not found');
+      throw new BusinessException(
+        USER_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'User not found',
+      );
     }
 
     const internalId = user.id;
@@ -1289,13 +1301,22 @@ export class UsersService {
     }
 
     const user = await this.usersRepository.findById(userId);
-    if (!user) throw new NotFoundException('User not found');
+    if (!user)
+      throw new BusinessException(
+        USER_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'User not found',
+      );
 
     const membership = user.tenants?.find(
       (t) => String(t.tenantId) === String(activeTenantId),
     );
     if (!membership) {
-      throw new NotFoundException('User is not a member of this tenant');
+      throw new BusinessException(
+        USER_ERRORS.NOT_IN_TENANT,
+        HttpStatus.NOT_FOUND,
+        'User is not a member of this tenant',
+      );
     }
 
     // The owner's access is derived from tenant.ownerId, not from this flag —
@@ -1319,7 +1340,12 @@ export class UsersService {
     const updated = await this.usersRepository.update(user.id, {
       tenants,
     } as any);
-    if (!updated) throw new NotFoundException('User not found');
+    if (!updated)
+      throw new BusinessException(
+        USER_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'User not found',
+      );
 
     void this.audit.record({
       category: 'MEMBERSHIP',

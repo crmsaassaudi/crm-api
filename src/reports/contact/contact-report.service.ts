@@ -33,6 +33,8 @@ import {
   SourceAttributionItem,
   StaleContactsData,
 } from './interfaces/contact-report-types';
+import { reportAggregate } from '../shared/utils/report-aggregate.util';
+import { ContactGrowthRollupReader } from './rollup/contact-growth-rollup.reader';
 
 type DateContext = {
   from: Date;
@@ -58,6 +60,7 @@ export class ContactReportService {
     private readonly contactModel: Model<ContactSchemaDocument>,
     private readonly settingsService: CrmSettingsService,
     private readonly cls: ClsService,
+    private readonly growthRollup: ContactGrowthRollupReader,
   ) {}
 
   async getGrowthTrend(
@@ -68,60 +71,108 @@ export class ContactReportService {
     const format = getMongoDateFormat(context.resolvedGranularity);
     const baseMatch = this.buildBaseMatch(dto, { skipSoftDelete: true });
 
+    // Try the pre-aggregated rollup first. It answers the same question from ~one
+    // row per owner per day instead of scanning the whole contacts collection, which
+    // at 100M records is the most expensive read in the product AND sits on the
+    // most-visited screen.
+    //
+    // `tryRead` returns null whenever the rollup cannot answer the exact question —
+    // an unsupported filter, an ABAC predicate, a timezone mismatch, or a range
+    // extending past what has been computed. The fallback below is always correct, so
+    // the rollup can only make this faster, never wrong.
+    const rollup = await this.growthRollup.tryRead({
+      tenantId: this.resolveTenantId(),
+      request: dto,
+      from: context.from,
+      to: context.to,
+      timezone: context.timezone,
+      granularity: context.resolvedGranularity,
+    });
+
+    if (rollup) {
+      const data = mergeGrowthBuckets(
+        context.from,
+        context.to,
+        context.resolvedGranularity,
+        rollup.created,
+        rollup.deleted,
+      );
+      return buildReportResponse({
+        report: 'growth_trend',
+        dto,
+        data,
+        totalRecords: data.reduce(
+          (sum, item) => sum + item.createdCount + item.deletedCount,
+          0,
+        ),
+        startedAt,
+        requestedGranularity: context.requestedGranularity,
+        resolvedGranularity: context.resolvedGranularity,
+        warnings: context.warnings,
+      });
+    }
+
     // Single aggregation with $facet: one collection scan handles both the
     // created-bucket and the deleted-bucket. Old impl issued two parallel
     // aggregates which each scanned the contact collection independently.
+    //
+    // The `deleted` series depends on delete being a SOFT delete. It reports
+    // nothing at all while `DELETE /contacts/:id` issued a hard `deleteOne` —
+    // the document that carried the `deletedAt` this buckets on was gone — so the
+    // churn line silently only ever counted merges. ContactRepository.remove()
+    // now soft-deletes and ContactPurgeService performs the hard delete after the
+    // retention window, which is what makes this series mean what it claims.
+    // If either of those reverts to an immediate hard delete, this goes quiet
+    // again rather than erroring.
     const facetMatchOr: any[] = [
       { createdAt: { $gte: context.from, $lte: context.to } },
       { deletedAt: { $gte: context.from, $lte: context.to } },
     ];
-    const [facetResult] = await this.contactModel
-      .aggregate([
-        { $match: { ...baseMatch, $or: facetMatchOr } },
-        {
-          $facet: {
-            created: [
-              {
-                $match: {
-                  createdAt: { $gte: context.from, $lte: context.to },
-                },
+    const [facetResult] = await reportAggregate(this.contactModel, [
+      { $match: { ...baseMatch, $or: facetMatchOr } },
+      {
+        $facet: {
+          created: [
+            {
+              $match: {
+                createdAt: { $gte: context.from, $lte: context.to },
               },
-              {
-                $group: {
-                  _id: {
-                    $dateToString: {
-                      format,
-                      date: '$createdAt',
-                      timezone: context.timezone,
-                    },
+            },
+            {
+              $group: {
+                _id: {
+                  $dateToString: {
+                    format,
+                    date: '$createdAt',
+                    timezone: context.timezone,
                   },
-                  count: { $sum: 1 },
                 },
+                count: { $sum: 1 },
               },
-            ],
-            deleted: [
-              {
-                $match: {
-                  deletedAt: { $gte: context.from, $lte: context.to },
-                },
+            },
+          ],
+          deleted: [
+            {
+              $match: {
+                deletedAt: { $gte: context.from, $lte: context.to },
               },
-              {
-                $group: {
-                  _id: {
-                    $dateToString: {
-                      format,
-                      date: '$deletedAt',
-                      timezone: context.timezone,
-                    },
+            },
+            {
+              $group: {
+                _id: {
+                  $dateToString: {
+                    format,
+                    date: '$deletedAt',
+                    timezone: context.timezone,
                   },
-                  count: { $sum: 1 },
                 },
+                count: { $sum: 1 },
               },
-            ],
-          },
+            },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
     const created = facetResult?.created ?? [];
     const deleted = facetResult?.deleted ?? [];
 
@@ -159,24 +210,23 @@ export class ContactReportService {
     // Combine countDocuments + group-by into a single pipeline. The old
     // version scanned the contact collection twice for the same filter.
     const [facetResult, sourceMap] = await Promise.all([
-      this.contactModel
-        .aggregate([
-          { $match: match },
-          {
-            $facet: {
-              total: [{ $count: 'count' }],
-              rows: [
-                {
-                  $group: {
-                    _id: { $ifNull: ['$sourceId', null] },
-                    count: { $sum: 1 },
-                  },
+      reportAggregate(this.contactModel, [
+        { $match: match },
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            rows: [
+              {
+                $group: {
+                  _id: { $ifNull: ['$sourceId', null] },
+                  count: { $sum: 1 },
                 },
-                { $sort: { count: -1 } },
-              ],
-            },
+              },
+              { $sort: { count: -1 } },
+            ],
           },
-        ])
+        },
+      ])
         .exec()
         .then((res) => res?.[0] ?? { total: [], rows: [] }),
       this.getSourceMap(),
@@ -215,34 +265,32 @@ export class ContactReportService {
     });
     // Combine count + group/lookup into one pipeline so the contact
     // collection is scanned a single time.
-    const [facetResult] = await this.contactModel
-      .aggregate([
-        { $match: match },
-        {
-          $facet: {
-            total: [{ $count: 'count' }],
-            rows: [
-              {
-                $group: {
-                  _id: { $ifNull: ['$ownerId', null] },
-                  count: { $sum: 1 },
-                },
+    const [facetResult] = await reportAggregate(this.contactModel, [
+      { $match: match },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          rows: [
+            {
+              $group: {
+                _id: { $ifNull: ['$ownerId', null] },
+                count: { $sum: 1 },
               },
-              {
-                $lookup: {
-                  from: 'users',
-                  localField: '_id',
-                  foreignField: '_id',
-                  as: 'owner',
-                },
+            },
+            {
+              $lookup: {
+                from: 'users',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'owner',
               },
-              { $unwind: { path: '$owner', preserveNullAndEmptyArrays: true } },
-              { $sort: { count: -1 } },
-            ],
-          },
+            },
+            { $unwind: { path: '$owner', preserveNullAndEmptyArrays: true } },
+            { $sort: { count: -1 } },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
     const total: number = facetResult?.total?.[0]?.count ?? 0;
     const rows: any[] = facetResult?.rows ?? [];
     const data = rows.map((row) => {
@@ -274,75 +322,73 @@ export class ContactReportService {
     const startedAt = process.hrtime.bigint();
     const context = await this.resolveDateContext(dto);
     const match = this.buildBaseMatch(dto, { createdBeforeOrOn: context.to });
-    const rows = await this.contactModel
-      .aggregate([
-        { $match: match },
-        {
-          $project: {
-            inactiveDays: {
-              $dateDiff: {
-                startDate: { $ifNull: ['$lastActivityAt', '$createdAt'] },
-                endDate: context.to,
-                unit: 'day',
-              },
+    const rows = await reportAggregate(this.contactModel, [
+      { $match: match },
+      {
+        $project: {
+          inactiveDays: {
+            $dateDiff: {
+              startDate: { $ifNull: ['$lastActivityAt', '$createdAt'] },
+              endDate: context.to,
+              unit: 'day',
             },
           },
         },
-        {
-          $group: {
-            _id: null,
-            active: {
-              $sum: { $cond: [{ $lt: ['$inactiveDays', 30] }, 1, 0] },
-            },
-            days30: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $gte: ['$inactiveDays', 30] },
-                      { $lt: ['$inactiveDays', 60] },
-                    ],
-                  },
-                  1,
-                  0,
-                ],
-              },
-            },
-            days60: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $gte: ['$inactiveDays', 60] },
-                      { $lt: ['$inactiveDays', 90] },
-                    ],
-                  },
-                  1,
-                  0,
-                ],
-              },
-            },
-            days90: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $gte: ['$inactiveDays', 90] },
-                      { $lt: ['$inactiveDays', 180] },
-                    ],
-                  },
-                  1,
-                  0,
-                ],
-              },
-            },
-            days180: {
-              $sum: { $cond: [{ $gte: ['$inactiveDays', 180] }, 1, 0] },
+      },
+      {
+        $group: {
+          _id: null,
+          active: {
+            $sum: { $cond: [{ $lt: ['$inactiveDays', 30] }, 1, 0] },
+          },
+          days30: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ['$inactiveDays', 30] },
+                    { $lt: ['$inactiveDays', 60] },
+                  ],
+                },
+                1,
+                0,
+              ],
             },
           },
+          days60: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ['$inactiveDays', 60] },
+                    { $lt: ['$inactiveDays', 90] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          days90: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ['$inactiveDays', 90] },
+                    { $lt: ['$inactiveDays', 180] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          days180: {
+            $sum: { $cond: [{ $gte: ['$inactiveDays', 180] }, 1, 0] },
+          },
         },
-      ])
-      .exec();
+      },
+    ]).exec();
     const row = rows[0] ?? {};
     const totalStale =
       (row.days30 ?? 0) +
@@ -384,33 +430,31 @@ export class ContactReportService {
     });
     // Single aggregation: $facet so count and bucket pipeline both
     // re-use one collection scan via the shared $match stage above.
-    const [facetResult] = await this.contactModel
-      .aggregate([
-        { $match: match },
-        {
-          $facet: {
-            total: [{ $count: 'count' }],
-            buckets: [
-              {
-                $project: {
-                  score: {
-                    $min: [100, { $max: [0, { $ifNull: ['$score', 0] }] }],
-                  },
+    const [facetResult] = await reportAggregate(this.contactModel, [
+      { $match: match },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          buckets: [
+            {
+              $project: {
+                score: {
+                  $min: [100, { $max: [0, { $ifNull: ['$score', 0] }] }],
                 },
               },
-              {
-                $bucket: {
-                  groupBy: '$score',
-                  boundaries: [0, 21, 41, 61, 81, 101],
-                  default: 'other',
-                  output: { count: { $sum: 1 } },
-                },
+            },
+            {
+              $bucket: {
+                groupBy: '$score',
+                boundaries: [0, 21, 41, 61, 81, 101],
+                default: 'other',
+                output: { count: { $sum: 1 } },
               },
-            ],
-          },
+            },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
     const total: number = facetResult?.total?.[0]?.count ?? 0;
     const rows: any[] = facetResult?.buckets ?? [];
     const labels: Record<string, Pick<ScoreBucket, 'range' | 'label'>> = {
@@ -448,38 +492,32 @@ export class ContactReportService {
     const match = this.buildBaseMatch(dto, {
       createdBetween: { from: context.from, to: context.to },
     });
-    const rows = await this.contactModel
-      .aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: 1 },
-            emailOptOut: {
-              $sum: {
-                $cond: [
-                  { $ne: [{ $ifNull: ['$emailOptIn', false] }, true] },
-                  1,
-                  0,
-                ],
-              },
-            },
-            smsOptOut: {
-              $sum: {
-                $cond: [
-                  { $ne: [{ $ifNull: ['$smsOptIn', false] }, true] },
-                  1,
-                  0,
-                ],
-              },
-            },
-            doNotCall: {
-              $sum: { $cond: [{ $eq: ['$doNotCall', true] }, 1, 0] },
+    const rows = await reportAggregate(this.contactModel, [
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          emailOptOut: {
+            $sum: {
+              $cond: [
+                { $ne: [{ $ifNull: ['$emailOptIn', false] }, true] },
+                1,
+                0,
+              ],
             },
           },
+          smsOptOut: {
+            $sum: {
+              $cond: [{ $ne: [{ $ifNull: ['$smsOptIn', false] }, true] }, 1, 0],
+            },
+          },
+          doNotCall: {
+            $sum: { $cond: [{ $eq: ['$doNotCall', true] }, 1, 0] },
+          },
         },
-      ])
-      .exec();
+      },
+    ]).exec();
     const row = rows[0] ?? {
       total: 0,
       emailOptOut: 0,
@@ -539,7 +577,7 @@ export class ContactReportService {
 
     const [total, rows] = await Promise.all([
       this.contactModel.countDocuments(match).exec(),
-      this.contactModel.aggregate(pipeline).exec(),
+      reportAggregate(this.contactModel, pipeline).exec(),
     ]);
     const data = rows.map((row) => ({
       channelType: row._id ?? 'unknown',
@@ -580,39 +618,35 @@ export class ContactReportService {
       ],
     };
     const [summary, trendRows] = await Promise.all([
-      this.contactModel
-        .aggregate([
-          { $match: match },
-          {
-            $group: {
-              _id: null,
-              totalShadow: { $sum: 1 },
-              convertedCount: {
-                $sum: { $cond: [convertedExpression, 1, 0] },
-              },
+      reportAggregate(this.contactModel, [
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            totalShadow: { $sum: 1 },
+            convertedCount: {
+              $sum: { $cond: [convertedExpression, 1, 0] },
             },
           },
-        ])
-        .exec(),
-      this.contactModel
-        .aggregate([
-          { $match: match },
-          {
-            $group: {
-              _id: {
-                $dateToString: {
-                  format,
-                  date: '$createdAt',
-                  timezone: context.timezone,
-                },
+        },
+      ]).exec(),
+      reportAggregate(this.contactModel, [
+        { $match: match },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format,
+                date: '$createdAt',
+                timezone: context.timezone,
               },
-              total: { $sum: 1 },
-              converted: { $sum: { $cond: [convertedExpression, 1, 0] } },
             },
+            total: { $sum: 1 },
+            converted: { $sum: { $cond: [convertedExpression, 1, 0] } },
           },
-          { $sort: { _id: 1 } },
-        ])
-        .exec(),
+        },
+        { $sort: { _id: 1 } },
+      ]).exec(),
     ]);
     const totals = summary[0] ?? { totalShadow: 0, convertedCount: 0 };
     const data = {
@@ -962,18 +996,16 @@ export class ContactReportService {
         this.contactModel
           .countDocuments({ ...match, 'stageHistory.0': { $exists: true } })
           .exec(),
-        this.contactModel
-          .aggregate([
-            { $match: { ...match, 'stageHistory.0': { $exists: true } } },
-            { $unwind: '$stageHistory' },
-            {
-              $group: {
-                _id: null,
-                reliableFrom: { $min: '$stageHistory.changedAt' },
-              },
+        reportAggregate(this.contactModel, [
+          { $match: { ...match, 'stageHistory.0': { $exists: true } } },
+          { $unwind: '$stageHistory' },
+          {
+            $group: {
+              _id: null,
+              reliableFrom: { $min: '$stageHistory.changedAt' },
             },
-          ])
-          .exec(),
+          },
+        ]).exec(),
       ]);
     const coveragePercent = safePercent(contactsWithHistory, totalContacts);
     const warnings =

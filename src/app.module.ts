@@ -32,6 +32,7 @@ import { MongooseConfigService } from './database/mongoose-config.service';
 import { RedisModule } from './redis/redis.module';
 import { DlqModule } from './queue/dlq/dlq.module';
 import { EntityAuditModule } from './common/audit/entity-audit.module';
+import { ReferencesModule } from './common/references/references.module';
 import { QueueModule } from './queue/queue.module';
 import { MailQueueModule } from './queue/mail/mail-queue.module';
 import { ActivityLogModule } from './activity-log/activity-log.module';
@@ -100,8 +101,8 @@ const infrastructureDatabaseModule = MongooseModule.forRootAsync({
 
 import { DatabaseModule } from './database/database.module';
 import { ClsModule, ClsService } from 'nestjs-cls';
-import { WinstonModule, utilities as nestWinstonUtilities } from 'nest-winston';
-import * as winston from 'winston';
+import { WinstonModule } from 'nest-winston';
+import { winstonConfig } from './common/logger/winston.config';
 import { ulid } from 'ulid';
 import { Request } from 'express';
 
@@ -240,29 +241,23 @@ function bullBoardBasicAuth() {
         },
       },
     }),
+    // Logging config lives in `common/logger/winston.config.ts`. It used to be
+    // inlined here, and the inlined copy silently dropped four things the extracted
+    // one provides:
+    //
+    //   1. SECRET MASKING. `maskFormat` walks the message and every meta field
+    //      through `maskSecrets`. Without it, anything a logger call touches ships
+    //      verbatim to Loki. `sentry.bootstrap.ts` even reasons from the assumption
+    //      that this is on ("applies the same maskSecrets so anything that escapes a
+    //      logger call...") — it was not.
+    //   2. LOG_FORMAT. The inline copy hard-coded colorized nestLike, so production
+    //      shipped ANSI escape codes into Loki instead of JSON lines.
+    //   3. tenantId / userId / service on every line — the inline printf carried
+    //      correlationId only.
+    //   4. Structured meta. `({ context, level, timestamp, message, ms })` discarded
+    //      the rest of the object, so metadata passed to a logger call vanished.
     WinstonModule.forRootAsync({
-      useFactory: (clsService: ClsService) => {
-        return {
-          transports: [
-            new winston.transports.Console({
-              format: winston.format.combine(
-                winston.format.timestamp(),
-                winston.format.ms(),
-                nestWinstonUtilities.format.nestLike('MyApp', {
-                  colors: true,
-                  prettyPrint: true,
-                }),
-                winston.format.printf(
-                  ({ context, level, timestamp, message, ms }) => {
-                    const correlationId = clsService.getId() || 'N/A';
-                    return `[${timestamp}] [${correlationId}] ${level} [${context}] : ${message} ${ms}`;
-                  },
-                ),
-              ),
-            }),
-          ],
-        };
-      },
+      useFactory: (clsService: ClsService) => winstonConfig(clsService),
       inject: [ClsService],
     }),
     I18nModule.forRootAsync({
@@ -309,6 +304,8 @@ function bullBoardBasicAuth() {
     HealthModule,
     RedisModule,
     EntityAuditModule,
+    // Supplies RetentionPurgeRunner to the five domains that purge.
+    ReferencesModule,
     DlqModule,
     QueueModule,
     MailQueueModule,

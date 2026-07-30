@@ -13,6 +13,19 @@ export type BotConversationStatus = 'active' | 'handoff' | 'ended';
  */
 export type BotMode = 'bot_first' | 'bot_only' | 'disabled';
 
+// Removed: `lockedAt`, the visible half of an abandoned "lock the conversation while
+// the bot is thinking" design. Four code paths dutifully cleared it and NOTHING ever
+// set it, which is worse than absence: a reader seeing `$unset: {'bot.lockedAt': 1}`
+// on handoff reasonably concludes some path takes that lock. Its service half
+// (`bot/bot-conversation-lock.service.ts`) was orphaned in the same way — never
+// provided, never injected.
+//
+// Conversation mutations ARE serialized, by `ConversationOpsProcessor`, which wraps
+// every command in `RedisLockService.acquire('conv-ops-lock:<id>')` — and bot state
+// writes reach it through `enqueueUpdateBotState`. Wiring the bot lock back in would
+// have been actively harmful: a second lock namespace over the same resource
+// protects nothing, and it had no heartbeat, so it could expire mid-operation with
+// no abort signal (the thing `RedisLockService` exists to provide).
 export interface ConversationBotState {
   enabled: boolean;
   provider: string;
@@ -20,7 +33,6 @@ export interface ConversationBotState {
   sessionId?: string | null;
   status: BotConversationStatus;
   lastError?: string | null;
-  lockedAt?: Date | null;
 }
 
 /**

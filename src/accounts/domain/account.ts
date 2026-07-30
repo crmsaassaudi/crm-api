@@ -50,6 +50,10 @@ export class Account {
   @ApiProperty({ type: () => User })
   owner?: User;
 
+  /** Org-unit ownership — the second data-visibility axis alongside `ownerId`. */
+  @ApiProperty({ type: 'string', nullable: true })
+  orgUnitId?: string | null;
+
   @ApiProperty({ example: 'active' })
   statusId?: string;
 
@@ -58,6 +62,29 @@ export class Account {
 
   @ApiProperty({ example: false })
   isArchived?: boolean;
+
+  // ── Derived identity keys ──
+  //
+  // Present on the domain model, not just the schema, because `update()` writes
+  // through `AccountMapper.toPersistence` and only carries fields the mapper knows
+  // about. While these three were schema-only, `AccountsService.update` derived them
+  // on every PATCH and the mapper dropped them on the floor: renaming a company left
+  // its old `nameKey` in place, so duplicate detection went on comparing the previous
+  // name forever. Create was unaffected (it bypasses the mapper), which is why the gap
+  // looked like it worked.
+
+  @ApiProperty({ example: 'acme' })
+  nameKey?: string;
+
+  @ApiProperty({ example: 'acme.com' })
+  websiteDomain?: string;
+
+  @ApiProperty({ example: 'TAX123456' })
+  taxIdKey?: string;
+
+  /** Mongo `__v`, for the optimistic check on merge. */
+  @ApiProperty({ example: 0 })
+  version?: number;
 
   @ApiProperty()
   customFields?: Record<string, any>;

@@ -1,3 +1,5 @@
+import { HttpStatus } from '@nestjs/common';
+import { TICKET_ERRORS } from './constants/ticket-error-codes';
 import { TicketsService } from './tickets.service';
 import {
   createTicket,
@@ -8,12 +10,15 @@ import { createEventBusMock } from '../test/mocks/event-bus.mock';
 import { createQueueMock } from '../test/mocks/queue.mock';
 import { createMongooseModelMock } from '../test/mocks/mongoose-model.mock';
 import { BadRequestException } from '@nestjs/common';
+import { TICKET_MERGE_REFERENCES } from './ticket-references.registry';
 
 describe('TicketsService', () => {
   let service: TicketsService;
   let repository: any;
   let cls: ReturnType<typeof createClsMock>;
   let eventEmitter: ReturnType<typeof createEventBusMock>;
+  let connection: any;
+  let updateMany: jest.Mock;
   let ticketSettingsService: any;
 
   beforeEach(() => {
@@ -32,6 +37,10 @@ describe('TicketsService', () => {
     ticketSettingsService = {
       findStatusById: jest.fn().mockResolvedValue(null),
     };
+
+    // mergeTickets re-parents activity_logs and tasks through the raw connection.
+    updateMany = jest.fn(() => Promise.resolve({ modifiedCount: 1 }));
+    connection = { collection: jest.fn(() => ({ updateMany })) };
 
     service = new TicketsService(
       repository,
@@ -70,6 +79,7 @@ describe('TicketsService', () => {
       } as any, // exportRequest
       { validateTagIds: jest.fn().mockResolvedValue(undefined) } as any, // tagsService
       { getSetting: jest.fn().mockResolvedValue(null) } as any, // crmSettings
+      connection as any, // connection — merge re-parents activity/tasks through it
     );
   });
 
@@ -179,6 +189,143 @@ describe('TicketsService', () => {
           paginationOptions: { page: 1, limit: 10 },
         }),
       );
+    });
+  });
+
+  // ===================================================================
+  // MERGE — the same C-1 defect the contact audit found
+  // ===================================================================
+  describe('mergeTickets', () => {
+    // Real ObjectId hex, not 'target'/'source'. The registry casts ids for
+    // ObjectId-kind references, so a placeholder throws inside the re-parent loop —
+    // where the per-reference catch swallows it. The test then passed while asserting
+    // against the failure path, which is how the child-ticket reference looked covered.
+    const TARGET_ID = '60d0fe4f5311236168a109ca';
+    const SOURCE_ID = '60d0fe4f5311236168a109cb';
+
+    const target = () =>
+      createTicket({
+        id: TARGET_ID,
+        description: 'Original',
+        linkedMessageIds: ['m1'],
+      } as any);
+    const source = () =>
+      createTicket({
+        id: SOURCE_ID,
+        ticketNumber: 'TKT-00009',
+        linkedMessageIds: ['m2', 'm1'],
+      } as any);
+
+    beforeEach(() => {
+      repository.findOne.mockImplementation((f: any) =>
+        Promise.resolve(String(f._id) === TARGET_ID ? target() : source()),
+      );
+      repository.update.mockResolvedValue(target());
+    });
+
+    it('should refuse to merge a ticket with itself', async () => {
+      await expect(service.mergeTickets('t1', 't1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should carry the source linked messages onto the target', async () => {
+      // Without this the merge only appended a sentence to the description: the
+      // conversation messages stayed linked to a ticket about to be archived, so the
+      // agent lost the very thread they merged the duplicate for.
+      await service.mergeTickets(TARGET_ID, SOURCE_ID);
+
+      const payload = repository.update.mock.calls[0][1];
+      expect(payload.linkedMessageIds.sort()).toEqual(['m1', 'm2']);
+    });
+
+    it('should de-duplicate messages linked to both tickets', async () => {
+      await service.mergeTickets(TARGET_ID, SOURCE_ID);
+      const ids = repository.update.mock.calls[0][1].linkedMessageIds;
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it('should re-parent the source timeline onto the target', async () => {
+      await service.mergeTickets(TARGET_ID, SOURCE_ID);
+
+      expect(connection.collection).toHaveBeenCalledWith('activity_logs');
+      const activityCall = updateMany.mock.calls.find(
+        ([filter]: any[]) => filter.targetType === 'ticket',
+      );
+      expect(activityCall?.[0].targetId).toBe(SOURCE_ID);
+      expect(activityCall?.[1]).toEqual({ $set: { targetId: TARGET_ID } });
+    });
+
+    it('should re-parent related tasks, matching both relatedTo key shapes', async () => {
+      await service.mergeTickets(TARGET_ID, SOURCE_ID);
+
+      expect(connection.collection).toHaveBeenCalledWith('tasks');
+      const taskCall = updateMany.mock.calls.find(
+        ([filter]: any[]) => filter['relatedTo.type'] === 'Ticket',
+      );
+      expect(taskCall?.[0].$or).toEqual([
+        { 'relatedTo._id': SOURCE_ID },
+        { 'relatedTo.id': SOURCE_ID },
+      ]);
+    });
+
+    it('should soft-delete the source, which its own comment always claimed', async () => {
+      // `remove()` used to hard-delete; the comment said "soft-delete source ticket".
+      await service.mergeTickets(TARGET_ID, SOURCE_ID);
+      expect(repository.remove).toHaveBeenCalledWith(SOURCE_ID);
+    });
+
+    it('should re-parent CHILD tickets, which the hand-rolled version missed', async () => {
+      // Merging a parent used to leave its children pointing at a soft-deleted ticket:
+      // unreachable rather than deleted, which is the original merge defect reappearing
+      // in a domain that had already been fixed once. The registry declares the
+      // reference; the loop now reads the registry instead of a hard-coded pair.
+      await service.mergeTickets(TARGET_ID, SOURCE_ID);
+
+      expect(connection.collection).toHaveBeenCalledWith('tickets');
+      const childCall = updateMany.mock.calls.find(
+        ([filter]: any[]) => filter.parentTicketId !== undefined,
+      );
+      expect(String(childCall?.[0].parentTicketId)).toBe(SOURCE_ID);
+    });
+
+    it('should re-parent agent time segments, so occupancy follows the survivor', async () => {
+      // Minutes an agent worked on the duplicate belong to the ticket that survives it;
+      // left behind, workforce reporting undercounts the surviving ticket forever.
+      await service.mergeTickets(TARGET_ID, SOURCE_ID);
+
+      expect(connection.collection).toHaveBeenCalledWith(
+        'interaction_segments',
+      );
+    });
+
+    it('should NEVER move the audit trail', async () => {
+      // Excluded by policy (`onMerge: 'keep'`), not by omission — it records what
+      // happened to a specific ticket id, and rewriting it would falsify the history of
+      // the very operation doing the rewriting.
+      await service.mergeTickets(TARGET_ID, SOURCE_ID);
+      expect(connection.collection).not.toHaveBeenCalledWith('audit_logs');
+    });
+
+    it('should move every reference the registry marks reparent', async () => {
+      await service.mergeTickets(TARGET_ID, SOURCE_ID);
+
+      const touched = connection.collection.mock.calls.map(
+        ([name]: any[]) => name,
+      );
+      for (const ref of TICKET_MERGE_REFERENCES) {
+        expect(touched).toContain(ref.collection);
+      }
+    });
+
+    it('should still complete when a re-parent collection fails', async () => {
+      // The merge has already committed by that point, so throwing would tell the
+      // caller it failed when the target was in fact updated.
+      updateMany.mockRejectedValue(new Error('mongo down'));
+      await expect(
+        service.mergeTickets(TARGET_ID, SOURCE_ID),
+      ).resolves.toBeTruthy();
+      expect(repository.remove).toHaveBeenCalledWith(SOURCE_ID);
     });
   });
 
@@ -303,6 +450,69 @@ describe('TicketsService', () => {
           mapping: { Column1: 'description' },
         } as any),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('deal link', () => {
+    // The whole feature was inert: `dealId` was absent from the schema (so Mongoose
+    // strict mode dropped every write), absent from the mapper (so `update()` would have
+    // dropped it anyway), and ignored by the list filter — which made
+    // `GET /tickets/by-deal/:dealId` answer with every ticket in the tenant and look
+    // like it had worked.
+    it('should write dealId when linking', async () => {
+      repository.findOne.mockResolvedValue({ id: 't1', subject: 'S' });
+      repository.update.mockResolvedValue({ id: 't1', dealId: 'd1' });
+
+      const result = await service.linkDeal('t1', 'd1');
+
+      expect(repository.update).toHaveBeenCalledWith(
+        't1',
+        expect.objectContaining({ dealId: 'd1' }),
+      );
+      expect(result.dealId).toBe('d1');
+    });
+
+    it('should be idempotent when the link already exists', async () => {
+      repository.findOne.mockResolvedValue({ id: 't1', dealId: 'd1' });
+
+      await service.linkDeal('t1', 'd1');
+
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('should write an explicit null when unlinking', async () => {
+      // Not `undefined`, and not omitted: the mapper only writes keys it is given, so an
+      // omitted field would leave the old link in place and make unlink a silent no-op.
+      repository.findOne.mockResolvedValue({ id: 't1', dealId: 'd1' });
+      repository.update.mockResolvedValue({ id: 't1', dealId: null });
+
+      await service.unlinkDeal('t1');
+
+      expect(repository.update).toHaveBeenCalledWith(
+        't1',
+        expect.objectContaining({ dealId: null }),
+      );
+    });
+
+    it('should 404 rather than link a ticket that does not exist', async () => {
+      repository.findOne.mockResolvedValue(null);
+      await expect(service.linkDeal('nope', 'd1')).rejects.toMatchObject({
+        errorCode: TICKET_ERRORS.NOT_FOUND,
+        status: HttpStatus.NOT_FOUND,
+      });
+    });
+
+    it('should pass dealId to the repository when listing a deal tickets', async () => {
+      repository.findManyWithPagination.mockResolvedValue({ data: [] });
+
+      await service.findByDeal('d1');
+
+      // The filter has to REACH the query — an ignored one returns unrelated rows.
+      expect(repository.findManyWithPagination).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filterOptions: expect.objectContaining({ dealId: 'd1' }),
+        }),
+      );
     });
   });
 });

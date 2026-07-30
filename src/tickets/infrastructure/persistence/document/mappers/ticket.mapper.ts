@@ -14,6 +14,8 @@ export class TicketMapper {
     // Customer Context
     domainEntity.contactId = raw.contactId?.toString();
     domainEntity.accountId = raw.accountId?.toString();
+    domainEntity.dealId = raw.dealId?.toString();
+    domainEntity.parentTicketId = raw.parentTicketId?.toString();
     domainEntity.omniConversationId = raw.omniConversationId?.toString();
     domainEntity.linkedMessageIds = raw.linkedMessageIds;
     domainEntity.relatedTo = raw.relatedTo
@@ -123,6 +125,15 @@ export class TicketMapper {
     // Customer Context
     persistenceEntity.contactId = domainEntity.contactId;
     persistenceEntity.accountId = domainEntity.accountId;
+    // `!== undefined` rather than truthy: unlinkDeal writes an explicit null, and a
+    // truthy check would make "unlink" a silent no-op — the mirror of the bug that made
+    // "link" one. The mapper is the whitelist `update()` writes through.
+    if (domainEntity.dealId !== undefined) {
+      persistenceEntity.dealId = domainEntity.dealId;
+    }
+    if (domainEntity.parentTicketId !== undefined) {
+      persistenceEntity.parentTicketId = domainEntity.parentTicketId;
+    }
     persistenceEntity.omniConversationId = domainEntity.omniConversationId;
     persistenceEntity.linkedMessageIds = domainEntity.linkedMessageIds;
     persistenceEntity.relatedTo = domainEntity.relatedTo;

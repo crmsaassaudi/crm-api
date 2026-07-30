@@ -145,7 +145,6 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
       sessionId: { type: String },
       status: { type: String, enum: BOT_STATUSES },
       lastError: { type: String },
-      lockedAt: { type: Date },
     },
     _id: false,
   })
@@ -156,7 +155,6 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
     sessionId?: string | null;
     status: 'active' | 'handoff' | 'ended';
     lastError?: string | null;
-    lockedAt?: Date | null;
   };
 
   @Prop({ default: '' })

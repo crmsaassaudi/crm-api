@@ -38,7 +38,9 @@ import {
   validateSendCarousel,
   validateReaction,
   validateTyping,
+  validateConversationId,
 } from '../dto/gateway-dto';
+import { TENANT_HEADER } from '../../common/tenant/tenant-header.policy';
 
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
@@ -417,7 +419,7 @@ export class OmniGateway
       decoded.tenantId ??
       decoded.tenant_id ??
       client.handshake.auth?.tenantId ??
-      client.handshake.headers['x-tenant-id'];
+      client.handshake.headers[TENANT_HEADER];
 
     const fromHint = await this.resolveTenantHint(hint);
     if (fromHint) return fromHint;
@@ -1339,9 +1341,11 @@ export class OmniGateway
     @MessageBody() data: { conversationId: string },
   ) {
     if (!client.data.user) return { ok: false, error: 'Unauthenticated' };
-    if (!data?.conversationId) {
-      return { ok: false, error: 'conversationId is required' };
-    }
+    // Presence AND format: an unvalidated id becomes a room name here and a Mongo
+    // filter in the lock/claim handlers, so a malformed one either pollutes the room
+    // registry or surfaces as a CastError.
+    const subscribeError = validateConversationId(data);
+    if (subscribeError) return { ok: false, error: subscribeError };
 
     // HIGH-04: Tenant-scope the room to prevent cross-tenant realtime leaks.
     // Without this, a tenant-A socket that learns a tenant-B conversationId
@@ -1362,9 +1366,8 @@ export class OmniGateway
     @MessageBody() data: { conversationId: string },
   ) {
     if (!client.data.user) return { ok: false, error: 'Unauthenticated' };
-    if (!data?.conversationId) {
-      return { ok: false, error: 'conversationId is required' };
-    }
+    const unsubscribeError = validateConversationId(data);
+    if (unsubscribeError) return { ok: false, error: unsubscribeError };
 
     const tenantId = client.data.tenantId;
     if (!tenantId) {
@@ -1446,6 +1449,9 @@ export class OmniGateway
     const user = client.data.user;
     if (!user) return;
 
+    // typing:start validates; stop did not, so a malformed id still broadcast.
+    if (validateConversationId(data)) return;
+
     client
       .to(`tenant:${client.data.tenantId}:conversation:${data.conversationId}`)
       .emit('omni:typing:stop', {
@@ -1498,6 +1504,9 @@ export class OmniGateway
   ) {
     const user = client.data.user;
     if (!user) return { ok: false, error: 'Unauthenticated' };
+
+    const claimError = validateConversationId(data);
+    if (claimError) return { ok: false, error: claimError };
 
     const userId = client.data.userId ?? user.id ?? user.sub;
     const tenantId = client.data.tenantId;
@@ -1616,6 +1625,9 @@ export class OmniGateway
     const agentId = client.data.userId ?? user.id ?? user.sub;
     if (!tenantId) return { ok: false, error: 'No tenant context' };
 
+    const heartbeatError = validateConversationId(data);
+    if (heartbeatError) return { ok: false, error: heartbeatError };
+
     try {
       const lock = await this.conversationLockService.heartbeat({
         tenantId,
@@ -1640,6 +1652,9 @@ export class OmniGateway
     const tenantId = client.data.tenantId;
     const agentId = client.data.userId ?? user.id ?? user.sub;
     if (!tenantId) return { ok: false, error: 'No tenant context' };
+
+    const takeoverError = validateConversationId(data);
+    if (takeoverError) return { ok: false, error: takeoverError };
 
     try {
       const result = await this.conversationLockService.takeover({
@@ -1963,10 +1978,12 @@ export class OmniGateway
     userId?: string;
   }): void {
     if (!event?.tenantId) return;
-    this.server.to(`tenant:${event.tenantId}`).emit('authz:permissions:changed', {
-      tenantId: event.tenantId,
-      userId: event.userId ?? null,
-    });
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('authz:permissions:changed', {
+        tenantId: event.tenantId,
+        userId: event.userId ?? null,
+      });
   }
 
   /** Resolve any thrown value to a human-readable error string. */

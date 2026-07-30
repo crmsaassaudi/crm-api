@@ -85,6 +85,15 @@ export const PERMISSION_REGISTRY: Record<
     export: 'contacts:export',
     import: 'contacts:import',
     unmask: 'contacts:unmask',
+    // Reassigning a record's owner, separately from editing its fields.
+    //
+    // `ownerId` used to be writable through plain `contacts:edit`, so moving a
+    // record to another rep was indistinguishable from correcting a phone
+    // number. That matters here specifically because ownership IS the primary
+    // visibility axis: an agent could quietly move a record into their own scope,
+    // or out of a colleague's, using the same permission they use to type. This
+    // is what Salesforce separates as "Transfer Record".
+    assign: 'contacts:assign',
   },
   accounts: {
     view: 'accounts:view',
@@ -304,6 +313,16 @@ export const PERMISSION_REGISTRY: Record<
     assign: 'omni_channel:assign',
     /** Tenant-wide omni settings and storage quota. */
     manage_system: 'omni_channel:manage_system',
+    /**
+     * Reveal the customer's phone and email on a conversation.
+     *
+     * `conversation.customer` caches the end customer's personal contact details —
+     * the same data class as `contact.emails`, which FieldMaskingInterceptor already
+     * redacts. Without this the same customer's phone number was masked on the
+     * Contact screen and printed in full one click away in the inbox, so the control
+     * protected the record and not the data.
+     */
+    unmask: 'omni_channel:unmask',
   },
   omni_reports: {
     view: 'omni_reports:view',
@@ -489,6 +508,7 @@ export const CORE_PERMISSIONS: string[] = [
   'omni_channel:view',
   'omni_channel:edit',
   'omni_channel:assign',
+  'omni_channel:unmask',
   'omni_channel:manage_system',
   // Omni-Channel Reports
   'omni_reports:view',

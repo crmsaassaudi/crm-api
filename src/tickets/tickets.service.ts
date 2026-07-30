@@ -1,14 +1,17 @@
 import {
   BadRequestException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { BusinessException } from '../common/exceptions/business.exception';
+import { TICKET_ERRORS } from './constants/ticket-error-codes';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { Model } from 'mongoose';
+import { Connection, Model } from 'mongoose';
 import { Readable } from 'stream';
 import { TicketRepository } from './infrastructure/persistence/document/repositories/ticket.repository';
 import { Ticket } from './domain/ticket';
@@ -36,6 +39,11 @@ import { StartTicketImportDto } from './dto/start-ticket-import.dto';
 import { ExportRequestService, ExportRequestDto } from '../common/export';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 import { TagsService } from '../tags/tags.service';
+import {
+  buildReferenceFilter,
+  buildReparentUpdate,
+} from '../common/references/entity-reference';
+import { TICKET_MERGE_REFERENCES } from './ticket-references.registry';
 
 @Injectable()
 export class TicketsService {
@@ -58,6 +66,9 @@ export class TicketsService {
     private readonly exportRequest: ExportRequestService,
     private readonly tagsService: TagsService,
     private readonly crmSettings: CrmSettingsService,
+    // Raw connection for the merge re-parent pass: injecting ActivityLogModule and
+    // TasksModule here would close a dependency cycle with ContactsModule.
+    @InjectConnection() private readonly connection: Connection,
   ) {
     this.importStorage = this.storageFactory.create('tickets');
   }
@@ -355,6 +366,45 @@ export class TicketsService {
     if (!data.closedAt) updateData.closedAt = new Date();
   }
 
+  // ──────────────────────── RECYCLE BIN ────────────────────────
+  //
+  // `remove()` is a soft delete (the schema declares `deletedAt`), so without these
+  // two methods a deleted ticket was invisible everywhere and recoverable nowhere —
+  // strictly worse than the hard delete it replaced, because the row also stayed in
+  // the database forever.
+
+  async listDeleted(options: { page?: number; limit?: number }): Promise<{
+    data: Ticket[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(100, Math.max(1, options.limit ?? 25));
+    const { data, total } = await this.repository.findDeleted({ page, limit });
+    return { data, total, page, limit };
+  }
+
+  async restore(id: string): Promise<Ticket> {
+    const restored = await this.repository.restore(id);
+    if (!restored) {
+      throw new NotFoundException(
+        'Ticket not found in the recycle bin — it may already have been purged',
+      );
+    }
+
+    this.entityAudit.emit({
+      entity: 'ticket',
+      entityType: 'TICKET',
+      entityId: id,
+      kind: 'updated',
+      oldSnapshot: { _deleted: true } as any,
+      newSnapshot: restored,
+    });
+
+    return restored;
+  }
+
   async remove(id: string): Promise<void> {
     const existing = await this.repository.findOne({ _id: id });
     await this.repository.remove(id);
@@ -611,12 +661,21 @@ export class TicketsService {
   // ──────────────────────────── DEAL LINK ────────────────────────────
 
   /**
-   * Link a Deal to this Ticket (bi-directional).
-   * Sets ticket.dealId and appends ticket._id to deal.ticketIds[].
+   * Link a Deal to this Ticket.
+   *
+   * One-directional on purpose. The previous comment here claimed it was bi-directional
+   * and appended to `deal.ticketIds[]` — it never did, and `ticketIds` existed on the
+   * Deal domain class but on neither the schema nor the mapper. The deal's tickets come
+   * from querying `tickets.dealId`, so there is one source of truth to keep correct.
    */
   async linkDeal(ticketId: string, dealId: string): Promise<Ticket> {
     const ticket = await this.repository.findOne({ _id: ticketId });
-    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (!ticket)
+      throw new BusinessException(
+        TICKET_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'Ticket not found',
+      );
 
     if ((ticket as any).dealId === dealId) {
       // Already linked — idempotent
@@ -641,7 +700,12 @@ export class TicketsService {
    */
   async unlinkDeal(ticketId: string): Promise<Ticket> {
     const ticket = await this.repository.findOne({ _id: ticketId });
-    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (!ticket)
+      throw new BusinessException(
+        TICKET_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'Ticket not found',
+      );
 
     const updated = await this.repository.update(ticketId, {
       dealId: null,
@@ -682,7 +746,12 @@ export class TicketsService {
       this.repository.findOne({ _id: parentTicketId }),
     ]);
 
-    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (!ticket)
+      throw new BusinessException(
+        TICKET_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'Ticket not found',
+      );
     if (!parentTicket) throw new NotFoundException('Parent ticket not found');
 
     // Check that parentTicket is not already a child of ticketId (circular check)
@@ -709,7 +778,12 @@ export class TicketsService {
    */
   async removeParent(ticketId: string): Promise<Ticket> {
     const ticket = await this.repository.findOne({ _id: ticketId });
-    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (!ticket)
+      throw new BusinessException(
+        TICKET_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'Ticket not found',
+      );
 
     const updated = await this.repository.update(ticketId, {
       parentTicketId: null,
@@ -765,15 +839,40 @@ export class TicketsService {
     const mergeNote = `\n\n---\n[MERGED] Ticket #${(source as any).ticketNumber ?? sourceId} was merged into this ticket.`;
     const mergedNotes = existingNotes + mergeNote;
 
+    // Carry the source's linked omni messages onto the target.
+    //
+    // Without this the merge only wrote a sentence into the description: the
+    // conversation messages that had been linked to the source stayed linked to a
+    // ticket that is about to be soft-deleted, so the agent who merged the duplicate
+    // lost the very thread they merged it for. Union rather than replace — the target
+    // has its own links — and de-duplicated, because the same message can legitimately
+    // have been linked to both.
+    const mergedMessageIds = Array.from(
+      new Set([
+        ...(((target as any).linkedMessageIds as string[]) ?? []),
+        ...(((source as any).linkedMessageIds as string[]) ?? []),
+      ]),
+    );
+
     // Update target with merged description
     const updated = await this.repository.update(targetId, {
       description: mergedNotes,
+      linkedMessageIds: mergedMessageIds,
     } as any);
 
     if (!updated)
       throw new NotFoundException('Target ticket not found after update');
 
-    // Soft-delete source ticket (mark as merged via deletedAt)
+    // Move the source's timeline onto the target, for the same reason: entries
+    // attached to a soft-deleted ticket are unreachable, not deleted. The audit trail
+    // is deliberately NOT moved — it records what happened to a specific ticket id,
+    // and rewriting it would falsify history; this merge is itself audited below.
+    await this.reparentTicketReferences(sourceId, targetId);
+
+    // Soft-delete source ticket (mark as merged via deletedAt).
+    // `remove()` on the base repository is a soft delete for any schema declaring
+    // `deletedAt` — which is what this comment always claimed and, until the base was
+    // fixed, was not: it issued `deleteOne` and destroyed the source outright.
     await this.repository.remove(sourceId);
 
     this.logger.log(`[TicketMerge] Ticket ${sourceId} merged into ${targetId}`);
@@ -791,6 +890,62 @@ export class TicketsService {
     return updated;
   }
 
+  /**
+   * Move the source ticket's timeline entries and related tasks onto the target.
+   *
+   * Same shape as the contact merge's re-parent pass, and the same reason: a merge
+   * that archives the loser without moving what points at it does not delete data,
+   * it makes it unreachable — and nothing errors, so nobody notices.
+   *
+   * Reached through the raw connection rather than by injecting ActivityLogModule and
+   * TasksModule: TicketsModule is already imported by ContactsModule, and adding
+   * those two would close a dependency cycle.
+   *
+   * Best-effort per collection. The merge has already committed by this point, so
+   * throwing would leave the caller believing it failed when the target was in fact
+   * updated; a logged failure is repairable, a false error is not.
+   */
+  /**
+   * Move every registered reference from the merged-away ticket onto the survivor.
+   *
+   * Registry-driven since the ticket registry existed. The hand-rolled version this
+   * replaces moved `activity_logs` and `tasks` and stopped there, so it missed two
+   * references the registry declares:
+   *
+   *   - **child tickets.** Merging a parent left its children pointing at a
+   *     soft-deleted ticket — unreachable, not deleted, which is the original merge
+   *     defect reappearing in a domain that had been fixed once already.
+   *   - **agent time segments.** The minutes an agent worked stayed attributed to the
+   *     archived ticket, so occupancy reporting undercounted the survivor.
+   *
+   * Per-reference try/catch: one collection failing must not abandon the merge with no
+   * record of it, and the audit trail is excluded by policy rather than by omission —
+   * `onMerge: 'keep'` on that entry, because it records what happened to a specific id.
+   */
+  private async reparentTicketReferences(
+    sourceId: string,
+    targetId: string,
+  ): Promise<void> {
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    if (!tenantId) return;
+
+    for (const ref of TICKET_MERGE_REFERENCES) {
+      try {
+        await this.connection
+          .collection(ref.collection)
+          .updateMany(
+            buildReferenceFilter(ref, sourceId, String(tenantId)),
+            buildReparentUpdate(ref, targetId) as any,
+          );
+      } catch (err) {
+        this.logger.error(
+          `[TicketMerge] Could not move ${ref.label} (${ref.collection}.${ref.field}) ` +
+            `for ${sourceId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
   // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 SLA PAUSE / RESUME \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
   /**
@@ -800,7 +955,12 @@ export class TicketsService {
    */
   async pauseSla(ticketId: string): Promise<Ticket> {
     const ticket = await this.repository.findOne({ _id: ticketId });
-    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (!ticket)
+      throw new BusinessException(
+        TICKET_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'Ticket not found',
+      );
 
     // Already paused — idempotent
     if ((ticket as any).slaPausedAt && !(ticket as any).slaResumedAt) {
@@ -826,7 +986,12 @@ export class TicketsService {
    */
   async resumeSla(ticketId: string): Promise<Ticket> {
     const ticket = await this.repository.findOne({ _id: ticketId });
-    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (!ticket)
+      throw new BusinessException(
+        TICKET_ERRORS.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'Ticket not found',
+      );
 
     const pausedAt = (ticket as any).slaPausedAt;
     const alreadyResumed = (ticket as any).slaResumedAt;

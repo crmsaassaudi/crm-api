@@ -111,7 +111,17 @@ export class TicketRepository extends BaseDocumentRepository<
     filterOptions?: any;
     paginationOptions: IPaginationOptions;
   }): Promise<PaginationResponseDto<Ticket>> {
-    const where: FilterQuery<TicketSchemaClass> = {};
+    // Exclude soft-deleted records.
+    //
+    // Missed twice before this. §20 made deletion a soft delete across six collections,
+    // and the inventory written afterwards only inspected `findOne` — so a LIST query
+    // that never filtered `deletedAt` stayed invisible to it. Accounts was found in §28
+    // and recorded there as "the only list query in the CRM" doing this; it was not.
+    //
+    // `null` rather than `$exists: false`, because `restore()` UNSETS the field: `null`
+    // matches both a missing field and an explicit null, so a restored row and a legacy
+    // row both read as live.
+    const where: FilterQuery<TicketSchemaClass> = { deletedAt: null };
 
     if (filterOptions?.search) {
       const searchExpr = {
@@ -149,6 +159,19 @@ export class TicketRepository extends BaseDocumentRepository<
       where.contactId = filterOptions.contactId;
     }
 
+    // `findByDeal` passes this, and nothing read it — so GET /tickets/by-deal/:dealId
+    // returned the first 50 tickets in the TENANT, unfiltered, presented as the deal's
+    // tickets. An ignored filter is worse than a missing endpoint: it answers.
+    if (filterOptions?.dealId) {
+      where.dealId = filterOptions.dealId;
+    }
+
+    // Same story as dealId: `getChildren` passes this and nothing read it, so asking for
+    // one ticket's children returned the first 100 tickets in the tenant.
+    if (filterOptions?.parentTicketId) {
+      where.parentTicketId = filterOptions.parentTicketId;
+    }
+
     const scopedWhere = this.applyTenantFilter(where);
 
     // .lean() skips Mongoose hydration which roughly halves RAM/CPU on large
@@ -175,7 +198,20 @@ export class TicketRepository extends BaseDocumentRepository<
   async findOne(
     filter: FilterQuery<TicketSchemaClass>,
   ): Promise<Ticket | null> {
-    const scopedFilter = this.applyTenantFilter(filter);
+    // Exclude soft-deleted records unless the caller asks for one explicitly.
+    //
+    // Harmless while `remove()` hard-deleted: the row was gone, so the lookup
+    // returned null by itself. Once deletion became a soft delete the unfiltered
+    // lookup began SERVING deleted records — `GET /:id` answering 200 instead of
+    // 404, the detail page rendering a deleted record as editable, and automation's
+    // `fetchRecord` resuming delayed workflows against it, which is how a
+    // "wait 3 days then email" step ends up acting on something the user deleted.
+    //
+    // Passing `deletedAt` explicitly opts out, for merge and restore paths that
+    // legitimately need to load an archived row.
+    const scopedFilter = this.applyTenantFilter(
+      filter.deletedAt !== undefined ? filter : { ...filter, deletedAt: null },
+    );
     const doc = await this.populateRefs(
       this.model.findOne(scopedFilter),
     ).exec();
@@ -220,5 +256,40 @@ export class TicketRepository extends BaseDocumentRepository<
       matchedCount: result.matchedCount,
       modifiedCount: result.modifiedCount,
     };
+  }
+
+  /**
+   * Records soft-deleted before `cutoff`, for the retention purge.
+   *
+   * `isPlatformQuery` because the caller is a cron: retention applies to every tenant, and
+   * without the flag `tenantFilterPlugin` throws on a missing CLS tenant — which is how
+   * four nightly jobs came to fail on their first query while logging "skipped".
+   *
+   * Oldest deletion first, so a backlog drains in the order it accumulated.
+   */
+  async findPurgeable(
+    cutoff: Date,
+    limit: number,
+  ): Promise<Array<{ id: string; tenantId: string }>> {
+    const docs = await this.model
+      .find({ deletedAt: { $ne: null, $lte: cutoff } })
+      .setOptions({ isPlatformQuery: true } as any)
+      .select({ _id: 1, tenantId: 1 })
+      .sort({ deletedAt: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    return docs.map((doc: any) => ({
+      id: String(doc._id),
+      tenantId: String(doc.tenantId),
+    }));
+  }
+
+  /** Hard-delete one ticket. Only TicketPurgeService may call this. */
+  async hardDelete(id: string): Promise<void> {
+    await this.model
+      .deleteOne({ _id: id })
+      .setOptions({ isPlatformQuery: true } as any)
+      .exec();
   }
 }

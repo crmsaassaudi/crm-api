@@ -38,10 +38,9 @@ export class Ticket {
   @ApiProperty({ description: 'Parent ticket ID (for sub-tickets)' })
   parentTicketId?: string;
 
-  @ApiProperty({
-    description: 'Child ticket IDs (sub-tickets under this ticket)',
-  })
-  childTicketIds?: string[];
+  // NO `childTicketIds`: children are found by querying `parentTicketId`
+  // (GET /tickets/:id/children). Same reasoning as the removed `deals.ticketIds` — a
+  // denormalised mirror of a foreign key is a second source of truth that drifts.
 
   @ApiProperty()
   relatedTo?: {

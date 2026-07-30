@@ -164,6 +164,7 @@ describe('ContactImportProcessor — mapping', () => {
       },
       baseData().mapping,
       1,
+      baseData(),
     );
     // `mapRow` returns { row, fields, arrayFields }. Multi-value columns live
     // under `arrayFields`, not at the top level — the assertions below used to
@@ -178,6 +179,7 @@ describe('ContactImportProcessor — mapping', () => {
       { 'First Name': 'A', 'Last Name': 'B', Phone: '+84 90 111 2222' },
       baseData().mapping,
       1,
+      baseData(),
     );
     expect(m.arrayFields.phones).toEqual(['+84901112222']);
   });
@@ -191,6 +193,7 @@ describe('ContactImportProcessor — buildMerge', () => {
       { 'First Name': 'New', 'Last Name': 'Name', Email: 'x@x.com' },
       { 'First Name': 'firstName', 'Last Name': 'lastName', Email: 'emails' },
       1,
+      baseData(),
     );
     const errors: any[] = [];
     const update = proc.buildMerge(
@@ -211,6 +214,7 @@ describe('ContactImportProcessor — buildMerge', () => {
       { 'First Name': 'A', 'Last Name': 'B', Email: 'new@x.com' },
       { 'First Name': 'firstName', 'Last Name': 'lastName', Email: 'emails' },
       7,
+      baseData(),
     );
     const errors: any[] = [];
     const update = proc.buildMerge(
@@ -229,6 +233,7 @@ describe('ContactImportProcessor — buildMerge', () => {
       { 'First Name': 'A', 'Last Name': 'B', Email: 'new@x.com' },
       { 'First Name': 'firstName', 'Last Name': 'lastName', Email: 'emails' },
       1,
+      baseData(),
     );
     const data = baseData();
     data.tenantSettings.multipleEmailsAllowed = true;
@@ -250,11 +255,13 @@ describe('ContactImportProcessor — processBatch', () => {
       { 'First Name': 'A', 'Last Name': 'B', Email: 'a@x.com' },
       baseData().mapping,
       1,
+      baseData(),
     ),
     proc.mapRow(
       { 'First Name': 'C', 'Last Name': 'D', Email: 'c@x.com' },
       baseData().mapping,
       2,
+      baseData(),
     ),
   ];
 
@@ -357,6 +364,7 @@ describe('ContactImportProcessor — processBatch', () => {
         { 'First Name': 'A', Email: 'a@x.com' }, // no lastName
         baseData().mapping,
         1,
+        baseData(),
       ),
     ];
     await proc.processBatch(
@@ -383,11 +391,13 @@ describe('ContactImportProcessor — processBatch', () => {
         { 'First Name': 'A', 'Last Name': 'B', Email: 'dup@x.com' },
         baseData().mapping,
         1,
+        baseData(),
       ),
       proc.mapRow(
         { 'First Name': 'C', 'Last Name': 'D', Email: 'dup@x.com' },
         baseData().mapping,
         2,
+        baseData(),
       ),
     ];
     await proc.processBatch(

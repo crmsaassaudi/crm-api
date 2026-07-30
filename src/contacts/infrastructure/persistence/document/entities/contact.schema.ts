@@ -209,10 +209,14 @@ ContactSchema.index(
   { tenantId: 1, createdAt: -1, _id: -1 },
   { name: 'tenant_created_cursor' },
 );
-ContactSchema.index(
-  { 'omniIdentities.channelType': 1, 'omniIdentities.senderId': 1 },
-  { name: 'omni_identity_lookup' },
-);
+// NOTE: the former `omni_identity_lookup` index — keyed on
+// `omniIdentities.channelType + senderId` with NO tenantId prefix — was dropped.
+// It was strictly redundant with `tenant_omni_identity_lookup` below (every
+// lookup goes through applyTenantFilter, so no query ever omitted tenantId) and
+// as a cross-tenant multikey index over an array field it was one of the largest
+// on the collection. Dropping it removes RAM pressure from the hot inbound path
+// at 100M contacts, and removes an index a mis-scoped query could have used.
+// Existing deployments: `db.contacts.dropIndex('omni_identity_lookup')`.
 ContactSchema.index(
   {
     tenantId: 1,
@@ -246,9 +250,48 @@ ContactSchema.index(
   { tenantId: 1, phones: 1 },
   { name: 'tenant_phone_lookup' },
 );
+// Partial index for the default list view.
+//
+// The plain `(tenantId, deletedAt, createdAt)` index it replaces could not serve
+// the query that actually runs: every read filters `deletedAt: null`, and Mongo
+// cannot use an index selectively for a null/missing match — it still walked the
+// deleted entries. A partial index contains ONLY live contacts, so it is both
+// smaller and fully selective, and the deleted rows (a rounding error by count,
+// and now bounded by the 30-day retention purge) simply are not in it.
 ContactSchema.index(
-  { tenantId: 1, deletedAt: 1, createdAt: -1 },
-  { name: 'tenant_active_list' },
+  { tenantId: 1, createdAt: -1, _id: -1 },
+  {
+    name: 'tenant_active_list',
+    partialFilterExpression: { deletedAt: null },
+  },
+);
+// The recycle bin: soft-deleted contacts, newest first. Also the driver for
+// ContactPurgeService.findPurgeable, which scans by `deletedAt` ascending.
+ContactSchema.index(
+  { tenantId: 1, deletedAt: -1 },
+  {
+    name: 'tenant_recycle_bin',
+    partialFilterExpression: { deletedAt: { $type: 'date' } },
+  },
+);
+// The owner axis is OR-ed with the org-unit axis in applyTenantFilter, and Mongo
+// needs an index per `$or` branch. `tenant_owner_lookup` covered the first
+// branch; the second had none, so an org-unit-scoped read fell back to a scan.
+ContactSchema.index(
+  { tenantId: 1, orgUnitId: 1 },
+  { name: 'tenant_org_unit_lookup' },
+);
+// "Contacts at this company" — the account detail page's related list.
+ContactSchema.index(
+  { tenantId: 1, accountId: 1 },
+  { name: 'tenant_account_lookup' },
+);
+// Tag filtering from the list view and TagUsageService.countUsage.
+ContactSchema.index({ tenantId: 1, tags: 1 }, { name: 'tenant_tag_lookup' });
+// Funnel + growth reports group by stage over a date range.
+ContactSchema.index(
+  { tenantId: 1, lifecycleStageId: 1, createdAt: -1 },
+  { name: 'tenant_stage_created' },
 );
 ContactSchema.index(
   { firstName: 'text', lastName: 'text', emails: 'text' },

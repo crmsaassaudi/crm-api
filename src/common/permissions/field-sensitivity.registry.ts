@@ -24,21 +24,49 @@ export interface SensitiveField {
 
 /**
  * Per-resource sensitive-field map. Keyed by the resource token passed to
- * `@SensitiveResource(...)`. Extend as new PII/financial fields appear.
+ * `@SensitiveResource(...)`.
+ *
+ * `field` MUST be the name as it appears in the SERIALISED response, not the
+ * conceptual name. Contacts store `emails: string[]` / `phones: string[]`; this
+ * registry previously declared the singular `email`/`phone`, so
+ * `FieldMaskingInterceptor.maskItem` looked up `target['email']`, found
+ * `undefined`, and masked nothing — the whole permission-driven control was
+ * inert for the one resource it existed to protect, and CI stayed green because
+ * the spec fed it a hand-built `{ email: ... }` object rather than a contact.
+ * The specs below the fix now assert against the real field names.
  */
 export const FIELD_SENSITIVITY: Record<string, SensitiveField[]> = {
   contacts: [
     {
-      field: 'email',
+      field: 'emails',
       classification: 'pii',
       strategy: 'email',
       unmask: { resource: 'contacts', action: 'unmask' },
     },
     {
-      field: 'phone',
+      field: 'phones',
       classification: 'pii',
       strategy: 'phone',
       unmask: { resource: 'contacts', action: 'unmask' },
+    },
+  ],
+  /**
+   * Conversations cache the end customer's contact details on a `customer`
+   * sub-document. Dotted paths, which `FieldMaskingInterceptor.maskPath` resolves —
+   * a flat lookup could not reach these however precisely they were named.
+   */
+  omni_channel: [
+    {
+      field: 'customer.email',
+      classification: 'pii',
+      strategy: 'email',
+      unmask: { resource: 'omni_channel', action: 'unmask' },
+    },
+    {
+      field: 'customer.phone',
+      classification: 'pii',
+      strategy: 'phone',
+      unmask: { resource: 'omni_channel', action: 'unmask' },
     },
   ],
 };

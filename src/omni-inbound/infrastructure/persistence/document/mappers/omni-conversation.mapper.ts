@@ -68,7 +68,6 @@ export class OmniConversationMapper {
       sessionId: bot.sessionId ?? null,
       status: bot.status ?? 'active',
       lastError: bot.lastError ?? null,
-      lockedAt: bot.lockedAt ?? null,
     };
   }
 

@@ -60,7 +60,7 @@ const orClauses = (filter: any): any[] | undefined =>
   filter.$and?.find((clause: any) => clause.$or)?.$or;
 
 describe('applyTenantFilter — compiled ABAC predicate', () => {
-  it('intersects the matching resource predicate with caller and row scope', () => {
+  it('should intersect the matching resource predicate with caller and row scope', () => {
     const denyFilter = { $nor: [{ confidential: true }] };
     const repo = new ContactRepository(
       clsWith({
@@ -71,14 +71,11 @@ describe('applyTenantFilter — compiled ABAC predicate', () => {
 
     expect(repo.filterFor({ status: 'open' })).toEqual({
       status: 'open',
-      $and: [
-        { $or: [{ ownerId: { $in: ['u1'] } }] },
-        denyFilter,
-      ],
+      $and: [{ $or: [{ ownerId: { $in: ['u1'] } }] }, denyFilter],
     });
   });
 
-  it('never applies one endpoint resource policy to a related repository', () => {
+  it('should never apply one endpoint resource policy to a related repository', () => {
     const repo = new ContactRepository(
       clsWith({
         abacResourceFilter: {

@@ -264,10 +264,128 @@ export abstract class BaseDocumentRepository<
     return updated ? this.mapToDomain(updated) : null;
   }
 
+  /**
+   * True when this collection models deletion as a `deletedAt` timestamp.
+   *
+   * Derived from the schema rather than declared per repository, because a
+   * repository author forgetting to declare it is exactly how this went wrong:
+   * accounts, contacts, deals, notes, tasks and tickets all define `deletedAt`
+   * and all filter their reads on it, yet none of them overrode `remove()`, so
+   * `DELETE` destroyed the document while the rest of each domain was written as
+   * if deletion were reversible. Reading the schema means a collection cannot
+   * opt in to a soft-delete contract and then quietly not get one.
+   */
+  protected get supportsSoftDelete(): boolean {
+    return Boolean(this.model.schema?.path('deletedAt'));
+  }
+
+  /**
+   * Delete a record: a soft delete when the schema has `deletedAt`, otherwise a
+   * hard delete.
+   *
+   * This used to be an unconditional `deleteOne`. For six collections that was a
+   * silent contract violation — every read filtered `deletedAt`, the schemas
+   * declared it, merge flows set it, and this method destroyed the row anyway.
+   * The visible consequences were no recycle bin, unrecoverable mis-clicks,
+   * orphaned references in every collection pointing at the deleted id, and audit
+   * entries recording a soft delete that had not happened.
+   *
+   * Collections with no `deletedAt` keep the previous behaviour, so nothing that
+   * genuinely wants a hard delete changes.
+   *
+   * A domain that needs cascade or retention on top of this overrides it —
+   * ContactRepository does, together with ContactPurgeService.
+   */
   async remove(id: string): Promise<void> {
     const filter = this.applyTenantFilter({ _id: id } as FilterQuery<TSchema>);
-    await this.model.deleteOne(filter);
+
+    if (!this.supportsSoftDelete) {
+      await this.model.deleteOne(filter);
+      return;
+    }
+
+    const deletedById = this.cls.get('userId') ?? this.cls.get('user.id');
+    await this.model.updateOne(filter, {
+      $set: {
+        deletedAt: new Date(),
+        ...(deletedById && this.model.schema?.path('updatedById')
+          ? { updatedById: deletedById }
+          : {}),
+      },
+    } as any);
   }
+
+  /**
+   * Soft-deleted records awaiting purge — the recycle bin.
+   *
+   * On the base class for the same reason `remove()` is: soft delete was rolled
+   * out across six collections at once, and only contacts got a way back out.
+   * For accounts, deals, tickets, tasks and notes the result was worse than the
+   * hard delete it replaced — the row stopped being visible anywhere, stopped
+   * being recoverable, and (outside contacts, which has a purge job) stayed in
+   * the database forever. Soft delete justifies itself by being reversible; a
+   * per-domain opt-in is how five of six domains ended up with the cost and none
+   * of the benefit.
+   *
+   * Tenant- and visibility-scoped like every other read: you can only see
+   * archived records you could have seen before they were archived.
+   */
+  async findDeleted(options: {
+    page: number;
+    limit: number;
+  }): Promise<{ data: TDomain[]; total: number }> {
+    if (!this.supportsSoftDelete) return { data: [], total: 0 };
+
+    const scopedWhere = this.applyTenantFilter({
+      deletedAt: { $ne: null },
+    } as FilterQuery<TSchema>);
+
+    const [docs, total] = await Promise.all([
+      this.model
+        .find(scopedWhere)
+        // Newest deletion first: a recycle bin is read to undo something that
+        // just happened, not to browse history.
+        .sort({ deletedAt: -1 })
+        .skip((options.page - 1) * options.limit)
+        .limit(options.limit)
+        .exec(),
+      // Capped: the count drives a pager, and an exact count of a large bin
+      // costs a collection scan to tell nobody anything.
+      this.model.countDocuments(scopedWhere).limit(1001).exec(),
+    ]);
+
+    return { data: docs.map((doc) => this.mapToDomain(doc as TSchema)), total };
+  }
+
+  /**
+   * Restore a soft-deleted record.
+   *
+   * `$unset` rather than `deletedAt: null`, because a filter written as
+   * `deletedAt: { $exists: false }` — which several repositories use — treats a
+   * present-but-null field as still deleted. Restoring to null would leave the
+   * record invisible: restored in the database and still gone in the UI.
+   */
+  async restore(id: string): Promise<TDomain | null> {
+    if (!this.supportsSoftDelete) return null;
+
+    const filter = this.applyTenantFilter({
+      _id: id,
+      deletedAt: { $ne: null },
+    } as FilterQuery<TSchema>);
+
+    const doc = await this.model
+      .findOneAndUpdate(filter, { $unset: { deletedAt: '' } } as any, {
+        new: true,
+      })
+      .exec();
+    return doc ? this.mapToDomain(doc) : null;
+  }
+
+  // Deliberately NO base `hardDelete`. Permanent deletion is always a
+  // domain-specific retention decision — ContactRepository pairs one with
+  // ContactPurgeService and its cascade, FileDocumentRepository has its own with a
+  // different signature. A base version would be a third convention for the same
+  // concept and would collide with both.
 
   /**
    * Enriches data with multitenant context from CLS.

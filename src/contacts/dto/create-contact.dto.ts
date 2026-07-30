@@ -1,12 +1,18 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
+  IsObject,
   IsOptional,
   IsString,
   IsArray,
   IsBoolean,
   IsDateString,
 } from 'class-validator';
+import {
+  TransformEmails,
+  TransformPhones,
+} from '../../common/identity/identity-normalizer';
 
 export class CreateContactDto {
   @ApiProperty({ example: 'Nguyễn' })
@@ -67,18 +73,28 @@ export class CreateContactDto {
   @IsString()
   ownerId?: string;
 
+  // Shape is validated against the tenant's custom_fields registry by
+  // CustomFieldValueValidator; @IsObject only rejects the obviously wrong types
+  // (array, string) that would otherwise be written into the Mixed column.
   @ApiProperty({ example: { lead_score: 100 } })
   @IsOptional()
+  @IsObject()
   customFields?: Record<string, any>;
 
+  // Normalised inside the global ValidationPipe, so no controller, service or
+  // repository can ever observe the raw client value. This is what makes a
+  // UI-entered address comparable with an imported one — see
+  // common/identity/identity-normalizer.ts.
   @ApiProperty({ example: ['test@example.com'] })
   @IsOptional()
+  @Transform(TransformEmails)
   @IsArray()
   @IsEmail({}, { each: true })
   emails?: string[];
 
   @ApiProperty({ example: ['0911019999'] })
   @IsOptional()
+  @Transform(TransformPhones)
   @IsArray()
   @IsString({ each: true })
   phones?: string[];
@@ -111,10 +127,13 @@ export class CreateContactDto {
   @IsArray()
   omniIdentities?: Array<{ channelType: string; senderId: string }>;
 
-  @ApiProperty({ example: true })
-  @IsOptional()
-  @IsBoolean()
-  isShadow?: boolean;
+  // `isShadow` is deliberately NOT accepted from clients. It is set only by
+  // ShadowContactService when the omni pipeline auto-creates a contact from an
+  // inbound message, and cleared by the promotion rule in ContactsService.
+  // A client-settable shadow flag let a caller create records that the UI
+  // treats as provisional and that reports exclude (`$eq: ['$isShadow', false]`
+  // in contact-report.service.ts) — i.e. write records that do not show up in
+  // the numbers. `forbidNonWhitelisted` now rejects the field outright.
 
   // ────────────────── SOCIAL PROFILES ──────────────────
 

@@ -3,7 +3,7 @@ import { AccessPolicyService } from './access-policy.service';
 describe('AccessPolicyService versioning and simulation', () => {
   const audit = { record: jest.fn() };
 
-  it('simulates a candidate without writing it', () => {
+  it('should simulate a candidate without writing it', () => {
     const model = { create: jest.fn() };
     const service = new AccessPolicyService(model as any, audit as any);
 
@@ -28,7 +28,7 @@ describe('AccessPolicyService versioning and simulation', () => {
     expect(model.create).not.toHaveBeenCalled();
   });
 
-  it('publishes rollback as a new immutable revision', async () => {
+  it('should publish rollback as a new immutable revision', async () => {
     const save = jest.fn();
     const policy: any = {
       _id: 'p1',
@@ -57,7 +57,7 @@ describe('AccessPolicyService versioning and simulation', () => {
       ],
       save,
     };
-    save.mockImplementation(async () => policy);
+    save.mockImplementation(() => Promise.resolve(policy));
     const model = {
       findOne: jest.fn().mockReturnValue({
         exec: jest.fn().mockResolvedValue(policy),

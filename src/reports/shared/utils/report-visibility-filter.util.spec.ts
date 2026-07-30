@@ -24,7 +24,7 @@ const cls = (values: Record<string, unknown>) =>
   }) as unknown as ClsService;
 
 describe('report visibility filter compiler', () => {
-  it('intersects a compiled report ABAC deny even for tenant-wide scope', () => {
+  it('should intersect a compiled report ABAC deny even for tenant-wide scope', () => {
     const deny = { $nor: [{ confidential: true }] };
     expect(
       buildCrmReportVisibilityFilter(
@@ -40,7 +40,7 @@ describe('report visibility filter compiler', () => {
     ).toEqual({ $and: [deny] });
   });
 
-  it('does not mix an unrelated report resource predicate into the pipeline', () => {
+  it('should not mix an unrelated report resource predicate into the pipeline', () => {
     expect(
       buildCrmReportVisibilityFilter(
         cls({

@@ -18,7 +18,13 @@ import { TicketsService } from './tickets.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { Ticket } from './domain/ticket';
-import { ApiTags, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiBody,
+  ApiOkResponse,
+} from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
@@ -70,6 +76,34 @@ export class TicketsController {
     return this.service.update(id, data as Partial<Ticket>);
   }
 
+  // ──────────────────────── RECYCLE BIN ────────────────────────
+  //
+  // Declared BEFORE the `:id` routes — Nest matches in declaration order, and
+  // `recycle-bin` would otherwise be captured as an id.
+
+  @ApiOkResponse({ description: 'Soft-deleted tickets awaiting purge' })
+  @Get('recycle-bin')
+  @RequirePermission('view', 'tickets')
+  listDeleted(@Query('page') page?: string, @Query('limit') limit?: string) {
+    return this.service.listDeleted({
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
+  }
+
+  // Restoring re-exposes a record, so it takes `delete` — the same capability that
+  // removed it — rather than `edit`. Record-level ACL as well: you may only bring
+  // back a record you could have seen. The PIP's loader reads with `findById` and no
+  // soft-delete predicate, so it hydrates the archived document and the
+  // owner/org-unit conditions evaluate against the record as it was.
+  @Post(':id/restore')
+  @RequirePermission('delete', 'tickets')
+  @UseAcl('delete', 'tickets')
+  @LoadResource('tickets')
+  restore(@Param('id') id: string) {
+    return this.service.restore(id);
+  }
+
   @Delete(':id')
   @RequirePermission('delete', 'tickets')
   @UseAcl('delete', 'tickets')
@@ -85,9 +119,14 @@ export class TicketsController {
     return this.service.bulkTagTickets(body);
   }
 
+  /**
+   * Requires `delete`: `mergeTickets` soft-deletes the source ticket, so gating this on
+   * `edit` made merge a deletion path that skips the delete check. The same rule now
+   * applies to contact and account merge.
+   */
   @Post(':id/merge')
-  @RequirePermission('edit', 'tickets')
-  @UseAcl('edit', 'tickets')
+  @RequirePermission('delete', 'tickets')
+  @UseAcl('delete', 'tickets')
   @LoadResource('tickets')
   mergeTickets(
     @Param('id') targetId: string,

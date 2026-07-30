@@ -14,6 +14,7 @@ import { TicketSettingsModule } from '../ticket-settings/ticket-settings.module'
 import { TicketImportProcessor } from './import/ticket-import.processor';
 import { TicketExportProcessor } from './export/ticket-export.processor';
 import { isWorkerRuntime } from '../config/runtime-role';
+import { TicketPurgeService } from './ticket-purge.service';
 import { TICKET_IMPORT_QUEUE, TICKET_EXPORT_QUEUE } from './tickets.constants';
 import {
   ImportJobSchema,
@@ -43,7 +44,15 @@ import { TagsModule } from '../tags/tags.module';
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
 
 const workerProviders = isWorkerRuntime()
-  ? [TicketImportProcessor, TicketExportProcessor]
+  ? [
+      TicketImportProcessor,
+      TicketExportProcessor,
+      // Retention purge: the only path that hard-deletes, plus the cascade that keeps
+      // related records from being orphaned by it. Worker-gated like every other cron —
+      // an unconditional provider schedules it in every API replica too and makes the
+      // Redis lock load-bearing for correctness rather than a safety net.
+      TicketPurgeService,
+    ]
   : [];
 
 @Module({

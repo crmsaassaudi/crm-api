@@ -33,7 +33,7 @@ import { LinkMessagesDto } from '../dto/link-messages.dto';
 import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
 import { FilesService } from '../../files/files.service';
-import { RequirePermission } from '../../common/permissions';
+import { RequirePermission, SensitiveResource } from '../../common/permissions';
 import { UseAcl } from '../../common/permissions/use-acl.decorator';
 import { LoadResource } from '../../common/permissions/load-resource.decorator';
 import { AssignmentAuditLogRepository } from '../repositories/omni-assignment-audit-log.repository';
@@ -57,6 +57,11 @@ import { ChannelSupportService } from '../../channels/services/channel-support.s
  *   PATCH /omni/conversations/:id/assign   — assign / reassign agent
  *   PATCH /omni/conversations/:id/unassign — remove agent assignment
  */
+// Conversations cache the end customer's phone and email on `customer`.
+// FieldMaskingInterceptor redacts them unless the principal holds
+// `omni_channel:unmask` — without this the same customer's number was masked on
+// the Contact screen and printed in full one click away in the inbox.
+@SensitiveResource('omni_channel')
 @Controller({ path: 'omni', version: '1' })
 export class OmniController {
   private readonly logger = new Logger(OmniController.name);

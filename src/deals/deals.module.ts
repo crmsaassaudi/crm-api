@@ -13,6 +13,7 @@ import {
 import { DealImportProcessor } from './import/deal-import.processor';
 import { DealExportProcessor } from './export/deal-export.processor';
 import { isWorkerRuntime } from '../config/runtime-role';
+import { DealPurgeService } from './deal-purge.service';
 import { DEAL_IMPORT_QUEUE, DEAL_EXPORT_QUEUE } from './deals.constants';
 import {
   ImportJobSchema,
@@ -37,13 +38,25 @@ import {
 import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { TagsModule } from '../tags/tags.module';
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
+import { CustomFieldsModule } from '../custom-fields/custom-fields.module';
 
 const workerProviders = isWorkerRuntime()
-  ? [DealImportProcessor, DealExportProcessor]
+  ? [
+      DealImportProcessor,
+      DealExportProcessor,
+      // Retention purge: the only path that hard-deletes, plus the cascade that keeps
+      // related records from being orphaned by it. Worker-gated like every other cron —
+      // an unconditional provider schedules it in every API replica too and makes the
+      // Redis lock load-bearing for correctness rather than a safety net.
+      DealPurgeService,
+    ]
   : [];
 
 @Module({
   imports: [
+    // Supplies CustomFieldValueValidator so submitted `customFields` are checked
+    // against the tenant's registry instead of being written as opaque Mixed.
+    CustomFieldsModule,
     MongooseModule.forFeature([
       { name: DealSchemaClass.name, schema: DealSchema },
       { name: ImportJobSchemaClass.name, schema: ImportJobSchema },

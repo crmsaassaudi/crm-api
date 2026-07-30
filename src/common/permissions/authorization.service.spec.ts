@@ -41,7 +41,7 @@ describe('AuthorizationService (PDP)', () => {
     );
   });
 
-  it('writes explainable action allow/deny decisions to the audit stream', async () => {
+  it('should write explainable action allow/deny decisions to the audit stream', async () => {
     cache.isPlatformSuperAdmin.mockResolvedValue(false);
     cache.canAccess.mockResolvedValue({
       allowed: true,

@@ -1,8 +1,6 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-} from '@nestjs/common';
+import { HttpStatus, Injectable, ConflictException } from '@nestjs/common';
+import { BusinessException } from '../common/exceptions/business.exception';
+import { SLA_ERRORS } from './constants/sla-error-codes';
 import { ClsService } from 'nestjs-cls';
 import { SlaPolicyRepository } from './infrastructure/persistence/document/repositories/sla-policy.repository';
 import { SlaPolicy } from './domain/sla-policy';
@@ -23,7 +21,12 @@ export class SlaPoliciesService {
   async findById(id: string): Promise<SlaPolicy> {
     const tenantId = this.cls.get('tenantId');
     const policy = await this.repository.findById(tenantId, id);
-    if (!policy) throw new NotFoundException('SLA Policy not found');
+    if (!policy)
+      throw new BusinessException(
+        SLA_ERRORS.POLICY_NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'SLA Policy not found',
+      );
     return policy;
   }
 
@@ -45,7 +48,12 @@ export class SlaPoliciesService {
     const tenantId = this.cls.get('tenantId');
     try {
       const policy = await this.repository.update(tenantId, id, dto);
-      if (!policy) throw new NotFoundException('SLA Policy not found');
+      if (!policy)
+        throw new BusinessException(
+          SLA_ERRORS.POLICY_NOT_FOUND,
+          HttpStatus.NOT_FOUND,
+          'SLA Policy not found',
+        );
       return policy;
     } catch (error) {
       if (error?.code === 11000) {
@@ -60,6 +68,11 @@ export class SlaPoliciesService {
   async delete(id: string): Promise<void> {
     const tenantId = this.cls.get('tenantId');
     const deleted = await this.repository.delete(tenantId, id);
-    if (!deleted) throw new NotFoundException('SLA Policy not found');
+    if (!deleted)
+      throw new BusinessException(
+        SLA_ERRORS.POLICY_NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+        'SLA Policy not found',
+      );
   }
 }

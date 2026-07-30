@@ -60,7 +60,12 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     description:
       'Full operational access across CRM modules, including delete and assignment.',
     color: '#8b5cf6',
-    version: 2,
+    // v3: gained `contacts:assign`. Reassigning a contact's owner is now a
+    // distinct capability from editing its fields — ownership is the primary
+    // visibility axis, so transferring a record moves it between people's scopes.
+    // Deliberately NOT added to the Sales Rep template: a rep editing their own
+    // records should not be able to move records into or out of their own view.
+    version: 3,
     permissions: [
       'leads:view',
       'leads:create',
@@ -71,6 +76,19 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'contacts:create',
       'contacts:edit',
       'contacts:delete',
+      'contacts:assign',
+      // `contacts:unmask` reveals email addresses and phone numbers, which
+      // FieldMaskingInterceptor otherwise redacts. It belongs to the roles whose
+      // job is to contact the customer.
+      //
+      // This was previously granted by NO template — which did not show, because
+      // FIELD_SENSITIVITY declared the fields as `email`/`phone` while contacts
+      // serialise `emails`/`phones`, so the interceptor matched nothing and masked
+      // nothing. Fixing that typo made the control live and, without this grant,
+      // would have left every non-administrator looking at `a****@acme.com` with no
+      // way to reveal it — a working control that breaks the job it protects.
+      'contacts:unmask',
+
       'accounts:view',
       'accounts:create',
       'accounts:edit',
@@ -105,6 +123,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'omni_channel:view',
       'omni_channel:edit',
       'omni_channel:assign',
+      'omni_channel:unmask',
       'omni_channel:manage_system',
       'omni_reports:view',
     ],
@@ -112,9 +131,11 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
   {
     systemKey: 'sys.sales_rep',
     name: 'Sales Rep',
+    // v2: gained `contacts:unmask`. A rep who cannot see a contact's email address
+    // cannot email them, which is the whole job.
     description: 'Work leads, contacts, accounts and deals day to day.',
     color: '#22c55e',
-    version: 1,
+    version: 2,
     permissions: [
       'leads:view',
       'leads:create',
@@ -122,6 +143,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'contacts:view',
       'contacts:create',
       'contacts:edit',
+      'contacts:unmask',
       'accounts:view',
       'accounts:create',
       'accounts:edit',
@@ -142,15 +164,20 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
   {
     systemKey: 'sys.support_agent',
     name: 'Support Agent',
+    // v3: gained `contacts:unmask`. An agent handling a live conversation needs the
+    // customer's phone number and email to answer them — and the omni inbox already
+    // shows both unmasked on `conversation.customer`, so masking them on the linked
+    // contact record protected nothing while breaking the ticket workflow.
     description: 'Handle tickets and customer conversations.',
     color: '#06b6d4',
-    version: 2,
+    version: 3,
     permissions: [
       'tickets:view',
       'tickets:create',
       'tickets:edit',
       'tickets:resolve',
       'contacts:view',
+      'contacts:unmask',
       'accounts:view',
       'tasks:view',
       'tasks:create',
@@ -162,6 +189,11 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'omni_channel:view',
       'omni_channel:edit',
       'omni_channel:assign',
+      // The agent answering a live conversation needs the customer's phone and
+      // email. Granting it here preserves exactly what they see today; what changes
+      // is that Read Only, Auditor and Marketing stop seeing raw customer PII they
+      // have no reason to see.
+      'omni_channel:unmask',
       'omni_reports:view',
     ],
   },

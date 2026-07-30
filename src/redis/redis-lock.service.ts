@@ -6,6 +6,24 @@ import {
 import { ulid } from 'ulid';
 import { RedisService } from './redis.service';
 
+/**
+ * True when `acquire` failed because another replica held the lock.
+ *
+ * Every cluster-singleton cron here is written as
+ * `acquire(...).catch(err => logger.debug(...))`, because contention is the normal case
+ * — N replicas tick, one wins. The problem is that the same handler swallows a job that
+ * THREW, at debug level, with the word "skipped". Four nightly jobs (contact purge,
+ * contact rescore, identity drift, metrics rollup) were failing on their first query for
+ * exactly as long as that conflation existed, and the log said they were standing aside
+ * politely.
+ *
+ * With this, a handler can log contention at debug and a real failure at error.
+ */
+export function isLockContention(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Could not acquire lock for key');
+}
+
 export class LockLostError extends Error {
   constructor(key: string) {
     super(`Lost Redis lock ownership during execution of key: ${key}`);

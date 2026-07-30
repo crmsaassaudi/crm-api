@@ -128,7 +128,16 @@ export class TaskRepository extends BaseDocumentRepository<
   }
 
   async findOne(filter: FilterQuery<TaskSchemaClass>): Promise<Task | null> {
-    const scopedFilter = this.applyTenantFilter(filter);
+    // Exclude soft-deleted tasks unless the caller asked for one explicitly.
+    //
+    // The list query at `buildListWhere` has always filtered these; `findOne` did
+    // not, which did not show while `remove()` hard-deleted (the row was simply
+    // gone, so a fetch 404'd). Now that deletion is a soft delete, an unfiltered
+    // `findOne` would serve a deleted task on its detail page instead of 404 —
+    // and, worse, let it be edited back into visibility.
+    const scopedFilter = this.applyTenantFilter(
+      filter.deletedAt !== undefined ? filter : { ...filter, deletedAt: null },
+    );
     const doc = await this.model
       .findOne(scopedFilter)
       .populate('assignedTo', 'firstName lastName photo email')
@@ -138,5 +147,40 @@ export class TaskRepository extends BaseDocumentRepository<
       .populate('taskSource')
       .exec();
     return doc ? this.mapToDomain(doc) : null;
+  }
+
+  /**
+   * Records soft-deleted before `cutoff`, for the retention purge.
+   *
+   * `isPlatformQuery` because the caller is a cron: retention applies to every tenant, and
+   * without the flag `tenantFilterPlugin` throws on a missing CLS tenant — which is how
+   * four nightly jobs came to fail on their first query while logging "skipped".
+   *
+   * Oldest deletion first, so a backlog drains in the order it accumulated.
+   */
+  async findPurgeable(
+    cutoff: Date,
+    limit: number,
+  ): Promise<Array<{ id: string; tenantId: string }>> {
+    const docs = await this.model
+      .find({ deletedAt: { $ne: null, $lte: cutoff } })
+      .setOptions({ isPlatformQuery: true } as any)
+      .select({ _id: 1, tenantId: 1 })
+      .sort({ deletedAt: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    return docs.map((doc: any) => ({
+      id: String(doc._id),
+      tenantId: String(doc.tenantId),
+    }));
+  }
+
+  /** Hard-delete one task. Only TaskPurgeService may call this. */
+  async hardDelete(id: string): Promise<void> {
+    await this.model
+      .deleteOne({ _id: id })
+      .setOptions({ isPlatformQuery: true } as any)
+      .exec();
   }
 }

@@ -158,10 +158,55 @@ export class FieldMaskingInterceptor implements NestInterceptor {
     const target =
       typeof item.toJSON === 'function' ? item.toJSON() : { ...item };
     for (const f of fields) {
-      if (target[f.field] !== undefined && target[f.field] !== null) {
-        target[f.field] = maskValue(target[f.field], f.strategy);
-      }
+      this.maskPath(target, f.field.split('.'), f.strategy);
     }
     return target;
+  }
+
+  /**
+   * Mask a field addressed by a dotted path, e.g. `customer.email`.
+   *
+   * A flat `target[field]` lookup could only reach top-level keys, which meant the
+   * registry was unable to describe PII nested inside a sub-document however
+   * accurately it named it — the same class of limitation as declaring `email` for a
+   * document that serialises `emails`: the registry can only express what this method
+   * can read.
+   *
+   * Each level is shallow-copied on the way down. `{ ...item }` above copies only the
+   * top level, so `target.customer` is still the SAME object as the source document's
+   * — writing through it would mutate the persisted document, breaking the promise in
+   * this class's own doc comment. Cloning the path keeps the response a projection.
+   */
+  private maskPath(
+    target: Record<string, any>,
+    path: string[],
+    strategy: SensitiveField['strategy'],
+  ): void {
+    const [head, ...rest] = path;
+    if (head === undefined) return;
+
+    const current = target[head];
+    if (current === undefined || current === null) return;
+
+    if (rest.length === 0) {
+      target[head] = maskValue(current, strategy);
+      return;
+    }
+
+    // An array of sub-documents (`items.0.email` is not addressed; every element is).
+    if (Array.isArray(current)) {
+      target[head] = current.map((entry) => {
+        if (typeof entry !== 'object' || entry === null) return entry;
+        const clone = { ...entry };
+        this.maskPath(clone, rest, strategy);
+        return clone;
+      });
+      return;
+    }
+
+    if (typeof current !== 'object') return;
+    const clone = { ...current };
+    this.maskPath(clone, rest, strategy);
+    target[head] = clone;
   }
 }

@@ -17,6 +17,13 @@ import { RedisModule } from '../redis/redis.module';
 import { ContactReportController } from './contact/contact-report.controller';
 import { ContactReportRateLimitGuard } from './contact/contact-report-rate-limit.guard';
 import { ContactReportService } from './contact/contact-report.service';
+import { ContactGrowthRollupReader } from './contact/rollup/contact-growth-rollup.reader';
+import { ContactMetricsRollupService } from './contact/rollup/contact-metrics-rollup.service';
+import {
+  ContactDailyMetricsSchema,
+  ContactDailyMetricsSchemaClass,
+} from './contact/rollup/contact-daily-metrics.schema';
+import { isWorkerRuntime } from '../config/runtime-role';
 import { OmniReportController } from './omni/omni-report.controller';
 import { OmniReportService } from './omni/omni-report.service';
 import { DealReportModule } from './deal/deal-report.module';
@@ -35,6 +42,10 @@ import { MailerModule } from '../mailer/mailer.module';
         schema: OmniConversationSchema,
       },
       { name: OmniMessageSchemaClass.name, schema: OmniMessageSchema },
+      {
+        name: ContactDailyMetricsSchemaClass.name,
+        schema: ContactDailyMetricsSchema,
+      },
     ]),
     CrmSettingsModule,
     RedisModule,
@@ -50,9 +61,15 @@ import { MailerModule } from '../mailer/mailer.module';
   ],
   providers: [
     ContactReportService,
+    // Read side: consulted on every growth-trend request, falls back to the live
+    // aggregation whenever the pre-aggregated rows cannot answer the exact question.
+    ContactGrowthRollupReader,
     ContactReportRateLimitGuard,
     OmniReportService,
     ReportDigestService,
+    // Write side: the nightly job belongs to the worker only. Running it in the API
+    // process would put a whole-collection aggregation on the request path.
+    ...(isWorkerRuntime() ? [ContactMetricsRollupService] : []),
   ],
 })
 export class ReportsModule {}

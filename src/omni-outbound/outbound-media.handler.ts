@@ -11,12 +11,47 @@ import { ChannelType } from '../omni-inbound/domain/omni-payload';
 import { OutboundMedia } from './types/outbound-media.type';
 import { FilesService } from '../files/files.service';
 import { ImageProcessingService } from '../files/image-processing.service';
-import { PLATFORM_LIMITS } from '../files/config/platform-limits.config';
+import { validateForPlatform } from '../files/config/platform-limits.config';
 import { mimeToMessageType } from '../common/utils/mime.util';
 import { UsersService } from '../users/users.service';
 import { ReplyWindowExpiredException } from './exceptions/reply-window-expired.exception';
 import { ConfigType } from '@nestjs/config';
 import replyWindowConfig from './config/reply-window.config';
+
+/** Extension for each type `ImageProcessingService` can re-encode to. */
+const MIME_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+};
+
+/**
+ * Align a filename's extension with the type actually being sent.
+ *
+ * Outbound images are re-encoded, so `photo.webp` can leave as JPEG bytes. Several
+ * provider APIs infer the attachment type from the extension, and the omni UI uses
+ * it for the download name, so a stale extension shows up as a rejected send or a
+ * file that will not open. Unknown types and already-correct names pass through.
+ */
+export function renameForMime(fileName: string, mimeType: string): string {
+  const extension = MIME_EXTENSIONS[mimeType.toLowerCase()];
+  if (!extension) return fileName;
+
+  const dot = fileName.lastIndexOf('.');
+  // No extension, or a leading-dot name like ".gitignore" — leave it alone rather
+  // than inventing a basename.
+  if (dot <= 0) return fileName;
+
+  const current = fileName.slice(dot + 1).toLowerCase();
+  if (current === extension) return fileName;
+  // Treat .jpeg/.jfif as already correct for JPEG; renaming them is churn.
+  if (extension === 'jpg' && (current === 'jpeg' || current === 'jfif')) {
+    return fileName;
+  }
+
+  return `${fileName.slice(0, dot)}.${extension}`;
+}
 
 /**
  * T-040: OutboundMediaHandler
@@ -84,19 +119,32 @@ export class OutboundMediaHandler {
     // 2. Resolve media buffer
     const mediaBuffer = await this.resolveMediaBuffer(media, agentId);
 
-    // 3. Validate against platform limits
+    // 3. Compress for platform if image. This runs BEFORE validation on purpose:
+    //    compression targets the platform's own cap (Zalo's preset targets exactly
+    //    the 1 MB the table allows), so validating the uploaded bytes first would
+    //    reject any ordinary phone photo on the strictest channels — the ones
+    //    compression exists to serve.
     const channelKey = conversation.channelType.toLowerCase() as ChannelType;
-    this.validatePlatformLimits(channelKey, media.mimeType, mediaBuffer.length);
-
-    // 4. Compress for platform if image
-    const sendBuffer = await this.compressMediaForPlatform(
+    const compressed = await this.compressMediaForPlatform(
       mediaBuffer,
       media.mimeType,
       channelKey,
     );
+    const sendBuffer = compressed.buffer;
+
+    // Re-encoding changes the format, so everything downstream must describe the
+    // bytes being sent rather than the bytes uploaded.
+    const effectiveMimeType = compressed.mimeType;
+
+    // 4. Validate what will actually go out
+    this.validatePlatformLimits(
+      channelKey,
+      effectiveMimeType,
+      sendBuffer.length,
+    );
 
     // 5. Determine message type
-    const messageType = mimeToMessageType(media.mimeType);
+    const messageType = mimeToMessageType(effectiveMimeType);
 
     // 6. Persist message
     const message = await this.persistAgentMediaMessage({
@@ -106,6 +154,7 @@ export class OutboundMediaHandler {
       senderContext,
       media,
       sendBuffer,
+      effectiveMimeType,
       caption,
       source,
       transport,
@@ -131,6 +180,7 @@ export class OutboundMediaHandler {
       channel,
       media,
       sendBuffer,
+      effectiveMimeType,
       caption,
       channelKey,
       messageType,
@@ -212,39 +262,51 @@ export class OutboundMediaHandler {
   }
 
   /**
-   * Validate media file size against per-channel platform limits.
+   * Validate media against per-channel platform limits.
+   *
+   * Delegates to `validateForPlatform`, which owns the same table this used to
+   * read directly. The hand-rolled version it replaces classified media as
+   * `isImage ? image : file`, so:
+   *
+   *   - video and audio were checked against the DOCUMENT cap — a 40 MB video
+   *     passed WhatsApp's 64 MB file limit while its real video limit is 16 MB;
+   *   - a `null` entry (Zalo accepts no video or audio at all) fell through to
+   *     the file limit and then `if (limit && …)` skipped the check entirely;
+   *   - the allowed mime list was never consulted.
+   *
+   * Each of those surfaced as an opaque provider-side failure after the message
+   * had already been persisted as `sending`, instead of a message saying which
+   * limit was hit.
    */
   private validatePlatformLimits(
     channelKey: ChannelType,
     mimeType: string,
     bufferLength: number,
   ): void {
-    const platformLimits = PLATFORM_LIMITS[channelKey];
-    if (!platformLimits) return;
-
-    const isImage = mimeType.startsWith('image/');
-    const limit = isImage ? platformLimits.image : platformLimits.file;
-    if (limit && bufferLength > limit.maxBytes) {
-      throw new Error(
-        `File size ${(bufferLength / (1024 * 1024)).toFixed(1)}MB exceeds ${channelKey} limit of ${(limit.maxBytes / (1024 * 1024)).toFixed(0)}MB`,
-      );
-    }
+    const error = validateForPlatform(channelKey, mimeType, bufferLength);
+    if (error) throw new Error(error);
   }
 
   /**
-   * Compress image for the target platform. Returns the original buffer
-   * for non-image or non-processable types.
+   * Compress an image for the target platform.
+   *
+   * Returns the effective mime type alongside the buffer: `compressForPlatform`
+   * re-encodes to JPEG, so a WebP upload leaves here as JPEG. Dropping that (as
+   * this method used to) left the persisted message, the emitted event and the
+   * adapter payload all declaring the ORIGINAL type over re-encoded bytes.
+   *
+   * Non-image and non-processable types pass through with their type unchanged.
    */
   private async compressMediaForPlatform(
     mediaBuffer: Buffer,
     mimeType: string,
     channelKey: ChannelType,
-  ): Promise<Buffer> {
+  ): Promise<{ buffer: Buffer; mimeType: string }> {
     if (
       !mimeType.startsWith('image/') ||
       !this.imageProcessingService.isProcessableImage(mimeType)
     ) {
-      return mediaBuffer;
+      return { buffer: mediaBuffer, mimeType };
     }
 
     try {
@@ -255,12 +317,14 @@ export class OutboundMediaHandler {
       this.logger.log(
         `Compressed image for ${channelKey}: ${(mediaBuffer.length / 1024).toFixed(0)}KB → ${(compressed.buffer.length / 1024).toFixed(0)}KB`,
       );
-      return compressed.buffer;
+      return { buffer: compressed.buffer, mimeType: compressed.mimeType };
     } catch (err) {
+      // Fall back to the original bytes AND the original type — reporting the
+      // compressed type after a failed compression would be a lie.
       this.logger.warn(
         `Platform compression failed, using original: ${(err as Error).message}`,
       );
-      return mediaBuffer;
+      return { buffer: mediaBuffer, mimeType };
     }
   }
 
@@ -274,6 +338,8 @@ export class OutboundMediaHandler {
     senderContext: { name: string; avatarUrl?: string | null };
     media: OutboundMedia;
     sendBuffer: Buffer;
+    /** Type of the bytes actually sent — may differ from `media.mimeType`. */
+    effectiveMimeType: string;
     caption: string;
     source: string;
     transport: string;
@@ -305,8 +371,11 @@ export class OutboundMediaHandler {
         source: opts.source,
         transport: opts.transport,
         media: {
-          fileName: opts.media.fileName,
-          mimeType: opts.media.mimeType,
+          fileName: renameForMime(opts.media.fileName, opts.effectiveMimeType),
+          // The sent bytes, not the uploaded ones: the omni UI renders history
+          // straight from this metadata, and a WebP label over JPEG bytes shows
+          // a broken thumbnail.
+          mimeType: opts.effectiveMimeType,
           size: opts.sendBuffer.length,
           fileId: opts.media.fileId,
         },
@@ -327,6 +396,8 @@ export class OutboundMediaHandler {
     channel: any;
     media: OutboundMedia;
     sendBuffer: Buffer;
+    /** Type of the bytes actually sent — may differ from `media.mimeType`. */
+    effectiveMimeType: string;
     caption: string;
     channelKey: ChannelType;
     messageType: string;
@@ -349,6 +420,11 @@ export class OutboundMediaHandler {
           ...ctx.media,
           buffer: ctx.sendBuffer,
           size: ctx.sendBuffer.length,
+          // Describe the re-encoded bytes. Providers validate the declared type
+          // against the body (and some infer it from the extension), so a stale
+          // `image/webp` on a JPEG body is rejected by the stricter APIs.
+          mimeType: ctx.effectiveMimeType,
+          fileName: renameForMime(ctx.media.fileName, ctx.effectiveMimeType),
           caption: ctx.caption,
           url: resolvedUrl,
         };

@@ -370,7 +370,6 @@ export class ConversationOpsProcessor
       await this.conversationRepo.updateBotState(cmd.conversationId, {
         status: 'ended',
         sessionId: null,
-        lockedAt: null,
       });
     }
 

@@ -33,6 +33,7 @@ import {
   ResponseTimeData,
   TagAnalyticsItem,
 } from './interfaces/omni-report-types';
+import { reportAggregate } from '../shared/utils/report-aggregate.util';
 
 type DateContext = {
   from: Date;
@@ -63,61 +64,59 @@ export class OmniReportService {
     const format = getMongoDateFormat(context.resolvedGranularity);
     const baseMatch = this.buildBaseMatch(dto);
 
-    const [facetResult] = await this.conversationModel
-      .aggregate([
-        {
-          $match: {
-            ...baseMatch,
-            $or: [
-              { createdAt: { $gte: context.from, $lte: context.to } },
-              { resolvedAt: { $gte: context.from, $lte: context.to } },
-            ],
-          },
+    const [facetResult] = await reportAggregate(this.conversationModel, [
+      {
+        $match: {
+          ...baseMatch,
+          $or: [
+            { createdAt: { $gte: context.from, $lte: context.to } },
+            { resolvedAt: { $gte: context.from, $lte: context.to } },
+          ],
         },
-        {
-          $facet: {
-            created: [
-              {
-                $match: {
-                  createdAt: { $gte: context.from, $lte: context.to },
-                },
+      },
+      {
+        $facet: {
+          created: [
+            {
+              $match: {
+                createdAt: { $gte: context.from, $lte: context.to },
               },
-              {
-                $group: {
-                  _id: {
-                    $dateToString: {
-                      format,
-                      date: '$createdAt',
-                      timezone: context.timezone,
-                    },
+            },
+            {
+              $group: {
+                _id: {
+                  $dateToString: {
+                    format,
+                    date: '$createdAt',
+                    timezone: context.timezone,
                   },
-                  count: { $sum: 1 },
                 },
+                count: { $sum: 1 },
               },
-            ],
-            resolved: [
-              {
-                $match: {
-                  resolvedAt: { $gte: context.from, $lte: context.to },
-                },
+            },
+          ],
+          resolved: [
+            {
+              $match: {
+                resolvedAt: { $gte: context.from, $lte: context.to },
               },
-              {
-                $group: {
-                  _id: {
-                    $dateToString: {
-                      format,
-                      date: '$resolvedAt',
-                      timezone: context.timezone,
-                    },
+            },
+            {
+              $group: {
+                _id: {
+                  $dateToString: {
+                    format,
+                    date: '$resolvedAt',
+                    timezone: context.timezone,
                   },
-                  count: { $sum: 1 },
                 },
+                count: { $sum: 1 },
               },
-            ],
-          },
+            },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const created = facetResult?.created ?? [];
     const resolved = facetResult?.resolved ?? [];
@@ -163,20 +162,18 @@ export class OmniReportService {
       createdAt: { $gte: context.from, $lte: context.to },
     };
 
-    const [facetResult] = await this.conversationModel
-      .aggregate([
-        { $match: match },
-        {
-          $facet: {
-            total: [{ $count: 'count' }],
-            rows: [
-              { $group: { _id: '$channelType', count: { $sum: 1 } } },
-              { $sort: { count: -1 } },
-            ],
-          },
+    const [facetResult] = await reportAggregate(this.conversationModel, [
+      { $match: match },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          rows: [
+            { $group: { _id: '$channelType', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const total: number = facetResult?.total?.[0]?.count ?? 0;
     const rows: any[] = facetResult?.rows ?? [];
@@ -208,39 +205,37 @@ export class OmniReportService {
       resolvedAt: { $gte: context.from, $lte: context.to },
     };
 
-    const rows = await this.conversationModel
-      .aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: '$assignedAgentId',
-            totalConversations: { $sum: 1 },
-            avgResolutionMs: {
-              $avg: { $subtract: ['$resolvedAt', '$createdAt'] },
-            },
-            frtBreachCount: {
-              $sum: { $cond: [{ $eq: ['$frtBreached', true] }, 1, 0] },
-            },
-            resolutionBreachCount: {
-              $sum: {
-                $cond: [{ $eq: ['$resolutionBreached', true] }, 1, 0],
-              },
-            },
-            avgMessageCount: { $avg: '$messageCount' },
+    const rows = await reportAggregate(this.conversationModel, [
+      { $match: match },
+      {
+        $group: {
+          _id: '$assignedAgentId',
+          totalConversations: { $sum: 1 },
+          avgResolutionMs: {
+            $avg: { $subtract: ['$resolvedAt', '$createdAt'] },
           },
-        },
-        {
-          $lookup: {
-            from: 'users',
-            localField: '_id',
-            foreignField: '_id',
-            as: 'agent',
+          frtBreachCount: {
+            $sum: { $cond: [{ $eq: ['$frtBreached', true] }, 1, 0] },
           },
+          resolutionBreachCount: {
+            $sum: {
+              $cond: [{ $eq: ['$resolutionBreached', true] }, 1, 0],
+            },
+          },
+          avgMessageCount: { $avg: '$messageCount' },
         },
-        { $unwind: { path: '$agent', preserveNullAndEmptyArrays: true } },
-        { $sort: { totalConversations: -1 } },
-      ])
-      .exec();
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'agent',
+        },
+      },
+      { $unwind: { path: '$agent', preserveNullAndEmptyArrays: true } },
+      { $sort: { totalConversations: -1 } },
+    ]).exec();
 
     const data: AgentPerformanceItem[] = rows.map((row) => {
       const agentName = [row.agent?.firstName, row.agent?.lastName]
@@ -291,28 +286,26 @@ export class OmniReportService {
       resolvedAt: { $gte: context.from, $lte: context.to },
     };
 
-    const rows = await this.conversationModel
-      .aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: 1 },
-            avgResolutionMs: {
-              $avg: { $subtract: ['$resolvedAt', '$createdAt'] },
-            },
-            frtBreachedCount: {
-              $sum: { $cond: [{ $eq: ['$frtBreached', true] }, 1, 0] },
-            },
-            resolutionBreachedCount: {
-              $sum: {
-                $cond: [{ $eq: ['$resolutionBreached', true] }, 1, 0],
-              },
+    const rows = await reportAggregate(this.conversationModel, [
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          avgResolutionMs: {
+            $avg: { $subtract: ['$resolvedAt', '$createdAt'] },
+          },
+          frtBreachedCount: {
+            $sum: { $cond: [{ $eq: ['$frtBreached', true] }, 1, 0] },
+          },
+          resolutionBreachedCount: {
+            $sum: {
+              $cond: [{ $eq: ['$resolutionBreached', true] }, 1, 0],
             },
           },
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const row = rows[0] ?? {
       total: 0,
@@ -358,38 +351,34 @@ export class OmniReportService {
       createdAt: { $gte: context.from, $lte: context.to },
     };
 
-    const [facetResult] = await this.conversationModel
-      .aggregate([
-        { $match: baseMatch },
-        {
-          $facet: {
-            statusBreakdown: [
-              { $group: { _id: '$status', count: { $sum: 1 } } },
-            ],
-            resolveSource: [
-              {
-                $match: {
-                  status: { $in: ['resolved', 'closed'] },
-                  resolveSource: { $ne: null },
-                },
+    const [facetResult] = await reportAggregate(this.conversationModel, [
+      { $match: baseMatch },
+      {
+        $facet: {
+          statusBreakdown: [{ $group: { _id: '$status', count: { $sum: 1 } } }],
+          resolveSource: [
+            {
+              $match: {
+                status: { $in: ['resolved', 'closed'] },
+                resolveSource: { $ne: null },
               },
-              { $group: { _id: '$resolveSource', count: { $sum: 1 } } },
-              { $sort: { count: -1 } },
-            ],
-            resolveReason: [
-              {
-                $match: {
-                  status: { $in: ['resolved', 'closed'] },
-                  resolveReason: { $ne: null },
-                },
+            },
+            { $group: { _id: '$resolveSource', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
+          resolveReason: [
+            {
+              $match: {
+                status: { $in: ['resolved', 'closed'] },
+                resolveReason: { $ne: null },
               },
-              { $group: { _id: '$resolveReason', count: { $sum: 1 } } },
-              { $sort: { count: -1 } },
-            ],
-          },
+            },
+            { $group: { _id: '$resolveReason', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const statusMap = new Map<string, number>(
       (facetResult?.statusBreakdown ?? []).map((row: any) => [
@@ -451,28 +440,26 @@ export class OmniReportService {
       createdAt: { $gte: context.from, $lte: context.to },
     };
 
-    const [facetResult] = await this.messageModel
-      .aggregate([
-        { $match: baseMatch },
-        {
-          $facet: {
-            total: [{ $count: 'count' }],
-            byType: [
-              { $group: { _id: '$messageType', count: { $sum: 1 } } },
-              { $sort: { count: -1 } },
-            ],
-            byDirection: [
-              { $group: { _id: '$direction', count: { $sum: 1 } } },
-              { $sort: { count: -1 } },
-            ],
-            bySenderType: [
-              { $group: { _id: '$senderType', count: { $sum: 1 } } },
-              { $sort: { count: -1 } },
-            ],
-          },
+    const [facetResult] = await reportAggregate(this.messageModel, [
+      { $match: baseMatch },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          byType: [
+            { $group: { _id: '$messageType', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
+          byDirection: [
+            { $group: { _id: '$direction', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
+          bySenderType: [
+            { $group: { _id: '$senderType', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const total: number = facetResult?.total?.[0]?.count ?? 0;
 
@@ -516,28 +503,26 @@ export class OmniReportService {
       'bot.enabled': true,
     };
 
-    const rows = await this.conversationModel
-      .aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: 1 },
-            botResolved: {
-              $sum: {
-                $cond: [{ $eq: ['$resolveSource', 'bot'] }, 1, 0],
-              },
+    const rows = await reportAggregate(this.conversationModel, [
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          botResolved: {
+            $sum: {
+              $cond: [{ $eq: ['$resolveSource', 'bot'] }, 1, 0],
             },
-            botHandoff: {
-              $sum: {
-                $cond: [{ $eq: ['$bot.status', 'handoff'] }, 1, 0],
-              },
-            },
-            avgMessageCount: { $avg: '$messageCount' },
           },
+          botHandoff: {
+            $sum: {
+              $cond: [{ $eq: ['$bot.status', 'handoff'] }, 1, 0],
+            },
+          },
+          avgMessageCount: { $avg: '$messageCount' },
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const row = rows[0] ?? {
       total: 0,
@@ -576,28 +561,26 @@ export class OmniReportService {
       createdAt: { $gte: context.from, $lte: context.to },
     };
 
-    const rows = await this.conversationModel
-      .aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: {
-              dayOfWeek: {
-                $dayOfWeek: {
-                  date: '$createdAt',
-                  timezone: context.timezone,
-                },
-              },
-              hour: {
-                $hour: { date: '$createdAt', timezone: context.timezone },
+    const rows = await reportAggregate(this.conversationModel, [
+      { $match: match },
+      {
+        $group: {
+          _id: {
+            dayOfWeek: {
+              $dayOfWeek: {
+                date: '$createdAt',
+                timezone: context.timezone,
               },
             },
-            count: { $sum: 1 },
+            hour: {
+              $hour: { date: '$createdAt', timezone: context.timezone },
+            },
           },
+          count: { $sum: 1 },
         },
-        { $sort: { '_id.dayOfWeek': 1, '_id.hour': 1 } },
-      ])
-      .exec();
+      },
+      { $sort: { '_id.dayOfWeek': 1, '_id.hour': 1 } },
+    ]).exec();
 
     // MongoDB $dayOfWeek: 1=Sunday … 7=Saturday → convert to 0=Sunday … 6=Saturday
     const data: PeakHoursCell[] = rows.map((row) => ({
@@ -628,50 +611,48 @@ export class OmniReportService {
       'tags.0': { $exists: true },
     };
 
-    const [facetResult] = await this.conversationModel
-      .aggregate([
-        { $match: match },
-        { $unwind: '$tags' },
-        {
-          $facet: {
-            total: [{ $count: 'count' }],
-            rows: [
-              { $group: { _id: '$tags', count: { $sum: 1 } } },
-              { $sort: { count: -1 } },
-              { $limit: 50 },
-              {
-                $addFields: {
-                  tagObjectId: {
-                    $convert: {
-                      input: '$_id',
-                      to: 'objectId',
-                      onError: null,
-                      onNull: null,
-                    },
+    const [facetResult] = await reportAggregate(this.conversationModel, [
+      { $match: match },
+      { $unwind: '$tags' },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          rows: [
+            { $group: { _id: '$tags', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 50 },
+            {
+              $addFields: {
+                tagObjectId: {
+                  $convert: {
+                    input: '$_id',
+                    to: 'objectId',
+                    onError: null,
+                    onNull: null,
                   },
                 },
               },
-              {
-                $lookup: {
-                  from: 'tags',
-                  localField: 'tagObjectId',
-                  foreignField: '_id',
-                  as: 'tagDoc',
-                },
+            },
+            {
+              $lookup: {
+                from: 'tags',
+                localField: 'tagObjectId',
+                foreignField: '_id',
+                as: 'tagDoc',
               },
-              {
-                $addFields: {
-                  tagName: {
-                    $ifNull: [{ $arrayElemAt: ['$tagDoc.name', 0] }, '$_id'],
-                  },
-                  tagColor: { $arrayElemAt: ['$tagDoc.color', 0] },
+            },
+            {
+              $addFields: {
+                tagName: {
+                  $ifNull: [{ $arrayElemAt: ['$tagDoc.name', 0] }, '$_id'],
                 },
+                tagColor: { $arrayElemAt: ['$tagDoc.color', 0] },
               },
-            ],
-          },
+            },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const total: number = facetResult?.total?.[0]?.count ?? 0;
     const data: TagAnalyticsItem[] = (facetResult?.rows ?? []).map(
@@ -708,41 +689,37 @@ export class OmniReportService {
     };
 
     const [summary, trendRows] = await Promise.all([
-      this.conversationModel
-        .aggregate([
-          { $match: match },
-          {
-            $group: {
-              _id: null,
-              totalResolved: { $sum: 1 },
-              reopenedCount: {
-                $sum: { $cond: [{ $gt: ['$reopenCount', 0] }, 1, 0] },
-              },
+      reportAggregate(this.conversationModel, [
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            totalResolved: { $sum: 1 },
+            reopenedCount: {
+              $sum: { $cond: [{ $gt: ['$reopenCount', 0] }, 1, 0] },
             },
           },
-        ])
-        .exec(),
-      this.conversationModel
-        .aggregate([
-          { $match: match },
-          {
-            $group: {
-              _id: {
-                $dateToString: {
-                  format,
-                  date: '$resolvedAt',
-                  timezone: context.timezone,
-                },
-              },
-              resolvedCount: { $sum: 1 },
-              reopenedCount: {
-                $sum: { $cond: [{ $gt: ['$reopenCount', 0] }, 1, 0] },
+        },
+      ]).exec(),
+      reportAggregate(this.conversationModel, [
+        { $match: match },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format,
+                date: '$resolvedAt',
+                timezone: context.timezone,
               },
             },
+            resolvedCount: { $sum: 1 },
+            reopenedCount: {
+              $sum: { $cond: [{ $gt: ['$reopenCount', 0] }, 1, 0] },
+            },
           },
-          { $sort: { _id: 1 } },
-        ])
-        .exec(),
+        },
+        { $sort: { _id: 1 } },
+      ]).exec(),
     ]);
 
     const totals = summary[0] ?? { totalResolved: 0, reopenedCount: 0 };

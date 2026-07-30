@@ -26,6 +26,7 @@ import {
   ApiBody,
   ApiProperty,
   ApiPropertyOptional,
+  ApiOkResponse,
 } from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
@@ -99,6 +100,34 @@ export class DealsController {
   @UsePipes(new SanitizeMaskedInputPipe())
   update(@Param('id') id: string, @Body() data: UpdateDealDto) {
     return this.service.update(id, data as Partial<Deal>);
+  }
+
+  // ──────────────────────── RECYCLE BIN ────────────────────────
+  //
+  // Declared BEFORE the `:id` routes — Nest matches in declaration order, and
+  // `recycle-bin` would otherwise be captured as an id.
+
+  @ApiOkResponse({ description: 'Soft-deleted deals awaiting purge' })
+  @Get('recycle-bin')
+  @RequirePermission('view', 'deals')
+  listDeleted(@Query('page') page?: string, @Query('limit') limit?: string) {
+    return this.service.listDeleted({
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
+  }
+
+  // Restoring re-exposes a record, so it takes `delete` — the same capability that
+  // removed it — rather than `edit`. Record-level ACL as well: you may only bring
+  // back a record you could have seen. The PIP's loader reads with `findById` and no
+  // soft-delete predicate, so it hydrates the archived document and the
+  // owner/org-unit conditions evaluate against the record as it was.
+  @Post(':id/restore')
+  @RequirePermission('delete', 'deals')
+  @UseAcl('delete', 'deals')
+  @LoadResource('deals')
+  restore(@Param('id') id: string) {
+    return this.service.restore(id);
   }
 
   @Delete(':id')

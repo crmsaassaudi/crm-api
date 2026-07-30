@@ -284,7 +284,7 @@ describe('RoleAssignmentService', () => {
     expect(where.principalId.$in.sort()).toEqual([userId, 'group_1'].sort());
   });
 
-  it('requires two distinct approvals before activating a request', async () => {
+  it('should require two distinct approvals before activating a request', async () => {
     const save = jest.fn();
     const doc: any = {
       tenantId,
@@ -296,7 +296,7 @@ describe('RoleAssignmentService', () => {
       approvals: [],
       save,
     };
-    save.mockImplementation(async () => doc);
+    save.mockImplementation(() => Promise.resolve(doc));
     model.findOne.mockReturnValue({ exec: () => Promise.resolve(doc) });
 
     const first = await service.approve(
@@ -321,7 +321,7 @@ describe('RoleAssignmentService', () => {
     });
   });
 
-  it('prevents requester, target, and duplicate approver participation', async () => {
+  it('should prevent requester, target, and duplicate approver participation', async () => {
     const doc: any = {
       tenantId,
       principalType: 'user',

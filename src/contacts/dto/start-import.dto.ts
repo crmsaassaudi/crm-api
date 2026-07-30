@@ -94,4 +94,16 @@ export class StartImportDto {
   @IsOptional()
   @IsString()
   fileFormat?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Owner assigned to every imported contact. Defaults to the requesting ' +
+      'user. Never leave the rows unowned — scoped users cannot see unowned ' +
+      'records, so the import would land in the database and be visible only ' +
+      'to admins.',
+    example: '60d0fe4f5311236168a109cc',
+  })
+  @IsOptional()
+  @IsString()
+  ownerId?: string;
 }

@@ -662,7 +662,6 @@ export class ConversationRepository {
       sessionId: string | null;
       status: 'active' | 'handoff' | 'ended';
       lastError: string | null;
-      lockedAt: Date | null;
     }>,
   ): Promise<OmniConversation | null> {
     const $set: Record<string, any> = {};
@@ -696,9 +695,6 @@ export class ConversationRepository {
           $set: {
             'bot.enabled': false,
             'bot.status': 'handoff',
-          },
-          $unset: {
-            'bot.lockedAt': 1,
           },
         },
         { new: true },
@@ -1263,7 +1259,6 @@ export class ConversationRepository {
             'bot.flowId': null,
             'bot.status': 'active',
             'bot.lastError': null,
-            'bot.lockedAt': null,
           },
           $inc: { reopenCount: 1 },
         },

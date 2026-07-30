@@ -34,6 +34,9 @@ export class ContactMapper {
       };
     });
     domainEntity.isShadow = raw.isShadow;
+    // isVIP has two dedicated indexes on the schema and was absent from this mapper
+    // entirely: unreadable and unwritable through the repository.
+    domainEntity.isVIP = raw.isVIP;
     domainEntity.stageHistory = (raw.stageHistory || []).map((entry: any) => ({
       fromStage: entry.fromStage,
       toStage: entry.toStage,
@@ -97,6 +100,9 @@ export class ContactMapper {
       persistenceEntity.omniIdentities = domainEntity.omniIdentities;
     if (domainEntity.isShadow !== undefined) {
       persistenceEntity.isShadow = domainEntity.isShadow;
+    }
+    if (domainEntity.isVIP !== undefined) {
+      persistenceEntity.isVIP = domainEntity.isVIP;
     }
     persistenceEntity.ownerId = domainEntity.ownerId;
     persistenceEntity.createdById = domainEntity.createdById;

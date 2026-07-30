@@ -92,11 +92,16 @@ export abstract class BaseImportProcessor<
   /**
    * Map a raw CSV/XLSX row onto entity fields using the user's column mapping.
    * Must return scalar fields and array fields separately.
+   *
+   * `data` is passed rather than read from instance state because a processor
+   * instance handles several jobs concurrently (`concurrency: 3`); per-job
+   * settings held on `this` would leak between tenants.
    */
   protected abstract mapRow(
     raw: Record<string, string>,
     mapping: Record<string, string>,
     row: number,
+    data: TJobData,
   ): MappedRow;
 
   /**
@@ -244,7 +249,7 @@ export abstract class BaseImportProcessor<
 
       for await (const raw of parser.parse(stream)) {
         rowNum++;
-        const mapped = this.mapRow(raw, data.mapping, rowNum);
+        const mapped = this.mapRow(raw, data.mapping, rowNum, data);
         batch.push(mapped);
 
         if (batch.length >= this.moduleConfig.batchSize) {

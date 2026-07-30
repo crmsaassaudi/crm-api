@@ -28,6 +28,13 @@ const REVIEWED_EXEMPTIONS = new Set([
   'omni-inbound/infrastructure/persistence/document/entities/interaction-segment.schema.ts',
   'omni-inbound/infrastructure/persistence/document/entities/outbox-event.schema.ts',
   'omni-inbound/infrastructure/persistence/document/entities/processed-operation.schema.ts',
+  // Written by the nightly rollup worker, which has no request and therefore no CLS
+  // tenant: the plugin's lookup would yield nothing and silently scope every query to
+  // "no tenant", producing a job that appears to run and writes nothing. Both the
+  // writer (ContactMetricsRollupService) and the reader (ContactGrowthRollupReader)
+  // pass tenantId explicitly on every query, and the reader additionally applies the
+  // request's owner/orgUnit visibility union to the rollup's dimensions.
+  'reports/contact/rollup/contact-daily-metrics.schema.ts',
   'tenants/infrastructure/persistence/document/entities/provisioning-job.schema.ts',
 ]);
 
@@ -39,7 +46,7 @@ const walk = (dir: string): string[] =>
   });
 
 describe('tenant schema inventory', () => {
-  it('requires tenant plugin or an exact reviewed exemption', () => {
+  it('should require the tenant plugin or an exact reviewed exemption', () => {
     const violations = walk(SRC)
       .filter((file) => {
         const source = fs.readFileSync(file, 'utf8');
@@ -53,7 +60,7 @@ describe('tenant schema inventory', () => {
     expect(violations).toEqual([]);
   });
 
-  it('keeps every exemption alive and explicit (no stale allowlist entries)', () => {
+  it('should keep every exemption alive and explicit (no stale allowlist entries)', () => {
     for (const relative of REVIEWED_EXEMPTIONS) {
       const source = fs.readFileSync(path.join(SRC, relative), 'utf8');
       expect(source).toMatch(/\btenantId\b/);

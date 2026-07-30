@@ -145,23 +145,44 @@ export function isEligibleForRouting(
   );
 }
 
-/**
- * Reduce concurrent open interactions to a single display label (§2.4).
- * NOTE: priority-max is for display only — do NOT use it for analytics; per-type
- * durations come from `interaction_segments` (gap D).
- */
-export function deriveWorkStatus(openInteractions: {
+/** The open-interaction flags that `deriveWorkStatus` reduces to one label. */
+export interface OpenInteractions {
   call?: boolean;
   chat?: boolean;
   ticket?: boolean;
   email?: boolean;
   wrapUp?: boolean;
-}): WorkStatus {
-  if (openInteractions.call) return 'IN_CALL';
-  if (openInteractions.chat) return 'IN_CHAT';
-  if (openInteractions.ticket) return 'IN_TICKET';
-  if (openInteractions.email) return 'IN_EMAIL';
-  if (openInteractions.wrapUp) return 'WRAP_UP';
+}
+
+/** Which flag makes each WorkStatus true. IDLE is the fallthrough, so it has none. */
+const WORK_STATUS_INTERACTION: Record<
+  WorkStatus,
+  keyof OpenInteractions | null
+> = {
+  IN_CALL: 'call',
+  IN_CHAT: 'chat',
+  IN_TICKET: 'ticket',
+  IN_EMAIL: 'email',
+  WRAP_UP: 'wrapUp',
+  IDLE: null,
+};
+
+/**
+ * Reduce concurrent open interactions to a single display label (§2.4).
+ * NOTE: priority-max is for display only — do NOT use it for analytics; per-type
+ * durations come from `interaction_segments` (gap D).
+ *
+ * Iterates WORK_STATUS_PRIORITY rather than restating the order as an if-chain.
+ * The chain was a second, silent copy of the same ranking: editing the documented
+ * constant changed nothing, so the two could disagree with no signal at all.
+ */
+export function deriveWorkStatus(
+  openInteractions: OpenInteractions,
+): WorkStatus {
+  for (const status of WORK_STATUS_PRIORITY) {
+    const flag = WORK_STATUS_INTERACTION[status];
+    if (flag && openInteractions[flag]) return status;
+  }
   return 'IDLE';
 }
 

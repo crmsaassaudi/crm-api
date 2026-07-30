@@ -26,6 +26,7 @@ import {
   TicketResolutionTimeData,
   TicketVolumeData,
 } from './interfaces/ticket-report-types';
+import { reportAggregate } from '../shared/utils/report-aggregate.util';
 
 type DateContext = {
   from: Date;
@@ -57,55 +58,53 @@ export class TicketReportService {
       createdAt: { $gte: context.from, $lte: context.to },
     };
 
-    const [facetResult] = await this.ticketModel
-      .aggregate([
-        { $match: match },
-        {
-          $facet: {
-            trend: [
-              {
-                $group: {
-                  _id: {
-                    $dateToString: {
-                      format,
-                      date: '$createdAt',
-                      timezone: context.timezone,
-                    },
+    const [facetResult] = await reportAggregate(this.ticketModel, [
+      { $match: match },
+      {
+        $facet: {
+          trend: [
+            {
+              $group: {
+                _id: {
+                  $dateToString: {
+                    format,
+                    date: '$createdAt',
+                    timezone: context.timezone,
                   },
-                  count: { $sum: 1 },
                 },
+                count: { $sum: 1 },
               },
-              { $sort: { _id: 1 } },
-            ],
-            statusBreakdown: [
-              {
-                $lookup: {
-                  from: 'ticketstatuses',
-                  localField: 'statusId',
-                  foreignField: '_id',
-                  as: 'ticketStatus',
+            },
+            { $sort: { _id: 1 } },
+          ],
+          statusBreakdown: [
+            {
+              $lookup: {
+                from: 'ticketstatuses',
+                localField: 'statusId',
+                foreignField: '_id',
+                as: 'ticketStatus',
+              },
+            },
+            {
+              $unwind: {
+                path: '$ticketStatus',
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+            {
+              $group: {
+                _id: {
+                  $toLower: { $ifNull: ['$ticketStatus.apiName', 'open'] },
                 },
+                count: { $sum: 1 },
               },
-              {
-                $unwind: {
-                  path: '$ticketStatus',
-                  preserveNullAndEmptyArrays: true,
-                },
-              },
-              {
-                $group: {
-                  _id: {
-                    $toLower: { $ifNull: ['$ticketStatus.apiName', 'open'] },
-                  },
-                  count: { $sum: 1 },
-                },
-              },
-            ],
-            total: [{ $count: 'count' }],
-          },
+            },
+          ],
+          total: [{ $count: 'count' }],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const trendRows: any[] = facetResult?.trend ?? [];
     const statusRows: any[] = facetResult?.statusBreakdown ?? [];
@@ -150,88 +149,83 @@ export class TicketReportService {
       createdAt: { $gte: context.from, $lte: context.to },
     };
 
-    const [facetResult] = await this.ticketModel
-      .aggregate([
-        { $match: match },
-        {
-          $facet: {
-            overall: [
-              {
-                $group: {
-                  _id: null,
-                  total: { $sum: 1 },
-                  breached: {
-                    $sum: { $cond: [{ $eq: ['$isSlaBreached', true] }, 1, 0] },
+    const [facetResult] = await reportAggregate(this.ticketModel, [
+      { $match: match },
+      {
+        $facet: {
+          overall: [
+            {
+              $group: {
+                _id: null,
+                total: { $sum: 1 },
+                breached: {
+                  $sum: { $cond: [{ $eq: ['$isSlaBreached', true] }, 1, 0] },
+                },
+                frtOnTime: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          {
+                            $ne: [
+                              { $ifNull: ['$firstRespondedAt', null] },
+                              null,
+                            ],
+                          },
+                          {
+                            $ne: [
+                              { $ifNull: ['$firstResponseDueAt', null] },
+                              null,
+                            ],
+                          },
+                          {
+                            $lte: ['$firstRespondedAt', '$firstResponseDueAt'],
+                          },
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
                   },
-                  frtOnTime: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $and: [
-                            {
-                              $ne: [
-                                { $ifNull: ['$firstRespondedAt', null] },
-                                null,
-                              ],
-                            },
-                            {
-                              $ne: [
-                                { $ifNull: ['$firstResponseDueAt', null] },
-                                null,
-                              ],
-                            },
-                            {
-                              $lte: [
-                                '$firstRespondedAt',
-                                '$firstResponseDueAt',
-                              ],
-                            },
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                  resolutionOnTime: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $and: [
-                            { $ne: [{ $ifNull: ['$resolvedAt', null] }, null] },
-                            {
-                              $ne: [
-                                { $ifNull: ['$resolutionDueAt', null] },
-                                null,
-                              ],
-                            },
-                            { $lte: ['$resolvedAt', '$resolutionDueAt'] },
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
+                },
+                resolutionOnTime: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $ne: [{ $ifNull: ['$resolvedAt', null] }, null] },
+                          {
+                            $ne: [
+                              { $ifNull: ['$resolutionDueAt', null] },
+                              null,
+                            ],
+                          },
+                          { $lte: ['$resolvedAt', '$resolutionDueAt'] },
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
                   },
                 },
               },
-            ],
-            byPriority: [
-              {
-                $group: {
-                  _id: '$priority',
-                  total: { $sum: 1 },
-                  breached: {
-                    $sum: { $cond: [{ $eq: ['$isSlaBreached', true] }, 1, 0] },
-                  },
+            },
+          ],
+          byPriority: [
+            {
+              $group: {
+                _id: '$priority',
+                total: { $sum: 1 },
+                breached: {
+                  $sum: { $cond: [{ $eq: ['$isSlaBreached', true] }, 1, 0] },
                 },
               },
-              { $sort: { total: -1 } },
-            ],
-          },
+            },
+            { $sort: { total: -1 } },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const o = facetResult?.overall?.[0] ?? {
       total: 0,
@@ -276,60 +270,58 @@ export class TicketReportService {
       resolvedAt: { $gte: context.from, $lte: context.to },
     };
 
-    const [facetResult] = await this.ticketModel
-      .aggregate([
-        { $match: match },
-        {
-          $facet: {
-            overall: [
-              {
-                $group: {
-                  _id: null,
-                  total: { $sum: 1 },
-                  avgResolutionMs: {
-                    $avg: { $subtract: ['$resolvedAt', '$createdAt'] },
-                  },
-                  avgFrtMs: {
-                    $avg: {
-                      $cond: [
-                        {
-                          $ne: [{ $ifNull: ['$firstRespondedAt', null] }, null],
-                        },
-                        { $subtract: ['$firstRespondedAt', '$createdAt'] },
-                        null,
-                      ],
-                    },
+    const [facetResult] = await reportAggregate(this.ticketModel, [
+      { $match: match },
+      {
+        $facet: {
+          overall: [
+            {
+              $group: {
+                _id: null,
+                total: { $sum: 1 },
+                avgResolutionMs: {
+                  $avg: { $subtract: ['$resolvedAt', '$createdAt'] },
+                },
+                avgFrtMs: {
+                  $avg: {
+                    $cond: [
+                      {
+                        $ne: [{ $ifNull: ['$firstRespondedAt', null] }, null],
+                      },
+                      { $subtract: ['$firstRespondedAt', '$createdAt'] },
+                      null,
+                    ],
                   },
                 },
               },
-            ],
-            byPriority: [
-              {
-                $group: {
-                  _id: '$priority',
-                  count: { $sum: 1 },
-                  avgResolutionMs: {
-                    $avg: { $subtract: ['$resolvedAt', '$createdAt'] },
-                  },
-                  avgFrtMs: {
-                    $avg: {
-                      $cond: [
-                        {
-                          $ne: [{ $ifNull: ['$firstRespondedAt', null] }, null],
-                        },
-                        { $subtract: ['$firstRespondedAt', '$createdAt'] },
-                        null,
-                      ],
-                    },
+            },
+          ],
+          byPriority: [
+            {
+              $group: {
+                _id: '$priority',
+                count: { $sum: 1 },
+                avgResolutionMs: {
+                  $avg: { $subtract: ['$resolvedAt', '$createdAt'] },
+                },
+                avgFrtMs: {
+                  $avg: {
+                    $cond: [
+                      {
+                        $ne: [{ $ifNull: ['$firstRespondedAt', null] }, null],
+                      },
+                      { $subtract: ['$firstRespondedAt', '$createdAt'] },
+                      null,
+                    ],
                   },
                 },
               },
-              { $sort: { count: -1 } },
-            ],
-          },
+            },
+            { $sort: { count: -1 } },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const o = facetResult?.overall?.[0] ?? {
       total: 0,
@@ -375,49 +367,47 @@ export class TicketReportService {
       createdAt: { $gte: context.from, $lte: context.to },
     };
 
-    const rows = await this.ticketModel
-      .aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: '$ownerId',
-            totalTickets: { $sum: 1 },
-            resolvedTickets: {
-              $sum: {
-                $cond: [
-                  { $ne: [{ $ifNull: ['$resolvedAt', null] }, null] },
-                  1,
-                  0,
-                ],
-              },
+    const rows = await reportAggregate(this.ticketModel, [
+      { $match: match },
+      {
+        $group: {
+          _id: '$ownerId',
+          totalTickets: { $sum: 1 },
+          resolvedTickets: {
+            $sum: {
+              $cond: [
+                { $ne: [{ $ifNull: ['$resolvedAt', null] }, null] },
+                1,
+                0,
+              ],
             },
-            avgResolutionMs: {
-              $avg: {
-                $cond: [
-                  { $ne: [{ $ifNull: ['$resolvedAt', null] }, null] },
-                  { $subtract: ['$resolvedAt', '$createdAt'] },
-                  null,
-                ],
-              },
-            },
-            breachCount: {
-              $sum: { $cond: [{ $eq: ['$isSlaBreached', true] }, 1, 0] },
-            },
-            avgCsat: { $avg: { $ifNull: ['$csatScore', null] } },
           },
-        },
-        {
-          $lookup: {
-            from: 'users',
-            localField: '_id',
-            foreignField: '_id',
-            as: 'agent',
+          avgResolutionMs: {
+            $avg: {
+              $cond: [
+                { $ne: [{ $ifNull: ['$resolvedAt', null] }, null] },
+                { $subtract: ['$resolvedAt', '$createdAt'] },
+                null,
+              ],
+            },
           },
+          breachCount: {
+            $sum: { $cond: [{ $eq: ['$isSlaBreached', true] }, 1, 0] },
+          },
+          avgCsat: { $avg: { $ifNull: ['$csatScore', null] } },
         },
-        { $unwind: { path: '$agent', preserveNullAndEmptyArrays: true } },
-        { $sort: { totalTickets: -1 } },
-      ])
-      .exec();
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'agent',
+        },
+      },
+      { $unwind: { path: '$agent', preserveNullAndEmptyArrays: true } },
+      { $sort: { totalTickets: -1 } },
+    ]).exec();
 
     const data: AgentWorkloadItem[] = rows.map((row) => {
       const agentName = [row.agent?.firstName, row.agent?.lastName]
@@ -458,48 +448,46 @@ export class TicketReportService {
       createdAt: { $gte: context.from, $lte: context.to },
     };
 
-    const [facetResult] = await this.ticketModel
-      .aggregate([
-        { $match: match },
-        {
-          $facet: {
-            total: [{ $count: 'count' }],
-            bySource: [
-              { $group: { _id: '$sourceId', count: { $sum: 1 } } },
-              {
-                $lookup: {
-                  from: 'ticketsources',
-                  localField: '_id',
-                  foreignField: '_id',
-                  as: 'source',
-                },
+    const [facetResult] = await reportAggregate(this.ticketModel, [
+      { $match: match },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          bySource: [
+            { $group: { _id: '$sourceId', count: { $sum: 1 } } },
+            {
+              $lookup: {
+                from: 'ticketsources',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'source',
               },
-              {
-                $unwind: { path: '$source', preserveNullAndEmptyArrays: true },
+            },
+            {
+              $unwind: { path: '$source', preserveNullAndEmptyArrays: true },
+            },
+            { $sort: { count: -1 } },
+          ],
+          byType: [
+            { $group: { _id: '$typeId', count: { $sum: 1 } } },
+            {
+              $lookup: {
+                from: 'tickettypes',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'type',
               },
-              { $sort: { count: -1 } },
-            ],
-            byType: [
-              { $group: { _id: '$typeId', count: { $sum: 1 } } },
-              {
-                $lookup: {
-                  from: 'tickettypes',
-                  localField: '_id',
-                  foreignField: '_id',
-                  as: 'type',
-                },
-              },
-              { $unwind: { path: '$type', preserveNullAndEmptyArrays: true } },
-              { $sort: { count: -1 } },
-            ],
-            byPriority: [
-              { $group: { _id: '$priority', count: { $sum: 1 } } },
-              { $sort: { count: -1 } },
-            ],
-          },
+            },
+            { $unwind: { path: '$type', preserveNullAndEmptyArrays: true } },
+            { $sort: { count: -1 } },
+          ],
+          byPriority: [
+            { $group: { _id: '$priority', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const total: number = facetResult?.total?.[0]?.count ?? 0;
     const toBreakdownItem = (row: any, name: string): BreakdownItem => ({
@@ -542,44 +530,42 @@ export class TicketReportService {
       resolvedAt: { $gte: context.from, $lte: context.to },
     };
 
-    const [facetResult] = await this.ticketModel
-      .aggregate([
-        { $match: match },
-        {
-          $facet: {
-            overall: [
-              {
-                $group: {
-                  _id: null,
-                  avgScore: { $avg: '$csatScore' },
-                  count: { $sum: 1 },
-                },
+    const [facetResult] = await reportAggregate(this.ticketModel, [
+      { $match: match },
+      {
+        $facet: {
+          overall: [
+            {
+              $group: {
+                _id: null,
+                avgScore: { $avg: '$csatScore' },
+                count: { $sum: 1 },
               },
-            ],
-            distribution: [
-              { $group: { _id: '$csatScore', count: { $sum: 1 } } },
-              { $sort: { _id: 1 } },
-            ],
-            trend: [
-              {
-                $group: {
-                  _id: {
-                    $dateToString: {
-                      format,
-                      date: '$resolvedAt',
-                      timezone: context.timezone,
-                    },
+            },
+          ],
+          distribution: [
+            { $group: { _id: '$csatScore', count: { $sum: 1 } } },
+            { $sort: { _id: 1 } },
+          ],
+          trend: [
+            {
+              $group: {
+                _id: {
+                  $dateToString: {
+                    format,
+                    date: '$resolvedAt',
+                    timezone: context.timezone,
                   },
-                  avgScore: { $avg: '$csatScore' },
-                  count: { $sum: 1 },
                 },
+                avgScore: { $avg: '$csatScore' },
+                count: { $sum: 1 },
               },
-              { $sort: { _id: 1 } },
-            ],
-          },
+            },
+            { $sort: { _id: 1 } },
+          ],
         },
-      ])
-      .exec();
+      },
+    ]).exec();
 
     const o = facetResult?.overall?.[0] ?? { avgScore: 0, count: 0 };
     const totalRatings = o.count;

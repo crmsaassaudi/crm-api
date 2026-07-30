@@ -21,7 +21,7 @@ const walk = (dir: string): string[] =>
  * @platform-query marker for an intentionally global collection.
  */
 describe('raw Mongo tenant boundary', () => {
-  it('requires an explicit tenant predicate near every raw collection operation', () => {
+  it('should require an explicit tenant predicate near every raw collection operation', () => {
     const violations: string[] = [];
     const operation =
       /(?:\.collection\([^)]*\)|\.collection)\s*\.\s*(find|findOne|aggregate|updateOne|updateMany|deleteOne|deleteMany|bulkWrite)\s*\(/g;

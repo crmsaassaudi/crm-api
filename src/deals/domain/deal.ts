@@ -103,6 +103,11 @@ export class Deal {
   @ApiProperty({ description: 'Linked message IDs from the omni-conversation' })
   linkedMessageIds?: string[];
 
-  @ApiProperty({ description: 'Tickets linked to this deal' })
-  ticketIds?: string[];
+  // NO `ticketIds`.
+  //
+  // It was declared here, absent from DealSchemaClass, and read by nothing —
+  // `linkDeal`'s comment even claimed it appended to it. The deal's tickets are found by
+  // querying `tickets.dealId` (GET /tickets/by-deal/:dealId), which is one source of
+  // truth; a mirrored array would need maintaining on every link, unlink and merge, and
+  // would silently disagree with the FK the first time one of those was missed.
 }

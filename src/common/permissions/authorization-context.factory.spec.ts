@@ -3,7 +3,7 @@ import { AuthorizationContextFactory } from './authorization-context.factory';
 describe('AuthorizationContextFactory', () => {
   const factory = new AuthorizationContextFactory();
 
-  it('builds the same canonical subject shape for action and record decisions', () => {
+  it('should build the same canonical subject shape for action and record decisions', () => {
     const subject = {
       tenantId: 't1',
       userId: 'u1',
@@ -31,7 +31,7 @@ describe('AuthorizationContextFactory', () => {
     expect(action.subject?.groupIds).toEqual(['g1']);
   });
 
-  it('does not allow supplemental attributes to spoof trusted fields', () => {
+  it('should not allow supplemental attributes to spoof trusted fields', () => {
     const context = factory.forRecord(
       {
         tenantId: 'trusted-tenant',

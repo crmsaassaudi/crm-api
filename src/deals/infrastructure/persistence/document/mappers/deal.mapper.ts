@@ -64,6 +64,10 @@ export class DealMapper {
     domainEntity.lostReason = raw.lostReason;
     domainEntity.tags = raw.tags;
     domainEntity.customFields = raw.customFields;
+    domainEntity.omniConversationId = raw.omniConversationId?.toString();
+    domainEntity.linkedMessageIds = raw.linkedMessageIds?.map((id: any) =>
+      id.toString(),
+    );
     domainEntity.closeDate = raw.closeDate;
     domainEntity.wonAt = raw.wonAt;
     domainEntity.lostAt = raw.lostAt;
@@ -95,6 +99,15 @@ export class DealMapper {
     persistenceEntity.lostReason = domainEntity.lostReason;
     persistenceEntity.tags = domainEntity.tags;
     persistenceEntity.customFields = domainEntity.customFields;
+    // The omni-conversion link: declared on the domain and the schema (with an index),
+    // never mapped — so converting a conversation to a deal could not record which
+    // conversation it came from.
+    if (domainEntity.omniConversationId !== undefined) {
+      persistenceEntity.omniConversationId = domainEntity.omniConversationId;
+    }
+    if (domainEntity.linkedMessageIds !== undefined) {
+      persistenceEntity.linkedMessageIds = domainEntity.linkedMessageIds;
+    }
     persistenceEntity.closeDate = domainEntity.closeDate;
     persistenceEntity.wonAt = domainEntity.wonAt;
     persistenceEntity.lostAt = domainEntity.lostAt;

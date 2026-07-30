@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { AutomationEventPayload } from '../automation-rules/events/automation-event.payload';
 import { AutomationOutboxService } from '../automation-rules/events/automation-outbox.service';
@@ -93,6 +93,45 @@ export class TasksService {
     }
 
     return updated;
+  }
+
+  // ──────────────────────── RECYCLE BIN ────────────────────────
+  //
+  // `remove()` is a soft delete (the schema declares `deletedAt`), so without these
+  // two methods a deleted task was invisible everywhere and recoverable nowhere —
+  // strictly worse than the hard delete it replaced, because the row also stayed in
+  // the database forever.
+
+  async listDeleted(options: { page?: number; limit?: number }): Promise<{
+    data: Task[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(100, Math.max(1, options.limit ?? 25));
+    const { data, total } = await this.repository.findDeleted({ page, limit });
+    return { data, total, page, limit };
+  }
+
+  async restore(id: string): Promise<Task> {
+    const restored = await this.repository.restore(id);
+    if (!restored) {
+      throw new NotFoundException(
+        'Task not found in the recycle bin — it may already have been purged',
+      );
+    }
+
+    this.entityAudit.emit({
+      entity: 'task',
+      entityType: 'TASK',
+      entityId: id,
+      kind: 'updated',
+      oldSnapshot: { _deleted: true } as any,
+      newSnapshot: restored,
+    });
+
+    return restored;
   }
 
   async remove(id: string): Promise<void> {

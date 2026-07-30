@@ -110,8 +110,72 @@ export class AccountRepository extends BaseDocumentRepository<
     return query.exec();
   }
 
+  /**
+   * Accounts that share any identity key with the supplied one.
+   *
+   * A single `$or` rather than three queries: the caller then ranks the results by
+   * confidence, so the strongest available signal wins without three round trips.
+   * Capped, because a weak name key can legitimately match many rows and a duplicate
+   * warning does not need all of them.
+   */
+  async findIdentityCandidates(
+    keys: { nameKey?: string; websiteDomain?: string; taxIdKey?: string },
+    excludeId?: string,
+  ): Promise<Account[]> {
+    const clauses: FilterQuery<AccountSchemaClass>[] = [];
+    if (keys.taxIdKey) clauses.push({ taxIdKey: keys.taxIdKey });
+    if (keys.websiteDomain) clauses.push({ websiteDomain: keys.websiteDomain });
+    if (keys.nameKey) clauses.push({ nameKey: keys.nameKey });
+    if (clauses.length === 0) return [];
+
+    const where: FilterQuery<AccountSchemaClass> = {
+      $or: clauses,
+      deletedAt: null,
+    };
+    if (excludeId) where._id = { $ne: excludeId };
+
+    const docs = await this.model
+      .find(this.applyTenantFilter(where))
+      .select({
+        name: 1,
+        website: 1,
+        taxId: 1,
+        nameKey: 1,
+        websiteDomain: 1,
+        taxIdKey: 1,
+      })
+      .limit(25)
+      .lean()
+      .exec();
+
+    return docs.map((doc) => this.mapToDomain(doc as any));
+  }
+
   private buildListWhere(filterOptions?: any) {
-    const where: FilterQuery<AccountSchemaClass> = {};
+    const where: FilterQuery<AccountSchemaClass> = {
+      // Exclude soft-deleted accounts.
+      //
+      // This builder was the only list query in the CRM that never filtered
+      // `deletedAt` — deals, tickets, tasks and contacts all did. It did not show
+      // while `remove()` issued `deleteOne`, because the row was gone; once deletion
+      // became a soft delete the accounts list started listing deleted accounts.
+      // `null` rather than `$exists: false` so a restored row (which unsets the field)
+      // and a legacy row (which never had it) both count as live.
+      deletedAt: null,
+
+      // Exclude archived accounts unless explicitly asked for.
+      //
+      // `isArchived` was declared on the schema, the domain model and the mapper, was
+      // writable through the API — and was read by nothing. So a client could archive
+      // an account, get a 200, and watch it stay in every list: an affordance that
+      // lied. Archiving is a real concept distinct from deletion (keep the history,
+      // hide it from working views) and this repo already implements it that way for
+      // deal pipelines, so the fix is to honour the field rather than delete it.
+      //
+      // `$ne: true` not `false`, because the overwhelming majority of existing
+      // documents have no such field at all.
+      ...(filterOptions?.includeArchived ? {} : { isArchived: { $ne: true } }),
+    };
 
     if (filterOptions?.search) {
       const searchExpr = {
@@ -376,12 +440,92 @@ export class AccountRepository extends BaseDocumentRepository<
   async findOne(
     filter: FilterQuery<AccountSchemaClass>,
   ): Promise<Account | null> {
-    const scopedFilter = this.applyTenantFilter(filter);
+    // Exclude soft-deleted records unless the caller asks for one explicitly.
+    //
+    // Harmless while `remove()` hard-deleted: the row was gone, so the lookup
+    // returned null by itself. Once deletion became a soft delete the unfiltered
+    // lookup began SERVING deleted records — `GET /:id` answering 200 instead of
+    // 404, the detail page rendering a deleted record as editable, and automation's
+    // `fetchRecord` resuming delayed workflows against it, which is how a
+    // "wait 3 days then email" step ends up acting on something the user deleted.
+    //
+    // Passing `deletedAt` explicitly opts out, for merge and restore paths that
+    // legitimately need to load an archived row.
+    const scopedFilter = this.applyTenantFilter(
+      filter.deletedAt !== undefined ? filter : { ...filter, deletedAt: null },
+    );
     const doc = await this.model
       .findOne(scopedFilter)
       .populate('owner')
       .populate('accountStatus')
       .populate('accountType')
+      .exec();
+    return doc ? this.mapToDomain(doc) : null;
+  }
+
+  /**
+   * Accounts soft-deleted before `cutoff`, for the retention purge.
+   *
+   * Runs WITHOUT the tenant filter by design: the purge cron has no request context, and
+   * retention applies to every tenant. `applyTenantFilter` would return nothing there,
+   * which is the quiet failure — a purge that logs success and deletes nothing.
+   *
+   * Oldest deletion first, so a backlog drains in the order it accumulated.
+   */
+  async findPurgeable(
+    cutoff: Date,
+    limit: number,
+  ): Promise<Array<{ id: string; tenantId: string }>> {
+    const docs = await this.model
+      .find({ deletedAt: { $ne: null, $lte: cutoff } })
+      .setOptions({ isPlatformQuery: true } as any)
+      .select({ _id: 1, tenantId: 1 })
+      .sort({ deletedAt: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    return docs.map((doc: any) => ({
+      id: String(doc._id),
+      tenantId: String(doc.tenantId),
+    }));
+  }
+
+  /** Hard-delete one account. Only AccountPurgeService may call this. */
+  async hardDelete(id: string): Promise<void> {
+    await this.model
+      .deleteOne({ _id: id })
+      .setOptions({ isPlatformQuery: true } as any)
+      .exec();
+  }
+
+  /**
+   * Apply `data` only if the document is still at `version`.
+   *
+   * Exists for merge. The merge lock serialises merges of the same pair, but not an
+   * ordinary PATCH by someone who had the account open — without this check that edit
+   * is silently overwritten by the pre-merge snapshot the merge is working from.
+   * Returns null on a version mismatch so the caller can report a conflict rather than
+   * report success over lost work.
+   */
+  async updateWithVersionCheck(
+    id: string,
+    version: number,
+    data: Partial<AccountSchemaClass>,
+  ): Promise<Account | null> {
+    const scopedFilter = this.applyTenantFilter({
+      _id: id,
+      __v: version,
+    } as FilterQuery<AccountSchemaClass>);
+    const updatedById = this.cls.get('userId') ?? this.cls.get('user.id');
+    const doc = await this.model
+      .findOneAndUpdate(
+        scopedFilter,
+        {
+          $set: { ...data, ...(updatedById ? { updatedById } : {}) },
+          $inc: { __v: 1 },
+        },
+        { new: true },
+      )
       .exec();
     return doc ? this.mapToDomain(doc) : null;
   }

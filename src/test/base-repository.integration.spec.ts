@@ -100,6 +100,49 @@ class TestEntityRepository extends BaseDocumentRepository<
   }
 }
 
+// ─── A second entity that soft-deletes ──────────────────────────
+//
+// The entity above has no `deletedAt`, so it only ever exercises the hard-delete
+// branch. Soft delete is derived from the schema (`model.schema.path('deletedAt')`),
+// so the two branches are genuinely different code paths — and the reversible one,
+// which is the whole justification for soft delete, was never executed against a real
+// database until these tests.
+
+const SoftEntitySchema = new Schema(
+  {
+    tenantId: { type: Schema.Types.ObjectId, required: true, index: true },
+    name: { type: String, required: true },
+    ownerId: { type: Schema.Types.ObjectId },
+    createdById: { type: Schema.Types.ObjectId, required: true },
+    updatedById: { type: Schema.Types.ObjectId, required: true },
+    deletedAt: { type: Date },
+  },
+  { timestamps: true },
+);
+SoftEntitySchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+
+class SoftEntityRepository extends BaseDocumentRepository<any, any> {
+  protected mapToDomain(doc: any) {
+    return {
+      id: doc._id?.toString(),
+      tenantId: doc.tenantId?.toString(),
+      name: doc.name,
+      deletedAt: doc.deletedAt ?? null,
+    };
+  }
+
+  protected toPersistence(domain: any) {
+    return {
+      tenantId: domain.tenantId,
+      name: domain.name,
+      createdById: domain.createdById,
+      updatedById: domain.updatedById,
+    };
+  }
+}
+
+let SoftModel: Model<any>;
+
 let connection: Connection;
 let TestModel: Model<TestEntityDocument>;
 let repo: TestEntityRepository;
@@ -112,6 +155,7 @@ const USER_2 = new mongoose.Types.ObjectId().toString();
 beforeAll(async () => {
   connection = await setupTestDatabase();
   TestModel = connection.model('TestEntity', TestEntitySchema) as any;
+  SoftModel = connection.model('SoftEntity', SoftEntitySchema) as any;
 }, 30000);
 
 afterEach(async () => {
@@ -353,6 +397,181 @@ describe('BaseDocumentRepository — real MongoDB', () => {
       expect(updated!.emails).toHaveLength(2);
       expect(updated!.phones).toHaveLength(3);
       // If whitelist was broken: these would be [] → test fails → bug caught
+    });
+  });
+  // ═══════════════════════════════════════════════════════════════════
+  // SOFT DELETE — delete, find it in the bin, restore it
+  // ═══════════════════════════════════════════════════════════════════
+  describe('soft delete, recycle bin and restore', () => {
+    /** A repository bound to the CLS context of the current run. */
+    const softRepo = () =>
+      new SoftEntityRepository(
+        SoftModel as any,
+        ClsServiceManager.getClsService() as any,
+      );
+
+    const seedDeleted = async (name: string) =>
+      runWithTenant(TENANT_A, async () => {
+        const repository = softRepo();
+        const created = await repository.create({ name } as any);
+        await repository.remove(created.id);
+        return created;
+      });
+
+    it('should STAMP deletedAt instead of destroying the row', async () => {
+      const created = await seedDeleted('Doomed');
+
+      // The row survives — the entire promise of soft delete, and never verified
+      // against a real database before this test.
+      const raw = await SoftModel.findById(created.id)
+        .setOptions({ isPlatformQuery: true })
+        .lean()
+        .exec();
+      expect(raw).toBeTruthy();
+      expect((raw as any).deletedAt).toBeInstanceOf(Date);
+    });
+
+    it('should list a deleted record in the recycle bin', async () => {
+      const created = await seedDeleted('Doomed');
+
+      const bin = await runWithTenant(TENANT_A, () =>
+        softRepo().findDeleted({ page: 1, limit: 25 }),
+      );
+
+      expect(bin.total).toBe(1);
+      expect(bin.data.map((r: any) => r.id)).toEqual([created.id]);
+    });
+
+    it('should NOT list a live record in the recycle bin', async () => {
+      const bin = await runWithTenant(TENANT_A, async () => {
+        const repository = softRepo();
+        await repository.create({ name: 'Alive' } as any);
+        return repository.findDeleted({ page: 1, limit: 25 });
+      });
+
+      // `deletedAt: { $ne: null }` must not match a document with no such field. If it
+      // did, the bin would list the entire live collection with a restore button.
+      expect(bin.total).toBe(0);
+      expect(bin.data).toEqual([]);
+    });
+
+    it('should not show one tenant the other tenant recycle bin', async () => {
+      await seedDeleted('Doomed');
+
+      const bin = await runWithTenant(
+        TENANT_B,
+        () => softRepo().findDeleted({ page: 1, limit: 25 }),
+        USER_2,
+      );
+
+      expect(bin.total).toBe(0);
+      expect(bin.data).toEqual([]);
+    });
+
+    it('should UNSET deletedAt on restore rather than writing null', async () => {
+      const created = await seedDeleted('Doomed');
+
+      const restored = await runWithTenant(TENANT_A, () =>
+        softRepo().restore(created.id),
+      );
+      expect(restored).toBeTruthy();
+
+      // Several repositories filter with `deletedAt: { $exists: false }`, which reads a
+      // present-but-null field as still deleted. Restoring to null would leave the
+      // record restored in the database and still invisible in the UI.
+      const raw = await SoftModel.findById(created.id)
+        .setOptions({ isPlatformQuery: true })
+        .lean()
+        .exec();
+      expect(
+        Object.prototype.hasOwnProperty.call(raw as object, 'deletedAt'),
+      ).toBe(false);
+
+      const bin = await runWithTenant(TENANT_A, () =>
+        softRepo().findDeleted({ page: 1, limit: 25 }),
+      );
+      expect(bin.total).toBe(0);
+    });
+
+    it('should refuse to restore across a tenant boundary', async () => {
+      const created = await seedDeleted('Doomed');
+
+      const restored = await runWithTenant(
+        TENANT_B,
+        () => softRepo().restore(created.id),
+        USER_2,
+      );
+
+      // Restore is a write that re-exposes data, so it is tenant-scoped like any
+      // other. Null lets the service answer 404 instead of leaking the record.
+      expect(restored).toBeNull();
+      const raw = await SoftModel.findById(created.id)
+        .setOptions({ isPlatformQuery: true })
+        .lean()
+        .exec();
+      expect((raw as any).deletedAt).toBeInstanceOf(Date);
+    });
+
+    it('should return null when restoring a record that was never deleted', async () => {
+      const restored = await runWithTenant(TENANT_A, async () => {
+        const repository = softRepo();
+        const created = await repository.create({ name: 'Alive' } as any);
+        return repository.restore(created.id);
+      });
+
+      // The filter is `deletedAt: { $ne: null }`, so a live record is not a match.
+      // Returning it would make restore a no-op that reports success.
+      expect(restored).toBeNull();
+    });
+
+    it('should page the recycle bin newest-deletion-first', async () => {
+      const { second, page } = await runWithTenant(TENANT_A, async () => {
+        const repository = softRepo();
+        const first = await repository.create({ name: 'First' } as any);
+        const later = await repository.create({ name: 'Second' } as any);
+
+        await repository.remove(first.id);
+        // Distinct timestamps: two deletions inside the same millisecond would make
+        // the ordering assertion depend on natural order instead of on the sort.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        await repository.remove(later.id);
+
+        return {
+          second: later,
+          page: await repository.findDeleted({ page: 1, limit: 1 }),
+        };
+      });
+
+      // A recycle bin is opened to undo what just happened.
+      expect(page.total).toBe(2);
+      expect(page.data.map((r: any) => r.id)).toEqual([second.id]);
+    });
+
+    it('should report an empty bin for a collection that hard-deletes', async () => {
+      // TestEntity has no `deletedAt`, so `remove()` destroys the row and there is
+      // nothing to list. Empty rather than everything is the fail-safe direction: a
+      // shared recycle-bin page pointed at a hard-deleting domain must not turn into a
+      // list of live records offering to restore them.
+      const { created, bin } = await runWithTenant(TENANT_A, async () => {
+        const repository = new TestEntityRepository(
+          TestModel,
+          ClsServiceManager.getClsService(),
+        );
+        const entity = await repository.create({ name: 'Hard' } as any);
+        await repository.remove(entity.id);
+        return {
+          created: entity,
+          bin: await repository.findDeleted({ page: 1, limit: 25 }),
+        };
+      });
+
+      expect(bin).toEqual({ data: [], total: 0 });
+      expect(
+        await TestModel.findById(created.id)
+          .setOptions({ isPlatformQuery: true })
+          .lean()
+          .exec(),
+      ).toBeNull();
     });
   });
 });

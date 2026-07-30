@@ -6,7 +6,7 @@ import {
   AutomationBulkJobData,
 } from './automation-queue.constants';
 import { AutomationEventPayload } from '../events/automation-event.payload';
-import { DEFAULT_JOB_OPTIONS } from '../../queue/config/default-job-options';
+import { BACKGROUND_JOB_OPTIONS } from '../../queue/config/default-job-options';
 
 /**
  * AutomationBulkProducer — dispatches throttled events to the low-priority bulk queue.
@@ -36,7 +36,11 @@ export class AutomationBulkProducer {
     };
 
     const job = await this.bulkQueue.add('automation.bulk-execute', jobData, {
-      ...DEFAULT_JOB_OPTIONS,
+      // BACKGROUND_JOB_OPTIONS is DEFAULT plus a longer backoff and two more
+      // attempts, written for exactly this ("low-priority/background jobs that can
+      // tolerate retries") and until now used by nobody. Safe here because the
+      // deterministic jobId below makes a retry idempotent.
+      ...BACKGROUND_JOB_OPTIONS,
       priority: 10, // Low priority
       // Deterministic id: the same workflow evaluating the same record for the
       // same event is one unit of work, so a duplicate emission collapses

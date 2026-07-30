@@ -7,6 +7,7 @@ import {
   CustomFieldSchema,
   CustomFieldSchemaClass,
 } from './infrastructure/persistence/document/entities/custom-field.schema';
+import { CustomFieldValueValidator } from './custom-field-value.validator';
 
 @Module({
   imports: [
@@ -15,7 +16,11 @@ import {
     ]),
   ],
   controllers: [CustomFieldsController],
-  providers: [CustomFieldsService, CustomFieldRepository],
-  exports: [CustomFieldsService],
+  providers: [
+    CustomFieldsService,
+    CustomFieldRepository,
+    CustomFieldValueValidator,
+  ],
+  exports: [CustomFieldsService, CustomFieldValueValidator],
 })
 export class CustomFieldsModule {}

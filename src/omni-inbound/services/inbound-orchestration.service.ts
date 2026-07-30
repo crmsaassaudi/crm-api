@@ -318,7 +318,6 @@ export class InboundOrchestrationService {
       sessionId: null,
       status: 'active',
       lastError: null,
-      lockedAt: null,
     };
   }
 

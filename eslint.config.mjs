@@ -15,6 +15,13 @@ const compat = new FlatCompat({
 });
 
 export default [
+  {
+    // Standalone operator scripts: plain CommonJS `.js`, deliberately outside
+    // tsconfig.json (they are run with `node`, never compiled). The type-aware parser
+    // cannot read a file the project does not include, so linting them produced three
+    // permanent parsing errors — noise that trains everyone to ignore lint output.
+    ignores: ['src/scripts/**/*.js'],
+  },
   ...compat.extends(
     'plugin:@typescript-eslint/recommended',
     'plugin:prettier/recommended',

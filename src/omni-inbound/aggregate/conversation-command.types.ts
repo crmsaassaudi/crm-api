@@ -172,7 +172,6 @@ export interface UpdateBotStatePayload {
     enabled: boolean;
     status: string;
     sessionId: string | null;
-    lockedAt: Date | null;
     lastError: string;
     provider: string;
   }>;

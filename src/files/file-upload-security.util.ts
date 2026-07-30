@@ -249,14 +249,6 @@ function detectMediaMime(buffer: Buffer): string | null {
   return null;
 }
 
-/**
- * Legacy alias — kept for backward compatibility.
- * @deprecated Use `detectMimeFromBuffer` instead.
- */
-export function detectAllowedImageMimeFromBuffer(
-  buffer: Buffer,
-): string | null {
-  const mime = detectMimeFromBuffer(buffer);
-  // Only return image MIME types for backward compat
-  return mime?.startsWith('image/') ? mime : null;
-}
+// Removed: `detectAllowedImageMimeFromBuffer`, a "kept for backward compatibility"
+// alias for `detectMimeFromBuffer` with no callers on either side of the rename.
+// Nothing was left to be backward-compatible with.

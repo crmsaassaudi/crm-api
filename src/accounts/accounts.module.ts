@@ -5,6 +5,8 @@ import { BullBoardModule } from '@bull-board/nestjs';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { AccountsController } from './accounts.controller';
 import { AccountsService } from './accounts.service';
+import { AccountMergeService } from './merge/account-merge.service';
+import { AccountPurgeService } from './account-purge.service';
 import { AccountRepository } from './infrastructure/persistence/document/repositories/account.repository';
 import {
   AccountSchema,
@@ -35,13 +37,27 @@ import {
 } from '../account-settings/entities/account-type.schema';
 import { TagsModule } from '../tags/tags.module';
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
+import { CustomFieldsModule } from '../custom-fields/custom-fields.module';
+import { ActivityLogModule } from '../activity-log/activity-log.module';
 
 const workerProviders = isWorkerRuntime()
-  ? [AccountImportProcessor, AccountExportProcessor]
+  ? [
+      AccountImportProcessor,
+      AccountExportProcessor,
+      // Retention purge: the only path that hard-deletes an account, and the cascade
+      // that keeps deals, tickets and contacts from being orphaned by it. Gated on the
+      // worker runtime like every other cron here — an unconditional provider would
+      // schedule it in every API process too, and the Redis lock would then be load-
+      // bearing for correctness rather than a safety net.
+      AccountPurgeService,
+    ]
   : [];
 
 @Module({
   imports: [
+    // Supplies CustomFieldValueValidator so submitted `customFields` are checked
+    // against the tenant's registry instead of being written as opaque Mixed.
+    CustomFieldsModule,
     MongooseModule.forFeature([
       { name: AccountSchemaClass.name, schema: AccountSchema },
       { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
@@ -77,9 +93,18 @@ const workerProviders = isWorkerRuntime()
     }),
     TagsModule,
     AutomationOutboxModule,
+    // Supplies ActivityLogService for the account timeline route.
+    ActivityLogModule,
   ],
   controllers: [AccountsController],
-  providers: [AccountsService, AccountRepository, ...workerProviders],
-  exports: [AccountsService],
+  providers: [
+    AccountsService,
+    AccountRepository,
+    // RedisLockService and EntityAuditService come from @Global() modules, so merge
+    // needs no extra imports here.
+    AccountMergeService,
+    ...workerProviders,
+  ],
+  exports: [AccountsService, AccountMergeService],
 })
 export class AccountsModule {}

@@ -36,7 +36,7 @@ describe('DataVisibilityInterceptor versioned cache', () => {
     return { interceptor, values, redis, bundles };
   };
 
-  it('stores and restores the complete scope snapshot under tenant/user/version', async () => {
+  it('should store and restore the complete scope snapshot under tenant/user/version', async () => {
     const { interceptor, values, redis } = build();
     await (interceptor as any).cacheResolvedVisibility('t1', 'u1');
 

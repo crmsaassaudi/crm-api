@@ -98,12 +98,39 @@ export class ContactRepository extends BaseDocumentRepository<
   /**
    * Resolve a single filter entry into a [dbField, condition] tuple.
    * Returns null when the filter should be skipped.
+   *
+   * `customFields.<key>` is accepted in addition to the static whitelist, but
+   * only for keys the tenant actually declared in its `custom_fields` registry —
+   * passed in as `allowedCustomFieldKeys`. Before this, an admin could define a
+   * custom field the product then had no way to filter, sort or report on: the
+   * registry let them create it and every query path rejected it. Validating
+   * against the registry rather than accepting any dotted path keeps the original
+   * purpose of this whitelist (no arbitrary field injection into the query)
+   * intact — an undeclared key is still refused.
    */
-  private resolveSingleFilterCondition(f: {
-    id: string;
-    value: any;
-  }): [string, any] | null {
+  private resolveSingleFilterCondition(
+    f: {
+      id: string;
+      value: any;
+    },
+    allowedCustomFieldKeys?: Set<string>,
+  ): [string, any] | null {
     if (!f.id || !f.value) return null;
+
+    if (f.id.startsWith('customFields.')) {
+      const key = f.id.slice('customFields.'.length);
+      // No registry supplied, or a key that is not in it → refuse, do not guess.
+      if (!key || !allowedCustomFieldKeys?.has(key)) return null;
+      return [
+        `customFields.${key}`,
+        Array.isArray(f.value)
+          ? { $in: f.value }
+          : typeof f.value === 'string'
+            ? { $regex: this.escapeRegex(f.value), $options: 'i' }
+            : f.value,
+      ];
+    }
+
     if (!this.ALLOWED_FILTER_FIELDS.has(f.id)) return null;
 
     if (['emails', 'phones'].includes(f.id)) {
@@ -135,9 +162,13 @@ export class ContactRepository extends BaseDocumentRepository<
   private applyParsedFilters(
     where: FilterQuery<ContactSchemaClass>,
     parsedFilters: any[],
+    allowedCustomFieldKeys?: Set<string>,
   ): void {
     for (const f of parsedFilters) {
-      const resolved = this.resolveSingleFilterCondition(f);
+      const resolved = this.resolveSingleFilterCondition(
+        f,
+        allowedCustomFieldKeys,
+      );
       if (resolved) {
         const [dbField, condition] = resolved;
         where[dbField] = condition;
@@ -145,14 +176,28 @@ export class ContactRepository extends BaseDocumentRepository<
     }
   }
 
+  /**
+   * Apply the legacy `data_access_policy.restrict_own_contacts` flag.
+   *
+   * Written into `$and` rather than onto `where.ownerId` directly. The bare-key
+   * form was overwritable: `applyParsedFilters` runs afterwards and maps a
+   * client-supplied `{ id: 'owner', value: X }` onto the SAME `ownerId` key, so a
+   * user in a restricted tenant could read other people's contacts just by
+   * sending a filter. An `$and` clause cannot be overwritten by a later
+   * assignment — the two conditions intersect instead, which is what "restrict"
+   * has to mean.
+   *
+   * (The RBAC visibility axes in `applyTenantFilter` were never bypassable this
+   * way — they were already `$and`-ed. This flag is the separate, older control a
+   * tenant enables on top, and it is the one that failed.)
+   */
   private applyOwnerRestriction(
     where: FilterQuery<ContactSchemaClass>,
     filterOptions: any,
   ): void {
     const currentUserId = filterOptions.__currentUserId;
-    if (currentUserId) {
-      where.ownerId = currentUserId;
-    }
+    if (!currentUserId) return;
+    where.$and = [...((where.$and as any[]) ?? []), { ownerId: currentUserId }];
   }
 
   private applySearchFilter(
@@ -172,9 +217,12 @@ export class ContactRepository extends BaseDocumentRepository<
   }
 
   private buildListWhere(filterOptions?: any) {
-    const where: FilterQuery<ContactSchemaClass> = {
-      deletedAt: { $exists: false },
-    };
+    // `deletedAt: null` matches BOTH a missing field and an explicit null, which
+    // `$exists: false` does not. That difference matters now that records come
+    // back from the recycle bin and from an unmerge: a restore that writes
+    // `deletedAt: null` instead of unsetting the field would leave the contact
+    // invisible under an `$exists` filter, i.e. restored but still gone.
+    const where: FilterQuery<ContactSchemaClass> = { deletedAt: null };
 
     if (filterOptions?.__restrictToOwner) {
       this.applyOwnerRestriction(where, filterOptions);
@@ -195,7 +243,14 @@ export class ContactRepository extends BaseDocumentRepository<
             ? JSON.parse(filterOptions.filters)
             : filterOptions.filters;
         if (Array.isArray(parsedFilters)) {
-          this.applyParsedFilters(where, parsedFilters);
+          // Resolved once per request by ContactsService from the tenant's
+          // custom_fields registry; absent means custom-field filters are
+          // refused rather than passed through.
+          this.applyParsedFilters(
+            where,
+            parsedFilters,
+            filterOptions.__allowedCustomFieldKeys,
+          );
         }
       } catch (err) {
         const logger = new Logger(ContactRepository.name);
@@ -425,7 +480,7 @@ export class ContactRepository extends BaseDocumentRepository<
                 .filter((id) => Types.ObjectId.isValid(id))
                 .map((id) => new Types.ObjectId(id)),
             },
-            deletedAt: { $exists: false },
+            deletedAt: null,
           } as FilterQuery<ContactSchemaClass>)
         : this.buildListWhere(params.filters);
     return this.applyTenantFilter(where);
@@ -481,7 +536,20 @@ export class ContactRepository extends BaseDocumentRepository<
   async findOne(
     filter: FilterQuery<ContactSchemaClass>,
   ): Promise<Contact | null> {
-    const scopedFilter = this.applyTenantFilter(filter);
+    // Exclude soft-deleted records unless the caller asks for one explicitly.
+    //
+    // This did not matter while `remove()` hard-deleted — the row was gone, so a
+    // fetch returned null on its own. Once deletion became a soft delete the
+    // unfiltered lookup started serving deleted records: `GET /:id` answered 200
+    // instead of 404, the detail page rendered a deleted record as editable, and
+    // automation's `fetchRecord` resumed delayed workflows against it — which is how
+    // a "wait 3 days then email" step ends up emailing a deleted contact.
+    //
+    // Passing `deletedAt` explicitly opts out, which is what the merge and restore
+    // paths need.
+    const scopedFilter = this.applyTenantFilter(
+      filter.deletedAt !== undefined ? filter : { ...filter, deletedAt: null },
+    );
     const doc = await this.model
       .findOne(scopedFilter)
       .populate('owner')
@@ -514,6 +582,39 @@ export class ContactRepository extends BaseDocumentRepository<
     // LOW-07: Cap results to prevent unbounded scans on large tenants
     const docs = await this.model.find(scopedWhere).limit(50).exec();
     return docs.map((doc) => this.mapToDomain(doc));
+  }
+
+  /**
+   * Exact-match lookup for one identity value, used to enforce the tenant's
+   * uniqueEmail / uniquePhone policy.
+   *
+   * Exact equality, not the case-insensitive regex `checkDuplicate` uses: both
+   * sides are normalised at the edge now, so a regex here would only add an
+   * un-indexable scan. Backed by `tenantId + emails` / `tenant_phone_lookup`.
+   *
+   * Scoped by `applyTenantFilter`, which also applies the visibility axes — so a
+   * conflict with a contact the caller cannot see reports as no conflict, and the
+   * write proceeds. That is the intended trade-off: leaking the existence of an
+   * out-of-scope record through a uniqueness error would be worse than allowing
+   * a duplicate that a dedup scan can find later.
+   */
+  async findDuplicateByIdentity(
+    field: 'emails' | 'phones',
+    value: string,
+    excludeId?: string,
+  ): Promise<Contact | null> {
+    const where: FilterQuery<ContactSchemaClass> = {
+      [field]: value,
+      deletedAt: null,
+    };
+    if (excludeId) where._id = { $ne: excludeId };
+
+    const doc = await this.model
+      .findOne(this.applyTenantFilter(where))
+      .select({ firstName: 1, lastName: 1, emails: 1, phones: 1 })
+      .lean()
+      .exec();
+    return doc ? this.mapToDomain(doc as any) : null;
   }
 
   /**
@@ -572,7 +673,7 @@ export class ContactRepository extends BaseDocumentRepository<
   ): Promise<{ matchedCount: number; modifiedCount: number }> {
     const scopedFilter = this.applyTenantFilter({
       _id: { $in: contactIds },
-      deletedAt: { $exists: false },
+      deletedAt: null,
     } as FilterQuery<ContactSchemaClass>);
     const result = await this.model
       .updateMany(scopedFilter, {
@@ -584,6 +685,118 @@ export class ContactRepository extends BaseDocumentRepository<
       matchedCount: result.matchedCount,
       modifiedCount: result.modifiedCount,
     };
+  }
+
+  /**
+   * Soft-delete a contact.
+   *
+   * Overrides the base implementation, which issues `deleteOne` — a HARD delete.
+   * That was wrong in three separate ways for this collection: every read here
+   * filters `deletedAt: { $exists: false }`, the schema declares a `deletedAt`
+   * field, and merge already soft-deletes. So the domain was written as if
+   * delete were reversible while the one method that performs it destroyed the
+   * document, orphaning notes, tickets, deals, tasks, conversations, email
+   * bodies and the activity feed with no way to repair them, and making the
+   * audit trail's `_deleted: true` snapshot a claim about a row that no longer
+   * existed.
+   *
+   * Hard deletion now happens only in ContactPurgeService, after the retention
+   * window, and cascades through CONTACT_REFERENCES.
+   */
+  async remove(id: string): Promise<void> {
+    const scopedFilter = this.applyTenantFilter({ _id: id });
+    const deletedById = this.cls.get('userId') ?? this.cls.get('user.id');
+    await this.model
+      .updateOne(scopedFilter, {
+        $set: {
+          deletedAt: new Date(),
+          ...(deletedById ? { updatedById: deletedById } : {}),
+        },
+      })
+      .exec();
+  }
+
+  /** Restore a soft-deleted contact from the recycle bin. */
+  async restore(id: string): Promise<Contact | null> {
+    const scopedFilter = this.applyTenantFilter({
+      _id: id,
+      deletedAt: { $ne: null },
+    });
+    const doc = await this.model
+      .findOneAndUpdate(
+        scopedFilter,
+        { $unset: { deletedAt: '' } },
+        { new: true },
+      )
+      .exec();
+    return doc ? this.mapToDomain(doc) : null;
+  }
+
+  /**
+   * List soft-deleted contacts — the recycle bin.
+   * Scoped and paginated like any other read; a deleted record is still the
+   * tenant's data and still subject to the visibility axes.
+   */
+  async findDeleted(options: {
+    page: number;
+    limit: number;
+  }): Promise<{ data: Contact[]; total: number }> {
+    const scopedWhere = this.applyTenantFilter({
+      deletedAt: { $ne: null },
+    } as FilterQuery<ContactSchemaClass>);
+
+    const [docs, total] = await Promise.all([
+      this.model
+        .find(scopedWhere)
+        .sort({ deletedAt: -1 })
+        .skip((options.page - 1) * options.limit)
+        .limit(options.limit)
+        .populate('owner')
+        .populate('updatedBy')
+        .exec(),
+      this.model.countDocuments(scopedWhere).limit(1001).exec(),
+    ]);
+
+    return { data: docs.map((doc) => this.mapToDomain(doc)), total };
+  }
+
+  /**
+   * Contacts soft-deleted before `cutoff`, for the purge job.
+   *
+   * Runs WITHOUT the tenant filter by design: the purge cron has no request
+   * context, and retention has to apply to every tenant. `applyTenantFilter`
+   * would silently return nothing in that context, which is the quiet-failure
+   * mode where a retention policy appears to run and never deletes anything.
+   */
+  async findPurgeable(
+    cutoff: Date,
+    limit: number,
+  ): Promise<Array<{ id: string; tenantId: string }>> {
+    const docs = await this.model
+      .find({ deletedAt: { $ne: null, $lte: cutoff } })
+      // The tenant plugin THROWS when CLS has no tenant, and a cron has no request
+      // context — so without this the nightly purge failed on its first query every
+      // night and the failure was swallowed as "purge skipped" at debug level.
+      .setOptions({ isPlatformQuery: true } as any)
+      .select({ _id: 1, tenantId: 1 })
+      .sort({ deletedAt: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    return docs.map((doc: any) => ({
+      id: String(doc._id),
+      tenantId: String(doc.tenantId),
+    }));
+  }
+
+  /** Hard-delete a single contact. Only ContactPurgeService may call this. */
+  async hardDelete(id: string): Promise<void> {
+    // Platform-level for the same reason as findPurgeable: the caller is a cron.
+    // `deleteOne` is one of the hooked operations, so an unmarked call throws.
+    await this.model
+      .deleteOne({ _id: id })
+      .setOptions({ isPlatformQuery: true } as any)
+      .exec();
   }
 
   async updateWithVersionCheck(
@@ -609,11 +822,32 @@ export class ContactRepository extends BaseDocumentRepository<
     return doc ? this.mapToDomain(doc) : null;
   }
 
+  /**
+   * Recompute lead scores for a page of contacts.
+   *
+   * `afterId` is a resume cursor and it is not optional in practice: the previous
+   * version issued `.find({...}).limit(5000)` with no sort and no cursor, so
+   * every nightly run scored the same first 5,000 documents in natural order and
+   * never reached the rest. On any tenant past that size the job appeared healthy
+   * — it logged `scanned=5000, updated=N` every night — while most contacts kept
+   * a score of 0 forever. Sorting by `_id` and resuming after the last one
+   * processed is what makes the pass actually cover the collection.
+   *
+   * Returns `nextCursor` so the caller can keep going until it is null.
+   */
   async recomputeScoresForAllTenants(
     limit: number,
-  ): Promise<{ scanned: number; updated: number }> {
+    afterId?: string,
+  ): Promise<{ scanned: number; updated: number; nextCursor: string | null }> {
+    const filter: FilterQuery<ContactSchemaClass> = { deletedAt: null };
+    if (afterId) filter._id = { $gt: new Types.ObjectId(afterId) };
+
     const docs = await this.model
-      .find({ deletedAt: { $exists: false } })
+      .find(filter)
+      // Cross-tenant by design (the comment above says so) — but "by design" was not
+      // enough: the tenant plugin throws without CLS, so the nightly rescore threw on
+      // this query and never scored anything. Intent has to be declared to the plugin.
+      .setOptions({ isPlatformQuery: true } as any)
       .select({
         _id: 1,
         emails: 1,
@@ -624,12 +858,15 @@ export class ContactRepository extends BaseDocumentRepository<
         lastActivityAt: 1,
         createdAt: 1,
       })
+      // `_id` is monotonic and unique, so it is a stable cursor even while rows
+      // are being inserted during the run.
+      .sort({ _id: 1 })
       .limit(limit)
       .lean()
       .exec();
 
     if (docs.length === 0) {
-      return { scanned: 0, updated: 0 };
+      return { scanned: 0, updated: 0, nextCursor: null };
     }
 
     const now = Date.now();
@@ -662,6 +899,10 @@ export class ContactRepository extends BaseDocumentRepository<
     return {
       scanned: docs.length,
       updated: result.modifiedCount,
+      // A short page means the collection is exhausted; anything else means
+      // there is more to do and the caller must come back with this cursor.
+      nextCursor:
+        docs.length < limit ? null : String((docs[docs.length - 1] as any)._id),
     };
   }
 

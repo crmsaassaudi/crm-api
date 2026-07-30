@@ -74,6 +74,28 @@ export class AccountSchemaClass extends EntityDocumentHelper {
   @Prop({ default: false })
   isArchived?: boolean;
 
+  // ── Derived identity keys ──
+  //
+  // Stored rather than computed per query so duplicate lookups are exact and indexed.
+  // Written by AccountsService from `common/identity/company-identity`, which is the
+  // single definition of how a company name / domain / tax id is compared — the same
+  // reason contact emails are normalised at the edge rather than at compare time.
+  //
+  // These are comparison keys, not display values: `name`, `website` and `taxId` remain
+  // exactly as the user entered them.
+
+  /** Weak signal: legal-form suffixes and diacritics stripped. See the module comment. */
+  @Prop({ index: true })
+  nameKey?: string;
+
+  /** Strong signal: the registrable domain of `website`. */
+  @Prop({ index: true })
+  websiteDomain?: string;
+
+  /** Exact signal: `taxId` with formatting removed. */
+  @Prop({ index: true })
+  taxIdKey?: string;
+
   @Prop({ type: MongooseSchema.Types.Mixed })
   customFields?: Record<string, any>;
 
@@ -116,6 +138,20 @@ AccountSchema.index(
   { name: 'tenant_status_lookup' },
 );
 AccountSchema.index({ tenantId: 1, typeId: 1 }, { name: 'tenant_type_lookup' });
+// Duplicate detection. Sparse: most accounts will have a name key, far fewer a tax id,
+// and an index entry for every absent value is pure overhead.
+AccountSchema.index(
+  { tenantId: 1, taxIdKey: 1 },
+  { name: 'tenant_tax_id_lookup', sparse: true },
+);
+AccountSchema.index(
+  { tenantId: 1, websiteDomain: 1 },
+  { name: 'tenant_domain_lookup', sparse: true },
+);
+AccountSchema.index(
+  { tenantId: 1, nameKey: 1 },
+  { name: 'tenant_name_key_lookup', sparse: true },
+);
 AccountSchema.index(
   { tenantId: 1, createdAt: -1, _id: -1 },
   { name: 'tenant_created_cursor' },

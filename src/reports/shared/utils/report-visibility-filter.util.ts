@@ -169,11 +169,10 @@ export const buildConversationReportVisibilityFilter = (
     }
   }
 
-  return withAbacFilter(
-    cls,
-    and.length > 0 ? { $and: and } : {},
-    ['conversations', 'omni_reports'],
-  );
+  return withAbacFilter(cls, and.length > 0 ? { $and: and } : {}, [
+    'conversations',
+    'omni_reports',
+  ]);
 };
 
 /** Agent state/interaction documents store agentId as a string, not ObjectId. */

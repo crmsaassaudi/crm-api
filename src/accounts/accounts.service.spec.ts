@@ -22,6 +22,7 @@ describe('AccountsService', () => {
 
   beforeEach(() => {
     repository = {
+      findIdentityCandidates: jest.fn(() => Promise.resolve([])),
       create: jest
         .fn()
         .mockImplementation((data) =>
@@ -38,6 +39,8 @@ describe('AccountsService', () => {
         .fn()
         .mockImplementation((id, data) => Promise.resolve({ id, ...data })),
       remove: jest.fn().mockResolvedValue(undefined),
+      restore: jest.fn().mockResolvedValue(null),
+      findDeleted: jest.fn().mockResolvedValue({ data: [], total: 0 }),
     };
 
     entityAudit = { emit: jest.fn() };
@@ -89,6 +92,10 @@ describe('AccountsService', () => {
 
     service = new AccountsService(
       repository,
+      // customFieldValidator: pass-through; its own behaviour is covered in its spec.
+      {
+        validate: jest.fn((_m: string, v: any) => Promise.resolve(v)),
+      } as any,
       entityAudit,
       cls as any,
       {
@@ -308,6 +315,158 @@ describe('AccountsService', () => {
       await expect(service.getImportStatus('cross_tenant_job')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+  // ===================================================================
+  // DUPLICATE DETECTION (company identity)
+  // ===================================================================
+  describe('checkDuplicate', () => {
+    const candidate = (over: Record<string, unknown>) => ({
+      id: 'a1',
+      name: 'Acme Corp',
+      website: 'https://acme.com',
+      taxId: '01-2345678',
+      ...over,
+    });
+
+    it('should not query when the payload carries no identity at all', async () => {
+      // Otherwise every blank lookup matches every blank account.
+      const result = await service.checkDuplicate({});
+      expect(result).toEqual({ isDuplicate: false, duplicates: [] });
+      expect(repository.findIdentityCandidates).not.toHaveBeenCalled();
+    });
+
+    it('should report a shared tax id as EXACT even when the names differ', async () => {
+      repository.findIdentityCandidates.mockResolvedValue([
+        candidate({ name: 'Totally Different Ltd' }),
+      ]);
+
+      const result = await service.checkDuplicate({ taxId: '012345678' });
+
+      expect(result.isDuplicate).toBe(true);
+      expect(result.duplicates[0]).toMatchObject({
+        confidence: 'exact',
+        matchedOn: 'taxId',
+      });
+    });
+
+    it('should report a shared domain as STRONG, not exact', async () => {
+      repository.findIdentityCandidates.mockResolvedValue([
+        candidate({ name: 'Acme EU', taxId: undefined }),
+      ]);
+
+      const result = await service.checkDuplicate({
+        name: 'Acme US',
+        website: 'www.acme.com/eu',
+      });
+
+      expect(result.duplicates[0]).toMatchObject({
+        confidence: 'strong',
+        matchedOn: 'website',
+      });
+    });
+
+    it('should report a name-only match as WEAK', async () => {
+      // "Acme Ltd" and "Acme GmbH" reduce to the same key and are different legal
+      // entities, so this must never present as certainty.
+      repository.findIdentityCandidates.mockResolvedValue([
+        candidate({ name: 'Acme GmbH', website: undefined, taxId: undefined }),
+      ]);
+
+      const result = await service.checkDuplicate({ name: 'Acme Ltd' });
+
+      expect(result.duplicates[0]).toMatchObject({
+        confidence: 'weak',
+        matchedOn: 'name',
+      });
+    });
+
+    it('should rank the strongest evidence first', async () => {
+      repository.findIdentityCandidates.mockResolvedValue([
+        candidate({
+          id: 'weak',
+          name: 'Acme Ltd',
+          website: undefined,
+          taxId: undefined,
+        }),
+        candidate({ id: 'exact', name: 'Other', taxId: '012345678' }),
+      ]);
+
+      const result = await service.checkDuplicate({
+        name: 'Acme Corp',
+        taxId: '01-2345678',
+      });
+
+      expect(result.duplicates[0].id).toBe('exact');
+    });
+
+    it('should drop candidates that match on nothing', async () => {
+      // The repository `$or`s across three keys, so a row can come back having matched
+      // a key the comparison then rejects.
+      repository.findIdentityCandidates.mockResolvedValue([
+        candidate({ name: 'Globex', website: 'globex.com', taxId: '999' }),
+      ]);
+
+      const result = await service.checkDuplicate({
+        name: 'Acme',
+        website: 'acme.com',
+      });
+
+      expect(result).toEqual({ isDuplicate: false, duplicates: [] });
+    });
+
+    it('should pass excludeId through so editing a record does not match itself', async () => {
+      await service.checkDuplicate({ name: 'Acme', excludeId: 'a1' });
+      expect(repository.findIdentityCandidates).toHaveBeenCalledWith(
+        expect.any(Object),
+        'a1',
+      );
+    });
+  });
+
+  describe('recycle bin', () => {
+    it('should clamp the page size so a caller cannot ask for the whole bin', async () => {
+      await service.listDeleted({ page: 3, limit: 5000 });
+      expect(repository.findDeleted).toHaveBeenCalledWith({
+        page: 3,
+        limit: 100,
+      });
+    });
+
+    it('should default to page 1 and reject a zero or negative page', async () => {
+      await service.listDeleted({ page: 0 });
+      expect(repository.findDeleted).toHaveBeenCalledWith({
+        page: 1,
+        limit: 25,
+      });
+    });
+
+    it('should restore an archived account and audit the resurrection', async () => {
+      repository.restore.mockResolvedValue({ id: 'acc_1', name: 'Acme' });
+
+      const restored = await service.restore('acc_1');
+
+      expect(restored).toEqual({ id: 'acc_1', name: 'Acme' });
+      // The audit trail has to show a record coming BACK, not just going away —
+      // otherwise a restored record looks like it was never deleted.
+      expect(entityAudit.emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entityType: 'ACCOUNT',
+          entityId: 'acc_1',
+          oldSnapshot: { _deleted: true },
+        }),
+      );
+    });
+
+    it('should 404 rather than pretend to restore a purged account', async () => {
+      // `restore()` returns null both for "never existed" and "already purged". A
+      // silent success here would tell someone their data is back when it is gone.
+      repository.restore.mockResolvedValue(null);
+
+      await expect(service.restore('acc_gone')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(entityAudit.emit).not.toHaveBeenCalled();
     });
   });
 });
