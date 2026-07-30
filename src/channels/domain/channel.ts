@@ -88,6 +88,9 @@ export class Channel {
   @ApiProperty({ example: 'page_a' })
   account: string;
 
+  @ApiProperty({ required: false, nullable: true })
+  inboxId: string | null;
+
   @ApiProperty({ enum: ['Connected', 'Disconnected', 'Error', 'Pending'] })
   status: string;
 

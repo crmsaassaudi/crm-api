@@ -94,7 +94,19 @@ describe('renameForMime', () => {
 describe('OutboundMediaHandler.sendAgentMedia', () => {
   const MB = 1024 * 1024;
 
-  function build(overrides: { compress?: any; adapterChannel?: string } = {}) {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  function build(
+    overrides: {
+      compress?: any;
+      adapterChannel?: string;
+      fileSize?: number;
+      fileMimeType?: string;
+      fileName?: string;
+    } = {},
+  ) {
     const sendMedia = jest.fn().mockResolvedValue({
       success: true,
       externalMessageId: 'ext-1',
@@ -116,6 +128,25 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
         .fn()
         .mockResolvedValue({ credentials: {}, account: {} }),
     };
+    const fileSize = overrides.fileSize ?? 3 * MB;
+    const fileMimeType = overrides.fileMimeType ?? 'image/jpeg';
+    const fileName = overrides.fileName ?? 'photo.jpg';
+    const filesService = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'file-1',
+        path: 'tenant/file-1',
+        mimeType: fileMimeType,
+        fileName,
+      }),
+      checkAccess: jest.fn().mockReturnValue(true),
+      getPresignedDownloadUrl: jest
+        .fn()
+        .mockResolvedValue('https://files.test/file-1'),
+    };
+    jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      arrayBuffer: jest.fn().mockResolvedValue(Buffer.alloc(fileSize).buffer),
+    } as any);
     const imageProcessingService = {
       isProcessableImage: jest.fn().mockReturnValue(true),
       compressForPlatform:
@@ -128,6 +159,11 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
           originalSize: 3 * MB,
         }),
     };
+    const deliveryCommands = {
+      enqueue: jest
+        .fn()
+        .mockResolvedValue({ commandId: 'cmd-1', deferred: false }),
+    };
     const handler = new OutboundMediaHandler(
       messageRepo as any,
       conversationRepo as any,
@@ -135,9 +171,10 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
       { emit: jest.fn() } as any,
       new Map([[overrides.adapterChannel ?? 'zalo', { sendMedia }]]) as any,
       {} as any, // reply window disabled
-      { findById: jest.fn(), getPresignedDownloadUrl: jest.fn() } as any,
+      filesService as any,
       imageProcessingService as any,
       { findByIdsGlobal: jest.fn().mockResolvedValue([]) } as any,
+      deliveryCommands as any,
     );
     return {
       handler,
@@ -145,6 +182,7 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
       sendMedia,
       imageProcessingService,
       conversationRepo,
+      deliveryCommands,
     };
   }
 
@@ -164,7 +202,7 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
     const { handler, messageRepo, sendMedia } = build();
 
     const result = await send(handler, {
-      buffer: Buffer.alloc(3 * MB),
+      fileId: 'file-1',
       mimeType: 'image/jpeg',
       fileName: 'photo.jpg',
       size: 3 * MB,
@@ -172,26 +210,22 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
 
     expect(result.ok).toBe(true);
     expect(messageRepo.create).toHaveBeenCalledTimes(1);
-    expect(sendMedia).toHaveBeenCalledTimes(1);
-    expect(sendMedia.mock.calls[0][1].buffer.length).toBe(400 * 1024);
+    expect(sendMedia).not.toHaveBeenCalled();
+    expect(result.status).toBe('sending');
   });
 
   it('should describe the re-encoded bytes downstream, not the upload', async () => {
     // compressForPlatform always emits JPEG. The old code threw its returned
     // mimeType away, so a WebP upload was persisted, emitted and dispatched as
     // `image/webp` over JPEG bytes.
-    const { handler, messageRepo, sendMedia } = build();
+    const { handler, messageRepo } = build();
 
     await send(handler, {
-      buffer: Buffer.alloc(2 * MB),
+      fileId: 'file-1',
       mimeType: 'image/webp',
       fileName: 'photo.webp',
       size: 2 * MB,
     });
-
-    const payload = sendMedia.mock.calls[0][1];
-    expect(payload.mimeType).toBe('image/jpeg');
-    expect(payload.fileName).toBe('photo.jpg');
 
     const persisted = messageRepo.create.mock.calls[0][0];
     expect(persisted.metadata.media.mimeType).toBe('image/jpeg');
@@ -202,13 +236,16 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
   it('should reject oversized video before persisting anything', async () => {
     const { handler, messageRepo, sendMedia, imageProcessingService } = build({
       adapterChannel: 'whatsapp',
+      fileSize: 20 * MB,
+      fileMimeType: 'video/mp4',
+      fileName: 'clip.mp4',
     });
     imageProcessingService.isProcessableImage.mockReturnValue(false);
     (imageProcessingService as any).compressForPlatform = jest.fn();
 
     await expect(
       send(handler, {
-        buffer: Buffer.alloc(20 * MB),
+        fileId: 'file-1',
         mimeType: 'video/mp4',
         fileName: 'clip.mp4',
         size: 20 * MB,
@@ -223,20 +260,23 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
   it('should keep the ORIGINAL type when compression fails', async () => {
     // Falling back to the original bytes while reporting the compressed type
     // would be the same lie in the other direction.
-    const { handler, sendMedia } = build({
+    const { handler, messageRepo, sendMedia } = build({
       compress: jest.fn().mockRejectedValue(new Error('sharp exploded')),
+      fileSize: 500 * 1024,
+      fileMimeType: 'image/png',
+      fileName: 'photo.png',
     });
 
     await send(handler, {
-      buffer: Buffer.alloc(500 * 1024),
+      fileId: 'file-1',
       mimeType: 'image/png',
       fileName: 'photo.png',
       size: 500 * 1024,
     });
 
-    const payload = sendMedia.mock.calls[0][1];
-    expect(payload.mimeType).toBe('image/png');
-    expect(payload.fileName).toBe('photo.png');
-    expect(payload.buffer.length).toBe(500 * 1024);
+    expect(sendMedia).not.toHaveBeenCalled();
+    const persisted = messageRepo.create.mock.calls[0][0];
+    expect(persisted.metadata.media.mimeType).toBe('image/png');
+    expect(persisted.metadata.media.fileName).toBe('photo.png');
   });
 });

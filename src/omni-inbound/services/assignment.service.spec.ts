@@ -88,6 +88,9 @@ function buildService(overrides?: {
     set: jest.fn(async () => 'OK'),
   };
   const stickyQueue = { add: jest.fn(async () => ({ id: 'j1' })) };
+  const workDistribution = {
+    createOfferFromReservation: jest.fn(async () => true),
+  };
 
   const service = new AssignmentService(
     core as any,
@@ -102,6 +105,7 @@ function buildService(overrides?: {
     eventEmitter as any,
     redis as any,
     stickyQueue as any,
+    workDistribution as any,
   );
 
   return {
@@ -117,6 +121,7 @@ function buildService(overrides?: {
     eventEmitter,
     redis,
     stickyQueue,
+    workDistribution,
   };
 }
 
@@ -235,12 +240,20 @@ describe('AssignmentService', () => {
       expect(request.configOverride).toMatchObject({ autoAssignEnabled: true });
     });
 
-    it('should supply a reassignment commit (CAS against the observed previous agent) only when reassignment is allowed', async () => {
+    it('should commit auto-routing as an offer and explicit reassignment as a direct CAS', async () => {
       const plain = buildService();
       await plain.service.assignConversation('t1', 'c1', {});
+      const autoRequest = plain.core.assign.mock.calls[0][0] as any;
+      expect(autoRequest.commitOutcome).toBe('offered');
+      await autoRequest.commit('agent-9', 'g1');
       expect(
-        (plain.core.assign.mock.calls[0][0] as any).commit,
-      ).toBeUndefined();
+        plain.workDistribution.createOfferFromReservation,
+      ).toHaveBeenCalledWith({
+        tenantId: 't1',
+        conversationId: 'c1',
+        agentId: 'agent-9',
+        groupId: 'g1',
+      });
 
       const reassign = buildService();
       await reassign.service.assignConversation('t1', 'c1', {
@@ -248,6 +261,7 @@ describe('AssignmentService', () => {
         expectedPreviousAgentId: 'agent-old',
       });
       const request = reassign.core.assign.mock.calls[0][0] as any;
+      expect(request.commitOutcome).toBe('assigned');
       expect(request.previousAssigneeId).toBe('agent-old');
       expect(typeof request.commit).toBe('function');
       await request.commit('agent-9', 'g1');
@@ -426,6 +440,22 @@ describe('AssignmentService', () => {
       expect(result).toBe('agent-1');
       expect(h.eventEmitter.emit).not.toHaveBeenCalled();
       expect(h.stickyQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('should expose an offered decision without claiming the conversation', async () => {
+      const h = buildService({
+        decision: {
+          outcome: 'offered',
+          assigneeId: 'agent-1',
+          groupId: 'group-1',
+          reasonKey: 'offered',
+        },
+      });
+
+      await expect(
+        h.service.assignConversation('t1', 'c1', {}),
+      ).resolves.toBeNull();
+      expect(h.eventEmitter.emit).not.toHaveBeenCalled();
     });
 
     it('should survive a failed retry schedule without throwing', async () => {

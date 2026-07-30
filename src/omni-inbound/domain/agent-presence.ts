@@ -48,6 +48,8 @@ export interface AgentPresence {
 
   // ── Capacity ───────────────────────────────────────────────────────────────
   activeConversations: number;
+  /** Weighted workload used for blended-channel capacity decisions. */
+  activeCapacityUnits: number;
   maxCapacity: number;
 
   /** Skills cached from the user record at connect time for skill-based routing. */

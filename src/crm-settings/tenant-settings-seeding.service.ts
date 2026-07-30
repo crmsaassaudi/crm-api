@@ -72,6 +72,7 @@ export class TenantSettingsSeedingService {
 
       // ── Omni Agent Presence / Workforce ────────────────────────────────────
       this.seed(tenantId, 'omni_presence', DEFAULT_OMNI_PRESENCE),
+      this.seed(tenantId, 'omni_capacity', DEFAULT_OMNI_CAPACITY),
 
       // ── Omni Session Lifecycle ─────────────────────────────────────────────
       this.seed(
@@ -1139,6 +1140,36 @@ const DEFAULT_OMNI_PRESENCE = {
 
 // ─── Omni Auto-Reassignment defaults ───────────────────────────────────────
 
+const DEFAULT_OMNI_CAPACITY = {
+  version: 1,
+  capacityWeights: {
+    voice: 5,
+    phone: 5,
+    video: 5,
+    email: 2,
+    whatsapp: 1,
+    livechat: 1,
+    facebook: 1,
+    instagram: 1,
+    telegram: 1,
+    zalo: 1,
+    tiktok: 1,
+  },
+  afterContactWorkSeconds: {
+    voice: 60,
+    phone: 60,
+    video: 60,
+    email: 30,
+    whatsapp: 30,
+    livechat: 30,
+    facebook: 30,
+    instagram: 30,
+    telegram: 30,
+    zalo: 30,
+    tiktok: 30,
+  },
+};
+
 const DEFAULT_OMNI_AUTO_REASSIGNMENT = {
   /** Whether auto-reassignment is enabled when an agent goes offline */
   enabled: false,
@@ -1463,6 +1494,7 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   general_notifications: DEFAULT_GENERAL_NOTIFICATIONS,
   omni_routing: DEFAULT_OMNI_ROUTING,
   omni_presence: DEFAULT_OMNI_PRESENCE,
+  omni_capacity: DEFAULT_OMNI_CAPACITY,
   omni_auto_reassignment: DEFAULT_OMNI_AUTO_REASSIGNMENT,
   omni_session_lifecycle: DEFAULT_OMNI_SESSION_LIFECYCLE,
   omni_identity_resolution: DEFAULT_OMNI_IDENTITY_RESOLUTION,

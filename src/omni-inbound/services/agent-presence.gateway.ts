@@ -315,6 +315,7 @@ export class AgentPresenceGateway {
       // legacy `routingStatus` means CAPACITY for the current frontend: accept | full
       routingStatus: presence.capacityStatus === 'FULL' ? 'full' : 'accept',
       activeConversations: presence.activeConversations,
+      activeCapacityUnits: presence.activeCapacityUnits,
       maxCapacity: presence.maxCapacity,
       // canonical contract (new frontend)
       presenceStatus: presence.presenceStatus,

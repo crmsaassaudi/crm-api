@@ -30,6 +30,8 @@ export interface AssignmentScope {
   commandId?: string | null;
   queuePriority?: number;
   slaDueAt?: Date | null;
+  /** Workload units consumed by this item in a blended-channel capacity pool. */
+  workloadWeight?: number;
 }
 
 /**

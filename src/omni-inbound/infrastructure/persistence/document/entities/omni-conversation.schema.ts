@@ -22,8 +22,9 @@ const CHANNEL_TYPES = [
  * Schema for omni-channel conversations (chat sessions).
  *
  * A single customer can have MULTIPLE conversations over time.
- * When an agent resolves a conversation, the status moves to 'resolved'.
- * If the customer messages again, a NEW conversation is created.
+ * A resolved conversation may reopen inside the configured reopen window.
+ * A closed conversation is terminal; later inbound traffic creates a new
+ * linked support session.
  */
 @Schema({
   timestamps: true,
@@ -46,6 +47,15 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
     index: true,
   })
   channelId: string;
+
+  /** Immutable inbox ownership snapshot selected when the session is created. */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'InboxSchemaClass',
+    default: null,
+    index: true,
+  })
+  inboxId: string | null;
 
   @Prop({ required: true, index: true })
   channelAccount: string;
@@ -145,6 +155,15 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
       sessionId: { type: String },
       status: { type: String, enum: BOT_STATUSES },
       lastError: { type: String },
+      handoffReason: { type: String },
+      handoffMessage: { type: String },
+      handoffTarget: {
+        type: String,
+        enum: ['general', 'group', 'agent'],
+      },
+      handoffTargetId: { type: String },
+      handedOffAt: { type: Date },
+      handedOffByInboundMessageId: { type: String },
     },
     _id: false,
   })
@@ -155,6 +174,12 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
     sessionId?: string | null;
     status: 'active' | 'handoff' | 'ended';
     lastError?: string | null;
+    handoffReason?: string | null;
+    handoffMessage?: string | null;
+    handoffTarget?: 'general' | 'group' | 'agent' | null;
+    handoffTargetId?: string | null;
+    handedOffAt?: Date | null;
+    handedOffByInboundMessageId?: string | null;
   };
 
   @Prop({ default: '' })
@@ -376,6 +401,11 @@ OmniConversationSchema.index(
 OmniConversationSchema.index(
   { tenantId: 1, status: 1, lastMessageAt: -1 },
   { name: 'conversation_list' },
+);
+
+OmniConversationSchema.index(
+  { tenantId: 1, inboxId: 1, status: 1, lastMessageAt: -1, _id: -1 },
+  { name: 'conversation_inbox_queue' },
 );
 
 // "Unanswered" filter — conversations whose last message is still from the

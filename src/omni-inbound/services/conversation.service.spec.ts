@@ -16,6 +16,7 @@ import { InboundOrchestrationService } from './inbound-orchestration.service';
 import { ShadowContactService } from './shadow-contact.service';
 import { ConversationLifecycleService } from './conversation-lifecycle.service';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
+import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
 
 describe('ConversationService Concurrency', () => {
   let service: ConversationService;
@@ -63,6 +64,7 @@ describe('ConversationService Concurrency', () => {
       findLastByExternalId: jest.fn().mockResolvedValue(null),
       findById: jest.fn().mockResolvedValue(null),
       updateContactId: jest.fn().mockResolvedValue(undefined),
+      reopenConversation: jest.fn().mockResolvedValue(null),
     };
 
     messageRepoMock = {
@@ -170,6 +172,14 @@ describe('ConversationService Concurrency', () => {
           provide: ConversationCommandService,
           useValue: conversationCommandMock,
         },
+        {
+          provide: ChannelRepository,
+          useValue: {
+            findById: jest
+              .fn()
+              .mockResolvedValue({ id: 'channel_1', inboxId: 'inbox_1' }),
+          },
+        },
       ],
     }).compile();
 
@@ -210,7 +220,9 @@ describe('ConversationService Concurrency', () => {
       expect.any(Function),
     );
     expect(identityServiceMock.resolveIdentityForTenant).toHaveBeenCalled();
-    expect(conversationRepoMock.create).toHaveBeenCalled();
+    expect(conversationRepoMock.create).toHaveBeenCalledWith(
+      expect.objectContaining({ inboxId: 'inbox_1' }),
+    );
     expect(identityServiceMock.updateIdentity).toHaveBeenCalledWith(
       'facebook',
       'page_1',
@@ -228,6 +240,41 @@ describe('ConversationService Concurrency', () => {
       payload,
       'msg_001',
       'omni:processed:tenant_1:msg_001',
+    );
+  });
+
+  it('should start a new session instead of reopening a closed conversation', async () => {
+    const payload = createPayload('msg_closed_001');
+    identityServiceMock.resolveIdentityForTenant.mockResolvedValue({
+      contactId: 'contact_123',
+      conversationId: 'conv_closed',
+    });
+    conversationRepoMock.findById.mockResolvedValue({
+      id: 'conv_closed',
+      tenantId: 'tenant_1',
+      contactId: 'contact_123',
+      status: 'closed',
+      updatedAt: new Date(),
+    });
+    conversationRepoMock.create.mockResolvedValue({ id: 'conv_new' });
+
+    await service.handleInboundMessage(payload);
+
+    expect(conversationRepoMock.reopenConversation).not.toHaveBeenCalled();
+    expect(conversationRepoMock.create).toHaveBeenCalled();
+    expect(identityServiceMock.updateIdentity).toHaveBeenCalledWith(
+      'facebook',
+      'page_1',
+      'thread_1',
+      { contactId: 'contact_123', conversationId: 'conv_new' },
+      'tenant_1',
+    );
+    expect(conversationCommandMock.enqueueCustomerMessage).toHaveBeenCalledWith(
+      'conv_new',
+      'tenant_1',
+      payload,
+      'msg_closed_001',
+      'omni:processed:tenant_1:msg_closed_001',
     );
   });
 

@@ -2,6 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AgentPresenceService } from './agent-presence.service';
 import { ConversationRepository } from '../repositories/conversation.repository';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import {
+  WorkItemDocument,
+  WorkItemSchemaClass,
+} from '../work-distribution/work-distribution.schema';
 
 /**
  * PresenceReconciliationService — self-healing guard for Redis agent counters.
@@ -38,6 +44,8 @@ export class PresenceReconciliationService {
   constructor(
     private readonly presenceService: AgentPresenceService,
     private readonly conversationRepo: ConversationRepository,
+    @InjectModel(WorkItemSchemaClass.name)
+    private readonly workItems: Model<WorkItemDocument>,
   ) {}
 
   /**
@@ -55,13 +63,13 @@ export class PresenceReconciliationService {
       );
       if (!presence) return; // agent not in Redis — nothing to reconcile
 
-      const actual = await this.conversationRepo.countOpenByAgent(
-        tenantId,
-        agentId,
-      );
+      const workload = await this.workloadForAgents(tenantId, [agentId]);
+      const actual = workload.get(agentId) ?? { count: 0, units: 0 };
       const stored = presence.activeConversations ?? 0;
+      const storedUnits =
+        presence.activeCapacityUnits ?? presence.activeConversations ?? 0;
 
-      if (stored !== actual) {
+      if (stored !== actual.count || storedUnits !== actual.units) {
         this.logger.warn(
           `Presence drift detected for agent ${agentId} (tenant ${tenantId}): ` +
             `Redis=${stored}, MongoDB=${actual} — patching`,
@@ -69,7 +77,8 @@ export class PresenceReconciliationService {
         await this.presenceService.patchActiveConversations(
           tenantId,
           agentId,
-          actual,
+          actual.count,
+          actual.units,
         );
       } else {
         this.logger.debug(
@@ -97,25 +106,32 @@ export class PresenceReconciliationService {
     const agentIds = allAgents.map((a) => a.userId);
 
     // Batch aggregation — single MongoDB round-trip for all agents
-    const actualCounts = await this.conversationRepo.countOpenByAgents(
-      tenantId,
-      agentIds,
-    );
+    const actualCounts = await this.workloadForAgents(tenantId, agentIds);
 
     let patchedCount = 0;
     const patches: Promise<void>[] = [];
 
     for (const presence of allAgents) {
-      const actual = actualCounts.get(presence.userId) ?? 0;
+      const actual = actualCounts.get(presence.userId) ?? {
+        count: 0,
+        units: 0,
+      };
       const stored = presence.activeConversations ?? 0;
+      const storedUnits =
+        presence.activeCapacityUnits ?? presence.activeConversations ?? 0;
 
-      if (stored !== actual) {
+      if (stored !== actual.count || storedUnits !== actual.units) {
         this.logger.warn(
           `[Reconcile] Agent ${presence.userId} drift: Redis=${stored}, MongoDB=${actual}`,
         );
         patches.push(
           this.presenceService
-            .patchActiveConversations(tenantId, presence.userId, actual)
+            .patchActiveConversations(
+              tenantId,
+              presence.userId,
+              actual.count,
+              actual.units,
+            )
             .catch((err: any) =>
               this.logger.error(
                 `Failed to patch agent ${presence.userId}: ${err.message}`,
@@ -138,6 +154,40 @@ export class PresenceReconciliationService {
     }
 
     return patchedCount;
+  }
+
+  private async workloadForAgents(
+    tenantId: string,
+    agentIds: string[],
+  ): Promise<Map<string, { count: number; units: number }>> {
+    const rows = await this.workItems
+      .aggregate([
+        {
+          $match: {
+            tenantId: new Types.ObjectId(tenantId),
+            assignedAgentId: {
+              $in: agentIds.map((id) => new Types.ObjectId(id)),
+            },
+            status: { $in: ['offered', 'assigned', 'active', 'wrap_up'] },
+            capacityReleasedAt: null,
+          },
+        },
+        {
+          $group: {
+            _id: '$assignedAgentId',
+            count: { $sum: 1 },
+            units: { $sum: { $ifNull: ['$capacityWeight', 1] } },
+          },
+        },
+      ])
+      .option({ isPlatformQuery: true })
+      .exec();
+    return new Map(
+      rows.map((row: any) => [
+        String(row._id),
+        { count: row.count, units: row.units },
+      ]),
+    );
   }
 
   /**

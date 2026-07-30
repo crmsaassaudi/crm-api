@@ -68,6 +68,8 @@ export const OmniEvents = {
   CONVERSATION_QUEUED: 'omni.conversation.queued',
   /** Agent replied to an unassigned conversation — trigger implicit assignment */
   REPLY_AUTO_ASSIGN: 'omni.conversation.reply_auto_assign',
+  /** Capacity-reserved work was offered and awaits agent acceptance. */
+  WORK_OFFER_CREATED: 'omni.work_offer.created',
 
   // ── Bot Lifecycle ────────────────────────────────────────────────────────
   /** Bot handed off conversation to human agent — trigger auto-assignment */
@@ -335,6 +337,13 @@ export interface BotHandoffEvent extends OmniEventBase {
   channelType: string;
   channelAccount: string;
   contactId: string | null;
+  inboundMessageId?: string;
+  sessionId?: string;
+  handoff?: {
+    target: 'general' | 'group' | 'agent';
+    targetId: string | null;
+    message: string | null;
+  };
 }
 
 /** omni.reaction.inbound */

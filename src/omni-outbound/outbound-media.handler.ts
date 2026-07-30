@@ -17,6 +17,7 @@ import { UsersService } from '../users/users.service';
 import { ReplyWindowExpiredException } from './exceptions/reply-window-expired.exception';
 import { ConfigType } from '@nestjs/config';
 import replyWindowConfig from './config/reply-window.config';
+import { DeliveryCommandService } from './delivery-command.service';
 
 /** Extension for each type `ImageProcessingService` can re-encode to. */
 const MIME_EXTENSIONS: Record<string, string> = {
@@ -80,6 +81,7 @@ export class OutboundMediaHandler {
     private readonly filesService: FilesService,
     private readonly imageProcessingService: ImageProcessingService,
     private readonly usersService: UsersService,
+    private readonly deliveryCommands: DeliveryCommandService,
   ) {}
 
   // ── Agent Media ─────────────────────────────────────────────────────────
@@ -108,9 +110,14 @@ export class OutboundMediaHandler {
     } = params;
 
     const senderContext = await this.resolveSenderContext(agentId);
+    if (!media.fileId) {
+      throw new Error(
+        'Agent media delivery requires a durable fileId. Upload the file before sending.',
+      );
+    }
 
     // 1. Resolve conversation + channel
-    const { conversation, channel } = await this.resolveConversationAndChannel(
+    const { conversation } = await this.resolveConversationAndChannel(
       tenantId,
       conversationId,
     );
@@ -170,26 +177,95 @@ export class OutboundMediaHandler {
       'agent',
     );
 
-    // 7. Send via adapter
-    return this.dispatchAgentMedia({
+    // 7. Persist a durable delivery command. The worker owns provider dispatch.
+    const queued = await this.deliveryCommands.enqueue({
       tenantId,
       conversationId,
+      messageId: message.id,
       agentId,
-      senderContext,
+      content: caption || `[${messageType}] ${media.fileName}`,
+      messageType,
+      kind: 'media',
+      payload: {
+        media: {
+          fileId: media.fileId,
+          mimeType: media.mimeType,
+          fileName: media.fileName,
+          size: media.size,
+          url: media.url,
+          storageKey: media.storageKey,
+        },
+        caption,
+      },
+      source,
+      transport,
+      idempotencyKey,
+      clientMessageId,
+    });
+
+    return {
+      ok: true,
+      queued: true,
+      deferred: queued.deferred,
+      commandId: queued.commandId,
+      messageId: message.id,
+      status: 'sending',
+      idempotencyKey,
+      clientMessageId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      source,
+    };
+  }
+
+  async dispatchDeliveryCommand(params: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    messageId: string;
+    payload: {
+      media: OutboundMedia;
+      caption?: string;
+    };
+  }): Promise<{ message_id?: string; id?: string }> {
+    const { tenantId, conversationId, agentId, messageId, payload } = params;
+    const media = { ...payload.media };
+    if (!media.fileId) {
+      throw new Error('Durable media command is missing fileId');
+    }
+
+    const { conversation, channel } = await this.resolveConversationAndChannel(
+      tenantId,
+      conversationId,
+    );
+    this.enforceReplyWindow(conversation);
+
+    const mediaBuffer = await this.resolveMediaBuffer(media, agentId);
+    const channelKey = conversation.channelType.toLowerCase() as ChannelType;
+    const compressed = await this.compressMediaForPlatform(
+      mediaBuffer,
+      media.mimeType,
+      channelKey,
+    );
+    const sendBuffer = compressed.buffer;
+    const effectiveMimeType = compressed.mimeType;
+    this.validatePlatformLimits(
+      channelKey,
+      effectiveMimeType,
+      sendBuffer.length,
+    );
+
+    const externalId = await this.dispatchAgentMedia({
       conversation,
       channel,
       media,
       sendBuffer,
       effectiveMimeType,
-      caption,
+      caption: payload.caption ?? '',
       channelKey,
-      messageType,
-      message,
-      idempotencyKey,
-      clientMessageId,
-      source,
-      transport,
+      messageId,
     });
+    return { message_id: externalId };
   }
 
   /**
@@ -250,6 +326,7 @@ export class OutboundMediaHandler {
       media.mimeType =
         media.mimeType ?? file.mimeType ?? 'application/octet-stream';
       media.fileName = media.fileName ?? file.fileName ?? 'file';
+      media.storageKey = media.storageKey ?? file.path;
       media.size = buffer.length;
       return buffer;
     }
@@ -388,10 +465,6 @@ export class OutboundMediaHandler {
    * Handles adapter selection, fallback, status update, and error recovery.
    */
   private async dispatchAgentMedia(ctx: {
-    tenantId: string;
-    conversationId: string;
-    agentId: string;
-    senderContext: { name: string; avatarUrl?: string | null };
     conversation: any;
     channel: any;
     media: OutboundMedia;
@@ -400,15 +473,13 @@ export class OutboundMediaHandler {
     effectiveMimeType: string;
     caption: string;
     channelKey: ChannelType;
-    messageType: string;
-    message: any;
-    idempotencyKey?: string;
-    clientMessageId?: string;
-    source: string;
-    transport: string;
-  }): Promise<any> {
+    messageId: string;
+  }): Promise<string | undefined> {
     try {
       const adapter = this.adapters.get(ctx.channelKey);
+      if (!adapter) {
+        throw new Error(`No outbound adapter registered for ${ctx.channelKey}`);
+      }
       let externalId: string | undefined;
 
       if (adapter?.sendMedia) {
@@ -434,7 +505,7 @@ export class OutboundMediaHandler {
           {
             credentials: ctx.channel.credentials,
             account: ctx.channel.account,
-            messageId: ctx.message.id,
+            messageId: ctx.messageId,
           },
         );
         externalId = result.externalMessageId;
@@ -447,48 +518,15 @@ export class OutboundMediaHandler {
           ctx.conversation,
           ctx.media,
           ctx.caption,
-          ctx.message.id,
+          ctx.messageId,
           ctx.channel,
         );
       }
-
-      await this.messageRepo.updateStatus(ctx.message.id, 'sent', externalId);
-
-      this.eventEmitter.emit('omni.message.sent', {
-        tenantId: ctx.tenantId,
-        conversationId: ctx.conversationId,
-        senderId: ctx.agentId,
-        senderName: ctx.senderContext.name,
-        senderAvatarUrl: ctx.senderContext.avatarUrl ?? null,
-        senderType: 'agent',
-        messageType: ctx.messageType,
-        content: ctx.caption || `[${ctx.messageType}] ${ctx.media.fileName}`,
-        messageId: ctx.message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey: ctx.idempotencyKey,
-        clientMessageId: ctx.clientMessageId,
-        timestamp: new Date().toISOString(),
-        source: ctx.source,
-        transport: ctx.transport,
-      });
-
-      return {
-        ok: true,
-        messageId: ctx.message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey: ctx.idempotencyKey,
-        clientMessageId: ctx.clientMessageId,
-        senderId: ctx.agentId,
-        senderName: ctx.senderContext.name,
-        source: ctx.source,
-      };
+      return externalId;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to send media via provider: ${errorMessage}`);
-      await this.messageRepo.updateStatus(ctx.message.id, 'failed');
       throw error;
     }
   }

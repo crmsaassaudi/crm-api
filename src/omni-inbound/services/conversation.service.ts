@@ -27,6 +27,7 @@ import { ConversationLifecycleService } from './conversation-lifecycle.service';
 import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 import type { MediaCacheJobData } from '../queue/media-cache.processor';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
+import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
 
 /**
  * ConversationService — listens to `omni.message.received` events and handles:
@@ -69,6 +70,7 @@ export class ConversationService {
     @InjectQueue(OMNI_MEDIA_CACHE_QUEUE)
     private readonly mediaCacheQueue: Queue<MediaCacheJobData>,
     private readonly conversationCommandService: ConversationCommandService,
+    private readonly channelRepository: ChannelRepository,
   ) {}
 
   /**
@@ -277,6 +279,15 @@ export class ConversationService {
   ): Promise<{ conversationId: string | null; contactId: string | null }> {
     if (existing.status !== 'resolved' && existing.status !== 'closed') {
       return { conversationId, contactId: existing.contactId };
+    }
+
+    // Closed is terminal. A later inbound message starts a new support session
+    // while retaining the same provider thread/contact relationship.
+    if (existing.status === 'closed') {
+      this.logger.log(
+        `Conversation ${conversationId} is closed — creating a new session`,
+      );
+      return { conversationId: null, contactId: existing.contactId };
     }
 
     const config = await this.lifecycle.getSessionLifecycleConfig();
@@ -488,9 +499,14 @@ export class ConversationService {
       (previousConv.status === 'resolved' || previousConv.status === 'closed');
     const reopenCount = isReopen ? (previousConv.reopenCount ?? 0) + 1 : 0;
 
+    const channel = await this.channelRepository.findById(
+      payload.tenantId,
+      payload.channelId,
+    );
     const conversation = await this.conversationRepo.create({
       tenantId: payload.tenantId,
       channelId: payload.channelId,
+      inboxId: channel?.inboxId ?? null,
       channelAccount: payload.channelAccount,
       channelType: this.lifecycle.toSchemaChannelType(payload.channelType),
       externalId: payload.externalConversationId,

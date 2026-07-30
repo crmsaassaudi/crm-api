@@ -119,6 +119,10 @@ export class OmniGateway
     'socket:omni:message:media_cached',
     'socket:omni:message:status',
     'socket:omni:conversation:unread_reset',
+    'socket:omni:work_offer:created',
+    'socket:omni:transfer:changed',
+    'socket:omni:sla:clock_breached',
+    'socket:omni:bot:state',
   ] as const;
 
   // HIGH-06: Claim lock TTL in seconds. Redis-backed claim locks auto-expire
@@ -199,6 +203,18 @@ export class OmniGateway
             break;
           case 'socket:omni:conversation:unread_reset':
             this.broadcastUnreadReset(event);
+            break;
+          case 'socket:omni:work_offer:created':
+            this.broadcastWorkOffer(event);
+            break;
+          case 'socket:omni:transfer:changed':
+            this.broadcastTransfer(event);
+            break;
+          case 'socket:omni:sla:clock_breached':
+            this.broadcastSlaClockBreached(event);
+            break;
+          case 'socket:omni:bot:state':
+            this.broadcastBotState(event);
             break;
         }
       } catch (err) {
@@ -522,7 +538,7 @@ export class OmniGateway
       // interceptor pipeline, so CLS is empty. Mongoose tenant filter
       // plugin requires activeTenantId in CLS for all DB operations.
       const result = await runWithTenantContext(this.cls, tenantId, () =>
-        this.outboundService.sendAgentMessage({
+        this.outboundService.queueAgentMessage({
           tenantId,
           conversationId: data.conversationId,
           agentId: userId,
@@ -1152,7 +1168,7 @@ export class OmniGateway
     tenantId: string;
     conversationId: string;
     messageIds: string[];
-    status: 'delivered' | 'read';
+    status: 'delivered' | 'read' | 'failed';
   }) {
     if (isDedicatedWorkerProcess()) {
       await this.publishSocketEvent('socket:omni:message:status', payload);
@@ -1754,6 +1770,108 @@ export class OmniGateway
       });
   }
 
+  @OnEvent('omni.work_offer.created')
+  async handleWorkOfferCreated(event: {
+    tenantId: string;
+    conversationId: string;
+    workItemId: string;
+    offerId: string;
+    agentId: string;
+    groupId?: string | null;
+    expiresAt: Date | string;
+  }) {
+    if (isDedicatedWorkerProcess()) {
+      await this.publishSocketEvent('socket:omni:work_offer:created', event);
+      return;
+    }
+    this.broadcastWorkOffer(event);
+  }
+
+  private broadcastWorkOffer(event: {
+    tenantId: string;
+    agentId: string;
+    [key: string]: any;
+  }): void {
+    this.server.to(`agent:${event.agentId}`).emit('omni:work_offer:new', event);
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:queue:offer_created', {
+        conversationId: event.conversationId,
+        workItemId: event.workItemId,
+        offerId: event.offerId,
+        agentId: event.agentId,
+        expiresAt: event.expiresAt,
+      });
+  }
+
+  @OnEvent('omni.sla.clock_breached')
+  async handleSlaClockBreached(event: {
+    tenantId: string;
+    conversationId: string;
+    clockId: string;
+    policyId: string;
+    metric: string;
+    cycle: number;
+    dueAt: Date | string;
+  }) {
+    if (isDedicatedWorkerProcess()) {
+      await this.publishSocketEvent('socket:omni:sla:clock_breached', event);
+      return;
+    }
+    this.broadcastSlaClockBreached(event);
+  }
+
+  private broadcastSlaClockBreached(event: {
+    tenantId: string;
+    [key: string]: any;
+  }): void {
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:sla:clock_breached', event);
+  }
+
+  @OnEvent('omni.transfer.changed')
+  async handleTransferChanged(event: {
+    tenantId: string;
+    transferId: string;
+    conversationId: string;
+    type: 'cold' | 'warm' | 'consult';
+    status: string;
+    sourceAgentId: string;
+    targetAgentId: string;
+    handoffNote?: string | null;
+    expiresAt: Date | string;
+  }) {
+    if (isDedicatedWorkerProcess()) {
+      await this.publishSocketEvent('socket:omni:transfer:changed', event);
+      return;
+    }
+    this.broadcastTransfer(event);
+  }
+
+  private broadcastTransfer(event: {
+    tenantId: string;
+    sourceAgentId: string;
+    targetAgentId: string;
+    [key: string]: any;
+  }): void {
+    const eventName = 'omni:transfer:changed';
+    this.server.to(`agent:${event.sourceAgentId}`).emit(eventName, event);
+    if (event.targetAgentId !== event.sourceAgentId) {
+      this.server.to(`agent:${event.targetAgentId}`).emit(eventName, event);
+    }
+    this.server
+      .to(`tenant:${event.tenantId}`)
+      .emit('omni:queue:transfer_changed', {
+        transferId: event.transferId,
+        conversationId: event.conversationId,
+        type: event.type,
+        status: event.status,
+        sourceAgentId: event.sourceAgentId,
+        targetAgentId: event.targetAgentId,
+      });
+  }
+
   /**
    * Force-disconnect a removed/deactivated agent's live sockets.
    *
@@ -1774,30 +1892,67 @@ export class OmniGateway
   }
 
   @OnEvent('omni.bot.disabled')
-  handleBotDisabled(event: {
+  async handleBotDisabled(event: {
     tenantId: string;
     conversationId: string;
     reason: string;
   }) {
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:conversation:bot_state', {
-        conversationId: event.conversationId,
-        bot: { enabled: false, status: 'handoff' },
-        reason: event.reason,
-        timestamp: new Date().toISOString(),
-      });
+    await this.deliverBotState({
+      ...event,
+      bot: { enabled: false, status: 'ended' },
+    });
   }
 
   @OnEvent('omni.bot.enabled')
-  handleBotEnabled(event: { tenantId: string; conversationId: string }) {
+  async handleBotEnabled(event: { tenantId: string; conversationId: string }) {
+    await this.deliverBotState({
+      ...event,
+      bot: { enabled: true, status: 'active' },
+    });
+  }
+
+  @OnEvent('omni.bot.handoff')
+  async handleBotHandoffState(event: {
+    tenantId: string;
+    conversationId: string;
+    handoff?: Record<string, any>;
+  }) {
+    await this.deliverBotState({
+      ...event,
+      bot: {
+        enabled: false,
+        status: 'handoff',
+        handoffTarget: event.handoff?.target,
+        handoffTargetId: event.handoff?.targetId,
+        handoffMessage: event.handoff?.message,
+      },
+    });
+  }
+
+  private async deliverBotState(event: {
+    tenantId: string;
+    conversationId: string;
+    bot: Record<string, any>;
+    [key: string]: any;
+  }): Promise<void> {
+    const payload = { ...event, timestamp: new Date().toISOString() };
+    if (isDedicatedWorkerProcess()) {
+      await this.publishSocketEvent('socket:omni:bot:state', payload);
+      return;
+    }
+    this.broadcastBotState(payload);
+  }
+
+  private broadcastBotState(event: {
+    tenantId: string;
+    conversationId: string;
+    bot: Record<string, any>;
+    [key: string]: any;
+  }): void {
+    const { tenantId, ...payload } = event;
     this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:conversation:bot_state', {
-        conversationId: event.conversationId,
-        bot: { enabled: true, status: 'active' },
-        timestamp: new Date().toISOString(),
-      });
+      .to(`tenant:${tenantId}`)
+      .emit('omni:conversation:bot_state', payload);
   }
 
   @OnEvent('omni.conversation.lock_acquired')

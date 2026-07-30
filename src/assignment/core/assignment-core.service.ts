@@ -111,6 +111,11 @@ export interface AssignRequest {
    * Returns false to signal "lost the race", same contract as CommitPort.
    */
   commit?: (assigneeId: string, groupId: string | null) => Promise<boolean>;
+  /**
+   * Meaning of a successful custom commit. Conversation auto-routing uses an
+   * offer commit; record assignment and manual operations remain immediate.
+   */
+  commitOutcome?: 'assigned' | 'offered';
 
   /** Do not persist, do not reserve, do not audit. */
   dryRun?: boolean;
@@ -259,6 +264,11 @@ export class AssignmentCoreService {
     return Number.isFinite(date.getTime()) ? date : null;
   }
 
+  private workloadWeight(attributes?: AssignmentAttributes): number {
+    const raw = Number(attributes?.capacityWeight ?? 1);
+    return Number.isFinite(raw) && raw >= 0.1 ? raw : 1;
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
 
   async assign(request: AssignRequest): Promise<AssignDecision> {
@@ -270,6 +280,7 @@ export class AssignmentCoreService {
       commandId: request.commandId ?? null,
       queuePriority: this.queuePriority(request.attributes),
       slaDueAt: this.slaDueAt(request.attributes),
+      workloadWeight: this.workloadWeight(request.attributes),
     };
 
     if (request.bypass) {
@@ -635,12 +646,13 @@ export class AssignmentCoreService {
       );
     }
 
+    const commitOutcome = request.commitOutcome ?? 'assigned';
     return this.finish(request, {
-      outcome: 'assigned',
+      outcome: commitOutcome,
       assigneeId: reserved,
       groupId: target.owningGroupId,
       strategy: orderingStrategy,
-      reasonKey: 'assigned',
+      reasonKey: commitOutcome,
       reason: ruleRef
         ? `Rule "${ruleRef.name}" matched → ${orderingStrategy} selected the assignee`
         : `Default ${orderingStrategy} assignment`,
@@ -939,12 +951,13 @@ export class AssignmentCoreService {
       });
     }
 
+    const commitOutcome = request.commitOutcome ?? 'assigned';
     return this.finish(request, {
-      outcome: 'assigned',
+      outcome: commitOutcome,
       assigneeId: reserved,
       groupId: target.owningGroupId,
       strategy: 'preferred',
-      reasonKey: 'preferredAssignee',
+      reasonKey: commitOutcome === 'offered' ? 'offered' : 'preferredAssignee',
       reason: `Preferred assignee re-selected${preferred.source ? ` (${preferred.source})` : ''}`,
       reasonParams: preferred.source ? { source: preferred.source } : null,
       rule: ruleRef,

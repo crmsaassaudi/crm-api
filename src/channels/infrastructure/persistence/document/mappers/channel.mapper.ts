@@ -35,6 +35,7 @@ export class ChannelMapper {
     entity.type = raw.type;
     entity.name = raw.name;
     entity.account = raw.account;
+    entity.inboxId = raw.inboxId?.toString() ?? null;
     entity.status = raw.status;
     entity.config = raw.config;
     entity.support = toDomainSupport(raw.support);
@@ -54,6 +55,7 @@ export class ChannelMapper {
     p.type = entity.type;
     p.name = entity.name;
     p.account = entity.account;
+    p.inboxId = entity.inboxId ?? null;
     p.status = entity.status;
     p.config = entity.config;
     if (entity.support) p.support = entity.support;

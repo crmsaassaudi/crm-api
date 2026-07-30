@@ -140,7 +140,12 @@ export interface AssignAgentPayload {
   /** If true, only assign when conversation is currently unassigned (CAS semantics) */
   onlyIfUnassigned?: boolean;
   /** Agent pool capacity sync — fire-and-forget after commit */
-  syncCapacity?: { releaseAgentId?: string; assignAgentId?: string };
+  syncCapacity?: {
+    releaseAgentId?: string;
+    assignAgentId?: string;
+    releaseWeight?: number;
+    assignWeight?: number;
+  };
   /** Audit log data for routing history */
   auditLog?: { channelType?: string };
 }

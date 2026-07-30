@@ -13,12 +13,27 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { SlaPoliciesService } from './sla-policies.service';
 import { CreateSlaPolicyDto, UpdateSlaPolicyDto } from './dto/sla-policy.dto';
 import { RequirePermission } from '../common/permissions/permission.decorator';
+import { SlaClockService } from './clock/sla-clock.service';
+import { ClsService } from 'nestjs-cls';
 
 @ApiTags('SLA Policies')
 @ApiBearerAuth()
 @Controller({ path: 'sla-policies', version: '1' })
 export class SlaPoliciesController {
-  constructor(private readonly service: SlaPoliciesService) {}
+  constructor(
+    private readonly service: SlaPoliciesService,
+    private readonly clocks: SlaClockService,
+    private readonly cls: ClsService,
+  ) {}
+
+  @Get('conversations/:conversationId/clocks')
+  @RequirePermission('view', 'omni_channel')
+  findConversationClocks(@Param('conversationId') conversationId: string) {
+    return this.clocks.listForConversation(
+      this.cls.get('tenantId'),
+      conversationId,
+    );
+  }
 
   @Get()
   @RequirePermission('view', 'sla_policies')

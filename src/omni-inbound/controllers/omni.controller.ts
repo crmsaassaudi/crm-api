@@ -42,6 +42,10 @@ import { AssignmentService } from '../services/assignment.service';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
 import { TagsService } from '../../tags/tags.service';
 import { ChannelSupportService } from '../../channels/services/channel-support.service';
+import {
+  canTransitionConversationStatus,
+  isConversationStatus,
+} from '../domain/conversation-status';
 
 /**
  * REST API for omni-channel conversations and messages.
@@ -839,7 +843,7 @@ export class OmniController {
     }
 
     try {
-      return await this.outboundService.sendAgentMessage({
+      return await this.outboundService.queueAgentMessage({
         tenantId,
         conversationId,
         agentId,
@@ -1096,6 +1100,15 @@ export class OmniController {
     }
 
     const oldStatus = conversation.status;
+    if (
+      !isConversationStatus(oldStatus) ||
+      !isConversationStatus(status) ||
+      !canTransitionConversationStatus(oldStatus, status)
+    ) {
+      throw new ConflictException(
+        `Conversation status cannot transition from ${oldStatus} to ${status}`,
+      );
+    }
 
     const updated = await this.conversationCommandService.executeChangeStatus(
       id,
@@ -1147,6 +1160,14 @@ export class OmniController {
     const conversation = await this.conversationRepo.findById(id);
     if (!conversation) {
       throw new NotFoundException(`Conversation ${id} not found`);
+    }
+    if (
+      !isConversationStatus(conversation.status) ||
+      !canTransitionConversationStatus(conversation.status, 'pending')
+    ) {
+      throw new ConflictException(
+        `Conversation status cannot transition from ${conversation.status} to pending`,
+      );
     }
 
     const snoozeUntil = new Date(Date.now() + minutesNum * 60_000);

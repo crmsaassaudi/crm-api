@@ -141,6 +141,8 @@ export type MatchType = (typeof MATCH_TYPES)[number];
 export const ASSIGNMENT_OUTCOMES = [
   /** An assignee was selected, reserved and persisted. */
   'assigned',
+  /** Capacity was reserved and a leased offer awaits agent acceptance. */
+  'offered',
   /** No assignee; the record sits in a queue (optionally owned by a group). */
   'queued',
   /** A preferred assignee was busy and the caller will retry later. */
@@ -160,6 +162,7 @@ export type AssignmentOutcome = (typeof ASSIGNMENT_OUTCOMES)[number];
  */
 export const ASSIGNMENT_REASON_KEYS = [
   'assigned',
+  'offered',
   'directUserAssign',
   'manualOverride',
   'preferredAssignee',

@@ -1,11 +1,11 @@
 import {
-  Controller,
-  Post,
   Body,
+  Controller,
+  ForbiddenException,
   Headers,
   HttpCode,
   Logger,
-  ForbiddenException,
+  Post,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Unprotected } from 'nest-keycloak-connect';
@@ -14,7 +14,8 @@ import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
-import { BotCallbackPayload } from './bot-processing.types';
+import { BotCallbackDto } from './dto/bot-callback.dto';
+import { assertCrmBotInternalSecret } from './internal-secret.util';
 import { BotGeneratedReplyEvent } from '../aggregate/conversation-command.types';
 import { BOT_GENERATED_REPLY_EVENT } from '../aggregate/conversation-ops.constants';
 
@@ -49,27 +50,19 @@ export class BotCallbackController {
   @HttpCode(200)
   async handleBotCallback(
     @Headers('x-crm-internal-secret') secret: string,
-    @Body() payload: BotCallbackPayload,
+    @Body() payload: BotCallbackDto,
   ) {
-    this.validateInternalSecret(secret);
+    assertCrmBotInternalSecret(this.configService, secret);
 
     const { conversationId, org } = payload;
+    // Message bodies are customer content — log shape, never text.
     this.logger.log(
       `[BOT-CALLBACK] ▶ Received callback — conv=${conversationId}, org=${org}, ` +
         `inboundMsg=${payload.inboundMessageId}, sessionId=${payload.sessionId}, ` +
         `status=${payload.status}, handoff=${!!payload.handoff}, ` +
-        `messages=${payload.messages?.length ?? 0}`,
+        `messages=${payload.messages?.length ?? 0} ` +
+        `[${payload.messages?.map((m) => m.type).join(',') ?? ''}]`,
     );
-
-    if (payload.messages?.length) {
-      payload.messages.forEach((m, i) => {
-        this.logger.log(
-          `[BOT-CALLBACK] Message[${i}]: type=${m.type}, ` +
-            `text="${(m.text ?? '').substring(0, 80)}", ` +
-            `buttons=${m.buttons?.length ?? 0}, url=${m.url ?? 'none'}`,
-        );
-      });
-    }
 
     // Wrap in tenant context — Mongoose tenant-filter plugin needs activeTenantId in CLS
     return runWithTenantContext(this.cls, org, async () => {
@@ -129,20 +122,5 @@ export class BotCallbackController {
 
       return { ok: true };
     });
-  }
-
-  private validateInternalSecret(secret: string): void {
-    const expected = this.configService.get<string>('CRM_BOT_INTERNAL_SECRET', {
-      infer: true,
-    });
-    if (!expected) {
-      this.logger.warn(
-        'CRM_BOT_INTERNAL_SECRET not configured — skipping validation',
-      );
-      return;
-    }
-    if (secret !== expected) {
-      throw new ForbiddenException('Invalid internal secret');
-    }
   }
 }

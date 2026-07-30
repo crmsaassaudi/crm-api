@@ -1,17 +1,16 @@
 import {
+  BadRequestException,
   Controller,
   Get,
-  Query,
   Headers,
-  Logger,
-  ForbiddenException,
-  BadRequestException,
+  Query,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Unprotected } from 'nest-keycloak-connect';
 import { ClsService } from 'nestjs-cls';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
+import { assertCrmBotInternalSecret } from './internal-secret.util';
 
 /**
  * Internal endpoint for crm-bot Builder to fetch tenant channels.
@@ -22,8 +21,6 @@ import { ChannelRepository } from '../../channels/infrastructure/persistence/doc
  */
 @Controller({ path: 'internal/channels', version: '1' })
 export class InternalChannelsController {
-  private readonly logger = new Logger(InternalChannelsController.name);
-
   constructor(
     private readonly configService: ConfigService,
     private readonly cls: ClsService,
@@ -36,7 +33,7 @@ export class InternalChannelsController {
     @Headers('x-crm-internal-secret') secret: string,
     @Query('tenantId') tenantId: string,
   ) {
-    this.validateInternalSecret(secret);
+    assertCrmBotInternalSecret(this.configService, secret);
 
     if (!tenantId) {
       throw new BadRequestException('tenantId query param is required');
@@ -53,20 +50,5 @@ export class InternalChannelsController {
         status: ch.status,
       }));
     });
-  }
-
-  private validateInternalSecret(secret: string): void {
-    const expected = this.configService.get<string>('CRM_BOT_INTERNAL_SECRET', {
-      infer: true,
-    });
-    if (!expected) {
-      this.logger.warn(
-        'CRM_BOT_INTERNAL_SECRET not configured — skipping validation',
-      );
-      return;
-    }
-    if (secret !== expected) {
-      throw new ForbiddenException('Invalid internal secret');
-    }
   }
 }

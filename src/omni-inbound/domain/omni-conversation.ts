@@ -33,6 +33,12 @@ export interface ConversationBotState {
   sessionId?: string | null;
   status: BotConversationStatus;
   lastError?: string | null;
+  handoffReason?: string | null;
+  handoffMessage?: string | null;
+  handoffTarget?: 'general' | 'group' | 'agent' | null;
+  handoffTargetId?: string | null;
+  handedOffAt?: Date | null;
+  handedOffByInboundMessageId?: string | null;
 }
 
 /**
@@ -45,6 +51,7 @@ export interface OmniConversation {
 
   /** The channel this conversation belongs to */
   channelId: string;
+  inboxId: string | null;
   channelType: ChannelType;
   channelAccount: string;
 

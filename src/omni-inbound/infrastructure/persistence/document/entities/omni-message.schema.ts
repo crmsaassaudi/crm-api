@@ -201,6 +201,18 @@ OmniMessageSchema.index(
   { name: 'conversation_messages_timeline' },
 );
 
+// Operational recovery scan for outbound sends interrupted after persistence.
+OmniMessageSchema.index(
+  { updatedAt: 1, _id: 1 },
+  {
+    name: 'stale_outbound_sending',
+    partialFilterExpression: {
+      status: 'sending',
+      direction: 'outbound',
+    },
+  },
+);
+
 // Deduplication: prevent processing the same webhook message twice
 // Use partialFilterExpression to only include documents where externalMessageId is a non-null string.
 // This allows outbound messages (which start with no external ID) to coexist without conflict.

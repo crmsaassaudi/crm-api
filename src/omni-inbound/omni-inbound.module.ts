@@ -54,6 +54,7 @@ import { ConversationLifecycleService } from './services/conversation-lifecycle.
 import { ConversationQueryService } from './services/conversation-query.service';
 import { CrmRealtimeGateway } from './services/crm-realtime.gateway';
 import { OmniMetricsListener } from './services/omni-metrics.listener';
+import { OmniReportingProjectionListener } from './services/omni-reporting-projection.listener';
 import { PresenceReconciliationService } from './services/presence-reconciliation.service';
 import { PresenceSegmentService } from './services/presence-segment.service';
 import { WorkStatusService } from './services/work-status.service';
@@ -75,6 +76,7 @@ import { BotApiService } from './bot/bot-api.service';
 import { BotQueueService } from './bot/bot-queue.service';
 import { BotCallbackController } from './bot/bot-callback.controller';
 import { InternalChannelsController } from './bot/internal-channels.controller';
+import { InternalDirectoryController } from './bot/internal-directory.controller';
 import { CsatModule } from './csat/csat.module';
 
 // Repositories
@@ -96,6 +98,10 @@ import {
   OmniMessageSchemaClass,
   OmniMessageSchema,
 } from './infrastructure/persistence/document/entities/omni-message.schema';
+import {
+  OmniDailyMetricsSchema,
+  OmniDailyMetricsSchemaClass,
+} from './infrastructure/persistence/document/entities/omni-daily-metrics.schema';
 import {
   OmniNoteSchemaClass,
   OmniNoteSchema,
@@ -139,7 +145,28 @@ import { LivechatModule } from '../livechat/livechat.module';
 import { ConversationOpsModule } from './aggregate/conversation-ops.module';
 import { ConversationOpsProcessor } from './aggregate/conversation-ops.processor';
 import { ConversationCommandService } from './aggregate/conversation-command.service';
+import { GroupsModule } from '../groups/groups.module';
 import { TagsModule } from '../tags/tags.module';
+import {
+  QueueEntrySchema,
+  QueueEntrySchemaClass,
+  WorkItemSchema,
+  WorkItemSchemaClass,
+  WorkOfferSchema,
+  WorkOfferSchemaClass,
+} from './work-distribution/work-distribution.schema';
+import { WorkDistributionService } from './work-distribution/work-distribution.service';
+import { WorkOfferController } from './work-distribution/work-offer.controller';
+import {
+  ConversationTransferSchema,
+  ConversationTransferSchemaClass,
+} from './transfer/conversation-transfer.schema';
+import { ConversationTransferService } from './transfer/conversation-transfer.service';
+import { ConversationTransferController } from './transfer/conversation-transfer.controller';
+import {
+  InboxSchema,
+  InboxSchemaClass,
+} from '../inboxes/infrastructure/inbox.schema';
 
 const workerProviders =
   isWorkerRuntime() || isOmniRuntime()
@@ -191,12 +218,17 @@ const workerProviders =
     // Phase 1: Conversation Aggregate — sequential command processing
     ConversationOpsModule,
     TagsModule,
+    GroupsModule,
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,
         schema: OmniConversationSchema,
       },
       { name: OmniMessageSchemaClass.name, schema: OmniMessageSchema },
+      {
+        name: OmniDailyMetricsSchemaClass.name,
+        schema: OmniDailyMetricsSchema,
+      },
       { name: OmniNoteSchemaClass.name, schema: OmniNoteSchema },
       {
         name: ConversationActivitySchemaClass.name,
@@ -218,6 +250,14 @@ const workerProviders =
         name: InteractionSegmentSchemaClass.name,
         schema: InteractionSegmentSchema,
       },
+      { name: WorkItemSchemaClass.name, schema: WorkItemSchema },
+      { name: QueueEntrySchemaClass.name, schema: QueueEntrySchema },
+      { name: WorkOfferSchemaClass.name, schema: WorkOfferSchema },
+      { name: InboxSchemaClass.name, schema: InboxSchema },
+      {
+        name: ConversationTransferSchemaClass.name,
+        schema: ConversationTransferSchema,
+      },
     ]),
   ],
   controllers: [
@@ -227,6 +267,9 @@ const workerProviders =
     AgentStatusAuditController,
     BotCallbackController,
     InternalChannelsController,
+    InternalDirectoryController,
+    WorkOfferController,
+    ConversationTransferController,
   ],
   providers: [
     // ── Pillar 1: Data Normalization ───────────────────────────────
@@ -347,6 +390,8 @@ const workerProviders =
     // ── Pillar 12c: Work status (auto-derived) + interaction segments ─
     InteractionSegmentRepository,
     WorkStatusService,
+    WorkDistributionService,
+    ConversationTransferService,
 
     // ── Pillar 14: Presence Alerts (Phase 7) ─────────────────────────
     PresenceAlertService,
@@ -354,6 +399,7 @@ const workerProviders =
 
     // ── Pillar 13: Observability ────────────────────────────────────
     OmniMetricsListener,
+    OmniReportingProjectionListener,
   ],
   exports: [
     InboundProcessorService,
@@ -377,6 +423,8 @@ const workerProviders =
     ConversationLockService,
     BotQueueService,
     ReactionService,
+    WorkDistributionService,
+    ConversationTransferService,
     CsatModule,
   ],
 })

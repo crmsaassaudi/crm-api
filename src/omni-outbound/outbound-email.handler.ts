@@ -14,6 +14,24 @@ import { EmailSignatureService } from '../channels/services/email-signature.serv
 import { UsersService } from '../users/users.service';
 import { EmailContentDocument } from '../channels/infrastructure/persistence/document/entities/email-content.schema';
 import { EmailMetadataDocument } from '../channels/infrastructure/persistence/document/entities/email-metadata.schema';
+import { DeliveryCommandService } from './delivery-command.service';
+
+type EmailDeliveryProjection = {
+  tenantId: string;
+  channelId: string;
+  messageId: string;
+  subject: string;
+  finalHtml: string;
+  snippet: string;
+  standardAttachments: { url: string; filename: string; contentType: string }[];
+  externalId: string;
+  inReplyTo?: string;
+  references: string[];
+  fromAddress: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+};
 
 /**
  * T-041: OutboundEmailHandler
@@ -44,6 +62,7 @@ export class OutboundEmailHandler {
     private readonly emailContentModel: Model<EmailContentDocument>,
     @InjectModel('EmailMetadataSchemaClass')
     private readonly emailMetadataModel: Model<EmailMetadataDocument>,
+    private readonly deliveryCommands: DeliveryCommandService,
   ) {}
 
   async sendEmailReply(params: {
@@ -73,6 +92,90 @@ export class OutboundEmailHandler {
       attachments: standardAttachments = [],
     } = params;
     const senderContext = await this.resolveSenderContext(agentId);
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new Error(`Conversation ${conversationId} not found`);
+    }
+
+    // Persist both the customer-visible placeholder and the delivery intent
+    // before SMTP is touched. The worker owns the irreversible provider call.
+    const snippet = this.extractSnippet(htmlBody);
+    const messageRecord = await this.persistOutboundMessage({
+      tenantId,
+      conversationId,
+      agentId,
+      senderContext,
+      snippet,
+    });
+    const queued = await this.deliveryCommands.enqueue({
+      tenantId,
+      conversationId,
+      messageId: messageRecord.id,
+      agentId,
+      content: snippet,
+      messageType: 'email',
+      kind: 'email',
+      payload: {
+        to,
+        cc,
+        bcc,
+        subject,
+        htmlBody,
+        inReplyTo,
+        references,
+        attachments: standardAttachments,
+      },
+      source: 'crm_api',
+      transport: 'http',
+      idempotencyKey: `email:${messageRecord.id}`,
+    });
+    await this.conversationRepo.updateLastMessage(
+      conversationId,
+      snippet,
+      new Date(),
+      'agent',
+    );
+    return {
+      ok: true,
+      queued: true,
+      deferred: queued.deferred,
+      commandId: queued.commandId,
+      messageId: messageRecord.id,
+      status: 'sending',
+    };
+  }
+
+  async dispatchDeliveryCommand(params: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    messageId: string;
+    payload: {
+      to: string[];
+      cc?: string[];
+      bcc?: string[];
+      subject: string;
+      htmlBody: string;
+      inReplyTo?: string;
+      references?: string[];
+      attachments?: { url: string; filename: string; contentType: string }[];
+    };
+  }): Promise<{
+    message_id: string;
+    emailProjection: EmailDeliveryProjection;
+  }> {
+    const { tenantId, conversationId, agentId, messageId, payload } = params;
+    const {
+      to,
+      cc = [],
+      bcc = [],
+      subject,
+      htmlBody,
+      inReplyTo,
+      references = [],
+      attachments: standardAttachments = [],
+    } = payload;
 
     const conversation = await this.conversationRepo.findById(conversationId);
     if (!conversation) {
@@ -131,17 +234,8 @@ export class OutboundEmailHandler {
       await this.fetchStandardAttachments(standardAttachments);
     const allAttachments = [...formattedAttachments, ...inlineAttachments];
 
-    // 4. Persist placeholder to MessageRepository
+    // 4. Send Email via NodeMailer
     const snippet = this.extractSnippet(finalHtml);
-    const messageRecord = await this.persistOutboundMessage({
-      tenantId,
-      conversationId,
-      agentId,
-      senderContext,
-      snippet,
-    });
-
-    // 5. Send Email via NodeMailer
     const fromAddress = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
     let info;
     try {
@@ -159,76 +253,64 @@ export class OutboundEmailHandler {
         headers: {
           'X-CRM-Thread-ID': conversationId,
           'X-CRM-Tenant-ID': tenantId,
-          'X-CRM-Message-Id': messageRecord.id,
+          'X-CRM-Message-Id': messageId,
         },
       });
     } catch (err) {
       this.logger.error(`Nodemailer failed to send email: ${err}`);
-      await this.messageRepo.updateStatus(messageRecord.id, 'failed');
       throw err;
     }
 
     const externalId = info.messageId ?? `<${ulid()}@crm.local>`;
+    return {
+      message_id: externalId,
+      emailProjection: {
+        tenantId,
+        channelId,
+        messageId,
+        subject,
+        finalHtml,
+        snippet,
+        standardAttachments,
+        externalId,
+        inReplyTo,
+        references,
+        fromAddress,
+        to,
+        cc,
+        bcc,
+      },
+    };
+  }
 
-    // 6. Update Status + Record Send for Quota Tracking
-    await this.messageRepo.updateStatus(messageRecord.id, 'sent', externalId);
-    await this.conversationRepo.updateLastMessage(
-      conversationId,
-      snippet,
-      new Date(),
-      'agent',
-    );
+  async projectSuccessfulDelivery(
+    projection: EmailDeliveryProjection,
+  ): Promise<void> {
     await this.outboundQueue.recordSend(
-      tenantId,
-      channelId,
-      to.length + cc.length + bcc.length,
+      projection.tenantId,
+      projection.channelId,
+      projection.to.length + projection.cc.length + projection.bcc.length,
     );
-
-    // 7. Persist Email Full Content & Metadata
     await this.persistEmailContent({
-      tenantId,
-      messageId: messageRecord.id,
-      subject,
-      finalHtml,
-      snippet,
-      standardAttachments,
+      tenantId: projection.tenantId,
+      messageId: projection.messageId,
+      subject: projection.subject,
+      finalHtml: projection.finalHtml,
+      snippet: projection.snippet,
+      standardAttachments: projection.standardAttachments,
     });
     await this.persistEmailMetadata({
-      tenantId,
-      channelId,
-      messageId: messageRecord.id,
-      externalId,
-      inReplyTo,
-      references,
-      fromAddress,
-      to,
-      cc,
-      bcc,
+      tenantId: projection.tenantId,
+      channelId: projection.channelId,
+      messageId: projection.messageId,
+      externalId: projection.externalId,
+      inReplyTo: projection.inReplyTo,
+      references: projection.references,
+      fromAddress: projection.fromAddress,
+      to: projection.to,
+      cc: projection.cc,
+      bcc: projection.bcc,
     });
-
-    // 8. Emit real-time socket event
-    this.eventEmitter.emit('omni.message.sent', {
-      tenantId,
-      conversationId,
-      senderId: agentId,
-      senderName: senderContext.name,
-      senderAvatarUrl: senderContext.avatarUrl ?? null,
-      senderType: 'agent',
-      messageType: 'text',
-      content: snippet,
-      messageId: messageRecord.id,
-      externalMessageId: externalId,
-      status: 'sent',
-      timestamp: new Date().toISOString(),
-      source: 'crm_api',
-      transport: 'http',
-    });
-
-    return {
-      ok: true,
-      messageId: messageRecord.id,
-      externalMessageId: externalId,
-    };
   }
 
   // ── Private Helpers ─────────────────────────────────────────────────────

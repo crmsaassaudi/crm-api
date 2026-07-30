@@ -1,11 +1,26 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
+import { BullModule } from '@nestjs/bullmq';
 
 // Service
 import { OutboundService } from './outbound.service';
 import { OutboundMediaHandler } from './outbound-media.handler';
 import { OutboundEmailHandler } from './outbound-email.handler';
+import { OutboundReconciliationService } from './outbound-reconciliation.service';
+import { DeliveryAttemptService } from './delivery-attempt.service';
+import { DeliveryCommandService } from './delivery-command.service';
+import { DeliveryProcessor } from './delivery.processor';
+import { OMNI_DELIVERY_QUEUE } from './delivery-command.constants';
+import {
+  DeliveryAttemptSchema,
+  DeliveryAttemptSchemaClass,
+} from './infrastructure/delivery-attempt.schema';
+import {
+  DeliveryCommandSchema,
+  DeliveryCommandSchemaClass,
+} from './infrastructure/delivery-command.schema';
+import { isOmniRuntime } from '../config/runtime-role';
 
 // Config
 import replyWindowConfig from './config/reply-window.config';
@@ -41,6 +56,7 @@ import {
 import { ChannelsModule } from '../channels/channels.module';
 import { UsersModule } from '../users/users.module';
 import { FilesModule } from '../files/files.module';
+import { ObservabilityModule } from '../observability/observability.module';
 
 // Email schemas
 import {
@@ -64,6 +80,15 @@ import {
     ChannelsModule,
     UsersModule,
     FilesModule,
+    ObservabilityModule,
+    BullModule.registerQueue({
+      name: OMNI_DELIVERY_QUEUE,
+      defaultJobOptions: {
+        attempts: 1,
+        removeOnComplete: { count: 1_000, age: 86_400 },
+        removeOnFail: { count: 5_000, age: 604_800 },
+      },
+    }),
     forwardRef(() => LivechatModule), // LivechatAdapter (wired with gateway)
     MongooseModule.forFeature([
       {
@@ -71,6 +96,14 @@ import {
         schema: OmniConversationSchema,
       },
       { name: OmniMessageSchemaClass.name, schema: OmniMessageSchema },
+      {
+        name: DeliveryAttemptSchemaClass.name,
+        schema: DeliveryAttemptSchema,
+      },
+      {
+        name: DeliveryCommandSchemaClass.name,
+        schema: DeliveryCommandSchema,
+      },
       { name: EmailContentSchemaClass.name, schema: EmailContentSchema },
       { name: EmailMetadataSchemaClass.name, schema: EmailMetadataSchema },
     ]),
@@ -116,7 +149,11 @@ import {
     OutboundService,
     OutboundMediaHandler,
     OutboundEmailHandler,
+    OutboundReconciliationService,
+    DeliveryAttemptService,
+    DeliveryCommandService,
+    ...(isOmniRuntime() ? [DeliveryProcessor] : []),
   ],
-  exports: [OutboundService],
+  exports: [OutboundService, DeliveryCommandService],
 })
 export class OmniOutboundModule {}

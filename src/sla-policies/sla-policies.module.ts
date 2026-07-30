@@ -15,6 +15,8 @@ import { SlaQueueModule } from './queue/sla-queue.module';
 
 import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
 import { isWorkerRuntime } from '../config/runtime-role';
+import { SlaClockSchema, SlaClockSchemaClass } from './clock/sla-clock.schema';
+import { SlaClockService } from './clock/sla-clock.service';
 
 @Module({
   imports: [
@@ -22,6 +24,7 @@ import { isWorkerRuntime } from '../config/runtime-role';
     OmniInboundModule,
     MongooseModule.forFeature([
       { name: SlaPolicySchemaClass.name, schema: SlaPolicySchema },
+      { name: SlaClockSchemaClass.name, schema: SlaClockSchema },
     ]),
   ],
   controllers: [SlaPoliciesController],
@@ -31,8 +34,9 @@ import { isWorkerRuntime } from '../config/runtime-role';
     SlaMonitorService,
     SlaTriggerListener,
     SlaCancellationListener,
+    SlaClockService,
     ...(isWorkerRuntime() ? [SlaBreachProcessor] : []),
   ],
-  exports: [SlaPoliciesService, SlaMonitorService],
+  exports: [SlaPoliciesService, SlaMonitorService, SlaClockService],
 })
 export class SlaPoliciesModule {}

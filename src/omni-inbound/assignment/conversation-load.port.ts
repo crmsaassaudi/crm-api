@@ -39,7 +39,10 @@ export class ConversationLoadPort implements LoadPort {
     await Promise.all(
       candidateIds.map(async (id) => {
         const presence = await this.presence.getPresence(scope.tenantId, id);
-        result.set(id, presence?.activeConversations ?? 0);
+        result.set(
+          id,
+          presence?.activeCapacityUnits ?? presence?.activeConversations ?? 0,
+        );
       }),
     );
     return result;
@@ -69,6 +72,7 @@ export class ConversationLoadPort implements LoadPort {
         reserved = await this.presence.reserveFirstEligibleAgent(
           scope.tenantId,
           orderedCandidateIds,
+          scope.workloadWeight,
         );
         break;
       case 'capacity-based':
@@ -76,6 +80,7 @@ export class ConversationLoadPort implements LoadPort {
           scope.tenantId,
           orderedCandidateIds,
           maxCapacity,
+          scope.workloadWeight,
         );
         break;
       case 'least-busy':
@@ -83,6 +88,7 @@ export class ConversationLoadPort implements LoadPort {
         reserved = await this.presence.reserveAgentFromCandidates(
           scope.tenantId,
           orderedCandidateIds,
+          scope.workloadWeight,
         );
         break;
     }
@@ -112,7 +118,8 @@ export class ConversationLoadPort implements LoadPort {
         const presence = await this.presence.getPresence(scope.tenantId, id);
         return {
           id,
-          load: presence?.activeConversations ?? 0,
+          load:
+            presence?.activeCapacityUnits ?? presence?.activeConversations ?? 0,
           capacity:
             presence?.maxCapacity && presence.maxCapacity > 0
               ? presence.maxCapacity
@@ -125,7 +132,10 @@ export class ConversationLoadPort implements LoadPort {
     );
 
     const eligible = rows.filter(
-      (r) => r.present && (strategy === 'least-busy' || r.load < r.capacity),
+      (r) =>
+        r.present &&
+        (strategy === 'least-busy' ||
+          r.load + (scope.workloadWeight ?? 1) <= r.capacity),
     );
     if (eligible.length === 0) return null;
 
@@ -136,6 +146,10 @@ export class ConversationLoadPort implements LoadPort {
   }
 
   async release(scope: AssignmentScope, candidateId: string): Promise<void> {
-    await this.presence.releaseConversation(scope.tenantId, candidateId);
+    await this.presence.releaseConversation(
+      scope.tenantId,
+      candidateId,
+      scope.workloadWeight,
+    );
   }
 }

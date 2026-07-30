@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { OmniEvents } from '../domain/omni-events';
-import { ConversationRepository } from '../repositories/conversation.repository';
 import { IdentityService } from './identity.service';
 import { InboundOrchestrationService } from './inbound-orchestration.service';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
@@ -24,7 +23,6 @@ export class ConversationLifecycleService {
   private readonly logger = new Logger(ConversationLifecycleService.name);
 
   constructor(
-    private readonly conversationRepo: ConversationRepository,
     private readonly identityService: IdentityService,
     private readonly orchestration: InboundOrchestrationService,
     private readonly settingsService: CrmSettingsService,
@@ -79,7 +77,8 @@ export class ConversationLifecycleService {
    *
    * Also:
    * - Cancels any pending auto-resolve job
-   * - Releases the agent's conversation counter (capacity tracking)
+   * - WorkDistribution retains capacity through after-contact work and releases
+   *   it when the durable WorkItem leaves wrap_up.
    */
   @OnEvent(OmniEvents.CONVERSATION_STATUS_CHANGED)
   async handleStatusChanged(event: {
@@ -101,16 +100,6 @@ export class ConversationLifecycleService {
 
       // Cancel any pending auto-resolve job for this conversation
       await this.orchestration.cancelAutoResolve(event.conversationId);
-
-      const assignedAgentId =
-        (await this.conversationRepo.findById(event.conversationId))
-          ?.assignedAgentId ?? null;
-      if (assignedAgentId) {
-        await this.orchestration.releaseConversation(
-          event.tenantId,
-          assignedAgentId,
-        );
-      }
 
       this.logger.log(
         `Invalidated identity cache for conversation ${event.conversationId} (${event.status})`,

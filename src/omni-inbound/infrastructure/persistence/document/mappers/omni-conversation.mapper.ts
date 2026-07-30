@@ -15,6 +15,7 @@ export class OmniConversationMapper {
       id: raw._id.toString(),
       tenantId: raw.tenantId?.toString(),
       channelId: raw.channelId?.toString(),
+      inboxId: this.normalizeId(raw.inboxId),
       channelType: raw.channelType,
       channelAccount: (raw as any).channelAccount,
       externalConversationId: raw.externalId,
@@ -68,6 +69,12 @@ export class OmniConversationMapper {
       sessionId: bot.sessionId ?? null,
       status: bot.status ?? 'active',
       lastError: bot.lastError ?? null,
+      handoffReason: bot.handoffReason ?? null,
+      handoffMessage: bot.handoffMessage ?? null,
+      handoffTarget: bot.handoffTarget ?? null,
+      handoffTargetId: bot.handoffTargetId ?? null,
+      handedOffAt: bot.handedOffAt ?? null,
+      handedOffByInboundMessageId: bot.handedOffByInboundMessageId ?? null,
     };
   }
 
@@ -78,6 +85,7 @@ export class OmniConversationMapper {
     }
     raw.tenantId = domain.tenantId;
     raw.channelId = domain.channelId;
+    raw.inboxId = domain.inboxId;
     (raw as any).channelAccount = domain.channelAccount;
     raw.channelType = domain.channelType;
     raw.externalId = domain.externalConversationId;

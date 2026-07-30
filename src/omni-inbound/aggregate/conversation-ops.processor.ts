@@ -16,6 +16,10 @@ import { MessageRepository } from '../repositories/message.repository';
 import { InboundOrchestrationService } from '../services/inbound-orchestration.service';
 import { MediaProxyService } from '../services/media-proxy.service';
 import { OmniEvents } from '../domain/omni-events';
+import {
+  assertConversationStatusTransition,
+  isConversationStatus,
+} from '../domain/conversation-status';
 
 import {
   ConversationCommand,
@@ -48,6 +52,7 @@ import {
 import { OutboundService } from '../../omni-outbound/outbound.service';
 import { AgentPresenceService } from '../services/agent-presence.service';
 import { AssignmentService } from '../services/assignment.service';
+import { canAcceptBotCallback } from '../bot/bot-state-machine';
 
 import { ModuleRef } from '@nestjs/core';
 
@@ -62,7 +67,7 @@ export class ConversationOpsProcessor
 {
   protected readonly logger = new Logger(ConversationOpsProcessor.name);
   protected readonly cls: ClsService;
-  private orchestration: InboundOrchestrationService;
+  private orchestration!: InboundOrchestrationService;
 
   constructor(
     cls: ClsService,
@@ -349,6 +354,22 @@ export class ConversationOpsProcessor
       afterTimestamp,
     } = cmd.payload;
 
+    // This check runs inside the per-conversation aggregate lock. A callback
+    // queued before an agent takeover but processed after it therefore cannot
+    // reactivate the bot or send a late bot response.
+    const currentConversation = await this.conversationRepo.findById(
+      cmd.conversationId,
+    );
+    if (
+      !currentConversation ||
+      !canAcceptBotCallback(currentConversation.bot, sessionId)
+    ) {
+      this.logger.warn(
+        `[CONV-OPS] Ignored stale bot callback: conv=${cmd.conversationId} session=${sessionId ?? 'none'}`,
+      );
+      return;
+    }
+
     // Resolve the afterTimestamp from the triggering inbound message
     let resolvedAfterTimestamp = afterTimestamp;
     if (!resolvedAfterTimestamp && inboundMessageId) {
@@ -474,10 +495,25 @@ export class ConversationOpsProcessor
     cmd: ConversationCommand,
     handoffMeta: any,
   ): Promise<void> {
-    await this.conversationRepo.markBotHandoff(cmd.conversationId);
-    const conversation = await this.conversationRepo.findById(
+    const target = handoffMeta?.target ?? 'general';
+    const targetId =
+      target === 'agent'
+        ? handoffMeta?.agentId
+        : target === 'group'
+          ? handoffMeta?.groupId
+          : undefined;
+    const conversation = await this.conversationRepo.markBotHandoff(
       cmd.conversationId,
+      {
+        reason: 'bot_requested_handoff',
+        message: handoffMeta?.message,
+        target,
+        targetId,
+        inboundMessageId: cmd.payload.inboundMessageId,
+      },
     );
+    // Duplicate/stale callbacks cannot repeat routing or handoff events.
+    if (!conversation) return;
     const previousAgentId = conversation?.assignedAgentId
       ? String(conversation.assignedAgentId)
       : null;
@@ -546,14 +582,26 @@ export class ConversationOpsProcessor
       }
     }
 
-    this.eventEmitter.emit(OmniEvents.BOT_HANDOFF, {
-      tenantId: cmd.tenantId,
-      conversationId: cmd.conversationId,
-      channelType: conversation?.channelType,
-      channelAccount:
-        conversation?.channelAccount ?? conversation?.channelId?.toString(),
-      contactId: conversation?.contactId ?? null,
-    });
+    await this.saveAndPublishOutboxEvent(
+      cmd.conversationId,
+      cmd.tenantId,
+      OmniEvents.BOT_HANDOFF,
+      {
+        tenantId: cmd.tenantId,
+        conversationId: cmd.conversationId,
+        channelType: conversation.channelType,
+        channelAccount:
+          conversation.channelAccount ?? conversation.channelId?.toString(),
+        contactId: conversation.contactId ?? null,
+        inboundMessageId: cmd.payload.inboundMessageId,
+        sessionId: cmd.payload.sessionId,
+        handoff: {
+          target,
+          targetId: targetId ?? null,
+          message: handoffMeta?.message ?? null,
+        },
+      },
+    );
   }
 
   private async publishAssignmentEvent(
@@ -715,12 +763,20 @@ export class ConversationOpsProcessor
   private syncPresenceOnAssignment(tenantId: string, syncCapacity: any): void {
     if (syncCapacity?.releaseAgentId) {
       this.agentPresenceService
-        .releaseConversation(tenantId, syncCapacity.releaseAgentId)
+        .releaseConversation(
+          tenantId,
+          syncCapacity.releaseAgentId,
+          syncCapacity.releaseWeight,
+        )
         .catch(logSwallowed(this.logger, 'releaseConversation'));
     }
     if (syncCapacity?.assignAgentId) {
       this.agentPresenceService
-        .assignConversation(tenantId, syncCapacity.assignAgentId)
+        .assignConversation(
+          tenantId,
+          syncCapacity.assignAgentId,
+          syncCapacity.assignWeight,
+        )
         .catch(logSwallowed(this.logger, 'assignConversation'));
     }
   }
@@ -768,7 +824,6 @@ export class ConversationOpsProcessor
   ): Promise<void> {
     const {
       newStatus,
-      oldStatus,
       agentId,
       reason,
       note,
@@ -777,6 +832,18 @@ export class ConversationOpsProcessor
       channelAccount,
       externalConversationId,
     } = cmd.payload;
+
+    const current = await this.conversationRepo.findById(cmd.conversationId);
+    if (!current) {
+      throw new Error(`Conversation ${cmd.conversationId} not found`);
+    }
+    if (!isConversationStatus(current.status)) {
+      throw new Error(
+        `Conversation ${cmd.conversationId} has unknown status ${current.status}`,
+      );
+    }
+    assertConversationStatusTransition(current.status, newStatus);
+    const effectiveOldStatus = current.status;
 
     if (newStatus === 'resolved' || newStatus === 'closed') {
       await this.conversationRepo.updateStatusWithMetadata(
@@ -799,7 +866,7 @@ export class ConversationOpsProcessor
         tenantId: cmd.tenantId,
         conversationId: cmd.conversationId,
         status: newStatus,
-        oldStatus,
+        oldStatus: effectiveOldStatus,
         agentId,
         reason,
         note,
@@ -812,7 +879,7 @@ export class ConversationOpsProcessor
 
     this.logger.log(
       `[CONV-OPS] CHANGE_STATUS: conv=${cmd.conversationId} ` +
-        `${oldStatus} → ${newStatus} (source=${resolveSource})`,
+        `${effectiveOldStatus} → ${newStatus} (source=${resolveSource})`,
     );
   }
 

@@ -335,6 +335,63 @@ export class BusinessHoursService {
   }
 
   /**
+   * Count configured working minutes in an interval. Used when pausing an SLA
+   * clock so nights, weekends and holidays already excluded from its deadline
+   * are not granted a second time after resume.
+   */
+  async calculateBusinessMinutesBetween(
+    tenantId: string,
+    from: Date,
+    to: Date,
+  ): Promise<number> {
+    if (to <= from) return 0;
+    const config = await this.settingsService.getSetting(
+      'business_hours',
+      tenantId,
+    );
+    if (!config) {
+      return Math.ceil((to.getTime() - from.getTime()) / 60_000);
+    }
+
+    let totalMs = 0;
+    let day = new Date(from);
+    day.setHours(0, 0, 0, 0);
+    const last = new Date(to);
+    last.setHours(0, 0, 0, 0);
+    let safety = 0;
+    while (day <= last && safety++ < 366) {
+      if (!this.isHoliday(day, config.holidays)) {
+        const schedule = this.getDaySchedule(day, config);
+        if (schedule?.enabled) {
+          for (const slot of this.getWorkingSlots(schedule)) {
+            const startMinutes = this.timeToMinutes(slot.start);
+            const endMinutes = this.timeToMinutes(slot.end);
+            const slotStart = new Date(day);
+            slotStart.setHours(
+              Math.floor(startMinutes / 60),
+              startMinutes % 60,
+              0,
+              0,
+            );
+            const slotEnd = new Date(day);
+            slotEnd.setHours(
+              Math.floor(endMinutes / 60),
+              endMinutes % 60,
+              0,
+              0,
+            );
+            const overlapStart = Math.max(from.getTime(), slotStart.getTime());
+            const overlapEnd = Math.min(to.getTime(), slotEnd.getTime());
+            if (overlapEnd > overlapStart) totalMs += overlapEnd - overlapStart;
+          }
+        }
+      }
+      day = this.advanceToNextDay(day);
+    }
+    return Math.ceil(totalMs / 60_000);
+  }
+
+  /**
    * Consume available minutes in today's working slots.
    */
   private consumeWorkingSlots(

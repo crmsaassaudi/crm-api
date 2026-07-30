@@ -43,6 +43,15 @@ export class ChannelSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true })
   account: string;
 
+  /** Operational inbox that owns routing, visibility, SLA and bot policy. */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'InboxSchemaClass',
+    default: null,
+    index: true,
+  })
+  inboxId: string | null;
+
   @Prop({
     type: String,
     required: true,

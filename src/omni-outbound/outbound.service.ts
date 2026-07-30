@@ -14,6 +14,8 @@ import { ImageProcessingService } from '../files/image-processing.service';
 
 import { OutboundMediaHandler } from './outbound-media.handler';
 import { OutboundEmailHandler } from './outbound-email.handler';
+import { DeliveryAttemptService } from './delivery-attempt.service';
+import { DeliveryCommandService } from './delivery-command.service';
 
 import { ChannelRepository } from '../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { ReplyWindowExpiredException } from './exceptions/reply-window-expired.exception';
@@ -83,7 +85,131 @@ export class OutboundService {
     // T-040/T-041: Extracted handlers
     private readonly mediaHandler: OutboundMediaHandler,
     private readonly emailHandler: OutboundEmailHandler,
+    private readonly deliveryAttempts: DeliveryAttemptService,
+    private readonly deliveryCommands: DeliveryCommandService,
   ) {}
+
+  /**
+   * Durable agent text send. Persists the customer-visible message and command
+   * before returning; provider I/O is performed by DeliveryProcessor.
+   */
+  async queueAgentMessage(params: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string;
+    content: string;
+    messageType?: string;
+    source?: string;
+    transport?: 'http' | 'socket';
+    idempotencyKey?: string;
+    clientMessageId?: string;
+  }): Promise<any> {
+    const {
+      tenantId,
+      conversationId,
+      agentId,
+      content,
+      messageType = 'text',
+      source: rawSource = 'crm_api',
+      transport = 'http',
+      idempotencyKey,
+      clientMessageId,
+    } = params;
+    const source = normalizeOutboundSource(rawSource);
+    const senderContext = await this.resolveSenderContext(agentId);
+    const idempotency = await this.checkOutboundIdempotency(
+      tenantId,
+      idempotencyKey,
+      senderContext,
+      source,
+    );
+    if (idempotency.reused) return idempotency.response;
+
+    const conversation = await this.conversationRepo.findById(conversationId);
+    if (!conversation) {
+      throw new Error(`Conversation ${conversationId} not found`);
+    }
+    await this.resolveChannelForOutbound(tenantId, conversation);
+    this.enforceReplyWindow(conversation);
+    this.handleImplicitAssignment(
+      tenantId,
+      conversationId,
+      agentId,
+      conversation,
+    );
+    await this.handleBotAutoDisable(
+      tenantId,
+      conversationId,
+      agentId,
+      conversation,
+    );
+
+    let message = idempotency.retryMessage;
+    if (message) {
+      await this.messageRepo.updateStatus(message.id, 'sending');
+    } else {
+      try {
+        message = await this.persistOutboundMessage({
+          tenantId,
+          conversationId,
+          agentId,
+          senderContext,
+          source,
+          messageType,
+          content,
+          idempotencyKey,
+          clientMessageId,
+          transport,
+        });
+      } catch (error) {
+        const recovered = await this.recoverFromDuplicateKey(
+          error,
+          tenantId,
+          idempotencyKey,
+          senderContext,
+          source,
+        );
+        if (recovered) return recovered;
+        throw error;
+      }
+      await this.conversationRepo.updateLastMessage(
+        conversationId,
+        content.substring(0, 200),
+        new Date(),
+        'agent',
+      );
+    }
+
+    const queued = await this.deliveryCommands.enqueue({
+      tenantId,
+      messageId: message.id,
+      conversationId,
+      agentId,
+      content,
+      messageType,
+      kind: 'text',
+      payload: {},
+      source,
+      transport,
+      idempotencyKey,
+      clientMessageId,
+    });
+
+    return {
+      ok: true,
+      queued: true,
+      deferred: queued.deferred,
+      commandId: queued.commandId,
+      messageId: message.id,
+      status: 'sending',
+      idempotencyKey,
+      clientMessageId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? null,
+      source,
+    };
+  }
 
   /**
    * Send a reply from an agent to a customer.
@@ -191,6 +317,14 @@ export class OutboundService {
       );
     }
 
+    const deliveryAttemptId = await this.deliveryAttempts.start({
+      tenantId,
+      messageId: message.id,
+      conversationId,
+      channelId: conversation.channelId,
+      channelType: conversation.channelType,
+    });
+
     try {
       const externalId = await this.dispatchToProvider(
         conversation,
@@ -200,6 +334,17 @@ export class OutboundService {
         messageType,
       );
 
+      await this.deliveryAttempts
+        .succeed(deliveryAttemptId, externalId)
+        .catch((ledgerError: unknown) => {
+          this.logger.error(
+            `Provider accepted message ${message.id}, but the delivery ledger could not be completed: ${
+              ledgerError instanceof Error
+                ? ledgerError.message
+                : String(ledgerError)
+            }`,
+          );
+        });
       await this.messageRepo.updateStatus(message.id, 'sent', externalId);
       this.emitMessageSentEvent({
         tenantId,
@@ -237,6 +382,17 @@ export class OutboundService {
         source,
       };
     } catch (error) {
+      await this.deliveryAttempts
+        .fail(deliveryAttemptId, error)
+        .catch((ledgerError: unknown) => {
+          this.logger.error(
+            `Could not record failed delivery attempt ${deliveryAttemptId}: ${
+              ledgerError instanceof Error
+                ? ledgerError.message
+                : String(ledgerError)
+            }`,
+          );
+        });
       await this.handleOutboundError(message, idempotency.redisKey, error);
       throw error;
     }
@@ -639,10 +795,7 @@ export class OutboundService {
       );
     }
 
-    const channel = await this.resolveChannelForOutbound(
-      tenantId,
-      conversation,
-    );
+    await this.resolveChannelForOutbound(tenantId, conversation);
 
     // NOTE: Template messages deliberately SKIP enforceReplyWindow().
     // WhatsApp templates are pre-approved by Meta and are the only
@@ -695,69 +848,35 @@ export class OutboundService {
       'agent',
     );
 
-    // 5. Send via WhatsApp adapter
-    try {
-      const adapter = this.adapters.get('whatsapp');
-      if (!adapter?.sendTemplate) {
-        throw new Error(
-          'WhatsApp adapter or sendTemplate method not available',
-        );
-      }
+    const queued = await this.deliveryCommands.enqueue({
+      tenantId,
+      messageId: message.id,
+      conversationId,
+      agentId,
+      content: contentSummary,
+      messageType: 'template',
+      kind: 'template',
+      payload: { templateName, languageCode, components },
+      source,
+      transport,
+      idempotencyKey,
+      clientMessageId,
+    });
 
-      const adapterResponse = await adapter.sendTemplate(
-        conversation.customer.externalId,
-        templateName,
-        languageCode,
-        components,
-        { credentials: channel.credentials, account: channel.account },
-      );
-
-      const externalId = adapterResponse?.message_id || adapterResponse?.id;
-      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
-
-      this.eventEmitter.emit('omni.message.sent', {
-        tenantId,
-        conversationId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        senderAvatarUrl: senderContext.avatarUrl ?? null,
-        senderType: 'agent',
-        direction: 'outbound',
-        source,
-        messageType: 'template',
-        content: contentSummary,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        clientMessageId,
-        transport,
-        timestamp: new Date().toISOString(),
-        createdAt: message.createdAt,
-        metadata: message.metadata,
-      });
-
-      return {
-        ok: true,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        clientMessageId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        senderAvatarUrl: senderContext.avatarUrl ?? null,
-        source,
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.logger.error(
-        `Failed to send WhatsApp template '${templateName}': ${errorMessage}`,
-      );
-      await this.messageRepo.updateStatus(message.id, 'failed');
-      throw error;
-    }
+    return {
+      ok: true,
+      queued: true,
+      deferred: queued.deferred,
+      commandId: queued.commandId,
+      messageId: message.id,
+      status: 'sending',
+      idempotencyKey,
+      clientMessageId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? null,
+      source,
+    };
   }
 
   /**
@@ -1242,66 +1361,35 @@ export class OutboundService {
       'agent',
     );
 
-    try {
-      let adapterResponse: any = null;
-      const adapter = this.adapters.get(
-        conversation.channelType.toLowerCase() as ChannelType,
-      );
-      if (adapter) {
-        adapterResponse = await this.dispatchInteractiveToProvider(
-          conversation,
-          channel,
-          message,
-          body,
-          buttons,
-          adapter,
-        );
-      }
+    const queued = await this.deliveryCommands.enqueue({
+      tenantId,
+      messageId: message.id,
+      conversationId,
+      agentId,
+      content: body,
+      messageType: 'interactive',
+      kind: 'interactive',
+      payload: { body, buttons },
+      source,
+      transport,
+      idempotencyKey,
+      clientMessageId,
+    });
 
-      const externalId = adapterResponse?.message_id || adapterResponse?.id;
-      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
-
-      this.eventEmitter.emit('omni.message.sent', {
-        tenantId,
-        conversationId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        senderAvatarUrl: senderContext.avatarUrl ?? null,
-        senderType: 'agent',
-        direction: 'outbound',
-        source,
-        messageType: 'interactive',
-        content: body,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        clientMessageId,
-        transport,
-        timestamp: new Date().toISOString(),
-        createdAt: message.createdAt,
-        metadata: message.metadata,
-      });
-
-      return {
-        ok: true,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        clientMessageId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        senderAvatarUrl: senderContext.avatarUrl ?? null,
-        source,
-      };
-    } catch (error) {
-      this.logger.error(
-        `Failed to send interactive: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      await this.messageRepo.updateStatus(message.id, 'failed');
-      throw error;
-    }
+    return {
+      ok: true,
+      queued: true,
+      deferred: queued.deferred,
+      commandId: queued.commandId,
+      messageId: message.id,
+      status: 'sending',
+      idempotencyKey,
+      clientMessageId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? null,
+      source,
+    };
   }
 
   /**
@@ -1406,66 +1494,35 @@ export class OutboundService {
       'agent',
     );
 
-    try {
-      let adapterResponse: any = null;
-      const adapter = this.adapters.get(
-        conversation.channelType.toLowerCase() as ChannelType,
-      );
-      if (adapter) {
-        adapterResponse = await this.dispatchCarouselToProvider(
-          conversation,
-          channel,
-          message,
-          content,
-          cards,
-          adapter,
-        );
-      }
+    const queued = await this.deliveryCommands.enqueue({
+      tenantId,
+      messageId: message.id,
+      conversationId,
+      agentId,
+      content: contentSummary,
+      messageType: 'carousel',
+      kind: 'carousel',
+      payload: { content, cards },
+      source,
+      transport,
+      idempotencyKey,
+      clientMessageId,
+    });
 
-      const externalId = adapterResponse?.message_id || adapterResponse?.id;
-      await this.messageRepo.updateStatus(message.id, 'sent', externalId);
-
-      this.eventEmitter.emit('omni.message.sent', {
-        tenantId,
-        conversationId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        senderAvatarUrl: senderContext.avatarUrl ?? null,
-        senderType: 'agent',
-        direction: 'outbound',
-        source,
-        messageType: 'carousel',
-        content: contentSummary,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        clientMessageId,
-        transport,
-        timestamp: new Date().toISOString(),
-        createdAt: message.createdAt,
-        metadata: message.metadata,
-      });
-
-      return {
-        ok: true,
-        messageId: message.id,
-        externalMessageId: externalId,
-        status: 'sent',
-        idempotencyKey,
-        clientMessageId,
-        senderId: agentId,
-        senderName: senderContext.name,
-        senderAvatarUrl: senderContext.avatarUrl ?? null,
-        source,
-      };
-    } catch (error) {
-      this.logger.error(
-        `Failed to send carousel: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      await this.messageRepo.updateStatus(message.id, 'failed');
-      throw error;
-    }
+    return {
+      ok: true,
+      queued: true,
+      deferred: queued.deferred,
+      commandId: queued.commandId,
+      messageId: message.id,
+      status: 'sending',
+      idempotencyKey,
+      clientMessageId,
+      senderId: agentId,
+      senderName: senderContext.name,
+      senderAvatarUrl: senderContext.avatarUrl ?? null,
+      source,
+    };
   }
 
   /**

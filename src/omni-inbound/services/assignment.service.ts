@@ -26,6 +26,8 @@ import { ConversationCommitPort } from '../assignment/conversation-commit.port';
 import { ConversationCandidatePort } from '../assignment/conversation-candidate.port';
 import { RecordCandidatePort } from '../../assignment/adapters/record/record-candidate.port';
 import { AgentPresenceService } from './agent-presence.service';
+import { WorkDistributionService } from '../work-distribution/work-distribution.service';
+import { resolveCapacityWeight } from '../work-distribution/capacity-policy';
 
 /**
  * Per-channel routing override, stored on the channel as `channel.config.routing`.
@@ -161,6 +163,7 @@ export class AssignmentService implements OnModuleInit {
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectQueue(OMNI_STICKY_RETRY_QUEUE)
     private readonly stickyRetryQueue: Queue<StickyRetryJobData>,
+    private readonly workDistribution: WorkDistributionService,
   ) {}
 
   /**
@@ -445,7 +448,14 @@ export class AssignmentService implements OnModuleInit {
               groupId,
               options.expectedPreviousAgentId ?? null,
             )
-        : undefined,
+        : (assigneeId, groupId) =>
+            this.workDistribution.createOfferFromReservation({
+              tenantId,
+              conversationId,
+              agentId: assigneeId,
+              groupId,
+            }),
+      commitOutcome: options.allowReassignment ? 'assigned' : 'offered',
       source: options.source ?? 'inbound',
       sourceWorkflowId: options.sourceWorkflowId ?? null,
       channelType: options.routingContext?.channel ?? null,
@@ -456,7 +466,7 @@ export class AssignmentService implements OnModuleInit {
 
     const decision = await this.core.assign(request);
     await this.afterDecision(tenantId, conversationId, decision, options);
-    return decision.assigneeId;
+    return decision.outcome === 'assigned' ? decision.assigneeId : null;
   }
 
   /**
@@ -551,6 +561,7 @@ export class AssignmentService implements OnModuleInit {
       business_hours: context.businessHours,
       org_unit: context.orgUnitId,
       language: context.language,
+      capacityWeight: resolveCapacityWeight(context.channel ?? 'unknown'),
     };
   }
 

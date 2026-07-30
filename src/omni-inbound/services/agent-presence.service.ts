@@ -69,13 +69,17 @@ const LUA_ATOMIC_RELEASE =
 local presenceHash = KEYS[1]
 local loadZset = KEYS[2]
 local agentId = ARGV[1]
+local weight = tonumber(ARGV[2] or 1)
 local raw = redis.call('HGET', presenceHash, agentId)
 if not raw then return nil end
 
 local data = cjson.decode(raw)
-data.activeConversations = math.max(0, data.activeConversations - 1)
+local previousCount = tonumber(data.activeConversations or 0)
+local previousUnits = tonumber(data.activeCapacityUnits or previousCount)
+data.activeConversations = math.max(0, previousCount - 1)
+data.activeCapacityUnits = math.max(0, previousUnits - weight)
 
-if data.activeConversations < data.maxCapacity then
+if data.activeCapacityUnits < data.maxCapacity then
   data.capacityStatus = 'OK'
 else
   data.capacityStatus = 'FULL'
@@ -83,7 +87,7 @@ end
 recomputeDisplay(data)
 
 redis.call('HSET', presenceHash, agentId, cjson.encode(data))
-redis.call('ZADD', loadZset, data.activeConversations, agentId)
+redis.call('ZADD', loadZset, data.activeCapacityUnits, agentId)
 return cjson.encode(data)
 `;
 
@@ -114,6 +118,7 @@ local loadZset = KEYS[2]
 local candidateCount = tonumber(ARGV[1])
 local nowMs = tonumber(ARGV[candidateCount + 2])
 local heartbeatTtlMs = tonumber(ARGV[candidateCount + 3])
+local weight = tonumber(ARGV[candidateCount + 4] or 1)
 local bestAgent = nil
 local bestLoad = nil
 
@@ -122,9 +127,10 @@ for i = 1, candidateCount do
   local raw = redis.call('HGET', presenceHash, agentId)
   if raw then
     local data = cjson.decode(raw)
-    local active = tonumber(data.activeConversations or 0)
+    local active = tonumber(data.activeCapacityUnits or data.activeConversations or 0)
     local capacity = tonumber(data.maxCapacity or 0)
-    if eligible(data, active, capacity, nowMs, heartbeatTtlMs) then
+    if eligible(data, active, capacity, nowMs, heartbeatTtlMs)
+      and active + weight <= capacity then
       local score = redis.call('ZSCORE', loadZset, agentId)
       local load = tonumber(score or active)
       if bestLoad == nil or load < bestLoad then
@@ -140,12 +146,13 @@ if not bestAgent then return nil end
 local raw = redis.call('HGET', presenceHash, bestAgent)
 if not raw then return nil end
 local data = cjson.decode(raw)
-local active = tonumber(data.activeConversations or 0)
+local active = tonumber(data.activeCapacityUnits or data.activeConversations or 0)
 local capacity = tonumber(data.maxCapacity or 0)
-if active >= capacity then return nil end
+if active + weight > capacity then return nil end
 
-active = active + 1
-data.activeConversations = active
+active = active + weight
+data.activeCapacityUnits = active
+data.activeConversations = tonumber(data.activeConversations or 0) + 1
 if active >= capacity then data.capacityStatus = 'FULL' else data.capacityStatus = 'OK' end
 
 redis.call('HSET', presenceHash, bestAgent, cjson.encode(data))
@@ -163,14 +170,16 @@ return bestAgent
  */
 const LUA_CLAIM_IF_UNDER_CAPACITY = `
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
+local weight = tonumber(ARGV[2] or 1)
 if not raw then return 0 end
 local data = cjson.decode(raw)
-local active = tonumber(data.activeConversations or 0)
+local active = tonumber(data.activeCapacityUnits or data.activeConversations or 0)
 local capacity = tonumber(data.maxCapacity or 0)
-if capacity <= 0 or active >= capacity then return 0 end
+if capacity <= 0 or active + weight > capacity then return 0 end
 
-active = active + 1
-data.activeConversations = active
+active = active + weight
+data.activeCapacityUnits = active
+data.activeConversations = tonumber(data.activeConversations or 0) + 1
 if active >= capacity then data.capacityStatus = 'FULL' else data.capacityStatus = 'OK' end
 
 redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(data))
@@ -193,6 +202,7 @@ local candidateCount = tonumber(ARGV[1])
 local nowMs = tonumber(ARGV[candidateCount + 2])
 local heartbeatTtlMs = tonumber(ARGV[candidateCount + 3])
 local tenantFallbackCap = tonumber(ARGV[candidateCount + 4])
+local weight = tonumber(ARGV[candidateCount + 5] or 1)
 local bestAgent = nil
 local bestLoad = nil
 local bestCap = nil
@@ -208,7 +218,7 @@ for i = 1, candidateCount do
   local raw = redis.call('HGET', presenceHash, agentId)
   if raw then
     local data = cjson.decode(raw)
-    local active = tonumber(data.activeConversations or 0)
+    local active = tonumber(data.activeCapacityUnits or data.activeConversations or 0)
     local capacity = effectiveCap(tonumber(data.maxCapacity or 0))
     local heartbeatMs = tonumber(data.lastHeartbeatMs or 0)
     local isStale = nowMs - heartbeatMs > heartbeatTtlMs
@@ -217,7 +227,7 @@ for i = 1, candidateCount do
       and data.connectionStatus == 'CONNECTED'
       and data.routingStatus == 'ACCEPTING'
       and capacity > 0
-      and active < capacity then
+      and active + weight <= capacity then
       local score = redis.call('ZSCORE', loadZset, agentId)
       local load = tonumber(score or active)
       if bestLoad == nil or load < bestLoad then
@@ -234,11 +244,12 @@ if not bestAgent then return nil end
 local raw = redis.call('HGET', presenceHash, bestAgent)
 if not raw then return nil end
 local data = cjson.decode(raw)
-local active = tonumber(data.activeConversations or 0)
-if active >= bestCap then return nil end
+local active = tonumber(data.activeCapacityUnits or data.activeConversations or 0)
+if active + weight > bestCap then return nil end
 
-active = active + 1
-data.activeConversations = active
+active = active + weight
+data.activeCapacityUnits = active
+data.activeConversations = tonumber(data.activeConversations or 0) + 1
 local ownCap = tonumber(data.maxCapacity or 0)
 if ownCap > 0 and active >= ownCap then data.capacityStatus = 'FULL' else data.capacityStatus = 'OK' end
 recomputeDisplay(data)
@@ -260,17 +271,20 @@ local loadZset = KEYS[2]
 local candidateCount = tonumber(ARGV[1])
 local nowMs = tonumber(ARGV[candidateCount + 2])
 local heartbeatTtlMs = tonumber(ARGV[candidateCount + 3])
+local weight = tonumber(ARGV[candidateCount + 4] or 1)
 
 for i = 1, candidateCount do
   local agentId = ARGV[i + 1]
   local raw = redis.call('HGET', presenceHash, agentId)
   if raw then
     local data = cjson.decode(raw)
-    local active = tonumber(data.activeConversations or 0)
+    local active = tonumber(data.activeCapacityUnits or data.activeConversations or 0)
     local capacity = tonumber(data.maxCapacity or 0)
-    if eligible(data, active, capacity, nowMs, heartbeatTtlMs) then
-      active = active + 1
-      data.activeConversations = active
+    if eligible(data, active, capacity, nowMs, heartbeatTtlMs)
+      and active + weight <= capacity then
+      active = active + weight
+      data.activeCapacityUnits = active
+      data.activeConversations = tonumber(data.activeConversations or 0) + 1
       if active >= capacity then data.capacityStatus = 'FULL' else data.capacityStatus = 'OK' end
       redis.call('HSET', presenceHash, agentId, cjson.encode(data))
       redis.call('ZADD', loadZset, active, agentId)
@@ -348,7 +362,7 @@ export class AgentPresenceService {
 
     // Derived fields — always recomputed so they can never drift.
     presence.capacityStatus = computeCapacityStatus(
-      presence.activeConversations,
+      presence.activeCapacityUnits,
       presence.maxCapacity,
     );
     presence.status = computeDisplayStatus(
@@ -363,7 +377,7 @@ export class AgentPresenceService {
     const pipeline = client.pipeline();
     pipeline.setex(key, HEARTBEAT_TTL_SECONDS, encoded);
     pipeline.hset(hashKey, presence.userId, encoded);
-    pipeline.zadd(loadKey, presence.activeConversations, presence.userId);
+    pipeline.zadd(loadKey, presence.activeCapacityUnits, presence.userId);
     pipeline.expire(hashKey, 86400);
     pipeline.expire(loadKey, 86400);
     // Track tenants with live presence so the rollover cron can enumerate them
@@ -380,7 +394,9 @@ export class AgentPresenceService {
 
   private parsePresence(raw: string): AgentPresence | null {
     try {
-      return JSON.parse(raw) as AgentPresence;
+      const presence = JSON.parse(raw) as AgentPresence;
+      presence.activeCapacityUnits ??= presence.activeConversations ?? 0;
+      return presence;
     } catch {
       return null;
     }
@@ -400,6 +416,8 @@ export class AgentPresenceService {
       connectionStatus: base.connectionStatus ?? 'DISCONNECTED',
       status: 'offline',
       activeConversations: base.activeConversations ?? 0,
+      activeCapacityUnits:
+        base.activeCapacityUnits ?? base.activeConversations ?? 0,
       maxCapacity: base.maxCapacity ?? DEFAULT_MAX_CAPACITY,
       skills: base.skills,
       connections: base.connections ?? [],
@@ -568,7 +586,7 @@ export class AgentPresenceService {
         routingStatus: existing.routingStatus,
         workStatus: existing.workStatus,
         connectionStatus: existing.connectionStatus,
-        currentLoad: existing.activeConversations,
+        currentLoad: existing.activeCapacityUnits,
         maxLoad: existing.maxCapacity,
         updatedAtMs: existing.lastHeartbeatMs,
       },
@@ -639,7 +657,7 @@ export class AgentPresenceService {
         routingStatus: existing.routingStatus,
         workStatus: existing.workStatus,
         connectionStatus: existing.connectionStatus,
-        currentLoad: existing.activeConversations,
+        currentLoad: existing.activeCapacityUnits,
         maxLoad: existing.maxCapacity,
         updatedAtMs: existing.lastHeartbeatMs,
       },
@@ -780,6 +798,8 @@ export class AgentPresenceService {
       workStatus: existing?.workStatus ?? 'IDLE',
       connectionStatus: 'CONNECTED',
       activeConversations: existing?.activeConversations ?? 0,
+      activeCapacityUnits:
+        existing?.activeCapacityUnits ?? existing?.activeConversations ?? 0,
       maxCapacity,
       skills: attributes?.skills ?? existing?.skills,
       connections,
@@ -865,7 +885,7 @@ export class AgentPresenceService {
         routingStatus: existing.routingStatus,
         workStatus: existing.workStatus,
         connectionStatus: existing.connectionStatus,
-        currentLoad: existing.activeConversations,
+        currentLoad: existing.activeCapacityUnits,
         maxLoad: existing.maxCapacity,
         updatedAtMs: existing.lastHeartbeatMs,
       },
@@ -897,7 +917,7 @@ export class AgentPresenceService {
         routingStatus: existing.routingStatus,
         workStatus: existing.workStatus,
         connectionStatus: existing.connectionStatus,
-        currentLoad: existing.activeConversations,
+        currentLoad: existing.activeCapacityUnits,
         maxLoad: existing.maxCapacity,
         updatedAtMs: existing.lastHeartbeatMs,
       },
@@ -944,7 +964,11 @@ export class AgentPresenceService {
    * Atomically increment the active conversation count (used by direct/manual
    * assignment to keep Redis in sync). No-op if the agent has no presence.
    */
-  async assignConversation(tenantId: string, userId: string): Promise<void> {
+  async assignConversation(
+    tenantId: string,
+    userId: string,
+    workloadWeight = 1,
+  ): Promise<void> {
     const client = this.redis.getClient();
     const hashKey = tenantPresenceHashKey(tenantId);
     const loadKey = tenantAgentLoadKey(tenantId);
@@ -956,15 +980,17 @@ export class AgentPresenceService {
       const data: AgentPresence = JSON.parse(raw);
       const active = (data.activeConversations ?? 0) + 1;
       data.activeConversations = active;
+      data.activeCapacityUnits =
+        (data.activeCapacityUnits ?? active - 1) + workloadWeight;
       data.capacityStatus = computeCapacityStatus(
-        active,
+        data.activeCapacityUnits,
         data.maxCapacity ?? DEFAULT_MAX_CAPACITY,
       );
 
       const encoded = JSON.stringify(data);
       const pipeline = client.pipeline();
       pipeline.hset(hashKey, userId, encoded);
-      pipeline.zadd(loadKey, active, userId);
+      pipeline.zadd(loadKey, data.activeCapacityUnits, userId);
       await pipeline.exec();
     } catch {
       // Corrupted record — skip silently
@@ -983,6 +1009,7 @@ export class AgentPresenceService {
   async claimIfUnderCapacity(
     tenantId: string,
     userId: string,
+    workloadWeight = 1,
   ): Promise<boolean> {
     const client = this.redis.getClient();
     const result = await client.eval(
@@ -991,6 +1018,7 @@ export class AgentPresenceService {
       tenantPresenceHashKey(tenantId),
       tenantAgentLoadKey(tenantId),
       userId,
+      workloadWeight.toString(),
     );
     return result === 1;
   }
@@ -998,6 +1026,7 @@ export class AgentPresenceService {
   async reserveAgentFromCandidates(
     tenantId: string,
     candidateIds: string[],
+    workloadWeight = 1,
   ): Promise<string | null> {
     const candidates = [...new Set(candidateIds.filter(Boolean))];
     if (candidates.length === 0) return null;
@@ -1012,6 +1041,7 @@ export class AgentPresenceService {
       ...candidates,
       Date.now().toString(),
       (HEARTBEAT_TTL_SECONDS * 1000).toString(),
+      workloadWeight.toString(),
     );
     return typeof result === 'string' ? result : null;
   }
@@ -1019,6 +1049,7 @@ export class AgentPresenceService {
   async reserveFirstEligibleAgent(
     tenantId: string,
     orderedCandidateIds: string[],
+    workloadWeight = 1,
   ): Promise<string | null> {
     const candidates = [...new Set(orderedCandidateIds.filter(Boolean))];
     if (candidates.length === 0) return null;
@@ -1033,6 +1064,7 @@ export class AgentPresenceService {
       ...candidates,
       Date.now().toString(),
       (HEARTBEAT_TTL_SECONDS * 1000).toString(),
+      workloadWeight.toString(),
     );
     return typeof result === 'string' ? result : null;
   }
@@ -1041,6 +1073,7 @@ export class AgentPresenceService {
     tenantId: string,
     candidateIds: string[],
     tenantFallbackCapacity: number,
+    workloadWeight = 1,
   ): Promise<string | null> {
     const candidates = [...new Set(candidateIds.filter(Boolean))];
     if (candidates.length === 0) return null;
@@ -1059,6 +1092,7 @@ export class AgentPresenceService {
         ? tenantFallbackCapacity
         : DEFAULT_MAX_CAPACITY
       ).toString(),
+      workloadWeight.toString(),
     );
     return typeof result === 'string' ? result : null;
   }
@@ -1067,7 +1101,11 @@ export class AgentPresenceService {
    * Atomically decrement the active conversation count. NEVER changes
    * presenceStatus or routingStatus — only capacityStatus (FULL → OK).
    */
-  async releaseConversation(tenantId: string, userId: string): Promise<void> {
+  async releaseConversation(
+    tenantId: string,
+    userId: string,
+    workloadWeight = 1,
+  ): Promise<void> {
     const client = this.redis.getClient();
     const result = await client.eval(
       LUA_ATOMIC_RELEASE,
@@ -1075,6 +1113,7 @@ export class AgentPresenceService {
       tenantPresenceHashKey(tenantId),
       tenantAgentLoadKey(tenantId),
       userId,
+      workloadWeight.toString(),
     );
 
     if (result) {
@@ -1100,6 +1139,7 @@ export class AgentPresenceService {
     tenantId: string,
     userId: string,
     actual: number,
+    actualCapacityUnits = actual,
   ): Promise<void> {
     const client = this.redis.getClient();
     const hashKey = tenantPresenceHashKey(tenantId);
@@ -1116,7 +1156,11 @@ export class AgentPresenceService {
     try {
       const data: AgentPresence = JSON.parse(raw);
       data.activeConversations = actual;
-      data.capacityStatus = computeCapacityStatus(actual, data.maxCapacity);
+      data.activeCapacityUnits = actualCapacityUnits;
+      data.capacityStatus = computeCapacityStatus(
+        actualCapacityUnits,
+        data.maxCapacity,
+      );
       data.status = computeDisplayStatus(
         data.presenceStatus,
         data.routingStatus,
@@ -1126,7 +1170,7 @@ export class AgentPresenceService {
       const encoded = JSON.stringify(data);
       const pipeline = client.pipeline();
       pipeline.hset(hashKey, userId, encoded);
-      pipeline.zadd(loadKey, actual, userId);
+      pipeline.zadd(loadKey, actualCapacityUnits, userId);
       pipeline.setex(
         agentPresenceKey(tenantId, userId),
         HEARTBEAT_TTL_SECONDS,
@@ -1211,7 +1255,7 @@ export class AgentPresenceService {
         presenceStatus: a.presenceStatus,
         connectionStatus: a.connectionStatus,
         routingStatus: a.routingStatus,
-        currentLoad: a.activeConversations,
+        currentLoad: a.activeCapacityUnits,
         maxLoad: a.maxCapacity,
       }),
     );

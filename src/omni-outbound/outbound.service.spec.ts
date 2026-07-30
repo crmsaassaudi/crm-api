@@ -24,6 +24,8 @@ describe('OutboundService', () => {
   let adapters: Map<string, any>;
   let redis: any;
   let usersService: any;
+  let deliveryAttempts: any;
+  let deliveryCommands: any;
 
   const replyWindowCfg = {
     facebook: 24,
@@ -100,6 +102,16 @@ describe('OutboundService', () => {
         },
       ]),
     };
+    deliveryAttempts = {
+      start: jest.fn().mockResolvedValue('attempt_1'),
+      succeed: jest.fn().mockResolvedValue(undefined),
+      fail: jest.fn().mockResolvedValue('failed'),
+    };
+    deliveryCommands = {
+      enqueue: jest
+        .fn()
+        .mockResolvedValue({ commandId: 'command_1', deferred: false }),
+    };
 
     service = new OutboundService(
       messageRepo,
@@ -119,6 +131,8 @@ describe('OutboundService', () => {
       {} as any, // imageProcessingService
       {} as any, // mediaHandler
       {} as any, // emailHandler
+      deliveryAttempts,
+      deliveryCommands,
     );
   });
 
@@ -153,6 +167,17 @@ describe('OutboundService', () => {
         'sent',
         'ext_mid_1',
       );
+      expect(deliveryAttempts.start).toHaveBeenCalledWith({
+        tenantId: 'tenant_1',
+        messageId: 'msg_new',
+        conversationId: 'conv_1',
+        channelId: 'channel_1',
+        channelType: 'facebook',
+      });
+      expect(deliveryAttempts.succeed).toHaveBeenCalledWith(
+        'attempt_1',
+        'ext_mid_1',
+      );
       // 4. Event emitted
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'omni.message.sent',
@@ -177,6 +202,87 @@ describe('OutboundService', () => {
         expect.any(Date),
         'agent',
       );
+    });
+  });
+
+  describe('queueAgentMessage — durable delivery', () => {
+    it('should persist the message and command without calling the provider inline', async () => {
+      const result = await service.queueAgentMessage(baseSendParams);
+
+      expect(messageRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant_1',
+          conversationId: 'conv_1',
+          status: 'sending',
+        }),
+      );
+      expect(deliveryCommands.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant_1',
+          messageId: 'msg_new',
+          conversationId: 'conv_1',
+          content: 'Hello customer',
+        }),
+      );
+      expect(adapters.get('facebook')!.send).not.toHaveBeenCalled();
+      expect(result).toEqual(
+        expect.objectContaining({
+          queued: true,
+          status: 'sending',
+          commandId: 'command_1',
+          messageId: 'msg_new',
+        }),
+      );
+    });
+
+    it('should queue interactive content without provider I/O', async () => {
+      const result = await service.sendAgentInteractive({
+        tenantId: 'tenant_1',
+        conversationId: 'conv_1',
+        agentId: 'agent_1',
+        body: 'Choose',
+        buttons: [{ title: 'One' }],
+        source: 'agent_ui',
+        transport: 'socket',
+      });
+
+      expect(deliveryCommands.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'interactive',
+          payload: { body: 'Choose', buttons: [{ title: 'One' }] },
+        }),
+      );
+      expect(adapters.get('facebook')!.send).not.toHaveBeenCalled();
+      expect(result.status).toBe('sending');
+    });
+
+    it('should queue WhatsApp templates outside the free-form reply window', async () => {
+      conversationRepo.findById.mockResolvedValueOnce({
+        ...baseConversation,
+        channelType: 'whatsapp',
+        lastCustomerMessageAt: new Date(0),
+      });
+
+      const result = await service.sendAgentTemplate({
+        tenantId: 'tenant_1',
+        conversationId: 'conv_1',
+        agentId: 'agent_1',
+        templateName: 'order_update',
+        languageCode: 'en',
+        components: [],
+      });
+
+      expect(deliveryCommands.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'template',
+          payload: {
+            templateName: 'order_update',
+            languageCode: 'en',
+            components: [],
+          },
+        }),
+      );
+      expect(result.status).toBe('sending');
     });
   });
 
@@ -387,6 +493,10 @@ describe('OutboundService', () => {
         'msg_new',
         'failed',
       );
+      expect(deliveryAttempts.fail).toHaveBeenCalledWith(
+        'attempt_1',
+        expect.objectContaining({ message: 'Facebook API error 190' }),
+      );
     });
 
     it('should release Redis idempotency lock when adapter fails', async () => {
@@ -565,6 +675,16 @@ describe('normalizeOutboundSource (via sendAgentMessage)', () => {
       {} as any,
       {} as any, // mediaHandler
       {} as any, // emailHandler
+      {
+        start: jest.fn().mockResolvedValue('attempt_1'),
+        succeed: jest.fn().mockResolvedValue(undefined),
+        fail: jest.fn().mockResolvedValue('failed'),
+      } as any,
+      {
+        enqueue: jest
+          .fn()
+          .mockResolvedValue({ commandId: 'command_1', deferred: false }),
+      } as any,
     );
   });
 

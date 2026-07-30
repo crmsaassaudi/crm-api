@@ -643,8 +643,8 @@ export class ConversationRepository {
     snoozeUntil: Date,
   ): Promise<{ status: string; snoozeUntil: Date } | null> {
     const doc = await this.model
-      .findByIdAndUpdate(
-        id,
+      .findOneAndUpdate(
+        { _id: id, status: { $in: ['open', 'pending'] } },
         { $set: { status: 'pending', snoozeUntil } },
         { new: true },
       )
@@ -662,6 +662,12 @@ export class ConversationRepository {
       sessionId: string | null;
       status: 'active' | 'handoff' | 'ended';
       lastError: string | null;
+      handoffReason: string | null;
+      handoffMessage: string | null;
+      handoffTarget: 'general' | 'group' | 'agent' | null;
+      handoffTargetId: string | null;
+      handedOffAt: Date | null;
+      handedOffByInboundMessageId: string | null;
     }>,
   ): Promise<OmniConversation | null> {
     const $set: Record<string, any> = {};
@@ -687,14 +693,33 @@ export class ConversationRepository {
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
 
-  async markBotHandoff(id: string): Promise<OmniConversation | null> {
+  async markBotHandoff(
+    id: string,
+    context: {
+      reason: string;
+      message?: string;
+      target: 'general' | 'group' | 'agent';
+      targetId?: string;
+      inboundMessageId?: string;
+    },
+  ): Promise<OmniConversation | null> {
     const doc = await this.model
-      .findByIdAndUpdate(
-        id,
+      .findOneAndUpdate(
+        {
+          _id: id,
+          'bot.enabled': true,
+          'bot.status': 'active',
+        },
         {
           $set: {
             'bot.enabled': false,
             'bot.status': 'handoff',
+            'bot.handoffReason': context.reason,
+            'bot.handoffMessage': context.message ?? null,
+            'bot.handoffTarget': context.target,
+            'bot.handoffTargetId': context.targetId ?? null,
+            'bot.handedOffAt': new Date(),
+            'bot.handedOffByInboundMessageId': context.inboundMessageId ?? null,
           },
         },
         { new: true },
@@ -712,8 +737,8 @@ export class ConversationRepository {
     agentId: string,
   ): Promise<OmniConversation | null> {
     const doc = await this.model
-      .findByIdAndUpdate(
-        id,
+      .findOneAndUpdate(
+        { _id: id, status: { $in: ['open', 'pending'] } },
         {
           $set: {
             assignedAgentId: agentId,
@@ -1236,7 +1261,7 @@ export class ConversationRepository {
   }
 
   /**
-   * Reopen a resolved/closed conversation: set status back to 'open',
+   * Reopen a resolved conversation: set status back to 'open',
    * increment reopenCount, clear resolve metadata, and reset bot session
    * context so the bot starts fresh (while preserving the enabled flag).
    */
@@ -1244,8 +1269,8 @@ export class ConversationRepository {
     conversationId: string,
   ): Promise<OmniConversation | null> {
     const doc = await this.model
-      .findByIdAndUpdate(
-        conversationId,
+      .findOneAndUpdate(
+        { _id: conversationId, status: 'resolved' },
         {
           $set: {
             status: 'open',

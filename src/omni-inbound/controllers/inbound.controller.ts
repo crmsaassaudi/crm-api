@@ -8,6 +8,7 @@ import {
   HttpStatus,
   Logger,
   BadRequestException,
+  PayloadTooLargeException,
   Get,
   Query,
   Req,
@@ -106,6 +107,15 @@ export class InboundController {
     // We forward the original bytes to the adapter so HMAC verification
     // cannot be bypassed by JSON re-serialization quirks.
     const rawBody = (req as any).rawBody as Buffer | undefined;
+    const maxPayloadBytes = this.getMaxPayloadBytes();
+    if (rawBody && rawBody.byteLength > maxPayloadBytes) {
+      this.logger.warn(
+        `Rejected ${channelType} webhook payload: ${rawBody.byteLength} bytes exceeds ${maxPayloadBytes}`,
+      );
+      throw new PayloadTooLargeException(
+        `Webhook payload exceeds ${maxPayloadBytes} bytes`,
+      );
+    }
 
     const isValid = this.processor.validateWebhook(
       channelType,
@@ -246,5 +256,16 @@ export class InboundController {
         `${channelType}:${accountId || 'unknown'}:${senderId}:${providerMessageId}`,
       )
       .digest('hex');
+  }
+
+  private getMaxPayloadBytes(): number {
+    const configured = Number(
+      this.configService.get<string>('OMNI_WEBHOOK_MAX_PAYLOAD_BYTES', {
+        infer: true,
+      }),
+    );
+    return Number.isInteger(configured) && configured > 0
+      ? configured
+      : 2 * 1024 * 1024;
   }
 }
