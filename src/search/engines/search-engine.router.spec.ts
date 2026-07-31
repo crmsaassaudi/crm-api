@@ -1,5 +1,9 @@
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { SearchEngineRouter } from './search-engine.router';
+import {
+  AuthorizationFilterException,
+  IndexFilterUnsupportedException,
+} from './opensearch-filter';
 
 const request = {
   module: 'contacts' as const,
@@ -81,5 +85,143 @@ describe('SearchEngineRouter', () => {
       UnauthorizedException,
     );
     expect(mongo.search).not.toHaveBeenCalled();
+  });
+
+  it('should stop calling a dead OpenSearch once the breaker opens', async () => {
+    opensearch.search.mockRejectedValue(new Error('connection failed'));
+    mongo.search.mockResolvedValue({ data: [], nextCursor: null });
+    const instance = router(true);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await instance.search(request);
+    }
+    expect(opensearch.search).toHaveBeenCalledTimes(5);
+
+    // Sixth request must not spend another timeout on a known-dead engine.
+    await expect(instance.search(request)).resolves.toMatchObject({
+      actualEngine: 'mongodb',
+      fallbackReason: 'circuit_open',
+    });
+    expect(opensearch.search).toHaveBeenCalledTimes(5);
+  });
+
+  it('should not let a refused authorization predicate trip the breaker', async () => {
+    opensearch.search.mockRejectedValue(new BadRequestException('cursor'));
+    const instance = router(true);
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await expect(instance.search(request)).rejects.toThrow('cursor');
+    }
+    expect(opensearch.search).toHaveBeenCalledTimes(6);
+  });
+
+  it('should tag the cursor it returns with the engine that minted it', async () => {
+    opensearch.search.mockResolvedValue({ data: [], nextCursor: 'WzEuOF0' });
+    await expect(router(true).search(request)).resolves.toMatchObject({
+      nextCursor: 'os:WzEuOF0',
+      cursorReset: false,
+    });
+  });
+
+  it('should hand an engine its own cursor back untagged', async () => {
+    opensearch.search.mockResolvedValue({ data: [], nextCursor: null });
+    await router(true).search({ ...request, cursor: 'os:WzEuOF0' });
+    expect(opensearch.search).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 'WzEuOF0' }),
+    );
+  });
+
+  it('should restart a module rather than feed MongoDB an OpenSearch cursor', async () => {
+    // The breaker switching engines between two pages used to send a base64
+    // `search_after` triple to `Number()`, land on page 1 again, and then hand
+    // the resulting "NaN" back to OpenSearch as a 400.
+    opensearch.search.mockRejectedValue(new Error('connection failed'));
+    mongo.search.mockResolvedValue({ data: [], nextCursor: '2' });
+
+    await expect(
+      router(true).search({ ...request, cursor: 'os:WzEuOF0' }),
+    ).resolves.toMatchObject({
+      actualEngine: 'mongodb',
+      cursorReset: true,
+      nextCursor: 'mg:2',
+    });
+    expect(mongo.search).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: undefined }),
+    );
+    expect(metrics.incrementCounter).toHaveBeenCalledWith(
+      'crm_search_cursor_reset_total',
+      { engine: 'mongodb', module: 'contacts' },
+    );
+  });
+
+  it('should restart a module rather than feed OpenSearch a page number', async () => {
+    opensearch.search.mockResolvedValue({ data: [], nextCursor: null });
+    await expect(
+      router(true).search({ ...request, cursor: 'mg:2' }),
+    ).resolves.toMatchObject({ cursorReset: true });
+    expect(opensearch.search).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: undefined }),
+    );
+  });
+
+  it('should treat a cursor from an older build as a restart, not an error', async () => {
+    opensearch.search.mockResolvedValue({ data: [], nextCursor: null });
+    await expect(
+      router(true).search({ ...request, cursor: 'WzEuOF0' }),
+    ).resolves.toMatchObject({ cursorReset: true });
+  });
+
+  it('should serve a module from MongoDB when the index cannot express its policy', async () => {
+    opensearch.search.mockRejectedValue(
+      new IndexFilterUnsupportedException('"accountId" is not indexed'),
+    );
+    mongo.search.mockResolvedValue({ data: [], nextCursor: null });
+    const instance = router(true);
+
+    // MongoDB enforces the same predicate over the full document, so this is
+    // neither an outage nor a refusal — and it must not open the breaker,
+    // because every retry would fail identically.
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await expect(instance.search(request)).resolves.toMatchObject({
+        actualEngine: 'mongodb',
+        fallbackReason: 'filter_unsupported',
+      });
+    }
+    expect(opensearch.search).toHaveBeenCalledTimes(6);
+  });
+
+  it('should fail closed on an inexpressible policy when fallback is disabled', async () => {
+    opensearch.search.mockRejectedValue(
+      new IndexFilterUnsupportedException('"accountId" is not indexed'),
+    );
+    await expect(router(true, false).search(request)).rejects.toThrow(
+      IndexFilterUnsupportedException,
+    );
+    expect(mongo.search).not.toHaveBeenCalled();
+  });
+
+  it('should still refuse a malformed predicate outright', async () => {
+    opensearch.search.mockRejectedValue(
+      new AuthorizationFilterException('unsafe field path'),
+    );
+    await expect(router(true).search(request)).rejects.toThrow(
+      AuthorizationFilterException,
+    );
+    expect(mongo.search).not.toHaveBeenCalled();
+  });
+
+  it('should carry the engine reason onto the fallback metric', async () => {
+    opensearch.search.mockRejectedValue(
+      Object.assign(new Error('rejected'), { reason: 'rejected_400' }),
+    );
+    mongo.search.mockResolvedValue({ data: [], nextCursor: null });
+
+    await expect(router(true).search(request)).resolves.toMatchObject({
+      fallbackReason: 'rejected_400',
+    });
+    expect(metrics.incrementCounter).toHaveBeenCalledWith(
+      'crm_search_engine_errors_total',
+      { engine: 'opensearch', reason: 'rejected_400' },
+    );
   });
 });

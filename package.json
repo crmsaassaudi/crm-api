@@ -68,7 +68,8 @@
     "prepare": "is-ci || husky",
     "release": "release-it",
     "migrate:assignment-consolidation": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-assignment-consolidation.ts",
-    "migrate:strip-deprecated-permissions": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-strip-deprecated-permissions.ts"
+    "migrate:strip-deprecated-permissions": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-strip-deprecated-permissions.ts",
+    "test:search:it": "jest -c jest.search-integration.config.js --runInBand"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1039.0",

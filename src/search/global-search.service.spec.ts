@@ -17,12 +17,14 @@ describe('GlobalSearchService', () => {
   };
   const events = { emit: jest.fn() };
   const metrics = { incrementCounter: jest.fn() };
+  const settings = { getSetting: jest.fn(() => Promise.resolve({})) };
   const service = new GlobalSearchService(
     authorization as never,
     cls as unknown as ClsService,
     events as unknown as EventEmitter2,
     router as unknown as SearchEngineRouter,
     metrics as never,
+    settings as never,
   );
 
   beforeEach(() => {
@@ -112,5 +114,63 @@ describe('GlobalSearchService', () => {
       }),
     );
     expect(JSON.stringify(telemetry)).not.toContain('secret@example.com');
+  });
+
+  it('should carry restrict_own_contacts into the engine scope', async () => {
+    authorization.canPerformAction.mockResolvedValue({ allowed: true });
+    settings.getSetting.mockResolvedValueOnce({ restrict_own_contacts: true });
+    router.search.mockResolvedValue({
+      data: [],
+      nextCursor: null,
+      requestedEngine: 'opensearch',
+      actualEngine: 'opensearch',
+      fallbackUsed: false,
+    });
+
+    await service.search({
+      query: 'acme',
+      modules: ['contacts', 'deals'],
+      limitPerModule: 5,
+    });
+
+    expect(router.search).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        module: 'contacts',
+        scope: expect.objectContaining({ restrictToOwnerUserId: 'user-1' }),
+      }),
+    );
+    // The flag is contact-specific; it must not silently narrow other modules.
+    expect(router.search).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        module: 'deals',
+        scope: expect.objectContaining({ restrictToOwnerUserId: null }),
+      }),
+    );
+  });
+
+  it('should fail closed when the data access policy cannot be read', async () => {
+    authorization.canPerformAction.mockResolvedValue({ allowed: true });
+    settings.getSetting.mockRejectedValueOnce(new Error('settings down'));
+    router.search.mockResolvedValue({
+      data: [],
+      nextCursor: null,
+      requestedEngine: 'opensearch',
+      actualEngine: 'opensearch',
+      fallbackUsed: false,
+    });
+
+    await service.search({
+      query: 'acme',
+      modules: ['contacts'],
+      limitPerModule: 5,
+    });
+
+    expect(router.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: expect.objectContaining({ restrictToOwnerUserId: 'user-1' }),
+      }),
+    );
   });
 });

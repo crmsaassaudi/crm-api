@@ -11,6 +11,13 @@ export interface SearchScope {
   visibleOrgUnitIds: string[] | null;
   includeUnowned: boolean;
   abacFilter?: Record<string, unknown> | null;
+  /**
+   * The legacy `data_access_policy.restrict_own_contacts` flag. The contact
+   * repository applies it on the MongoDB path, so without it here the two
+   * engines disagree about what a scoped user may see — and OpenSearch is the
+   * wider of the two.
+   */
+  restrictToOwnerUserId?: string | null;
 }
 
 export interface EngineSearchRequest {

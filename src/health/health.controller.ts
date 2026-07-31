@@ -79,7 +79,7 @@ export class HealthController {
 
   @Get('deep')
   async deep() {
-    const report = await this.collect();
+    const report = await this.collect({ includeFreshness: true });
     return {
       status: Object.values(report).every((c) => c.status === 'ok')
         ? 'ok'
@@ -90,11 +90,13 @@ export class HealthController {
     };
   }
 
-  private async collect(): Promise<Record<string, ComponentReport>> {
+  private async collect(
+    options: { includeFreshness: boolean } = { includeFreshness: false },
+  ): Promise<Record<string, ComponentReport>> {
     const [mongo, redis, opensearch] = await Promise.all([
       this.checkMongo(),
       this.checkRedis(),
-      this.checkOpenSearch(),
+      this.checkOpenSearch(options.includeFreshness),
     ]);
     return {
       mongo,
@@ -103,16 +105,32 @@ export class HealthController {
     };
   }
 
-  private async checkOpenSearch(): Promise<ComponentReport | null> {
+  /**
+   * OpenSearch is never reported as `down`.
+   *
+   * Search falls back to MongoDB when the cluster is unreachable, so a search
+   * outage is a degradation of one feature — but `ready()` turns `down` into a
+   * 503, which withdraws every pod of the API from the load balancer. A
+   * dependency that has a working fallback must not be able to take the whole
+   * application offline.
+   */
+  private async checkOpenSearch(
+    includeFreshness: boolean,
+  ): Promise<ComponentReport | null> {
     const enabled =
       this.configService?.get('opensearch', { infer: true })?.enabled ?? false;
     if (!enabled) return null;
-    if (!this.openSearch) return { status: 'down', detail: 'no service' };
+    if (!this.openSearch) {
+      return { status: 'degraded', detail: 'no service' };
+    }
     try {
-      const [latencyMs, freshnessAgeSeconds] = await Promise.all([
-        this.openSearch.ping(),
-        this.openSearch.freshnessAgeSeconds(),
-      ]);
+      const latencyMs = await this.openSearch.ping();
+      // The freshness aggregate scans the whole index. On the readiness path
+      // that is one such scan per pod every few seconds, so it belongs to the
+      // operator-facing probe only.
+      const freshnessAgeSeconds = includeFreshness
+        ? await this.openSearch.freshnessAgeSeconds()
+        : null;
       if (freshnessAgeSeconds !== null) {
         this.metrics?.setGauge(
           'crm_search_index_freshness_age_seconds',
@@ -128,7 +146,7 @@ export class HealthController {
           : {}),
       };
     } catch {
-      return { status: 'down', detail: 'ping failed' };
+      return { status: 'degraded', detail: 'ping failed; search uses MongoDB' };
     }
   }
 

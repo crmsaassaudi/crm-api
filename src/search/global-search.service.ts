@@ -16,6 +16,7 @@ import {
 import { SearchEngineRouter } from './engines/search-engine.router';
 import { GlobalSearchResult } from './global-search.types';
 import { MetricsService } from '../observability/metrics.service';
+import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 
 interface CursorState {
   version: 2;
@@ -33,6 +34,7 @@ export class GlobalSearchService {
     private readonly events: EventEmitter2,
     private readonly router: SearchEngineRouter,
     private readonly metrics: MetricsService,
+    private readonly settings: CrmSettingsService,
   ) {}
 
   async search(input: GlobalSearchQueryDto) {
@@ -45,6 +47,8 @@ export class GlobalSearchService {
     const cursor = this.decodeCursor(input.cursor, fingerprint);
     const allowedModules: SearchModule[] = [];
     const deniedModules: SearchModule[] = [];
+    /** Modules whose pagination restarted because the engine changed. */
+    const restartedModules: SearchModule[] = [];
     const results: GlobalSearchResult[] = [];
     const nextModules: CursorState['modules'] = { ...cursor.modules };
     let requestedEngine: 'mongodb' | 'opensearch' = 'mongodb';
@@ -55,6 +59,8 @@ export class GlobalSearchService {
     const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
     if (!tenantId || !userId) throw new UnauthorizedException();
+
+    const restrictOwnContacts = await this.restrictOwnContacts();
 
     for (const module of requestedModules) {
       if (cursor.modules[module] === null) continue;
@@ -92,10 +98,13 @@ export class GlobalSearchService {
             includeUnowned:
               this.cls.get<boolean>('includeUnownedInScope') === true,
             abacFilter: decision.resourceFilter,
+            restrictToOwnerUserId:
+              module === 'contacts' && restrictOwnContacts ? userId : null,
           },
         });
         results.push(...response.data);
         nextModules[module] = response.nextCursor;
+        if (response.cursorReset) restartedModules.push(module);
         requestedEngine = response.requestedEngine;
         actualEngine = response.actualEngine;
         fallbackUsed ||= response.fallbackUsed;
@@ -124,6 +133,7 @@ export class GlobalSearchService {
       requestedModules,
       allowedModules,
       deniedModules,
+      restartedModules,
       requestedEngine,
       actualEngine,
       fallbackUsed,
@@ -171,8 +181,37 @@ export class GlobalSearchService {
         durationMs,
         allowedModules,
         deniedModules,
+        // The search engine changed between two pages, so these modules were
+        // served from their first page again. The client can tell the user why
+        // it is seeing rows it already scrolled past.
+        ...(restartedModules.length ? { restartedModules } : {}),
       },
     };
+  }
+
+  /**
+   * The contact repository narrows list queries to the caller's own records
+   * when the tenant sets `data_access_policy.restrict_own_contacts`. The
+   * OpenSearch index knows nothing about that setting, so it has to be carried
+   * into the engine scope — otherwise turning OpenSearch on quietly widens
+   * what a restricted user can find.
+   */
+  private async restrictOwnContacts(): Promise<boolean> {
+    try {
+      const policy = await this.settings.getSetting('data_access_policy');
+      return (
+        (policy as { restrict_own_contacts?: boolean })
+          ?.restrict_own_contacts === true
+      );
+    } catch (error) {
+      // Fail closed: an unreadable policy must not widen visibility.
+      this.logger.error(
+        `Could not read data_access_policy; restricting contact search to the caller: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return true;
+    }
   }
 
   private authorize(module: SearchModule, tenantId: string, userId: string) {

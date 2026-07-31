@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -26,9 +27,34 @@ interface SearchHit {
   };
 }
 
+/**
+ * A rejected query and an unreachable cluster both used to surface as the same
+ * anonymous `ServiceUnavailableException`, so a malformed request silently
+ * demoted every search to MongoDB for as long as the defect went unnoticed.
+ * The reason travels with the error and lands on the fallback metric.
+ */
+export class OpenSearchQueryException extends ServiceUnavailableException {
+  constructor(
+    readonly reason: string,
+    cause: unknown,
+  ) {
+    super('Search engine unavailable', { cause });
+  }
+}
+
+/**
+ * BM25 has no upper bound, while the MongoDB engine emits 0..1. Merging both
+ * into one list ordered every OpenSearch hit above every MongoDB hit whenever
+ * a single module fell back. Saturating puts them on one scale without
+ * depending on the page's maximum, which `search_after` does not preserve.
+ */
+const SCORE_SATURATION = 6;
+const saturate = (score: number): number => score / (score + SCORE_SATURATION);
+
 @Injectable()
 export class OpenSearchEngine implements SearchEngine {
   readonly name = 'opensearch' as const;
+  private readonly logger = new Logger(OpenSearchEngine.name);
   private readonly client: AxiosInstance;
   private readonly alias: string;
 
@@ -59,12 +85,9 @@ export class OpenSearchEngine implements SearchEngine {
         bool: {
           must: [
             {
-              multi_match: {
-                query: request.query,
-                fields: ['title^5', 'subtitle^2', 'searchText'],
-                type: 'best_fields',
-                fuzziness: 'AUTO',
-                prefix_length: 1,
+              bool: {
+                should: this.matchClauses(request.query),
+                minimum_should_match: 1,
               },
             },
           ],
@@ -76,39 +99,42 @@ export class OpenSearchEngine implements SearchEngine {
       _source: ['recordId', 'module', 'title', 'subtitle'],
     };
 
+    let response: { data?: any };
     try {
-      const response = await this.client.post(`/${this.alias}/_search`, body);
-      const hits = (response.data?.hits?.hits ?? []) as SearchHit[];
-      return {
-        data: hits.map((hit) => {
-          const source = hit._source;
-          const ranked = rankSearchResult(
-            request.query,
-            source.title,
-            source.subtitle,
-          );
-          return {
-            id: String(source.recordId),
-            module: source.module,
-            title: source.title,
-            ...(source.subtitle ? { subtitle: source.subtitle } : {}),
-            href: `/${source.module}/${source.recordId}`,
-            score: Number(hit._score ?? ranked.score),
-            highlights: ranked.highlights,
-          };
-        }),
-        nextCursor:
-          hits.length === request.limit && hits.at(-1)?.sort
-            ? Buffer.from(JSON.stringify(hits.at(-1)!.sort), 'utf8').toString(
-                'base64url',
-              )
-            : null,
-      };
+      response = await this.client.post(`/${this.alias}/_search`, body);
     } catch (error) {
-      throw new ServiceUnavailableException('Search engine unavailable', {
-        cause: error,
-      });
+      throw this.toEngineError(error);
     }
+
+    const hits = (response.data?.hits?.hits ?? []) as SearchHit[];
+    return {
+      data: hits.map((hit) => {
+        const source = hit._source;
+        const ranked = rankSearchResult(
+          request.query,
+          source.title,
+          source.subtitle,
+        );
+        const relevance = saturate(Number(hit._score ?? 0));
+        return {
+          id: String(source.recordId),
+          module: source.module,
+          title: source.title,
+          ...(source.subtitle ? { subtitle: source.subtitle } : {}),
+          href: `/${source.module}/${source.recordId}`,
+          // Engine relevance dominates; the lexical rank keeps an exact
+          // prefix match ahead of a fuzzy one at comparable BM25 scores.
+          score: Number((relevance * 0.75 + ranked.score * 0.25).toFixed(4)),
+          highlights: ranked.highlights,
+        };
+      }),
+      nextCursor:
+        hits.length === request.limit && hits.at(-1)?.sort
+          ? Buffer.from(JSON.stringify(hits.at(-1)!.sort), 'utf8').toString(
+              'base64url',
+            )
+          : null,
+    };
   }
 
   async ping(): Promise<number> {
@@ -128,6 +154,54 @@ export class OpenSearchEngine implements SearchEngine {
       : null;
   }
 
+  /**
+   * `fuzziness: AUTO` alone needs a whole word — "ngu" is three edits from
+   * "nguyen" — so the global search box returned nothing until the user
+   * finished typing. The edge n-gram and prefix clauses are what make it
+   * behave like a search box; `minimum_should_match` keeps a multi-word query
+   * from matching every record that happens to share one term.
+   */
+  private matchClauses(query: string): Record<string, unknown>[] {
+    return [
+      {
+        multi_match: {
+          query,
+          fields: ['title^5', 'subtitle^2', 'searchText'],
+          type: 'best_fields',
+          fuzziness: 'AUTO',
+          prefix_length: 1,
+          minimum_should_match: '2<70%',
+        },
+      },
+      { match_phrase: { title: { query, boost: 6 } } },
+      { match: { 'title.prefix': { query, boost: 3 } } },
+      { match: { 'subtitle.prefix': { query, boost: 1.5 } } },
+      { match_bool_prefix: { searchText: { query, boost: 1 } } },
+    ];
+  }
+
+  private toEngineError(error: unknown): OpenSearchQueryException {
+    const status = (error as any)?.response?.status;
+    if (typeof status === 'number' && status >= 400 && status < 500) {
+      // Deterministic: the cluster is fine and rejected what we sent. Falling
+      // back keeps the user working, but this is a defect and has to be loud.
+      this.logger.error(
+        `OpenSearch rejected the search request (${status}): ${JSON.stringify(
+          (error as any)?.response?.data?.error ?? {},
+        )}`,
+      );
+      return new OpenSearchQueryException(`rejected_${status}`, error);
+    }
+    if (typeof status === 'number') {
+      return new OpenSearchQueryException(`unavailable_${status}`, error);
+    }
+    const code = (error as any)?.code;
+    return new OpenSearchQueryException(
+      code === 'ECONNABORTED' ? 'timeout' : 'unreachable',
+      error,
+    );
+  }
+
   private securityFilter(
     request: EngineSearchRequest,
   ): Record<string, unknown>[] {
@@ -135,6 +209,11 @@ export class OpenSearchEngine implements SearchEngine {
       { term: { tenantId: request.scope.tenantId } },
       { term: { module: request.module } },
     ];
+    if (request.scope.restrictToOwnerUserId) {
+      filters.push({
+        term: { ownerId: request.scope.restrictToOwnerUserId },
+      });
+    }
     const owners = request.scope.visibleOwnerIds;
     if (Array.isArray(owners)) {
       const should: Record<string, unknown>[] = [
