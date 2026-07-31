@@ -28,10 +28,7 @@ export class InternalChannelsController {
 
   @Get()
   @Unprotected()
-  async listChannels(
-    @Query('tenantId') tenantId: string,
-  ) {
-
+  async listChannels(@Query('tenantId') tenantId: string) {
     if (!tenantId) {
       throw new BadRequestException('tenantId query param is required');
     }

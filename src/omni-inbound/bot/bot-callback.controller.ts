@@ -47,10 +47,7 @@ export class BotCallbackController {
   @Post('reply')
   @Unprotected()
   @HttpCode(200)
-  async handleBotCallback(
-    @Body() payload: BotCallbackDto,
-  ) {
-
+  async handleBotCallback(@Body() payload: BotCallbackDto) {
     const { conversationId, org } = payload;
     // Message bodies are customer content — log shape, never text.
     this.logger.debug(

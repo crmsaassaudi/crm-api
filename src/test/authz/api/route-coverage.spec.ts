@@ -111,6 +111,34 @@ const SELF_SCOPED_CONTROLLERS: Record<string, string> = {
 };
 
 /**
+ * Controllers whose authorization decision is genuinely inexpressible as a route
+ * decorator, and is therefore taken inside the service — per unit of work, on
+ * every request, with the outcome reported back to the caller.
+ *
+ * A much narrower bar than the lists above: one decorator must be *wrong*, not
+ * merely inconvenient. Global search fans one request out over five modules and
+ * calls `AuthorizationService.canPerformAction({action: 'view', resource:
+ * module})` for each, dropping the ones that fail and returning them as
+ * `meta.deniedModules`. Any single `@RequirePermission` would be a lie in both
+ * directions: `contacts:view` would deny a user who may only see deals, and
+ * passing it would not authorize the other four modules.
+ *
+ * An entry here is a claim that is checked by a test, not a promise: the
+ * assertion below requires each one to name the service call that enforces it.
+ */
+const SERVICE_ENFORCED_CONTROLLERS: Record<
+  string,
+  { reason: string; enforcedIn: string; call: string }
+> = {
+  'search/global-search.controller.ts': {
+    reason:
+      'one request spans five modules; the per-module RBAC decision cannot be a single route decorator',
+    enforcedIn: 'search/global-search.service.ts',
+    call: 'canPerformAction',
+  },
+};
+
+/**
  * Handlers that are authenticated but intentionally not permission-gated
  * because they act only on the caller's own identity. `key` is
  * `<controller-path>#<handlerName>`.
@@ -343,11 +371,24 @@ describe('API route authorization coverage (C-05)', () => {
     const stale = [
       ...Object.keys(PUBLIC_CONTROLLERS),
       ...Object.keys(SELF_SCOPED_CONTROLLERS),
+      ...Object.keys(SERVICE_ENFORCED_CONTROLLERS),
       ...KNOWN_UNGATED_C05,
     ].filter((file) => !known.has(file));
     // Prevents the allowlist from rotting into a permanent blanket exemption
     // after a file is renamed or deleted.
     expect(stale).toEqual([]);
+  });
+
+  it('should prove each service-enforced controller really enforces in its service', () => {
+    // Without this, the category would be a comment: a place to file a
+    // controller and never check the claim again. Each entry has to name a
+    // service that exists and calls the authorization service, so deleting the
+    // check turns the exemption red instead of leaving the route open.
+    for (const [file, entry] of Object.entries(SERVICE_ENFORCED_CONTROLLERS)) {
+      const service = readFileSync(join(SRC_ROOT, entry.enforcedIn), 'utf8');
+      expect([file, service.includes(`${entry.call}(`)]).toEqual([file, true]);
+      expect([file, entry.reason.length > 30]).toEqual([file, true]);
+    }
   });
 
   it('should keep the set of ungated controllers EXACTLY the reviewed lists', () => {
@@ -358,6 +399,7 @@ describe('API route authorization coverage (C-05)', () => {
     const accounted = new Set([
       ...Object.keys(PUBLIC_CONTROLLERS),
       ...Object.keys(SELF_SCOPED_CONTROLLERS),
+      ...Object.keys(SERVICE_ENFORCED_CONTROLLERS),
       ...KNOWN_UNGATED_C05,
     ]);
 

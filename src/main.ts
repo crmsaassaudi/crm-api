@@ -58,7 +58,8 @@ function summarizePendingSockets(): string {
         readyState?: string;
         _host?: string;
       };
-      if (socket.remotePort === undefined && socket._host === undefined) continue;
+      if (socket.remotePort === undefined && socket._host === undefined)
+        continue;
 
       const target =
         socket.remoteAddress !== undefined && socket.remotePort !== undefined
@@ -86,9 +87,10 @@ function startBootstrapWatchdog(): () => void {
   const timer = setInterval(() => {
     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
     // getActiveResourcesInfo(): e.g. ["TCPSocketWrap", "DNSChannel", "Timeout"]
-    const resources = (
-      process as unknown as { getActiveResourcesInfo?: () => string[] }
-    ).getActiveResourcesInfo?.() ?? [];
+    const resources =
+      (
+        process as unknown as { getActiveResourcesInfo?: () => string[] }
+      ).getActiveResourcesInfo?.() ?? [];
     const counts = resources.reduce<Record<string, number>>((acc, name) => {
       acc[name] = (acc[name] ?? 0) + 1;
       return acc;
