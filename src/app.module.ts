@@ -85,6 +85,7 @@ import { LivechatModule } from './livechat/livechat.module';
 import { TelegramModule } from './channels/telegram/telegram.module';
 import { DashboardsModule } from './dashboards/dashboards.module';
 import { InboxesModule } from './inboxes/inboxes.module';
+import { SearchModule } from './search/search.module';
 
 import {
   KeycloakConnectModule,
@@ -190,6 +191,7 @@ function bullBoardBasicAuth() {
       inject: [ConfigService],
     }),
     infrastructureDatabaseModule,
+    SearchModule,
     ThrottlerModule.forRoot([
       // Burst protection: block aggressive bots hammering in quick succession
       { name: 'burst', ttl: 1_000, limit: 10 },
