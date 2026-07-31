@@ -1,33 +1,28 @@
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
+import { SearchEngineRouter } from './engines/search-engine.router';
 import { GlobalSearchService } from './global-search.service';
 
 describe('GlobalSearchService', () => {
-  const contacts = { findAll: jest.fn() };
-  const accounts = { findAll: jest.fn() };
-  const deals = { findAll: jest.fn() };
-  const tickets = { findAll: jest.fn() };
-  const tasks = { findAll: jest.fn() };
   const authorization = { canPerformAction: jest.fn() };
+  const router = { search: jest.fn() };
   const context = new Map<string, unknown>([
     ['tenantId', 'tenant-1'],
     ['userId', 'user-1'],
+    ['visibleOwnerIds', ['user-1']],
   ]);
   const cls = {
     get: jest.fn((key: string) => context.get(key)),
     set: jest.fn((key: string, value: unknown) => context.set(key, value)),
   };
   const events = { emit: jest.fn() };
-
+  const metrics = { incrementCounter: jest.fn() };
   const service = new GlobalSearchService(
-    contacts as never,
-    accounts as never,
-    deals as never,
-    tickets as never,
-    tasks as never,
     authorization as never,
     cls as unknown as ClsService,
     events as unknown as EventEmitter2,
+    router as unknown as SearchEngineRouter,
+    metrics as never,
   );
 
   beforeEach(() => {
@@ -35,16 +30,19 @@ describe('GlobalSearchService', () => {
     context.delete('abacResourceFilter');
   });
 
-  it('should omit denied modules and never query their repositories', async () => {
+  it('should omit denied modules and never query their engine', async () => {
     authorization.canPerformAction
       .mockResolvedValueOnce({
         allowed: true,
         resourceFilter: { ownerId: 'user-1' },
       })
       .mockResolvedValueOnce({ allowed: false });
-    contacts.findAll.mockResolvedValue({
-      data: [{ id: 'contact-1', firstName: 'Acme' }],
-      hasNextPage: false,
+    router.search.mockResolvedValue({
+      data: [],
+      nextCursor: null,
+      requestedEngine: 'opensearch',
+      actualEngine: 'opensearch',
+      fallbackUsed: false,
     });
 
     const response = await service.search({
@@ -53,55 +51,66 @@ describe('GlobalSearchService', () => {
       limitPerModule: 5,
     });
 
-    expect(contacts.findAll).toHaveBeenCalledWith({
-      search: 'acme',
-      page: 1,
-      limit: 5,
-    });
-    expect(accounts.findAll).not.toHaveBeenCalled();
+    expect(router.search).toHaveBeenCalledTimes(1);
+    expect(router.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        module: 'contacts',
+        scope: expect.objectContaining({
+          tenantId: 'tenant-1',
+          userId: 'user-1',
+          visibleOwnerIds: ['user-1'],
+          abacFilter: { ownerId: 'user-1' },
+        }),
+      }),
+    );
     expect(response.meta.allowedModules).toEqual(['contacts']);
     expect(response.meta.deniedModules).toEqual(['accounts']);
     expect(context.get('abacResourceFilter')).toBeUndefined();
   });
 
-  it('should return an opaque cursor and continue each module independently', async () => {
+  it('should return an opaque cursor and map telemetry without raw query', async () => {
     authorization.canPerformAction.mockResolvedValue({ allowed: true });
-    contacts.findAll
+    router.search
       .mockResolvedValueOnce({
-        data: [{ id: 'contact-1', firstName: 'Acme' }],
-        hasNextPage: true,
+        data: [],
+        nextCursor: 'engine-cursor',
+        requestedEngine: 'opensearch',
+        actualEngine: 'mongodb',
+        fallbackUsed: true,
+        fallbackReason: 'ServiceUnavailableException',
       })
       .mockResolvedValueOnce({
-        data: [{ id: 'contact-2', firstName: 'Acme Two' }],
-        hasNextPage: false,
+        data: [],
+        nextCursor: null,
+        requestedEngine: 'opensearch',
+        actualEngine: 'opensearch',
+        fallbackUsed: false,
       });
 
     const first = await service.search({
-      query: 'acme',
+      query: 'secret@example.com',
       modules: ['contacts'],
       limitPerModule: 5,
     });
-    const second = await service.search({
-      query: 'acme',
+    await service.search({
+      query: 'secret@example.com',
       modules: ['contacts'],
       limitPerModule: 5,
       cursor: first.nextCursor ?? undefined,
     });
 
     expect(first.nextCursor).toEqual(expect.any(String));
-    expect(contacts.findAll).toHaveBeenLastCalledWith({
-      search: 'acme',
-      page: 2,
-      limit: 5,
-    });
-    expect(second.nextCursor).toBeNull();
-    expect(events.emit).toHaveBeenCalledWith(
-      'search.executed',
+    expect(router.search).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: 'engine-cursor' }),
+    );
+    const telemetry = events.emit.mock.calls.at(-1)?.[1];
+    expect(telemetry).toEqual(
       expect.objectContaining({
         queryHash: expect.any(String),
-        queryLength: 4,
+        queryLength: 18,
         cursorUsed: true,
       }),
     );
+    expect(JSON.stringify(telemetry)).not.toContain('secret@example.com');
   });
 });

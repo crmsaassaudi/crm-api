@@ -11,6 +11,10 @@ import { Connection } from 'mongoose';
 import { Public } from 'nest-keycloak-connect';
 import { RedisService } from '../redis/redis.service';
 import { ResilienceMetricsService } from '../common/http/resilience-metrics.service';
+import { ConfigService } from '@nestjs/config';
+import { AllConfigType } from '../config/config.type';
+import { OpenSearchEngine } from '../search/engines/opensearch.engine';
+import { MetricsService } from '../observability/metrics.service';
 
 type ComponentStatus = 'ok' | 'degraded' | 'down';
 
@@ -39,6 +43,9 @@ export class HealthController {
     @Optional() private readonly redisService?: RedisService,
     @Optional()
     private readonly resilienceMetrics?: ResilienceMetricsService,
+    @Optional() private readonly configService?: ConfigService<AllConfigType>,
+    @Optional() private readonly openSearch?: OpenSearchEngine,
+    @Optional() private readonly metrics?: MetricsService,
   ) {}
 
   @Get()
@@ -84,11 +91,45 @@ export class HealthController {
   }
 
   private async collect(): Promise<Record<string, ComponentReport>> {
-    const [mongo, redis] = await Promise.all([
+    const [mongo, redis, opensearch] = await Promise.all([
       this.checkMongo(),
       this.checkRedis(),
+      this.checkOpenSearch(),
     ]);
-    return { mongo, redis };
+    return {
+      mongo,
+      redis,
+      ...(opensearch ? { opensearch } : {}),
+    };
+  }
+
+  private async checkOpenSearch(): Promise<ComponentReport | null> {
+    const enabled =
+      this.configService?.get('opensearch', { infer: true })?.enabled ?? false;
+    if (!enabled) return null;
+    if (!this.openSearch) return { status: 'down', detail: 'no service' };
+    try {
+      const [latencyMs, freshnessAgeSeconds] = await Promise.all([
+        this.openSearch.ping(),
+        this.openSearch.freshnessAgeSeconds(),
+      ]);
+      if (freshnessAgeSeconds !== null) {
+        this.metrics?.setGauge(
+          'crm_search_index_freshness_age_seconds',
+          { engine: 'opensearch' },
+          freshnessAgeSeconds,
+        );
+      }
+      return {
+        status: 'ok',
+        latencyMs,
+        ...(freshnessAgeSeconds !== null
+          ? { detail: `freshnessAgeSeconds=${freshnessAgeSeconds}` }
+          : {}),
+      };
+    } catch {
+      return { status: 'down', detail: 'ping failed' };
+    }
   }
 
   private async checkMongo(): Promise<ComponentReport> {

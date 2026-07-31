@@ -7,6 +7,7 @@ import { QueueConfig } from '../queue/config/queue-config.type';
 import { RedisConfig } from '../redis/config/redis-config.type';
 import { KeycloakConfig } from '../auth/config/keycloak-config.type';
 import { AiConfig } from './ai-config.type';
+import { OpenSearchConfig } from '../search/config/opensearch-config.type';
 
 export type AllConfigType = {
   app: AppConfig;
@@ -18,4 +19,5 @@ export type AllConfigType = {
   redis: RedisConfig;
   keycloak: KeycloakConfig;
   ai: AiConfig;
+  opensearch: OpenSearchConfig;
 };

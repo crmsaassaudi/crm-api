@@ -7,43 +7,20 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createHash } from 'crypto';
 import { ClsService } from 'nestjs-cls';
-import { ContactsService } from '../contacts/contacts.service';
-import { AccountsService } from '../accounts/accounts.service';
-import { DealsService } from '../deals/deals.service';
-import { TicketsService } from '../tickets/tickets.service';
-import { TasksService } from '../tasks/tasks.service';
 import { AuthorizationService } from '../common/permissions/authorization.service';
 import {
   GlobalSearchQueryDto,
   SEARCH_MODULES,
   SearchModule,
 } from './dto/global-search-query.dto';
-import { rankSearchResult, SearchHighlightRange } from './search-ranking';
+import { SearchEngineRouter } from './engines/search-engine.router';
+import { GlobalSearchResult } from './global-search.types';
+import { MetricsService } from '../observability/metrics.service';
 
 interface CursorState {
-  version: 1;
+  version: 2;
   fingerprint: string;
-  pages: Partial<Record<SearchModule, number | null>>;
-}
-
-export interface GlobalSearchResult {
-  id: string;
-  module: SearchModule;
-  title: string;
-  subtitle?: string;
-  href: string;
-  score: number;
-  highlights: {
-    title?: SearchHighlightRange[];
-    subtitle?: SearchHighlightRange[];
-  };
-}
-
-interface ModuleSearchResponse {
-  data?: any[];
-  hasNextPage?: boolean;
-  currentPage?: number;
-  totalPages?: number;
+  modules: Partial<Record<SearchModule, string | null>>;
 }
 
 @Injectable()
@@ -51,14 +28,11 @@ export class GlobalSearchService {
   private readonly logger = new Logger(GlobalSearchService.name);
 
   constructor(
-    private readonly contacts: ContactsService,
-    private readonly accounts: AccountsService,
-    private readonly deals: DealsService,
-    private readonly tickets: TicketsService,
-    private readonly tasks: TasksService,
     private readonly authorization: AuthorizationService,
     private readonly cls: ClsService,
     private readonly events: EventEmitter2,
+    private readonly router: SearchEngineRouter,
+    private readonly metrics: MetricsService,
   ) {}
 
   async search(input: GlobalSearchQueryDto) {
@@ -72,16 +46,22 @@ export class GlobalSearchService {
     const allowedModules: SearchModule[] = [];
     const deniedModules: SearchModule[] = [];
     const results: GlobalSearchResult[] = [];
-    const nextPages: CursorState['pages'] = { ...cursor.pages };
+    const nextModules: CursorState['modules'] = { ...cursor.modules };
+    let requestedEngine: 'mongodb' | 'opensearch' = 'mongodb';
+    let actualEngine: 'mongodb' | 'opensearch' = 'mongodb';
+    let fallbackUsed = false;
+    let fallbackReason: string | undefined;
+
+    const tenantId = this.cls.get<string>('tenantId');
+    const userId = this.cls.get<string>('userId');
+    if (!tenantId || !userId) throw new UnauthorizedException();
 
     for (const module of requestedModules) {
-      const page = cursor.pages[module] ?? 1;
-      if (page === null) continue;
-
-      const decision = await this.authorize(module);
+      if (cursor.modules[module] === null) continue;
+      const decision = await this.authorize(module, tenantId, userId);
       if (!decision.allowed) {
         deniedModules.push(module);
-        nextPages[module] = null;
+        nextModules[module] = null;
         continue;
       }
       allowedModules.push(module);
@@ -92,18 +72,34 @@ export class GlobalSearchService {
         filter: decision.resourceFilter ?? null,
       });
       try {
-        const response = await this.searchModule(
+        const visibleOwnerIds = this.cls.get<string[] | null>(
+          'visibleOwnerIds',
+        );
+        if (visibleOwnerIds === undefined) {
+          throw new UnauthorizedException('Search data scope is unavailable');
+        }
+        const response = await this.router.search({
           module,
           query,
-          page,
-          input.limitPerModule,
-        );
-        results.push(
-          ...(response.data ?? []).map((record) =>
-            this.toSearchResult(module, record, query),
-          ),
-        );
-        nextPages[module] = this.hasNextPage(response) ? page + 1 : null;
+          limit: input.limitPerModule,
+          cursor: cursor.modules[module] ?? undefined,
+          scope: {
+            tenantId,
+            userId,
+            visibleOwnerIds,
+            visibleOrgUnitIds:
+              this.cls.get<string[] | null>('visibleOrgUnitIds') ?? null,
+            includeUnowned:
+              this.cls.get<boolean>('includeUnownedInScope') === true,
+            abacFilter: decision.resourceFilter,
+          },
+        });
+        results.push(...response.data);
+        nextModules[module] = response.nextCursor;
+        requestedEngine = response.requestedEngine;
+        actualEngine = response.actualEngine;
+        fallbackUsed ||= response.fallbackUsed;
+        fallbackReason ??= response.fallbackReason;
       } finally {
         this.cls.set('abacResourceFilter', previousAbac);
       }
@@ -116,33 +112,57 @@ export class GlobalSearchService {
         left.title.localeCompare(right.title) ||
         left.id.localeCompare(right.id),
     );
-
-    const hasNextPage = Object.values(nextPages).some(
-      (page) => typeof page === 'number',
+    const hasNextPage = Object.values(nextModules).some(
+      (value) => typeof value === 'string',
     );
     const durationMs = Date.now() - startedAt;
     const telemetry = {
-      tenantId: this.cls.get<string>('tenantId'),
-      userId: this.cls.get<string>('userId'),
+      tenantId,
+      userId,
       queryHash: this.queryHash(query),
       queryLength: query.length,
       requestedModules,
       allowedModules,
       deniedModules,
+      requestedEngine,
+      actualEngine,
+      fallbackUsed,
+      ...(fallbackReason ? { fallbackReason } : {}),
       resultCount: results.length,
       cursorUsed: Boolean(input.cursor),
       durationMs,
     };
     this.events.emit('search.executed', telemetry);
+    const metricLabels = {
+      requested_engine: requestedEngine,
+      actual_engine: actualEngine,
+      fallback: String(fallbackUsed),
+    };
+    this.metrics.incrementCounter('crm_search_requests_total', metricLabels);
+    this.metrics.incrementCounter(
+      'crm_search_results_total',
+      metricLabels,
+      results.length,
+    );
+    this.metrics.incrementCounter(
+      'crm_search_duration_ms_total',
+      metricLabels,
+      durationMs,
+    );
+    if (fallbackUsed) {
+      this.metrics.incrementCounter('crm_search_fallback_total', {
+        reason: fallbackReason ?? 'unknown',
+      });
+    }
     this.logger.log(`Global search executed ${JSON.stringify(telemetry)}`);
 
     return {
       data: results,
       nextCursor: hasNextPage
         ? this.encodeCursor({
-            version: 1,
+            version: 2,
             fingerprint,
-            pages: nextPages,
+            modules: nextModules,
           })
         : null,
       hasNextPage,
@@ -155,99 +175,13 @@ export class GlobalSearchService {
     };
   }
 
-  private async authorize(module: SearchModule) {
-    const rawUserId = this.cls.get<string>('userId');
-    const tenantId = this.cls.get<string>('tenantId');
-    if (!rawUserId || !tenantId) {
-      throw new UnauthorizedException();
-    }
+  private authorize(module: SearchModule, tenantId: string, userId: string) {
     return this.authorization.canPerformAction({
-      rawUserId,
+      rawUserId: userId,
       tenantHint: tenantId,
       claims: this.cls.get('user'),
       rule: { action: 'view', resource: module },
     });
-  }
-
-  private searchModule(
-    module: SearchModule,
-    query: string,
-    page: number,
-    limit: number,
-  ): Promise<ModuleSearchResponse> {
-    const params = { search: query, page, limit };
-    switch (module) {
-      case 'contacts':
-        return this.contacts.findAll(params);
-      case 'accounts':
-        return this.accounts.findAll(params);
-      case 'deals':
-        return this.deals.findAll(params);
-      case 'tickets':
-        return this.tickets.findAll(params);
-      case 'tasks':
-        return this.tasks.findAll(params);
-    }
-  }
-
-  private toSearchResult(
-    module: SearchModule,
-    record: any,
-    query: string,
-  ): GlobalSearchResult {
-    const id = String(record.id ?? record._id);
-    const fields = this.resultFields(module, record);
-    return {
-      id,
-      module,
-      ...fields,
-      href: `/${module}/${id}`,
-      ...rankSearchResult(query, fields.title, fields.subtitle),
-    };
-  }
-
-  private resultFields(
-    module: SearchModule,
-    record: any,
-  ): { title: string; subtitle?: string } {
-    switch (module) {
-      case 'contacts':
-        return {
-          title:
-            [record.firstName, record.lastName].filter(Boolean).join(' ') ||
-            'Unnamed contact',
-          subtitle: record.companyName || record.title,
-        };
-      case 'accounts':
-        return {
-          title: record.name || 'Unnamed account',
-          subtitle: record.website || record.industry,
-        };
-      case 'deals':
-        return {
-          title: record.title || record.name || 'Unnamed deal',
-          subtitle: record.accountName,
-        };
-      case 'tickets':
-        return {
-          title: record.subject || 'Untitled ticket',
-          subtitle: record.ticketNumber,
-        };
-      case 'tasks':
-        return {
-          title: record.title || 'Untitled task',
-          subtitle: record.description,
-        };
-    }
-  }
-
-  private hasNextPage(response: ModuleSearchResponse): boolean {
-    if (typeof response.hasNextPage === 'boolean') return response.hasNextPage;
-    return (
-      typeof response.currentPage === 'number' &&
-      typeof response.totalPages === 'number' &&
-      response.currentPage < response.totalPages
-    );
   }
 
   private fingerprint(query: string, modules: SearchModule[]): string {
@@ -268,21 +202,19 @@ export class GlobalSearchService {
     raw: string | undefined,
     fingerprint: string,
   ): CursorState {
-    if (!raw) return { version: 1, fingerprint, pages: {} };
+    if (!raw) return { version: 2, fingerprint, modules: {} };
     try {
       const parsed = JSON.parse(
         Buffer.from(raw, 'base64url').toString('utf8'),
       ) as CursorState;
       if (
-        parsed.version !== 1 ||
+        parsed.version !== 2 ||
         parsed.fingerprint !== fingerprint ||
-        !parsed.pages ||
-        Object.values(parsed.pages).some(
-          (page) =>
-            page !== null &&
-            (!Number.isInteger(page) ||
-              Number(page) < 1 ||
-              Number(page) > 10_000),
+        !parsed.modules ||
+        Object.values(parsed.modules).some(
+          (value) =>
+            value !== null &&
+            (typeof value !== 'string' || value.length > 1_024),
         )
       ) {
         throw new Error('invalid cursor');
@@ -293,3 +225,5 @@ export class GlobalSearchService {
     }
   }
 }
+
+export type { GlobalSearchResult } from './global-search.types';
