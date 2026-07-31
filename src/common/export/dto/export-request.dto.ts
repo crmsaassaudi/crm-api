@@ -1,6 +1,21 @@
-import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsIn,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { ExportFormat } from '../types';
+
+export class ExportRequestFilterItem {
+  @IsString()
+  id: string;
+
+  @IsOptional()
+  value: unknown;
+}
 
 /**
  * Generic export request body shared by modules that export whole collections
@@ -29,4 +44,16 @@ export class ExportRequestDto {
   @IsArray()
   @IsString({ each: true })
   columns?: string[];
+
+  @ApiPropertyOptional({ description: 'Exact list filters captured by the UI' })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ExportRequestFilterItem)
+  filters?: ExportRequestFilterItem[];
+
+  @ApiPropertyOptional({ description: 'Exact list search captured by the UI' })
+  @IsOptional()
+  @IsString()
+  search?: string;
 }

@@ -15,6 +15,15 @@ import { PaginationResponseDto } from '../../../../../utils/dto/pagination-respo
 import { pagination } from '../../../../../utils/pagination';
 import { escapeRegex } from '../../../../../utils/escape-regex';
 import { cappedCount } from '../../../../../utils/capped-count';
+import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
+
+const normalizeListFilter = (value: unknown): string[] => {
+  const values = Array.isArray(value) ? value : String(value ?? '').split(',');
+  return values
+    .map((entry) => String(entry).trim())
+    .filter(Boolean)
+    .slice(0, 100);
+};
 
 @Injectable()
 export class TicketRepository extends BaseDocumentRepository<
@@ -42,24 +51,109 @@ export class TicketRepository extends BaseDocumentRepository<
     return TicketMapper.toPersistence(domain);
   }
 
+  private buildListWhere(filterOptions?: any): FilterQuery<TicketSchemaClass> {
+    const where: FilterQuery<TicketSchemaClass> = { deletedAt: null };
+    if (filterOptions?.search) {
+      const expression = {
+        $regex: escapeRegex(filterOptions.search),
+        $options: 'i',
+      };
+      where.$or = [
+        { subject: expression },
+        { ticketNumber: expression },
+        { description: expression },
+      ];
+    }
+    const statusIds = normalizeListFilter(filterOptions?.statusIds);
+    if (statusIds.length) where.statusId = { $in: statusIds } as any;
+    else if (filterOptions?.statusId) where.statusId = filterOptions.statusId;
+
+    const priorities = normalizeListFilter(filterOptions?.priorities).map(
+      (priority) => priority.toUpperCase(),
+    );
+    if (priorities.length) where.priority = { $in: priorities } as any;
+    else if (filterOptions?.priority) where.priority = filterOptions.priority;
+
+    for (const field of [
+      'typeId',
+      'groupId',
+      'contactId',
+      'dealId',
+      'parentTicketId',
+    ] as const) {
+      if (filterOptions?.[field]) where[field] = filterOptions[field];
+    }
+    if (filterOptions?.categoryPath) {
+      where.categoryPath = { $in: [filterOptions.categoryPath] } as any;
+    }
+
+    // Table filters use singular UI keys while list query DTOs also support
+    // plural top-level keys. Normalize both into the same repository query.
+    const tableFilters =
+      typeof filterOptions?.filters === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(filterOptions.filters);
+            } catch {
+              return [];
+            }
+          })()
+        : filterOptions?.filters;
+    if (Array.isArray(tableFilters)) {
+      for (const filter of tableFilters) {
+        if (!filter?.id || filter.value === undefined || filter.value === '') {
+          continue;
+        }
+        if (String(filter.id).startsWith('customFields.')) continue;
+        if (filter.id === 'status') {
+          where.statusId = Array.isArray(filter.value)
+            ? ({ $in: filter.value } as any)
+            : filter.value;
+        } else if (filter.id === 'priority') {
+          const values = normalizeListFilter(filter.value).map((value) =>
+            value.toUpperCase(),
+          );
+          where.priority =
+            values.length > 1 ? ({ $in: values } as any) : values[0];
+        } else if (['owner', 'createdBy', 'updatedBy'].includes(filter.id)) {
+          const field =
+            (
+              {
+                owner: 'ownerId',
+                createdBy: 'createdById',
+                updatedBy: 'updatedById',
+              } as Record<string, string>
+            )[filter.id] ?? filter.id;
+          where[field] = Array.isArray(filter.value)
+            ? { $in: filter.value }
+            : filter.value;
+        }
+      }
+    }
+    applyRegisteredCustomFieldFilters(
+      where,
+      filterOptions?.filters,
+      filterOptions?.__customFieldDefinitions,
+    );
+    return where;
+  }
+
   // ─────────────────────────── EXPORT ───────────────────────────
 
   private buildExportFilter(params: {
     ids?: string[];
+    filters?: any;
   }): FilterQuery<TicketSchemaClass> {
-    const base: FilterQuery<TicketSchemaClass> =
-      params.ids && params.ids.length > 0
-        ? {
-            _id: {
-              $in: params.ids
-                .filter((id) => Types.ObjectId.isValid(id))
-                .map((id) => new Types.ObjectId(id)),
-            },
-          }
-        : {};
+    if (!params.ids?.length) {
+      return this.applyTenantFilter(this.buildListWhere(params.filters));
+    }
     return this.applyTenantFilter({
-      ...base,
-      deletedAt: { $exists: false },
+      _id: {
+        $in: params.ids
+          .filter((id) => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id)),
+      },
+      deletedAt: null,
     } as FilterQuery<TicketSchemaClass>);
   }
 
@@ -135,11 +229,19 @@ export class TicketRepository extends BaseDocumentRepository<
       ];
     }
 
-    if (filterOptions?.statusId) {
+    const statusIds = normalizeListFilter(filterOptions?.statusIds);
+    if (statusIds.length > 0) {
+      where.statusId = { $in: statusIds } as any;
+    } else if (filterOptions?.statusId) {
       where.statusId = filterOptions.statusId;
     }
 
-    if (filterOptions?.priority) {
+    const priorities = normalizeListFilter(filterOptions?.priorities).map(
+      (priority) => priority.toUpperCase(),
+    );
+    if (priorities.length > 0) {
+      where.priority = { $in: priorities } as any;
+    } else if (filterOptions?.priority) {
       where.priority = filterOptions.priority;
     }
 
@@ -172,6 +274,13 @@ export class TicketRepository extends BaseDocumentRepository<
       where.parentTicketId = filterOptions.parentTicketId;
     }
 
+    applyRegisteredCustomFieldFilters(
+      where,
+      filterOptions?.filters,
+      filterOptions?.__customFieldDefinitions,
+    );
+
+    Object.assign(where, this.buildListWhere(filterOptions));
     const scopedWhere = this.applyTenantFilter(where);
 
     // .lean() skips Mongoose hydration which roughly halves RAM/CPU on large

@@ -9,7 +9,9 @@ import {
   Query,
   UseInterceptors,
   UsePipes,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -18,6 +20,15 @@ import { DataMaskingInterceptor } from '../common/interceptors/data-masking.inte
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
 import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
+import { ExportRequestDto } from '../common/export';
+
+function resolveContentType(ext: string | undefined): string {
+  if (ext === 'xlsx') {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  }
+  if (ext === 'gz') return 'application/gzip';
+  return 'text/csv; charset=utf-8';
+}
 
 @ApiTags('Tasks')
 @ApiBearerAuth()
@@ -40,6 +51,54 @@ export class TasksController {
   @RequirePermission('view', 'tasks')
   findAll(@Query() query: any) {
     return this.service.findAll(query);
+  }
+
+  @Post('export')
+  @RequirePermission('export', 'tasks')
+  exportTasks(@Body() body: ExportRequestDto) {
+    return this.service.exportTasks(body || {});
+  }
+
+  @Get('export-status/:jobId')
+  @RequirePermission('export', 'tasks')
+  getExportStatus(@Param('jobId') jobId: string) {
+    return this.service.getExportStatus(jobId);
+  }
+
+  @Get('export-jobs')
+  @RequirePermission('export', 'tasks')
+  listExportJobs(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.service.listExportJobs({
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      status,
+    });
+  }
+
+  @Post('export-jobs/:jobId/cancel')
+  @RequirePermission('export', 'tasks')
+  cancelExport(@Param('jobId') jobId: string) {
+    return this.service.cancelExport(jobId);
+  }
+
+  @Get('export-download/:token')
+  @RequirePermission('export', 'tasks')
+  async downloadExport(@Param('token') token: string, @Res() res: Response) {
+    const file = await this.service.getExportDownload(token);
+    const safeFilename = file.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const extension = safeFilename.split('.').pop()?.toLowerCase();
+    res.setHeader('Content-Type', resolveContentType(extension));
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${safeFilename}"`,
+    );
+    res.setHeader('Content-Length', String(file.buffer.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(file.buffer);
   }
 
   // ──────────────────────── RECYCLE BIN ────────────────────────

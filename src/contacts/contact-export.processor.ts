@@ -1,5 +1,5 @@
 import { Processor } from '@nestjs/bullmq';
-import { Inject, Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
@@ -26,6 +26,8 @@ import { IOREDIS_CLIENT } from '../redis/redis.tokens';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { UserSchemaClass } from '../users/infrastructure/persistence/document/entities/user.schema';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
+import { loadCustomFieldExportColumns } from '../common/export/custom-field-export-columns';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -61,6 +63,23 @@ function buildContactExportColumns(
       format: (val) => resolve(statusMap, val),
     },
     { header: 'lastActivityAt', path: 'lastActivityAt' },
+    {
+      header: 'owner',
+      path: 'ownerId',
+      format: (val) => resolve(userMap, val),
+    },
+    { header: 'createdAt', path: 'createdAt' },
+    { header: 'updatedAt', path: 'updatedAt' },
+    {
+      header: 'createdBy',
+      path: 'createdById',
+      format: (val) => resolve(userMap, val),
+    },
+    {
+      header: 'updatedBy',
+      path: 'updatedById',
+      format: (val) => resolve(userMap, val),
+    },
   ];
 }
 
@@ -76,6 +95,11 @@ const STATIC_COLUMNS: readonly ExportColumn[] = [
   { header: 'lifecycleStage', path: 'lifecycleStageId' },
   { header: 'status', path: 'statusId' },
   { header: 'lastActivityAt', path: 'lastActivityAt' },
+  { header: 'owner', path: 'ownerId' },
+  { header: 'createdAt', path: 'createdAt' },
+  { header: 'updatedAt', path: 'updatedAt' },
+  { header: 'createdBy', path: 'createdById' },
+  { header: 'updatedBy', path: 'updatedById' },
 ] as const;
 
 /**
@@ -113,6 +137,7 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
     @InjectModel(UserSchemaClass.name)
     private readonly userModel: Model<any>,
     private readonly crmSettingsService: CrmSettingsService,
+    @Optional() private readonly customFields?: CustomFieldsService,
   ) {
     super();
     this.cls = cls;
@@ -122,16 +147,16 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
   // ── Lifecycle hook: pre-load lookup maps ───────────────────────────
 
   protected async beforeExport(data: ContactExportJobData): Promise<void> {
-    await Promise.all([
+    const [, , dynamicColumns] = await Promise.all([
       this.loadUserMap(data.tenantId),
       this.loadLifecycleMaps(data.tenantId),
+      loadCustomFieldExportColumns(this.customFields, 'Contact'),
     ]);
 
-    this.resolvedColumns = buildContactExportColumns(
-      this.userMap,
-      this.stageMap,
-      this.statusMap,
-    );
+    this.resolvedColumns = [
+      ...buildContactExportColumns(this.userMap, this.stageMap, this.statusMap),
+      ...dynamicColumns,
+    ];
   }
 
   private async loadUserMap(tenantId: string): Promise<void> {
@@ -193,7 +218,12 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
       maskingResource: 'Contact',
       columns:
         this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
-      selectableColumns: new Set(STATIC_COLUMNS.map((c) => c.path)),
+      selectableColumns: new Set(
+        (this.resolvedColumns.length > 0
+          ? this.resolvedColumns
+          : STATIC_COLUMNS
+        ).map((column) => column.path),
+      ),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,
       throttleMs: 50,

@@ -372,12 +372,17 @@ export class ContactsController {
     @Param('id') id: string,
     @Query('limit') limit?: string,
     @Query('sources') sources?: string,
+    @Query('before') before?: string,
   ) {
     return this.timelineService.getTimeline(id, {
       limit: limit ? parseInt(limit, 10) : undefined,
       sources: sources
         ? (sources.split(',').map((s) => s.trim()) as TimelineSource[])
         : undefined,
+      before:
+        before && !Number.isNaN(new Date(before).getTime())
+          ? new Date(before)
+          : undefined,
     });
   }
 

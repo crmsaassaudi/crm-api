@@ -15,6 +15,12 @@ import {
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
 import { isWorkerRuntime } from '../config/runtime-role';
 import { TaskPurgeService } from './task-purge.service';
+import { CustomFieldsModule } from '../custom-fields/custom-fields.module';
+import { BullModule } from '@nestjs/bullmq';
+import { BullBoardModule } from '@bull-board/nestjs';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { TASK_EXPORT_QUEUE } from './tasks.constants';
+import { TaskExportProcessor } from './export/task-export.processor';
 
 const workerProviders = isWorkerRuntime()
   ? [
@@ -23,6 +29,7 @@ const workerProviders = isWorkerRuntime()
       // an unconditional provider schedules it in every API replica too and makes the
       // Redis lock load-bearing for correctness rather than a safety net.
       TaskPurgeService,
+      TaskExportProcessor,
     ]
   : [];
 
@@ -33,6 +40,20 @@ const workerProviders = isWorkerRuntime()
       { name: TaskStatusSchemaClass.name, schema: TaskStatusSchema },
     ]),
     AutomationOutboxModule,
+    CustomFieldsModule,
+    BullModule.registerQueue({
+      name: TASK_EXPORT_QUEUE,
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: 100,
+        removeOnFail: 500,
+      },
+    }),
+    BullBoardModule.forFeature({
+      name: TASK_EXPORT_QUEUE,
+      adapter: BullMQAdapter,
+    }),
   ],
   controllers: [TasksController],
   providers: [

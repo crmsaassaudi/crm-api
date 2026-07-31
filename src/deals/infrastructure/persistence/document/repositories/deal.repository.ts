@@ -12,6 +12,7 @@ import { PaginationResponseDto } from '../../../../../utils/dto/pagination-respo
 import { pagination } from '../../../../../utils/pagination';
 import { escapeRegex } from '../../../../../utils/escape-regex';
 import { cappedCount } from '../../../../../utils/capped-count';
+import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
 
 @Injectable()
 export class DealRepository extends BaseDocumentRepository<
@@ -39,24 +40,90 @@ export class DealRepository extends BaseDocumentRepository<
     return DealMapper.toPersistence(domain);
   }
 
+  private buildListWhere(filterOptions?: any): FilterQuery<DealSchemaClass> {
+    const where: FilterQuery<DealSchemaClass> = { deletedAt: null };
+    if (filterOptions?.search) {
+      const expression = {
+        $regex: escapeRegex(filterOptions.search),
+        $options: 'i',
+      };
+      where.$or = [
+        { title: expression },
+        { name: expression },
+        { accountName: expression },
+      ];
+    }
+    if (filterOptions?.stage) where.stageId = filterOptions.stage;
+    if (filterOptions?.contactId) where.contactIds = filterOptions.contactId;
+    if (filterOptions?.filters) {
+      try {
+        const filters =
+          typeof filterOptions.filters === 'string'
+            ? JSON.parse(filterOptions.filters)
+            : filterOptions.filters;
+        if (Array.isArray(filters)) {
+          filters.forEach((filter: any) => {
+            if (!filter.id || !filter.value) return;
+            if (String(filter.id).startsWith('customFields.')) return;
+            if (filter.id === 'stage' || filter.id === 'stageId') {
+              where.stageId = filter.value;
+            } else if (filter.id === 'pipelineId') {
+              where.pipelineId = filter.value;
+            } else if (filter.id === 'value') {
+              const value = Number(filter.value);
+              if (!Number.isNaN(value)) where[filter.id] = value;
+            } else if (
+              ['owner', 'createdBy', 'updatedBy'].includes(filter.id)
+            ) {
+              const field =
+                (
+                  {
+                    owner: 'ownerId',
+                    createdBy: 'createdById',
+                    updatedBy: 'updatedById',
+                  } as Record<string, string>
+                )[filter.id] ?? filter.id;
+              where[field] = Array.isArray(filter.value)
+                ? { $in: filter.value }
+                : filter.value;
+            } else if (Array.isArray(filter.value)) {
+              where[filter.id] = { $in: filter.value };
+            } else {
+              where[filter.id] = {
+                $regex: escapeRegex(String(filter.value)),
+                $options: 'i',
+              };
+            }
+          });
+        }
+      } catch {
+        // Keep malformed-filter behavior aligned with list requests.
+      }
+    }
+    applyRegisteredCustomFieldFilters(
+      where,
+      filterOptions?.filters,
+      filterOptions?.__customFieldDefinitions,
+    );
+    return where;
+  }
+
   // ─────────────────────────── EXPORT ───────────────────────────
 
   private buildExportFilter(params: {
     ids?: string[];
+    filters?: any;
   }): FilterQuery<DealSchemaClass> {
-    const base: FilterQuery<DealSchemaClass> =
-      params.ids && params.ids.length > 0
-        ? {
-            _id: {
-              $in: params.ids
-                .filter((id) => Types.ObjectId.isValid(id))
-                .map((id) => new Types.ObjectId(id)),
-            },
-          }
-        : {};
+    if (!params.ids?.length) {
+      return this.applyTenantFilter(this.buildListWhere(params.filters));
+    }
     return this.applyTenantFilter({
-      ...base,
-      deletedAt: { $exists: false },
+      _id: {
+        $in: params.ids
+          .filter((id) => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id)),
+      },
+      deletedAt: null,
     } as FilterQuery<DealSchemaClass>);
   }
 
@@ -135,8 +202,11 @@ export class DealRepository extends BaseDocumentRepository<
         if (Array.isArray(parsedFilters)) {
           parsedFilters.forEach((f: any) => {
             if (f.id && f.value) {
-              if (['stageId'].includes(f.id)) {
-                where[f.id] = f.value;
+              if (String(f.id).startsWith('customFields.')) return;
+              if (['stage', 'stageId'].includes(f.id)) {
+                where.stageId = f.value;
+              } else if (f.id === 'pipelineId') {
+                where.pipelineId = f.value;
               } else if (f.id === 'value') {
                 const val = Number(f.value);
                 if (!isNaN(val)) where[f.id] = val;
@@ -166,6 +236,13 @@ export class DealRepository extends BaseDocumentRepository<
       }
     }
 
+    applyRegisteredCustomFieldFilters(
+      where,
+      filterOptions?.filters,
+      filterOptions?.__customFieldDefinitions,
+    );
+
+    Object.assign(where, this.buildListWhere(filterOptions));
     const scopedWhere = this.applyTenantFilter(where);
 
     const [docs, { totalItems }] = await Promise.all([

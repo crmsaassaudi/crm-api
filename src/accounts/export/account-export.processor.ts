@@ -1,5 +1,5 @@
 import { Processor } from '@nestjs/bullmq';
-import { Inject, Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
@@ -27,6 +27,8 @@ import { RedisLockService } from '../../redis/redis-lock.service';
 import { UserSchemaClass } from '../../users/infrastructure/persistence/document/entities/user.schema';
 import { AccountStatusSchemaClass } from '../../account-settings/entities/account-status.schema';
 import { AccountTypeSchemaClass } from '../../account-settings/entities/account-type.schema';
+import { CustomFieldsService } from '../../custom-fields/custom-fields.service';
+import { loadCustomFieldExportColumns } from '../../common/export/custom-field-export-columns';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -67,6 +69,7 @@ function buildAccountExportColumns(
       format: (val) => resolve(userMap, val),
     },
     { header: 'createdAt', path: 'createdAt' },
+    { header: 'updatedAt', path: 'updatedAt' },
   ];
 }
 
@@ -85,6 +88,7 @@ const STATIC_COLUMNS: readonly ExportColumn[] = [
   { header: 'type', path: 'typeId' },
   { header: 'owner', path: 'ownerId' },
   { header: 'createdAt', path: 'createdAt' },
+  { header: 'updatedAt', path: 'updatedAt' },
 ] as const;
 
 export interface AccountExportJobData extends BaseExportJobData {
@@ -120,6 +124,7 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
     private readonly accountStatusModel: Model<any>,
     @InjectModel(AccountTypeSchemaClass.name)
     private readonly accountTypeModel: Model<any>,
+    @Optional() private readonly customFields?: CustomFieldsService,
   ) {
     super();
     this.cls = cls;
@@ -129,17 +134,17 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
   // ── Lifecycle hook ────────────────────────────────────────────────
 
   protected async beforeExport(data: AccountExportJobData): Promise<void> {
-    await Promise.all([
+    const [, , , dynamicColumns] = await Promise.all([
       this.loadUserMap(data.tenantId),
       this.loadStatusMap(data.tenantId),
       this.loadTypeMap(data.tenantId),
+      loadCustomFieldExportColumns(this.customFields, 'Account'),
     ]);
 
-    this.resolvedColumns = buildAccountExportColumns(
-      this.userMap,
-      this.statusMap,
-      this.typeMap,
-    );
+    this.resolvedColumns = [
+      ...buildAccountExportColumns(this.userMap, this.statusMap, this.typeMap),
+      ...dynamicColumns,
+    ];
   }
 
   private async loadUserMap(tenantId: string): Promise<void> {
@@ -188,7 +193,12 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
       maskingResource: 'Account',
       columns:
         this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
-      selectableColumns: new Set(STATIC_COLUMNS.map((c) => c.path)),
+      selectableColumns: new Set(
+        (this.resolvedColumns.length > 0
+          ? this.resolvedColumns
+          : STATIC_COLUMNS
+        ).map((column) => column.path),
+      ),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,
       throttleMs: 50,

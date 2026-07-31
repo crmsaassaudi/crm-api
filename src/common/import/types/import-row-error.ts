@@ -48,4 +48,10 @@ export interface ImportRowError {
   reason: string;
   /** The offending value, truncated to 200 chars for report readability. */
   value?: string;
+  /**
+   * Snapshot of the mapped source row. This makes an error report actionable:
+   * users can correct the rejected values and retry only failed rows without
+   * re-uploading the full source file.
+   */
+  source?: Record<string, unknown>;
 }

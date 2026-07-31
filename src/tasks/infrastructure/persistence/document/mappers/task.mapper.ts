@@ -26,6 +26,7 @@ export class TaskMapper {
     domainEntity.reminderAt = raw.reminderAt;
     domainEntity.completedAt = raw.completedAt;
     domainEntity.sourceId = raw.sourceId?.toString();
+    domainEntity.customFields = raw.customFields;
     if ((raw as any).taskStatus) {
       const s = (raw as any).taskStatus;
       domainEntity.taskStatus = {
@@ -78,6 +79,7 @@ export class TaskMapper {
     persistenceEntity.reminderAt = domainEntity.reminderAt;
     persistenceEntity.completedAt = domainEntity.completedAt;
     persistenceEntity.sourceId = domainEntity.sourceId;
+    persistenceEntity.customFields = domainEntity.customFields;
     return persistenceEntity;
   }
 }

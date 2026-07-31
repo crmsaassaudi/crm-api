@@ -42,6 +42,7 @@ import {
 } from '../groups/infrastructure/persistence/document/entities/group.schema';
 import { TagsModule } from '../tags/tags.module';
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
+import { CustomFieldsModule } from '../custom-fields/custom-fields.module';
 
 const workerProviders = isWorkerRuntime()
   ? [
@@ -94,6 +95,7 @@ const workerProviders = isWorkerRuntime()
     TicketSettingsModule,
     TagsModule,
     AutomationOutboxModule,
+    CustomFieldsModule,
   ],
   controllers: [TicketsController],
   providers: [TicketsService, TicketRepository, ...workerProviders],

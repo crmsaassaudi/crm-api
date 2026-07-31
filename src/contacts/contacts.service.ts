@@ -69,6 +69,10 @@ import { TagsService } from '../tags/tags.service';
 import { AuthorizationService } from '../common/permissions/authorization.service';
 import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
 import { randomUUID } from 'crypto';
+import {
+  buildContactExportQuery,
+  buildContactExportSnapshot,
+} from './export/contact-export-query';
 
 @Injectable()
 export class ContactsService {
@@ -995,22 +999,16 @@ export class ContactsService {
 
     // Preserve the existing repository filter shape (incl. the legacy magic
     // keys the export filter builder understands).
-    const legacyFilters: Record<string, any> = {
-      ...((params.filters as unknown as Record<string, any>) || {}),
-      __restrictToOwner: restrictToOwner,
-      __currentUserId: userId,
+    const legacyFilters = buildContactExportQuery(params, {
+      restrictToOwner,
+      currentUserId: userId,
       // Export shares buildListWhere with the list view, so it needs the same
       // registry allow-list or a custom-field filter would be silently dropped
       // and the export would quietly cover more rows than the user selected.
-      __allowedCustomFieldKeys: await this.resolveCustomFieldKeys(params),
-    };
+      allowedCustomFieldKeys: await this.resolveCustomFieldKeys(params),
+    });
 
-    const filterSnapshot = {
-      ids: params.ids,
-      search: params.search,
-      lifecycleStage: params.lifecycleStage,
-      restrictToOwner,
-    };
+    const filterSnapshot = buildContactExportSnapshot(params, restrictToOwner);
 
     const format = params.format ?? 'csv';
     const job = await this.exportQueue.add('export', {

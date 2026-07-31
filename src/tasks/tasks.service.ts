@@ -1,10 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { AutomationEventPayload } from '../automation-rules/events/automation-event.payload';
 import { AutomationOutboxService } from '../automation-rules/events/automation-outbox.service';
 import { TaskRepository } from './infrastructure/persistence/document/repositories/task.repository';
 import { Task } from './domain/task';
 import { EntityAuditService } from '../common/audit/entity-audit.service';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
+import { loadCustomFieldDefinitions } from '../utils/custom-field-filter';
+import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { ExportRequestDto, ExportRequestService } from '../common/export';
+import { TASK_EXPORT_QUEUE } from './tasks.constants';
 
 @Injectable()
 export class TasksService {
@@ -13,10 +20,62 @@ export class TasksService {
     private readonly entityAudit: EntityAuditService,
     private readonly cls: ClsService,
     private readonly automationOutbox: AutomationOutboxService,
+    @InjectQueue(TASK_EXPORT_QUEUE)
+    private readonly exportQueue: Queue,
+    private readonly exportRequest: ExportRequestService,
+    @Optional() private readonly customFields?: CustomFieldsService,
+    @Optional()
+    private readonly customFieldValidator?: CustomFieldValueValidator,
   ) {}
+
+  async exportTasks(
+    dto: ExportRequestDto,
+  ): Promise<{ jobId: string; status: 'queued' }> {
+    const querySnapshot = {
+      filters: dto.filters ?? [],
+      search: dto.search,
+    };
+    return this.exportRequest.enqueue({
+      entityType: 'task',
+      queue: this.exportQueue,
+      format: dto.format,
+      ids: dto.ids,
+      columns: dto.columns,
+      legacyFilters: {
+        ...querySnapshot,
+        __customFieldDefinitions: await loadCustomFieldDefinitions(
+          this.customFields,
+          'Task',
+          dto.filters,
+        ),
+      },
+      filterSnapshot: { ids: dto.ids, ...querySnapshot },
+    });
+  }
+
+  getExportStatus(jobId: string) {
+    return this.exportRequest.status(this.exportQueue, jobId);
+  }
+
+  cancelExport(jobId: string) {
+    return this.exportRequest.cancel('task', jobId);
+  }
+
+  listExportJobs(options: { page?: number; limit?: number; status?: string }) {
+    return this.exportRequest.list('task', this.exportQueue, options);
+  }
+
+  getExportDownload(token: string) {
+    return this.exportRequest.download('tasks', token);
+  }
 
   async create(data: Partial<Task>): Promise<Task> {
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
+    const customFields = this.customFieldValidator
+      ? await this.customFieldValidator.validate('Task', data.customFields, {
+          strict: true,
+        })
+      : data.customFields;
 
     const task = await this.automationOutbox.runWithEvent(
       (session) =>
@@ -26,6 +85,7 @@ export class TasksService {
             ownerId,
             statusId: data.statusId,
             categoryId: data.categoryId,
+            customFields,
           } as any,
           session,
         ),
@@ -44,8 +104,16 @@ export class TasksService {
   }
 
   async findAll(filter: any): Promise<any> {
+    const filterOptions = {
+      ...filter,
+      __customFieldDefinitions: await loadCustomFieldDefinitions(
+        this.customFields,
+        'Task',
+        filter.filters,
+      ),
+    };
     return this.repository.findManyWithPagination({
-      filterOptions: filter,
+      filterOptions,
       paginationOptions: {
         page: Number(filter.page) || 1,
         limit: Number(filter.limit) || 10,
@@ -61,7 +129,17 @@ export class TasksService {
     const existing = await this.repository.findOne({ _id: id });
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
 
-    const updateData: any = { ...data, ownerId };
+    const customFields = this.customFieldValidator
+      ? await this.customFieldValidator.validate('Task', data.customFields, {
+          partial: true,
+          strict: true,
+        })
+      : data.customFields;
+    const updateData: any = {
+      ...data,
+      ownerId,
+      ...(customFields !== undefined ? { customFields } : {}),
+    };
 
     // Auto-set completedAt when task is marked with a terminal status
     // The frontend should send completedAt when appropriate

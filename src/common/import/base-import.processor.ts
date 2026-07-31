@@ -305,15 +305,21 @@ export abstract class BaseImportProcessor<
         wouldSkip: summary.skipped,
         validationErrors: summary.errors,
       };
-      await report.discard();
+      const finalized = await report.finalize(summary);
       await progress.complete(job, summary.total);
       await this.updateImportJob(String(job.id), {
         status: 'completed',
         preview,
+        reportUrl: finalized?.reportUrl,
         progress: { processed: summary.total, total: summary.total, pct: 100 },
         completedAt: new Date(),
       });
-      return { jobId: String(job.id), dryRun: true, preview };
+      return {
+        jobId: String(job.id),
+        dryRun: true,
+        preview,
+        reportUrl: finalized?.reportUrl,
+      };
     }
 
     const finalized = await report.finalize(summary);
@@ -423,6 +429,16 @@ export abstract class BaseImportProcessor<
 
     // ── Step 5: Execute (skip for dry-run) ──
     await this.executeBatchOps(ops, opMeta, affected, data, context, errors);
+    const rowsByNumber = new Map(batch.map((item) => [item.row, item]));
+    for (const error of errors) {
+      const sourceRow = rowsByNumber.get(error.row);
+      if (!sourceRow) continue;
+      error.source = {
+        ...sourceRow.fields,
+        ...sourceRow.arrayFields,
+      };
+    }
+    await context.report.appendErrors(errors);
   }
 
   /** Step 1: Filter out rows missing required fields or failing module validation. */
@@ -571,7 +587,6 @@ export abstract class BaseImportProcessor<
     errors: ImportRowError[],
   ): Promise<void> {
     if (context.dryRun) {
-      await context.report.appendErrors(errors);
       return;
     }
 
@@ -594,8 +609,6 @@ export abstract class BaseImportProcessor<
         data,
       );
     }
-
-    await context.report.appendErrors(errors);
   }
 
   private async executeBulkWithOutbox(

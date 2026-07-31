@@ -17,6 +17,7 @@ import {
   DEFAULT_CHANNEL_SUPPORT,
 } from '../domain/channel';
 import { UpdateChannelSupportDto } from '../dto/channel.dto';
+import { escapeRegex } from '../../utils/escape-regex';
 
 /**
  * (direct ∪ group members) \ excluded — the one definition of "who is in the
@@ -289,6 +290,86 @@ export class ChannelSupportService {
   ): Promise<string[] | null> {
     const pool = await this.resolvePool(tenantId, channelId);
     return pool?.agentIds ?? null;
+  }
+
+  /**
+   * Cursor-light, server-ranked assignment picker. It avoids sending the full
+   * tenant directory to every agent workspace and intersects results with the
+   * same resolved support pool used by assignment enforcement.
+   */
+  async searchAssignmentCandidates(
+    tenantId: string,
+    channelId: string,
+    options: {
+      type: 'agent' | 'group';
+      search?: string;
+      limit?: number;
+    },
+  ): Promise<Array<{ id: string; displayName: string }>> {
+    const pool = await this.resolvePool(tenantId, channelId);
+    const limit = Math.min(50, Math.max(1, options.limit ?? 25));
+    const queryText = String(options.search ?? '').trim();
+    const search = queryText
+      ? { $regex: escapeRegex(queryText), $options: 'i' }
+      : undefined;
+
+    if (options.type === 'group') {
+      const filter: Record<string, unknown> = {
+        tenantId: toObjectId(tenantId),
+        isActive: { $ne: false },
+      };
+      if (pool?.mode === 'restricted') {
+        filter._id = {
+          $in: pool.groupIds
+            .filter((id) => Types.ObjectId.isValid(id))
+            .map((id) => new Types.ObjectId(id)),
+        };
+      }
+      if (search) filter.name = search;
+      const groups = await this.groupModel
+        .find(filter, { name: 1 })
+        .sort({ name: 1, _id: 1 })
+        .limit(limit)
+        .lean()
+        .exec();
+      return groups.map((group: any) => ({
+        id: String(group._id),
+        displayName: String(group.name),
+      }));
+    }
+
+    const filter: Record<string, unknown> = {
+      'tenants.tenantId': toObjectId(tenantId),
+      deletedAt: { $exists: false },
+      isActive: { $ne: false },
+    };
+    if (pool?.agentIds) {
+      filter._id = {
+        $in: pool.agentIds
+          .filter((id) => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id)),
+      };
+    }
+    if (search) {
+      filter.$or = [
+        { firstName: search },
+        { lastName: search },
+        { email: search },
+      ];
+    }
+    const users = await this.userModel
+      .find(filter, { firstName: 1, lastName: 1, email: 1 })
+      .sort({ firstName: 1, lastName: 1, _id: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    return users.map((user: any) => ({
+      id: String(user._id),
+      displayName:
+        [user.firstName, user.lastName].filter(Boolean).join(' ') ||
+        user.email ||
+        String(user._id),
+    }));
   }
 
   /**
@@ -689,3 +770,6 @@ export class ChannelSupportService {
     }
   }
 }
+
+const toObjectId = (value: string): string | Types.ObjectId =>
+  Types.ObjectId.isValid(value) ? new Types.ObjectId(value) : value;

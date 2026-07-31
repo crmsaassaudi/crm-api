@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -39,6 +40,8 @@ import { StartAccountImportDto } from './dto/start-account-import.dto';
 import { ExportRequestService, ExportRequestDto } from '../common/export';
 import { TagsService } from '../tags/tags.service';
 import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
+import { loadCustomFieldDefinitions } from '../utils/custom-field-filter';
 import {
   compareCompanyIdentity,
   deriveCompanyIdentity,
@@ -67,6 +70,7 @@ export class AccountsService {
     private readonly importJobModel: Model<ImportJobDocument>,
     private readonly exportRequest: ExportRequestService,
     private readonly tagsService: TagsService,
+    @Optional() private readonly customFields?: CustomFieldsService,
   ) {
     this.importStorage = this.storageFactory.create('accounts');
   }
@@ -106,16 +110,29 @@ export class AccountsService {
 
   // ─────────────────────────── EXPORT ───────────────────────────
 
-  exportAccounts(
+  async exportAccounts(
     dto: ExportRequestDto,
   ): Promise<{ jobId: string; status: 'queued' }> {
+    const querySnapshot = {
+      filters: dto.filters ?? [],
+      search: dto.search,
+    };
+    const legacyFilters = {
+      ...querySnapshot,
+      __customFieldDefinitions: await loadCustomFieldDefinitions(
+        this.customFields,
+        'Account',
+        dto.filters,
+      ),
+    };
     return this.exportRequest.enqueue({
       entityType: 'account',
       queue: this.exportQueue,
       format: dto.format,
       ids: dto.ids,
       columns: dto.columns,
-      filterSnapshot: { ids: dto.ids },
+      legacyFilters,
+      filterSnapshot: { ids: dto.ids, ...querySnapshot },
     });
   }
 
@@ -291,10 +308,18 @@ export class AccountsService {
 
   async findAll(filter: any): Promise<any> {
     const limit = clampPaginationLimit(filter.limit);
+    const filterOptions = {
+      ...filter,
+      __customFieldDefinitions: await loadCustomFieldDefinitions(
+        this.customFields,
+        'Account',
+        filter.filters,
+      ),
+    };
 
     if (resolvePaginationMode(filter) === 'cursor') {
       return this.repository.findManyWithCursorPagination({
-        filterOptions: filter,
+        filterOptions,
         paginationOptions: {
           limit,
           cursor: filter.cursor,
@@ -307,7 +332,7 @@ export class AccountsService {
     }
 
     return this.repository.findManyWithPagination({
-      filterOptions: filter,
+      filterOptions,
       paginationOptions: {
         page: Number(filter.page ?? 1) || 1,
         limit,

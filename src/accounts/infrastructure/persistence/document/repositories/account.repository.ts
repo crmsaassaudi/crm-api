@@ -15,6 +15,7 @@ import { ICursorPaginationOptions } from '../../../../../utils/types/cursor-pagi
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
 import { CursorPaginationResponseDto } from '../../../../../utils/dto/cursor-pagination-response.dto';
 import { pagination } from '../../../../../utils/pagination';
+import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
 import {
   buildMongoCursorFilter,
   buildMongoCursorSort,
@@ -66,21 +67,19 @@ export class AccountRepository extends BaseDocumentRepository<
 
   private buildExportFilter(params: {
     ids?: string[];
+    filters?: any;
   }): FilterQuery<AccountSchemaClass> {
-    const base: FilterQuery<AccountSchemaClass> =
-      params.ids && params.ids.length > 0
-        ? {
-            _id: {
-              $in: params.ids
-                .filter((id) => Types.ObjectId.isValid(id))
-                .map((id) => new Types.ObjectId(id)),
-            },
-          }
-        : {};
-    return this.applyTenantFilter({
-      ...base,
-      deletedAt: { $exists: false },
-    } as FilterQuery<AccountSchemaClass>);
+    if (params.ids && params.ids.length > 0) {
+      return this.applyTenantFilter({
+        _id: {
+          $in: params.ids
+            .filter((id) => Types.ObjectId.isValid(id))
+            .map((id) => new Types.ObjectId(id)),
+        },
+        deletedAt: null,
+      } as FilterQuery<AccountSchemaClass>);
+    }
+    return this.applyTenantFilter(this.buildListWhere(params.filters));
   }
 
   /** Lean + projection + read-preference cursor for streaming exports. */
@@ -199,6 +198,7 @@ export class AccountRepository extends BaseDocumentRepository<
         if (Array.isArray(parsedFilters)) {
           parsedFilters.forEach((f: any) => {
             if (f.id && f.value) {
+              if (String(f.id).startsWith('customFields.')) return;
               if (['industry', 'statusId'].includes(f.id)) {
                 where[f.id] = Array.isArray(f.value)
                   ? { $in: f.value }
@@ -228,6 +228,12 @@ export class AccountRepository extends BaseDocumentRepository<
         // ignore parse errors
       }
     }
+
+    applyRegisteredCustomFieldFilters(
+      where,
+      filterOptions?.filters,
+      filterOptions?.__customFieldDefinitions,
+    );
 
     return where;
   }

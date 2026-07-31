@@ -1,5 +1,5 @@
 import { Processor } from '@nestjs/bullmq';
-import { Inject, Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
@@ -29,6 +29,8 @@ import { TicketStatusSchemaClass } from '../../ticket-settings/entities/ticket-s
 import { TicketTypeSchemaClass } from '../../ticket-settings/entities/ticket-type.schema';
 import { TicketSourceSchemaClass } from '../../ticket-settings/entities/ticket-source.schema';
 import { GroupSchemaClass } from '../../groups/infrastructure/persistence/document/entities/group.schema';
+import { CustomFieldsService } from '../../custom-fields/custom-fields.service';
+import { loadCustomFieldExportColumns } from '../../common/export/custom-field-export-columns';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -76,6 +78,7 @@ function buildTicketExportColumns(
     },
     { header: 'tags', path: 'tags' },
     { header: 'createdAt', path: 'createdAt' },
+    { header: 'updatedAt', path: 'updatedAt' },
   ];
 }
 
@@ -91,6 +94,7 @@ const STATIC_COLUMNS: readonly ExportColumn[] = [
   { header: 'group', path: 'groupId' },
   { header: 'tags', path: 'tags' },
   { header: 'createdAt', path: 'createdAt' },
+  { header: 'updatedAt', path: 'updatedAt' },
 ] as const;
 
 export interface TicketExportJobData extends BaseExportJobData {
@@ -132,6 +136,7 @@ export class TicketExportProcessor extends BaseExportProcessor<TicketExportJobDa
     private readonly ticketSourceModel: Model<any>,
     @InjectModel(GroupSchemaClass.name)
     private readonly groupModel: Model<any>,
+    @Optional() private readonly customFields?: CustomFieldsService,
   ) {
     super();
     this.cls = cls;
@@ -141,21 +146,25 @@ export class TicketExportProcessor extends BaseExportProcessor<TicketExportJobDa
   // ── Lifecycle hook ────────────────────────────────────────────────
 
   protected async beforeExport(data: TicketExportJobData): Promise<void> {
-    await Promise.all([
+    const [, , , , , dynamicColumns] = await Promise.all([
       this.loadUserMap(data.tenantId),
       this.loadStatusMap(data.tenantId),
       this.loadTypeMap(data.tenantId),
       this.loadSourceMap(data.tenantId),
       this.loadGroupMap(data.tenantId),
+      loadCustomFieldExportColumns(this.customFields, 'Ticket'),
     ]);
 
-    this.resolvedColumns = buildTicketExportColumns(
-      this.userMap,
-      this.statusMap,
-      this.typeMap,
-      this.sourceMap,
-      this.groupMap,
-    );
+    this.resolvedColumns = [
+      ...buildTicketExportColumns(
+        this.userMap,
+        this.statusMap,
+        this.typeMap,
+        this.sourceMap,
+        this.groupMap,
+      ),
+      ...dynamicColumns,
+    ];
   }
 
   private async loadUserMap(tenantId: string): Promise<void> {
@@ -226,7 +235,12 @@ export class TicketExportProcessor extends BaseExportProcessor<TicketExportJobDa
       maskingResource: 'Ticket',
       columns:
         this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
-      selectableColumns: new Set(STATIC_COLUMNS.map((c) => c.path)),
+      selectableColumns: new Set(
+        (this.resolvedColumns.length > 0
+          ? this.resolvedColumns
+          : STATIC_COLUMNS
+        ).map((column) => column.path),
+      ),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,
       throttleMs: 50,

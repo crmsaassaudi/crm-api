@@ -62,6 +62,9 @@ export class Task {
   @ApiProperty()
   taskSource?: { id: string; name: string };
 
+  @ApiProperty({ required: false, type: Object })
+  customFields?: Record<string, unknown>;
+
   @ApiProperty()
   createdAt: Date;
 

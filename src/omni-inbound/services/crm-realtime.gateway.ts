@@ -37,6 +37,7 @@ export class CrmRealtimeGateway {
     'socket:account:export:completed',
     'socket:deal:export:completed',
     'socket:ticket:export:completed',
+    'socket:task:export:completed',
     'socket:contact:import:completed',
     'socket:account:import:completed',
     'socket:deal:import:completed',
@@ -60,6 +61,9 @@ export class CrmRealtimeGateway {
         return true;
       case 'socket:ticket:export:completed':
         this.handleModuleExportCompleted('ticket', event);
+        return true;
+      case 'socket:task:export:completed':
+        this.handleModuleExportCompleted('task', event);
         return true;
       case 'socket:contact:import:completed':
         this.handleContactImportCompleted(event);
@@ -106,7 +110,7 @@ export class CrmRealtimeGateway {
    * Generic handler for account/deal/ticket export completion events.
    */
   private handleModuleExportCompleted(
-    module: 'account' | 'deal' | 'ticket',
+    module: 'account' | 'deal' | 'ticket' | 'task',
     event: {
       tenantId: string;
       userId: string;

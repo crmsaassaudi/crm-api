@@ -121,6 +121,10 @@ export abstract class BaseExportProcessor<
     signal: AbortSignal,
   ): Promise<ExportResult> {
     const data = job.data;
+    // Runtime schemas (custom fields, reference labels) must be loaded before
+    // resolving requested columns. Resolving first made the first job use the
+    // static schema and allowed a later job to inherit stale tenant columns.
+    await this.beforeExport(data);
     const cfg = this.getModuleConfig();
     const format = data.format;
     const cap = cfg.hardCap[format];
@@ -141,8 +145,6 @@ export abstract class BaseExportProcessor<
       data.userGroupId,
       cfg.maskingResource,
     );
-
-    await this.beforeExport(data);
 
     const estimatedTotal = await this.safeCount(data);
 

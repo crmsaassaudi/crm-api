@@ -108,6 +108,7 @@ export const PERMISSION_REGISTRY: Record<
     edit: 'deals:edit',
     delete: 'deals:delete',
     move_stage: 'deals:move_stage',
+    export: 'deals:export',
   },
   campaigns: {
     view: 'campaigns:view',
@@ -122,6 +123,7 @@ export const PERMISSION_REGISTRY: Record<
     edit: 'tickets:edit',
     delete: 'tickets:delete',
     resolve: 'tickets:resolve',
+    export: 'tickets:export',
   },
   reports: {
     view: 'reports:view',
@@ -191,6 +193,7 @@ export const PERMISSION_REGISTRY: Record<
     create: 'tasks:create',
     edit: 'tasks:edit',
     delete: 'tasks:delete',
+    export: 'tasks:export',
   },
   ai_video: {
     view: 'ai_video:view',
@@ -533,6 +536,9 @@ export const FEATURE_PERMISSIONS: string[] = [
   'contacts:import',
   'contacts:unmask',
   'accounts:export',
+  'deals:export',
+  'tickets:export',
+  'tasks:export',
   // Reports advanced
   'reports:create',
   'reports:export',

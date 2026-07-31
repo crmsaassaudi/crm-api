@@ -1,5 +1,5 @@
 import { Processor } from '@nestjs/bullmq';
-import { Inject, Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
@@ -28,6 +28,8 @@ import { UserSchemaClass } from '../../users/infrastructure/persistence/document
 import { DealStageSchemaClass } from '../../deal-settings/entities/deal-stage.schema';
 import { DealSourceSchemaClass } from '../../deal-settings/entities/deal-source.schema';
 import { AccountSchemaClass } from '../../accounts/infrastructure/persistence/document/entities/account.schema';
+import { CustomFieldsService } from '../../custom-fields/custom-fields.service';
+import { loadCustomFieldExportColumns } from '../../common/export/custom-field-export-columns';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -73,6 +75,7 @@ function buildDealExportColumns(
     { header: 'lostReason', path: 'lostReason' },
     { header: 'tags', path: 'tags' },
     { header: 'createdAt', path: 'createdAt' },
+    { header: 'updatedAt', path: 'updatedAt' },
   ];
 }
 
@@ -91,6 +94,7 @@ const STATIC_COLUMNS: readonly ExportColumn[] = [
   { header: 'lostReason', path: 'lostReason' },
   { header: 'tags', path: 'tags' },
   { header: 'createdAt', path: 'createdAt' },
+  { header: 'updatedAt', path: 'updatedAt' },
 ] as const;
 
 export interface DealExportJobData extends BaseExportJobData {
@@ -129,6 +133,7 @@ export class DealExportProcessor extends BaseExportProcessor<DealExportJobData> 
     private readonly dealSourceModel: Model<any>,
     @InjectModel(AccountSchemaClass.name)
     private readonly accountModel: Model<any>,
+    @Optional() private readonly customFields?: CustomFieldsService,
   ) {
     super();
     this.cls = cls;
@@ -138,19 +143,23 @@ export class DealExportProcessor extends BaseExportProcessor<DealExportJobData> 
   // ── Lifecycle hook ────────────────────────────────────────────────
 
   protected async beforeExport(data: DealExportJobData): Promise<void> {
-    await Promise.all([
+    const [, , , , dynamicColumns] = await Promise.all([
       this.loadUserMap(data.tenantId),
       this.loadStageMap(data.tenantId),
       this.loadSourceMap(data.tenantId),
       this.loadAccountMap(data.tenantId),
+      loadCustomFieldExportColumns(this.customFields, 'Deal'),
     ]);
 
-    this.resolvedColumns = buildDealExportColumns(
-      this.userMap,
-      this.stageMap,
-      this.sourceMap,
-      this.accountMap,
-    );
+    this.resolvedColumns = [
+      ...buildDealExportColumns(
+        this.userMap,
+        this.stageMap,
+        this.sourceMap,
+        this.accountMap,
+      ),
+      ...dynamicColumns,
+    ];
   }
 
   private async loadUserMap(tenantId: string): Promise<void> {
@@ -210,7 +219,12 @@ export class DealExportProcessor extends BaseExportProcessor<DealExportJobData> 
       maskingResource: 'Deal',
       columns:
         this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
-      selectableColumns: new Set(STATIC_COLUMNS.map((c) => c.path)),
+      selectableColumns: new Set(
+        (this.resolvedColumns.length > 0
+          ? this.resolvedColumns
+          : STATIC_COLUMNS
+        ).map((column) => column.path),
+      ),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,
       throttleMs: 50,

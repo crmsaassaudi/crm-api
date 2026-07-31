@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -41,6 +42,8 @@ import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 import { TagsService } from '../tags/tags.service';
 import { buildCrmReportVisibilityFilter } from '../reports/shared/utils/report-visibility-filter.util';
 import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
+import { loadCustomFieldDefinitions } from '../utils/custom-field-filter';
 
 @Injectable()
 export class DealsService {
@@ -68,6 +71,7 @@ export class DealsService {
     private readonly exportRequest: ExportRequestService,
     private readonly crmSettings: CrmSettingsService,
     private readonly tagsService: TagsService,
+    @Optional() private readonly customFields?: CustomFieldsService,
   ) {
     this.importStorage = this.storageFactory.create('deals');
   }
@@ -176,16 +180,26 @@ export class DealsService {
 
   // ─────────────────────────── EXPORT ───────────────────────────
 
-  exportDeals(
+  async exportDeals(
     dto: ExportRequestDto,
   ): Promise<{ jobId: string; status: 'queued' }> {
+    const filters = [...(dto.filters ?? [])];
+    const querySnapshot = { filters, search: dto.search };
     return this.exportRequest.enqueue({
       entityType: 'deal',
       queue: this.exportQueue,
       format: dto.format,
       ids: dto.ids,
       columns: dto.columns,
-      filterSnapshot: { ids: dto.ids },
+      legacyFilters: {
+        ...querySnapshot,
+        __customFieldDefinitions: await loadCustomFieldDefinitions(
+          this.customFields,
+          'Deal',
+          filters,
+        ),
+      },
+      filterSnapshot: { ids: dto.ids, ...querySnapshot },
     });
   }
 
@@ -261,8 +275,16 @@ export class DealsService {
   }
 
   async findAll(filter: any): Promise<any> {
+    const filterOptions = {
+      ...filter,
+      __customFieldDefinitions: await loadCustomFieldDefinitions(
+        this.customFields,
+        'Deal',
+        filter.filters,
+      ),
+    };
     return this.repository.findManyWithPagination({
-      filterOptions: filter,
+      filterOptions,
       paginationOptions: {
         page: Number(filter.page) || 1,
         limit: Number(filter.limit) || 10,

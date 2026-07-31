@@ -72,6 +72,9 @@ export class TaskSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TaskSourceSchemaClass' })
   sourceId?: string;
 
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  customFields?: Record<string, unknown>;
+
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',

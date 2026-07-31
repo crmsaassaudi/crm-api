@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
@@ -44,6 +45,9 @@ import {
   buildReparentUpdate,
 } from '../common/references/entity-reference';
 import { TICKET_MERGE_REFERENCES } from './ticket-references.registry';
+import { CustomFieldsService } from '../custom-fields/custom-fields.service';
+import { loadCustomFieldDefinitions } from '../utils/custom-field-filter';
+import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
 
 @Injectable()
 export class TicketsService {
@@ -69,6 +73,9 @@ export class TicketsService {
     // Raw connection for the merge re-parent pass: injecting ActivityLogModule and
     // TasksModule here would close a dependency cycle with ContactsModule.
     @InjectConnection() private readonly connection: Connection,
+    @Optional() private readonly customFields?: CustomFieldsService,
+    @Optional()
+    private readonly customFieldValidator?: CustomFieldValueValidator,
   ) {
     this.importStorage = this.storageFactory.create('tickets');
   }
@@ -185,16 +192,28 @@ export class TicketsService {
 
   // ─────────────────────────── EXPORT ───────────────────────────
 
-  exportTickets(
+  async exportTickets(
     dto: ExportRequestDto,
   ): Promise<{ jobId: string; status: 'queued' }> {
+    const querySnapshot = {
+      filters: dto.filters ?? [],
+      search: dto.search,
+    };
     return this.exportRequest.enqueue({
       entityType: 'ticket',
       queue: this.exportQueue,
       format: dto.format,
       ids: dto.ids,
       columns: dto.columns,
-      filterSnapshot: { ids: dto.ids },
+      legacyFilters: {
+        ...querySnapshot,
+        __customFieldDefinitions: await loadCustomFieldDefinitions(
+          this.customFields,
+          'Ticket',
+          dto.filters,
+        ),
+      },
+      filterSnapshot: { ids: dto.ids, ...querySnapshot },
     });
   }
 
@@ -217,6 +236,11 @@ export class TicketsService {
   async create(data: Partial<Ticket>): Promise<Ticket> {
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'create');
+    const customFields = this.customFieldValidator
+      ? await this.customFieldValidator.validate('Ticket', data.customFields, {
+          strict: true,
+        })
+      : data.customFields;
 
     const ticketNumber = await this.repository.generateTicketNumber();
 
@@ -228,6 +252,7 @@ export class TicketsService {
             ticketNumber,
             isSlaBreached: false,
             timeSpentSeconds: 0,
+            customFields,
           } as any,
           session,
         ),
@@ -246,8 +271,16 @@ export class TicketsService {
   }
 
   async findAll(filter: any): Promise<any> {
+    const filterOptions = {
+      ...filter,
+      __customFieldDefinitions: await loadCustomFieldDefinitions(
+        this.customFields,
+        'Ticket',
+        filter.filters,
+      ),
+    };
     return this.repository.findManyWithPagination({
-      filterOptions: filter,
+      filterOptions,
       paginationOptions: {
         page: Number(filter.page) || 1,
         limit: Number(filter.limit) || 10,
@@ -266,7 +299,16 @@ export class TicketsService {
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'update');
 
-    const updateData: any = { ...data };
+    const customFields = this.customFieldValidator
+      ? await this.customFieldValidator.validate('Ticket', data.customFields, {
+          partial: true,
+          strict: true,
+        })
+      : data.customFields;
+    const updateData: any = {
+      ...data,
+      ...(customFields !== undefined ? { customFields } : {}),
+    };
 
     await this.handleStatusChange(existingTicket, data, updateData);
 

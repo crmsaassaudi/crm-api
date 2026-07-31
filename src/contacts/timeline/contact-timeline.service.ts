@@ -70,11 +70,17 @@ export class ContactTimelineService {
 
   async getTimeline(
     contactId: string,
-    options: { limit?: number; sources?: TimelineSource[] } = {},
+    options: {
+      limit?: number;
+      sources?: TimelineSource[];
+      before?: Date;
+    } = {},
   ): Promise<{
     data: TimelineEntry[];
     truncatedSources: TimelineSource[];
     sourceCounts: Record<string, number>;
+    nextCursor?: string;
+    hasNextPage: boolean;
   }> {
     // Read the contact through the repository first: that applies the tenant and
     // visibility axes, so the timeline cannot become a side door to a record the
@@ -102,17 +108,25 @@ export class ContactTimelineService {
 
     const results = await Promise.all([
       wanted.has('activity')
-        ? this.fetchActivities(tenantId, contactId)
+        ? this.fetchActivities(tenantId, contactId, options.before)
         : empty(),
-      wanted.has('note') ? this.fetchNotes(tenantId, oid) : empty(),
-      wanted.has('ticket') ? this.fetchTickets(tenantId, oid) : empty(),
-      wanted.has('deal') ? this.fetchDeals(tenantId, oid) : empty(),
-      wanted.has('task') ? this.fetchTasks(tenantId, contactId) : empty(),
+      wanted.has('note')
+        ? this.fetchNotes(tenantId, oid, options.before)
+        : empty(),
+      wanted.has('ticket')
+        ? this.fetchTickets(tenantId, oid, options.before)
+        : empty(),
+      wanted.has('deal')
+        ? this.fetchDeals(tenantId, oid, options.before)
+        : empty(),
+      wanted.has('task')
+        ? this.fetchTasks(tenantId, contactId, options.before)
+        : empty(),
       wanted.has('conversation')
-        ? this.fetchConversations(tenantId, oid)
+        ? this.fetchConversations(tenantId, oid, options.before)
         : empty(),
       wanted.has('stage_change')
-        ? this.fetchStageTransitions(tenantId, oid)
+        ? this.fetchStageTransitions(tenantId, oid, options.before)
         : empty(),
     ]);
 
@@ -120,7 +134,11 @@ export class ContactTimelineService {
     const projectedStages = results.at(-1) ?? [];
     const stageEntries =
       wanted.has('stage_change') && projectedStages.length === 0
-        ? this.mapStageHistory(contact)
+        ? this.mapStageHistory(contact).filter(
+            (entry) =>
+              !options.before ||
+              new Date(entry.occurredAt).getTime() < options.before.getTime(),
+          )
         : [];
 
     const merged = [...results.flat(), ...stageEntries].sort(
@@ -141,7 +159,18 @@ export class ContactTimelineService {
       .filter(([, count]) => count >= SOURCE_LIMIT)
       .map(([source]) => source);
 
-    return { data: merged.slice(0, limit), truncatedSources, sourceCounts };
+    const data = merged.slice(0, limit);
+    const hasNextPage = merged.length > limit || truncatedSources.length > 0;
+    return {
+      data,
+      truncatedSources,
+      sourceCounts,
+      hasNextPage,
+      nextCursor:
+        hasNextPage && data.length > 0
+          ? new Date(data[data.length - 1].occurredAt).toISOString()
+          : undefined,
+    };
   }
 
   // ── Per-source fetchers ────────────────────────────────────────────────
@@ -154,12 +183,14 @@ export class ContactTimelineService {
   private async fetchActivities(
     tenantId: string,
     contactId: string,
+    before?: Date,
   ): Promise<TimelineEntry[]> {
     const rows = await this.find('activity_logs', {
       filter: {
         tenantId: toId(tenantId),
         targetType: 'contact',
         targetId: contactId,
+        ...beforeDate('occurredAt', before),
       },
       projection: { event: 1, actorId: 1, occurredAt: 1, payload: 1 },
       sort: { occurredAt: -1 },
@@ -179,9 +210,14 @@ export class ContactTimelineService {
   private async fetchNotes(
     tenantId: string,
     contactId: Types.ObjectId,
+    before?: Date,
   ): Promise<TimelineEntry[]> {
     const rows = await this.find('notes', {
-      filter: { tenantId: toId(tenantId), contactId },
+      filter: {
+        tenantId: toId(tenantId),
+        contactId,
+        ...beforeDate('createdAt', before),
+      },
       projection: { title: 1, content: 1, createdById: 1, createdAt: 1 },
       sort: { createdAt: -1 },
     });
@@ -201,9 +237,15 @@ export class ContactTimelineService {
   private async fetchTickets(
     tenantId: string,
     contactId: Types.ObjectId,
+    before?: Date,
   ): Promise<TimelineEntry[]> {
     const rows = await this.find('tickets', {
-      filter: { tenantId: toId(tenantId), contactId, deletedAt: null },
+      filter: {
+        tenantId: toId(tenantId),
+        contactId,
+        deletedAt: null,
+        ...beforeDate('createdAt', before),
+      },
       projection: {
         subject: 1,
         title: 1,
@@ -230,12 +272,14 @@ export class ContactTimelineService {
   private async fetchDeals(
     tenantId: string,
     contactId: Types.ObjectId,
+    before?: Date,
   ): Promise<TimelineEntry[]> {
     const rows = await this.find('deals', {
       filter: {
         tenantId: toId(tenantId),
         contactIds: contactId,
         deletedAt: null,
+        ...beforeDate('createdAt', before),
       },
       projection: {
         name: 1,
@@ -263,6 +307,7 @@ export class ContactTimelineService {
   private async fetchTasks(
     tenantId: string,
     contactId: string,
+    before?: Date,
   ): Promise<TimelineEntry[]> {
     const rows = await this.find('tasks', {
       filter: {
@@ -271,6 +316,7 @@ export class ContactTimelineService {
         // Both key shapes, matching TaskRepository — older rows use `.id`.
         $or: [{ 'relatedTo._id': contactId }, { 'relatedTo.id': contactId }],
         deletedAt: null,
+        ...beforeDate('createdAt', before),
       },
       projection: {
         title: 1,
@@ -301,9 +347,14 @@ export class ContactTimelineService {
   private async fetchConversations(
     tenantId: string,
     contactId: Types.ObjectId,
+    before?: Date,
   ): Promise<TimelineEntry[]> {
     const rows = await this.find('omni_conversations', {
-      filter: { tenantId: toId(tenantId), contactId },
+      filter: {
+        tenantId: toId(tenantId),
+        contactId,
+        ...beforeDate('lastMessageAt', before),
+      },
       projection: {
         channelType: 1,
         status: 1,
@@ -337,9 +388,14 @@ export class ContactTimelineService {
   private async fetchStageTransitions(
     tenantId: string,
     contactId: Types.ObjectId,
+    before?: Date,
   ): Promise<TimelineEntry[]> {
     const rows = await this.find('contact_stage_transitions', {
-      filter: { tenantId: toId(tenantId), contactId },
+      filter: {
+        tenantId: toId(tenantId),
+        contactId,
+        ...beforeDate('occurredAt', before),
+      },
       projection: {
         fromStage: 1,
         toStage: 1,
@@ -442,6 +498,12 @@ function empty(): Promise<TimelineEntry[]> {
 
 function toId(value: string): any {
   return Types.ObjectId.isValid(value) ? new Types.ObjectId(value) : value;
+}
+
+function beforeDate(field: string, before?: Date): Record<string, unknown> {
+  return before && !Number.isNaN(before.getTime())
+    ? { [field]: { $lt: before } }
+    : {};
 }
 
 function excerpt(content: unknown, length = 140): string {

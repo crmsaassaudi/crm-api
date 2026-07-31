@@ -153,6 +153,25 @@ export class ChannelsController {
     };
   }
 
+  @Get(':id/assignment-candidates')
+  @RequirePermission('view', 'channels')
+  getAssignmentCandidates(
+    @Param('id') id: string,
+    @Query('type') type?: 'agent' | 'group',
+    @Query('search') search?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.supportService.searchAssignmentCandidates(
+      this.cls.get<string>('tenantId'),
+      id,
+      {
+        type: type === 'group' ? 'group' : 'agent',
+        search,
+        limit: limit ? Number(limit) : undefined,
+      },
+    );
+  }
+
   /**
    * The support pool with names resolved and group membership expanded — what
    * the admin UI renders. `manage_system` like the write route: it discloses
