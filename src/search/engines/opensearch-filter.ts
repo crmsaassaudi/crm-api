@@ -44,6 +44,7 @@ export const INDEXED_FILTER_FIELDS: ReadonlySet<string> = new Set([
   'orgUnitId',
   'statusId',
   'tags',
+  'flags',
   'createdAt',
   'updatedAt',
 ]);

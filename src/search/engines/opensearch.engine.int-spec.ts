@@ -121,6 +121,21 @@ const FIXTURES = [
     ...document('q5', 'Other Tenant Secret'),
     tenantId: 'tenant-someone-else',
   },
+  // Hidden-state fixtures. These exist to prove the safety invariants against
+  // the real mapping rather than against a mock that cannot disagree with it.
+  document('q7', 'Archived Holdings', {
+    ownerId: 'user-1',
+    statusId: 'active',
+    searchText: 'Archived Holdings company',
+    flags: ['archived'],
+  }),
+  document('q8', 'Empty Owner Record', {
+    // MongoDB treats "" as present, so a scoped user does not see this row.
+    // Indexing it as a present-but-empty keyword is what makes OpenSearch agree.
+    ownerId: '',
+    statusId: 'active',
+    searchText: 'Empty Owner Record',
+  }),
 ];
 
 const reciprocalRank = (
@@ -184,6 +199,45 @@ describe('OpenSearchEngine against a live cluster', () => {
   it('should never return another tenant’s records', async () => {
     const all = await titles('tenant');
     expect(all.join(' ')).not.toContain('Other Tenant Secret');
+  });
+
+  it('should hide archived records the way every MongoDB list does', async () => {
+    // Safety invariant against the real mapping. A record the product hid must
+    // stay hidden on both engines: turning the gateway on used to bring
+    // archived accounts back into search, which reads to a user as the product
+    // ignoring something they deliberately put away.
+    const found = await titles('Holdings');
+    expect(found.join(' ')).toContain('Nguyen Van An Holdings');
+    expect(found.join(' ')).not.toContain('Archived Holdings');
+  });
+
+  it('should treat an empty ownerId as owned, exactly as MongoDB does', async () => {
+    // "" matches neither `{ownerId: null}` nor an `$in` list in MongoDB, so a
+    // scoped user does not see the row. Dropping the field at index time made
+    // it look unowned here, `must_not exists` matched, and OpenSearch revealed
+    // a record MongoDB hides.
+    const asScopedUser = await titles('Empty Owner Record', {
+      scope: scope({
+        visibleOwnerIds: ['user-1'],
+        visibleOrgUnitIds: [],
+        includeUnowned: true,
+      }),
+    });
+    expect(asScopedUser.join(' ')).not.toContain('Empty Owner Record');
+  });
+
+  it('should return nothing at all when the resolved scope is empty', async () => {
+    // An empty visibility set must compile to `match_none`, never to an empty
+    // bool filter — which matches everything and would turn "sees nobody" into
+    // "sees everyone".
+    const nothing = await titles('Nguyễn', {
+      scope: scope({
+        visibleOwnerIds: [],
+        visibleOrgUnitIds: [],
+        includeUnowned: false,
+      }),
+    });
+    expect(nothing).toEqual([]);
   });
 
   it('should match a partial word so the search box works while typing', async () => {

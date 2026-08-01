@@ -19,7 +19,7 @@ describe('GlobalSearchService', () => {
     set: jest.fn((key: string, value: unknown) => context.set(key, value)),
   };
   const events = { emit: jest.fn() };
-  const metrics = { incrementCounter: jest.fn() };
+  const metrics = { incrementCounter: jest.fn(), observeHistogram: jest.fn() };
   const settings = { getSetting: jest.fn(() => Promise.resolve({})) };
   const service = new GlobalSearchService(
     authorization as never,

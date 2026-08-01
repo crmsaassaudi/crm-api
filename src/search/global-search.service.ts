@@ -55,9 +55,15 @@ export class GlobalSearchService {
     const nextModules: CursorState['modules'] = { ...cursor.modules };
     let openSearchPitId = cursor.openSearchPitId;
     let requestedEngine: 'mongodb' | 'opensearch' = 'mongodb';
-    let actualEngine: 'mongodb' | 'opensearch' = 'mongodb';
     let fallbackUsed = false;
     let fallbackReason: string | undefined;
+    /** Which engine actually answered each module, so nothing has to guess. */
+    const engineByModule: Partial<
+      Record<SearchModule, 'mongodb' | 'opensearch'>
+    > = {};
+    const degradedModules: SearchModule[] = [];
+    let degraded = false;
+    let degradedSemantics: string | undefined;
 
     const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
@@ -89,6 +95,7 @@ export class GlobalSearchService {
             throw new UnauthorizedException('Search data scope is unavailable');
           }
           const response = await this.router.search({
+            capability: 'global_search',
             module,
             query,
             limit: input.limitPerModule,
@@ -113,10 +120,20 @@ export class GlobalSearchService {
             openSearchPitId = response.snapshotId;
           }
           if (response.cursorReset) restartedModules.push(module);
+          // Recorded per module, not overwritten. The previous assignment ran
+          // inside this loop, so a mixed response reported whichever engine
+          // happened to serve the *last* module — and the metric labelled by
+          // that value is the one used to decide whether OpenSearch is worth
+          // its bill.
+          engineByModule[module] = response.actualEngine;
           requestedEngine = response.requestedEngine;
-          actualEngine = response.actualEngine;
           fallbackUsed ||= response.fallbackUsed;
           fallbackReason ??= response.fallbackReason;
+          if (response.degraded) {
+            degraded = true;
+            degradedSemantics ??= response.degradedSemantics;
+            degradedModules.push(module);
+          }
         } finally {
           this.cls.set('abacResourceFilter', previousAbac);
         }
@@ -147,6 +164,12 @@ export class GlobalSearchService {
       openSearchPitId = undefined;
     }
     const durationMs = Date.now() - startedAt;
+    // One request can be served by both engines — the router is consulted per
+    // module. Collapsing that to a single engine name was how the dashboards
+    // came to disagree with what actually happened.
+    const enginesUsed = [...new Set(Object.values(engineByModule))];
+    const actualEngine: 'mongodb' | 'opensearch' | 'mixed' =
+      enginesUsed.length > 1 ? 'mixed' : (enginesUsed[0] ?? 'mongodb');
     const telemetry = {
       tenantId,
       userId,
@@ -158,7 +181,10 @@ export class GlobalSearchService {
       restartedModules,
       requestedEngine,
       actualEngine,
+      engineByModule,
       fallbackUsed,
+      degraded,
+      degradedModules,
       ...(fallbackReason ? { fallbackReason } : {}),
       resultCount: results.length,
       cursorUsed: Boolean(input.cursor),
@@ -169,12 +195,21 @@ export class GlobalSearchService {
       requested_engine: requestedEngine,
       actual_engine: actualEngine,
       fallback: String(fallbackUsed),
+      degraded: String(degraded),
     };
     this.metrics.incrementCounter('crm_search_requests_total', metricLabels);
     this.metrics.incrementCounter(
       'crm_search_results_total',
       metricLabels,
       results.length,
+    );
+    // The histogram is the one that can answer "what is p95". The counter is
+    // kept alongside it for one release so existing dashboards do not go blank
+    // during the cutover; it can only ever yield a mean.
+    this.metrics.observeHistogram(
+      'crm_search_duration_ms',
+      metricLabels,
+      durationMs,
     );
     this.metrics.incrementCounter(
       'crm_search_duration_ms_total',
@@ -204,6 +239,15 @@ export class GlobalSearchService {
         durationMs,
         allowedModules,
         deniedModules,
+        // The capability's owning engine did not serve these modules, so the
+        // answer is narrower and ordered differently than the search box
+        // promises. The router knew this all along; until now it was computed
+        // and thrown away, which made a degraded answer indistinguishable from
+        // a wrong one.
+        degraded,
+        ...(degradedModules.length ? { degradedModules } : {}),
+        ...(degraded && degradedSemantics ? { degradedSemantics } : {}),
+        engineByModule,
         // The search engine changed between two pages, so these modules were
         // served from their first page again. The client can tell the user why
         // it is seeing rows it already scrolled past.

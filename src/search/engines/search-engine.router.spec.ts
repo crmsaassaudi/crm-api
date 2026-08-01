@@ -6,6 +6,7 @@ import {
 } from './opensearch-filter';
 
 const request = {
+  capability: 'global_search' as const,
   module: 'contacts' as const,
   query: 'acme',
   limit: 5,
@@ -26,10 +27,18 @@ describe('SearchEngineRouter', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
-  function router(enabled: boolean, fallbackToMongoDb = true) {
+  function router(
+    enabled: boolean,
+    fallbackToMongoDb = true,
+    capabilityOverrides: Record<string, string> = {},
+  ) {
     return new SearchEngineRouter(
       {
-        getOrThrow: jest.fn(() => ({ enabled, fallbackToMongoDb })),
+        getOrThrow: jest.fn(() => ({
+          enabled,
+          fallbackToMongoDb,
+          capabilityOverrides,
+        })),
       } as never,
       mongo as never,
       opensearch as never,
@@ -223,5 +232,62 @@ describe('SearchEngineRouter', () => {
       'crm_search_engine_errors_total',
       { engine: 'opensearch', reason: 'rejected_400' },
     );
+  });
+
+  describe('capability routing', () => {
+    it('should mark a runtime diversion as degraded, not merely a fallback', async () => {
+      // `fallbackUsed` says an engine changed. `degraded` says the answer is
+      // weaker than the capability promised — which is the part a caller has to
+      // be told, and the part that used to be computed and discarded.
+      opensearch.search.mockRejectedValue(new Error('connection failed'));
+      mongo.search.mockResolvedValue({ data: [], nextCursor: null });
+
+      const response = await router(true).search(request);
+      expect(response.degraded).toBe(true);
+      expect(response.degradedSemantics).toEqual(expect.any(String));
+    });
+
+    it('should not call MongoDB at all when a capability is switched off', async () => {
+      // The whole point of `off`: an unavailable feature is recoverable, a
+      // primary saturated by scans that the feature diverted onto it is not.
+      const off = router(true, true, { global_search: 'off' });
+      await expect(off.search(request)).rejects.toThrow(/unavailable/);
+      expect(mongo.search).not.toHaveBeenCalled();
+      expect(opensearch.search).not.toHaveBeenCalled();
+    });
+
+    it('should serve a capability forced to MongoDB without touching OpenSearch', async () => {
+      mongo.search.mockResolvedValue({ data: [], nextCursor: null });
+      const forced = router(true, true, { global_search: 'mongodb' });
+
+      await expect(forced.search(request)).resolves.toMatchObject({
+        actualEngine: 'mongodb',
+        degraded: false,
+      });
+      expect(opensearch.search).not.toHaveBeenCalled();
+    });
+
+    it('should keep one capability breaker from opening another', async () => {
+      // The breaker used to be one counter for the whole process, so a heavy
+      // capability timing out took a light, healthy one down with it.
+      const instance = router(true);
+      opensearch.search.mockRejectedValue(new Error('connection failed'));
+      mongo.search.mockResolvedValue({ data: [], nextCursor: null });
+
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        await instance.search({ ...request, capability: 'global_search' });
+      }
+      const openedForGlobalSearch = opensearch.search.mock.calls.length;
+      // Five failures open it; the sixth request must not have reached
+      // OpenSearch at all.
+      expect(openedForGlobalSearch).toBe(5);
+
+      // A different capability has its own counter and is still tried.
+      opensearch.search.mockResolvedValue({ data: [], nextCursor: null });
+      await instance.search({ ...request, capability: 'contact_list' });
+      // contact_list is tier E, so it never reaches OpenSearch by design —
+      // which is itself the guarantee under test.
+      expect(opensearch.search.mock.calls.length).toBe(openedForGlobalSearch);
+    });
   });
 });

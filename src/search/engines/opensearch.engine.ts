@@ -265,6 +265,12 @@ export class OpenSearchEngine implements SearchEngine {
     const filters: Record<string, unknown>[] = [
       { term: { tenantId: request.scope.tenantId } },
       { term: { module: request.module } },
+      // Hidden-state parity with the MongoDB read paths. `accounts` excludes
+      // archived rows from every list; without this clause turning the gateway
+      // on brought them back into search, which reads to a user as the product
+      // ignoring something they deliberately put away. Harmless for modules
+      // that never set the flag.
+      { bool: { must_not: [{ term: { flags: 'archived' } }] } },
     ];
     if (request.scope.restrictToOwnerUserId) {
       filters.push({

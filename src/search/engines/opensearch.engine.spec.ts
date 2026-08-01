@@ -82,6 +82,21 @@ describe('OpenSearchEngine', () => {
     );
   });
 
+  it('should hide archived records the way every MongoDB list does', () => {
+    // Safety invariant, not a quality preference: a record the product hid
+    // must be hidden by both engines, always. Turning the gateway on used to
+    // bring archived accounts back into search.
+    const filters = (engine as any).securityFilter({
+      module: 'accounts',
+      query: 'acme',
+      limit: 5,
+      scope,
+    });
+    expect(filters).toContainEqual({
+      bool: { must_not: [{ term: { flags: 'archived' } }] },
+    });
+  });
+
   it('should refuse to search rather than ignore a deny rule it cannot express', () => {
     expect(() =>
       (engine as any).securityFilter({

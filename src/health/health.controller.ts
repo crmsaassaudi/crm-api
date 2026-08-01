@@ -14,6 +14,11 @@ import { ResilienceMetricsService } from '../common/http/resilience-metrics.serv
 import { ConfigService } from '@nestjs/config';
 import { AllConfigType } from '../config/config.type';
 import { OpenSearchEngine } from '../search/engines/opensearch.engine';
+import {
+  SEARCH_CAPABILITY_NAMES,
+  capabilityDefinition,
+  resolveCapability,
+} from '../search/capabilities/search-capabilities';
 import { MetricsService } from '../observability/metrics.service';
 
 type ComponentStatus = 'ok' | 'degraded' | 'down';
@@ -87,7 +92,40 @@ export class HealthController {
       uptime: Math.floor((Date.now() - this.startedAt.getTime()) / 1000),
       timestamp: new Date().toISOString(),
       components: report,
+      searchCapabilities: this.searchCapabilities(),
     };
+  }
+
+  /**
+   * Which engine currently answers each search capability, and why.
+   *
+   * Exists so that "why is this tenant not finding anything" is answerable with
+   * one request instead of by reading three configuration sources — the kill
+   * switch, the per-capability overrides, and the registry defaults — and
+   * guessing how they combined.
+   */
+  private searchCapabilities() {
+    const config = this.configService?.get('opensearch', { infer: true });
+    const runtime = {
+      openSearchEnabled: config?.enabled ?? false,
+      overrides: config?.capabilityOverrides ?? {},
+    };
+    return Object.fromEntries(
+      SEARCH_CAPABILITY_NAMES.map((name) => {
+        const definition = capabilityDefinition(name);
+        const plan = resolveCapability(name, runtime);
+        return [
+          name,
+          {
+            tier: definition.tier,
+            owner: definition.owner,
+            servedBy: plan.disabled ? 'disabled' : plan.engine,
+            ...(plan.divertedByConfig ? { divertedByConfig: true } : {}),
+            ...(plan.reason ? { reason: plan.reason } : {}),
+          },
+        ];
+      }),
+    );
   }
 
   private async collect(
@@ -108,11 +146,11 @@ export class HealthController {
   /**
    * OpenSearch is never reported as `down`.
    *
-   * Search falls back to MongoDB when the cluster is unreachable, so a search
-   * outage is a degradation of one feature — but `ready()` turns `down` into a
-   * 503, which withdraws every pod of the API from the load balancer. A
-   * dependency that has a working fallback must not be able to take the whole
-   * application offline.
+   * `ready()` turns `down` into a 503, which withdraws every pod of the API
+   * from the load balancer. Losing OpenSearch costs some capabilities their
+   * quality and switches others off — see `searchCapabilities()` for which —
+   * but it never costs the product its ability to serve, so it must not be able
+   * to take the whole application offline.
    */
   private async checkOpenSearch(
     includeFreshness: boolean,

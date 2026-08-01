@@ -1,5 +1,6 @@
 import { SearchModule } from '../dto/global-search-query.dto';
 import { GlobalSearchResult } from '../global-search.types';
+import { SearchCapabilityName } from '../capabilities/search-capabilities';
 
 export const MONGO_SEARCH_ENGINE = Symbol('MONGO_SEARCH_ENGINE');
 export const OPENSEARCH_SEARCH_ENGINE = Symbol('OPENSEARCH_SEARCH_ENGINE');
@@ -21,6 +22,13 @@ export interface SearchScope {
 }
 
 export interface EngineSearchRequest {
+  /**
+   * Which declared capability this request belongs to. The router uses it to
+   * look up the owning engine and the policy for when that engine is down —
+   * so the engine follows from the nature of the question, not from whether a
+   * cluster happens to be reachable.
+   */
+  capability: SearchCapabilityName;
   module: SearchModule;
   query: string;
   limit: number;

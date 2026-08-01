@@ -8,6 +8,7 @@ import {
 } from 'class-validator';
 import validateConfig from '../../utils/validate-config';
 import { OpenSearchConfig } from './opensearch-config.type';
+import { parseCapabilityOverrides } from '../capabilities/search-capabilities';
 
 class OpenSearchEnvironmentValidator {
   @IsBooleanString()
@@ -37,6 +38,10 @@ class OpenSearchEnvironmentValidator {
   @IsNumberString()
   @IsOptional()
   OPENSEARCH_REQUEST_TIMEOUT_MS?: string;
+
+  @IsString()
+  @IsOptional()
+  SEARCH_CAPABILITY_OVERRIDES?: string;
 }
 
 const flag = (value: string | undefined, defaultValue: boolean): boolean =>
@@ -56,6 +61,12 @@ export default registerAs<OpenSearchConfig>('opensearch', () => {
   if (enabled && !process.env.OPENSEARCH_NODE) {
     throw new Error('OPENSEARCH_NODE is required when OpenSearch is enabled');
   }
+  // Throws on an unknown capability, a typo, or an override that would widen
+  // rather than narrow. Failing at boot is deliberate: an override that
+  // silently does nothing is discovered during an incident.
+  const capabilityOverrides = parseCapabilityOverrides(
+    process.env.SEARCH_CAPABILITY_OVERRIDES,
+  );
   return {
     enabled,
     node: process.env.OPENSEARCH_NODE ?? 'http://localhost:9200',
@@ -64,5 +75,6 @@ export default registerAs<OpenSearchConfig>('opensearch', () => {
     indexPrefix: process.env.OPENSEARCH_INDEX_PREFIX ?? 'crm',
     fallbackToMongoDb: flag(process.env.OPENSEARCH_FALLBACK_TO_MONGODB, true),
     requestTimeoutMs,
+    capabilityOverrides,
   };
 });
