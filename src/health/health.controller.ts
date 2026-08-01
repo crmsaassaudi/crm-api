@@ -128,21 +128,21 @@ export class HealthController {
       // The freshness aggregate scans the whole index. On the readiness path
       // that is one such scan per pod every few seconds, so it belongs to the
       // operator-facing probe only.
-      const freshnessAgeSeconds = includeFreshness
-        ? await this.openSearch.freshnessAgeSeconds()
+      const newestRecordAgeSeconds = includeFreshness
+        ? await this.openSearch.newestRecordAgeSeconds()
         : null;
-      if (freshnessAgeSeconds !== null) {
+      if (newestRecordAgeSeconds !== null) {
         this.metrics?.setGauge(
-          'crm_search_index_freshness_age_seconds',
+          'crm_search_newest_record_age_seconds',
           { engine: 'opensearch' },
-          freshnessAgeSeconds,
+          newestRecordAgeSeconds,
         );
       }
       return {
         status: 'ok',
         latencyMs,
-        ...(freshnessAgeSeconds !== null
-          ? { detail: `freshnessAgeSeconds=${freshnessAgeSeconds}` }
+        ...(newestRecordAgeSeconds !== null
+          ? { detail: `newestRecordAgeSeconds=${newestRecordAgeSeconds}` }
           : {}),
       };
     } catch {

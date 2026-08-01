@@ -57,6 +57,8 @@ export class GlobalSearchQueryDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(2048)
+  // One shared PIT id plus five bounded sort cursors fits under common proxy
+  // request-line limits; reject cursor amplification at the DTO boundary.
+  @MaxLength(4096)
   cursor?: string;
 }

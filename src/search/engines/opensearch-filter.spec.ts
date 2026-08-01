@@ -34,10 +34,10 @@ describe('mongoAuthorizationFilterToDsl', () => {
     );
   });
 
-  it('should allow custom field paths carried by the flat_object mapping', () => {
-    expect(
+  it('should fall back instead of full-scanning a flat_object subfield', () => {
+    expect(() =>
       mongoAuthorizationFilterToDsl({ 'customFields.region': 'APAC' }),
-    ).toEqual({ term: { 'customFields.region': 'APAC' } });
+    ).toThrow(/not safe for indexed authorization filtering/);
   });
 
   it('should reject a bare customFields prefix with no key', () => {
@@ -79,19 +79,17 @@ describe('mongoAuthorizationFilterToDsl', () => {
     // value — and a `must_not` that matches nothing matches everything, so a
     // DENY on a date-valued field silently became an ALLOW.
     const at = new Date('2026-07-31T12:00:00.000Z');
-    expect(
-      mongoAuthorizationFilterToDsl({
-        $nor: [{ 'customFields.signedAt': at }],
-      }),
-    ).toEqual({
-      bool: {
-        must_not: [
-          { term: { 'customFields.signedAt': '2026-07-31T12:00:00.000Z' } },
-        ],
-      },
-    });
     expect(mongoAuthorizationFilterToDsl({ createdAt: { $gte: at } })).toEqual({
       range: { createdAt: { gte: '2026-07-31T12:00:00.000Z' } },
+    });
+  });
+
+  it('should preserve a BSON ObjectId operand on keyword fields', () => {
+    const value = {
+      toHexString: () => '507F1F77BCF86CD799439011',
+    };
+    expect(mongoAuthorizationFilterToDsl({ ownerId: value })).toEqual({
+      term: { ownerId: '507f1f77bcf86cd799439011' },
     });
   });
 
@@ -103,10 +101,12 @@ describe('mongoAuthorizationFilterToDsl', () => {
     ).toThrow(IndexFilterUnsupportedException);
   });
 
-  it('should keep ranges over mapped date fields', () => {
-    expect(
-      mongoAuthorizationFilterToDsl({ updatedAt: { $lt: '2026-01-01' } }),
-    ).toEqual({ range: { updatedAt: { lt: '2026-01-01' } } });
+  it('should reject an invalid Date instead of emitting an invalid range', () => {
+    expect(() =>
+      mongoAuthorizationFilterToDsl({
+        updatedAt: { $lt: new Date('not-a-date') },
+      }),
+    ).toThrow(/date operand must be valid/);
   });
 
   it('should refuse a non-scalar operand instead of stringifying it', () => {
@@ -164,5 +164,51 @@ describe('mongoAuthorizationFilterToDsl', () => {
         ],
       },
     });
+  });
+
+  it('should give empty set operators exact identities', () => {
+    expect(mongoAuthorizationFilterToDsl({ ownerId: { $in: [] } })).toEqual({
+      match_none: {},
+    });
+    expect(mongoAuthorizationFilterToDsl({ ownerId: { $nin: [] } })).toEqual({
+      match_all: {},
+    });
+  });
+
+  it('should reject malformed operator operands instead of coercing them', () => {
+    for (const filter of [
+      { ownerId: { $in: 'user-1' } },
+      { ownerId: { $nin: 'user-1' } },
+      { ownerId: { $exists: 'false' } },
+      { updatedAt: { $gt: Number.POSITIVE_INFINITY } },
+      { $or: [] },
+      { $and: { ownerId: 'user-1' } },
+    ]) {
+      expect(() => mongoAuthorizationFilterToDsl(filter)).toThrow(
+        AuthorizationFilterException,
+      );
+    }
+  });
+
+  it('should fall back for valid predicates whose BSON semantics would drift', () => {
+    for (const filter of [
+      { ownerId: { $ne: null } },
+      { ownerId: { $in: [null, 'user-1'] } },
+      { ownerId: { $nin: [null] } },
+      { ownerId: /user/i },
+      { ownerId: { $exists: true } },
+      { ownerId: { $exists: false } },
+      { updatedAt: { $lt: '2026-01-01' } },
+      { statusId: { $gt: 'draft' } },
+      { tags: { $gte: 'vip' } },
+      { ownerId: 123 },
+      { ownerId: true },
+      { ownerId: { $in: ['user-1', 123] } },
+      { updatedAt: '2026-01-01T00:00:00.000Z' },
+    ]) {
+      expect(() => mongoAuthorizationFilterToDsl(filter)).toThrow(
+        IndexFilterUnsupportedException,
+      );
+    }
   });
 });

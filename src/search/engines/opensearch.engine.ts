@@ -27,6 +27,13 @@ interface SearchHit {
   };
 }
 
+interface OpenSearchCursor {
+  version: 2;
+  sort: unknown[];
+}
+
+const PIT_KEEP_ALIVE = '2m';
+
 /**
  * A rejected query and an unreachable cluster both used to surface as the same
  * anonymous `ServiceUnavailableException`, so a malformed request silently
@@ -60,6 +67,11 @@ export class OpenSearchEngine implements SearchEngine {
 
   constructor(configService: ConfigService<AllConfigType>) {
     const config = configService.getOrThrow('opensearch', { infer: true });
+    if (!!config.username !== !!config.password) {
+      throw new Error(
+        'OpenSearch username and password must either both be set or both be omitted',
+      );
+    }
     this.alias = `${config.indexPrefix}-global-search`;
     this.client = axios.create({
       baseURL: config.node.replace(/\/+$/, ''),
@@ -77,7 +89,9 @@ export class OpenSearchEngine implements SearchEngine {
       throw new UnauthorizedException();
     }
     const filter = this.securityFilter(request);
-    const searchAfter = this.decodeCursor(request.cursor);
+    const cursor = this.decodeCursor(request.cursor);
+    const openedPit = request.snapshotId ? null : await this.openPointInTime();
+    const pitId = request.snapshotId ?? openedPit!;
     const body = {
       size: request.limit,
       track_total_hits: false,
@@ -95,18 +109,25 @@ export class OpenSearchEngine implements SearchEngine {
         },
       },
       sort: [{ _score: 'desc' }, { updatedAt: 'desc' }, { recordId: 'asc' }],
-      ...(searchAfter ? { search_after: searchAfter } : {}),
+      pit: { id: pitId, keep_alive: PIT_KEEP_ALIVE },
+      ...(cursor ? { search_after: cursor.sort } : {}),
       _source: ['recordId', 'module', 'title', 'subtitle'],
     };
 
     let response: { data?: any };
     try {
-      response = await this.client.post(`/${this.alias}/_search`, body);
+      response = await this.client.post('/_search', body);
     } catch (error) {
+      if (openedPit) await this.closePointInTime(openedPit);
       throw this.toEngineError(error);
     }
 
     const hits = (response.data?.hits?.hits ?? []) as SearchHit[];
+    const currentPitId =
+      typeof response.data?.pit_id === 'string' && response.data.pit_id
+        ? response.data.pit_id
+        : pitId;
+    const hasNextPage = hits.length === request.limit && hits.at(-1)?.sort;
     return {
       data: hits.map((hit) => {
         const source = hit._source;
@@ -122,18 +143,22 @@ export class OpenSearchEngine implements SearchEngine {
           title: source.title,
           ...(source.subtitle ? { subtitle: source.subtitle } : {}),
           href: `/${source.module}/${source.recordId}`,
-          // Engine relevance dominates; the lexical rank keeps an exact
-          // prefix match ahead of a fuzzy one at comparable BM25 scores.
-          score: Number((relevance * 0.75 + ranked.score * 0.25).toFixed(4)),
+          // Keep this strictly monotonic with the `_score` used by
+          // search_after. Re-ranking here used to let a hit from a later page
+          // outrank an earlier one after GlobalSearchService merged modules.
+          // Exact/phrase/prefix preferences already live in the query boosts;
+          // the local lexical helper is retained only for safe highlights.
+          score: relevance,
           highlights: ranked.highlights,
         };
       }),
-      nextCursor:
-        hits.length === request.limit && hits.at(-1)?.sort
-          ? Buffer.from(JSON.stringify(hits.at(-1)!.sort), 'utf8').toString(
-              'base64url',
-            )
-          : null,
+      nextCursor: hasNextPage
+        ? this.encodeCursor({
+            version: 2,
+            sort: hits.at(-1)!.sort!,
+          })
+        : null,
+      snapshotId: currentPitId,
     };
   }
 
@@ -143,7 +168,8 @@ export class OpenSearchEngine implements SearchEngine {
     return Date.now() - startedAt;
   }
 
-  async freshnessAgeSeconds(): Promise<number | null> {
+  /** Age of the newest business record, not index replication lag. */
+  async newestRecordAgeSeconds(): Promise<number | null> {
     const response = await this.client.post(`/${this.alias}/_search`, {
       size: 0,
       aggs: { latest_update: { max: { field: 'updatedAt' } } },
@@ -162,7 +188,7 @@ export class OpenSearchEngine implements SearchEngine {
    * from matching every record that happens to share one term.
    */
   private matchClauses(query: string): Record<string, unknown>[] {
-    return [
+    const clauses: Record<string, unknown>[] = [
       {
         multi_match: {
           query,
@@ -174,10 +200,41 @@ export class OpenSearchEngine implements SearchEngine {
         },
       },
       { match_phrase: { title: { query, boost: 6 } } },
-      { match: { 'title.prefix': { query, boost: 3 } } },
-      { match: { 'subtitle.prefix': { query, boost: 1.5 } } },
-      { match_bool_prefix: { searchText: { query, boost: 1 } } },
+      {
+        match: {
+          'title.prefix': {
+            query,
+            boost: 3,
+            minimum_should_match: '2<70%',
+          },
+        },
+      },
+      {
+        match: {
+          'subtitle.prefix': {
+            query,
+            boost: 1.5,
+            minimum_should_match: '2<70%',
+          },
+        },
+      },
+      {
+        match_bool_prefix: {
+          searchText: {
+            query,
+            boost: 1,
+            minimum_should_match: '2<70%',
+          },
+        },
+      },
     ];
+    const digits = query.replace(/\D+/g, '');
+    if (/^[+\d\s().-]+$/.test(query) && digits.length >= 4) {
+      clauses.push({
+        term: { phoneSuffixes: { value: digits.slice(-20), boost: 4 } },
+      });
+    }
+    return clauses;
   }
 
   private toEngineError(error: unknown): OpenSearchQueryException {
@@ -216,9 +273,8 @@ export class OpenSearchEngine implements SearchEngine {
     }
     const owners = request.scope.visibleOwnerIds;
     if (Array.isArray(owners)) {
-      const should: Record<string, unknown>[] = [
-        { terms: { ownerId: owners } },
-      ];
+      const should: Record<string, unknown>[] = [];
+      if (owners.length) should.push({ terms: { ownerId: owners } });
       if (request.scope.includeUnowned) {
         should.push({ bool: { must_not: [{ exists: { field: 'ownerId' } }] } });
       }
@@ -230,7 +286,11 @@ export class OpenSearchEngine implements SearchEngine {
           terms: { orgUnitId: request.scope.visibleOrgUnitIds },
         });
       }
-      filters.push({ bool: { should, minimum_should_match: 1 } });
+      filters.push(
+        should.length
+          ? { bool: { should, minimum_should_match: 1 } }
+          : { match_none: {} },
+      );
     }
     if (request.scope.abacFilter) {
       filters.push(mongoAuthorizationFilterToDsl(request.scope.abacFilter));
@@ -238,16 +298,53 @@ export class OpenSearchEngine implements SearchEngine {
     return filters;
   }
 
-  private decodeCursor(cursor?: string): unknown[] | undefined {
+  private encodeCursor(cursor: OpenSearchCursor): string {
+    return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+  }
+
+  private decodeCursor(cursor?: string): OpenSearchCursor | undefined {
     if (!cursor) return undefined;
     try {
       const parsed = JSON.parse(
         Buffer.from(cursor, 'base64url').toString('utf8'),
       );
-      if (!Array.isArray(parsed) || parsed.length !== 3) throw new Error();
+      if (
+        parsed?.version !== 2 ||
+        !Array.isArray(parsed.sort) ||
+        parsed.sort.length !== 3
+      ) {
+        throw new Error();
+      }
       return parsed;
     } catch {
       throw new BadRequestException('Invalid or stale search cursor');
     }
+  }
+
+  private async openPointInTime(): Promise<string> {
+    try {
+      const response = await this.client.post(
+        `/${this.alias}/_search/point_in_time`,
+        undefined,
+        { params: { keep_alive: PIT_KEEP_ALIVE } },
+      );
+      const pitId = response.data?.pit_id;
+      if (typeof pitId !== 'string' || !pitId) {
+        throw new Error('OpenSearch returned an invalid PIT id');
+      }
+      return pitId;
+    } catch (error) {
+      throw this.toEngineError(error);
+    }
+  }
+
+  async closeSnapshot(pitId: string): Promise<void> {
+    await this.client
+      .delete('/_search/point_in_time', { data: { pit_id: [pitId] } })
+      .catch(() => undefined);
+  }
+
+  private closePointInTime(pitId: string): Promise<void> {
+    return this.closeSnapshot(pitId);
   }
 }

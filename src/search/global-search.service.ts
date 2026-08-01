@@ -14,14 +14,16 @@ import {
   SearchModule,
 } from './dto/global-search-query.dto';
 import { SearchEngineRouter } from './engines/search-engine.router';
+import { decodeEngineCursor } from './engines/engine-cursor';
 import { GlobalSearchResult } from './global-search.types';
 import { MetricsService } from '../observability/metrics.service';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 
 interface CursorState {
-  version: 2;
+  version: 3;
   fingerprint: string;
   modules: Partial<Record<SearchModule, string | null>>;
+  openSearchPitId?: string;
 }
 
 @Injectable()
@@ -51,6 +53,7 @@ export class GlobalSearchService {
     const restartedModules: SearchModule[] = [];
     const results: GlobalSearchResult[] = [];
     const nextModules: CursorState['modules'] = { ...cursor.modules };
+    let openSearchPitId = cursor.openSearchPitId;
     let requestedEngine: 'mongodb' | 'opensearch' = 'mongodb';
     let actualEngine: 'mongodb' | 'opensearch' = 'mongodb';
     let fallbackUsed = false;
@@ -62,56 +65,67 @@ export class GlobalSearchService {
 
     const restrictOwnContacts = await this.restrictOwnContacts();
 
-    for (const module of requestedModules) {
-      if (cursor.modules[module] === null) continue;
-      const decision = await this.authorize(module, tenantId, userId);
-      if (!decision.allowed) {
-        deniedModules.push(module);
-        nextModules[module] = null;
-        continue;
-      }
-      allowedModules.push(module);
-
-      const previousAbac = this.cls.get('abacResourceFilter');
-      this.cls.set('abacResourceFilter', {
-        resource: module,
-        filter: decision.resourceFilter ?? null,
-      });
-      try {
-        const visibleOwnerIds = this.cls.get<string[] | null>(
-          'visibleOwnerIds',
-        );
-        if (visibleOwnerIds === undefined) {
-          throw new UnauthorizedException('Search data scope is unavailable');
+    try {
+      for (const module of requestedModules) {
+        if (cursor.modules[module] === null) continue;
+        const decision = await this.authorize(module, tenantId, userId);
+        if (!decision.allowed) {
+          deniedModules.push(module);
+          nextModules[module] = null;
+          continue;
         }
-        const response = await this.router.search({
-          module,
-          query,
-          limit: input.limitPerModule,
-          cursor: cursor.modules[module] ?? undefined,
-          scope: {
-            tenantId,
-            userId,
-            visibleOwnerIds,
-            visibleOrgUnitIds:
-              this.cls.get<string[] | null>('visibleOrgUnitIds') ?? null,
-            includeUnowned:
-              this.cls.get<boolean>('includeUnownedInScope') === true,
-            abacFilter: decision.resourceFilter,
-            restrictToOwnerUserId:
-              module === 'contacts' && restrictOwnContacts ? userId : null,
-          },
+        allowedModules.push(module);
+
+        const previousAbac = this.cls.get('abacResourceFilter');
+        this.cls.set('abacResourceFilter', {
+          resource: module,
+          filter: decision.resourceFilter ?? null,
         });
-        results.push(...response.data);
-        nextModules[module] = response.nextCursor;
-        if (response.cursorReset) restartedModules.push(module);
-        requestedEngine = response.requestedEngine;
-        actualEngine = response.actualEngine;
-        fallbackUsed ||= response.fallbackUsed;
-        fallbackReason ??= response.fallbackReason;
-      } finally {
-        this.cls.set('abacResourceFilter', previousAbac);
+        try {
+          const visibleOwnerIds = this.cls.get<string[] | null>(
+            'visibleOwnerIds',
+          );
+          if (visibleOwnerIds === undefined) {
+            throw new UnauthorizedException('Search data scope is unavailable');
+          }
+          const response = await this.router.search({
+            module,
+            query,
+            limit: input.limitPerModule,
+            cursor: cursor.modules[module] ?? undefined,
+            ...(openSearchPitId ? { snapshotId: openSearchPitId } : {}),
+            scope: {
+              tenantId,
+              userId,
+              visibleOwnerIds,
+              visibleOrgUnitIds:
+                this.cls.get<string[] | null>('visibleOrgUnitIds') ?? null,
+              includeUnowned:
+                this.cls.get<boolean>('includeUnownedInScope') === true,
+              abacFilter: decision.resourceFilter,
+              restrictToOwnerUserId:
+                module === 'contacts' && restrictOwnContacts ? userId : null,
+            },
+          });
+          results.push(...response.data);
+          nextModules[module] = response.nextCursor;
+          if (response.actualEngine === 'opensearch' && response.snapshotId) {
+            openSearchPitId = response.snapshotId;
+          }
+          if (response.cursorReset) restartedModules.push(module);
+          requestedEngine = response.requestedEngine;
+          actualEngine = response.actualEngine;
+          fallbackUsed ||= response.fallbackUsed;
+          fallbackReason ??= response.fallbackReason;
+        } finally {
+          this.cls.set('abacResourceFilter', previousAbac);
+        }
       }
+    } catch (error) {
+      if (openSearchPitId) {
+        await this.router.closeOpenSearchSnapshot(openSearchPitId);
+      }
+      throw error;
     }
 
     results.sort(
@@ -124,6 +138,14 @@ export class GlobalSearchService {
     const hasNextPage = Object.values(nextModules).some(
       (value) => typeof value === 'string',
     );
+    const hasOpenSearchNextPage = Object.values(nextModules).some((value) => {
+      if (typeof value !== 'string') return false;
+      return decodeEngineCursor(value)?.engine === 'opensearch';
+    });
+    if (openSearchPitId && !hasOpenSearchNextPage) {
+      await this.router.closeOpenSearchSnapshot(openSearchPitId);
+      openSearchPitId = undefined;
+    }
     const durationMs = Date.now() - startedAt;
     const telemetry = {
       tenantId,
@@ -170,9 +192,10 @@ export class GlobalSearchService {
       data: results,
       nextCursor: hasNextPage
         ? this.encodeCursor({
-            version: 2,
+            version: 3,
             fingerprint,
             modules: nextModules,
+            ...(openSearchPitId ? { openSearchPitId } : {}),
           })
         : null,
       hasNextPage,
@@ -241,19 +264,23 @@ export class GlobalSearchService {
     raw: string | undefined,
     fingerprint: string,
   ): CursorState {
-    if (!raw) return { version: 2, fingerprint, modules: {} };
+    if (!raw) return { version: 3, fingerprint, modules: {} };
     try {
       const parsed = JSON.parse(
         Buffer.from(raw, 'base64url').toString('utf8'),
       ) as CursorState;
       if (
-        parsed.version !== 2 ||
+        parsed.version !== 3 ||
         parsed.fingerprint !== fingerprint ||
         !parsed.modules ||
+        (parsed.openSearchPitId !== undefined &&
+          (typeof parsed.openSearchPitId !== 'string' ||
+            !parsed.openSearchPitId ||
+            parsed.openSearchPitId.length > 4_096)) ||
         Object.values(parsed.modules).some(
           (value) =>
             value !== null &&
-            (typeof value !== 'string' || value.length > 1_024),
+            (typeof value !== 'string' || value.length > 4_096),
         )
       ) {
         throw new Error('invalid cursor');

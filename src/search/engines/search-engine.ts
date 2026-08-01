@@ -25,15 +25,20 @@ export interface EngineSearchRequest {
   query: string;
   limit: number;
   cursor?: string;
+  /** Shared OpenSearch PIT for every module in one global-search snapshot. */
+  snapshotId?: string;
   scope: SearchScope;
 }
 
 export interface EngineSearchResponse {
   data: GlobalSearchResult[];
   nextCursor: string | null;
+  /** Latest PIT id returned by the engine; OpenSearch may rotate it per page. */
+  snapshotId?: string;
 }
 
 export interface SearchEngine {
   readonly name: 'mongodb' | 'opensearch';
   search(request: EngineSearchRequest): Promise<EngineSearchResponse>;
+  closeSnapshot?(snapshotId: string): Promise<void>;
 }

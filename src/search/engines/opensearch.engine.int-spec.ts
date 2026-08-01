@@ -42,14 +42,28 @@ const scope = (overrides: Partial<EngineSearchRequest['scope']> = {}) => ({
 const search = (
   query: string,
   overrides: Partial<EngineSearchRequest> = {},
-): Promise<{ data: any[]; nextCursor: string | null }> =>
-  engine.search({
+): Promise<{
+  data: any[];
+  nextCursor: string | null;
+  snapshotId?: string;
+}> => searchAndCloseTerminal(query, overrides);
+
+const searchAndCloseTerminal = async (
+  query: string,
+  overrides: Partial<EngineSearchRequest>,
+) => {
+  const response = await engine.search({
     module: 'contacts',
     query,
     limit: 10,
     scope: scope(),
     ...overrides,
   } as EngineSearchRequest);
+  if (!response.nextCursor && response.snapshotId) {
+    await engine.closeSnapshot(response.snapshotId);
+  }
+  return response;
+};
 
 const titles = async (query: string, overrides = {}): Promise<string[]> =>
   (await search(query, overrides)).data.map((hit) => hit.title);
@@ -65,6 +79,9 @@ const document = (
   title,
   searchText: title,
   customFields: {},
+  // Required by the v3 strict mapping. Query-side fixtures do not exercise
+  // reconciliation, so a deterministic sentinel fingerprint is sufficient.
+  contentHash: '0'.repeat(64),
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
   ...extra,
@@ -77,6 +94,7 @@ const FIXTURES = [
     statusId: 'active',
     tags: ['vip'],
     searchText: 'Nguyễn Văn An an@example.com APAC',
+    phoneSuffixes: ['5678', '345678', '912345678', '84912345678'],
     customFields: { region: 'APAC' },
   }),
   document('q2', 'Trần Thị Bình', {
@@ -94,11 +112,42 @@ const FIXTURES = [
     statusId: 'active',
     searchText: 'Nguyễn Duy Cường',
   }),
+  document('q6', 'Nguyen Van An Holdings', {
+    ownerId: 'user-3',
+    statusId: 'active',
+    searchText: 'Nguyen Van An Holdings investment company',
+  }),
   {
     ...document('q5', 'Other Tenant Secret'),
     tenantId: 'tenant-someone-else',
   },
 ];
+
+const reciprocalRank = (
+  resultIds: string[],
+  judgments: Readonly<Record<string, number>>,
+): number => {
+  const rank = resultIds.findIndex((id) => (judgments[id] ?? 0) > 0);
+  return rank < 0 ? 0 : 1 / (rank + 1);
+};
+
+const ndcgAt = (
+  resultIds: string[],
+  judgments: Readonly<Record<string, number>>,
+  k: number,
+): number => {
+  const dcg = (grades: number[]) =>
+    grades.reduce(
+      (sum, grade, index) => sum + (2 ** grade - 1) / Math.log2(index + 2),
+      0,
+    );
+  const actual = resultIds.slice(0, k).map((id) => judgments[id] ?? 0);
+  const ideal = Object.values(judgments)
+    .sort((left, right) => right - left)
+    .slice(0, k);
+  const idealDcg = dcg(ideal);
+  return idealDcg === 0 ? 1 : dcg(actual) / idealDcg;
+};
 
 beforeAll(async () => {
   const alias = await os.get(`/_alias/${ALIAS}`).catch(() => null);
@@ -151,11 +200,28 @@ describe('OpenSearchEngine against a live cluster', () => {
     expect(await titles('APAC')).toContain('Nguyễn Văn An');
   });
 
+  it('should find a contact by the remembered phone suffix', async () => {
+    expect(await titles('345678')).toContain('Nguyễn Văn An');
+  });
+
   it('should not match every record that shares one term of a phrase', async () => {
-    // "Nguyễn Duy Cường" must not surface for a query about a different person
-    // just because both share "Nguyễn".
-    const results = await titles('Trần Thị Bình');
-    expect(results[0]).toBe('Trần Thị Bình');
+    // A prefix boost used to bypass minimum_should_match, admitting a record
+    // that shared only "Nguyễn". Correct ranking is not enough: the irrelevant
+    // row must not leak into a later page either.
+    const results = await titles('Nguyễn Văn An');
+    expect(results[0]).toBe('Nguyễn Văn An');
+    expect(results).not.toContain('Nguyễn Duy Cường');
+  });
+
+  it('should meet the graded relevance floor for an exact person query', async () => {
+    // Explicit judgments: exact contact > longer organization-like title;
+    // the other same-first-name contact is irrelevant to the full query.
+    const judgments = { q1: 3, q6: 2, q4: 0 } as const;
+    const ids = (await search('nguyen van an')).data.map((hit) => hit.id);
+
+    expect(reciprocalRank(ids, judgments)).toBe(1);
+    expect(ndcgAt(ids, judgments, 3)).toBeGreaterThanOrEqual(0.95);
+    expect(ids).not.toContain('q4');
   });
 
   it('should apply the owner scope', async () => {
@@ -222,16 +288,39 @@ describe('OpenSearchEngine against a live cluster', () => {
     }
   });
 
-  it('should paginate with search_after without repeating a record', async () => {
+  it('should paginate a frozen PIT without repeats or late inserts', async () => {
     const first = await search('Nguyễn', { limit: 1 });
     expect(first.data).toHaveLength(1);
     expect(first.nextCursor).toEqual(expect.any(String));
 
+    const late = document('q-late', 'Nguyễn Inserted After Page One');
+    await os.post(
+      '/_bulk',
+      `${JSON.stringify({ index: { _index: ALIAS, _id: 'contacts:q-late' } })}\n${JSON.stringify(late)}\n`,
+      { headers: { 'content-type': 'application/x-ndjson' } },
+    );
+    await os.post(`/${ALIAS}/_refresh`);
+
     const second = await search('Nguyễn', {
       limit: 1,
       cursor: first.nextCursor!,
+      snapshotId: first.snapshotId,
     });
     expect(second.data[0]?.id).not.toBe(first.data[0].id);
+    const seen = [...first.data, ...second.data];
+    let cursor = second.nextCursor;
+    let snapshotId = second.snapshotId;
+    while (cursor) {
+      const page = await search('Nguyễn', {
+        limit: 1,
+        cursor,
+        snapshotId,
+      });
+      seen.push(...page.data);
+      cursor = page.nextCursor;
+      snapshotId = page.snapshotId;
+    }
+    expect(seen.map((hit) => hit.id)).not.toContain('q-late');
   });
 
   it('should reject a corrupted cursor instead of ignoring it', async () => {
@@ -247,7 +336,7 @@ describe('OpenSearchEngine against a live cluster', () => {
 
   it('should report reachability and index freshness', async () => {
     await expect(engine.ping()).resolves.toBeGreaterThanOrEqual(0);
-    await expect(engine.freshnessAgeSeconds()).resolves.toEqual(
+    await expect(engine.newestRecordAgeSeconds()).resolves.toEqual(
       expect.any(Number),
     );
   });

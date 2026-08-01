@@ -5,7 +5,10 @@ import { GlobalSearchService } from './global-search.service';
 
 describe('GlobalSearchService', () => {
   const authorization = { canPerformAction: jest.fn() };
-  const router = { search: jest.fn() };
+  const router = {
+    search: jest.fn(),
+    closeOpenSearchSnapshot: jest.fn(() => Promise.resolve()),
+  };
   const context = new Map<string, unknown>([
     ['tenantId', 'tenant-1'],
     ['userId', 'user-1'],
@@ -114,6 +117,95 @@ describe('GlobalSearchService', () => {
       }),
     );
     expect(JSON.stringify(telemetry)).not.toContain('secret@example.com');
+  });
+
+  it('should share one rotating PIT across OpenSearch modules', async () => {
+    authorization.canPerformAction.mockResolvedValue({ allowed: true });
+    router.search
+      .mockResolvedValueOnce({
+        data: [],
+        nextCursor: 'os:sort-contacts',
+        snapshotId: 'pit-1',
+        requestedEngine: 'opensearch',
+        actualEngine: 'opensearch',
+        fallbackUsed: false,
+      })
+      .mockResolvedValueOnce({
+        data: [],
+        nextCursor: 'os:sort-deals',
+        snapshotId: 'pit-2',
+        requestedEngine: 'opensearch',
+        actualEngine: 'opensearch',
+        fallbackUsed: false,
+      });
+
+    const response = await service.search({
+      query: 'acme',
+      modules: ['contacts', 'deals'],
+      limitPerModule: 5,
+    });
+
+    expect(router.search).toHaveBeenNthCalledWith(
+      1,
+      expect.not.objectContaining({ snapshotId: expect.anything() }),
+    );
+    expect(router.search).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ snapshotId: 'pit-1' }),
+    );
+    const cursor = JSON.parse(
+      Buffer.from(response.nextCursor!, 'base64url').toString('utf8'),
+    );
+    expect(cursor).toMatchObject({
+      version: 3,
+      openSearchPitId: 'pit-2',
+      modules: { contacts: 'os:sort-contacts', deals: 'os:sort-deals' },
+    });
+    expect(router.closeOpenSearchSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('should close the shared PIT when no OpenSearch module has another page', async () => {
+    authorization.canPerformAction.mockResolvedValue({ allowed: true });
+    router.search.mockResolvedValue({
+      data: [],
+      nextCursor: null,
+      snapshotId: 'pit-final',
+      requestedEngine: 'opensearch',
+      actualEngine: 'opensearch',
+      fallbackUsed: false,
+    });
+
+    const response = await service.search({
+      query: 'acme',
+      modules: ['contacts'],
+      limitPerModule: 5,
+    });
+
+    expect(response.nextCursor).toBeNull();
+    expect(router.closeOpenSearchSnapshot).toHaveBeenCalledWith('pit-final');
+  });
+
+  it('should close a PIT when a later module fails', async () => {
+    authorization.canPerformAction
+      .mockResolvedValueOnce({ allowed: true })
+      .mockRejectedValueOnce(new Error('authorization backend failed'));
+    router.search.mockResolvedValueOnce({
+      data: [],
+      nextCursor: 'os:sort-contacts',
+      snapshotId: 'pit-open',
+      requestedEngine: 'opensearch',
+      actualEngine: 'opensearch',
+      fallbackUsed: false,
+    });
+
+    await expect(
+      service.search({
+        query: 'acme',
+        modules: ['contacts', 'deals'],
+        limitPerModule: 5,
+      }),
+    ).rejects.toThrow('authorization backend failed');
+    expect(router.closeOpenSearchSnapshot).toHaveBeenCalledWith('pit-open');
   });
 
   it('should carry restrict_own_contacts into the engine scope', async () => {

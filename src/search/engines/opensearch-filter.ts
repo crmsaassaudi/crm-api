@@ -26,8 +26,10 @@ export class AuthorizationFilterException extends ForbiddenException {
 export class IndexFilterUnsupportedException extends AuthorizationFilterException {}
 
 /**
- * Exactly the fields `crm-opensearch` puts in the mapping. Anything else is
- * absent from every document, and absence is not neutral: a DENY policy
+ * The mapped fields on which authorization filtering is intentionally
+ * supported. Search-only fields such as title, phoneSuffixes and contentHash
+ * are deliberately absent from this allowlist. Any other policy field is not
+ * safely queryable here, and absence is not neutral: a DENY policy
  * compiles to `must_not`, and a `must_not` over an unknown field matches every
  * document. Translating such a predicate would silently turn "deny these rows"
  * into "allow everything", so an unmapped field has to be refused instead.
@@ -46,7 +48,7 @@ export const INDEXED_FILTER_FIELDS: ReadonlySet<string> = new Set([
   'updatedAt',
 ]);
 
-/** `customFields.<key>` is queryable through the flat_object mapping. */
+/** Custom fields remain identifiable so we can return an actionable fallback. */
 const CUSTOM_FIELD_PREFIX = 'customFields.';
 
 const isCustomField = (field: string): boolean =>
@@ -54,7 +56,24 @@ const isCustomField = (field: string): boolean =>
   field.length > CUSTOM_FIELD_PREFIX.length;
 
 const isQueryableField = (field: string): boolean =>
-  INDEXED_FILTER_FIELDS.has(field) || isCustomField(field);
+  INDEXED_FILTER_FIELDS.has(field);
+
+const INDEXED_DATE_FIELDS: ReadonlySet<string> = new Set([
+  'createdAt',
+  'updatedAt',
+]);
+
+const objectIdHex = (value: unknown): string | null => {
+  if (!value || typeof value !== 'object') return null;
+  const toHexString = (value as { toHexString?: unknown }).toHexString;
+  if (typeof toHexString !== 'function') return null;
+  try {
+    const rendered = String(toHexString.call(value));
+    return /^[0-9a-f]{24}$/i.test(rendered) ? rendered.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+};
 
 /**
  * `flat_object` stores every leaf as the string the indexer serialised, and a
@@ -65,6 +84,9 @@ const isQueryableField = (field: string): boolean =>
  * coercion instead of through the field name.
  */
 const scalar = (value: unknown): string | number | boolean | null => {
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new AuthorizationFilterException('a numeric operand must be finite');
+  }
   if (
     value === null ||
     typeof value === 'string' ||
@@ -73,7 +95,17 @@ const scalar = (value: unknown): string | number | boolean | null => {
   ) {
     return value;
   }
-  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new AuthorizationFilterException('a date operand must be valid');
+    }
+    return value.toISOString();
+  }
+  if (value instanceof RegExp || typeof value === 'bigint') {
+    throw new IndexFilterUnsupportedException(
+      'the operand type cannot be represented faithfully by the index',
+    );
+  }
   const rendered = String(value);
   if (rendered === '[object Object]' || rendered === '[object Array]') {
     // An object operand cannot be compared as a term; guessing would be the
@@ -83,6 +115,26 @@ const scalar = (value: unknown): string | number | boolean | null => {
     );
   }
   return rendered;
+};
+
+const fieldScalar = (
+  field: string,
+  value: unknown,
+): string | number | boolean | null => {
+  if (INDEXED_DATE_FIELDS.has(field)) {
+    if (!(value instanceof Date)) {
+      throw new IndexFilterUnsupportedException(
+        `"${field}" requires a BSON Date operand`,
+      );
+    }
+    return scalar(value);
+  }
+  if (typeof value === 'string') return value;
+  const objectId = objectIdHex(value);
+  if (objectId) return objectId;
+  throw new IndexFilterUnsupportedException(
+    `"${field}" requires a string or ObjectId operand to preserve BSON type semantics`,
+  );
 };
 
 /**
@@ -110,6 +162,14 @@ function fieldClause(field: string, value: unknown): Query {
     throw new AuthorizationFilterException('unsafe field path');
   }
   if (!isQueryableField(field)) {
+    if (isCustomField(field)) {
+      // flat_object avoids mapping explosion, but its subfields are not
+      // indexed for efficient lookup. A leaf lookup can require a full index
+      // scan, which is not an acceptable ABAC path at CRM scale.
+      throw new IndexFilterUnsupportedException(
+        `"${field}" is a flat_object subfield and is not safe for indexed authorization filtering`,
+      );
+    }
     // Never translated loosely: MongoDB answers this module instead, and if
     // fallback is disabled the caller gets a 403 rather than a result set the
     // policy did not sanction.
@@ -121,43 +181,86 @@ function fieldClause(field: string, value: unknown): Query {
     return { bool: { must_not: [{ exists: { field } }] } };
   }
   if (!isOperatorMap(value)) {
-    return { term: { [field]: scalar(value) } };
+    return { term: { [field]: fieldScalar(field, value) } };
   }
 
   const operators = value as Record<string, unknown>;
   const clauses = Object.entries(operators).map(([operator, operand]) => {
     switch (operator) {
-      case '$in':
-        return { terms: { [field]: (operand as unknown[]).map(scalar) } };
-      case '$nin':
+      case '$in': {
+        if (!Array.isArray(operand)) {
+          throw new AuthorizationFilterException('$in requires an array');
+        }
+        if (operand.length === 0) return { match_none: {} };
+        if (operand.includes(null)) {
+          throw new IndexFilterUnsupportedException(
+            '$in containing null requires MongoDB missing-field semantics',
+          );
+        }
+        return {
+          terms: { [field]: operand.map((entry) => fieldScalar(field, entry)) },
+        };
+      }
+      case '$nin': {
+        if (!Array.isArray(operand)) {
+          throw new AuthorizationFilterException('$nin requires an array');
+        }
+        if (operand.length === 0) return { match_all: {} };
+        if (operand.includes(null)) {
+          throw new IndexFilterUnsupportedException(
+            '$nin containing null requires MongoDB missing-field semantics',
+          );
+        }
         return {
           bool: {
             must_not: [
-              { terms: { [field]: (operand as unknown[]).map(scalar) } },
+              {
+                terms: {
+                  [field]: operand.map((entry) => fieldScalar(field, entry)),
+                },
+              },
             ],
           },
         };
+      }
       case '$ne':
-        return { bool: { must_not: [{ term: { [field]: scalar(operand) } }] } };
+        if (operand === null) {
+          throw new IndexFilterUnsupportedException(
+            '$ne null requires MongoDB null and missing-field semantics',
+          );
+        }
+        return {
+          bool: {
+            must_not: [{ term: { [field]: fieldScalar(field, operand) } }],
+          },
+        };
       case '$gt':
       case '$gte':
       case '$lt':
-      case '$lte':
-        if (isCustomField(field)) {
-          // `flat_object` indexes its leaves as keywords with no numeric or date
-          // doc values, so OpenSearch rejects a range over one. The rejection
-          // used to arrive as a bare 400 that looked exactly like an outage.
+      case '$lte': {
+        // MongoDB comparison predicates use BSON type bracketing (and have
+        // distinct array semantics). OpenSearch would instead parse a string
+        // passed to a date field or compare a keyword lexicographically. Only
+        // a BSON Date against one of our mapped date fields is equivalent.
+        if (!INDEXED_DATE_FIELDS.has(field) || !(operand instanceof Date)) {
           throw new IndexFilterUnsupportedException(
-            `a range over "${field}" is not supported by the flat_object mapping`,
+            'range predicates require a Date operand on createdAt or updatedAt',
           );
         }
         return {
           range: { [field]: { [operator.slice(1)]: scalar(operand) } },
         };
+      }
       case '$exists':
-        return Boolean(operand)
-          ? { exists: { field } }
-          : { bool: { must_not: [{ exists: { field } }] } };
+        if (typeof operand !== 'boolean') {
+          throw new AuthorizationFilterException('$exists requires a boolean');
+        }
+        // MongoDB considers an explicitly-null field present; OpenSearch does
+        // not index null and cannot distinguish it from a missing field.
+        // Translating `$exists:false` would widen an authorization scope.
+        throw new IndexFilterUnsupportedException(
+          '$exists requires MongoDB null-versus-missing semantics',
+        );
       default:
         throw new IndexFilterUnsupportedException(
           `operator "${operator}" is not supported`,
@@ -170,6 +273,7 @@ function fieldClause(field: string, value: unknown): Query {
 export function mongoAuthorizationFilterToDsl(filter: Query): Query {
   const clauses = Object.entries(filter).map(([field, value]) => {
     if (field === '$and') {
+      assertBooleanOperands(field, value);
       return {
         bool: {
           filter: (value as Query[]).map(mongoAuthorizationFilterToDsl),
@@ -177,6 +281,7 @@ export function mongoAuthorizationFilterToDsl(filter: Query): Query {
       };
     }
     if (field === '$or') {
+      assertBooleanOperands(field, value);
       return {
         bool: {
           should: (value as Query[]).map(mongoAuthorizationFilterToDsl),
@@ -185,6 +290,7 @@ export function mongoAuthorizationFilterToDsl(filter: Query): Query {
       };
     }
     if (field === '$nor') {
+      assertBooleanOperands(field, value);
       return {
         bool: {
           must_not: (value as Query[]).map(mongoAuthorizationFilterToDsl),
@@ -199,4 +305,22 @@ export function mongoAuthorizationFilterToDsl(filter: Query): Query {
     return fieldClause(field, value);
   });
   return clauses.length === 1 ? clauses[0] : { bool: { filter: clauses } };
+}
+
+function assertBooleanOperands(
+  operator: string,
+  value: unknown,
+): asserts value is Query[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.some(
+      (clause) =>
+        typeof clause !== 'object' || clause === null || Array.isArray(clause),
+    )
+  ) {
+    throw new AuthorizationFilterException(
+      `${operator} requires a non-empty array of predicates`,
+    );
+  }
 }

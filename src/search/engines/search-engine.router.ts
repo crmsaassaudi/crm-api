@@ -127,6 +127,10 @@ export class SearchEngineRouter {
     }
   }
 
+  async closeOpenSearchSnapshot(snapshotId: string): Promise<void> {
+    await this.openSearch.closeSnapshot?.(snapshotId);
+  }
+
   private async fallback(
     request: EngineSearchRequest,
     reason: string,
