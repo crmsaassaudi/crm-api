@@ -156,7 +156,7 @@ export class ContactExportStorageService {
     }
 
     const userId = this.cls.get('userId');
-    if (entry.ownerId && userId && entry.ownerId !== userId) {
+    if (entry.ownerId && entry.ownerId !== userId) {
       throw new ForbiddenException('Export link belongs to another user');
     }
 
@@ -237,13 +237,41 @@ export class ContactExportStorageService {
     );
   }
 
+  private sanitizeOwnershipSegment(value: string): string {
+    return value.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 128);
+  }
+
+  /**
+   * Fail closed before a client-supplied upload key is accepted for a job.
+   * ULIDs are difficult to guess, but secrecy is not authorization: a key can
+   * leak through logs, browser history or support tooling. Binding the key to
+   * both tenant and uploader prevents cross-tenant and cross-user import IDOR.
+   */
+  assertImportFileOwned(
+    fileKey: string,
+    tenantId: string,
+    userId: string,
+  ): void {
+    this.assertSafeKey(fileKey);
+    const ownerPrefix = `${IMPORT_PREFIX}/${this.sanitizeOwnershipSegment(
+      tenantId,
+    )}.${this.sanitizeOwnershipSegment(userId)}.`;
+    if (!fileKey.startsWith(ownerPrefix)) {
+      // NotFound deliberately avoids confirming that another principal's key
+      // exists.
+      throw new NotFoundException('Import file not found');
+    }
+  }
+
   async storeImportFile(file: {
     buffer: Buffer;
     originalname: string;
+    tenantId: string;
+    userId: string;
   }): Promise<{ fileKey: string }> {
-    const fileKey = `${IMPORT_PREFIX}/${ulid()}-${this.sanitizeName(
-      file.originalname,
-    )}`;
+    const fileKey = `${IMPORT_PREFIX}/${this.sanitizeOwnershipSegment(
+      file.tenantId,
+    )}.${this.sanitizeOwnershipSegment(file.userId)}.${ulid()}-${this.sanitizeName(file.originalname)}`;
     const bucket = this.configService.get('file.awsDefaultS3Bucket', {
       infer: true,
     });
@@ -267,6 +295,43 @@ export class ContactExportStorageService {
       recursive: true,
     });
     await writeFile(filePath, file.buffer);
+    return { fileKey };
+  }
+
+  async storeImportFileFromPath(file: {
+    path: string;
+    size: number;
+    originalname: string;
+    tenantId: string;
+    userId: string;
+  }): Promise<{ fileKey: string }> {
+    const fileKey = `${IMPORT_PREFIX}/${this.sanitizeOwnershipSegment(
+      file.tenantId,
+    )}.${this.sanitizeOwnershipSegment(file.userId)}.${ulid()}-${this.sanitizeName(file.originalname)}`;
+    const bucket = this.configService.get('file.awsDefaultS3Bucket', {
+      infer: true,
+    });
+
+    if (this.s3 && bucket) {
+      await this.s3.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: fileKey,
+          Body: createReadStream(file.path),
+          ContentLength: file.size,
+          ContentDisposition: `attachment; filename="${this.sanitizeName(
+            file.originalname,
+          )}"`,
+        }),
+      );
+      return { fileKey };
+    }
+
+    const filePath = this.localPathForKey(fileKey);
+    await mkdir(join(process.cwd(), 'files', IMPORT_PREFIX), {
+      recursive: true,
+    });
+    await pipeline(createReadStream(file.path), createWriteStream(filePath));
     return { fileKey };
   }
 
@@ -412,7 +477,7 @@ export class ContactExportStorageService {
     }
 
     const userId = this.cls.get('userId');
-    if (entry.ownerId && userId && entry.ownerId !== userId) {
+    if (entry.ownerId && entry.ownerId !== userId) {
       throw new ForbiddenException('Report link belongs to another user');
     }
 

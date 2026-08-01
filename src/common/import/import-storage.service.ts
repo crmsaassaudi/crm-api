@@ -13,7 +13,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createReadStream, createWriteStream } from 'fs';
-import { access, mkdir, readFile, unlink, writeFile } from 'fs/promises';
+import { access, mkdir, readFile, stat, unlink, writeFile } from 'fs/promises';
 import { basename, join } from 'path';
 import { ulid } from 'ulid';
 import { ClsService } from 'nestjs-cls';
@@ -272,7 +272,7 @@ export class ImportStorageService {
     }
 
     const userId = this.cls.get('userId');
-    if (entry.ownerId && userId && entry.ownerId !== userId) {
+    if (entry.ownerId && entry.ownerId !== userId) {
       throw new ForbiddenException('Report link belongs to another user');
     }
 
@@ -280,6 +280,42 @@ export class ImportStorageService {
       buffer: await readFile(entry.filePath),
       filename: entry.filename,
     };
+  }
+
+  /** Stream a potentially large error report without buffering it in the API. */
+  async openLocalReport(token: string): Promise<{
+    stream: ReturnType<typeof createReadStream>;
+    filename: string;
+    size: number;
+  }> {
+    const entry = await this.resolveOwnedLocalReport(token);
+    const fileStat = await stat(entry.filePath);
+    return {
+      stream: createReadStream(entry.filePath),
+      filename: entry.filename,
+      size: fileStat.size,
+    };
+  }
+
+  private async resolveOwnedLocalReport(
+    token: string,
+  ): Promise<LocalFileToken> {
+    let entry = this.localReportTokens.get(token);
+    if (!entry) {
+      entry = (await this.readLocalReportMetadata(token)) ?? undefined;
+      if (entry) this.localReportTokens.set(token, entry);
+    }
+    if (!entry) {
+      throw new NotFoundException('Report link not found or expired');
+    }
+    if (entry.expiresAt.getTime() < Date.now()) {
+      this.localReportTokens.delete(token);
+      throw new NotFoundException('Report link expired');
+    }
+    if (entry.ownerId && entry.ownerId !== this.cls.get('userId')) {
+      throw new ForbiddenException('Report link belongs to another user');
+    }
+    return entry;
   }
 
   private async readLocalReportMetadata(

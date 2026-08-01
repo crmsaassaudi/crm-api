@@ -1,4 +1,5 @@
 import { ContactRepository } from './contact.repository';
+import { ContactSchema } from '../entities/contact.schema';
 
 /**
  * `ALLOWED_FILTER_FIELDS` is a security boundary: it stops a client turning the
@@ -107,5 +108,55 @@ describe('contact filter whitelist — static fields still hold', () => {
 
   it('should skip a filter with no value', () => {
     expect(resolve({ id: 'companyName', value: '' })).toBeNull();
+  });
+});
+
+describe('contact list search query shape', () => {
+  it('should use indexed normalised equality for a full email search', () => {
+    const where = repo.buildListWhere({ search: ' Person@Example.COM ' });
+
+    expect(where.emails).toBe('person@example.com');
+    expect(where).not.toHaveProperty('$or');
+    expect(where).not.toHaveProperty('$text');
+  });
+
+  it('should keep text search for names', () => {
+    const where = repo.buildListWhere({ search: 'Nguyen Van A' });
+
+    expect(where.$text).toEqual({ $search: 'Nguyen Van A' });
+  });
+
+  it('should prefix the text index with tenantId', () => {
+    const textIndex = ContactSchema.indexes().find(
+      ([, options]) => options.name === 'contact_text_search',
+    );
+    expect(textIndex?.[0]).toEqual({
+      tenantId: 1,
+      firstName: 'text',
+      lastName: 'text',
+      emails: 'text',
+    });
+  });
+});
+
+describe('contact cursor sort index coverage', () => {
+  it('should expose only non-null sortable fields with matching compound indexes', () => {
+    const sortableFields = [...repo.cursorSortableFields] as string[];
+    expect(sortableFields).toEqual([
+      'createdAt',
+      'updatedAt',
+      'firstName',
+      'lastName',
+      'score',
+    ]);
+
+    const indexKeys = ContactSchema.indexes().map(([keys]) => keys);
+    for (const field of sortableFields) {
+      expect(indexKeys).toContainEqual({
+        tenantId: 1,
+        [field]: field === 'createdAt' ? -1 : 1,
+        _id: field === 'createdAt' ? -1 : 1,
+      });
+    }
   });
 });

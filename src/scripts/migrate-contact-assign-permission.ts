@@ -16,23 +16,16 @@ const ASSIGN = 'contacts:assign';
  * move records into their own scope, or a colleague's out of theirs, with the same
  * permission they use to type. `contacts:assign` now exists to separate the two.
  *
- * Enforcement is behind the tenant setting
- * `data_access_policy.enforce_transfer_permission`, OFF by default, precisely so
- * that deploying the permission does not silently revoke a capability every
- * existing tenant's roles already grant in practice. Changing live authorization
- * semantics as a deploy side effect is worse than the gap being closed.
+ * Enforcement is unconditional in ContactsService. Run this migration BEFORE
+ * deploying that code so existing editors keep their current transfer ability,
+ * now represented by an explicit permission instead of a fail-open feature flag.
  *
- * So the intended sequence per environment is:
- *   1. deploy (nothing changes — the setting is off);
- *   2. run this script (roles that could reassign can still reassign, now
- *      explicitly);
- *   3. `npm run seed:system-roles` (the Manager template gains the permission at
- *      templateVersion 3);
- *   4. an admin tightens the roles that should NOT transfer — typically Sales Rep;
- *   5. an admin switches `enforce_transfer_permission` on.
- *
- * Steps 1–3 are safe and reversible. Only step 5 changes behaviour, and by then
- * the roles are already correct.
+ * Intended sequence per environment:
+ *   1. run with `--dry-run` and review the affected roles/memberships;
+ *   2. run this migration;
+ *   3. run `npm run seed:system-roles` (Manager template version 3);
+ *   4. deploy the enforcing API/UI;
+ *   5. remove `contacts:assign` from roles that should not transfer records.
  *
  * `--strict` skips the grandfathering and instead REMOVES `contacts:assign` from
  * every non-system role, for an operator who would rather grant it deliberately
@@ -166,8 +159,7 @@ async function run(): Promise<void> {
       );
       console.log(
         '\nGrant it deliberately from the Roles screen to the roles that should ' +
-          'be able to transfer records, then enable\n' +
-          'data_access_policy.enforce_transfer_permission.',
+          'be able to transfer records before deploying the enforcing API.',
       );
       return;
     }
@@ -184,10 +176,9 @@ async function run(): Promise<void> {
 
     if (!args.dryRun) {
       console.log(
-        '\nNext: run `npm run seed:system-roles` so the Manager template picks up\n' +
-          'templateVersion 3, tighten the roles that should NOT transfer records,\n' +
-          'then set data_access_policy.enforce_transfer_permission = true.\n' +
-          'Until that setting is on, nothing about reassignment has changed.',
+        '\nNext: run `npm run seed:system-roles`, then deploy the enforcing API/UI.\n' +
+          'After deployment, remove contacts:assign from roles that should not\n' +
+          'transfer Contact ownership.',
       );
     }
   } finally {

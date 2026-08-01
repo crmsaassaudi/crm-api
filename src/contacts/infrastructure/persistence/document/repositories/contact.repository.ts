@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, FilterQuery, Types } from 'mongoose';
 import {
@@ -24,6 +29,7 @@ import {
   normalizeCursorDirection,
   normalizeSortOrder,
 } from '../../../../../utils/cursor-pagination';
+import { normalizeEmail } from '../../../../../common/identity/identity-normalizer';
 
 @Injectable()
 export class ContactRepository extends BaseDocumentRepository<
@@ -33,10 +39,8 @@ export class ContactRepository extends BaseDocumentRepository<
   private readonly cursorSortableFields = new Set([
     'createdAt',
     'updatedAt',
-    'lastActivityAt',
     'firstName',
     'lastName',
-    'companyName',
     'score',
   ]);
 
@@ -206,11 +210,12 @@ export class ContactRepository extends BaseDocumentRepository<
   ): void {
     const searchTerm = search.trim();
     if (searchTerm.includes('@')) {
-      const escaped = this.escapeRegex(searchTerm);
-      where.$or = [
-        { emails: { $regex: escaped, $options: 'i' } },
-        { $text: { $search: searchTerm } },
-      ];
+      // Full email identities are normalised at every write boundary and have a
+      // tenant-prefixed multikey index. Equality can use that index; the former
+      // unanchored /i regex could not and turned a common exact lookup into a
+      // tenant-wide scan at large cardinality.
+      const normalisedEmail = normalizeEmail(searchTerm);
+      where.emails = normalisedEmail;
     } else {
       where.$text = { $search: searchTerm };
     }
@@ -704,9 +709,16 @@ export class ContactRepository extends BaseDocumentRepository<
    * window, and cascades through CONTACT_REFERENCES.
    */
   async remove(id: string): Promise<void> {
+    const removed = await this.removeIfExists(id);
+    if (!removed) {
+      throw new NotFoundException(this.notFoundMessage(id));
+    }
+  }
+
+  async removeIfExists(id: string): Promise<boolean> {
     const scopedFilter = this.applyTenantFilter({ _id: id });
     const deletedById = this.cls.get('userId') ?? this.cls.get('user.id');
-    await this.model
+    const result = await this.model
       .updateOne(scopedFilter, {
         $set: {
           deletedAt: new Date(),
@@ -714,6 +726,11 @@ export class ContactRepository extends BaseDocumentRepository<
         },
       })
       .exec();
+    return result.matchedCount > 0;
+  }
+
+  protected notFoundMessage(id: string): string {
+    return `Contact ${id} not found`;
   }
 
   /** Restore a soft-deleted contact from the recycle bin. */

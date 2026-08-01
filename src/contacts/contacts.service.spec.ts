@@ -12,6 +12,9 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { access, mkdtemp, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 describe('ContactsService', () => {
   let service: ContactsService;
@@ -24,6 +27,11 @@ describe('ContactsService', () => {
   let authorization: any;
   let identitySync: any;
   let customFieldValidator: any;
+  let exportStorageService: any;
+  let importStorage: any;
+  let importQueue: any;
+  let importJobModel: any;
+  let userModel: any;
 
   beforeEach(() => {
     repository = {
@@ -90,6 +98,19 @@ describe('ContactsService', () => {
         Promise.resolve(values),
       ),
     };
+    exportStorageService = {
+      storeImportFileFromPath: jest.fn().mockResolvedValue({
+        fileKey: 'imports/contacts/tenant_1.user_1.test-import.csv',
+      }),
+      assertImportFileOwned: jest.fn(),
+      importFileExists: jest.fn().mockResolvedValue(true),
+    };
+    importStorage = { openLocalReport: jest.fn() };
+    importQueue = createQueueMock();
+    importJobModel = createMongooseModelMock();
+    userModel = createMongooseModelMock({
+      findResult: { orgUnitId: '60d0fe4f5311236168a109cd' },
+    });
 
     // Minimal construction — only fields needed for the methods under test.
     // Other dependencies are stubbed as empty objects since they are not exercised.
@@ -113,7 +134,7 @@ describe('ContactsService', () => {
           return result;
         }),
       } as any,
-      {} as any, // exportStorageService
+      exportStorageService as any,
       // mergeIdentity now serialises on the identity — the read-then-write
       // uniqueness check has no unique index behind it. Run the callback through.
       {
@@ -122,6 +143,7 @@ describe('ContactsService', () => {
       { emit: jest.fn() } as any, // entityAudit
       {} as any, // activityLog
       { create: jest.fn().mockReturnValue({}) } as any, // exportStorageFactory
+      { create: jest.fn().mockReturnValue(importStorage) } as any, // importStorageFactory
       mergeService as any, // mergeService
       customFieldValidator as any, // customFieldValidator
       { getByModule: jest.fn(() => Promise.resolve([])) } as any, // customFields
@@ -132,9 +154,10 @@ describe('ContactsService', () => {
       identitySync as any, // identitySync
       {} as any, // redis
       createQueueMock() as any, // exportQueue
-      createQueueMock() as any, // importQueue
-      createMongooseModelMock() as any, // importJobModel
+      importQueue as any,
+      importJobModel as any,
       createMongooseModelMock() as any, // exportJobModel
+      userModel as any,
     );
   });
 
@@ -177,7 +200,7 @@ describe('ContactsService', () => {
       );
     });
 
-    it('should normalize empty ownerId to undefined', async () => {
+    it('should normalize empty ownerId to the requesting user', async () => {
       const dto = createContactDto({ ownerId: '' });
       repository.create.mockResolvedValue(createContact());
 
@@ -185,7 +208,7 @@ describe('ContactsService', () => {
 
       expect(repository.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          ownerId: undefined,
+          ownerId: 'user_1',
         }),
         undefined,
       );
@@ -423,6 +446,8 @@ describe('ContactsService', () => {
   // OWNERSHIP TRANSFER (M-3)
   // ═══════════════════════════════════════════════════════════════════
   describe('ownership transfer', () => {
+    const ownerA = '60d0fe4f5311236168a109ca';
+    const ownerB = '60d0fe4f5311236168a109cb';
     const withPolicy = (policy: Record<string, unknown> | null) =>
       settingsService.getSetting.mockImplementation((key: string) =>
         Promise.resolve(key === 'data_access_policy' ? policy : null),
@@ -430,24 +455,23 @@ describe('ContactsService', () => {
 
     beforeEach(() => {
       repository.findOne.mockResolvedValue(
-        createContact({ id: 'c1', ownerId: 'owner_a' }),
+        createContact({ id: 'c1', ownerId: ownerA }),
       );
-      repository.update.mockResolvedValue(
-        createContact({ ownerId: 'owner_b' }),
-      );
+      repository.update.mockResolvedValue(createContact({ ownerId: ownerB }));
     });
 
-    it('should NOT enforce the permission unless the tenant opted in', async () => {
-      // Enabling this globally on deploy would revoke a capability every existing
-      // tenant's roles grant in practice — changing live authorization semantics
-      // as a side effect of shipping.
+    it('should enforce contacts:assign without a tenant feature flag', async () => {
       withPolicy(null);
       authorization.canPerformAction.mockResolvedValue({ allowed: false });
 
       await expect(
-        service.update('c1', { ownerId: 'owner_b' } as any),
-      ).resolves.toBeTruthy();
-      expect(authorization.canPerformAction).not.toHaveBeenCalled();
+        service.update('c1', { ownerId: ownerB } as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(authorization.canPerformAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rule: { action: 'assign', resource: 'contacts' },
+        }),
+      );
     });
 
     it('should reject a transfer without contacts:assign once enforced', async () => {
@@ -455,7 +479,7 @@ describe('ContactsService', () => {
       authorization.canPerformAction.mockResolvedValue({ allowed: false });
 
       await expect(
-        service.update('c1', { ownerId: 'owner_b' } as any),
+        service.update('c1', { ownerId: ownerB } as any),
       ).rejects.toThrow(ForbiddenException);
       expect(repository.update).not.toHaveBeenCalled();
     });
@@ -465,13 +489,30 @@ describe('ContactsService', () => {
       authorization.canPerformAction.mockResolvedValue({ allowed: true });
 
       await expect(
-        service.update('c1', { ownerId: 'owner_b' } as any),
+        service.update('c1', { ownerId: ownerB } as any),
       ).resolves.toBeTruthy();
       expect(authorization.canPerformAction).toHaveBeenCalledWith(
         expect.objectContaining({
           rule: { action: 'assign', resource: 'contacts' },
         }),
       );
+      expect(repository.update).toHaveBeenCalledWith(
+        'c1',
+        expect.objectContaining({
+          ownerId: ownerB,
+          orgUnitId: '60d0fe4f5311236168a109cd',
+        }),
+        undefined,
+      );
+    });
+
+    it('should require contacts:assign when creating for another owner', async () => {
+      authorization.canPerformAction.mockResolvedValue({ allowed: false });
+
+      await expect(
+        service.create(createContactDto({ ownerId: ownerB }) as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(repository.create).not.toHaveBeenCalled();
     });
 
     it('should not treat an unchanged ownerId as a transfer', async () => {
@@ -482,7 +523,7 @@ describe('ContactsService', () => {
 
       await expect(
         service.update('c1', {
-          ownerId: 'owner_a',
+          ownerId: ownerA,
           phones: ['+84901112222'],
         } as any),
       ).resolves.toBeTruthy();
@@ -513,6 +554,145 @@ describe('ContactsService', () => {
         tenantId: 'tenant_1',
         emails: 'test@example.com', // lowercased
       });
+    });
+  });
+
+  describe('streamed import upload', () => {
+    it('should stream the temporary file and remove it after durable storage', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'contact-upload-test-'));
+      const path = join(directory, 'contacts.csv');
+      await writeFile(path, 'First Name,Email\nAlice,alice@example.com\n');
+
+      try {
+        await expect(
+          service.uploadImportFile({
+            path,
+            originalname: 'contacts.csv',
+            size: 48,
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            format: 'csv',
+            headers: ['First Name', 'Email'],
+          }),
+        );
+        expect(
+          exportStorageService.storeImportFileFromPath,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({
+            path,
+            tenantId: 'tenant_1',
+            userId: 'user_1',
+          }),
+        );
+        await expect(access(path)).rejects.toThrow();
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('should remove the temporary file when validation fails', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'contact-upload-test-'));
+      const path = join(directory, 'contacts.exe');
+      await writeFile(path, 'not an import');
+
+      try {
+        await expect(
+          service.uploadImportFile({
+            path,
+            originalname: 'contacts.exe',
+            size: 13,
+          }),
+        ).rejects.toThrow(BadRequestException);
+        await expect(access(path)).rejects.toThrow();
+        expect(
+          exportStorageService.storeImportFileFromPath,
+        ).not.toHaveBeenCalled();
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('import report storage namespace', () => {
+    it('should read reports from the same generic namespace as the worker', async () => {
+      importStorage.openLocalReport.mockResolvedValue({
+        stream: {},
+        filename: 'report.json',
+        size: 2,
+      });
+
+      await expect(service.getImportReport('01JTESTTOKEN')).resolves.toEqual(
+        expect.objectContaining({ filename: 'report.json' }),
+      );
+      expect(importStorage.openLocalReport).toHaveBeenCalledWith(
+        '01JTESTTOKEN',
+      );
+      expect(exportStorageService.readLocalReport).toBeUndefined();
+    });
+  });
+
+  describe('durable import enqueue ordering', () => {
+    const dto = {
+      fileKey: 'imports/contacts/tenant_1.user_1.test-import.csv',
+      fileName: 'contacts.csv',
+      fileFormat: 'csv',
+      mapping: {
+        'First Name': 'firstName',
+        'Last Name': 'lastName',
+        Email: 'emails',
+      },
+    } as any;
+
+    it('should persist the checkpoint record before exposing the Bull job', async () => {
+      const result = await service.startImport(dto);
+      const persisted = importJobModel.create.mock.calls[0][0];
+      const queued = importQueue.add.mock.calls[0];
+
+      expect(persisted.bullJobId).toMatch(/^contact-import-/);
+      expect(queued[2]).toEqual({ jobId: persisted.bullJobId });
+      expect(result.jobId).toBe(persisted.bullJobId);
+      expect(importJobModel.create.mock.invocationCallOrder[0]).toBeLessThan(
+        importQueue.add.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('should remove only the new history record when enqueue fails', async () => {
+      importQueue.add.mockRejectedValueOnce(new Error('redis unavailable'));
+
+      await expect(service.startImport(dto)).rejects.toThrow(
+        'redis unavailable',
+      );
+      const persisted = importJobModel.create.mock.calls[0][0];
+      expect(importJobModel.deleteOne).toHaveBeenCalledWith({
+        bullJobId: persisted.bullJobId,
+        tenantId: 'tenant_1',
+        userId: 'user_1',
+      });
+    });
+
+    it('should not enqueue anything when durable history creation fails', async () => {
+      importJobModel.create.mockRejectedValueOnce(
+        new Error('mongo unavailable'),
+      );
+
+      await expect(service.startImport(dto)).rejects.toThrow(
+        'mongo unavailable',
+      );
+      expect(importQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('should require contacts:assign before importing for another owner', async () => {
+      authorization.canPerformAction.mockResolvedValue({ allowed: false });
+
+      await expect(
+        service.startImport({
+          ...dto,
+          ownerId: '60d0fe4f5311236168a109cb',
+        }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(importJobModel.create).not.toHaveBeenCalled();
+      expect(importQueue.add).not.toHaveBeenCalled();
     });
   });
 });

@@ -14,7 +14,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
+import { diskStorage } from 'multer';
+import { tmpdir } from 'os';
+import { ulid } from 'ulid';
+import { pipeline } from 'stream/promises';
 import type { Response } from 'express';
 import { ContactsService } from './contacts.service';
 import { Contact } from './domain/contact';
@@ -170,19 +173,29 @@ export class ContactsController {
       'Content-Disposition',
       `attachment; filename="${safeFilename}"`,
     );
-    res.setHeader('Content-Length', String(file.buffer.length));
+    res.setHeader('Content-Length', String(file.size));
     res.setHeader('Cache-Control', 'no-store');
-    res.end(file.buffer);
+    await pipeline(file.stream, res);
   }
 
   // ──────────────────────────── CONTACT IMPORT ────────────────────────────
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('import-upload')
-  @RequirePermission('create', 'contacts')
+  @RequirePermission('import', 'contacts')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: memoryStorage(),
+      // Do not hold a 50 MB import in the API process heap. The service streams
+      // this temporary file to durable storage and always unlinks it afterwards.
+      storage: diskStorage({
+        destination: tmpdir(),
+        filename: (_req, file, cb) => {
+          const extension = file.originalname.toLowerCase().endsWith('.xlsx')
+            ? '.xlsx'
+            : '.csv';
+          cb(null, `crm-contact-import-${ulid()}${extension}`);
+        },
+      }),
       limits: { fileSize: IMPORT_MAX_FILE_BYTES },
     }),
   )
@@ -193,19 +206,19 @@ export class ContactsController {
   // Tighter than export (limit:10) — a single import job is far heavier.
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
   @Post('import')
-  @RequirePermission('create', 'contacts')
+  @RequirePermission('import', 'contacts')
   startImport(@Body() body: StartImportDto) {
     return this.service.startImport(body);
   }
 
   @Get('import-status/:jobId')
-  @RequirePermission('create', 'contacts')
+  @RequirePermission('import', 'contacts')
   getImportStatus(@Param('jobId') jobId: string) {
     return this.service.getImportStatus(jobId);
   }
 
   @Get('import-jobs')
-  @RequirePermission('create', 'contacts')
+  @RequirePermission('import', 'contacts')
   listImportJobs(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -219,13 +232,13 @@ export class ContactsController {
   }
 
   @Get('import-jobs/:id')
-  @RequirePermission('create', 'contacts')
+  @RequirePermission('import', 'contacts')
   getImportJobDetail(@Param('id') id: string) {
     return this.service.getImportJobDetail(id);
   }
 
   @Get('import-report/:token')
-  @RequirePermission('create', 'contacts')
+  @RequirePermission('import', 'contacts')
   async downloadImportReport(
     @Param('token') token: string,
     @Res() res: Response,
@@ -237,9 +250,9 @@ export class ContactsController {
       'Content-Disposition',
       `attachment; filename="${safeFilename}"`,
     );
-    res.setHeader('Content-Length', String(file.buffer.length));
+    res.setHeader('Content-Length', String(file.size));
     res.setHeader('Cache-Control', 'no-store');
-    res.end(file.buffer);
+    await pipeline(file.stream, res);
   }
 
   @Throttle({ default: { limit: 20, ttl: 60_000 } })

@@ -7,8 +7,8 @@ import { ConfigService } from '@nestjs/config';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { createWriteStream } from 'fs';
-import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
+import { createReadStream, createWriteStream } from 'fs';
+import { mkdir, readFile, stat, unlink, writeFile } from 'fs/promises';
 import { basename, join } from 'path';
 import { once } from 'events';
 import { ulid } from 'ulid';
@@ -229,7 +229,7 @@ export class ExportStorageService {
     }
 
     const userId = this.cls.get('userId');
-    if (entry.ownerId && userId && entry.ownerId !== userId) {
+    if (entry.ownerId && entry.ownerId !== userId) {
       throw new ForbiddenException('Export link belongs to another user');
     }
 
@@ -237,6 +237,42 @@ export class ExportStorageService {
       buffer: await readFile(entry.filePath),
       filename: entry.filename,
     };
+  }
+
+  /** Stream a local export without loading a million-row CSV into API heap. */
+  async openLocalExport(token: string): Promise<{
+    stream: ReturnType<typeof createReadStream>;
+    filename: string;
+    size: number;
+  }> {
+    const entry = await this.resolveOwnedLocalExport(token);
+    const fileStat = await stat(entry.filePath);
+    return {
+      stream: createReadStream(entry.filePath),
+      filename: entry.filename,
+      size: fileStat.size,
+    };
+  }
+
+  private async resolveOwnedLocalExport(
+    token: string,
+  ): Promise<LocalExportToken> {
+    let entry = this.localTokens.get(token);
+    if (!entry) {
+      entry = (await this.readLocalMetadata(token)) ?? undefined;
+      if (entry) this.localTokens.set(token, entry);
+    }
+    if (!entry) {
+      throw new NotFoundException('Export link not found or expired');
+    }
+    if (entry.expiresAt.getTime() < Date.now()) {
+      this.localTokens.delete(token);
+      throw new NotFoundException('Export link expired');
+    }
+    if (entry.ownerId && entry.ownerId !== this.cls.get('userId')) {
+      throw new ForbiddenException('Export link belongs to another user');
+    }
+    return entry;
   }
 
   private async readLocalMetadata(

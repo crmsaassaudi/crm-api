@@ -13,7 +13,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import Redis from 'ioredis';
 import { InjectModel } from '@nestjs/mongoose';
 import { Queue } from 'bullmq';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { ContactRepository } from './infrastructure/persistence/document/repositories/contact.repository';
 import { Contact } from './domain/contact';
 import { CreateContactDto } from './dto/create-contact.dto';
@@ -52,8 +52,13 @@ import {
 } from '../common/export';
 import { StartImportDto } from './dto/start-import.dto';
 import { createParser, detectFormat } from './import/import-parser.factory';
+import {
+  ImportStorageFactory,
+  ImportStorageService,
+} from '../common/import/import-storage.service';
 import { ImportTenantSettings } from './contact-import.processor';
-import { Readable } from 'stream';
+import { createReadStream } from 'fs';
+import { unlink } from 'fs/promises';
 import {
   ImportJobSchemaClass,
   ImportJobDocument,
@@ -69,6 +74,10 @@ import { TagsService } from '../tags/tags.service';
 import { AuthorizationService } from '../common/permissions/authorization.service';
 import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
 import { randomUUID } from 'crypto';
+import {
+  UserSchemaClass,
+  UserSchemaDocument,
+} from '../users/infrastructure/persistence/document/entities/user.schema';
 import {
   buildContactExportQuery,
   buildContactExportSnapshot,
@@ -91,6 +100,7 @@ export class ContactsService {
     private readonly entityAudit: EntityAuditService,
     private readonly activityLog: ActivityLogService,
     private readonly exportStorageFactory: ExportStorageFactory,
+    private readonly importStorageFactory: ImportStorageFactory,
     private readonly mergeService: ContactMergeService,
     private readonly customFieldValidator: CustomFieldValueValidator,
     private readonly customFields: CustomFieldsService,
@@ -107,16 +117,23 @@ export class ContactsService {
     private readonly importJobModel: Model<ImportJobDocument>,
     @InjectModel(ExportJobSchemaClass.name)
     private readonly exportJobModel: Model<ExportJobDocument>,
+    @InjectModel(UserSchemaClass.name)
+    private readonly userModel: Model<UserSchemaDocument>,
   ) {
     this.exportStorage = this.exportStorageFactory.create('contacts');
+    this.importStorage = this.importStorageFactory.create('contacts');
   }
 
   /** Dual-mode storage for export downloads (matches the worker's namespace). */
   private readonly exportStorage: ExportStorageService;
+  /** Same namespace as ContactImportProcessor and its report writer. */
+  private readonly importStorage: ImportStorageService;
 
   async create(data: CreateContactDto): Promise<Contact> {
     const normalizedLifecycle = await this.normalizeLifecycleFields(data);
-    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
+    const ownerId = data.ownerId?.trim() || this.requireCurrentUserId();
+    await this.assertMayTransferOwnership(null, ownerId);
+    const orgUnitId = await this.resolveOwnerOrgUnit(ownerId);
     // Already lower-cased / E.164-normalised by the DTO transforms, so these are
     // directly comparable with what every other write path stores.
     const emails = data.emails ?? [];
@@ -144,6 +161,7 @@ export class ContactsService {
             emails,
             phones,
             ownerId,
+            orgUnitId,
             ...(customFields !== undefined ? { customFields } : {}),
           } as any,
           session,
@@ -255,12 +273,28 @@ export class ContactsService {
 
   async update(id: string, data: UpdateContactDto): Promise<Contact | null> {
     const existingContact = await this.repository.findOne({ _id: id });
+    // `findOne` is scoped by tenant, data-visibility and the ABAC deny, so a
+    // miss means "not yours to edit" — and it has to be answered here.
+    //
+    // This path does NOT go through BaseDocumentRepository.update: it uses
+    // `updateWithVersionCheck(id, existingContact?.version ?? 0, …)`. With no
+    // pre-read the version defaulted to 0, the versioned write matched nothing,
+    // and the caller was told `409 The contact was modified by another request`
+    // — an authorization refusal reported as a concurrency clash, on the most
+    // used entity in the product. 404 is the same answer every other module
+    // gives, and it discloses nothing.
+    if (!existingContact) {
+      throw new NotFoundException(`Contact ${id} not found`);
+    }
     const normalizedLifecycle = await this.normalizeLifecycleFields(
       data,
       existingContact ?? undefined,
     );
     // Sanitize ownerId: empty string is not a valid ObjectId
-    const ownerId = data.ownerId === '' ? undefined : data.ownerId;
+    if (data.ownerId === '') {
+      throw new BadRequestException('A Contact must always have an owner.');
+    }
+    const ownerId = data.ownerId;
     const emails = data.emails;
     const phones = data.phones;
 
@@ -269,6 +303,11 @@ export class ContactsService {
     }
 
     await this.assertMayTransferOwnership(existingContact, ownerId);
+    const ownerOrgUnitId =
+      ownerId !== undefined &&
+      String(existingContact?.ownerId ?? '') !== String(ownerId)
+        ? await this.resolveOwnerOrgUnit(ownerId)
+        : undefined;
 
     // `partial: true` — a PATCH that does not mention a required custom field
     // must not fail on it; the field was already satisfied at create time.
@@ -302,7 +341,10 @@ export class ContactsService {
             ...(emails !== undefined ? { emails } : {}),
             ...(phones !== undefined ? { phones } : {}),
             ...(customFields !== undefined ? { customFields } : {}),
-            ownerId,
+            ...(ownerId !== undefined ? { ownerId } : {}),
+            ...(ownerOrgUnitId !== undefined
+              ? { orgUnitId: ownerOrgUnitId }
+              : {}),
           },
           session,
         );
@@ -360,12 +402,10 @@ export class ContactsService {
    * permission they use to correct a phone number. Salesforce separates this as
    * "Transfer Record" for the same reason.
    *
-   * Gated behind the tenant setting `data_access_policy.enforce_transfer_permission`
-   * and OFF by default, deliberately. Turning it on globally would immediately break
-   * reassignment for every existing tenant whose roles predate the permission —
-   * changing live authorization semantics as a deploy side effect is worse than the
-   * gap it closes. `migrate:contact-assign-permission` grandfathers existing roles;
-   * an admin then flips this on when their roles are right.
+   * This is unconditional. `migrate:contact-assign-permission` must run before
+   * deployment to grandfather existing editor roles where appropriate. A feature
+   * flag here was fail-open security: an API caller could bypass the UI permission
+   * in every tenant that had not explicitly enabled enforcement.
    */
   private async assertMayTransferOwnership(
     existing: Contact | null,
@@ -373,14 +413,12 @@ export class ContactsService {
   ): Promise<void> {
     // Not a transfer: field absent, or unchanged.
     if (nextOwnerId === undefined) return;
-    if (!existing) return;
-    if (String(existing.ownerId ?? '') === String(nextOwnerId ?? '')) return;
-
-    const policy =
-      (await this.settingsService.getSetting('data_access_policy')) ?? {};
-    if (policy.enforce_transfer_permission !== true) return;
-
     const userId = this.getCurrentUserId();
+    if (existing) {
+      if (String(existing.ownerId ?? '') === String(nextOwnerId ?? '')) return;
+    } else if (String(nextOwnerId) === String(userId)) {
+      return;
+    }
     const decision = await this.authorization.canPerformAction({
       rule: { action: 'assign', resource: 'contacts' },
       rawUserId: String(userId ?? ''),
@@ -392,6 +430,33 @@ export class ContactsService {
         'Changing the owner of a contact requires the contacts:assign permission.',
       );
     }
+  }
+
+  private async resolveOwnerOrgUnit(ownerId: string): Promise<string | null> {
+    if (
+      !Types.ObjectId.isValid(ownerId) &&
+      ownerId !== this.getCurrentUserId()
+    ) {
+      throw new BadRequestException('ownerId is not a valid user id.');
+    }
+    if (String(ownerId) === String(this.getCurrentUserId())) {
+      return this.cls.get('userOrgUnitId') ?? null;
+    }
+
+    const tenantId = this.resolveTenantId();
+    const owner = await this.userModel
+      .findOne({
+        _id: ownerId,
+        'tenants.tenantId': tenantId,
+        deletedAt: { $exists: false },
+      })
+      .select({ orgUnitId: 1 })
+      .lean()
+      .exec();
+    if (!owner) {
+      throw new BadRequestException('ownerId is not an active tenant member.');
+    }
+    return owner.orgUnitId ? String(owner.orgUnitId) : null;
   }
 
   async remove(id: string): Promise<void> {
@@ -1184,9 +1249,9 @@ export class ContactsService {
 
   async getExportDownload(
     token: string,
-  ): Promise<{ buffer: Buffer; filename: string }> {
+  ): ReturnType<ExportStorageService['openLocalExport']> {
     // export_downloaded: system action — not written to Activity Log.
-    return this.exportStorage.readLocalExport(token);
+    return this.exportStorage.openLocalExport(token);
   }
 
   // ──────────────────────────── CONTACT IMPORT ────────────────────────────
@@ -1196,33 +1261,42 @@ export class ContactsService {
    * header row so the client can build the field-mapping UI.
    */
   async uploadImportFile(file: {
-    buffer: Buffer;
+    path: string;
     originalname: string;
     size: number;
   }): Promise<{ fileKey: string; format: string; headers: string[] }> {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
-    if (file.size > IMPORT_MAX_FILE_BYTES) {
-      throw new BadRequestException(
-        `File exceeds the ${IMPORT_MAX_FILE_BYTES / (1024 * 1024)}MB limit`,
-      );
+
+    try {
+      if (file.size > IMPORT_MAX_FILE_BYTES) {
+        throw new BadRequestException(
+          `File exceeds the ${IMPORT_MAX_FILE_BYTES / (1024 * 1024)}MB limit`,
+        );
+      }
+      const format = detectFormat(file.originalname);
+      // Both header parsing and persistence consume streams from disk. Peak API
+      // heap is therefore independent of the uploaded file size.
+      const parser = createParser(format);
+      const headers = await parser.readHeaders(createReadStream(file.path));
+      if (headers.length === 0) {
+        throw new BadRequestException('File has no header row');
+      }
+
+      const { fileKey } =
+        await this.exportStorageService.storeImportFileFromPath({
+          path: file.path,
+          size: file.size,
+          originalname: file.originalname,
+          tenantId: this.resolveTenantId(),
+          userId: this.requireCurrentUserId(),
+        });
+
+      return { fileKey, format, headers };
+    } finally {
+      await unlink(file.path).catch(() => undefined);
     }
-    const format = detectFormat(file.originalname);
-
-    // Parse just the header row before persisting so we fail fast on garbage.
-    const parser = createParser(format);
-    const headers = await parser.readHeaders(Readable.from(file.buffer));
-    if (headers.length === 0) {
-      throw new BadRequestException('File has no header row');
-    }
-
-    const { fileKey } = await this.exportStorageService.storeImportFile({
-      buffer: file.buffer,
-      originalname: file.originalname,
-    });
-
-    return { fileKey, format, headers };
   }
 
   async startImport(
@@ -1237,14 +1311,20 @@ export class ContactsService {
     //    queries crm_settings inside its hot loop (latency + consistency).
     const tenantSettings = await this.fetchImportTenantSettings();
 
-    const job = await this.importQueue.add('import', {
+    const tenantId = this.resolveTenantId();
+    const userId = this.requireCurrentUserId();
+    const ownerId = dto.ownerId ?? userId;
+    await this.assertMayTransferOwnership(null, ownerId);
+    const orgUnitId = await this.resolveOwnerOrgUnit(ownerId);
+    const jobId = `contact-import-${randomUUID()}`;
+    const jobData = {
       tenantId: this.resolveTenantId(),
-      userId: this.getCurrentUserId(),
+      userId,
       // Ownership is resolved HERE, in the request, and carried on the job.
       // The worker has no CLS context to derive it from, and an unowned contact
       // is invisible to every scoped user.
-      ownerId: dto.ownerId ?? this.getCurrentUserId(),
-      orgUnitId: this.cls.get('userOrgUnitId'),
+      ownerId,
+      orgUnitId,
       fileKey: dto.fileKey,
       mapping: dto.mapping,
       deduplication: dto.deduplication,
@@ -1253,36 +1333,40 @@ export class ContactsService {
       estimatedRows: dto.estimatedRows,
       fileName: this.resolveImportFileName(dto),
       tenantSettings,
+    };
+
+    // The checkpoint is part of every Contact batch transaction, so its durable
+    // job record must exist BEFORE a worker can start. The former enqueue-first,
+    // best-effort create had a race where a fast worker (or a Mongo create
+    // failure) could never persist a checkpoint and retried forever.
+    await this.importJobModel.create({
+      tenantId,
+      userId,
+      fileName: this.resolveImportFileName(dto),
+      fileFormat: this.resolveImportFileFormat(dto),
+      rowCount: dto.estimatedRows ?? 0,
+      status: 'queued',
+      bullJobId: jobId,
+      dryRun: dto.dryRun ?? false,
+      mapping: dto.mapping,
+      deduplication: dto.deduplication,
+      triggerAutomations: dto.triggerAutomations ?? false,
+      ip: this.cls.get('requestIp'),
+      userAgent: this.cls.get('userAgent'),
     });
 
-    // Persist to MongoDB for import history
-    const tenantId = this.resolveTenantId();
-    const userId = this.getCurrentUserId();
     try {
-      await this.importJobModel.create({
-        tenantId,
-        userId,
-        fileName: this.resolveImportFileName(dto),
-        fileFormat: this.resolveImportFileFormat(dto),
-        rowCount: dto.estimatedRows ?? 0,
-        status: 'queued',
-        bullJobId: String(job.id),
-        dryRun: dto.dryRun ?? false,
-        mapping: dto.mapping,
-        deduplication: dto.deduplication,
-        triggerAutomations: dto.triggerAutomations ?? false,
-        ip: this.cls.get('requestIp'),
-        userAgent: this.cls.get('userAgent'),
-        startedAt: new Date(),
-      });
+      await this.importQueue.add('import', jobData, { jobId });
     } catch (err) {
-      // Non-critical: don't fail the import if history record fails
-      this.logger.warn(
-        `Failed to persist import history record: ${(err as Error).message}`,
-      );
+      // Compensate only the record created above. The upload remains available
+      // so the caller can retry without uploading 50 MB again.
+      await this.importJobModel
+        .deleteOne({ bullJobId: jobId, tenantId, userId })
+        .catch(() => undefined);
+      throw err;
     }
 
-    return { jobId: String(job.id), status: 'queued' };
+    return { jobId, status: 'queued' };
   }
 
   // ─────────────────────── IMPORT HISTORY ───────────────────────────
@@ -1392,6 +1476,11 @@ export class ContactsService {
   }
 
   private async validateFileExists(fileKey: string): Promise<void> {
+    this.exportStorageService.assertImportFileOwned(
+      fileKey,
+      this.resolveTenantId(),
+      this.requireCurrentUserId(),
+    );
     const exists = await this.exportStorageService.importFileExists(fileKey);
     if (!exists) {
       throw new BadRequestException(
@@ -1447,8 +1536,8 @@ export class ContactsService {
 
   getImportReport(
     token: string,
-  ): Promise<{ buffer: Buffer; filename: string }> {
-    return this.exportStorageService.readLocalReport(token);
+  ): ReturnType<ImportStorageService['openLocalReport']> {
+    return this.importStorage.openLocalReport(token);
   }
 
   /**
@@ -1647,5 +1736,13 @@ export class ContactsService {
 
   private getCurrentUserId(): string | undefined {
     return this.cls.get('userId') ?? this.cls.get('user.id');
+  }
+
+  private requireCurrentUserId(): string {
+    const userId = this.getCurrentUserId();
+    if (!userId) {
+      throw new ForbiddenException('Authenticated user context is required');
+    }
+    return userId;
   }
 }

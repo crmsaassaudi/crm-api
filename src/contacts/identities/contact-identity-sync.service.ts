@@ -27,6 +27,15 @@ export interface IdentityConflict {
   heldBy: string;
 }
 
+export interface ContactIdentityProjectionInput {
+  contactId: string;
+  contact: {
+    emails?: string[];
+    phones?: string[];
+    omniIdentities?: Array<{ channelType: string; senderId: string }>;
+  };
+}
+
 /**
  * Keeps `contact_identities` in step with the authoritative
  * `emails[]` / `phones[]` / `omniIdentities[]` arrays.
@@ -326,6 +335,67 @@ export class ContactIdentitySyncService {
         userId: options.userId,
       },
     );
+  }
+
+  /**
+   * Reconcile a batch without serialising every contact behind one database
+   * round-trip chain. Import batches contain up to 1,000 contacts; awaiting each
+   * projection one-by-one made identity projection dominate the whole import.
+   *
+   * Concurrency is deliberately bounded. An unbounded Promise.all over a large
+   * import batch can exhaust the Mongo pool and hurt interactive CRM traffic.
+   * Individual syncs keep their existing best-effort semantics and drift repair
+   * remains the safety net.
+   */
+  async syncManyFromContacts(
+    inputs: ContactIdentityProjectionInput[],
+    options: {
+      source?: string;
+      defaultCountryCode?: string;
+      tenantId?: string;
+      userId?: string;
+      concurrency?: number;
+      strict?: boolean;
+    } = {},
+  ): Promise<void> {
+    const concurrency = Math.max(
+      1,
+      Math.min(Math.floor(options.concurrency ?? 16), 32),
+    );
+    let next = 0;
+    const failures: Array<{ contactId: string; error: unknown }> = [];
+
+    const worker = async () => {
+      while (next < inputs.length) {
+        const input = inputs[next++];
+        try {
+          await this.syncFromContact(input.contactId, input.contact, {
+            source: options.source,
+            defaultCountryCode: options.defaultCountryCode,
+            tenantId: options.tenantId,
+            userId: options.userId,
+            strict: options.strict,
+          });
+        } catch (error) {
+          failures.push({ contactId: input.contactId, error });
+        }
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, inputs.length) }, worker),
+    );
+
+    if (failures.length > 0) {
+      const failure = new Error(
+        `Identity projection failed for ${failures.length} contact(s): ${failures
+          .slice(0, 3)
+          .map(({ contactId }) => contactId)
+          .join(', ')}`,
+      );
+      Object.defineProperty(failure, 'cause', { value: failures[0].error });
+      throw failure;
+    }
   }
 
   /** Every live identity of a contact, primary first. */

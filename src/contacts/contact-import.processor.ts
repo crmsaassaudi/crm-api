@@ -38,6 +38,7 @@ import {
   splitMultiValue,
 } from '../common/identity/identity-normalizer';
 import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
+import { isEmail } from 'class-validator';
 
 // ── Module config ──────────────────────────────────────────────────
 
@@ -112,6 +113,7 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
   protected readonly logger = new Logger(ContactImportProcessor.name);
   protected readonly cls: ClsService;
   protected readonly moduleConfig = CONTACT_IMPORT_CONFIG;
+  protected readonly allowPartialBatchFailure: boolean = false;
 
   private readonly storage: ImportStorageService;
   private readonly reportService: ImportReportService;
@@ -178,12 +180,19 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
       .lean()
       .exec();
 
-    for (const contact of contacts as any[]) {
-      await this.identitySync.syncFromContact(String(contact._id), contact, {
+    await this.identitySync.syncManyFromContacts(
+      (contacts as any[]).map((contact) => ({
+        contactId: String(contact._id),
+        contact,
+      })),
+      {
         source: 'import',
         defaultCountryCode: data.tenantSettings.defaultCountryCode,
-      });
-    }
+        tenantId: data.tenantId,
+        userId: data.userId,
+        strict: true,
+      },
+    );
   }
 
   // ── Row mapping ──
@@ -228,10 +237,58 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
   // ── Row validation ──
 
   protected validateRow(
-    _mapped: MappedRow,
+    mapped: MappedRow,
     _data: ContactImportJobData,
   ): ImportRowError[] {
-    return [];
+    const errors: ImportRowError[] = [];
+    const maxLengths: Record<string, number> = {
+      firstName: 200,
+      lastName: 200,
+      companyName: 255,
+      title: 255,
+      role: 255,
+      address: 2_000,
+    };
+
+    for (const [field, max] of Object.entries(maxLengths)) {
+      const value = mapped.fields[field];
+      if (typeof value === 'string' && value.length > max) {
+        errors.push({
+          row: mapped.row,
+          code: ImportErrorCode.VALIDATION_FAILED,
+          field,
+          reason: `${field} exceeds the ${max} character limit`,
+          value: value.slice(0, 500),
+        });
+      }
+    }
+
+    for (const email of mapped.arrayFields.emails ?? []) {
+      if (email.length > 320 || !isEmail(email)) {
+        errors.push({
+          row: mapped.row,
+          code: ImportErrorCode.VALIDATION_FAILED,
+          field: 'emails',
+          reason: 'Invalid email address',
+          value: email.slice(0, 500),
+        });
+      }
+    }
+
+    for (const phone of mapped.arrayFields.phones ?? []) {
+      const digitCount = phone.replace(/\D/g, '').length;
+      if (digitCount < 7 || digitCount > 15) {
+        errors.push({
+          row: mapped.row,
+          code: ImportErrorCode.VALIDATION_FAILED,
+          field: 'phones',
+          reason: 'Phone number must contain 7 to 15 digits',
+          value: phone.slice(0, 500),
+        });
+      }
+    }
+
+    return errors;
   }
 
   // ── Dedup value extraction ──

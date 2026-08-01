@@ -4,6 +4,7 @@ import {
 } from './contact-import.processor';
 import { ImportSummary } from './contact-import-report.service';
 import { ImportDedupEngine } from '../common/import/import-dedup.service';
+import { ImportJobSchema as RegisteredContactImportJobSchema } from './infrastructure/persistence/document/entities/import-job.schema';
 
 /** Minimal report-writer stub capturing appended errors. */
 function makeReport() {
@@ -72,10 +73,20 @@ function makeProcessor(model: any) {
       return result;
     }),
   };
-  const identitySync = { syncFromContact: jest.fn() };
+  const identitySync = { syncManyFromContacts: jest.fn() };
   const cls = { set: jest.fn(), get: jest.fn(), runWith: jest.fn() };
   const redis = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
-  const importJobModel = { updateOne: jest.fn(() => ({})) };
+  const importJobModel = {
+    updateOne: jest.fn(() => Promise.resolve({ matchedCount: 1 })),
+    findOne: jest.fn(() => {
+      const chain: any = {
+        select: () => chain,
+        lean: () => chain,
+        exec: () => Promise.resolve(null),
+      };
+      return chain;
+    }),
+  };
   const connection = { startSession: jest.fn() };
 
   // Only `contactModel` is exercised by the methods under test; the rest exist
@@ -92,6 +103,7 @@ function makeProcessor(model: any) {
     connection as any,
   );
   (processor as any).__identitySync = identitySync;
+  (processor as any).__importJobModel = importJobModel;
   return processor;
 }
 
@@ -122,6 +134,20 @@ const emptySummary = (): ImportSummary => ({
   updated: 0,
   skipped: 0,
   errors: 0,
+});
+
+describe('registered Contact import-job schema', () => {
+  it('should persist every field required for crash-safe resume', () => {
+    expect(
+      RegisteredContactImportJobSchema.path('checkpointRow'),
+    ).toBeDefined();
+    expect(
+      RegisteredContactImportJobSchema.path('checkpointSummary'),
+    ).toBeDefined();
+    expect(
+      RegisteredContactImportJobSchema.path('projectionPendingIds'),
+    ).toBeDefined();
+  });
 });
 
 describe('ContactImportProcessor identity projection', () => {
@@ -155,11 +181,116 @@ describe('ContactImportProcessor identity projection', () => {
       baseData(),
     );
 
-    expect(processor.__identitySync.syncFromContact).toHaveBeenCalledWith(
-      '60d0fe4f5311236168a109ca',
-      expect.objectContaining({ emails: ['person@example.com'] }),
-      expect.objectContaining({ source: 'import' }),
+    expect(processor.__identitySync.syncManyFromContacts).toHaveBeenCalledWith(
+      [
+        {
+          contactId: '60d0fe4f5311236168a109ca',
+          contact: expect.objectContaining({ emails: ['person@example.com'] }),
+        },
+      ],
+      expect.objectContaining({
+        source: 'import',
+        tenantId: 't1',
+        userId: 'u1',
+      }),
     );
+  });
+});
+
+describe('ContactImportProcessor resumable batch checkpoint', () => {
+  const contactId = '60d0fe4f5311236168a109ca';
+
+  function executionArgs() {
+    const summary = {
+      total: 1,
+      inserted: 1,
+      updated: 0,
+      skipped: 0,
+      errors: 0,
+    };
+    return [
+      [
+        {
+          insertOne: {
+            document: {
+              _id: contactId,
+              tenantId: 't1',
+              firstName: 'Alice',
+              lastName: 'Smith',
+              emails: ['alice@example.com'],
+              phones: [],
+            },
+          },
+        },
+      ],
+      [{ row: 1, type: 'insert' }],
+      [{ id: contactId, row: 1, type: 'insert' }],
+      baseData(),
+      {
+        summary,
+        report: makeReport(),
+        dryRun: false,
+        bullJobId: 'job-1',
+      },
+      [],
+      1,
+    ] as const;
+  }
+
+  it('should commit checkpoint and pending projection receipt in the entity transaction', async () => {
+    const proc: any = makeProcessor(makeModel());
+
+    await proc.executeBatchOps(...executionArgs());
+
+    expect(proc.__importJobModel.updateOne).toHaveBeenCalledWith(
+      { bullJobId: 'job-1', tenantId: 't1' },
+      {
+        $set: expect.objectContaining({
+          checkpointRow: 1,
+          projectionPendingIds: [contactId],
+        }),
+      },
+      { session: { id: 'session' } },
+    );
+    expect(proc.__identitySync.syncManyFromContacts).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ strict: true, tenantId: 't1' }),
+    );
+    expect(proc.__importJobModel.updateOne).toHaveBeenCalledWith(
+      { bullJobId: 'job-1', tenantId: 't1' },
+      { $set: { projectionPendingIds: [] } },
+    );
+  });
+
+  it('should leave the durable pending receipt when identity projection fails', async () => {
+    const proc: any = makeProcessor(makeModel());
+    proc.__identitySync.syncManyFromContacts.mockRejectedValueOnce(
+      new Error('identity index unavailable'),
+    );
+
+    await expect(proc.executeBatchOps(...executionArgs())).rejects.toThrow(
+      'identity index unavailable',
+    );
+
+    const updates = proc.__importJobModel.updateOne.mock.calls.map(
+      (call: any[]) => call[1]?.$set?.projectionPendingIds,
+    );
+    expect(updates).toContainEqual([contactId]);
+    expect(updates).not.toContainEqual([]);
+  });
+
+  it('should abort the whole Contact batch instead of salvaging partial rows', async () => {
+    const model = makeModel();
+    model.bulkWrite.mockRejectedValueOnce({
+      writeErrors: [{ index: 0, code: 11000 }],
+    });
+    const proc: any = makeProcessor(model);
+
+    await expect(proc.executeBatchOps(...executionArgs())).rejects.toEqual(
+      expect.objectContaining({ writeErrors: expect.any(Array) }),
+    );
+    expect(model.bulkWrite).toHaveBeenCalledTimes(1);
+    expect(proc.__importJobModel.updateOne).not.toHaveBeenCalled();
   });
 });
 
@@ -225,6 +356,60 @@ describe('ContactImportProcessor — mapping', () => {
       baseData(),
     );
     expect(m.arrayFields.phones).toEqual(['+84901112222']);
+  });
+});
+
+describe('ContactImportProcessor — validation', () => {
+  const proc: any = makeProcessor(makeModel());
+
+  it('should reject malformed email and phone identities', () => {
+    const mapped = proc.mapRow(
+      {
+        'First Name': 'Alice',
+        'Last Name': 'Smith',
+        Email: 'not-an-email',
+        Phone: '123',
+      },
+      baseData().mapping,
+      9,
+      baseData(),
+    );
+
+    expect(proc.validateRow(mapped, baseData())).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ row: 9, field: 'emails' }),
+        expect.objectContaining({ row: 9, field: 'phones' }),
+      ]),
+    );
+  });
+
+  it('should reject oversized scalar fields before writing to Mongo', () => {
+    const mapped = proc.mapRow(
+      { 'First Name': 'A'.repeat(201), 'Last Name': 'Smith' },
+      baseData().mapping,
+      4,
+      baseData(),
+    );
+
+    expect(proc.validateRow(mapped, baseData())).toContainEqual(
+      expect.objectContaining({ row: 4, field: 'firstName' }),
+    );
+  });
+
+  it('should accept normalised valid identities', () => {
+    const mapped = proc.mapRow(
+      {
+        'First Name': 'Alice',
+        'Last Name': 'Smith',
+        Email: 'Alice@Example.com',
+        Phone: '+84 90 111 2222',
+      },
+      baseData().mapping,
+      1,
+      baseData(),
+    );
+
+    expect(proc.validateRow(mapped, baseData())).toEqual([]);
   });
 });
 

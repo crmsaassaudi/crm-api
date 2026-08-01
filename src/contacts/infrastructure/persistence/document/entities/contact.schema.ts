@@ -265,6 +265,18 @@ ContactSchema.index(
     partialFilterExpression: { deletedAt: null },
   },
 );
+// Every field exposed by cursor pagination needs the tenant/filter prefix and
+// `_id` tie-breaker in the same index. Without these indexes, a legal API sort
+// can become a blocking in-memory sort and fail at million-contact cardinality.
+for (const field of ['updatedAt', 'firstName', 'lastName', 'score'] as const) {
+  ContactSchema.index(
+    { tenantId: 1, [field]: 1, _id: 1 },
+    {
+      name: `tenant_active_${field}_cursor`,
+      partialFilterExpression: { deletedAt: null },
+    },
+  );
+}
 // The recycle bin: soft-deleted contacts, newest first. Also the driver for
 // ContactPurgeService.findPurgeable, which scans by `deletedAt` ascending.
 ContactSchema.index(
@@ -294,7 +306,7 @@ ContactSchema.index(
   { name: 'tenant_stage_created' },
 );
 ContactSchema.index(
-  { firstName: 'text', lastName: 'text', emails: 'text' },
+  { tenantId: 1, firstName: 'text', lastName: 'text', emails: 'text' },
   {
     name: 'contact_text_search',
     default_language: 'none',

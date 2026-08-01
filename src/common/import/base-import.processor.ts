@@ -33,6 +33,12 @@ import { AutomationEventPayload } from '../../automation-rules/events/automation
 const LOCK_TTL_MS = 10 * 60 * 1000; // 10 min, heartbeat-renewed by lock service
 const DEFAULT_THROTTLE_MS = 60; // pause between batches to spare MongoDB CPU
 
+interface ImportCheckpoint {
+  checkpointRow: number;
+  checkpointSummary?: ImportSummary;
+  projectionPendingIds: string[];
+}
+
 /**
  * Abstract base class for ALL import processors.
  *
@@ -86,6 +92,12 @@ export abstract class BaseImportProcessor<
 
   /** Durable workflow outbox used to atomically bridge imported records. */
   protected abstract getAutomationOutbox(): AutomationOutboxService;
+
+  /**
+   * Legacy modules may salvage valid rows after a bulk error. Contact disables
+   * this so a checkpoint always represents one atomic batch.
+   */
+  protected readonly allowPartialBatchFailure: boolean = true;
 
   // ─────────────────────── ABSTRACT: Module-specific logic ────────────────
 
@@ -192,10 +204,12 @@ export abstract class BaseImportProcessor<
   @OnWorkerEvent('failed')
   async onFailed(job: Job<TJobData>, error: Error) {
     void super.onFailed(job, error);
+    const attempts = job.opts.attempts ?? 1;
+    const willRetry = job.attemptsMade < attempts;
     await this.updateImportJob(String(job.id), {
-      status: 'failed',
+      status: willRetry ? 'queued' : 'failed',
       failedReason: error.message,
-      completedAt: new Date(),
+      completedAt: willRetry ? null : new Date(),
     });
   }
 
@@ -212,12 +226,14 @@ export abstract class BaseImportProcessor<
 
   private async runImport(job: Job<TJobData>): Promise<ImportResult> {
     const data = job.data;
+    const bullJobId = String(job.id);
     const dryRun = data.dryRun ?? false;
     const format = detectFormat(data.fileKey);
     const parser = createParser(format);
     const storage = this.getStorage();
     const reportService = this.getReportService();
-    const report = reportService.createWriter(String(job.id), data.tenantId);
+    const report = reportService.createWriter(bullJobId, data.tenantId);
+    const checkpoint = await this.loadCheckpoint(bullJobId, data.tenantId);
 
     // Initialize reference resolver if this module has reference fields.
     let refResolver: ImportReferenceResolver | undefined;
@@ -233,19 +249,38 @@ export abstract class BaseImportProcessor<
     // Initialize progress tracker.
     const progress = new ImportProgressTracker(
       this.getImportJobModel(),
-      String(job.id),
+      bullJobId,
     );
 
     // Mark as active in MongoDB history.
-    await this.updateImportJob(String(job.id), { status: 'active' });
+    await this.updateImportJob(bullJobId, {
+      status: 'active',
+      failedReason: null,
+      completedAt: null,
+    });
 
-    const summary: ImportSummary = {
+    const summary: ImportSummary = checkpoint.checkpointSummary ?? {
       total: 0,
       inserted: 0,
       updated: 0,
       skipped: 0,
       errors: 0,
     };
+
+    // A crash can happen after the entity/outbox transaction commits but before
+    // a module projection finishes. Reconcile that exact receipt first. The hook
+    // is idempotent, so a crash while clearing the receipt is safe to replay.
+    if (!dryRun && checkpoint.projectionPendingIds.length > 0) {
+      await this.afterBatchWrite(
+        checkpoint.projectionPendingIds.map((id) => ({
+          id,
+          type: 'update' as const,
+          row: checkpoint.checkpointRow,
+        })),
+        data,
+      );
+      await this.clearProjectionPending(bullJobId, data.tenantId);
+    }
 
     const dedupEngine = new ImportDedupEngine();
     const dedupConfig: DedupConfig | undefined = data.deduplication
@@ -264,6 +299,7 @@ export abstract class BaseImportProcessor<
 
       for await (const raw of parser.parse(stream)) {
         rowNum++;
+        if (rowNum <= checkpoint.checkpointRow) continue;
         const mapped = this.mapRow(raw, data.mapping, rowNum, data);
         batch.push(mapped);
 
@@ -275,6 +311,7 @@ export abstract class BaseImportProcessor<
             summary,
             report,
             dryRun,
+            bullJobId,
           });
           batch = [];
           await progress.report(job, summary.total, data.estimatedRows);
@@ -290,6 +327,7 @@ export abstract class BaseImportProcessor<
           summary,
           report,
           dryRun,
+          bullJobId,
         });
       }
     } finally {
@@ -374,6 +412,7 @@ export abstract class BaseImportProcessor<
       summary: ImportSummary;
       report: ImportReportWriter;
       dryRun: boolean;
+      bullJobId?: string;
     },
   ): Promise<void> {
     const errors: ImportRowError[] = [];
@@ -428,7 +467,15 @@ export abstract class BaseImportProcessor<
     });
 
     // ── Step 5: Execute (skip for dry-run) ──
-    await this.executeBatchOps(ops, opMeta, affected, data, context, errors);
+    await this.executeBatchOps(
+      ops,
+      opMeta,
+      affected,
+      data,
+      context,
+      errors,
+      batch[batch.length - 1]?.row ?? context.summary.total,
+    );
     const rowsByNumber = new Map(batch.map((item) => [item.row, item]));
     for (const error of errors) {
       const sourceRow = rowsByNumber.get(error.row);
@@ -583,10 +630,21 @@ export abstract class BaseImportProcessor<
       summary: ImportSummary;
       report: ImportReportWriter;
       dryRun: boolean;
+      bullJobId?: string;
     },
     errors: ImportRowError[],
+    checkpointRow: number,
   ): Promise<void> {
     if (context.dryRun) {
+      if (context.bullJobId) {
+        await this.writeCheckpoint(
+          context.bullJobId,
+          data.tenantId,
+          checkpointRow,
+          context.summary,
+          [],
+        );
+      }
       return;
     }
 
@@ -598,15 +656,43 @@ export abstract class BaseImportProcessor<
         data,
         errors,
         context.summary,
+        context.bullJobId,
+        checkpointRow,
       );
       for (const meta of failed) {
         if (meta.type === 'insert') context.summary.inserted--;
         else context.summary.updated--;
       }
       const failedRows = new Set(failed.map((meta) => meta.row));
-      await this.afterBatchWrite(
-        affected.filter((item) => !failedRows.has(item.row)),
-        data,
+      const successful = affected.filter((item) => !failedRows.has(item.row));
+      // The all-or-nothing path persisted its checkpoint inside the entity +
+      // outbox transaction. Legacy partial-row fallback cannot do that for the
+      // whole batch, so checkpoint only after every row has a final outcome.
+      if (failed.length > 0 && context.bullJobId) {
+        await this.writeCheckpoint(
+          context.bullJobId,
+          data.tenantId,
+          checkpointRow,
+          context.summary,
+          successful.map((item) => item.id).filter(Boolean) as string[],
+        );
+      }
+      await this.afterBatchWrite(successful, data);
+      if (context.bullJobId) {
+        await this.clearProjectionPending(context.bullJobId, data.tenantId);
+      }
+      return;
+    }
+
+    // A fully invalid/skipped batch still advances the source cursor. It has no
+    // entity mutation to couple with, so a plain durable checkpoint is enough.
+    if (context.bullJobId) {
+      await this.writeCheckpoint(
+        context.bullJobId,
+        data.tenantId,
+        checkpointRow,
+        context.summary,
+        [],
       );
     }
   }
@@ -618,6 +704,8 @@ export abstract class BaseImportProcessor<
     data: TJobData,
     errors: ImportRowError[],
     summary: ImportSummary,
+    bullJobId: string | undefined,
+    checkpointRow: number,
   ): Promise<Array<{ row: number; type: 'insert' | 'update' }>> {
     const outbox = this.getAutomationOutbox();
     try {
@@ -626,6 +714,16 @@ export abstract class BaseImportProcessor<
           ordered: false,
           session,
         });
+        if (bullJobId) {
+          await this.writeCheckpoint(
+            bullJobId,
+            data.tenantId,
+            checkpointRow,
+            summary,
+            affected.map((item) => item.id).filter(Boolean) as string[],
+            session,
+          );
+        }
         return {
           result: true,
           payloads: data.triggerAutomations
@@ -638,6 +736,7 @@ export abstract class BaseImportProcessor<
       const writeErrors: any[] =
         error?.writeErrors ?? error?.result?.writeErrors ?? [];
       if (writeErrors.length === 0) throw error;
+      if (!this.allowPartialBatchFailure) throw error;
       // A write error aborts a Mongo transaction. Retry rows independently so
       // valid rows still import while every successful row remains atomic with
       // its outbox event.
@@ -736,6 +835,66 @@ export abstract class BaseImportProcessor<
   }
 
   // ─────────────────────── HELPERS ────────────────────────────
+
+  private async loadCheckpoint(
+    bullJobId: string,
+    tenantId: string,
+  ): Promise<ImportCheckpoint> {
+    const doc: any = await this.getImportJobModel()
+      .findOne({ bullJobId, tenantId })
+      .select({
+        checkpointRow: 1,
+        checkpointSummary: 1,
+        projectionPendingIds: 1,
+      })
+      .lean()
+      .exec();
+
+    return {
+      checkpointRow: Math.max(0, Number(doc?.checkpointRow ?? 0)),
+      checkpointSummary: doc?.checkpointSummary,
+      projectionPendingIds: Array.isArray(doc?.projectionPendingIds)
+        ? doc.projectionPendingIds.map(String)
+        : [],
+    };
+  }
+
+  private async writeCheckpoint(
+    bullJobId: string,
+    tenantId: string,
+    checkpointRow: number,
+    summary: ImportSummary,
+    projectionPendingIds: string[],
+    session?: ClientSession,
+  ): Promise<void> {
+    const result = await this.getImportJobModel().updateOne(
+      { bullJobId, tenantId },
+      {
+        $set: {
+          checkpointRow,
+          checkpointSummary: { ...summary },
+          projectionPendingIds,
+        },
+      },
+      session ? { session } : undefined,
+    );
+    if (result?.matchedCount === 0) {
+      throw new Error(`Import checkpoint row is missing for job ${bullJobId}`);
+    }
+  }
+
+  private async clearProjectionPending(
+    bullJobId: string,
+    tenantId: string,
+  ): Promise<void> {
+    const result = await this.getImportJobModel().updateOne(
+      { bullJobId, tenantId },
+      { $set: { projectionPendingIds: [] } },
+    );
+    if (result?.matchedCount === 0) {
+      throw new Error(`Import checkpoint row is missing for job ${bullJobId}`);
+    }
+  }
 
   private async updateImportJob(
     bullJobId: string,

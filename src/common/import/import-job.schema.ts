@@ -123,6 +123,24 @@ export class ImportJobSchemaClass {
     pct: number | null;
   };
 
+  /** Last source row whose entity/outbox batch committed successfully. */
+  @Prop({ default: 0 })
+  checkpointRow: number;
+
+  /** Summary at checkpointRow, used to continue counters after a worker retry. */
+  @Prop({ type: MongooseSchema.Types.Mixed })
+  checkpointSummary?: {
+    total: number;
+    inserted: number;
+    updated: number;
+    skipped: number;
+    errors: number;
+  };
+
+  /** Entity ids committed but not yet reconciled by the projection hook. */
+  @Prop({ type: [String], default: [] })
+  projectionPendingIds: string[];
+
   // ── Timestamps ────────────────────────────────────────────────────
 
   @Prop()

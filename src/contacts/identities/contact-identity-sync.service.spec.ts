@@ -300,6 +300,86 @@ describe('ContactIdentitySyncService — primaries', () => {
   });
 });
 
+describe('ContactIdentitySyncService — batch projection', () => {
+  it('should project every contact and pass explicit worker context', async () => {
+    const { service } = makeHarness();
+    const syncFromContact = jest
+      .spyOn(service, 'syncFromContact')
+      .mockResolvedValue(undefined);
+
+    await service.syncManyFromContacts(
+      [
+        { contactId: CONTACT, contact: { emails: ['a@x.com'] } },
+        { contactId: OTHER, contact: { phones: ['+15551234567'] } },
+      ],
+      {
+        source: 'import',
+        tenantId: TENANT,
+        userId: 'user-1',
+        defaultCountryCode: '1',
+        concurrency: 2,
+      },
+    );
+
+    expect(syncFromContact).toHaveBeenCalledTimes(2);
+    expect(syncFromContact).toHaveBeenCalledWith(
+      CONTACT,
+      { emails: ['a@x.com'] },
+      expect.objectContaining({
+        source: 'import',
+        tenantId: TENANT,
+        userId: 'user-1',
+      }),
+    );
+  });
+
+  it('should cap concurrency so a batch cannot exhaust the Mongo pool', async () => {
+    const { service } = makeHarness();
+    let active = 0;
+    let peak = 0;
+    jest.spyOn(service, 'syncFromContact').mockImplementation(async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      active--;
+    });
+
+    await service.syncManyFromContacts(
+      Array.from({ length: 64 }, (_, index) => ({
+        contactId: `${index}`,
+        contact: {},
+      })),
+      { concurrency: 100 },
+    );
+
+    expect(peak).toBe(32);
+  });
+
+  it('should wait for all workers and surface strict projection failures', async () => {
+    const { service } = makeHarness();
+    const completed: string[] = [];
+    jest
+      .spyOn(service, 'syncFromContact')
+      .mockImplementation(async (contactId) => {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        completed.push(contactId);
+        if (contactId === OTHER) throw new Error('identity index unavailable');
+      });
+
+    await expect(
+      service.syncManyFromContacts(
+        [
+          { contactId: CONTACT, contact: {} },
+          { contactId: OTHER, contact: {} },
+          { contactId: 'third', contact: {} },
+        ],
+        { concurrency: 3, strict: true },
+      ),
+    ).rejects.toThrow('Identity projection failed for 1 contact');
+    expect(completed).toHaveLength(3);
+  });
+});
+
 describe('ContactIdentitySyncService — per-identity state', () => {
   it('should record consent against one identity, not the whole contact', async () => {
     // The contact-level boolean could not express "this address opted out but that

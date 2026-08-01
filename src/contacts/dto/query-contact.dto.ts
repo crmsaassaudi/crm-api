@@ -45,7 +45,7 @@ export class QueryContactDto {
   direction?: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn(['createdAt', 'updatedAt', 'firstName', 'lastName', 'score'])
   sortBy?: string;
 
   @IsOptional()

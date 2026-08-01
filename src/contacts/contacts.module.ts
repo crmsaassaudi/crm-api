@@ -122,8 +122,10 @@ const workerProviders = isWorkerRuntime()
     BullModule.registerQueue({
       name: CONTACT_IMPORT_QUEUE,
       defaultJobOptions: {
-        // No retry: import is not idempotent — a retry would re-insert rows.
-        attempts: 1,
+        // Same-job retries resume from a transactionally persisted batch
+        // checkpoint and finish any pending identity projection first.
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 30_000 },
         removeOnComplete: 50,
         removeOnFail: 200,
       },
