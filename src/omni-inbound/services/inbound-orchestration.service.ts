@@ -6,7 +6,9 @@ import {
   ReplyAutoAssignEvent,
   BotEndedEvent,
   BotHandoffEvent,
+  WorkItemRequeuedEvent,
 } from '../domain/omni-events';
+import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { ChannelsService } from '../../channels/channels.service';
 import { Channel } from '../../channels/domain/channel';
@@ -20,6 +22,8 @@ import { BotQueueService } from '../bot/bot-queue.service';
 import { shouldReleaseToHumanOnBotEnd } from '../bot/bot-end-policy';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
 import { ConversationBotState, BotMode } from '../domain/omni-conversation';
+import { MetricsService } from '../../observability/metrics.service';
+import { ClsService } from 'nestjs-cls';
 
 /**
  * InboundOrchestrationService — coordinates post-persistence side effects
@@ -52,6 +56,8 @@ export class InboundOrchestrationService {
     private readonly eventEmitter: EventEmitter2,
     @Inject(forwardRef(() => ConversationCommandService))
     private readonly conversationCommandService: ConversationCommandService,
+    private readonly metrics: MetricsService,
+    private readonly cls: ClsService,
   ) {}
 
   // ────────────────────────────────────────────────────────────────
@@ -78,7 +84,8 @@ export class InboundOrchestrationService {
     reason: string,
     enrichedProfile?: { name?: string; avatarUrl?: string; phone?: string },
     expectedPreviousAgentId?: string | null,
-  ): Promise<void> {
+    excludeAgentIds?: string[],
+  ): Promise<string | null> {
     try {
       this.logger.debug(
         `[AUTO-ASSIGN] triggerAutoAssignment for conversation=${conversationId}, reason=${reason}`,
@@ -87,10 +94,10 @@ export class InboundOrchestrationService {
       const channel = await this.loadChannel(payload);
       const channelConfig = channel?.config ?? {};
       if (channelConfig.autoAssignmentEnabled === false) {
-        this.logger.log(
+        this.logger.debug(
           `Auto-assignment explicitly disabled for channel ${payload.channelAccount} — skipping`,
         );
-        return;
+        return null;
       }
 
       const pool = channel
@@ -111,6 +118,7 @@ export class InboundOrchestrationService {
         conversationId,
         {
           agentPool: pool?.agentIds ?? undefined,
+          excludeAgentIds,
           contactId,
           externalSenderId: payload.senderId,
           channelAutoAssignOverride: channelConfig.autoAssignmentEnabled,
@@ -139,15 +147,28 @@ export class InboundOrchestrationService {
           reason,
         );
       } else {
-        this.logger.log(
-          `Conversation ${conversationId} goes to queue — no available agent (reason: ${reason})`,
+        // Auto-routing commits as an *offer*, so a null return means "no agent
+        // holds it yet" — which covers both "offered, awaiting accept" and
+        // "queued, nobody available". Saying the second out loud when the first
+        // happened is how the out-of-hours reply started firing at customers
+        // whose conversation had just been offered to an online agent.
+        this.logger.debug(
+          `Conversation ${conversationId} not directly assigned (reason: ${reason})`,
         );
       }
+      return assignedAgentId;
     } catch (err: any) {
+      // Assignment failing silently leaves a conversation nobody owns and
+      // nobody is told about, so it has to be countable, not just logged.
+      this.metrics.incrementCounter('crm_omni_assignment_failures_total', {
+        channel: payload.channelType ?? 'unknown',
+        reason,
+      });
       this.logger.error(
         `Auto-assignment failed for conversation ${conversationId}: ${err.message}`,
         err.stack,
       );
+      return null;
     }
   }
 
@@ -220,7 +241,9 @@ export class InboundOrchestrationService {
       tags: conversationTags,
       customerName,
       content: payload.content ?? '',
-      time: this.getCurrentTimeHHmm(),
+      time: await this.businessHoursService.getTenantLocalTime(
+        payload.tenantId,
+      ),
       segment: conversationIsVip === true ? 'VIP' : undefined,
       businessHours: await this.resolveBusinessHoursFlag(payload.tenantId),
       orgUnitId,
@@ -573,11 +596,13 @@ export class InboundOrchestrationService {
   async handleBusinessHoursCheck(
     payload: OmniPayload,
     conversationId: string,
-    assignedAgentId?: string | null,
+    handledByHuman?: boolean,
   ): Promise<void> {
     try {
-      // F-11: if the routing engine already found an available agent, OOO is moot.
-      if (assignedAgentId) {
+      // Someone is already on this conversation — assigned, or offered to an
+      // agent who is online. Telling the customer "we are offline" on top of
+      // that is worse than saying nothing.
+      if (handledByHuman) {
         return;
       }
 
@@ -736,23 +761,8 @@ export class InboundOrchestrationService {
         `[BOT-HANDOFF] Triggering deferred auto-assignment for conv=${conversationId}`,
       );
 
-      // Build a minimal OmniPayload for the assignment engine
-      const syntheticPayload = {
-        tenantId,
-        channelType,
-        channelAccount,
-        senderId: '',
-        channelId: '',
-        externalConversationId: '',
-        content: '',
-        messageType: 'text',
-        senderType: 'customer',
-        timestamp: new Date(),
-        metadata: {},
-      } as OmniPayload;
-
       await this.triggerAutoAssignment(
-        syntheticPayload,
+        this.routingOnlyPayload(tenantId, channelType, channelAccount),
         conversationId,
         contactId,
         'bot_handoff',
@@ -806,22 +816,8 @@ export class InboundOrchestrationService {
           `(reason=${event.reason}, botMode=${botConfig.botMode})`,
       );
 
-      const syntheticPayload = {
-        tenantId,
-        channelType,
-        channelAccount,
-        senderId: '',
-        channelId: '',
-        externalConversationId: '',
-        content: '',
-        messageType: 'text',
-        senderType: 'customer',
-        timestamp: new Date(),
-        metadata: {},
-      } as OmniPayload;
-
       await this.triggerAutoAssignment(
-        syntheticPayload,
+        this.routingOnlyPayload(tenantId, channelType, channelAccount),
         conversationId,
         contactId,
         `bot_ended_${event.reason}`,
@@ -829,6 +825,82 @@ export class InboundOrchestrationService {
     } catch (err: any) {
       this.logger.error(
         `[BOT-ENDED] Deferred assignment failed for conv=${conversationId}: ${err.message}`,
+        err.stack,
+      );
+    }
+  }
+
+  /**
+   * A conversation that came back to the queue is not re-routed by anything
+   * else: `queued` items only move when an agent pulls them by hand. Deferred
+   * assignment (bot handoff, re-offer) therefore has to re-enter the same
+   * engine, and the engine's entry point is shaped around an inbound payload.
+   *
+   * Only the fields routing actually reads are populated — this is not a
+   * message and must never be treated as one.
+   */
+  private routingOnlyPayload(
+    tenantId: string,
+    channelType: string,
+    channelAccount: string,
+  ): OmniPayload {
+    return {
+      tenantId,
+      channelType,
+      channelAccount,
+      senderId: '',
+      channelId: '',
+      externalConversationId: '',
+      content: '',
+      messageType: 'text',
+      senderType: 'customer',
+      timestamp: new Date(),
+      metadata: {},
+    } as OmniPayload;
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Re-offer after a lapsed / declined offer
+  // ────────────────────────────────────────────────────────────────
+
+  /**
+   * Route a work item that returned to the queue to somebody else.
+   *
+   * Without this, an offer nobody answered left the conversation sitting in the
+   * queue indefinitely — the customer waits while online agents sit idle. The
+   * attempt bound lives in WorkDistributionService, which only emits this event
+   * while re-offering is still worth trying.
+   */
+  @OnEvent(OmniEvents.WORK_ITEM_REQUEUED)
+  async handleWorkItemRequeued(event: WorkItemRequeuedEvent): Promise<void> {
+    const { tenantId, conversationId, excludeAgentId, attempt, reason } = event;
+
+    try {
+      // The cron that expires offers runs outside any request, so the tenant
+      // scope every repository read depends on has to be established here.
+      await runWithTenantContext(this.cls, tenantId, async () => {
+        const conversation =
+          await this.conversationRepo.findById(conversationId);
+        if (!conversation || conversation.status === 'closed') return;
+
+        await this.triggerAutoAssignment(
+          this.routingOnlyPayload(
+            tenantId,
+            conversation.channelType,
+            conversation.channelAccount,
+          ),
+          conversationId,
+          conversation.contactId ? String(conversation.contactId) : null,
+          `redispatch_${reason}`,
+          undefined,
+          undefined,
+          [excludeAgentId],
+        );
+      });
+    } catch (err: any) {
+      this.logger.error(
+        `Re-offer failed for conversation ${conversationId} ` +
+          `(attempt ${attempt}, ${reason}): ${err.message}`,
         err.stack,
       );
     }
@@ -862,11 +934,6 @@ export class InboundOrchestrationService {
   ): Promise<string[]> {
     if (groupIds.length === 0) return [];
     return this.assignmentService.resolveGroupMembers(groupIds);
-  }
-
-  private getCurrentTimeHHmm(): string {
-    const now = new Date();
-    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
   }
 
   private toSchemaChannelType(type: string): string {

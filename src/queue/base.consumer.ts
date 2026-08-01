@@ -10,9 +10,12 @@ export abstract class BaseConsumer extends WorkerHost {
   @Inject(DlqService)
   protected readonly dlqService?: DlqService;
 
+  // Per-job lifecycle logging is `debug`, not `log`. At omni volumes these two
+  // hooks alone emit two lines per message per queue stage; kept at info level
+  // they dominate the log pipeline and add measurable latency to every job.
   @OnWorkerEvent('completed')
   onCompleted(job: Job) {
-    this.logger.log(`Job ${job.id} completed successfully. Name: ${job.name}.`);
+    this.logger.debug(`Job ${job.id} completed. Name: ${job.name}.`);
   }
 
   @OnWorkerEvent('failed')
@@ -30,6 +33,6 @@ export abstract class BaseConsumer extends WorkerHost {
 
   @OnWorkerEvent('active')
   onActive(job: Job) {
-    this.logger.log(`Job ${job.id} started. Name: ${job.name}.`);
+    this.logger.debug(`Job ${job.id} started. Name: ${job.name}.`);
   }
 }

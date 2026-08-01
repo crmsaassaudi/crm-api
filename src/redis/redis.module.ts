@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { CacheModule } from '@nestjs/cache-manager';
 import { RedisService } from './redis.service';
 import { RedisLockService } from './redis-lock.service';
+import { IdempotencyService } from './idempotency.service';
 import { RedisEvictionPolicyGuard } from './redis-eviction-policy.guard';
 import type { RedisOptions } from 'ioredis';
 // @ts-expect-error -- cache-manager-ioredis does not ship type declarations
@@ -29,6 +30,7 @@ import { IOREDIS_CLIENT } from './redis.tokens';
   providers: [
     RedisService,
     RedisLockService,
+    IdempotencyService,
     RedisEvictionPolicyGuard,
     {
       // Dedicated raw ioredis client — avoids cache-manager v7 store abstraction issues.
@@ -57,6 +59,12 @@ import { IOREDIS_CLIENT } from './redis.tokens';
       inject: [ConfigService],
     },
   ],
-  exports: [RedisService, RedisLockService, CacheModule, IOREDIS_CLIENT],
+  exports: [
+    RedisService,
+    RedisLockService,
+    IdempotencyService,
+    CacheModule,
+    IOREDIS_CLIENT,
+  ],
 })
 export class RedisModule {}

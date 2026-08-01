@@ -10,6 +10,8 @@ import {
 } from '../omni-inbound/infrastructure/persistence/document/entities/omni-message.schema';
 import { MetricsService } from '../observability/metrics.service';
 import { DeliveryAttemptService } from './delivery-attempt.service';
+import { RedisLockService } from '../redis/redis-lock.service';
+import { runAsClusterSingleton } from '../common/scheduling/cluster-singleton';
 
 const DEFAULT_STALE_AFTER_MS = 5 * 60_000;
 const DEFAULT_BATCH_SIZE = 200;
@@ -41,9 +43,18 @@ export class OutboundReconciliationService {
     private readonly events: EventEmitter2,
     private readonly metrics: MetricsService,
     private readonly deliveryAttempts: DeliveryAttemptService,
+    private readonly lockService: RedisLockService,
   ) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
+  async reconcileStuckMessagesTick(): Promise<void> {
+    await runAsClusterSingleton(
+      { lockService: this.lockService, logger: this.logger },
+      { name: 'omni:outbound:reconcile-stuck', lockTtlMs: 5 * 60_000 },
+      () => this.reconcileStuckMessages(),
+    );
+  }
+
   async reconcileStuckMessages(): Promise<number> {
     const staleAfterMs = this.positiveInteger(
       this.config.get('OMNI_OUTBOUND_STALE_SENDING_MS'),

@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
+import axios from 'axios';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
+
+/** Zalo Official Account Open API v3. */
+const ZALO_OA_API = 'https://openapi.zalo.me/v3.0/oa';
 
 /**
  * Deterministic JSON serializer. Sorts object keys recursively so two payloads
@@ -57,36 +61,45 @@ export class ZaloAdapter implements ChannelAdapter {
     tenantId: string,
     channelId: string,
     channelConfig?: any,
-  ): OmniPayload {
-    const messageType = this.resolveMessageType(
-      rawPayload.event_name,
-      rawPayload.message,
-    );
-    const mediaUrl = this.extractMediaUrl(rawPayload.message);
+  ): OmniPayload[] {
+    // OA-originated events (`oa_send_*`) are echoes of messages we already
+    // stored when we sent them; only user-originated events are new.
+    if (!String(rawPayload.event_name ?? '').startsWith('user_send')) {
+      return [];
+    }
 
-    return {
-      tenantId,
-      channelId,
-      channelAccount: rawPayload.recipient?.id,
-      channelType: this.channelType,
-      senderId: rawPayload.sender.id,
-      senderType: 'customer',
-      messageType,
-      content: rawPayload.message?.text ?? '',
-      mediaUrl: mediaUrl ?? undefined,
-      metadata: {
-        appId: rawPayload.app_id,
-        eventName: rawPayload.event_name,
-        oaId: rawPayload.recipient?.id,
-        // Keep raw attachment metadata for the media proxy
-        attachmentMeta: rawPayload.message?.attachments?.[0]?.payload,
-        bot: this.resolveBotConfig(channelConfig),
+    const oaId = rawPayload.oa_id ?? rawPayload.recipient?.id;
+    const userId = rawPayload.sender?.id;
+    const sentAt = new Date(Number(rawPayload.timestamp));
+
+    return [
+      {
+        tenantId,
+        channelId,
+        channelAccount: oaId,
+        channelType: this.channelType,
+        senderId: userId,
+        senderType: 'customer',
+        messageType: this.resolveMessageType(
+          rawPayload.event_name,
+          rawPayload.message,
+        ),
+        content: rawPayload.message?.text ?? '',
+        mediaUrl: this.extractMediaUrl(rawPayload.message) ?? undefined,
+        metadata: {
+          appId: rawPayload.app_id,
+          eventName: rawPayload.event_name,
+          oaId,
+          // Keep raw attachment metadata for the media proxy
+          attachmentMeta: rawPayload.message?.attachments?.[0]?.payload,
+          bot: this.resolveBotConfig(channelConfig),
+        },
+        externalMessageId: rawPayload.message?.msg_id ?? '',
+        externalConversationId: `${userId}_${oaId}`,
+        timestamp: sentAt,
+        providerTimestamp: sentAt,
       },
-      externalMessageId: rawPayload.message?.msg_id ?? '',
-      externalConversationId: `${rawPayload.sender.id}_${rawPayload.recipient?.id}`,
-      timestamp: new Date(Number(rawPayload.timestamp)),
-      providerTimestamp: new Date(Number(rawPayload.timestamp)),
-    };
+    ];
   }
 
   /**
@@ -101,6 +114,7 @@ export class ZaloAdapter implements ChannelAdapter {
     headers: Record<string, string>,
     body: any,
     _rawBody?: Buffer,
+    secret?: string,
   ): boolean {
     // headers and _rawBody are intentionally unused (underscore-prefixed params)
     const mac = body?.mac;
@@ -109,8 +123,12 @@ export class ZaloAdapter implements ChannelAdapter {
       return false;
     }
 
+    // Each Zalo OA has its own secret, so the channel's own value wins over
+    // the env fallback — otherwise only one tenant's OA could ever verify.
     const oaSecretKey =
-      process.env.ZALO_OA_SECRET_KEY ?? process.env.ZALO_WEBHOOK_SECRET;
+      secret ??
+      process.env.ZALO_OA_SECRET_KEY ??
+      process.env.ZALO_WEBHOOK_SECRET;
     if (!oaSecretKey) {
       this.logger.error(
         'ZALO_OA_SECRET_KEY is not configured — cannot verify Zalo webhook',
@@ -181,15 +199,47 @@ export class ZaloAdapter implements ChannelAdapter {
     return config.bot ?? config.typebot ?? undefined;
   }
 
-  send(
+  /**
+   * Send a text message through the Zalo OA API.
+   *
+   * @see https://developers.zalo.me/docs/official-account/tin-nhan/gui-tin-nhan-tu-van
+   */
+  async send(
     recipientId: string,
     content: string,
-    messageType: string,
-    _channelConfig: any,
-  ): Promise<any> {
-    // HIGH-08: Fail loudly instead of returning a fake success.
-    throw new Error(
-      `Zalo OA API send not implemented — cannot deliver ${messageType} to ${recipientId}`,
+    _messageType: string,
+    channelConfig: any,
+  ): Promise<{ message_id: string }> {
+    const accessToken = channelConfig?.credentials?.accessToken;
+    if (!accessToken) {
+      throw new Error('Zalo adapter lacks an access token to send messages');
+    }
+
+    const response = await axios.post(
+      `${ZALO_OA_API}/message/cs`,
+      {
+        recipient: { user_id: recipientId },
+        message: { text: content },
+      },
+      {
+        headers: {
+          access_token: accessToken,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10_000,
+      },
     );
+
+    // Zalo answers 200 with an `error` field rather than an HTTP error code, so
+    // a non-zero `error` has to be turned into a throw explicitly — otherwise
+    // every rejected send would be recorded as delivered.
+    const body = response.data;
+    if (body?.error) {
+      throw new Error(
+        `Zalo send failed (${body.error}): ${body.message ?? 'unknown error'}`,
+      );
+    }
+
+    return { message_id: body?.data?.message_id ?? '' };
   }
 }

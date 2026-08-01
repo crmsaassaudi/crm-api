@@ -64,6 +64,7 @@ describe('OutboundReconciliationService', () => {
       events as unknown as EventEmitter2,
       metrics as unknown as MetricsService,
       deliveryAttempts as any,
+      { acquire: (_k: any, _o: any, fn: any) => fn() } as any,
     );
   });
 

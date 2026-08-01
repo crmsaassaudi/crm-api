@@ -28,6 +28,7 @@ import {
 } from '../queue/omni-queue.constants';
 import { WebhookJobData } from '../queue/webhook-processor';
 import { HIGH_THROUGHPUT_JOB_OPTIONS } from '../../queue/config/default-job-options';
+import { ChannelsService } from '../../channels/channels.service';
 
 /**
  * Webhook receiver for all messaging providers.
@@ -53,6 +54,7 @@ export class InboundController {
   constructor(
     private readonly processor: InboundProcessorService,
     private readonly configService: ConfigService,
+    private readonly channels: ChannelsService,
     @InjectQueue(OMNI_WEBHOOK_QUEUE) private readonly webhookQueue: Queue,
   ) {}
 
@@ -117,21 +119,24 @@ export class InboundController {
       );
     }
 
+    // Unwrapping is pure parsing of the untrusted body, and it is what tells us
+    // which channel the request claims to be from — which is what selects the
+    // signing secret. Nothing is trusted or enqueued until validation passes.
+    const events = this.unwrapEvents(channelType, body);
+
     const isValid = this.processor.validateWebhook(
       channelType,
       headers,
       body,
       rawBody,
+      await this.resolveChannelSecret(channelType, events),
     );
     if (!isValid) {
       this.logger.warn(`Invalid webhook signature for ${channelType}`);
       throw new BadRequestException('Invalid webhook signature');
     }
 
-    const events = this.unwrapEvents(channelType, body);
-    const accountId = this.extractAccountId(channelType, body);
-
-    const jobs = events.map((event, index) => ({
+    const jobs = events.map(({ event, accountId }) => ({
       name: 'process-webhook',
       data: {
         channelType,
@@ -139,12 +144,7 @@ export class InboundController {
         accountId,
       } as WebhookJobData,
       opts: {
-        jobId: this.buildDeterministicJobId(
-          channelType,
-          accountId,
-          event,
-          index,
-        ),
+        jobId: this.buildDeterministicJobId(channelType, accountId, event),
         // These were five inlined literals that happened to reproduce
         // HIGH_THROUGHPUT_JOB_OPTIONS exactly, while the shared constant sat with
         // no reader — the same drift risk as any copied config. Only removeOnFail
@@ -161,86 +161,116 @@ export class InboundController {
     return { status: 'ok', queued: jobs.length };
   }
 
-  private unwrapEvents(channelType: ChannelType, body: any): any[] {
+  /**
+   * Split a provider batch into individual events, each carrying the account it
+   * actually belongs to.
+   *
+   * The account MUST be derived per event. Meta batches events for several
+   * Pages / phone numbers into one POST, so reading it once from `entry[0]`
+   * stamped every event in the batch with the first entry's account — which
+   * resolved the whole batch to that account's channel, and therefore its
+   * tenant. Messages for one tenant's Page were persisted inside another
+   * tenant's data with no guard tripping, because tenantId and channelId were
+   * consistently (and consistently wrongly) taken from the same channel.
+   */
+  /**
+   * The signing secret of the channel this batch belongs to, or `undefined` to
+   * let the adapter use its env-level secret.
+   *
+   * Only resolved when the batch names exactly one account. A batch spanning
+   * several accounts can only come from a provider that signs with one shared
+   * app secret (Meta), and picking one account's secret to authenticate another
+   * account's events would be worse than using the app secret.
+   *
+   * A lookup failure yields `undefined` rather than a rejection: the env secret
+   * is still a valid gate, and a database blip must not turn into dropped
+   * webhooks.
+   */
+  private async resolveChannelSecret(
+    channelType: ChannelType,
+    events: Array<{ accountId: string }>,
+  ): Promise<string | undefined> {
+    const accounts = new Set(events.map((e) => e.accountId).filter(Boolean));
+    if (accounts.size !== 1) return undefined;
+
+    const [account] = [...accounts];
+    try {
+      const channel = await this.channels.findAnyByAccount(
+        channelType.toLowerCase(),
+        account,
+      );
+      const secret = channel?.credentials?.webhookSecret;
+      return typeof secret === 'string' && secret ? secret : undefined;
+    } catch {
+      this.logger.debug(
+        `No channel for ${channelType}/${account} — verifying with the env secret`,
+      );
+      return undefined;
+    }
+  }
+
+  private unwrapEvents(
+    channelType: ChannelType,
+    body: any,
+  ): Array<{ event: any; accountId: string }> {
     switch (channelType) {
       case 'facebook':
       case 'instagram':
-        // Instagram uses the same entry[].messaging[] structure as Facebook
-        return (body.entry ?? []).flatMap(
-          (entry: any) => entry.messaging ?? [],
+        // Instagram uses the same entry[].messaging[] structure as Facebook.
+        return (body.entry ?? []).flatMap((entry: any) =>
+          (entry.messaging ?? []).map((event: any) => ({
+            event,
+            accountId: String(entry?.id ?? ''),
+          })),
         );
 
       case 'whatsapp':
         return (body.entry ?? []).flatMap((entry: any) =>
-          (entry.changes ?? []).map((change: any) => change.value),
+          (entry.changes ?? []).map((change: any) => ({
+            event: change?.value,
+            accountId: String(change?.value?.metadata?.phone_number_id ?? ''),
+          })),
         );
 
       case 'zalo':
-        return [body];
+        return [{ event: body, accountId: this.extractZaloOaId(body) }];
 
       default:
-        return [body];
+        return [{ event: body, accountId: '' }];
     }
   }
 
-  private extractAccountId(channelType: ChannelType, body: any): string {
-    switch (channelType) {
-      case 'facebook':
-      case 'instagram':
-        return body.entry?.[0]?.id ?? '';
-      case 'whatsapp':
-        return (
-          body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id ?? ''
-        );
-      case 'zalo':
-        return body.sender?.id ?? body.recipient?.id ?? body.oa_id ?? '';
-      default:
-        return '';
-    }
+  /**
+   * The Official Account id, which is the `account` a Zalo channel is stored
+   * under.
+   *
+   * Zalo puts the OA in `recipient` for user→OA events and in `sender` for
+   * OA→user echoes; `oa_id` is authoritative when the payload carries it.
+   * Reading `sender.id` first (the previous behaviour) yielded the *customer's*
+   * user id for every inbound message, so the channel lookup always missed and
+   * every Zalo message was dropped as "channel no longer exists".
+   */
+  private extractZaloOaId(body: any): string {
+    if (body?.oa_id) return String(body.oa_id);
+
+    const sentByOa = String(body?.event_name ?? '').startsWith('oa_');
+    const oaId = sentByOa ? body?.sender?.id : body?.recipient?.id;
+    return String(oaId ?? '');
   }
 
-  private extractSenderIds(channelType: ChannelType, events: any[]): string[] {
-    const ids = new Set<string>();
-    for (const event of events) {
-      const extractedIds = this.getSenderIdsFromEvent(channelType, event);
-      for (const id of extractedIds) {
-        ids.add(id);
-      }
-    }
-    return Array.from(ids);
-  }
-
-  private getSenderIdsFromEvent(
-    channelType: ChannelType,
-    event: any,
-  ): string[] {
-    try {
-      switch (channelType) {
-        case 'facebook':
-        case 'instagram':
-          return event?.sender?.id ? [event.sender.id] : [];
-        case 'whatsapp':
-          return (event?.messages ?? [])
-            .map((msg: any) => msg?.from)
-            .filter(Boolean);
-        case 'zalo':
-          return event?.sender?.id ? [event.sender.id] : [];
-        default:
-          return [];
-      }
-    } catch {
-      return [];
-    }
-  }
-
+  /**
+   * Stable id so a provider re-delivery collapses onto the same queue job.
+   *
+   * Events without a provider message id (delivery/read receipts) fall back to
+   * a hash of the event itself. The previous fallback was the event's index in
+   * the batch, which gave every such event the same id and let BullMQ discard
+   * all but the first.
+   */
   private buildDeterministicJobId(
     channelType: ChannelType,
     accountId: string,
     event: any,
-    index: number,
   ): string {
-    const senderId =
-      this.extractSenderIds(channelType, [event])[0] ?? 'unknown';
     const providerMessageId =
       event?.message?.mid ??
       event?.message?.msg_id ??
@@ -249,12 +279,10 @@ export class InboundController {
       event?.message_id ??
       event?.msg_id ??
       event?.id ??
-      index;
+      JSON.stringify(event ?? null);
 
     return createHash('sha256')
-      .update(
-        `${channelType}:${accountId || 'unknown'}:${senderId}:${providerMessageId}`,
-      )
+      .update(`${channelType}:${accountId || 'unknown'}:${providerMessageId}`)
       .digest('hex');
   }
 

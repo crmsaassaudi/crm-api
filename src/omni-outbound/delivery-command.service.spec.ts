@@ -1,4 +1,8 @@
 import { DeliveryCommandService } from './delivery-command.service';
+import {
+  DELIVERY_MAX_ATTEMPTS,
+  DELIVERY_PRIORITY,
+} from './delivery-command.constants';
 
 describe('DeliveryCommandService', () => {
   let model: any;
@@ -53,7 +57,12 @@ describe('DeliveryCommandService', () => {
     expect(queue.add).toHaveBeenCalledWith(
       'deliver-message',
       { commandId: 'command_1', tenantId: 'tenant_1' },
-      expect.objectContaining({ jobId: 'command_1', attempts: 1 }),
+      expect.objectContaining({
+        jobId: 'command_1',
+        attempts: DELIVERY_MAX_ATTEMPTS,
+        // An agent typing in the inbox outranks bot and bulk traffic.
+        priority: DELIVERY_PRIORITY.agent,
+      }),
     );
   });
 

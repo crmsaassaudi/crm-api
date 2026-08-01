@@ -7,8 +7,8 @@ import { WebhookProcessor } from './webhook-processor';
  * Existing tests cover basic dedup and key scoping.
  * These tests cover:
  * - E11000 swallowing (Mongo duplicate key during processing → ack, don't retry)
- * - NotFoundException swallowing (channel deleted → ack, don't retry)
- * - Redis lock cleanup on unexpected errors
+ * - NotFoundException (channel deleted → ack, don't retry, but count the drop)
+ * - Idempotency claims surviving unexpected errors so the retry can resume
  * - VIP sender detection
  * - Pre-resolved channel data path
  * - Provider message ID extraction across channel types
@@ -20,10 +20,11 @@ describe('WebhookProcessor — error handling & edge cases', () => {
   let channelsService: { findAnyByAccount: jest.Mock };
   let contactRepo: { isVIPSender: jest.Mock };
   let cls: { runWith: jest.Mock };
-  let redis: { set: jest.Mock; del: jest.Mock };
+  let idempotency: { claim: jest.Mock; commit: jest.Mock; release: jest.Mock };
+  let metrics: { incrementCounter: jest.Mock };
 
   beforeEach(() => {
-    processorService = { process: jest.fn().mockResolvedValue(undefined) };
+    processorService = { process: jest.fn().mockResolvedValue([]) };
     channelsService = {
       findAnyByAccount: jest.fn().mockResolvedValue({
         id: 'channel_1',
@@ -32,17 +33,20 @@ describe('WebhookProcessor — error handling & edge cases', () => {
     };
     contactRepo = { isVIPSender: jest.fn().mockResolvedValue(false) };
     cls = { runWith: jest.fn((_context, callback) => callback()) };
-    redis = {
-      set: jest.fn().mockResolvedValue('OK'),
-      del: jest.fn().mockResolvedValue(1),
+    idempotency = {
+      claim: jest.fn().mockResolvedValue(true),
+      commit: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
     };
+    metrics = { incrementCounter: jest.fn() };
 
     processor = new WebhookProcessor(
       processorService as any,
       channelsService as any,
       contactRepo as any,
       cls as any,
-      redis as any,
+      idempotency as any,
+      metrics as any,
     );
   });
 
@@ -61,16 +65,16 @@ describe('WebhookProcessor — error handling & edge cases', () => {
       ).resolves.toBeUndefined();
     });
 
-    it('should NOT release Redis lock on E11000 (message was already persisted)', async () => {
+    it('should commit the claim on E11000 (message was already persisted)', async () => {
       const e11000 = new Error('E11000');
       (e11000 as any).code = 11000;
       processorService.process.mockRejectedValueOnce(e11000);
 
       await processor.process(createFacebookJob());
 
-      // del should NOT be called — the idempotency lock should remain
-      // since the message was successfully persisted by the other process
-      expect(redis.del).not.toHaveBeenCalled();
+      // The work is done, so the claim becomes a permanent duplicate marker.
+      expect(idempotency.commit).toHaveBeenCalled();
+      expect(idempotency.release).not.toHaveBeenCalled();
     });
   });
 
@@ -78,7 +82,7 @@ describe('WebhookProcessor — error handling & edge cases', () => {
   // NotFoundException — channel deleted → swallow, don't retry
   // ═══════════════════════════════════════════════════════════════════
   describe('NotFoundException (channel deleted)', () => {
-    it('should swallow NotFoundException and not throw', async () => {
+    it('should not throw for a channel that no longer exists', async () => {
       channelsService.findAnyByAccount.mockRejectedValueOnce(
         new NotFoundException('Channel not found'),
       );
@@ -113,19 +117,18 @@ describe('WebhookProcessor — error handling & edge cases', () => {
       );
     });
 
-    it('should release Redis lock on unexpected error (allows retry dedup)', async () => {
+    it('should leave the claim in place on unexpected error', async () => {
       processorService.process.mockRejectedValueOnce(
         new Error('Network error'),
       );
 
-      try {
-        await processor.process(createFacebookJob());
-      } catch {}
+      await expect(processor.process(createFacebookJob())).rejects.toThrow();
 
-      // Redis del should be called to release the lock
-      expect(redis.del).toHaveBeenCalledWith(
-        'processed:webhook:facebook:page_1:mid.1',
-      );
+      // The retry runs under the same owner and re-enters its own claim, so
+      // nothing has to be released — and a release here would let a concurrent
+      // redelivery process the same message twice.
+      expect(idempotency.release).not.toHaveBeenCalled();
+      expect(idempotency.commit).not.toHaveBeenCalled();
     });
   });
 
@@ -181,8 +184,8 @@ describe('WebhookProcessor — error handling & edge cases', () => {
         },
       } as any);
 
-      // Redis SET should NOT be called (no idempotency key)
-      expect(redis.set).not.toHaveBeenCalled();
+      // No idempotency key can be built, so no claim is taken.
+      expect(idempotency.claim).not.toHaveBeenCalled();
       // But should still process the message
       expect(processorService.process).toHaveBeenCalled();
     });
@@ -205,12 +208,9 @@ describe('WebhookProcessor — error handling & edge cases', () => {
         },
       } as any);
 
-      expect(redis.set).toHaveBeenCalledWith(
+      expect(idempotency.claim).toHaveBeenCalledWith(
         'processed:webhook:whatsapp:wa_phone_1:wamid.abc123',
-        '1',
-        'EX',
-        86400,
-        'NX',
+        'job_wa',
       );
     });
 
@@ -228,12 +228,9 @@ describe('WebhookProcessor — error handling & edge cases', () => {
         },
       } as any);
 
-      expect(redis.set).toHaveBeenCalledWith(
+      expect(idempotency.claim).toHaveBeenCalledWith(
         'processed:webhook:zalo:oa_1:zalo_msg_1',
-        '1',
-        'EX',
-        86400,
-        'NX',
+        'job_zalo',
       );
     });
   });

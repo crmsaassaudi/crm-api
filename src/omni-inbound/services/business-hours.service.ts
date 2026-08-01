@@ -86,8 +86,9 @@ export class BusinessHoursService {
       const endMinutes = this.timeToMinutes(daySchedule.end ?? '18:00');
       return currentMinutes >= startMinutes && currentMinutes < endMinutes;
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
       this.logger.warn(
-        `Failed to check business hours for tenant ${tenantId}: ${err.message} — defaulting to open`,
+        `Failed to check business hours for tenant ${tenantId}: ${errorMessage} — defaulting to open`,
       );
       return true;
     }
@@ -219,6 +220,45 @@ export class BusinessHoursService {
     }
 
     return null;
+  }
+
+  /**
+   * The tenant's configured timezone, or UTC when none is set.
+   *
+   * Exposed so routing rules evaluate a time-of-day condition against the same
+   * clock the schedule uses. Reading the server's local time instead made a
+   * "09:00–17:00" rule mean whatever the container's TZ happened to be.
+   */
+  async getTenantTimezone(tenantId: string): Promise<string> {
+    try {
+      const businessHours = await this.settingsService.getSetting(
+        'business_hours',
+        tenantId,
+      );
+      return businessHours?.timezone || 'UTC';
+    } catch {
+      return 'UTC';
+    }
+  }
+
+  /** Current wall-clock time in the tenant's timezone, as `HH:mm`. */
+  async getTenantLocalTime(tenantId: string): Promise<string> {
+    const timezone = await this.getTenantTimezone(tenantId);
+    try {
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(new Date());
+    } catch {
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'UTC',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(new Date());
+    }
   }
 
   /**

@@ -8,6 +8,7 @@ import {
 } from '../../queue/base-tenant.consumer';
 import { AssignmentService } from '../services/assignment.service';
 import { OMNI_STICKY_RETRY_QUEUE } from './omni-sticky-queue.constants';
+import { OMNI_CONCURRENCY } from '../../queue/config/worker-concurrency';
 
 export interface StickyRetryJobData extends TenantJobData {
   conversationId: string;
@@ -31,7 +32,9 @@ export interface StickyRetryJobData extends TenantJobData {
  * channel context at all, so a restricted channel's conversation could be handed
  * to an agent outside its support pool on retry.
  */
-@Processor(OMNI_STICKY_RETRY_QUEUE)
+@Processor(OMNI_STICKY_RETRY_QUEUE, {
+  concurrency: OMNI_CONCURRENCY.maintenance(),
+})
 export class StickyRetryProcessor extends BaseTenantConsumer<StickyRetryJobData> {
   protected readonly logger = new Logger(StickyRetryProcessor.name);
   protected readonly cls: ClsService;

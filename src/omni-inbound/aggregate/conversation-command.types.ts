@@ -54,8 +54,6 @@ export interface CustomerMessagePayload {
   omniPayload: OmniPayload;
   /** Dedup key for the message (externalMessageId or synthetic hash) */
   messageDedupId: string;
-  /** Redis idempotency key to expire after processing */
-  idemKey: string;
 }
 
 export interface BotReplyCommand extends ConversationCommand {

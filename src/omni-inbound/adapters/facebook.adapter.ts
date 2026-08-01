@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 import { OmniReactionPayload } from '../domain/omni-reaction-payload';
+import { DeliveryReceipt } from '../domain/delivery-receipt';
 import axios from 'axios';
 
 export interface FacebookProfile {
@@ -87,16 +88,19 @@ export class FacebookAdapter implements ChannelAdapter {
     }
   }
 
+  /**
+   * The controller splits `entry[].messaging[]`, so one call is one event and
+   * carries at most one message.
+   */
   normalize(
     rawPayload: any,
     tenantId: string,
     channelId: string,
     channelConfig?: any,
-  ): OmniPayload | null {
-    // ── Skip non-message events ──────────────────────────────────
-    // Facebook sends delivery receipts, read receipts, reactions, and
-    // referrals via the same webhook URL. Reactions are handled by
-    // normalizeReaction(); other non-message events are silently skipped.
+  ): OmniPayload[] {
+    // Facebook sends delivery receipts, read receipts, reactions and referrals
+    // to the same webhook URL. Reactions go through normalizeReaction() and
+    // receipts through normalizeDeliveryReceipts().
     if (
       rawPayload.delivery ||
       rawPayload.read ||
@@ -105,58 +109,68 @@ export class FacebookAdapter implements ChannelAdapter {
       rawPayload['policy-enforcement'] ||
       !rawPayload.message
     ) {
-      return null; // Signal to caller: nothing to process
+      return [];
     }
 
-    // ── CRIT-05: Skip echo messages ────────────────────────────────
-    // Facebook echoes every outbound message the CRM sends as an inbound
-    // webhook with is_echo=true. The outbound message is already stored by
-    // OutboundService, so processing the echo creates a duplicate entry.
-    if (rawPayload.message?.is_echo) {
+    // Facebook echoes every message the CRM sends back as an inbound webhook.
+    // OutboundService already stored it, so processing the echo would duplicate it.
+    if (rawPayload.message.is_echo) {
       this.logger.debug(
-        `Skipping Facebook echo message mid=${rawPayload.message?.mid}`,
+        `Skipping Facebook echo message mid=${rawPayload.message.mid}`,
       );
-      return null;
+      return [];
     }
 
-    // FB batches events — we normalise the first messaging entry.
-    // The controller should iterate `entry[].messaging[]` and call this once per event.
-    const messaging = rawPayload;
-    const isEcho = !!messaging.message?.is_echo;
-    const pageId = isEcho ? messaging.sender.id : messaging.recipient.id;
-    const consumerId = isEcho ? messaging.recipient.id : messaging.sender.id;
+    const pageId = rawPayload.recipient.id;
+    const consumerId = rawPayload.sender.id;
+    const sentAt = new Date(rawPayload.timestamp);
 
-    // For quick replies, use the quick reply title as content
-    const quickReplyPayload = messaging.message?.quick_reply?.payload;
-    const messageType = this.resolveMessageType(messaging.message);
-    const mediaUrl = this.extractMediaUrl(messaging.message);
-    const content = messaging.message?.text ?? '';
-
-    return {
-      tenantId,
-      channelId,
-      channelAccount: pageId,
-      channelType: this.channelType,
-      senderId: messaging.sender.id,
-      senderType: isEcho ? 'agent' : 'customer',
-      messageType,
-      content,
-      mediaUrl: mediaUrl ?? undefined,
-      metadata: {
-        mid: messaging.message?.mid,
-        quickReply: messaging.message?.quick_reply,
-        replyTo: messaging.message?.reply_to,
-        isEcho,
-        accessToken: channelConfig?.credentials?.accessToken,
-        bot: this.resolveBotConfig(channelConfig),
-        // Quick reply payload for exact bot branch matching
-        replyId: quickReplyPayload ?? undefined,
+    return [
+      {
+        tenantId,
+        channelId,
+        channelAccount: pageId,
+        channelType: this.channelType,
+        senderId: consumerId,
+        senderType: 'customer',
+        messageType: this.resolveMessageType(rawPayload.message),
+        content: rawPayload.message.text ?? '',
+        mediaUrl: this.extractMediaUrl(rawPayload.message) ?? undefined,
+        metadata: {
+          mid: rawPayload.message.mid,
+          quickReply: rawPayload.message.quick_reply,
+          replyTo: rawPayload.message.reply_to,
+          isEcho: false,
+          accessToken: channelConfig?.credentials?.accessToken,
+          bot: this.resolveBotConfig(channelConfig),
+          // Quick reply payload for exact bot branch matching
+          replyId: rawPayload.message.quick_reply?.payload ?? undefined,
+        },
+        externalMessageId: rawPayload.message.mid ?? '',
+        externalConversationId: `${consumerId}_${pageId}`,
+        timestamp: sentAt,
+        providerTimestamp: sentAt,
       },
-      externalMessageId: messaging.message?.mid ?? '',
-      externalConversationId: `${consumerId}_${pageId}`,
-      timestamp: new Date(messaging.timestamp),
-      providerTimestamp: new Date(messaging.timestamp),
-    };
+    ];
+  }
+
+  /**
+   * Messenger reports delivery and read as watermarks — a timestamp meaning
+   * "everything up to here". `delivery.mids` names the messages when present;
+   * a bare watermark carries no id and is therefore not actionable per message.
+   */
+  normalizeDeliveryReceipts(rawPayload: any): DeliveryReceipt[] {
+    if (rawPayload?.delivery?.mids?.length) {
+      const occurredAt = new Date(
+        rawPayload.delivery.watermark ?? rawPayload.timestamp ?? Date.now(),
+      );
+      return rawPayload.delivery.mids.map((mid: string) => ({
+        externalMessageId: String(mid),
+        status: 'delivered' as const,
+        occurredAt,
+      }));
+    }
+    return [];
   }
 
   /**
@@ -171,6 +185,7 @@ export class FacebookAdapter implements ChannelAdapter {
     headers: Record<string, string>,
     body: any,
     rawBody?: Buffer,
+    secret?: string,
   ): boolean {
     const signature = headers['x-hub-signature-256'];
     if (!signature) {
@@ -178,8 +193,10 @@ export class FacebookAdapter implements ChannelAdapter {
       return false;
     }
 
+    // Meta signs every Page's webhook with one app secret, so the env value is
+    // normally right; the channel override exists for tenants on their own app.
     const appSecret =
-      process.env.FACEBOOK_APP_SECRET ?? process.env.META_APP_SECRET;
+      secret ?? process.env.FACEBOOK_APP_SECRET ?? process.env.META_APP_SECRET;
     if (!appSecret) {
       this.logger.error(
         'FACEBOOK_APP_SECRET is not configured — cannot verify webhook signature',

@@ -186,11 +186,31 @@ export class IdentityService {
    * multiple sender IDs across platforms.
    */
   async invalidateByPattern(pattern: string): Promise<void> {
-    const keys = await this.redis.keys(`omni:identity:${pattern}`);
-    if (keys.length > 0) {
-      await this.redis.del(...keys);
+    // SCAN, not KEYS: KEYS walks the entire keyspace in one blocking call, so on
+    // a production Redis it stalls every other command — including the queue's
+    // blocking reads — for as long as the scan takes.
+    const match = `omni:identity:${pattern}`;
+    let cursor = '0';
+    let deleted = 0;
+
+    do {
+      const [next, keys] = await this.redis.scan(
+        cursor,
+        'MATCH',
+        match,
+        'COUNT',
+        500,
+      );
+      cursor = next;
+      if (keys.length > 0) {
+        await this.redis.del(...keys);
+        deleted += keys.length;
+      }
+    } while (cursor !== '0');
+
+    if (deleted > 0) {
       this.logger.log(
-        `Invalidated ${keys.length} identity cache keys matching ${pattern}`,
+        `Invalidated ${deleted} identity cache keys matching ${pattern}`,
       );
     }
   }

@@ -47,7 +47,7 @@ export class TikTokAdapter implements ChannelAdapter {
     tenantId: string,
     channelId: string,
     channelConfig?: any,
-  ): OmniPayload {
+  ): OmniPayload[] {
     const event = rawPayload?.event ?? {};
     const msg = event?.message ?? {};
     const fromUser = event?.from_user ?? {};
@@ -55,28 +55,30 @@ export class TikTokAdapter implements ChannelAdapter {
     const messageType = this.resolveMessageType(msg.message_type);
     const mediaUrl = this.extractMediaUrl(msg);
 
-    return {
-      tenantId,
-      channelId,
-      channelAccount: event?.to_user?.open_id ?? rawPayload.client_key ?? '',
-      channelType: this.channelType,
-      senderId: fromUser.open_id ?? '',
-      senderType: 'customer',
-      messageType,
-      content: msg.content?.text ?? '',
-      mediaUrl: mediaUrl ?? undefined,
-      metadata: {
-        clientKey: rawPayload.client_key,
-        eventType: rawPayload.type,
-        displayName: fromUser.display_name,
-        conversationId: event.conversation_id,
-        bot: this.resolveBotConfig(channelConfig),
+    return [
+      {
+        tenantId,
+        channelId,
+        channelAccount: event?.to_user?.open_id ?? rawPayload.client_key ?? '',
+        channelType: this.channelType,
+        senderId: fromUser.open_id ?? '',
+        senderType: 'customer',
+        messageType,
+        content: msg.content?.text ?? '',
+        mediaUrl: mediaUrl ?? undefined,
+        metadata: {
+          clientKey: rawPayload.client_key,
+          eventType: rawPayload.type,
+          displayName: fromUser.display_name,
+          conversationId: event.conversation_id,
+          bot: this.resolveBotConfig(channelConfig),
+        },
+        externalMessageId: msg.message_id ?? '',
+        externalConversationId: event.conversation_id ?? '',
+        timestamp: new Date(Number(event.create_time) || Date.now()),
+        providerTimestamp: new Date(Number(event.create_time) || Date.now()),
       },
-      externalMessageId: msg.message_id ?? '',
-      externalConversationId: event.conversation_id ?? '',
-      timestamp: new Date(Number(event.create_time) || Date.now()),
-      providerTimestamp: new Date(Number(event.create_time) || Date.now()),
-    };
+    ];
   }
 
   /**
@@ -92,6 +94,7 @@ export class TikTokAdapter implements ChannelAdapter {
     headers: Record<string, string>,
     _body: any,
     rawBody?: Buffer,
+    secret?: string,
   ): boolean {
     const signature =
       headers['x-tiktok-signature'] ?? headers['X-TikTok-Signature'];
@@ -101,8 +104,11 @@ export class TikTokAdapter implements ChannelAdapter {
       return false;
     }
 
+    // Per-app secret when the channel carries one; env is the single-app case.
     const clientSecret =
-      process.env.TIKTOK_CLIENT_SECRET ?? process.env.TIKTOK_WEBHOOK_SECRET;
+      secret ??
+      process.env.TIKTOK_CLIENT_SECRET ??
+      process.env.TIKTOK_WEBHOOK_SECRET;
 
     if (!clientSecret) {
       this.logger.error(

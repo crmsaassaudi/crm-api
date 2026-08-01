@@ -10,6 +10,33 @@ import { OmniMessageMapper } from '../infrastructure/persistence/document/mapper
 import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
 import { pagination } from '../../utils/pagination';
 
+/**
+ * Canonical thread order: when the provider says the message was sent, then the
+ * per-conversation ordinal, then `_id`.
+ *
+ * Not `createdAt` — that is when *we* wrote the row, which reflects queue and
+ * retry timing rather than what the customer did. Sorting by it reordered
+ * threads as soon as message processing ran concurrently.
+ */
+const THREAD_ORDER: Record<string, SortOrder> = {
+  providerTimestamp: 1,
+  sequence: 1,
+  _id: 1,
+};
+
+const THREAD_ORDER_DESC: Record<string, SortOrder> = {
+  providerTimestamp: -1,
+  sequence: -1,
+  _id: -1,
+};
+
+/** A message's position in {@link THREAD_ORDER}. */
+export interface ThreadCursor {
+  providerTimestamp: Date;
+  sequence: number;
+  id: string;
+}
+
 @Injectable()
 export class MessageRepository {
   constructor(
@@ -28,24 +55,22 @@ export class MessageRepository {
       externalMessageId: string;
     },
   ): Promise<{ message: OmniMessage; inserted: boolean }> {
+    // A single atomic operation rather than update-then-read: the read half of
+    // the old pair could observe a *different* write than the one it had just
+    // performed when two deliveries of the same webhook raced, so both callers
+    // could come away believing they had inserted the message.
     const result = await this.model
-      .updateOne(
+      .findOneAndUpdate(
         {
           tenantId: data.tenantId,
           externalMessageId: data.externalMessageId,
         },
         { $setOnInsert: data },
-        { upsert: true },
+        { upsert: true, new: true, includeResultMetadata: true },
       )
       .exec();
 
-    const doc = await this.model
-      .findOne({
-        tenantId: data.tenantId,
-        externalMessageId: data.externalMessageId,
-      })
-      .exec();
-
+    const doc = result?.value;
     if (!doc) {
       throw new Error(
         `Failed to read upserted inbound message ${data.externalMessageId}`,
@@ -54,7 +79,7 @@ export class MessageRepository {
 
     return {
       message: OmniMessageMapper.toDomain(doc),
-      inserted: result.upsertedCount > 0,
+      inserted: !result.lastErrorObject?.updatedExisting,
     };
   }
 
@@ -85,13 +110,18 @@ export class MessageRepository {
     limit: number,
   ): Promise<PaginationResponseDto<OmniMessage>> {
     const filter = { conversationId };
-    const sort: Record<string, SortOrder> = { createdAt: -1 };
 
     const safePage = Math.max(1, page);
     const skip = (safePage - 1) * limit;
 
     const [items, total] = await Promise.all([
-      this.model.find(filter).sort(sort).skip(skip).limit(limit).lean().exec(),
+      this.model
+        .find(filter)
+        .sort(THREAD_ORDER_DESC)
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
       this.model.countDocuments(filter).exec(),
     ]);
 
@@ -113,12 +143,9 @@ export class MessageRepository {
     conversationId: string,
     limit: number,
   ): Promise<{ data: OmniMessage[] }> {
-    const filter = { conversationId };
-    const sort: Record<string, SortOrder> = { createdAt: -1 };
-
     const items = await this.model
-      .find(filter)
-      .sort(sort)
+      .find({ conversationId })
+      .sort(THREAD_ORDER_DESC)
       .limit(Math.max(1, limit))
       .lean()
       .exec();
@@ -158,6 +185,34 @@ export class MessageRepository {
   }
 
   /**
+   * Record a provider's delivery/read/failure report on an outbound message.
+   */
+  async applyDeliveryReceipt(
+    id: string,
+    receipt: {
+      status: string;
+      occurredAt: Date;
+      errorCode?: string;
+      errorMessage?: string;
+    },
+  ): Promise<void> {
+    await this.model
+      .findByIdAndUpdate(id, {
+        $set: {
+          status: receipt.status,
+          [`metadata.delivery.${receipt.status}At`]: receipt.occurredAt,
+          ...(receipt.errorCode
+            ? { 'metadata.delivery.errorCode': receipt.errorCode }
+            : {}),
+          ...(receipt.errorMessage
+            ? { 'metadata.delivery.errorMessage': receipt.errorMessage }
+            : {}),
+        },
+      })
+      .exec();
+  }
+
+  /**
    * Update the media proxy URL on a message after async caching completes.
    * Called by MediaCacheProcessor when the background download finishes.
    */
@@ -175,13 +230,12 @@ export class MessageRepository {
     limit: number,
   ): Promise<PaginationResponseDto<OmniMessage>> {
     const filter = { conversationId: { $in: conversationIds } };
-    const sort: Record<string, SortOrder> = { createdAt: 1 };
 
     const safePage = Math.max(1, page);
     const skip = (safePage - 1) * limit;
 
     const [items, total] = await Promise.all([
-      this.model.find(filter).sort(sort).skip(skip).limit(limit).exec(),
+      this.model.find(filter).sort(THREAD_ORDER).skip(skip).limit(limit).exec(),
       this.model.countDocuments(filter).exec(),
     ]);
 
@@ -202,7 +256,7 @@ export class MessageRepository {
       conversationIds.map(async (conversationId) => {
         const docs = await this.model
           .find({ conversationId })
-          .sort({ createdAt: 1, _id: 1 })
+          .sort(THREAD_ORDER)
           .limit(safeLimit)
           .exec();
 
@@ -216,15 +270,61 @@ export class MessageRepository {
     return Object.fromEntries(entries);
   }
 
+  /**
+   * The sort-key position of a message, for cursor pagination.
+   *
+   * Resolved from the anchor message rather than taken from the client, so the
+   * cursor is always expressed in the same terms as the sort and cannot skip or
+   * repeat rows because a caller sent a value from a different field.
+   */
+  async findCursorAnchor(messageId: string): Promise<ThreadCursor | null> {
+    if (!Types.ObjectId.isValid(messageId)) return null;
+
+    const doc = await this.model
+      .findById(messageId)
+      .select('providerTimestamp sequence')
+      .lean()
+      .exec();
+    if (!doc) return null;
+
+    return {
+      id: messageId,
+      providerTimestamp: doc.providerTimestamp ?? new Date(0),
+      sequence: doc.sequence ?? 0,
+    };
+  }
+
+  /**
+   * Everything in a conversation sent after a point in time, oldest first.
+   *
+   * For "catch me up since I last polled" clients that track a timestamp rather
+   * than a message id. Compares `providerTimestamp` so the boundary is in the
+   * same terms as the ordering.
+   */
+  async findSentAfter(
+    conversationId: string,
+    since: Date,
+    limit: number,
+  ): Promise<OmniMessage[]> {
+    const docs = await this.model
+      .find({ conversationId, providerTimestamp: { $gt: since } })
+      .sort(THREAD_ORDER)
+      .limit(Math.max(1, Math.min(limit, 200)))
+      .lean()
+      .exec();
+
+    return docs.map((doc) => OmniMessageMapper.toDomain(doc as any));
+  }
+
   async findByConversationIdWithCursor(params: {
     conversationId: string;
     limit: number;
     direction: 'past' | 'future';
-    cursor?: { createdAt: Date; id: string } | null;
+    cursor?: ThreadCursor | null;
   }): Promise<{
     data: OmniMessage[];
     hasMore: boolean;
-    cursor: { createdAt: Date; id: string } | null;
+    cursor: ThreadCursor | null;
   }> {
     const safeLimit = Math.max(1, Math.min(params.limit, 200));
     const filter: Record<string, any> = {
@@ -232,10 +332,7 @@ export class MessageRepository {
       ...this.buildCursorFilter(params.cursor, params.direction),
     };
 
-    const sort: Record<string, SortOrder> =
-      params.direction === 'past'
-        ? { createdAt: -1, _id: -1 }
-        : { createdAt: 1, _id: 1 };
+    const sort = params.direction === 'past' ? THREAD_ORDER_DESC : THREAD_ORDER;
 
     const docs = await this.model
       .find(filter)
@@ -257,12 +354,7 @@ export class MessageRepository {
     return {
       data,
       hasMore,
-      cursor: edge
-        ? {
-            createdAt: edge.createdAt,
-            id: edge.id,
-          }
-        : null,
+      cursor: edge ? await this.findCursorAnchor(edge.id) : null,
     };
   }
 
@@ -285,38 +377,34 @@ export class MessageRepository {
     return docs.map((doc) => OmniMessageMapper.toDomain(doc as any));
   }
 
+  /**
+   * Everything strictly before (`past`) or after (`future`) the cursor's
+   * position in {@link THREAD_ORDER} — each key compared only when the keys
+   * ahead of it tie.
+   */
   private buildCursorFilter(
-    cursor: { createdAt: Date; id: string } | null | undefined,
+    cursor: ThreadCursor | null | undefined,
     direction: 'past' | 'future',
   ): Record<string, any> {
     if (!cursor) return {};
 
+    const cmp = direction === 'past' ? '$lt' : '$gt';
     const cursorObjectId = Types.ObjectId.isValid(cursor.id)
       ? new Types.ObjectId(cursor.id)
-      : null;
-
-    if (!cursorObjectId) {
-      return {
-        createdAt:
-          direction === 'past'
-            ? { $lt: cursor.createdAt }
-            : { $gt: cursor.createdAt },
-      };
-    }
-
-    if (direction === 'past') {
-      return {
-        $or: [
-          { createdAt: { $lt: cursor.createdAt } },
-          { createdAt: cursor.createdAt, _id: { $lt: cursorObjectId } },
-        ],
-      };
-    }
+      : new Types.ObjectId();
 
     return {
       $or: [
-        { createdAt: { $gt: cursor.createdAt } },
-        { createdAt: cursor.createdAt, _id: { $gt: cursorObjectId } },
+        { providerTimestamp: { [cmp]: cursor.providerTimestamp } },
+        {
+          providerTimestamp: cursor.providerTimestamp,
+          sequence: { [cmp]: cursor.sequence },
+        },
+        {
+          providerTimestamp: cursor.providerTimestamp,
+          sequence: cursor.sequence,
+          _id: { [cmp]: cursorObjectId },
+        },
       ],
     };
   }

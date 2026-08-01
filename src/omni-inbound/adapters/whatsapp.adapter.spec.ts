@@ -35,14 +35,14 @@ describe('WhatsAppAdapter', () => {
 
       const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
-      expect(result.channelType).toBe('whatsapp');
-      expect(result.senderId).toBe('wa_001');
-      expect(result.messageType).toBe('text');
-      expect(result.content).toBe('Hello from WhatsApp!');
-      expect(result.externalMessageId).toBe('wamid.abc123');
-      expect(result.externalConversationId).toBe('wa_001_phone_123');
-      expect(result.timestamp).toEqual(new Date(1700000000000));
-      expect(result.metadata.contactName).toBe('John');
+      expect(result[0].channelType).toBe('whatsapp');
+      expect(result[0].senderId).toBe('wa_001');
+      expect(result[0].messageType).toBe('text');
+      expect(result[0].content).toBe('Hello from WhatsApp!');
+      expect(result[0].externalMessageId).toBe('wamid.abc123');
+      expect(result[0].externalConversationId).toBe('wa_001_phone_123');
+      expect(result[0].timestamp).toEqual(new Date(1700000000000));
+      expect(result[0].metadata.contactName).toBe('John');
     });
 
     it('should normalize an image message with media ID', () => {
@@ -68,11 +68,11 @@ describe('WhatsAppAdapter', () => {
 
       const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
-      expect(result.messageType).toBe('image');
-      expect(result.content).toBe('Check this out!');
-      expect(result.mediaUrl).toBe('media_img_001');
-      expect(result.metadata.mediaId).toBe('media_img_001');
-      expect(result.metadata.mimeType).toBe('image/jpeg');
+      expect(result[0].messageType).toBe('image');
+      expect(result[0].content).toBe('Check this out!');
+      expect(result[0].mediaUrl).toBe('media_img_001');
+      expect(result[0].metadata.mediaId).toBe('media_img_001');
+      expect(result[0].metadata.mimeType).toBe('image/jpeg');
     });
 
     it('should normalize a document message', () => {
@@ -98,8 +98,8 @@ describe('WhatsAppAdapter', () => {
 
       const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
-      expect(result.messageType).toBe('file');
-      expect(result.metadata.mediaId).toBe('media_doc_001');
+      expect(result[0].messageType).toBe('file');
+      expect(result[0].metadata.mediaId).toBe('media_doc_001');
     });
 
     it('should normalize a location message', () => {
@@ -125,10 +125,10 @@ describe('WhatsAppAdapter', () => {
 
       const result = adapter.normalize(raw, 'tenant_1', 'channel_1')!;
 
-      expect(result.messageType).toBe('location');
-      expect(result.content).toContain('Ho Chi Minh City');
-      expect(result.content).toContain('10.762622');
-      expect(result.mediaUrl).toBeUndefined();
+      expect(result[0].messageType).toBe('location');
+      expect(result[0].content).toContain('Ho Chi Minh City');
+      expect(result[0].content).toContain('10.762622');
+      expect(result[0].mediaUrl).toBeUndefined();
     });
 
     it('should return null — NOT throw — when the payload has no messages', () => {
@@ -145,7 +145,7 @@ describe('WhatsAppAdapter', () => {
         messages: [],
       };
 
-      expect(adapter.normalize(raw, 'tenant_1', 'channel_1')).toBeNull();
+      expect(adapter.normalize(raw, 'tenant_1', 'channel_1')).toEqual([]);
     });
 
     it('should return null for a delivery-status webhook', () => {
@@ -157,7 +157,7 @@ describe('WhatsAppAdapter', () => {
         statuses: [{ id: 'wamid.1', status: 'delivered' }],
       };
 
-      expect(adapter.normalize(raw, 'tenant_1', 'channel_1')).toBeNull();
+      expect(adapter.normalize(raw, 'tenant_1', 'channel_1')).toEqual([]);
     });
 
     it('should return null when the payload omits messages entirely', () => {
@@ -169,7 +169,7 @@ describe('WhatsAppAdapter', () => {
           'tenant_1',
           'channel_1',
         ),
-      ).toBeNull();
+      ).toEqual([]);
     });
   });
 });

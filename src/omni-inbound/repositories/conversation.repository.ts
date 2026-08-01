@@ -1554,10 +1554,95 @@ export class ConversationRepository {
    * Accepts raw $set, $inc, $unset — the processor builds the correct
    * update expression based on the command being processed.
    */
+  /**
+   * Conversations that are still open but have been silent past their
+   * auto-resolve deadline — i.e. ones whose timer should already have fired.
+   *
+   * In a healthy system this returns nothing; a non-empty result means the
+   * delayed jobs holding those timers were lost.
+   */
+  async findOverdueForAutoResolve(
+    silentSince: Date,
+    limit: number,
+  ): Promise<Array<{ tenantId: string; conversationId: string }>> {
+    const docs = await this.model
+      .find({
+        status: { $in: ['open', 'pending'] },
+        lastMessageAt: { $lte: silentSince },
+      })
+      .select('_id tenantId')
+      .sort({ lastMessageAt: 1 })
+      .limit(limit)
+      .lean()
+      .setOptions({ isPlatformQuery: true })
+      .exec();
+
+    return docs.map((doc: any) => ({
+      tenantId: String(doc.tenantId),
+      conversationId: String(doc._id),
+    }));
+  }
+
   async atomicUpdate(
     conversationId: string,
     update: Record<string, any>,
   ): Promise<void> {
     await this.model.findByIdAndUpdate(conversationId, update).exec();
+  }
+
+  /**
+   * Fold a newly persisted message into the conversation aggregate.
+   *
+   * Counters always advance; the `lastMessage*` summary only advances when this
+   * message is newer than the one currently summarised. Both happen in one
+   * round trip via an aggregation-pipeline update, so a replayed or late
+   * message can never rewind the inbox row it is displayed in.
+   */
+  async applyIncomingMessage(
+    conversationId: string,
+    change: {
+      sequence: number;
+      counters: { messageCount: number; unreadCount: number };
+      preview: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const isNewer = {
+      $gte: [change.sequence, { $ifNull: ['$lastMessageSequence', 0] }],
+    };
+    const advanceIfNewer = Object.fromEntries(
+      Object.entries(change.preview).map(([field, value]) => [
+        field,
+        { $cond: [isNewer, value, `$${field}`] },
+      ]),
+    );
+
+    await this.model
+      .updateOne({ _id: conversationId }, [
+        {
+          $set: {
+            ...advanceIfNewer,
+            lastMessageSequence: {
+              $cond: [
+                isNewer,
+                change.sequence,
+                { $ifNull: ['$lastMessageSequence', 0] },
+              ],
+            },
+            messageCount: {
+              $add: [
+                { $ifNull: ['$messageCount', 0] },
+                change.counters.messageCount,
+              ],
+            },
+            unreadCount: {
+              $add: [
+                { $ifNull: ['$unreadCount', 0] },
+                change.counters.unreadCount,
+              ],
+            },
+          },
+        },
+      ])
+      .exec();
   }
 }

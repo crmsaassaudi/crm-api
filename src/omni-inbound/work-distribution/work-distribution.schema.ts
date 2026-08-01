@@ -36,6 +36,14 @@ export class WorkItemSchemaClass extends EntityDocumentHelper {
   /** Relative workload units consumed by this channel (chat=1 by default). */
   @Prop({ type: Number, default: 1, min: 0.1 })
   capacityWeight: number;
+  /**
+   * How many times this item has been re-offered after a lapse or decline.
+   *
+   * Bounds the retry loop: an item nobody accepts stops being re-offered and
+   * waits in the queue for an agent to pull it, instead of cycling forever.
+   */
+  @Prop({ type: Number, default: 0 })
+  redispatchAttempts: number;
   @Prop({ type: MongooseSchema.Types.ObjectId, default: null })
   assignedAgentId: string | null;
   @Prop({ type: Date, default: null })

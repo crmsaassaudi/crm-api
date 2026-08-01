@@ -1,12 +1,10 @@
 import { Processor, InjectQueue } from '@nestjs/bullmq';
-import { Logger, OnModuleInit, Inject } from '@nestjs/common';
+import { Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Job, Queue } from 'bullmq';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
-import type Redis from 'ioredis';
 import { logSwallowed } from '../../common/utils/log-swallowed';
 
 import { BaseTenantConsumer } from '../../queue/base-tenant.consumer';
@@ -35,7 +33,6 @@ import {
   CONV_OPS_LOCK_PREFIX,
   CONV_OPS_LOCK_TTL_MS,
   CONV_OPS_MAX_ATTEMPTS,
-  IDEM_KEY_TTL_SEC,
   PREVIEW_MAX_LENGTH,
   PRESIGNED_URL_TTL_SEC,
   SLOW_OP_THRESHOLD_MS,
@@ -53,14 +50,31 @@ import { OutboundService } from '../../omni-outbound/outbound.service';
 import { AgentPresenceService } from '../services/agent-presence.service';
 import { AssignmentService } from '../services/assignment.service';
 import { canAcceptBotCallback } from '../bot/bot-state-machine';
+import { WorkDistributionService } from '../work-distribution/work-distribution.service';
 
 import { ModuleRef } from '@nestjs/core';
+import { OMNI_CONCURRENCY } from '../../queue/config/worker-concurrency';
+import { isOmniRuntime, isWorkerRuntime } from '../../config/runtime-role';
+
+/** Only the commands that append a message need a per-conversation ordinal. */
+function needsSequence(type: ConversationCommand['type']): boolean {
+  return type === 'CUSTOMER_MESSAGE' || type === 'BOT_REPLY';
+}
 
 /**
  * Aggregate Root processor — serializes all conversation mutations
  * via per-conversation Redis locks and BullMQ queue.
+ *
+ * The class is always provided, because controllers reach it directly for
+ * inline execution, but on an API-only pod the BullMQ worker stays parked:
+ * `@Processor` starts a worker as a side effect of being instantiated, so an
+ * API replica would otherwise consume aggregate commands alongside serving
+ * HTTP, putting queue work on the latency-critical pod.
  */
-@Processor(CONV_OPS_QUEUE)
+@Processor(CONV_OPS_QUEUE, {
+  concurrency: OMNI_CONCURRENCY.conversationOps(),
+  autorun: isWorkerRuntime() || isOmniRuntime(),
+})
 export class ConversationOpsProcessor
   extends BaseTenantConsumer<ConversationCommand>
   implements OnModuleInit
@@ -76,8 +90,6 @@ export class ConversationOpsProcessor
     private readonly messageRepo: MessageRepository,
     private readonly mediaProxy: MediaProxyService,
     private readonly eventEmitter: EventEmitter2,
-    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
-
     @InjectModel(ProcessedOperationSchemaClass.name)
     private readonly processedOpsModel: Model<ProcessedOperationDocument>,
     @InjectModel(OutboxEventSchemaClass.name)
@@ -86,6 +98,7 @@ export class ConversationOpsProcessor
     private readonly outboundService: OutboundService,
     private readonly agentPresenceService: AgentPresenceService,
     private readonly assignmentService: AssignmentService,
+    private readonly workDistribution: WorkDistributionService,
     private readonly moduleRef: ModuleRef,
   ) {
     super();
@@ -150,11 +163,9 @@ export class ConversationOpsProcessor
     this.cls.set('correlationId', cmd.operationId);
     this.cls.set('conversationId', cmd.conversationId);
 
-    const alreadyProcessed = await this.checkIdempotency(cmd);
-    if (alreadyProcessed) return;
-    const sequence = await this.conversationRepo.getNextSequence(
-      cmd.conversationId,
-    );
+    const claim = await this.claimOperation(cmd);
+    if (!claim) return;
+    const { sequence } = claim;
 
     switch (cmd.type) {
       case 'CUSTOMER_MESSAGE':
@@ -188,8 +199,10 @@ export class ConversationOpsProcessor
         this.logger.warn(`[CONV-OPS] Unknown command type: ${cmd.type}`);
     }
 
+    await this.completeOperation(cmd.operationId);
+
     const duration = Date.now() - startTime;
-    this.logger.log(
+    this.logger.debug(
       `[CONV-OPS] ✓ ${cmd.type} op=${cmd.operationId} ` +
         `conv=${cmd.conversationId} duration=${duration}ms`,
     );
@@ -209,7 +222,8 @@ export class ConversationOpsProcessor
     cmd: ConversationCommand & { payload: CustomerMessagePayload },
     sequence: number,
   ): Promise<void> {
-    const { omniPayload: payload, messageDedupId, idemKey } = cmd.payload;
+    const { omniPayload: payload, messageDedupId } = cmd.payload;
+    const msgTimestamp = payload.providerTimestamp ?? payload.timestamp;
 
     const { message, inserted } =
       await this.messageRepo.upsertInboundByExternalId({
@@ -226,11 +240,11 @@ export class ConversationOpsProcessor
         metadata: payload.metadata,
         externalMessageId: messageDedupId,
         platformMessageId: messageDedupId,
-        providerTimestamp: payload.providerTimestamp ?? payload.timestamp,
+        providerTimestamp: msgTimestamp,
+        sequence,
       });
 
     if (!inserted) {
-      await this.redis.expire(idemKey, IDEM_KEY_TTL_SEC);
       this.logger.debug(
         `[CONV-OPS] Duplicate inbound message ${messageDedupId} — skipping`,
       );
@@ -255,31 +269,31 @@ export class ConversationOpsProcessor
       0,
       PREVIEW_MAX_LENGTH,
     );
-    const msgTimestamp = payload.providerTimestamp ?? payload.timestamp;
 
-    await this.conversationRepo.atomicUpdate(cmd.conversationId, {
-      $set: {
+    // The preview fields describe the *latest* message, so a message that turns
+    // out to be older than the one already summarised must not overwrite them —
+    // otherwise a retried or late-delivered message rewinds the inbox row.
+    // The counters are unconditional: they count arrivals, not recency.
+    await this.conversationRepo.applyIncomingMessage(cmd.conversationId, {
+      sequence,
+      counters: {
+        messageCount: 1,
+        unreadCount: payload.senderType === 'customer' ? 1 : 0,
+      },
+      preview: {
         lastMessageId: message.id,
         lastMessagePreview: preview,
         lastMessageType: payload.messageType,
         lastMessageAt: msgTimestamp,
         lastMessageSenderType: payload.senderType,
         lastMessage: preview,
-
         ...(payload.senderType === 'customer'
           ? { lastCustomerMessageAt: msgTimestamp }
           : {}),
       },
-      $inc: {
-        messageCount: 1,
-
-        ...(payload.senderType === 'customer' ? { unreadCount: 1 } : {}),
-      },
     });
 
-    await this.redis.expire(idemKey, IDEM_KEY_TTL_SEC);
-
-    this.logger.log(
+    this.logger.debug(
       `[CONV-OPS] Saved message ${messageDedupId} seq=${sequence} conv=${cmd.conversationId}`,
     );
 
@@ -327,13 +341,26 @@ export class ConversationOpsProcessor
       conversationSnapshot,
     );
 
+    // A pending work offer counts as "a human has this": auto-routing commits
+    // an offer rather than an assignment, so `assignedAgentId` alone is null
+    // for a conversation that was just handed to an online agent.
+    const handledByHuman =
+      !!conversationSnapshot?.assignedAgentId ||
+      (await this.hasPendingOffer(cmd.conversationId));
+
     await this.orchestration
-      .handleBusinessHoursCheck(
-        payload,
-        cmd.conversationId,
-        conversationSnapshot?.assignedAgentId ?? null,
-      )
+      .handleBusinessHoursCheck(payload, cmd.conversationId, handledByHuman)
       .catch((err) => this.logOperationWarning(cmd, 'businessHoursCheck', err));
+  }
+
+  private async hasPendingOffer(conversationId: string): Promise<boolean> {
+    try {
+      return await this.workDistribution.hasOpenOffer(conversationId);
+    } catch {
+      // Unknown means "do not suppress" — a missing out-of-hours reply is a
+      // worse outcome than a redundant one.
+      return false;
+    }
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -961,27 +988,80 @@ export class ConversationOpsProcessor
   // Idempotency
   // ────────────────────────────────────────────────────────────────────
 
-  private async checkIdempotency(cmd: ConversationCommand): Promise<boolean> {
+  /**
+   * Take (or resume) ownership of a command.
+   *
+   * Returns the allocated sequence, or null when the command has already run to
+   * completion. An incomplete record means a previous attempt of *this* job
+   * died partway, so the retry resumes it — reusing the sequence it already
+   * allocated rather than taking a fresh one behind newer messages.
+   */
+  private async claimOperation(
+    cmd: ConversationCommand,
+  ): Promise<{ sequence: number } | null> {
+    const existing = await this.processedOpsModel
+      .findOne({ operationId: cmd.operationId })
+      .lean()
+      .exec();
+
+    if (existing?.completedAt) {
+      this.logger.debug(
+        `[CONV-OPS] Already completed — skipping op=${cmd.operationId}`,
+      );
+      return null;
+    }
+
+    if (existing) {
+      this.logger.warn(
+        `[CONV-OPS] Resuming interrupted op=${cmd.operationId} type=${cmd.type} ` +
+          `conv=${cmd.conversationId}`,
+      );
+      return { sequence: existing.sequence ?? 0 };
+    }
+
+    const sequence = needsSequence(cmd.type)
+      ? await this.conversationRepo.getNextSequence(cmd.conversationId)
+      : 0;
+
     try {
       await this.processedOpsModel.create({
         operationId: cmd.operationId,
         conversationId: cmd.conversationId,
         tenantId: cmd.tenantId,
+        sequence,
       });
-      return false; // New — not yet processed
     } catch (err: any) {
-      if (err?.code === 11000) {
-        this.logger.debug(
-          `[CONV-OPS] Idempotency hit — skipping op=${cmd.operationId}`,
-        );
-        return true; // Already processed
-      }
-      throw err; // Unexpected error
+      // Lost a race with a concurrent attempt of the same job; that attempt owns
+      // the command and its sequence.
+      if (err?.code !== 11000) throw err;
+      const winner = await this.processedOpsModel
+        .findOne({ operationId: cmd.operationId })
+        .lean()
+        .exec();
+      if (winner?.completedAt) return null;
+      return { sequence: winner?.sequence ?? sequence };
     }
+
+    return { sequence };
+  }
+
+  private async completeOperation(operationId: string): Promise<void> {
+    await this.processedOpsModel
+      .updateOne({ operationId }, { $set: { completedAt: new Date() } })
+      .exec();
   }
 
   // ── Outbox ─────────────────────────────────────────────────────
 
+  /**
+   * Record the event, then publish it — and only mark it published once every
+   * listener has actually finished.
+   *
+   * `emit()` is fire-and-forget: it does not await async listeners, so their
+   * rejections never reached the `catch` here and the row was flipped to
+   * `published` regardless. That made the table a log of attempts rather than
+   * an outbox, and left the poller — the only retry path — with nothing to find.
+   */
   private async saveAndPublishOutboxEvent(
     conversationId: string,
     tenantId: string,
@@ -997,14 +1077,16 @@ export class ConversationOpsProcessor
     });
 
     try {
-      this.eventEmitter.emit(eventType, payload);
+      await this.eventEmitter.emitAsync(eventType, payload);
       await this.outboxModel.updateOne(
         { _id: outboxDoc._id },
         { $set: { status: 'published', publishedAt: new Date() } },
       );
     } catch (err: any) {
+      // Left pending on purpose: OutboxPublisherService retries it with the
+      // tenant context restored.
       this.logger.warn(
-        `[CONV-OPS] In-process publish failed, poller will retry: ${err?.message}`,
+        `[CONV-OPS] Publish of ${eventType} failed, outbox poller will retry: ${err?.message}`,
       );
     }
   }

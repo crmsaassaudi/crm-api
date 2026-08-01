@@ -1,7 +1,14 @@
 import { ConflictException } from '@nestjs/common';
 import { WorkDistributionService } from './work-distribution.service';
 
-const query = (value: any) => ({ exec: jest.fn().mockResolvedValue(value) });
+/** Minimal Mongoose query double: every builder call chains, `exec` resolves. */
+const query = (value: any) => {
+  const q: any = { exec: jest.fn().mockResolvedValue(value) };
+  for (const builder of ['setOptions', 'select', 'limit', 'lean', 'sort']) {
+    q[builder] = jest.fn().mockReturnValue(q);
+  }
+  return q;
+};
 
 describe('WorkDistributionService', () => {
   let workItems: any;
@@ -12,6 +19,7 @@ describe('WorkDistributionService', () => {
   let presence: any;
   let commands: any;
   let settings: any;
+  let events: any;
   let service: WorkDistributionService;
 
   beforeEach(() => {
@@ -50,6 +58,7 @@ describe('WorkDistributionService', () => {
     settings = {
       getSetting: jest.fn().mockResolvedValue(null),
     };
+    events = { emit: jest.fn() };
     service = new WorkDistributionService(
       workItems,
       queueEntries,
@@ -58,8 +67,9 @@ describe('WorkDistributionService', () => {
       inboxes,
       presence,
       commands,
-      { emit: jest.fn() } as any,
+      events,
       settings,
+      { acquire: (_k: any, _o: any, fn: any) => fn() } as any,
     );
   });
 
@@ -223,5 +233,54 @@ describe('WorkDistributionService', () => {
       { _id: 'offer_1', status: 'accepted' },
       { $set: { status: 'cancelled' } },
     );
+  });
+
+  describe('re-offer after a lapsed offer', () => {
+    const expiredOffer = {
+      _id: 'offer_1',
+      tenantId: 'tenant_1',
+      agentId: 'agent_1',
+      workItemId: 'work_1',
+      queueEntryId: 'queue_1',
+    };
+
+    beforeEach(() => {
+      offers.find.mockReturnValue(query([expiredOffer]));
+      offers.findOneAndUpdate.mockReturnValue(query(expiredOffer));
+    });
+
+    it('should ask for another routing pass that skips the agent who lapsed', async () => {
+      workItems.findOneAndUpdate.mockReturnValue(
+        query({
+          _id: 'work_1',
+          conversationId: 'conversation_1',
+          redispatchAttempts: 1,
+        }),
+      );
+
+      await service.expireOffers();
+
+      expect(events.emit).toHaveBeenCalledWith(
+        'omni.work_item.requeued',
+        expect.objectContaining({
+          tenantId: 'tenant_1',
+          conversationId: 'conversation_1',
+          excludeAgentId: 'agent_1',
+          attempt: 1,
+        }),
+      );
+    });
+
+    it('should stop re-offering once the attempt bound is reached', async () => {
+      // The bounded update matches nothing when redispatchAttempts is spent.
+      workItems.findOneAndUpdate.mockReturnValue(query(null));
+
+      await service.expireOffers();
+
+      expect(events.emit).not.toHaveBeenCalledWith(
+        'omni.work_item.requeued',
+        expect.anything(),
+      );
+    });
   });
 });

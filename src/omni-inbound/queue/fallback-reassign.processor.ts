@@ -17,6 +17,7 @@ import { OMNI_FALLBACK_QUEUE } from './omni-fallback-queue.constants';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
 import { AssignmentStrategy } from '../../assignment/domain/assignment.types';
+import { OMNI_CONCURRENCY } from '../../queue/config/worker-concurrency';
 
 export interface FallbackReassignJobData extends TenantJobData {
   agentId: string;
@@ -40,7 +41,7 @@ export interface FallbackReassignJobData extends TenantJobData {
  *   3. If offline → reassigns all open conversations
  *   4. If reconnected → no-op (Redis disconnect marker already cleared)
  */
-@Processor(OMNI_FALLBACK_QUEUE)
+@Processor(OMNI_FALLBACK_QUEUE, { concurrency: OMNI_CONCURRENCY.maintenance() })
 export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassignJobData> {
   protected readonly logger = new Logger(FallbackReassignProcessor.name);
   protected readonly cls: ClsService;

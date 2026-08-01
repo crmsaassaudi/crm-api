@@ -8,6 +8,7 @@ import { BOT_PROCESSING_QUEUE } from '../queue/bot-processing-queue.constants';
 import { BotApiService } from './bot-api.service';
 import { BotProcessingJobData } from './bot-processing.types';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
+import { OMNI_CONCURRENCY } from '../../queue/config/worker-concurrency';
 
 /**
  * BullMQ processor — fire-and-forget to crm-bot.
@@ -18,7 +19,7 @@ import { ConversationCommandService } from '../aggregate/conversation-command.se
  * 3. Dispatch to crm-bot (returns 200 immediately)
  * 4. Done — bot will callback to /v1/bot-callback/reply async
  */
-@Processor(BOT_PROCESSING_QUEUE)
+@Processor(BOT_PROCESSING_QUEUE, { concurrency: OMNI_CONCURRENCY.bot() })
 export class BotProcessingProcessor extends BaseTenantConsumer<BotProcessingJobData> {
   protected readonly logger = new Logger(BotProcessingProcessor.name);
   protected readonly cls: ClsService;

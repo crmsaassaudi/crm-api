@@ -503,15 +503,9 @@ export class LivechatEmbedController {
     const useIncremental = afterDate && !isNaN(afterDate.getTime());
 
     if (useIncremental && afterDate) {
-      const cursorResult = await runWithTenantContext(this.cls, tenantId, () =>
-        this.messageRepo.findByConversationIdWithCursor({
-          conversationId: convId,
-          limit,
-          direction: 'future',
-          cursor: { createdAt: afterDate, id: '' },
-        }),
+      return runWithTenantContext(this.cls, tenantId, () =>
+        this.messageRepo.findSentAfter(convId, afterDate, limit),
       );
-      return cursorResult.data;
     }
 
     const result = await runWithTenantContext(this.cls, tenantId, () =>

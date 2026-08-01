@@ -141,6 +141,16 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   @Prop({ type: Date, index: true })
   providerTimestamp: Date;
 
+  /**
+   * Per-conversation ordinal, allocated by ConversationOpsProcessor.
+   *
+   * Breaks ties when two messages share a `providerTimestamp` (providers report
+   * whole seconds, so a burst routinely does) and gives the thread a total
+   * order that does not depend on which worker happened to write first.
+   */
+  @Prop({ type: Number, default: 0 })
+  sequence: number;
+
   /** Quote reply: reference to the message being replied to */
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'OmniMessageSchemaClass' })
   replyToMessageId?: string;
@@ -183,21 +193,11 @@ export const OmniMessageSchema = SchemaFactory.createForClass(
 
 OmniMessageSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
-// Retrieve messages for a conversation, sorted by time
+// The thread order every read uses: when the provider says it was sent, then
+// the per-conversation ordinal, then _id. One index covers the list, the
+// cursor scan and both directions.
 OmniMessageSchema.index(
-  { conversationId: 1, createdAt: 1 },
-  { name: 'conversation_messages' },
-);
-
-OmniMessageSchema.index(
-  { conversationId: 1, createdAt: 1, _id: 1 },
-  { name: 'conversation_messages_created_cursor' },
-);
-
-// Deterministic cursor scan per conversation — uses providerTimestamp as primary sort key
-// with createdAt and _id as tiebreakers for consistent ordering.
-OmniMessageSchema.index(
-  { conversationId: 1, providerTimestamp: 1, createdAt: 1, _id: 1 },
+  { conversationId: 1, providerTimestamp: 1, sequence: 1, _id: 1 },
   { name: 'conversation_messages_timeline' },
 );
 

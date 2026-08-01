@@ -4,11 +4,15 @@ import { ZaloAdapter } from '../adapters/zalo.adapter';
 import { WhatsAppAdapter } from '../adapters/whatsapp.adapter';
 import { ChannelType } from '../domain/omni-payload';
 import { ChannelAdapter } from '../adapters/channel-adapter.interface';
+import { LivechatAdapter } from '../adapters/livechat.adapter';
+import { LivechatEvents } from '../domain/omni-events';
 
 describe('InboundProcessorService', () => {
   let service: InboundProcessorService;
   let routingQueue: { add: jest.Mock };
   let adapters: Map<ChannelType, ChannelAdapter>;
+  let events: { emit: jest.Mock };
+  let metrics: { incrementCounter: jest.Mock };
 
   beforeEach(() => {
     routingQueue = { add: jest.fn().mockResolvedValue({ id: 'route_1' }) };
@@ -20,11 +24,16 @@ describe('InboundProcessorService', () => {
     adapters.set('facebook', new FacebookAdapter());
     adapters.set('zalo', new ZaloAdapter());
     adapters.set('whatsapp', new WhatsAppAdapter(mockWaTemplateRepo));
+    adapters.set('livechat', new LivechatAdapter({} as any));
+
+    events = { emit: jest.fn() };
+    metrics = { incrementCounter: jest.fn() };
 
     service = new InboundProcessorService(
       adapters,
       routingQueue as any,
-      { emit: jest.fn() } as any,
+      events as any,
+      metrics as any,
     );
   });
 
@@ -38,8 +47,8 @@ describe('InboundProcessorService', () => {
 
     const result = await service.process('facebook', raw, 'tenant_1', 'ch_1');
 
-    expect(result!.channelType).toBe('facebook');
-    expect(result!.content).toBe('Hello FB!');
+    expect(result[0].channelType).toBe('facebook');
+    expect(result[0].content).toBe('Hello FB!');
     expect(routingQueue.add).toHaveBeenCalledWith(
       'omni.route',
       expect.objectContaining({ channelType: 'facebook' }),
@@ -59,8 +68,8 @@ describe('InboundProcessorService', () => {
 
     const result = await service.process('zalo', raw, 'tenant_1', 'ch_2');
 
-    expect(result!.channelType).toBe('zalo');
-    expect(result!.content).toBe('Hello Zalo!');
+    expect(result[0].channelType).toBe('zalo');
+    expect(result[0].content).toBe('Hello Zalo!');
     expect(routingQueue.add).toHaveBeenCalledWith(
       'omni.route',
       expect.objectContaining({ channelType: 'zalo' }),
@@ -86,8 +95,8 @@ describe('InboundProcessorService', () => {
 
     const result = await service.process('whatsapp', raw, 'tenant_1', 'ch_3');
 
-    expect(result!.channelType).toBe('whatsapp');
-    expect(result!.content).toBe('Hello WA!');
+    expect(result[0].channelType).toBe('whatsapp');
+    expect(result[0].content).toBe('Hello WA!');
     expect(routingQueue.add).toHaveBeenCalledWith(
       'omni.route',
       expect.objectContaining({ channelType: 'whatsapp' }),
@@ -120,5 +129,48 @@ describe('InboundProcessorService', () => {
       }),
       expect.objectContaining({ jobId: expect.any(String), priority: 10 }),
     );
+  });
+
+  describe('livechat durability', () => {
+    const inbound = {
+      channelType: 'livechat' as ChannelType,
+      channelId: 'ch_lc',
+      tenantId: 'tenant_1',
+      rawPayload: {
+        visitorId: 'visitor_1',
+        text: 'anyone there?',
+        metadata: { clientMessageId: 'cm_1' },
+      },
+    };
+
+    it('should retry a failed enqueue before giving up', async () => {
+      routingQueue.add
+        .mockRejectedValueOnce(new Error('redis blip'))
+        .mockResolvedValueOnce({ id: 'route_1' });
+
+      await service.handleLivechatInboundEvent(inbound);
+
+      expect(routingQueue.add).toHaveBeenCalledTimes(2);
+      expect(metrics.incrementCounter).not.toHaveBeenCalled();
+    });
+
+    it('should count the drop and tell the widget when every attempt fails', async () => {
+      routingQueue.add.mockRejectedValue(new Error('redis down'));
+
+      await service.handleLivechatInboundEvent(inbound);
+
+      expect(metrics.incrementCounter).toHaveBeenCalledWith(
+        'crm_omni_messages_dropped_total',
+        { channel: 'livechat', reason: 'enqueue_failed' },
+      );
+      expect(events.emit).toHaveBeenCalledWith(
+        LivechatEvents.MESSAGE_REJECTED,
+        expect.objectContaining({
+          visitorId: 'visitor_1',
+          clientMessageId: 'cm_1',
+          reason: 'enqueue_failed',
+        }),
+      );
+    });
   });
 });

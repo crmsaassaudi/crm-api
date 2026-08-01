@@ -8,11 +8,19 @@ import {
   CHANNEL_ADAPTERS,
 } from '../adapters/channel-adapter.interface';
 import { OmniPayload, ChannelType } from '../domain/omni-payload';
-import { OmniEvents } from '../domain/omni-events';
+import { OmniEvents, LivechatEvents } from '../domain/omni-events';
+import { MetricsService } from '../../observability/metrics.service';
 import {
   OMNI_ROUTING_QUEUE,
   PRIORITY_NORMAL,
 } from '../queue/omni-queue.constants';
+
+/** Livechat enqueue retries — short, because a visitor is waiting on the reply. */
+const LIVECHAT_ENQUEUE_ATTEMPTS = 3;
+const LIVECHAT_ENQUEUE_BACKOFF_MS = 200;
+
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Single entry-point for all inbound messages from any provider.
@@ -35,6 +43,7 @@ export class InboundProcessorService {
     @InjectQueue(OMNI_ROUTING_QUEUE)
     private readonly routingQueue: Queue<OmniPayload>,
     private readonly eventEmitter: EventEmitter2,
+    private readonly metrics: MetricsService,
   ) {}
 
   /**
@@ -51,60 +60,93 @@ export class InboundProcessorService {
     tenantId: string,
     channelId: string,
     channelConfig?: any,
-  ): Promise<OmniPayload | null> {
+  ): Promise<OmniPayload[]> {
     const adapter = this.adapters.get(channelType);
     if (!adapter) {
       throw new Error(`No adapter registered for channel type: ${channelType}`);
     }
 
-    const normalized = adapter.normalize(
+    const messages = adapter.normalize(
       rawPayload,
       tenantId,
       channelId,
       channelConfig,
     );
 
-    // Adapter returns null for non-message events (delivery receipts, read receipts, etc.)
-    if (normalized === null) {
-      // Try as a reaction event before discarding
-      const handled = await this.processReaction(
+    if (messages.length === 0) {
+      this.handleNonMessageEvent(
         channelType,
         rawPayload,
         tenantId,
         channelId,
         channelConfig,
       );
-      if (handled) {
-        this.logger.debug(`Processed ${channelType} reaction event`);
-        return null;
-      }
-
-      this.logger.debug(
-        `Skipping non-message ${channelType} event (delivery/read/referral)`,
-      );
-      return null;
+      return [];
     }
 
-    this.logger.log(
-      `Processed ${channelType} message: ${normalized.externalMessageId} ` +
-        `from sender ${normalized.senderId}`,
+    for (const message of messages) {
+      // T07: stamp a correlationId at the entry point if the adapter didn't
+      // supply one. It propagates through every downstream event and enables
+      // end-to-end log tracing without distributed tracing infra.
+      message.correlationId ??= randomUUID();
+      await this.enqueueForRouting(message);
+    }
+
+    this.logger.debug(
+      `Normalised ${messages.length} ${channelType} message(s) for tenant ${tenantId}`,
     );
+    return messages;
+  }
 
-    // T07: stamp a correlationId at the entry point if the adapter didn't supply one.
-    // This ID propagates through all downstream events (conversation created, assigned,
-    // activity logged) and enables end-to-end log tracing without distributed tracing infra.
-    if (!normalized.correlationId) {
-      normalized.correlationId = randomUUID();
-    }
-
-    await this.routingQueue.add('omni.route', normalized, {
-      jobId: this.buildRoutingJobId(normalized),
+  private async enqueueForRouting(message: OmniPayload): Promise<void> {
+    await this.routingQueue.add('omni.route', message, {
+      jobId: this.buildRoutingJobId(message),
       priority: PRIORITY_NORMAL,
       removeOnComplete: { count: 500 },
-      removeOnFail: { count: 2000 },
+      // Age-bounded, and NOT `false`: a job id that lingers in the failed set
+      // makes `add()` a silent no-op, so a provider redelivery of a message
+      // whose first attempt failed would never be re-queued.
+      removeOnFail: { count: 2000, age: 60 * 60 * 24 },
     });
+  }
 
-    return normalized;
+  /**
+   * An event with no messages is still meaningful: it may be a reaction or a
+   * delivery receipt for something we sent.
+   */
+  private handleNonMessageEvent(
+    channelType: ChannelType,
+    rawPayload: any,
+    tenantId: string,
+    channelId: string,
+    channelConfig?: any,
+  ): void {
+    if (
+      this.processReaction(
+        channelType,
+        rawPayload,
+        tenantId,
+        channelId,
+        channelConfig,
+      )
+    ) {
+      this.logger.debug(`Processed ${channelType} reaction event`);
+      return;
+    }
+
+    const receipts =
+      this.adapters.get(channelType)?.normalizeDeliveryReceipts?.(rawPayload) ??
+      [];
+    if (receipts.length > 0) {
+      this.eventEmitter.emit(OmniEvents.DELIVERY_RECEIPTS_RECEIVED, {
+        tenantId,
+        channelType,
+        receipts,
+      });
+      return;
+    }
+
+    this.logger.debug(`Skipping non-message ${channelType} event`);
   }
 
   /**
@@ -126,18 +168,48 @@ export class InboundProcessorService {
     this.logger.debug(
       `[livechat] omni.inbound.webhook received — channelId=${data.channelId}, tenant=${data.tenantId}`,
     );
-    try {
-      await this.process(
-        data.channelType,
-        data.rawPayload,
-        data.tenantId,
-        data.channelId,
-        // channelConfig not required — LivechatAdapter ignores it
-      );
-    } catch (error: any) {
-      this.logger.error(
-        `[livechat] Failed to process inbound event: ${error?.message ?? String(error)}`,
-      );
+
+    // Livechat has no provider to redeliver: the visitor's browser is the only
+    // other copy of this message. A Redis blip on the routing enqueue used to
+    // lose it silently, so retry briefly, and if it still fails, say so —
+    // to the operator as a counter, and to the widget so the visitor sees the
+    // message did not go through instead of waiting for a reply that cannot come.
+    for (let attempt = 1; attempt <= LIVECHAT_ENQUEUE_ATTEMPTS; attempt++) {
+      try {
+        await this.process(
+          data.channelType,
+          data.rawPayload,
+          data.tenantId,
+          data.channelId,
+          // channelConfig not required — LivechatAdapter ignores it
+        );
+        return;
+      } catch (error: any) {
+        const message = error?.message ?? String(error);
+        if (attempt < LIVECHAT_ENQUEUE_ATTEMPTS) {
+          this.logger.warn(
+            `[livechat] Inbound enqueue attempt ${attempt} failed: ${message} — retrying`,
+          );
+          await delay(LIVECHAT_ENQUEUE_BACKOFF_MS * attempt);
+          continue;
+        }
+
+        this.logger.error(
+          `[livechat] Dropped inbound message from visitor ` +
+            `${data.rawPayload?.visitorId} after ${attempt} attempts: ${message}`,
+        );
+        this.metrics.incrementCounter('crm_omni_messages_dropped_total', {
+          channel: 'livechat',
+          reason: 'enqueue_failed',
+        });
+        this.eventEmitter.emit(LivechatEvents.MESSAGE_REJECTED, {
+          tenantId: data.tenantId,
+          channelId: data.channelId,
+          visitorId: data.rawPayload?.visitorId,
+          clientMessageId: data.rawPayload?.metadata?.clientMessageId ?? null,
+          reason: 'enqueue_failed',
+        });
+      }
     }
   }
 
@@ -149,10 +221,11 @@ export class InboundProcessorService {
     headers: Record<string, string>,
     body: any,
     rawBody?: Buffer,
+    secret?: string,
   ): boolean {
     const adapter = this.adapters.get(channelType);
     if (!adapter) return false;
-    return adapter.validateWebhook(headers, body, rawBody);
+    return adapter.validateWebhook(headers, body, rawBody, secret);
   }
 
   private buildRoutingJobId(payload: OmniPayload): string {

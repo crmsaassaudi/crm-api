@@ -63,6 +63,7 @@ describe('ConversationService Concurrency', () => {
       updateLastCustomerMessageAt: jest.fn().mockResolvedValue(undefined),
       findLastByExternalId: jest.fn().mockResolvedValue(null),
       findById: jest.fn().mockResolvedValue(null),
+      findActiveByExternalId: jest.fn().mockResolvedValue(null),
       updateContactId: jest.fn().mockResolvedValue(undefined),
       reopenConversation: jest.fn().mockResolvedValue(null),
     };
@@ -207,13 +208,6 @@ describe('ConversationService Concurrency', () => {
 
     await service.handleInboundMessage(payload);
 
-    expect(redisMock.set).toHaveBeenCalledWith(
-      'omni:processed:tenant_1:msg_001',
-      '1',
-      'EX',
-      3600,
-      'NX',
-    );
     expect(lockServiceMock.acquire).toHaveBeenCalledWith(
       'lock:inbound:tenant_1:channel_1:user_1',
       5000,
@@ -231,15 +225,14 @@ describe('ConversationService Concurrency', () => {
       'tenant_1',
     );
     // Message persistence, bot processing, business hours and auto-resolve all
-    // happen in ConversationOpsProcessor now — the inbound path only enqueues
-    // the CUSTOMER_MESSAGE command and hands the idempotency key over with it.
+    // happen in ConversationOpsProcessor now — the inbound path only resolves
+    // the session and enqueues the CUSTOMER_MESSAGE command.
     expect(messageRepoMock.upsertInboundByExternalId).not.toHaveBeenCalled();
     expect(conversationCommandMock.enqueueCustomerMessage).toHaveBeenCalledWith(
       'conv_123',
       'tenant_1',
       payload,
       'msg_001',
-      'omni:processed:tenant_1:msg_001',
     );
   });
 
@@ -274,7 +267,6 @@ describe('ConversationService Concurrency', () => {
       'tenant_1',
       payload,
       'msg_closed_001',
-      'omni:processed:tenant_1:msg_closed_001',
     );
   });
 
@@ -313,45 +305,45 @@ describe('ConversationService Concurrency', () => {
     );
   });
 
-  it('should skip processing if idempotency check returns true in Redis', async () => {
-    redisMock.set.mockResolvedValueOnce(null); // already processed
+  it('should append to the session that won when creation races (E11000)', async () => {
+    const duplicateKey = Object.assign(new Error('Duplicate key'), {
+      code: 11000,
+    });
+    conversationRepoMock.create.mockRejectedValueOnce(duplicateKey);
+    conversationRepoMock.findActiveByExternalId.mockResolvedValueOnce({
+      id: 'winner_conv',
+      tenantId: 'tenant_1',
+      status: 'open',
+    });
 
     const payload = createPayload('msg_001');
     await service.handleInboundMessage(payload);
 
-    expect(redisMock.set).toHaveBeenCalledWith(
-      'omni:processed:tenant_1:msg_001',
-      '1',
-      'EX',
-      3600,
-      'NX',
+    // The message belongs in the session that won the race. Swallowing E11000
+    // as a duplicate *message* dropped it: the conversation existed, the
+    // message did not.
+    expect(conversationCommandMock.enqueueCustomerMessage).toHaveBeenCalledWith(
+      'winner_conv',
+      'tenant_1',
+      payload,
+      'msg_001',
     );
-    expect(lockServiceMock.acquire).not.toHaveBeenCalled();
-    expect(conversationRepoMock.create).not.toHaveBeenCalled();
-    expect(
-      conversationCommandMock.enqueueCustomerMessage,
-    ).not.toHaveBeenCalled();
   });
 
-  it('should skip processing if E11000 is thrown during save', async () => {
-    // Simulate race condition where the lock was slow and another worker saved it
-    lockServiceMock.acquire.mockImplementationOnce(
-      (key: any, ttl: any, cb: any) => {
-        void key;
-        void ttl;
-        void cb;
-        const err = new Error('Duplicate key');
-        (err as any).code = 11000;
-        throw err;
-      },
-    );
+  it('should not re-run auto-assignment for a session it adopted', async () => {
+    const duplicateKey = Object.assign(new Error('Duplicate key'), {
+      code: 11000,
+    });
+    conversationRepoMock.create.mockRejectedValueOnce(duplicateKey);
+    conversationRepoMock.findActiveByExternalId.mockResolvedValueOnce({
+      id: 'winner_conv',
+      tenantId: 'tenant_1',
+      status: 'open',
+    });
 
-    const payload = createPayload('msg_001');
-    await service.handleInboundMessage(payload);
+    await service.handleInboundMessage(createPayload('msg_001'));
 
-    // Should catch the error and return peacefully
-    expect(lockServiceMock.acquire).toHaveBeenCalled();
-    expect(conversationRepoMock.create).not.toHaveBeenCalled();
+    expect(orchestrationMock.triggerAutoAssignment).not.toHaveBeenCalled();
   });
 
   it('should use existing conversation from identity cache', async () => {
@@ -379,20 +371,15 @@ describe('ConversationService Concurrency', () => {
       'tenant_1',
       payload,
       'msg_002',
-      'omni:processed:tenant_1:msg_002',
     );
   });
 
-  it('should release the idempotency key when processing fails', async () => {
+  it('should rethrow processing failures so the queue retries them', async () => {
     lockServiceMock.acquire.mockRejectedValueOnce(new Error('boom'));
 
-    const payload = createPayload('msg_fail');
-
-    await expect(service.handleInboundMessage(payload)).rejects.toThrow('boom');
-
-    expect(redisMock.del).toHaveBeenCalledWith(
-      'omni:processed:tenant_1:msg_fail',
-    );
+    await expect(
+      service.handleInboundMessage(createPayload('msg_fail')),
+    ).rejects.toThrow('boom');
   });
 
   // ── Pre-identified visitor tests (pre-chat form enrichment) ──────────

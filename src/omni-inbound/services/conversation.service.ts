@@ -4,14 +4,12 @@ import {
   Inject,
   BadRequestException,
 } from '@nestjs/common';
-import { createHash } from 'crypto';
 import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
-import type Redis from 'ioredis';
 import { OmniPayload, ChannelType } from '../domain/omni-payload';
 import { OmniEvents } from '../domain/omni-events';
+import { buildMessageDedupId } from '../domain/message-dedup-id';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { MessageRepository } from '../repositories/message.repository';
 import { MediaProxyService } from './media-proxy.service';
@@ -47,9 +45,6 @@ import { ChannelRepository } from '../../channels/infrastructure/persistence/doc
 export class ConversationService {
   private readonly logger = new Logger(ConversationService.name);
 
-  /** TTL for the processed-message idempotency marker (1 hour) */
-  private readonly IDEM_TTL = 60 * 60;
-
   /** Lock TTL: 5 seconds — well above typical DB operations (<500ms)
    *  but short enough to minimise contention when webhooks burst. */
   private readonly LOCK_TTL = 5_000;
@@ -66,7 +61,6 @@ export class ConversationService {
     private readonly orchestration: InboundOrchestrationService,
     private readonly shadowContactService: ShadowContactService,
     private readonly eventEmitter: EventEmitter2,
-    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     @InjectQueue(OMNI_MEDIA_CACHE_QUEUE)
     private readonly mediaCacheQueue: Queue<MediaCacheJobData>,
     private readonly conversationCommandService: ConversationCommandService,
@@ -88,38 +82,22 @@ export class ConversationService {
    */
   @OnEvent(OmniEvents.MESSAGE_RECEIVED)
   async handleInboundMessage(payload: OmniPayload): Promise<void> {
-    const msgId = this.buildMessageDedupId(payload);
+    const messageDedupId = buildMessageDedupId(payload);
 
-    // ── Step 1: Optimistic idempotency check (Redis) ──────────
-    const idemKey = `omni:processed:${payload.tenantId}:${msgId}`;
-    const idempotencyReserved = await this.redis.set(
-      idemKey,
-      '1',
-      'EX',
-      this.IDEM_TTL,
-      'NX',
-    );
-    if (!idempotencyReserved) {
-      this.logger.debug(`Idempotency hit — skipping message ${msgId}`);
-      return;
-    }
-
-    // ── Step 2: Acquire distributed lock on sender ────────────
+    // Deduplication is owned by the two layers around this one — the routing
+    // processor claims the message before emitting, and `platformMessageId` is
+    // uniquely indexed. A third Redis marker here only added a fourth TTL to
+    // reason about and a key that had to be threaded down into the aggregate
+    // command just to be refreshed.
     const lockKey = `lock:inbound:${payload.tenantId}:${payload.channelId}:${payload.senderId}`;
 
     try {
       await this.lockService.acquire(lockKey, this.LOCK_TTL, async () => {
-        await this.processWithinLock(payload, idemKey, msgId);
+        await this.processWithinLock(payload, messageDedupId);
       });
     } catch (error: any) {
-      // E11000 = duplicate key — another worker already saved this message
-      if (error?.code === 11000) {
-        this.logger.warn(`Duplicate message (race condition): ${msgId}`);
-        return;
-      }
-      await this.redis.del(idemKey).catch(() => undefined);
       this.logger.error(
-        `Failed to handle inbound message: ${error.message}`,
+        `Failed to handle inbound message ${messageDedupId}: ${error.message}`,
         error.stack,
       );
       throw error; // re-throw so BullMQ can retry
@@ -131,7 +109,6 @@ export class ConversationService {
    */
   private async processWithinLock(
     payload: OmniPayload,
-    idemKey: string,
     messageDedupId: string,
   ): Promise<void> {
     // ── Step 3: Resolve identity (Cache-aside) ────────────────
@@ -181,12 +158,12 @@ export class ConversationService {
       );
       contactId = enriched.contactId;
 
-      const conversation = await this.createNewConversation(
+      const created = await this.createSessionOrAdoptExisting(
         payload,
         contactId,
         enriched.profile,
       );
-      conversationId = conversation.id;
+      conversationId = created.conversationId;
 
       await this.identityService.updateIdentity(
         payload.channelType,
@@ -196,11 +173,13 @@ export class ConversationService {
         payload.tenantId,
       );
 
-      await this.triggerInitialAutoAssignment(
-        payload,
-        conversationId,
-        contactId,
-      );
+      if (created.isNew) {
+        await this.triggerInitialAutoAssignment(
+          payload,
+          conversationId,
+          contactId,
+        );
+      }
     }
 
     // ── Aggregate: Enqueue CUSTOMER_MESSAGE command ──────────────────
@@ -209,34 +188,11 @@ export class ConversationService {
       payload.tenantId,
       payload,
       messageDedupId,
-      idemKey,
     );
 
     this.logger.log(
       `Enqueued CUSTOMER_MESSAGE for ${messageDedupId} → conversation ${conversationId}`,
     );
-  }
-
-  private buildMessageDedupId(payload: OmniPayload): string {
-    const externalMessageId = payload.externalMessageId?.trim();
-    if (externalMessageId) {
-      return externalMessageId;
-    }
-
-    const fingerprint = [
-      payload.tenantId,
-      payload.channelType,
-      payload.channelId,
-      payload.channelAccount,
-      payload.externalConversationId,
-      payload.senderId,
-      this.toFingerprintDate(payload.providerTimestamp ?? payload.timestamp),
-      payload.messageType,
-      payload.content ?? '',
-      payload.mediaUrl ?? '',
-    ].join('|');
-
-    return `synthetic:${createHash('sha256').update(fingerprint).digest('hex')}`;
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -482,6 +438,45 @@ export class ConversationService {
     return {};
   }
 
+  /**
+   * Open a new session, or adopt the one that already exists.
+   *
+   * `unique_active_session` allows only one open/pending conversation per
+   * provider thread, so two racing messages make the loser's insert fail with
+   * E11000. That used to bubble up and be swallowed as a duplicate *message*,
+   * which dropped a real customer message: the conversation existed, the
+   * message did not. The winner's conversation is the correct home for it.
+   */
+  private async createSessionOrAdoptExisting(
+    payload: OmniPayload,
+    contactId: string | null,
+    profile: any,
+  ): Promise<{ conversationId: string; isNew: boolean }> {
+    try {
+      const conversation = await this.createNewConversation(
+        payload,
+        contactId,
+        profile,
+      );
+      return { conversationId: conversation.id, isNew: true };
+    } catch (error: any) {
+      if (error?.code !== 11000) throw error;
+
+      const active = await this.conversationRepo.findActiveByExternalId(
+        payload.tenantId,
+        this.lifecycle.toSchemaChannelType(payload.channelType),
+        payload.channelAccount,
+        payload.externalConversationId,
+      );
+      if (!active) throw error;
+
+      this.logger.log(
+        `Session for ${payload.externalConversationId} was created concurrently — appending to ${active.id}`,
+      );
+      return { conversationId: active.id, isNew: false };
+    }
+  }
+
   private async createNewConversation(
     payload: OmniPayload,
     contactId: string | null,
@@ -587,14 +582,5 @@ export class ConversationService {
         'new_conversation',
       );
     }
-  }
-
-  private toFingerprintDate(value: Date | string | undefined): string {
-    if (!value) {
-      return '';
-    }
-
-    const date = value instanceof Date ? value : new Date(value);
-    return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
   }
 }

@@ -10,6 +10,7 @@ import {
 import { MediaProxyService } from '../services/media-proxy.service';
 import { MessageRepository } from '../repositories/message.repository';
 import { OMNI_MEDIA_CACHE_QUEUE } from './omni-media-queue.constants';
+import { OMNI_CONCURRENCY } from '../../queue/config/worker-concurrency';
 
 export interface MediaCacheJobData extends TenantJobData {
   conversationId: string;
@@ -40,7 +41,7 @@ export interface MediaCacheJobData extends TenantJobData {
  *   - Automatic retries via BullMQ (3 attempts, exponential backoff)
  *   - Idempotent: re-processing the same messageId is safe (upsert)
  */
-@Processor(OMNI_MEDIA_CACHE_QUEUE)
+@Processor(OMNI_MEDIA_CACHE_QUEUE, { concurrency: OMNI_CONCURRENCY.media() })
 export class MediaCacheProcessor extends BaseTenantConsumer<MediaCacheJobData> {
   protected readonly logger = new Logger(MediaCacheProcessor.name);
   protected readonly cls: ClsService;

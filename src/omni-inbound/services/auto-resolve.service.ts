@@ -161,6 +161,50 @@ export class AutoResolveService {
     }
   }
 
+  /**
+   * Re-arm timers that Redis no longer holds.
+   *
+   * The delayed jobs are the only record that a conversation is due to
+   * auto-resolve — there is deliberately no periodic full scan, because one
+   * would not scale. That makes the schedule as durable as Redis is: a flush or
+   * a restore from an old snapshot leaves conversations that will never resolve
+   * and nothing to notice it.
+   *
+   * This walks only conversations that are quiet for longer than the timeout
+   * and re-schedules the ones with no job, so recovery is bounded by the
+   * backlog rather than by the size of the collection.
+   */
+  async reconcileMissingTimers(
+    staleConversations: Array<{ tenantId: string; conversationId: string }>,
+  ): Promise<number> {
+    let rescheduled = 0;
+
+    for (const { tenantId, conversationId } of staleConversations) {
+      const hasJob = await this.hasScheduledJob(conversationId);
+      if (hasJob) continue;
+
+      await this.scheduleAutoResolve(tenantId, conversationId);
+      rescheduled++;
+    }
+
+    if (rescheduled > 0) {
+      this.logger.warn(
+        `Re-armed ${rescheduled} missing auto-resolve timer(s) — Redis lost the schedule`,
+      );
+    }
+    return rescheduled;
+  }
+
+  private async hasScheduledJob(conversationId: string): Promise<boolean> {
+    for (const phase of ['warning', 'resolve'] as const) {
+      const job = await this.autoResolveQueue.getJob(
+        this.buildJobId(conversationId, phase),
+      );
+      if (job) return true;
+    }
+    return false;
+  }
+
   // ────────────────────────────────────────────────────────────────────────
   // Helpers
   // ────────────────────────────────────────────────────────────────────────

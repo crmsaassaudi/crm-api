@@ -23,10 +23,18 @@ import { OMNI_DELIVERY_QUEUE } from './delivery-command.constants';
 import { MetricsService } from '../observability/metrics.service';
 import { OutboundEmailHandler } from './outbound-email.handler';
 import { OutboundMediaHandler } from './outbound-media.handler';
+import { OMNI_CONCURRENCY } from '../queue/config/worker-concurrency';
 
 type DeliveryJob = { tenantId: string; commandId: string };
 
-@Processor(OMNI_DELIVERY_QUEUE)
+/** Everything resolved before the provider call. */
+interface PreparedDelivery {
+  conversation: any;
+  channel: any;
+  adapter: ChannelAdapter | undefined;
+}
+
+@Processor(OMNI_DELIVERY_QUEUE, { concurrency: OMNI_CONCURRENCY.delivery() })
 export class DeliveryProcessor extends BaseTenantConsumer<DeliveryJob> {
   protected readonly logger = new Logger(DeliveryProcessor.name);
   protected readonly cls: ClsService;
@@ -69,41 +77,25 @@ export class DeliveryProcessor extends BaseTenantConsumer<DeliveryJob> {
       .exec();
     if (!command) return;
 
+    // Everything up to the provider call is safe to retry: nothing has been
+    // sent, so a transient database blip or a channel that is momentarily
+    // unreadable should not cost the customer their message. The command is
+    // rewound to `pending` and rethrown so the queue retries it. Treating these
+    // the same as a failed send is why an agent had to retype a message after
+    // any hiccup in a lookup.
+    let prepared: PreparedDelivery;
+    try {
+      prepared = await this.prepare(command);
+    } catch (error) {
+      await this.rewindForRetry(command, error);
+      throw error;
+    }
+
+    const { conversation, channel, adapter } = prepared;
+    const conversationChannelType = conversation.channelType;
     let attemptId: string | null = null;
-    let conversationChannelType = 'unknown';
     let response: any;
     try {
-      const conversation = await this.conversations.findById(
-        String(command.conversationId),
-      );
-      if (!conversation) throw new Error('Conversation no longer exists');
-      conversationChannelType = conversation.channelType;
-
-      let channel = await this.channels.findByIdWithCredentials(
-        String(command.tenantId),
-        String(conversation.channelId),
-      );
-      if (!channel && conversation.channelAccount) {
-        channel = await this.channels.findByAccountWithCredentials(
-          String(command.tenantId),
-          conversation.channelType,
-          conversation.channelAccount,
-        );
-      }
-      if (!channel) throw new Error('Channel is disconnected or unavailable');
-
-      const adapter =
-        command.kind === 'email'
-          ? undefined
-          : this.adapters.get(
-              conversation.channelType.toLowerCase() as ChannelType,
-            );
-      if (command.kind !== 'email' && !adapter) {
-        throw new Error(
-          `No outbound adapter registered for ${conversation.channelType}`,
-        );
-      }
-
       attemptId = await this.attempts.start({
         tenantId: String(command.tenantId),
         messageId: String(command.messageId),
@@ -176,6 +168,72 @@ export class DeliveryProcessor extends BaseTenantConsumer<DeliveryJob> {
       externalMessageId,
       conversationChannelType,
       response,
+    );
+  }
+
+  /**
+   * Resolve everything the send needs. Nothing here talks to the provider, so
+   * every failure it raises is safe to retry.
+   */
+  private async prepare(
+    command: DeliveryCommandDocument,
+  ): Promise<PreparedDelivery> {
+    const conversation = await this.conversations.findById(
+      String(command.conversationId),
+    );
+    if (!conversation) throw new Error('Conversation no longer exists');
+
+    let channel = await this.channels.findByIdWithCredentials(
+      String(command.tenantId),
+      String(conversation.channelId),
+    );
+    if (!channel && conversation.channelAccount) {
+      channel = await this.channels.findByAccountWithCredentials(
+        String(command.tenantId),
+        conversation.channelType,
+        conversation.channelAccount,
+      );
+    }
+    if (!channel) throw new Error('Channel is disconnected or unavailable');
+
+    const adapter =
+      command.kind === 'email'
+        ? undefined
+        : this.adapters.get(
+            conversation.channelType.toLowerCase() as ChannelType,
+          );
+    if (command.kind !== 'email' && !adapter) {
+      throw new Error(
+        `No outbound adapter registered for ${conversation.channelType}`,
+      );
+    }
+
+    return { conversation, channel, adapter };
+  }
+
+  /**
+   * Put a command back in the queue's hands after a failure that happened
+   * before the provider was called.
+   *
+   * Only `processing` is rewound, so a command that somehow advanced further is
+   * left alone rather than being sent twice.
+   */
+  private async rewindForRetry(
+    command: DeliveryCommandDocument,
+    error: unknown,
+  ): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    await this.commands
+      .updateOne(
+        { _id: command._id, status: 'processing' },
+        {
+          $set: { status: 'pending', lastError: message.substring(0, 2_000) },
+          $unset: { processingStartedAt: '' },
+        },
+      )
+      .exec();
+    this.logger.warn(
+      `Delivery command ${String(command._id)} will retry — failed before dispatch: ${message}`,
     );
   }
 

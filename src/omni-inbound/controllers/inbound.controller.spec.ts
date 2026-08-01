@@ -15,6 +15,10 @@ describe('InboundController webhook payload limits', () => {
     }),
   };
 
+  const channels = {
+    findAnyByAccount: jest.fn().mockResolvedValue(null),
+  };
+
   let controller: InboundController;
 
   beforeEach(() => {
@@ -22,6 +26,7 @@ describe('InboundController webhook payload limits', () => {
     controller = new InboundController(
       processor as any,
       config as any,
+      channels as any,
       queue as any,
     );
   });

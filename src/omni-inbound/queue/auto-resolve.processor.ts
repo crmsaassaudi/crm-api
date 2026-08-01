@@ -13,6 +13,7 @@ import { ConversationRepository } from '../repositories/conversation.repository'
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { OMNI_AUTO_RESOLVE_QUEUE } from './omni-auto-resolve-queue.constants';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
+import { OMNI_CONCURRENCY } from '../../queue/config/worker-concurrency';
 
 export interface AutoResolveJobData extends TenantJobData {
   conversationId: string;
@@ -33,7 +34,9 @@ export interface AutoResolveJobData extends TenantJobData {
  * Single-phase flow (if no warning configured):
  *   Directly resolve the conversation.
  */
-@Processor(OMNI_AUTO_RESOLVE_QUEUE)
+@Processor(OMNI_AUTO_RESOLVE_QUEUE, {
+  concurrency: OMNI_CONCURRENCY.maintenance(),
+})
 export class AutoResolveProcessor extends BaseTenantConsumer<AutoResolveJobData> {
   protected readonly logger = new Logger(AutoResolveProcessor.name);
   protected readonly cls: ClsService;

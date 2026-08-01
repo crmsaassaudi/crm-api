@@ -97,19 +97,20 @@ export class TelegramService {
       return;
     }
 
-    const payload = this.adapter.normalize(
+    const payloads = this.adapter.normalize(
       update,
       channel.tenantId,
       channelId,
       channelConfig,
     );
-    if (!payload) return;
 
     // Emit into the omni-inbound pipeline
-    this.events.emit('omni.inbound.message', { payload, channelConfig });
-    this.logger.debug(
-      `Telegram inbound emitted: type=${payload.messageType} from=${payload.senderId}`,
-    );
+    for (const payload of payloads) {
+      this.events.emit('omni.inbound.message', { payload, channelConfig });
+      this.logger.debug(
+        `Telegram inbound emitted: type=${payload.messageType} from=${payload.senderId}`,
+      );
+    }
   }
 
   // ── Register webhook with Telegram ─────────────────────────────────────────

@@ -8,7 +8,11 @@ import {
   DeliveryCommandDocument,
   DeliveryCommandSchemaClass,
 } from './infrastructure/delivery-command.schema';
-import { OMNI_DELIVERY_QUEUE } from './delivery-command.constants';
+import {
+  DELIVERY_MAX_ATTEMPTS,
+  OMNI_DELIVERY_QUEUE,
+  deliveryPriorityFor,
+} from './delivery-command.constants';
 import { MetricsService } from '../observability/metrics.service';
 
 export type DeliveryCommandInput = {
@@ -59,7 +63,7 @@ export class DeliveryCommandService {
 
     const commandId = String(command._id);
     try {
-      await this.addJob(commandId, input.tenantId);
+      await this.addJob(commandId, input.tenantId, input.source);
       this.metrics.incrementCounter('crm_omni_delivery_commands_total', {
         outcome: 'queued',
         kind: input.kind ?? 'text',
@@ -133,13 +137,23 @@ export class DeliveryCommandService {
     return recovered;
   }
 
-  private addJob(commandId: string, tenantId: string): Promise<unknown> {
+  private addJob(
+    commandId: string,
+    tenantId: string,
+    source?: string,
+  ): Promise<unknown> {
     return this.queue.add(
       'deliver-message',
       { commandId, tenantId },
       {
         jobId: commandId,
-        attempts: 1,
+        priority: deliveryPriorityFor(source),
+        // Retries are for failures that happened *before* the provider call —
+        // the processor puts the command back to `pending` only in that case,
+        // and a retry that finds any other state exits without re-sending. A
+        // send whose outcome is unknown is never repeated.
+        attempts: DELIVERY_MAX_ATTEMPTS,
+        backoff: { type: 'exponential', delay: 2_000 },
         removeOnComplete: { count: 1_000, age: 86_400 },
         removeOnFail: { count: 5_000, age: 604_800 },
       },

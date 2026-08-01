@@ -6,6 +6,10 @@ import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
 import { OmniReactionPayload } from '../domain/omni-reaction-payload';
 import {
+  DeliveryReceipt,
+  DeliveryReceiptStatus,
+} from '../domain/delivery-receipt';
+import {
   OutboundMedia,
   MediaSendResult,
 } from '../../omni-outbound/types/outbound-media.type';
@@ -13,6 +17,16 @@ import { WhatsAppTemplateRepository } from '../../message-templates/infrastructu
 
 /** Graph API version. Centralized to ease upgrades. */
 const WA_GRAPH_VERSION = 'v19.0';
+
+/**
+ * WhatsApp status values we act on. `sent` is omitted: we already record that
+ * when the send call returns, so echoing it back would only rewrite what we know.
+ */
+const WA_STATUS_MAP: Record<string, DeliveryReceiptStatus> = {
+  delivered: 'delivered',
+  read: 'read',
+  failed: 'failed',
+};
 
 /**
  * Classify WhatsApp Cloud API error codes into actionable categories.
@@ -96,7 +110,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     tenantId: string,
     channelId: string,
     channelConfig?: any,
-  ): OmniPayload | null {
+  ): OmniPayload[] {
     // ── Template status webhook ─────────────────────────────────────
     if (rawPayload.event === 'message_template_status_update') {
       this.logger.log(
@@ -113,47 +127,39 @@ export class WhatsAppAdapter implements ChannelAdapter {
           );
         });
 
-      return null;
+      return [];
     }
 
-    // ── Status webhooks (delivered / read / failed) ────────────────
-    // WhatsApp sends delivery receipts in a `statuses` array.
-    // We skip these as non-message events; status tracking can be
-    // added later by emitting events instead of returning OmniPayload.
-    if (rawPayload.statuses?.length && !rawPayload.messages?.length) {
-      this.logger.debug(
-        `WhatsApp status update: ${rawPayload.statuses[0]?.status} for msg ${rawPayload.statuses[0]?.id}`,
-      );
-      return null;
-    }
-
-    const msg = rawPayload.messages?.[0];
-    if (!msg) {
-      this.logger.debug(
-        'WhatsApp webhook change value has no messages, skipping',
-      );
-      return null;
-    }
-
-    // ── Reaction events → handled by normalizeReaction() ──────────
-    if (msg.type === 'reaction') {
-      this.logger.debug(
-        `WhatsApp reaction ${msg.reaction?.emoji} on ${msg.reaction?.message_id} — delegating to normalizeReaction()`,
-      );
-      return null;
-    }
-
+    // `messages` is an array and WhatsApp does batch it. Reactions are handled
+    // by normalizeReaction(); delivery receipts by normalizeDeliveryReceipts().
     const contact = rawPayload.contacts?.[0];
-    const messageType = this.resolveMessageType(msg.type);
+    return (rawPayload.messages ?? [])
+      .filter((msg: any) => msg?.type !== 'reaction')
+      .map((msg: any) =>
+        this.toOmniPayload(msg, rawPayload, contact, {
+          tenantId,
+          channelId,
+          channelConfig,
+        }),
+      );
+  }
+
+  private toOmniPayload(
+    msg: any,
+    rawPayload: any,
+    contact: any,
+    ctx: { tenantId: string; channelId: string; channelConfig?: any },
+  ): OmniPayload {
+    const sentAt = new Date(Number(msg.timestamp) * 1000);
 
     return {
-      tenantId,
-      channelId,
+      tenantId: ctx.tenantId,
+      channelId: ctx.channelId,
       channelAccount: rawPayload.metadata?.phone_number_id,
       channelType: this.channelType,
       senderId: msg.from,
       senderType: 'customer',
-      messageType,
+      messageType: this.resolveMessageType(msg.type),
       content: this.extractContent(msg),
       mediaUrl: this.extractMediaId(msg) ?? undefined,
       metadata: {
@@ -166,8 +172,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
         mimeType: this.extractMimeType(msg),
         // Carry the channel's access token so MediaProxyService can
         // download media that requires authentication.
-        accessToken: channelConfig?.credentials?.accessToken,
-        bot: this.resolveBotConfig(channelConfig),
+        accessToken: ctx.channelConfig?.credentials?.accessToken,
+        bot: this.resolveBotConfig(ctx.channelConfig),
         // Interactive button/list reply ID for exact bot branch matching
         replyId:
           msg.interactive?.button_reply?.id ??
@@ -176,9 +182,30 @@ export class WhatsAppAdapter implements ChannelAdapter {
       },
       externalMessageId: msg.id,
       externalConversationId: `${msg.from}_${rawPayload.metadata?.phone_number_id}`,
-      timestamp: new Date(Number(msg.timestamp) * 1000),
-      providerTimestamp: new Date(Number(msg.timestamp) * 1000),
+      timestamp: sentAt,
+      providerTimestamp: sentAt,
     };
+  }
+
+  /**
+   * WhatsApp reports delivery in a `statuses` array on the same webhook.
+   */
+  normalizeDeliveryReceipts(rawPayload: any): DeliveryReceipt[] {
+    return (rawPayload?.statuses ?? []).flatMap((status: any) => {
+      const mapped = WA_STATUS_MAP[status?.status];
+      if (!mapped || !status?.id) return [];
+
+      const error = status.errors?.[0];
+      return [
+        {
+          externalMessageId: String(status.id),
+          status: mapped,
+          occurredAt: new Date(Number(status.timestamp ?? 0) * 1000),
+          errorCode: error?.code != null ? String(error.code) : undefined,
+          errorMessage: error?.title ?? error?.message,
+        } satisfies DeliveryReceipt,
+      ];
+    });
   }
 
   /**
@@ -193,6 +220,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     headers: Record<string, string>,
     body: any,
     rawBody?: Buffer,
+    secret?: string,
   ): boolean {
     const signature = headers['x-hub-signature-256'];
     if (!signature) {
@@ -200,8 +228,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
       return false;
     }
 
+    // Meta signs every Page's webhook with one app secret, so the env value is
+    // normally right; the channel override exists for tenants on their own app.
     const appSecret =
-      process.env.FACEBOOK_APP_SECRET ?? process.env.META_APP_SECRET;
+      secret ?? process.env.FACEBOOK_APP_SECRET ?? process.env.META_APP_SECRET;
     if (!appSecret) {
       this.logger.error(
         'FACEBOOK_APP_SECRET is not configured — cannot verify WhatsApp webhook signature',

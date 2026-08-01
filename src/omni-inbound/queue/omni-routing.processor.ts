@@ -6,14 +6,13 @@ import { ClsService } from 'nestjs-cls';
 import { BaseTenantConsumer } from '../../queue/base-tenant.consumer';
 import { OmniPayload } from '../domain/omni-payload';
 import { OMNI_ROUTING_QUEUE } from './omni-queue.constants';
-import { RedisService } from '../../redis/redis.service';
+import { IdempotencyService } from '../../redis/idempotency.service';
+import { buildMessageDedupId } from '../domain/message-dedup-id';
+import { OMNI_CONCURRENCY } from '../../queue/config/worker-concurrency';
 
 export type OmniRoutingJobData = OmniPayload;
 
-/** 24-hour window to deduplicate retried BullMQ jobs by externalMessageId. */
-const OMNI_DEDUP_TTL_SECONDS = 86_400;
-
-@Processor(OMNI_ROUTING_QUEUE)
+@Processor(OMNI_ROUTING_QUEUE, { concurrency: OMNI_CONCURRENCY.routing() })
 export class OmniRoutingProcessor extends BaseTenantConsumer<OmniRoutingJobData> {
   protected readonly logger = new Logger(OmniRoutingProcessor.name);
   protected readonly cls: ClsService;
@@ -21,7 +20,7 @@ export class OmniRoutingProcessor extends BaseTenantConsumer<OmniRoutingJobData>
   constructor(
     private readonly eventEmitter: EventEmitter2,
     cls: ClsService,
-    private readonly redisService: RedisService,
+    private readonly idempotency: IdempotencyService,
   ) {
     super();
     this.cls = cls;
@@ -30,35 +29,32 @@ export class OmniRoutingProcessor extends BaseTenantConsumer<OmniRoutingJobData>
   protected async handle(job: Job<OmniRoutingJobData>): Promise<void> {
     const payload = job.data;
 
-    const dedupKey = `omni:dedup:${payload.tenantId}:${payload.externalMessageId}`;
-    const client = this.redisService.getClient();
-    const acquired = await client.set(
-      dedupKey,
-      '1',
-      'EX',
-      OMNI_DEDUP_TTL_SECONDS,
-      'NX',
-    );
+    // `buildMessageDedupId` falls back to a content fingerprint when the
+    // provider gave no message id. Interpolating a possibly-empty
+    // `externalMessageId` into the key instead collapsed every such message in
+    // the tenant onto one key, so the first one processed suppressed all the
+    // others for the lifetime of that key.
+    const dedupKey = `omni:dedup:${payload.tenantId}:${buildMessageDedupId(payload)}`;
 
-    if (!acquired) {
-      this.logger.log(
-        `[OmniRouting] Duplicate skipped: externalMessageId=${payload.externalMessageId} tenant=${payload.tenantId}`,
+    // A claim, not a marker: it is promoted to a permanent duplicate marker
+    // only after the listeners have run, so a killed worker retries instead of
+    // silently dropping the message.
+    const claimed = await this.idempotency.claim(
+      dedupKey,
+      String(job.id ?? job.name),
+    );
+    if (!claimed) {
+      this.logger.debug(
+        `[OmniRouting] Duplicate skipped: ${payload.externalMessageId} tenant=${payload.tenantId}`,
       );
       return;
     }
 
-    this.logger.log(
+    this.logger.debug(
       `Routing omni message ${payload.externalMessageId} for tenant ${payload.tenantId}`,
     );
 
-    // CRIT-07: Roll back the dedup key on failure so BullMQ retries can
-    // re-process the message. Without this, a transient downstream failure
-    // permanently suppresses the message for the 24h TTL window.
-    try {
-      await this.eventEmitter.emitAsync('omni.message.received', payload);
-    } catch (error) {
-      await client.del(dedupKey).catch(() => undefined);
-      throw error;
-    }
+    await this.eventEmitter.emitAsync('omni.message.received', payload);
+    await this.idempotency.commit(dedupKey);
   }
 }

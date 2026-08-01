@@ -80,7 +80,7 @@ export class InstagramAdapter implements ChannelAdapter {
     tenantId: string,
     channelId: string,
     channelConfig?: any,
-  ): OmniPayload | null {
+  ): OmniPayload[] {
     // ── Skip non-message events ──────────────────────────────────
     // Instagram sends delivery receipts, read receipts, reactions via
     // the same webhook URL. Reactions are handled by normalizeReaction().
@@ -91,7 +91,7 @@ export class InstagramAdapter implements ChannelAdapter {
       rawPayload.referral ||
       !rawPayload.message
     ) {
-      return null;
+      return [];
     }
 
     // ── Skip echo messages ────────────────────────────────────────
@@ -101,7 +101,7 @@ export class InstagramAdapter implements ChannelAdapter {
       this.logger.debug(
         `Skipping Instagram echo message mid=${rawPayload.message?.mid}`,
       );
-      return null;
+      return [];
     }
 
     // ── Skip deleted messages ─────────────────────────────────────
@@ -109,7 +109,7 @@ export class InstagramAdapter implements ChannelAdapter {
       this.logger.debug(
         `Skipping deleted Instagram message mid=${rawPayload.message?.mid}`,
       );
-      return null;
+      return [];
     }
 
     // Instagram uses the same sender/recipient structure as Facebook
@@ -118,32 +118,34 @@ export class InstagramAdapter implements ChannelAdapter {
     const messageType = this.resolveMessageType(rawPayload.message);
     const mediaUrl = this.extractMediaUrl(rawPayload.message);
 
-    return {
-      tenantId,
-      channelId,
-      channelAccount: igBusinessId,
-      channelType: this.channelType,
-      senderId: consumerId,
-      senderType: 'customer',
-      messageType,
-      content: rawPayload.message?.text ?? '',
-      mediaUrl: mediaUrl ?? undefined,
-      metadata: {
-        mid: rawPayload.message?.mid,
-        replyTo: rawPayload.message?.reply_to,
-        // Carry the channel's access token for media download
-        // (Instagram uses Page Access Token for IG messaging API)
-        accessToken: channelConfig?.credentials?.accessToken,
-        // Track story mentions for UI rendering
-        isStoryMention: this.isStoryMention(rawPayload.message),
-        isShare: this.isShare(rawPayload.message),
-        bot: this.resolveBotConfig(channelConfig),
+    return [
+      {
+        tenantId,
+        channelId,
+        channelAccount: igBusinessId,
+        channelType: this.channelType,
+        senderId: consumerId,
+        senderType: 'customer',
+        messageType,
+        content: rawPayload.message?.text ?? '',
+        mediaUrl: mediaUrl ?? undefined,
+        metadata: {
+          mid: rawPayload.message?.mid,
+          replyTo: rawPayload.message?.reply_to,
+          // Carry the channel's access token for media download
+          // (Instagram uses Page Access Token for IG messaging API)
+          accessToken: channelConfig?.credentials?.accessToken,
+          // Track story mentions for UI rendering
+          isStoryMention: this.isStoryMention(rawPayload.message),
+          isShare: this.isShare(rawPayload.message),
+          bot: this.resolveBotConfig(channelConfig),
+        },
+        externalMessageId: rawPayload.message?.mid ?? '',
+        externalConversationId: `${consumerId}_${igBusinessId}`,
+        timestamp: new Date(rawPayload.timestamp),
+        providerTimestamp: new Date(rawPayload.timestamp),
       },
-      externalMessageId: rawPayload.message?.mid ?? '',
-      externalConversationId: `${consumerId}_${igBusinessId}`,
-      timestamp: new Date(rawPayload.timestamp),
-      providerTimestamp: new Date(rawPayload.timestamp),
-    };
+    ];
   }
 
   /**
@@ -158,6 +160,7 @@ export class InstagramAdapter implements ChannelAdapter {
     headers: Record<string, string>,
     body: any,
     rawBody?: Buffer,
+    secret?: string,
   ): boolean {
     const signature = headers['x-hub-signature-256'];
     if (!signature) {
@@ -165,8 +168,10 @@ export class InstagramAdapter implements ChannelAdapter {
       return false;
     }
 
+    // Meta signs every Page's webhook with one app secret, so the env value is
+    // normally right; the channel override exists for tenants on their own app.
     const appSecret =
-      process.env.FACEBOOK_APP_SECRET ?? process.env.META_APP_SECRET;
+      secret ?? process.env.FACEBOOK_APP_SECRET ?? process.env.META_APP_SECRET;
     if (!appSecret) {
       this.logger.error(
         'FACEBOOK_APP_SECRET is not configured — cannot verify Instagram webhook signature',

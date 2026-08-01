@@ -9,6 +9,7 @@ import {
 import { AgentStateSegmentRepository } from '../repositories/agent-state-segment.repository';
 import { dayKeyOf, SegmentAxis } from '../domain/presence-segments';
 import { PRESENCE_SEGMENTS_QUEUE } from './presence-segments-queue.constants';
+import { OMNI_CONCURRENCY } from '../../queue/config/worker-concurrency';
 
 export interface PresenceSegmentJobData extends TenantJobData {
   agentId: string;
@@ -27,7 +28,9 @@ export interface PresenceSegmentJobData extends TenantJobData {
  * dayKey is computed from each segment's startAt (UTC); the rollover cron
  * guarantees segments never cross a day boundary (§3.2).
  */
-@Processor(PRESENCE_SEGMENTS_QUEUE)
+@Processor(PRESENCE_SEGMENTS_QUEUE, {
+  concurrency: OMNI_CONCURRENCY.maintenance(),
+})
 export class PresenceSegmentsProcessor extends BaseTenantConsumer<PresenceSegmentJobData> {
   protected readonly logger = new Logger(PresenceSegmentsProcessor.name);
   protected readonly cls: ClsService;

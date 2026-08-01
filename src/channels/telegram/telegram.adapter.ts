@@ -33,20 +33,20 @@ export class TelegramAdapter implements ChannelAdapter {
     tenantId: string,
     channelId: string,
     channelConfig?: any,
-  ): OmniPayload | null {
+  ): OmniPayload[] {
     const update = rawPayload;
 
     // Support message and edited_message
     const msg = update.message ?? update.edited_message;
     if (!msg) {
       this.logger.debug('Telegram update has no message, skipping');
-      return null;
+      return [];
     }
 
     // Skip bot messages (prevent echo loops)
     if (msg.from?.is_bot) {
       this.logger.debug('Telegram message from bot, skipping');
-      return null;
+      return [];
     }
 
     const chatId = String(msg.chat?.id ?? msg.from?.id);
@@ -54,41 +54,43 @@ export class TelegramAdapter implements ChannelAdapter {
     const messageType = this.resolveMessageType(msg);
     const content = this.extractContent(msg);
 
-    return {
-      tenantId,
-      channelId,
-      channelAccount: channelId,
-      channelType: this.channelType,
-      senderId: fromId,
-      senderType: 'customer',
-      messageType,
-      content,
-      mediaUrl: this.extractFileId(msg) ?? undefined,
-      metadata: {
-        chatId,
-        updateId: update.update_id,
-        firstName: msg.from?.first_name,
-        lastName: msg.from?.last_name,
-        username: msg.from?.username,
-        languageCode: msg.from?.language_code,
-        // For location
-        latitude: msg.location?.latitude,
-        longitude: msg.location?.longitude,
-        // For contact share
-        contactPhone: msg.contact?.phone_number,
-        contactName: msg.contact?.first_name,
-        // For stickers
-        stickerEmoji: msg.sticker?.emoji,
-        // Bot config passthrough
-        bot: channelConfig?.config?.bot ?? channelConfig?.config?.typebot,
-        // Store bot token for outbound
-        botToken: channelConfig?.credentials?.botToken,
+    return [
+      {
+        tenantId,
+        channelId,
+        channelAccount: channelId,
+        channelType: this.channelType,
+        senderId: fromId,
+        senderType: 'customer',
+        messageType,
+        content,
+        mediaUrl: this.extractFileId(msg) ?? undefined,
+        metadata: {
+          chatId,
+          updateId: update.update_id,
+          firstName: msg.from?.first_name,
+          lastName: msg.from?.last_name,
+          username: msg.from?.username,
+          languageCode: msg.from?.language_code,
+          // For location
+          latitude: msg.location?.latitude,
+          longitude: msg.location?.longitude,
+          // For contact share
+          contactPhone: msg.contact?.phone_number,
+          contactName: msg.contact?.first_name,
+          // For stickers
+          stickerEmoji: msg.sticker?.emoji,
+          // Bot config passthrough
+          bot: channelConfig?.config?.bot ?? channelConfig?.config?.typebot,
+          // Store bot token for outbound
+          botToken: channelConfig?.credentials?.botToken,
+        },
+        externalMessageId: String(msg.message_id),
+        externalConversationId: chatId,
+        timestamp: new Date((msg.date ?? 0) * 1000),
+        providerTimestamp: new Date((msg.date ?? 0) * 1000),
       },
-      externalMessageId: String(msg.message_id),
-      externalConversationId: chatId,
-      timestamp: new Date((msg.date ?? 0) * 1000),
-      providerTimestamp: new Date((msg.date ?? 0) * 1000),
-    };
+    ];
   }
 
   // ── validateWebhook ────────────────────────────────────────────────────────

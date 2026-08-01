@@ -99,6 +99,8 @@ export interface AssignmentOptions {
   strategy?: AssignmentStrategy | string;
   /** Extra hard restriction on top of the channel support pool. */
   agentPool?: string[];
+  /** Agents to skip on this pass only — e.g. one who just let an offer lapse. */
+  excludeAgentIds?: string[];
   contactId?: string | null;
   externalSenderId?: string | null;
   requiredSkills?: string[];
@@ -404,7 +406,10 @@ export class AssignmentService implements OnModuleInit {
         options,
         config.previousAssigneeTimeoutHours,
       );
-      if (found) {
+      // The excluded agent is usually also the sticky one — they handled this
+      // customer last, which is why they were offered the work they just let
+      // lapse. Honouring stickiness here would re-offer it straight back.
+      if (found && !options.excludeAgentIds?.includes(found.assigneeId)) {
         preferred = {
           assigneeId: found.assigneeId,
           source: found.source,
@@ -426,6 +431,7 @@ export class AssignmentService implements OnModuleInit {
       requiredSkills: options.requiredSkills ?? [],
       owningGroupId: options.owningGroupId ?? null,
       restrictToCandidates: options.agentPool ?? null,
+      excludeCandidates: options.excludeAgentIds ?? null,
       preferred,
       configOverride: effectiveOverride,
       previousAssigneeId: options.allowReassignment

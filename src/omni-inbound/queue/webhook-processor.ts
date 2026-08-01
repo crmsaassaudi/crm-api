@@ -1,8 +1,7 @@
 import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { Inject, Logger, NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import Redis from 'ioredis';
 import { BaseConsumer } from '../../queue/base.consumer';
 import { InboundProcessorService } from '../processors/inbound-processor.service';
 import { OMNI_WEBHOOK_QUEUE } from './omni-queue.constants';
@@ -10,7 +9,9 @@ import { ChannelType } from '../domain/omni-payload';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ChannelsService } from '../../channels/channels.service';
 import { ContactRepository } from '../../contacts/infrastructure/persistence/document/repositories/contact.repository';
-import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
+import { IdempotencyService } from '../../redis/idempotency.service';
+import { MetricsService } from '../../observability/metrics.service';
+import { OMNI_CONCURRENCY } from '../../queue/config/worker-concurrency';
 
 export interface WebhookJobData {
   channelType: ChannelType;
@@ -27,47 +28,45 @@ export interface WebhookJobData {
  *
  * Retries are handled automatically by BullMQ (3 attempts, exponential backoff).
  */
-@Processor(OMNI_WEBHOOK_QUEUE)
+@Processor(OMNI_WEBHOOK_QUEUE, { concurrency: OMNI_CONCURRENCY.webhook() })
 export class WebhookProcessor extends BaseConsumer {
   protected readonly logger = new Logger(WebhookProcessor.name);
-  private readonly IDEM_TTL_SECONDS = 86400;
 
   constructor(
     private readonly processor: InboundProcessorService,
     private readonly channelsService: ChannelsService,
     private readonly contactRepo: ContactRepository,
     private readonly cls: ClsService,
-    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    private readonly idempotency: IdempotencyService,
+    private readonly metrics: MetricsService,
   ) {
     super();
   }
 
   async process(job: Job<WebhookJobData>): Promise<void> {
     const { channelType, event } = job.data;
-    const accountId = job.data.accountId ?? this.extractAccountId(job.data);
-    // Dedup ONLY by provider message ID. A BullMQ retry gets a fresh job.id,
-    // so falling back to job.id (the previous behaviour) silently allowed
-    // duplicates when the same webhook was re-delivered later.
+    const accountId = job.data.accountId || this.extractAccountId(job.data);
+    // Dedup by provider message ID only. A BullMQ retry gets a fresh job.id, so
+    // falling back to job.id would let a later redelivery through as new.
     const idempotencyKey = this.buildIdempotencyKey(
       channelType,
       accountId,
       event,
     );
-    const acquired = idempotencyKey
-      ? await this.redis.set(
-          idempotencyKey,
-          '1',
-          'EX',
-          this.IDEM_TTL_SECONDS,
-          'NX',
-        )
-      : 'OK';
 
-    if (!acquired) {
-      this.logger.debug(
-        `Duplicate webhook job skipped by idempotency key ${idempotencyKey}`,
+    // Claim, don't mark. The key only becomes a permanent "handled" marker in
+    // `commit()` below — an attempt killed mid-flight leaves a lease that
+    // expires, so the retry reprocesses instead of being skipped as a duplicate.
+    if (idempotencyKey) {
+      const claimed = await this.idempotency.claim(
+        idempotencyKey,
+        String(job.id ?? job.name),
       );
-      return;
+      if (!claimed) {
+        this.logger.debug(`Duplicate webhook skipped: ${idempotencyKey}`);
+        this.countDropped(channelType, 'duplicate');
+        return;
+      }
     }
 
     try {
@@ -75,7 +74,7 @@ export class WebhookProcessor extends BaseConsumer {
         await this.resolveChannelData({ ...job.data, accountId });
 
       await runWithTenantContext(this.cls, tenantId, async () => {
-        this.logger.log(
+        this.logger.debug(
           `Processing webhook job ${job.id} - ${channelType} for tenant ${tenantId}`,
         );
 
@@ -88,27 +87,42 @@ export class WebhookProcessor extends BaseConsumer {
           channelConfig,
         );
       });
+
+      if (idempotencyKey) await this.idempotency.commit(idempotencyKey);
     } catch (error: any) {
-      // NotFoundException = channel deleted/disconnected. Retry won't help.
+      // The channel is gone or was never connected. Retrying cannot help, but
+      // this is still a dropped customer message: record it, forward it to the
+      // DLQ so it is visible, and release the claim so a redelivery after the
+      // channel is reconnected can be processed.
       if (error instanceof NotFoundException) {
-        this.logger.warn(
-          `Job ${job.id} failed with ${error.message} — channel no longer exists, skipping retry`,
+        this.logger.error(
+          `Dropping ${channelType} webhook for account ${accountId}: ${error.message}`,
         );
+        this.countDropped(channelType, 'channel_not_found');
+        if (idempotencyKey) await this.idempotency.release(idempotencyKey);
+        await this.dlqService?.sendToDlq(OMNI_WEBHOOK_QUEUE, job, error);
         return;
       }
-      // E11000 = MongoDB Duplicate Key - message was already persisted.
-      // Acknowledge the job as completed to avoid BullMQ retries and log spam.
+      // E11000 = the message is already persisted, so the work is done.
       if (error?.code === 11000) {
-        this.logger.warn(
-          `Duplicate message detected (E11000) in job ${job.id} - marking as completed`,
+        this.logger.debug(
+          `Message in job ${job.id} was already persisted (E11000)`,
         );
+        if (idempotencyKey) await this.idempotency.commit(idempotencyKey);
         return;
       }
-      if (idempotencyKey) {
-        await this.redis.del(idempotencyKey).catch(() => undefined);
-      }
-      throw error; // Re-throw any other error so BullMQ retries normally
+      // Everything else retries under the same owner, which re-enters its own
+      // claim. No compensating delete is needed, and none would be reliable:
+      // a `catch` block does not run for an OOM kill.
+      throw error;
     }
+  }
+
+  private countDropped(channelType: ChannelType, reason: string): void {
+    this.metrics.incrementCounter('crm_omni_webhooks_dropped_total', {
+      channel: channelType,
+      reason,
+    });
   }
 
   private async resolveChannelData(data: WebhookJobData): Promise<{
@@ -124,7 +138,7 @@ export class WebhookProcessor extends BaseConsumer {
       };
     }
 
-    const accountId = data.accountId ?? this.extractAccountId(data);
+    const accountId = data.accountId || this.extractAccountId(data);
     if (!accountId) {
       throw new Error(
         `Could not determine channel account ID from ${data.channelType} webhook`,
@@ -151,8 +165,14 @@ export class WebhookProcessor extends BaseConsumer {
         return event?.recipient?.id ?? '';
       case 'whatsapp':
         return event?.metadata?.phone_number_id ?? '';
-      case 'zalo':
-        return event?.oa_id ?? event?.recipient?.id ?? '';
+      case 'zalo': {
+        if (event?.oa_id) return String(event.oa_id);
+        // The OA is the recipient of a user message and the sender of an echo.
+        const sentByOa = String(event?.event_name ?? '').startsWith('oa_');
+        return String(
+          (sentByOa ? event?.sender?.id : event?.recipient?.id) ?? '',
+        );
+      }
       default:
         return '';
     }

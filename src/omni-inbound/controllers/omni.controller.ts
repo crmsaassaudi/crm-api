@@ -565,23 +565,24 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
 
-    const cursorCreatedAt = afterCreatedAt ? new Date(afterCreatedAt) : null;
-    const canDeltaSync =
-      !!afterMessageId &&
-      !!cursorCreatedAt &&
-      !Number.isNaN(cursorCreatedAt.getTime());
+    // The cursor position is read from the anchor message itself rather than
+    // from `afterCreatedAt`. The client's timestamp is in a different field
+    // from the one the thread is ordered by, so trusting it skipped messages.
+    // The parameter stays accepted for older clients, and ignored.
+    void afterCreatedAt;
+    const cursor = afterMessageId
+      ? await this.messageRepo.findCursorAnchor(afterMessageId)
+      : null;
 
-    const messageResult = canDeltaSync
+    const messageResult = cursor
       ? await this.messageRepo.findByConversationIdWithCursor({
           conversationId,
           limit: 100,
           direction: 'future',
-          cursor: {
-            id: afterMessageId,
-            createdAt: cursorCreatedAt,
-          },
+          cursor,
         })
       : await this.messageRepo.findByConversation(conversationId, 1, 100);
+    const canDeltaSync = !!cursor;
     const messages = messageResult.data;
     const hasMore =
       'hasMore' in messageResult

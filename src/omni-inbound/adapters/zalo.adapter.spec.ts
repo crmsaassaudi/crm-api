@@ -29,13 +29,13 @@ describe('ZaloAdapter', () => {
 
       const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
 
-      expect(result.channelType).toBe('zalo');
-      expect(result.senderId).toBe('zalo_user_123');
-      expect(result.messageType).toBe('text');
-      expect(result.content).toBe('Xin chào!');
-      expect(result.externalMessageId).toBe('zmsg_001');
-      expect(result.externalConversationId).toBe('zalo_user_123_oa_456');
-      expect(result.timestamp).toEqual(new Date(1700000000000));
+      expect(result[0].channelType).toBe('zalo');
+      expect(result[0].senderId).toBe('zalo_user_123');
+      expect(result[0].messageType).toBe('text');
+      expect(result[0].content).toBe('Xin chào!');
+      expect(result[0].externalMessageId).toBe('zmsg_001');
+      expect(result[0].externalConversationId).toBe('zalo_user_123_oa_456');
+      expect(result[0].timestamp).toEqual(new Date(1700000000000));
     });
 
     it('should normalize an image message with expiring URL', () => {
@@ -61,11 +61,11 @@ describe('ZaloAdapter', () => {
 
       const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
 
-      expect(result.messageType).toBe('image');
-      expect(result.mediaUrl).toBe(
+      expect(result[0].messageType).toBe('image');
+      expect(result[0].mediaUrl).toBe(
         'https://zalo-cdn.com/image.jpg?token=expires_soon',
       );
-      expect(result.content).toBe('');
+      expect(result[0].content).toBe('');
     });
 
     it('should normalize a file message', () => {
@@ -92,8 +92,8 @@ describe('ZaloAdapter', () => {
 
       const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
 
-      expect(result.messageType).toBe('file');
-      expect(result.mediaUrl).toBe('https://zalo-cdn.com/doc.pdf');
+      expect(result[0].messageType).toBe('file');
+      expect(result[0].mediaUrl).toBe('https://zalo-cdn.com/doc.pdf');
     });
 
     it('should normalize a sticker message', () => {
@@ -116,7 +116,7 @@ describe('ZaloAdapter', () => {
 
       const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
 
-      expect(result.messageType).toBe('sticker');
+      expect(result[0].messageType).toBe('sticker');
     });
 
     it('should preserve Zalo-specific metadata', () => {
@@ -131,9 +131,9 @@ describe('ZaloAdapter', () => {
 
       const result = adapter.normalize(raw, 'tenant_1', 'channel_1');
 
-      expect(result.metadata.appId).toBe('app_001');
-      expect(result.metadata.eventName).toBe('user_send_text');
-      expect(result.metadata.oaId).toBe('oa_456');
+      expect(result[0].metadata.appId).toBe('app_001');
+      expect(result[0].metadata.eventName).toBe('user_send_text');
+      expect(result[0].metadata.oaId).toBe('oa_456');
     });
   });
 });

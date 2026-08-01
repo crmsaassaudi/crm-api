@@ -50,6 +50,8 @@ import { ConversationLockService } from './services/conversation-lock.service';
 import { ReactionService } from './services/reaction.service';
 import { InboundOrchestrationService } from './services/inbound-orchestration.service';
 import { ShadowContactService } from './services/shadow-contact.service';
+import { DeliveryReceiptService } from './services/delivery-receipt.service';
+import { LifecycleReconcileCron } from './cron/lifecycle-reconcile.cron';
 import { ConversationLifecycleService } from './services/conversation-lifecycle.service';
 import { ConversationQueryService } from './services/conversation-query.service';
 import { CrmRealtimeGateway } from './services/crm-realtime.gateway';
@@ -344,6 +346,8 @@ const workerProviders =
     ConversationQueryService,
     InboundOrchestrationService,
     ShadowContactService,
+    DeliveryReceiptService,
+    LifecycleReconcileCron,
     ConversionService,
     IdentityService,
 

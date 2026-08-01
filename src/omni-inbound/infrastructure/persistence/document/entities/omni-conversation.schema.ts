@@ -195,6 +195,15 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 0 })
   nextSequence: number;
 
+  /**
+   * Sequence of the message the `lastMessage*` fields describe.
+   *
+   * Guards the preview against being rewound by a message that is replayed or
+   * delivered late: the summary only moves forward.
+   */
+  @Prop({ default: 0 })
+  lastMessageSequence: number;
+
   /** Reference to the most recent message document. */
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -439,8 +448,17 @@ OmniConversationSchema.index(
   { name: 'sticky_by_sender' },
 );
 
+// Customer name only — deliberately NOT `lastMessage`.
+//
+// `lastMessage` is rewritten on every inbound and outbound message, so
+// including it made this text index the most-updated index in the system, on
+// its hottest collection. It also made the results inconsistent: it matched
+// only whatever the newest message happened to be, so a thread dropped out of
+// its own search result as soon as the customer said something else.
+// Full-text search over message bodies belongs in OpenSearch, which indexes
+// every message rather than the last one.
 OmniConversationSchema.index(
-  { tenantId: 1, 'customer.name': 'text', lastMessage: 'text' },
+  { tenantId: 1, 'customer.name': 'text' },
   { name: 'conversation_text_search' },
 );
 

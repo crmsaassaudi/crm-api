@@ -70,6 +70,8 @@ export const OmniEvents = {
   REPLY_AUTO_ASSIGN: 'omni.conversation.reply_auto_assign',
   /** Capacity-reserved work was offered and awaits agent acceptance. */
   WORK_OFFER_CREATED: 'omni.work_offer.created',
+  /** An offer lapsed or was declined and the item is back in the queue */
+  WORK_ITEM_REQUEUED: 'omni.work_item.requeued',
 
   // ── Bot Lifecycle ────────────────────────────────────────────────────────
   /** Bot handed off conversation to human agent — trigger auto-assignment */
@@ -103,6 +105,10 @@ export const OmniEvents = {
   // ── Contact / Identity ───────────────────────────────────────────────────
   /** Contacts auto-merged during identity resolution */
   CONTACT_AUTO_MERGED: 'omni.contact.auto_merged',
+
+  // ── Delivery receipts ────────────────────────────────────────────────────
+  /** Provider reported delivered/read/failed for messages we sent */
+  DELIVERY_RECEIPTS_RECEIVED: 'omni.delivery.receipts_received',
 
   // ── Reactions ────────────────────────────────────────────────────────────
   /** Inbound reaction received from any channel */
@@ -153,6 +159,13 @@ export const LivechatEvents = {
   VISITOR_UPLOAD_FAILED: 'livechat.visitor.upload_failed',
   /** Visitor identified via pre-chat form or CRMWidget.identify() */
   VISITOR_IDENTIFIED: 'livechat.visitor.identified',
+  /**
+   * A visitor message could not be accepted into the pipeline.
+   *
+   * Livechat has no provider redelivery, so the widget is told rather than left
+   * waiting: the visitor sees the message failed and can resend it.
+   */
+  MESSAGE_REJECTED: 'livechat.message.rejected',
 } as const;
 
 export type LivechatEventName =
@@ -336,6 +349,19 @@ export interface ReplyAutoAssignEvent extends OmniEventBase {
   agentId: string;
   /** Channel type for analytics */
   channelType: string;
+}
+
+/**
+ * omni.work_item.requeued — an offer lapsed or was declined and the work item
+ * is back in the queue awaiting a fresh routing pass.
+ */
+export interface WorkItemRequeuedEvent extends OmniEventBase {
+  conversationId: string;
+  /** The agent who let the offer lapse — must not be picked again. */
+  excludeAgentId: string;
+  /** 1-based re-offer count, bounded by MAX_REDISPATCH_ATTEMPTS. */
+  attempt: number;
+  reason: string;
 }
 
 /** omni.bot.handoff — Bot handed off conversation to human agent */

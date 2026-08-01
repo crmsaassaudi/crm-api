@@ -364,6 +364,31 @@ describe('AssignmentCoreService', () => {
       });
       expect(decision.outcome).toBe('queued');
     });
+
+    it('should skip excluded candidates', async () => {
+      const h = buildHarness({ pool: ['a', 'b'] });
+      const decision = await h.core.assign({
+        ...base,
+        excludeCandidates: ['a'],
+      });
+      expect(decision.assigneeId).toBe('b');
+    });
+
+    it('should queue when the exclusion empties the pool', async () => {
+      const h = buildHarness({ pool: ['a'] });
+      const decision = await h.core.assign({
+        ...base,
+        excludeCandidates: ['a'],
+      });
+      expect(decision.outcome).toBe('queued');
+      expect(h.commit.committed).toHaveLength(0);
+    });
+
+    it('should treat an empty exclusion list as no exclusion', async () => {
+      const h = buildHarness({ pool: ['a'] });
+      const decision = await h.core.assign({ ...base, excludeCandidates: [] });
+      expect(decision.assigneeId).toBe('a');
+    });
   });
 
   describe('skills', () => {

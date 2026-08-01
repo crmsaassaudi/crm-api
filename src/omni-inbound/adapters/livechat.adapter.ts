@@ -38,34 +38,37 @@ export class LivechatAdapter implements ChannelAdapter {
     tenantId: string,
     channelId: string,
     _channelConfig?: any,
-  ): OmniPayload | null {
+  ): OmniPayload[] {
     // ── Text message ────────────────────────────────────────────────────
     if (rawPayload?.visitorId && rawPayload?.text) {
-      return {
-        channelType: 'livechat',
-        channelId,
-        tenantId,
-        channelAccount: channelId,
-        senderId: rawPayload.visitorId,
-        senderType: 'customer',
-        messageType: 'text',
-        content: rawPayload.text,
-        metadata: {
-          ...(rawPayload.metadata ?? {}),
-          contactName: rawPayload.visitorName || undefined,
+      return [
+        {
+          channelType: 'livechat',
+          channelId,
+          tenantId,
+          channelAccount: channelId,
+          senderId: rawPayload.visitorId,
+          senderType: 'customer',
+          messageType: 'text',
+          content: rawPayload.text,
+          metadata: {
+            ...(rawPayload.metadata ?? {}),
+            contactName: rawPayload.visitorName || undefined,
+          },
+          // No id: the pipeline derives a content fingerprint, which makes a
+          // widget resend deduplicate. A `Date.now()` id, the previous
+          // fallback, made every resend look like a brand-new message.
+          externalMessageId: this.visitorMessageId(rawPayload),
+          externalConversationId: rawPayload.visitorId,
+          timestamp: rawPayload.timestamp
+            ? new Date(rawPayload.timestamp)
+            : new Date(),
+          // Use server time — livechat messages arrive in real-time via WS,
+          // no webhook reordering needed (unlike FB/Zalo). Using browser clock
+          // causes sort mismatch with bot replies that use server clock.
+          providerTimestamp: new Date(),
         },
-        externalMessageId: rawPayload.metadata?.clientMessageId
-          ? String(rawPayload.metadata.clientMessageId)
-          : `lc_${rawPayload.visitorId}_${Date.now()}`,
-        externalConversationId: rawPayload.visitorId,
-        timestamp: rawPayload.timestamp
-          ? new Date(rawPayload.timestamp)
-          : new Date(),
-        // Use server time — livechat messages arrive in real-time via WS,
-        // no webhook reordering needed (unlike FB/Zalo). Using browser clock
-        // causes sort mismatch with bot replies that use server clock.
-        providerTimestamp: new Date(),
-      };
+      ];
     }
 
     // ── Media message (P1.4: fileId already resolved by VisitorUploadService) ──
@@ -82,33 +85,50 @@ export class LivechatAdapter implements ChannelAdapter {
         ? new Date(rawPayload.timestamp)
         : new Date();
 
-      return {
-        channelType: 'livechat',
-        channelId: rawPayload.channelId ?? channelId,
-        tenantId,
-        channelAccount: channelId,
-        senderId: rawPayload.visitorId,
-        senderType: 'customer',
-        messageType,
-        content: rawPayload.fileName ?? `[${messageType}]`,
-        metadata: {
-          media: {
-            fileName: rawPayload.fileName,
-            mimeType,
-            size: rawPayload.fileSize,
-            fileId: rawPayload.fileId,
-            storageKey: rawPayload.storageKey,
+      return [
+        {
+          channelType: 'livechat',
+          channelId: rawPayload.channelId ?? channelId,
+          tenantId,
+          channelAccount: channelId,
+          senderId: rawPayload.visitorId,
+          senderType: 'customer',
+          messageType,
+          content: rawPayload.fileName ?? `[${messageType}]`,
+          metadata: {
+            media: {
+              fileName: rawPayload.fileName,
+              mimeType,
+              size: rawPayload.fileSize,
+              fileId: rawPayload.fileId,
+              storageKey: rawPayload.storageKey,
+            },
+            contactName: rawPayload.visitorName || undefined,
           },
-          contactName: rawPayload.visitorName || undefined,
+          // The uploaded file is already unique per upload, so its id is a
+          // stable identity for the message that carries it.
+          externalMessageId: `lc_media_${rawPayload.fileId}`,
+          externalConversationId: rawPayload.visitorId,
+          timestamp: ts,
+          providerTimestamp: new Date(),
         },
-        externalMessageId: `lc_media_${rawPayload.visitorId}_${ts.getTime()}`,
-        externalConversationId: rawPayload.visitorId,
-        timestamp: ts,
-        providerTimestamp: new Date(),
-      };
+      ];
     }
 
-    return null;
+    return [];
+  }
+
+  /**
+   * A widget-supplied `clientMessageId` is the visitor's own idempotency key.
+   * Scope it to the visitor so one widget cannot suppress another's messages by
+   * reusing an id, and fall back to no id at all — the pipeline's content
+   * fingerprint is a better duplicate test than a fresh timestamp.
+   */
+  private visitorMessageId(rawPayload: any): string {
+    const clientMessageId = rawPayload.metadata?.clientMessageId;
+    return clientMessageId
+      ? `lc_${rawPayload.visitorId}_${String(clientMessageId)}`
+      : '';
   }
 
   /** No HTTP webhook — WS auth is handled in LivechatGateway */

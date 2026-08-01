@@ -559,6 +559,25 @@ export class LivechatGateway
     });
   }
 
+  /**
+   * The pipeline refused a visitor message (Redis unavailable, for instance).
+   *
+   * Nothing will retry it — livechat has no provider redelivery — so the widget
+   * has to know, or the visitor sits waiting for a reply to a message that was
+   * never accepted.
+   */
+  @OnEvent(LivechatEvents.MESSAGE_REJECTED)
+  handleMessageRejected(payload: {
+    visitorId: string;
+    clientMessageId: string | null;
+    reason: string;
+  }): void {
+    this.server.to(`visitor:${payload.visitorId}`).emit('message:rejected', {
+      clientMessageId: payload.clientMessageId,
+      reason: payload.reason,
+    });
+  }
+
   // ── T-031: Rate Limiting ────────────────────────────────────────────────
 
   /**

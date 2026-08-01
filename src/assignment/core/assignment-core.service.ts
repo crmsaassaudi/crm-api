@@ -92,6 +92,14 @@ export interface AssignRequest {
    */
   restrictToCandidates?: string[] | null;
 
+  /**
+   * Candidates to skip on this pass only — e.g. the agent who just let an offer
+   * lapse. Unlike `restrictToCandidates` this never widens or defines the pool,
+   * it only subtracts from whatever the pool turned out to be, so an empty array
+   * is simply "exclude nobody".
+   */
+  excludeCandidates?: string[] | null;
+
   preferred?: PreferredAssignee | null;
   /** Skip rule evaluation — the caller has already chosen the target. */
   skipRules?: boolean;
@@ -461,6 +469,13 @@ export class AssignmentCoreService {
         eligiblePoolSize: 0,
         traces,
       });
+    }
+
+    // Applied after the target resolves rather than to the base pool: with an
+    // unrestricted pool (`undefined`) there is no set to subtract from yet.
+    const excluded = new Set(request.excludeCandidates ?? []);
+    if (excluded.size > 0) {
+      target.candidates = target.candidates.filter((id) => !excluded.has(id));
     }
 
     if (target.candidates.length === 0) {

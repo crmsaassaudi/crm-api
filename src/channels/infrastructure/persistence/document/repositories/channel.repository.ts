@@ -8,6 +8,19 @@ import {
 import { Channel } from '../../../../domain/channel';
 import { ChannelMapper } from '../mappers/channel.mapper';
 
+/**
+ * Short-lived memo of `findAnyByAccount`, shared per process.
+ *
+ * Bounded by the number of connected channels, which is small, so it needs no
+ * eviction beyond its TTL.
+ */
+const channelByAccountCache = new Map<
+  string,
+  { channel: Channel | null; expiresAt: number }
+>();
+
+const ACCOUNT_CACHE_TTL_MS = 15_000;
+
 @Injectable()
 export class ChannelRepository {
   constructor(
@@ -34,13 +47,29 @@ export class ChannelRepository {
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
+  /**
+   * Resolve a channel from the provider's account id.
+   *
+   * This is the single hottest read in the omni pipeline — every inbound
+   * message resolves its channel, bot config and credentials through it — so
+   * results are memoised for a few seconds per process. The window is short
+   * enough that a config change takes effect while an operator is still looking
+   * at the screen, and a stale credential costs one retry rather than a
+   * misroute.
+   */
   async findAnyByAccount(
     type: string,
     account: string,
   ): Promise<Channel | null> {
-    // CRIT-03: Fetch up to 2 matches to detect ambiguous multi-tenant state.
-    // If the same (type, account) exists in multiple tenants, we must not
-    // silently pick one — that would route webhooks to the wrong tenant.
+    const cacheKey = `${type}:${account}`;
+    const cached = channelByAccountCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.channel;
+    }
+
+    // Fetch up to 2 matches to detect ambiguous multi-tenant state. If the same
+    // (type, account) exists in two tenants we must not silently pick one —
+    // that would route a tenant's webhooks into another tenant's data.
     const docs = await this.model
       .find({ type, account })
       .select('+credentials')
@@ -49,8 +78,7 @@ export class ChannelRepository {
       .exec();
 
     if (docs.length > 1) {
-      // This should never happen if assertChannelAccountAvailable is enforced,
-      // but if it does, refuse to resolve rather than route to the wrong tenant.
+      // Should be impossible while assertChannelAccountAvailable is enforced.
       const tenantIds = docs.map((d) => d.tenantId?.toString());
       throw new Error(
         `Ambiguous channel account: (${type}, ${account}) found in tenants [${tenantIds.join(', ')}]. ` +
@@ -58,7 +86,17 @@ export class ChannelRepository {
       );
     }
 
-    return docs[0] ? ChannelMapper.toDomain(docs[0]) : null;
+    const channel = docs[0] ? ChannelMapper.toDomain(docs[0]) : null;
+    channelByAccountCache.set(cacheKey, {
+      channel,
+      expiresAt: Date.now() + ACCOUNT_CACHE_TTL_MS,
+    });
+    return channel;
+  }
+
+  /** Drop the memoised lookup after a write that changes routing or credentials. */
+  static invalidateAccountCache(type: string, account: string): void {
+    channelByAccountCache.delete(`${type}:${account}`);
   }
 
   async findByAccountWithCredentials(
@@ -130,6 +168,7 @@ export class ChannelRepository {
     // so we rely on updatedAt vs createdAt to detect new docs.
     const timeDiff = doc.updatedAt.getTime() - doc.createdAt.getTime();
     const isNew = timeDiff < 1000;
+    ChannelRepository.invalidateAccountCache(type, account);
     return { channel: ChannelMapper.toDomain(doc), isNew };
   }
 
@@ -141,6 +180,7 @@ export class ChannelRepository {
     const doc = await this.model
       .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
       .exec();
+    if (doc) ChannelRepository.invalidateAccountCache(doc.type, doc.account);
     return doc ? ChannelMapper.toDomain(doc) : null;
   }
 
@@ -160,7 +200,9 @@ export class ChannelRepository {
   }
 
   async delete(tenantId: string, id: string): Promise<boolean> {
+    const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     const result = await this.model.deleteOne({ _id: id, tenantId }).exec();
+    if (doc) ChannelRepository.invalidateAccountCache(doc.type, doc.account);
     return result.deletedCount > 0;
   }
 }

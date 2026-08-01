@@ -1,5 +1,6 @@
 import { OmniPayload, ChannelType } from '../domain/omni-payload';
 import { OmniReactionPayload } from '../domain/omni-reaction-payload';
+import { DeliveryReceipt } from '../domain/delivery-receipt';
 import {
   OutboundMedia,
   MediaSendResult,
@@ -18,17 +19,27 @@ export interface ChannelAdapter {
   readonly channelType: ChannelType;
 
   /**
-   * Transform a raw provider webhook body into a normalised `OmniPayload`.
-   * Returns `null` for non-message events (delivery receipts, read receipts,
-   * reactions, etc.) that should be silently skipped.
-   * Throws if the payload is malformed or unsupported.
+   * Transform a raw provider webhook event into normalised messages.
+   *
+   * Returns every message the event carries — providers batch, and WhatsApp in
+   * particular puts an array under one `changes[].value`. Returning a single
+   * payload silently discarded everything after the first.
+   *
+   * An empty array means the event carries no messages (delivery receipts, read
+   * receipts, reactions). Throws if the payload is malformed or unsupported.
    */
   normalize(
     rawPayload: any,
     tenantId: string,
     channelId: string,
     channelConfig?: any,
-  ): OmniPayload | null;
+  ): OmniPayload[];
+
+  /**
+   * Extract delivery/read receipts for messages we sent.
+   * Optional — only implemented by providers that report them.
+   */
+  normalizeDeliveryReceipts?(rawPayload: any): DeliveryReceipt[];
 
   /**
    * Extract a reaction event from a raw provider webhook body.
@@ -51,6 +62,16 @@ export interface ChannelAdapter {
     headers: Record<string, string>,
     body: any,
     rawBody?: Buffer,
+    /**
+     * Per-channel signing secret, when the connected channel carries one.
+     *
+     * Providers differ: Meta signs every Page's webhook with a single app
+     * secret, but each Zalo OA and each TikTok app has its own. With only an
+     * env-level secret, exactly one tenant could verify those channels — the
+     * rest were rejected at the door. Falls back to the env secret when the
+     * channel does not define one.
+     */
+    secret?: string,
   ): boolean;
 
   /**

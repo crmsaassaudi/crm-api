@@ -45,6 +45,16 @@ export class OutboxEventSchemaClass {
   @Prop({ type: Number, default: 0 })
   retryCount: number;
 
+  /**
+   * When a recovery run took ownership of this event.
+   *
+   * The poller is registered on more than one runtime, so without a claim two
+   * replicas publish the same pending event. The claim expires so a replica
+   * that dies mid-publish does not strand it.
+   */
+  @Prop({ type: Date, default: null })
+  claimedAt: Date | null;
+
   @Prop({ type: String, default: null })
   lastError: string | null;
 

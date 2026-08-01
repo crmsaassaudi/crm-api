@@ -2,6 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -19,9 +20,13 @@ import {
 } from './conversation-transfer.schema';
 import { CreateTransferDto } from './transfer.dto';
 import { resolveCapacityWeight } from '../work-distribution/capacity-policy';
+import { RedisLockService } from '../../redis/redis-lock.service';
+import { runAsClusterSingleton } from '../../common/scheduling/cluster-singleton';
 
 @Injectable()
 export class ConversationTransferService {
+  private readonly logger = new Logger(ConversationTransferService.name);
+
   constructor(
     @InjectModel(ConversationTransferSchemaClass.name)
     private readonly transfers: Model<ConversationTransferDocument>,
@@ -30,6 +35,7 @@ export class ConversationTransferService {
     private readonly presence: AgentPresenceService,
     private readonly channelSupport: ChannelSupportService,
     private readonly events: EventEmitter2,
+    private readonly lockService: RedisLockService,
   ) {}
 
   async create(
@@ -270,6 +276,14 @@ export class ConversationTransferService {
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
+  async expirePendingTick(): Promise<void> {
+    await runAsClusterSingleton(
+      { lockService: this.lockService, logger: this.logger },
+      { name: 'omni:transfer:expire-pending', lockTtlMs: 2 * 60_000 },
+      () => this.expirePending(),
+    );
+  }
+
   async expirePending(): Promise<number> {
     const candidates = await this.transfers
       .find({

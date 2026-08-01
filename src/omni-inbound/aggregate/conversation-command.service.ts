@@ -60,7 +60,6 @@ export class ConversationCommandService {
     tenantId: string,
     omniPayload: OmniPayload,
     messageDedupId: string,
-    idemKey: string,
   ): Promise<void> {
     const operationId = ulid();
 
@@ -73,7 +72,6 @@ export class ConversationCommandService {
       payload: {
         omniPayload,
         messageDedupId,
-        idemKey,
       } satisfies CustomerMessagePayload,
       createdAt: new Date().toISOString(),
     };

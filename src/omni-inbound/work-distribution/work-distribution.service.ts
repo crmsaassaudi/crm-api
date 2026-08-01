@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -35,9 +36,16 @@ import {
   InboxDocument,
   InboxSchemaClass,
 } from '../../inboxes/infrastructure/inbox.schema';
+import { RedisLockService } from '../../redis/redis-lock.service';
+import { runAsClusterSingleton } from '../../common/scheduling/cluster-singleton';
+
+/** How many times an unaccepted item is re-offered before it waits for a pull. */
+const MAX_REDISPATCH_ATTEMPTS = 3;
 
 @Injectable()
 export class WorkDistributionService {
+  private readonly logger = new Logger(WorkDistributionService.name);
+
   constructor(
     @InjectModel(WorkItemSchemaClass.name)
     private readonly workItems: Model<WorkItemDocument>,
@@ -53,6 +61,7 @@ export class WorkDistributionService {
     private readonly commands: ConversationCommandService,
     private readonly events: EventEmitter2,
     private readonly settings: CrmSettingsService,
+    private readonly lockService: RedisLockService,
   ) {}
 
   @OnEvent(OmniEvents.CONVERSATION_CREATED, { async: true })
@@ -218,6 +227,14 @@ export class WorkDistributionService {
   }
 
   @Cron(CronExpression.EVERY_10_SECONDS)
+  async completeDueWrapUpTick(): Promise<void> {
+    await runAsClusterSingleton(
+      { lockService: this.lockService, logger: this.logger },
+      { name: 'omni:work-distribution:wrap-up', lockTtlMs: 30_000 },
+      () => this.completeDueWrapUp(),
+    );
+  }
+
   async completeDueWrapUp(): Promise<number> {
     const candidates = await this.workItems
       .find({ status: 'wrap_up', wrapUpDueAt: { $lte: new Date() } })
@@ -598,6 +615,29 @@ export class WorkDistributionService {
     return { offerId, workItemId: String(item._id), status: 'accepted' };
   }
 
+  /** True while an agent still has an unexpired offer for this conversation. */
+  async hasOpenOffer(conversationId: string): Promise<boolean> {
+    const workItem = await this.workItems
+      .findOne({ conversationId, status: 'offered' })
+      .select('_id')
+      .lean()
+      .setOptions({ isPlatformQuery: true })
+      .exec();
+    if (!workItem) return false;
+
+    const offer = await this.offers
+      .findOne({
+        workItemId: workItem._id,
+        status: 'offered',
+        expiresAt: { $gt: new Date() },
+      })
+      .select('_id')
+      .lean()
+      .setOptions({ isPlatformQuery: true })
+      .exec();
+    return !!offer;
+  }
+
   async declineOffer(
     tenantId: string,
     offerId: string,
@@ -624,10 +664,19 @@ export class WorkDistributionService {
       agentId,
       offer.capacityWeight,
     );
+    await this.requestRedispatch(offer, 'offer_declined');
     return { offerId, status: 'declined' };
   }
 
   @Cron(CronExpression.EVERY_10_SECONDS)
+  async expireOffersTick(): Promise<void> {
+    await runAsClusterSingleton(
+      { lockService: this.lockService, logger: this.logger },
+      { name: 'omni:work-distribution:expire-offers', lockTtlMs: 30_000 },
+      () => this.expireOffers(),
+    );
+  }
+
   async expireOffers(): Promise<number> {
     const expired = await this.offers
       .find({ status: 'offered', expiresAt: { $lte: new Date() } })
@@ -653,9 +702,56 @@ export class WorkDistributionService {
         String(result.agentId),
         result.capacityWeight,
       );
+      await this.requestRedispatch(result, 'offer_expired');
       count++;
     }
     return count;
+  }
+
+  /**
+   * Ask the routing engine to find someone else for a work item that came back
+   * to the queue.
+   *
+   * Returning it to `queued` is not enough on its own: nothing else looks at
+   * queued items, so an offer that timed out left the conversation sitting
+   * there until an agent happened to pull it by hand. Re-offering has to be
+   * bounded, though — an item nobody accepts would otherwise cycle forever, so
+   * after `MAX_REDISPATCH_ATTEMPTS` it stays queued for a human to pick up.
+   */
+  private async requestRedispatch(
+    offer: WorkOfferDocument,
+    reason: string,
+  ): Promise<void> {
+    const workItem = await this.workItems
+      .findOneAndUpdate(
+        {
+          _id: offer.workItemId,
+          status: 'queued',
+          $or: [
+            { redispatchAttempts: { $lt: MAX_REDISPATCH_ATTEMPTS } },
+            { redispatchAttempts: { $exists: false } },
+          ],
+        },
+        { $inc: { redispatchAttempts: 1 } },
+        { new: true },
+      )
+      .setOptions({ isPlatformQuery: true })
+      .exec();
+
+    if (!workItem) {
+      this.logger.debug(
+        `Work item ${String(offer.workItemId)} stays queued for manual pickup (${reason})`,
+      );
+      return;
+    }
+
+    this.events.emit(OmniEvents.WORK_ITEM_REQUEUED, {
+      tenantId: String(offer.tenantId),
+      conversationId: String(workItem.conversationId),
+      excludeAgentId: String(offer.agentId),
+      attempt: workItem.redispatchAttempts,
+      reason,
+    });
   }
 
   /**
@@ -665,6 +761,14 @@ export class WorkDistributionService {
    * the deployment backfill.
    */
   @Cron(CronExpression.EVERY_MINUTE)
+  async reconcileRecentWorkItemsTick(): Promise<void> {
+    await runAsClusterSingleton(
+      { lockService: this.lockService, logger: this.logger },
+      { name: 'omni:work-distribution:reconcile', lockTtlMs: 5 * 60_000 },
+      () => this.reconcileRecentWorkItems(),
+    );
+  }
+
   async reconcileRecentWorkItems(): Promise<number> {
     const missing = await this.conversations
       .aggregate([

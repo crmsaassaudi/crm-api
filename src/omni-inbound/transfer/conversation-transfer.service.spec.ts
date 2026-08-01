@@ -64,6 +64,7 @@ describe('ConversationTransferService', () => {
       presence,
       channelSupport,
       events,
+      { acquire: (_k: any, _o: any, fn: any) => fn() } as any,
     );
   });
 
