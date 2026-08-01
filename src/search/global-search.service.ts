@@ -203,16 +203,14 @@ export class GlobalSearchService {
       metricLabels,
       results.length,
     );
-    // The histogram is the one that can answer "what is p95". The counter is
-    // kept alongside it for one release so existing dashboards do not go blank
-    // during the cutover; it can only ever yield a mean.
+    // Only the histogram can answer "what is p95", which is the question the
+    // latency budget is written in. A companion counter was carried alongside
+    // it to keep dashboards from going blank across the cutover — there has
+    // been no cutover, nothing queries it, and a series that can only ever
+    // yield a mean is worse than no series when someone reaches for it during
+    // an incident.
     this.metrics.observeHistogram(
       'crm_search_duration_ms',
-      metricLabels,
-      durationMs,
-    );
-    this.metrics.incrementCounter(
-      'crm_search_duration_ms_total',
       metricLabels,
       durationMs,
     );
