@@ -210,6 +210,13 @@ export class ContactsService {
       // hole its whitelist exists to close), and an admin-defined field that
       // cannot be filtered is a field the product cannot actually use.
       __allowedCustomFieldKeys: await this.resolveCustomFieldKeys(filter),
+      // Only resolved when the request actually carries a search term: a phone
+      // lookup needs the tenant's country code to turn the national form a user
+      // types into the E.164 form the write gate stored, and an ordinary list
+      // request should not pay for the settings read.
+      __defaultCountryCode: filter?.search
+        ? await this.resolveDefaultCountryCode()
+        : undefined,
     };
 
     if (resolvePaginationMode(filter) === 'cursor') {
@@ -388,6 +395,21 @@ export class ContactsService {
         tenantId: (updated as any).tenantId,
         contactId: updated.id,
       });
+
+      // VIP is denormalised onto the contact's live conversations, because both
+      // the inbox filter and the inbound routing context read it from there.
+      // Emitted as an event rather than calling the omni repository directly:
+      // contacts must not gain a dependency on omni-inbound, which already
+      // depends on contacts.
+      const previousVip = (existingContact as any)?.isVIP === true;
+      const currentVip = (updated as any)?.isVIP === true;
+      if (data.isVIP !== undefined && previousVip !== currentVip) {
+        this.eventEmitter.emit('contact.vip_changed', {
+          tenantId: String((updated as any).tenantId),
+          contactId: updated.id,
+          isVip: currentVip,
+        });
+      }
     }
 
     return updated;
@@ -1486,6 +1508,26 @@ export class ContactsService {
       throw new BadRequestException(
         'fileKey not found in storage — upload the file again',
       );
+    }
+  }
+
+  /**
+   * The tenant's default country code, from the same `contact_identity` setting
+   * the import and identity-sync paths already read.
+   *
+   * Never throws: a phone search that cannot resolve the code still works for
+   * the international and bare-digit forms, so an unreadable setting must
+   * degrade the match rather than fail the list request.
+   */
+  private async resolveDefaultCountryCode(): Promise<string | undefined> {
+    try {
+      const identity =
+        await this.settingsService.getSetting('contact_identity');
+      const code = (identity as { defaultCountryCode?: unknown })
+        ?.defaultCountryCode;
+      return typeof code === 'string' && code.trim() ? code : undefined;
+    } catch {
+      return undefined;
     }
   }
 

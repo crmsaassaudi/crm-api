@@ -278,11 +278,31 @@ export class ConversationRepository {
     // overdue unanswered conversations surface at the top of the list.
     const sortDir: 1 | -1 = query.unansweredMode === 'longestWaiting' ? 1 : -1;
 
-    if (query.cursor) {
-      filter.lastMessageAt =
-        sortDir === -1
-          ? { $lt: new Date(query.cursor) }
-          : { $gt: new Date(query.cursor) };
+    // The cursor carries `_id` alongside the timestamp because the sort does.
+    //
+    // Filtering on `lastMessageAt` alone while sorting by `(lastMessageAt, _id)`
+    // is only safe when timestamps are unique, and here they are routinely not:
+    // providers report whole seconds, and a burst of inbound messages stamps
+    // several conversations identically. Every row sharing the boundary
+    // timestamp was then either skipped or repeated across the page break — a
+    // customer conversation silently missing from the agent's queue.
+    const cursor = this.decodeConversationCursor(query.cursor);
+    if (cursor) {
+      const comparison = sortDir === -1 ? '$lt' : '$gt';
+      (filter.$and ??= []).push(
+        cursor.id
+          ? {
+              $or: [
+                { lastMessageAt: { [comparison]: cursor.lastMessageAt } },
+                {
+                  lastMessageAt: cursor.lastMessageAt,
+                  _id: { [comparison]: new Types.ObjectId(cursor.id) },
+                },
+              ],
+            }
+          : // Legacy timestamp-only cursor: keep the exact behaviour it had.
+            { lastMessageAt: { [comparison]: cursor.lastMessageAt } },
+      );
     }
 
     const safeLimit = Math.max(1, Math.min(limit, 50));
@@ -304,9 +324,13 @@ export class ConversationRepository {
       OmniConversationMapper.toDomain(doc as any),
     );
 
+    const lastItem = pageItems[pageItems.length - 1];
     const nextCursor =
-      pageItems.length > 0 && pageItems[pageItems.length - 1].lastMessageAt
-        ? (pageItems[pageItems.length - 1].lastMessageAt?.toISOString() ?? null)
+      hasNextPage && lastItem?.lastMessageAt
+        ? this.encodeConversationCursor(
+            lastItem.lastMessageAt,
+            String(lastItem._id),
+          )
         : null;
 
     return {
@@ -314,6 +338,39 @@ export class ConversationRepository {
       nextCursor,
       hasNextPage,
       totalItems: undefined,
+    };
+  }
+
+  /**
+   * Encode the page boundary as `<iso>|<id>`.
+   *
+   * Plain text rather than base64 so an operator reading a log or a support
+   * ticket can see which conversation a client is stuck on.
+   */
+  private encodeConversationCursor(lastMessageAt: Date, id: string): string {
+    return `${lastMessageAt.toISOString()}|${id}`;
+  }
+
+  /**
+   * Decode a cursor, accepting the older timestamp-only form.
+   *
+   * Compatibility is not optional here: the previous cursor was a bare ISO
+   * string, and every inbox open in a browser at deploy time holds one. Rejecting
+   * it would turn a fix for a rare missing row into an immediate error for every
+   * agent mid-scroll. A legacy cursor keeps its old semantics — it can still
+   * skip a row on a timestamp tie — which is strictly what the caller already
+   * had, and it disappears as soon as the client pages again.
+   */
+  private decodeConversationCursor(
+    raw: string | undefined,
+  ): { lastMessageAt: Date; id: string | null } | null {
+    if (!raw) return null;
+    const [timestamp, id] = raw.split('|');
+    const lastMessageAt = new Date(timestamp);
+    if (Number.isNaN(lastMessageAt.getTime())) return null;
+    return {
+      lastMessageAt,
+      id: id && Types.ObjectId.isValid(id) ? id : null,
     };
   }
 
@@ -529,7 +586,12 @@ export class ConversationRepository {
   private applySlaFilter(filter: any, sla: string[] | undefined): void {
     const slaConditions = this.buildSlaFilter(sla);
     if (slaConditions.length > 0) {
-      filter.$or = slaConditions;
+      // Pushed into `$and` rather than assigned to `filter.$or`. The bare
+      // assignment worked only because nothing else in this builder wrote `$or`
+      // — the cursor clause now does, and the visibility scope always could.
+      // Two writers to one `$or` key means the second silently erases the
+      // first, which for a scope clause means widening what a user can see.
+      (filter.$and ??= []).push({ $or: slaConditions });
     }
   }
 
@@ -1041,6 +1103,40 @@ export class ConversationRepository {
   }
 
   /**
+   * Propagate a contact's VIP flag onto its conversations.
+   *
+   * Bounded to conversations that are still open or pending on purpose: a
+   * resolved thread from last year does not become VIP retroactively, its
+   * routing decision is already made, and leaving it alone keeps this write
+   * proportional to the agent's live queue rather than to the contact's whole
+   * history.
+   *
+   * Runs as a platform query: the trigger is a contact update that may come from
+   * an import worker or a cron with no request context, and a tenant-plugin
+   * throw there would silently leave the flag unsynced — the exact failure this
+   * method exists to end.
+   */
+  async syncVipForContact(params: {
+    tenantId: string;
+    contactId: string;
+    isVip: boolean;
+  }): Promise<number> {
+    const result = await this.model
+      .updateMany(
+        {
+          tenantId: new Types.ObjectId(params.tenantId),
+          contactId: new Types.ObjectId(params.contactId),
+          status: { $in: ['open', 'pending'] },
+          isVip: { $ne: params.isVip },
+        },
+        { $set: { isVip: params.isVip } },
+      )
+      .setOptions({ isPlatformQuery: true } as any)
+      .exec();
+    return result.modifiedCount ?? 0;
+  }
+
+  /**
    * Find ALL conversations for a given customer thread (any status), sorted oldest-first.
    * Used for cross-conversation message history.
    */
@@ -1482,6 +1578,42 @@ export class ConversationRepository {
       .limit(100) // Process in batches to avoid memory issues
       .exec();
     return docs.map(OmniConversationMapper.toDomain);
+  }
+
+  /**
+   * The ids of a contact's conversations the caller is allowed to see.
+   *
+   * Exists so message search can bound its work to a set of threads without
+   * loading the threads themselves. It goes through `applyVisibilityScope` for
+   * the same reason `findByContactId` had to be fixed to: without it, anyone
+   * holding `view:omni_channel` could reach conversations on a restricted
+   * channel, or belonging to an agent outside their scope, simply by passing a
+   * contact id.
+   *
+   * `limit` is a hard bound, not a page: a contact with a thousand threads must
+   * not turn one search into a thousand-thread scan. Newest threads first,
+   * because that is where a recent mention is.
+   */
+  async findScopedConversationIdsForContact(params: {
+    tenantId: string;
+    contactId: string;
+    limit: number;
+  }): Promise<string[]> {
+    if (!Types.ObjectId.isValid(params.contactId)) return [];
+    const filter: FilterQuery<OmniConversationDocument> = {
+      tenantId: params.tenantId,
+      contactId: new Types.ObjectId(params.contactId),
+    };
+    this.applyVisibilityScope(filter);
+
+    const docs = await this.model
+      .find(filter)
+      .select({ _id: 1 })
+      .sort({ lastMessageAt: -1, _id: -1 })
+      .limit(Math.max(1, Math.min(params.limit, 200)))
+      .lean()
+      .exec();
+    return docs.map((doc: any) => String(doc._id));
   }
 
   /**

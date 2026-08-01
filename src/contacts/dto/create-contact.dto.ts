@@ -114,6 +114,22 @@ export class CreateContactDto {
   @IsBoolean()
   doNotCall?: boolean;
 
+  /**
+   * Priority customer.
+   *
+   * The flag existed everywhere except here: the schema declares it, the mapper
+   * maps it, merge survivorship ORs it across a merge, two indexes are built on
+   * it, the filter whitelist accepts it, and the omni pipeline looks it up per
+   * inbound message. It was simply not accepted from a client, so nothing could
+   * ever set it — which is why every reader downstream (the inbox VIP filter, the
+   * `segment: 'VIP'` routing context) was reading a value that was always false
+   * without anyone noticing the readers were also broken.
+   */
+  @ApiProperty({ example: false, description: 'Priority (VIP) customer' })
+  @IsOptional()
+  @IsBoolean()
+  isVIP?: boolean;
+
   @ApiProperty({ example: ['enterprise', 'webinar'] })
   @IsOptional()
   @IsArray()

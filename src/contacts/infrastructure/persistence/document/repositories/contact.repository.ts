@@ -30,6 +30,10 @@ import {
   normalizeSortOrder,
 } from '../../../../../utils/cursor-pagination';
 import { normalizeEmail } from '../../../../../common/identity/identity-normalizer';
+import {
+  buildPhoneSearchPrefixes,
+  phoneSearchClause,
+} from '../../../../search/phone-search';
 
 @Injectable()
 export class ContactRepository extends BaseDocumentRepository<
@@ -207,6 +211,7 @@ export class ContactRepository extends BaseDocumentRepository<
   private applySearchFilter(
     where: FilterQuery<ContactSchemaClass>,
     search: string,
+    defaultCountryCode?: string,
   ): void {
     const searchTerm = search.trim();
     if (searchTerm.includes('@')) {
@@ -216,9 +221,42 @@ export class ContactRepository extends BaseDocumentRepository<
       // tenant-wide scan at large cardinality.
       const normalisedEmail = normalizeEmail(searchTerm);
       where.emails = normalisedEmail;
-    } else {
-      where.$text = { $search: searchTerm };
+      return;
     }
+
+    // A phone number was previously handed to `$text`, whose index covers
+    // firstName, lastName and emails — so it matched nothing, and the single
+    // most frequent lookup in a call centre ("the number that is ringing")
+    // returned an empty list. The digits never had a chance of being found,
+    // even though `tenant_phone_lookup` exists and the search index already
+    // knows how to answer this.
+    const phonePrefixes = buildPhoneSearchPrefixes(
+      searchTerm,
+      defaultCountryCode,
+    );
+    if (phonePrefixes?.length) {
+      (where.$and as any[]) = [
+        ...((where.$and as any[]) ?? []),
+        phoneSearchClause(phonePrefixes),
+      ];
+      return;
+    }
+
+    where.$text = { $search: searchTerm };
+  }
+
+  /**
+   * True when this list request carries a free-text search.
+   *
+   * Used to skip the companion count: a `$text` query must use the text index,
+   * which cannot also supply the requested sort order, so the count re-executes
+   * the whole match — the single most expensive thing a search request does,
+   * done twice, for a number the UI renders as "25+" anyway.
+   */
+  private hasSearchTerm(filterOptions?: any): boolean {
+    return typeof filterOptions?.search === 'string'
+      ? filterOptions.search.trim().length > 0
+      : false;
   }
 
   private buildListWhere(filterOptions?: any) {
@@ -234,7 +272,11 @@ export class ContactRepository extends BaseDocumentRepository<
     }
 
     if (filterOptions?.search) {
-      this.applySearchFilter(where, filterOptions.search);
+      this.applySearchFilter(
+        where,
+        filterOptions.search,
+        filterOptions.__defaultCountryCode,
+      );
     }
 
     if (filterOptions?.lifecycleStage) {
@@ -277,24 +319,46 @@ export class ContactRepository extends BaseDocumentRepository<
   }): Promise<PaginationResponseDto<Contact>> {
     const where = this.buildListWhere(filterOptions);
     const scopedWhere = this.applyTenantFilter(where);
+    const searching = this.hasSearchTerm(filterOptions);
+
+    // One row beyond the page, so a search request can report "there is more"
+    // without paying for a count it cannot serve cheaply.
+    const fetchLimit = searching
+      ? paginationOptions.limit + 1
+      : paginationOptions.limit;
+    const skip = (paginationOptions.page - 1) * paginationOptions.limit;
 
     const [docs, countResult] = await Promise.all([
       this.model
         .find(scopedWhere)
         .sort({ createdAt: -1 })
-        .skip((paginationOptions.page - 1) * paginationOptions.limit)
-        .limit(paginationOptions.limit)
+        .skip(skip)
+        .limit(fetchLimit)
         .populate('owner')
         .populate('createdBy')
         .populate('updatedBy')
         .lean()
         .exec(),
-      this.countDocumentsWithCap(scopedWhere, 10_000),
+      searching
+        ? Promise.resolve(null)
+        : this.countDocumentsWithCap(scopedWhere, 10_000),
     ]);
 
+    const hasExtraPage = searching && docs.length > paginationOptions.limit;
+    const pageDocs = hasExtraPage
+      ? docs.slice(0, paginationOptions.limit)
+      : docs;
+
+    // With no count, the honest total is "at least what we have seen". The
+    // DataTable renders a non-exact total as "N+", so a lower bound reads
+    // correctly instead of claiming a page is the whole result set.
+    const totalItems =
+      countResult?.totalItems ??
+      skip + pageDocs.length + (hasExtraPage ? 1 : 0);
+
     return pagination(
-      docs.map((doc) => this.mapToDomain(doc as any)),
-      countResult.totalItems,
+      pageDocs.map((doc) => this.mapToDomain(doc as any)),
+      totalItems,
       paginationOptions,
     );
   }
@@ -333,6 +397,7 @@ export class ContactRepository extends BaseDocumentRepository<
         } as FilterQuery<ContactSchemaClass>)
       : scopedWhere;
 
+    const searching = this.hasSearchTerm(filterOptions);
     const [docs, cappedCount] = await Promise.all([
       this.model
         .find(queryWhere)
@@ -342,7 +407,9 @@ export class ContactRepository extends BaseDocumentRepository<
         .populate('createdBy')
         .populate('updatedBy')
         .exec(),
-      this.countDocumentsWithCap(scopedWhere, countLimit),
+      searching
+        ? Promise.resolve(null)
+        : this.countDocumentsWithCap(scopedWhere, countLimit),
     ]);
 
     const hasExtraPage = docs.length > limit;
@@ -367,8 +434,11 @@ export class ContactRepository extends BaseDocumentRepository<
           : null,
         hasNextPage: direction === 'prev' ? hasCursor : hasExtraPage,
         hasPreviousPage: direction === 'prev' ? hasExtraPage : hasCursor,
-        totalItems: cappedCount.totalItems,
-        isExactCount: cappedCount.isExactCount,
+        // A search request reports what it has actually seen and flags the count
+        // as inexact, which the table renders as "N+". Claiming an exact total
+        // would require running the text search a second time.
+        totalItems: cappedCount?.totalItems ?? pageDocs.length,
+        isExactCount: cappedCount?.isExactCount ?? !hasExtraPage,
       },
     );
   }

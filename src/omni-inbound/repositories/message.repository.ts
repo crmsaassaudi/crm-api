@@ -9,6 +9,7 @@ import { OmniMessage } from '../domain/omni-message';
 import { OmniMessageMapper } from '../infrastructure/persistence/document/mappers/omni-message.mapper';
 import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
 import { pagination } from '../../utils/pagination';
+import { escapeRegex } from '../../utils/escape-regex';
 
 /**
  * Canonical thread order: when the provider says the message was sent, then the
@@ -375,6 +376,83 @@ export class MessageRepository {
       .exec();
 
     return docs.map((doc) => OmniMessageMapper.toDomain(doc as any));
+  }
+
+  /**
+   * Full-text-ish search over message bodies, scoped to a bounded set of
+   * conversations.
+   *
+   * ── Why the conversation set is required, not optional ──
+   *
+   * `omni_messages` has no index on `content`, and adding one is the wrong
+   * answer at this size: it would be the most-written index in the system on its
+   * hottest collection. What makes this query safe instead is that its cost is
+   * bounded by the *conversations* it is given, not by the tenant:
+   * `conversation_messages_timeline` seeks straight to those threads and the
+   * regex is applied to their messages only. A thread holds tens to a few
+   * thousand messages, so the work is the same whether the tenant has 10,000
+   * messages or 100 million.
+   *
+   * Tenant-wide message search is a different query with a different cost model
+   * and it belongs in OpenSearch. Refusing it here — rather than quietly
+   * answering it with a scan that gets slower every week — is the point.
+   *
+   * Case-insensitive on purpose: message bodies are human prose, so a
+   * case-sensitive match would be wrong far more often than it would be fast.
+   * The `i` flag costs nothing here because no index could serve `content`
+   * anyway; the bound comes from the conversation filter.
+   */
+  async searchInConversations(params: {
+    conversationIds: string[];
+    term: string;
+    limit: number;
+    cursor?: ThreadCursor | null;
+  }): Promise<{
+    data: OmniMessage[];
+    hasMore: boolean;
+    cursor: ThreadCursor | null;
+  }> {
+    const ids = Array.from(new Set(params.conversationIds))
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (ids.length === 0 || !params.term.trim()) {
+      return { data: [], hasMore: false, cursor: null };
+    }
+
+    const safeLimit = Math.max(1, Math.min(params.limit, 50));
+    const filter: Record<string, any> = {
+      conversationId: { $in: ids },
+      content: { $regex: escapeRegex(params.term.trim()), $options: 'i' },
+      // Newest-first paging, so the cursor always walks into the past.
+      ...this.buildCursorFilter(params.cursor, 'past'),
+    };
+
+    const docs = await this.model
+      .find(filter)
+      .sort(THREAD_ORDER_DESC)
+      .limit(safeLimit + 1)
+      .lean()
+      .exec();
+
+    const hasMore = docs.length > safeLimit;
+    const trimmed = hasMore ? docs.slice(0, safeLimit) : docs;
+    // Kept newest-first: these are search results, not a thread being read, and
+    // the most recent mention is the one an agent is looking for.
+    const data = trimmed.map((doc) => OmniMessageMapper.toDomain(doc as any));
+
+    const last = trimmed[trimmed.length - 1] as any;
+    return {
+      data,
+      hasMore,
+      cursor:
+        hasMore && last
+          ? {
+              providerTimestamp: last.providerTimestamp ?? new Date(0),
+              sequence: last.sequence ?? 0,
+              id: String(last._id),
+            }
+          : null,
+    };
   }
 
   /**

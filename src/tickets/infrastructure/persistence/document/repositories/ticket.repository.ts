@@ -16,6 +16,7 @@ import { pagination } from '../../../../../utils/pagination';
 import { escapeRegex } from '../../../../../utils/escape-regex';
 import { cappedCount } from '../../../../../utils/capped-count';
 import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
+import { normalizeTicketNumberQuery } from '../../../../search/ticket-number-query';
 
 const normalizeListFilter = (value: unknown): string[] => {
   const values = Array.isArray(value) ? value : String(value ?? '').split(',');
@@ -54,15 +55,24 @@ export class TicketRepository extends BaseDocumentRepository<
   private buildListWhere(filterOptions?: any): FilterQuery<TicketSchemaClass> {
     const where: FilterQuery<TicketSchemaClass> = { deletedAt: null };
     if (filterOptions?.search) {
-      const expression = {
-        $regex: escapeRegex(filterOptions.search),
-        $options: 'i',
-      };
-      where.$or = [
-        { subject: expression },
-        { ticketNumber: expression },
-        { description: expression },
-      ];
+      // Same exact-match fast path as the list query — kept identical on
+      // purpose: an export filtered by a ticket number must select the same
+      // rows the list showed, or the export silently disagrees with the screen
+      // the user ran it from.
+      const ticketNumber = normalizeTicketNumberQuery(filterOptions.search);
+      if (ticketNumber) {
+        where.ticketNumber = ticketNumber;
+      } else {
+        const expression = {
+          $regex: escapeRegex(filterOptions.search),
+          $options: 'i',
+        };
+        where.$or = [
+          { subject: expression },
+          { ticketNumber: expression },
+          { description: expression },
+        ];
+      }
     }
     const statusIds = normalizeListFilter(filterOptions?.statusIds);
     if (statusIds.length) where.statusId = { $in: statusIds } as any;
@@ -218,15 +228,26 @@ export class TicketRepository extends BaseDocumentRepository<
     const where: FilterQuery<TicketSchemaClass> = { deletedAt: null };
 
     if (filterOptions?.search) {
-      const searchExpr = {
-        $regex: escapeRegex(filterOptions.search),
-        $options: 'i',
-      };
-      where.$or = [
-        { subject: searchExpr },
-        { ticketNumber: searchExpr },
-        { description: searchExpr },
-      ];
+      const ticketNumber = normalizeTicketNumberQuery(filterOptions.search);
+      if (ticketNumber) {
+        // Support reads a ticket number back over the phone, so this is one of
+        // the most frequent lookups there is — and it was being answered by an
+        // unanchored /i regex inside an `$or`, which cannot use
+        // `(tenantId, ticketNumber)` and so read every live ticket in the
+        // tenant. An exact match is a strict subset of what the regex found,
+        // so no result that used to appear disappears.
+        where.ticketNumber = ticketNumber;
+      } else {
+        const searchExpr = {
+          $regex: escapeRegex(filterOptions.search),
+          $options: 'i',
+        };
+        where.$or = [
+          { subject: searchExpr },
+          { ticketNumber: searchExpr },
+          { description: searchExpr },
+        ];
+      }
     }
 
     const statusIds = normalizeListFilter(filterOptions?.statusIds);

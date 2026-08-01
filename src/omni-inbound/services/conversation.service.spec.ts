@@ -17,6 +17,7 @@ import { ShadowContactService } from './shadow-contact.service';
 import { ConversationLifecycleService } from './conversation-lifecycle.service';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
 import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
+import { ContactRepository } from '../../contacts/infrastructure/persistence/document/repositories/contact.repository';
 
 describe('ConversationService Concurrency', () => {
   let service: ConversationService;
@@ -28,6 +29,7 @@ describe('ConversationService Concurrency', () => {
   let orchestrationMock: any;
   let shadowContactMock: any;
   let conversationCommandMock: any;
+  let contactRepoMock: any;
 
   beforeEach(async () => {
     // Mock Redis for idempotency check
@@ -123,6 +125,12 @@ describe('ConversationService Concurrency', () => {
       enqueueAssignAgent: jest.fn().mockResolvedValue(undefined),
     };
 
+    // A new conversation is stamped with the sender's VIP status so both the
+    // inbox filter and the routing context can read it from the conversation.
+    contactRepoMock = {
+      isVIPSender: jest.fn().mockResolvedValue(false),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ConversationService,
@@ -180,6 +188,10 @@ describe('ConversationService Concurrency', () => {
               .fn()
               .mockResolvedValue({ id: 'channel_1', inboxId: 'inbox_1' }),
           },
+        },
+        {
+          provide: ContactRepository,
+          useValue: contactRepoMock,
         },
       ],
     }).compile();

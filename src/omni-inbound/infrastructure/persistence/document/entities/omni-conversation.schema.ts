@@ -230,6 +230,35 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ type: [String], default: [] })
   tags: string[];
 
+  /**
+   * Whether the customer behind this conversation is a VIP.
+   *
+   * Denormalised from `contacts.isVIP` deliberately. Two things read it and both
+   * need it on this document:
+   *
+   *  - the inbox filter, which cannot join to `contacts` inside a paginated,
+   *    scope-filtered list query;
+   *  - `buildRoutingContext`, which sets `segment: 'VIP'` for the assignment
+   *    engine on the inbound hot path, where an extra lookup per message is a
+   *    cost paid on every message rather than on every VIP.
+   *
+   * Both read it as `conversation.isVip` and, before this field existed, both
+   * read `undefined`: the filter always returned nothing and the VIP segment was
+   * never set, so any assignment rule keyed on it could never fire. It is kept
+   * in step by ContactsService when the flag changes and set when a conversation
+   * is created or linked to a contact.
+   *
+   * Deliberately NOT indexed on its own. A boolean has two values, so an index
+   * on it alone is nearly the size of the collection and selective for neither;
+   * the VIP filter always arrives with a status filter and a `lastMessageAt`
+   * sort, which `conversation_list` already serves with `isVip` applied as a
+   * residual predicate. A dedicated compound index belongs here only if the
+   * measured plan says so — not in advance, and not on the hottest collection in
+   * the system.
+   */
+  @Prop({ type: Boolean, default: false })
+  isVip: boolean;
+
   @Prop({ default: 0 })
   messageCount: number;
 

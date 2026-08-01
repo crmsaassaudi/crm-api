@@ -29,6 +29,12 @@ import { ConversionService } from '../services/conversion.service';
 import { ConversationLockService } from '../services/conversation-lock.service';
 import { TimelineQueryDto } from '../dto/timeline-query.dto';
 import { ListConversationsQueryDto } from '../dto/list-conversations-query.dto';
+import { SearchMessagesQueryDto } from '../dto/search-messages-query.dto';
+import { buildMessageSnippet } from '../search/message-snippet';
+import {
+  decodeMessageSearchCursor,
+  encodeMessageSearchCursor,
+} from '../search/message-search-cursor';
 import { LinkMessagesDto } from '../dto/link-messages.dto';
 import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
@@ -466,6 +472,91 @@ export class OmniController {
 
     const messages = await this.messageRepo.findByIds(idArray);
     return { data: messages };
+  }
+
+  /**
+   * Search message bodies inside one conversation, or across one contact's
+   * conversations.
+   *
+   * Until this endpoint there was no way to search what was actually said on any
+   * channel: `omni_conversations` has a text index on the customer's name only,
+   * and nothing indexed `omni_messages.content` at all. "What did this customer
+   * say about the refund" — the question an agent asks several times a day, and
+   * the one a supervisor asks when a complaint arrives — had no answer in the
+   * product.
+   *
+   * The scope parameter is required. See SearchMessagesQueryDto for why a
+   * tenant-wide variant is refused here rather than served with a scan.
+   */
+  @Get('messages/search')
+  @RequirePermission('view', 'omni_channel')
+  async searchMessages(@Query() query: SearchMessagesQueryDto) {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) throw new BadRequestException('Tenant context not found');
+
+    const { conversationId, contactId } = query;
+    if (!conversationId && !contactId) {
+      throw new BadRequestException(
+        'Either conversationId or contactId is required. Tenant-wide message search is not available on this endpoint.',
+      );
+    }
+    if (conversationId && contactId) {
+      throw new BadRequestException(
+        'Provide either conversationId or contactId, not both',
+      );
+    }
+
+    let conversationIds: string[];
+    if (conversationId) {
+      // Resolved through the repository, never taken on trust: `findById`
+      // applies the tenant, owner-scope and channel-pool checks, so an id the
+      // caller may not see reads as not found instead of leaking its messages.
+      const conversation = await this.conversationRepo.findById(conversationId);
+      if (!conversation) {
+        throw new NotFoundException(`Conversation ${conversationId} not found`);
+      }
+      conversationIds = [conversationId];
+    } else {
+      conversationIds =
+        await this.conversationRepo.findScopedConversationIdsForContact({
+          tenantId,
+          contactId: contactId!,
+          limit: 200,
+        });
+      if (conversationIds.length === 0) {
+        return {
+          data: [],
+          hasNextPage: false,
+          nextCursor: null,
+          meta: { conversationsSearched: 0 },
+        };
+      }
+    }
+
+    const limit = Math.min(
+      Math.max(parseInt(query.limit ?? '20', 10) || 20, 1),
+      50,
+    );
+    const result = await this.messageRepo.searchInConversations({
+      conversationIds,
+      term: query.q,
+      limit,
+      cursor: decodeMessageSearchCursor(query.cursor),
+    });
+
+    return {
+      data: result.data.map((message) => ({
+        ...message,
+        // Offsets, not markup: the message body is customer-controlled text and
+        // must never be interpolated into HTML on the server.
+        snippet: buildMessageSnippet((message as any).content ?? '', query.q),
+      })),
+      hasNextPage: result.hasMore,
+      nextCursor: result.cursor
+        ? encodeMessageSearchCursor(result.cursor)
+        : null,
+      meta: { conversationsSearched: conversationIds.length },
+    };
   }
 
   /**

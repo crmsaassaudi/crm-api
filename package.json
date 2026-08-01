@@ -69,6 +69,7 @@
     "release": "release-it",
     "migrate:assignment-consolidation": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-assignment-consolidation.ts",
     "migrate:strip-deprecated-permissions": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-strip-deprecated-permissions.ts",
+    "report:search-volume": "ts-node -r tsconfig-paths/register ./src/scripts/report-search-volume.ts",
     "migrate:omni-remediation": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-omni-remediation.ts",
     "test:search:it": "jest -c jest.search-integration.config.js --runInBand"
   },

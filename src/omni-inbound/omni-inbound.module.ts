@@ -83,6 +83,7 @@ import { CsatModule } from './csat/csat.module';
 
 // Repositories
 import { ConversationRepository } from './repositories/conversation.repository';
+import { ContactVipSyncListener } from './listeners/contact-vip-sync.listener';
 import { MessageRepository } from './repositories/message.repository';
 import { NoteRepository } from './repositories/note.repository';
 import { ActivityRepository } from './repositories/activity.repository';
@@ -344,6 +345,7 @@ const workerProviders =
     ConversationService,
     ConversationLifecycleService,
     ConversationQueryService,
+    ContactVipSyncListener,
     InboundOrchestrationService,
     ShadowContactService,
     DeliveryReceiptService,

@@ -26,6 +26,7 @@ import { OMNI_MEDIA_CACHE_QUEUE } from '../queue/omni-media-queue.constants';
 import type { MediaCacheJobData } from '../queue/media-cache.processor';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
 import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
+import { ContactRepository } from '../../contacts/infrastructure/persistence/document/repositories/contact.repository';
 
 /**
  * ConversationService — listens to `omni.message.received` events and handles:
@@ -65,6 +66,9 @@ export class ConversationService {
     private readonly mediaCacheQueue: Queue<MediaCacheJobData>,
     private readonly conversationCommandService: ConversationCommandService,
     private readonly channelRepository: ChannelRepository,
+    // Already a dependency of this module (WebhookProcessor injects the same
+    // repository), so this adds no new edge to the module graph.
+    private readonly contactRepo: ContactRepository,
   ) {}
 
   /**
@@ -477,6 +481,30 @@ export class ConversationService {
     }
   }
 
+  /**
+   * Is the sender behind this conversation a VIP?
+   *
+   * Resolved from the sender id rather than the contact id, because
+   * `tenant_sender_vip_lookup` answers it with one covered lookup and the
+   * sender is known even when no contact has been linked yet.
+   *
+   * Fails to `false`: a routing decision must not be blocked by this, and an
+   * unavailable answer is corrected the next time the flag is synced.
+   */
+  private async resolveVipFlag(
+    tenantId: string,
+    senderId: string,
+  ): Promise<boolean> {
+    try {
+      return await this.contactRepo.isVIPSender(tenantId, senderId);
+    } catch (error: any) {
+      this.logger.warn(
+        `VIP lookup failed for sender ${senderId}; treating as non-VIP: ${error?.message}`,
+      );
+      return false;
+    }
+  }
+
   private async createNewConversation(
     payload: OmniPayload,
     contactId: string | null,
@@ -506,6 +534,7 @@ export class ConversationService {
       channelType: this.lifecycle.toSchemaChannelType(payload.channelType),
       externalId: payload.externalConversationId,
       contactId: contactId ?? null,
+      isVip: await this.resolveVipFlag(payload.tenantId, payload.senderId),
       customer: {
         externalId: payload.senderId,
         name: profile.name ?? payload.metadata.contactName ?? payload.senderId,
