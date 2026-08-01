@@ -46,7 +46,11 @@ export abstract class UserRepository {
     limit?: number,
   ): Promise<User[]>;
 
-  abstract update(
+  /** Throws NotFoundException when the id is outside the caller's scope. */
+  abstract update(id: User['id'], payload: DeepPartial<User>): Promise<User>;
+
+  /** `update()` without the refusal — for idempotent sweeps only. */
+  abstract updateIfExists(
     id: User['id'],
     payload: DeepPartial<User>,
   ): Promise<User | null>;
@@ -69,5 +73,9 @@ export abstract class UserRepository {
     tenantId: string,
   ): Promise<User>;
 
+  /** Throws NotFoundException when the id is outside the caller's scope. */
   abstract remove(id: User['id']): Promise<void>;
+
+  /** `remove()` without the refusal — returns whether anything matched. */
+  abstract removeIfExists(id: User['id']): Promise<boolean>;
 }

@@ -67,12 +67,21 @@ const PUBLIC_CONTROLLERS: Record<string, string> = {
     'open/click pixel — anonymous by design',
   'livechat/livechat-embed.controller.ts':
     'public widget embed script (anonymous visitors)',
+  // NOT anonymous, despite living in this list: the global Keycloak guard still
+  // applies (no handler here is @Unprotected), and uploads additionally carry
+  // @UseGuards(AuthGuard('jwt')). What they lack is an RBAC permission, because
+  // uploading is not the authorization decision — reading a record's attachment
+  // is, and that is gated on the record. The previous reason on all three said
+  // "signed file download", which described a mechanism none of them implement;
+  // the local download is a capability-token model (server-generated,
+  // non-enumerable filenames plus a path-traversal check), and s3/s3-presigned
+  // expose no download route at all.
   'files/infrastructure/uploader/local/files.controller.ts':
-    'signed file download',
+    'authenticated; upload behind AuthGuard(jwt), download is a capability-token path with traversal checks — no per-record permission because the record gates the attachment',
   'files/infrastructure/uploader/s3/files.controller.ts':
-    'signed file download',
+    'authenticated upload only (AuthGuard(jwt)); no download route on this controller',
   'files/infrastructure/uploader/s3-presigned/files.controller.ts':
-    'signed file download',
+    'authenticated upload only (AuthGuard(jwt)); no download route on this controller',
 };
 
 /**

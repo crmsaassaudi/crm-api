@@ -98,12 +98,66 @@ interface Finding {
   line: number;
 }
 
+/**
+ * Names this file injects a Mongoose model under.
+ *
+ * Derived from `@InjectModel(...)` rather than assumed from the property name.
+ * The scan used to match `this.<something>Model.<op>(`, which meant the gate's
+ * coverage depended on a naming convention: `AssignmentQueueMaintenanceService`
+ * injects its model as `this.queue`, so its `updateMany` was invisible here and
+ * shipped without `isPlatformQuery` — throwing once a minute, with the stale
+ * queue-item recovery never running. A property name must not decide whether a
+ * query is checked.
+ */
+function injectedModelProperties(source: string): string[] {
+  const names = new Set<string>();
+  const pattern =
+    /@InjectModel\([^)]*\)[\s\S]{0,200}?(?:private|public|protected|readonly)[\s\S]{0,40}?\b(\w+)\s*:/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null) names.add(match[1]);
+  return [...names];
+}
+
+/**
+ * The body of every `@Cron`-decorated method, with the offset it starts at so a
+ * finding can still report a real line number.
+ *
+ * Method-scoped rather than file-scoped, because several services mix a cron
+ * with request-path methods on the same model (`work-distribution.service.ts`
+ * has one cron and thirty request-path writes). A file-level scan reports those
+ * writes as findings, and the only way to make it green is a blanket exemption
+ * — which is worse than no gate, because `isPlatformQuery` on a request-path
+ * query would DISABLE tenant scoping.
+ *
+ * Known limit: a cron that delegates to a private helper is not followed. This
+ * catches the query written inside the scheduled method, which is where all five
+ * real instances so far have been.
+ */
+function cronMethodBodies(source: string): { body: string; offset: number }[] {
+  const bodies: { body: string; offset: number }[] = [];
+  const cron = /@Cron\(/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = cron.exec(source)) !== null) {
+    const open = source.indexOf('{', match.index);
+    if (open === -1) continue;
+    let depth = 0;
+    let index = open;
+    for (; index < source.length; index++) {
+      if (source[index] === '{') depth++;
+      else if (source[index] === '}') {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    bodies.push({ body: source.slice(open, index + 1), offset: open });
+  }
+
+  return bodies;
+}
+
 function scan(): Finding[] {
   const findings: Finding[] = [];
-  const pattern = new RegExp(
-    `this\\.(\\w*[Mm]odel)\\s*\\.\\s*(${HOOKED_OPERATIONS.join('|')})\\s*\\(`,
-    'g',
-  );
 
   for (const file of walk(SRC)) {
     const source = fs.readFileSync(file, 'utf8');
@@ -112,16 +166,29 @@ function scan(): Finding[] {
     const relative = path.relative(SRC, file).replaceAll('\\', '/');
     if (relative in REVIEWED) continue;
 
-    pattern.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(source)) !== null) {
-      const statement = statementAt(source, match.index);
-      if (statement.includes('isPlatformQuery')) continue;
-      findings.push({
-        file: relative,
-        call: `${match[1]}.${match[2]}`,
-        line: source.slice(0, match.index).split('\n').length,
-      });
+    // Both spellings: the injected property, whatever it is called, and the
+    // conventional `*Model` name for services that take a model another way.
+    const properties = [
+      ...new Set([...injectedModelProperties(source), '\\w*[Mm]odel']),
+    ];
+    const pattern = new RegExp(
+      `this\\.(${properties.join('|')})\\s*\\.\\s*(${HOOKED_OPERATIONS.join('|')})\\s*\\(`,
+      'g',
+    );
+
+    for (const { body, offset } of cronMethodBodies(source)) {
+      pattern.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(body)) !== null) {
+        const absolute = offset + match.index;
+        const statement = statementAt(source, absolute);
+        if (statement.includes('isPlatformQuery')) continue;
+        findings.push({
+          file: relative,
+          call: `${match[1]}.${match[2]}`,
+          line: source.slice(0, absolute).split('\n').length,
+        });
+      }
     }
   }
 

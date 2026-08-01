@@ -65,7 +65,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // visibility axis, so transferring a record moves it between people's scopes.
     // Deliberately NOT added to the Sales Rep template: a rep editing their own
     // records should not be able to move records into or out of their own view.
-    version: 3,
+    version: 4,
     permissions: [
       'leads:view',
       'leads:create',
@@ -112,6 +112,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'reports:deal:view',
       'reports:ticket:view',
       'reports:agent:view',
+      'dashboards:view',
+      'dashboards:create',
+      'dashboards:edit',
+      'dashboards:delete',
       'users:view',
       'groups:view',
       'tags:view',
@@ -135,7 +139,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // cannot email them, which is the whole job.
     description: 'Work leads, contacts, accounts and deals day to day.',
     color: '#22c55e',
-    version: 2,
+    version: 3,
     permissions: [
       'leads:view',
       'leads:create',
@@ -156,6 +160,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'tasks:edit',
       'reports:view',
       'reports:deal:view',
+      'dashboards:view',
+      'dashboards:create',
+      'dashboards:edit',
+      'dashboards:delete',
       'tags:view',
       'files:view',
       'files:create',
@@ -170,7 +178,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // contact record protected nothing while breaking the ticket workflow.
     description: 'Handle tickets and customer conversations.',
     color: '#06b6d4',
-    version: 3,
+    version: 4,
     permissions: [
       'tickets:view',
       'tickets:create',
@@ -184,6 +192,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'tasks:edit',
       'reports:view',
       'reports:ticket:view',
+      'dashboards:view',
+      'dashboards:create',
+      'dashboards:edit',
+      'dashboards:delete',
       'tags:view',
       'files:view',
       'omni_channel:view',
@@ -213,7 +225,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     description:
       'Read every record in the workspace — no owner, unit or channel scope — and change nothing. For compliance reviewers and heads of function who need the full picture without the power to administer users or billing.',
     color: '#0ea5e9',
-    version: 1,
+    version: 2,
     // Gated so the role only appears where an operator has actually granted the
     // full-read feature. Without the gate a tenant would see an "Auditor" role
     // whose defining permission the engine silently drops — the exact
@@ -236,6 +248,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'reports:contact:view',
       'reports:deal:view',
       'reports:ticket:view',
+      'dashboards:view',
       'audit_logs:view',
       'org_units:view',
       'groups:view',
@@ -247,7 +260,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     name: 'Marketing',
     description: 'Plan and launch campaigns, manage the content library.',
     color: '#ec4899',
-    version: 1,
+    version: 2,
     requiresFeature: 'campaigns:view',
     permissions: [
       'campaigns:view',
@@ -258,6 +271,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'leads:view',
       'reports:view',
       'reports:contact:view',
+      'dashboards:view',
+      'dashboards:create',
+      'dashboards:edit',
+      'dashboards:delete',
       'tags:view',
       'files:view',
       'files:create',

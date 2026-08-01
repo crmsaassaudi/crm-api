@@ -118,7 +118,9 @@ export class OrphanCleanupCron {
         );
       });
     }
-    await this.userRepository.remove(user.id);
+    // IfExists, not remove(): this is a sweep, and a row a concurrent pass (or
+    // a real signup completing) already dealt with must not abort the batch.
+    await this.userRepository.removeIfExists(user.id);
     this.logger.log(
       `[OrphanCleanup] Cleaned up: ${user.email} (userId=${user.id}, age=${this.getAge(user.createdAt)})`,
     );

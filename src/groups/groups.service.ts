@@ -93,6 +93,72 @@ export class GroupsService {
     }
   }
 
+  /**
+   * Everything membership of a group confers: its own permissions/roleIds PLUS
+   * every ancestor's, because `findGroupsByMemberWithAncestors` resolves the
+   * whole chain when computing a member's effective permissions.
+   *
+   * `parentGroupId` is the *prospective* parent, so this can be asked about a
+   * group that does not exist yet or about a re-parent that has not been
+   * written.
+   */
+  private async cascadedGrant(
+    tenantId: string,
+    group: {
+      permissions?: string[] | null;
+      roleIds?: string[] | null;
+      parentGroupId?: string | null;
+    },
+  ): Promise<{ permissions: string[]; roleIds: string[] }> {
+    const ancestors = group.parentGroupId
+      ? await this.repository.findAncestorChain(
+          tenantId,
+          String(group.parentGroupId),
+        )
+      : [];
+
+    return {
+      permissions: [
+        ...(group.permissions ?? []),
+        ...ancestors.flatMap((ancestor) => ancestor.permissions ?? []),
+      ],
+      roleIds: [
+        ...(group.roleIds ?? []).map(String),
+        ...ancestors.flatMap((ancestor) =>
+          (ancestor.roleIds ?? []).map(String),
+        ),
+      ],
+    };
+  }
+
+  /**
+   * C-04, the membership half of the third grant path.
+   *
+   * Attaching a role to a group was already bound by "you cannot grant what you
+   * do not hold" — but three sibling writes granted exactly the same access
+   * while side-stepping that check, because none of them touches `roleIds`:
+   *
+   *   PATCH /groups/:id { memberIds: [me] }            → I inherit its roles
+   *   PATCH /groups/:id { parentGroupId: privileged }  → its members inherit the
+   *                                                      ancestor's roles
+   *   POST  /groups/:id/members/:me                    → I inherit its roles
+   *
+   * Each is reachable with an ordinary `groups:edit` / `groups:create` /
+   * `groups:manage_members`, so the invariant has to be enforced on the access
+   * a write *confers*, not on the field it happens to write.
+   */
+  private async assertCallerCanGrantGroupMembership(
+    tenantId: string,
+    group: {
+      permissions?: string[] | null;
+      roleIds?: string[] | null;
+      parentGroupId?: string | null;
+    },
+  ): Promise<void> {
+    const { permissions, roleIds } = await this.cascadedGrant(tenantId, group);
+    await this.assertCallerCanGrantToGroup(tenantId, permissions, roleIds);
+  }
+
   async findAll(query?: QueryGroupDto): Promise<Group[]> {
     const tenantId = this.cls.get('tenantId');
     return this.repository.findAll(tenantId, query);
@@ -123,11 +189,9 @@ export class GroupsService {
         }
       }
       await this.assertRoleIdsBelongToTenant(tenantId, dto.roleIds);
-      await this.assertCallerCanGrantToGroup(
-        tenantId,
-        dto.permissions,
-        dto.roleIds,
-      );
+      // A brand-new group grants its whole cascaded set to every member it is
+      // created with, so the check is over the chain, not just `dto.roleIds`.
+      await this.assertCallerCanGrantGroupMembership(tenantId, dto);
       const group = await this.repository.create({ ...dto, tenantId });
       await this.emitGroupUpdated(tenantId, group);
       void this.audit.record({
@@ -175,11 +239,36 @@ export class GroupsService {
         (roleId) =>
           !(previous?.roleIds ?? []).map(String).includes(String(roleId)),
       );
-      await this.assertCallerCanGrantToGroup(
-        tenantId,
-        addedPermissions,
-        addedRoleIds,
+
+      const previousMembers = new Set((previous?.memberIds ?? []).map(String));
+      const addsMembers = (dto.memberIds ?? []).some(
+        (memberId) => !previousMembers.has(String(memberId)),
       );
+      const reparents =
+        dto.parentGroupId !== undefined &&
+        String(dto.parentGroupId ?? '') !==
+          String(previous?.parentGroupId ?? '');
+
+      if (addsMembers || reparents) {
+        // Either the set of principals or the set of ancestors grew, so the
+        // access conferred is the whole post-change chain — see the helper.
+        await this.assertCallerCanGrantGroupMembership(tenantId, {
+          permissions: dto.permissions ?? previous?.permissions,
+          roleIds: dto.roleIds ?? previous?.roleIds,
+          parentGroupId:
+            dto.parentGroupId !== undefined
+              ? dto.parentGroupId
+              : previous?.parentGroupId,
+        });
+      } else {
+        // Editing an unrelated field on a powerful group must not require
+        // holding its permissions; only newly ADDED keys are a grant.
+        await this.assertCallerCanGrantToGroup(
+          tenantId,
+          addedPermissions,
+          addedRoleIds,
+        );
+      }
       const group = await this.repository.update(tenantId, id, dto);
       if (!group) throw new NotFoundException('Group not found');
       await this.emitGroupUpdated(tenantId, group, previous?.memberIds);
@@ -283,6 +372,12 @@ export class GroupsService {
       );
     }
 
+    const existing = await this.repository.findById(tenantId, groupId);
+    if (!existing) throw new NotFoundException('Group not found');
+    // Adding a principal to a group grants them everything the group chain
+    // carries — the same grant as attaching the role directly.
+    await this.assertCallerCanGrantGroupMembership(tenantId, existing);
+
     const group = await this.repository.addMember(tenantId, groupId, userId);
     if (!group) throw new NotFoundException('Group not found');
     this.eventEmitter.emit('group.membership.updated', {
@@ -290,17 +385,34 @@ export class GroupsService {
       groupId,
       memberIds: [userId],
     });
+    void this.audit.record({
+      category: 'GROUP',
+      action: 'assign',
+      targetType: 'group',
+      targetId: groupId,
+      summary: `added user ${userId} to group "${group.name}"`,
+      after: { memberId: userId },
+    });
     return group;
   }
 
   async removeMember(groupId: string, userId: string): Promise<Group> {
     const tenantId = this.cls.get('tenantId');
+    // No grant check: losing group membership can only remove access.
     const group = await this.repository.removeMember(tenantId, groupId, userId);
     if (!group) throw new NotFoundException('Group not found');
     this.eventEmitter.emit('group.membership.updated', {
       tenantId,
       groupId,
       memberIds: [userId],
+    });
+    void this.audit.record({
+      category: 'GROUP',
+      action: 'revoke',
+      targetType: 'group',
+      targetId: groupId,
+      summary: `removed user ${userId} from group "${group.name}"`,
+      before: { memberId: userId },
     });
     return group;
   }

@@ -34,8 +34,11 @@ function makeRepo(options: { paths?: string[]; userId?: string } = {}) {
   const deleteOne = jest.fn((_filter: any) =>
     Promise.resolve({ deletedCount: 1 }),
   );
+  // `matchedCount`, not just `modifiedCount`: `remove()` distinguishes "the row
+  // was excluded by the scoped filter" (a refusal) from "the row was already
+  // soft-deleted" (a no-op that still matched), and only the former is a 404.
   const updateOne = jest.fn((_filter: any, _update: any) =>
-    Promise.resolve({ modifiedCount: 1 }),
+    Promise.resolve({ matchedCount: 1, modifiedCount: 1 }),
   );
   const findOneAndUpdate = jest.fn(
     (_filter: any, _update?: any, _opts?: any) => ({

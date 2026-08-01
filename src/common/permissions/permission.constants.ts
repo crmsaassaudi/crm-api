@@ -6,6 +6,7 @@ export type PermissionResource =
   | 'campaigns'
   | 'tickets'
   | 'reports'
+  | 'dashboards'
   | 'contact_reports'
   | 'deal_reports'
   | 'ticket_reports'
@@ -129,6 +130,22 @@ export const PERMISSION_REGISTRY: Record<
     view: 'reports:view',
     create: 'reports:create',
     export: 'reports:export',
+  },
+  /**
+   * Saved dashboards. A separate resource from `reports` on purpose: `reports`
+   * gates the report *builder* (`reports:create` is a feature grant no standard
+   * role template carries), while a dashboard is an ordinary user-owned object
+   * that anyone who can read reports should be able to keep their own of.
+   *
+   * Before this existed every dashboard route was gated on `contacts:*`, so
+   * `contacts:delete` deleted anybody's dashboard and a report-only user could
+   * not manage their own.
+   */
+  dashboards: {
+    view: 'dashboards:view',
+    create: 'dashboards:create',
+    edit: 'dashboards:edit',
+    delete: 'dashboards:delete',
   },
   contact_reports: {
     view: 'reports:contact:view',
@@ -415,6 +432,11 @@ export const CORE_PERMISSIONS: string[] = [
   'tasks:delete',
   // Reports (view only by default)
   'reports:view',
+  // Dashboards — user-owned objects, not a gated feature
+  'dashboards:view',
+  'dashboards:create',
+  'dashboards:edit',
+  'dashboards:delete',
   'reports:contact:view',
   'reports:deal:view',
   'reports:ticket:view',

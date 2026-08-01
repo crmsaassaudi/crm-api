@@ -124,6 +124,17 @@ class UpdateLeadScoringRuleDto {
 
 // ── Controller ────────────────────────────────────────────────────────────────
 
+/**
+ * Scoring RULES are tenant-wide configuration, and `rescore` rewrites the score
+ * on every contact in the tenant — so both are gated on `settings:manage_system`
+ * (the convention already used by custom-fields, list-views, access-policy and
+ * custom-roles), not on `contacts:edit`.
+ *
+ * They were all `contacts:edit`, which every Sales Rep holds: an ordinary rep
+ * could rewrite the tenant's scoring model and trigger a full-tenant rescore.
+ * Reading the rules stays on `contacts:view` — a rep needs to understand why a
+ * lead scored what it did.
+ */
 @ApiTags('Lead Scoring')
 @ApiBearerAuth()
 @Controller({ path: 'lead-scoring', version: '1' })
@@ -142,7 +153,7 @@ export class LeadScoringController {
   }
 
   @Post('rules')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('manage_system', 'settings')
   @ApiOperation({ summary: 'Create a lead scoring rule' })
   async createRule(@Body() dto: CreateLeadScoringRuleDto) {
     const tenantId = this.cls.get('tenantId');
@@ -150,7 +161,7 @@ export class LeadScoringController {
   }
 
   @Patch('rules/:id')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('manage_system', 'settings')
   @ApiOperation({ summary: 'Update a lead scoring rule' })
   async updateRule(
     @Param('id') id: string,
@@ -162,7 +173,7 @@ export class LeadScoringController {
 
   @Delete('rules/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('manage_system', 'settings')
   @ApiOperation({ summary: 'Delete a lead scoring rule' })
   async deleteRule(@Param('id') id: string) {
     const tenantId = this.cls.get('tenantId');
@@ -170,7 +181,7 @@ export class LeadScoringController {
   }
 
   @Post('rules/:id/toggle')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('manage_system', 'settings')
   @ApiOperation({ summary: 'Enable/disable a rule' })
   async toggleRule(
     @Param('id') id: string,
@@ -181,7 +192,7 @@ export class LeadScoringController {
   }
 
   @Post('rescore')
-  @RequirePermission('edit', 'contacts')
+  @RequirePermission('manage_system', 'settings')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger bulk re-score for all contacts in tenant' })
   async bulkRescore() {

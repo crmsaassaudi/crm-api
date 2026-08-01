@@ -1093,8 +1093,15 @@ async function seedConversations(
       assignedAgentId: spec.assignedAgentEmail
         ? (userIdByEmail.get(spec.assignedAgentEmail) ?? null)
         : null,
+      // ObjectId, not the string the map holds: this collection is written
+      // through the raw driver, which does NOT cast, while every read goes
+      // through Mongoose, which DOES. A string here is stored as a string and
+      // then never matches `assignedGroupId: {$in: [ObjectId…]}` — the group
+      // axis of conversation visibility silently returns nothing, which is
+      // exactly what it looked like when this was found. `support.groupIds`
+      // above already converts; this was the one site that did not.
       assignedGroupId: spec.assignedGroupKey
-        ? (groupIdByKey.get(spec.assignedGroupKey) ?? null)
+        ? new ObjectId(groupIdByKey.get(spec.assignedGroupKey))
         : null,
       tags: spec.tags,
       updatedAt: new Date(),

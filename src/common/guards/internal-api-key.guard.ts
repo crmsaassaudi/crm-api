@@ -13,8 +13,14 @@ import * as crypto from 'crypto';
  * Guards endpoints that should only be called by internal services
  * (e.g. crm-manager-api → crm-api). Validates the X-Internal-Api-Key header.
  *
- * Set INTERNAL_API_KEY in env. If unset in development the guard skips validation
- * so local dev doesn't break, but in production the key is required.
+ * Fails CLOSED when INTERNAL_API_KEY is unset — matching
+ * `CrmBotInternalSecretGuard`, the other internal-trust boundary in this
+ * codebase. It previously skipped validation whenever NODE_ENV was not exactly
+ * `production`, which made an unset NODE_ENV (the default under a bare
+ * `node dist/main`) enough to expose tenant provisioning and
+ * `feature-permissions/grant` — a tenant's RBAC ceiling — to anonymous callers.
+ * A missing secret is a misconfiguration, and a misconfiguration must not open
+ * a door.
  */
 @Injectable()
 export class InternalApiKeyGuard implements CanActivate {
@@ -29,13 +35,9 @@ export class InternalApiKeyGuard implements CanActivate {
     });
 
     if (!expectedKey) {
-      if (process.env.NODE_ENV === 'production') {
-        throw new UnauthorizedException(
-          'INTERNAL_API_KEY is not configured on this server',
-        );
-      }
-      // Dev/test: allow through with a warning logged once at startup
-      return true;
+      throw new UnauthorizedException(
+        'INTERNAL_API_KEY is not configured on this server',
+      );
     }
 
     const request = context.switchToHttp().getRequest<Request>();

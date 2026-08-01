@@ -172,11 +172,18 @@ describe('DealsService', () => {
       );
     });
 
-    it('should NOT emit audit if update returns null', async () => {
-      repository.update.mockResolvedValueOnce(null);
+    it('should refuse an update whose pre-read finds nothing, and emit no audit', async () => {
+      // The pre-read is scoped by tenant, data-visibility and the ABAC deny, so
+      // a miss means "not found, or not yours". It used to fall through to the
+      // write, which matched nothing and answered 200 with an empty body — an
+      // audit-free no-op the caller was told had succeeded.
+      repository.findOne.mockResolvedValueOnce(null);
 
-      await service.update('nonexistent', { title: 'X' } as any);
+      await expect(
+        service.update('nonexistent', { title: 'X' } as any),
+      ).rejects.toBeInstanceOf(NotFoundException);
 
+      expect(repository.update).not.toHaveBeenCalled();
       expect(entityAudit.emit).not.toHaveBeenCalled();
     });
   });

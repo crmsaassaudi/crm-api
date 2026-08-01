@@ -1,4 +1,8 @@
-import { Injectable, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { ClsService } from 'nestjs-cls'; // Import ClsService
 import { NullableType } from '../../../../../utils/types/nullable.type';
 import { FilterUserDto, SortUserDto } from '../../../../dto/query-user.dto';
@@ -225,6 +229,22 @@ export class UsersDocumentRepository
   async update(
     id: User['id'],
     payload: Partial<User>,
+    session?: any,
+  ): Promise<User> {
+    const updated = await this.updateIfExists(id, payload, session);
+    if (!updated) {
+      throw new NotFoundException(`User ${String(id)} not found`);
+    }
+    return updated;
+  }
+
+  /**
+   * Same override as `update()`, minus the refusal — see the base class for why
+   * a scope miss must not be reported as success.
+   */
+  async updateIfExists(
+    id: User['id'],
+    payload: Partial<User>,
     session?: any, // Match Base signature optionally, or just ignore since we override
   ): Promise<User | null> {
     const clonedPayload = { ...payload };
@@ -277,12 +297,20 @@ export class UsersDocumentRepository
   }
 
   async remove(id: User['id']): Promise<void> {
+    const removed = await this.removeIfExists(id);
+    if (!removed) {
+      throw new NotFoundException(`User ${String(id)} not found`);
+    }
+  }
+
+  async removeIfExists(id: User['id']): Promise<boolean> {
     const filter = this.applyTenantFilter({ _id: id.toString() });
     const query = this.model.deleteOne(filter);
     if (!this.cls.get('tenantId')) {
       query.setOptions({ isPlatformQuery: true });
     }
-    await query;
+    const result = await query;
+    return result.deletedCount > 0;
   }
 
   /**

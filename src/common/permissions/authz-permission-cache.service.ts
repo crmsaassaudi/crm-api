@@ -199,6 +199,36 @@ export class AuthzPermissionCacheService {
    * include the granted assignment roleIds — so the engine expands them as
    * regular role references. Never mutates the cached user document.
    */
+  /**
+   * Overlay an admin's UNSAVED membership edits onto the resolved subject.
+   * Only the two fields the edit dialog can change are replaced; everything
+   * else (group membership, JIT grants, tenant role) stays as stored, because
+   * the preview must answer "what will be true after I save", not "what would
+   * be true in some other tenant state".
+   */
+  private withCandidateMembership(
+    user: any,
+    tenantId: string,
+    candidate?: {
+      roleIds?: string[];
+      permissionOverrides?: Record<string, boolean>;
+    },
+  ): any {
+    if (!candidate) return user;
+
+    const tenants = (user.tenants ?? []).map((membership: any) => {
+      if (String(membership.tenantId) !== tenantId) return membership;
+      return {
+        ...membership,
+        roleIds: candidate.roleIds ?? membership.roleIds,
+        permissionOverrides:
+          candidate.permissionOverrides ?? membership.permissionOverrides,
+      };
+    });
+
+    return { ...user, tenants };
+  }
+
   private withAssignmentRoles(
     user: any,
     tenantId: string,
@@ -538,10 +568,21 @@ export class AuthzPermissionCacheService {
    * Resolve a user's EFFECTIVE permissions with source attribution, for admin
    * preview ("what can this user do, and why"). Not cached — always computed
    * fresh from roles/groups/JIT so the preview reflects the true current state.
+   *
+   * `candidate` replaces the user's stored membership roleIds / overrides with
+   * UNSAVED ones, so an admin editing a user can be shown the access their
+   * pending change would actually produce. It runs through this exact code
+   * path on purpose: the previous client-side preview was a second permission
+   * engine, and it disagreed with this one about owner/admin ceilings, direct
+   * grants, inherited ancestor groups, JIT assignments and deactivated users.
    */
   async explainForUser(
     rawUserId: string,
     tenantHint?: string,
+    candidate?: {
+      roleIds?: string[];
+      permissionOverrides?: Record<string, boolean>;
+    },
   ): Promise<EffectivePermissionExplanation> {
     const tenantsRepository = this.moduleRef.get(TenantsRepository, {
       strict: false,
@@ -612,10 +653,10 @@ export class AuthzPermissionCacheService {
       String(tenant.id),
       [String(user.id), ...groupIds],
     );
-    const subject = this.withAssignmentRoles(
-      user,
+    const subject = this.withCandidateMembership(
+      this.withAssignmentRoles(user, String(tenant.id), assignmentRoleIds),
       String(tenant.id),
-      assignmentRoleIds,
+      candidate,
     );
 
     return explainEffectivePermissions(

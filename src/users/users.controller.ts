@@ -23,6 +23,7 @@ import { CreateUserForTenantDto } from './dto/create-user-for-tenant.dto';
 import { CheckEmailDto } from './dto/check-email.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { SetTenantRoleDto } from './dto/set-tenant-role.dto';
+import { PreviewEffectivePermissionsDto } from './dto/preview-effective-permissions.dto';
 import { UpdateUserI18nPreferencesDto } from './dto/user-i18n-preferences.dto';
 import {
   ApiBearerAuth,
@@ -222,6 +223,26 @@ export class UsersController {
   getEffectivePermissions(@Param('id') id: string) {
     const tenantId = this.cls.get<string>('tenantId');
     return this.authzCache.explainForUser(id, tenantId);
+  }
+
+  @ApiOperation({
+    summary:
+      "Preview a user's effective permissions under UNSAVED role/override edits. Read-only: nothing is persisted.",
+  })
+  @ApiOkResponse({ description: 'Effective permissions + per-key sources' })
+  @RequirePermission('view', 'users')
+  @Post(':id/effective-permissions/preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiParam({ name: 'id', type: String, required: true })
+  previewEffectivePermissions(
+    @Param('id') id: string,
+    @Body() dto: PreviewEffectivePermissionsDto,
+  ) {
+    const tenantId = this.cls.get<string>('tenantId');
+    return this.authzCache.explainForUser(id, tenantId, {
+      roleIds: dto.roleIds,
+      permissionOverrides: dto.permissionOverrides,
+    });
   }
 
   @ApiOperation({

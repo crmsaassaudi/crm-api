@@ -29,6 +29,19 @@ export class AssignmentQueueMaintenanceService {
     private readonly outbox?: Model<AssignmentOutboxEventDocument>,
   ) {}
 
+  /**
+   * Platform-wide by design: a stuck queue item must be recovered whichever
+   * tenant it belongs to, and a cron has no request context to take a tenant
+   * from.
+   *
+   * `isPlatformQuery` is not optional here. Without it `tenantFilterPlugin`
+   * THREW on every run — correctly, since a model query with no CLS tenant is
+   * indistinguishable from a lost request context — so this recovery never
+   * executed and items stuck in `claiming`/`retrying` accumulated forever. The
+   * only visible symptom was a CRITICAL log line once a minute. Its sibling
+   * `escalateOverdueItems` goes through `this.queue.collection` (the raw driver,
+   * which the plugin does not hook) and was therefore fine.
+   */
   @Cron(CronExpression.EVERY_MINUTE)
   async recoverStaleOperations(): Promise<number> {
     const result = await this.queue
@@ -45,6 +58,7 @@ export class AssignmentQueueMaintenanceService {
           $inc: { attemptCount: 1 },
         },
       )
+      .setOptions({ isPlatformQuery: true })
       .exec();
     const recovered = result.modifiedCount ?? 0;
     if (recovered > 0) {

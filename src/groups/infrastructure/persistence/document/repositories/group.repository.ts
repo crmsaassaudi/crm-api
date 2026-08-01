@@ -114,36 +114,80 @@ export class GroupRepository {
   }
 
   /**
+   * Hard bound on how far a parent walk may climb. The hierarchy is kept
+   * acyclic by `GroupsService.assertNoCycle`, and the visited set below already
+   * makes a cycle terminate; this is the second belt, so a hierarchy corrupted
+   * outside the service can never spin the walk.
+   */
+  private static readonly MAX_HIERARCHY_DEPTH = 32;
+
+  /**
+   * Walk up the parentGroupId chain, one level per query, starting from the
+   * given frontier of group ids. Returns the groups visited, excluding any id
+   * already in `visited` (which it also mutates).
+   *
+   * Level-at-a-time rather than loading the tenant's whole group collection:
+   * the walk is O(depth) small `_id`-indexed reads instead of O(groups in
+   * tenant), and this runs on every permission resolution.
+   */
+  private async climbParents(
+    tenantId: string,
+    frontier: string[],
+    visited: Set<string>,
+  ): Promise<Group[]> {
+    const collected: Group[] = [];
+    let next = frontier.filter((id) => !visited.has(id));
+
+    for (
+      let depth = 0;
+      depth < GroupRepository.MAX_HIERARCHY_DEPTH && next.length;
+      depth++
+    ) {
+      next.forEach((id) => visited.add(id));
+      const docs = await this.model
+        .find({ _id: { $in: next }, tenantId })
+        .exec();
+      const groups = docs.map(GroupMapper.toDomain);
+      collected.push(...groups);
+
+      next = groups
+        .map((group) => group.parentGroupId && String(group.parentGroupId))
+        .filter((id): id is string => !!id && !visited.has(id));
+    }
+
+    return collected;
+  }
+
+  /**
    * Groups the user is a direct member of PLUS every ancestor group up the
    * parentGroupId chain (RBAC group-hierarchy inheritance, C1). Permissions
    * and roleIds granted to a parent group cascade down to child-group members.
-   * Cycle-safe (visited set) and bounded (one tenant-scoped load).
+   * Cycle-safe (visited set) and depth-bounded.
    */
   async findGroupsByMemberWithAncestors(
     tenantId: string,
     userId: string,
   ): Promise<Group[]> {
-    const all = (await this.model.find({ tenantId }).exec()).map(
-      GroupMapper.toDomain,
-    );
-    const byId = new Map(all.map((g) => [String(g.id), g]));
+    const direct = (
+      await this.model.find({ tenantId, memberIds: userId }).exec()
+    ).map(GroupMapper.toDomain);
 
-    const result = new Map<string, Group>();
-    const visited = new Set<string>();
-    const queue = all.filter((g) => g.memberIds?.some((m) => m === userId));
+    const visited = new Set(direct.map((group) => String(group.id)));
+    const parents = direct
+      .map((group) => group.parentGroupId && String(group.parentGroupId))
+      .filter((id): id is string => !!id);
 
-    while (queue.length) {
-      const group = queue.shift()!;
-      const id = String(group.id);
-      if (visited.has(id)) continue; // cycle / already processed
-      visited.add(id);
-      result.set(id, group);
-      if (group.parentGroupId) {
-        const parent = byId.get(String(group.parentGroupId));
-        if (parent && !visited.has(String(parent.id))) queue.push(parent);
-      }
-    }
-    return Array.from(result.values());
+    const ancestors = await this.climbParents(tenantId, parents, visited);
+    return [...direct, ...ancestors];
+  }
+
+  /**
+   * The given group plus every ancestor above it. Used to answer "what does
+   * membership of this group actually grant", which is the union of the whole
+   * chain — not just the group's own roleIds.
+   */
+  async findAncestorChain(tenantId: string, groupId: string): Promise<Group[]> {
+    return this.climbParents(tenantId, [String(groupId)], new Set());
   }
 
   /**

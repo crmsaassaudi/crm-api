@@ -1,4 +1,4 @@
-import { ConflictException, Logger } from '@nestjs/common';
+import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { ClientSession, Model, Document, FilterQuery } from 'mongoose';
 
@@ -210,6 +210,27 @@ export abstract class BaseDocumentRepository<
     id: string,
     payload: Partial<TDomain>,
     session?: ClientSession,
+  ): Promise<TDomain> {
+    const updated = await this.updateIfExists(id, payload, session);
+    if (!updated) {
+      throw new NotFoundException(this.notFoundMessage(id));
+    }
+    return updated;
+  }
+
+  /**
+   * `update()` without the refusal — returns `null` when the scoped filter
+   * matches nothing.
+   *
+   * For the handful of genuinely idempotent writes (a cleanup cron sweeping
+   * rows that another pass may already have removed). Everything reached from
+   * an HTTP handler wants `update()`: a scope miss there is an authorization
+   * or existence outcome the caller must be told about, not absorbed.
+   */
+  async updateIfExists(
+    id: string,
+    payload: Partial<TDomain>,
+    session?: ClientSession,
   ): Promise<TDomain | null> {
     const enriched = this.enrichWithContext(payload, false);
     // @ts-expect-error `id` is only present on some domain shapes and is intentionally removed.
@@ -253,7 +274,13 @@ export abstract class BaseDocumentRepository<
     )) as TSchema;
 
     if (!updated && version !== undefined) {
-      const exists = await this.model.exists({ _id: id });
+      // Scoped, not `{_id: id}`. The tenant plugin already blocks another
+      // tenant's row, but a row inside this tenant that the caller cannot SEE
+      // (data-visibility / ABAC deny) would answer 409 "someone else changed
+      // it" — confirming a record exists to someone with no right to know.
+      const exists = await this.model.exists(
+        this.applyTenantFilter({ _id: id } as FilterQuery<TSchema>),
+      );
       if (exists) {
         throw new ConflictException(
           'Dữ liệu đã bị thay đổi bởi người dùng khác. Vui lòng tải lại.',
@@ -262,6 +289,14 @@ export abstract class BaseDocumentRepository<
     }
 
     return updated ? this.mapToDomain(updated) : null;
+  }
+
+  /**
+   * What a scope miss is called in an error message. Overridable so a domain
+   * can say "Contact not found" instead of the generic wording.
+   */
+  protected notFoundMessage(id: string): string {
+    return `Record ${id} not found`;
   }
 
   /**
@@ -297,15 +332,33 @@ export abstract class BaseDocumentRepository<
    * ContactRepository does, together with ContactPurgeService.
    */
   async remove(id: string): Promise<void> {
+    const removed = await this.removeIfExists(id);
+    if (!removed) {
+      throw new NotFoundException(this.notFoundMessage(id));
+    }
+  }
+
+  /**
+   * `remove()` without the refusal — returns whether anything matched.
+   *
+   * `remove()` used to be this, returning `void`. The scoped filter carries the
+   * tenant, data-visibility and ABAC-deny predicates, so a delete the caller
+   * was not allowed to perform matched zero documents and the handler answered
+   * `204 No Content` — reporting a deletion that never happened, for a record
+   * still sitting in the database. Silence is the worst possible answer to an
+   * authorization question, so the refusal is now the default and absorbing it
+   * has to be asked for explicitly.
+   */
+  async removeIfExists(id: string): Promise<boolean> {
     const filter = this.applyTenantFilter({ _id: id } as FilterQuery<TSchema>);
 
     if (!this.supportsSoftDelete) {
-      await this.model.deleteOne(filter);
-      return;
+      const result = await this.model.deleteOne(filter);
+      return result.deletedCount > 0;
     }
 
     const deletedById = this.cls.get('userId') ?? this.cls.get('user.id');
-    await this.model.updateOne(filter, {
+    const result = await this.model.updateOne(filter, {
       $set: {
         deletedAt: new Date(),
         ...(deletedById && this.model.schema?.path('updatedById')
@@ -313,6 +366,7 @@ export abstract class BaseDocumentRepository<
           : {}),
       },
     } as any);
+    return result.matchedCount > 0;
   }
 
   /**

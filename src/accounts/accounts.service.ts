@@ -349,6 +349,13 @@ export class AccountsService {
     // diff. Previously this service did not emit any audit signal — the
     // 2026-05-28 review flagged it as a coverage gap.
     const existing = await this.repository.findOne({ _id: id });
+    // `findOne` is scoped by tenant, data-visibility and the ABAC deny, so a
+    // miss means "not yours to edit". Refusing here rather than letting the
+    // write miss keeps the answer a 404 and skips the validation work a denied
+    // request should never pay for.
+    if (!existing) {
+      throw new NotFoundException(`Account ${id} not found`);
+    }
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const phones = data.phones;
     const emails = data.emails;

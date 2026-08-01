@@ -129,16 +129,14 @@ const envFilePath = [
 function bullBoardBasicAuth() {
   const user = process.env.BULL_BOARD_USER;
   const pass = process.env.BULL_BOARD_PASSWORD;
-  const isProduction = process.env.NODE_ENV === 'production';
 
   return (req: any, res: any, next: any) => {
-    if (isProduction && (!user || !pass)) {
+    // Fail closed regardless of NODE_ENV. Keying this on `production` meant an
+    // unset NODE_ENV published job payloads (and retry/remove controls) to
+    // anonymous callers; setting the two env vars is a one-line dev cost.
+    if (!user || !pass) {
       res.status(503).send('Bull-board credentials not configured');
       return;
-    }
-    if (!user || !pass) {
-      // Dev convenience: allow when not configured.
-      return next();
     }
     const header = req.headers['authorization'] || '';
     const expected =

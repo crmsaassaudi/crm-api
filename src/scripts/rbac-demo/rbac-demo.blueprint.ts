@@ -352,7 +352,11 @@ export const GROUPS: GroupSpec[] = [
     name: 'CSKH Tầng 1',
     description: 'Tiếp nhận yêu cầu ở tầng đầu tiên trước khi chuyển tiếp.',
     roleKeys: ['support_agent_self'],
-    memberEmails: [EMAIL.agentSupport],
+    // The manager is a member too: their CONVERSATION_EXPECTATIONS entry says
+    // they reach the web pool "through the same group", and without membership
+    // they were outside the pool and saw nothing — the fixture contradicted its
+    // own note.
+    memberEmails: [EMAIL.agentSupport, EMAIL.mgrSupport],
   },
   {
     key: 'revenue_analysts',
@@ -1202,12 +1206,17 @@ export const RECORD_PROBES: RecordProbe[] = [
     layer: 'rbac',
   },
   {
+    // This expectation used to be `200` with an empty body, which pinned a real
+    // defect: a write refused by data-visibility was reported as success. It
+    // then silently became `409 modified by another request`, because the
+    // contacts PATCH path derives its optimistic-lock version from a
+    // visibility-scoped pre-read that returned nothing. Both answers were wrong
+    // about the same thing — the record is not this caller's to edit.
     label:
-      'South rep write to a North record is a no-op — out of data scope (200 + empty body, record untouched)',
+      'South rep write to a North record is refused — out of data scope (404, record untouched)',
     email: EMAIL.repSouth,
     contactKey: 'c-north-1',
-    expectedStatus: 200,
-    expectEmptyBody: true,
+    expectedStatus: 404,
     layer: 'data-scope',
   },
   {
@@ -1351,19 +1360,28 @@ export const CONVERSATION_EXPECTATIONS: ConversationExpectation[] = [
     ],
     note: 'ORG_UNIT scope over the support unit, and in the web pool through the same group.',
   },
+  // repNorth1 / repNorth2 USED to be listed here with a visible conversation
+  // set, which the fixture cannot express: all three sales accounts share
+  // `sales_rep_self`, and MODULE_PROBES asserts (correctly, and load-bearingly)
+  // that repSouth gets 403 on /omni/conversations because omni no longer rides
+  // on `contacts:view`. One role cannot both carry and not carry
+  // `omni_channel:view`, so those two entries could only ever fail.
+  //
+  // The read side of the channel axis is therefore covered by the support
+  // accounts below, and the user-pool semantics repNorth2 was there to prove —
+  // "same group, but not in the pool" — are still covered by ASSIGNMENT_PROBES.
+  // Restoring read coverage for a pooled sales rep needs a second sales role
+  // with `omni_channel:view`; that is a fixture design decision, not a
+  // product one.
   {
     email: EMAIL.repNorth1,
-    visibleConversations: ['cv_sales_assigned'],
-    note:
-      'Named directly in the sales-page pool. SELF scope, so only their own row — ' +
-      'and the web channel is invisible regardless of scope.',
+    visibleConversations: null,
+    note: 'Shares sales_rep_self, which has no omni_channel:view — the module is closed.',
   },
   {
     email: EMAIL.repNorth2,
-    visibleConversations: [],
-    note:
-      'In the same GROUP as repNorth1 but NOT in the sales-page support pool, which ' +
-      'lists users individually. The channel axis alone hides everything.',
+    visibleConversations: null,
+    note: 'Same role as repNorth1; the omni module is closed before the channel axis is reached.',
   },
   {
     email: EMAIL.analyst,

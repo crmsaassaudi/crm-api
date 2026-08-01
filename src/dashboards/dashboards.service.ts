@@ -65,7 +65,13 @@ export class DashboardsService {
       widgets: dto.widgets ?? [],
     });
     this.logger.log(`Dashboard created: ${doc.id} by user=${this.userId}`);
-    return doc;
+    // `.toObject()`, not the hydrated document: every read here returns
+    // `.lean()` output, and the global ClassSerializerInterceptor walks whatever
+    // it is handed. Handed a Mongoose document it recursed into the internal
+    // state machine and threw `callback is not a function` — a 500 AFTER the
+    // insert committed, so the client saw a failure for a dashboard that
+    // existed, and a retry made a second one.
+    return doc.toObject() as DashboardDocument;
   }
 
   // ── Update (layout + metadata) ────────────────────────────────────────────
@@ -94,7 +100,9 @@ export class DashboardsService {
     if (existing.ownerId !== this.userId) {
       throw new ForbiddenException('Only the owner can delete this dashboard');
     }
-    await this.model.deleteOne({ _id: id });
+    // tenantId in the filter even though findOne() above already validated it:
+    // a delete must not depend on a caller remembering to pre-read.
+    await this.model.deleteOne({ _id: id, tenantId: this.tenantId });
   }
 
   // ── Duplicate (clone shared dashboard to own) ─────────────────────────────
@@ -110,6 +118,7 @@ export class DashboardsService {
       icon: source.icon,
       widgets: source.widgets,
     });
-    return copy;
+    // Same reason as create(): never hand a hydrated document to the serializer.
+    return copy.toObject() as DashboardDocument;
   }
 }

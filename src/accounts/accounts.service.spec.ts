@@ -166,11 +166,16 @@ describe('AccountsService', () => {
       );
     });
 
-    it('should NOT emit audit when update returns null', async () => {
-      repository.update.mockResolvedValueOnce(null);
+    it('should refuse an update whose pre-read finds nothing, and emit no audit', async () => {
+      // See the matching test in deals.service.spec.ts: a scope miss is an
+      // authorization outcome, not a silent no-op reported as success.
+      repository.findOne.mockResolvedValueOnce(null);
 
-      await service.update('nonexistent', { name: 'X' } as any);
+      await expect(
+        service.update('nonexistent', { name: 'X' } as any),
+      ).rejects.toBeInstanceOf(NotFoundException);
 
+      expect(repository.update).not.toHaveBeenCalled();
       expect(entityAudit.emit).not.toHaveBeenCalled();
     });
   });

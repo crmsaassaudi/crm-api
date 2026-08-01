@@ -4,7 +4,12 @@ import { AssignmentQueueMaintenanceService } from './assignment-queue-maintenanc
 describe('AssignmentQueueMaintenanceService', () => {
   it('should return stale operations to the queue and records telemetry', async () => {
     const exec = jest.fn(async () => ({ modifiedCount: 2 }));
-    const queue = { updateMany: jest.fn(() => ({ exec })) };
+    // `setOptions` is part of the contract, not chain noise: this cron has no
+    // request context, so `tenantFilterPlugin` throws unless the query declares
+    // `isPlatformQuery`. A mock without it is how the missing declaration went
+    // unnoticed while the job threw once a minute in a real process.
+    const setOptions = jest.fn(() => ({ exec }));
+    const queue = { updateMany: jest.fn(() => ({ setOptions, exec })) };
     const metrics = { incrementCounter: jest.fn() };
     const service = new AssignmentQueueMaintenanceService(
       queue as any,
@@ -19,6 +24,7 @@ describe('AssignmentQueueMaintenanceService', () => {
       }),
       expect.anything(),
     );
+    expect(setOptions).toHaveBeenCalledWith({ isPlatformQuery: true });
     expect(metrics.incrementCounter).toHaveBeenCalledWith(
       'crm_assignment_queue_stale_operations_recovered_total',
       {},

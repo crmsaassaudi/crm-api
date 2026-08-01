@@ -295,6 +295,13 @@ export class TicketsService {
   async update(id: string, data: Partial<Ticket>): Promise<Ticket | null> {
     // Snapshot before update for audit trail
     const existingTicket = await this.repository.findOne({ _id: id });
+    // `findOne` is scoped by tenant, data-visibility and the ABAC deny, so a
+    // miss means "not yours to edit". Refusing here rather than letting the
+    // write miss keeps the answer a 404 and skips the validation work a denied
+    // request should never pay for.
+    if (!existingTicket) {
+      throw new NotFoundException(`Ticket ${id} not found`);
+    }
 
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'update');

@@ -1,5 +1,5 @@
 import mongoose, { Schema, Model, Connection, Document } from 'mongoose';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import {
   setupTestDatabase,
   clearDatabase,
@@ -316,20 +316,23 @@ describe('BaseDocumentRepository — real MongoDB', () => {
   // CROSS-TENANT UPDATE/DELETE PROTECTION
   // ═══════════════════════════════════════════════════════════════════
   describe('cross-tenant protection', () => {
-    it('should update() from different tenant returns null (no match)', async () => {
+    it('should refuse update() from a different tenant with a 404', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
         repo = new TestEntityRepository(TestModel, cls);
         return repo.create({ name: 'TenantA Data', score: 50 } as any);
       });
 
-      const result = await runWithTenant(TENANT_B, async () => {
-        const cls = ClsServiceManager.getClsService();
-        repo = new TestEntityRepository(TestModel, cls);
-        return repo.update(created.id, { name: 'Hacked' } as any);
-      });
-
-      expect(result).toBeNull();
+      // Used to resolve to `null`, which callers doing `return updated!`
+      // forwarded as a 200 with an empty body — a refused write reported as a
+      // successful one.
+      await expect(
+        runWithTenant(TENANT_B, async () => {
+          const cls = ClsServiceManager.getClsService();
+          repo = new TestEntityRepository(TestModel, cls);
+          return repo.update(created.id, { name: 'Hacked' } as any);
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
 
       // Original unchanged
       const original = await runWithTenant(TENANT_A, async () => {
@@ -340,18 +343,22 @@ describe('BaseDocumentRepository — real MongoDB', () => {
       expect(original!.name).toBe('TenantA Data');
     });
 
-    it('should remove() from different tenant has no effect', async () => {
+    it('should refuse remove() from a different tenant with a 404 and leave the row intact', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
         repo = new TestEntityRepository(TestModel, cls);
         return repo.create({ name: 'Protected' } as any);
       });
 
-      await runWithTenant(TENANT_B, async () => {
-        const cls = ClsServiceManager.getClsService();
-        repo = new TestEntityRepository(TestModel, cls);
-        await repo.remove(created.id);
-      });
+      // Used to resolve silently, so the handler answered 204 No Content for a
+      // record it had not deleted and was never allowed to touch.
+      await expect(
+        runWithTenant(TENANT_B, async () => {
+          const cls = ClsServiceManager.getClsService();
+          repo = new TestEntityRepository(TestModel, cls);
+          await repo.remove(created.id);
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
 
       const stillExists = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
