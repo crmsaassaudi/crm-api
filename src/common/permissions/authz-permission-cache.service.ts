@@ -21,7 +21,7 @@ import {
   PermissionTenant,
 } from './permission.engine';
 import { PermissionRuleMetadata } from './permission.decorator';
-import { getPermissionKey } from './permission.constants';
+import { DEPRECATED_PERMISSIONS, getPermissionKey } from './permission.constants';
 
 const DEFAULT_CACHE_TTL_SECONDS = 5 * 60;
 const EMPTY_SENTINEL = '__empty__';
@@ -712,6 +712,22 @@ export class AuthzPermissionCacheService {
    * Read-only and hypothetical: nothing is written, and no group membership or
    * JIT assignment is assumed, because an invitee has neither yet.
    */
+  /**
+   * A preview answers "what will this person be able to do", so it must not
+   * list a permission whose feature no longer exists. The enforcement engine
+   * still resolves retired keys — a stored role may hold one until the strip
+   * migration has run everywhere — but they authorize nothing, and showing them
+   * puts a line in an admin's approval that maps to no button in the product.
+   *
+   * @see DEPRECATED_PERMISSIONS, and `getPermissionMatrix`, which hides the same
+   * keys from the role editor.
+   */
+  private static readonly retired = new Set<string>(DEPRECATED_PERMISSIONS);
+
+  private withoutRetired(keys: string[]): string[] {
+    return keys.filter((key) => !AuthzPermissionCacheService.retired.has(key));
+  }
+
   async previewMembershipAccess(
     tenantId: string,
     candidate: { tenantRole: string; roleIds?: string[] },
@@ -764,7 +780,7 @@ export class AuthzPermissionCacheService {
 
     if (explanation.fullAccess) {
       return {
-        permissions: explanation.effective,
+        permissions: this.withoutRetired(explanation.effective),
         fullAccess: true,
         scope: DataScope.TENANT,
         explicit: true,
@@ -777,7 +793,7 @@ export class AuthzPermissionCacheService {
       .map((role) => role.dataScope);
 
     return {
-      permissions: explanation.effective,
+      permissions: this.withoutRetired(explanation.effective),
       fullAccess: false,
       scope: maxScope(scopes),
       explicit: scopes.some(isDataScope),
@@ -890,9 +906,9 @@ export class AuthzPermissionCacheService {
       .map((role) => role.dataScope);
 
     return {
-      permissions: explanation.effective,
+      permissions: this.withoutRetired(explanation.effective),
       sources: explanation.sources,
-      tenantCeiling: explanation.tenantCeiling,
+      tenantCeiling: this.withoutRetired(explanation.tenantCeiling),
       scope: maxScope(scopes),
       explicit: scopes.some(isDataScope),
       inherited: inherited.map((group) => ({

@@ -57,4 +57,41 @@ describe('TicketMapper — dealId round trip', () => {
     } as any);
     expect(mapped.dealId).toBeUndefined();
   });
+
+  it('should preserve a null dealId in the unlink response', () => {
+    const mapped = TicketMapper.toDomain({
+      _id: '60d0fe4f5311236168a109ca',
+      subject: 'Printer on fire',
+      dealId: null,
+    } as any);
+    expect(mapped.dealId).toBeNull();
+  });
+
+  it('should round-trip SLA pause state used by pause and resume commands', () => {
+    const pausedAt = new Date('2026-08-01T10:00:00Z');
+    const resumedAt = new Date('2026-08-01T10:05:00Z');
+    const mapped = TicketMapper.toDomain({
+      _id: '60d0fe4f5311236168a109ca',
+      subject: 'Printer on fire',
+      slaPausedAt: pausedAt,
+      slaResumedAt: resumedAt,
+      slaPausedSeconds: 300,
+    } as any);
+    expect(mapped).toEqual(
+      expect.objectContaining({
+        slaPausedAt: pausedAt,
+        slaResumedAt: resumedAt,
+        slaPausedSeconds: 300,
+      }),
+    );
+
+    const persisted = TicketMapper.toPersistence(mapped);
+    expect(persisted).toEqual(
+      expect.objectContaining({
+        slaPausedAt: pausedAt,
+        slaResumedAt: resumedAt,
+        slaPausedSeconds: 300,
+      }),
+    );
+  });
 });

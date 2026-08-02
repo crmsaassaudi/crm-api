@@ -12,7 +12,7 @@ import { BusinessException } from '../common/exceptions/business.exception';
 import { TICKET_ERRORS } from './constants/ticket-error-codes';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { Connection, Model } from 'mongoose';
+import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { Readable } from 'stream';
 import { TicketRepository } from './infrastructure/persistence/document/repositories/ticket.repository';
 import { Ticket } from './domain/ticket';
@@ -48,6 +48,8 @@ import { TICKET_MERGE_REFERENCES } from './ticket-references.registry';
 import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { loadCustomFieldDefinitions } from '../utils/custom-field-filter';
 import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
+import { logSwallowed } from '../common/utils/log-swallowed';
+import { AuthorizationService } from '../common/permissions/authorization.service';
 
 @Injectable()
 export class TicketsService {
@@ -76,6 +78,7 @@ export class TicketsService {
     @Optional() private readonly customFields?: CustomFieldsService,
     @Optional()
     private readonly customFieldValidator?: CustomFieldValueValidator,
+    @Optional() private readonly authorization?: AuthorizationService,
   ) {
     this.importStorage = this.storageFactory.create('tickets');
   }
@@ -84,6 +87,11 @@ export class TicketsService {
     ticketIds: string[];
     tags: string[];
   }): Promise<{ success: true; matchedCount: number; modifiedCount: number }> {
+    if (!Array.isArray(params.ticketIds) || !Array.isArray(params.tags)) {
+      throw new BadRequestException('ticketIds and tags must be arrays');
+    }
+    for (const id of params.ticketIds) this.assertObjectId(id, 'ticketIds');
+    for (const id of params.tags) this.assertObjectId(id, 'tags');
     const ticketIds = Array.from(new Set(params.ticketIds || [])).filter(
       Boolean,
     );
@@ -105,7 +113,35 @@ export class TicketsService {
 
     await this.tagsService.validateTagIds('Ticket', tags);
 
+    const tickets = await this.repository.findManyByIds(ticketIds);
+    if (tickets.length !== ticketIds.length) {
+      throw new NotFoundException('One or more tickets were not found');
+    }
+    // Bound authorization concurrency so a 500-record operation cannot create
+    // 500 simultaneous ACL/ABAC database lookups.
+    for (let offset = 0; offset < tickets.length; offset += 20) {
+      await Promise.all(
+        tickets
+          .slice(offset, offset + 20)
+          .map((ticket) =>
+            this.assertRecordAccess(
+              'edit',
+              'tickets',
+              ticket.id,
+              ticket as any,
+            ),
+          ),
+      );
+    }
+
     const result = await this.repository.addTagsToTickets(ticketIds, tags);
+
+    for (const ticket of tickets) {
+      this.emitMutationAudit(ticket.id, ticket, {
+        ...ticket,
+        tags: Array.from(new Set([...(ticket.tags ?? []), ...tags])),
+      });
+    }
 
     return {
       success: true,
@@ -142,6 +178,15 @@ export class TicketsService {
       }
     }
     return data;
+  }
+
+  private assertObjectId(
+    value: unknown,
+    field: string,
+  ): asserts value is string {
+    if (typeof value !== 'string' || !Types.ObjectId.isValid(value)) {
+      throw new BadRequestException(`${field} is not a valid id`);
+    }
   }
 
   /**
@@ -190,6 +235,142 @@ export class TicketsService {
     }
   }
 
+  private async validateTenantReferences(
+    data: Record<string, any>,
+  ): Promise<void> {
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    if (!tenantId)
+      throw new Error('Tenant context is required for ticket references');
+    const tenantValue = Types.ObjectId.isValid(String(tenantId))
+      ? new Types.ObjectId(String(tenantId))
+      : tenantId;
+    // Collections whose delete is a soft delete: a reference to a record in the
+    // recycle bin is a dangling reference, so it is refused like a missing one.
+    const softDeleted = new Set([
+      'contacts',
+      'accounts',
+      'deals',
+      'tasks',
+      'tickets',
+    ]);
+    const references: Array<[string, string]> = [
+      ['contactId', 'contacts'],
+      ['accountId', 'accounts'],
+      ['dealId', 'deals'],
+      ['groupId', 'groups'],
+      ['statusId', 'ticket_statuses'],
+      ['typeId', 'ticket_types'],
+      ['sourceId', 'ticket_sources'],
+      ['resolutionCodeId', 'ticket_resolution_codes'],
+      ['parentTicketId', 'tickets'],
+      ['ownerId', 'users'],
+    ];
+    await Promise.all(
+      references.map(async ([field, collection]) => {
+        const value = data[field];
+        if (value === undefined || value === null) return;
+        if (!Types.ObjectId.isValid(String(value))) {
+          throw new BadRequestException(`${field} is not a valid id`);
+        }
+        // These are raw driver reads, so the tenant plugin does not apply and
+        // the predicate is spelled out here rather than built out of sight.
+        const exists = await this.connection.collection(collection).findOne({
+          _id: new Types.ObjectId(String(value)),
+          ...(collection === 'users'
+            ? { 'tenants.tenantId': tenantValue }
+            : { tenantId: tenantValue }),
+          ...(softDeleted.has(collection) ? { deletedAt: null } : {}),
+        });
+        if (!exists) {
+          throw new BadRequestException(
+            `${field} does not reference an active record in this tenant`,
+          );
+        }
+        if (['contacts', 'accounts', 'deals', 'tickets'].includes(collection)) {
+          await this.assertRecordAccess(
+            'view',
+            collection,
+            String(value),
+            exists,
+          );
+        }
+      }),
+    );
+    if (Array.isArray(data.tags) && data.tags.length > 0) {
+      await this.tagsService.validateTagIds('Ticket', data.tags);
+    }
+    if (data.relatedTo) {
+      const targets: Record<string, { collection: string; nameField: string }> =
+        {
+          Deal: { collection: 'deals', nameField: 'name' },
+          Ticket: { collection: 'tickets', nameField: 'subject' },
+          Contact: { collection: 'contacts', nameField: 'firstName' },
+          Account: { collection: 'accounts', nameField: 'name' },
+          Task: { collection: 'tasks', nameField: 'title' },
+        };
+      const target = targets[data.relatedTo.type];
+      if (!target || !Types.ObjectId.isValid(String(data.relatedTo._id))) {
+        throw new BadRequestException('relatedTo is invalid');
+      }
+      // Read the whole document, not just the label: it is also the record the
+      // ABAC evaluator sees, and a projected record has no `ownerId` for
+      // `resource.*` conditions to hold — every scoped user would be refused.
+      const related = await this.connection
+        .collection(target.collection)
+        .findOne({
+          _id: new Types.ObjectId(String(data.relatedTo._id)),
+          tenantId: tenantValue,
+          ...(softDeleted.has(target.collection) ? { deletedAt: null } : {}),
+        });
+      if (!related) {
+        throw new BadRequestException(
+          'relatedTo does not reference an active record in this tenant',
+        );
+      }
+      await this.assertRecordAccess(
+        'view',
+        target.collection,
+        String(related._id),
+        related,
+      );
+      const label =
+        data.relatedTo.type === 'Contact'
+          ? [related.firstName, related.lastName].filter(Boolean).join(' ')
+          : related[target.nameField];
+      data.relatedTo = {
+        type: data.relatedTo.type,
+        _id: String(related._id),
+        id: String(related._id),
+        name: String(label ?? ''),
+      };
+    }
+  }
+
+  private async assertRecordAccess(
+    action: string,
+    resource: string,
+    resourceId: string,
+    record: Record<string, unknown>,
+  ): Promise<void> {
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    const userId = this.getCurrentUserId();
+    if (!tenantId || !userId || !this.authorization) {
+      throw new Error('Authorization context is required for ticket relation');
+    }
+    const allowed = await this.authorization.canAccessRecord({
+      tenantId: String(tenantId),
+      userId: String(userId),
+      action,
+      resource,
+      resourceId,
+      groupIds: this.cls.get('visibleGroupIds') ?? [],
+      principalType: this.cls.get('principalType') ?? 'user',
+      record,
+      env: { ip: this.cls.get('requestIp') },
+    });
+    if (!allowed) throw new NotFoundException(`${resource} record not found`);
+  }
+
   // ─────────────────────────── EXPORT ───────────────────────────
 
   async exportTickets(
@@ -236,6 +417,7 @@ export class TicketsService {
   async create(data: Partial<Ticket>): Promise<Ticket> {
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'create');
+    await this.validateTenantReferences(data as Record<string, any>);
     const customFields = this.customFieldValidator
       ? await this.customFieldValidator.validate('Ticket', data.customFields, {
           strict: true,
@@ -271,6 +453,50 @@ export class TicketsService {
   }
 
   async findAll(filter: any): Promise<any> {
+    const page = Math.max(1, Number(filter.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(filter.limit) || 20));
+    for (const field of ['statusIds', 'priorities'] as const) {
+      if (filter[field] !== undefined && typeof filter[field] !== 'string') {
+        throw new BadRequestException(
+          `${field} must be a comma-separated string`,
+        );
+      }
+    }
+    const statusIds = String(filter.statusIds ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (
+      statusIds.length > 100 ||
+      statusIds.some((value) => !Types.ObjectId.isValid(value))
+    ) {
+      throw new BadRequestException('statusIds contains an invalid id');
+    }
+    const priorities = String(filter.priorities ?? '')
+      .split(',')
+      .map((value) => value.trim().toUpperCase())
+      .filter(Boolean);
+    if (
+      priorities.length > 20 ||
+      priorities.some(
+        (value) => !['URGENT', 'HIGH', 'MEDIUM', 'LOW'].includes(value),
+      )
+    ) {
+      throw new BadRequestException('priorities contains an invalid value');
+    }
+    if (typeof filter.filters === 'string') {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(filter.filters);
+      } catch {
+        throw new BadRequestException('filters must be valid JSON');
+      }
+      if (!Array.isArray(parsed) || parsed.length > 100) {
+        throw new BadRequestException(
+          'filters must be an array of at most 100 items',
+        );
+      }
+    }
     const filterOptions = {
       ...filter,
       __customFieldDefinitions: await loadCustomFieldDefinitions(
@@ -282,8 +508,8 @@ export class TicketsService {
     return this.repository.findManyWithPagination({
       filterOptions,
       paginationOptions: {
-        page: Number(filter.page) || 1,
-        limit: Number(filter.limit) || 10,
+        page,
+        limit,
       },
     });
   }
@@ -305,6 +531,7 @@ export class TicketsService {
 
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'update');
+    await this.validateTenantReferences(data as Record<string, any>);
 
     const customFields = this.customFieldValidator
       ? await this.customFieldValidator.validate('Ticket', data.customFields, {
@@ -513,6 +740,21 @@ export class TicketsService {
       );
     }
     const format = detectFormat(file.originalname);
+    if (
+      format === 'xlsx' &&
+      !(
+        file.buffer.length >= 4 &&
+        file.buffer[0] === 0x50 &&
+        file.buffer[1] === 0x4b &&
+        file.buffer[2] === 0x03 &&
+        file.buffer[3] === 0x04
+      )
+    ) {
+      throw new BadRequestException('Invalid XLSX file signature');
+    }
+    if (format === 'csv' && file.buffer.subarray(0, 8_192).includes(0)) {
+      throw new BadRequestException('CSV file contains binary data');
+    }
     const parser = createParser(format);
     const headers = await parser.readHeaders(Readable.from(file.buffer));
     if (headers.length === 0) {
@@ -528,6 +770,25 @@ export class TicketsService {
   async startImport(
     dto: StartTicketImportDto,
   ): Promise<{ jobId: string; status: 'queued' }> {
+    const mappingEntries = Object.entries(dto.mapping ?? {});
+    if (mappingEntries.length === 0 || mappingEntries.length > 200) {
+      throw new BadRequestException(
+        'mapping must contain between 1 and 200 columns',
+      );
+    }
+    if (
+      mappingEntries.some(
+        ([header, target]) =>
+          header.length === 0 ||
+          header.length > 500 ||
+          typeof target !== 'string' ||
+          target.length > 100,
+      )
+    ) {
+      throw new BadRequestException(
+        'mapping contains an invalid column or target',
+      );
+    }
     const mappedFields = new Set(Object.values(dto.mapping ?? {}));
     if (!mappedFields.has('subject')) {
       throw new BadRequestException('mapping must include subject');
@@ -551,7 +812,15 @@ export class TicketsService {
     }
 
     const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
-    const userId = this.getCurrentUserId() ?? 'system';
+    const userId = this.getCurrentUserId();
+    if (!tenantId || !userId) {
+      throw new BadRequestException('Authenticated tenant context is required');
+    }
+    await this.importStorage.assertImportFileOwnership(
+      dto.fileKey,
+      String(tenantId),
+      String(userId),
+    );
 
     const job = await this.importQueue.add('import', {
       tenantId,
@@ -643,7 +912,9 @@ export class TicketsService {
       if (bullJob.progress && typeof bullJob.progress === 'object') {
         doc.progress = bullJob.progress;
       }
-    } catch {}
+    } catch (error) {
+      logSwallowed(this.logger, 'ticket import queue status enrichment')(error);
+    }
   }
 
   /** Extract populated user object from userId. */
@@ -680,7 +951,9 @@ export class TicketsService {
           if (bullJob.progress && typeof bullJob.progress === 'object')
             (doc as any).progress = bullJob.progress;
         }
-      } catch {}
+      } catch (error) {
+        logSwallowed(this.logger, 'ticket import job detail enrichment')(error);
+      }
     }
     return doc;
   }
@@ -718,6 +991,7 @@ export class TicketsService {
    * from querying `tickets.dealId`, so there is one source of truth to keep correct.
    */
   async linkDeal(ticketId: string, dealId: string): Promise<Ticket> {
+    this.assertObjectId(dealId, 'dealId');
     const ticket = await this.repository.findOne({ _id: ticketId });
     if (!ticket)
       throw new BusinessException(
@@ -731,6 +1005,17 @@ export class TicketsService {
       return ticket;
     }
 
+    await this.validateTenantReferences({ dealId });
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    const deal = await this.connection.collection('deals').findOne({
+      _id: new Types.ObjectId(dealId),
+      tenantId: Types.ObjectId.isValid(String(tenantId))
+        ? new Types.ObjectId(String(tenantId))
+        : tenantId,
+    });
+    if (!deal) throw new NotFoundException('deals record not found');
+    await this.assertRecordAccess('view', 'deals', dealId, deal);
+
     const updated = await this.repository.update(ticketId, {
       dealId,
     } as any);
@@ -740,6 +1025,7 @@ export class TicketsService {
     this.logger.log(
       `[TicketDealLink] Ticket ${ticketId} ↔ Deal ${dealId} linked`,
     );
+    this.emitMutationAudit(ticketId, ticket, updated);
     return updated;
   }
 
@@ -763,6 +1049,7 @@ export class TicketsService {
     if (!updated) throw new NotFoundException('Ticket not found after update');
 
     this.logger.log(`[TicketDealLink] Ticket ${ticketId} deal unlinked`);
+    this.emitMutationAudit(ticketId, ticket, updated);
     return updated;
   }
 
@@ -786,6 +1073,7 @@ export class TicketsService {
    *  - Not creating a circular reference (parent cannot be a child of self)
    */
   async setParent(ticketId: string, parentTicketId: string): Promise<Ticket> {
+    this.assertObjectId(parentTicketId, 'parentTicketId');
     if (ticketId === parentTicketId) {
       throw new BadRequestException('A ticket cannot be its own parent');
     }
@@ -802,12 +1090,41 @@ export class TicketsService {
         'Ticket not found',
       );
     if (!parentTicket) throw new NotFoundException('Parent ticket not found');
+    await this.assertRecordAccess(
+      'view',
+      'tickets',
+      parentTicketId,
+      parentTicket as any,
+    );
 
-    // Check that parentTicket is not already a child of ticketId (circular check)
-    if ((parentTicket as any).parentTicketId === ticketId) {
-      throw new BadRequestException(
-        'Circular parent reference: the target parent is already a child of this ticket',
-      );
+    // Walk the complete ancestor chain. A one-level check misses A -> B -> C
+    // followed by C -> A. Bound the walk to protect against legacy corrupt data.
+    const visited = new Set<string>([parentTicketId]);
+    let ancestorId: string | null = (parentTicket as any).parentTicketId
+      ? String((parentTicket as any).parentTicketId)
+      : null;
+    for (let depth = 0; ancestorId && depth < 100; depth += 1) {
+      if (ancestorId === ticketId) {
+        throw new BadRequestException(
+          'Circular parent reference: target is already a descendant of this ticket',
+        );
+      }
+      if (visited.has(ancestorId)) {
+        throw new BadRequestException(
+          'Ticket hierarchy already contains a circular reference',
+        );
+      }
+      visited.add(ancestorId);
+      const next = await this.repository.findParentId(ancestorId);
+      if (next === undefined) {
+        throw new BadRequestException(
+          'Ticket hierarchy contains a missing parent',
+        );
+      }
+      ancestorId = next;
+    }
+    if (ancestorId) {
+      throw new BadRequestException('Ticket hierarchy exceeds 100 levels');
     }
 
     const updated = await this.repository.update(ticketId, {
@@ -819,6 +1136,7 @@ export class TicketsService {
     this.logger.log(
       `[TicketHierarchy] Ticket ${ticketId} → parent: ${parentTicketId}`,
     );
+    this.emitMutationAudit(ticketId, ticket, updated);
     return updated;
   }
 
@@ -841,6 +1159,7 @@ export class TicketsService {
     if (!updated) throw new NotFoundException('Ticket not found after update');
 
     this.logger.log(`[TicketHierarchy] Ticket ${ticketId} parent removed`);
+    this.emitMutationAudit(ticketId, ticket, updated);
     return updated;
   }
 
@@ -869,6 +1188,7 @@ export class TicketsService {
    *  - Returns the updated target ticket.
    */
   async mergeTickets(targetId: string, sourceId: string): Promise<Ticket> {
+    this.assertObjectId(sourceId, 'sourceId');
     if (targetId === sourceId) {
       throw new BadRequestException('Cannot merge a ticket with itself');
     }
@@ -882,6 +1202,8 @@ export class TicketsService {
       throw new NotFoundException(`Target ticket ${targetId} not found`);
     if (!source)
       throw new NotFoundException(`Source ticket ${sourceId} not found`);
+
+    await this.assertRecordAccess('delete', 'tickets', sourceId, source as any);
 
     // Append merge note on target
     const existingNotes: string = (target as any).description ?? '';
@@ -904,25 +1226,34 @@ export class TicketsService {
     );
 
     // Update target with merged description
-    const updated = await this.repository.update(targetId, {
-      description: mergedNotes,
-      linkedMessageIds: mergedMessageIds,
-    } as any);
-
-    if (!updated)
-      throw new NotFoundException('Target ticket not found after update');
+    const session = await this.connection.startSession();
+    let updated!: Ticket;
+    try {
+      await session.withTransaction(async () => {
+        updated = await this.repository.update(
+          targetId,
+          {
+            description: mergedNotes,
+            linkedMessageIds: mergedMessageIds,
+          } as any,
+          session,
+        );
+        await this.reparentTicketReferences(sourceId, targetId, session);
+        await this.repository.softDeleteInSession(sourceId, session);
+      });
+    } finally {
+      await session.endSession();
+    }
 
     // Move the source's timeline onto the target, for the same reason: entries
     // attached to a soft-deleted ticket are unreachable, not deleted. The audit trail
     // is deliberately NOT moved — it records what happened to a specific ticket id,
     // and rewriting it would falsify history; this merge is itself audited below.
-    await this.reparentTicketReferences(sourceId, targetId);
 
     // Soft-delete source ticket (mark as merged via deletedAt).
     // `remove()` on the base repository is a soft delete for any schema declaring
     // `deletedAt` — which is what this comment always claimed and, until the base was
     // fixed, was not: it issued `deleteOne` and destroyed the source outright.
-    await this.repository.remove(sourceId);
 
     this.logger.log(`[TicketMerge] Ticket ${sourceId} merged into ${targetId}`);
 
@@ -974,24 +1305,19 @@ export class TicketsService {
   private async reparentTicketReferences(
     sourceId: string,
     targetId: string,
+    session: ClientSession,
   ): Promise<void> {
     const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
     if (!tenantId) return;
 
     for (const ref of TICKET_MERGE_REFERENCES) {
-      try {
-        await this.connection
-          .collection(ref.collection)
-          .updateMany(
-            buildReferenceFilter(ref, sourceId, String(tenantId)),
-            buildReparentUpdate(ref, targetId) as any,
-          );
-      } catch (err) {
-        this.logger.error(
-          `[TicketMerge] Could not move ${ref.label} (${ref.collection}.${ref.field}) ` +
-            `for ${sourceId}: ${err instanceof Error ? err.message : String(err)}`,
+      await this.connection
+        .collection(ref.collection)
+        .updateMany(
+          buildReferenceFilter(ref, sourceId, String(tenantId)),
+          buildReparentUpdate(ref, targetId) as any,
+          { session },
         );
-      }
     }
   }
 
@@ -1016,15 +1342,16 @@ export class TicketsService {
       return ticket;
     }
 
-    const updated = await this.repository.update(ticketId, {
-      slaPausedAt: new Date(),
-      slaResumedAt: undefined,
-    } as any);
-
-    if (!updated) throw new NotFoundException('Ticket not found after update');
+    const updated = await this.repository.pauseSlaAtomic(ticketId, new Date());
+    // A concurrent request may have paused it first. Re-read and return the
+    // winning state to preserve idempotency without a lost update.
+    const result =
+      updated ?? (await this.repository.findOne({ _id: ticketId }));
+    if (!result) throw new NotFoundException('Ticket not found after update');
 
     this.logger.log(`[SLA] Ticket ${ticketId} SLA paused`);
-    return updated;
+    this.emitMutationAudit(ticketId, ticket, result);
+    return result;
   }
 
   /**
@@ -1051,33 +1378,34 @@ export class TicketsService {
     }
 
     const now = new Date();
-    const pausedMs = now.getTime() - new Date(pausedAt).getTime();
-    const additionalPausedSeconds = Math.floor(pausedMs / 1000);
-    const cumulative =
-      ((ticket as any).slaPausedSeconds ?? 0) + additionalPausedSeconds;
-
-    // Extend SLA deadlines by the paused duration
-    const firstResponseDueAt = (ticket as any).firstResponseDueAt
-      ? new Date(
-          new Date((ticket as any).firstResponseDueAt).getTime() + pausedMs,
-        )
-      : undefined;
-    const resolutionDueAt = (ticket as any).resolutionDueAt
-      ? new Date(new Date((ticket as any).resolutionDueAt).getTime() + pausedMs)
-      : undefined;
-
-    const updated = await this.repository.update(ticketId, {
-      slaResumedAt: now,
-      slaPausedSeconds: cumulative,
-      ...(firstResponseDueAt ? { firstResponseDueAt } : {}),
-      ...(resolutionDueAt ? { resolutionDueAt } : {}),
-    } as any);
-
-    if (!updated) throw new NotFoundException('Ticket not found after update');
+    const additionalPausedSeconds = Math.max(
+      0,
+      Math.floor((now.getTime() - new Date(pausedAt).getTime()) / 1000),
+    );
+    const updated = await this.repository.resumeSlaAtomic(ticketId, now);
+    const result =
+      updated ?? (await this.repository.findOne({ _id: ticketId }));
+    if (!result) throw new NotFoundException('Ticket not found after update');
 
     this.logger.log(
-      `[SLA] Ticket ${ticketId} SLA resumed. Paused ${additionalPausedSeconds}s. Total paused: ${cumulative}s. Deadlines extended.`,
+      `[SLA] Ticket ${ticketId} SLA resumed. Paused ${additionalPausedSeconds}s. Deadlines extended.`,
     );
-    return updated;
+    this.emitMutationAudit(ticketId, ticket, result);
+    return result;
+  }
+
+  private emitMutationAudit(
+    entityId: string,
+    oldSnapshot: Ticket,
+    newSnapshot: Ticket,
+  ): void {
+    this.entityAudit.emit({
+      entity: 'ticket',
+      entityType: 'TICKET',
+      entityId,
+      kind: 'updated',
+      oldSnapshot,
+      newSnapshot,
+    });
   }
 }

@@ -15,6 +15,7 @@ import {
   BaseImportJobData,
   MappedRow,
   ImportRowError,
+  ImportErrorCode,
   ImportJobSchemaClass,
   ImportJobDocument,
 } from '../../common/import';
@@ -191,10 +192,43 @@ export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobDa
   }
 
   protected validateRow(
-    _mapped: MappedRow,
+    mapped: MappedRow,
     _data: TicketImportJobData,
   ): ImportRowError[] {
-    return [];
+    const errors: ImportRowError[] = [];
+    const subject = String(mapped.fields.subject ?? '').trim();
+    if (!subject) {
+      errors.push({
+        row: mapped.row,
+        field: 'subject',
+        code: ImportErrorCode.REQUIRED_FIELD_MISSING,
+        reason: 'subject is required',
+      });
+    } else if (subject.length > 500) {
+      errors.push({
+        row: mapped.row,
+        field: 'subject',
+        code: ImportErrorCode.VALIDATION_FAILED,
+        reason: 'subject must not exceed 500 characters',
+      });
+    }
+    if (String(mapped.fields.description ?? '').length > 50_000) {
+      errors.push({
+        row: mapped.row,
+        field: 'description',
+        code: ImportErrorCode.VALIDATION_FAILED,
+        reason: 'description must not exceed 50000 characters',
+      });
+    }
+    if ((mapped.arrayFields.tags?.length ?? 0) > 100) {
+      errors.push({
+        row: mapped.row,
+        field: 'tags',
+        code: ImportErrorCode.VALIDATION_FAILED,
+        reason: 'tags must not contain more than 100 values',
+      });
+    }
+    return errors;
   }
 
   /**

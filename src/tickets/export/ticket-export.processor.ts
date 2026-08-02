@@ -109,13 +109,6 @@ export class TicketExportProcessor extends BaseExportProcessor<TicketExportJobDa
   private readonly storage: ExportStorageService;
 
   // ── Per-job lookup maps ───────────────────────────────────────────
-  private readonly userMap = new Map<string, string>();
-  private readonly statusMap = new Map<string, string>();
-  private readonly typeMap = new Map<string, string>();
-  private readonly sourceMap = new Map<string, string>();
-  private readonly groupMap = new Map<string, string>();
-  private resolvedColumns: ExportColumn[] = [];
-
   constructor(
     private readonly repository: TicketRepository,
     storageFactory: ExportStorageFactory,
@@ -145,30 +138,34 @@ export class TicketExportProcessor extends BaseExportProcessor<TicketExportJobDa
 
   // ── Lifecycle hook ────────────────────────────────────────────────
 
-  protected async beforeExport(data: TicketExportJobData): Promise<void> {
-    const [, , , , , dynamicColumns] = await Promise.all([
-      this.loadUserMap(data.tenantId),
-      this.loadStatusMap(data.tenantId),
-      this.loadTypeMap(data.tenantId),
-      this.loadSourceMap(data.tenantId),
-      this.loadGroupMap(data.tenantId),
-      loadCustomFieldExportColumns(this.customFields, 'Ticket'),
-    ]);
+  protected async beforeExport(
+    data: TicketExportJobData,
+  ): Promise<ExportModuleConfig> {
+    const [userMap, statusMap, typeMap, sourceMap, groupMap, dynamicColumns] =
+      await Promise.all([
+        this.loadUserMap(data.tenantId),
+        this.loadStatusMap(data.tenantId),
+        this.loadTypeMap(data.tenantId),
+        this.loadSourceMap(data.tenantId),
+        this.loadGroupMap(data.tenantId),
+        loadCustomFieldExportColumns(this.customFields, 'Ticket'),
+      ]);
 
-    this.resolvedColumns = [
+    const columns = [
       ...buildTicketExportColumns(
-        this.userMap,
-        this.statusMap,
-        this.typeMap,
-        this.sourceMap,
-        this.groupMap,
+        userMap,
+        statusMap,
+        typeMap,
+        sourceMap,
+        groupMap,
       ),
       ...dynamicColumns,
     ];
+    return this.buildModuleConfig(columns);
   }
 
-  private async loadUserMap(tenantId: string): Promise<void> {
-    this.userMap.clear();
+  private async loadUserMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const users = await this.userModel
       .find(
         { 'tenants.tenantId': tenantId },
@@ -178,69 +175,72 @@ export class TicketExportProcessor extends BaseExportProcessor<TicketExportJobDa
       .exec();
     for (const u of users as any[]) {
       const name = [u.firstName, u.lastName].filter(Boolean).join(' ');
-      this.userMap.set(String(u._id), name || u.email || String(u._id));
+      map.set(String(u._id), name || u.email || String(u._id));
     }
+    return map;
   }
 
-  private async loadStatusMap(tenantId: string): Promise<void> {
-    this.statusMap.clear();
+  private async loadStatusMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const docs = await this.ticketStatusModel
       .find({ tenantId }, { label: 1 })
       .lean()
       .exec();
     for (const d of docs as any[]) {
-      this.statusMap.set(String(d._id), d.label);
+      map.set(String(d._id), d.label);
     }
+    return map;
   }
 
-  private async loadTypeMap(tenantId: string): Promise<void> {
-    this.typeMap.clear();
+  private async loadTypeMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const docs = await this.ticketTypeModel
       .find({ tenantId }, { name: 1 })
       .lean()
       .exec();
     for (const d of docs as any[]) {
-      this.typeMap.set(String(d._id), d.name);
+      map.set(String(d._id), d.name);
     }
+    return map;
   }
 
-  private async loadSourceMap(tenantId: string): Promise<void> {
-    this.sourceMap.clear();
+  private async loadSourceMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const docs = await this.ticketSourceModel
       .find({ tenantId }, { name: 1 })
       .lean()
       .exec();
     for (const d of docs as any[]) {
-      this.sourceMap.set(String(d._id), d.name);
+      map.set(String(d._id), d.name);
     }
+    return map;
   }
 
-  private async loadGroupMap(tenantId: string): Promise<void> {
-    this.groupMap.clear();
+  private async loadGroupMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const docs = await this.groupModel
       .find({ tenantId }, { name: 1 })
       .lean()
       .exec();
     for (const d of docs as any[]) {
-      this.groupMap.set(String(d._id), d.name);
+      map.set(String(d._id), d.name);
     }
+    return map;
   }
 
   // ── BaseExportProcessor abstract implementations ──────────────────
 
   protected getModuleConfig(): ExportModuleConfig {
+    return this.buildModuleConfig([...STATIC_COLUMNS]);
+  }
+
+  private buildModuleConfig(columns: ExportColumn[]): ExportModuleConfig {
     return {
       module: 'ticket',
       displayName: 'Ticket',
       maskingResource: 'Ticket',
-      columns:
-        this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
-      selectableColumns: new Set(
-        (this.resolvedColumns.length > 0
-          ? this.resolvedColumns
-          : STATIC_COLUMNS
-        ).map((column) => column.path),
-      ),
+      columns,
+      selectableColumns: new Set(columns.map((column) => column.path)),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,
       throttleMs: 50,

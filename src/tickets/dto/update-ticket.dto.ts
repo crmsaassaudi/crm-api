@@ -1,4 +1,10 @@
-import { IsString, IsOptional, IsBoolean } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsMongoId,
+  MaxLength,
+} from 'class-validator';
 import { ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { CreateTicketDto } from './create-ticket.dto';
 
@@ -11,11 +17,13 @@ import { CreateTicketDto } from './create-ticket.dto';
 export class UpdateTicketDto extends PartialType(CreateTicketDto) {
   @ApiPropertyOptional({ description: 'TicketResolutionCode ObjectId' })
   @IsString()
+  @IsMongoId()
   @IsOptional()
   resolutionCodeId?: string;
 
   @ApiPropertyOptional({ description: 'Internal notes when closing ticket' })
   @IsString()
+  @MaxLength(20_000)
   @IsOptional()
   resolutionNotes?: string;
 

@@ -53,7 +53,6 @@ export class TaskExportProcessor extends BaseExportProcessor<TaskExportJobData> 
   protected readonly logger = new Logger(TaskExportProcessor.name);
   protected readonly cls: ClsService;
   private readonly storage: ExportStorageService;
-  private resolvedColumns: ExportColumn[] = [];
 
   constructor(
     private readonly repository: TaskRepository,
@@ -72,16 +71,18 @@ export class TaskExportProcessor extends BaseExportProcessor<TaskExportJobData> 
     this.storage = storageFactory.create('tasks');
   }
 
-  protected async beforeExport(): Promise<void> {
-    this.resolvedColumns = [
+  protected async beforeExport(): Promise<ExportModuleConfig> {
+    return this.buildModuleConfig([
       ...STATIC_COLUMNS,
       ...(await loadCustomFieldExportColumns(this.customFields, 'Task')),
-    ];
+    ]);
   }
 
   protected getModuleConfig(): ExportModuleConfig {
-    const columns =
-      this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS;
+    return this.buildModuleConfig([...STATIC_COLUMNS]);
+  }
+
+  private buildModuleConfig(columns: ExportColumn[]): ExportModuleConfig {
     return {
       module: 'task',
       displayName: 'Task',

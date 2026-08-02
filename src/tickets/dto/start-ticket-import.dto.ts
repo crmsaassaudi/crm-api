@@ -8,6 +8,10 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsInt,
+  Max,
+  MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -78,15 +82,20 @@ export class StartTicketImportDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000)
   estimatedRows?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(255)
   fileName?: string;
 
   @ApiPropertyOptional({ enum: ['csv', 'xlsx'] })
   @IsOptional()
-  @IsString()
-  fileFormat?: string;
+  @IsIn(['csv', 'xlsx'])
+  fileFormat?: 'csv' | 'xlsx';
 }

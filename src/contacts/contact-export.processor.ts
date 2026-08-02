@@ -118,12 +118,6 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
   protected readonly cls: ClsService;
   private readonly storage: ExportStorageService;
 
-  // ── Per-job lookup maps (rebuilt in beforeExport) ──────────────────
-  private readonly userMap = new Map<string, string>();
-  private readonly stageMap = new Map<string, string>();
-  private readonly statusMap = new Map<string, string>();
-  private resolvedColumns: ExportColumn[] = [];
-
   constructor(
     private readonly repository: ContactRepository,
     storageFactory: ExportStorageFactory,
@@ -146,21 +140,27 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
 
   // ── Lifecycle hook: pre-load lookup maps ───────────────────────────
 
-  protected async beforeExport(data: ContactExportJobData): Promise<void> {
-    const [, , dynamicColumns] = await Promise.all([
+  protected async beforeExport(
+    data: ContactExportJobData,
+  ): Promise<ExportModuleConfig> {
+    const [userMap, lifecycle, dynamicColumns] = await Promise.all([
       this.loadUserMap(data.tenantId),
       this.loadLifecycleMaps(data.tenantId),
       loadCustomFieldExportColumns(this.customFields, 'Contact'),
     ]);
 
-    this.resolvedColumns = [
-      ...buildContactExportColumns(this.userMap, this.stageMap, this.statusMap),
+    return this.buildModuleConfig([
+      ...buildContactExportColumns(
+        userMap,
+        lifecycle.stageMap,
+        lifecycle.statusMap,
+      ),
       ...dynamicColumns,
-    ];
+    ]);
   }
 
-  private async loadUserMap(tenantId: string): Promise<void> {
-    this.userMap.clear();
+  private async loadUserMap(tenantId: string): Promise<Map<string, string>> {
+    const userMap = new Map<string, string>();
     const users = await this.userModel
       .find(
         { 'tenants.tenantId': tenantId },
@@ -170,60 +170,66 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
       .exec();
     for (const u of users as any[]) {
       const name = [u.firstName, u.lastName].filter(Boolean).join(' ');
-      this.userMap.set(String(u._id), name || u.email || String(u._id));
+      userMap.set(String(u._id), name || u.email || String(u._id));
     }
+    return userMap;
   }
 
-  private async loadLifecycleMaps(tenantId: string): Promise<void> {
-    this.stageMap.clear();
-    this.statusMap.clear();
+  private async loadLifecycleMaps(tenantId: string): Promise<{
+    stageMap: Map<string, string>;
+    statusMap: Map<string, string>;
+  }> {
+    const stageMap = new Map<string, string>();
+    const statusMap = new Map<string, string>();
     try {
       const setting = await this.crmSettingsService.getSetting(
         'contact_lifecycle',
         tenantId,
       );
       const stages = Array.isArray(setting?.stages) ? setting.stages : [];
-      this.parseStagesAndStatuses(stages);
+      this.parseStagesAndStatuses(stages, stageMap, statusMap);
     } catch {
       // Setting not found — maps stay empty, raw IDs are used as fallback.
     }
+    return { stageMap, statusMap };
   }
 
-  private parseStagesAndStatuses(stages: any[]) {
+  private parseStagesAndStatuses(
+    stages: any[],
+    stageMap: Map<string, string>,
+    statusMap: Map<string, string>,
+  ) {
     for (const stage of stages) {
-      if (stage.id) this.stageMap.set(stage.id, stage.name ?? stage.apiName);
+      if (stage.id) stageMap.set(stage.id, stage.name ?? stage.apiName);
       if (stage.apiName)
-        this.stageMap.set(stage.apiName, stage.name ?? stage.apiName);
+        stageMap.set(stage.apiName, stage.name ?? stage.apiName);
 
-      this.parseStatuses(stage.statuses);
+      this.parseStatuses(stage.statuses, statusMap);
     }
   }
 
-  private parseStatuses(statuses: any) {
+  private parseStatuses(statuses: any, statusMap: Map<string, string>) {
     if (!Array.isArray(statuses)) return;
     for (const status of statuses) {
-      if (status.id)
-        this.statusMap.set(status.id, status.label ?? status.apiName);
+      if (status.id) statusMap.set(status.id, status.label ?? status.apiName);
       if (status.apiName)
-        this.statusMap.set(status.apiName, status.label ?? status.apiName);
+        statusMap.set(status.apiName, status.label ?? status.apiName);
     }
   }
 
   // ── BaseExportProcessor abstract implementations ──────────────────
 
   protected getModuleConfig(): ExportModuleConfig {
+    return this.buildModuleConfig([...STATIC_COLUMNS]);
+  }
+
+  private buildModuleConfig(columns: ExportColumn[]): ExportModuleConfig {
     return {
       module: 'contact',
       displayName: 'Contact',
       maskingResource: 'Contact',
-      columns:
-        this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
-      selectableColumns: new Set(
-        (this.resolvedColumns.length > 0
-          ? this.resolvedColumns
-          : STATIC_COLUMNS
-        ).map((column) => column.path),
-      ),
+      columns,
+      selectableColumns: new Set(columns.map((column) => column.path)),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,
       throttleMs: 50,

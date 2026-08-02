@@ -14,8 +14,9 @@ export class TicketMapper {
     // Customer Context
     domainEntity.contactId = raw.contactId?.toString();
     domainEntity.accountId = raw.accountId?.toString();
-    domainEntity.dealId = raw.dealId?.toString();
-    domainEntity.parentTicketId = raw.parentTicketId?.toString();
+    domainEntity.dealId = raw.dealId === null ? null : raw.dealId?.toString();
+    domainEntity.parentTicketId =
+      raw.parentTicketId === null ? null : raw.parentTicketId?.toString();
     domainEntity.omniConversationId = raw.omniConversationId?.toString();
     domainEntity.linkedMessageIds = raw.linkedMessageIds;
     domainEntity.relatedTo = raw.relatedTo
@@ -39,6 +40,7 @@ export class TicketMapper {
     // Assignment & Collaboration
     domainEntity.groupId = raw.groupId?.toString();
     domainEntity.ownerId = raw.ownerId?.toString();
+    domainEntity.orgUnitId = raw.orgUnitId?.toString() ?? null;
     domainEntity.watchers = raw.watchers?.map((w) => w.toString());
     domainEntity.statusId = raw.statusId?.toString();
 
@@ -47,6 +49,9 @@ export class TicketMapper {
     domainEntity.firstResponseDueAt = raw.firstResponseDueAt;
     domainEntity.resolutionDueAt = raw.resolutionDueAt;
     domainEntity.isSlaBreached = raw.isSlaBreached ?? false;
+    domainEntity.slaPausedAt = raw.slaPausedAt;
+    domainEntity.slaResumedAt = raw.slaResumedAt;
+    domainEntity.slaPausedSeconds = raw.slaPausedSeconds ?? 0;
 
     // Metrics & Resolution
     domainEntity.resolutionCodeId = raw.resolutionCodeId?.toString();
@@ -61,6 +66,8 @@ export class TicketMapper {
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
+    domainEntity.createdById = raw.createdById?.toString();
+    domainEntity.updatedById = raw.updatedById?.toString();
 
     // Populated virtuals
     if ((raw as any).owner) {
@@ -150,6 +157,7 @@ export class TicketMapper {
     // Assignment & Collaboration
     persistenceEntity.groupId = domainEntity.groupId;
     persistenceEntity.ownerId = domainEntity.ownerId;
+    persistenceEntity.orgUnitId = domainEntity.orgUnitId;
     persistenceEntity.watchers = domainEntity.watchers;
     persistenceEntity.statusId = domainEntity.statusId;
 
@@ -158,6 +166,9 @@ export class TicketMapper {
     persistenceEntity.firstResponseDueAt = domainEntity.firstResponseDueAt;
     persistenceEntity.resolutionDueAt = domainEntity.resolutionDueAt;
     persistenceEntity.isSlaBreached = domainEntity.isSlaBreached;
+    persistenceEntity.slaPausedAt = domainEntity.slaPausedAt;
+    persistenceEntity.slaResumedAt = domainEntity.slaResumedAt;
+    persistenceEntity.slaPausedSeconds = domainEntity.slaPausedSeconds;
 
     // Metrics & Resolution
     persistenceEntity.resolutionCodeId = domainEntity.resolutionCodeId;

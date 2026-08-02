@@ -86,7 +86,9 @@ export abstract class BaseExportProcessor<
    *
    * The default implementation is a no-op.
    */
-  protected async beforeExport(_data: TJobData): Promise<void> {
+  protected async beforeExport(
+    _data: TJobData,
+  ): Promise<ExportModuleConfig | void> {
     // no-op — subclasses may override
   }
 
@@ -124,8 +126,8 @@ export abstract class BaseExportProcessor<
     // Runtime schemas (custom fields, reference labels) must be loaded before
     // resolving requested columns. Resolving first made the first job use the
     // static schema and allowed a later job to inherit stale tenant columns.
-    await this.beforeExport(data);
-    const cfg = this.getModuleConfig();
+    const jobConfig = await this.beforeExport(data);
+    const cfg = jobConfig ?? this.getModuleConfig();
     const format = data.format;
     const cap = cfg.hardCap[format];
     const gzip = format === 'csv' && cfg.gzipCsv;

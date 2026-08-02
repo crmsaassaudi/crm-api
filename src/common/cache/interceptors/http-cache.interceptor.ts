@@ -22,6 +22,21 @@ export class HttpCacheInterceptor extends CacheInterceptor {
       return super.trackBy(context);
     }
 
+    const request = context.switchToHttp().getRequest();
+
+    // CORRECTNESS: only GET may be served from cache.
+    //
+    // The base class enforces that inside its OWN trackBy (`isRequestCacheable`),
+    // and `intercept()` caches whenever trackBy returns a key — so an override
+    // that forgets the check silently makes every method cacheable. It did:
+    // `POST /users/:id/effective-permissions/preview` had its answer stored and
+    // replayed, so the second preview in a dialog — the one with the role
+    // actually ticked — was served the first preview's "no roles" result, and
+    // the admin was told the member would get 0 permissions.
+    if (!this.allowedMethods.includes(request.method)) {
+      return undefined;
+    }
+
     // SECURITY (C-03): the cache key MUST include the principal.
     //
     // Response payloads are shaped per-user by data visibility
@@ -47,12 +62,17 @@ export class HttpCacheInterceptor extends CacheInterceptor {
       return undefined;
     }
 
-    const request = context.switchToHttp().getRequest();
     const id = request.params?.id;
     const scope = `tenant:${tenantId}:user:${userId}:${entityName}`;
 
-    // For list/queries the URL carries the filters/pagination that shape the
-    // response, so it belongs in the key.
-    return id ? `${scope}:${id}` : `${scope}:${request.url}`;
+    // The URL is ALWAYS part of the key, id or not.
+    //
+    // Keying a detail response on `:id` alone collapsed every route under
+    // `/users/:id/**` into one entry — `GET /users/:id` and
+    // `GET /users/:id/effective-permissions` share the param, so whichever ran
+    // first won and the other was served its body for the rest of the TTL.
+    // The id stays in front of the URL so the invalidation wildcards
+    // (`…:User:*`) keep matching.
+    return `${scope}:${id ?? '-'}:${request.url}`;
   }
 }

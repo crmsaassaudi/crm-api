@@ -1,4 +1,4 @@
-import { HttpStatus } from '@nestjs/common';
+import { HttpStatus, NotFoundException } from '@nestjs/common';
 import { TICKET_ERRORS } from './constants/ticket-error-codes';
 import { TicketsService } from './tickets.service';
 import {
@@ -26,8 +26,14 @@ describe('TicketsService', () => {
       create: jest.fn(),
       findOne: jest.fn(),
       findManyWithPagination: jest.fn(),
+      findManyByIds: jest.fn(),
+      addTagsToTickets: jest.fn(),
       update: jest.fn(),
       remove: jest.fn(),
+      softDeleteInSession: jest.fn().mockResolvedValue(undefined),
+      findParentId: jest.fn().mockResolvedValue(null),
+      pauseSlaAtomic: jest.fn(),
+      resumeSlaAtomic: jest.fn(),
       generateTicketNumber: jest.fn().mockResolvedValue('TKT-00001'),
     };
 
@@ -40,7 +46,17 @@ describe('TicketsService', () => {
 
     // mergeTickets re-parents activity_logs and tasks through the raw connection.
     updateMany = jest.fn(() => Promise.resolve({ modifiedCount: 1 }));
-    connection = { collection: jest.fn(() => ({ updateMany })) };
+    const session = {
+      withTransaction: jest.fn(async (work: () => Promise<void>) => work()),
+      endSession: jest.fn().mockResolvedValue(undefined),
+    };
+    connection = {
+      collection: jest.fn(() => ({
+        updateMany,
+        findOne: jest.fn().mockResolvedValue({ _id: 'existing' }),
+      })),
+      startSession: jest.fn().mockResolvedValue(session),
+    };
 
     service = new TicketsService(
       repository,
@@ -80,7 +96,13 @@ describe('TicketsService', () => {
       { validateTagIds: jest.fn().mockResolvedValue(undefined) } as any, // tagsService
       { getSetting: jest.fn().mockResolvedValue(null) } as any, // crmSettings
       connection as any, // connection — merge re-parents activity/tasks through it
+      undefined,
+      undefined,
+      { canAccessRecord: jest.fn().mockResolvedValue(true) } as any,
     );
+    jest
+      .spyOn(service as any, 'validateTenantReferences')
+      .mockResolvedValue(undefined);
   });
 
   // ═══════════════════════════════════════════════════════════════════
@@ -143,6 +165,124 @@ describe('TicketsService', () => {
     });
   });
 
+  describe('bulkTagTickets', () => {
+    it('should reject operator-shaped ids before any repository call', async () => {
+      await expect(
+        service.bulkTagTickets({
+          ticketIds: [{ $ne: null } as any],
+          tags: ['60d0fe4f5311236168a109cc'],
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(repository.findManyByIds).not.toHaveBeenCalled();
+    });
+
+    it('should authorize every ticket before the bulk write', async () => {
+      const tickets = [
+        createTicket({ id: '60d0fe4f5311236168a109ca' }),
+        createTicket({ id: '60d0fe4f5311236168a109cb' }),
+      ];
+      repository.findManyByIds.mockResolvedValue(tickets);
+      repository.addTagsToTickets.mockResolvedValue({
+        matchedCount: 2,
+        modifiedCount: 2,
+      });
+
+      await service.bulkTagTickets({
+        ticketIds: tickets.map((ticket) => ticket.id),
+        tags: ['60d0fe4f5311236168a109cc'],
+      });
+
+      expect(
+        (service as any).authorization.canAccessRecord,
+      ).toHaveBeenCalledTimes(2);
+      expect(repository.addTagsToTickets).toHaveBeenCalled();
+    });
+
+    it('should not partially write when one ticket is hidden', async () => {
+      repository.findManyByIds.mockResolvedValue([
+        createTicket({ id: '60d0fe4f5311236168a109ca' }),
+      ]);
+
+      await expect(
+        service.bulkTagTickets({
+          ticketIds: ['60d0fe4f5311236168a109ca', '60d0fe4f5311236168a109cb'],
+          tags: ['60d0fe4f5311236168a109cc'],
+        }),
+      ).rejects.toThrow(NotFoundException);
+      expect(repository.addTagsToTickets).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('tenant reference validation', () => {
+    it('should reject a reference that is absent from the active tenant', async () => {
+      (service as any).validateTenantReferences.mockRestore();
+      connection.collection.mockReturnValue({
+        findOne: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(
+        (service as any).validateTenantReferences({
+          contactId: '60d0fe4f5311236168a109ca',
+        }),
+      ).rejects.toThrow('does not reference an active record in this tenant');
+    });
+
+    it('should enforce record ACL on a referenced CRM record', async () => {
+      (service as any).validateTenantReferences.mockRestore();
+      (service as any).authorization.canAccessRecord.mockResolvedValueOnce(
+        false,
+      );
+
+      await expect(
+        (service as any).validateTenantReferences({
+          dealId: '60d0fe4f5311236168a109ca',
+        }),
+      ).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('should refuse a soft-deleted reference', async () => {
+      (service as any).validateTenantReferences.mockRestore();
+      const findOne = jest.fn().mockResolvedValue(null);
+      connection.collection.mockReturnValue({ findOne });
+
+      await expect(
+        (service as any).validateTenantReferences({
+          contactId: '60d0fe4f5311236168a109ca',
+        }),
+      ).rejects.toThrow('does not reference an active record in this tenant');
+      expect(findOne.mock.calls[0][0]).toMatchObject({ deletedAt: null });
+    });
+
+    it('should hand the whole related record to the ACL check, not a label projection', async () => {
+      (service as any).validateTenantReferences.mockRestore();
+      const record = {
+        _id: '60d0fe4f5311236168a109ca',
+        name: 'Acme renewal',
+        ownerId: 'u1',
+      };
+      const findOne = jest.fn().mockResolvedValue(record);
+      connection.collection.mockReturnValue({ findOne });
+
+      const data: any = {
+        relatedTo: {
+          type: 'Deal',
+          _id: '60d0fe4f5311236168a109ca',
+          name: 'stale label',
+        },
+      };
+      await (service as any).validateTenantReferences(data);
+
+      expect(findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ deletedAt: null }),
+      );
+      expect(
+        (service as any).authorization.canAccessRecord,
+      ).toHaveBeenCalledWith(expect.objectContaining({ record }));
+      // The stored label comes from the database, never from the request body.
+      expect(data.relatedTo.name).toBe('Acme renewal');
+    });
+  });
+
   // ═══════════════════════════════════════════════════════════════════
   // FIND
   // ═══════════════════════════════════════════════════════════════════
@@ -179,16 +319,30 @@ describe('TicketsService', () => {
       );
     });
 
-    it('should default to page 1 and limit 10 when not provided', async () => {
+    it('should default to page 1 and limit 20 when not provided', async () => {
       repository.findManyWithPagination.mockResolvedValue({ data: [] });
 
       await service.findAll({});
 
       expect(repository.findManyWithPagination).toHaveBeenCalledWith(
         expect.objectContaining({
-          paginationOptions: { page: 1, limit: 10 },
+          paginationOptions: { page: 1, limit: 20 },
         }),
       );
+    });
+
+    it('should reject malformed list filters', async () => {
+      await expect(service.findAll({ filters: '{bad json' })).rejects.toThrow(
+        'filters must be valid JSON',
+      );
+      expect(repository.findManyWithPagination).not.toHaveBeenCalled();
+    });
+
+    it('should reject Mongo operators in statusIds', async () => {
+      await expect(
+        service.findAll({ statusIds: [{ $ne: null }] }),
+      ).rejects.toThrow('statusIds must be a comma-separated string');
+      expect(repository.findManyWithPagination).not.toHaveBeenCalled();
     });
   });
 
@@ -227,6 +381,17 @@ describe('TicketsService', () => {
       await expect(service.mergeTickets('t1', 't1')).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it('should refuse to delete a source denied by its record ACL', async () => {
+      (service as any).authorization.canAccessRecord.mockResolvedValueOnce(
+        false,
+      );
+
+      await expect(
+        service.mergeTickets(TARGET_ID, SOURCE_ID),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(connection.startSession).not.toHaveBeenCalled();
     });
 
     it('should carry the source linked messages onto the target', async () => {
@@ -272,7 +437,10 @@ describe('TicketsService', () => {
     it('should soft-delete the source, which its own comment always claimed', async () => {
       // `remove()` used to hard-delete; the comment said "soft-delete source ticket".
       await service.mergeTickets(TARGET_ID, SOURCE_ID);
-      expect(repository.remove).toHaveBeenCalledWith(SOURCE_ID);
+      expect(repository.softDeleteInSession).toHaveBeenCalledWith(
+        SOURCE_ID,
+        expect.anything(),
+      );
     });
 
     it('should re-parent CHILD tickets, which the hand-rolled version missed', async () => {
@@ -318,14 +486,14 @@ describe('TicketsService', () => {
       }
     });
 
-    it('should still complete when a re-parent collection fails', async () => {
+    it('should abort when a re-parent collection fails', async () => {
       // The merge has already committed by that point, so throwing would tell the
       // caller it failed when the target was in fact updated.
       updateMany.mockRejectedValue(new Error('mongo down'));
-      await expect(
-        service.mergeTickets(TARGET_ID, SOURCE_ID),
-      ).resolves.toBeTruthy();
-      expect(repository.remove).toHaveBeenCalledWith(SOURCE_ID);
+      await expect(service.mergeTickets(TARGET_ID, SOURCE_ID)).rejects.toThrow(
+        'mongo down',
+      );
+      expect(repository.softDeleteInSession).not.toHaveBeenCalled();
     });
   });
 
@@ -440,6 +608,26 @@ describe('TicketsService', () => {
         }),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('should reject a renamed non-XLSX binary', async () => {
+      await expect(
+        service.uploadImportFile({
+          buffer: Buffer.from('not a zip workbook'),
+          originalname: 'fake.xlsx',
+          size: 18,
+        }),
+      ).rejects.toThrow('Invalid XLSX file signature');
+    });
+
+    it('should reject binary content renamed as CSV', async () => {
+      await expect(
+        service.uploadImportFile({
+          buffer: Buffer.from([0x61, 0, 0x62]),
+          originalname: 'fake.csv',
+          size: 3,
+        }),
+      ).rejects.toThrow('CSV file contains binary data');
+    });
   });
 
   describe('startImport', () => {
@@ -460,22 +648,24 @@ describe('TicketsService', () => {
     // `GET /tickets/by-deal/:dealId` answer with every ticket in the tenant and look
     // like it had worked.
     it('should write dealId when linking', async () => {
+      const dealId = '60d0fe4f5311236168a109cc';
       repository.findOne.mockResolvedValue({ id: 't1', subject: 'S' });
-      repository.update.mockResolvedValue({ id: 't1', dealId: 'd1' });
+      repository.update.mockResolvedValue({ id: 't1', dealId });
 
-      const result = await service.linkDeal('t1', 'd1');
+      const result = await service.linkDeal('t1', dealId);
 
       expect(repository.update).toHaveBeenCalledWith(
         't1',
-        expect.objectContaining({ dealId: 'd1' }),
+        expect.objectContaining({ dealId }),
       );
-      expect(result.dealId).toBe('d1');
+      expect(result.dealId).toBe(dealId);
     });
 
     it('should be idempotent when the link already exists', async () => {
-      repository.findOne.mockResolvedValue({ id: 't1', dealId: 'd1' });
+      const dealId = '60d0fe4f5311236168a109cc';
+      repository.findOne.mockResolvedValue({ id: 't1', dealId });
 
-      await service.linkDeal('t1', 'd1');
+      await service.linkDeal('t1', dealId);
 
       expect(repository.update).not.toHaveBeenCalled();
     });
@@ -496,7 +686,9 @@ describe('TicketsService', () => {
 
     it('should 404 rather than link a ticket that does not exist', async () => {
       repository.findOne.mockResolvedValue(null);
-      await expect(service.linkDeal('nope', 'd1')).rejects.toMatchObject({
+      await expect(
+        service.linkDeal('nope', '60d0fe4f5311236168a109cc'),
+      ).rejects.toMatchObject({
         errorCode: TICKET_ERRORS.NOT_FOUND,
         status: HttpStatus.NOT_FOUND,
       });
@@ -513,6 +705,43 @@ describe('TicketsService', () => {
           filterOptions: expect.objectContaining({ dealId: 'd1' }),
         }),
       );
+    });
+  });
+
+  describe('SLA concurrency safety', () => {
+    it('should pause through the conditional atomic repository operation', async () => {
+      const ticket = createTicket({ slaPausedAt: undefined } as any);
+      const paused = createTicket({ slaPausedAt: new Date() } as any);
+      repository.findOne.mockResolvedValue(ticket);
+      repository.pauseSlaAtomic.mockResolvedValue(paused);
+
+      await expect(service.pauseSla(ticket.id)).resolves.toBe(paused);
+      expect(repository.pauseSlaAtomic).toHaveBeenCalledWith(
+        ticket.id,
+        expect.any(Date),
+      );
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('should resume through one atomic calculation and write', async () => {
+      const ticket = createTicket({
+        slaPausedAt: new Date(Date.now() - 5_000),
+        slaResumedAt: undefined,
+      } as any);
+      const resumed = createTicket({
+        slaPausedAt: (ticket as any).slaPausedAt,
+        slaResumedAt: new Date(),
+        slaPausedSeconds: 5,
+      } as any);
+      repository.findOne.mockResolvedValue(ticket);
+      repository.resumeSlaAtomic.mockResolvedValue(resumed);
+
+      await expect(service.resumeSla(ticket.id)).resolves.toBe(resumed);
+      expect(repository.resumeSlaAtomic).toHaveBeenCalledWith(
+        ticket.id,
+        expect.any(Date),
+      );
+      expect(repository.update).not.toHaveBeenCalled();
     });
   });
 });

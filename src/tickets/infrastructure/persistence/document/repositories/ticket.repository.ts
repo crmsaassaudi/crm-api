@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery, Types } from 'mongoose';
+import { ClientSession, Model, FilterQuery, Types } from 'mongoose';
 import {
   TicketSchemaClass,
   TicketSchemaDocument,
@@ -116,9 +116,10 @@ export class TicketRepository extends BaseDocumentRepository<
         }
         if (String(filter.id).startsWith('customFields.')) continue;
         if (filter.id === 'status') {
-          where.statusId = Array.isArray(filter.value)
-            ? ({ $in: filter.value } as any)
-            : filter.value;
+          const values = normalizeListFilter(filter.value).filter((value) =>
+            Types.ObjectId.isValid(value),
+          );
+          if (values.length > 0) where.statusId = { $in: values } as any;
         } else if (filter.id === 'priority') {
           const values = normalizeListFilter(filter.value).map((value) =>
             value.toUpperCase(),
@@ -134,9 +135,10 @@ export class TicketRepository extends BaseDocumentRepository<
                 updatedBy: 'updatedById',
               } as Record<string, string>
             )[filter.id] ?? filter.id;
-          where[field] = Array.isArray(filter.value)
-            ? { $in: filter.value }
-            : filter.value;
+          const values = normalizeListFilter(filter.value).filter((value) =>
+            Types.ObjectId.isValid(value),
+          );
+          if (values.length > 0) where[field] = { $in: values };
         }
       }
     }
@@ -374,11 +376,17 @@ export class TicketRepository extends BaseDocumentRepository<
   ): Promise<{ matchedCount: number; modifiedCount: number }> {
     const scopedFilter = this.applyTenantFilter({
       _id: { $in: ticketIds },
-      deletedAt: { $exists: false },
+      deletedAt: null,
     } as FilterQuery<TicketSchemaClass>);
+    const updatedById = this.cls.get('userId') ?? this.cls.get('user.id');
     const result = await this.model
       .updateMany(scopedFilter, {
         $addToSet: { tags: { $each: tags } },
+        $set: {
+          updatedAt: new Date(),
+          ...(updatedById ? { updatedById } : {}),
+        },
+        $inc: { __v: 1 },
       })
       .exec();
 
@@ -386,6 +394,19 @@ export class TicketRepository extends BaseDocumentRepository<
       matchedCount: result.matchedCount,
       modifiedCount: result.modifiedCount,
     };
+  }
+
+  async findManyByIds(ids: string[]): Promise<Ticket[]> {
+    const docs = await this.model
+      .find(
+        this.applyTenantFilter({
+          _id: { $in: ids },
+          deletedAt: null,
+        } as FilterQuery<TicketSchemaClass>),
+      )
+      .lean()
+      .exec();
+    return docs.map((doc: any) => this.mapToDomain(doc));
   }
 
   /**
@@ -421,5 +442,124 @@ export class TicketRepository extends BaseDocumentRepository<
       .deleteOne({ _id: id })
       .setOptions({ isPlatformQuery: true } as any)
       .exec();
+  }
+
+  async softDeleteInSession(id: string, session: ClientSession): Promise<void> {
+    const updatedById = this.cls.get('userId') ?? this.cls.get('user.id');
+    const result = await this.model
+      .updateOne(
+        this.applyTenantFilter({ _id: id, deletedAt: null }),
+        {
+          $set: {
+            deletedAt: new Date(),
+            ...(updatedById ? { updatedById } : {}),
+          },
+        },
+        { session },
+      )
+      .exec();
+    if (result.matchedCount === 0) {
+      throw new Error(`Ticket ${id} could not be deleted during merge`);
+    }
+  }
+
+  /** Load only the parent pointer, avoiding the expensive list/detail populates. */
+  async findParentId(id: string): Promise<string | null | undefined> {
+    const doc = await this.model
+      .findOne(this.applyTenantFilter({ _id: id, deletedAt: null }))
+      .select({ parentTicketId: 1 })
+      .lean()
+      .exec();
+    if (!doc) return undefined;
+    return (doc as any).parentTicketId
+      ? String((doc as any).parentTicketId)
+      : null;
+  }
+
+  async pauseSlaAtomic(id: string, now: Date): Promise<Ticket | null> {
+    const actorId = this.cls.get('userId') ?? this.cls.get('user.id');
+    const doc = await this.model
+      .findOneAndUpdate(
+        this.applyTenantFilter({
+          _id: id,
+          deletedAt: null,
+          $or: [{ slaPausedAt: null }, { slaResumedAt: { $ne: null } }],
+        }),
+        {
+          $set: {
+            slaPausedAt: now,
+            updatedAt: now,
+            ...(actorId ? { updatedById: actorId } : {}),
+          },
+          $unset: { slaResumedAt: '' },
+        },
+        { new: true },
+      )
+      .exec();
+    return doc ? this.mapToDomain(doc) : null;
+  }
+
+  async resumeSlaAtomic(id: string, now: Date): Promise<Ticket | null> {
+    const actorId = this.cls.get('userId') ?? this.cls.get('user.id');
+    const persistedActorId =
+      actorId && Types.ObjectId.isValid(String(actorId))
+        ? new Types.ObjectId(String(actorId))
+        : actorId;
+    const filter = this.applyTenantFilter({
+      _id: id,
+      deletedAt: null,
+      slaPausedAt: { $ne: null },
+      slaResumedAt: null,
+    });
+    const doc = await this.model
+      .findOneAndUpdate(
+        filter,
+        [
+          {
+            $set: {
+              slaResumedAt: now,
+              updatedAt: now,
+              ...(persistedActorId ? { updatedById: persistedActorId } : {}),
+              slaPausedSeconds: {
+                $add: [
+                  { $ifNull: ['$slaPausedSeconds', 0] },
+                  {
+                    $floor: {
+                      $divide: [{ $subtract: [now, '$slaPausedAt'] }, 1000],
+                    },
+                  },
+                ],
+              },
+              firstResponseDueAt: {
+                $cond: [
+                  { $ne: [{ $ifNull: ['$firstResponseDueAt', null] }, null] },
+                  {
+                    $add: [
+                      '$firstResponseDueAt',
+                      { $subtract: [now, '$slaPausedAt'] },
+                    ],
+                  },
+                  '$firstResponseDueAt',
+                ],
+              },
+              resolutionDueAt: {
+                $cond: [
+                  { $ne: [{ $ifNull: ['$resolutionDueAt', null] }, null] },
+                  {
+                    $add: [
+                      '$resolutionDueAt',
+                      { $subtract: [now, '$slaPausedAt'] },
+                    ],
+                  },
+                  '$resolutionDueAt',
+                ],
+              },
+            },
+          },
+        ],
+        { new: true },
+      )
+      .exec();
+    return doc ? this.mapToDomain(doc) : null;
   }
 }

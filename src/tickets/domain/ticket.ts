@@ -33,10 +33,10 @@ export class Ticket {
   linkedMessageIds?: string[];
 
   @ApiProperty({ description: 'Deal linked to this ticket' })
-  dealId?: string;
+  dealId?: string | null;
 
   @ApiProperty({ description: 'Parent ticket ID (for sub-tickets)' })
-  parentTicketId?: string;
+  parentTicketId?: string | null;
 
   // NO `childTicketIds`: children are found by querying `parentTicketId`
   // (GET /tickets/:id/children). Same reasoning as the removed `deals.ticketIds` — a
@@ -45,7 +45,7 @@ export class Ticket {
   @ApiProperty()
   relatedTo?: {
     type: string;
-    id: string;
+    id?: string;
     _id: string;
     name: string;
   };
@@ -89,6 +89,9 @@ export class Ticket {
   ownerId?: string;
 
   @ApiProperty()
+  orgUnitId?: string | null;
+
+  @ApiProperty()
   owner?: User;
 
   @ApiProperty({ description: 'User IDs watching this ticket' })
@@ -119,6 +122,15 @@ export class Ticket {
 
   @ApiProperty({ example: false })
   isSlaBreached: boolean;
+
+  @ApiProperty()
+  slaPausedAt?: Date;
+
+  @ApiProperty()
+  slaResumedAt?: Date;
+
+  @ApiProperty({ example: 0 })
+  slaPausedSeconds?: number;
 
   // ── Metrics & Resolution ──
   @ApiProperty({
@@ -156,4 +168,10 @@ export class Ticket {
 
   @ApiProperty()
   deletedAt?: Date;
+
+  @ApiProperty()
+  createdById?: string;
+
+  @ApiProperty()
+  updatedById?: string;
 }

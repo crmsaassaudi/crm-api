@@ -102,12 +102,6 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
   protected readonly cls: ClsService;
   private readonly storage: ExportStorageService;
 
-  // ── Per-job lookup maps ───────────────────────────────────────────
-  private readonly userMap = new Map<string, string>();
-  private readonly statusMap = new Map<string, string>();
-  private readonly typeMap = new Map<string, string>();
-  private resolvedColumns: ExportColumn[] = [];
-
   constructor(
     private readonly repository: AccountRepository,
     storageFactory: ExportStorageFactory,
@@ -133,22 +127,24 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
 
   // ── Lifecycle hook ────────────────────────────────────────────────
 
-  protected async beforeExport(data: AccountExportJobData): Promise<void> {
-    const [, , , dynamicColumns] = await Promise.all([
+  protected async beforeExport(
+    data: AccountExportJobData,
+  ): Promise<ExportModuleConfig> {
+    const [userMap, statusMap, typeMap, dynamicColumns] = await Promise.all([
       this.loadUserMap(data.tenantId),
       this.loadStatusMap(data.tenantId),
       this.loadTypeMap(data.tenantId),
       loadCustomFieldExportColumns(this.customFields, 'Account'),
     ]);
 
-    this.resolvedColumns = [
-      ...buildAccountExportColumns(this.userMap, this.statusMap, this.typeMap),
+    return this.buildModuleConfig([
+      ...buildAccountExportColumns(userMap, statusMap, typeMap),
       ...dynamicColumns,
-    ];
+    ]);
   }
 
-  private async loadUserMap(tenantId: string): Promise<void> {
-    this.userMap.clear();
+  private async loadUserMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const users = await this.userModel
       .find(
         { 'tenants.tenantId': tenantId },
@@ -158,47 +154,48 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
       .exec();
     for (const u of users as any[]) {
       const name = [u.firstName, u.lastName].filter(Boolean).join(' ');
-      this.userMap.set(String(u._id), (name || u.email) ?? String(u._id));
+      map.set(String(u._id), (name || u.email) ?? String(u._id));
     }
+    return map;
   }
 
-  private async loadStatusMap(tenantId: string): Promise<void> {
-    this.statusMap.clear();
+  private async loadStatusMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const docs = await this.accountStatusModel
       .find({ tenantId }, { label: 1 })
       .lean()
       .exec();
     for (const d of docs as any[]) {
-      this.statusMap.set(String(d._id), d.label);
+      map.set(String(d._id), d.label);
     }
+    return map;
   }
 
-  private async loadTypeMap(tenantId: string): Promise<void> {
-    this.typeMap.clear();
+  private async loadTypeMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const docs = await this.accountTypeModel
       .find({ tenantId }, { name: 1 })
       .lean()
       .exec();
     for (const d of docs as any[]) {
-      this.typeMap.set(String(d._id), d.name);
+      map.set(String(d._id), d.name);
     }
+    return map;
   }
 
   // ── BaseExportProcessor abstract implementations ──────────────────
 
   protected getModuleConfig(): ExportModuleConfig {
+    return this.buildModuleConfig([...STATIC_COLUMNS]);
+  }
+
+  private buildModuleConfig(columns: ExportColumn[]): ExportModuleConfig {
     return {
       module: 'account',
       displayName: 'Account',
       maskingResource: 'Account',
-      columns:
-        this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
-      selectableColumns: new Set(
-        (this.resolvedColumns.length > 0
-          ? this.resolvedColumns
-          : STATIC_COLUMNS
-        ).map((column) => column.path),
-      ),
+      columns,
+      selectableColumns: new Set(columns.map((column) => column.path)),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,
       throttleMs: 50,

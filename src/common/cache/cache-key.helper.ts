@@ -1,7 +1,11 @@
 /**
  * HTTP response cache keys.
  *
- * Shape: `tenant:<tenantId>:user:<userId>:<Entity>:<id|url>`
+ * Shape: `tenant:<tenantId>:user:<userId>:<Entity>:<id|-> :<url>`
+ *
+ * The URL is in the key even for `:id` routes: `/users/:id` and
+ * `/users/:id/effective-permissions` carry the same id, and keying on the id
+ * alone served one route's body in answer to the other.
  *
  * The principal is part of the key by necessity, not convenience (C-03):
  * response bodies are shaped per-user by data visibility (`visibleOwnerIds`)
@@ -13,13 +17,14 @@
  * the invalidation side, so both must be changed together.
  */
 export class CacheKeyHelper {
-  static getDetailKey(
+  /** Every cached route of one record — a prefix, since the URL follows the id. */
+  static getDetailPattern(
     tenantId: string,
     userId: string,
     entityName: string,
     id: string,
   ): string {
-    return `tenant:${tenantId}:user:${userId}:${entityName}:${id}`;
+    return `tenant:${tenantId}:user:${userId}:${entityName}:${id}:*`;
   }
 
   /** Every cached response for one entity, across all users of a tenant. */

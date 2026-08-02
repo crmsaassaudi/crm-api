@@ -32,6 +32,16 @@ import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
 import { StartTicketImportDto } from './dto/start-ticket-import.dto';
 import { ExportRequestDto } from '../common/export';
 import { Throttle } from '@nestjs/throttler';
+import {
+  BulkTagTicketsDto,
+  JobListQueryDto,
+  LinkTicketDealDto,
+  MergeTicketDto,
+  PageQueryDto,
+  SetTicketParentDto,
+  TicketListQueryDto,
+} from './dto/ticket-operations.dto';
+import { TICKET_IMPORT_MAX_FILE_BYTES } from './tickets.constants';
 
 /** Map a safe file extension to its HTTP Content-Type. */
 function resolveContentType(ext: string | undefined): string {
@@ -63,7 +73,7 @@ export class TicketsController {
 
   @Get()
   @RequirePermission('view', 'tickets')
-  findAll(@Query() query: any) {
+  findAll(@Query() query: TicketListQueryDto) {
     return this.service.findAll(query);
   }
 
@@ -84,11 +94,8 @@ export class TicketsController {
   @ApiOkResponse({ description: 'Soft-deleted tickets awaiting purge' })
   @Get('recycle-bin')
   @RequirePermission('view', 'tickets')
-  listDeleted(@Query('page') page?: string, @Query('limit') limit?: string) {
-    return this.service.listDeleted({
-      page: page ? parseInt(page, 10) : undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
-    });
+  listDeleted(@Query() query: PageQueryDto) {
+    return this.service.listDeleted(query);
   }
 
   // Restoring re-exposes a record, so it takes `delete` — the same capability that
@@ -115,7 +122,7 @@ export class TicketsController {
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('bulk-tag')
   @RequirePermission('edit', 'tickets')
-  bulkTag(@Body() body: { ticketIds: string[]; tags: string[] }) {
+  bulkTag(@Body() body: BulkTagTicketsDto) {
     return this.service.bulkTagTickets(body);
   }
 
@@ -128,10 +135,7 @@ export class TicketsController {
   @RequirePermission('delete', 'tickets')
   @UseAcl('delete', 'tickets')
   @LoadResource('tickets')
-  mergeTickets(
-    @Param('id') targetId: string,
-    @Body() body: { sourceId: string },
-  ) {
+  mergeTickets(@Param('id') targetId: string, @Body() body: MergeTicketDto) {
     return this.service.mergeTickets(targetId, body.sourceId);
   }
 
@@ -159,7 +163,7 @@ export class TicketsController {
   @RequirePermission('edit', 'tickets')
   @UseAcl('edit', 'tickets')
   @LoadResource('tickets')
-  linkDeal(@Param('id') id: string, @Body() body: { dealId: string }) {
+  linkDeal(@Param('id') id: string, @Body() body: LinkTicketDealDto) {
     return this.service.linkDeal(id, body.dealId);
   }
 
@@ -185,7 +189,7 @@ export class TicketsController {
   @RequirePermission('edit', 'tickets')
   @UseAcl('edit', 'tickets')
   @LoadResource('tickets')
-  setParent(@Param('id') id: string, @Body() body: { parentTicketId: string }) {
+  setParent(@Param('id') id: string, @Body() body: SetTicketParentDto) {
     return this.service.setParent(id, body.parentTicketId);
   }
 
@@ -209,7 +213,11 @@ export class TicketsController {
 
   @Post('import-upload')
   @RequirePermission('create', 'tickets')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: TICKET_IMPORT_MAX_FILE_BYTES, files: 1 },
+    }),
+  )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -235,16 +243,8 @@ export class TicketsController {
 
   @Get('import-jobs')
   @RequirePermission('view', 'tickets')
-  listImportJobs(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('status') status?: string,
-  ) {
-    return this.service.listImportJobs({
-      page: page ? Number(page) : undefined,
-      limit: limit ? Number(limit) : undefined,
-      status,
-    });
+  listImportJobs(@Query() query: JobListQueryDto) {
+    return this.service.listImportJobs(query);
   }
 
   @Get('import-jobs/:id')
@@ -278,16 +278,8 @@ export class TicketsController {
 
   @Get('export-jobs')
   @RequirePermission('export', 'tickets')
-  listExportJobs(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('status') status?: string,
-  ) {
-    return this.service.listExportJobs({
-      page: page ? Number(page) : undefined,
-      limit: limit ? Number(limit) : undefined,
-      status,
-    });
+  listExportJobs(@Query() query: JobListQueryDto) {
+    return this.service.listExportJobs(query);
   }
 
   @Post('export-jobs/:jobId/cancel')

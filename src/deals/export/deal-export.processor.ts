@@ -108,13 +108,6 @@ export class DealExportProcessor extends BaseExportProcessor<DealExportJobData> 
   protected readonly cls: ClsService;
   private readonly storage: ExportStorageService;
 
-  // ── Per-job lookup maps ───────────────────────────────────────────
-  private readonly userMap = new Map<string, string>();
-  private readonly stageMap = new Map<string, string>();
-  private readonly sourceMap = new Map<string, string>();
-  private readonly accountMap = new Map<string, string>();
-  private resolvedColumns: ExportColumn[] = [];
-
   constructor(
     private readonly repository: DealRepository,
     storageFactory: ExportStorageFactory,
@@ -142,28 +135,26 @@ export class DealExportProcessor extends BaseExportProcessor<DealExportJobData> 
 
   // ── Lifecycle hook ────────────────────────────────────────────────
 
-  protected async beforeExport(data: DealExportJobData): Promise<void> {
-    const [, , , , dynamicColumns] = await Promise.all([
-      this.loadUserMap(data.tenantId),
-      this.loadStageMap(data.tenantId),
-      this.loadSourceMap(data.tenantId),
-      this.loadAccountMap(data.tenantId),
-      loadCustomFieldExportColumns(this.customFields, 'Deal'),
-    ]);
+  protected async beforeExport(
+    data: DealExportJobData,
+  ): Promise<ExportModuleConfig> {
+    const [userMap, stageMap, sourceMap, accountMap, dynamicColumns] =
+      await Promise.all([
+        this.loadUserMap(data.tenantId),
+        this.loadStageMap(data.tenantId),
+        this.loadSourceMap(data.tenantId),
+        this.loadAccountMap(data.tenantId),
+        loadCustomFieldExportColumns(this.customFields, 'Deal'),
+      ]);
 
-    this.resolvedColumns = [
-      ...buildDealExportColumns(
-        this.userMap,
-        this.stageMap,
-        this.sourceMap,
-        this.accountMap,
-      ),
+    return this.buildModuleConfig([
+      ...buildDealExportColumns(userMap, stageMap, sourceMap, accountMap),
       ...dynamicColumns,
-    ];
+    ]);
   }
 
-  private async loadUserMap(tenantId: string): Promise<void> {
-    this.userMap.clear();
+  private async loadUserMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const users = await this.userModel
       .find(
         { 'tenants.tenantId': tenantId },
@@ -173,58 +164,60 @@ export class DealExportProcessor extends BaseExportProcessor<DealExportJobData> 
       .exec();
     for (const u of users as any[]) {
       const name = [u.firstName, u.lastName].filter(Boolean).join(' ');
-      this.userMap.set(String(u._id), name || u.email || String(u._id));
+      map.set(String(u._id), name || u.email || String(u._id));
     }
+    return map;
   }
 
-  private async loadStageMap(tenantId: string): Promise<void> {
-    this.stageMap.clear();
+  private async loadStageMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const docs = await this.dealStageModel
       .find({ tenantId }, { label: 1 })
       .lean()
       .exec();
     for (const d of docs as any[]) {
-      this.stageMap.set(String(d._id), d.label);
+      map.set(String(d._id), d.label);
     }
+    return map;
   }
 
-  private async loadSourceMap(tenantId: string): Promise<void> {
-    this.sourceMap.clear();
+  private async loadSourceMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const docs = await this.dealSourceModel
       .find({ tenantId }, { name: 1 })
       .lean()
       .exec();
     for (const d of docs as any[]) {
-      this.sourceMap.set(String(d._id), d.name);
+      map.set(String(d._id), d.name);
     }
+    return map;
   }
 
-  private async loadAccountMap(tenantId: string): Promise<void> {
-    this.accountMap.clear();
+  private async loadAccountMap(tenantId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
     const docs = await this.accountModel
       .find({ tenantId }, { name: 1 })
       .lean()
       .exec();
     for (const d of docs as any[]) {
-      this.accountMap.set(String(d._id), d.name);
+      map.set(String(d._id), d.name);
     }
+    return map;
   }
 
   // ── BaseExportProcessor abstract implementations ──────────────────
 
   protected getModuleConfig(): ExportModuleConfig {
+    return this.buildModuleConfig([...STATIC_COLUMNS]);
+  }
+
+  private buildModuleConfig(columns: ExportColumn[]): ExportModuleConfig {
     return {
       module: 'deal',
       displayName: 'Deal',
       maskingResource: 'Deal',
-      columns:
-        this.resolvedColumns.length > 0 ? this.resolvedColumns : STATIC_COLUMNS,
-      selectableColumns: new Set(
-        (this.resolvedColumns.length > 0
-          ? this.resolvedColumns
-          : STATIC_COLUMNS
-        ).map((column) => column.path),
-      ),
+      columns,
+      selectableColumns: new Set(columns.map((column) => column.path)),
       batchSize: 1_000,
       hardCap: DEFAULT_EXPORT_HARD_CAP,
       throttleMs: 50,

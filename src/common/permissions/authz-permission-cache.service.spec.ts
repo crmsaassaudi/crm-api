@@ -147,6 +147,49 @@ describe('AuthzPermissionCacheService', () => {
     ).toHaveBeenCalledWith(tenantId, userId);
   });
 
+  /**
+   * A preview answers "what will this person be able to do", so a permission
+   * whose feature has been removed must not appear in it — it authorizes
+   * nothing, and an admin approving a role should not be shown a line that maps
+   * to no button in the product. Enforcement still resolves the key; only the
+   * two preview endpoints hide it.
+   */
+  describe('previews hide retired permissions', () => {
+    const retired = 'automation_rules:view';
+
+    beforeEach(() => {
+      groupRepository.findAncestorChain = jest.fn().mockResolvedValue([]);
+      customRolesService.findAll.mockResolvedValue([
+        {
+          id: 'role_1',
+          name: 'Legacy role',
+          permissions: ['contacts:view', retired],
+          dataScope: 'self',
+        },
+      ]);
+    });
+
+    it('drops them from a group preview, keeping the live keys', async () => {
+      const preview = await service.previewGroupAccess(tenantId, {
+        roleIds: ['role_1'],
+      });
+
+      expect(preview.permissions).toContain('contacts:view');
+      expect(preview.permissions).not.toContain(retired);
+      expect(preview.tenantCeiling).not.toContain(retired);
+    });
+
+    it('drops them from a membership preview', async () => {
+      const preview = await service.previewMembershipAccess(tenantId, {
+        tenantRole: 'MEMBER',
+        roleIds: ['role_1'],
+      });
+
+      expect(preview.permissions).toContain('contacts:view');
+      expect(preview.permissions).not.toContain(retired);
+    });
+  });
+
   it('should not fail authorization when Redis populate fails', async () => {
     redisClient.pipeline.mockReturnValueOnce({
       del: jest.fn().mockReturnThis(),

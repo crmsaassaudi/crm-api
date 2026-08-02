@@ -23,7 +23,7 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   })
   tenantId: string;
 
-  @Prop({ required: true, unique: true, index: true })
+  @Prop({ required: true })
   ticketNumber: string;
 
   @Prop({ required: true, index: true })
@@ -248,7 +248,10 @@ export const TicketSchema = SchemaFactory.createForClass(TicketSchemaClass);
 TicketSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
 // ── Compound Indexes ─────────────────────────────────────────────────────
-TicketSchema.index({ tenantId: 1, ticketNumber: 1 });
+TicketSchema.index(
+  { tenantId: 1, ticketNumber: 1 },
+  { unique: true, name: 'tenant_ticket_number_unique' },
+);
 TicketSchema.index({ tenantId: 1, statusId: 1 });
 TicketSchema.index(
   { tenantId: 1, ownerId: 1 },
@@ -290,6 +293,18 @@ TicketSchema.index(
 TicketSchema.index(
   { tenantId: 1, statusId: 1, createdAt: -1 },
   { name: 'tenant_status_created_lookup' },
+);
+TicketSchema.index(
+  { tenantId: 1, dealId: 1, createdAt: -1 },
+  { name: 'tenant_deal_created_lookup' },
+);
+TicketSchema.index(
+  { tenantId: 1, parentTicketId: 1, createdAt: -1 },
+  { name: 'tenant_parent_created_lookup' },
+);
+TicketSchema.index(
+  { tenantId: 1, deletedAt: -1 },
+  { name: 'tenant_recycle_bin' },
 );
 
 // ── Virtuals ─────────────────────────────────────────────────────────────

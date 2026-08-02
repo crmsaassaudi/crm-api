@@ -30,7 +30,8 @@ interface LocalFileToken {
 
 // Storage keys we generate: <prefix>/<ulid>-<safeName>. Reject anything else
 // before touching S3 / disk so a hostile fileKey can't escape the prefix.
-const SAFE_KEY_PATTERN = /^imports\/[a-z]+\/[A-Za-z0-9._-]+$/;
+const SAFE_KEY_PATTERN =
+  /^imports\/[a-z]+\/[0-9A-HJKMNP-TV-Z]{26}-[A-Za-z0-9._-]{1,80}$/;
 
 /**
  * Generic dual-mode (S3 / local-disk) storage for import files and reports.
@@ -84,7 +85,10 @@ export class ImportStorageService {
   }
 
   private assertSafeKey(fileKey: string): void {
-    if (!SAFE_KEY_PATTERN.test(fileKey)) {
+    if (
+      !SAFE_KEY_PATTERN.test(fileKey) ||
+      !fileKey.startsWith(`${this.importPrefix}/`)
+    ) {
       throw new NotFoundException('Import file not found');
     }
   }
@@ -109,6 +113,11 @@ export class ImportStorageService {
     const bucket = this.configService.get('file.awsDefaultS3Bucket', {
       infer: true,
     });
+    const ownerId = this.cls.get('userId') ?? this.cls.get('user.id');
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    if (!ownerId || !tenantId) {
+      throw new ForbiddenException('Authenticated tenant context is required');
+    }
 
     if (this.s3 && bucket) {
       await this.s3.send(
@@ -119,6 +128,7 @@ export class ImportStorageService {
           ContentDisposition: `attachment; filename="${this.sanitizeName(
             file.originalname,
           )}"`,
+          Metadata: { ownerid: String(ownerId), tenantid: String(tenantId) },
         }),
       );
       return { fileKey };
@@ -129,7 +139,55 @@ export class ImportStorageService {
       recursive: true,
     });
     await writeFile(filePath, file.buffer);
+    await writeFile(
+      `${filePath}.meta.json`,
+      JSON.stringify({ ownerId: String(ownerId), tenantId: String(tenantId) }),
+      'utf8',
+    );
     return { fileKey };
+  }
+
+  async assertImportFileOwnership(
+    fileKey: string,
+    tenantId: string,
+    ownerId: string,
+  ): Promise<void> {
+    this.assertSafeKey(fileKey);
+    const bucket = this.configService.get('file.awsDefaultS3Bucket', {
+      infer: true,
+    });
+    let metadata: { ownerId?: string; tenantId?: string };
+    if (this.s3 && bucket) {
+      try {
+        const head = await this.s3.send(
+          new HeadObjectCommand({ Bucket: bucket, Key: fileKey }),
+        );
+        metadata = {
+          ownerId: head.Metadata?.ownerid,
+          tenantId: head.Metadata?.tenantid,
+        };
+      } catch {
+        throw new NotFoundException('Import file not found');
+      }
+    } else {
+      try {
+        metadata = JSON.parse(
+          await readFile(`${this.localPathForKey(fileKey)}.meta.json`, 'utf8'),
+        );
+      } catch {
+        throw new NotFoundException('Import file not found');
+      }
+    }
+    if (
+      !metadata.ownerId ||
+      !metadata.tenantId ||
+      String(metadata.ownerId) !== String(ownerId) ||
+      String(metadata.tenantId) !== String(tenantId)
+    ) {
+      throw new ForbiddenException(
+        'Import file belongs to another user or tenant',
+      );
+    }
   }
 
   async importFileExists(fileKey: string): Promise<boolean> {
@@ -178,7 +236,11 @@ export class ImportStorageService {
   }
 
   async deleteImportFile(fileKey: string): Promise<void> {
-    if (!SAFE_KEY_PATTERN.test(fileKey)) return;
+    if (
+      !SAFE_KEY_PATTERN.test(fileKey) ||
+      !fileKey.startsWith(`${this.importPrefix}/`)
+    )
+      return;
     const bucket = this.configService.get('file.awsDefaultS3Bucket', {
       infer: true,
     });
@@ -189,6 +251,9 @@ export class ImportStorageService {
         );
       } else {
         await unlink(this.localPathForKey(fileKey));
+        await unlink(`${this.localPathForKey(fileKey)}.meta.json`).catch(
+          () => undefined,
+        );
       }
     } catch {
       // Best-effort cleanup — a leftover temp file is reaped by the TTL sweep.
