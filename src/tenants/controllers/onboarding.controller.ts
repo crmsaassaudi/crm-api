@@ -294,6 +294,7 @@ export class OnboardingController {
       alias,
       plan: SubscriptionPlan.FREE,
       useCase: session.useCase,
+      teamSize: session.teamSize,
       source: 'PLG',
     });
 

@@ -4,7 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { RedisService } from '../../redis/redis.service';
 import { PlatformRoleEnum } from '../../roles/platform-role.enum';
 import { TenantRoleEnum } from '../../roles/tenant-role.enum';
-import { DataScope, maxScope } from './data-scope.enum';
+import { DataScope, isDataScope, maxScope } from './data-scope.enum';
 import { StatusEnum } from '../../statuses/statuses.enum';
 import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
 import { TenantsRepository } from '../../tenants/infrastructure/persistence/document/repositories/tenant.repository';
@@ -691,12 +691,107 @@ export class AuthzPermissionCacheService {
    * Fail-closed: an unresolvable user, tenant, or inactive account yields SELF
    * with no org unit. `maxScope([])` is SELF, so a role catalogue that fails to
    * load narrows rather than widens.
+   *
+   * `explicit` distinguishes "every role this principal holds declares a scope"
+   * from "none of them do" — both collapse to SELF through `maxScope`, but they
+   * mean opposite things to the caller. Only the second may fall back to the
+   * tenant-wide default; treating the first as unset is what let a tenant
+   * default silently widen a role deliberately marked SELF.
    */
+  /**
+   * The access a not-yet-created membership would produce.
+   *
+   * Answers the invite dialog's question — "what will this person actually see
+   * once I click Add" — before there is a user to ask it about. Every other
+   * preview route keys on an existing `:id`, which is precisely the case that
+   * does not exist yet, so the alternative was for the browser to guess from
+   * the role's permission array. That guess is a second permission engine, and
+   * the last one drifted from this one silently.
+   *
+   * Read-only and hypothetical: nothing is written, and no group membership or
+   * JIT assignment is assumed, because an invitee has neither yet.
+   */
+  async previewMembershipAccess(
+    tenantId: string,
+    candidate: { tenantRole: string; roleIds?: string[] },
+  ): Promise<{
+    permissions: string[];
+    fullAccess: boolean;
+    scope: DataScope;
+    explicit: boolean;
+  }> {
+    const tenantsRepository = this.moduleRef.get(TenantsRepository, {
+      strict: false,
+    });
+    const tenant = await this.resolveTenant(tenantsRepository, tenantId);
+    if (!tenant) {
+      return {
+        permissions: [],
+        fullAccess: false,
+        scope: DataScope.SELF,
+        explicit: false,
+      };
+    }
+
+    const permissionTenant: PermissionTenant = {
+      id: String(tenant.id),
+      ownerId: (tenant as any).ownerId ?? null,
+      availablePermissions: (tenant as any).availablePermissions ?? null,
+      disabledCorePermissions: (tenant as any).disabledCorePermissions ?? null,
+    };
+
+    const roleIds = (candidate.roleIds ?? []).map(String);
+    const tenantRoles = await this.loadTenantRoles(String(tenant.id));
+
+    const explanation = explainEffectivePermissions(
+      permissionTenant,
+      {
+        // A synthetic id that matches no tenant owner, so the preview cannot
+        // accidentally resolve to owner-level access.
+        id: '__preview__',
+        tenants: [
+          {
+            tenantId: String(tenant.id),
+            roles: [String(candidate.tenantRole).toUpperCase()],
+            roleIds,
+          },
+        ],
+      },
+      [],
+      tenantRoles,
+    );
+
+    if (explanation.fullAccess) {
+      return {
+        permissions: explanation.effective,
+        fullAccess: true,
+        scope: DataScope.TENANT,
+        explicit: true,
+      };
+    }
+
+    const held = new Set(roleIds);
+    const scopes = tenantRoles
+      .filter((role) => held.has(String(role.id)))
+      .map((role) => role.dataScope);
+
+    return {
+      permissions: explanation.effective,
+      fullAccess: false,
+      scope: maxScope(scopes),
+      explicit: scopes.some(isDataScope),
+    };
+  }
+
   async resolveDataScope(
     rawUserId: string,
     tenantHint?: string,
-  ): Promise<{ scope: DataScope; orgUnitId: string | null }> {
-    const closed = { scope: DataScope.SELF, orgUnitId: null };
+  ): Promise<{
+    scope: DataScope;
+    orgUnitId: string | null;
+    explicit: boolean;
+  }> {
+    const closed = { scope: DataScope.SELF, orgUnitId: null, explicit: false };
 
     const tenantsRepository = this.moduleRef.get(TenantsRepository, {
       strict: false,
@@ -715,13 +810,14 @@ export class AuthzPermissionCacheService {
     );
     if (!tenant) return closed;
 
-    const orgUnitId = (user as any).orgUnitId
-      ? String((user as any).orgUnitId)
-      : null;
-
     const membership = user.tenants?.find(
       (row: any) => String(row.tenantId) === String(tenant.id),
     );
+
+    // Per-membership: someone in two tenants is filed in each independently.
+    const orgUnitId = (membership as any)?.orgUnitId
+      ? String((membership as any).orgUnitId)
+      : null;
 
     const superAdmin = user.platformRole?.id === PlatformRoleEnum.SUPER_ADMIN;
     const privileged =
@@ -731,7 +827,8 @@ export class AuthzPermissionCacheService {
         (role: string) =>
           role === TenantRoleEnum.OWNER || role === TenantRoleEnum.ADMIN,
       );
-    if (privileged) return { scope: DataScope.TENANT, orgUnitId };
+    if (privileged)
+      return { scope: DataScope.TENANT, orgUnitId, explicit: true };
 
     const [userGroups, tenantRoles] = await Promise.all([
       groupRepository.findGroupsByMemberWithAncestors(
@@ -760,7 +857,11 @@ export class AuthzPermissionCacheService {
       .filter((role) => heldRoleIds.has(String(role.id)))
       .map((role) => role.dataScope);
 
-    return { scope: maxScope(scopes), orgUnitId };
+    return {
+      scope: maxScope(scopes),
+      orgUnitId,
+      explicit: scopes.some(isDataScope),
+    };
   }
 
   private buildKey(tenantId: string, userId: string): string {

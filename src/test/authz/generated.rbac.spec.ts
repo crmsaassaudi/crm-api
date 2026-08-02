@@ -1,5 +1,5 @@
 /**
- * Auto-generated RBAC matrix — 4096 grant-source combinations × 7 probe keys.
+ * Auto-generated RBAC matrix — every grant-source combination × 7 probe keys.
  *
  * Runs the REAL engine against an independent oracle. A mismatch is reported
  * with the case id (e.g. `rbac-0413[adminFlag,overrideDeny]`) so the failing
@@ -24,6 +24,7 @@ import {
   TENANT_ID,
   USER_ID,
   ROLE_CATALOG,
+  SOURCE_FLAGS,
 } from './matrix/rbac-matrix';
 
 const CASES = generateRbacCases();
@@ -33,8 +34,9 @@ const CORE_PROBE_KEYS = PROBE_KEYS.filter((key) =>
 
 describe('RBAC matrix (generated)', () => {
   it('should enumerate the full grant-source space', () => {
-    expect(CASES).toHaveLength(4096);
-    expect(new Set(CASES.map((c) => c.id)).size).toBe(4096);
+    const expected = 2 ** SOURCE_FLAGS.length;
+    expect(CASES).toHaveLength(expected);
+    expect(new Set(CASES.map((c) => c.id)).size).toBe(expected);
   });
 
   it('should classify probe keys correctly against CORE_PERMISSIONS', () => {
@@ -94,15 +96,15 @@ describe('RBAC matrix (generated)', () => {
   });
 
   it('should be monotonic: adding a pure allow source never shrinks the result', () => {
-    // Excludes the two sources that are not pure allows.
+    // Excludes the sources that are not pure allows: overrideDeny removes,
+    // disabledCore shrinks the ceiling, and tenantOwner/adminFlag replace the
+    // union outright rather than adding to it.
     const allowSources = [
-      'directPermission',
       'directRole',
       'groupPermission',
       'groupRole',
       'ancestorGroupRole',
       'jitRole',
-      'overrideAllow',
     ] as const;
 
     const shrinks: string[] = [];
@@ -279,7 +281,7 @@ describe('RBAC edge cases the matrix cannot express', () => {
           {
             tenantId: '0000000000000000000000ff',
             roles: ['ADMIN'],
-            permissions: [KEY.CONTACTS_VIEW],
+            roleIds: ['role-view'],
           },
         ],
       },
@@ -295,8 +297,8 @@ describe('RBAC edge cases the matrix cannot express', () => {
       {
         id: USER_ID,
         tenants: [
-          { tenantId: TENANT_ID, permissions: [KEY.CONTACTS_VIEW] },
-          { tenantId: TENANT_ID, permissions: [KEY.CONTACTS_DELETE] },
+          { tenantId: TENANT_ID, roleIds: ['role-view'] },
+          { tenantId: TENANT_ID, roleIds: ['role-jit'] },
         ],
       },
       [],
@@ -327,9 +329,7 @@ describe('RBAC edge cases the matrix cannot express', () => {
       { ...tenant, id: objectIdLike as any },
       {
         id: USER_ID,
-        tenants: [
-          { tenantId: objectIdLike as any, permissions: [KEY.CONTACTS_VIEW] },
-        ],
+        tenants: [{ tenantId: objectIdLike as any, roleIds: ['role-view'] }],
       },
       [],
       ROLE_CATALOG,
@@ -362,7 +362,7 @@ describe('RBAC edge cases the matrix cannot express', () => {
       tenant,
       {
         id: USER_ID,
-        tenants: [{ tenantId: TENANT_ID, permissions: [KEY.CONTACTS_VIEW] }],
+        tenants: [{ tenantId: TENANT_ID, roleIds: ['role-view'] }],
       },
       // PermissionGroup has no permissionOverrides field at all.
       [{ memberIds: [USER_ID], permissions: [] }],

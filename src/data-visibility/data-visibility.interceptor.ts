@@ -378,8 +378,11 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     userGroupIds: string[],
     settings: any,
   ): Promise<ScopeContext> {
-    const { scope: roleScope, orgUnitId } =
-      await this.authzCache.resolveDataScope(userId, tenantId);
+    const {
+      scope: roleScope,
+      orgUnitId,
+      explicit: roleScopeIsExplicit,
+    } = await this.authzCache.resolveDataScope(userId, tenantId);
 
     const tenantDefaultScope = isDataScope(settings?.defaultScope)
       ? settings.defaultScope
@@ -409,6 +412,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       userRoles,
       userGroupIds,
       roleScope,
+      roleScopeIsExplicit,
       orgUnitId,
       tenantDefaultScope,
       defaultAccess:
@@ -483,10 +487,23 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     const grant = await this.grantFor(ctx, moduleKey);
     if (grant.all) return { ownerIds: null, orgUnitIds: null };
 
-    const moduleDefaultScope = isDataScope(configured?.scope)
-      ? configured.scope
-      : ctx.tenantDefaultScope;
-    const scope = maxScope([ctx.roleScope, moduleDefaultScope]);
+    // The role's scope is the source of truth once a role declares one. The
+    // tenant-wide default only fills the gap for a principal whose roles say
+    // nothing — it is a fallback, not a floor.
+    //
+    // It used to be a floor: the union was
+    // `max(roleScope, moduleScope ?? tenantDefault)`, and the seeded default is
+    // SUBORDINATES. So every role, including one deliberately marked SELF, read
+    // its holder's subordinates anyway, and no screen showed why. A default
+    // that overrides the explicit per-role setting is not a default.
+    const baseScope = ctx.roleScopeIsExplicit
+      ? ctx.roleScope
+      : maxScope([ctx.roleScope, ctx.tenantDefaultScope]);
+    // A per-module setting may still widen: that one IS an explicit, visible
+    // choice an admin made on the Data Visibility page.
+    const scope = isDataScope(configured?.scope)
+      ? maxScope([baseScope, configured.scope])
+      : baseScope;
 
     if (scope === DataScope.TENANT) return { ownerIds: null, orgUnitIds: null };
 
@@ -890,7 +907,10 @@ interface ScopeContext {
   userRoles: string[];
   userGroupIds: string[];
   roleScope: DataScope;
+  /** False when none of the principal's roles declares a scope — see below. */
+  roleScopeIsExplicit: boolean;
   orgUnitId: string | null;
+  /** Fallback for principals whose roles declare no scope. Never a floor. */
   tenantDefaultScope: DataScope;
   defaultAccess: 'private' | 'public_read';
   byModuleSettings: Record<

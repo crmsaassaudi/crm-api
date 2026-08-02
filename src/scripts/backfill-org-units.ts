@@ -67,17 +67,24 @@ async function run(): Promise<void> {
     await client.connect();
     const db = client.db();
 
-    const userFilter: Record<string, unknown> = { orgUnitId: { $ne: null } };
-    if (tenantId) {
-      userFilter['tenants.tenantId'] = new ObjectId(tenantId);
-    }
+    // Org placement lives on the membership, so `$elemMatch` is required:
+    // matching `tenants.orgUnitId` and `tenants.tenantId` as separate top-level
+    // keys would be satisfied by two DIFFERENT memberships, and the script
+    // would stamp this tenant's records with another workspace's unit.
+    const membershipMatch: Record<string, unknown> = {
+      orgUnitId: { $ne: null },
+    };
+    if (tenantId) membershipMatch.tenantId = new ObjectId(tenantId);
 
     // One pass over users, grouped by unit: the update is then one bulk op per
     // (collection, unit) rather than one per record. A tenant with 100k contacts
     // and 12 units costs 72 writes, not 100k.
     const users = await db
       .collection('users')
-      .find(userFilter, { projection: { _id: 1, orgUnitId: 1 } })
+      .find(
+        { tenants: { $elemMatch: membershipMatch } },
+        { projection: { _id: 1, tenants: 1 } },
+      )
       .toArray();
 
     if (users.length === 0) {
@@ -89,9 +96,18 @@ async function run(): Promise<void> {
 
     const ownersByUnit = new Map<string, ObjectId[]>();
     for (const user of users) {
-      const unit = String(user.orgUnitId);
-      if (!ownersByUnit.has(unit)) ownersByUnit.set(unit, []);
-      ownersByUnit.get(unit)!.push(user._id as ObjectId);
+      // Re-select the membership in memory: the projection returns the whole
+      // array, and without a tenant filter a user may be placed in several.
+      const memberships = (user.tenants ?? []).filter(
+        (row: any) =>
+          row?.orgUnitId &&
+          (!tenantId || String(row.tenantId) === String(tenantId)),
+      );
+      for (const membership of memberships) {
+        const unit = String(membership.orgUnitId);
+        if (!ownersByUnit.has(unit)) ownersByUnit.set(unit, []);
+        ownersByUnit.get(unit)!.push(user._id as ObjectId);
+      }
     }
 
     console.log(

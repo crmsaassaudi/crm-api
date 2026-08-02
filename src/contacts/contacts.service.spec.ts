@@ -108,8 +108,10 @@ describe('ContactsService', () => {
     importStorage = { openLocalReport: jest.fn() };
     importQueue = createQueueMock();
     importJobModel = createMongooseModelMock();
+    // Org placement lives on the membership, and the lookup projects
+    // `tenants.$` — the single membership that matched the tenant filter.
     userModel = createMongooseModelMock({
-      findResult: { orgUnitId: '60d0fe4f5311236168a109cd' },
+      findResult: { tenants: [{ orgUnitId: '60d0fe4f5311236168a109cd' }] },
     });
 
     // Minimal construction — only fields needed for the methods under test.

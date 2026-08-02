@@ -38,6 +38,19 @@ describe('permission.engine (authz matrix)', () => {
     tenants: [{ tenantId: TENANT_ID, roles: [], ...membership }],
   });
 
+  /**
+   * Roles are the only way to grant a member a key. Standing per-user grants
+   * (`membership.permissions`) and allow-overrides were removed: neither could
+   * be written any more, so honouring stored ones meant access arriving from a
+   * field no screen could show or edit.
+   */
+  const ROLES = [
+    { id: 'r-view', permissions: ['contacts:view'] },
+    { id: 'r-view-export', permissions: ['contacts:view', 'contacts:export'] },
+    { id: 'role_sales', permissions: ['contacts:view', 'deals:view'] },
+    { id: 'role_export', permissions: ['contacts:export'] },
+  ];
+
   // ── Owner / Admin bypass ──────────────────────────────────────────────
   it('should grants the full tenant ceiling to the tenant owner', () => {
     const perms = calculateEffectivePermissions(tenant(), user('owner_user'));
@@ -120,10 +133,12 @@ describe('permission.engine (authz matrix)', () => {
   });
 
   // ── Member: intersection with ceiling ─────────────────────────────────
-  it('should grants a member only the personal permissions within the ceiling', () => {
+  it('should grants a member only their roles’ permissions within the ceiling', () => {
     const perms = calculateEffectivePermissions(
       tenant(),
-      user('member_1', { roles: ['MEMBER'], permissions: ['contacts:view'] }),
+      user('member_1', { roles: ['MEMBER'], roleIds: ['r-view'] }),
+      [],
+      ROLES,
     );
     expect(canAccess(perms, 'view', 'contacts')).toBe(true);
     expect(canAccess(perms, 'delete', 'contacts')).toBe(false);
@@ -133,59 +148,51 @@ describe('permission.engine (authz matrix)', () => {
     const groups: PermissionGroup[] = [{ permissions: ['deals:view'] }];
     const perms = calculateEffectivePermissions(
       tenant(),
-      user('member_1', { roles: ['MEMBER'], permissions: ['contacts:view'] }),
+      user('member_1', { roles: ['MEMBER'], roleIds: ['r-view'] }),
       groups,
+      ROLES,
     );
     expect(canAccess(perms, 'view', 'contacts')).toBe(true);
     expect(canAccess(perms, 'view', 'deals')).toBe(true);
   });
 
-  it('should drops a personal permission NOT within the tenant ceiling (feature not enabled)', () => {
+  it('should drop a role permission NOT within the tenant ceiling (feature not enabled)', () => {
     const perms = calculateEffectivePermissions(
       tenant(), // contacts:export not enabled
-      user('member_1', {
-        roles: ['MEMBER'],
-        permissions: ['contacts:view', 'contacts:export'],
-      }),
+      user('member_1', { roles: ['MEMBER'], roleIds: ['r-view-export'] }),
+      [],
+      ROLES,
     );
     expect(canAccess(perms, 'view', 'contacts')).toBe(true);
     expect(canAccess(perms, 'export', 'contacts')).toBe(false);
   });
 
-  // ── permissionOverrides: deny wins ────────────────────────────────────
+  // ── permissionOverrides: deny only ────────────────────────────────────
   it('should removes a granted permission via a deny override', () => {
     const perms = calculateEffectivePermissions(
       tenant(),
       user('member_1', {
         roles: ['MEMBER'],
-        permissions: ['contacts:view'],
+        roleIds: ['r-view'],
         permissionOverrides: { 'contacts:view': false },
       }),
+      [],
+      ROLES,
     );
     expect(canAccess(perms, 'view', 'contacts')).toBe(false);
   });
 
-  it('should adds a ceiling permission via an allow override', () => {
+  it('should ignore an allow override — widening goes through a role', () => {
     const perms = calculateEffectivePermissions(
       tenant(),
       user('member_1', {
         roles: ['MEMBER'],
-        permissions: [],
         permissionOverrides: { 'contacts:view': true },
       }),
+      [],
+      ROLES,
     );
-    expect(canAccess(perms, 'view', 'contacts')).toBe(true);
-  });
-
-  it('should ignores an allow override for a permission outside the ceiling', () => {
-    const perms = calculateEffectivePermissions(
-      tenant(), // contacts:export not enabled
-      user('member_1', {
-        roles: ['MEMBER'],
-        permissionOverrides: { 'contacts:export': true },
-      }),
-    );
-    expect(canAccess(perms, 'export', 'contacts')).toBe(false);
+    expect(canAccess(perms, 'view', 'contacts')).toBe(false);
   });
 
   // ── Tenant ceiling: disabled core ─────────────────────────────────────
@@ -197,11 +204,6 @@ describe('permission.engine (authz matrix)', () => {
   });
 
   // ── Role references (RBAC expansion) ──────────────────────────────────
-  const ROLES = [
-    { id: 'role_sales', permissions: ['contacts:view', 'deals:view'] },
-    { id: 'role_export', permissions: ['contacts:export'] },
-  ];
-
   it('should expands a role assigned directly to the member', () => {
     const perms = calculateEffectivePermissions(
       tenant(),

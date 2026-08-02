@@ -46,11 +46,26 @@ export class TenantAliasReservationRepository {
 
   /**
    * Marks a reservation as CONFIRMED once the Saga completes successfully.
+   *
+   * Upserts rather than updating in place. A plain update silently matched
+   * nothing when the reservation had expired or been cleared by an earlier
+   * rollback, which left a live tenant whose alias nothing was holding — the
+   * next signup could reserve the same name and then fail on the tenants
+   * collection's unique index. The confirmed row is the lock, so it has to
+   * exist by the time provisioning reports success.
    */
   async confirm(alias: string): Promise<void> {
     await this.model.updateOne(
       { alias },
-      { $set: { status: AliasReservationStatus.CONFIRMED } },
+      {
+        $set: { status: AliasReservationStatus.CONFIRMED },
+        // The TTL index deletes any document carrying a past `expiresAt`,
+        // regardless of status. Leaving it set expired the lock 30 minutes
+        // after every successful signup.
+        $unset: { expiresAt: '' },
+        $setOnInsert: { alias, createdAt: new Date() },
+      },
+      { upsert: true },
     );
   }
 

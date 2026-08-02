@@ -105,6 +105,7 @@ export class SystemRolesSeederService {
         description: template.description,
         color: template.color,
         permissions,
+        dataScope: template.dataScope,
         isSystem: true,
         templateVersion: template.version,
       });
@@ -131,6 +132,11 @@ export class SystemRolesSeederService {
     permissions: string[],
   ): boolean {
     if ((existing.templateVersion ?? 0) < template.version) return false;
+    // Checked independently of the version because a row materialised before
+    // templates carried a scope has `dataScope: null`, which floors to SELF and
+    // renders every module empty for its holders. Repair that on the next run
+    // rather than waiting for an unrelated version bump.
+    if (existing.dataScope !== template.dataScope) return false;
     // Dynamic roles (Read Only) track the tenant ceiling, which moves on plan
     // changes without any template version bump.
     const current = [...(existing.permissions ?? [])].sort();
@@ -162,6 +168,7 @@ export class SystemRolesSeederService {
       description: template.description,
       color: template.color,
       permissions,
+      dataScope: template.dataScope,
     });
   }
 

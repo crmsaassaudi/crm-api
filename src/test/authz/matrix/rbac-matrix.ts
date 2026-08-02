@@ -40,10 +40,13 @@ export const USER_ID = '000000000000000000000002';
 
 /** Role catalog referenced by roleId from users and groups. */
 export const ROLE_CATALOG: PermissionRole[] = [
+  { id: 'role-view', permissions: [KEY.CONTACTS_VIEW] },
   { id: 'role-edit', permissions: [KEY.CONTACTS_EDIT] },
   { id: 'role-users', permissions: [KEY.USERS_VIEW] },
   { id: 'role-ancestor', permissions: [KEY.TICKETS_EDIT] },
   { id: 'role-jit', permissions: [KEY.CONTACTS_DELETE] },
+  /** Carries a key outside the default ceiling, to prove clipping. */
+  { id: 'role-outside-ceiling', permissions: [KEY.CONTACTS_EXPORT] },
   /** Referenced by nobody's catalog on purpose — dangling reference case. */
   { id: 'role-dangling-never-registered', permissions: [KEY.CONTACTS_EXPORT] },
 ];
@@ -52,13 +55,11 @@ export const ROLE_CATALOG: PermissionRole[] = [
 export const SOURCE_FLAGS = [
   'tenantOwner',
   'adminFlag',
-  'directPermission',
   'directRole',
   'groupPermission',
   'groupRole',
   'ancestorGroupRole',
   'jitRole',
-  'overrideAllow',
   'overrideDeny',
   'grantOutsideCeiling',
   'disabledCore',
@@ -87,19 +88,18 @@ function buildSubject(sources: Sources): Omit<MatrixCase, 'id' | 'sources'> {
     disabledCorePermissions: sources.disabledCore ? [KEY.USERS_VIEW] : null,
   };
 
-  const directPermissions: string[] = [];
-  if (sources.directPermission) directPermissions.push(KEY.CONTACTS_VIEW);
-  if (sources.grantOutsideCeiling) directPermissions.push(KEY.CONTACTS_EXPORT);
-
   const roleIds: string[] = [];
   if (sources.directRole) roleIds.push('role-edit');
+  // A role carrying a key the tenant is not entitled to. The engine must clip
+  // it; the role reference itself is perfectly ordinary.
+  if (sources.grantOutsideCeiling) roleIds.push('role-outside-ceiling');
   // JIT grants are merged into membership.roleIds upstream by
   // AuthzPermissionCacheService.withAssignmentRoles — the engine sees them as
   // ordinary role references, which is exactly what we model here.
   if (sources.jitRole) roleIds.push('role-jit');
 
+  // Deny-only: a standing allow-override is neither writable nor honoured.
   const overrides: Record<string, boolean> = {};
-  if (sources.overrideAllow) overrides[KEY.TICKETS_EDIT] = true;
   if (sources.overrideDeny) overrides[KEY.CONTACTS_VIEW] = false;
 
   const user: PermissionUser = {
@@ -109,7 +109,6 @@ function buildSubject(sources: Sources): Omit<MatrixCase, 'id' | 'sources'> {
         tenantId: TENANT_ID,
         roles: sources.adminFlag ? ['ADMIN'] : ['MEMBER'],
         roleIds,
-        permissions: directPermissions,
         permissionOverrides: overrides,
       },
     ],
@@ -179,7 +178,6 @@ export function oracleEffectiveKeys(input: OracleInput): Set<string> {
     sources.groupPermission ? [KEY.TICKETS_VIEW] : [],
     sources.groupRole ? [KEY.USERS_VIEW] : [],
     sources.ancestorGroupRole ? [KEY.TICKETS_EDIT] : [],
-    sources.directPermission ? [KEY.CONTACTS_VIEW] : [],
     sources.grantOutsideCeiling ? [KEY.CONTACTS_EXPORT] : [],
     sources.directRole ? [KEY.CONTACTS_EDIT] : [],
     sources.jitRole ? [KEY.CONTACTS_DELETE] : [],
@@ -193,10 +191,7 @@ export function oracleEffectiveKeys(input: OracleInput): Set<string> {
     sources.tenantOwner || sources.adminFlag ? ceiling : granted,
   );
 
-  // Overrides are the last word, and are themselves clamped by the ceiling.
-  if (sources.overrideAllow && ceiling.has(KEY.TICKETS_EDIT)) {
-    result.add(KEY.TICKETS_EDIT);
-  }
+  // A deny override is the last word, and is itself clamped by the ceiling.
   if (sources.overrideDeny && ceiling.has(KEY.CONTACTS_VIEW)) {
     result.delete(KEY.CONTACTS_VIEW);
   }

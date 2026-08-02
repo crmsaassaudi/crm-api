@@ -11,6 +11,7 @@
  *   DATABASE_URL=mongodb://... npx ts-node src/scripts/migrate-tenant-to-tenant-id.ts
  */
 
+import 'dotenv/config';
 import { MongoClient, ObjectId } from 'mongodb';
 
 const COLLECTIONS = ['automation_rules', 'routing_rules'] as const;

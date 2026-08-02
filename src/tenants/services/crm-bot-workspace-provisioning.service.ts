@@ -14,6 +14,13 @@ type ProvisionWorkspaceResponse = {
   workspaceId: string;
 };
 
+type DeprovisionWorkspaceResponse = {
+  ok: boolean;
+  deleted?: boolean;
+  reason?: string;
+  error?: string;
+};
+
 @Injectable()
 export class CrmBotWorkspaceProvisioningService {
   private readonly logger = new Logger(CrmBotWorkspaceProvisioningService.name);
@@ -53,6 +60,57 @@ export class CrmBotWorkspaceProvisioningService {
     );
 
     return response.data.workspaceId;
+  }
+
+  /**
+   * Undo `provisionWorkspace` for a tenant that never finished provisioning.
+   *
+   * The saga creates the bot workspace at step 8 and can still fail at 9 or 10.
+   * Without this the workspace, its welcome bot and its member row outlived the
+   * tenant they belonged to, unreachable and uncountable — a slow leak in a
+   * database the CRM does not own.
+   *
+   * crm-bot declines the delete if anyone has used the workspace; that comes
+   * back as `deleted: false` with a reason, not as an error. Returns false
+   * rather than throwing on transport failures too: a rollback that throws
+   * would mask the original provisioning error.
+   */
+  async deprovisionWorkspace(tenantId: string): Promise<boolean> {
+    const baseUrl = this.resolveBuilderBaseUrl();
+    const endpoint = `${baseUrl}/api/internal/workspaces/deprovision`;
+
+    try {
+      const response = await axios.post<DeprovisionWorkspaceResponse>(
+        endpoint,
+        { tenantId },
+        {
+          timeout: this.resolveTimeoutMs(),
+          headers: {
+            'content-type': 'application/json',
+            'x-crm-internal-secret': this.resolveInternalSecret(),
+          },
+        },
+      );
+
+      if (response.data?.deleted) {
+        this.logger.log(
+          `Deprovisioned crm-bot workspace for tenant ${tenantId}`,
+        );
+        return true;
+      }
+
+      this.logger.warn(
+        `crm-bot kept the workspace for tenant ${tenantId}: ${response.data?.reason ?? 'unknown reason'}`,
+      );
+      return false;
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to deprovision crm-bot workspace for tenant ${tenantId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
   }
 
   private resolveBuilderBaseUrl(): string {

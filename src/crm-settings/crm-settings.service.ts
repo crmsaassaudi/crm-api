@@ -113,6 +113,7 @@ export class CrmSettingsService {
     const tid = this.resolveTenantId(tenantId);
 
     validateVisibilitySetting(key, value);
+    validateNavigationSetting(key, value);
 
     // Invalidate cache on write so the next read fetches fresh data.
     this.settingsCache.delete(`${tid}:${key}`);
@@ -584,6 +585,99 @@ export class CrmSettingsService {
       throw new ConflictException(
         `Cannot change or delete lifecycle status "${status.label}" because ${contactsCount} contact(s) still reference it. Move or merge those contacts first.`,
       );
+    }
+  }
+}
+
+/**
+ * Reject a navigation config the sidebar could not render.
+ *
+ * Two failure modes worth catching here rather than in the browser: a
+ * workspace list that nobody can see (every entry hidden or gated) leaves the
+ * switcher empty and the user on a blank menu, and an item pointing at a
+ * workspace id that does not exist simply vanishes with no error anywhere.
+ *
+ * Item ids are NOT validated against a catalog: the catalog lives in the web
+ * app, ships on its own cadence, and an id this API has not heard of is a
+ * front-end item from a newer build, not a mistake.
+ */
+function validateNavigationSetting(key: string, value: any): void {
+  if (key !== 'navigation_workspaces') return;
+
+  const workspaces = value?.workspaces;
+  if (!Array.isArray(workspaces) || workspaces.length === 0) {
+    throw new BadRequestException(
+      'navigation_workspaces.workspaces must be a non-empty array',
+    );
+  }
+
+  const ids = new Set<string>();
+  for (const workspace of workspaces) {
+    const id = workspace?.id;
+    if (typeof id !== 'string' || !/^[a-z0-9_-]{1,40}$/.test(id)) {
+      throw new BadRequestException(
+        `Workspace id must be a slug of letters, digits, dash or underscore (got "${id}")`,
+      );
+    }
+    if (ids.has(id)) {
+      throw new BadRequestException(`Duplicate workspace id "${id}"`);
+    }
+    ids.add(id);
+
+    if (typeof workspace?.label !== 'string' || !workspace.label.trim()) {
+      throw new BadRequestException(`Workspace "${id}" needs a label`);
+    }
+
+    const requires = workspace?.requires;
+    if (
+      requires !== null &&
+      requires !== undefined &&
+      requires !== 'owner' &&
+      !(typeof requires === 'string' && requires.startsWith('permission:'))
+    ) {
+      throw new BadRequestException(
+        `Workspace "${id}": requires must be null, "owner", or "permission:<key>"`,
+      );
+    }
+  }
+
+  // An ungated, visible workspace has to survive, or a tenant can lock its own
+  // members out of the menu with a settings write.
+  const reachable = workspaces.some(
+    (workspace: any) =>
+      !workspace?.hidden &&
+      (workspace?.requires === null || workspace?.requires === undefined),
+  );
+  if (!reachable) {
+    throw new BadRequestException(
+      'At least one workspace must be visible with no access requirement, ' +
+        'otherwise members with no admin permissions see an empty menu.',
+    );
+  }
+
+  const items = value?.items;
+  if (items !== undefined && items !== null) {
+    if (!Array.isArray(items)) {
+      throw new BadRequestException(
+        'navigation_workspaces.items must be an array',
+      );
+    }
+    for (const item of items) {
+      if (typeof item?.itemId !== 'string' || !item.itemId) {
+        throw new BadRequestException('Every navigation item needs an itemId');
+      }
+      if (!Array.isArray(item?.workspaces)) {
+        throw new BadRequestException(
+          `Item "${item.itemId}": workspaces must be an array`,
+        );
+      }
+      for (const workspaceId of item.workspaces) {
+        if (!ids.has(workspaceId)) {
+          throw new BadRequestException(
+            `Item "${item.itemId}" references unknown workspace "${workspaceId}"`,
+          );
+        }
+      }
     }
   }
 }

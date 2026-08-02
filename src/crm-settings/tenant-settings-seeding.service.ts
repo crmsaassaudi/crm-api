@@ -113,6 +113,13 @@ export class TenantSettingsSeedingService {
 
       // ── Email Channel Settings ──────────────────────────────────────────────
       this.seed(tenantId, 'email_settings', DEFAULT_EMAIL_SETTINGS),
+
+      // ── Navigation ──────────────────────────────────────────────────────────
+      this.seed(
+        tenantId,
+        'navigation_workspaces',
+        DEFAULT_NAVIGATION_WORKSPACES,
+      ),
     ]);
 
     this.logger.log(`[Seeding] Completed for tenant ${tenantId}`);
@@ -727,7 +734,16 @@ const DEFAULT_VALIDATION_RULES = {
 // ─── Business Hours default ──────────────────────────────────────────────────
 
 const DEFAULT_BUSINESS_HOURS = {
-  timezone: 'ict',
+  /**
+   * An IANA zone identifier, and the same value `general_localization` seeds.
+   *
+   * This used to be `'ict'`, which is not an IANA zone — `Intl` rejects it, so
+   * BusinessHoursService caught the error and fell back to UTC. Every new
+   * tenant therefore ran its schedule seven hours off what the settings screen
+   * claimed, and nothing said so. Two defaults for the same concept is how
+   * that stayed invisible; there is one now.
+   */
+  timezone: 'UTC',
   weekStartDay: 'monday',
   workingDays: [
     {
@@ -1458,8 +1474,121 @@ const DEFAULT_LIST_VIEWS = {
   ],
 };
 
+// ─── Navigation / Workspaces ─────────────────────────────────────────────────
+
+/**
+ * Workspaces — the named groupings behind the sidebar switcher.
+ *
+ * Per tenant, not hard-coded, because "which menus does a salesperson see" is a
+ * question every company answers differently. The five fixed labels this
+ * replaced (sales/service/marketing/operations/admin) were the same for every
+ * tenant and could not be renamed, reordered, hidden, or added to.
+ *
+ * This is NAVIGATION, not security. `requires` decides whether a workspace is
+ * offered in the switcher; it never decides whether a route is reachable — the
+ * route guards and the API do, and they are unaffected by anything stored here.
+ *
+ * `requires` values:
+ *   null                    — everyone
+ *   'owner'                 — the tenant owner only (tenant.ownerId)
+ *   'permission:<key>'      — holders of that permission key
+ *
+ * The seeded three answer "where does someone land on first login": the first
+ * workspace in `order` they are allowed to see. Owner → Owner, an admin →
+ * Admin, everyone else → Member. Tenants rename, hide, reorder and add their
+ * own from Settings; nothing below is privileged over a tenant's own entries.
+ */
+const DEFAULT_NAVIGATION_WORKSPACES = {
+  workspaces: [
+    {
+      id: 'owner',
+      label: 'Owner',
+      color: 'bg-amber-500',
+      order: 10,
+      hidden: false,
+      requires: 'owner',
+    },
+    {
+      id: 'admin',
+      label: 'Admin',
+      color: 'bg-slate-500',
+      order: 20,
+      hidden: false,
+      requires: 'permission:settings:view',
+    },
+    {
+      id: 'member',
+      label: 'Member',
+      color: 'bg-emerald-500',
+      order: 30,
+      hidden: false,
+      requires: null,
+    },
+  ] as Array<{
+    id: string;
+    label: string;
+    color: string;
+    order: number;
+    hidden: boolean;
+    requires: string | null;
+  }>,
+  /**
+   * Which workspaces each navigation item appears in.
+   *
+   * **Owner holds every item.** The owner is the one person who is accountable
+   * for the whole workspace, and a curated "oversight" menu meant they had to
+   * switch workspaces to reach the modules they own. A menu that hides things
+   * from the person responsible for them is a worse default than a long one;
+   * they can shorten it from Settings, which is the point of this being
+   * per-tenant.
+   *
+   * Admin and Member stay split by JOB rather than by permission — an owner and
+   * an admin hold identical keys, so grouping by permission would produce two
+   * identical menus. The admin's day is running the system; the member's is the
+   * work itself.
+   *
+   * An id absent from this list is hidden everywhere, which is how a tenant
+   * removes an item without it reappearing on the next release.
+   */
+  items: [
+    {
+      itemId: 'dashboard',
+      workspaces: ['owner', 'admin', 'member'],
+      order: 10,
+    },
+    {
+      itemId: 'omni_channel',
+      workspaces: ['owner', 'admin', 'member'],
+      order: 20,
+    },
+    {
+      itemId: 'contacts',
+      workspaces: ['owner', 'admin', 'member'],
+      order: 30,
+    },
+    {
+      itemId: 'accounts',
+      workspaces: ['owner', 'admin', 'member'],
+      order: 40,
+    },
+    { itemId: 'deals', workspaces: ['owner', 'admin', 'member'], order: 50 },
+    { itemId: 'tickets', workspaces: ['owner', 'admin', 'member'], order: 60 },
+    { itemId: 'tasks', workspaces: ['owner', 'admin', 'member'], order: 70 },
+    { itemId: 'campaigns', workspaces: ['owner', 'admin'], order: 80 },
+    { itemId: 'social_posts', workspaces: ['owner', 'admin'], order: 90 },
+    { itemId: 'ai_video', workspaces: ['owner', 'admin'], order: 100 },
+    { itemId: 'reports', workspaces: ['owner', 'admin'], order: 110 },
+    { itemId: 'omni_reports', workspaces: ['owner', 'admin'], order: 120 },
+    { itemId: 'agent_leaderboard', workspaces: ['owner', 'admin'], order: 130 },
+    { itemId: 'revenue_forecast', workspaces: ['owner'], order: 140 },
+    { itemId: 'dashboards', workspaces: ['owner', 'admin'], order: 150 },
+    { itemId: 'settings', workspaces: ['owner', 'admin'], order: 160 },
+  ] as Array<{ itemId: string; workspaces: string[]; order: number }>,
+};
+
 /** Lookup map used by lazySeed() and getDefault(). Add new keys here when a new module ships. */
 export const DEFAULTS_MAP: Record<string, unknown> = {
+  navigation_workspaces: DEFAULT_NAVIGATION_WORKSPACES,
   contact_identity: DEFAULT_CONTACT_IDENTITY,
   contact_relationship: DEFAULT_CONTACT_RELATIONSHIP,
   contact_communication: DEFAULT_CONTACT_COMMUNICATION,

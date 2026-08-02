@@ -66,6 +66,20 @@ export class TenantsRepository {
     );
   }
 
+  /**
+   * Hard-delete a tenant row. Used only by the provisioning saga's terminal
+   * compensation.
+   *
+   * The row must go, not just be flagged FAILED: `alias` carries a unique
+   * index, so a tombstone keeps the name occupied forever while the matching
+   * reservation is released — the next signup passes the reservation check and
+   * then dies on a duplicate key it cannot see or clear. The failure itself is
+   * recorded on the provisioning job, which is where support looks anyway.
+   */
+  async remove(id: string, session?: ClientSession): Promise<void> {
+    await this.tenantsModel.deleteOne({ _id: id }, { session }).exec();
+  }
+
   async update(
     id: string,
     payload: Partial<Omit<Tenant, 'id'>>,

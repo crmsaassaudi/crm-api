@@ -32,6 +32,16 @@ export interface TenantProvisioningJobData {
   /** User-selected use case from onboarding UI (PLG only) */
   useCase?: string;
 
+  /**
+   * Headcount bracket from the onboarding wizard (PLG only).
+   *
+   * Decides whether the seeder builds an org tree at all. It was asked for and
+   * then dropped on the floor, so every tenant got the same single-unit tree
+   * regardless of answer — a 300-person company and a solo founder both landed
+   * on one headquarters with nothing under it.
+   */
+  teamSize?: string;
+
   /** Origin of the provisioning request */
   source: 'PLG' | 'SLG';
 }

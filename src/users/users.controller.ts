@@ -24,6 +24,7 @@ import { CheckEmailDto } from './dto/check-email.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { SetTenantRoleDto } from './dto/set-tenant-role.dto';
 import { PreviewEffectivePermissionsDto } from './dto/preview-effective-permissions.dto';
+import { PreviewMembershipAccessDto } from './dto/preview-membership-access.dto';
 import { UpdateUserI18nPreferencesDto } from './dto/user-i18n-preferences.dto';
 import {
   ApiBearerAuth,
@@ -122,6 +123,29 @@ export class UsersController {
     @Body() createUserForTenantDto: CreateUserForTenantDto,
   ): Promise<User> {
     return this.usersService.createForTenant(createUserForTenantDto);
+  }
+
+  @ApiOperation({
+    summary:
+      'Preview the access an invite would produce, before the membership exists.',
+    description:
+      'Answers "what will this person see" for a role/tenant-role combination ' +
+      'that has no user behind it yet. Read-only; nothing is persisted. ' +
+      'Exists so the invite dialog does not have to derive permissions in the ' +
+      'browser, which would be a second engine free to disagree with this one.',
+  })
+  @ApiOkResponse({
+    description: 'Effective permission keys, full-access flag and data scope',
+  })
+  @RequirePermission('create', 'users')
+  @Post('membership-access-preview')
+  @HttpCode(HttpStatus.OK)
+  previewMembershipAccess(@Body() dto: PreviewMembershipAccessDto) {
+    const tenantId = this.cls.get<string>('tenantId');
+    return this.authzCache.previewMembershipAccess(tenantId, {
+      tenantRole: dto.tenantRole,
+      roleIds: dto.roleIds,
+    });
   }
 
   @ApiOkResponse({

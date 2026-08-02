@@ -28,6 +28,8 @@
  * by the engine, which looks like a bug to the admin who granted it.
  */
 
+import { DataScope } from './data-scope.enum';
+
 export interface SystemRoleTemplate {
   /** Stable identity across tenants and releases. Never change or reuse. */
   systemKey: string;
@@ -35,12 +37,22 @@ export interface SystemRoleTemplate {
   description: string;
   color: string;
   /**
-   * Bump when `permissions` / `name` / `description` change. The seeder
-   * re-syncs materialised rows whose stored templateVersion is lower.
+   * Bump when `permissions` / `name` / `description` / `dataScope` change. The
+   * seeder re-syncs materialised rows whose stored templateVersion is lower.
    */
   version: number;
   /** Explicit permission keys. Ignored when `dynamic` is set. */
   permissions: string[];
+  /**
+   * How wide this role reads — the ABAC half of the grant.
+   *
+   * Mandatory on every template, and that is the point. A template without one
+   * materialises with `dataScope: null`, which `maxScope()` floors to SELF, so
+   * the holder passes every `:view` guard and then sees an empty list because
+   * they own nothing yet. Permissions without a scope is not a safe default,
+   * it is an invisible one.
+   */
+  dataScope: DataScope;
   /**
    * Resolve permissions from the tenant's live ceiling instead of a fixed list.
    * `all_view` → every `*:view` key the tenant actually has.
@@ -65,7 +77,11 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // visibility axis, so transferring a record moves it between people's scopes.
     // Deliberately NOT added to the Sales Rep template: a rep editing their own
     // records should not be able to move records into or out of their own view.
-    version: 4,
+    // v5: gained an explicit dataScope. A manager runs a unit and the units
+    // beneath it, which is exactly the subtree scope — anchored on their own
+    // org unit, so it needs no per-tenant configuration to be correct.
+    version: 5,
+    dataScope: DataScope.ORG_UNIT_SUBTREE,
     permissions: [
       'leads:view',
       'leads:create',
@@ -139,7 +155,12 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // cannot email them, which is the whole job.
     description: 'Work leads, contacts, accounts and deals day to day.',
     color: '#22c55e',
-    version: 3,
+    // v4: gained an explicit dataScope. ORG_UNIT rather than SELF — a rep who
+    // cannot see their own team's pipeline cannot cover for a colleague, and
+    // SELF makes a newly invited rep stare at five empty modules on day one.
+    // Narrowing to SELF stays available by cloning.
+    version: 4,
+    dataScope: DataScope.ORG_UNIT,
     permissions: [
       'leads:view',
       'leads:create',
@@ -178,7 +199,11 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // contact record protected nothing while breaking the ticket workflow.
     description: 'Handle tickets and customer conversations.',
     color: '#06b6d4',
-    version: 4,
+    // v5: gained an explicit dataScope. Support is queue work — an agent picks
+    // up whatever their unit is handling, so ORG_UNIT. Which *channels* they
+    // may serve stays a separate axis (the channel support pool).
+    version: 5,
+    dataScope: DataScope.ORG_UNIT,
     permissions: [
       'tickets:view',
       'tickets:create',
@@ -213,9 +238,17 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     systemKey: 'sys.read_only',
     name: 'Read Only',
     description:
-      'See everything the workspace exposes, change nothing. The safe default for a new teammate.',
+      "See your unit's records across every module the workspace exposes, change nothing. The default for a new teammate.",
     color: '#64748b',
-    version: 1,
+    // v2: gained an explicit dataScope, ORG_UNIT.
+    //
+    // This is the baseline every invite falls back to, so its scope decides
+    // what a new teammate sees on their first login. It used to resolve to
+    // SELF, which meant "read only" shipped as "read nothing": they own no
+    // records yet, so every module rendered empty and the workspace looked
+    // broken. Read-across-my-unit is the ordinary reading of the name.
+    version: 2,
+    dataScope: DataScope.ORG_UNIT,
     permissions: [],
     dynamic: 'all_view',
   },
@@ -225,7 +258,11 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     description:
       'Read every record in the workspace — no owner, unit or channel scope — and change nothing. For compliance reviewers and heads of function who need the full picture without the power to administer users or billing.',
     color: '#0ea5e9',
-    version: 2,
+    // v3: gained an explicit dataScope. TENANT is the whole point of the role,
+    // and it now says so on the role itself rather than relying on
+    // `all_data:view` being interpreted downstream.
+    version: 3,
+    dataScope: DataScope.TENANT,
     // Gated so the role only appears where an operator has actually granted the
     // full-read feature. Without the gate a tenant would see an "Auditor" role
     // whose defining permission the engine silently drops — the exact
@@ -260,7 +297,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     name: 'Marketing',
     description: 'Plan and launch campaigns, manage the content library.',
     color: '#ec4899',
-    version: 2,
+    // v3: gained an explicit dataScope. Campaign work is planned per unit and
+    // the audience is read through contact/lead views, so ORG_UNIT.
+    version: 3,
+    dataScope: DataScope.ORG_UNIT,
     requiresFeature: 'campaigns:view',
     permissions: [
       'campaigns:view',

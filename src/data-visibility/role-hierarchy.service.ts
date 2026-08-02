@@ -36,17 +36,21 @@ export class RoleHierarchyService {
    * @returns Array of subordinate user IDs (does NOT include the user itself)
    */
   async getSubordinateIds(tenantId: string, userId: string): Promise<string[]> {
-    // Load all users in the tenant with just _id and reportsToId
+    // The manager chain is per-membership, so project only the matching
+    // membership: `tenants.$` returns the one element that satisfied the
+    // filter, and reading `tenants[0]` off a multi-tenant user would otherwise
+    // hand back whichever workspace happens to sit first in the array.
     const users = await this.userModel
-      .find({ 'tenants.tenantId': tenantId }, { _id: 1, reportsToId: 1 })
+      .find({ 'tenants.tenantId': tenantId }, { _id: 1, 'tenants.$': 1 })
       .lean()
       .exec();
 
     // Build adjacency list: managerId → [directReportIds]
     const childrenMap = new Map<string, string[]>();
     for (const user of users) {
-      if (user.reportsToId) {
-        const managerId = user.reportsToId.toString();
+      const reportsToId = (user.tenants?.[0] as any)?.reportsToId;
+      if (reportsToId) {
+        const managerId = reportsToId.toString();
         if (!childrenMap.has(managerId)) {
           childrenMap.set(managerId, []);
         }

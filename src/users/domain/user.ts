@@ -19,8 +19,12 @@ export class User {
     tenantId: string;
     roles: string[];
     roleIds?: string[];
-    permissions?: string[];
+    /** Deny-only exceptions; grants come from roles. */
     permissionOverrides?: Record<string, boolean>;
+    /** Org unit within THIS tenant. Basis of the org_unit data scopes. */
+    orgUnitId?: string | null;
+    /** Direct manager within THIS tenant, for the SUBORDINATES scope. */
+    reportsToId?: string | null;
     joinedAt: Date;
   }[];
 
@@ -114,21 +118,6 @@ export class User {
     /** Override timezone (null = use tenant default) */
     timezone?: string | null;
   } | null;
-
-  @ApiProperty({
-    description: 'Direct manager ID for Role Hierarchy (Reports To)',
-    example: '60d0fe4f5311236168a109ca',
-    required: false,
-  })
-  reportsToId?: string | null;
-
-  @ApiProperty({
-    description:
-      'The single org unit this user belongs to. Basis of the org_unit data scopes.',
-    example: '60d0fe4f5311236168a109ca',
-    required: false,
-  })
-  orgUnitId?: string | null;
 
   @ApiProperty({
     description: 'Onboarding lifecycle tag for orphan cleanup',

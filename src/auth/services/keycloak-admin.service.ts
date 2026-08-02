@@ -208,10 +208,29 @@ export class KeycloakAdminService implements OnModuleInit {
     });
   }
 
+  /**
+   * Idempotent: a repeat call for an existing member is a no-op.
+   *
+   * Keycloak answers 409 when the user is already in the organization. The
+   * provisioning saga can retry this step after a later one failed, and a
+   * conflict there means the step already succeeded — treating it as an error
+   * turned a resumable retry into a permanent failure.
+   */
   async addUserToOrganization(orgId: string, userId: string): Promise<void> {
     return this.ensureClient(async () => {
-      await this.kcAdminClient.organizations.addMember({ orgId, userId });
-      this.logger.log(`Added user ${userId} to organization ${orgId}`);
+      try {
+        await this.kcAdminClient.organizations.addMember({ orgId, userId });
+        this.logger.log(`Added user ${userId} to organization ${orgId}`);
+      } catch (error: any) {
+        const status = error?.response?.status ?? error?.responseData?.status;
+        if (status === 409) {
+          this.logger.log(
+            `User ${userId} is already a member of organization ${orgId}`,
+          );
+          return;
+        }
+        throw error;
+      }
     });
   }
 

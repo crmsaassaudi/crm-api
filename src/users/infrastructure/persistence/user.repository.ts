@@ -32,6 +32,14 @@ export abstract class UserRepository {
    * Units with no members are absent from the map rather than zero.
    */
   abstract countByOrgUnit(tenantId: string): Promise<Record<string, number>>;
+
+  /**
+   * Memberships missing an org unit or any role — both render every module
+   * empty for their holder. Used by the tenant setup health check.
+   */
+  abstract countIncompleteMemberships(
+    tenantId: string,
+  ): Promise<{ withoutOrgUnit: number; withoutRole: number }>;
   abstract findByEmail(email: User['email']): Promise<NullableType<User>>;
   abstract findByKeycloakIdAndProvider({
     keycloakId,
@@ -63,6 +71,8 @@ export abstract class UserRepository {
       tenantId: string;
       roles: string[];
       roleIds?: string[];
+      orgUnitId?: string | null;
+      reportsToId?: string | null;
       joinedAt: Date;
     }[],
     session?: any,

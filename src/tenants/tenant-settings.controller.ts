@@ -16,6 +16,7 @@ import {
 import { TenantsService } from './tenants.service';
 import { UpdateTenantI18nDto } from './dto/i18n-settings.dto';
 import { RequirePermission } from '../common/permissions';
+import { TenantHealthService } from './tenant-health.service';
 
 @ApiTags('Tenants')
 @ApiBearerAuth()
@@ -26,8 +27,28 @@ import { RequirePermission } from '../common/permissions';
 export class TenantSettingsController {
   constructor(
     private readonly tenantsService: TenantsService,
+    private readonly tenantHealth: TenantHealthService,
     private readonly cls: ClsService,
   ) {}
+
+  /**
+   * GET /api/v1/tenants/setup-health
+   * Configuration that silently produces empty screens.
+   */
+  @Get('setup-health')
+  @RequirePermission('view', 'settings')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Tenant setup health',
+    description:
+      'Lists configuration that is individually valid but leaves members ' +
+      'looking at empty modules — members with no org unit or no role, roles ' +
+      'with no data scope, an org tree that was never built. Advisory only: ' +
+      'nothing here changes access.',
+  })
+  async getSetupHealth() {
+    return this.tenantHealth.check();
+  }
 
   /**
    * GET /api/v1/tenants/i18n

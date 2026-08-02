@@ -25,6 +25,7 @@
  *   ✅ Migration completed successfully
  */
 
+import 'dotenv/config';
 import { MongoClient } from 'mongodb';
 
 const CHANNEL_TYPE_MAP: Record<string, string> = {

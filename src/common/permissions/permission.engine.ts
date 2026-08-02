@@ -25,8 +25,14 @@ export interface PermissionUserMembership {
   roles?: string[];
   /** Custom-role references assigned directly to the user (RBAC). */
   roleIds?: string[];
-  /** Ad-hoc permission keys granted directly to the user (ABAC-ish escape hatch). */
-  permissions?: string[];
+  /**
+   * Per-key exceptions. Only `false` is honoured.
+   *
+   * A standing `true` here was an ad-hoc grant with no approval, no expiry and
+   * no reusable identity; writing one has been refused for a while, and the
+   * read path now matches the write path instead of quietly keeping old ones
+   * alive. Widening goes through a role or a governed RoleAssignment.
+   */
   permissionOverrides?: Record<string, boolean>;
 }
 
@@ -74,70 +80,6 @@ export const getTenantPermissions = (tenant: PermissionTenant): Set<string> => {
   return core;
 };
 
-export const calculateEffectivePermissions = (
-  tenant: PermissionTenant,
-  user: PermissionUser,
-  userGroups: PermissionGroup[] = [],
-  tenantRoles: PermissionRole[] = [],
-): Set<string> => {
-  // The ceiling for this tenant — Core + explicitly granted feature permissions
-  const tenantPermissions = getTenantPermissions(tenant);
-
-  const membership = user.tenants?.find((tenantMembership) =>
-    idsEqual(tenantMembership.tenantId, tenant.id),
-  );
-
-  const isOwner = idsEqual(tenant.ownerId, user.id);
-  const hasAdminRole =
-    membership?.roles?.includes('OWNER') ||
-    membership?.roles?.includes('ADMIN');
-
-  // Map roleId → permission keys for expanding role references (RBAC).
-  const roleMap = new Map<string, string[]>(
-    tenantRoles.map((role) => [String(role.id), role.permissions ?? []]),
-  );
-  const expandRoleIds = (roleIds?: string[]): string[] =>
-    (roleIds ?? []).flatMap((roleId) => roleMap.get(String(roleId)) ?? []);
-
-  // Regular members: union of
-  //   - group permissions + group role references
-  //   - personal permissions + personal role references
-  // intersected with the tenant ceiling, then per-key overrides.
-  // Elevated tenant roles start from the whole ceiling, but explicit
-  // per-principal denies are still applied below as the final policy layer.
-  const effectivePermissions = new Set<string>(
-    isOwner || hasAdminRole ? tenantPermissions : [],
-  );
-
-  const addWithinCeiling = (permission: string) => {
-    if (tenantPermissions.has(permission)) {
-      effectivePermissions.add(permission);
-    }
-  };
-
-  userGroups.forEach((group) => {
-    group.permissions?.forEach(addWithinCeiling);
-    expandRoleIds(group.roleIds).forEach(addWithinCeiling);
-  });
-
-  membership?.permissions?.forEach(addWithinCeiling);
-  expandRoleIds(membership?.roleIds).forEach(addWithinCeiling);
-
-  Object.entries(membership?.permissionOverrides ?? {}).forEach(
-    ([permission, isGranted]) => {
-      if (!tenantPermissions.has(permission)) return;
-
-      if (isGranted) {
-        effectivePermissions.add(permission);
-      } else {
-        effectivePermissions.delete(permission);
-      }
-    },
-  );
-
-  return effectivePermissions;
-};
-
 export const canAccess = (
   effectivePermissions: Set<string>,
   action: PermissionAction,
@@ -161,14 +103,7 @@ export interface ExplainGroup {
   roleIds?: string[];
 }
 export interface PermissionSource {
-  kind:
-    | 'owner'
-    | 'admin'
-    | 'role'
-    | 'group'
-    | 'group-role'
-    | 'direct'
-    | 'override';
+  kind: 'owner' | 'admin' | 'role' | 'group' | 'group-role';
   label: string;
 }
 export interface EffectivePermissionExplanation {
@@ -281,9 +216,6 @@ export const explainEffectivePermissions = (
     });
   });
 
-  membership?.permissions?.forEach((p) =>
-    addSource(p, { kind: 'direct', label: 'Direct grant' }),
-  );
   (membership?.roleIds ?? []).forEach((rid) => {
     const role = roleMap.get(String(rid));
     role?.permissions?.forEach((p) =>
@@ -291,19 +223,12 @@ export const explainEffectivePermissions = (
     );
   });
 
+  // Deny-only, and applied last so it beats every grant above it.
   Object.entries(membership?.permissionOverrides ?? {}).forEach(
     ([perm, granted]) => {
-      if (!tenantPermissions.has(perm)) return;
-      if (granted) {
-        effective.add(perm);
-        (sources[perm] ??= []).push({
-          kind: 'override',
-          label: 'Override: allow',
-        });
-      } else {
-        effective.delete(perm);
-        delete sources[perm];
-      }
+      if (granted !== false || !tenantPermissions.has(perm)) return;
+      effective.delete(perm);
+      delete sources[perm];
     },
   );
 
@@ -314,3 +239,27 @@ export const explainEffectivePermissions = (
     fullAccess: false,
   };
 };
+
+/**
+ * The permission set the guards enforce.
+ *
+ * A projection of `explainEffectivePermissions`, not a second implementation.
+ * These were two hand-written copies of the same union, and they had already
+ * drifted — which meant the "why can this user do X" screen was answering from
+ * different code than the check that actually allowed or refused the request.
+ * Any future divergence would be invisible until someone hit it in production.
+ */
+export const calculateEffectivePermissions = (
+  tenant: PermissionTenant,
+  user: PermissionUser,
+  userGroups: PermissionGroup[] = [],
+  tenantRoles: PermissionRole[] = [],
+): Set<string> =>
+  new Set(
+    explainEffectivePermissions(
+      tenant,
+      user,
+      userGroups,
+      tenantRoles,
+    ).effective,
+  );

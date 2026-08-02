@@ -165,14 +165,20 @@ export class UsersDocumentRepository
     // unit that still has members.
     if (!Types.ObjectId.isValid(tenantId)) return {};
 
+    const tenantObjectId = new Types.ObjectId(tenantId);
     const rows = await this.model.aggregate([
+      { $match: { 'tenants.tenantId': tenantObjectId } },
+      // Unwind before matching the unit: the placement lives on the membership,
+      // and matching `tenants.orgUnitId` on the whole document would count a
+      // user whose OTHER tenant's membership happens to name that unit.
+      { $unwind: '$tenants' },
       {
         $match: {
-          'tenants.tenantId': new Types.ObjectId(tenantId),
-          orgUnitId: { $ne: null },
+          'tenants.tenantId': tenantObjectId,
+          'tenants.orgUnitId': { $ne: null },
         },
       },
-      { $group: { _id: '$orgUnitId', count: { $sum: 1 } } },
+      { $group: { _id: '$tenants.orgUnitId', count: { $sum: 1 } } },
     ]);
 
     const counts: Record<string, number> = {};
@@ -180,6 +186,49 @@ export class UsersDocumentRepository
       counts[String(row._id)] = row.count;
     }
     return counts;
+  }
+
+  /**
+   * Members of this tenant whose membership is missing something they need to
+   * see anything: an org unit, or any role at all.
+   *
+   * Both produce the same confusing symptom — every module passes its `:view`
+   * guard and then renders an empty list — so they are counted together for the
+   * setup health check rather than discovered one support ticket at a time.
+   */
+  async countIncompleteMemberships(
+    tenantId: string,
+  ): Promise<{ withoutOrgUnit: number; withoutRole: number }> {
+    if (!Types.ObjectId.isValid(tenantId)) {
+      return { withoutOrgUnit: 0, withoutRole: 0 };
+    }
+    const tenantObjectId = new Types.ObjectId(tenantId);
+
+    // `$elemMatch` so both conditions are read off the SAME membership — as
+    // separate keys they could be satisfied by two different tenants' rows.
+    const [withoutOrgUnit, withoutRole] = await Promise.all([
+      this.model.countDocuments({
+        tenants: {
+          $elemMatch: {
+            tenantId: tenantObjectId,
+            $or: [{ orgUnitId: null }, { orgUnitId: { $exists: false } }],
+          },
+        },
+      }),
+      this.model.countDocuments({
+        tenants: {
+          $elemMatch: {
+            tenantId: tenantObjectId,
+            // Owners and admins hold the whole ceiling without a role, so they
+            // are not "role-less" in any way that matters.
+            roles: { $nin: ['OWNER', 'ADMIN'] },
+            $or: [{ roleIds: { $size: 0 } }, { roleIds: { $exists: false } }],
+          },
+        },
+      }),
+    ]);
+
+    return { withoutOrgUnit, withoutRole };
   }
 
   async findByEmail(email: User['email']): Promise<NullableType<User>> {
@@ -325,6 +374,8 @@ export class UsersDocumentRepository
       tenantId: string;
       roles: string[];
       roleIds?: string[];
+      orgUnitId?: string | null;
+      reportsToId?: string | null;
       joinedAt: Date;
     }[],
     session?: any,

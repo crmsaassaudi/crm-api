@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpStatus,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -318,26 +319,164 @@ describe('UsersService', () => {
         service.invite({ email: 'no-tenant@test.com' }),
       ).rejects.toThrow('Tenant context missing');
     });
+
+    // ── tenantRole is a grant, and the widest one there is ──────────────────
+    // `roles: ['ADMIN']` seeds the membership with the whole tenant ceiling and
+    // bypasses every data-visibility axis. This endpoint only requires
+    // `users:create`, so without these checks anyone who can add a teammate
+    // could mint themselves a fully privileged second account.
+    it('should refuse ADMIN from a caller who does not hold full access', async () => {
+      (service as any).authzCache.explainForUser.mockResolvedValueOnce({
+        effective: ['users:create'],
+        sources: {},
+        tenantCeiling: ['users:create', 'contacts:view'],
+        fullAccess: false,
+      });
+
+      await expect(
+        service.invite({ email: 'escalate@test.com', tenantRole: 'ADMIN' }),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(usersRepository.create).not.toHaveBeenCalled();
+      expect(keycloakAdminService.createUser).not.toHaveBeenCalled();
+    });
+
+    it('should allow ADMIN from a caller who does hold full access', async () => {
+      await service.invite({ email: 'ok-admin@test.com', tenantRole: 'ADMIN' });
+
+      expect(usersRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenants: expect.arrayContaining([
+            expect.objectContaining({ roles: ['ADMIN'] }),
+          ]),
+        }),
+      );
+    });
+
+    it('should refuse OWNER outright — ownership is transferred, not invited', async () => {
+      await expect(
+        service.invite({ email: 'owner@test.com', tenantRole: 'OWNER' }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // INVITE PLACEMENT — org unit / manager / groups
+  //
+  // A member with no org unit resolves every ORG_UNIT scope to an empty set,
+  // so they pass each `:view` guard and then see an empty list. Placement at
+  // invite time is what stops a new teammate landing in that state.
+  // ═══════════════════════════════════════════════════════════════════
+  describe('invite placement', () => {
+    /** The acting principal, filed in the active tenant. */
+    const inviter = (orgUnitId: string | null) =>
+      createUser({
+        id: 'user_1',
+        tenants: [
+          {
+            tenantId: 'tenant_1',
+            roles: ['ADMIN'],
+            orgUnitId,
+            joinedAt: new Date(),
+          } as any,
+        ],
+      });
+
+    const membershipFor = (call: any, tenantId = 'tenant_1') =>
+      call.tenants.find((t: any) => t.tenantId === tenantId);
+
+    it('should inherit the inviter’s org unit and manager by default', async () => {
+      usersRepository.findById.mockResolvedValue(inviter('unit_sales'));
+
+      await service.invite({ email: 'placed@test.com' });
+
+      const created = usersRepository.create.mock.calls[0][0];
+      expect(membershipFor(created)).toMatchObject({
+        orgUnitId: 'unit_sales',
+        reportsToId: 'user_1',
+      });
+    });
+
+    it('should prefer an explicitly supplied org unit', async () => {
+      usersRepository.findById.mockResolvedValue(inviter('unit_sales'));
+
+      await service.invite({
+        email: 'explicit@test.com',
+        orgUnitId: 'unit_support',
+      });
+
+      const created = usersRepository.create.mock.calls[0][0];
+      expect(membershipFor(created).orgUnitId).toBe('unit_support');
+    });
+
+    it('should reject an org unit from another tenant', async () => {
+      (service as any).moduleRef.get.mockReturnValueOnce({
+        findById: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(
+        service.invite({ email: 'foreign@test.com', orgUnitId: 'unit_other' }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(usersRepository.create).not.toHaveBeenCalled();
+    });
+
+    // Placement lives on the membership, so joining a second workspace writes a
+    // second placement rather than overwriting the first. This is the whole
+    // reason the fields moved off the user document.
+    it('should place an existing user without touching their other tenant', async () => {
+      usersRepository.findByEmail.mockResolvedValueOnce(
+        createUser({
+          id: 'existing_1',
+          keycloakId: 'kc_existing',
+          tenants: [
+            {
+              tenantId: 'other_tenant',
+              roles: ['MEMBER'],
+              orgUnitId: 'unit_from_other_tenant',
+              joinedAt: new Date(),
+            } as any,
+          ],
+        }),
+      );
+
+      await service.invite({
+        email: 'existing@test.com',
+        orgUnitId: 'unit_support',
+      });
+
+      const [, , , newTenants] =
+        usersRepository.upsertWithTenants.mock.calls[0];
+      expect(newTenants).toEqual([
+        expect.objectContaining({
+          tenantId: 'tenant_1',
+          orgUnitId: 'unit_support',
+        }),
+      ]);
+      // Nothing was written to the user document itself, so the other tenant's
+      // placement cannot have been disturbed.
+      expect(usersRepository.update).not.toHaveBeenCalled();
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════
   // REMOVE — tenant owner protection, event emission
   // ═══════════════════════════════════════════════════════════════════
   describe('update authorization grants', () => {
-    it('should reject a newly added direct allow permission', async () => {
-      const existing = createUser({
-        id: 'target_user',
-        tenants: [
-          {
-            tenantId: 'tenant_1',
-            roles: ['MEMBER'],
-            permissions: [],
-            permissionOverrides: {},
-            joinedAt: new Date(),
-          } as any,
-        ],
-      });
-      usersRepository.findById.mockResolvedValue(existing);
+    it('should reject a newly added allow override', async () => {
+      usersRepository.findById.mockResolvedValue(
+        createUser({
+          id: 'target_user',
+          tenants: [
+            {
+              tenantId: 'tenant_1',
+              roles: ['MEMBER'],
+              permissionOverrides: {},
+              joinedAt: new Date(),
+            } as any,
+          ],
+        }),
+      );
 
       await expect(
         service.update('target_user', {
@@ -345,8 +484,7 @@ describe('UsersService', () => {
             {
               tenantId: 'tenant_1',
               roles: ['MEMBER'],
-              permissions: ['contacts:delete'],
-              permissionOverrides: {},
+              permissionOverrides: { 'contacts:delete': true },
               joinedAt: new Date(),
             },
           ],
@@ -354,6 +492,37 @@ describe('UsersService', () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(usersRepository.update).not.toHaveBeenCalled();
+    });
+
+    // The field is gone from the schema, but a stale client may still send it.
+    // It must be dropped rather than written back as an unenforced grant.
+    it('should ignore a legacy per-user permissions array', async () => {
+      usersRepository.findById.mockResolvedValue(
+        createUser({
+          id: 'target_user',
+          tenants: [
+            {
+              tenantId: 'tenant_1',
+              roles: ['MEMBER'],
+              joinedAt: new Date(),
+            } as any,
+          ],
+        }),
+      );
+
+      await service.update('target_user', {
+        tenants: [
+          {
+            tenantId: 'tenant_1',
+            roles: ['MEMBER'],
+            permissions: ['contacts:delete'],
+            joinedAt: new Date(),
+          },
+        ],
+      } as any);
+
+      const persisted = usersRepository.update.mock.calls[0][1];
+      expect(persisted.tenants[0]).not.toHaveProperty('permissions');
     });
   });
 

@@ -601,8 +601,11 @@ async function seedUsers(
         if (!id) throw new Error(`Unknown role key "${key}" for ${spec.email}`);
         return id;
       }),
-      permissions: [] as string[],
       permissionOverrides: spec.permissionOverrides ?? {},
+      // Org placement is per-membership. `reportsToId` is filled in pass 2,
+      // once every user in the chain has an _id.
+      orgUnitId,
+      reportsToId: null as ObjectId | null,
       joinedAt: new Date(),
     };
 
@@ -627,7 +630,6 @@ async function seedUsers(
               platformRole: 'USER',
               status: 'active',
               onboardingStatus: 'COMPLETED',
-              orgUnitId,
               tenants: [...others, membership],
               updatedAt: new Date(),
             },
@@ -650,8 +652,6 @@ async function seedUsers(
         platformRole: 'USER',
         status: 'active',
         onboardingStatus: 'COMPLETED',
-        orgUnitId,
-        reportsToId: null, // pass 2
         skills: [],
         tenants: [membership],
         createdAt: new Date(),
@@ -670,9 +670,14 @@ async function seedUsers(
     const manager = idByEmail.get(spec.reportsToEmail);
     if (!self || !manager) continue;
     if (!dryRun) {
+      // Positional `$` targets the membership matched by the filter, so a demo
+      // user who also exists in another workspace keeps their manager there.
       await db
         .collection('users')
-        .updateOne({ _id: self }, { $set: { reportsToId: manager } });
+        .updateOne(
+          { _id: self, 'tenants.tenantId': new ObjectId(tenantId) },
+          { $set: { 'tenants.$.reportsToId': manager } },
+        );
     }
   }
 

@@ -160,7 +160,7 @@ describe('TenantRolesGuard', () => {
       createUser({
         platformRole: null,
         tenants: [
-          { tenantId: 'tenant_1', roles: ['VIEWER'], joinedAt: new Date() },
+          { tenantId: 'tenant_1', roles: ['MEMBER'], joinedAt: new Date() },
         ],
       }),
     );

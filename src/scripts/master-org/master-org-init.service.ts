@@ -245,7 +245,6 @@ export class MasterOrgInitService {
         user.tenants.push({
           tenantId: new Types.ObjectId(tenantId) as any,
           roles: [TenantRoleEnum.OWNER],
-          permissions: [],
           joinedAt: new Date(),
         });
       } else if (!membership.roles.includes(TenantRoleEnum.OWNER)) {

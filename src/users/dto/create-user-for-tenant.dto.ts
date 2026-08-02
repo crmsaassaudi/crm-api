@@ -2,12 +2,15 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
   IsEmail,
+  IsIn,
+  IsMongoId,
   IsNotEmpty,
   IsOptional,
   IsString,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { lowerCaseTransformer } from '../../utils/transformers/lower-case.transformer';
+import { TenantRoleEnum } from '../../roles/tenant-role.enum';
 
 export class CreateUserForTenantDto {
   @ApiProperty({ example: 'test1@example.com' })
@@ -28,10 +31,13 @@ export class CreateUserForTenantDto {
 
   @ApiPropertyOptional({
     example: 'MEMBER',
-    description: 'Role within the tenant (OWNER, ADMIN, MEMBER)',
+    enum: [TenantRoleEnum.ADMIN, TenantRoleEnum.MEMBER],
+    description:
+      'Membership tier. ADMIN grants the whole tenant ceiling and may only be ' +
+      'granted by someone who already holds it.',
   })
   @IsOptional()
-  @IsString()
+  @IsIn([TenantRoleEnum.ADMIN, TenantRoleEnum.MEMBER])
   tenantRole?: string;
 
   @ApiPropertyOptional({
@@ -43,4 +49,27 @@ export class CreateUserForTenantDto {
   @IsArray()
   @IsString({ each: true })
   roleIds?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Org unit to file the member under. Omit to inherit the creator’s unit.',
+    example: '665f0c1e2b9a4c0012ab34cd',
+  })
+  @IsOptional()
+  @IsMongoId()
+  orgUnitId?: string;
+
+  @ApiPropertyOptional({ type: [String], description: 'Groups to join.' })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  groupIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Manager, for the SUBORDINATES scope.',
+    example: '665f0c1e2b9a4c0012ab34cd',
+  })
+  @IsOptional()
+  @IsMongoId()
+  reportsToId?: string;
 }

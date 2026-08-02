@@ -20,8 +20,13 @@ export class UserMapper {
             '',
           roles: t.roles,
           roleIds: ((t as any).roleIds || []).map((r: any) => r.toString()),
-          permissions: (t as any).permissions || [],
           permissionOverrides: (t as any).permissionOverrides || {},
+          orgUnitId: (t as any).orgUnitId
+            ? (t as any).orgUnitId.toString()
+            : null,
+          reportsToId: (t as any).reportsToId
+            ? (t as any).reportsToId.toString()
+            : null,
           joinedAt: t.joinedAt,
         }))
       : [];
@@ -60,8 +65,6 @@ export class UserMapper {
           timezone: raw.i18nPreferences.timezone ?? null,
         }
       : null;
-    domainEntity.reportsToId = raw.reportsToId?.toString() ?? null;
-    domainEntity.orgUnitId = raw.orgUnitId?.toString() ?? null;
     domainEntity.onboardingStatus = raw.onboardingStatus as
       | 'INCOMPLETE_ONBOARDING'
       | 'COMPLETED'
@@ -92,8 +95,9 @@ export class UserMapper {
           tenantId: t.tenantId as any,
           roles: t.roles,
           roleIds: t.roleIds || [],
-          permissions: t.permissions || [],
           permissionOverrides: t.permissionOverrides || {},
+          orgUnitId: t.orgUnitId ?? null,
+          reportsToId: t.reportsToId ?? null,
           joinedAt: t.joinedAt,
         }))
       : [];
@@ -122,12 +126,6 @@ export class UserMapper {
     }
     if (domainEntity.i18nPreferences !== undefined) {
       persistenceSchema.i18nPreferences = domainEntity.i18nPreferences;
-    }
-    if (domainEntity.reportsToId !== undefined) {
-      persistenceSchema.reportsToId = domainEntity.reportsToId;
-    }
-    if (domainEntity.orgUnitId !== undefined) {
-      persistenceSchema.orgUnitId = domainEntity.orgUnitId;
     }
     if (domainEntity.onboardingStatus !== undefined) {
       persistenceSchema.onboardingStatus = domainEntity.onboardingStatus;

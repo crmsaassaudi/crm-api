@@ -16,6 +16,7 @@
  *   DATABASE_URL=mongodb+srv://... npx ts-node src/scripts/create-email-text-index.ts
  */
 
+import 'dotenv/config';
 import { MongoClient } from 'mongodb';
 
 async function createEmailTextIndex() {

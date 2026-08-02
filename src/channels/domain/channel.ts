@@ -37,15 +37,18 @@ export const DEFAULT_CHANNEL_SUPPORT: ChannelSupport = {
 };
 
 /**
- * What a channel created today starts as.
+ * What a channel created today starts as: open, with the creator recorded.
  *
- * Deliberately different from DEFAULT_CHANNEL_SUPPORT, which is also the
- * fallback for documents written before `support` existed — flipping that one
- * to 'restricted' would retroactively lock every legacy channel to an empty
- * pool, i.e. to nobody. New channels fail closed; old ones keep working.
+ * It used to start `restricted` with a pool of one. That reads as the safe
+ * choice and is not: `servableChannelIds` is `null` (unrestricted) only while a
+ * tenant has NO channels, so the moment an admin connected the first one, every
+ * other agent's conversation query became `channelId: { $in: [] }` and the omni
+ * inbox went blank workspace-wide. Fail-closed on an axis whose empty state
+ * means "see nothing" is not a safe default, it is an outage with a good
+ * reason.
  *
- * A new channel is seeded with its creator so "restricted" never means "dead
- * on arrival".
+ * Narrowing stays one edit away in Settings → Channels, and the pool is seeded
+ * with the creator so switching to `restricted` never leaves it empty.
  */
 export function newChannelSupport(
   creatorUserId?: string | null,
@@ -54,7 +57,7 @@ export function newChannelSupport(
     userIds: creatorUserId ? [String(creatorUserId)] : [],
     groupIds: [],
     excludedUserIds: [],
-    mode: 'restricted',
+    mode: 'open',
   };
 }
 

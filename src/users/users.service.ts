@@ -19,6 +19,7 @@ import bcrypt from 'bcryptjs';
 import { AuthProvidersEnum } from '../auth/auth-providers.enum';
 import { FilesService } from '../files/files.service';
 import { PlatformRoleEnum } from '../roles/platform-role.enum';
+import { TenantRoleEnum } from '../roles/tenant-role.enum';
 import { StatusEnum } from '../statuses/statuses.enum';
 import { IPaginationOptions } from '../utils/types/pagination-options';
 import { FileType } from '../files/domain/file';
@@ -28,6 +29,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { ClsService } from 'nestjs-cls';
 import { ModuleRef } from '@nestjs/core';
 import { OrgUnitRepository } from '../org-units/infrastructure/persistence/document/repositories/org-unit.repository';
+import { GroupsService } from '../groups/groups.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { KeycloakAdminService } from '../auth/services/keycloak-admin.service';
 import { SessionService } from '../auth/services/session.service';
@@ -108,6 +110,79 @@ export class UsersService {
         status: HttpStatus.UNPROCESSABLE_ENTITY,
         errors: { orgUnitId: 'Unknown org unit for this tenant' },
       });
+    }
+  }
+
+  /**
+   * The org placement a new member starts with: unit, manager, groups.
+   *
+   * Resolved BEFORE the user is written so a bad id fails the whole invite
+   * rather than leaving a half-placed member behind. Both fall back to the
+   * inviter's own placement, which is almost always right — people invite into
+   * their own team — and is far better than the alternative of null, where
+   * every ORG_UNIT scope resolves to an empty set and the new member logs in to
+   * five empty modules.
+   */
+  private async resolvePlacement(
+    tenantId: string,
+    dto: { orgUnitId?: string; reportsToId?: string },
+  ): Promise<{ orgUnitId: string | null; reportsToId: string | null }> {
+    if (dto.orgUnitId) {
+      await this.assertOrgUnitInTenant(tenantId, dto.orgUnitId);
+    }
+    if (dto.reportsToId) {
+      await this.assertUserInTenant(tenantId, dto.reportsToId);
+    }
+
+    const inviterId = this.cls.get<string>('userId');
+    const inviter = inviterId
+      ? await this.usersRepository.findById(inviterId)
+      : null;
+    const inviterUnit = inviter?.tenants?.find(
+      (membership) => String(membership.tenantId) === String(tenantId),
+    )?.orgUnitId;
+
+    return {
+      orgUnitId: dto.orgUnitId ?? inviterUnit ?? null,
+      // The inviter as default manager mirrors how the invite actually happened.
+      reportsToId: dto.reportsToId ?? (inviterId ? String(inviterId) : null),
+    };
+  }
+
+  /** A referenced principal must be a member of the acting tenant. */
+  private async assertUserInTenant(
+    tenantId: string,
+    userId: string,
+  ): Promise<void> {
+    const user = await this.usersRepository.findById(userId);
+    const isMember = user?.tenants?.some(
+      (membership: any) => String(membership.tenantId) === String(tenantId),
+    );
+    if (!isMember) {
+      throw new UnprocessableEntityException({
+        status: HttpStatus.UNPROCESSABLE_ENTITY,
+        errors: { reportsToId: 'Manager is not a member of this tenant' },
+      });
+    }
+  }
+
+  /**
+   * Add a brand-new member to the groups the inviter picked.
+   *
+   * Separate from org placement because the two are written differently:
+   * `orgUnitId` / `reportsToId` live on the membership and are set when it is
+   * created, while group membership is its own collection. Routed through
+   * `GroupsService.addMember` so the "cannot grant what you do not hold"
+   * invariant still applies to whatever roles a group carries.
+   */
+  private async joinGroups(user: User, groupIds?: string[]): Promise<void> {
+    if (!groupIds?.length) return;
+    // Resolved lazily rather than injected: GroupsModule already depends on
+    // UsersModule, and a second eager edge back is how this codebase last
+    // deadlocked its own bootstrap.
+    const groups = this.moduleRef.get(GroupsService, { strict: false });
+    for (const groupId of groupIds) {
+      await groups.addMember(groupId, String(user.id));
     }
   }
 
@@ -225,6 +300,62 @@ export class UsersService {
    * refused outright — even when the caller holds `users:update`. Separation of
    * duties: another admin makes the change, and the audit log names them.
    */
+  /**
+   * The same anti-escalation invariant, for the one grant that is not a
+   * permission key: `tenants[].roles`.
+   *
+   * `ADMIN` is not an ordinary role — it seeds the membership with the entire
+   * tenant ceiling (`permission.engine.ts`) and bypasses every data-visibility
+   * axis (`data-visibility.interceptor.ts`). Writing it is therefore the widest
+   * grant in the system, and it was reachable from `POST /users/invite` and
+   * `POST /users/create-for-tenant` with nothing but `users:create` — while the
+   * equivalent `PATCH /users/:id/tenant-role` demanded `users:manage_roles`.
+   * Anyone able to add a teammate could mint themselves a second, fully
+   * privileged account.
+   *
+   * `OWNER` is refused outright on these paths: ownership derives from
+   * `tenant.ownerId` and is transferred, never handed out at invite time.
+   */
+  private async assertCallerCanGrantTenantRole(
+    tenantId: string,
+    tenantRole: string,
+  ): Promise<void> {
+    const role = String(tenantRole).toUpperCase();
+
+    if (role === TenantRoleEnum.OWNER) {
+      throw new ForbiddenException({
+        status: HttpStatus.FORBIDDEN,
+        errors: {
+          tenantRole:
+            'Ownership cannot be granted here. Transfer ownership instead.',
+        },
+      });
+    }
+
+    if (role !== TenantRoleEnum.ADMIN) return;
+
+    const callerId = this.cls.get<string>('userId');
+    if (!callerId) {
+      throw new ForbiddenException(
+        'Cannot resolve the acting principal; administrator grant refused',
+      );
+    }
+
+    const explanation = await this.authzCache.explainForUser(
+      String(callerId),
+      tenantId,
+    );
+    if (!explanation.fullAccess) {
+      throw new ForbiddenException({
+        status: HttpStatus.FORBIDDEN,
+        errors: {
+          tenantRole:
+            'Only an administrator or the workspace owner can grant administrator access.',
+        },
+      });
+    }
+  }
+
   private assertNotSelfPrivilegeEdit(targetUserId: string): void {
     const callerId = this.cls.get<string>('userId');
     if (callerId && String(callerId) === String(targetUserId)) {
@@ -479,17 +610,13 @@ export class UsersService {
       );
     }
 
-    // Standing direct ALLOW grants are deprecated: they have no approval,
-    // expiry, or reusable role identity. Existing keys may be removed and deny
-    // overrides remain valid for narrowing, but new allows must use a custom
-    // role / governed RoleAssignment.
+    // Standing ALLOW exceptions have no approval, no expiry and no reusable
+    // identity, so `permissionOverrides` is deny-only — the engine ignores a
+    // stored `true`, and accepting one here would persist a grant that silently
+    // does nothing. Widening goes through a role or a governed RoleAssignment.
     if (activeTenantId && incomingMembership) {
       const previousMembership = targetBefore?.tenants?.find(
         (membership) => String(membership.tenantId) === String(activeTenantId),
-      );
-      const previousDirect = new Set(previousMembership?.permissions ?? []);
-      const addedDirect = (incomingMembership.permissions ?? []).filter(
-        (key: string) => !previousDirect.has(key),
       );
       const addedAllowOverrides = Object.entries(
         incomingMembership.permissionOverrides ?? {},
@@ -500,12 +627,12 @@ export class UsersService {
             previousMembership?.permissionOverrides?.[key] !== true,
         )
         .map(([key]) => key);
-      if (addedDirect.length || addedAllowOverrides.length) {
+      if (addedAllowOverrides.length) {
         throw new BadRequestException({
           status: 400,
           errors: {
             permissions:
-              'Direct allow grants are disabled. Assign a custom role or submit a governed time-bound role assignment.',
+              'Allow overrides are disabled. Assign a custom role or submit a governed time-bound role assignment.',
           },
         });
       }
@@ -518,16 +645,10 @@ export class UsersService {
     // Roles are expanded to their keys so wrapping keys in a role is not a
     // bypass. Only ALLOW directions are checked — revoking is not escalation.
     if (activeTenantId && incomingMembership) {
-      const grantedKeys = [
-        ...(incomingMembership.permissions ?? []),
-        ...Object.entries(incomingMembership.permissionOverrides ?? {})
-          .filter(([, isGranted]) => isGranted === true)
-          .map(([key]) => key),
-        ...(await this.expandRoleIdsToKeys(
-          activeTenantId,
-          incomingMembership.roleIds,
-        )),
-      ];
+      const grantedKeys = await this.expandRoleIdsToKeys(
+        activeTenantId,
+        incomingMembership.roleIds,
+      );
 
       if (grantedKeys.length) {
         this.assertNotSelfPrivilegeEdit(String(id));
@@ -560,8 +681,9 @@ export class UsersService {
       version: updateUserDto.version,
       omniMaxCapacity: updateUserDto.omniMaxCapacity,
       skills: updateUserDto.skills,
-      reportsToId: updateUserDto.reportsToId,
-      orgUnitId: updateUserDto.orgUnitId,
+      // `orgUnitId` / `reportsToId` are NOT passed here: they live on the
+      // active tenant's membership and are folded in by
+      // `resolveMembershipUpdate` below.
       // Only include when there is an actual membership change — passing
       // tenants: undefined would wipe all memberships via the mapper.
       ...(tenants !== undefined ? { tenants } : {}),
@@ -608,12 +730,10 @@ export class UsersService {
         summary: `updated tenant roles/permissions for user ${userId}`,
         before: b && {
           roleIds: b.roleIds,
-          permissions: b.permissions,
           permissionOverrides: b.permissionOverrides,
         },
         after: a && {
           roleIds: a.roleIds,
-          permissions: a.permissions,
           permissionOverrides: a.permissionOverrides,
         },
       });
@@ -634,35 +754,45 @@ export class UsersService {
 
   /**
    * Merge an incoming membership update for the ACTIVE tenant only.
+   *
    * Returns the full tenants array to persist, or undefined when there is
-   * nothing to change. Only roleIds / permissions / permissionOverrides are
-   * mutable here — tenant `roles` and other tenants are left untouched.
+   * nothing to change. Mutable here: `roleIds`, `permissionOverrides`, and the
+   * org placement (`orgUnitId` / `reportsToId`). Tenant `roles` and every other
+   * tenant's membership are left untouched — a write against one workspace must
+   * never reach into another.
+   *
+   * Placement arrives as top-level DTO fields because that is how the profile
+   * form posts it, but it is stored per-membership, so it is folded in here
+   * rather than written to the user document.
    */
   private resolveMembershipUpdate(
     existing: User | null,
     dto: UpdateUserDto,
   ): User['tenants'] | undefined {
-    const incomingTenants = (dto as any).tenants;
-    if (!Array.isArray(incomingTenants)) return undefined;
-
     const activeTenantId = this.cls.get('tenantId');
     if (!activeTenantId) return undefined;
-
     if (!existing?.tenants?.length) return undefined;
 
-    const incoming: any = incomingTenants.find(
-      (t: any) => String(t.tenantId) === String(activeTenantId),
-    );
-    if (!incoming) return undefined;
+    const incomingTenants = (dto as any).tenants;
+    const incoming: any = Array.isArray(incomingTenants)
+      ? incomingTenants.find(
+          (t: any) => String(t.tenantId) === String(activeTenantId),
+        )
+      : undefined;
+
+    const placementChanged =
+      dto.orgUnitId !== undefined || dto.reportsToId !== undefined;
+    if (!incoming && !placementChanged) return undefined;
 
     return existing.tenants.map((m) =>
       String(m.tenantId) === String(activeTenantId)
         ? {
             ...m,
-            roleIds: incoming.roleIds ?? m.roleIds,
-            permissions: incoming.permissions ?? m.permissions,
+            roleIds: incoming?.roleIds ?? m.roleIds,
             permissionOverrides:
-              incoming.permissionOverrides ?? m.permissionOverrides,
+              incoming?.permissionOverrides ?? m.permissionOverrides,
+            orgUnitId: dto.orgUnitId ?? m.orgUnitId,
+            reportsToId: dto.reportsToId ?? m.reportsToId,
           }
         : m,
     );
@@ -739,9 +869,19 @@ export class UsersService {
     }
 
     const tenantRole = inviteUserDto.tenantRole ?? 'MEMBER';
+    await this.assertCallerCanGrantTenantRole(String(tenantId), tenantRole);
     const roleIds = await this.resolveBaselineRoleIds(
       String(tenantId),
       inviteUserDto.roleIds,
+    );
+    // Roles carry permission keys, so attaching them is a grant like any other.
+    await this.assertCallerCanGrant(
+      String(tenantId),
+      await this.expandRoleIdsToKeys(String(tenantId), roleIds),
+    );
+    const placement = await this.resolvePlacement(
+      String(tenantId),
+      inviteUserDto,
     );
 
     // ── Case 1: User already exists in the system ───────────────────────────
@@ -787,10 +927,15 @@ export class UsersService {
             tenantId: tenantId,
             roles: [tenantRole],
             roleIds,
+            // Carried on the NEW membership, so joining a second workspace can
+            // no longer disturb where this person sits in the first.
+            orgUnitId: placement.orgUnitId,
+            reportsToId: placement.reportsToId,
             joinedAt: new Date(),
           },
         ],
       );
+      await this.joinGroups(updated, inviteUserDto.groupIds);
       this.emitUserTenantMembershipUpdated(updated, tenantId);
       return updated;
     }
@@ -861,10 +1006,13 @@ export class UsersService {
             tenantId: tenantId,
             roles: [tenantRole],
             roleIds,
+            orgUnitId: placement.orgUnitId,
+            reportsToId: placement.reportsToId,
             joinedAt: new Date(),
           },
         ],
       });
+      await this.joinGroups(created, inviteUserDto.groupIds);
       this.emitUserTenantMembershipUpdated(created, tenantId);
       return created;
     } catch (error) {
@@ -1034,6 +1182,9 @@ export class UsersService {
     lastName: string;
     tenantRole?: string;
     roleIds?: string[];
+    orgUnitId?: string;
+    groupIds?: string[];
+    reportsToId?: string;
   }): Promise<User> {
     const tenantId = this.cls.get('tenantId');
     if (!tenantId) {
@@ -1057,10 +1208,16 @@ export class UsersService {
     }
 
     const tenantRole = dto.tenantRole ?? 'MEMBER';
+    await this.assertCallerCanGrantTenantRole(String(tenantId), tenantRole);
     const roleIds = await this.resolveBaselineRoleIds(
       String(tenantId),
       dto.roleIds,
     );
+    await this.assertCallerCanGrant(
+      String(tenantId),
+      await this.expandRoleIdsToKeys(String(tenantId), roleIds),
+    );
+    const placement = await this.resolvePlacement(String(tenantId), dto);
     let keycloakUserCreated = false;
     let keycloakUser: { id: string; email: string };
 
@@ -1124,10 +1281,13 @@ export class UsersService {
             tenantId: tenantId,
             roles: [tenantRole],
             roleIds,
+            orgUnitId: placement.orgUnitId,
+            reportsToId: placement.reportsToId,
             joinedAt: new Date(),
           },
         ],
       });
+      await this.joinGroups(created, dto.groupIds);
       this.emitUserTenantMembershipUpdated(created, tenantId);
       return created;
     } catch (error) {

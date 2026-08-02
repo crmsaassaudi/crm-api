@@ -35,8 +35,26 @@ export class UserSchemaClass extends EntityDocumentHelper {
         },
         roles: [String],
         roleIds: { type: [String], default: [] },
-        permissions: { type: [String], default: [] },
+        // No `permissions` array: a standing per-user grant had no approval, no
+        // expiry and no reusable identity, and the API stopped accepting writes
+        // to it. Widening a member's access goes through a role or a governed
+        // RoleAssignment. `permissionOverrides` remains, deny-only.
         permissionOverrides: { type: MongooseSchema.Types.Mixed, default: {} },
+        // Org placement is per-membership, not per-person. Both of these used
+        // to be top-level fields, which meant somebody belonging to two tenants
+        // had ONE org unit and ONE manager between them: joining a second
+        // workspace silently re-filed them in the first, and every ORG_UNIT
+        // scope over there started resolving to nothing.
+        orgUnitId: {
+          type: MongooseSchema.Types.ObjectId,
+          ref: 'OrgUnitSchemaClass',
+          default: null,
+        },
+        reportsToId: {
+          type: MongooseSchema.Types.ObjectId,
+          ref: 'UserSchemaClass',
+          default: null,
+        },
         joinedAt: { type: Date, default: now },
       },
     ],
@@ -46,8 +64,20 @@ export class UserSchemaClass extends EntityDocumentHelper {
     tenantId: string;
     roles: string[];
     roleIds?: string[];
-    permissions?: string[];
     permissionOverrides?: Record<string, boolean>;
+    /**
+     * The single org unit this membership sits in.
+     *
+     * Single-valued by definition, not by simplification: a record carries one
+     * `orgUnitId`, so "records belonging to my unit" only has a determinate
+     * answer if a person has one unit per workspace. Many-to-many membership is
+     * what Groups are for. Null while the org chart is still being drawn — an
+     * unassigned member contributes no org-unit scope, which is the fail-closed
+     * direction.
+     */
+    orgUnitId?: string | null;
+    /** Direct manager within this tenant, for the SUBORDINATES scope. */
+    reportsToId?: string | null;
     joinedAt: Date;
   }[];
 
@@ -121,32 +151,6 @@ export class UserSchemaClass extends EntityDocumentHelper {
     timezone?: string | null;
   } | null;
 
-  /** The user's direct manager (for Role Hierarchy / data visibility) */
-  @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: 'UserSchemaClass',
-    default: null,
-  })
-  reportsToId?: string | null;
-
-  /**
-   * The single org unit this user sits in.
-   *
-   * Single-valued on purpose, and that is the definition rather than a
-   * simplification: a record carries one `orgUnitId`, so "records belonging to
-   * my unit" only has a determinate answer if a person has one unit. Many-to-many
-   * membership is what Groups are for. Nullable because a user can exist before
-   * the org chart is drawn — an unassigned user contributes no org-unit scope
-   * and therefore sees nothing extra, which is the fail-closed direction.
-   */
-  @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: 'OrgUnitSchemaClass',
-    default: null,
-    index: true,
-  })
-  orgUnitId?: string | null;
-
   /** Onboarding lifecycle tag: INCOMPLETE_ONBOARDING | COMPLETED | null */
   @Prop({
     type: String,
@@ -178,4 +182,10 @@ UserSchema.index(
 UserSchema.index(
   { 'tenants.tenantId': 1, _id: 1 },
   { name: 'users_tenant_member_lookup' },
+);
+// Org-unit member counts and the reverse "who is in this unit" lookup both
+// filter on the pair, and a multikey index on the subdocument serves both.
+UserSchema.index(
+  { 'tenants.tenantId': 1, 'tenants.orgUnitId': 1 },
+  { name: 'users_tenant_org_unit' },
 );

@@ -472,13 +472,16 @@ export class ContactsService {
         'tenants.tenantId': tenantId,
         deletedAt: { $exists: false },
       })
-      .select({ orgUnitId: 1 })
+      // `tenants.$` projects only the membership that matched the filter —
+      // the owner may belong to other tenants, each with its own placement.
+      .select({ 'tenants.$': 1 })
       .lean()
       .exec();
     if (!owner) {
       throw new BadRequestException('ownerId is not an active tenant member.');
     }
-    return owner.orgUnitId ? String(owner.orgUnitId) : null;
+    const orgUnitId = (owner.tenants?.[0] as any)?.orgUnitId;
+    return orgUnitId ? String(orgUnitId) : null;
   }
 
   async remove(id: string): Promise<void> {

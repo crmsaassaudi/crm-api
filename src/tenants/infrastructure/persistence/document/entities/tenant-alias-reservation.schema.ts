@@ -39,9 +39,15 @@ export class TenantAliasReservationSchemaClass {
   /**
    * TTL index: Mongo automatically deletes stale RESERVED entries after 30 minutes.
    * This ensures eventual cleanup even if the saga never reaches the rollback handler.
+   *
+   * Cleared on confirmation, and therefore optional. Mongo's TTL monitor only
+   * deletes documents whose indexed field holds a Date, so an absent value is
+   * what makes a CONFIRMED reservation permanent. It used to be left in place,
+   * which meant the lock on every live tenant's alias expired half an hour
+   * after signup and a later signup could reserve a name already in use.
    */
-  @Prop({ required: true })
-  expiresAt: Date;
+  @Prop({ type: Date, required: false, default: null })
+  expiresAt?: Date | null;
 }
 
 export const TenantAliasReservationSchema = SchemaFactory.createForClass(

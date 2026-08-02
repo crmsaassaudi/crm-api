@@ -6,8 +6,11 @@ import { UsersModule } from '../users/users.module';
 import { TenantsAuthController } from './tenants.controller';
 import { TenantSettingsController } from './tenant-settings.controller';
 import { TenantCreatedListener } from './listeners/tenant-created.listener';
+import { TenantHealthService } from './tenant-health.service';
 import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
 import { OnboardingModule } from './onboarding.module';
+import { OrgUnitsModule } from '../org-units/org-units.module';
+import { GroupsModule } from '../groups/groups.module';
 
 @Module({
   imports: [
@@ -20,8 +23,12 @@ import { OnboardingModule } from './onboarding.module';
     CrmSettingsModule,
     // OnboardingModule provides SampleDataSeederService
     forwardRef(() => OnboardingModule),
+    // OrgUnitsModule/GroupsModule provide the default headquarters unit and
+    // owner group seeded on tenant.created
+    OrgUnitsModule,
+    GroupsModule,
   ],
-  providers: [TenantsService, TenantCreatedListener],
+  providers: [TenantsService, TenantCreatedListener, TenantHealthService],
   controllers: [TenantsAuthController, TenantSettingsController],
   exports: [TenantsService, DocumentTenantPersistenceModule],
 })

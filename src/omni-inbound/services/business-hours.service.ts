@@ -271,7 +271,14 @@ export class BusinessHoursService {
       });
       return new Date(dateStr);
     } catch {
-      // Invalid timezone → fallback to UTC
+      // Invalid timezone → fall back to UTC, but say so. Silence here hid a
+      // seeded default of 'ict' — not an IANA zone — which put every new
+      // tenant's schedule seven hours from where its settings screen said it
+      // was, with no error anywhere to connect the two.
+      this.logger.warn(
+        `Invalid business-hours timezone "${timezone}"; falling back to UTC. ` +
+          'Set an IANA identifier such as Asia/Ho_Chi_Minh.',
+      );
       return new Date();
     }
   }
