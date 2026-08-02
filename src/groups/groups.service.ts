@@ -10,7 +10,12 @@ import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { GroupRepository } from './infrastructure/persistence/document/repositories/group.repository';
 import { Group } from './domain/group';
-import { CreateGroupDto, QueryGroupDto, UpdateGroupDto } from './dto/group.dto';
+import {
+  CreateGroupDto,
+  PreviewGroupAccessDto,
+  QueryGroupDto,
+  UpdateGroupDto,
+} from './dto/group.dto';
 import { UserRepository } from '../users/infrastructure/persistence/user.repository';
 import { AuthzAuditService } from '../common/authz-audit/authz-audit.service';
 import { CustomRolesService } from '../common/permissions/custom-roles.service';
@@ -169,6 +174,54 @@ export class GroupsService {
     const group = await this.repository.findById(tenantId, id);
     if (!group) throw new NotFoundException('Group not found');
     return group;
+  }
+
+  /**
+   * What membership of this group — as currently being edited — would confer.
+   * Delegated to the authorization engine rather than derived here, so the
+   * preview cannot drift from the check that actually authorizes requests.
+   */
+  async previewAccess(dto: PreviewGroupAccessDto) {
+    const tenantId = this.cls.get('tenantId');
+    await this.assertRoleIdsBelongToTenant(tenantId, dto.roleIds);
+    return this.authzCache.previewGroupAccess(tenantId, dto);
+  }
+
+  /**
+   * The group's members as display summaries.
+   *
+   * The editor needs these because `memberIds` alone cannot be rendered, and
+   * the paginated user list only ever holds one page — so a member outside that
+   * page was invisible and silently un-removable.
+   */
+  async listMembers(id: string): Promise<
+    Array<{
+      id: string;
+      firstName: string | null;
+      lastName: string | null;
+      email: string | null;
+    }>
+  > {
+    const tenantId = this.cls.get('tenantId');
+    const group = await this.repository.findById(tenantId, id);
+    if (!group) throw new NotFoundException('Group not found');
+
+    const memberIds = (group.memberIds ?? []).map(String);
+    if (!memberIds.length) return [];
+
+    const users = await this.userRepository.findByIds(memberIds);
+    return users
+      .filter((user) =>
+        user.tenants?.some(
+          (membership) => String(membership.tenantId) === String(tenantId),
+        ),
+      )
+      .map((user) => ({
+        id: String(user.id),
+        firstName: user.firstName ?? null,
+        lastName: user.lastName ?? null,
+        email: user.email ?? null,
+      }));
   }
 
   async create(dto: CreateGroupDto): Promise<Group> {

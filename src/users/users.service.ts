@@ -506,6 +506,13 @@ export class UsersService {
     return this.usersRepository.findManyByTenant(tenantId);
   }
 
+  searchByTenant(
+    tenantId: string,
+    params: { search?: string; page: number; limit: number },
+  ): Promise<{ data: User[]; totalItems: number }> {
+    return this.usersRepository.searchByTenant(tenantId, params);
+  }
+
   findManyWithPagination({
     filterOptions,
     sortOptions,

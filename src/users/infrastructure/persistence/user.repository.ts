@@ -28,6 +28,19 @@ export abstract class UserRepository {
   abstract findManyByTenant(tenantId: string): Promise<User[]>;
 
   /**
+   * One page of a tenant's directory, searched and counted in the database.
+   *
+   * Distinct from `findManyByTenant` on purpose: that one materialises every
+   * member, and the list endpoint used it to slice a page in Node — so paging
+   * through a directory re-read the whole collection once per page, and every
+   * caller that forgot a `limit` silently saw the first ten people only.
+   */
+  abstract searchByTenant(
+    tenantId: string,
+    params: { search?: string; page: number; limit: number },
+  ): Promise<{ data: User[]; totalItems: number }>;
+
+  /**
    * Member count per org unit for one tenant, keyed by org-unit id.
    * Units with no members are absent from the map rather than zero.
    */

@@ -12,7 +12,12 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { GroupsService } from './groups.service';
-import { CreateGroupDto, QueryGroupDto, UpdateGroupDto } from './dto/group.dto';
+import {
+  CreateGroupDto,
+  PreviewGroupAccessDto,
+  QueryGroupDto,
+  UpdateGroupDto,
+} from './dto/group.dto';
 import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
 
 @ApiTags('Groups')
@@ -28,11 +33,29 @@ export class GroupsController {
     return this.service.findAll(query);
   }
 
+  @Post('access-preview')
+  @RequirePermission('view', 'groups')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Resolve what membership of a group — saved or not yet created — would confer',
+  })
+  previewAccess(@Body() dto: PreviewGroupAccessDto) {
+    return this.service.previewAccess(dto);
+  }
+
   @Get(':id')
   @RequirePermission('view', 'groups')
   @ApiOperation({ summary: 'Get a single group by id' })
   findById(@Param('id') id: string) {
     return this.service.findById(id);
+  }
+
+  @Get(':id/members')
+  @RequirePermission('view', 'groups')
+  @ApiOperation({ summary: "Display summaries for the group's members" })
+  listMembers(@Param('id') id: string) {
+    return this.service.listMembers(id);
   }
 
   @Post()

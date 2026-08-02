@@ -1,4 +1,8 @@
-import { ForbiddenException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { GroupsService } from './groups.service';
 
 /**
@@ -23,6 +27,7 @@ describe('GroupsService — grant invariant on membership and hierarchy', () => 
   let repository: any;
   let customRoles: any;
   let authzCache: any;
+  let userRepository: any;
   let service: GroupsService;
 
   /** Caller holds exactly these permission keys and is not an admin. */
@@ -64,7 +69,16 @@ describe('GroupsService — grant invariant on membership and hierarchy', () => 
     customRoles = {
       findAll: jest.fn().mockResolvedValue([privilegedRole, ordinaryRole]),
     };
-    authzCache = { explainForUser: jest.fn() };
+    authzCache = {
+      explainForUser: jest.fn(),
+      previewGroupAccess: jest.fn(),
+    };
+    userRepository = {
+      findById: jest
+        .fn()
+        .mockResolvedValue({ id: callerId, tenants: [{ tenantId }] }),
+      findByIds: jest.fn().mockResolvedValue([]),
+    };
     callerHolds('contacts:view');
 
     service = new GroupsService(
@@ -76,11 +90,7 @@ describe('GroupsService — grant invariant on membership and hierarchy', () => 
             key === 'tenantId' ? tenantId : callerId,
           ),
       } as any,
-      {
-        findById: jest
-          .fn()
-          .mockResolvedValue({ id: callerId, tenants: [{ tenantId }] }),
-      } as any,
+      userRepository,
       { emit: jest.fn() } as any,
       { record: jest.fn().mockResolvedValue(undefined) } as any,
       customRoles,
@@ -218,6 +228,103 @@ describe('GroupsService — grant invariant on membership and hierarchy', () => 
         } as any),
       ).rejects.toThrow(ForbiddenException);
       expect(repository.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('previewAccess', () => {
+    it('should delegate to the authorization engine rather than resolving locally', async () => {
+      authzCache.previewGroupAccess.mockResolvedValue({
+        permissions: ['contacts:view'],
+        sources: {},
+        tenantCeiling: ['contacts:view'],
+        scope: 'self',
+        explicit: false,
+        inherited: [],
+      });
+
+      const result = await service.previewAccess({
+        roleIds: [ordinaryRole.id],
+        parentGroupId: 'g_parent',
+      });
+
+      expect(authzCache.previewGroupAccess).toHaveBeenCalledWith(tenantId, {
+        roleIds: [ordinaryRole.id],
+        parentGroupId: 'g_parent',
+      });
+      expect(result.permissions).toEqual(['contacts:view']);
+    });
+
+    it('should reject role ids from outside the tenant catalog', async () => {
+      await expect(
+        service.previewAccess({ roleIds: ['role_from_another_tenant'] }),
+      ).rejects.toThrow(UnprocessableEntityException);
+      expect(authzCache.previewGroupAccess).not.toHaveBeenCalled();
+    });
+
+    it('should not apply the grant invariant — previewing confers nothing', async () => {
+      authzCache.previewGroupAccess.mockResolvedValue({
+        permissions: privilegedRole.permissions,
+        sources: {},
+        tenantCeiling: privilegedRole.permissions,
+        scope: 'self',
+        explicit: false,
+        inherited: [],
+      });
+
+      await expect(
+        service.previewAccess({ roleIds: [privilegedRole.id] }),
+      ).resolves.toBeDefined();
+      expect(authzCache.explainForUser).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listMembers', () => {
+    it('should drop users who are not members of the active tenant', async () => {
+      repository.findById.mockResolvedValue({
+        id: 'g1',
+        name: 'g',
+        memberIds: ['u_in', 'u_out'],
+      });
+      userRepository.findByIds.mockResolvedValue([
+        {
+          id: 'u_in',
+          firstName: 'In',
+          lastName: 'Tenant',
+          email: 'in@x.com',
+          tenants: [{ tenantId }],
+        },
+        {
+          id: 'u_out',
+          firstName: 'Out',
+          lastName: 'Side',
+          email: 'out@x.com',
+          tenants: [{ tenantId: 'other_tenant' }],
+        },
+      ]);
+
+      await expect(service.listMembers('g1')).resolves.toEqual([
+        {
+          id: 'u_in',
+          firstName: 'In',
+          lastName: 'Tenant',
+          email: 'in@x.com',
+        },
+      ]);
+    });
+
+    it('should not query the user store for an empty group', async () => {
+      repository.findById.mockResolvedValue({ id: 'g1', name: 'g' });
+
+      await expect(service.listMembers('g1')).resolves.toEqual([]);
+      expect(userRepository.findByIds).not.toHaveBeenCalled();
+    });
+
+    it('should refuse an unknown group rather than returning an empty roster', async () => {
+      repository.findById.mockResolvedValue(null);
+
+      await expect(service.listMembers('missing')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

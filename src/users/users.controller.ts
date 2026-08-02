@@ -50,6 +50,13 @@ import {
   PaginationResponseDto,
 } from '../utils/dto/pagination-response.dto';
 
+/**
+ * Upper bound on `limit`. A ceiling still exists so one caller cannot ask for
+ * a tenant's entire directory in a single response, but it is high enough that
+ * the pickers which legitimately want a whole small directory get one.
+ */
+const MAX_PAGE_SIZE = 200;
+
 @ApiBearerAuth()
 @UseGuards(RolesGuard)
 @ApiTags('Users')
@@ -161,11 +168,12 @@ export class UsersController {
   async findAll(
     @Query() query: QueryUserDto,
   ): Promise<PaginationResponseDto<User>> {
-    const page = query?.page ?? 1;
-    let limit = query?.limit ?? 10;
-    if (limit > 50) {
-      limit = 50;
-    }
+    const page = Math.max(1, query?.page ?? 1);
+    // 200, not 50: the old ceiling silently truncated every picker that asked
+    // for a whole directory, and there is no longer a reason to keep it low —
+    // the query below is indexed, counted and paged in the database rather
+    // than materialised in this process.
+    const limit = Math.min(query?.limit ?? 10, MAX_PAGE_SIZE);
 
     const tenantId = this.usersService.getTenantId();
     const search = query?.search; // Search by name/email
@@ -173,25 +181,17 @@ export class UsersController {
     // If tenantId is present and user is NOT a super admin, filter by tenant
     // For now, if tenantId is present, we prioritize the tenant-based list for users
     if (tenantId) {
-      const users = await this.usersService.findManyByTenant(tenantId);
-      // Basic search filtering if needed (or we can update service to handle search)
-      let filteredUsers = users;
-      if (search) {
-        const lowerSearch = search.toLowerCase();
-        filteredUsers = users.filter(
-          (u) =>
-            u.firstName?.toLowerCase().includes(lowerSearch) ||
-            u.lastName?.toLowerCase().includes(lowerSearch) ||
-            u.email?.toLowerCase().includes(lowerSearch),
-        );
-      }
+      const { data, totalItems } = await this.usersService.searchByTenant(
+        tenantId,
+        { search, page, limit },
+      );
 
       return {
-        data: filteredUsers.slice((page - 1) * limit, page * limit),
-        totalItems: filteredUsers.length,
-        totalPages: Math.ceil(filteredUsers.length / limit),
+        data,
+        totalItems,
+        totalPages: Math.ceil(totalItems / limit),
         currentPage: page,
-        hasNextPage: page * limit < filteredUsers.length,
+        hasNextPage: page * limit < totalItems,
         hasPreviousPage: page > 1,
       };
     }

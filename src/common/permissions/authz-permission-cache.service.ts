@@ -17,6 +17,7 @@ import {
   canAccess,
   explainEffectivePermissions,
   EffectivePermissionExplanation,
+  PermissionSource,
   PermissionTenant,
 } from './permission.engine';
 import { PermissionRuleMetadata } from './permission.decorator';
@@ -780,6 +781,127 @@ export class AuthzPermissionCacheService {
       fullAccess: false,
       scope: maxScope(scopes),
       explicit: scopes.some(isDataScope),
+    };
+  }
+
+  /**
+   * The access that MEMBERSHIP OF ONE GROUP would confer — the group editor's
+   * live preview, computed from the unsaved form state.
+   *
+   * A group is not a principal, so there is no user to ask about; the question
+   * is "what will everyone in here inherit once I save". That answer is the
+   * union of the group's own grant AND its whole ancestor chain, which is the
+   * same union `cascadedGrant` enforces on write. Computing it here rather than
+   * in the browser keeps one engine: the previous client-side attempt at this
+   * (H-06) ignored roleIds and disagreed with the server on the tenant ceiling.
+   *
+   * Hypothetical and read-only. `parentGroupId` is the PROSPECTIVE parent, so
+   * this can be asked about a group that does not exist yet — which is exactly
+   * the create-dialog case that an `:id`-keyed route cannot serve.
+   *
+   * Fail-closed: an unresolvable tenant yields nothing and SELF scope.
+   */
+  async previewGroupAccess(
+    tenantId: string,
+    candidate: {
+      roleIds?: string[];
+      permissions?: string[];
+      parentGroupId?: string | null;
+    },
+  ): Promise<{
+    permissions: string[];
+    sources: Record<string, PermissionSource[]>;
+    tenantCeiling: string[];
+    scope: DataScope;
+    explicit: boolean;
+    inherited: Array<{ id: string; name: string; roleNames: string[] }>;
+  }> {
+    const empty = {
+      permissions: [],
+      sources: {},
+      tenantCeiling: [],
+      scope: DataScope.SELF,
+      explicit: false,
+      inherited: [],
+    };
+
+    const tenantsRepository = this.moduleRef.get(TenantsRepository, {
+      strict: false,
+    });
+    const groupRepository = this.moduleRef.get(GroupRepository, {
+      strict: false,
+    });
+
+    const tenant = await this.resolveTenant(tenantsRepository, tenantId);
+    if (!tenant) return empty;
+
+    const permissionTenant: PermissionTenant = {
+      id: String(tenant.id),
+      ownerId: (tenant as any).ownerId ?? null,
+      availablePermissions: (tenant as any).availablePermissions ?? null,
+      disabledCorePermissions: (tenant as any).disabledCorePermissions ?? null,
+    };
+
+    // `findAncestorChain` returns the prospective parent AND everything above
+    // it, matching what a member would actually inherit.
+    const ancestors = candidate.parentGroupId
+      ? await groupRepository.findAncestorChain(
+          String(tenant.id),
+          String(candidate.parentGroupId),
+        )
+      : [];
+
+    const tenantRoles = await this.loadTenantRoles(String(tenant.id));
+    const roleById = new Map(
+      tenantRoles.map((role) => [String(role.id), role] as const),
+    );
+
+    const self = {
+      id: '__candidate__',
+      name: 'This group',
+      permissions: candidate.permissions ?? [],
+      roleIds: (candidate.roleIds ?? []).map(String),
+    };
+    const inherited = ancestors.map((group) => ({
+      id: String(group.id),
+      name: group.name,
+      permissions: group.permissions ?? [],
+      roleIds: (group.roleIds ?? []).map(String),
+    }));
+
+    const explanation = explainEffectivePermissions(
+      permissionTenant,
+      {
+        // Synthetic id that matches no tenant owner, so the preview cannot
+        // accidentally resolve to owner-level access.
+        id: '__preview__',
+        tenants: [{ tenantId: String(tenant.id), roles: [], roleIds: [] }],
+      },
+      [self, ...inherited],
+      tenantRoles,
+    );
+
+    const heldRoleIds = new Set([
+      ...self.roleIds,
+      ...inherited.flatMap((group) => group.roleIds),
+    ]);
+    const scopes = tenantRoles
+      .filter((role) => heldRoleIds.has(String(role.id)))
+      .map((role) => role.dataScope);
+
+    return {
+      permissions: explanation.effective,
+      sources: explanation.sources,
+      tenantCeiling: explanation.tenantCeiling,
+      scope: maxScope(scopes),
+      explicit: scopes.some(isDataScope),
+      inherited: inherited.map((group) => ({
+        id: group.id,
+        name: group.name,
+        roleNames: group.roleIds.map(
+          (roleId) => roleById.get(roleId)?.name ?? roleId,
+        ),
+      })),
     };
   }
 

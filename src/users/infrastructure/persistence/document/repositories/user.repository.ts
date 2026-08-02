@@ -150,6 +150,44 @@ export class UsersDocumentRepository
     return userObjects.map((userObject) => UserMapper.toDomain(userObject));
   }
 
+  async searchByTenant(
+    tenantId: string,
+    { search, page, limit }: { search?: string; page: number; limit: number },
+  ): Promise<{ data: User[]; totalItems: number }> {
+    const filter: FilterQuery<UserSchemaDocument> = {
+      'tenants.tenantId': tenantId,
+    };
+
+    const term = search?.trim();
+    if (term) {
+      // Escaped: a directory search box is user input, and an unescaped `(`
+      // or `*` here is a 500 at best and a catastrophic-backtracking stall at
+      // worst. Substring + case-insensitive, matching what the endpoint did
+      // in memory before, so no caller sees its result set change shape.
+      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { firstName: { $regex: escaped, $options: 'i' } },
+        { lastName: { $regex: escaped, $options: 'i' } },
+        { email: { $regex: escaped, $options: 'i' } },
+      ];
+    }
+
+    const [docs, totalItems] = await Promise.all([
+      this.model
+        .find(filter)
+        // `_id` is the tiebreaker, not decoration: without a total order,
+        // people with the same first name shuffle between pages and an
+        // infinite-scroll list shows duplicates while skipping others.
+        .sort({ firstName: 1, lastName: 1, _id: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .exec(),
+      this.model.countDocuments(filter).exec(),
+    ]);
+
+    return { data: docs.map(UserMapper.toDomain), totalItems };
+  }
+
   /**
    * Member count per org unit for the tenant, as `{ [orgUnitId]: count }`.
    *

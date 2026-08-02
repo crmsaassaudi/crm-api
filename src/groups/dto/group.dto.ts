@@ -111,6 +111,36 @@ export class UpdateGroupDto {
   color?: string | null;
 }
 
+/**
+ * Unsaved group form state, for the "what will members inherit" preview.
+ * Not keyed on an id: the create dialog has no group yet, and that is precisely
+ * the case an admin most needs answered before saving.
+ */
+export class PreviewGroupAccessDto {
+  @ApiPropertyOptional({ type: [String], description: 'Custom role IDs' })
+  @IsArray()
+  @IsMongoId({ each: true })
+  @IsOptional()
+  roleIds?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Legacy direct grants still held by the group',
+  })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  permissions?: string[];
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Prospective parent — may differ from what is stored',
+  })
+  @IsMongoId()
+  @IsOptional()
+  parentGroupId?: string | null;
+}
+
 export class QueryGroupDto {
   @ApiPropertyOptional({ description: 'Search by name or description' })
   @IsString()
