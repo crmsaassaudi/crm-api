@@ -482,6 +482,29 @@ function containsTenantField(
 }
 
 function stripTenantField(value: any, tenantField: string, path = ''): any {
+  // Nothing to strip in this subtree — hand it back untouched.
+  //
+  // This early return is load-bearing, not an optimisation. The pruning below
+  // exists for one reason: removing a tenant predicate can leave an empty `{}`
+  // behind, and an empty object inside `$or` matches EVERY document, so it has to
+  // go. But applied indiscriminately, that same pruning deletes predicates that
+  // are legitimately empty and legitimately meaningful — `{ownerId: {$in: []}}`
+  // being the one that matters.
+  //
+  // `$in: []` means "match nothing". It is what data visibility produces for a
+  // user who may see no records, and what `applyTenantFilter` builds to enforce
+  // that. Pruning it collapsed the clause to `{}`, then dropped the enclosing
+  // `$or`, then dropped the enclosing `$and` — so the query that meant "this user
+  // sees nothing" reached Mongo meaning "this user sees the entire tenant". A
+  // fail-open, in the one function whose entire job is to fail closed.
+  //
+  // Scoping the rewrite to subtrees that actually contain the tenant field keeps
+  // the original protection exactly as strong while leaving every other predicate
+  // byte-for-byte intact.
+  if (!containsTenantField(value, tenantField, path)) {
+    return value;
+  }
+
   if (Array.isArray(value)) {
     return value
       .map((item) => stripTenantField(item, tenantField, path))

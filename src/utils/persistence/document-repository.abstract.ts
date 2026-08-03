@@ -14,12 +14,8 @@ export abstract class BaseDocumentRepository<
   ) {}
 
   /**
-   * Auto-enriches data with multitenant context from CLS:
-   *   - tenantId    → cls.tenantId   (MongoDB ObjectId)
-   *   - createdById → cls.userId     (MongoDB ObjectId)
-   *   - updatedById → cls.userId     (MongoDB ObjectId)
-   *
-   * Existing values in data are NOT overwritten.
+   * Stamps `tenantId`, `createdById` and `updatedById` from CLS. Values already
+   * present in `data` are never overwritten.
    */
   async create(
     data: Partial<TDomain>,
@@ -35,36 +31,31 @@ export abstract class BaseDocumentRepository<
     filter: FilterQuery<TSchema> = {},
   ): FilterQuery<TSchema> {
     let enriched: any = { ...filter };
-    // ── Data Visibility Filter ──────────────────────────────────────────────
-    // visibleOwnerIds is set by DataVisibilityInterceptor:
-    //   undefined → not evaluated (skip)
-    //   null      → admin/owner bypass (see all)
-    //   string[]  → filter to these owner IDs only
+    // `visibleOwnerIds`, set by DataVisibilityInterceptor, has three states:
+    //   undefined → not evaluated, apply no filter
+    //   null      → admin/owner bypass, see everything
+    //   string[]  → restrict to these owners
     if (this.enableDataVisibility()) {
       const { visibleOwnerIds, visibleOrgUnitIds } = this.resolveVisibility();
       if (Array.isArray(visibleOwnerIds)) {
-        // C3: by default, unowned records (ownerId null/missing) are NOT
-        // visible to scoped users — they only leak when the tenant explicitly
-        // opts in (includeUnownedInScope). Admins bypass this entirely
-        // (visibleOwnerIds === null). This closes the "null owner → visible to
-        // everyone" data leak.
+        // Unowned records (`ownerId` null or missing) stay hidden from a scoped
+        // user unless the tenant opts in via `includeUnownedInScope`. Treating
+        // "no owner" as "everyone's" is what turned an unassigned lead queue into
+        // a tenant-wide read. Admins never reach here — they bypass with null.
         const ownerClauses: any[] = [{ ownerId: { $in: visibleOwnerIds } }];
         if (this.cls.get('includeUnownedInScope') === true) {
           ownerClauses.push({ ownerId: null }); // covers null and missing field
         }
 
-        // H-07: the org-unit axis, UNIONED with the owner axis.
+        // The org-unit axis is UNIONED with the owner axis, not intersected.
+        // ORG_UNIT scope means "my records AND my unit's records": a manager keeps
+        // what they own even when personally unassigned to a unit, and keeps a
+        // subordinate who sits in another unit. Intersecting would let a WIDER
+        // scope return FEWER rows, which is what makes a scope model untrustable.
         //
-        // Union, not intersection. ORG_UNIT scope means "my records AND my
-        // unit's records" — a manager keeps seeing what they own even if they
-        // are personally unassigned to a unit, and keeps seeing a subordinate in
-        // another unit. Intersecting would make a wider scope return fewer rows,
-        // which is the surprise that makes scope models untrustworthy.
-        //
-        // An EMPTY array adds nothing: it is what an unassigned user, or a
-        // SELF/SUBORDINATES scope, produces. It must not be turned into an
-        // `$in: []` clause of its own, which matches no rows and would erase the
-        // owner clause it was meant to widen.
+        // An empty array must add no clause at all — it is what an unassigned user
+        // or a SELF/SUBORDINATES scope produces. As `$in: []` it would match
+        // nothing and erase the owner clause it was meant to widen.
         if (Array.isArray(visibleOrgUnitIds) && visibleOrgUnitIds.length > 0) {
           ownerClauses.push({ orgUnitId: { $in: visibleOrgUnitIds } });
         }
@@ -74,11 +65,10 @@ export abstract class BaseDocumentRepository<
           $and: [...(enriched.$and || []), { $or: ownerClauses }],
         };
       }
-      // null or undefined → no additional filter
     }
 
     // Resource-dependent ABAC denies are compiled once by PermissionGuard and
-    // intersected here with every query for the matching CRM module.
+    // intersected here into every query for the matching CRM module.
     const abac = this.cls.get<{
       resource?: string;
       filter?: Record<string, unknown> | null;
@@ -114,8 +104,8 @@ export abstract class BaseDocumentRepository<
   }
 
   /**
-   * Override in subclasses to disable data visibility filtering.
-   * Default: true for CRM entities. Override to false for User, Settings, etc.
+   * Override to disable data-visibility filtering. Default true for CRM
+   * entities; false for User, Settings and other non-owned collections.
    */
   protected enableDataVisibility(): boolean {
     return true;
@@ -123,13 +113,13 @@ export abstract class BaseDocumentRepository<
 
   /**
    * The module key this repository's records belong to ('Contact', 'Deal', …),
-   * or null when the repository is not part of a module a tenant can configure
+   * or null when the repository is not part of a module a tenant configures
    * separately.
    *
    * Exists so one tenant can say "tickets are visible to the whole department,
-   * deals are not". Without it every module shares one scope, which forces an
-   * admin to pick the widest setting any module needs and apply it to all of
-   * them — the reason coarse visibility models get abandoned.
+   * deals are not". Without it every module shares one scope, forcing an admin
+   * to pick the widest setting any module needs and apply it to all of them —
+   * the reason coarse visibility models get abandoned.
    */
   protected visibilityModule(): string | null {
     return null;
@@ -138,12 +128,11 @@ export abstract class BaseDocumentRepository<
   /**
    * The owner/org-unit axes to enforce for THIS repository.
    *
-   * Falls back to the request-wide values whenever the tenant has configured
-   * nothing module-specific, so a repository that never overrides
-   * `visibilityModule()` behaves exactly as before. A per-module entry replaces
-   * the base pair wholesale rather than merging: the interceptor already
-   * computed it as a complete answer for that module, including sharing rules
-   * scoped to it.
+   * Falls back to the request-wide values whenever the tenant configured nothing
+   * module-specific, so a repository that never overrides `visibilityModule()`
+   * behaves exactly as before. A per-module entry replaces the base pair
+   * wholesale rather than merging: the interceptor already computed it as a
+   * complete answer for that module, sharing rules included.
    */
   private resolveVisibility(): {
     visibleOwnerIds: unknown;
@@ -257,7 +246,6 @@ export abstract class BaseDocumentRepository<
 
     const filter: any = { _id: id };
 
-    // Apply tenant filter
     const scopedFilter: any = this.applyTenantFilter(filter);
 
     if (version !== undefined) {
@@ -331,8 +319,8 @@ export abstract class BaseDocumentRepository<
    * A domain that needs cascade or retention on top of this overrides it —
    * ContactRepository does, together with ContactPurgeService.
    */
-  async remove(id: string): Promise<void> {
-    const removed = await this.removeIfExists(id);
+  async remove(id: string, session?: ClientSession): Promise<void> {
+    const removed = await this.removeIfExists(id, session);
     if (!removed) {
       throw new NotFoundException(this.notFoundMessage(id));
     }
@@ -349,23 +337,33 @@ export abstract class BaseDocumentRepository<
    * authorization question, so the refusal is now the default and absorbing it
    * has to be asked for explicitly.
    */
-  async removeIfExists(id: string): Promise<boolean> {
+  async removeIfExists(id: string, session?: ClientSession): Promise<boolean> {
     const filter = this.applyTenantFilter({ _id: id } as FilterQuery<TSchema>);
 
     if (!this.supportsSoftDelete) {
-      const result = await this.model.deleteOne(filter);
+      // The options argument is passed only when there IS a session, rather than
+      // as an always-present `{}`. A session lets a domain commit the delete
+      // together with the outbox row announcing it; before that was possible the
+      // event and the write were two independent commits and a crash between them
+      // lost one of the two.
+      const result = session
+        ? await this.model.deleteOne(filter, { session })
+        : await this.model.deleteOne(filter);
       return result.deletedCount > 0;
     }
 
     const deletedById = this.cls.get('userId') ?? this.cls.get('user.id');
-    const result = await this.model.updateOne(filter, {
+    const update = {
       $set: {
         deletedAt: new Date(),
         ...(deletedById && this.model.schema?.path('updatedById')
           ? { updatedById: deletedById }
           : {}),
       },
-    } as any);
+    } as any;
+    const result = session
+      ? await this.model.updateOne(filter, update, { session })
+      : await this.model.updateOne(filter, update);
     return result.matchedCount > 0;
   }
 
@@ -419,7 +417,7 @@ export abstract class BaseDocumentRepository<
    * present-but-null field as still deleted. Restoring to null would leave the
    * record invisible: restored in the database and still gone in the UI.
    */
-  async restore(id: string): Promise<TDomain | null> {
+  async restore(id: string, session?: ClientSession): Promise<TDomain | null> {
     if (!this.supportsSoftDelete) return null;
 
     const filter = this.applyTenantFilter({
@@ -430,6 +428,7 @@ export abstract class BaseDocumentRepository<
     const doc = await this.model
       .findOneAndUpdate(filter, { $unset: { deletedAt: '' } } as any, {
         new: true,
+        ...(session ? { session } : {}),
       })
       .exec();
     return doc ? this.mapToDomain(doc) : null;
@@ -466,7 +465,7 @@ export abstract class BaseDocumentRepository<
         enriched.ownerId = userId;
       }
 
-      // H-07: stamp the record with the creator's org unit so ORG_UNIT scopes
+      // Stamp the record with the creator's org unit so ORG_UNIT scopes
       // have something to match on. Taken from CLS — resolved once per request
       // by DataVisibilityInterceptor — rather than re-read per insert.
       //

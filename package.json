@@ -76,6 +76,7 @@
     "report:search-volume": "ts-node -r tsconfig-paths/register ./src/scripts/report-search-volume.ts",
     "migrate:omni-remediation": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-omni-remediation.ts",
     "migrate:ticket-number-index": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-02-scope-ticket-number-index.ts",
+    "migrate:task-indexes": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-03-task-indexes.ts",
     "test:search:it": "jest -c jest.search-integration.config.js --runInBand"
   },
   "dependencies": {

@@ -16,6 +16,7 @@ describe('TasksService export', () => {
       {} as any,
       queue,
       exportRequest as any,
+      {} as any,
       undefined,
       undefined,
     );

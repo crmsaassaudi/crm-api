@@ -121,6 +121,9 @@ export abstract class BaseExportProcessor<
     signal: AbortSignal,
   ): Promise<ExportResult> {
     const data = job.data;
+    // Runtime schemas (custom fields, reference labels) must load BEFORE the
+    // requested columns are resolved. Resolving first made the first job use the
+    // static schema and let a later job inherit another tenant's stale columns.
     const jobConfig = await this.beforeExport(data);
     const cfg = jobConfig ?? this.getModuleConfig();
     const format = data.format;

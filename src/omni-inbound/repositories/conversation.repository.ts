@@ -76,17 +76,29 @@ export class ConversationRepository {
       .lean()
       .exec();
     if (!doc) return null;
+    // Record-level scope: a scoped user must not read a conversation outside
+    // their visibility just by knowing its id — tenant isolation alone is not
+    // enough. Fail-closed to null, which the caller reports as "not found".
     if (!this.isConversationInScope(doc)) return null;
     return OmniConversationMapper.toDomain(doc as any);
   }
 
+  /**
+   * Whether the current CLS principal may see this conversation, mirroring
+   * applyVisibilityScope() for a single already-fetched document.
+   */
   private isConversationInScope(doc: any): boolean {
+    // Channel axis first: it holds regardless of the owner axis, so a principal
+    // outside a restricted channel's pool cannot read its conversations even
+    // with an unrestricted owner scope.
     const servable = this.cls.get('servableChannelIds');
     if (Array.isArray(servable)) {
       const channel = doc.channelId ? String(doc.channelId) : null;
       if (!channel || !servable.map(String).includes(channel)) return false;
     }
 
+    // A channel can force 'private' or 'public_read' regardless of the
+    // tenant-wide default the rest of this method would otherwise apply.
     const channelId = doc.channelId ? String(doc.channelId) : null;
     const overrides =
       (this.cls.get('channelVisibilityOverrides') as Record<
@@ -117,6 +129,14 @@ export class ConversationRepository {
     );
   }
 
+  /**
+   * The owner axis for conversations, honouring a per-module override.
+   *
+   * A tenant can scope Conversation differently from Contact/Deal — "agents see
+   * only their own inbox even though the department shares its pipeline" is a
+   * common ask. With no override configured this returns the request-wide value,
+   * so behaviour is unchanged.
+   */
   private moduleOwnerIds(): unknown {
     return this.moduleScope()?.ownerIds ?? this.cls.get('visibleOwnerIds');
   }
@@ -137,6 +157,7 @@ export class ConversationRepository {
     return byModule?.Conversation;
   }
 
+  /** Owner/org-unit/group scope check shared by the normal and strict paths. */
   private isWithinOwnerScope(
     doc: any,
     ownerIds: string[],
@@ -183,6 +204,12 @@ export class ConversationRepository {
     return docs.map((doc) => OmniConversationMapper.toDomain(doc as any));
   }
 
+  /**
+   * The ACTIVE (open or pending) conversation for a given external thread id.
+   *
+   * The key query for session management: no active session means the caller
+   * should create a new one rather than reopen a resolved thread.
+   */
   async findActiveByExternalId(
     tenantId: string,
     channelType: string,

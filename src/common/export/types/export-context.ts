@@ -52,6 +52,41 @@ export interface ExportFilter {
 }
 
 /**
+ * The requester's row-level visibility, frozen at enqueue time.
+ *
+ * Every field here is a CLS key that `BaseDocumentRepository.applyTenantFilter`
+ * reads to narrow a query. They are populated per-request by
+ * `DataVisibilityInterceptor` and `PermissionGuard` — and a BullMQ worker has no
+ * request, so it cannot re-derive any of them.
+ *
+ * That mattered more than it looks. `applyTenantFilter` treats
+ * `visibleOwnerIds === undefined` as "no owner predicate", which is correct for
+ * an admin and catastrophic for a worker: the export cursor came back with every
+ * task in the tenant regardless of who asked. A user whose list view showed three
+ * rows could press Export and receive five hundred. The same code path had
+ * already learned this lesson for field-level masking — `userGroupId` above is
+ * snapshotted for exactly this reason, with exactly this justification in its
+ * docblock — and stopped one layer short of row-level scope.
+ *
+ * `null` and `[]` are meaningfully different here and must survive the round
+ * trip through JSON: `null` means "admin, sees everything" and `[]` means "sees
+ * nothing". Collapsing either into `undefined` reopens the hole.
+ */
+export interface ExportScopeSnapshot {
+  visibleOwnerIds: string[] | null;
+  visibleOrgUnitIds: string[] | null;
+  dataVisibilityByModule: Record<
+    string,
+    { ownerIds: string[] | null; orgUnitIds: string[] | null }
+  > | null;
+  includeUnownedInScope: boolean;
+  abacResourceFilter: {
+    resource?: string;
+    filter?: Record<string, unknown> | null;
+  } | null;
+}
+
+/**
  * Standard BullMQ job payload for ALL export jobs. Module-specific processors
  * may extend this with extra snapshotted settings.
  */
@@ -63,6 +98,12 @@ export interface BaseExportJobData extends TenantJobData {
    * no HTTP context, so it cannot re-derive this. Falls back to 'default'.
    */
   userGroupId?: string;
+  /**
+   * Snapshot of the requester's row-level visibility. See
+   * {@link ExportScopeSnapshot} — without it the export reads wider than the
+   * request that asked for it.
+   */
+  scope?: ExportScopeSnapshot;
   /** Output format. Phase 1 supports 'csv'; 'xlsx' lands in Phase 2. */
   format: ExportFormat;
   /** Selected column keys (the `path` of each column). Omit = all columns. */

@@ -15,6 +15,8 @@ import { Response } from 'express';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { TaskListQueryDto } from './dto/task-list-query.dto';
+import { BulkTaskIdsDto, BulkUpdateTasksDto } from './dto/bulk-task.dto';
 import { ApiTags, ApiBearerAuth, ApiOkResponse } from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
@@ -43,13 +45,45 @@ export class TasksController {
 
   @Post()
   @RequirePermission('create', 'tasks')
+  // Sanitising on create as well as on update. It was only on `@Patch`, which left
+  // the one route that introduces a record as the only one that could introduce a
+  // masked value verbatim.
+  @UsePipes(new SanitizeMaskedInputPipe())
   create(@Body() data: CreateTaskDto) {
     return this.service.create(data);
   }
 
+  // BULK
+  //
+  // Before the `:id` routes, like `recycle-bin` — Nest matches in declaration
+  // order and `bulk` would otherwise be captured as an id.
+  //
+  // Both take the same permission as their single-record equivalent, and enforce
+  // record-level scope per id inside the service rather than through `@UseAcl`:
+  // the guard evaluates one `:id` from the path, and these carry a list in the
+  // body. Ids the caller cannot see come back in `skipped`, not as a failure of
+  // the whole request.
+
+  @ApiOkResponse({ description: 'Per-id outcome of the bulk update' })
+  @Patch('bulk')
+  @RequirePermission('edit', 'tasks')
+  @UsePipes(new SanitizeMaskedInputPipe())
+  bulkUpdate(@Body() body: BulkUpdateTasksDto) {
+    return this.service.bulkUpdate(body);
+  }
+
+  @ApiOkResponse({ description: 'Per-id outcome of the bulk delete' })
+  @Post('bulk-delete')
+  // POST, not DELETE: a body on DELETE is legal but poorly supported by proxies
+  // and client libraries, and a list of ids does not belong in a query string.
+  @RequirePermission('delete', 'tasks')
+  bulkRemove(@Body() body: BulkTaskIdsDto) {
+    return this.service.bulkRemove(body.ids);
+  }
+
   @Get()
   @RequirePermission('view', 'tasks')
-  findAll(@Query() query: any) {
+  findAll(@Query() query: TaskListQueryDto) {
     return this.service.findAll(query);
   }
 
@@ -101,7 +135,7 @@ export class TasksController {
     res.end(file.buffer);
   }
 
-  // ──────────────────────── RECYCLE BIN ────────────────────────
+  // RECYCLE BIN
   //
   // Declared BEFORE the `:id` routes — Nest matches in declaration order, and
   // `recycle-bin` would otherwise be captured as an id.

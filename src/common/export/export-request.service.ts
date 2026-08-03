@@ -16,7 +16,7 @@ import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { ExportStorageFactory } from './export-storage.service';
 import { ExportProgressTracker } from './export-progress.service';
 import { ExportJobSchemaClass, ExportJobDocument } from './export-job.schema';
-import { ExportFormat } from './types';
+import { ExportFormat, ExportScopeSnapshot } from './types';
 
 const MAX_QUEUED_PER_TENANT = Number(
   process.env.EXPORT_MAX_QUEUED_PER_TENANT ?? 3,
@@ -52,6 +52,28 @@ export class ExportRequestService {
     return this.cls.get('userId');
   }
 
+  /**
+   * Freeze the requester's row-level scope into the job.
+   *
+   * Called on every enqueue rather than left to each module, because "the module
+   * forgot to pass its scope" fails open — the worker reads the whole tenant and
+   * nothing complains. Doing it here means a new export module inherits the
+   * restriction instead of having to remember it.
+   *
+   * `?? null` and not `?? undefined`: the difference between "admin, sees
+   * everything" (null) and "not evaluated" (undefined) is exactly what
+   * `applyTenantFilter` branches on, and the worker must be told which one it is.
+   */
+  private captureScope(): ExportScopeSnapshot {
+    return {
+      visibleOwnerIds: this.cls.get('visibleOwnerIds') ?? null,
+      visibleOrgUnitIds: this.cls.get('visibleOrgUnitIds') ?? null,
+      dataVisibilityByModule: this.cls.get('dataVisibilityByModule') ?? null,
+      includeUnownedInScope: this.cls.get('includeUnownedInScope') === true,
+      abacResourceFilter: this.cls.get('abacResourceFilter') ?? null,
+    };
+  }
+
   async enqueue(opts: {
     entityType: string;
     queue: Queue;
@@ -73,6 +95,7 @@ export class ExportRequestService {
       tenantId,
       userId,
       userGroupId,
+      scope: this.captureScope(),
       format,
       columns: opts.columns,
       filter: { ids: opts.ids },

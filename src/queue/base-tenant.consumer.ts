@@ -9,6 +9,16 @@ import { BaseConsumer } from './base.consumer';
 export interface TenantJobData {
   tenantId: string;
   userId?: string;
+  /**
+   * Row-level visibility captured from the request that enqueued this job.
+   *
+   * Restored into CLS before `handle()` runs, so a repository call inside a
+   * worker narrows exactly as it would have inside the request. Optional because
+   * many jobs are legitimately tenant-wide (retention purge, reconciliation) and
+   * must keep reading everything; a job that represents *a user's* read has to
+   * supply it, and `ExportRequestService` now does so unconditionally.
+   */
+  scope?: object;
 }
 
 /**
@@ -53,7 +63,7 @@ export abstract class BaseTenantConsumer<
    * Sets up tenant CLS context, then delegates to handle().
    */
   async process(job: Job<TData>): Promise<TResult> {
-    const { tenantId, userId } = job.data;
+    const { tenantId, userId, scope } = job.data;
 
     if (!tenantId) {
       throw new Error(
@@ -63,7 +73,19 @@ export abstract class BaseTenantConsumer<
     }
 
     return this.cls.runWith(
-      { tenantId, activeTenantId: tenantId } as any,
+      {
+        tenantId,
+        activeTenantId: tenantId,
+        // Restored BEFORE handle(), because a repository reads these the moment
+        // it builds its first filter. Setting them afterwards, or inside the
+        // handler, is too late for anything the handler's first query returns.
+        //
+        // Until this existed the CLS store held only the tenant, and
+        // `applyTenantFilter` reads `visibleOwnerIds === undefined` as "no owner
+        // predicate" — so every user-initiated read performed in a worker
+        // silently widened to the whole tenant.
+        ...(scope ?? {}),
+      } as any,
       async () => {
         if (userId) {
           this.cls.set('userId', userId);

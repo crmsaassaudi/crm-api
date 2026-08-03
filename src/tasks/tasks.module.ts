@@ -12,6 +12,20 @@ import {
   TaskStatusSchema,
   TaskStatusSchemaClass,
 } from '../task-settings/entities/task-status.schema';
+import {
+  TaskCategorySchema,
+  TaskCategorySchemaClass,
+} from '../task-settings/entities/task-category.schema';
+import {
+  TaskSourceSchema,
+  TaskSourceSchemaClass,
+} from '../task-settings/entities/task-source.schema';
+import {
+  UserSchema,
+  UserSchemaClass,
+} from '../users/infrastructure/persistence/document/entities/user.schema';
+import { TaskReferenceValidator } from './task-reference.validator';
+import { TaskReminderService } from './task-reminder.service';
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
 import { isWorkerRuntime } from '../config/runtime-role';
 import { TaskPurgeService } from './task-purge.service';
@@ -30,6 +44,13 @@ const workerProviders = isWorkerRuntime()
       // Redis lock load-bearing for correctness rather than a safety net.
       TaskPurgeService,
       TaskExportProcessor,
+      // RecurringTaskService moved here from the unconditional provider list. Its
+      // `@Cron` fires in every process that loaded ScheduleModule, so as an
+      // always-on provider it ran a cross-tenant scan once an hour in every API
+      // replica. Its compare-and-set claim stopped that producing duplicate
+      // tasks, but nothing stopped it producing N redundant platform-wide scans.
+      RecurringTaskService,
+      TaskReminderService,
     ]
   : [];
 
@@ -37,7 +58,13 @@ const workerProviders = isWorkerRuntime()
   imports: [
     MongooseModule.forFeature([
       { name: TaskSchemaClass.name, schema: TaskSchema },
+      // The three settings collections and User are registered here because
+      // TaskReferenceValidator has to confirm that every id a task points at
+      // exists inside the caller's tenant before the write.
       { name: TaskStatusSchemaClass.name, schema: TaskStatusSchema },
+      { name: TaskCategorySchemaClass.name, schema: TaskCategorySchema },
+      { name: TaskSourceSchemaClass.name, schema: TaskSourceSchema },
+      { name: UserSchemaClass.name, schema: UserSchema },
     ]),
     AutomationOutboxModule,
     CustomFieldsModule,
@@ -59,7 +86,7 @@ const workerProviders = isWorkerRuntime()
   providers: [
     TasksService,
     TaskRepository,
-    RecurringTaskService,
+    TaskReferenceValidator,
     ...workerProviders,
   ],
   exports: [TasksService],

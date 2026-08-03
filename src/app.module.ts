@@ -244,6 +244,12 @@ function bullBoardBasicAuth() {
         },
       },
     }),
+    // Logging config lives in `common/logger/winston.config.ts` and must stay
+    // there rather than being inlined: it routes every message and meta field
+    // through `maskSecrets`, honours LOG_FORMAT so production ships JSON lines
+    // instead of ANSI, and carries tenantId/userId/service plus structured meta
+    // on every line. `sentry.bootstrap.ts` reasons from the assumption that the
+    // masking is on.
     WinstonModule.forRootAsync({
       useFactory: (clsService: ClsService) => winstonConfig(clsService),
       inject: [ClsService],

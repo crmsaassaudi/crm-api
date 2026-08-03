@@ -108,6 +108,42 @@ export const SEARCH_CAPABILITIES = {
     description:
       'Phát hiện trùng khi merge — kết quả gần đúng ở đây nghĩa là gộp nhầm hai khách hàng.',
   },
+  /**
+   * Danh sách task có filter/sort/đếm.
+   *
+   * Tier E và MongoDB sở hữu vĩnh viễn, cùng lý do như `contact_list`: người dùng
+   * lọc "task quá hạn của tôi" rồi hành động trên đúng danh sách đó, nên thiếu một
+   * dòng là sai chứ không phải "kém liên quan". Có index hậu thuẫn
+   * (`task_list_default`, `task_owner_due`, `task_status_due`,
+   * `task_related_lookup`) nên không có đường suy giảm nào cần khai báo.
+   */
+  task_list: {
+    tier: 'E',
+    owner: 'mongodb',
+    description:
+      'Danh sách task có filter, sort và đếm — phải chính xác và đọc-sau-ghi.',
+  },
+  /**
+   * Ô tìm kiếm tự do trong danh sách task.
+   *
+   * Tách khỏi `task_list` vì đây là câu hỏi khác hạng: gõ "renewal" là đi tìm mức
+   * độ liên quan, không phải một câu trả lời đúng duy nhất. Hiện MongoDB trả lời
+   * bằng `$regex` không neo, case-insensitive trên `title` + `description` —
+   * **không index nào phục vụ được**, tức là collection scan.
+   *
+   * Khai báo `owner: 'mongodb'` là nói thật về hiện trạng, không phải chấp nhận
+   * nó: đây là chỗ duy nhất trong registry mà chủ sở hữu tier R là MongoDB, và
+   * `description` ghi rõ chi phí để lần chuyển sang OpenSearch có một mục tiêu cụ
+   * thể. Không đặt `owner: 'opensearch'` vì Task chưa hề được index — khai báo như
+   * vậy sẽ là một lời hứa mà `src/search/indexing/` không giữ được.
+   */
+  task_list_search: {
+    tier: 'R',
+    owner: 'mongodb',
+    description:
+      'Tìm tự do trong danh sách task. Hiện dùng $regex → collection scan; ' +
+      'ứng viên chuyển sang OpenSearch khi tenant vượt ~100k task.',
+  },
 } as const satisfies Record<string, SearchCapability>;
 
 export type SearchCapabilityName = keyof typeof SEARCH_CAPABILITIES;

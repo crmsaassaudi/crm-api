@@ -65,6 +65,58 @@ const expectedIndexes: ExpectedIndex[] = [
     key: { publishedAt: 1 },
     expireAfterSeconds: 7 * 86_400,
   },
+  // tasks
+  //
+  // `tasks` was missing from this list entirely, and no migration created its
+  // indexes. With `autoIndex: false` in production that combination means the
+  // index state of the busiest collection in the module was unverifiable: the
+  // schema declared indexes, and whether the cluster had them was anybody's
+  // guess. Created by `npm run migrate:task-indexes`.
+  {
+    collection: 'tasks',
+    name: 'task_list_default',
+    key: { tenantId: 1, deletedAt: 1, dueDate: 1, _id: 1 },
+  },
+  {
+    collection: 'tasks',
+    name: 'task_list_created',
+    key: { tenantId: 1, deletedAt: 1, createdAt: -1, _id: -1 },
+  },
+  {
+    collection: 'tasks',
+    name: 'task_owner_due',
+    key: { tenantId: 1, ownerId: 1, deletedAt: 1, dueDate: 1 },
+  },
+  {
+    collection: 'tasks',
+    name: 'task_status_due',
+    key: { tenantId: 1, statusId: 1, deletedAt: 1, dueDate: 1 },
+  },
+  {
+    collection: 'tasks',
+    name: 'task_related_lookup',
+    key: { tenantId: 1, 'relatedTo._id': 1 },
+  },
+  {
+    collection: 'tasks',
+    name: 'task_org_unit_scope',
+    key: { tenantId: 1, orgUnitId: 1, deletedAt: 1 },
+  },
+  {
+    collection: 'tasks',
+    name: 'task_purge_sweep',
+    key: { deletedAt: 1 },
+  },
+  {
+    collection: 'tasks',
+    name: 'recurring_tasks_cron',
+    key: { isRecurring: 1, nextOccurrenceAt: 1, deletedAt: 1 },
+  },
+  {
+    collection: 'tasks',
+    name: 'task_reminder_due',
+    key: { reminderSentAt: 1, reminderAt: 1, deletedAt: 1 },
+  },
 ];
 
 async function main() {

@@ -36,7 +36,9 @@ const STATIC_COLUMNS: readonly ExportColumn[] = [
   { header: 'categoryId', path: 'categoryId' },
   { header: 'sourceId', path: 'sourceId' },
   { header: 'ownerId', path: 'ownerId' },
-  { header: 'assignedToId', path: 'assignedToId' },
+  // No 'assignedToId' column: the field does not exist on TaskSchema, so it
+  // exported an empty column for every row and advertised a second person axis
+  // the module does not have.
   { header: 'dueDate', path: 'dueDate' },
   { header: 'completedAt', path: 'completedAt' },
   { header: 'createdAt', path: 'createdAt' },

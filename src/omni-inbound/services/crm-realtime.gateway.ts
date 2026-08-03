@@ -42,6 +42,11 @@ export class CrmRealtimeGateway {
     'socket:account:import:completed',
     'socket:deal:import:completed',
     'socket:ticket:import:completed',
+    // Task reminders. Registered here because a channel published to but not
+    // listed is silently dropped by `handleRedisMessage`'s default branch — which
+    // is how a reminder could look delivered on the publisher's side and arrive
+    // nowhere.
+    'socket:task:reminder:due',
   ] as const;
 
   /**
@@ -77,12 +82,44 @@ export class CrmRealtimeGateway {
       case 'socket:ticket:import:completed':
         this.handleModuleImportCompleted('ticket', event);
         return true;
+      case 'socket:task:reminder:due':
+        this.handleTaskReminderDue(event);
+        return true;
       default:
         return false;
     }
   }
 
-  // ─── Export handlers ─────────────────────────────────────────────
+  /**
+   * Broadcast a due task reminder to the tenant room.
+   *
+   * Sent to the tenant room with `ownerId` in the payload rather than to a
+   * per-user room, matching how export completion is delivered — the client
+   * filters. A reminder is not sensitive beyond the task itself, which the owner
+   * can already read.
+   */
+  private handleTaskReminderDue(event: {
+    tenantId: string;
+    taskId: string;
+    ownerId: string | null;
+    title: string;
+    dueDate: string;
+    priority: string;
+  }) {
+    const room = `tenant:${event.tenantId}`;
+    this.logger.log(
+      `Broadcasting task reminder to room=${room} (task=${event.taskId}, owner=${event.ownerId})`,
+    );
+    this.server.to(room).emit('task:reminder:due', {
+      taskId: event.taskId,
+      ownerId: event.ownerId,
+      title: event.title,
+      dueDate: event.dueDate,
+      priority: event.priority,
+    });
+  }
+
+  // Export handlers
 
   /**
    * Broadcast contact export completion to the tenant room.
@@ -131,7 +168,7 @@ export class CrmRealtimeGateway {
     });
   }
 
-  // ─── Import handlers ─────────────────────────────────────────────
+  // Import handlers
 
   /**
    * Broadcast contact import completion to the user who triggered it.

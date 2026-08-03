@@ -53,6 +53,10 @@ import {
   isConversationStatus,
 } from '../domain/conversation-status';
 
+// Conversations cache the end customer's phone and email on `customer`.
+// FieldMaskingInterceptor redacts them unless the principal holds
+// `omni_channel:unmask` — without this the same customer's number is masked on
+// the Contact screen and printed in full one click away in the inbox.
 @SensitiveResource('omni_channel')
 @Controller({ path: 'omni', version: '1' })
 export class OmniController {
@@ -81,6 +85,14 @@ export class OmniController {
     private readonly channelSupportService: ChannelSupportService,
   ) {}
 
+  /**
+   * An assignment target must be a member of the active tenant.
+   *
+   * Without this, `agentId` is an unvalidated body field that writes a foreign
+   * (or non-existent) user id onto a conversation — cross-tenant assignment, and
+   * a capacity/routing corruption vector. Null/undefined means "unassign", which
+   * is always allowed.
+   */
   private async assertAgentInTenant(agentId?: string | null): Promise<void> {
     if (!agentId) return;
 

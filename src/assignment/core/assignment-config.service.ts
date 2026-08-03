@@ -190,7 +190,7 @@ export class AssignmentConfigService implements OnModuleInit, OnModuleDestroy {
           return;
         }
         // `<tenantId>:*` drops every objectType of one tenant — used when a
-        // tenant-wide change (or a settings import) invalidates all of them.
+        // tenant-wide change, or a settings import, invalidates all of them.
         if (message.endsWith(':*')) {
           const prefix = message.slice(0, -1);
           for (const key of [...this.cache.keys()]) {
@@ -216,7 +216,7 @@ export class AssignmentConfigService implements OnModuleInit, OnModuleDestroy {
       );
       await this.subscriber.quit();
     } catch {
-      // best-effort cleanup
+      this.logger.debug('Failed to clean up assignment config subscriber');
     }
   }
 

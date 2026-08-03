@@ -193,7 +193,16 @@ export class ContactsService {
       ...filter,
       __restrictToOwner: restrictToOwner,
       __currentUserId: this.getCurrentUserId(),
+      // Which `customFields.<key>` filters the repository may honour. Resolved
+      // here, once per request, from the tenant's registry: the repository must
+      // not accept an arbitrary dotted path — that reopens the field-injection
+      // hole its whitelist exists to close — and an admin-defined field that
+      // cannot be filtered is a field the product cannot actually use.
       __allowedCustomFieldKeys: await this.resolveCustomFieldKeys(filter),
+      // Resolved only when the request carries a search term: a phone lookup
+      // needs the tenant's country code to turn the national form a user types
+      // into the E.164 form the write gate stored, and an ordinary list request
+      // should not pay for the settings read.
       __defaultCountryCode: filter?.search
         ? await this.resolveDefaultCountryCode()
         : undefined,
