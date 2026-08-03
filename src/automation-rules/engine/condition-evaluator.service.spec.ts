@@ -8,14 +8,14 @@ describe('ConditionEvaluatorService', () => {
     service = new ConditionEvaluatorService();
   });
 
-  // ── Empty / No Conditions ───────────────────────────────────────────────
+  // Empty / No Conditions
 
   it('should return true for empty rules (pass-through)', () => {
     const group: ConditionGroup = { logic: 'AND', rules: [] };
     expect(service.evaluate(group, { status: 'New' })).toBe(true);
   });
 
-  // ── AND logic ──────────────────────────────────────────────────────────
+  // AND logic
 
   it('should return true when AND: all conditions match', () => {
     const group: ConditionGroup = {
@@ -43,7 +43,7 @@ describe('ConditionEvaluatorService', () => {
     );
   });
 
-  // ── OR logic ───────────────────────────────────────────────────────────
+  // OR logic
 
   it('should return true when OR: one condition matches', () => {
     const group: ConditionGroup = {
@@ -67,7 +67,7 @@ describe('ConditionEvaluatorService', () => {
     expect(service.evaluate(group, { status: 'Closed' })).toBe(false);
   });
 
-  // ── Nested groups ──────────────────────────────────────────────────────
+  // Nested groups
 
   it('should return true for Nested AND([status=New, OR([source=Web, source=FB])])', () => {
     const group: ConditionGroup = {
@@ -107,7 +107,7 @@ describe('ConditionEvaluatorService', () => {
     );
   });
 
-  // ── Numeric operators ──────────────────────────────────────────────────
+  // Numeric operators
 
   it('should return true when gt: amount > 1000 and amount=1500', () => {
     const group: ConditionGroup = {
@@ -149,7 +149,7 @@ describe('ConditionEvaluatorService', () => {
     expect(service.evaluate(group, { score: 90 })).toBe(false);
   });
 
-  // ── String operators ───────────────────────────────────────────────────
+  // String operators
 
   it('should match case-insensitively when contains: name contains Nguyen', () => {
     const group: ConditionGroup = {
@@ -175,7 +175,7 @@ describe('ConditionEvaluatorService', () => {
     expect(service.evaluate(group, { status: 'Open' })).toBe(true);
   });
 
-  // ── Null / Empty operators ─────────────────────────────────────────────
+  // Null / Empty operators
 
   it('should return true when is_empty and field is null', () => {
     const group: ConditionGroup = {
@@ -209,7 +209,7 @@ describe('ConditionEvaluatorService', () => {
     expect(service.evaluate(group, { email: 'test@example.com' })).toBe(true);
   });
 
-  // ── Null field with comparison operators → false ────────────────────────
+  // Null field with comparison operators → false
 
   it('should return false when eq and field is null', () => {
     const group: ConditionGroup = {
@@ -219,7 +219,7 @@ describe('ConditionEvaluatorService', () => {
     expect(service.evaluate(group, { status: null })).toBe(false);
   });
 
-  // ── Type mismatch on numeric operators → false ─────────────────────────
+  // Type mismatch on numeric operators → false
 
   it('should return false when gt with text field and numeric operator', () => {
     const group: ConditionGroup = {
@@ -229,7 +229,7 @@ describe('ConditionEvaluatorService', () => {
     expect(service.evaluate(group, { name: 'not-a-number' })).toBe(false);
   });
 
-  // ── Validation ─────────────────────────────────────────────────────────
+  // Validation
 
   it('should be invalid when validate depth > 3', () => {
     // 5 levels of nesting: depth 0 → 1 → 2 → 3 → 4 (exceeds max 3)
@@ -281,7 +281,7 @@ describe('ConditionEvaluatorService', () => {
     expect(result.valid).toBe(true);
   });
 
-  // ── String numeric coercion (eq with string numbers) ───────────────────
+  // String numeric coercion (eq with string numbers)
 
   it('should coerce numeric strings: "100" eq 100 returns true', () => {
     const group: ConditionGroup = {

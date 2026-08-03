@@ -38,7 +38,6 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     const correlationId = this.cls.getId();
 
-    // Extract message and error code
     const { message, errorCode, errors } = this.extractErrorMetadata(exception);
 
     const responseBody = {

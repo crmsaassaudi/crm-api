@@ -94,8 +94,6 @@ export class FileManagementController {
     });
   }
 
-  // ── Upload ────────────────────────────────────────────────────────
-
   @Post('upload')
   @RequirePermission('create', 'files')
   @UseInterceptors(FileInterceptor('file'))
@@ -115,7 +113,7 @@ export class FileManagementController {
 
     this.validateUploadedFile(file);
 
-    // ── Quota check (atomic) ────────────────────────────────────────
+    // Quota check (atomic)
     const category = dto.category ?? getFileCategory(file.mimetype);
     const countsQuota = category !== 'general';
 
@@ -147,7 +145,7 @@ export class FileManagementController {
       throw new BadRequestException(`MIME type ${file.mimetype} not allowed`);
     }
 
-    // HIGH-11: Verify magic bytes match the declared MIME type.
+    // Verify magic bytes match the declared MIME type.
     const detectedMime = detectMimeFromBuffer(file.buffer);
     if (detectedMime && !isAllowedMimeType(detectedMime)) {
       throw new BadRequestException(
@@ -189,7 +187,7 @@ export class FileManagementController {
     dto: UploadFileDto,
     category: FileCategory,
   ) {
-    // ── Compress if image ───────────────────────────────────────────
+    // Compress if image
     let uploadBuffer = file.buffer;
     let uploadMimeType = file.mimetype;
     let imageWidth: number | undefined;
@@ -210,7 +208,7 @@ export class FileManagementController {
       originalSize = file.size;
     }
 
-    // ── S3 Upload ─────────────────────────────────────────────────
+    // S3 Upload
     const ext = (file.originalname.split('.').pop() ?? '').toLowerCase();
     const safeExt = SAFE_EXT.test(ext) ? ext : 'bin';
     // Use webp extension if compressed to webp
@@ -229,16 +227,13 @@ export class FileManagementController {
       }),
     );
 
-    // ── Thumbnail ─────────────────────────────────────────────────
     const thumbnailKey = await this.generateThumbnail(tenantId, file);
 
-    // ── Checksum ──────────────────────────────────────────────────
     const checksum = crypto
       .createHash('sha256')
       .update(uploadBuffer)
       .digest('hex');
 
-    // ── DB Record ─────────────────────────────────────────────────
     const fileRecord = await this.filesService.upsertByMessageId(
       tenantId,
       `upload_${storageKey}`, // unique key for uploads
@@ -309,7 +304,7 @@ export class FileManagementController {
     }
   }
 
-  // ── List ──────────────────────────────────────────────────────────
+  // List
 
   @Get()
   @RequirePermission('view', 'files')
@@ -356,7 +351,7 @@ export class FileManagementController {
     return { ...result, data: enrichedData };
   }
 
-  // ── Detail ────────────────────────────────────────────────────────
+  // Detail
 
   @Get(':id')
   @RequirePermission('view', 'files')
@@ -385,7 +380,7 @@ export class FileManagementController {
     };
   }
 
-  // ── Download URL ──────────────────────────────────────────────────
+  // Download URL
 
   @Get(':id/download')
   @RequirePermission('view', 'files')
@@ -403,7 +398,7 @@ export class FileManagementController {
     return { url, expiresIn: 3600 };
   }
 
-  // ── Update Access ─────────────────────────────────────────────────
+  // Update Access
 
   @Patch(':id/access')
   @RequirePermission('edit', 'files')
@@ -424,7 +419,7 @@ export class FileManagementController {
     );
   }
 
-  // ── Soft Delete ───────────────────────────────────────────────────
+  // Soft Delete
 
   @Delete(':id')
   @RequirePermission('delete', 'files')
@@ -436,7 +431,7 @@ export class FileManagementController {
     return this.filesService.softDelete(id, userId, userRole);
   }
 
-  // ── Hard Delete (SUPER_ADMIN) ─────────────────────────────────────
+  // Hard Delete (SUPER_ADMIN)
 
   @Delete(':id/purge')
   @RequirePermission('delete', 'files')
@@ -459,7 +454,7 @@ export class FileManagementController {
     return { deleted: true, freedBytes: fileSize };
   }
 
-  // ── Storage Overview ──────────────────────────────────────────────
+  // Storage Overview
 
   @Get('/storage/usage')
   @RequirePermission('view', 'storage')
@@ -510,7 +505,7 @@ export class FileManagementController {
     };
   }
 
-  // ── Cloud Drive Extensions ────────────────────────────────────────
+  // Cloud Drive Extensions
 
   @Patch(':id/rename')
   @RequirePermission('edit', 'files')

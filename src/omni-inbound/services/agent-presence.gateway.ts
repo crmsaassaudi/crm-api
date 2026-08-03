@@ -38,7 +38,7 @@ import { PresenceReconciliationService } from './presence-reconciliation.service
  *  - agent:status:changed   (server → client)  broadcast on peer change
  *  - agent:status:sync      (server → client)  authoritative sync on connect
  */
-// MED-08b: CORS origin from env
+// CORS origin from env
 @WebSocketGateway({
   namespace: '/omni',
   cors: {
@@ -63,7 +63,7 @@ export class AgentPresenceGateway {
     private readonly reconciliationService: PresenceReconciliationService,
   ) {}
 
-  // ─── Client Events ──────────────────────────────────────────────────
+  // Client Events
 
   /** Legacy: available | busy | away | offline. */
   @SubscribeMessage('agent:status:update')
@@ -152,7 +152,7 @@ export class AgentPresenceGateway {
     return { ok: true, agents: agents.map((a) => this.toWire(a.userId, a)) };
   }
 
-  // ─── Connection Lifecycle (called by OmniGateway) ─────────────────
+  // Connection Lifecycle (called by OmniGateway)
 
   async onAgentConnected(
     tenantId: string,
@@ -226,7 +226,7 @@ export class AgentPresenceGateway {
     return { allDisconnected };
   }
 
-  // ─── Grace Period Management ────────────────────────────────────────
+  // Grace Period Management
 
   private async startGraceTimer(
     tenantId: string,
@@ -235,7 +235,7 @@ export class AgentPresenceGateway {
     const timerKey = `${tenantId}:${userId}`;
     this.cancelGraceTimer(tenantId, userId);
 
-    // Phase 2.5: read grace period from tenant settings, fallback to hardcoded constant
+    // Read grace period from tenant settings, fallback to hardcoded constant
     let gracePeriodMs = GRACE_PERIOD_MS;
     try {
       const cfg = await this.settingsService.getSetting(
@@ -285,7 +285,7 @@ export class AgentPresenceGateway {
     }
   }
 
-  // ─── Helpers ────────────────────────────────────────────────────────
+  // Helpers
 
   private ctxOf(client: Socket): { tenantId: string; userId: string } | null {
     const user = client.data.user;

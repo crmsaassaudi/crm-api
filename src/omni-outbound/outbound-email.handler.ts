@@ -34,7 +34,7 @@ type EmailDeliveryProjection = {
 };
 
 /**
- * T-041: OutboundEmailHandler
+ * OutboundEmailHandler
  *
  * Extracted from OutboundService to isolate email/SMTP-specific concerns:
  * - SMTP transport resolution
@@ -197,7 +197,7 @@ export class OutboundEmailHandler {
     const { host, port, fromEmail, fromName } = transportConfig.publicSettings;
     const numPort = Number(port);
 
-    // ── Outbound Queue: Throttle + Daily Quota Check ──────────────────
+    // Outbound Queue: Throttle + Daily Quota Check
     const throttleResult = await this.outboundQueue.checkSendAllowed(
       tenantId,
       channelId,
@@ -219,7 +219,7 @@ export class OutboundEmailHandler {
     const { $, inlineAttachments } =
       await this.processHtmlWithInlineImages(htmlBody);
 
-    // ── Append Email Signature + Signature Fence ───────────────────────
+    // Append Email Signature + Signature Fence
     await this.appendEmailSignature(
       $,
       tenantId,
@@ -313,7 +313,7 @@ export class OutboundEmailHandler {
     });
   }
 
-  // ── Private Helpers ─────────────────────────────────────────────────────
+  // Private Helpers
 
   /** Parse HTML, download S3 inline images, and embed as CID attachments. */
   private async processHtmlWithInlineImages(
@@ -504,7 +504,7 @@ export class OutboundEmailHandler {
     });
   }
 
-  // ── Shared Helpers ──────────────────────────────────────────────────────
+  // Shared Helpers
 
   private async resolveSenderContext(agentId: string): Promise<{
     name: string;

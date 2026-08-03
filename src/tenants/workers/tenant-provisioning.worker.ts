@@ -111,9 +111,7 @@ export class TenantProvisioningWorker
     super();
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Main job handler
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async process(job: Job<TenantProvisioningJobData>): Promise<void> {
     const task = this.runJob(job);
@@ -172,17 +170,15 @@ export class TenantProvisioningWorker
         stepLabel: 'Starting…',
       });
 
-      // Phase 1: Keycloak
       await this.provisionKeycloakResources(provisioningId, data, saga);
 
-      // Phase 2: MongoDB + bot workspace
       const { redirectUrl, localUser } = await this.provisionMongoResources(
         provisioningId,
         data,
         saga,
       );
 
-      // ── Emit event for downstream listeners ─────────────────────────
+      // Emit event for downstream listeners
       runWithTenantContext(this.cls, saga.tenantId!, () =>
         this.eventEmitter.emit(
           'tenant.created',
@@ -213,7 +209,7 @@ export class TenantProvisioningWorker
     }
   }
 
-  /** Phase 1: reserve alias, create KC org, find-or-create KC user. */
+  /** Reserve alias, create KC org, find-or-create KC user. */
   private async provisionKeycloakResources(
     provisioningId: string,
     data: TenantProvisioningJobData,
@@ -273,7 +269,7 @@ export class TenantProvisioningWorker
     await this.reportStep(provisioningId, 4);
   }
 
-  /** Phase 2: create MongoDB tenant, bot workspace, confirm alias, mark READY. */
+  /** Create MongoDB tenant, bot workspace, confirm alias, mark READY. */
   private async provisionMongoResources(
     provisioningId: string,
     data: TenantProvisioningJobData,
@@ -557,9 +553,7 @@ export class TenantProvisioningWorker
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Helpers
-  // ─────────────────────────────────────────────────────────────────────────────
 
   private async reportStep(
     provisioningId: string,

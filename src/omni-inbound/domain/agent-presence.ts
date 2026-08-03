@@ -1,4 +1,4 @@
-// ─── Agent Presence (Redis record) ──────────────────────────────────────────
+// Agent Presence (Redis record)
 //
 // The persisted/real-time shape of an agent's presence in Redis. It composes
 // the canonical 4-axis state (presence-state.ts) with connection-tracking and
@@ -12,7 +12,6 @@
 //
 // `status` is a lowercase legacy display value kept for the existing frontend
 // and the work-time report; it is derived, never authoritative.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import {
   CapacityStatus,
@@ -36,7 +35,7 @@ export interface AgentPresence {
   userId: string;
   tenantId: string;
 
-  // ── 4-Axis canonical state ─────────────────────────────────────────────────
+  // 4-Axis canonical state
   presenceStatus: PresenceStatus;
   routingStatus: RoutingStatus;
   workStatus: WorkStatus;
@@ -46,7 +45,7 @@ export interface AgentPresence {
   /** Derived lowercase display status for the legacy UI / work-time report. */
   status: LegacyIntentStatus;
 
-  // ── Capacity ───────────────────────────────────────────────────────────────
+  // Capacity
   activeConversations: number;
   /** Weighted workload used for blended-channel capacity decisions. */
   activeCapacityUnits: number;
@@ -55,7 +54,7 @@ export interface AgentPresence {
   /** Skills cached from the user record at connect time for skill-based routing. */
   skills?: string[];
 
-  // ── Connection tracking ──────────────────────────────────────────────────
+  // Connection tracking
   /** Active socket IDs — multi-tab/multi-device support (§1.6). */
   connections: string[];
 
@@ -73,7 +72,7 @@ export interface AgentPresence {
   lastCommandTs?: number;
 }
 
-// ─── Redis Key Helpers ──────────────────────────────────────────────────────
+// Redis Key Helpers
 
 export const AGENT_PRESENCE_PREFIX = 'omni:agent:presence';
 
@@ -86,7 +85,7 @@ export const tenantPresenceHashKey = (tenantId: string) =>
 export const tenantAgentLoadKey = (tenantId: string) =>
   `omni:agent_load:${tenantId}`;
 
-// ─── Constants ──────────────────────────────────────────────────────────────
+// Constants
 // NOTE: heartbeat/grace are still hardcoded here. Phase 2.5 wires them to the
 // `omni_presence` tenant setting (heartbeatTimeout=60s, gracePeriod=120s).
 

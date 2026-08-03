@@ -85,7 +85,7 @@ export class InboundProcessorService {
     }
 
     for (const message of messages) {
-      // T07: stamp a correlationId at the entry point if the adapter didn't
+      // Stamp a correlationId at the entry point if the adapter didn't
       // supply one. It propagates through every downstream event and enables
       // end-to-end log tracing without distributed tracing infra.
       message.correlationId ??= randomUUID();
@@ -150,7 +150,7 @@ export class InboundProcessorService {
   }
 
   /**
-   * F1 Fix — Livechat inbound bridge.
+   * Livechat inbound bridge.
    *
    * LivechatInboundBridge emits `omni.inbound.webhook` via EventEmitter2.
    * This handler receives it and routes it through the same normalize → queue

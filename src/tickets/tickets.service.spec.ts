@@ -105,9 +105,6 @@ describe('TicketsService', () => {
       .mockResolvedValue(undefined);
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // CREATE
-  // ═══════════════════════════════════════════════════════════════════
   describe('create', () => {
     it('should create ticket with auto-generated ticket number', async () => {
       const dto = createTicketDto();
@@ -283,9 +280,6 @@ describe('TicketsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // FIND
-  // ═══════════════════════════════════════════════════════════════════
   describe('findOne', () => {
     it('should return ticket by id', async () => {
       const ticket = createTicket();
@@ -346,9 +340,7 @@ describe('TicketsService', () => {
     });
   });
 
-  // ===================================================================
   // MERGE — the same C-1 defect the contact audit found
-  // ===================================================================
   describe('mergeTickets', () => {
     // Real ObjectId hex, not 'target'/'source'. The registry casts ids for
     // ObjectId-kind references, so a placeholder throws inside the re-parent loop —
@@ -497,9 +489,7 @@ describe('TicketsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // UPDATE — Status Transition Guard
-  // ═══════════════════════════════════════════════════════════════════
   describe('update', () => {
     it('should update ticket with valid data', async () => {
       const existing = createTicket();
@@ -578,9 +568,7 @@ describe('TicketsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // DELETE
-  // ═══════════════════════════════════════════════════════════════════
   describe('remove', () => {
     it('should delete ticket by id', async () => {
       repository.remove.mockResolvedValue(undefined);
@@ -589,9 +577,7 @@ describe('TicketsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // IMPORT VALIDATION
-  // ═══════════════════════════════════════════════════════════════════
   describe('uploadImportFile', () => {
     it('should throw when no file provided', async () => {
       await expect(service.uploadImportFile(null as any)).rejects.toThrow(

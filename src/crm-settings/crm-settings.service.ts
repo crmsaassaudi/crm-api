@@ -121,7 +121,7 @@ export class CrmSettingsService {
     return this.repository.update(tid, key, value);
   }
 
-  // ── List Views (atomic array ops, cache-invalidating) ────────────────────
+  // List Views (atomic array ops, cache-invalidating)
   // These delegate to the repository's atomic $push/$set/$pull operators so
   // ListViewsService never has to read-modify-write the whole views array.
 

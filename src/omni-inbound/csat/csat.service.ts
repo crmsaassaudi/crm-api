@@ -234,7 +234,6 @@ export class CsatService {
     const avgScore =
       responded > 0 ? Math.round((totalScore / responded) * 10) / 10 : null;
 
-    // By agent
     const byAgentRaw = await this.conversationModel
       .aggregate([
         { $match: respondedMatch },
@@ -249,7 +248,6 @@ export class CsatService {
       ])
       .exec();
 
-    // By channel
     const byChannelRaw = await this.conversationModel
       .aggregate([
         { $match: respondedMatch },

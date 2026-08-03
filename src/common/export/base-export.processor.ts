@@ -92,7 +92,7 @@ export abstract class BaseExportProcessor<
     // no-op — subclasses may override
   }
 
-  // ─────────────────────── LIFECYCLE HOOKS ───────────────────────
+  // LIFECYCLE HOOKS
 
   @OnWorkerEvent('failed')
   async onFailed(job: Job<TJobData>, error: Error) {
@@ -105,8 +105,6 @@ export abstract class BaseExportProcessor<
       completedAt: new Date(),
     });
   }
-
-  // ─────────────────────── MAIN PIPELINE ───────────────────────
 
   protected async handle(job: Job<TJobData>): Promise<ExportResult> {
     const cfg = this.getModuleConfig();
@@ -123,9 +121,6 @@ export abstract class BaseExportProcessor<
     signal: AbortSignal,
   ): Promise<ExportResult> {
     const data = job.data;
-    // Runtime schemas (custom fields, reference labels) must be loaded before
-    // resolving requested columns. Resolving first made the first job use the
-    // static schema and allowed a later job to inherit stale tenant columns.
     const jobConfig = await this.beforeExport(data);
     const cfg = jobConfig ?? this.getModuleConfig();
     const format = data.format;
@@ -235,7 +230,7 @@ export abstract class BaseExportProcessor<
     }
   }
 
-  // ─────────────────────── HELPERS ───────────────────────
+  // HELPERS
 
   private buildRow(
     columns: ExportColumn[],

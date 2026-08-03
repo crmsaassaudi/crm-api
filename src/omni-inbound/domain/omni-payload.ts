@@ -99,7 +99,7 @@ export interface OmniPayload {
   providerTimestamp: Date;
 
   /**
-   * T07: trace ID for end-to-end log correlation.
+   * Trace ID for end-to-end log correlation.
    * Generated once per inbound webhook call (or per socket message) and
    * propagated through all downstream events and audit log entries.
    *

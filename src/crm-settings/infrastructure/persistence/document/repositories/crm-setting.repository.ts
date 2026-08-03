@@ -221,7 +221,7 @@ export class CrmSettingRepository {
     return doc ? CrmSettingMapper.toDomain(doc) : null;
   }
 
-  // ── List Views (atomic array ops on value.views) ─────────────────────────
+  // List Views (atomic array ops on value.views)
 
   /**
    * Atomically append a view. Upserts the setting document and guards against

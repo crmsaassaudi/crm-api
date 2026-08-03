@@ -30,7 +30,7 @@ export class CsvExportWriter implements ExportFormatWriter {
   }
 
   private escape(value: string): string {
-    // HIGH-03: Neutralize formula injection before RFC 4180 quoting
+    // Neutralize formula injection before RFC 4180 quoting
     const safe = sanitizeCellValue(value ?? '');
     return `"${safe.replace(/"/g, '""')}"`;
   }

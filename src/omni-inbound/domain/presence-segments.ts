@@ -1,4 +1,4 @@
-// ─── Presence Reporting Segments (pure diff logic) ──────────────────────────
+// Presence Reporting Segments (pure diff logic)
 //
 // Each axis (presence / routing / work) produces a timeline of CLOSED segments
 // for reporting (docs/agent-presence-workforce-spec.md §3.1). When an axis
@@ -8,7 +8,6 @@
 //
 // This module is pure so the close/open arithmetic can be unit-tested in
 // isolation; the service layer adds Redis (open-segment store) + the queue.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import { PresenceStatus, RoutingStatus, WorkStatus } from './presence-state';
 

@@ -108,8 +108,6 @@ export class DealRepository extends BaseDocumentRepository<
     return where;
   }
 
-  // ─────────────────────────── EXPORT ───────────────────────────
-
   private buildExportFilter(params: {
     ids?: string[];
     filters?: any;

@@ -5,7 +5,7 @@ import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
  * EscalationAutomationListener — re-emits escalation events under the
  * `automation.trigger` name.
  *
- * ── NOT CONSUMED BY THE ENGINE ─────────────────────────────────────────────
+ * NOT CONSUMED BY THE ENGINE
  * The docblock here used to claim "AutomationRulesService listens on
  * `automation.trigger` and evaluates all enabled rules whose trigger matches
  * `conversation.escalated`". It does not: AutomationRulesService has no

@@ -41,7 +41,7 @@ function resolveModule(module: string): string | null {
   return LOCALIZED_MODULE_MAP[module.toLowerCase()] ?? null;
 }
 
-// ── Per-view helpers ───────────────────────────────────────────────
+// Per-view helpers
 
 interface ViewPatchResult {
   deleted: boolean;
@@ -137,7 +137,7 @@ function deduplicateViews(views: any[]): { removed: number; dirty: boolean } {
   return { removed, dirty };
 }
 
-// ── Main migration ─────────────────────────────────────────────────
+// Main migration
 
 async function migrateListViews() {
   const uri = process.env.DATABASE_URL;

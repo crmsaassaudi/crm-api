@@ -141,9 +141,9 @@ import { isWorkerRuntime, isEmailWorkerRuntime } from '../config/runtime-role';
     ]),
     // forwardRef to avoid circular dependency
     forwardRef(() => AutomationRulesModule),
-    // Phase 2: WebSocket for real-time alerts
+    // WebSocket for real-time alerts
     SocketModule,
-    // Phase 4: CRM Settings for tenant-level email config
+    // CRM Settings for tenant-level email config
     CrmSettingsModule,
     MessageTemplatesModule,
   ],
@@ -185,13 +185,13 @@ import { isWorkerRuntime, isEmailWorkerRuntime } from '../config/runtime-role';
     SmtpAdapter,
     AdapterRegistryService,
 
-    // Phase 2: Health Check & Alert
+    // Health Check & Alert
     ...(isWorkerRuntime() || isEmailWorkerRuntime()
       ? [ChannelHealthCheckService]
       : []),
     ChannelAlertService,
 
-    // Phase 3: Transport Pool (LRU cache for decrypted credentials)
+    // Transport Pool (LRU cache for decrypted credentials)
     TransportPoolService,
 
     // Channel support pool — the authorization seam for omni assignment

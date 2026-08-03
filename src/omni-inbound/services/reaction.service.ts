@@ -45,7 +45,7 @@ export class ReactionService {
       // original HTTP/WebSocket CLS scope, so the Mongoose tenant-filter
       // plugin requires activeTenantId in CLS for all DB operations.
       await runWithTenantContext(this.cls, payload.tenantId, async () => {
-        // ── Message lookup — two clean paths, no fallback chains ──
+        // Message lookup — two clean paths, no fallback chains
         //
         // 1. messageId (MongoDB _id) — set by internal callers:
         //    • OmniGateway (agent reaction)

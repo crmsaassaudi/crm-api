@@ -30,12 +30,10 @@ import { AccountTypeSchemaClass } from '../../account-settings/entities/account-
 import { CustomFieldsService } from '../../custom-fields/custom-fields.service';
 import { loadCustomFieldExportColumns } from '../../common/export/custom-field-export-columns';
 
-// ── Helpers ─────────────────────────────────────────────────────────
+// Helpers
 
 const resolve = (map: Map<string, string>, val: unknown): string =>
   map.get(String(val ?? '')) ?? String(val ?? '');
-
-// ── Columns ─────────────────────────────────────────────────────────
 
 function buildAccountExportColumns(
   userMap: Map<string, string>,
@@ -125,7 +123,7 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
     this.storage = storageFactory.create('accounts');
   }
 
-  // ── Lifecycle hook ────────────────────────────────────────────────
+  // Lifecycle hook
 
   protected async beforeExport(
     data: AccountExportJobData,
@@ -183,7 +181,7 @@ export class AccountExportProcessor extends BaseExportProcessor<AccountExportJob
     return map;
   }
 
-  // ── BaseExportProcessor abstract implementations ──────────────────
+  // BaseExportProcessor abstract implementations
 
   protected getModuleConfig(): ExportModuleConfig {
     return this.buildModuleConfig([...STATIC_COLUMNS]);

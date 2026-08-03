@@ -150,7 +150,7 @@ export class AutomationWorkflowService {
     }
   }
 
-  // ── Queries ────────────────────────────────────────────────────────────
+  // Queries
 
   async findAll() {
     const workflows = await this.repo.findAll(this.tenantId);
@@ -169,7 +169,7 @@ export class AutomationWorkflowService {
     return workflows.map((workflow) => this.redactWorkflowHeaders(workflow));
   }
 
-  // ── Mutations ──────────────────────────────────────────────────────────
+  // Mutations
 
   async create(dto: CreateWorkflowDto) {
     this.validateWorkflow(dto);
@@ -225,7 +225,7 @@ export class AutomationWorkflowService {
     const existing = await this.repo.findById(this.tenantId, id);
     if (!existing) throw new NotFoundException('Workflow not found');
 
-    // ── Optimistic Concurrency Control ──────────────────────────────────
+    // Optimistic Concurrency Control
     // If the client sends updatedAt, verify it matches the DB timestamp.
     // This prevents 'Last Write Wins' when multiple admins edit simultaneously.
     if (dto.updatedAt) {
@@ -286,7 +286,6 @@ export class AutomationWorkflowService {
       persistData.publishedNodes = existingPublishedNodes.nodes;
     }
 
-    // Compute diff for audit
     const diff = this.auditService.computeDiff(
       existingForDiff,
       encryptedUpdateData,
@@ -423,7 +422,7 @@ export class AutomationWorkflowService {
     });
   }
 
-  // ── Validation ─────────────────────────────────────────────────────────
+  // Validation
 
   private validateWorkflow(dto: CreateWorkflowDto): void {
     const { nodes, edges } = dto;
@@ -474,7 +473,7 @@ export class AutomationWorkflowService {
       }
     }
 
-    // CRIT-04: reject cyclic graphs. The workflow builder is a DAG (trigger →
+    // Reject cyclic graphs. The workflow builder is a DAG (trigger →
     // condition/action → …); a back-edge is a user error that would make the
     // runtime traversal recurse until the Redis strict-loop guard (or stack)
     // stops it. Catching it at save time is cheaper and clearer.

@@ -136,9 +136,7 @@ describe('OutboundService', () => {
     );
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // HAPPY PATH — successful send
-  // ═══════════════════════════════════════════════════════════════════
   describe('sendAgentMessage — happy path', () => {
     it('should persist message, send via adapter, update status to sent', async () => {
       const result = await service.sendAgentMessage(baseSendParams);
@@ -286,9 +284,7 @@ describe('OutboundService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // IDEMPOTENCY — duplicate send prevention
-  // ═══════════════════════════════════════════════════════════════════
   describe('sendAgentMessage — idempotency', () => {
     it('should return existing message when idempotencyKey matches a non-failed message', async () => {
       // Simulate: DB already has a 'sent' message with this key
@@ -357,7 +353,6 @@ describe('OutboundService', () => {
         idempotencyKey: 'idem_concurrent',
       });
 
-      // Redis SET with NX called
       expect(redis.set).toHaveBeenCalledWith(
         'omni:outbound:idempotency:tenant_1:idem_concurrent',
         'processing',
@@ -395,9 +390,7 @@ describe('OutboundService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // REPLY WINDOW — platform-specific enforcement
-  // ═══════════════════════════════════════════════════════════════════
   describe('sendAgentMessage — reply window', () => {
     it('should throw ReplyWindowExpiredException when window is expired', async () => {
       // Customer last message was 25 hours ago → beyond 24h Facebook window
@@ -427,9 +420,6 @@ describe('OutboundService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // REPLY WINDOW STATUS — getReplyWindowStatus
-  // ═══════════════════════════════════════════════════════════════════
   describe('getReplyWindowStatus', () => {
     it('should report window open when within 24h for Facebook', () => {
       const status = service.getReplyWindowStatus({
@@ -474,9 +464,7 @@ describe('OutboundService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // PROVIDER FAILURE — status rollback + Redis cleanup
-  // ═══════════════════════════════════════════════════════════════════
   describe('sendAgentMessage — provider failure', () => {
     it('should mark message as failed when adapter throws', async () => {
       adapters
@@ -534,9 +522,7 @@ describe('OutboundService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // MISSING CONVERSATION / CHANNEL
-  // ═══════════════════════════════════════════════════════════════════
   describe('sendAgentMessage — missing entities', () => {
     it('should throw when conversation not found', async () => {
       conversationRepo.findById.mockResolvedValueOnce(null);
@@ -555,9 +541,6 @@ describe('OutboundService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // BOT MESSAGE — idempotency
-  // ═══════════════════════════════════════════════════════════════════
   describe('sendBotMessage — idempotency', () => {
     it('should return existing bot message when idempotencyKey matches', async () => {
       messageRepo.findByIdempotencyKey.mockResolvedValueOnce({
@@ -604,9 +587,7 @@ describe('OutboundService', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════
 // normalizeOutboundSource — pure function
-// ═══════════════════════════════════════════════════════════════════
 describe('normalizeOutboundSource (via sendAgentMessage)', () => {
   // We test source normalization through the service since the function
   // is module-private. The persisted message.source shows the normalized value.

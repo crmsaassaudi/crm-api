@@ -95,7 +95,7 @@ export class AssignmentSettingSchemaClass extends EntityDocumentHelper {
   @Prop({ default: false })
   requireOnline: boolean;
 
-  // ── Preferred-assignee ("sticky") ────────────────────────────────────────
+  // Preferred-assignee ("sticky")
   //
   // Unifies omni's `stickyRoutingDefault` with the record engine's
   // `prioritizeCurrentOwner`: both meant "give the person who handled this

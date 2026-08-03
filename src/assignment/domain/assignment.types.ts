@@ -12,7 +12,7 @@
  * DTOs, evaluator, UI contract — derives from these constants.
  */
 
-// ── Object type ────────────────────────────────────────────────────────────
+// Object type
 //
 // Named `objectType`, not `module`: "module" already means a NestJS module and,
 // separately, a custom-fields module. The value names the kind of record being
@@ -39,7 +39,7 @@ export function isAssignmentObjectType(
   );
 }
 
-// ── Strategy ───────────────────────────────────────────────────────────────
+// Strategy
 //
 // Kebab-case only. `sticky` is NOT a strategy here: sticky is a *preference*
 // (see AssignRequest.preferred) that runs before the strategy and falls through
@@ -87,7 +87,7 @@ export function normalizeStrategy(
   return legacy[lowered] ?? fallback;
 }
 
-// ── Condition operators ────────────────────────────────────────────────────
+// Condition operators
 //
 // The union of both legacy sets, so no existing rule loses expressiveness and
 // every objectType gains the operators the other engine had.
@@ -136,7 +136,7 @@ export const VALUELESS_OPERATORS: readonly ConditionOperator[] = [
 export const MATCH_TYPES = ['all', 'any'] as const;
 export type MatchType = (typeof MATCH_TYPES)[number];
 
-// ── Outcome & reason keys ──────────────────────────────────────────────────
+// Outcome & reason keys
 
 export const ASSIGNMENT_OUTCOMES = [
   /** An assignee was selected, reserved and persisted. */

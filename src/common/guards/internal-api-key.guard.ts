@@ -44,7 +44,7 @@ export class InternalApiKeyGuard implements CanActivate {
     const provided = request.headers['x-internal-api-key'];
     const key = Array.isArray(provided) ? provided[0] : provided;
 
-    // LOW-02/LOW-03: Use constant-time comparison to prevent timing attacks.
+    // Constant-time comparison, so a wrong key cannot be recovered by timing.
     // A plain `!==` leaks key material byte-by-byte via response latency.
     if (
       !key ||

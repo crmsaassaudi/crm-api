@@ -31,7 +31,7 @@ export class MessageTemplatesService {
     private readonly cls: ClsService,
   ) {}
 
-  // ─── EMAIL TEMPLATES CRUD ───
+  // EMAIL TEMPLATES CRUD
 
   async findAllEmail(): Promise<EmailTemplate[]> {
     const tenantId = this.cls.get('tenantId');
@@ -69,7 +69,7 @@ export class MessageTemplatesService {
     if (!deleted) throw new NotFoundException('Email template not found');
   }
 
-  // ─── SMS TEMPLATES CRUD ───
+  // SMS TEMPLATES CRUD
 
   async findAllSMS(): Promise<SMSTemplate[]> {
     const tenantId = this.cls.get('tenantId');
@@ -104,7 +104,7 @@ export class MessageTemplatesService {
     if (!deleted) throw new NotFoundException('SMS template not found');
   }
 
-  // ─── WHATSAPP TEMPLATES CRUD & SYNC ───
+  // WHATSAPP TEMPLATES CRUD & SYNC
 
   async findAllWhatsApp(): Promise<WhatsAppTemplate[]> {
     const tenantId = this.cls.get('tenantId');

@@ -56,7 +56,7 @@ export class EmailNormalizerService {
 
   constructor(private readonly eventEmitter: EventEmitter2) {}
 
-  // ── 1. Auto-Responder Detection ─────────────────────────────────────────
+  // 1. Auto-Responder Detection
 
   /**
    * Check if an email is an auto-reply/auto-responder that should be dropped.
@@ -121,7 +121,7 @@ export class EmailNormalizerService {
     return false;
   }
 
-  // ── 2. Bounce Detection ────────────────────────────────────────────────
+  // 2. Bounce Detection
 
   /**
    * Check if an email is a Delivery Status Notification (bounce).
@@ -157,10 +157,8 @@ export class EmailNormalizerService {
       return null;
     }
 
-    // Extract original Message-ID from the bounce body
     const originalMessageId = this.extractOriginalMessageId(textBody, headers);
 
-    // Extract bounce reason
     const reason = this.extractBounceReason(textBody);
 
     this.logger.log(
@@ -198,7 +196,7 @@ export class EmailNormalizerService {
     });
   }
 
-  // ── 3. Thread Correlation — Hybrid 3-Layer Strategy ────────────────────
+  // 3. Thread Correlation — Hybrid 3-Layer Strategy
 
   /**
    * Extract threading information from email headers.
@@ -301,7 +299,7 @@ export class EmailNormalizerService {
     return Math.round(score * 100) / 100;
   }
 
-  // ── 4. Lazy Reply Guard — Soft-Link ────────────────────────────────────
+  // 4. Lazy Reply Guard — Soft-Link
 
   /**
    * Determine if a reply should create a soft-linked new conversation.
@@ -369,7 +367,7 @@ export class EmailNormalizerService {
     return result.action === 'soft_link';
   }
 
-  // ── 5. Participant Extraction ──────────────────────────────────────────
+  // 5. Participant Extraction
 
   /**
    * Extract all email participants for GDPR contactIds mapping.
@@ -414,7 +412,7 @@ export class EmailNormalizerService {
       : text;
   }
 
-  // ── Private Helpers ────────────────────────────────────────────────────
+  // Private Helpers
 
   getHeader(
     headers: Record<string, string | string[]>,

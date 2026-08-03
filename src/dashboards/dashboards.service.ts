@@ -27,7 +27,7 @@ export class DashboardsService {
     return this.cls.get('userId');
   }
 
-  // ── List ─────────────────────────────────────────────────────────────────
+  // List
 
   async findAll() {
     return this.model
@@ -39,7 +39,7 @@ export class DashboardsService {
       .lean();
   }
 
-  // ── Get one ───────────────────────────────────────────────────────────────
+  // Get one
 
   async findOne(id: string) {
     const doc = await this.model
@@ -51,8 +51,6 @@ export class DashboardsService {
     }
     return doc;
   }
-
-  // ── Create ────────────────────────────────────────────────────────────────
 
   async create(dto: CreateDashboardDto): Promise<DashboardDocument> {
     const doc = await this.model.create({
@@ -74,7 +72,7 @@ export class DashboardsService {
     return doc.toObject() as DashboardDocument;
   }
 
-  // ── Update (layout + metadata) ────────────────────────────────────────────
+  // Update (layout + metadata)
 
   async update(
     id: string,
@@ -93,8 +91,6 @@ export class DashboardsService {
     return updated as DashboardDocument;
   }
 
-  // ── Delete ────────────────────────────────────────────────────────────────
-
   async delete(id: string): Promise<void> {
     const existing = await this.findOne(id);
     if (existing.ownerId !== this.userId) {
@@ -105,7 +101,7 @@ export class DashboardsService {
     await this.model.deleteOne({ _id: id, tenantId: this.tenantId });
   }
 
-  // ── Duplicate (clone shared dashboard to own) ─────────────────────────────
+  // Duplicate (clone shared dashboard to own)
 
   async duplicate(id: string): Promise<DashboardDocument> {
     const source = await this.findOne(id);

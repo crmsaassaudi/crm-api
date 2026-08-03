@@ -150,7 +150,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     return task;
   }
 
-  // ── Stale Lock Cleanup (hot-reload / crash recovery) ─────────────────────
+  // Stale Lock Cleanup (hot-reload / crash recovery)
 
   /**
    * On startup, delete any IMAP locks left by a previous process.
@@ -192,7 +192,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // ── Master Scheduler ────────────────────────────────────────────────────
+  // Master Scheduler
 
   /**
    * Master tick: runs every minute, decides which tenants need polling.
@@ -233,7 +233,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // ── Per-Tenant Polling Decision ─────────────────────────────────────────
+  // Per-Tenant Polling Decision
 
   /**
    * Decide whether to poll this tenant's mailbox NOW.
@@ -366,7 +366,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  // ── IMAP Polling Logic ──────────────────────────────────────────────────
+  // IMAP Polling Logic
 
   /**
    * Connect to IMAP, fetch UNSEEN emails, process each through normalizer.
@@ -514,7 +514,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // ── Email Processing ────────────────────────────────────────────────────
+  // Email Processing
 
   /**
    * Process a single fetched email through the normalizer pipeline.
@@ -886,7 +886,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // ── Config Discovery ────────────────────────────────────────────────────
+  // Config Discovery
 
   private async refreshDuplicateEmailLabels(
     config: any,
@@ -1078,7 +1078,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // ── Basic Email Parsers ─────────────────────────────────────────────────
+  // Basic Email Parsers
 
   // parseHeaders and parseBody are now handled by mailparser in processEmail()
 }

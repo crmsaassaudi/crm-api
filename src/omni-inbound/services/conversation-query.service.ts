@@ -177,9 +177,7 @@ export class ConversationQueryService {
     };
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Helpers
-  // ────────────────────────────────────────────────────────────────
 
   parsePositiveInt(
     value: string | undefined,

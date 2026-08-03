@@ -11,7 +11,7 @@ import { MongoClient, ObjectId } from 'mongodb';
  * drift is possible by design — a projection that can fail a contact write would be
  * worse).
  *
- * ── Read this before running ──
+ * Read this before running
  *
  * The unique index `(tenantId, type, normalisedValue)` is the point of the collection:
  * it turns the app-level `assertIdentityIsUnique` read-then-write into a real

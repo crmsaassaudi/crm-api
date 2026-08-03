@@ -62,7 +62,7 @@ function parseArgs(): Args {
   };
 }
 
-// ── Keycloak admin REST (same realm/credentials the API uses) ────────────────
+// Keycloak admin REST (same realm/credentials the API uses)
 
 class KeycloakAdmin {
   private token = '';
@@ -190,7 +190,7 @@ class KeycloakAdmin {
   }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// Helpers
 
 const log = (line: string) => console.log(line);
 
@@ -372,7 +372,7 @@ async function purgeLegacy(
   }
 }
 
-// ── Seed steps ──────────────────────────────────────────────────────────────
+// Seed steps
 
 /**
  * Refuse to write over a row this fixture does not own.
@@ -1354,7 +1354,7 @@ async function invalidateCaches(tenantId: string, dryRun: boolean) {
   }
 }
 
-// ── Main ────────────────────────────────────────────────────────────────────
+// Main
 
 async function run() {
   const { dryRun, reset, purge: purgeOnly } = parseArgs();

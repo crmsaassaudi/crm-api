@@ -40,18 +40,13 @@ describe('TenantRolesGuard', () => {
     guard = new TenantRolesGuard(reflector, usersService, cls as any);
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // NO REQUIRED ROLES — allow all
-  // ═══════════════════════════════════════════════════════════════════
   it('should allow access when no roles are required', async () => {
     const context = createContext([]);
     const result = await guard.canActivate(context);
     expect(result).toBe(true);
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // NO USER PAYLOAD — deny
-  // ═══════════════════════════════════════════════════════════════════
   it('should deny access when no user in request', async () => {
     const context = createContext([TenantRoleEnum.ADMIN], null);
     const result = await guard.canActivate(context);
@@ -66,9 +61,6 @@ describe('TenantRolesGuard', () => {
     expect(result).toBe(false);
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // USER NOT FOUND — deny
-  // ═══════════════════════════════════════════════════════════════════
   it('should deny access when user is not found in database', async () => {
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(null);
     const context = createContext([TenantRoleEnum.ADMIN]);
@@ -76,9 +68,6 @@ describe('TenantRolesGuard', () => {
     expect(result).toBe(false);
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // SUPER_ADMIN BYPASS
-  // ═══════════════════════════════════════════════════════════════════
   it('should allow SUPER_ADMIN to bypass tenant role check', async () => {
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(
       createUser({
@@ -91,9 +80,7 @@ describe('TenantRolesGuard', () => {
     expect(result).toBe(true);
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // TENANT ISOLATION — no tenantId in CLS
-  // ═══════════════════════════════════════════════════════════════════
   it('should deny when no tenantId in CLS context', async () => {
     cls.get = jest.fn((_key: string) => undefined) as any;
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(
@@ -104,9 +91,7 @@ describe('TenantRolesGuard', () => {
     expect(result).toBe(false);
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // TENANT ISOLATION — no membership in tenant
-  // ═══════════════════════════════════════════════════════════════════
   it('should deny when user has no membership in current tenant', async () => {
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(
       createUser({
@@ -121,9 +106,7 @@ describe('TenantRolesGuard', () => {
     expect(result).toBe(false);
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // ROLE MATCHING
-  // ═══════════════════════════════════════════════════════════════════
   it('should allow when user role matches required role', async () => {
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(
       createUser({
@@ -169,9 +152,7 @@ describe('TenantRolesGuard', () => {
     expect(result).toBe(false);
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // CROSS-TENANT ISOLATION — user in tenant_2 cannot access tenant_1
-  // ═══════════════════════════════════════════════════════════════════
   it('should deny cross-tenant access even with correct role in other tenant', async () => {
     usersService.findByKeycloakIdAndProvider.mockResolvedValue(
       createUser({

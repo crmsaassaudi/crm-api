@@ -78,7 +78,6 @@ export abstract class BaseImportProcessor<
   /** Import report service for this module. */
   protected abstract getReportService(): ImportReportService;
 
-  /** Redis lock service. */
   protected abstract getLockService(): RedisLockService;
 
   /** Redis client for pub/sub. */
@@ -99,7 +98,7 @@ export abstract class BaseImportProcessor<
    */
   protected readonly allowPartialBatchFailure: boolean = true;
 
-  // ─────────────────────── ABSTRACT: Module-specific logic ────────────────
+  // ABSTRACT: Module-specific logic
 
   /**
    * Map a raw CSV/XLSX row onto entity fields using the user's column mapping.
@@ -198,7 +197,7 @@ export abstract class BaseImportProcessor<
     // Default: no-op. Contact uses this to reconcile normalized identities.
   }
 
-  // ─────────────────────── LIFECYCLE HOOKS ────────────────────────────
+  // LIFECYCLE HOOKS
 
   /** Update MongoDB history when a job fails. */
   @OnWorkerEvent('failed')
@@ -213,7 +212,7 @@ export abstract class BaseImportProcessor<
     });
   }
 
-  // ─────────────────────── MAIN PIPELINE ────────────────────────────
+  // MAIN PIPELINE
 
   protected async handle(job: Job<TJobData>): Promise<ImportResult> {
     const { tenantId } = job.data;
@@ -334,7 +333,7 @@ export abstract class BaseImportProcessor<
       stream?.destroy();
     }
 
-    // ── Finalize ──
+    // Finalize
 
     if (dryRun) {
       const preview: ImportPreview = {
@@ -400,7 +399,7 @@ export abstract class BaseImportProcessor<
     };
   }
 
-  // ─────────────────────── BATCH PROCESSING ────────────────────────────
+  // BATCH PROCESSING
 
   private async processBatch(
     batch: MappedRow[],
@@ -426,10 +425,10 @@ export abstract class BaseImportProcessor<
 
     context.summary.total += batch.length;
 
-    // ── Step 1: Required-field validation ──
+    // Step 1: Required-field validation
     const valid = this.validateBatchRows(batch, data, context.summary, errors);
 
-    // ── Step 2: Reference resolution ──
+    // Step 2: Reference resolution
     const { validWithRefs, resolvedRefs } = this.resolveRefs(
       valid,
       context.refResolver,
@@ -437,7 +436,7 @@ export abstract class BaseImportProcessor<
       errors,
     );
 
-    // ── Step 3: Dedup lookup ──
+    // Step 3: Dedup lookup
     const dedupMatches = context.dedupConfig
       ? await context.dedupEngine.lookupBatch(
           this.getEntityModel(),
@@ -448,10 +447,10 @@ export abstract class BaseImportProcessor<
         )
       : null;
 
-    // ── Step 3.5: Batch-wide pre-write resolution (e.g. tag name → id) ──
+    // Step 3.5: Batch-wide pre-write resolution (e.g. tag name → id)
     await this.beforeBuildOps(validWithRefs, data);
 
-    // ── Step 4: Build bulk-write ops ──
+    // Step 4: Build bulk-write ops
     this.buildBatchOps({
       rows: validWithRefs,
       data,
@@ -466,7 +465,7 @@ export abstract class BaseImportProcessor<
       affected,
     });
 
-    // ── Step 5: Execute (skip for dry-run) ──
+    // Step 5: Execute (skip for dry-run)
     await this.executeBatchOps(
       ops,
       opMeta,
@@ -834,7 +833,7 @@ export abstract class BaseImportProcessor<
     });
   }
 
-  // ─────────────────────── HELPERS ────────────────────────────
+  // HELPERS
 
   private async loadCheckpoint(
     bullJobId: string,

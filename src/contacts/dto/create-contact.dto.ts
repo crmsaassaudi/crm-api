@@ -151,7 +151,7 @@ export class CreateContactDto {
   // in contact-report.service.ts) — i.e. write records that do not show up in
   // the numbers. `forbidNonWhitelisted` now rejects the field outright.
 
-  // ────────────────── SOCIAL PROFILES ──────────────────
+  // SOCIAL PROFILES
 
   @ApiProperty({ example: 'https://linkedin.com/in/johndoe' })
   @IsOptional()

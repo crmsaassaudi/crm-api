@@ -133,9 +133,7 @@ export class ChannelSupportService {
     private readonly userModel: Model<any>,
   ) {}
 
-  // ──────────────────────────────────────────────────────────────────────
   // Write path
-  // ──────────────────────────────────────────────────────────────────────
 
   /**
    * Replace the support pool of a channel. Omitted DTO fields keep their
@@ -249,9 +247,7 @@ export class ChannelSupportService {
     this.invalidate(tenantId);
   }
 
-  // ──────────────────────────────────────────────────────────────────────
   // Read path
-  // ──────────────────────────────────────────────────────────────────────
 
   /**
    * Resolve one channel's pool into concrete agent ids (direct members ∪ group
@@ -442,7 +438,7 @@ export class ChannelSupportService {
         continue;
       }
       restrictedExists = true;
-      // L19: `agentIds` is already the union of direct userIds and active
+      // `agentIds` is already the union of direct userIds and active
       // group members (buildPools). Checking `pool.groupIds` again here used
       // to let a channel stay "visible" through a group that had gone
       // inactive — a group buildPools had already dropped from the pool a
@@ -540,9 +536,7 @@ export class ChannelSupportService {
     this.poolCache.delete(tenantId);
   }
 
-  // ──────────────────────────────────────────────────────────────────────
   // Internals
-  // ──────────────────────────────────────────────────────────────────────
 
   private async getPoolsCached(
     tenantId: string,

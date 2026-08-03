@@ -10,7 +10,7 @@ import { MongoClient, ObjectId } from 'mongodb';
  * report a wrong answer, it will report an incomplete one, which for an advisory
  * warning means silence rather than a false negative dressed as certainty.
  *
- * ── This one reports duplicates rather than resolving them ──
+ * This one reports duplicates rather than resolving them
  *
  * Unlike the contact identity backfill, there is no unique index to violate: company
  * identity has no key strong enough to enforce. A shared tax id IS conclusive, a shared

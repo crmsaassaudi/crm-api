@@ -80,10 +80,8 @@ export class InternalTenantsController {
     private readonly authzPermissionCache: AuthzPermissionCacheService,
   ) {}
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/v1/internal/tenants/provision
   // Sales creates a tenant for a customer (no password required)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @Post('provision')
   @Idempotent()
@@ -154,10 +152,8 @@ export class InternalTenantsController {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/v1/internal/tenants/:tenantId/invite
   // Send invite email using Keycloak Execute Actions Email
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @Post(':tenantId/invite')
   @HttpCode(HttpStatus.OK)
@@ -253,10 +249,8 @@ export class InternalTenantsController {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // GET /api/v1/internal/tenants/:tenantId/feature-permissions
   // Inspect what feature permissions are granted to a specific tenant
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @Get(':tenantId/feature-permissions')
   @HttpCode(HttpStatus.OK)
@@ -284,10 +278,8 @@ export class InternalTenantsController {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/v1/internal/tenants/:tenantId/feature-permissions/grant
   // Grant one or more feature permissions to a specific tenant
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @Post(':tenantId/feature-permissions/grant')
   @HttpCode(HttpStatus.OK)
@@ -338,10 +330,8 @@ export class InternalTenantsController {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // DELETE /api/v1/internal/tenants/:tenantId/feature-permissions/revoke
   // Revoke one or more feature permissions from a specific tenant
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @Delete(':tenantId/feature-permissions/revoke')
   @HttpCode(HttpStatus.OK)

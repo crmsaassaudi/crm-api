@@ -32,12 +32,10 @@ import { GroupSchemaClass } from '../../groups/infrastructure/persistence/docume
 import { CustomFieldsService } from '../../custom-fields/custom-fields.service';
 import { loadCustomFieldExportColumns } from '../../common/export/custom-field-export-columns';
 
-// ── Helpers ─────────────────────────────────────────────────────────
+// Helpers
 
 const resolve = (map: Map<string, string>, val: unknown): string =>
   map.get(String(val ?? '')) ?? String(val ?? '');
-
-// ── Columns ─────────────────────────────────────────────────────────
 
 function buildTicketExportColumns(
   userMap: Map<string, string>,
@@ -108,7 +106,7 @@ export class TicketExportProcessor extends BaseExportProcessor<TicketExportJobDa
   protected readonly cls: ClsService;
   private readonly storage: ExportStorageService;
 
-  // ── Per-job lookup maps ───────────────────────────────────────────
+  // Per-job lookup maps
   constructor(
     private readonly repository: TicketRepository,
     storageFactory: ExportStorageFactory,
@@ -136,7 +134,7 @@ export class TicketExportProcessor extends BaseExportProcessor<TicketExportJobDa
     this.storage = storageFactory.create('tickets');
   }
 
-  // ── Lifecycle hook ────────────────────────────────────────────────
+  // Lifecycle hook
 
   protected async beforeExport(
     data: TicketExportJobData,
@@ -228,7 +226,7 @@ export class TicketExportProcessor extends BaseExportProcessor<TicketExportJobDa
     return map;
   }
 
-  // ── BaseExportProcessor abstract implementations ──────────────────
+  // BaseExportProcessor abstract implementations
 
   protected getModuleConfig(): ExportModuleConfig {
     return this.buildModuleConfig([...STATIC_COLUMNS]);

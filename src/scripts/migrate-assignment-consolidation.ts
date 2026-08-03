@@ -136,7 +136,7 @@ function normalizeConditions(raw: unknown): Document[] {
   }));
 }
 
-// ── Step 1+2: rules ────────────────────────────────────────────────────────
+// Step 1+2: rules
 
 /**
  * Ensure a rule name is unique within (tenant, objectType).
@@ -294,7 +294,7 @@ async function reshapeLegacyRecordRules(db: Db): Promise<void> {
   );
 }
 
-// ── Step 3+4+5: settings ───────────────────────────────────────────────────
+// Step 3+4+5: settings
 
 /** Defaults matching AssignmentSeederService, so a tenant with no legacy config still gets a row. */
 function seedDefaults(objectType: ObjectType): Document {
@@ -483,7 +483,7 @@ async function migrateSettings(db: Db): Promise<void> {
   );
 }
 
-// ── Step 6: audit log ──────────────────────────────────────────────────────
+// Step 6: audit log
 
 async function flushAudit(
   target: ReturnType<Db['collection']>,
@@ -564,7 +564,7 @@ async function migrateAuditLogs(db: Db): Promise<void> {
   );
 }
 
-// ── Step 7: skills ─────────────────────────────────────────────────────────
+// Step 7: skills
 
 /**
  * Strip the combining marks NFD leaves behind, and map the one Vietnamese
@@ -701,7 +701,7 @@ async function migrateSkills(db: Db): Promise<void> {
   );
 }
 
-// ── Indexes ────────────────────────────────────────────────────────────────
+// Indexes
 
 /**
  * Drop indexes belonging to the retired shapes.
@@ -736,7 +736,7 @@ async function collectionExists(db: Db, name: string): Promise<boolean> {
   return found.length > 0;
 }
 
-// ── Legacy cleanup ─────────────────────────────────────────────────────────
+// Legacy cleanup
 
 async function dropLegacyCollections(db: Db): Promise<void> {
   const legacy = ['routing_rules', 'omni_assignment_audit_logs'];
@@ -747,8 +747,6 @@ async function dropLegacyCollections(db: Db): Promise<void> {
     console.log(`  dropped ${name} (${count} documents)`);
   }
 }
-
-// ── Main ───────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   const uri = process.env.DATABASE_URL;

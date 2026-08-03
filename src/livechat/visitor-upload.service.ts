@@ -72,12 +72,12 @@ export class VisitorUploadService {
   }): Promise<{ fileId: string; storageKey: string; thumbnailKey?: string }> {
     const { tenantId, fileName, mimeType, base64, dedupeKey } = params;
 
-    // ── Decode base64 ─────────────────────────────────────────────────
+    // Decode base64
     // Strip data URI prefix if present (e.g. "data:image/png;base64,")
     const raw = base64.replace(/^data:[^;]+;base64,/, '');
     let buffer = Buffer.from(raw, 'base64');
 
-    // ── Compress image if applicable ──────────────────────────────────
+    // Compress image if applicable
     let uploadMimeType = mimeType;
     let thumbnailBuffer: Buffer | undefined;
     let thumbnailKey: string | undefined;
@@ -105,7 +105,7 @@ export class VisitorUploadService {
       }
     }
 
-    // ── S3 upload ────────────────────────────────────────────────────
+    // S3 upload
     const ext =
       (fileName.split('.').pop() ?? 'bin')
         .toLowerCase()
@@ -125,7 +125,7 @@ export class VisitorUploadService {
       }),
     );
 
-    // ── Thumbnail upload ──────────────────────────────────────────────
+    // Thumbnail upload
     if (thumbnailBuffer) {
       thumbnailKey = `${tenantId}/livechat-visitor/thumbs/${randomStringGenerator()}.webp`;
       try {
@@ -144,10 +144,9 @@ export class VisitorUploadService {
       }
     }
 
-    // ── Checksum ─────────────────────────────────────────────────────
     const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
 
-    // ── Persist FileRecord ────────────────────────────────────────────
+    // Persist FileRecord
     const { file } = await this.filesService.upsertByMessageId(
       tenantId,
       `visitor-upload:${dedupeKey}`,

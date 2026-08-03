@@ -50,7 +50,7 @@ export class AutomationDlqProcessor extends BaseTenantConsumer<TenantJobData> {
       `[DLQ Processor] Dead-lettered job: action=${data.actionType} workflow=${data.workflowId} node=${data.nodeId} reason=${data.failedReason}`,
     );
 
-    // MED-14: Increment per-tenant DLQ counter for alerting.
+    // Increment per-tenant DLQ counter for alerting.
     // Operators can poll `dlq:counter:{tenantId}` to detect high-failure tenants.
     const counterKey = `dlq:counter:${data.tenantId}`;
     await this.redis

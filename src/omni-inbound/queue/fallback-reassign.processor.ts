@@ -131,7 +131,6 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
       `Reassigning ${openConversations.length} conversation(s) from offline agent ${agentId}`,
     );
 
-    // Map config strategy to assignment strategy
     const assignmentStrategy = this.mapStrategy(strategy);
 
     for (const conversation of openConversations) {

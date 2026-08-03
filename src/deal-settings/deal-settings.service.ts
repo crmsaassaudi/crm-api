@@ -31,7 +31,6 @@ export class DealSettingsService {
     return this.cls.get('tenantId');
   }
 
-  // ── Stages ─────────────────────────────────────────────────────────────
   async findAllStages(pipelineId?: string) {
     const filter: any = { tenantId: this.tenantId };
     if (pipelineId) filter.pipelineId = pipelineId;
@@ -60,7 +59,6 @@ export class DealSettingsService {
     return this.stageModel.findOne({ _id: id, tenantId: this.tenantId }).exec();
   }
 
-  // ── Sources ────────────────────────────────────────────────────────────
   async findAllSources() {
     return this.sourceModel
       .find({ tenantId: this.tenantId })
@@ -85,8 +83,6 @@ export class DealSettingsService {
       .deleteOne({ _id: id, tenantId: this.tenantId })
       .exec();
   }
-
-  // ── Pipelines ───────────────────────────────────────────────────────────
 
   async findAllPipelines() {
     return this.pipelineModel

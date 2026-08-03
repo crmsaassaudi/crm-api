@@ -18,7 +18,7 @@ import { randomBytes, createHmac } from 'crypto';
 export class LivechatWidgetService {
   private readonly logger = new Logger(LivechatWidgetService.name);
 
-  // ── PERF FIX #2: In-memory TTL cache for widget lookups ────────────────
+  // PERF FIX #2: In-memory TTL cache for widget lookups
   // Widget configs are written rarely (admin updates) but read on every
   // visitor socket connect + config request. Cache eliminates ~5-15ms
   // DB hit per read. TTL = 5 min, invalidated on update/delete.
@@ -30,7 +30,7 @@ export class LivechatWidgetService {
 
   constructor(private readonly repo: LivechatWidgetRepository) {}
 
-  // ── Admin CRUD ───────────────────────────────────────────────────────────
+  // Admin CRUD
 
   async create(
     tenantId: string,
@@ -185,7 +185,7 @@ export class LivechatWidgetService {
     if (widget?.widgetId) this.widgetCache.delete(widget.widgetId);
   }
 
-  // ── Public config (for widget JS) ────────────────────────────────────────
+  // Public config (for widget JS)
 
   /**
    * Returns the full widget configuration for the embed JS.
@@ -407,7 +407,7 @@ export class LivechatWidgetService {
     return RTL_LOCALES.includes(localization?.locale ?? 'en') ? 'rtl' : 'ltr';
   }
 
-  // ── Domain Whitelist ──────────────────────────────────────────────────────
+  // Domain Whitelist
 
   /**
    * Check if the given origin is allowed by the widget's domain whitelist.
@@ -495,7 +495,7 @@ export class LivechatWidgetService {
     return widget;
   }
 
-  // ── HMAC Identity Verification ────────────────────────────────────────────
+  // HMAC Identity Verification
 
   /**
    * Verify visitor identity using HMAC-SHA256.

@@ -107,7 +107,7 @@ export class AssignmentAdminService {
     return value;
   }
 
-  // ── Rules ──────────────────────────────────────────────────────────────
+  // Rules
 
   /**
    * Reject conditions the evaluator could only ever answer "no" to.
@@ -357,8 +357,6 @@ export class AssignmentAdminService {
     return this.rules.findAll(tenantId, type);
   }
 
-  // ── Settings ───────────────────────────────────────────────────────────
-
   async getSettings(objectType: string) {
     return this.config.get(this.tenantId, this.objectTypeOf(objectType));
   }
@@ -390,7 +388,7 @@ export class AssignmentAdminService {
     return this.config.upsert(this.tenantId, type, patch);
   }
 
-  // ── Fields (UI metadata) ───────────────────────────────────────────────
+  // Fields (UI metadata)
 
   fieldsFor(objectType: string) {
     const type = this.objectTypeOf(objectType);
@@ -400,7 +398,7 @@ export class AssignmentAdminService {
     }));
   }
 
-  // ── Skills ─────────────────────────────────────────────────────────────
+  // Skills
 
   private toSkillView(doc: any): AssignmentSkillView {
     return {
@@ -507,7 +505,7 @@ export class AssignmentAdminService {
     await this.skillModel.deleteOne({ _id: id, tenantId }).exec();
   }
 
-  // ── Dry run ────────────────────────────────────────────────────────────
+  // Dry run
 
   /**
    * Simulate a decision with no side effects: no reservation, no write, no audit
@@ -527,8 +525,6 @@ export class AssignmentAdminService {
     });
     return { ...decision, isDryRun: true };
   }
-
-  // ── Audit ──────────────────────────────────────────────────────────────
 
   async searchAudit(query: {
     objectType?: string;

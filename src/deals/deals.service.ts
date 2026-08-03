@@ -107,7 +107,7 @@ export class DealsService {
     };
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────────────
+  // Helpers
 
   /**
    * ObjectId ref fields that should be converted from '' to undefined.
@@ -177,8 +177,6 @@ export class DealsService {
       });
     }
   }
-
-  // ─────────────────────────── EXPORT ───────────────────────────
 
   async exportDeals(
     dto: ExportRequestDto,
@@ -356,7 +354,7 @@ export class DealsService {
     return updated;
   }
 
-  // ──────────────────────── RECYCLE BIN ────────────────────────
+  // RECYCLE BIN
   //
   // `remove()` is a soft delete (the schema declares `deletedAt`), so without these
   // two methods a deleted deal was invisible everywhere and recoverable nowhere —
@@ -456,7 +454,7 @@ export class DealsService {
 
     return { data, total };
   }
-  // ──────────────────────────── DEAL IMPORT ────────────────────────────
+  // DEAL IMPORT
 
   async uploadImportFile(file: {
     buffer: Buffer;

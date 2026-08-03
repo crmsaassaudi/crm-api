@@ -17,21 +17,8 @@ export type { EmailSettings };
  * These settings are lazy-seeded on first access (existing tenants) or
  * explicitly seeded on tenant creation via TenantSettingsSeedingService.
  *
- * ┌─────────────────── email_settings schema ────────────────────┐
- * │  trackingEnabled:           boolean  (opt-in, default OFF)   │
- * │  trackingDefaultPerEmail:   boolean  (per-compose checkbox)  │
- * │  lazyReplyBreakDays:        number   (configurable SLA)      │
- * │  dailyQuotaOverride:        number   (0 = use provider def)  │
- * │  bulkRecipientLimit:        number   (max recipients/email)  │
- * │  signatureAutoAppend:       boolean  (auto-append sigs)      │
- * │  historicalSyncMode:        string   (last-used sync mode)   │
- * │  domainBlacklistExtra:      string[] (tenant-specific)       │
- * │  immutableRecords:          boolean  (never delete emails)   │
- * │  gdprAutoRedactDays:        number   (0 = disabled)          │
- * │  syncReadState:             boolean  (opt-in two-way sync)   │
- * │  initialSyncDays:           number   (days to look back)     │
- * │  blockAutoResponders:       boolean  (drop OOF/auto-replies) │
- * └──────────────────────────────────────────────────────────────┘
+ * The shape and every default live in `EmailSettings` /
+ * `DEFAULT_EMAIL_SETTINGS` (../domain/email-settings.defaults).
  */
 
 const SETTINGS_KEY = 'email_settings';

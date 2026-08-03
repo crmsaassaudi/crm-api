@@ -82,9 +82,7 @@ export class SampleDataSeederService {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Sales Pipeline focus
-  // ─────────────────────────────────────────────────────────────────────────────
 
   private async seedSalesPipeline(context: SeedContext): Promise<void> {
     const audit = this.auditFields(context);
@@ -177,9 +175,7 @@ export class SampleDataSeederService {
     ]);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Customer Support focus
-  // ─────────────────────────────────────────────────────────────────────────────
 
   private async seedCustomerSupport(context: SeedContext): Promise<void> {
     const audit = this.auditFields(context);
@@ -212,9 +208,7 @@ export class SampleDataSeederService {
     ]);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Marketing focus
-  // ─────────────────────────────────────────────────────────────────────────────
 
   private async seedMarketing(context: SeedContext): Promise<void> {
     const audit = this.auditFields(context);

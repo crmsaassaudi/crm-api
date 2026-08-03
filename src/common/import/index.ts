@@ -1,14 +1,14 @@
-// ── Types ──
+// Types
 export * from './types';
 
-// ── Parsers ──
+// Parsers
 export { IImportParser } from './import-parser.interface';
 export { CsvImportParser } from './csv-import-parser';
 export { XlsxImportParser } from './xlsx-import-parser';
 export { detectFormat, createParser } from './import-parser.factory';
 export type { ImportFileFormat } from './import-parser.factory';
 
-// ── Services ──
+// Services
 export {
   ImportStorageService,
   ImportStorageFactory,
@@ -29,15 +29,15 @@ export {
   type RowReferenceResult,
 } from './import-reference-resolver.service';
 
-// ── Base Processor ──
+// Base Processor
 export { BaseImportProcessor } from './base-import.processor';
 
-// ── Schema ──
+// Schema
 export {
   ImportJobSchemaClass,
   ImportJobSchema,
   type ImportJobDocument,
 } from './import-job.schema';
 
-// ── Module ──
+// Module
 export { SharedImportModule } from './import.module';

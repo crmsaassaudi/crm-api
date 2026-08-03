@@ -77,9 +77,7 @@ export class TenantInterceptor implements NestInterceptor {
     );
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
   // Main resolution pipeline
-  // ──────────────────────────────────────────────────────────────────────────
 
   private async resolveContext(request: Request): Promise<void> {
     const forwardedFor = request.headers['x-forwarded-for'];
@@ -89,16 +87,16 @@ export class TenantInterceptor implements NestInterceptor {
     this.cls.set('requestIp', forwardedIp ?? request.ip);
     this.cls.set('userAgent', request.headers['user-agent']);
 
-    // ── Step 1: Collect raw identifiers from all sources ──
+    // Step 1: Collect raw identifiers from all sources
     const raw = this.collectRawIdentifiers(request);
 
-    // ── Step 2: Resolve identity (userId → MongoDB ObjectId) ──
+    // Step 2: Resolve identity (userId → MongoDB ObjectId)
     await this.resolveIdentity(raw);
 
-    // ── Step 3: Resolve tenantId (alias/UUID → MongoDB ObjectId) ──
+    // Step 3: Resolve tenantId (alias/UUID → MongoDB ObjectId)
     await this.resolveTenant(raw);
 
-    // ── Step 3.5: Verify the authenticated user belongs to the resolved tenant ──
+    // Step 3.5: Verify the authenticated user belongs to the resolved tenant
     const resolvedTenantId = this.cls.get('tenantId');
     const resolvedUserId = this.cls.get('userId');
     if (
@@ -110,23 +108,23 @@ export class TenantInterceptor implements NestInterceptor {
       await this.verifyTenantMembership(resolvedTenantId, resolvedUserId);
     }
 
-    // ── Step 4: Reject ambiguous tenant context for tenant-scoped requests ──
+    // Step 4: Reject ambiguous tenant context for tenant-scoped requests
     if (!this.cls.get('tenantId')) {
       this.rejectMissingTenantContext(request);
     }
 
-    // ── Step 5: Sync activeTenantId for downstream compatibility ──
+    // Step 5: Sync activeTenantId for downstream compatibility
     const tenantId = this.cls.get('tenantId');
     if (tenantId) {
       this.cls.set('activeTenantId', tenantId);
     }
 
-    // ── Step 6: Inject tenant i18n settings into CLS ──
+    // Step 6: Inject tenant i18n settings into CLS
     if (tenantId) {
       await this.resolveI18nContext(tenantId);
     }
 
-    // ── Step 7: Default execution source for audit trail ──
+    // Step 7: Default execution source for audit trail
     // 'M' = Manual (UI/HTTP request). Overridden by InternalApiKeyGuard ('A'),
     // automation processors ('A_F'), and bot processor ('B').
     this.cls.set('executionSource', 'M');
@@ -252,9 +250,7 @@ export class TenantInterceptor implements NestInterceptor {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
   // Step 1 — Collect raw identifiers from request sources
-  // ──────────────────────────────────────────────────────────────────────────
 
   private collectRawIdentifiers(request: Request): {
     tenantHints: string[];
@@ -298,9 +294,7 @@ export class TenantInterceptor implements NestInterceptor {
     return { tenantHints, userId, email, sessionData };
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
   // Step 2 — Resolve identity (BFF session → userId → MongoDB ObjectId)
-  // ──────────────────────────────────────────────────────────────────────────
 
   private async resolveIdentity(raw: {
     tenantHints: string[];
@@ -388,9 +382,7 @@ export class TenantInterceptor implements NestInterceptor {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
   // Step 3 — Resolve tenantId (try each hint until one resolves to ObjectId)
-  // ──────────────────────────────────────────────────────────────────────────
 
   private async resolveTenant(raw: { tenantHints: string[] }): Promise<void> {
     for (const hint of raw.tenantHints) {
@@ -447,9 +439,7 @@ export class TenantInterceptor implements NestInterceptor {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
   // Step 3.5 — Tenant membership check (prevents cross-tenant header forgery)
-  // ──────────────────────────────────────────────────────────────────────────
 
   private async verifyTenantMembership(
     tenantId: string,
@@ -503,7 +493,7 @@ export class TenantInterceptor implements NestInterceptor {
       this.applyMembership(resolved);
     } catch (err) {
       if (err instanceof UnauthorizedException) throw err;
-      // HIGH-02: Fail CLOSED on transient errors. The previous behavior
+      // Fail CLOSED on transient errors. The previous behavior
       // logged a warning and allowed the request through (fail-open),
       // which could permit cross-tenant access during a DB/Redis blip.
       this.logger.error(
@@ -531,7 +521,7 @@ export class TenantInterceptor implements NestInterceptor {
   private applyMembership(membership: CachedMembership): void {
     this.setTenantRoles(membership.roles ?? []);
 
-    // H-07: the acting user's org unit, stamped onto records they create so
+    // The acting user's org unit, stamped onto records they create so
     // ORG_UNIT scopes have something to match. Published here rather than in
     // DataVisibilityInterceptor because that interceptor returns early for
     // admins and for `public_read` tenants — and creates happen on those paths
@@ -550,9 +540,7 @@ export class TenantInterceptor implements NestInterceptor {
     this.cls.set('tenantRole', primary);
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
   // Step 4 — Missing tenant context policy
-  // ──────────────────────────────────────────────────────────────────────────
 
   private rejectMissingTenantContext(request: Request): void {
     const userId = this.cls.get('userId');
@@ -574,9 +562,7 @@ export class TenantInterceptor implements NestInterceptor {
     );
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
   // Utility methods
-  // ──────────────────────────────────────────────────────────────────────────
 
   private extractHeader(req: Request, name: string): string | undefined {
     const value = req.headers[name];

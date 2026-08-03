@@ -105,7 +105,7 @@ export class AttachmentSecurityService {
   /** CID inline image threshold: images below this stay as Base64 data URIs */
   private readonly CID_SIZE_THRESHOLD_BYTES = 10 * 1024; // 10 KB
 
-  // ── P0: Extension Blocklist ─────────────────────────────────────────────
+  // P0: Extension Blocklist
 
   /**
    * Check if a file's extension is blocked.
@@ -158,17 +158,13 @@ export class AttachmentSecurityService {
       };
     }
 
-    // Step 3: ClamAV scan (future integration)
-    // When ClamAV is available, uncomment:
-    // if (_buffer) {
-    //   const avResult = await this.scanWithClamAV(_buffer);
-    //   if (!avResult.safe) return avResult;
-    // }
+    // Step 3 (ClamAV scan) is not wired: scanWithClamAV below is a stub, so
+    // calling it here would add a check that always passes.
 
     return { safe: true };
   }
 
-  // ── P1: ClamAV Integration Stub ────────────────────────────────────────
+  // P1: ClamAV Integration Stub
 
   /**
    * Scan a file buffer with ClamAV.
@@ -187,7 +183,7 @@ export class AttachmentSecurityService {
     return { safe: true };
   }
 
-  // ── P2: CID Size-Threshold Filter ──────────────────────────────────────
+  // P2: CID Size-Threshold Filter
 
   /**
    * Classify inline CID images: small icons stay Base64, large images go to S3.
@@ -236,7 +232,7 @@ export class AttachmentSecurityService {
     };
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────
+  // Helpers
 
   private extractExtension(fileName: string): string {
     const lastDot = fileName.lastIndexOf('.');

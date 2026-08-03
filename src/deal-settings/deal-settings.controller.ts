@@ -24,7 +24,6 @@ import { RequirePermission } from '../common/permissions/permission.decorator';
 export class DealSettingsController {
   constructor(private readonly service: DealSettingsService) {}
 
-  // ── Stages ─────────────────────────────────────────────────────────────
   @Get('stages')
   @RequirePermission('view', 'settings')
   findAllStages(@Query('pipelineId') pipelineId?: string) {
@@ -49,7 +48,6 @@ export class DealSettingsController {
     await this.service.deleteStage(id);
   }
 
-  // ── Sources ────────────────────────────────────────────────────────────
   @Get('sources')
   @RequirePermission('view', 'settings')
   findAllSources() {
@@ -73,8 +71,6 @@ export class DealSettingsController {
   async deleteSource(@Param('id') id: string): Promise<void> {
     await this.service.deleteSource(id);
   }
-
-  // ── Pipelines ──────────────────────────────────────────────────────────
 
   @Get('pipelines')
   @RequirePermission('view', 'settings')

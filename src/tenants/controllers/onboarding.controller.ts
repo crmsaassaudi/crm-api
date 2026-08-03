@@ -68,10 +68,8 @@ export class OnboardingController {
     private readonly configService: ConfigService<AllConfigType>,
   ) {}
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/v1/onboarding/start (Public)
   // Step 1: Create KC user + MongoDB user + session + onboarding Redis state
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @Unprotected()
   @Post('start')
@@ -191,13 +189,11 @@ export class OnboardingController {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // GET /api/v1/onboarding/context (Authenticated)
   // Hydrate frontend state on F5/refresh
   //
   // context/updateContext/complete are self-scoped via extractUserId(req) —
   // no permission decorator needed, same rationale as auth/me.
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @ApiBearerAuth()
   @Get('context')
@@ -223,10 +219,8 @@ export class OnboardingController {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // PATCH /api/v1/onboarding/context (Authenticated)
   // Steps 2-3: Progressive profiling
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @ApiBearerAuth()
   @Patch('context')
@@ -249,10 +243,8 @@ export class OnboardingController {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/v1/onboarding/complete (Authenticated)
   // Queue the tenant provisioning job
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @ApiBearerAuth()
   @Post('complete')
@@ -312,7 +304,6 @@ export class OnboardingController {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // GET /api/v1/onboarding/status/:provisioningId (Authenticated)
   // Frontend polls every 2s during loading screen
   //
@@ -322,7 +313,6 @@ export class OnboardingController {
   // status payload itself carries no PII (step/label only). Do not add a
   // sequential or otherwise guessable id here without adding an ownership
   // check to match.
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @ApiBearerAuth()
   @Get('status/:provisioningId')
@@ -346,7 +336,6 @@ export class OnboardingController {
     return status;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/v1/onboarding/status/:provisioningId/retry (Authenticated)
   // Re-enqueue/retry a failed provisioning job
   //
@@ -355,7 +344,6 @@ export class OnboardingController {
   // the same provisioning payload already captured in the BullMQ job; it does
   // not accept caller-supplied data, so a holder of the id can at most
   // re-trigger (not redirect) someone else's signup.
-  // ─────────────────────────────────────────────────────────────────────────────
 
   @ApiBearerAuth()
   @Post('status/:provisioningId/retry')
@@ -376,9 +364,7 @@ export class OnboardingController {
     return { status: 'QUEUED', provisioningId };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Helpers
-  // ─────────────────────────────────────────────────────────────────────────────
 
   private extractUserId(req: any): string {
     // From session-based auth or Keycloak JWT

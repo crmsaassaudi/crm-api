@@ -109,13 +109,11 @@ export class MediaProxyService {
       `Caching media: ${channelType} / ${mediaId} for message ${messageId}`,
     );
 
-    // ── Quota check ────────────────────────────────────────────────
     if (!(await this.checkQuotaOrWarn(tenantId))) {
       return { proxyUrl: originalUrl };
     }
 
     try {
-      // ── Download ─────────────────────────────────────────────────
       const buffer = await this.downloadFromProvider(
         channelType,
         originalUrl,
@@ -123,12 +121,12 @@ export class MediaProxyService {
         accessToken,
       );
 
-      // ── Detect & compress ────────────────────────────────────────
+      // Detect & compress
       const detectedMime =
         detectMimeFromBuffer(buffer) ?? 'application/octet-stream';
       const compressed = await this.compressIfImage(buffer, detectedMime);
 
-      // ── Upload to S3 + thumbnail ─────────────────────────────────
+      // Upload to S3 + thumbnail
       const ext = this.getExtensionFromMime(compressed.mimeType);
       const storageKey = `${tenantId}/omni-media/${randomStringGenerator()}.${ext}`;
       await this.uploadToS3(
@@ -150,7 +148,7 @@ export class MediaProxyService {
         'omni-media/thumbs',
       );
 
-      // ── Persist + quota ──────────────────────────────────────────
+      // Persist + quota
       const checksum = crypto
         .createHash('sha256')
         .update(compressed.buffer)
@@ -181,7 +179,6 @@ export class MediaProxyService {
         await this.tryIncrementQuota(tenantId, compressed.buffer.length);
       }
 
-      // ── Presigned URL ────────────────────────────────────────────
       const proxyUrl = await this.getPresignedUrl(storageKey);
 
       this.logger.log(
@@ -391,7 +388,7 @@ export class MediaProxyService {
       downloadUrl = graphData.url;
     }
 
-    // HIGH-12: SSRF guard — validate URL before fetching.
+    // SSRF guard — validate URL before fetching.
     // A crafted webhook payload could supply a media URL pointing to internal
     // services (e.g., http://169.254.169.254/latest/meta-data/) allowing cloud
     // credential exfiltration via the CRM's server-side fetch.
@@ -440,7 +437,7 @@ export class MediaProxyService {
   }
 
   /**
-   * HIGH-12: Validate a download URL to prevent SSRF attacks.
+   * Validate a download URL to prevent SSRF attacks.
    * Only allows HTTPS URLs from known media provider domains.
    */
   private validateDownloadUrl(url: string): void {

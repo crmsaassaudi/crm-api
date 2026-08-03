@@ -20,9 +20,7 @@ export class OnboardingService {
 
   constructor(private readonly redisService: RedisService) {}
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Onboarding Session (multi-step form state in Redis)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   /**
    * Create a new onboarding session for a user (called after Step 1).
@@ -88,9 +86,7 @@ export class OnboardingService {
     await this.redisService.del(key);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Provisioning Status (polled by frontend during loading screen)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   /**
    * Read the current provisioning status for a given provisioningId.

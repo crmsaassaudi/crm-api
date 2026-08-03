@@ -61,7 +61,7 @@ async function migrateCollection(collection: any, collectionName: string) {
   let migrated = 0;
   let skipped = 0;
 
-  // LOW-08: Use cursor-based batching to avoid loading all docs into memory
+  // Use cursor-based batching to avoid loading all docs into memory
   const cursor = collection
     .find({
       tenant: { $exists: true, $ne: null },

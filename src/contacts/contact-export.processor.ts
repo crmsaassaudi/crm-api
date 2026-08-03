@@ -29,13 +29,13 @@ import { CrmSettingsService } from '../crm-settings/crm-settings.service';
 import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { loadCustomFieldExportColumns } from '../common/export/custom-field-export-columns';
 
-// ── Helpers ─────────────────────────────────────────────────────────
+// Helpers
 
 /** Resolve an ObjectId string via a pre-loaded map; fall back to raw value. */
 const resolve = (map: Map<string, string>, val: unknown): string =>
   map.get(String(val ?? '')) ?? String(val ?? '');
 
-// ── Columns ─────────────────────────────────────────────────────────
+// Columns
 // Column definitions are built per-job so the `format` closures can
 // capture the freshly-loaded lookup maps.
 
@@ -138,7 +138,7 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
     this.storage = storageFactory.create('contacts');
   }
 
-  // ── Lifecycle hook: pre-load lookup maps ───────────────────────────
+  // Lifecycle hook: pre-load lookup maps
 
   protected async beforeExport(
     data: ContactExportJobData,
@@ -217,7 +217,7 @@ export class ContactExportProcessor extends BaseExportProcessor<ContactExportJob
     }
   }
 
-  // ── BaseExportProcessor abstract implementations ──────────────────
+  // BaseExportProcessor abstract implementations
 
   protected getModuleConfig(): ExportModuleConfig {
     return this.buildModuleConfig([...STATIC_COLUMNS]);

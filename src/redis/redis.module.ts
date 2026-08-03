@@ -42,10 +42,10 @@ import { IOREDIS_CLIENT } from './redis.tokens';
           password: configService.get<string>('redis.password') ?? undefined,
           db: configService.get<number>('redis.db') ?? 0,
           lazyConnect: false,
-          // CRIT-06: Required for BullMQ blocking commands
+          // Required for BullMQ blocking commands
           maxRetriesPerRequest: null,
           enableReadyCheck: false,
-          // MED-13: Resilient reconnection on Redis blip
+          // Resilient reconnection on Redis blip
           retryStrategy: (times: number) => Math.min(times * 200, 5000),
           reconnectOnError: (err: Error) =>
             err.message.includes('READONLY') || err.message.includes('LOADING'),

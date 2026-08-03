@@ -144,7 +144,7 @@ export class ConversationOpsProcessor
     }
   }
 
-  // ── Inline Execution ──────────────────────────────────────────────
+  // Inline Execution
 
   /** Execute synchronously within the aggregate lock. Returns updated conversation. */
   async executeInline(cmd: ConversationCommand): Promise<any> {
@@ -156,7 +156,7 @@ export class ConversationOpsProcessor
     });
   }
 
-  // ── Command Router ────────────────────────────────────────────────
+  // Command Router
 
   private async processCommand(cmd: ConversationCommand): Promise<void> {
     const startTime = Date.now();
@@ -214,9 +214,7 @@ export class ConversationOpsProcessor
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
   // CUSTOMER_MESSAGE Handler
-  // ────────────────────────────────────────────────────────────────────
 
   private async handleCustomerMessage(
     cmd: ConversationCommand & { payload: CustomerMessagePayload },
@@ -363,9 +361,7 @@ export class ConversationOpsProcessor
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
   // BOT_REPLY Handler
-  // ────────────────────────────────────────────────────────────────────
 
   private async handleBotReply(
     cmd: ConversationCommand & { payload: BotReplyPayload },
@@ -689,7 +685,7 @@ export class ConversationOpsProcessor
     );
   }
 
-  // ── ASSIGN_AGENT Handler ─────────────────────────────────────────
+  // ASSIGN_AGENT Handler
 
   private async handleAssignAgent(
     cmd: ConversationCommand & { payload: AssignAgentPayload },
@@ -881,7 +877,7 @@ export class ConversationOpsProcessor
     }
   }
 
-  // ── CHANGE_STATUS Handler ────────────────────────────────────────
+  // CHANGE_STATUS Handler
 
   private async handleChangeStatus(
     cmd: ConversationCommand & { payload: ChangeStatusPayload },
@@ -947,7 +943,7 @@ export class ConversationOpsProcessor
     );
   }
 
-  // ── UPDATE_BOT_STATE Handler ─────────────────────────────────────
+  // UPDATE_BOT_STATE Handler
 
   private async handleUpdateBotState(
     cmd: ConversationCommand & { payload: UpdateBotStatePayload },
@@ -984,9 +980,7 @@ export class ConversationOpsProcessor
     );
   }
 
-  // ────────────────────────────────────────────────────────────────────
   // Idempotency
-  // ────────────────────────────────────────────────────────────────────
 
   /**
    * Take (or resume) ownership of a command.
@@ -1051,7 +1045,7 @@ export class ConversationOpsProcessor
       .exec();
   }
 
-  // ── Outbox ─────────────────────────────────────────────────────
+  // Outbox
 
   /**
    * Record the event, then publish it — and only mark it published once every
@@ -1091,7 +1085,7 @@ export class ConversationOpsProcessor
     }
   }
 
-  // ── Helpers ────────────────────────────────────────────────────
+  // Helpers
 
   private logOperationWarning(
     cmd: ConversationCommand,

@@ -65,9 +65,7 @@ async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ──────────────────────────────────────────────────────────────────
 // TEST 1: Create a contact, update it, verify audit log is generated
-// ──────────────────────────────────────────────────────────────────
 async function testContactUpdateAudit() {
   console.log('\n📋 TEST 1: Contact Update → Audit Log Pipeline');
   console.log('───────────────────────────────────────────────');
@@ -177,9 +175,7 @@ async function testContactUpdateAudit() {
   console.log(`  🧹 Cleaned up test contact ${contactId}`);
 }
 
-// ──────────────────────────────────────────────────────────────────
 // TEST 2: Cursor pagination
-// ──────────────────────────────────────────────────────────────────
 async function testCursorPagination() {
   console.log('\n📋 TEST 2: Cursor-Based Pagination');
   console.log('───────────────────────────────────');
@@ -241,9 +237,7 @@ async function testCursorPagination() {
   console.log(`  🧹 Cleaned up test contact ${contactId}`);
 }
 
-// ──────────────────────────────────────────────────────────────────
 // TEST 3: Permission gate
-// ──────────────────────────────────────────────────────────────────
 async function testPermissionGate() {
   console.log('\n📋 TEST 3: Permission Gate (audit_logs:view)');
   console.log('──────────────────────────────────────────────');
@@ -259,9 +253,7 @@ async function testPermissionGate() {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────
 // TEST 4: Truncation (long text field)
-// ──────────────────────────────────────────────────────────────────
 async function testLongTextTruncation() {
   console.log('\n📋 TEST 4: Long Text Truncation (> 256 chars)');
   console.log('───────────────────────────────────────────────');
@@ -308,9 +300,7 @@ async function testLongTextTruncation() {
   console.log(`  🧹 Cleaned up test contact ${contactId}`);
 }
 
-// ──────────────────────────────────────────────────────────────────
 // RUNNER
-// ──────────────────────────────────────────────────────────────────
 async function main() {
   console.log('╔════════════════════════════════════════════════╗');
   console.log('║   AUDIT TRAIL E2E TEST SUITE                  ║');

@@ -124,9 +124,7 @@ export class ContactsService {
     this.importStorage = this.importStorageFactory.create('contacts');
   }
 
-  /** Dual-mode storage for export downloads (matches the worker's namespace). */
   private readonly exportStorage: ExportStorageService;
-  /** Same namespace as ContactImportProcessor and its report writer. */
   private readonly importStorage: ImportStorageService;
 
   async create(data: CreateContactDto): Promise<Contact> {
@@ -134,16 +132,9 @@ export class ContactsService {
     const ownerId = data.ownerId?.trim() || this.requireCurrentUserId();
     await this.assertMayTransferOwnership(null, ownerId);
     const orgUnitId = await this.resolveOwnerOrgUnit(ownerId);
-    // Already lower-cased / E.164-normalised by the DTO transforms, so these are
-    // directly comparable with what every other write path stores.
     const emails = data.emails ?? [];
     const phones = data.phones ?? [];
 
-    // The tenant's identity policy is now enforced on the API path too. It used
-    // to be honoured only by the import worker, so a workspace with "unique
-    // email" switched on still accumulated duplicates through the UI, the public
-    // API and the omni pipeline — the setting was visible in Settings and did
-    // nothing.
     await this.assertIdentityIsUnique({ emails, phones });
 
     const customFields = await this.customFieldValidator.validate(
@@ -151,7 +142,6 @@ export class ContactsService {
       data.customFields,
     );
 
-    // tenant, createdBy, updatedBy are auto-injected by BaseDocumentRepository from CLS
     const contact = await this.automationOutbox.runWithEvent(
       async (session) => {
         const created = await this.repository.create(
@@ -186,7 +176,6 @@ export class ContactsService {
       newSnapshot: contact,
     });
 
-    // Emit lead-scoring event
     this.eventEmitter.emit('contact.created', {
       tenantId: (contact as any).tenantId,
       contactId: contact.id,
@@ -204,16 +193,7 @@ export class ContactsService {
       ...filter,
       __restrictToOwner: restrictToOwner,
       __currentUserId: this.getCurrentUserId(),
-      // Which `customFields.<key>` filters the repository may honour. Resolved
-      // here, once per request, from the tenant's registry: the repository must
-      // not accept an arbitrary dotted path (that would reopen the field-injection
-      // hole its whitelist exists to close), and an admin-defined field that
-      // cannot be filtered is a field the product cannot actually use.
       __allowedCustomFieldKeys: await this.resolveCustomFieldKeys(filter),
-      // Only resolved when the request actually carries a search term: a phone
-      // lookup needs the tenant's country code to turn the national form a user
-      // types into the E.164 form the write gate stored, and an ordinary list
-      // request should not pay for the settings read.
       __defaultCountryCode: filter?.search
         ? await this.resolveDefaultCountryCode()
         : undefined,
@@ -782,7 +762,7 @@ export class ContactsService {
       throw new BadRequestException(`Lifecycle stage "${newStage}" not found`);
     }
 
-    // --- Guardrail 1: Validate stage exists in lifecycle config ---
+    // Guardrail 1: Validate stage exists in lifecycle config
     const validStages = await this.getValidStages();
     if (!validStages.includes(stage.apiName)) {
       throw new BadRequestException(
@@ -796,7 +776,7 @@ export class ContactsService {
     );
     const previousStageName = previousStage?.apiName ?? null;
 
-    // --- Guardrail 2: Compute transition direction + skipped stages ---
+    // Guardrail 2: Compute transition direction + skipped stages
     const { direction, skippedStages } = this.computeTransitionDirection(
       validStages,
       previousStageName,
@@ -987,7 +967,7 @@ export class ContactsService {
     return this.repository.getStageHistory(id);
   }
 
-  // ── Automation Event Emitter ─────────────────────────────────────────────
+  // Automation Event Emitter
 
   async unmaskFields(
     id: string,
@@ -1279,7 +1259,7 @@ export class ContactsService {
     return this.exportStorage.openLocalExport(token);
   }
 
-  // ──────────────────────────── CONTACT IMPORT ────────────────────────────
+  // CONTACT IMPORT
 
   /**
    * Store an uploaded .csv/.xlsx and return its storage key plus the parsed
@@ -1394,7 +1374,7 @@ export class ContactsService {
     return { jobId, status: 'queued' };
   }
 
-  // ─────────────────────── IMPORT HISTORY ───────────────────────────
+  // IMPORT HISTORY
 
   async listImportJobs(options: {
     page?: number;
@@ -1631,7 +1611,7 @@ export class ContactsService {
     return this.mergeService.history(contactId);
   }
 
-  // ──────────────────────── RECYCLE BIN ────────────────────────
+  // RECYCLE BIN
 
   /**
    * List soft-deleted contacts. `remove()` is a soft delete, so a mis-click is

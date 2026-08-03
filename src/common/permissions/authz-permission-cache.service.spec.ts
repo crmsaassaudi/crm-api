@@ -169,7 +169,7 @@ describe('AuthzPermissionCacheService', () => {
       ]);
     });
 
-    it('drops them from a group preview, keeping the live keys', async () => {
+    it('should drop them from a group preview, keeping the live keys', async () => {
       const preview = await service.previewGroupAccess(tenantId, {
         roleIds: ['role_1'],
       });
@@ -179,7 +179,7 @@ describe('AuthzPermissionCacheService', () => {
       expect(preview.tenantCeiling).not.toContain(retired);
     });
 
-    it('drops them from a membership preview', async () => {
+    it('should drop them from a membership preview', async () => {
       const preview = await service.previewMembershipAccess(tenantId, {
         tenantRole: 'MEMBER',
         roleIds: ['role_1'],

@@ -108,8 +108,6 @@ export class AccountsService {
     };
   }
 
-  // ─────────────────────────── EXPORT ───────────────────────────
-
   async exportAccounts(
     dto: ExportRequestDto,
   ): Promise<{ jobId: string; status: 'queued' }> {
@@ -401,7 +399,7 @@ export class AccountsService {
     return updated;
   }
 
-  // ──────────────────────── RECYCLE BIN ────────────────────────
+  // RECYCLE BIN
   //
   // `remove()` is a soft delete (the schema declares `deletedAt`), so without these
   // two methods a deleted account was invisible everywhere and recoverable nowhere —
@@ -453,7 +451,7 @@ export class AccountsService {
     });
   }
 
-  // ──────────────────────────── ACCOUNT IMPORT ────────────────────────────
+  // ACCOUNT IMPORT
 
   /**
    * Store an uploaded .csv/.xlsx and return its storage key plus the parsed
@@ -581,7 +579,7 @@ export class AccountsService {
     return { jobId: String(job.id), status: 'queued' };
   }
 
-  // ─────────────────────── IMPORT HISTORY ───────────────────────────
+  // IMPORT HISTORY
 
   async listImportJobs(options: {
     page?: number;

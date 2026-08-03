@@ -394,7 +394,7 @@ describe('ConversationService Concurrency', () => {
     ).rejects.toThrow('boom');
   });
 
-  // ── Pre-identified visitor tests (pre-chat form enrichment) ──────────
+  // Pre-identified visitor tests (pre-chat form enrichment)
 
   describe('pre-identified visitor flow', () => {
     it('should use enriched Contact data when identity cache has contactId but no conversationId', async () => {

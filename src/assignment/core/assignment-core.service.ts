@@ -26,7 +26,7 @@ import { AssignmentAttributes, RuleTrace } from '../domain/condition-evaluator';
 import { AssignmentPolicyVersionService } from '../application/assignment-policy-version.service';
 import { AssignmentStrategyRegistry } from './assignment-strategy.registry';
 
-// ── Request / response ─────────────────────────────────────────────────────
+// Request / response
 
 /**
  * A preferred assignee — "sticky". The lookup that produces the id is
@@ -277,8 +277,6 @@ export class AssignmentCoreService {
     return Number.isFinite(raw) && raw >= 0.1 ? raw : 1;
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-
   async assign(request: AssignRequest): Promise<AssignDecision> {
     const scope: AssignmentScope = {
       tenantId: request.tenantId,
@@ -360,7 +358,7 @@ export class AssignmentCoreService {
       });
     }
 
-    // ── Rules ──────────────────────────────────────────────────────────────
+    // Rules
     const forcedTarget =
       (request.targetGroupIds && request.targetGroupIds.length > 0) ||
       request.targetUserId;
@@ -437,7 +435,7 @@ export class AssignmentCoreService {
       });
     }
 
-    // ── Target ─────────────────────────────────────────────────────────────
+    // Target
     const adapterPool = await adapter.candidates.basePool(scope);
     const basePool = request.restrictToCandidates
       ? adapterPool === undefined
@@ -502,7 +500,6 @@ export class AssignmentCoreService {
       groupId: target.owningGroupId,
     };
 
-    // ── Skills ─────────────────────────────────────────────────────────────
     const skilled = await this.filterBySkills(
       adapter,
       decisionScope,
@@ -529,7 +526,7 @@ export class AssignmentCoreService {
       );
     }
 
-    // ── Availability ───────────────────────────────────────────────────────
+    // Availability
     const eligible = adapter.candidates.filterAvailable
       ? await adapter.candidates.filterAvailable(
           decisionScope,
@@ -557,7 +554,7 @@ export class AssignmentCoreService {
       );
     }
 
-    // ── Dry run stops here: everything below reserves or writes ─────────────
+    // Dry run stops here: everything below reserves or writes
     if (request.dryRun) {
       const preview = await this.previewSelection(
         adapter,
@@ -582,7 +579,7 @@ export class AssignmentCoreService {
       });
     }
 
-    // ── Preferred assignee ─────────────────────────────────────────────────
+    // Preferred assignee
     // A failed preferred attempt falls through to `stickyFallbackStrategy`
     // (the strategy meant for this case), not the rule/object default — a
     // customer who lost their sticky agent should still land somewhere
@@ -604,7 +601,7 @@ export class AssignmentCoreService {
       orderingStrategy = config.stickyFallbackStrategy;
     }
 
-    // ── Reserve → commit → (release on failure) ─────────────────────────────
+    // Reserve → commit → (release on failure)
     const ordered = await this.orderCandidates(
       adapter,
       decisionScope,
@@ -678,7 +675,7 @@ export class AssignmentCoreService {
     });
   }
 
-  // ── Target resolution ────────────────────────────────────────────────────
+  // Target resolution
 
   /**
    * Who may take this record, and which team it is filed under.
@@ -786,7 +783,7 @@ export class AssignmentCoreService {
     return UNROUTABLE;
   }
 
-  // ── Filtering & ordering ─────────────────────────────────────────────────
+  // Filtering & ordering
 
   /**
    * Keep only candidates holding every required skill.
@@ -899,7 +896,7 @@ export class AssignmentCoreService {
     return ordered.find((id) => underCapacity.includes(id)) ?? null;
   }
 
-  // ── Preferred assignee ───────────────────────────────────────────────────
+  // Preferred assignee
 
   private async tryPreferred(
     request: AssignRequest,
@@ -982,7 +979,7 @@ export class AssignmentCoreService {
     });
   }
 
-  // ── Commit / release ─────────────────────────────────────────────────────
+  // Commit / release
 
   /**
    * Persist a reserved candidate. Releases the reservation on any non-success —
@@ -1108,7 +1105,7 @@ export class AssignmentCoreService {
     });
   }
 
-  // ── Fallback / queue ─────────────────────────────────────────────────────
+  // Fallback / queue
 
   /**
    * Nobody could be selected. Try the configured fallback owner, and otherwise
@@ -1183,7 +1180,7 @@ export class AssignmentCoreService {
     }
   }
 
-  // ── Audit ────────────────────────────────────────────────────────────────
+  // Audit
 
   /**
    * Single exit point: every decision is audited here, exactly once.

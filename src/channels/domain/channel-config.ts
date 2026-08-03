@@ -38,7 +38,7 @@ export class ChannelConfig {
   @ApiPropertyOptional()
   deletedAt: Date | null;
 
-  // ── Health Check Metadata (Phase 2) ─────────────────────────────────
+  // Health Check Metadata (Phase 2)
 
   @ApiPropertyOptional()
   lastVerifiedAt: Date | null;
@@ -49,7 +49,7 @@ export class ChannelConfig {
   @ApiProperty({ default: 0 })
   consecutiveFailures: number;
 
-  // ── Adaptive Health Check (Phase 3) ─────────────────────────────────
+  // Adaptive Health Check (Phase 3)
 
   @ApiPropertyOptional({ enum: ['healthy', 'degraded', 'unhealthy'] })
   healthState: string;

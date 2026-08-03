@@ -156,7 +156,7 @@ export class HistoricalSyncService {
     private readonly emailMetadataModel: Model<any>,
   ) {}
 
-  // ── Public API ────────────────────────────────────────────────────────
+  // Public API
 
   /**
    * Start a historical sync job for a channel config.
@@ -226,7 +226,7 @@ export class HistoricalSyncService {
     return false;
   }
 
-  // ── Core Sync Engine ──────────────────────────────────────────────────
+  // Core Sync Engine
 
   /**
    * Execute the sync job. This is the main async pipeline.
@@ -490,7 +490,7 @@ export class HistoricalSyncService {
     });
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────
+  // Helpers
 
   private async updateProgress(
     jobId: string,

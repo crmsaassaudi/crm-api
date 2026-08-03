@@ -103,9 +103,7 @@ export class SlaMonitorService {
     ]);
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Helpers
-  // ────────────────────────────────────────────────────────────────
 
   private async cancelBreachCheck(
     conversationId: string,

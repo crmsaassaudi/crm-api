@@ -36,7 +36,7 @@ export class RichMessageTemplateSchemaClass extends EntityDocumentHelper {
   @Prop({ type: [String], default: ['all'] })
   channelTypes: string[];
 
-  // ── Interactive fields ──
+  // Interactive fields
   @Prop({ default: '' })
   body: string;
 
@@ -46,7 +46,7 @@ export class RichMessageTemplateSchemaClass extends EntityDocumentHelper {
   })
   buttons: Array<{ id: string; title: string }>;
 
-  // ── Carousel fields ──
+  // Carousel fields
   @Prop({
     type: [
       {

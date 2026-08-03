@@ -42,7 +42,7 @@ export class LivechatEmbedController {
     private readonly cls: ClsService,
   ) {}
 
-  // ── Public widget config (loaded by embed JS) ───────────────────────────
+  // Public widget config (loaded by embed JS)
 
   @Public()
   @Throttle({ default: { limit: 120, ttl: 60_000 } })
@@ -80,7 +80,7 @@ export class LivechatEmbedController {
     res.json(config);
   }
 
-  // ── Widget bundle ────────────────────────────────────────────────────────
+  // Widget bundle
   // NOTE: Widget JS is served from Node E (livechat.crmsaudi.dev), NOT from
   // this API server. The serveWidget endpoint below is kept only as a
   // development fallback. In production, the script src in embed snippets
@@ -115,7 +115,7 @@ export class LivechatEmbedController {
     res.sendFile(filePath);
   }
 
-  // ── Embed snippet ────────────────────────────────────────────────────────
+  // Embed snippet
   // No @RequirePermission: channelConfigService.findById() already scopes by
   // the caller's tenantId (CLS), so this can only return snippets for the
   // caller's own tenant's channels; content is non-sensitive branding config
@@ -136,7 +136,7 @@ export class LivechatEmbedController {
       'https://livechat.crmsaudi.dev/widget/livechat.iife.js';
     const tenantId = (channel as any).tenantId ?? '';
 
-    // FIX: Settings are stored in channel.config (JSONB), NOT top-level fields.
+    // Settings are stored in channel.config (JSONB), NOT top-level fields.
     // Reading top-level always returned undefined → defaults were used every time.
     const cfg = (channel as any).config ?? {};
     const color = cfg.brandColor ?? '#6366f1';
@@ -161,7 +161,7 @@ export class LivechatEmbedController {
     res.send(snippet);
   }
 
-  // ── Admin preview page ───────────────────────────────────────────────────
+  // Admin preview page
 
   @Public()
   @Get('preview/:widgetId')
@@ -234,7 +234,7 @@ export class LivechatEmbedController {
     res.send(html);
   }
 
-  // ── Standalone chat page (direct URL access) ─────────────────────────────
+  // Standalone chat page (direct URL access)
 
   /**
    * GET /livechat/chat/:widgetId
@@ -403,7 +403,7 @@ export class LivechatEmbedController {
     res.send(html);
   }
 
-  // ── P1.3: Message history for widget (public, visitorId-scoped) ──────────
+  // P1.3: Message history for widget (public, visitorId-scoped)
 
   /**
    * GET /livechat/history/:channelId?visitorId=&tenantId=&limit=

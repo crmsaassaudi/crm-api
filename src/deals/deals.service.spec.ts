@@ -126,9 +126,7 @@ describe('DealsService', () => {
     );
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // CRUD
-  // ═══════════════════════════════════════════════════════════════════
   describe('create', () => {
     it('should create deal with name from title', async () => {
       const result = await service.create({
@@ -200,9 +198,7 @@ describe('DealsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // IMPORT — upload validation
-  // ═══════════════════════════════════════════════════════════════════
   describe('uploadImportFile', () => {
     it('should throw when no file provided', async () => {
       await expect(service.uploadImportFile(null as any)).rejects.toThrow(
@@ -221,9 +217,7 @@ describe('DealsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // IMPORT — startImport validation
-  // ═══════════════════════════════════════════════════════════════════
   describe('startImport', () => {
     it('should throw when mapping is missing required title field', async () => {
       await expect(
@@ -281,9 +275,7 @@ describe('DealsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // IMPORT STATUS — tenant isolation
-  // ═══════════════════════════════════════════════════════════════════
   describe('getImportStatus', () => {
     it('should throw when job not found', async () => {
       importQueue.getJob.mockResolvedValueOnce(null);
@@ -308,9 +300,7 @@ describe('DealsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // STAGE TRANSITIONS — close stamps and the reopen guard
-  // ═══════════════════════════════════════════════════════════════════
   describe('stage transitions', () => {
     const OPEN = 'stage_open';
     const WON = 'stage_won';

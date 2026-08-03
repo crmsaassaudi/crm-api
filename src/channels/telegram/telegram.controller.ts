@@ -35,7 +35,7 @@ export class CreateTelegramChannelDto {
 export class TelegramController {
   constructor(private readonly telegramService: TelegramService) {}
 
-  // ── Channel CRUD ─────────────────────────────────────────────────────────
+  // Channel CRUD
 
   @Post()
   @ApiOperation({ summary: 'Create a Telegram Bot channel' })
@@ -44,7 +44,7 @@ export class TelegramController {
     return this.telegramService.createChannel(dto);
   }
 
-  // ── Webhook ───────────────────────────────────────────────────────────────
+  // Webhook
 
   /**
    * Telegram delivers updates to this URL via HTTPS webhook.

@@ -43,7 +43,7 @@ export class EmailSettingsController {
     return this.cls.get('tenantId');
   }
 
-  // ── Email Channel Settings ─────────────────────────────────────────
+  // Email Channel Settings
 
   @Get('email-settings')
   @ApiOperation({ summary: 'Get tenant email settings' })
@@ -61,7 +61,7 @@ export class EmailSettingsController {
     return this.emailSettings.updateSettings(updates, this.getTenantId());
   }
 
-  // ── GDPR Compliance ────────────────────────────────────────────────
+  // GDPR Compliance
 
   @Get('gdpr/contact/:contactId/emails')
   @ApiOperation({ summary: 'GDPR: Export contact email metadata' })

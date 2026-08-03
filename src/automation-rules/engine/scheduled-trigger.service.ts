@@ -19,7 +19,7 @@ import {
  * ScheduledTriggerService — hourly scan for CRM records that match time-based
  * automation conditions.
  *
- * ── NOT WIRED TO THE ENGINE ────────────────────────────────────────────────
+ * NOT WIRED TO THE ENGINE
  * The scan emits `automation.trigger`, which nothing consumes. The engine only
  * matches workflows on `publishedTriggerConfig.event`, whose only values are
  * `record_created` and `field_updated` (TriggerConfigDto), so a "ticket has been

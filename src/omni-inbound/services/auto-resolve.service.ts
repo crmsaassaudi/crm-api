@@ -205,9 +205,7 @@ export class AutoResolveService {
     return false;
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Helpers
-  // ────────────────────────────────────────────────────────────────────────
 
   private buildJobId(
     conversationId: string,

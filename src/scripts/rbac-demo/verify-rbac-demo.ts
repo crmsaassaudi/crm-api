@@ -72,7 +72,7 @@ const fail = (
   console.log(`   ❌ ${check} — expected ${expected}, got ${actual}`);
 };
 
-// ── Auth ────────────────────────────────────────────────────────────────────
+// Auth
 
 async function login(email: string): Promise<string> {
   const body = new URLSearchParams({
@@ -131,7 +131,7 @@ function apiClient(token: string): AxiosInstance {
   );
 }
 
-// ── Fixture id lookup ───────────────────────────────────────────────────────
+// Fixture id lookup
 
 async function loadFixtureIds() {
   const uri = process.env.DATABASE_URL;
@@ -213,7 +213,7 @@ async function loadFixtureIds() {
   }
 }
 
-// ── Checks ──────────────────────────────────────────────────────────────────
+// Checks
 
 async function checkAccount(
   email: string,
@@ -438,7 +438,7 @@ async function runAssignmentProbes(
   }
 }
 
-// ── Main ────────────────────────────────────────────────────────────────────
+// Main
 
 async function run() {
   console.log(

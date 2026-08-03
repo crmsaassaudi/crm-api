@@ -56,7 +56,7 @@ export class TriggerEvaluatorService {
       `Found ${eligibleWorkflows.length} eligible workflow(s) for ${event}.${object} (record=${recordId})`,
     );
 
-    // ── Bulk Event Throttling (Phase 3) ──────────────────────────────
+    // Bulk Event Throttling (Phase 3)
     const { throttled } = await this.throttle.shouldThrottle(tenantId);
 
     for (const wf of eligibleWorkflows) {

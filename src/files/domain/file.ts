@@ -9,9 +9,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AppConfig } from '../../config/app-config.type';
 import appConfig from '../../config/app.config';
 
-// ────────────────────────────────────────────────────────────────
 // Enum types — shared between domain, schema, and DTOs
-// ────────────────────────────────────────────────────────────────
 export type FileCategory = 'general' | 'omni_media' | 'ticket_attachment';
 export type FileSource = 'upload' | 'omni_inbound' | 'omni_outbound' | 'system';
 export type FileStatus = 'uploading' | 'ready' | 'failed' | 'deleted';
@@ -48,7 +46,7 @@ export class FileType {
   @ApiProperty()
   updatedAt: Date;
 
-  // ── Storage Key ────────────────────────────────────────────────
+  // Storage Key
   // NEVER expose the raw S3 key to frontend. The @Transform decorator
   // converts it to a presigned URL on serialization.
   @ApiProperty({
@@ -91,7 +89,7 @@ export class FileType {
   )
   path: string;
 
-  // ── Basic Metadata ─────────────────────────────────────────────
+  // Basic Metadata
   @ApiProperty({ example: 'report.pdf' })
   @IsOptional()
   fileName?: string;
@@ -109,7 +107,7 @@ export class FileType {
   @Exclude({ toPlainOnly: true }) // Never expose checksum to frontend
   checksum?: string;
 
-  // ── Classification ────────────────────────────────────────────
+  // Classification
   @ApiProperty({ enum: ['general', 'omni_media', 'ticket_attachment'] })
   @IsOptional()
   category?: FileCategory;
@@ -122,7 +120,7 @@ export class FileType {
   @IsOptional()
   status?: FileStatus;
 
-  // ── Ownership & ACL ───────────────────────────────────────────
+  // Ownership & ACL
   @ApiProperty({ description: 'User ID who uploaded the file' })
   @IsOptional()
   uploadedBy?: string;
@@ -135,7 +133,7 @@ export class FileType {
   @IsOptional()
   allowedUserIds?: string[];
 
-  // ── Conversation Linking ──────────────────────────────────────
+  // Conversation Linking
   @ApiProperty({ description: 'Linked omni conversation ID' })
   @IsOptional()
   conversationId?: string;
@@ -144,7 +142,6 @@ export class FileType {
   @IsOptional()
   messageId?: string;
 
-  // ── Thumbnail ─────────────────────────────────────────────────
   @ApiProperty({ description: 'Presigned thumbnail URL' })
   @IsOptional()
   @Transform(
@@ -178,17 +175,17 @@ export class FileType {
   )
   thumbnailKey?: string;
 
-  // ── Image/Media Metadata ──────────────────────────────────────
+  // Image/Media Metadata
   @ApiProperty({ type: Object, required: false })
   @IsOptional()
   imageMetadata?: FileImageMetadata;
 
-  // ── Tags ──────────────────────────────────────────────────────
+  // Tags
   @ApiProperty({ type: [String] })
   @IsOptional()
   tags?: string[];
 
-  // ── Folder Linking ────────────────────────────────────────────
+  // Folder Linking
   @ApiProperty({
     description:
       'Folder ID for Cloud Drive organization. null/undefined = root.',
@@ -196,7 +193,7 @@ export class FileType {
   @IsOptional()
   folderId?: string;
 
-  // ── Soft Delete ───────────────────────────────────────────────
+  // Soft Delete
   @ApiProperty()
   @IsOptional()
   isDeleted?: boolean;

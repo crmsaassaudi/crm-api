@@ -139,9 +139,7 @@ describe('UsersService', () => {
     );
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // CREATE — email uniqueness, password hashing
-  // ═══════════════════════════════════════════════════════════════════
   describe('create', () => {
     it('should create user with hashed password', async () => {
       const result = await service.create({
@@ -208,9 +206,7 @@ describe('UsersService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // INVITE — existing user, new user, Keycloak rollback
-  // ═══════════════════════════════════════════════════════════════════
   describe('invite', () => {
     it('should add existing user to tenant without creating Keycloak user', async () => {
       usersRepository.findByEmail.mockResolvedValueOnce(
@@ -320,7 +316,7 @@ describe('UsersService', () => {
       ).rejects.toThrow('Tenant context missing');
     });
 
-    // ── tenantRole is a grant, and the widest one there is ──────────────────
+    // tenantRole is a grant, and the widest one there is
     // `roles: ['ADMIN']` seeds the membership with the whole tenant ceiling and
     // bypasses every data-visibility axis. This endpoint only requires
     // `users:create`, so without these checks anyone who can add a teammate
@@ -360,13 +356,11 @@ describe('UsersService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // INVITE PLACEMENT — org unit / manager / groups
   //
   // A member with no org unit resolves every ORG_UNIT scope to an empty set,
   // so they pass each `:view` guard and then see an empty list. Placement at
   // invite time is what stops a new teammate landing in that state.
-  // ═══════════════════════════════════════════════════════════════════
   describe('invite placement', () => {
     /** The acting principal, filed in the active tenant. */
     const inviter = (orgUnitId: string | null) =>
@@ -459,9 +453,7 @@ describe('UsersService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // REMOVE — tenant owner protection, event emission
-  // ═══════════════════════════════════════════════════════════════════
   describe('update authorization grants', () => {
     it('should reject a newly added allow override', async () => {
       usersRepository.findById.mockResolvedValue(
@@ -565,9 +557,7 @@ describe('UsersService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // REMOVE FROM TENANT — owner protection, group cleanup
-  // ═══════════════════════════════════════════════════════════════════
   describe('removeFromTenant', () => {
     it('should prevent removing the tenant owner', async () => {
       usersRepository.findById.mockResolvedValueOnce(createUser());
@@ -597,7 +587,6 @@ describe('UsersService', () => {
         'group_2',
         'user_to_remove',
       );
-      // Then remove membership
       expect(usersRepository.removeTenantMembership).toHaveBeenCalledWith(
         'user_to_remove',
         'tenant_1',
@@ -622,9 +611,7 @@ describe('UsersService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // UPDATE STATUS — session revocation on deactivation
-  // ═══════════════════════════════════════════════════════════════════
   describe('updateStatus', () => {
     it('should revoke sessions when a user is deactivated', async () => {
       usersRepository.findById.mockResolvedValueOnce(
@@ -655,9 +642,7 @@ describe('UsersService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // I18N RESOLUTION — User → Tenant → System cascade
-  // ═══════════════════════════════════════════════════════════════════
   describe('getResolvedI18n', () => {
     it('should resolve user preferences over tenant defaults', async () => {
       usersRepository.findById.mockResolvedValueOnce({
@@ -730,9 +715,7 @@ describe('UsersService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // getUserGroups — tenant isolation
-  // ═══════════════════════════════════════════════════════════════════
   describe('getUserGroups', () => {
     it('should throw when user does not belong to current tenant', async () => {
       usersRepository.findById.mockResolvedValueOnce(

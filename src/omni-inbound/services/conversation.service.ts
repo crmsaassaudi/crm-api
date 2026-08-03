@@ -115,7 +115,7 @@ export class ConversationService {
     payload: OmniPayload,
     messageDedupId: string,
   ): Promise<void> {
-    // ── Step 3: Resolve identity (Cache-aside) ────────────────
+    // Step 3: Resolve identity (Cache-aside)
     const identity = await this.identityService.resolveIdentityForTenant(
       payload.tenantId,
       payload.channelType,
@@ -126,7 +126,7 @@ export class ConversationService {
     let conversationId = identity.conversationId;
     let contactId = identity.contactId;
 
-    // ── Step 4: Resolve existing or create new conversation ────
+    // Step 4: Resolve existing or create new conversation
     const existing = await this.resolveExistingConversation(
       payload,
       conversationId,
@@ -186,7 +186,7 @@ export class ConversationService {
       }
     }
 
-    // ── Aggregate: Enqueue CUSTOMER_MESSAGE command ──────────────────
+    // Aggregate: Enqueue CUSTOMER_MESSAGE command
     await this.conversationCommandService.enqueueCustomerMessage(
       conversationId,
       payload.tenantId,
@@ -199,9 +199,7 @@ export class ConversationService {
     );
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Private Helpers
-  // ────────────────────────────────────────────────────────────────
 
   private async resolveExistingConversation(
     payload: OmniPayload,

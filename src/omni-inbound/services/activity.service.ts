@@ -67,7 +67,7 @@ export class ActivityService {
     return this.activityRepo.findByConversation(conversationId, page, limit);
   }
 
-  // ─── Event listeners ────────────────────────────────────────────
+  // Event listeners
 
   @OnEvent('omni.conversation.created')
   async onConversationCreated(event: {
@@ -197,10 +197,10 @@ export class ActivityService {
       actorPrefix,
     };
 
-    // ── Agent assignment activity ─────────────────────────────────
+    // Agent assignment activity
     await this.handleAgentAssignment(event, commonContext);
 
-    // ── Group assignment activity ─────────────────────────────────
+    // Group assignment activity
     await this.handleGroupAssignment(event, commonContext);
   }
 
@@ -270,7 +270,7 @@ export class ActivityService {
     });
   }
 
-  // ─── New event listeners ────────────────────────────────────────
+  // New event listeners
 
   @OnEvent('omni.conversation.sla_breached')
   async onSlaBreach(event: {
@@ -491,7 +491,7 @@ export class ActivityService {
     });
   }
 
-  // ─── Helpers ────────────────────────────────────────────────────
+  // Helpers
 
   private async log(params: ActivityLogParams): Promise<void> {
     const {

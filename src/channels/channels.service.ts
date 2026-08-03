@@ -412,7 +412,7 @@ export class ChannelsService {
     const tenantId = this.cls.get('tenantId');
     await this.assertChannelAccountAvailable(dto.type, dto.account, tenantId);
 
-    // --- Upsert: nếu channel (tenant+type+account) đã tồn tại thì update, không tạo mới ---
+    // Upsert: nếu channel (tenant+type+account) đã tồn tại thì update, không tạo mới
     const { channel } = await this.repository.upsert(
       tenantId,
       dto.type,

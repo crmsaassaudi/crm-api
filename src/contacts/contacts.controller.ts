@@ -178,7 +178,7 @@ export class ContactsController {
     await pipeline(file.stream, res);
   }
 
-  // ──────────────────────────── CONTACT IMPORT ────────────────────────────
+  // CONTACT IMPORT
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('import-upload')
@@ -262,7 +262,7 @@ export class ContactsController {
     return this.service.bulkTagContacts(body);
   }
 
-  // ──────────────────────────── RECYCLE BIN ────────────────────────────
+  // RECYCLE BIN
   //
   // `DELETE /contacts/:id` is a soft delete, so these two routes are what make
   // it recoverable. Declared BEFORE the `:id` routes below — Nest matches in
@@ -293,7 +293,7 @@ export class ContactsController {
     return this.service.restore(id);
   }
 
-  // ──────────────────────────── MERGE ────────────────────────────
+  // MERGE
 
   /**
    * Preview a merge without writing anything: the surviving value for every
@@ -399,7 +399,7 @@ export class ContactsController {
     });
   }
 
-  // ──────────────────────── IDENTITIES ────────────────────────
+  // IDENTITIES
   //
   // The reachable identities of a contact — emails, phones and channel accounts — as
   // rows rather than as the bare string arrays. `contact.emails[]` / `phones[]` remain
@@ -450,7 +450,7 @@ export class ContactsController {
     return this.identitySync.setDeliverability(identityId, body);
   }
 
-  // ──────────────────────── RELATIONSHIPS ────────────────────────
+  // RELATIONSHIPS
   //
   // Person↔person relations and person↔company affiliations. Neither existed
   // before: the schema had a single `accountId` plus a free-text `companyName`,

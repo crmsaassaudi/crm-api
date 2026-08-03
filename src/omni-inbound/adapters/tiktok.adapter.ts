@@ -158,7 +158,7 @@ export class TikTokAdapter implements ChannelAdapter {
     );
   }
 
-  // ── Private helpers ─────────────────────────────────────────────────
+  // Private helpers
 
   private resolveMessageType(tiktokType: string | undefined): MessageType {
     switch (tiktokType) {

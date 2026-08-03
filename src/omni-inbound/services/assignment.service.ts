@@ -184,9 +184,7 @@ export class AssignmentService implements OnModuleInit {
     this.recordCandidatePort.setPresenceProvider(this.presenceService);
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Preferred-assignee ("sticky") cache
-  // ────────────────────────────────────────────────────────────────────────
 
   private stickyContactKey(tenantId: string, contactId: string): string {
     return `omni:sticky:${tenantId}:c:${contactId}`;
@@ -361,9 +359,7 @@ export class AssignmentService implements OnModuleInit {
     return null;
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Auto-assignment
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Auto-assign a conversation. Returns the assigned agent id, or null when the
@@ -571,9 +567,7 @@ export class AssignmentService implements OnModuleInit {
     };
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // External (automation / API) assignment
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Assign on behalf of something other than the inbound pipeline — today, an
@@ -712,9 +706,7 @@ export class AssignmentService implements OnModuleInit {
     return { agentId: decision.assigneeId, groupId: target.groupId };
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Audit for decisions the core did not make
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Record a manual (re)assignment or unassignment made through the REST API.
@@ -814,9 +806,7 @@ export class AssignmentService implements OnModuleInit {
     });
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Helpers still used by callers outside this service
-  // ────────────────────────────────────────────────────────────────────────
 
   /** Members of one or more teams, deduplicated. */
   async resolveGroupMembers(

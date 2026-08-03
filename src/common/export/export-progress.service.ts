@@ -69,7 +69,7 @@ export class ExportProgressTracker {
     }
   }
 
-  // ── Static cancel helpers (used by the API process) ──
+  // Static cancel helpers (used by the API process)
 
   static async requestCancel(redis: Redis, jobId: string): Promise<void> {
     await redis.set(cancelKey(jobId), '1', 'EX', CANCEL_TTL_SECONDS);

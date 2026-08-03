@@ -10,8 +10,6 @@
  *   3. Deploy — Frontend auto-renders the new form. Zero UI code changes needed.
  */
 
-// ── Field Schema ──────────────────────────────────────────────────────────
-
 export interface ProviderFieldSchema {
   /** Unique key within the provider (e.g. 'apiKey', 'fromEmail') */
   key: string;
@@ -35,8 +33,6 @@ export interface ProviderFieldSchema {
   defaultValue?: string | boolean | number;
 }
 
-// ── Provider Schema ───────────────────────────────────────────────────────
-
 export interface ProviderSchema {
   /** Unique identifier (e.g. 'sendgrid', 'twilio') */
   providerType: string;
@@ -59,8 +55,6 @@ export interface ProviderSchema {
   /** Fields stored in plaintext (fromEmail, fromName, etc.) */
   settingFields: ProviderFieldSchema[];
 }
-
-// ── Registry ──────────────────────────────────────────────────────────────
 
 export const PROVIDER_REGISTRY: ProviderSchema[] = [
   {

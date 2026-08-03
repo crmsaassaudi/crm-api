@@ -21,7 +21,10 @@ import {
   PermissionTenant,
 } from './permission.engine';
 import { PermissionRuleMetadata } from './permission.decorator';
-import { DEPRECATED_PERMISSIONS, getPermissionKey } from './permission.constants';
+import {
+  DEPRECATED_PERMISSIONS,
+  getPermissionKey,
+} from './permission.constants';
 
 const DEFAULT_CACHE_TTL_SECONDS = 5 * 60;
 const EMPTY_SENTINEL = '__empty__';

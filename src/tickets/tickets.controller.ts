@@ -86,7 +86,7 @@ export class TicketsController {
     return this.service.update(id, data as Partial<Ticket>);
   }
 
-  // ──────────────────────── RECYCLE BIN ────────────────────────
+  // RECYCLE BIN
   //
   // Declared BEFORE the `:id` routes — Nest matches in declaration order, and
   // `recycle-bin` would otherwise be captured as an id.
@@ -139,7 +139,7 @@ export class TicketsController {
     return this.service.mergeTickets(targetId, body.sourceId);
   }
 
-  // ──────────────────────────── SLA PAUSE / RESUME ────────────────────────────
+  // SLA PAUSE / RESUME
 
   @Post(':id/sla/pause')
   @RequirePermission('edit', 'tickets')
@@ -156,8 +156,6 @@ export class TicketsController {
   resumeSla(@Param('id') id: string) {
     return this.service.resumeSla(id);
   }
-
-  // ──────────────────────────── DEAL LINK ────────────────────────────
 
   @Patch(':id/link-deal')
   @RequirePermission('edit', 'tickets')
@@ -183,7 +181,7 @@ export class TicketsController {
     return this.service.findByDeal(dealId);
   }
 
-  // ──────────────────────────── PARENT/CHILD HIERARCHY ─────────────────────
+  // PARENT/CHILD HIERARCHY
 
   @Patch(':id/set-parent')
   @RequirePermission('edit', 'tickets')
@@ -208,8 +206,6 @@ export class TicketsController {
   getChildren(@Param('id') id: string) {
     return this.service.getChildren(id);
   }
-
-  // ──────────────────────────── IMPORT ────────────────────────────
 
   @Post('import-upload')
   @RequirePermission('create', 'tickets')
@@ -261,8 +257,6 @@ export class TicketsController {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.send(buffer);
   }
-
-  // ──────────────────────────── EXPORT ────────────────────────────
 
   @Post('export')
   @RequirePermission('export', 'tickets')

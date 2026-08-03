@@ -123,7 +123,6 @@ export function userPrincipal(
 export function resolvePrincipal(params: {
   runAs: WorkflowRunAs | undefined;
   workflowId: string;
-  /** `createdBy` on the workflow. */
   workflowCreatedBy?: string | null;
   /** The user whose request emitted the trigger event, when there was one. */
   triggerUserId?: string | null;

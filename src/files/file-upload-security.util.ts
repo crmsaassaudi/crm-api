@@ -1,6 +1,6 @@
 import { FileCategory } from './domain/file';
 
-// ── Image Extensions & MIME Types ───────────────────────────────
+// Image Extensions & MIME Types
 const ALLOWED_IMAGE_EXTENSIONS = new Set([
   'jpg',
   'jpeg',
@@ -16,7 +16,7 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/webp',
 ]);
 
-// ── Document Extensions & MIME Types ────────────────────────────
+// Document Extensions & MIME Types
 const ALLOWED_DOCUMENT_EXTENSIONS = new Set([
   'pdf',
   'doc',
@@ -40,7 +40,7 @@ const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
   'text/plain',
 ]);
 
-// ── Media Extensions & MIME Types ───────────────────────────────
+// Media Extensions & MIME Types
 const ALLOWED_MEDIA_EXTENSIONS = new Set([
   'mp4',
   'webm',
@@ -62,7 +62,7 @@ const ALLOWED_MEDIA_MIME_TYPES = new Set([
   'audio/mp4',
 ]);
 
-// ── Combined ────────────────────────────────────────────────────
+// Combined
 const ALLOWED_ALL_EXTENSIONS = new Set([
   ...ALLOWED_IMAGE_EXTENSIONS,
   ...ALLOWED_DOCUMENT_EXTENSIONS,
@@ -75,7 +75,7 @@ const ALLOWED_ALL_MIME_TYPES = new Set([
   ...ALLOWED_MEDIA_MIME_TYPES,
 ]);
 
-// ── Validators ──────────────────────────────────────────────────
+// Validators
 
 /** Check if a filename has an allowed IMAGE extension */
 export function isAllowedImageFileName(fileName: string): boolean {
@@ -99,7 +99,7 @@ export function isAllowedMimeType(mimeType?: string): boolean {
   return !!mimeType && ALLOWED_ALL_MIME_TYPES.has(mimeType.toLowerCase());
 }
 
-// ── Category Detection ──────────────────────────────────────────
+// Category Detection
 
 /**
  * Determine the file category from its MIME type.
@@ -113,7 +113,7 @@ export function getFileCategory(mimeType: string): FileCategory {
   return 'general';
 }
 
-// ── Magic Byte Detection ────────────────────────────────────────
+// Magic Byte Detection
 
 /**
  * Detect MIME type from file buffer magic bytes.

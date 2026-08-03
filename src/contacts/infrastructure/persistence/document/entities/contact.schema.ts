@@ -119,7 +119,7 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop()
   deletedAt?: Date;
 
-  // ────────────────── OMNI-CHANNEL / SHADOW CONTACT ──────────────────
+  // OMNI-CHANNEL / SHADOW CONTACT
 
   /**
    * Multiple omni-channel identities linked to this contact.
@@ -146,7 +146,7 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop({ default: false, index: true })
   isVIP: boolean;
 
-  // ────────────────── STAGE HISTORY TRACKING ──────────────────
+  // STAGE HISTORY TRACKING
 
   /**
    * Embedded log of all lifecycle stage transitions.
@@ -179,7 +179,7 @@ export class ContactSchemaClass extends EntityDocumentHelper {
     skippedStages?: string[];
   }>;
 
-  // ──────────────────── SOCIAL PROFILES ────────────────────
+  // SOCIAL PROFILES
 
   @Prop()
   linkedinUrl?: string;

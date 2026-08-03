@@ -60,9 +60,7 @@ export class InboundOrchestrationService {
     private readonly cls: ClsService,
   ) {}
 
-  // ────────────────────────────────────────────────────────────────
   // Auto-Assignment Engine
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * Trigger auto-assignment for a conversation.
@@ -314,9 +312,7 @@ export class InboundOrchestrationService {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Bot Orchestration
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * Resolve the initial bot state for a new conversation.
@@ -360,7 +356,7 @@ export class InboundOrchestrationService {
       `[BOT-CONFIG] Looking up bot config: channelType=${channelType}, channelAccount=${channelAccount}, tenantId=${tenantId}`,
     );
     try {
-      // FIX: For livechat, channelAccount is the MongoDB _id (channelId),
+      // For livechat, channelAccount is the MongoDB _id (channelId),
       // NOT the `account` field (lc_<ulid>). findAnyByAccount queries
       // { type, account } which never matches a MongoDB _id, causing
       // the channel lookup to silently fail and disable bot processing.
@@ -579,9 +575,7 @@ export class InboundOrchestrationService {
     );
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Business Hours / OOO
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * Check if this message arrived outside business hours.
@@ -665,9 +659,7 @@ export class InboundOrchestrationService {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Auto-Resolve Timer
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * Reschedule the auto-resolve timer after a new message.
@@ -696,9 +688,7 @@ export class InboundOrchestrationService {
     await this.agentPresenceService.releaseConversation(tenantId, agentId);
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Reply Auto-Assignment
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * When an agent replies to an unassigned conversation, implicitly assign
@@ -742,9 +732,7 @@ export class InboundOrchestrationService {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Bot Handoff → Auto-Assignment
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * When bot hands off a conversation to a human agent, trigger
@@ -859,9 +847,7 @@ export class InboundOrchestrationService {
     } as OmniPayload;
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Re-offer after a lapsed / declined offer
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * Route a work item that returned to the queue to somebody else.
@@ -925,9 +911,7 @@ export class InboundOrchestrationService {
     );
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Private Helpers
-  // ────────────────────────────────────────────────────────────────
 
   private async resolveGroupMembersForAssignment(
     groupIds: string[],

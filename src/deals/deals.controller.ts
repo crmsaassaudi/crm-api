@@ -102,7 +102,7 @@ export class DealsController {
     return this.service.update(id, data as Partial<Deal>);
   }
 
-  // ──────────────────────── RECYCLE BIN ────────────────────────
+  // RECYCLE BIN
   //
   // Declared BEFORE the `:id` routes — Nest matches in declaration order, and
   // `recycle-bin` would otherwise be captured as an id.
@@ -145,7 +145,7 @@ export class DealsController {
     return this.service.bulkTagDeals(body);
   }
 
-  // ──────────────────────────── TICKET LINK ────────────────────────────
+  // TICKET LINK
 
   @Get(':id/tickets')
   @RequirePermission('view', 'deals')
@@ -154,8 +154,6 @@ export class DealsController {
   getLinkedTickets(@Param('id') id: string) {
     return this.service.getLinkedTickets(id);
   }
-
-  // ──────────────────────────── IMPORT ────────────────────────────
 
   @Post('import-upload')
   @RequirePermission('create', 'deals')
@@ -211,8 +209,6 @@ export class DealsController {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.send(buffer);
   }
-
-  // ──────────────────────────── EXPORT ────────────────────────────
 
   @Post('export')
   @RequirePermission('export', 'deals')
@@ -271,7 +267,7 @@ export class DealsController {
     return this.service.findOne(id);
   }
 
-  // ── Deal Activity Feed ─────────────────────────────────────────────────
+  // Deal Activity Feed
 
   @Get(':id/activities')
   @RequirePermission('view', 'deals')

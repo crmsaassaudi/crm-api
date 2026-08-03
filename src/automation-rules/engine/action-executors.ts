@@ -59,9 +59,7 @@ export interface ActionExecutionResult {
   retryable?: boolean;
 }
 
-// ---------------------------------------------------------------------------
 // Send Email Executor
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class SendEmailExecutor implements ActionExecutor {
@@ -133,7 +131,7 @@ export class SendEmailExecutor implements ActionExecutor {
     const configId = actionConfig.configId;
     if (configId) {
       try {
-        // P0: Transport Pool (LRU Cache)
+        // Transport pool (LRU cache)
         // Cache hit: ~0.01ms | Cache miss: DB + decrypt (~50ms)
         // The tenant guard is not optional here: `configId` comes from a
         // workflow node config, which is free-form JSON an admin can point at
@@ -206,7 +204,7 @@ export class SendEmailExecutor implements ActionExecutor {
                 consecutiveFailures: (transport.consecutiveFailures ?? 0) + 1,
               });
 
-              // P1: Passive trigger - schedule fast-lane adaptive health check
+              // Passive trigger: schedule a fast-lane adaptive health check
               this.eventEmitter?.emit('channel-config.runtime-failure', {
                 configId,
                 tenantId: transport.tenantId,
@@ -265,9 +263,7 @@ export class SendEmailExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Send SMS Executor
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class SendSmsExecutor implements ActionExecutor {
@@ -338,7 +334,7 @@ export class SendSmsExecutor implements ActionExecutor {
     const configId = actionConfig.configId;
     if (configId) {
       try {
-        // P0: Transport Pool (LRU Cache) - same pattern as SendEmailExecutor
+        // Transport pool (LRU cache), same as SendEmailExecutor
         // Tenant-guarded for the same reason as SendEmailExecutor: the pool is
         // keyed on configId alone and reads across tenants by design.
         const transport = this.smsTransportPool
@@ -411,7 +407,7 @@ export class SendSmsExecutor implements ActionExecutor {
                 consecutiveFailures: (transport.consecutiveFailures ?? 0) + 1,
               });
 
-              // P1: Passive trigger - schedule fast-lane adaptive health check
+              // Passive trigger: schedule a fast-lane adaptive health check
               this.smsEventEmitter?.emit('channel-config.runtime-failure', {
                 configId,
                 tenantId: transport.tenantId,
@@ -471,9 +467,7 @@ export class SendSmsExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Update Field Executor
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class UpdateFieldExecutor implements ActionExecutor {
@@ -535,9 +529,7 @@ export class UpdateFieldExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Route to Group Executor
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class RouteToGroupExecutor implements ActionExecutor {
@@ -763,9 +755,7 @@ export class RouteToGroupExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Webhook Executor
-// ---------------------------------------------------------------------------
 
 /**
  * Hard timeout cap for webhook requests (milliseconds).
@@ -906,9 +896,7 @@ export class WebhookExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Assignee resolution for record-creating actions
-// ---------------------------------------------------------------------------
 
 /**
  * Validates the assignee/team a `create_task` / `create_ticket` node names,
@@ -1019,9 +1007,7 @@ export class AutomationAssigneeResolver {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Create Task Executor
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class CreateTaskExecutor implements ActionExecutor {
@@ -1117,9 +1103,7 @@ export class CreateTaskExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Create Ticket Executor
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class CreateTicketExecutor implements ActionExecutor {
@@ -1218,9 +1202,7 @@ export class CreateTicketExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Add Tag Executor
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class AddTagExecutor implements ActionExecutor {
@@ -1304,9 +1286,7 @@ export class AddTagExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Remove Tag Executor
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class RemoveTagExecutor implements ActionExecutor {
@@ -1401,9 +1381,7 @@ export class RemoveTagExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Add Note Executor
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class AddNoteExecutor implements ActionExecutor {
@@ -1498,9 +1476,7 @@ export class AddNoteExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Create Record Executor
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class CreateRecordExecutor implements ActionExecutor {
@@ -1648,9 +1624,7 @@ export class CreateRecordExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // HTTP Request Executor
-// ---------------------------------------------------------------------------
 
 /** Hard timeout for HTTP requests (milliseconds). */
 const HTTP_REQUEST_HARD_TIMEOUT_MS = 5000;
@@ -1932,9 +1906,7 @@ export class HttpRequestExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Send WhatsApp Executor (dry-run stub — Meta WABA integration pending)
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class SendWhatsAppExecutor implements ActionExecutor {
@@ -2004,9 +1976,7 @@ export class SendWhatsAppExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Send ZNS Executor (dry-run stub — Zalo OA integration pending)
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class SendZnsExecutor implements ActionExecutor {
@@ -2085,9 +2055,7 @@ export class SendZnsExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Send Livechat Executor (event-driven)
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class SendLivechatExecutor implements ActionExecutor {
@@ -2180,9 +2148,7 @@ export class SendLivechatExecutor implements ActionExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Internal Notification Executor (event-driven)
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class InternalNotificationExecutor implements ActionExecutor {

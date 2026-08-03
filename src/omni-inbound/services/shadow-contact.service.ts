@@ -339,9 +339,7 @@ export class ShadowContactService {
     return contact.id;
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Configuration
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * Load identity resolution configuration from tenant CRM settings.
@@ -430,7 +428,7 @@ export class ShadowContactService {
     return enriched;
   }
 
-  // ── Private Helpers ────────────────────────────────────────────
+  // Private Helpers
 
   /**
    * Choose which candidate an inbound message should attach to.

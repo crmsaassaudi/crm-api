@@ -105,7 +105,7 @@ export class EmailContentSchemaClass {
   })
   conversationId: string | null;
 
-  // ── Email Headers (denormalized for query performance) ───────
+  // Email Headers (denormalized for query performance)
 
   /** Sender email address. */
   @Prop({ type: String, default: '' })
@@ -123,7 +123,7 @@ export class EmailContentSchemaClass {
   @Prop({ type: String, default: null })
   rfc822MessageId: string | null;
 
-  // ── GDPR Compliance ─────────────────────────────────────────
+  // GDPR Compliance
 
   /**
    * True when email content has been redacted per GDPR request.
@@ -141,7 +141,7 @@ export const EmailContentSchema = SchemaFactory.createForClass(
   EmailContentSchemaClass,
 );
 
-// ── Indexes ───────────────────────────────────────────────────────────────
+// Indexes
 
 // Fast lookup by messageId
 EmailContentSchema.index({ messageId: 1 }, { unique: true });
@@ -158,11 +158,8 @@ EmailContentSchema.index({ tenantId: 1, conversationId: 1 });
 // Thread correlation by RFC Message-ID
 EmailContentSchema.index({ tenantId: 1, rfc822MessageId: 1 }, { sparse: true });
 
-// NOTE: Text index is NOT created here automatically.
-// It must be created via a separate Migration Script to avoid
-// blocking the database during app startup on large collections.
-//
-// Migration command:
+// The text index is deliberately NOT declared here: building it at startup
+// blocks the database on a large collection. Create it from a migration:
 //   db.email_contents.createIndex(
 //     { subject: "text", textBody: "text" },
 //     { name: "email_fulltext_search", weights: { subject: 10, textBody: 1 } }

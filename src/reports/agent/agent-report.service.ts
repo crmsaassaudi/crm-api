@@ -50,7 +50,7 @@ export class AgentReportService {
     private readonly settingsService: CrmSettingsService,
   ) {}
 
-  // ── Report: Work time + KPIs ───────────────────────────────────────────────
+  // Report: Work time + KPIs
 
   async getWorkTime(
     dto: GetAgentReportDto,
@@ -101,7 +101,7 @@ export class AgentReportService {
     });
   }
 
-  // ── Report: Ranking (Agent Performance Index) ──────────────────────────────
+  // Report: Ranking (Agent Performance Index)
 
   async getRanking(
     dto: GetAgentReportDto,
@@ -187,7 +187,7 @@ export class AgentReportService {
     });
   }
 
-  // ── Internals ───────────────────────────────────────────────────────────────
+  // Internals
 
   private async buildAgents(
     dto: GetAgentReportDto,

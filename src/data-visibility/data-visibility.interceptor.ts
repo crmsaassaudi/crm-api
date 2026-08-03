@@ -200,7 +200,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
       // 3. Tenant policy.
       const settings = await this.settingsService.getSetting('data_visibility');
 
-      // C3: unowned (ownerId null/missing) records are hidden from scoped
+      // Unowned (ownerId null/missing) records are hidden from scoped
       // users by default — they must NOT leak to everyone. Tenants that rely
       // on an "unassigned pool" pattern (e.g. shared lead/ticket queue) can
       // opt in via data_visibility.unownedRecordsVisibleToAll. Admins/Owners
@@ -359,9 +359,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Resolution context
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Everything the per-module computations share, resolved at most once each.
@@ -544,9 +542,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     };
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Axis: org units the principal manages
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Units this principal is named manager of, plus their subtrees.
@@ -571,9 +567,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Axis: sharing rules
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Sharing rules the principal is a TARGET of, resolved into ids and grouped
@@ -762,9 +756,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
     return map;
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Shared lookups
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Get the user's roles within the current tenant.
@@ -791,7 +783,7 @@ export class DataVisibilityInterceptor implements NestInterceptor {
 
       if (!user) return [];
 
-      // M-06: compare as strings. `tenantId` is an ObjectId on the document but
+      // Compare as strings. `tenantId` is an ObjectId on the document but
       // a string in CLS, so the previous `===` silently returned no roles —
       // which meant an admin was scoped like a regular member.
       const membership = user.tenants?.find(

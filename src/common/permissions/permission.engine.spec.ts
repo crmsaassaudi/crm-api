@@ -51,7 +51,7 @@ describe('permission.engine (authz matrix)', () => {
     { id: 'role_export', permissions: ['contacts:export'] },
   ];
 
-  // ── Owner / Admin bypass ──────────────────────────────────────────────
+  // Owner / Admin bypass
   it('should grants the full tenant ceiling to the tenant owner', () => {
     const perms = calculateEffectivePermissions(tenant(), user('owner_user'));
     expect(canAccess(perms, 'view', 'contacts')).toBe(true);
@@ -132,7 +132,7 @@ describe('permission.engine (authz matrix)', () => {
     expect(canAccess(perms, 'export', 'contacts')).toBe(true);
   });
 
-  // ── Member: intersection with ceiling ─────────────────────────────────
+  // Member: intersection with ceiling
   it('should grants a member only their roles’ permissions within the ceiling', () => {
     const perms = calculateEffectivePermissions(
       tenant(),
@@ -167,7 +167,6 @@ describe('permission.engine (authz matrix)', () => {
     expect(canAccess(perms, 'export', 'contacts')).toBe(false);
   });
 
-  // ── permissionOverrides: deny only ────────────────────────────────────
   it('should removes a granted permission via a deny override', () => {
     const perms = calculateEffectivePermissions(
       tenant(),
@@ -195,7 +194,7 @@ describe('permission.engine (authz matrix)', () => {
     expect(canAccess(perms, 'view', 'contacts')).toBe(false);
   });
 
-  // ── Tenant ceiling: disabled core ─────────────────────────────────────
+  // Tenant ceiling: disabled core
   it('should honours disabledCorePermissions on the ceiling', () => {
     const t = tenant({ disabledCorePermissions: ['contacts:delete'] });
     expect(getTenantPermissions(t).has('contacts:delete')).toBe(false);
@@ -203,7 +202,7 @@ describe('permission.engine (authz matrix)', () => {
     expect(canAccess(perms, 'delete', 'contacts')).toBe(false);
   });
 
-  // ── Role references (RBAC expansion) ──────────────────────────────────
+  // Role references (RBAC expansion)
   it('should expands a role assigned directly to the member', () => {
     const perms = calculateEffectivePermissions(
       tenant(),
@@ -274,7 +273,7 @@ describe('permission.engine (authz matrix)', () => {
     expect(canAccess(perms, 'view', 'deals')).toBe(false);
   });
 
-  // ── No membership / unknown keys ──────────────────────────────────────
+  // No membership / unknown keys
   it('should grants nothing to a user with no membership in the tenant', () => {
     const stranger: PermissionUser = {
       id: 'stranger',

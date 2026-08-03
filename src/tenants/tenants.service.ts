@@ -59,9 +59,7 @@ export class TenantsService {
     return url.toString();
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Saga: POST /api/auth/register
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async register(dto: RegisterTenantDto): Promise<RegisterTenantResult> {
     const {
@@ -72,7 +70,7 @@ export class TenantsService {
       organizationAlias: alias,
     } = dto;
 
-    // ── Saga compensation trackers ─────────────────────────────────────────────
+    // Saga compensation trackers
     let aliasReserved = false;
     let keycloakOrgId: string | null = null;
     let keycloakUserCreatedByThisSaga = false;
@@ -87,7 +85,7 @@ export class TenantsService {
       );
 
     try {
-      // ── Step 1: Atomic alias reservation ──────────────────────────────────────
+      // Step 1: Atomic alias reservation
       try {
         await this.aliasReservationRepository.reserve(alias);
         aliasReserved = true;
@@ -97,7 +95,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 2: Create Keycloak Organization ──────────────────────────────────
+      // Step 2: Create Keycloak Organization
       try {
         const kcOrg = await this.keycloakAdminService.createOrganization(
           organizationName,
@@ -110,7 +108,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 3: Find or create the Keycloak User ──────────────────────────────
+      // Step 3: Find or create the Keycloak User
       try {
         let kcUser = await this.keycloakAdminService.findUserByEmail(email);
         if (kcUser) {
@@ -131,7 +129,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 4: Add user to the organization ──────────────────────────────────
+      // Step 4: Add user to the organization
       try {
         await this.keycloakAdminService.addUserToOrganization(
           keycloakOrgId!,
@@ -143,7 +141,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 6: Create Tenant record in MongoDB ───────────────────────────────
+      // Step 6: Create Tenant record in MongoDB
       let tenant: Tenant;
       try {
         const tenantData: Partial<Tenant> = {
@@ -161,7 +159,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 7: Upsert User in MongoDB & add OWNER membership ─────────────────
+      // Step 7: Upsert User in MongoDB & add OWNER membership
       let localUser: any;
       try {
         const spaceIdx = fullName.indexOf(' ');
@@ -187,7 +185,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 8: Set owner on the Tenant ──────────────────────────────────────
+      // Step 8: Set owner on the Tenant
       try {
         await this.tenantsRepository.updateOwner(tenant!.id, localUser.id);
 
@@ -197,7 +195,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 9: Confirm alias reservation ────────────────────────────────────
+      // Step 9: Confirm alias reservation
       try {
         await this.aliasReservationRepository.confirm(alias);
         stepLog(9, `Alias "${alias}" confirmed`);
@@ -206,7 +204,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Emit event ────────────────────────────────────────────────────────────
+      // Emit event
       // ownerId must be passed — TenantCreatedListener skips sample-data
       // seeding without it.
       this.eventEmitter.emit(
@@ -227,7 +225,7 @@ export class TenantsService {
         loginUrl: this.getTenantLoginUrl(alias),
       };
     } catch (error: unknown) {
-      // ── Saga Rollback (compensating transactions) ──────────────────────────────
+      // Saga Rollback (compensating transactions)
       this.logger.error(
         '[Saga] Onboarding failed — rolling back compensating actions',
         error instanceof Error ? error.stack : String(error),
@@ -281,9 +279,7 @@ export class TenantsService {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Saga: POST /api/auth/onboard-existing-user
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async onboardExistingUser(
     user: User,
@@ -296,7 +292,7 @@ export class TenantsService {
       throw new InternalServerErrorException('User is missing Keycloak ID');
     }
 
-    // ── Saga compensation trackers ─────────────────────────────────────────────
+    // Saga compensation trackers
     let aliasReserved = false;
     let keycloakOrgId: string | null = null;
 
@@ -309,7 +305,7 @@ export class TenantsService {
       );
 
     try {
-      // ── Step 1: Atomic alias reservation ──────────────────────────────────────
+      // Step 1: Atomic alias reservation
       try {
         await this.aliasReservationRepository.reserve(alias);
         aliasReserved = true;
@@ -319,7 +315,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 2: Create Keycloak Organization ──────────────────────────────────
+      // Step 2: Create Keycloak Organization
       try {
         const kcOrg = await this.keycloakAdminService.createOrganization(
           organizationName,
@@ -332,7 +328,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 3: Add user to the organization ──────────────────────────────────
+      // Step 3: Add user to the organization
       try {
         await this.keycloakAdminService.addUserToOrganization(
           keycloakOrgId!,
@@ -344,7 +340,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 4: Create Tenant record in MongoDB ───────────────────────────────
+      // Step 4: Create Tenant record in MongoDB
       let tenant: Tenant;
       try {
         const tenantData: Partial<Tenant> = {
@@ -362,7 +358,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 5: Upsert User in MongoDB & add OWNER membership ─────────────────
+      // Step 5: Upsert User in MongoDB & add OWNER membership
       let localUser: any;
       try {
         localUser = await this.userRepository.upsertWithTenants(
@@ -390,7 +386,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 6: Set owner on the Tenant ──────────────────────────────────────
+      // Step 6: Set owner on the Tenant
       try {
         await this.tenantsRepository.updateOwner(tenant!.id, localUser.id);
 
@@ -400,7 +396,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Step 7: Confirm alias reservation ────────────────────────────────────
+      // Step 7: Confirm alias reservation
       try {
         await this.aliasReservationRepository.confirm(alias);
         stepLog(7, `Alias "${alias}" confirmed`);
@@ -409,7 +405,7 @@ export class TenantsService {
         throw e;
       }
 
-      // ── Emit event ────────────────────────────────────────────────────────────
+      // Emit event
       this.eventEmitter.emit(
         'tenant.created',
         new TenantCreatedEvent(
@@ -428,7 +424,7 @@ export class TenantsService {
         loginUrl: this.getTenantLoginUrl(alias),
       };
     } catch (error: unknown) {
-      // ── Saga Rollback (compensating transactions) ──────────────────────────────
+      // Saga Rollback (compensating transactions)
       this.logger.error(
         '[Saga-Onboard] Onboarding failed — rolling back compensating actions',
         error instanceof Error ? error.stack : String(error),
@@ -466,9 +462,7 @@ export class TenantsService {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Read operations
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async findById(id: string): Promise<Tenant | null> {
     return this.tenantsRepository.findById(id);
@@ -503,9 +497,7 @@ export class TenantsService {
     return this.tenantsRepository.updateOmniSettings(tenantId, omniSettings);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Storage Quota Management
-  // ─────────────────────────────────────────────────────────────────────────────
 
   /**
    * Check whether a tenant is within their storage quota.
@@ -598,9 +590,7 @@ export class TenantsService {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // i18n Settings
-  // ─────────────────────────────────────────────────────────────────────────────
 
   private static readonly I18N_DEFAULTS = {
     locale: 'en',
@@ -649,9 +639,7 @@ export class TenantsService {
     return updated?.i18nSettings ?? { ...TenantsService.I18N_DEFAULTS };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Tenant Profile
-  // ─────────────────────────────────────────────────────────────────────────────
 
   /**
    * Get the tenant profile (name, alias, logoUrl).

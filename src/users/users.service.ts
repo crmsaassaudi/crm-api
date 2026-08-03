@@ -570,7 +570,7 @@ export class UsersService {
     const email = await this.resolveUpdatedEmail(id, updateUserDto);
     const photo = await this.resolveUpdatedPhoto(updateUserDto);
 
-    // ── CRIT-01: Only SUPER_ADMIN may change platformRole or status ──
+    // Only SUPER_ADMIN may change platformRole or status
     const callerUser = await this.usersRepository.findById(
       this.cls.get('userId'),
     );
@@ -645,7 +645,7 @@ export class UsersService {
       }
     }
 
-    // ── C-04: anti-escalation ────────────────────────────────────────────────
+    // Anti-escalation
     // Any membership change that widens privilege is held to two rules:
     //   1. you cannot edit your own privileges at all;
     //   2. you cannot grant a key you do not hold.
@@ -663,7 +663,7 @@ export class UsersService {
       }
     }
 
-    // H-07: an org unit id must belong to the ACTIVE tenant. Without this, an
+    // An org unit id must belong to the ACTIVE tenant. Without this, an
     // admin could file a user under a unit from another workspace, and once
     // ORG_UNIT scope resolves that unit's subtree the user would read across the
     // tenant boundary — through a field that looks like plain HR metadata.
@@ -891,7 +891,7 @@ export class UsersService {
       inviteUserDto,
     );
 
-    // ── Case 1: User already exists in the system ───────────────────────────
+    // Case 1: User already exists in the system
     const existingUser = await this.usersRepository.findByEmail(
       inviteUserDto.email,
     );
@@ -947,7 +947,7 @@ export class UsersService {
       return updated;
     }
 
-    // ── Case 2: User does NOT exist — create in Keycloak + DB ───────────────
+    // Case 2: User does NOT exist — create in Keycloak + DB
     let keycloakUserCreated = false;
     let keycloakUser: { id: string; email: string };
 
@@ -1041,10 +1041,6 @@ export class UsersService {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Remove user from tenant
-  // ─────────────────────────────────────────────────────────────────────────────
-
   async removeFromTenant(userId: string): Promise<User> {
     const tenantId = this.cls.get('tenantId');
     if (!tenantId) {
@@ -1078,7 +1074,6 @@ export class UsersService {
       await this.groupRepository.removeMember(tenantId, group.id, userId);
     }
 
-    // Remove tenant membership
     const updated = await this.usersRepository.removeTenantMembership(
       userId,
       tenantId,
@@ -1103,9 +1098,7 @@ export class UsersService {
     return updated;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Get all groups a user belongs to within the current tenant
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async getUserGroups(userId: string) {
     const tenantId = this.cls.get('tenantId');
@@ -1161,9 +1154,7 @@ export class UsersService {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Check if email exists in system (global lookup)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async checkEmail(email: string): Promise<{
     exists: boolean;
@@ -1179,9 +1170,7 @@ export class UsersService {
     return { exists: false };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Create a new user within the current tenant context
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async createForTenant(dto: {
     email: string;
@@ -1352,9 +1341,7 @@ export class UsersService {
     return updated;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // i18n Preferences (User + Tenant cascade)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   private static readonly I18N_SYSTEM_DEFAULTS = {
     locale: 'en',

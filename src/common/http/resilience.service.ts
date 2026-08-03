@@ -69,7 +69,7 @@ export class ResilienceService {
       `Creating policy for '${serviceName}': Retries=${retries}, Breaker=${breakerThreshold}, Timeout=${timeoutMs}ms`,
     );
 
-    // --- Policies ---
+    // Policies
 
     // 1. Timeout Policy (Fail fast if slow)
     const timeoutPolicy = timeout(timeoutMs, TimeoutStrategy.Aggressive);
@@ -90,7 +90,7 @@ export class ResilienceService {
       breaker: new ConsecutiveBreaker(breakerThreshold),
     });
 
-    // --- Logging & Telemetry ---
+    // Logging & Telemetry
 
     const getContext = () =>
       `[${serviceName}] [${this.cls.getId() || 'NO_ID'}]`;
@@ -123,7 +123,7 @@ export class ResilienceService {
       );
     });
 
-    // --- Composition ---
+    // Composition
     // Order: CircuitBreaker -> Retry -> Timeout -> Execute
     // If Circuit is open, fail immediately.
     // If Circuit is closed, try.
@@ -132,7 +132,7 @@ export class ResilienceService {
     // Standard user request: "Timeout Policy: If API hangs, retry is useless." -> This implies timeout per attempt.
     // So: Wrap(Retry, CircuitBreaker, Timeout) -> means Retry calls CircuitBreaker calls Timeout calls Function.
 
-    // --- Composition ---
+    // Composition
 
     const policy = wrap(retryPolicy, circuitBreakerPolicy, timeoutPolicy);
 

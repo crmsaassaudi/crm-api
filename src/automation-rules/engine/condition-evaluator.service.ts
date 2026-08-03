@@ -69,8 +69,6 @@ export class ConditionEvaluatorService {
     }
   }
 
-  // ── Private ─────────────────────────────────────────────────────────────
-
   private evaluateGroup(
     group: ConditionGroup,
     data: Record<string, any>,
@@ -179,7 +177,7 @@ export class ConditionEvaluatorService {
     }
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────────────
+  // Helpers
 
   private compareEqual(
     fieldValue: any,

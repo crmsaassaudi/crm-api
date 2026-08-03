@@ -64,7 +64,7 @@ describe('ContactEnrichmentService', () => {
     service = module.get<ContactEnrichmentService>(ContactEnrichmentService);
   });
 
-  // ── buildContactUpdate tests (via private method access) ───────────────
+  // buildContactUpdate tests (via private method access)
 
   describe('buildContactUpdate — dynamic field detection', () => {
     // Access private method for isolated unit testing
@@ -238,7 +238,7 @@ describe('ContactEnrichmentService', () => {
     });
   });
 
-  // ── Identity cache tests ──────────────────────────────────────────────
+  // Identity cache tests
 
   describe('enrichFromPreChat — identity cache', () => {
     it('should cache contactId even when conversationId is null', async () => {

@@ -25,7 +25,6 @@ export class AccountSettingsService {
     return this.cls.get('tenantId');
   }
 
-  // ── Statuses ───────────────────────────────────────────────────────────
   async findAllStatuses() {
     return this.statusModel
       .find({ tenantId: this.tenantId })
@@ -51,7 +50,6 @@ export class AccountSettingsService {
       .exec();
   }
 
-  // ── Types ──────────────────────────────────────────────────────────────
   async findAllTypes() {
     return this.typeModel
       .find({ tenantId: this.tenantId })

@@ -39,7 +39,7 @@ export abstract class FileRepository {
 
   abstract findByIds(ids: FileType['id'][]): Promise<FileType[]>;
 
-  // ── New methods for file management ───────────────────────────
+  // New methods for file management
 
   /** Find all files linked to a conversation (for file history) */
   abstract findByConversation(
@@ -65,7 +65,6 @@ export abstract class FileRepository {
     data: Partial<FileType>,
   ): Promise<{ file: FileType; isNew: boolean }>;
 
-  /** Soft-delete a file */
   abstract softDelete(id: string): Promise<NullableType<FileType>>;
 
   /** Hard-delete a file (removes DB record entirely) */
@@ -84,9 +83,8 @@ export abstract class FileRepository {
     status: FileStatus,
   ): Promise<NullableType<FileType>>;
 
-  // ── Cloud Drive extensions ────────────────────────────────────
+  // Cloud Drive extensions
 
-  /** Rename a file */
   abstract rename(id: string, newName: string): Promise<NullableType<FileType>>;
 
   /** Move file to a different folder */
@@ -101,7 +99,6 @@ export abstract class FileRepository {
     folderId: string | null,
   ): Promise<number>;
 
-  /** Bulk soft-delete */
   abstract bulkSoftDelete(ids: string[]): Promise<number>;
 
   /** Restore a soft-deleted file */

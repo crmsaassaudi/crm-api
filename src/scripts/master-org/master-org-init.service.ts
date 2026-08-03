@@ -69,8 +69,6 @@ export class MasterOrgInitService {
     private readonly aliasModel: Model<TenantAliasReservationSchemaClass>,
   ) {}
 
-  // ── Config ──────────────────────────────────────────────────────────────────
-
   static readConfig(): MasterOrgConfig {
     const name = process.env.MASTER_ORG_NAME?.trim() || 'CRM Saudi';
     const alias = (process.env.MASTER_ORG_ALIAS?.trim() || 'master')
@@ -119,14 +117,14 @@ export class MasterOrgInitService {
     return chars.join('');
   }
 
-  // ── Main ────────────────────────────────────────────────────────────────────
+  // Main
 
   async run(cfg: MasterOrgConfig): Promise<MasterOrgInitResult> {
     this.logger.log(
       `Initialising master org "${cfg.name}" (alias="${cfg.alias}", admin=${cfg.adminEmail})`,
     );
 
-    // ── Step 1: Keycloak organization (find-or-create) ──────────────────────────
+    // Step 1: Keycloak organization (find-or-create)
     let kcOrg = await this.keycloak.findOrganizationByAlias(cfg.alias);
     if (kcOrg) {
       this.logger.log(`KC org exists: ${kcOrg.id}`);
@@ -135,7 +133,7 @@ export class MasterOrgInitService {
       this.logger.log(`KC org created: ${kcOrg.id}`);
     }
 
-    // ── Step 2: Keycloak user (find-or-create) ──────────────────────────────────
+    // Step 2: Keycloak user (find-or-create)
     let generatedPassword: string | undefined;
     let kcUser = await this.keycloak.findUserByEmail(cfg.adminEmail);
     if (kcUser) {
@@ -152,7 +150,7 @@ export class MasterOrgInitService {
     }
     const keycloakUserId = kcUser.id;
 
-    // ── Step 3: Add user to org (idempotent) ────────────────────────────────────
+    // Step 3: Add user to org (idempotent)
     try {
       await this.keycloak.addUserToOrganization(kcOrg.id, keycloakUserId);
     } catch (e: any) {
@@ -164,7 +162,7 @@ export class MasterOrgInitService {
       }
     }
 
-    // ── Step 4: Mongo tenant (find-or-create) ───────────────────────────────────
+    // Step 4: Mongo tenant (find-or-create)
     let tenant = await this.tenantModel.findOne({ alias: cfg.alias }).exec();
     if (tenant) {
       this.logger.log(`Tenant exists: ${tenant._id.toString()}`);
@@ -191,7 +189,7 @@ export class MasterOrgInitService {
     }
     const tenantId = tenant._id.toString();
 
-    // ── Step 5: Mongo user (upsert as SUPER_ADMIN + OWNER of master tenant) ──────
+    // Step 5: Mongo user (upsert as SUPER_ADMIN + OWNER of master tenant)
     // Platform-level bootstrap query: the users collection is tenant-scoped by
     // tenantFilterPlugin, which fails closed without CLS context. isPlatformQuery
     // is the sanctioned opt-in for intentional cross-tenant/platform operations.
@@ -257,14 +255,14 @@ export class MasterOrgInitService {
     }
     const userId = user._id.toString();
 
-    // ── Step 6: Set tenant owner ────────────────────────────────────────────────
+    // Step 6: Set tenant owner
     if (tenant.ownerId?.toString() !== userId) {
       tenant.ownerId = new Types.ObjectId(userId);
       await tenant.save();
       this.logger.log(`Tenant owner set to ${userId}`);
     }
 
-    // ── Step 7: Confirm + pin the alias reservation (never TTL-expires) ─────────
+    // Step 7: Confirm + pin the alias reservation (never TTL-expires)
     const farFuture = new Date('2999-12-31T00:00:00Z');
     await this.aliasModel.updateOne(
       { alias: cfg.alias },

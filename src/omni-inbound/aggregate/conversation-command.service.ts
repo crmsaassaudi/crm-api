@@ -121,7 +121,7 @@ export class ConversationCommandService {
     );
   }
 
-  // ── Phase 2 Commands ──────────────────────────────────────────────
+  // Phase 2 Commands
 
   /**
    * Enqueue an ASSIGN_AGENT command.
@@ -210,7 +210,7 @@ export class ConversationCommandService {
     return operationId;
   }
 
-  // ── Inline Execution (synchronous controller path) ────────────────
+  // Inline Execution (synchronous controller path)
   //
   // Industry standard (Zendesk, HubSpot, Salesforce):
   // Single-record mutations return the updated document synchronously.
@@ -218,7 +218,6 @@ export class ConversationCommandService {
   // (bypassing BullMQ queue) for controller use.
   //
   // Background processors should use the enqueue* methods above.
-  // ──────────────────────────────────────────────────────────────────
 
   /**
    * Execute ASSIGN_AGENT synchronously. Returns updated conversation.

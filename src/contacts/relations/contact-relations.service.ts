@@ -75,7 +75,7 @@ export class ContactRelationsService {
     private readonly affiliationModel: Model<AccountContactRelationDocument>,
   ) {}
 
-  // ── Person ↔ person ─────────────────────────────────────────────────────
+  // Person ↔ person
 
   async addPersonRelation(
     fromContactId: string,
@@ -194,7 +194,7 @@ export class ContactRelationsService {
     }
   }
 
-  // ── Person ↔ company ────────────────────────────────────────────────────
+  // Person ↔ company
 
   async addAffiliation(
     contactId: string,
@@ -398,7 +398,7 @@ export class ContactRelationsService {
     }
   }
 
-  // ── Invariant helpers ───────────────────────────────────────────────────
+  // Invariant helpers
 
   private async demoteCurrentPrimary(contactId: string): Promise<void> {
     await this.affiliationModel
@@ -438,7 +438,7 @@ export class ContactRelationsService {
     }
   }
 
-  // ── Views ───────────────────────────────────────────────────────────────
+  // Views
 
   private toPersonView(
     row: any,

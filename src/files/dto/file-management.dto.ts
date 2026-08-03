@@ -11,7 +11,6 @@ import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { FileAccessLevel, FileCategory } from '../domain/file';
 
-// ── Upload DTO ──────────────────────────────────────────────────────
 export class UploadFileDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -42,7 +41,6 @@ export class UploadFileDto {
   tags?: string[];
 }
 
-// ── List Query DTO ──────────────────────────────────────────────────
 export class ListFilesQueryDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -82,7 +80,6 @@ export class ListFilesQueryDto {
   limit?: number;
 }
 
-// ── Update Access DTO ───────────────────────────────────────────────
 export class UpdateFileAccessDto {
   @IsEnum(['private', 'tenant', 'public'])
   accessLevel: FileAccessLevel;
@@ -93,20 +90,17 @@ export class UpdateFileAccessDto {
   allowedUserIds?: string[];
 }
 
-// ── Rename DTO ──────────────────────────────────────────────────────
 export class RenameFileDto {
   @IsString()
   name: string;
 }
 
-// ── Move DTO ────────────────────────────────────────────────────────
 export class MoveFileDto {
   @IsOptional()
   @IsString()
   folderId?: string | null;
 }
 
-// ── Bulk Move DTO ───────────────────────────────────────────────────
 export class BulkMoveDto {
   @IsArray()
   @IsString({ each: true })
@@ -117,7 +111,6 @@ export class BulkMoveDto {
   folderId?: string | null;
 }
 
-// ── Bulk Delete DTO ─────────────────────────────────────────────────
 export class BulkDeleteDto {
   @IsArray()
   @IsString({ each: true })

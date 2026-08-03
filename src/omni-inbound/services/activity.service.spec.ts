@@ -83,8 +83,6 @@ describe('ActivityService', () => {
     expect(service).toBeDefined();
   });
 
-  // ─── getActivities ───────────────────────────────────────────────
-
   describe('getActivities', () => {
     it('should delegate to repository', async () => {
       const result = await service.getActivities('conv-1', 1, 50);
@@ -96,8 +94,6 @@ describe('ActivityService', () => {
       expect(result.data).toHaveLength(1);
     });
   });
-
-  // ─── onConversationCreated ────────────────────────────────────────
 
   describe('onConversationCreated', () => {
     it('should log with correct description including channel name', async () => {
@@ -135,8 +131,6 @@ describe('ActivityService', () => {
     });
   });
 
-  // ─── onConversationReopened ───────────────────────────────────────
-
   describe('onConversationReopened', () => {
     it('should log reopened with count', async () => {
       await service.onConversationReopened({
@@ -154,8 +148,6 @@ describe('ActivityService', () => {
       );
     });
   });
-
-  // ─── onStatusChanged ─────────────────────────────────────────────
 
   describe('onStatusChanged', () => {
     it('should log agent-triggered status change with agent name', async () => {
@@ -197,8 +189,6 @@ describe('ActivityService', () => {
     });
   });
 
-  // ─── onAssigned ──────────────────────────────────────────────────
-
   describe('onAssigned', () => {
     it('should log assignment with agent name and strategy', async () => {
       await service.onAssigned({
@@ -239,8 +229,6 @@ describe('ActivityService', () => {
     });
   });
 
-  // ─── onSlaBreach ─────────────────────────────────────────────────
-
   describe('onSlaBreach', () => {
     it('should log SLA breach with type', async () => {
       await service.onSlaBreach({
@@ -258,8 +246,6 @@ describe('ActivityService', () => {
       );
     });
   });
-
-  // ─── onTicketCreated ─────────────────────────────────────────────
 
   describe('onTicketCreated', () => {
     it('should log ticket creation with subject', async () => {
@@ -280,8 +266,6 @@ describe('ActivityService', () => {
     });
   });
 
-  // ─── onDealCreated ───────────────────────────────────────────────
-
   describe('onDealCreated', () => {
     it('should log deal creation with title', async () => {
       await service.onDealCreated({
@@ -300,8 +284,6 @@ describe('ActivityService', () => {
       );
     });
   });
-
-  // ─── Error handling ──────────────────────────────────────────────
 
   describe('error handling', () => {
     it('should not throw when repository create fails', async () => {
@@ -333,8 +315,6 @@ describe('ActivityService', () => {
       );
     });
   });
-
-  // ─── onIdentityMerged ────────────────────────────────────────────
 
   describe('onIdentityMerged', () => {
     it('should skip if no conversationId', async () => {

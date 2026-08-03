@@ -99,14 +99,14 @@ export class ReportDigestService {
     }
   }
 
-  // ── Public for manual trigger via admin endpoint ─────────────────────────
+  // Public for manual trigger via admin endpoint
 
   async triggerManual(recipients: string[]): Promise<void> {
     const kpi = await this.buildKpi();
     await this.sendDigestEmail(recipients, kpi);
   }
 
-  // ── Internals ────────────────────────────────────────────────────────────
+  // Internals
 
   /**
    * Platform-wide counts across every tenant.
@@ -121,7 +121,6 @@ export class ReportDigestService {
     const thisWeekStart = subDays(now, 7);
     const lastWeekStart = subWeeks(thisWeekStart, 1);
 
-    // ── New contacts ────────────────────────────────────────────────────────
     const [newContactsThisWeek, newContactsLastWeek] = await Promise.all([
       this.contactModel
         .countDocuments({
@@ -137,7 +136,6 @@ export class ReportDigestService {
         .setOptions({ isPlatformQuery: true } as any),
     ]);
 
-    // ── Conversations ───────────────────────────────────────────────────────
     const [totalConversations, resolvedConversations] = await Promise.all([
       this.convModel
         .countDocuments({
@@ -151,7 +149,7 @@ export class ReportDigestService {
         .setOptions({ isPlatformQuery: true } as any),
     ]);
 
-    // ── Avg first response time (ms) ────────────────────────────────────────
+    // Avg first response time (ms)
     const frtAgg = await reportAggregate(this.convModel, [
       {
         $match: {

@@ -32,7 +32,7 @@ import { ClsService } from 'nestjs-cls';
 import { RequirePermission } from '../common/permissions/permission.decorator';
 import { SCORING_OPERATORS, SCORABLE_FIELDS } from './lead-scoring-rule.schema';
 
-// ── DTOs ─────────────────────────────────────────────────────────────────────
+// DTOs
 
 class ScoringConditionDto {
   @ApiProperty({ example: 'emails' })
@@ -122,7 +122,7 @@ class UpdateLeadScoringRuleDto {
   sortOrder?: number;
 }
 
-// ── Controller ────────────────────────────────────────────────────────────────
+// Controller
 
 /**
  * Scoring RULES are tenant-wide configuration, and `rescore` rewrites the score

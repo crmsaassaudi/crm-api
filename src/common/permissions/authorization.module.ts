@@ -92,7 +92,7 @@ import { AuthorizationContextFactory } from './authorization-context.factory';
     { provide: CUSTOM_ROLES_SERVICE, useExisting: CustomRolesService },
     { provide: ROLE_ASSIGNMENT_SERVICE, useExisting: RoleAssignmentService },
     {
-      // C-01: the record-level PEP is now part of the global guard chain. It is
+      // The record-level PEP is now part of the global guard chain. It is
       // a no-op on handlers without @UseAcl, so this cannot break existing
       // routes — but it does mean opting a route into record-level ACL/ABAC is
       // a one-line decorator instead of a wiring change that was never done.

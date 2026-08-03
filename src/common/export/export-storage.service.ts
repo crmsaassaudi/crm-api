@@ -116,7 +116,7 @@ export class ExportStorageService {
     const expiresAt = new Date(Date.now() + opts.ttlSeconds * 1000);
     const bucket = this.bucket();
 
-    // ── S3 mode: stream straight to S3 via multipart, no local temp ──
+    // S3 mode: stream straight to S3 via multipart, no local temp
     if (this.s3 && bucket) {
       const storageKey = `${this.prefix}/${ulid()}-${safeName}`;
       const passThrough = new PassThrough();
@@ -164,7 +164,7 @@ export class ExportStorageService {
       };
     }
 
-    // ── Local mode: stream to a temp file served via download token ──
+    // Local mode: stream to a temp file served via download token
     const token = ulid();
     const dir = this.localDir();
     await mkdir(dir, { recursive: true });

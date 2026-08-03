@@ -25,7 +25,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
  *   Without bot filtering, tracking data is worse than useless — it's misleading.
  */
 
-// ── 1x1 Transparent PNG ────────────────────────────────────────────────────
+// 1x1 Transparent PNG
 // Pre-computed minimal transparent PNG (68 bytes) — better than generating on each request
 const TRACKING_PIXEL = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQAB' +
@@ -33,7 +33,7 @@ const TRACKING_PIXEL = Buffer.from(
   'base64',
 );
 
-// ── Bot Detection ───────────────────────────────────────────────────────────
+// Bot Detection
 
 /** Known bot User-Agent substrings */
 const BOT_USER_AGENTS = [
@@ -65,8 +65,6 @@ const BOT_IP_PREFIXES = [
   '52.100.', // Microsoft
   '104.47.', // Microsoft
 ];
-
-// ── Schema ──────────────────────────────────────────────────────────────────
 
 export type EmailTrackingDocument = HydratedDocument<EmailTrackingSchemaClass>;
 
@@ -120,7 +118,7 @@ EmailTrackingSchema.index({ trackingId: 1 }, { unique: true });
 // Analytics queries
 EmailTrackingSchema.index({ tenantId: 1, messageId: 1 });
 
-// ── Service ─────────────────────────────────────────────────────────────────
+// Service
 
 @Injectable()
 export class EmailTrackingService {
@@ -132,7 +130,7 @@ export class EmailTrackingService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  // ── Pixel Generation ──────────────────────────────────────────────────
+  // Pixel Generation
 
   /**
    * Generate the tracking pixel HTML to embed in an outbound email.
@@ -159,7 +157,7 @@ export class EmailTrackingService {
     return TRACKING_PIXEL;
   }
 
-  // ── Pixel Hit Processing ──────────────────────────────────────────────
+  // Pixel Hit Processing
 
   /**
    * Process a tracking pixel request (email opened).
@@ -177,7 +175,6 @@ export class EmailTrackingService {
       return;
     }
 
-    // Classify the hit
     const classification = this.classifyHit(userAgent, ipAddress);
 
     if (existing) {
@@ -237,7 +234,7 @@ export class EmailTrackingService {
     });
   }
 
-  // ── Bot Fingerprinting ────────────────────────────────────────────────
+  // Bot Fingerprinting
 
   /**
    * Classify a pixel hit as human, bot, or unknown.
@@ -280,7 +277,7 @@ export class EmailTrackingService {
     return 'unknown';
   }
 
-  // ── Notification ──────────────────────────────────────────────────────
+  // Notification
 
   /**
    * Fire an open notification to the agent via WebSocket.
@@ -315,7 +312,7 @@ export class EmailTrackingService {
     );
   }
 
-  // ── Analytics ─────────────────────────────────────────────────────────
+  // Analytics
 
   /**
    * Get tracking stats for a specific message.

@@ -1,7 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
-// ── Schemas ──────────────────────────────────────────────────────────────
+// Schemas
 // NOTE: the legacy `automation_rules` collection is intentionally NOT registered
 // here. It was a CRUD-only feature with no evaluator anywhere in the codebase —
 // tenants could author rules that could never run. Removed 2026-07-28; the
@@ -23,19 +23,19 @@ import {
   AutomationDelayedJobSchemaClass,
 } from './infrastructure/persistence/document/entities/automation-delayed-job.schema';
 
-// ── Repositories ─────────────────────────────────────────────────────────
+// Repositories
 import { AutomationWorkflowRepository } from './infrastructure/persistence/document/repositories/automation-workflow.repository';
 import { AutomationExecutionLogRepository } from './infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationAuditLogRepository } from './infrastructure/persistence/document/repositories/automation-audit-log.repository';
 import { AutomationDelayedJobRepository } from './infrastructure/persistence/document/repositories/automation-delayed-job.repository';
 
-// ── Controllers & Services ───────────────────────────────────────────────
+// Controllers & Services
 import { AutomationWorkflowController } from './automation-workflow.controller';
 import { AutomationWorkflowService } from './automation-workflow.service';
 import { AutomationExecutionLogController } from './automation-execution-log.controller';
 import { AutomationAuditService } from './automation-audit.service';
 
-// ── Engine ───────────────────────────────────────────────────────────────
+// Engine
 import { AutomationEventListenerService } from './events/automation-event-listener.service';
 import { AutomationOutboxModule } from './events/automation-outbox.module';
 import { OmniAutomationBridgeService } from './events/omni-automation-bridge.service';
@@ -71,7 +71,7 @@ import {
   InternalNotificationExecutor,
 } from './engine/action-executors';
 
-// ── Providers (Email + SMS) ─────────────────────────────────────────────
+// Providers (Email + SMS)
 import {
   SendGridEmailProvider,
   EMAIL_PROVIDER_TOKEN,
@@ -81,7 +81,7 @@ import {
   SMS_PROVIDER_TOKEN,
 } from './engine/providers/sms-provider.service';
 
-// ── Queue ────────────────────────────────────────────────────────────────
+// Queue
 import { AutomationQueueModule } from './queue/automation-queue.module';
 import { AutomationActionProducer } from './queue/automation-action.producer';
 import { AutomationTriggerProcessor } from './queue/automation-trigger.processor';
@@ -100,7 +100,7 @@ import { AutomationDelayedProducer } from './queue/automation-delayed.producer';
 import { AutomationDelayedProcessor } from './queue/automation-delayed.processor';
 import { AutomationDelayedScheduler } from './queue/automation-delayed.scheduler';
 
-// ── CRM Modules (for real action executors) ──────────────────────────────
+// CRM Modules (for real action executors)
 import { ContactsModule } from '../contacts/contacts.module';
 import { TicketsModule } from '../tickets/tickets.module';
 import { DealsModule } from '../deals/deals.module';

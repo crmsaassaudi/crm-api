@@ -33,8 +33,6 @@ import {
 } from '../deals.constants';
 import { AutomationOutboxService } from '../../automation-rules/events/automation-outbox.service';
 
-// ── Module config ──────────────────────────────────────────────────
-
 const DEAL_IMPORT_CONFIG: ImportModuleConfig = {
   module: 'deal',
   displayName: 'Deal',
@@ -79,14 +77,12 @@ const SCALAR_FIELDS = DEAL_IMPORT_MAPPABLE_FIELDS.filter(
   (f) => !DEAL_IMPORT_ARRAY_FIELDS.has(f),
 );
 
-// ── Job data ──────────────────────────────────────────────────────
+// Job data
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface DealImportJobData extends BaseImportJobData {
   // Deal-specific tenant settings can be added here (e.g. default pipeline).
 }
-
-// ── Processor ──────────────────────────────────────────────────────
 
 @Processor(DEAL_IMPORT_QUEUE, { concurrency: 3 })
 export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> {
@@ -142,7 +138,7 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
     return this.importJobModel;
   }
 
-  // ── Row mapping ──
+  // Row mapping
 
   protected mapRow(
     raw: Record<string, string>,

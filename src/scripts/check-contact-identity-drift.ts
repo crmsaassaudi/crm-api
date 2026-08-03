@@ -5,7 +5,7 @@ import { MongoClient, ObjectId } from 'mongodb';
  * Report where `contact_identities` disagrees with the authoritative
  * `emails[]` / `phones[]` / `omniIdentities[]` arrays.
  *
- * ── Why drift is expected, and why that makes this necessary ──
+ * Why drift is expected, and why that makes this necessary
  *
  * `ContactIdentitySyncService` is deliberately **non-throwing**: the arrays are the
  * source of truth and are already saved by the time it runs, so letting a projection
@@ -25,7 +25,7 @@ import { MongoClient, ObjectId } from 'mongodb';
  * repair, and it already exists. Splitting detection from repair means this can be run
  * on a schedule and alerted on without any chance of it writing.
  *
- * ── Why this is the prerequisite for retiring the arrays ──
+ * Why this is the prerequisite for retiring the arrays
  *
  * The read path cannot move to `contact_identities` while the sync is best-effort:
  * `findDuplicateByIdentity` backs the uniqueness check, and an unsynced email would

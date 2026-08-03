@@ -9,10 +9,10 @@
  * and re-exported here for a clean public API.
  */
 
-// ── Interfaces ──────────────────────────────────────────────────────────────
+// Interfaces
 export { ActionExecutor, ActionExecutionResult } from './executor.interface';
 
-// ── Executor Implementations ────────────────────────────────────────────────
+// Executor Implementations
 export {
   SendEmailExecutor,
   SendSmsExecutor,

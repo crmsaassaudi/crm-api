@@ -78,14 +78,14 @@ export class ContactEnrichmentService {
     }
 
     try {
-      // ── Step 1: Load widget config for field mapping rules ──────────
+      // Step 1: Load widget config for field mapping rules
       const fieldMappings = await this.loadFieldMappings(widgetId);
 
-      // ── Step 2: Build Contact update from mapping rules ─────────────
+      // Step 2: Build Contact update from mapping rules
       const { contactUpdate, email, phone, displayName } =
         this.buildContactUpdate(identityData, fieldMappings);
 
-      // ── Step 3: Resolve existing Contact ────────────────────────────
+      // Step 3: Resolve existing Contact
       let contactId: string | null = null;
 
       if (conversationId) {
@@ -94,7 +94,7 @@ export class ContactEnrichmentService {
         contactId = conversation?.contactId ?? null;
       }
 
-      // ── Step 3a: If we already have a contactId, enrich it ──────────
+      // Step 3a: If we already have a contactId, enrich it
       if (contactId) {
         await this.enrichExistingContact(
           contactId,
@@ -106,7 +106,7 @@ export class ContactEnrichmentService {
           `Enriched existing Contact ${contactId} from pre-chat form`,
         );
       } else {
-        // ── Step 3b: Search by email/phone dedup ──────────────────────
+        // Step 3b: Search by email/phone dedup
         contactId = await this.findOrCreateContact(
           tenantId,
           visitorId,
@@ -117,7 +117,7 @@ export class ContactEnrichmentService {
         );
       }
 
-      // ── Step 5: Link Conversation ↔ Contact (1:1) ──────────────────
+      // Step 5: Link Conversation ↔ Contact (1:1)
       if (contactId) {
         await this.linkContactAndConversation(tenantId, contactId, {
           conversationId,
@@ -137,9 +137,7 @@ export class ContactEnrichmentService {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Private Helpers
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Load field definitions from widget config.
@@ -434,7 +432,7 @@ export class ContactEnrichmentService {
         tenantId,
       );
 
-      // ── Step 6: Broadcast for CRM realtime update ──────────────────
+      // Step 6: Broadcast for CRM realtime update
       this.eventEmitter.emit(OmniEvents.CONVERSATION_CUSTOMER_UPDATED, {
         tenantId,
         conversationId,
@@ -445,7 +443,7 @@ export class ContactEnrichmentService {
         `Linked Contact ${contactId} ↔ Conversation ${conversationId} (1:1)`,
       );
     } else {
-      // ── Step 5b: Cache contactId even WITHOUT conversation ────────
+      // Step 5b: Cache contactId even WITHOUT conversation
       await this.identityService.updateIdentity(
         'livechat',
         channelId,

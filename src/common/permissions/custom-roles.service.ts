@@ -46,7 +46,7 @@ export class CustomRolesService {
     private readonly cls: ClsService,
   ) {}
 
-  // ── CRUD ───────────────────────────────────────────────────────────────────
+  // CRUD
 
   async create(
     tenantId: string,
@@ -323,7 +323,7 @@ export class CustomRolesService {
     return CustomRoleMapper.toDomain(saved);
   }
 
-  // ── Permission matrix ──────────────────────────────────────────────────────
+  // Permission matrix
 
   /**
    * Returns the permission registry grouped by resource, plus the calling
@@ -392,7 +392,7 @@ export class CustomRolesService {
     }
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // Helpers
 
   /**
    * `tenantId + name` is unique, so a clone needs a free name. Appends " (2)",

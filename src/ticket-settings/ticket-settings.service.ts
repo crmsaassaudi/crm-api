@@ -37,7 +37,6 @@ export class TicketSettingsService {
     return this.cls.get('tenantId');
   }
 
-  // ── Statuses ───────────────────────────────────────────────────────────
   async findAllStatuses() {
     return this.statusModel
       .find({ tenantId: this.tenantId })
@@ -77,7 +76,6 @@ export class TicketSettingsService {
     return docs.map((d) => d._id.toString());
   }
 
-  // ── Types ──────────────────────────────────────────────────────────────
   async findAllTypes() {
     return this.typeModel
       .find({ tenantId: this.tenantId })
@@ -101,7 +99,6 @@ export class TicketSettingsService {
     await this.typeModel.deleteOne({ _id: id, tenantId: this.tenantId }).exec();
   }
 
-  // ── Sources ────────────────────────────────────────────────────────────
   async findAllSources() {
     return this.sourceModel
       .find({ tenantId: this.tenantId })
@@ -127,7 +124,6 @@ export class TicketSettingsService {
       .exec();
   }
 
-  // ── Resolution Codes ──────────────────────────────────────────────────
   async findAllResolutionCodes() {
     return this.resolutionCodeModel
       .find({ tenantId: this.tenantId })

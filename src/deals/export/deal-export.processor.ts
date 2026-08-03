@@ -31,12 +31,10 @@ import { AccountSchemaClass } from '../../accounts/infrastructure/persistence/do
 import { CustomFieldsService } from '../../custom-fields/custom-fields.service';
 import { loadCustomFieldExportColumns } from '../../common/export/custom-field-export-columns';
 
-// ── Helpers ─────────────────────────────────────────────────────────
+// Helpers
 
 const resolve = (map: Map<string, string>, val: unknown): string =>
   map.get(String(val ?? '')) ?? String(val ?? '');
-
-// ── Columns ─────────────────────────────────────────────────────────
 
 function buildDealExportColumns(
   userMap: Map<string, string>,
@@ -133,7 +131,7 @@ export class DealExportProcessor extends BaseExportProcessor<DealExportJobData> 
     this.storage = storageFactory.create('deals');
   }
 
-  // ── Lifecycle hook ────────────────────────────────────────────────
+  // Lifecycle hook
 
   protected async beforeExport(
     data: DealExportJobData,
@@ -205,7 +203,7 @@ export class DealExportProcessor extends BaseExportProcessor<DealExportJobData> 
     return map;
   }
 
-  // ── BaseExportProcessor abstract implementations ──────────────────
+  // BaseExportProcessor abstract implementations
 
   protected getModuleConfig(): ExportModuleConfig {
     return this.buildModuleConfig([...STATIC_COLUMNS]);

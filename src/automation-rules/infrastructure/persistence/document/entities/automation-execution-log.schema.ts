@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
-// ── Sub-document types ─────────────────────────────────────────────────────
+// Sub-document types
 
 export type ExecutionStatus =
   | 'running'
@@ -26,7 +26,7 @@ export interface ExecutionStep {
   duration: number; // milliseconds
 }
 
-// ── Schema ─────────────────────────────────────────────────────────────────
+// Schema
 
 export type AutomationExecutionLogDocument =
   HydratedDocument<AutomationExecutionLogSchemaClass>;
@@ -179,7 +179,7 @@ AutomationExecutionLogSchema.plugin(tenantFilterPlugin, {
   field: 'tenantId',
 });
 
-// ── Indexes ────────────────────────────────────────────────────────────────
+// Indexes
 
 // Logs per workflow (sorted newest first)
 AutomationExecutionLogSchema.index({

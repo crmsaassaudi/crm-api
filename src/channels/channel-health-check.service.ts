@@ -9,7 +9,7 @@ import { ChannelConfig } from './domain/channel-config';
 import { OAuth2TokenManager } from './services/oauth2-token-manager.service';
 import { RedisLockService } from '../redis/redis-lock.service';
 
-// ── Backoff intervals for adaptive health check ────────────────────────────
+// Backoff intervals for adaptive health check
 const BACKOFF_INTERVALS_MS = [
   5 * 60 * 1000, // 5 minutes  (1st failure → degraded)
   15 * 60 * 1000, // 15 minutes (2nd failure → unhealthy)
@@ -63,7 +63,7 @@ export class ChannelHealthCheckService {
     private readonly lockService: RedisLockService,
   ) {}
 
-  // ── Mode 1: Baseline Health Check (Every 6 Hours) ─────────────────────────
+  // Mode 1: Baseline Health Check (Every 6 Hours)
 
   /**
    * Cron: Every 6 hours (00:00, 06:00, 12:00, 18:00)
@@ -176,7 +176,7 @@ export class ChannelHealthCheckService {
     }
   }
 
-  // ── Mode 2: Adaptive Health Check (Every Minute) ──────────────────────────
+  // Mode 2: Adaptive Health Check (Every Minute)
 
   /**
    * Cron: Every minute — lightweight.
@@ -251,7 +251,7 @@ export class ChannelHealthCheckService {
     }
   }
 
-  // ── Passive Monitoring Bridge ─────────────────────────────────────────────
+  // Passive Monitoring Bridge
 
   /**
    * When an executor detects HTTP 401/403 at runtime, it emits this event.
@@ -288,7 +288,7 @@ export class ChannelHealthCheckService {
     }
   }
 
-  // ── Core: Verify + Update Adaptive State ──────────────────────────────────
+  // Core: Verify + Update Adaptive State
 
   /**
    * Verify a single channel config's credentials and update its health state.
@@ -315,7 +315,6 @@ export class ChannelHealthCheckService {
           credentials,
         );
 
-      // Verify via adapter
       const result = await this.adapterRegistry.verify(
         config.providerType,
         resolvedCredentials,
@@ -326,7 +325,7 @@ export class ChannelHealthCheckService {
       );
 
       if (result.success) {
-        // ── PASS: Transition to healthy ──────────────────────────────────
+        // PASS: Transition to healthy
         await this.repository.updateHealthStatus(config.id, {
           status: config.status === 'error' ? 'active' : config.status,
           lastVerifiedAt: new Date(),
@@ -351,7 +350,7 @@ export class ChannelHealthCheckService {
 
         return 'passed';
       } else {
-        // ── FAIL: Transition state + schedule adaptive check ─────────────
+        // FAIL: Transition state + schedule adaptive check
         return this.handleVerifyFailure(
           config,
           result.error ?? 'Connection verification failed',
@@ -412,7 +411,7 @@ export class ChannelHealthCheckService {
     return 'failed';
   }
 
-  // ── Backoff Calculator ────────────────────────────────────────────
+  // Backoff Calculator
 
   /**
    * Tally the results of a Promise.allSettled batch into pass/fail/skip counts.
@@ -450,7 +449,7 @@ export class ChannelHealthCheckService {
     return BACKOFF_INTERVALS_MS[Math.max(0, idx)];
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // Helpers
 
   private isEnabled(): boolean {
     return (

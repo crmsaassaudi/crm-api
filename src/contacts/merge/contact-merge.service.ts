@@ -164,7 +164,7 @@ export class ContactMergeService {
     const { update, choices } = resolveSurvivorship(survivor, merged, options);
     const occurredAt = new Date();
 
-    // ── 1. Journal first, then re-parent (see the class comment on ordering) ──
+    // 1. Journal first, then re-parent (see the class comment on ordering)
     const moveJournal = await this.buildMoveJournal(survivorId, mergedId);
     const ledger = await this.mergeModel.create({
       tenantId: this.tenantId(),
@@ -187,7 +187,7 @@ export class ContactMergeService {
         moveJournal,
       );
 
-      // ── 2. Apply survivorship to the survivor, with a version check ──
+      // 2. Apply survivorship to the survivor, with a version check
       // The lock serialises merges of this pair but NOT an ordinary PATCH by an
       // agent who had the contact open. Without the check that edit is silently
       // overwritten by our pre-merge snapshot.
@@ -203,23 +203,23 @@ export class ContactMergeService {
         );
       }
 
-      // ── 3. Soft-delete the loser (never a hard delete: unmerge needs it) ──
+      // 3. Soft-delete the loser (never a hard delete: unmerge needs it)
       await this.repository.update(mergedId, {
         deletedAt: occurredAt,
         lastActivityAt: occurredAt,
       } as any);
 
-      // ── 4. Ledger ──
+      // 4. Ledger
       ledger.reparented = reparented;
       ledger.status = 'completed';
       await ledger.save();
 
-      // ── 5. Invalidate the omni identity cache ──
+      // 5. Invalidate the omni identity cache
       // The cache maps a channel thread → contactId with a 24h TTL. Left alone,
       // inbound messages keep resolving to the contact that no longer exists.
       await this.invalidateOmniIdentityCache(merged);
 
-      // ── 6. Audit + activity ──
+      // 6. Audit + activity
       this.entityAudit.emit({
         entity: 'contact',
         entityType: 'CONTACT',
@@ -411,7 +411,7 @@ export class ContactMergeService {
       .exec();
   }
 
-  // ── Re-parenting ────────────────────────────────────────────────────────
+  // Re-parenting
 
   private async reparentAll(
     survivorId: string,
@@ -732,7 +732,7 @@ export class ContactMergeService {
     }
   }
 
-  // ── Cache ───────────────────────────────────────────────────────────────
+  // Cache
 
   /**
    * Drop the Redis identity entries that resolve an inbound channel thread to
@@ -776,7 +776,7 @@ export class ContactMergeService {
     }
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────────────
+  // Helpers
 
   private async loadPair(
     survivorId: string,

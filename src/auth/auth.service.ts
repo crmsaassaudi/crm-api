@@ -49,7 +49,7 @@ export class AuthService {
     private readonly sessionService: SessionService,
   ) {}
 
-  // ─── Step 1: Build login URL with CSRF state ──────────────────────────────
+  // Step 1: Build login URL with CSRF state
 
   async buildLoginUrl(
     returnTo?: string,
@@ -101,7 +101,7 @@ export class AuthService {
     return { url, state };
   }
 
-  // ─── Step 2: Validate state and exchange code ─────────────────────────────
+  // Step 2: Validate state and exchange code
 
   private async validateStateAndExchange(
     code: string,
@@ -175,7 +175,7 @@ export class AuthService {
     }
   }
 
-  // ─── Step 3: Full callback orchestration ─────────────────────────────────
+  // Step 3: Full callback orchestration
 
   async handleCallback(
     code: string,
@@ -259,7 +259,7 @@ export class AuthService {
     return { sid, redirectUrl };
   }
 
-  // ─── Step 4: Token refresh ────────────────────────────────────────────────
+  // Step 4: Token refresh
 
   async refreshTokens(sid: string): Promise<SessionData> {
     const inflight = this.refreshInflight.get(sid);
@@ -399,7 +399,7 @@ export class AuthService {
     throw new UnauthorizedException('Session refresh timeout');
   }
 
-  // ─── Step 5: Logout ───────────────────────────────────────────────────────
+  // Step 5: Logout
 
   async logout(sid: string): Promise<void> {
     const session = await this.sessionService.getSession(sid);
@@ -438,7 +438,7 @@ export class AuthService {
     }
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
+  // Helpers
 
   private decodeJwt(token: string): any {
     const base64 = token.split('.')[1];
@@ -540,7 +540,7 @@ export class AuthService {
     }
   }
 
-  // ─── JIT Provisioning (called from callback) ──────────────────────────────
+  // JIT Provisioning (called from callback)
 
   async jitProvision(keycloakPayload: any): Promise<NullableType<User>> {
     const keycloakId = keycloakPayload.sub;
@@ -645,7 +645,7 @@ export class AuthService {
     }
   }
 
-  // ─── Existing methods kept for /auth/me and /auth/patch ──────────────────
+  // Existing methods kept for /auth/me and /auth/patch
 
   async me(keycloakPayload: any): Promise<NullableType<User>> {
     return this.jitProvision(keycloakPayload);

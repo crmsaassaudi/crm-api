@@ -53,7 +53,7 @@ export class CreateTicketDto {
   @MaxLength(50_000)
   description?: string;
 
-  // ── Customer Context ──
+  // Customer Context
   @ApiPropertyOptional()
   @IsString()
   @IsMongoId()
@@ -100,7 +100,7 @@ export class CreateTicketDto {
   @IsOptional()
   relatedTo?: TicketRelatedToDto;
 
-  // ── Classification & Routing ──
+  // Classification & Routing
   @ApiPropertyOptional({ description: 'TicketType ObjectId' })
   @IsString()
   @IsMongoId()
@@ -145,7 +145,7 @@ export class CreateTicketDto {
   @IsOptional()
   customFields?: Record<string, any>;
 
-  // ── Assignment & Collaboration ──
+  // Assignment & Collaboration
   @ApiPropertyOptional({ description: 'Group ObjectId' })
   @IsString()
   @IsMongoId()

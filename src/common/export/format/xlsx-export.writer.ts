@@ -44,7 +44,7 @@ export class XlsxExportWriter implements ExportFormatWriter {
     if (this.rowsInSheet >= ROWS_PER_SHEET) {
       await this.rollover();
     }
-    // HIGH-03: Neutralize formula injection (=, +, -, @, tab, CR)
+    // Neutralize formula injection (=, +, -, @, tab, CR)
     const safeCells = cells.map((c) => sanitizeCellValue(c));
     this.sheet.addRow(safeCells).commit();
     this.rowsInSheet++;

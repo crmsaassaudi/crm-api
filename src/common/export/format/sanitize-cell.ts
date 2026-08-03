@@ -1,5 +1,5 @@
 /**
- * HIGH-03: Neutralize spreadsheet formula injection in exported cell values.
+ * Neutralize spreadsheet formula injection in exported cell values.
  *
  * Excel and Google Sheets interpret cells starting with `=`, `+`, `-`, `@`,
  * tab, or CR as formulas. An attacker can craft a contact name like

@@ -15,7 +15,7 @@ import {
 /**
  * Registers BullMQ queues for the automation engine.
  *
- * Phase 4 — Per-action-type queues with independent rate limiting:
+ * Per-action-type queues with independent rate limiting:
  *   - Email queue:    env AUTOMATION_EMAIL_RATE_LIMIT (default 500/min)
  *   - SMS queue:      env AUTOMATION_SMS_RATE_LIMIT (default 60/min — Twilio 1/s)
  *   - Internal queue: No rate limit (DB operations, fast)
@@ -26,7 +26,7 @@ import {
  */
 @Module({
   imports: [
-    // ── Trigger evaluation — keeps workflow matching off the API event loop ──
+    // Trigger evaluation — keeps workflow matching off the API event loop
     BullModule.registerQueue({
       name: AUTOMATION_TRIGGER_QUEUE,
       defaultJobOptions: {
@@ -37,7 +37,7 @@ import {
       },
     }),
 
-    // ── Per-type action queues (Phase 4) ──────────────────────────────
+    // Per-type action queues (Phase 4)
 
     // Email queue — rate-limited for SendGrid
     BullModule.registerQueueAsync({
@@ -101,7 +101,7 @@ import {
       }),
     }),
 
-    // ── Legacy main queue (backward compat — some code may still dispatch here) ─
+    // Legacy main queue: backward compat, some code may still dispatch here
     BullModule.registerQueue({
       name: AUTOMATION_ACTION_QUEUE,
       defaultJobOptions: {
@@ -112,7 +112,7 @@ import {
       },
     }),
 
-    // ── Dead Letter Queue ─────────────────────────────────────────────
+    // Dead Letter Queue
     BullModule.registerQueue({
       name: AUTOMATION_ACTION_DLQ,
       defaultJobOptions: {
@@ -121,7 +121,7 @@ import {
       },
     }),
 
-    // ── Bulk queue — rate-limited for high-volume events ──────────────
+    // Bulk queue — rate-limited for high-volume events
     BullModule.registerQueue({
       name: AUTOMATION_BULK_QUEUE,
       defaultJobOptions: {
@@ -132,7 +132,7 @@ import {
       },
     }),
 
-    // ── Delayed resume queue — Wait/Delay node hibernation ───────────
+    // Delayed resume queue — Wait/Delay node hibernation
     BullModule.registerQueue({
       name: AUTOMATION_DELAYED_QUEUE,
       defaultJobOptions: {

@@ -32,7 +32,7 @@ export class FileSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true })
   path: string;
 
-  // ── Basic Metadata ─────────────────────────────────────────────
+  // Basic Metadata
   @Prop()
   fileName?: string;
 
@@ -45,7 +45,7 @@ export class FileSchemaClass extends EntityDocumentHelper {
   @Prop()
   checksum?: string;
 
-  // ── Classification ────────────────────────────────────────────
+  // Classification
   @Prop({ default: 'general' })
   category?: string;
 
@@ -55,7 +55,7 @@ export class FileSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 'ready' })
   status?: string;
 
-  // ── Ownership & ACL ───────────────────────────────────────────
+  // Ownership & ACL
   @Prop()
   uploadedBy?: string;
 
@@ -65,7 +65,7 @@ export class FileSchemaClass extends EntityDocumentHelper {
   @Prop({ type: [String], default: [] })
   allowedUserIds?: string[];
 
-  // ── Conversation Linking ──────────────────────────────────────
+  // Conversation Linking
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'OmniConversationSchemaClass',
@@ -75,11 +75,11 @@ export class FileSchemaClass extends EntityDocumentHelper {
   @Prop()
   messageId?: string;
 
-  // ── Thumbnail ─────────────────────────────────────────────────
+  // Thumbnail
   @Prop()
   thumbnailKey?: string;
 
-  // ── Image/Media Metadata ──────────────────────────────────────
+  // Image/Media Metadata
   @Prop({ type: MongooseSchema.Types.Mixed })
   imageMetadata?: {
     width?: number;
@@ -89,18 +89,18 @@ export class FileSchemaClass extends EntityDocumentHelper {
     originalSize?: number;
   };
 
-  // ── Tags ──────────────────────────────────────────────────────
+  // Tags
   @Prop({ type: [String], default: [] })
   tags?: string[];
 
-  // ── Folder Linking ────────────────────────────────────────────
+  // Folder Linking
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'FolderSchemaClass',
   })
   folderId?: string;
 
-  // ── Soft Delete ───────────────────────────────────────────────
+  // Soft Delete
   @Prop({ default: false })
   isDeleted?: boolean;
 
@@ -110,7 +110,7 @@ export class FileSchemaClass extends EntityDocumentHelper {
 
 export const FileSchema = SchemaFactory.createForClass(FileSchemaClass);
 
-// ── Compound Indexes ────────────────────────────────────────────
+// Compound Indexes
 // Primary query: list files by tenant, status, category
 FileSchema.index(
   { tenantId: 1, status: 1, isDeleted: 1, category: 1 },

@@ -103,7 +103,7 @@ export const CONTACT_REFERENCES: readonly ContactReference[] = [
     // the last contact referencing it.
     onPurge: 'pull',
   },
-  // ── Relationships ──
+  // Relationships
   //
   // Both directions of the person graph are listed separately: the same collection
   // appears twice because a merge has to move rows where the contact is the SUBJECT

@@ -51,7 +51,7 @@ export class LivechatWidgetSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, enum: WIDGET_STATUSES, default: 'active' })
   status: string;
 
-  // ── Settings groups (Mixed JSONB — flexible, schema-less) ───────────────
+  // Settings groups (Mixed JSONB — flexible, schema-less)
 
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   branding: Record<string, any>;

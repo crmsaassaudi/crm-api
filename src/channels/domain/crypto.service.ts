@@ -29,7 +29,7 @@ export interface ICryptoService {
 
 export const CRYPTO_SERVICE_TOKEN = 'CRYPTO_SERVICE';
 
-// -- AES-256-GCM Implementation (Env-based key) ---------------------------
+// AES-256-GCM Implementation (Env-based key)
 
 @Injectable()
 export class EnvCryptoService implements ICryptoService, OnModuleInit {
@@ -113,7 +113,7 @@ export class EnvCryptoService implements ICryptoService, OnModuleInit {
   }
 }
 
-// -- AWS KMS Envelope Encryption (Production-grade) -----------------------
+// AWS KMS Envelope Encryption (Production-grade)
 
 /**
  * KmsCryptoService -- AWS KMS Envelope Encryption.
@@ -263,7 +263,7 @@ export class KmsCryptoService implements ICryptoService, OnModuleInit {
   }
 }
 
-// -- Bootstrap Halt Guard -------------------------------------------------
+// Bootstrap Halt Guard
 
 /**
  * Factory function for CRYPTO_SERVICE_TOKEN.

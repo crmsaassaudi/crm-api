@@ -55,7 +55,7 @@ export function renameForMime(fileName: string, mimeType: string): string {
 }
 
 /**
- * T-040: OutboundMediaHandler
+ * OutboundMediaHandler
  *
  * Extracted from OutboundService to isolate media-specific concerns:
  * - File resolution (S3 download, buffer handling)
@@ -83,8 +83,6 @@ export class OutboundMediaHandler {
     private readonly usersService: UsersService,
     private readonly deliveryCommands: DeliveryCommandService,
   ) {}
-
-  // ── Agent Media ─────────────────────────────────────────────────────────
 
   async sendAgentMedia(params: {
     tenantId: string;
@@ -531,8 +529,6 @@ export class OutboundMediaHandler {
     }
   }
 
-  // ── Bot Media ───────────────────────────────────────────────────────────
-
   async sendBotMedia(
     params: {
       tenantId: string;
@@ -787,7 +783,7 @@ export class OutboundMediaHandler {
     }
   }
 
-  // ── Private Helpers ─────────────────────────────────────────────────────
+  // Private Helpers
 
   /**
    * Resolve a public URL for channels that require one (Instagram, Zalo).
@@ -837,7 +833,7 @@ export class OutboundMediaHandler {
     return adapterResponse?.message_id ?? adapterResponse?.id;
   }
 
-  // ── Shared Helpers ──────────────────────────────────────────────────────
+  // Shared Helpers
 
   private async resolveSenderContext(agentId: string): Promise<{
     name: string;

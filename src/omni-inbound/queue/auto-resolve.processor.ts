@@ -106,7 +106,7 @@ export class AutoResolveProcessor extends BaseTenantConsumer<AutoResolveJobData>
   }
 
   /**
-   * Phase 1: Send a warning message before resolving.
+   * Send a warning message before resolving.
    */
   private async handleWarningPhase(
     tenantId: string,

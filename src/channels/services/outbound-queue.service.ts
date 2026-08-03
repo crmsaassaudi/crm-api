@@ -44,7 +44,7 @@ export class OutboundQueueService {
 
   constructor(private readonly redisService: RedisService) {}
 
-  // ── Pre-Send Gate ──────────────────────────────────────────────────────
+  // Pre-Send Gate
 
   /**
    * Check if a send operation is allowed. Must be called BEFORE dispatching.
@@ -60,7 +60,7 @@ export class OutboundQueueService {
     smtpHost: string,
     recipientCount: number,
   ): Promise<ThrottleCheckResult> {
-    // ── Check 1: Bulk Campaign Guard ─────────────────────────────────
+    // Check 1: Bulk Campaign Guard
     if (recipientCount > BULK_CAMPAIGN_THRESHOLD) {
       this.logger.warn(
         `[OutboundQueue] 🚫 Bulk campaign blocked: tenant=${tenantId}, recipients=${recipientCount}`,
@@ -74,7 +74,7 @@ export class OutboundQueueService {
       };
     }
 
-    // ── Check 2: Daily Quota ──────────────────────────────────────────
+    // Check 2: Daily Quota
     const dailyLimit = this.getDailyLimit(smtpHost);
     const dailySent = await this.getDailySentCount(tenantId, configId);
 
@@ -94,7 +94,7 @@ export class OutboundQueueService {
       };
     }
 
-    // ── Check 3: Per-Second Throttle ─────────────────────────────────
+    // Check 3: Per-Second Throttle
     const throttled = await this.isPerSecondThrottled(tenantId, configId);
     if (throttled) {
       return {
@@ -109,7 +109,7 @@ export class OutboundQueueService {
     return { allowed: true, dailySent, dailyLimit };
   }
 
-  // ── Post-Send Recording ───────────────────────────────────────────────
+  // Post-Send Recording
 
   /**
    * Record a successful send. Must be called AFTER the email is dispatched.
@@ -133,7 +133,7 @@ export class OutboundQueueService {
     await client.set(throttleKey, '1', 'PX', 1000);
   }
 
-  // ── Stats / Monitoring ────────────────────────────────────────────────
+  // Stats / Monitoring
 
   /**
    * Get current daily send stats for a config.
@@ -153,7 +153,7 @@ export class OutboundQueueService {
     };
   }
 
-  // ── Private Helpers ───────────────────────────────────────────────────
+  // Private Helpers
 
   private async getDailySentCount(
     tenantId: string,

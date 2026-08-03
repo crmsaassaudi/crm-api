@@ -26,7 +26,7 @@ export class LivechatWebhookService {
 
   constructor(private readonly widgetService: LivechatWidgetService) {}
 
-  // ── Event Listeners ───────────────────────────────────────────────────────
+  // Event Listeners
 
   @OnEvent('livechat.message.inbound', { async: true })
   async onMessageReceived(payload: {
@@ -134,7 +134,7 @@ export class LivechatWebhookService {
     });
   }
 
-  // ── Core Dispatch ─────────────────────────────────────────────────────────
+  // Core Dispatch
 
   /**
    * Dispatch a webhook POST if:

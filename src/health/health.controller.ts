@@ -226,7 +226,7 @@ export class HealthController {
     }
   }
 
-  // ── MED-12: Queue backlog metrics ──────────────────────────────────────
+  // Queue backlog metrics
 
   /** Critical queue names to monitor. */
   private static readonly MONITORED_QUEUES = [
@@ -341,7 +341,7 @@ export class HealthController {
     };
   }
 
-  // ── T-044: Channel adapter health check ──────────────────────────────────
+  // Channel adapter health check
 
   /** Channel adapters to report on. */
   private static readonly CHANNEL_ADAPTERS = [

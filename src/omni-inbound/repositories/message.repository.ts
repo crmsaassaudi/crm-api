@@ -382,7 +382,7 @@ export class MessageRepository {
    * Full-text-ish search over message bodies, scoped to a bounded set of
    * conversations.
    *
-   * ── Why the conversation set is required, not optional ──
+   * Why the conversation set is required, not optional
    *
    * `omni_messages` has no index on `content`, and adding one is the wrong
    * answer at this size: it would be the most-written index in the system on its

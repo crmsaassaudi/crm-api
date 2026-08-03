@@ -82,7 +82,6 @@ export class OutboundService {
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     private readonly filesService: FilesService,
     private readonly imageProcessingService: ImageProcessingService,
-    // T-040/T-041: Extracted handlers
     private readonly mediaHandler: OutboundMediaHandler,
     private readonly emailHandler: OutboundEmailHandler,
     private readonly deliveryAttempts: DeliveryAttemptService,
@@ -770,7 +769,7 @@ export class OutboundService {
     const source = normalizeOutboundSource(rawSource);
     const senderContext = await this.resolveSenderContext(agentId);
 
-    // ── Idempotency check ──────────────────────────────────────────
+    // Idempotency check
     const idempotencyResult = idempotencyKey
       ? await this.checkOutboundIdempotency(
           tenantId,
@@ -894,7 +893,7 @@ export class OutboundService {
    */
   /**
    * Send a media message from an agent to a customer.
-   * T-040: Delegated to OutboundMediaHandler for separation of concerns.
+   * Delegated to OutboundMediaHandler for separation of concerns.
    */
   async sendAgentMedia(params: {
     tenantId: string;

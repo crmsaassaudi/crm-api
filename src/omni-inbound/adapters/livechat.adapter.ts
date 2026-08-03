@@ -31,7 +31,7 @@ export class LivechatAdapter implements ChannelAdapter {
     this.gateway = gw;
   }
 
-  // ── ChannelAdapter contract ─────────────────────────────────────────────
+  // ChannelAdapter contract
 
   normalize(
     rawPayload: any,
@@ -39,7 +39,7 @@ export class LivechatAdapter implements ChannelAdapter {
     channelId: string,
     _channelConfig?: any,
   ): OmniPayload[] {
-    // ── Text message ────────────────────────────────────────────────────
+    // Text message
     if (rawPayload?.visitorId && rawPayload?.text) {
       return [
         {
@@ -71,7 +71,7 @@ export class LivechatAdapter implements ChannelAdapter {
       ];
     }
 
-    // ── Media message (P1.4: fileId already resolved by VisitorUploadService) ──
+    // Media message (P1.4: fileId already resolved by VisitorUploadService)
     // LivechatInboundBridge.handleMediaInbound() uploads base64 → S3 first,
     // then emits rawPayload with { fileId, storageKey }. If upload fails,
     // the bridge returns early — so fileId is always present here.
@@ -223,7 +223,7 @@ export class LivechatAdapter implements ChannelAdapter {
     return { success: true };
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────
+  // Helpers
 
   /**
    * Extract a reaction event from a livechat widget payload.

@@ -26,7 +26,7 @@ import { RequirePermission } from '../../common/permissions';
  * This gives agents a stable URL to view images and files
  * even after the provider's original URL has expired (Zalo).
  *
- * CRIT-02: Auth required + tenant-prefix validation.
+ * Auth required + tenant-prefix validation.
  * Previously @Public() — any unauthenticated request could sign/stream
  * any S3 object in the shared bucket, including cross-tenant PII exports.
  */
@@ -97,7 +97,7 @@ export class MediaProxyController {
   }
 
   /**
-   * CRIT-02: Validate that the authenticated user's tenant owns the
+   * Validate that the authenticated user's tenant owns the
    * requested storage key. S3 keys are structured as:
    *   ${tenantId}/omni-media/${randomId}.${ext}
    *

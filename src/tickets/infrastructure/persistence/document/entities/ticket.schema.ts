@@ -14,7 +14,7 @@ export type TicketSchemaDocument = HydratedDocument<TicketSchemaClass>;
   },
 })
 export class TicketSchemaClass extends EntityDocumentHelper {
-  // ── 1. CORE & TENANT ───────────────────────────────────────────────────
+  // 1. CORE & TENANT
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'TenantSchemaClass',
@@ -32,7 +32,7 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop()
   description?: string;
 
-  // ── 2. CUSTOMER CONTEXT (Ai đang gặp vấn đề?) ────────────────────────
+  // 2. CUSTOMER CONTEXT (Ai đang gặp vấn đề?)
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'ContactSchemaClass',
@@ -102,7 +102,7 @@ export class TicketSchemaClass extends EntityDocumentHelper {
     name: string;
   };
 
-  // ── 3. CLASSIFICATION & ROUTING ────────────────────────────────────────
+  // 3. CLASSIFICATION & ROUTING
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'TicketTypeSchemaClass',
@@ -134,7 +134,7 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.Mixed })
   customFields?: Record<string, any>;
 
-  // ── 4. ASSIGNMENT & COLLABORATION ─────────────────────────────────────
+  // 4. ASSIGNMENT & COLLABORATION
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'GroupSchemaClass',
@@ -168,7 +168,7 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   })
   statusId: string;
 
-  // ── 5. SLA MANAGEMENT ─────────────────────────────────────────────────
+  // 5. SLA MANAGEMENT
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'SlaPolicySchemaClass' })
   slaPolicyId?: string;
 
@@ -193,7 +193,7 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 0 })
   slaPausedSeconds?: number;
 
-  // ── 6. METRICS & RESOLUTION ───────────────────────────────────────────
+  // 6. METRICS & RESOLUTION
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'TicketResolutionCodeSchemaClass',
@@ -209,7 +209,7 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 0 })
   timeSpentSeconds?: number;
 
-  // ── 7. TIMESTAMPS & AUDIT ─────────────────────────────────────────────
+  // 7. TIMESTAMPS & AUDIT
   @Prop()
   firstRespondedAt?: Date;
 
@@ -247,7 +247,7 @@ export const TicketSchema = SchemaFactory.createForClass(TicketSchemaClass);
 
 TicketSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
-// ── Compound Indexes ─────────────────────────────────────────────────────
+// Compound Indexes
 TicketSchema.index(
   { tenantId: 1, ticketNumber: 1 },
   { unique: true, name: 'tenant_ticket_number_unique' },
@@ -307,7 +307,7 @@ TicketSchema.index(
   { name: 'tenant_recycle_bin' },
 );
 
-// ── Virtuals ─────────────────────────────────────────────────────────────
+// Virtuals
 TicketSchema.virtual('contact', {
   ref: 'ContactSchemaClass',
   localField: 'contactId',

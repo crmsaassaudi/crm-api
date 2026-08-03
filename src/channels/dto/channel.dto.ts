@@ -54,7 +54,7 @@ export class CreateLivechatChannelDto {
   @MinLength(1)
   name: string;
 
-  // ── Content ─────────────────────────────────────────────────────────
+  // Content
   @ApiPropertyOptional({ example: 'Hi there 👋 How can we help?' })
   @IsString()
   @IsOptional()
@@ -82,7 +82,7 @@ export class CreateLivechatChannelDto {
   @IsOptional()
   offlineMessage?: string;
 
-  // ── Branding / Colors ──────────────────────────────────────────────
+  // Branding / Colors
   @ApiPropertyOptional({ example: '#6366f1' })
   @IsString()
   @IsOptional()
@@ -112,7 +112,7 @@ export class CreateLivechatChannelDto {
   @IsOptional()
   agentTextColor?: string;
 
-  // ── Typography / Shape ──────────────────────────────────────────────
+  // Typography / Shape
   @ApiPropertyOptional({ example: 'Inter', description: 'Font family name' })
   @IsString()
   @IsOptional()
@@ -132,7 +132,7 @@ export class CreateLivechatChannelDto {
   @IsOptional()
   launcherSize?: number;
 
-  // ── Behavior ────────────────────────────────────────────────────
+  // Behavior
   @ApiPropertyOptional({ example: 'bottom-right' })
   @IsString()
   @IsOptional()
@@ -162,7 +162,7 @@ export class CreateLivechatChannelDto {
   @IsOptional()
   showBranding?: boolean;
 
-  // ── Advanced ──────────────────────────────────────────────────────
+  // Advanced
   @ApiPropertyOptional({ description: 'Custom CSS injected into Shadow DOM' })
   @IsString()
   @IsOptional()

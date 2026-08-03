@@ -25,7 +25,7 @@ export class TenantSettingsSeedingService {
     );
 
     await Promise.all([
-      // ── Contact ────────────────────────────────────────────────────────────
+      // Contact
       this.seed(tenantId, 'contact_identity', DEFAULT_CONTACT_IDENTITY),
       this.seed(tenantId, 'contact_relationship', DEFAULT_CONTACT_RELATIONSHIP),
       this.seed(
@@ -38,16 +38,16 @@ export class TenantSettingsSeedingService {
       this.seed(tenantId, 'contact_conversion', DEFAULT_CONTACT_CONVERSION),
       this.seed(tenantId, 'contact_source', DEFAULT_CONTACT_SOURCE),
 
-      // ── Contact & Account Lifecycle (starter template — tenant customises) -
+      // Contact & Account Lifecycle (starter template — tenant customises)
       this.seed(tenantId, 'contact_lifecycle', DEFAULT_CONTACT_LIFECYCLE),
       this.seed(tenantId, 'account_lifecycle', DEFAULT_ACCOUNT_LIFECYCLE),
 
-      // ── Deal ───────────────────────────────────────────────────────────────
+      // Deal
       this.seed(tenantId, 'deal_pipeline', DEFAULT_DEAL_PIPELINE),
       this.seed(tenantId, 'deal_forecasting', DEFAULT_DEAL_FORECASTING),
       this.seed(tenantId, 'deal_sales_goals', DEFAULT_DEAL_SALES_GOALS),
 
-      // ── Account ────────────────────────────────────────────────────────────
+      // Account
       this.seed(tenantId, 'account_structure', DEFAULT_ACCOUNT_STRUCTURE),
       this.seed(
         tenantId,
@@ -57,45 +57,45 @@ export class TenantSettingsSeedingService {
       this.seed(tenantId, 'account_territory', DEFAULT_ACCOUNT_TERRITORY),
       this.seed(tenantId, 'account_financial', DEFAULT_ACCOUNT_FINANCIAL),
 
-      // ── Task ───────────────────────────────────────────────────────────────
+      // Task
       this.seed(tenantId, 'task_advanced', DEFAULT_TASK_ADVANCED),
 
-      // ── Layout & Validation ────────────────────────────────────────────────
+      // Layout & Validation
       this.seed(tenantId, 'layout_settings', DEFAULT_LAYOUT_SETTINGS),
       this.seed(tenantId, 'validation_rules', DEFAULT_VALIDATION_RULES),
 
-      // ── Business Hours ─────────────────────────────────────────────────────
+      // Business Hours
       this.seed(tenantId, 'business_hours', DEFAULT_BUSINESS_HOURS),
 
-      // ── Omni Routing & Assignment ──────────────────────────────────────────
+      // Omni Routing & Assignment
       this.seed(tenantId, 'omni_routing', DEFAULT_OMNI_ROUTING),
 
-      // ── Omni Agent Presence / Workforce ────────────────────────────────────
+      // Omni Agent Presence / Workforce
       this.seed(tenantId, 'omni_presence', DEFAULT_OMNI_PRESENCE),
       this.seed(tenantId, 'omni_capacity', DEFAULT_OMNI_CAPACITY),
 
-      // ── Omni Session Lifecycle ─────────────────────────────────────────────
+      // Omni Session Lifecycle
       this.seed(
         tenantId,
         'omni_session_lifecycle',
         DEFAULT_OMNI_SESSION_LIFECYCLE,
       ),
 
-      // ── Omni Identity Resolution ──────────────────────────────────────────
+      // Omni Identity Resolution
       this.seed(
         tenantId,
         'omni_identity_resolution',
         DEFAULT_OMNI_IDENTITY_RESOLUTION,
       ),
 
-      // ── Omni Auto-Reassignment ──────────────────────────────────────────
+      // Omni Auto-Reassignment
       this.seed(
         tenantId,
         'omni_auto_reassignment',
         DEFAULT_OMNI_AUTO_REASSIGNMENT,
       ),
 
-      // ── General Settings ───────────────────────────────────────────────────
+      // General Settings
       this.seed(tenantId, 'general_profile', DEFAULT_GENERAL_PROFILE),
       this.seed(tenantId, 'general_localization', DEFAULT_GENERAL_LOCALIZATION),
       this.seed(
@@ -104,17 +104,17 @@ export class TenantSettingsSeedingService {
         DEFAULT_GENERAL_NOTIFICATIONS,
       ),
 
-      // ── Data Visibility & Sharing ──────────────────────────────────────────
+      // Data Visibility & Sharing
       this.seed(tenantId, 'data_visibility', DEFAULT_DATA_VISIBILITY),
       this.seed(tenantId, 'sharing_rules', DEFAULT_SHARING_RULES),
 
-      // ── List Views ──────────────────────────────────────────────────────────
+      // List Views
       this.seed(tenantId, 'list_views', DEFAULT_LIST_VIEWS),
 
-      // ── Email Channel Settings ──────────────────────────────────────────────
+      // Email Channel Settings
       this.seed(tenantId, 'email_settings', DEFAULT_EMAIL_SETTINGS),
 
-      // ── Navigation ──────────────────────────────────────────────────────────
+      // Navigation
       this.seed(
         tenantId,
         'navigation_workspaces',
@@ -171,7 +171,7 @@ export class TenantSettingsSeedingService {
   }
 }
 
-// ─── Default values ──────────────────────────────────────────────────────────
+// Default values
 
 const DEFAULT_CONTACT_IDENTITY = {
   uniqueEmail: true,
@@ -560,8 +560,6 @@ const DEFAULT_DEAL_SALES_GOALS = {
   goalPeriod: 'quarterly',
 };
 
-// ─── Account defaults ────────────────────────────────────────────────────────
-
 const DEFAULT_ACCOUNT_STRUCTURE = {
   enableParentChildHierarchy: true,
   maxHierarchyDepth: 5,
@@ -583,8 +581,6 @@ const DEFAULT_ACCOUNT_TERRITORY = {
 const DEFAULT_ACCOUNT_FINANCIAL = {
   multiCurrency: true,
 };
-
-// ─── Task defaults ───────────────────────────────────────────────────────────
 
 const DEFAULT_TASK_ADVANCED = {
   categories: [
@@ -621,7 +617,7 @@ const DEFAULT_TASK_ADVANCED = {
   enableAutoCompletionRules: true,
 };
 
-// ─── Layout & Validation defaults ────────────────────────────────────────────
+// Layout & Validation defaults
 
 const DEFAULT_SECTION_CONFIGS = {
   Contact: [
@@ -730,8 +726,6 @@ const DEFAULT_VALIDATION_RULES = {
     ],
   },
 };
-
-// ─── Business Hours default ──────────────────────────────────────────────────
 
 const DEFAULT_BUSINESS_HOURS = {
   /**
@@ -842,7 +836,7 @@ const DEFAULT_TASK_SOURCE = {
   ],
 };
 
-// ─── Ticket Type / Category / Resolution defaults ────────────────────────────
+// Ticket Type / Category / Resolution defaults
 
 const DEFAULT_TICKET_TYPE = {
   types: [
@@ -1059,8 +1053,6 @@ const DEFAULT_TASK_LIFECYCLE = {
   ],
 };
 
-// ─── Omni Identity Resolution defaults ───────────────────────────────────────
-
 const DEFAULT_OMNI_IDENTITY_RESOLUTION = {
   /** Auto-create a shadow CRM contact for every unknown sender */
   autoCreateShadowContact: true,
@@ -1075,7 +1067,7 @@ const DEFAULT_OMNI_IDENTITY_RESOLUTION = {
   autoMergeStrategy: 'phone_email_match',
 };
 
-// ─── Omni Routing & Assignment defaults ──────────────────────────────────────
+// Omni Routing & Assignment defaults
 
 /**
  * What is left of `omni_routing` after the assignment consolidation.
@@ -1091,12 +1083,12 @@ const DEFAULT_OMNI_ROUTING = {
   autoAvailableOnConnect: false,
 };
 
-// ─── Omni Agent Presence / Workforce defaults ────────────────────────────────
+// Omni Agent Presence / Workforce defaults
 // See docs/agent-presence-workforce-spec.md §8 for the rationale behind each
 // default. These drive the presence state machine, heartbeat/grace timing,
 // per-module routing eligibility, alerts and the agent ranking guardrails.
 const DEFAULT_OMNI_PRESENCE = {
-  // ── Heartbeat & connection (§2.3) ──────────────────────────────────────────
+  // Heartbeat & connection (§2.3)
   /** Client heartbeat interval (seconds) */
   heartbeatIntervalSeconds: 30,
   /** Silence after which a socket is considered disconnected (seconds) */
@@ -1104,18 +1096,18 @@ const DEFAULT_OMNI_PRESENCE = {
   /** Hold state before forcing OFFLINE after all connections lost (seconds) */
   gracePeriodSeconds: 120,
 
-  // ── Work status (§2.4) ─────────────────────────────────────────────────────
+  // Work status (§2.4)
   /** Window an agent stays in WRAP_UP after closing an interaction (seconds) */
   wrapUpWindowSeconds: 120,
 
-  // ── Routing interlock (§1.2) ───────────────────────────────────────────────
+  // Routing interlock (§1.2)
   /**
    * When returning to AVAILABLE from BREAK/MEETING/AWAY/TRAINING, auto-restore
    * ACCEPTING. Default false — agent must explicitly press "Ready".
    */
   restoreAcceptingOnReturn: false,
 
-  // ── Per-module require-online for assignment (§5) ──────────────────────────
+  // Per-module require-online for assignment (§5)
   requireOnlineForAssignment: {
     livechat: true,
     social: true,
@@ -1125,7 +1117,7 @@ const DEFAULT_OMNI_PRESENCE = {
     task: false,
   },
 
-  // ── Alerts (§4.5) ──────────────────────────────────────────────────────────
+  // Alerts (§4.5)
   /** Max daily BREAK budget before over-break alert (minutes) */
   breakBudgetMinutes: 60,
   /** Stay AVAILABLE+NOT_ACCEPTING this long after login → invisible-login alert (minutes) */
@@ -1137,7 +1129,7 @@ const DEFAULT_OMNI_PRESENCE = {
   /** AVAILABLE+NOT_ACCEPTING continuously longer than this → alert (minutes) */
   stuckNotAcceptingAlertMinutes: 30,
 
-  // ── Ranking (§4.3) ─────────────────────────────────────────────────────────
+  // Ranking (§4.3)
   ranking: {
     /** Agents below these thresholds appear in detail but are not ranked */
     minOnlineMinutes: 60,
@@ -1154,7 +1146,7 @@ const DEFAULT_OMNI_PRESENCE = {
   },
 };
 
-// ─── Omni Auto-Reassignment defaults ───────────────────────────────────────
+// Omni Auto-Reassignment defaults
 
 const DEFAULT_OMNI_CAPACITY = {
   version: 1,
@@ -1197,8 +1189,6 @@ const DEFAULT_OMNI_AUTO_REASSIGNMENT = {
   notifyAgent: false,
 };
 
-// ─── Omni Session Lifecycle defaults ─────────────────────────────────────────
-
 const DEFAULT_OMNI_SESSION_LIFECYCLE = {
   /** Hours after resolve during which a new message reopens the old session */
   reopenWindowHours: 24,
@@ -1222,7 +1212,7 @@ const DEFAULT_OMNI_SESSION_LIFECYCLE = {
   oooSetPending: true,
 };
 
-// ─── Data Visibility & Sharing Rules ─────────────────────────────────────────
+// Data Visibility & Sharing Rules
 
 /**
  * Data Visibility configuration.
@@ -1287,11 +1277,9 @@ const DEFAULT_SHARING_RULES = {
   }>,
 };
 
-// ─── List Views ──────────────────────────────────────────────────────────────
-
 const DEFAULT_LIST_VIEWS = {
   views: [
-    // ── Contact column layout views ──
+    // Contact column layout views
     // These define WHICH COLUMNS are visible in the table.
     // Labels are resolved by the frontend via i18n (objectManager.fieldLabels.{key}).
     // Filter presets ("All Contacts", "My Open Leads", etc.) are a separate feature
@@ -1331,7 +1319,7 @@ const DEFAULT_LIST_VIEWS = {
       excludedUserIds: [],
     },
 
-    // ── Account column layout views ──
+    // Account column layout views
     {
       id: 'account_all_fields',
       name: 'All Fields',
@@ -1368,7 +1356,7 @@ const DEFAULT_LIST_VIEWS = {
       excludedUserIds: [],
     },
 
-    // ── Ticket column layout views ──
+    // Ticket column layout views
     {
       id: 'ticket_all_fields',
       name: 'All Fields',
@@ -1403,7 +1391,7 @@ const DEFAULT_LIST_VIEWS = {
       excludedUserIds: [],
     },
 
-    // ── Deal column layout views ──
+    // Deal column layout views
     {
       id: 'deal_all_fields',
       name: 'All Fields',
@@ -1438,7 +1426,7 @@ const DEFAULT_LIST_VIEWS = {
       excludedUserIds: [],
     },
 
-    // ── Task column layout views ──
+    // Task column layout views
     {
       id: 'task_all_fields',
       name: 'All Fields',
@@ -1474,7 +1462,7 @@ const DEFAULT_LIST_VIEWS = {
   ],
 };
 
-// ─── Navigation / Workspaces ─────────────────────────────────────────────────
+// Navigation / Workspaces
 
 /**
  * Workspaces — the named groupings behind the sidebar switcher.

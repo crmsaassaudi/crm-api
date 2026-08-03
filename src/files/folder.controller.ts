@@ -14,7 +14,7 @@ import { ClsService } from 'nestjs-cls';
 import { FolderService } from './folder.service';
 import { RequirePermission } from '../common/permissions';
 
-// ── DTOs ──────────────────────────────────────────────────────────
+// DTOs
 
 class CreateFolderDto {
   @IsString()
@@ -64,7 +64,7 @@ export class FolderController {
     private readonly cls: ClsService,
   ) {}
 
-  // ── Create ────────────────────────────────────────────────────────
+  // Create
 
   @Post()
   @RequirePermission('edit', 'files')
@@ -82,7 +82,7 @@ export class FolderController {
     );
   }
 
-  // ── List all (flat for client-side tree assembly) ──────────────────
+  // List all (flat for client-side tree assembly)
 
   @Get()
   @RequirePermission('view', 'files')
@@ -91,7 +91,7 @@ export class FolderController {
     return this.folderService.listAll(tenantId);
   }
 
-  // ── Detail ────────────────────────────────────────────────────────
+  // Detail
 
   @Get(':id')
   @RequirePermission('view', 'files')
@@ -99,7 +99,7 @@ export class FolderController {
     return this.folderService.findById(id);
   }
 
-  // ── Update (rename, move, change color) ───────────────────────────
+  // Update (rename, move, change color)
 
   @Patch(':id')
   @RequirePermission('edit', 'files')
@@ -147,7 +147,7 @@ export class FolderController {
     return result;
   }
 
-  // ── Soft Delete ───────────────────────────────────────────────────
+  // Soft Delete
 
   @Delete(':id')
   @RequirePermission('edit', 'files')
@@ -160,8 +160,6 @@ export class FolderController {
     return this.folderService.softDelete(tenantId, id, userId, userRole);
   }
 
-  // ── Restore ───────────────────────────────────────────────────────
-
   @Post(':id/restore')
   @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
@@ -173,7 +171,7 @@ export class FolderController {
     return this.folderService.restore(tenantId, id, userId, userRole);
   }
 
-  // ── Hard Delete (OWNER only) ──────────────────────────────────────
+  // Hard Delete (OWNER only)
 
   @Delete(':id/purge')
   @RequirePermission('delete', 'files')

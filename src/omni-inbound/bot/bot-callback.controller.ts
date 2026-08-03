@@ -21,7 +21,7 @@ import { BOT_GENERATED_REPLY_EVENT } from '../aggregate/conversation-ops.constan
 /**
  * Receives async callback from crm-bot after it finishes processing a flow.
  *
- * ── Aggregate Architecture (Phase 1) ──
+ * Aggregate Architecture (Phase 1)
  * This controller NO LONGER performs any direct DB mutations.
  * It validates the request, then emits a `bot.generated_reply` event
  * which is consumed by ConversationCommandService and converted into

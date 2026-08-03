@@ -90,7 +90,7 @@ export class SsrfGuardService {
   async validate(
     url: string,
   ): Promise<{ safe: boolean; reason?: string; resolvedIp?: string }> {
-    // ── Step 0: Length guard ────────────────────────────────────────────
+    // Step 0: Length guard
     if (url.length > this.MAX_URL_LENGTH) {
       return {
         safe: false,
@@ -98,7 +98,7 @@ export class SsrfGuardService {
       };
     }
 
-    // ── Step 1: Parse URL ───────────────────────────────────────────────
+    // Step 1: Parse URL
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -119,7 +119,7 @@ export class SsrfGuardService {
       return { safe: false, reason: 'Invalid URL: hostname is required' };
     }
 
-    // ── Step 2: Check if hostname is a raw IP ───────────────────────────
+    // Step 2: Check if hostname is a raw IP
     const normalizedIp = this.normalizeIp(hostname);
     if (normalizedIp) {
       const blocked = this.isBlockedIp(normalizedIp);
@@ -140,7 +140,7 @@ export class SsrfGuardService {
       };
     }
 
-    // ── Step 3: DNS resolve and check all resolved IPs ──────────────────
+    // Step 3: DNS resolve and check all resolved IPs
     try {
       const results = await this.lookupWithTimeout(hostname);
 

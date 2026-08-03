@@ -63,7 +63,7 @@ export class ExportJobSchemaClass {
   @Prop({ required: true, index: true })
   bullJobId: string;
 
-  // ── Request snapshot (audit) ───────────────────────────────────────
+  // Request snapshot (audit)
 
   @Prop({ type: MongooseSchema.Types.Mixed })
   filterSnapshot?: Record<string, any>;
@@ -77,7 +77,7 @@ export class ExportJobSchemaClass {
   @Prop()
   userAgent?: string;
 
-  // ── Result (populated on completion) ──────────────────────────────
+  // Result (populated on completion)
 
   @Prop({ default: 0 })
   recordCount: number;
@@ -95,7 +95,7 @@ export class ExportJobSchemaClass {
   @Prop()
   cancelledAt?: Date;
 
-  // ── Progress (updated during processing) ──────────────────────────
+  // Progress (updated during processing)
 
   @Prop({ type: MongooseSchema.Types.Mixed })
   progress?: {
@@ -104,7 +104,7 @@ export class ExportJobSchemaClass {
     pct: number | null;
   };
 
-  // ── Timestamps ────────────────────────────────────────────────────
+  // Timestamps
 
   @Prop()
   startedAt?: Date;

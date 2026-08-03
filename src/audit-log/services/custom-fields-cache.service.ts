@@ -37,12 +37,9 @@ export class CustomFieldsCacheService {
         await this.redisService.get<Record<string, string>>(cacheKey);
       if (cached) return cached;
 
-      // [Phase 1] Read from CrmSettingsService / CustomFieldsRepository
-      // and cache with TTL 300s. For now, return empty map.
-      // When implemented:
-      //   const labels = await this.customFieldsRepo.getLabelsMap(tenantId, entityType);
-      //   await this.redisService.set(cacheKey, labels, 300);
-      //   return labels;
+      // Not implemented: an empty map makes the audit trail fall back to raw
+      // field keys, which is legible. Reading labels from CustomFieldsRepository
+      // and caching them for 300s is the intended behaviour.
       return {};
     } catch (error) {
       this.logger.debug(

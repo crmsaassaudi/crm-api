@@ -81,7 +81,7 @@ export class InstagramAdapter implements ChannelAdapter {
     channelId: string,
     channelConfig?: any,
   ): OmniPayload[] {
-    // ── Skip non-message events ──────────────────────────────────
+    // Skip non-message events
     // Instagram sends delivery receipts, read receipts, reactions via
     // the same webhook URL. Reactions are handled by normalizeReaction().
     if (
@@ -94,7 +94,7 @@ export class InstagramAdapter implements ChannelAdapter {
       return [];
     }
 
-    // ── Skip echo messages ────────────────────────────────────────
+    // Skip echo messages
     // Instagram echoes outbound messages back to the webhook with is_echo=true.
     // OutboundService already persists these, so processing them would create duplicates.
     if (rawPayload.message?.is_echo) {
@@ -104,7 +104,7 @@ export class InstagramAdapter implements ChannelAdapter {
       return [];
     }
 
-    // ── Skip deleted messages ─────────────────────────────────────
+    // Skip deleted messages
     if (rawPayload.message?.is_deleted) {
       this.logger.debug(
         `Skipping deleted Instagram message mid=${rawPayload.message?.mid}`,
@@ -371,7 +371,7 @@ export class InstagramAdapter implements ChannelAdapter {
     }
   }
 
-  // ─── Private helpers ─────────────────────────────────────────────
+  // Private helpers
 
   private resolveMessageType(message: any): MessageType {
     if (!message) return 'text';

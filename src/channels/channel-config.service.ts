@@ -37,13 +37,13 @@ export class ChannelConfigService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  // ── Provider Schema Registry ────────────────────────────────────────────
+  // Provider Schema Registry
 
   getProviderSchemas(): ProviderSchema[] {
     return PROVIDER_REGISTRY;
   }
 
-  // ── CRUD ────────────────────────────────────────────────────────────────
+  // CRUD
 
   async findAll(): Promise<ChannelConfig[]> {
     const tenantId = this.cls.get('tenantId');
@@ -57,7 +57,7 @@ export class ChannelConfigService {
     return config;
   }
 
-  // ── Verify & Save (Core Flow) ───────────────────────────────────────────
+  // Verify & Save (Core Flow)
 
   async verifyAndSave(
     dto: VerifyAndSaveChannelConfigDto,
@@ -137,8 +137,6 @@ export class ChannelConfigService {
     delete config.encryptedCredentials;
     return config;
   }
-
-  // ── Update ──────────────────────────────────────────────────────────────
 
   async update(
     id: string,
@@ -222,7 +220,7 @@ export class ChannelConfigService {
     return updated;
   }
 
-  // ── Soft Delete (with Proactive Validation) ─────────────────────────────
+  // Soft Delete (with Proactive Validation)
 
   async softDelete(
     id: string,
@@ -279,8 +277,6 @@ export class ChannelConfigService {
     return { deleted: true, warning };
   }
 
-  // ── Set Default ─────────────────────────────────────────────────────────
-
   async setDefault(id: string): Promise<ChannelConfig> {
     const tenantId = this.cls.get('tenantId');
 
@@ -323,7 +319,6 @@ export class ChannelConfigService {
     const config = await this.repository.findById(tenantId, id);
     if (!config) throw new NotFoundException('Channel config not found');
 
-    // Find all active workflows referencing this config
     const activeWorkflows = await this.findWorkflowsUsingConfig(tenantId, id);
     const affectedWorkflows = activeWorkflows.map((w: any) => {
       const nodes = (w.publishedNodes || []).filter(
@@ -425,7 +420,7 @@ export class ChannelConfigService {
     return { migratedWorkflows: migratedCount, deleted: true };
   }
 
-  // ── Private Helpers ─────────────────────────────────────────────────────
+  // Private Helpers
 
   private validateRequiredFields(
     schema: ProviderSchema,

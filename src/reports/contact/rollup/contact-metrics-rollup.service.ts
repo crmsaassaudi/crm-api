@@ -248,7 +248,7 @@ export class ContactMetricsRollupService {
     return merged.size;
   }
 
-  // ── Date helpers ────────────────────────────────────────────────────────
+  // Date helpers
   //
   // Day boundaries are computed in the rollup timezone, and that timezone is stored
   // on every row. A bucket built in one zone cannot serve a request in another: a

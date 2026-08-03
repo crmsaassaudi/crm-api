@@ -101,9 +101,7 @@ describe('ChannelSupportService', () => {
     service = module.get(ChannelSupportService);
   });
 
-  // ──────────────────────────────────────────────────────────────────────
   // Pool resolution
-  // ──────────────────────────────────────────────────────────────────────
 
   describe('resolvePool', () => {
     it('should union direct users with group members', async () => {
@@ -132,7 +130,7 @@ describe('ChannelSupportService', () => {
     });
 
     it('should return null agentIds for an open channel even with a stale populated list', async () => {
-      // H15: an 'open' channel must never let auto-routing narrow down to a
+      // An 'open' channel must never let auto-routing narrow down to a
       // leftover userIds/groupIds list from a prior 'restricted' period —
       // mode is the single source of truth, not "is the list empty".
       channelRepo.findAll.mockResolvedValue([
@@ -173,9 +171,7 @@ describe('ChannelSupportService', () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────────────
   // Eligibility
-  // ──────────────────────────────────────────────────────────────────────
 
   describe('assertAgentEligible', () => {
     beforeEach(() => {
@@ -239,9 +235,7 @@ describe('ChannelSupportService', () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────────────
   // Visibility
-  // ──────────────────────────────────────────────────────────────────────
 
   describe('listServableChannelIds', () => {
     it('should return null when no channel in the tenant restricts', async () => {
@@ -270,7 +264,7 @@ describe('ChannelSupportService', () => {
     });
 
     it('should admit a restricted channel through group membership', async () => {
-      // L19: membership now comes solely from the pool's own resolved
+      // Membership now comes solely from the pool's own resolved
       // agentIds (userIds ∪ actual group members), not a caller-supplied
       // group list — AGENT_IN_GROUP is a real member of GROUP_A per the
       // group lookup mock (`groupMembers`).
@@ -294,9 +288,7 @@ describe('ChannelSupportService', () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────────────
   // Write path
-  // ──────────────────────────────────────────────────────────────────────
 
   describe('updateSupport', () => {
     beforeEach(() => {
@@ -398,9 +390,7 @@ describe('ChannelSupportService', () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────────────
   // Exclusions
-  // ──────────────────────────────────────────────────────────────────────
 
   describe('excludedUserIds', () => {
     it('should subtract an excluded member from a group-derived pool', async () => {

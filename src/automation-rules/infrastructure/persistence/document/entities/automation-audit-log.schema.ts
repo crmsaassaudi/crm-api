@@ -2,8 +2,6 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 
-// ── Types ──────────────────────────────────────────────────────────────────
-
 export type AuditAction =
   | 'created'
   | 'updated'
@@ -21,7 +19,7 @@ export interface AuditDiffEntry {
 
 const AUDIT_LOG_RETENTION_DAYS = 365;
 
-// ── Schema ─────────────────────────────────────────────────────────────────
+// Schema
 
 export type AutomationAuditLogDocument =
   HydratedDocument<AutomationAuditLogSchemaClass>;
@@ -113,7 +111,7 @@ export const AutomationAuditLogSchema = SchemaFactory.createForClass(
 
 AutomationAuditLogSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
-// ── Indexes ────────────────────────────────────────────────────────────────
+// Indexes
 
 // Per-workflow audit history (sorted newest first)
 AutomationAuditLogSchema.index({

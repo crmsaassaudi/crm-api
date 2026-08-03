@@ -38,8 +38,6 @@ describe('ConversionService', () => {
     service = module.get<ConversionService>(ConversionService);
   });
 
-  // ─── linkMessages ────────────────────────────────────────────────────────────
-
   it('should link messages to a Deal', async () => {
     conversationRepoMock.findById.mockResolvedValueOnce({
       id: 'conv_001',

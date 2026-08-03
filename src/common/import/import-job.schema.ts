@@ -67,7 +67,7 @@ export class ImportJobSchemaClass {
   @Prop({ default: false })
   dryRun: boolean;
 
-  // ── Config snapshot ────────────────────────────────────────────────
+  // Config snapshot
 
   @Prop({ type: MongooseSchema.Types.Mixed, required: true })
   mapping: Record<string, string>;
@@ -81,7 +81,7 @@ export class ImportJobSchemaClass {
   @Prop({ default: false })
   triggerAutomations: boolean;
 
-  // ── Audit context (who triggered the import) ──────────────────────
+  // Audit context (who triggered the import)
 
   @Prop()
   ip?: string;
@@ -89,7 +89,7 @@ export class ImportJobSchemaClass {
   @Prop()
   userAgent?: string;
 
-  // ── Result (populated on completion) ──────────────────────────────
+  // Result (populated on completion)
 
   @Prop({ type: MongooseSchema.Types.Mixed })
   summary?: {
@@ -114,7 +114,7 @@ export class ImportJobSchemaClass {
   @Prop()
   failedReason?: string;
 
-  // ── Progress (updated during processing) ──────────────────────────
+  // Progress (updated during processing)
 
   @Prop({ type: MongooseSchema.Types.Mixed })
   progress?: {
@@ -141,7 +141,7 @@ export class ImportJobSchemaClass {
   @Prop({ type: [String], default: [] })
   projectionPendingIds: string[];
 
-  // ── Timestamps ────────────────────────────────────────────────────
+  // Timestamps
 
   @Prop()
   startedAt?: Date;

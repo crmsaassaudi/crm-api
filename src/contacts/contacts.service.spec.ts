@@ -163,9 +163,6 @@ describe('ContactsService', () => {
     );
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // CREATE
-  // ═══════════════════════════════════════════════════════════════════
   describe('create', () => {
     it('should create a contact with valid payload', async () => {
       const dto = createContactDto();
@@ -232,9 +229,6 @@ describe('ContactsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // FIND ONE
-  // ═══════════════════════════════════════════════════════════════════
   describe('findOne', () => {
     it('should return contact by id', async () => {
       const contact = createContact();
@@ -255,9 +249,6 @@ describe('ContactsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // UPDATE
-  // ═══════════════════════════════════════════════════════════════════
   describe('update', () => {
     it('should update contact with valid data', async () => {
       const existing = createContact();
@@ -309,9 +300,7 @@ describe('ContactsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // DELETE
-  // ═══════════════════════════════════════════════════════════════════
   describe('remove', () => {
     it('should remove contact by id', async () => {
       repository.findOne.mockResolvedValue(createContact());
@@ -323,9 +312,6 @@ describe('ContactsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // MERGE IDENTITY
-  // ═══════════════════════════════════════════════════════════════════
   describe('mergeIdentity', () => {
     it('should merge identity into existing contact', async () => {
       const contact = createContact();
@@ -370,9 +356,6 @@ describe('ContactsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // CHECK DUPLICATE
-  // ═══════════════════════════════════════════════════════════════════
   describe('checkDuplicate', () => {
     it('should return isDuplicate=false when no matches', async () => {
       repository.checkDuplicate.mockResolvedValue([]);
@@ -395,9 +378,6 @@ describe('ContactsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // BULK TAG
-  // ═══════════════════════════════════════════════════════════════════
   describe('bulkTagContacts', () => {
     it('should add tags to contacts', async () => {
       repository.addTagsToContacts.mockResolvedValue({
@@ -444,9 +424,6 @@ describe('ContactsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // OWNERSHIP TRANSFER (M-3)
-  // ═══════════════════════════════════════════════════════════════════
   describe('ownership transfer', () => {
     const ownerA = '60d0fe4f5311236168a109ca';
     const ownerB = '60d0fe4f5311236168a109cb';
@@ -543,9 +520,6 @@ describe('ContactsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // FIND BY EMAIL (tenant isolation)
-  // ═══════════════════════════════════════════════════════════════════
   describe('findByEmail — Tenant Isolation', () => {
     it('should include tenantId in query', async () => {
       repository.findOne.mockResolvedValue(null);

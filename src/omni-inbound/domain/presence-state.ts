@@ -1,4 +1,4 @@
-// ─── Canonical 4-Axis Agent State Model ─────────────────────────────────────
+// Canonical 4-Axis Agent State Model
 //
 // This is the canonical presence/routing/work model defined in
 // docs/agent-presence-workforce-spec.md §1. It supersedes the legacy 3-axis
@@ -13,7 +13,6 @@
 //   + connectionStatus — infra: is the socket alive (CONNECTED/DISCONNECTED)
 //
 // "Busy" is NOT a presence — it is AVAILABLE + NOT_ACCEPTING (§1.2).
-// ────────────────────────────────────────────────────────────────────────────
 
 /** Where the agent is, at a macro level. OFFLINE is set by the system only. */
 export type PresenceStatus =
@@ -96,7 +95,7 @@ export interface AgentState {
   updatedAtMs: number;
 }
 
-// ─── Pure Predicates ─────────────────────────────────────────────────────────
+// Pure Predicates
 
 export function isOnline(presence: PresenceStatus): boolean {
   return presence !== 'OFFLINE';
@@ -186,7 +185,7 @@ export function deriveWorkStatus(
   return 'IDLE';
 }
 
-// ─── Legacy Interop (3-axis model in agent-presence.ts) ──────────────────────
+// Legacy Interop (3-axis model in agent-presence.ts)
 //
 // The existing service/gateway/frontend speak the legacy lowercase intent model
 // `available | busy | away | offline`. These adapters let the new model coexist

@@ -12,9 +12,7 @@
 import { OmniPayload } from '../domain/omni-payload';
 import { BotReplyMessage } from '../bot/bot-processing.types';
 
-// ────────────────────────────────────────────────────────────────────────────
 // Command Envelope
-// ────────────────────────────────────────────────────────────────────────────
 
 export type ConversationCommandType =
   | 'CUSTOMER_MESSAGE'
@@ -40,9 +38,7 @@ export interface ConversationCommand {
   createdAt: string; // ISO-8601
 }
 
-// ────────────────────────────────────────────────────────────────────────────
 // Phase 1 Commands
-// ────────────────────────────────────────────────────────────────────────────
 
 export interface CustomerMessageCommand extends ConversationCommand {
   type: 'CUSTOMER_MESSAGE';
@@ -94,9 +90,7 @@ export interface AgentReplyPayload {
   messageId: string;
 }
 
-// ────────────────────────────────────────────────────────────────────────────
 // Bot Event (emitted by BotCallbackController, consumed by CommandService)
-// ────────────────────────────────────────────────────────────────────────────
 
 /**
  * Decoupled event emitted by BotCallbackController.
@@ -129,9 +123,7 @@ export interface BotGeneratedReplyEvent {
   afterTimestamp?: number;
 }
 
-// ────────────────────────────────────────────────────────────────────────────
 // Phase 2 Commands
-// ────────────────────────────────────────────────────────────────────────────
 
 export interface AssignAgentCommand extends ConversationCommand {
   type: 'ASSIGN_AGENT';

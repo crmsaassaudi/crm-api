@@ -120,8 +120,6 @@ export const LEGACY = {
   ],
 } as const;
 
-// ── Org units ───────────────────────────────────────────────────────────────
-
 export interface OrgUnitSpec {
   code: string;
   name: string;
@@ -167,7 +165,7 @@ export const ORG_UNITS: OrgUnitSpec[] = [
   },
 ];
 
-// ── Custom roles ────────────────────────────────────────────────────────────
+// Custom roles
 
 export interface RoleSpec {
   /** Internal handle. Never stored — `custom_roles` has no key column. */
@@ -325,8 +323,6 @@ export const ROLES: RoleSpec[] = [
   },
 ];
 
-// ── Groups ──────────────────────────────────────────────────────────────────
-
 export interface GroupSpec {
   key: string;
   name: string;
@@ -366,8 +362,6 @@ export const GROUPS: GroupSpec[] = [
     memberEmails: [EMAIL.analyst],
   },
 ];
-
-// ── Users ───────────────────────────────────────────────────────────────────
 
 export interface UserSpec {
   email: string;
@@ -510,7 +504,7 @@ export const USERS: UserSpec[] = [
   },
 ];
 
-// ── Contact fixtures (the rows data scope is measured on) ────────────────────
+// Contact fixtures (the rows data scope is measured on)
 
 export interface ContactSpec {
   /**
@@ -639,7 +633,7 @@ export const CONTACTS: ContactSpec[] = [
   },
 ];
 
-// ── Omni channels ───────────────────────────────────────────────────────────
+// Omni channels
 
 export interface ChannelSpec {
   key: string;
@@ -699,8 +693,6 @@ export const CHANNELS: ChannelSpec[] = [
       'Open channel: everyone with omni_channel:view may read it. The control case.',
   },
 ];
-
-// ── Routing rules ───────────────────────────────────────────────────────────
 
 export interface RoutingRuleSpec {
   key: string;
@@ -762,7 +754,7 @@ export const ROUTING_RULES: RoutingRuleSpec[] = [
   },
 ];
 
-// ── Omni conversations ──────────────────────────────────────────────────────
+// Omni conversations
 
 export interface ConversationSpec {
   key: string;
@@ -868,7 +860,7 @@ export const CONVERSATIONS: ConversationSpec[] = [
   },
 ];
 
-// ── ABAC policies ───────────────────────────────────────────────────────────
+// ABAC policies
 
 export interface PolicySpec {
   name: string;
@@ -947,7 +939,7 @@ export const POLICIES: PolicySpec[] = [
   },
 ];
 
-// ── Object ACL entries ──────────────────────────────────────────────────────
+// Object ACL entries
 
 export interface AclSpec {
   description: string;
@@ -979,7 +971,7 @@ export const ACLS: AclSpec[] = [
   },
 ];
 
-// ── Expectations (what the verifier asserts) ────────────────────────────────
+// Expectations (what the verifier asserts)
 
 export interface UserExpectation {
   email: string;
@@ -1314,7 +1306,7 @@ export const ROUTE_PROBES: RouteProbe[] = [
   },
 ];
 
-// ── Omni conversation visibility ────────────────────────────────────────────
+// Omni conversation visibility
 
 /**
  * Which conversations each principal may list.

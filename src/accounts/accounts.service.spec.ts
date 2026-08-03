@@ -110,9 +110,7 @@ describe('AccountsService', () => {
     );
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // CRUD — audit trail
-  // ═══════════════════════════════════════════════════════════════════
   describe('create', () => {
     it('should create account and emit audit event', async () => {
       const result = await service.create({
@@ -196,9 +194,7 @@ describe('AccountsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // PAGINATION — cursor vs offset routing
-  // ═══════════════════════════════════════════════════════════════════
   describe('findAll', () => {
     it('should use cursor pagination when cursor is present', async () => {
       await service.findAll({ cursor: 'abc123', limit: 20 });
@@ -215,9 +211,7 @@ describe('AccountsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // IMPORT UPLOAD — validation
-  // ═══════════════════════════════════════════════════════════════════
   describe('uploadImportFile', () => {
     it('should throw when no file', async () => {
       await expect(service.uploadImportFile(null as any)).rejects.toThrow(
@@ -236,9 +230,7 @@ describe('AccountsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // IMPORT START — mapping validation
-  // ═══════════════════════════════════════════════════════════════════
   describe('startImport', () => {
     it('should throw when mapping is missing required name field', async () => {
       await expect(
@@ -298,9 +290,7 @@ describe('AccountsService', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // IMPORT STATUS — tenant isolation
-  // ═══════════════════════════════════════════════════════════════════
   describe('getImportStatus', () => {
     it('should throw NotFoundException when job does not exist', async () => {
       await expect(service.getImportStatus('no_job')).rejects.toThrow(
@@ -322,9 +312,7 @@ describe('AccountsService', () => {
       );
     });
   });
-  // ===================================================================
   // DUPLICATE DETECTION (company identity)
-  // ===================================================================
   describe('checkDuplicate', () => {
     const candidate = (over: Record<string, unknown>) => ({
       id: 'a1',

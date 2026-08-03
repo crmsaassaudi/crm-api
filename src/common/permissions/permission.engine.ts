@@ -89,7 +89,7 @@ export const canAccess = (
   return permissionKey ? effectivePermissions.has(permissionKey) : false;
 };
 
-// ── Effective-permission explanation (source attribution for admin preview) ──
+// Effective-permission explanation (source attribution for admin preview)
 
 export interface ExplainRole {
   id: string;

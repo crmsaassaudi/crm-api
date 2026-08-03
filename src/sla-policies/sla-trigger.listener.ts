@@ -43,19 +43,19 @@ export class SlaTriggerListener {
         const policies = await this.slaPoliciesService.findAll();
         const enabledPolicies = policies.filter((p) => p.enabled);
 
-        // ── First Response Time (FRT) ──────────────────────────────
+        // First Response Time (FRT)
         const frtPolicy = enabledPolicies
           .filter((p) => p.type === 'first_response')
           .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
 
-        // ── Resolution Time ────────────────────────────────────────
+        // Resolution Time
         const resolutionPolicy = enabledPolicies
           .filter((p) => p.type === 'resolution')
           .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
 
         const updatePayload: Record<string, any> = {};
 
-        // ── Schedule FRT ───────────────────────────────────────────
+        // Schedule FRT
         if (frtPolicy?.targets?.[0]) {
           const target = frtPolicy.targets[0];
           const durationMinutes = this.toMinutes(
@@ -88,7 +88,7 @@ export class SlaTriggerListener {
           );
         }
 
-        // ── Schedule Resolution ────────────────────────────────────
+        // Schedule Resolution
         if (resolutionPolicy?.targets?.[0]) {
           const target = resolutionPolicy.targets[0];
           const durationMinutes = this.toMinutes(
@@ -121,7 +121,7 @@ export class SlaTriggerListener {
           );
         }
 
-        // ── Write all deadlines to conversation document ───────────
+        // Write all deadlines to conversation document
         if (Object.keys(updatePayload).length > 0) {
           await this.conversationRepository.updateSlaFields(
             event.conversationId,

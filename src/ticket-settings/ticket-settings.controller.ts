@@ -27,7 +27,6 @@ import { RequirePermission } from '../common/permissions/permission.decorator';
 export class TicketSettingsController {
   constructor(private readonly service: TicketSettingsService) {}
 
-  // ── Statuses ───────────────────────────────────────────────────────────
   @Get('statuses')
   @RequirePermission('view', 'settings')
   findAllStatuses() {
@@ -52,7 +51,6 @@ export class TicketSettingsController {
     await this.service.deleteStatus(id);
   }
 
-  // ── Types ──────────────────────────────────────────────────────────────
   @Get('types')
   @RequirePermission('view', 'settings')
   findAllTypes() {
@@ -77,7 +75,6 @@ export class TicketSettingsController {
     await this.service.deleteType(id);
   }
 
-  // ── Sources ────────────────────────────────────────────────────────────
   @Get('sources')
   @RequirePermission('view', 'settings')
   findAllSources() {
@@ -102,7 +99,6 @@ export class TicketSettingsController {
     await this.service.deleteSource(id);
   }
 
-  // ── Resolution Codes ──────────────────────────────────────────────────
   @Get('resolution-codes')
   @RequirePermission('view', 'settings')
   findAllResolutionCodes() {

@@ -27,7 +27,7 @@ import { runWithTenantContext } from '../common/tenancy/tenant-context';
 export class LivechatVisitorBridge {
   private readonly logger = new Logger(LivechatVisitorBridge.name);
 
-  // T-039: Redis-backed cache replaces in-memory Map to survive pod restarts
+  // Redis-backed cache replaces in-memory Map to survive pod restarts
   // and work across scaled replicas. Key: livechat:visitor:conv:{id}, TTL: 24h.
   private static readonly CACHE_PREFIX = 'livechat:visitor:conv:';
   private static readonly CACHE_TTL = 86400; // 24 hours
@@ -42,7 +42,7 @@ export class LivechatVisitorBridge {
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
-  // ── Assignment: notify visitor khi agent join ───────────────────────────
+  // Assignment: notify visitor khi agent join
 
   /**
    * Khi conversation được assign (auto hoặc manual), resolve visitorId từ
@@ -85,7 +85,7 @@ export class LivechatVisitorBridge {
             agent.email ??
             'Support Agent';
 
-          // FIX: Use typed `agent.photo` field (FileType | null) instead of
+          // Use typed `agent.photo` field (FileType | null) instead of
           // chained `as any` guesses. If photo has a path, generate a presigned URL.
           if (agent.photo?.path) {
             try {
@@ -118,7 +118,7 @@ export class LivechatVisitorBridge {
     }
   }
 
-  // ── Typing: agent → visitor ─────────────────────────────────────────────
+  // Typing: agent → visitor
 
   /**
    * OmniGateway emit event này khi agent gõ trong livechat conversation.
@@ -157,10 +157,10 @@ export class LivechatVisitorBridge {
     }
   }
 
-  // ── Conversation ended: notify visitor ─────────────────────────────────
+  // Conversation ended: notify visitor
 
   /**
-   * FIX: OmniController already includes `externalConversationId` in the
+   * OmniController already includes `externalConversationId` in the
    * status_changed payload (omni.controller.ts line 861), so we don't need
    * to make a second DB round-trip to resolve visitorId.
    */
@@ -176,7 +176,7 @@ export class LivechatVisitorBridge {
     if (event.status !== 'resolved' && event.status !== 'closed') return;
 
     try {
-      // FIX: Prefer visitorId from event payload — avoids unnecessary DB query.
+      // Prefer visitorId from event payload — avoids unnecessary DB query.
       const visitorId =
         event.externalConversationId ??
         (
@@ -202,7 +202,7 @@ export class LivechatVisitorBridge {
     }
   }
 
-  // ── CSAT: push survey token to visitor widget ───────────────────────────
+  // CSAT: push survey token to visitor widget
 
   /**
    * Task H: When CsatService generates a token (after conversation resolved),
@@ -243,7 +243,7 @@ export class LivechatVisitorBridge {
     }
   }
 
-  // ── Agent read: push read receipt to visitor widget ──────────────────────
+  // Agent read: push read receipt to visitor widget
 
   /**
    * When the agent opens/views a livechat conversation (markAsRead),
@@ -304,7 +304,7 @@ export class LivechatVisitorBridge {
     }
   }
 
-  // ── Reactions: forward persisted reaction to visitor widget ───────────────
+  // Reactions: forward persisted reaction to visitor widget
 
   /**
    * When a reaction is persisted (agent or visitor reacted on a livechat
@@ -366,7 +366,7 @@ export class LivechatVisitorBridge {
     }
   }
 
-  // ── Redis Cache Helpers ─────────────────────────────────────────────────
+  // Redis Cache Helpers
 
   /**
    * Cache conversationId → visitorId mapping in Redis.

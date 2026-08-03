@@ -45,7 +45,7 @@ export class TicketReportService {
     private readonly cls: ClsService,
   ) {}
 
-  // ── Report 1: Volume & Status ─────────────────────────────────────────────
+  // Report 1: Volume & Status
 
   async getVolume(
     dto: GetTicketReportDto,
@@ -137,7 +137,7 @@ export class TicketReportService {
     });
   }
 
-  // ── Report 2: SLA Compliance ──────────────────────────────────────────────
+  // Report 2: SLA Compliance
 
   async getSlaCompliance(
     dto: GetTicketReportDto,
@@ -258,7 +258,7 @@ export class TicketReportService {
     });
   }
 
-  // ── Report 3: Resolution Time ─────────────────────────────────────────────
+  // Report 3: Resolution Time
 
   async getResolutionTime(
     dto: GetTicketReportDto,
@@ -355,7 +355,7 @@ export class TicketReportService {
     });
   }
 
-  // ── Report 4: Agent Workload ──────────────────────────────────────────────
+  // Report 4: Agent Workload
 
   async getAgentWorkload(
     dto: GetTicketReportDto,
@@ -436,7 +436,7 @@ export class TicketReportService {
     });
   }
 
-  // ── Report 5: Breakdown (Source / Type / Priority) ────────────────────────
+  // Report 5: Breakdown (Source / Type / Priority)
 
   async getBreakdown(
     dto: GetTicketReportDto,
@@ -518,7 +518,7 @@ export class TicketReportService {
     });
   }
 
-  // ── Report 6: CSAT ────────────────────────────────────────────────────────
+  // Report 6: CSAT
 
   async getCsat(dto: GetTicketReportDto): Promise<ReportResponse<CsatData>> {
     const startedAt = process.hrtime.bigint();
@@ -609,7 +609,7 @@ export class TicketReportService {
     });
   }
 
-  // ── Private Helpers ───────────────────────────────────────────────────────
+  // Private Helpers
 
   private buildBaseMatch(dto: GetTicketReportDto): Record<string, any> {
     const match: Record<string, any> = {

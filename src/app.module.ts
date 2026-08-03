@@ -244,21 +244,6 @@ function bullBoardBasicAuth() {
         },
       },
     }),
-    // Logging config lives in `common/logger/winston.config.ts`. It used to be
-    // inlined here, and the inlined copy silently dropped four things the extracted
-    // one provides:
-    //
-    //   1. SECRET MASKING. `maskFormat` walks the message and every meta field
-    //      through `maskSecrets`. Without it, anything a logger call touches ships
-    //      verbatim to Loki. `sentry.bootstrap.ts` even reasons from the assumption
-    //      that this is on ("applies the same maskSecrets so anything that escapes a
-    //      logger call...") — it was not.
-    //   2. LOG_FORMAT. The inline copy hard-coded colorized nestLike, so production
-    //      shipped ANSI escape codes into Loki instead of JSON lines.
-    //   3. tenantId / userId / service on every line — the inline printf carried
-    //      correlationId only.
-    //   4. Structured meta. `({ context, level, timestamp, message, ms })` discarded
-    //      the rest of the object, so metadata passed to a logger call vanished.
     WinstonModule.forRootAsync({
       useFactory: (clsService: ClsService) => winstonConfig(clsService),
       inject: [ClsService],

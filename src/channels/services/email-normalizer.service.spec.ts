@@ -15,9 +15,7 @@ describe('EmailNormalizerService', () => {
     service = new EmailNormalizerService(eventEmitter);
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 1. Auto-Responder Detection
-  // ────────────────────────────────────────────────────────────────────────
   describe('isAutoResponder()', () => {
     it('should DROP emails with Auto-Submitted: auto-replied (RFC 3834)', () => {
       expect(
@@ -87,9 +85,7 @@ describe('EmailNormalizerService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 2. Bounce Detection
-  // ────────────────────────────────────────────────────────────────────────
   describe('detectBounce()', () => {
     it('should detect DSN bounces (multipart/report + delivery-status)', () => {
       const headers = {
@@ -201,9 +197,7 @@ describe('EmailNormalizerService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 3. Thread Correlation — Hybrid 3-Layer Strategy
-  // ────────────────────────────────────────────────────────────────────────
   describe('extractThreadInfo()', () => {
     it('should extract message-id, in-reply-to and references', () => {
       const headers = {
@@ -405,9 +399,7 @@ describe('EmailNormalizerService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 4. Soft-Link Thread Break (Lazy Reply Guard)
-  // ────────────────────────────────────────────────────────────────────────
   describe('shouldSoftLinkThread()', () => {
     it('should soft-link when conversation is CLOSED', () => {
       const result: SoftLinkResult = service.shouldSoftLinkThread(
@@ -503,9 +495,7 @@ describe('EmailNormalizerService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 5. Participant Extraction
-  // ────────────────────────────────────────────────────────────────────────
   describe('extractParticipants()', () => {
     it('should extract from, to, cc, bcc from headers', () => {
       const result = service.extractParticipants({
@@ -539,9 +529,7 @@ describe('EmailNormalizerService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 6. Snippet Generation
-  // ────────────────────────────────────────────────────────────────────────
   describe('generateSnippet()', () => {
     it('should strip HTML tags and generate plain text', () => {
       const html = '<h1>Hello</h1><p>Welcome to <b>CRM</b>!</p>';
@@ -574,9 +562,7 @@ describe('EmailNormalizerService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 7. Helper Methods
-  // ────────────────────────────────────────────────────────────────────────
   describe('normalizeEmail()', () => {
     it('should extract email from "Name <email>" format', () => {
       expect(service.normalizeEmail('John Doe <john@example.com>')).toBe(

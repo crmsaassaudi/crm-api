@@ -38,7 +38,7 @@ import { isWorkerRuntime } from '../config/runtime-role';
             configService.get<string>('AUDIT_DATABASE_NAME', { infer: true }) ??
             'crm_audit_logs',
 
-          // ── Atlas Resilience (mirrors main connection) ────────────
+          // Atlas Resilience (mirrors main connection)
           serverSelectionTimeoutMS: 45_000,
           socketTimeoutMS: 60_000,
           heartbeatFrequencyMS: 5_000,

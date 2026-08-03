@@ -45,21 +45,17 @@ import { TENANT_HEADER } from '../../common/tenant/tenant-header.policy';
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
  *
- * Event table:
- * ┌──────────────────────────────────┬────────────┬────────────────────────────────────┐
- * │ Event                            │ Direction  │ Purpose                            │
- * ├──────────────────────────────────┼────────────┼────────────────────────────────────┤
- * │ omni:message:send                │ C → S      │ Agent sends a reply                │
- * │ omni:message:new                 │ S → C      │ New inbound message (from webhook) │
- * │ omni:message:ack                 │ S → C      │ Server confirms message receipt    │
- * │ omni:typing:start / :stop        │ C ↔ S      │ Typing indicators                  │
- * │ omni:conversation:claim          │ C → S      │ Agent claims a conversation        │
- * │ omni:conversation:claimed        │ S → C      │ Broadcast who claimed              │
- * │ omni:collision                   │ S → C      │ Two agents claim the same conv.    │
- * └──────────────────────────────────┴────────────┴────────────────────────────────────┘
+ * Events, by direction:
+ *   C → S  omni:message:send             agent sends a reply
+ *   C → S  omni:conversation:claim       agent claims a conversation
+ *   C ↔ S  omni:typing:start / :stop     typing indicators
+ *   S → C  omni:message:new              new inbound message (from webhook)
+ *   S → C  omni:message:ack              server confirms message receipt
+ *   S → C  omni:conversation:claimed     broadcast who claimed
+ *   S → C  omni:collision                two agents claim the same conversation
  */
-// MED-08b: env-driven allowlist instead of origin: '*'. origin: '*' +
-// credentials: true would let any site open a socket with the user's cookies.
+// Env-driven allowlist instead of origin: '*'. origin: '*' + credentials: true
+// would let any site open a socket with the user's cookies.
 const OMNI_CORS_ALLOWLIST = process.env.FRONTEND_DOMAIN
   ? process.env.FRONTEND_DOMAIN.split(',')
       .map((s) => s.trim())
@@ -125,7 +121,7 @@ export class OmniGateway
     'socket:omni:bot:state',
   ] as const;
 
-  // HIGH-06: Claim lock TTL in seconds. Redis-backed claim locks auto-expire
+  // Claim lock TTL in seconds. Redis-backed claim locks auto-expire
   // so stale claims from crashed pods are cleaned up automatically.
   private static readonly CLAIM_LOCK_TTL_SECONDS = 300; // 5 minutes
 
@@ -228,7 +224,7 @@ export class OmniGateway
 
   private readonly SYSTEM_SUBDOMAINS = ['api', 'admin', 'auth', 'www', 'mail'];
 
-  // ─── Connection lifecycle ──────────────────────────────────────────
+  // Connection lifecycle
 
   async handleConnection(client: Socket) {
     try {
@@ -502,7 +498,7 @@ export class OmniGateway
     );
   }
 
-  // ─── Messaging ─────────────────────────────────────────────────────
+  // Messaging
 
   @SubscribeMessage('omni:message:send')
   async handleSendMessage(
@@ -529,7 +525,7 @@ export class OmniGateway
       `Agent ${userId} sends message to conversation ${data.conversationId}`,
     );
 
-    // T-037: Validate payload before processing
+    // Validate payload before processing
     const validationError = validateSendMessage(data);
     if (validationError) return { ok: false, error: validationError };
 
@@ -738,7 +734,7 @@ export class OmniGateway
     const tenantId = client.data.tenantId;
     if (!tenantId) return { ok: false, error: 'No tenant context' };
 
-    // T-037: Validate template payload
+    // Validate template payload
     const validationError = validateSendTemplate(data);
     if (validationError) {
       return { ok: false, error: validationError };
@@ -1156,7 +1152,7 @@ export class OmniGateway
     });
   }
 
-  // ── Message Status (delivery receipts) ───────────────────────────────
+  // Message Status (delivery receipts)
 
   /**
    * Listener for 'livechat.message.status' domain event.
@@ -1231,7 +1227,7 @@ export class OmniGateway
     });
   }
 
-  // ── Reactions (unified across all channels) ────────────────────────────
+  // Reactions (unified across all channels)
 
   /**
    * Listener for 'omni.reaction.persisted' domain event.
@@ -1290,7 +1286,7 @@ export class OmniGateway
     const tenantId = client.data.tenantId;
     if (!tenantId) return { ok: false, error: 'No tenant context' };
 
-    // T-037: Validate reaction payload
+    // Validate reaction payload
     const validationError = validateReaction(data);
     if (validationError) {
       return { ok: false, error: validationError };
@@ -1363,7 +1359,7 @@ export class OmniGateway
     const subscribeError = validateConversationId(data);
     if (subscribeError) return { ok: false, error: subscribeError };
 
-    // HIGH-04: Tenant-scope the room to prevent cross-tenant realtime leaks.
+    // Tenant-scope the room to prevent cross-tenant realtime leaks.
     // Without this, a tenant-A socket that learns a tenant-B conversationId
     // can join its room and receive live messages/typing/lock events.
     const tenantId = client.data.tenantId;
@@ -1395,7 +1391,7 @@ export class OmniGateway
     return { ok: true, room };
   }
 
-  // ─── Typing indicators ─────────────────────────────────────────────
+  // Typing indicators
 
   @SubscribeMessage('omni:typing:start')
   async handleTypingStart(
@@ -1405,7 +1401,7 @@ export class OmniGateway
     const user = client.data.user;
     if (!user) return;
 
-    // T-037: Validate typing payload
+    // Validate typing payload
     const validationError = validateTyping(data);
     if (validationError) return;
 
@@ -1511,7 +1507,7 @@ export class OmniGateway
     );
   }
 
-  // ─── Collision detection ────────────────────────────────────────────
+  // Collision detection
 
   @SubscribeMessage('omni:conversation:claim')
   async handleClaim(
@@ -1529,7 +1525,7 @@ export class OmniGateway
     if (!tenantId) return { ok: false, error: 'No tenant context' };
     const { conversationId } = data;
 
-    // HIGH-06: Redis-backed claim locks instead of in-memory Map.
+    // Redis-backed claim locks instead of in-memory Map.
     // In-memory Map fails in multi-process/pod: two agents on different pods
     // could claim the same conversation simultaneously.
     const claimKey = `omni:claim:${tenantId}:${conversationId}`;
@@ -1692,7 +1688,7 @@ export class OmniGateway
     }
   }
 
-  // ─── Event listeners: status & assignment broadcasts ────────────
+  // Event listeners: status & assignment broadcasts
 
   /**
    * Broadcast status changes (resolve, close, reopen) to all agents.
@@ -2040,7 +2036,7 @@ export class OmniGateway
       });
   }
 
-  // ─── Activity (Audit Trail) real-time broadcast ─────────────────
+  // Activity (Audit Trail) real-time broadcast
 
   /**
    * Broadcast new activity log entries to the tenant room.

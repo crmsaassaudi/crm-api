@@ -34,7 +34,6 @@ export class NormalizeIdInterceptor implements NestInterceptor {
     // Date – keep as-is
     if (value instanceof Date) return value;
 
-    // Array
     if (Array.isArray(value)) {
       return value.map((item) => this.normalize(item));
     }

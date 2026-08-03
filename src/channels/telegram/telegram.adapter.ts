@@ -26,8 +26,6 @@ export class TelegramAdapter implements ChannelAdapter {
   readonly channelType: ChannelType = 'telegram';
   private readonly logger = new Logger(TelegramAdapter.name);
 
-  // ── normalize ─────────────────────────────────────────────────────────────
-
   normalize(
     rawPayload: any,
     tenantId: string,
@@ -93,7 +91,7 @@ export class TelegramAdapter implements ChannelAdapter {
     ];
   }
 
-  // ── validateWebhook ────────────────────────────────────────────────────────
+  // validateWebhook
 
   /**
    * Telegram does not sign webhook payloads with HMAC by default.
@@ -118,7 +116,7 @@ export class TelegramAdapter implements ChannelAdapter {
     return incomingToken === secretToken;
   }
 
-  // ── send (text) ────────────────────────────────────────────────────────────
+  // send (text)
 
   async send(
     recipientId: string,
@@ -147,8 +145,6 @@ export class TelegramAdapter implements ChannelAdapter {
       throw new Error(`Telegram send failed: ${detail}`);
     }
   }
-
-  // ── sendMedia ──────────────────────────────────────────────────────────────
 
   async sendMedia(
     recipientId: string,
@@ -197,8 +193,6 @@ export class TelegramAdapter implements ChannelAdapter {
     }
   }
 
-  // ── enrichProfile ──────────────────────────────────────────────────────────
-
   enrichProfile(
     _externalId: string,
     _accessToken: string,
@@ -208,7 +202,7 @@ export class TelegramAdapter implements ChannelAdapter {
     return Promise.resolve({});
   }
 
-  // ── PRIVATE HELPERS ────────────────────────────────────────────────────────
+  // PRIVATE HELPERS
 
   private extractToken(channelConfig: any): string {
     const token = channelConfig?.credentials?.botToken;

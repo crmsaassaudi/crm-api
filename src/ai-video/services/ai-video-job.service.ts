@@ -35,7 +35,6 @@ export class AiVideoJobService {
     private readonly cls: ClsService,
   ) {}
 
-  // ── Settings ──────────────────────────────────────────────────────────
   async getSettings(): Promise<AiVideoSettings> {
     const tenantId = this.cls.get('tenantId');
     let settings = await this.settingsRepository.findByTenantId(tenantId);
@@ -59,7 +58,6 @@ export class AiVideoJobService {
     return updated!;
   }
 
-  // ── Create ────────────────────────────────────────────────────────────
   async createJob(dto: CreateAiVideoJobDto): Promise<AiVideoJob> {
     const tenantId = this.cls.get('tenantId');
     const userId = this.cls.get('userId');
@@ -109,7 +107,7 @@ export class AiVideoJobService {
     return job;
   }
 
-  // ── Read ──────────────────────────────────────────────────────────────
+  // Read
   async findById(id: string): Promise<AiVideoJob> {
     const tenantId = this.cls.get('tenantId');
     const job = await this.jobRepository.findById(tenantId, id);
@@ -134,7 +132,7 @@ export class AiVideoJobService {
     return this.auditLogRepository.findByJobId(tenantId, jobId);
   }
 
-  // ── Status transitions ────────────────────────────────────────────────
+  // Status transitions
 
   async updateStatus(
     jobId: string,

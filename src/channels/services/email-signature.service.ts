@@ -33,7 +33,7 @@ export interface EmailSignature {
   updatedAt?: Date;
 }
 
-// ── MongoDB Schema Registration ────────────────────────────────────────────
+// MongoDB Schema Registration
 // The schema is defined inline since it's a simple document.
 // For production, move to a separate schema file in entities/ directory.
 
@@ -88,7 +88,7 @@ EmailSignatureSchema.index(
   { unique: true },
 );
 
-// ── Service ────────────────────────────────────────────────────────────────
+// Service
 
 @Injectable()
 export class EmailSignatureService {
@@ -208,7 +208,7 @@ export class EmailSignatureService {
     return `<div class="crm-email-signature" style="margin-top:20px;">${signatureHtml}</div>${fence}`;
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────
+  // Helpers
 
   private htmlToPlainText(html: string): string {
     if (!html) return '';

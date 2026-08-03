@@ -20,7 +20,7 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
   const inScope = (repo: ConversationRepository, doc: any) =>
     (repo as any).isConversationInScope(doc);
 
-  // ── list scope ────────────────────────────────────────────────────────
+  // list scope
   it('should adds NO scope clause when the user is an admin (visibleOwnerIds = null)', () => {
     const cls = createClsMock({ visibleOwnerIds: null });
     const filter = buildFilter(build(cls), { tenantId: 't1' });
@@ -83,7 +83,7 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
     });
   });
 
-  // ── single-record scope ────────────────────────────────────────────────
+  // single-record scope
   it('should allows an in-scope conversation by assigned agent', () => {
     const cls = createClsMock({ visibleOwnerIds: ['u1'], visibleGroupIds: [] });
     expect(inScope(build(cls), { assignedAgentId: 'u1' })).toBe(true);
@@ -126,7 +126,6 @@ describe('ConversationRepository — data-visibility scope (C4)', () => {
     expect(inScope(build(cls), { assignedAgentId: 'anyone' })).toBe(true);
   });
 
-  // ── M18: per-channel visibility overrides ──────────────────────────────
   describe('per-channel visibility overrides (M18)', () => {
     it('should bypass everyone but still restrict an explicitly-private channel (list)', () => {
       const cls = createClsMock({

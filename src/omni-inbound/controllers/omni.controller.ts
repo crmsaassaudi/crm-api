@@ -53,24 +53,6 @@ import {
   isConversationStatus,
 } from '../domain/conversation-status';
 
-/**
- * REST API for omni-channel conversations and messages.
- *
- * Endpoints:
- *   GET   /omni/conversations              — paginated list
- *   GET   /omni/conversations/:id          — single conversation detail
- *   GET   /omni/conversations/:id/messages — paginated messages
- *   PATCH /omni/conversations/:id/status   — resolve / reopen session
- *   POST  /omni/conversations/:id/tags     — add tag
- *   PATCH /omni/conversations/:id/claim    — claim / assign agent
- *   PATCH /omni/conversations/:id/read     — mark as read (reset unread count)
- *   PATCH /omni/conversations/:id/assign   — assign / reassign agent
- *   PATCH /omni/conversations/:id/unassign — remove agent assignment
- */
-// Conversations cache the end customer's phone and email on `customer`.
-// FieldMaskingInterceptor redacts them unless the principal holds
-// `omni_channel:unmask` — without this the same customer's number was masked on
-// the Contact screen and printed in full one click away in the inbox.
 @SensitiveResource('omni_channel')
 @Controller({ path: 'omni', version: '1' })
 export class OmniController {
@@ -99,14 +81,6 @@ export class OmniController {
     private readonly channelSupportService: ChannelSupportService,
   ) {}
 
-  /**
-   * An assignment target must be a member of the active tenant.
-   *
-   * Without this, `agentId` is an unvalidated body field that writes a foreign
-   * (or non-existent) user id onto a conversation — cross-tenant assignment,
-   * and a capacity/routing corruption vector. Null/undefined means "unassign",
-   * which is always allowed.
-   */
   private async assertAgentInTenant(agentId?: string | null): Promise<void> {
     if (!agentId) return;
 
@@ -127,16 +101,6 @@ export class OmniController {
     }
   }
 
-  // ─── Routing Trace (production debugging) ────────────────────
-
-  /**
-   * GET /omni/conversations/:id/routing-trace
-   *
-   * Returns the assignment audit log for a specific conversation.
-   * Shows every routing decision (assign, queue, fail) in chronological
-   * order — the primary tool for debugging routing issues in production
-   * without reading logs or code.
-   */
   @Get('conversations/:id/routing-trace')
   @RequirePermission('view', 'omni_channel')
   async getRoutingTrace(
@@ -169,17 +133,6 @@ export class OmniController {
     };
   }
 
-  /**
-   * GET /omni/routing-history
-   *
-   * Global routing audit log search across all conversations.
-   * Supports query filtering by conversationId (partial match),
-   * outcome (assigned/queued/failed), and limit.
-   *
-   * Powers the global Routing History page for production debugging
-   * when a customer reports an issue and you need to trace without
-   * knowing the exact conversation.
-   */
   @Get('routing-history')
   @RequirePermission('view', 'omni_channel')
   async getRoutingHistory(
@@ -207,12 +160,6 @@ export class OmniController {
     };
   }
 
-  // ─── Conversations ────────────────────────────────────────────
-
-  /**
-   * List conversations for the current tenant, paginated.
-   * Supports filtering by status, channelType, assignedAgent, and search.
-   */
   @Get('conversations')
   @RequirePermission('view', 'omni_channel')
   async listConversations(@Query() query: ListConversationsQueryDto) {
@@ -241,7 +188,6 @@ export class OmniController {
       throw new BadRequestException('Tenant context not found');
     }
 
-    // ── contactId shortcut: return paginated conversations for a CRM contact ──
     if (contactId) {
       return this.conversationRepo.findByContactId(
         tenantId,
@@ -252,7 +198,6 @@ export class OmniController {
     }
 
     const statusFilter = status ? status.split(',') : ['open', 'pending'];
-    // Normalize channels to lowercase for case-insensitive matching
     const channelFilter = channels
       ? channels.split(',').map((ch) => ch.toLowerCase())
       : undefined;
@@ -603,7 +548,7 @@ export class OmniController {
     return updated;
   }
 
-  // ─── Messages ─────────────────────────────────────────────────
+  // Messages
 
   /**
    * Get paginated messages for a conversation.
@@ -680,7 +625,6 @@ export class OmniController {
         ? messageResult.hasMore
         : messageResult.hasNextPage;
 
-    // Enrich media messages with presigned URLs
     const enrichedMessages = await this.enrichMediaUrls(messages);
 
     return {
@@ -797,7 +741,7 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
 
-    // ── Step 1: Get the total count of past sessions for this customer ──────
+    // Step 1: Get the total count of past sessions for this customer
     const allConversations = await this.conversationRepo.findAllByExternalId(
       tenantId,
       conversation.channelType,
@@ -811,7 +755,7 @@ export class OmniController {
     );
     const totalConversations = pastConversations.length;
 
-    // ── Step 2: Paginate the conversation set (newest-first batches) ─────────
+    // Step 2: Paginate the conversation set (newest-first batches)
     const cp = Math.max(1, parseInt(convPage, 10));
     const cl = Math.min(parseInt(convLimit, 10), 20);
     const start = (cp - 1) * cl; // newest past first → slice from the end
@@ -822,7 +766,7 @@ export class OmniController {
 
     const conversationIds = pagedConversations.map((c) => c.id);
 
-    // ── Step 3: Fetch messages for this slice only ───────────────────────────
+    // Step 3: Fetch messages for this slice only
     const messages =
       conversationIds.length > 0
         ? await this.messageRepo.findByConversationIds(
@@ -860,7 +804,7 @@ export class OmniController {
       );
     }
 
-    // ── Step 4: Build session metadata ──────────────────────────────────────
+    // Step 4: Build session metadata
     const sessions = pagedConversations.map((c) => {
       const resolvedFromPopulate = c.resolvedByAgent
         ? {
@@ -1154,7 +1098,7 @@ export class OmniController {
     };
   }
 
-  // ─── Session management ────────────────────────────────────────
+  // Session management
 
   /**
    * Change conversation status (resolve, reopen, close).
@@ -1464,7 +1408,7 @@ export class OmniController {
     return updated;
   }
 
-  // ─── Claim / Assign ────────────────────────────────────────────
+  // Claim / Assign
 
   @Patch('conversations/:id/claim')
   @UseAcl('assign', 'omni_channel')
@@ -1663,8 +1607,6 @@ export class OmniController {
     return operationId;
   }
 
-  // ─── Notes ──────────────────────────────────────────────────────
-
   @Post('conversations/:id/notes')
   @UseAcl('edit', 'omni_channel')
   @LoadResource('omni_channel')
@@ -1756,9 +1698,9 @@ export class OmniController {
     }
   }
 
-  // ─── Read / Unread ─────────────────────────────────────────────
+  // Read / Unread
 
-  // ─── Activities (Audit Trail) ───────────────────────────────────
+  // Activities (Audit Trail)
 
   @Get('conversations/:id/activities')
   @RequirePermission('view', 'omni_channel')
@@ -1774,8 +1716,6 @@ export class OmniController {
     );
   }
 
-  // ─── Read / Unread ─────────────────────────────────────────────
-
   @Patch('conversations/:id/read')
   @RequirePermission('edit', 'omni_channel')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -1783,7 +1723,7 @@ export class OmniController {
     const conversation = await this.conversationRepo.findById(id);
     await this.conversationRepo.resetUnreadCount(id);
 
-    // FIX: Broadcast unread count reset to all agents in the tenant room
+    // Broadcast unread count reset to all agents in the tenant room
     // so the conversation list sidebar updates in real-time for all tabs/agents.
     if (conversation?.tenantId) {
       this.eventEmitter.emit('omni.conversation.unread_reset', {
@@ -1815,7 +1755,7 @@ export class OmniController {
     }
   }
 
-  // ─── Settings ─────────────────────────────────────────────────
+  // Settings
 
   /** Default notification sound config used when tenant has none */
   private static readonly DEFAULT_NOTIFICATION_SOUND = {
@@ -1965,7 +1905,7 @@ export class OmniController {
     };
   }
 
-  // ─── Conversation File History ─────────────────────────────────
+  // Conversation File History
 
   /**
    * GET /omni/conversations/:id/files
@@ -2054,7 +1994,7 @@ export class OmniController {
     return this.getConversationFiles(conversationId, 'image/', page, limit);
   }
 
-  // ─── Conversion Engine (link-messages) ────────────────────────
+  // Conversion Engine (link-messages)
 
   /**
    * POST /omni/conversations/:id/link-messages

@@ -24,8 +24,6 @@ import {
  * LIFECYCLE_STATUS_MUTABLE_FIELDS in crm-settings.service.ts.
  */
 
-// ── Lifecycle Status ────────────────────────────────────────────────────────
-
 export class LifecycleStatusDto {
   @ApiProperty()
   @IsString()
@@ -81,8 +79,6 @@ export class LifecycleStatusDto {
 }
 
 export class UpdateLifecycleStatusDto extends PartialType(LifecycleStatusDto) {}
-
-// ── Lifecycle Stage ─────────────────────────────────────────────────────────
 
 export class LifecycleStageDto {
   @ApiProperty()

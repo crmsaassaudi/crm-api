@@ -16,7 +16,7 @@ export class AuditLogListener {
     @InjectQueue('audit-queue') private readonly auditQueue: Queue,
   ) {}
 
-  // ── Entity update handlers ──
+  // Entity update handlers
   // Captures field-level diffs for contact/deal/ticket updates.
   // Diff runs HERE (async, outside request thread) — compact payload goes to BullMQ Worker.
 

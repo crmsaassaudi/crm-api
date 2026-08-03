@@ -149,7 +149,7 @@ export class TicketsService {
     };
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────────────
+  // Helpers
 
   /**
    * ObjectId ref fields that should be converted from '' to undefined.
@@ -370,8 +370,6 @@ export class TicketsService {
     });
     if (!allowed) throw new NotFoundException(`${resource} record not found`);
   }
-
-  // ─────────────────────────── EXPORT ───────────────────────────
 
   async exportTickets(
     dto: ExportRequestDto,
@@ -642,7 +640,7 @@ export class TicketsService {
     if (!data.closedAt) updateData.closedAt = new Date();
   }
 
-  // ──────────────────────── RECYCLE BIN ────────────────────────
+  // RECYCLE BIN
   //
   // `remove()` is a soft delete (the schema declares `deletedAt`), so without these
   // two methods a deleted ticket was invisible everywhere and recoverable nowhere —
@@ -694,7 +692,7 @@ export class TicketsService {
     });
   }
 
-  // ── Automation Event Emitter ─────────────────────────────────────────────
+  // Automation Event Emitter
 
   private buildAutomationEvent(
     event: 'record_created' | 'field_updated',
@@ -726,7 +724,7 @@ export class TicketsService {
     return this.cls.get('userId') ?? this.cls.get('user.id');
   }
 
-  // ──────────────────────────── TICKET IMPORT ────────────────────────────
+  // TICKET IMPORT
 
   async uploadImportFile(file: {
     buffer: Buffer;
@@ -980,7 +978,7 @@ export class TicketsService {
     return this.importStorage.readLocalReport(token);
   }
 
-  // ──────────────────────────── DEAL LINK ────────────────────────────
+  // DEAL LINK
 
   /**
    * Link a Deal to this Ticket.
@@ -1064,7 +1062,7 @@ export class TicketsService {
     return (result as any).data ?? [];
   }
 
-  // ──────────────────────────── PARENT/CHILD TICKET ────────────────────────
+  // PARENT/CHILD TICKET
 
   /**
    * Set the parent of a ticket (makes this ticket a sub-ticket).
@@ -1177,7 +1175,7 @@ export class TicketsService {
     return (result as any).data ?? [];
   }
 
-  // ──────────────────────────── MERGE DUPLICATES ────────────────────────────
+  // MERGE DUPLICATES
 
   /**
    * Merge a duplicate ticket (sourceId) into a target ticket (targetId).

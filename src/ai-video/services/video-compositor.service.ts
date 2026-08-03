@@ -58,7 +58,7 @@ export class VideoCompositorService {
     const bgImagePath = this.resolveBackgroundImage(tempDir);
     const bgmPath = this.resolveBgmPath();
 
-    // LOW-13: Use execFile instead of exec to prevent shell injection.
+    // Use execFile instead of exec to prevent shell injection.
     // exec() spawns a shell — a filename containing `;rm -rf /` would execute.
     await execFileAsync('ffmpeg', ['-version']);
 

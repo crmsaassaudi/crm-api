@@ -60,7 +60,7 @@ export class AssignmentController {
     private readonly strategyRegistry: AssignmentStrategyRegistry,
   ) {}
 
-  // ── Vocabulary (UI metadata) ───────────────────────────────────────────
+  // Vocabulary (UI metadata)
 
   @Get('meta')
   @RequirePermission('view', 'routing_rules')
@@ -91,8 +91,6 @@ export class AssignmentController {
     return this.service.fieldsFor(objectType);
   }
 
-  // ── Settings ───────────────────────────────────────────────────────────
-
   @Get('settings')
   @RequirePermission('view', 'routing_rules')
   @ApiOperation({ summary: 'Resolved settings for every objectType' })
@@ -116,8 +114,6 @@ export class AssignmentController {
   ) {
     return this.service.updateSettings(objectType, dto);
   }
-
-  // ── Rules ──────────────────────────────────────────────────────────────
 
   @Get('rules')
   @RequirePermission('view', 'routing_rules')
@@ -152,8 +148,6 @@ export class AssignmentController {
     return this.service.reorderRules(dto.objectType, dto.orderedIds);
   }
 
-  // ── Skills ─────────────────────────────────────────────────────────────
-
   @Get('skills')
   @RequirePermission('view', 'routing_rules')
   listSkills() {
@@ -179,8 +173,6 @@ export class AssignmentController {
     return this.service.deleteSkill(id);
   }
 
-  // ── Dry run ────────────────────────────────────────────────────────────
-
   @Post('dry-run')
   @RequirePermission('view', 'routing_rules')
   @ApiOperation({
@@ -190,7 +182,7 @@ export class AssignmentController {
     return this.service.dryRun(dto);
   }
 
-  // ── Audit ──────────────────────────────────────────────────────────────
+  // Audit
 
   @Get('queue')
   @RequirePermission('view', 'routing_rules')

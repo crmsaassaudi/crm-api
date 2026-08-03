@@ -101,7 +101,7 @@ export class ImportStorageService {
     );
   }
 
-  // ─────────────────────────── FILE UPLOAD ───────────────────────────
+  // FILE UPLOAD
 
   async storeImportFile(file: {
     buffer: Buffer;
@@ -260,7 +260,7 @@ export class ImportStorageService {
     }
   }
 
-  // ─────────────────────────── REPORT STORAGE ───────────────────────────
+  // REPORT STORAGE
 
   async storeReportStream(
     body: Readable,

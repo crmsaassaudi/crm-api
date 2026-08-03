@@ -63,7 +63,7 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
       `[ReadStateSync] Processing: ${emailMessageId} → ${targetState} (attempt ${job.attemptsMade + 1})`,
     );
 
-    // ── Step 1: Retrieve config & check opt-in ────────────────────────
+    // Step 1: Retrieve config & check opt-in
     const config = await this.configRepo.findByIdWithCredentialsNoTenant(
       job.data.configId,
     );
@@ -86,7 +86,7 @@ export class ReadStateSyncProcessor extends BaseTenantConsumer<ReadStateSyncJobD
       return;
     }
 
-    // ── Step 2: Redis lock (prevent concurrent sync of same message) ──
+    // Step 2: Redis lock (prevent concurrent sync of same message)
     const lockKey = `readstate:lock:${emailMessageId}`;
 
     await this.lockService.acquire(

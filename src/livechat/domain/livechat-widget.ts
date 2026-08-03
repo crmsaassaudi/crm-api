@@ -26,7 +26,7 @@ export class LivechatWidget {
   @ApiProperty({ enum: ['active', 'paused'], default: 'active' })
   status: string;
 
-  // ── 1. Branding ─────────────────────────────────────────────────────────
+  // 1. Branding
 
   @ApiPropertyOptional()
   branding: {
@@ -37,7 +37,7 @@ export class LivechatWidget {
     removeBranding?: boolean;
   };
 
-  // ── 2. Theme ────────────────────────────────────────────────────────────
+  // 2. Theme
 
   @ApiPropertyOptional()
   theme: {
@@ -51,7 +51,7 @@ export class LivechatWidget {
     fontFamily?: string;
   };
 
-  // ── 3. Widget Layout ────────────────────────────────────────────────────
+  // 3. Widget Layout
 
   @ApiPropertyOptional()
   layout: {
@@ -74,7 +74,7 @@ export class LivechatWidget {
     };
   };
 
-  // ── 4. Welcome Experience ───────────────────────────────────────────────
+  // 4. Welcome Experience
 
   @ApiPropertyOptional()
   welcome: {
@@ -90,7 +90,7 @@ export class LivechatWidget {
     offlineSubtitle?: string;
   };
 
-  // ── 5. Conversation Starters ────────────────────────────────────────────
+  // 5. Conversation Starters
 
   @ApiPropertyOptional()
   conversationStarters: Array<{
@@ -99,7 +99,7 @@ export class LivechatWidget {
     value: string;
   }>;
 
-  // ── 6. Offline / Business Hours ─────────────────────────────────────────
+  // 6. Offline / Business Hours
 
   @ApiPropertyOptional()
   offline: {
@@ -115,7 +115,7 @@ export class LivechatWidget {
     captureLeadWhenOffline?: boolean;
   };
 
-  // ── 7. Pre-chat Form ────────────────────────────────────────────────────
+  // 7. Pre-chat Form
 
   @ApiPropertyOptional()
   preChatForm: {
@@ -140,7 +140,7 @@ export class LivechatWidget {
     }>;
   };
 
-  // ── 8. Routing ──────────────────────────────────────────────────────────
+  // 8. Routing
 
   @ApiPropertyOptional()
   routing: {
@@ -161,7 +161,7 @@ export class LivechatWidget {
     queueMessage?: string; // template: "You are #{position} in queue"
   };
 
-  // ── 9. Automation ───────────────────────────────────────────────────────
+  // 9. Automation
 
   @ApiPropertyOptional()
   automation: {
@@ -171,7 +171,7 @@ export class LivechatWidget {
     faqSuggestions?: boolean;
   };
 
-  // ── 10. Proactive Chat ──────────────────────────────────────────────────
+  // 10. Proactive Chat
 
   @ApiPropertyOptional()
   proactiveChat: {
@@ -188,7 +188,7 @@ export class LivechatWidget {
     }>;
   };
 
-  // ── 11. Security ────────────────────────────────────────────────────────
+  // 11. Security
 
   @ApiPropertyOptional()
   security: {
@@ -197,7 +197,7 @@ export class LivechatWidget {
     hmacSecret?: string;
   };
 
-  // ── 12. Localization ────────────────────────────────────────────────────
+  // 12. Localization
 
   @ApiPropertyOptional()
   localization: {
@@ -211,7 +211,7 @@ export class LivechatWidget {
     translations?: Record<string, string>;
   };
 
-  // ── 13. Advanced ────────────────────────────────────────────────────────
+  // 13. Advanced
 
   @ApiPropertyOptional()
   advanced: {
@@ -234,7 +234,7 @@ export class LivechatWidget {
     webhookSecret?: string;
   };
 
-  // ── 14. Mobile Behavior ─────────────────────────────────────────────────
+  // 14. Mobile Behavior
 
   @ApiPropertyOptional()
   mobile: {
@@ -246,7 +246,7 @@ export class LivechatWidget {
     launcherBottomOffset?: number;
   };
 
-  // ── 15. Display Rules ────────────────────────────────────────────────────
+  // 15. Display Rules
 
   @ApiPropertyOptional()
   displayRules: {
@@ -260,7 +260,7 @@ export class LivechatWidget {
     loggedInOnly?: boolean;
   };
 
-  // ── 16. Launcher ────────────────────────────────────────────────────────
+  // 16. Launcher
 
   @ApiPropertyOptional()
   launcher: {
@@ -272,7 +272,7 @@ export class LivechatWidget {
     pulseAnimation?: boolean;
   };
 
-  // ── 17. Notifications ───────────────────────────────────────────────────
+  // 17. Notifications
 
   @ApiPropertyOptional()
   notifications: {
@@ -282,7 +282,7 @@ export class LivechatWidget {
     vibration?: boolean;
   };
 
-  // ── 18. State Persistence ────────────────────────────────────────────────
+  // 18. State Persistence
 
   @ApiPropertyOptional()
   statePersistence: {
@@ -292,7 +292,7 @@ export class LivechatWidget {
     rememberDraftMessage?: boolean;
   };
 
-  // ── CSAT ────────────────────────────────────────────────────────────────
+  // CSAT
 
   @ApiPropertyOptional()
   csat: {

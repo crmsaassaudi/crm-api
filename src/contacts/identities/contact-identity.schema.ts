@@ -30,7 +30,7 @@ export type ContactIdentityType = (typeof CONTACT_IDENTITY_TYPES)[number];
  *    attaches to an identity, not to a person; under GDPR/PDPL the contact-level
  *    flag is not defensible.
  *
- * ── Deliberately additive ──
+ * Deliberately additive
  *
  * `contact.emails[]` / `phones[]` / `omniIdentities[]` remain AUTHORITATIVE for
  * reads. Every list view, export column, report, automation condition, dedup

@@ -74,7 +74,7 @@ export class AccountSchemaClass extends EntityDocumentHelper {
   @Prop({ default: false })
   isArchived?: boolean;
 
-  // ── Derived identity keys ──
+  // Derived identity keys
   //
   // Stored rather than computed per query so duplicate lookups are exact and indexed.
   // Written by AccountsService from `common/identity/company-identity`, which is the

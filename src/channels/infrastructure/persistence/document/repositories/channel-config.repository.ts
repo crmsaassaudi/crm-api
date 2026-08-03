@@ -188,7 +188,7 @@ export class ChannelConfigRepository {
       .exec();
   }
 
-  // ── Health Check Methods (Phase 2) ──────────────────────────────────────
+  // Health Check Methods (Phase 2)
 
   /**
    * Find all non-deleted, non-disabled configs across ALL tenants.
@@ -251,7 +251,7 @@ export class ChannelConfigRepository {
     return docs.map((d) => this.toDomain(d));
   }
 
-  // ── Mapper ────────────────────────────────────────────────────────────────
+  // Mapper
 
   private toDomain(raw: ChannelConfigSchemaClass): ChannelConfig {
     const entity = new ChannelConfig();

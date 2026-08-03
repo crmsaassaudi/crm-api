@@ -63,8 +63,6 @@ export class AccountRepository extends BaseDocumentRepository<
     return AccountMapper.toPersistence(domain);
   }
 
-  // ─────────────────────────── EXPORT ───────────────────────────
-
   private buildExportFilter(params: {
     ids?: string[];
     filters?: any;

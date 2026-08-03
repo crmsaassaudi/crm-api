@@ -36,7 +36,7 @@ export class LoopPreventionService {
 
   constructor(@Inject(IOREDIS_CLIENT) private readonly redis: Redis) {}
 
-  // ── Layer 1: Strict Loop Detection (5s window) ───────────────────────
+  // Layer 1: Strict Loop Detection (5s window)
 
   /**
    * Check if a record has passed through a specific node too many times
@@ -82,7 +82,7 @@ export class LoopPreventionService {
     return { allowed: true };
   }
 
-  // ── Layer 2: Cross-Automation Depth Limit ────────────────────────────
+  // Layer 2: Cross-Automation Depth Limit
 
   /**
    * Check if the automation chain depth has exceeded the maximum.
@@ -129,7 +129,7 @@ export class LoopPreventionService {
     };
   }
 
-  // ── Layer 3: Run Once Per Record ─────────────────────────────────────
+  // Layer 3: Run Once Per Record
 
   /**
    * Check if a workflow has already been executed for a specific record.
@@ -176,13 +176,13 @@ export class LoopPreventionService {
     return { allowed: true };
   }
 
-  // ── Cleanup (for testing) ────────────────────────────────────────────
+  // Cleanup (for testing)
 
   /**
    * Clear all loop prevention keys for a tenant.
    * Used in integration tests only.
    *
-   * MED-05: uses a non-blocking SCAN cursor instead of the O(N)-blocking KEYS
+   * Uses a non-blocking SCAN cursor instead of the O(N)-blocking KEYS
    * command.
    *
    * Gated on `NODE_ENV === 'test'` rather than merely "not production". Deleting

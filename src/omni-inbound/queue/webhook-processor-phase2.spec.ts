@@ -50,9 +50,7 @@ describe('WebhookProcessor — error handling & edge cases', () => {
     );
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // E11000 — Mongo duplicate key → swallow, don't retry
-  // ═══════════════════════════════════════════════════════════════════
   describe('MongoDB duplicate key (E11000)', () => {
     it('should swallow E11000 and not throw (prevents BullMQ retry)', async () => {
       const e11000 = new Error('E11000 duplicate key');
@@ -78,9 +76,7 @@ describe('WebhookProcessor — error handling & edge cases', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // NotFoundException — channel deleted → swallow, don't retry
-  // ═══════════════════════════════════════════════════════════════════
   describe('NotFoundException (channel deleted)', () => {
     it('should not throw for a channel that no longer exists', async () => {
       channelsService.findAnyByAccount.mockRejectedValueOnce(
@@ -103,9 +99,7 @@ describe('WebhookProcessor — error handling & edge cases', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // Unexpected errors — release Redis lock, re-throw for retry
-  // ═══════════════════════════════════════════════════════════════════
   describe('unexpected errors', () => {
     it('should re-throw unexpected errors for BullMQ retry', async () => {
       processorService.process.mockRejectedValueOnce(
@@ -132,9 +126,7 @@ describe('WebhookProcessor — error handling & edge cases', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // Pre-resolved channel data — bypass channelsService lookup
-  // ═══════════════════════════════════════════════════════════════════
   describe('pre-resolved channel data', () => {
     it('should skip channelsService.findAnyByAccount when data is pre-resolved', async () => {
       await processor.process({
@@ -166,9 +158,7 @@ describe('WebhookProcessor — error handling & edge cases', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // No provider message ID → skip dedup entirely
-  // ═══════════════════════════════════════════════════════════════════
   describe('missing provider message ID', () => {
     it('should skip Redis dedup when event has no extractable message ID', async () => {
       await processor.process({
@@ -191,9 +181,7 @@ describe('WebhookProcessor — error handling & edge cases', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // Multi-channel provider message ID extraction
-  // ═══════════════════════════════════════════════════════════════════
   describe('provider message ID extraction', () => {
     it('should extract mid from WhatsApp message format', async () => {
       await processor.process({
@@ -235,9 +223,7 @@ describe('WebhookProcessor — error handling & edge cases', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // VIP sender detection
-  // ═══════════════════════════════════════════════════════════════════
   describe('VIP sender', () => {
     it('should check VIP status for sender', async () => {
       contactRepo.isVIPSender.mockResolvedValueOnce(true);
@@ -261,7 +247,7 @@ describe('WebhookProcessor — error handling & edge cases', () => {
     });
   });
 
-  // ─── Helpers ───────────────────────────────────────────────────────
+  // Helpers
   function createFacebookJob() {
     return {
       id: 'job_fb_1',

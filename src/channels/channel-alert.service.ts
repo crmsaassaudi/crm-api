@@ -27,7 +27,7 @@ import { AutomationWorkflowRepository } from '../automation-rules/infrastructure
 export class ChannelAlertService {
   private readonly logger = new Logger(ChannelAlertService.name);
 
-  // ── Flap Detection: prevent notification spam ──────────────────────────
+  // Flap Detection: prevent notification spam
   // Max 1 alert per config per 30 minutes (in-memory, per-node).
   // If scaling to multi-node, migrate to Redis SET with TTL.
   private readonly alertCooldowns = new Map<string, number>();
@@ -38,7 +38,7 @@ export class ChannelAlertService {
     @Optional() private readonly workflowRepo?: AutomationWorkflowRepository,
   ) {}
 
-  // ── Health Check Failed ──────────────────────────────────────────────────
+  // Health Check Failed
 
   @OnEvent('channel-config.health.failed')
   handleHealthCheckFailed(payload: {
@@ -76,7 +76,7 @@ export class ChannelAlertService {
       });
     }
 
-    // Phase 4: Notify workflow owners (marketers) about disrupted campaigns
+    // Notify workflow owners (marketers) about disrupted campaigns
     if (payload.statusChanged) {
       this.notifyWorkflowOwners(payload).catch((err) =>
         this.logger.error(
@@ -86,7 +86,7 @@ export class ChannelAlertService {
     }
   }
 
-  // ── Health Check Recovered ───────────────────────────────────────────────
+  // Health Check Recovered
 
   @OnEvent('channel-config.health.recovered')
   handleHealthCheckRecovered(payload: {
@@ -112,7 +112,7 @@ export class ChannelAlertService {
     });
   }
 
-  // ── Health Check Summary ─────────────────────────────────────────────────
+  // Health Check Summary
 
   @OnEvent('channel-config.health.summary')
   handleHealthCheckSummary(payload: {
@@ -130,7 +130,7 @@ export class ChannelAlertService {
     );
   }
 
-  // ── Private: WebSocket Emit ──────────────────────────────────────────────
+  // Private: WebSocket Emit
 
   /**
    * Emit alert to all connected users of a tenant.

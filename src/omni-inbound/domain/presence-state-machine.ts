@@ -1,10 +1,9 @@
-// ─── Presence State Machine ──────────────────────────────────────────────────
+// Presence State Machine
 //
 // Pure transition logic for the canonical 4-axis model (presence-state.ts).
 // All functions are side-effect free and return a new AgentState plus an
 // outcome describing which axes changed (so the service knows which reporting
 // segments to close/open in §3). See docs/agent-presence-workforce-spec.md §2.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import { AgentState, PresenceStatus, RoutingStatus } from './presence-state';
 
@@ -49,7 +48,7 @@ export interface TransitionResult {
   changed: ChangedAxis[];
 }
 
-// ─── Presence transition validity (§2.2 matrix) ──────────────────────────────
+// Presence transition validity (§2.2 matrix)
 
 /**
  * Is a presence transition allowed?
@@ -75,7 +74,7 @@ export function canTransitionPresence(
   return true;
 }
 
-// ─── Routing interlock when presence changes (§1.2) ──────────────────────────
+// Routing interlock when presence changes (§1.2)
 
 function routingAfterPresenceChange(
   to: PresenceStatus,
@@ -98,7 +97,7 @@ function routingAfterPresenceChange(
   return 'NOT_ACCEPTING';
 }
 
-// ─── Transitions ─────────────────────────────────────────────────────────────
+// Transitions
 
 /** Change the presence axis, applying the routing interlock. */
 export function transitionPresence(
@@ -237,7 +236,7 @@ export function applyDayRolloverReset(
   };
 }
 
-// ─── Multi-device Last-Write-Wins guard (§1.6) ───────────────────────────────
+// Multi-device Last-Write-Wins guard (§1.6)
 
 /**
  * Should an incoming command be dropped as stale? Used to reconcile concurrent

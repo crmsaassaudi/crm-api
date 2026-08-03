@@ -19,7 +19,7 @@ export class MongooseConfigService implements MongooseOptionsFactory {
       user: this.configService.get('database.username', { infer: true }),
       pass: this.configService.get('database.password', { infer: true }),
 
-      // ── Atlas Resilience ─────────────────────────────────────────
+      // Atlas Resilience
       // Wait up to 45s for a primary (default 30s is too tight for
       // cross-region Atlas clusters behind Docker DNS).
       serverSelectionTimeoutMS: 45_000,

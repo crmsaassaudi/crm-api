@@ -90,7 +90,7 @@ export class TransportPoolService implements OnModuleDestroy {
     this.logger.log('[TransportPool] Destroyed — all entries cleared');
   }
 
-  // ── Core: Get or Create ──────────────────────────────────────────────────
+  // Core: Get or Create
 
   /**
    * Get resolved transport for a configId.
@@ -164,7 +164,7 @@ export class TransportPoolService implements OnModuleDestroy {
     return transport;
   }
 
-  // ── Cross-Tenant Safety Guard ─────────────────────────────────────────────
+  // Cross-Tenant Safety Guard
 
   /**
    * Resolve transport with cross-tenant safety check.
@@ -193,7 +193,7 @@ export class TransportPoolService implements OnModuleDestroy {
     return transport;
   }
 
-  // ── Event-Driven Invalidation ────────────────────────────────────────────
+  // Event-Driven Invalidation
 
   /**
    * Invalidate cache when config is updated (credentials changed, status changed, etc.)
@@ -243,7 +243,7 @@ export class TransportPoolService implements OnModuleDestroy {
     this.pool.delete(payload.configId);
   }
 
-  // ── Pool Stats (for monitoring/debugging) ────────────────────────────────
+  // Pool Stats (for monitoring/debugging)
 
   getStats(): { size: number; maxSize: number; ttlMs: number } {
     return {
@@ -253,7 +253,7 @@ export class TransportPoolService implements OnModuleDestroy {
     };
   }
 
-  // ── Private Helpers ──────────────────────────────────────────────────────
+  // Private Helpers
 
   private put(
     configId: string,

@@ -51,7 +51,7 @@ export class WorkStatusService {
     private readonly interactionRepo: InteractionSegmentRepository,
   ) {}
 
-  // ─── Redis record helpers ───────────────────────────────────────────
+  // Redis record helpers
 
   private async read(tenantId: string, userId: string): Promise<WorkRecord> {
     const raw = await this.redis.getClient().get(workKey(tenantId, userId));
@@ -78,7 +78,7 @@ export class WorkStatusService {
     }
   }
 
-  // ─── Public API (generic, extensible) ───────────────────────────────
+  // Public API (generic, extensible)
 
   async openInteraction(
     tenantId: string,
@@ -182,8 +182,6 @@ export class WorkStatusService {
     }
   }
 
-  // ─── WRAP_UP timer ──────────────────────────────────────────────────
-
   private scheduleWrapTimer(
     tenantId: string,
     userId: string,
@@ -230,7 +228,7 @@ export class WorkStatusService {
     }
   }
 
-  // ─── Event wiring (chat) ────────────────────────────────────────────
+  // Event wiring (chat)
 
   @OnEvent('omni.conversation.assigned')
   async handleAssigned(event: ConversationAssignedEvent): Promise<void> {

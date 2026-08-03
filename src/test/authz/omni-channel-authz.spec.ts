@@ -81,9 +81,7 @@ describe('omni-channel authorization', () => {
     expect(BLOCKS.length).toBeGreaterThan(20);
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // Layer 1 — resource RBAC
-  // ────────────────────────────────────────────────────────────────────────
 
   describe('resource RBAC', () => {
     it('should gate every conversation route on omni_channel, never on contacts', () => {
@@ -106,9 +104,7 @@ describe('omni-channel authorization', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // Layer 2 — record-level ACL / ABAC
-  // ────────────────────────────────────────────────────────────────────────
 
   describe('record-level ACL', () => {
     const mutating = BLOCKS.filter(({ route }) =>
@@ -158,9 +154,7 @@ describe('omni-channel authorization', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // Layer 3 — channel support pool
-  // ────────────────────────────────────────────────────────────────────────
 
   describe('channel support pool enforcement', () => {
     it('should check eligibility on every assignment entry point', () => {
@@ -189,9 +183,7 @@ describe('omni-channel authorization', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // Channel visibility axis (behavioural)
-  // ────────────────────────────────────────────────────────────────────────
 
   describe('conversation visibility', () => {
     const CHANNEL_MINE = new Types.ObjectId().toString();

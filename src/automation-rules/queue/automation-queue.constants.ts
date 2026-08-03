@@ -14,16 +14,16 @@ import { AutomationCrmModule } from '../events/automation-event.payload';
  *   - automation-delayed-resume:    Wait/Delay node hibernation
  */
 
-// ── Per-Type Action Queues (separated for independent rate limiting) ─────
+// Per-Type Action Queues (separated for independent rate limiting)
 export const AUTOMATION_EMAIL_QUEUE = 'automation-actions-email';
 export const AUTOMATION_SMS_QUEUE = 'automation-actions-sms';
 export const AUTOMATION_INTERNAL_QUEUE = 'automation-actions-internal';
 export const AUTOMATION_WEBHOOK_QUEUE = 'automation-actions-webhook';
 
-// ── Legacy main queue (kept for backward compat, re-routes to typed queues) ─
+// Legacy main queue: kept for backward compat, re-routes to the typed queues
 export const AUTOMATION_ACTION_QUEUE = 'automation-actions';
 
-// ── System Queues ─────────────────────────────────────────────────────────
+// System Queues
 export const AUTOMATION_ACTION_DLQ = 'automation-actions-dlq';
 export const AUTOMATION_BULK_QUEUE = 'automation-actions-bulk';
 

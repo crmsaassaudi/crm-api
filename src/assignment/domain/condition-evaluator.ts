@@ -31,7 +31,7 @@ export interface RuleTrace {
   conditions: ConditionTrace[];
 }
 
-// ── Value coercion ─────────────────────────────────────────────────────────
+// Value coercion
 
 function isAbsent(value: unknown): boolean {
   if (value === undefined || value === null) return true;
@@ -79,7 +79,7 @@ function splitList(value: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-// ── Single-operator comparison ─────────────────────────────────────────────
+// Single-operator comparison
 
 /**
  * Compare one already-coerced pair. Case-insensitive for text operators,

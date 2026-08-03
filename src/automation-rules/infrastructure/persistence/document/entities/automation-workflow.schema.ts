@@ -4,7 +4,7 @@ import { EntityDocumentHelper } from '../../../../../utils/document-entity-helpe
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 import { WorkflowRunAs } from '../../../../domain/execution-principal';
 
-// ── Sub-document types ─────────────────────────────────────────────────────
+// Sub-document types
 
 export interface WorkflowTriggerConfig {
   event: 'record_created' | 'field_updated';
@@ -35,7 +35,7 @@ export interface WorkflowViewport {
 
 export type WorkflowStatus = 'draft' | 'active' | 'paused';
 
-// ── Schema ─────────────────────────────────────────────────────────────────
+// Schema
 
 export type AutomationWorkflowDocument =
   HydratedDocument<AutomationWorkflowSchemaClass>;
@@ -170,7 +170,7 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
   @Prop({ type: String, required: true })
   updatedBy: string;
 
-  // ── Published Snapshot (Immutable Execution State) ──────────────────────
+  // Published Snapshot (Immutable Execution State)
 
   @Prop({
     type: [
@@ -241,7 +241,7 @@ export const AutomationWorkflowSchema = SchemaFactory.createForClass(
 
 AutomationWorkflowSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
-// ── Indexes ────────────────────────────────────────────────────────────────
+// Indexes
 
 // List active workflows per tenant
 AutomationWorkflowSchema.index({ tenantId: 1, status: 1 });

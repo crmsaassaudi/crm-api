@@ -83,7 +83,7 @@ export class AccessPolicyService {
     @Optional() private readonly cls?: ClsService,
   ) {}
 
-  // ── Evaluation (hot path) ──────────────────────────────────────────────────
+  // Evaluation (hot path)
 
   async evaluate(
     tenantId: string,
@@ -214,7 +214,7 @@ export class AccessPolicyService {
     }
   }
 
-  // ── CRUD ────────────────────────────────────────────────────────────────────
+  // CRUD
 
   async findAll(tenantId: string): Promise<AccessPolicy[]> {
     const rows = await this.model
@@ -387,7 +387,7 @@ export class AccessPolicyService {
     return { applies, effect: applies ? input.effect : null };
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  // Helpers
 
   private policyVersionKey(tenantId: string): string {
     return `authz:policy:${tenantId}:version`;

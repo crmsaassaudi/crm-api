@@ -37,7 +37,7 @@ const MAX_EXECUTION_TIMEOUT_MS = 30_000;
  */
 interface WaitNodeConfig {
   name?: string;
-  delayType: 'fixed'; // Phase 4.0: fixed delay only
+  delayType: 'fixed'; // only a fixed delay is supported
   delayValue: number; // e.g. 30
   delayUnit: 'minutes' | 'hours' | 'days';
 }
@@ -131,7 +131,7 @@ export class WorkflowOrchestratorService {
         `${principal.fallbackReason ? ` (fallback: ${principal.fallbackReason})` : ''}`,
     );
 
-    // ── Layer 2: Depth limit check (synchronous) ──────────────────────────
+    // Layer 2: Depth limit check (synchronous)
     const depthCheck = this.loopPrevention.checkDepthLimit(depth);
     if (!depthCheck.allowed) {
       this.logger.warn(`[Orchestrator] DEPTH_EXCEEDED: ${depthCheck.reason}`);
@@ -175,7 +175,7 @@ export class WorkflowOrchestratorService {
       return;
     }
 
-    // ── Layer 3: Run-once check ───────────────────────────────────────────
+    // Layer 3: Run-once check
     if (workflow.triggerConfig?.runOncePerRecord) {
       // Atomic check-and-mark: eliminates TOCTOU race where two workers
       // both pass a separate check() before either calls mark().
@@ -203,7 +203,6 @@ export class WorkflowOrchestratorService {
       }
     }
 
-    // ── Start execution log ───────────────────────────────────────────────
     const execLog = await this.executionLogRepo.startExecution({
       tenantId,
       workflowId,
@@ -217,7 +216,7 @@ export class WorkflowOrchestratorService {
     const stepLogs: ExecutionStep[] = [];
 
     try {
-      // ── Walk the DAG (using PUBLISHED snapshot — immune to live edits) ──
+      // Walk the DAG (using PUBLISHED snapshot — immune to live edits)
       const nodes: any[] = workflow.publishedNodes || [];
       const edges: any[] = workflow.publishedEdges || [];
 
@@ -257,7 +256,7 @@ export class WorkflowOrchestratorService {
         stepLogs,
       );
 
-      // ── Mark success (only if no wait node paused the execution) ────────
+      // Mark success (only if no wait node paused the execution)
 
       if (!hibernated) {
         await this.flushStepLogs(executionId, stepLogs);
@@ -352,7 +351,7 @@ export class WorkflowOrchestratorService {
     }
   }
 
-  // ── DAG Traversal ────────────────────────────────────────────────────────
+  // DAG Traversal
 
   /**
    * Traverse the DAG from a given node.
@@ -372,7 +371,7 @@ export class WorkflowOrchestratorService {
     const node = graph.nodeMap.get(nodeId);
     if (!node) return false;
 
-    // ── Layer 0: hard step ceiling (CRIT-04 defense-in-depth) ────────────
+    // Layer 0: hard step ceiling (CRIT-04 defense-in-depth)
     const MAX_TOTAL_STEPS = 1000;
     if (stepLogs.length > MAX_TOTAL_STEPS) {
       throw new Error(
@@ -382,7 +381,7 @@ export class WorkflowOrchestratorService {
 
     const stepStart = new Date();
 
-    // ── Layer 1: Strict loop check ──────────────────────────────────────
+    // Layer 1: Strict loop check
     const loopCheck = await this.loopPrevention.checkStrictLoop({
       tenantId,
       executionSessionId,
@@ -406,7 +405,7 @@ export class WorkflowOrchestratorService {
       throw new Error(`LOOP_STRICT_DETECTED: ${loopCheck.reason}`);
     }
 
-    // ── Delegate to type-specific handler ──────────────────────────────
+    // Delegate to type-specific handler
     const ctx = {
       graph,
       payload,
@@ -430,7 +429,7 @@ export class WorkflowOrchestratorService {
     return false;
   }
 
-  // ── Node-type handlers ───────────────────────────────────────────────────
+  // Node-type handlers
 
   private async processTriggerNode(
     node: any,

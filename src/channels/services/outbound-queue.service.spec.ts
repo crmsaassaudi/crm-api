@@ -56,9 +56,7 @@ describe('OutboundQueueService', () => {
     mockRedisClient._clear();
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 1. Bulk Campaign Guard
-  // ────────────────────────────────────────────────────────────────────────
   describe('checkSendAllowed() — Bulk Campaign Guard', () => {
     it('should BLOCK campaigns with > 500 recipients', async () => {
       const result = await service.checkSendAllowed(
@@ -105,9 +103,7 @@ describe('OutboundQueueService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 2. Daily Quota Enforcement
-  // ────────────────────────────────────────────────────────────────────────
   describe('checkSendAllowed() — Daily Quota', () => {
     it('should BLOCK when daily quota would be exceeded', async () => {
       // Seed Redis with 1999 sent emails for Gmail (limit: 2000)
@@ -205,9 +201,7 @@ describe('OutboundQueueService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 3. Per-Second Throttle
-  // ────────────────────────────────────────────────────────────────────────
   describe('checkSendAllowed() — Per-Second Throttle', () => {
     it('should BLOCK when per-second throttle key exists', async () => {
       const throttleKey = `outbound:throttle:${TEST_TENANT}:${TEST_CONFIG}`;
@@ -236,9 +230,7 @@ describe('OutboundQueueService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 4. Check Priority Order (Bulk → Quota → Throttle)
-  // ────────────────────────────────────────────────────────────────────────
   describe('checkSendAllowed() — Priority Order', () => {
     it('should check bulk guard BEFORE daily quota', async () => {
       // Even with quota exceeded, bulk guard takes priority
@@ -259,9 +251,7 @@ describe('OutboundQueueService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 5. Post-Send Recording
-  // ────────────────────────────────────────────────────────────────────────
   describe('recordSend()', () => {
     it('should increment daily counter by recipientCount', async () => {
       await service.recordSend(TEST_TENANT, TEST_CONFIG, 5);
@@ -302,9 +292,7 @@ describe('OutboundQueueService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // 6. Daily Stats
-  // ────────────────────────────────────────────────────────────────────────
   describe('getDailyStats()', () => {
     it('should return correct sent, limit, and remaining', async () => {
       const dateKey = new Date().toISOString().split('T')[0];

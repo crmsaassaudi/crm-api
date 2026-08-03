@@ -149,7 +149,7 @@ export function generateRbacCases(): MatrixCase[] {
   return cases;
 }
 
-// ── Reference oracle ────────────────────────────────────────────────────────
+// Reference oracle
 //
 // Independently derived from the SPECIFICATION, not from the implementation:
 //

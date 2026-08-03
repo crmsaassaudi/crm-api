@@ -58,7 +58,6 @@ export class TenantRolesGuard implements CanActivate {
       return false;
     }
 
-    // Find user's membership in the current tenant
     const membership = user.tenants?.find((t) => t.tenantId === tenantId);
     if (!membership) {
       return false;

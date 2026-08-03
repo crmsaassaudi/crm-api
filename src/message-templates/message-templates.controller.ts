@@ -36,7 +36,7 @@ export class MessageTemplatesController {
     private readonly metaWAService: MetaWhatsAppService,
   ) {}
 
-  // ─── EMAIL TEMPLATES ───
+  // EMAIL TEMPLATES
 
   @Get('email')
   @RequirePermission('view', 'channels')
@@ -69,7 +69,7 @@ export class MessageTemplatesController {
     return this.service.deleteEmail(id);
   }
 
-  // ─── SMS TEMPLATES ───
+  // SMS TEMPLATES
 
   @Get('sms')
   @RequirePermission('view', 'channels')
@@ -102,7 +102,7 @@ export class MessageTemplatesController {
     return this.service.deleteSMS(id);
   }
 
-  // ─── WHATSAPP TEMPLATES ───
+  // WHATSAPP TEMPLATES
 
   @Get('whatsapp')
   @RequirePermission('view', 'channels')

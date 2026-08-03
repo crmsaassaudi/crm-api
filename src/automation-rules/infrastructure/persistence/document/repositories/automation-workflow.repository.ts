@@ -13,7 +13,7 @@ export class AutomationWorkflowRepository {
     private readonly model: Model<AutomationWorkflowSchemaClass>,
   ) {}
 
-  // ── Queries ────────────────────────────────────────────────────────────
+  // Queries
 
   async findAll(tenantId: string) {
     return this.model.find({ tenantId }).sort({ updatedAt: -1 }).lean().exec();
@@ -63,7 +63,7 @@ export class AutomationWorkflowRepository {
       .exec();
   }
 
-  // ── Mutations ──────────────────────────────────────────────────────────
+  // Mutations
 
   async create(data: Partial<AutomationWorkflowSchemaClass>) {
     const doc = await this.model.create(data);

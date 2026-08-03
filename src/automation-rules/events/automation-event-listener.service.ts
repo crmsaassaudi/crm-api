@@ -26,7 +26,7 @@ export class AutomationEventListenerService {
 
   constructor(private readonly outbox: AutomationOutboxService) {}
 
-  // ── Trigger-event listeners ───────────────────────────────────────────
+  // Trigger-event listeners
   //
   // Subscribed per (event, object) rather than with a wildcard. `automation.**`
   // also swallowed `automation.trigger` (emitted by ScheduledTriggerService and

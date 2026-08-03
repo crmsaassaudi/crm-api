@@ -271,7 +271,7 @@ export class AgentStatusAuditService implements OnModuleInit {
     });
   }
 
-  // ─── Internal Helpers ───────────────────────────────────────────────
+  // Internal Helpers
 
   private parseDateRange(date: string): {
     startOfDay: Date;

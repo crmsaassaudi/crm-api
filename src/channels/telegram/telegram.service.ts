@@ -20,7 +20,7 @@ export class TelegramService {
     private readonly events: EventEmitter2,
   ) {}
 
-  // ── Channel creation ────────────────────────────────────────────────────────
+  // Channel creation
 
   async createChannel(dto: CreateTelegramChannelDto) {
     const tenantId = this.cls.get('tenantId');
@@ -68,7 +68,7 @@ export class TelegramService {
     return { ...channel, botInfo };
   }
 
-  // ── Webhook handling ────────────────────────────────────────────────────────
+  // Webhook handling
 
   async handleInbound(
     channelId: string,
@@ -113,7 +113,7 @@ export class TelegramService {
     }
   }
 
-  // ── Register webhook with Telegram ─────────────────────────────────────────
+  // Register webhook with Telegram
 
   async setWebhook(channelId: string, webhookUrl: string) {
     const channel = await this.channelRepo.findByIdNoTenant(channelId);
@@ -149,8 +149,6 @@ export class TelegramService {
     );
     return { ok: true, webhookUrl };
   }
-
-  // ── Bot info ────────────────────────────────────────────────────────────────
 
   async getBotInfo(channelId: string) {
     const channel = await this.channelRepo.findByIdNoTenant(channelId);

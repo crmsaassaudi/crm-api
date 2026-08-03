@@ -28,9 +28,7 @@ export class ConversationLifecycleService {
     private readonly settingsService: CrmSettingsService,
   ) {}
 
-  // ────────────────────────────────────────────────────────────────
   // Session Lifecycle Configuration
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * Load session lifecycle configuration from tenant CRM settings.
@@ -67,9 +65,7 @@ export class ConversationLifecycleService {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Event listeners for cache invalidation
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * When a conversation is resolved or closed, invalidate the identity cache
@@ -107,9 +103,7 @@ export class ConversationLifecycleService {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────
   // Helpers
-  // ────────────────────────────────────────────────────────────────
 
   /**
    * Normalize channel type string for schema storage.

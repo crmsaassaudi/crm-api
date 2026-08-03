@@ -16,12 +16,10 @@
  * @module omni-inbound/domain
  */
 
-// ────────────────────────────────────────────────────────────────────────────
 // Event Name Constants
-// ────────────────────────────────────────────────────────────────────────────
 
 export const OmniEvents = {
-  // ── Inbound Pipeline ─────────────────────────────────────────────────────
+  // Inbound Pipeline
   /** Raw webhook received from any channel adapter (livechat bridge, etc.) */
   INBOUND_WEBHOOK: 'omni.inbound.webhook',
   /** Normalized message received, ready for processing */
@@ -35,7 +33,7 @@ export const OmniEvents = {
   /** Media caching failed */
   MESSAGE_MEDIA_CACHE_FAILED: 'omni.message.media_cache_failed',
 
-  // ── Conversation Lifecycle ───────────────────────────────────────────────
+  // Conversation Lifecycle
   /** New conversation created */
   CONVERSATION_CREATED: 'omni.conversation.created',
   /** Existing conversation reopened (within reopen window) */
@@ -46,9 +44,7 @@ export const OmniEvents = {
   CONVERSATION_ASSIGNED: 'omni.conversation.assigned',
   /** Customer profile updated on conversation */
   CONVERSATION_CUSTOMER_UPDATED: 'omni.conversation.customer_updated',
-  /** Tag added to conversation */
   CONVERSATION_TAG_ADDED: 'omni.conversation.tag_added',
-  /** Tag removed from conversation */
   CONVERSATION_TAG_REMOVED: 'omni.conversation.tag_removed',
   /** Internal note added */
   CONVERSATION_NOTE_ADDED: 'omni.conversation.note_added',
@@ -56,11 +52,8 @@ export const OmniEvents = {
   CONVERSATION_UNREAD_RESET: 'omni.conversation.unread_reset',
   /** Conversation escalated (SLA/policy) */
   CONVERSATION_ESCALATED: 'omni.conversation.escalated',
-  /** SLA breached on conversation */
   CONVERSATION_SLA_BREACHED: 'omni.conversation.sla_breached',
-  /** Ticket created from conversation */
   CONVERSATION_TICKET_CREATED: 'omni.conversation.ticket_created',
-  /** Deal created from conversation */
   CONVERSATION_DEAL_CREATED: 'omni.conversation.deal_created',
   /** Agent took over conversation from another agent */
   CONVERSATION_TAKEOVER: 'omni.conversation.takeover',
@@ -73,7 +66,7 @@ export const OmniEvents = {
   /** An offer lapsed or was declined and the item is back in the queue */
   WORK_ITEM_REQUEUED: 'omni.work_item.requeued',
 
-  // ── Bot Lifecycle ────────────────────────────────────────────────────────
+  // Bot Lifecycle
   /** Bot handed off conversation to human agent — trigger auto-assignment */
   BOT_HANDOFF: 'omni.bot.handoff',
   /**
@@ -88,51 +81,50 @@ export const OmniEvents = {
   /** Bot re-enabled on conversation (agent undoes takeover) */
   BOT_ENABLED: 'omni.bot.enabled',
 
-  // ── Conversation Lock ────────────────────────────────────────────────────
+  // Conversation Lock
   /** Agent acquired editing lock */
   CONVERSATION_LOCK_ACQUIRED: 'omni.conversation.lock_acquired',
   /** Agent released editing lock */
   CONVERSATION_LOCK_RELEASED: 'omni.conversation.lock_released',
 
-  // ── Auto-Resolve ─────────────────────────────────────────────────────────
+  // Auto-Resolve
   /** Auto-resolve warning sent to agent (conversation about to be resolved) */
   AUTO_RESOLVE_WARNING: 'omni.auto_resolve.warning',
 
-  // ── Out-of-Office ────────────────────────────────────────────────────────
+  // Out-of-Office
   /** OOO auto-reply sent */
   OOO_AUTO_REPLY: 'omni.ooo.auto_reply',
 
-  // ── Contact / Identity ───────────────────────────────────────────────────
+  // Contact / Identity
   /** Contacts auto-merged during identity resolution */
   CONTACT_AUTO_MERGED: 'omni.contact.auto_merged',
 
-  // ── Delivery receipts ────────────────────────────────────────────────────
+  // Delivery receipts
   /** Provider reported delivered/read/failed for messages we sent */
   DELIVERY_RECEIPTS_RECEIVED: 'omni.delivery.receipts_received',
 
-  // ── Reactions ────────────────────────────────────────────────────────────
+  // Reactions
   /** Inbound reaction received from any channel */
   REACTION_INBOUND: 'omni.reaction.inbound',
-  /** Reaction persisted to DB */
   REACTION_PERSISTED: 'omni.reaction.persisted',
 
-  // ── Real-time / Typing ───────────────────────────────────────────────────
+  // Real-time / Typing
   /** Visitor typing indicator (livechat → CRM) */
   VISITOR_TYPING_LIVECHAT: 'omni.visitor.typing.livechat',
   /** Agent typing indicator (CRM → livechat visitor) */
   AGENT_TYPING_LIVECHAT: 'omni.agent.typing.livechat',
 
-  // ── CSAT ─────────────────────────────────────────────────────────────────
+  // CSAT
   /** CSAT token generated for a resolved conversation */
   CSAT_TOKEN_GENERATED: 'omni.csat.token_generated',
 
-  // ── Escalation ───────────────────────────────────────────────────────────
+  // Escalation
   /** Escalation notification sent */
   ESCALATION_NOTIFY: 'omni.escalation.notify',
   /** Escalation reassignment triggered */
   ESCALATION_REASSIGN: 'omni.escalation.reassign',
 
-  // ── Activity ─────────────────────────────────────────────────────────────
+  // Activity
   /** Activity trail entry created */
   ACTIVITY_CREATED: 'omni.activity.created',
 } as const;
@@ -140,9 +132,7 @@ export const OmniEvents = {
 /** Union type of all Omni event name strings */
 export type OmniEventName = (typeof OmniEvents)[keyof typeof OmniEvents];
 
-// ────────────────────────────────────────────────────────────────────────────
 // Livechat-specific events (bridge layer)
-// ────────────────────────────────────────────────────────────────────────────
 
 export const LivechatEvents = {
   /** Text message from visitor widget */
@@ -171,9 +161,7 @@ export const LivechatEvents = {
 export type LivechatEventName =
   (typeof LivechatEvents)[keyof typeof LivechatEvents];
 
-// ────────────────────────────────────────────────────────────────────────────
 // CRM domain events (non-omni)
-// ────────────────────────────────────────────────────────────────────────────
 
 export const CrmEvents = {
   CONTACT_CREATED: 'contact.created',
@@ -188,15 +176,13 @@ export const CrmEvents = {
 
 export type CrmEventName = (typeof CrmEvents)[keyof typeof CrmEvents];
 
-// ────────────────────────────────────────────────────────────────────────────
 // Event Payload Interfaces
-// ────────────────────────────────────────────────────────────────────────────
 
 /** Base shape shared by most omni events */
 export interface OmniEventBase {
   tenantId: string;
   /**
-   * T07: optional trace ID to correlate events across service boundaries.
+   * Optional trace ID to correlate events across service boundaries.
    * Set once at the entry point (inbound webhook / socket message) and
    * propagated through all downstream events for the same logical operation.
    *
@@ -214,7 +200,6 @@ export interface InboundWebhookEvent {
   rawPayload: any;
 }
 
-/** omni.message.persisted */
 export interface MessagePersistedEvent extends OmniEventBase {
   conversationId: string;
   messageId: string;
@@ -235,7 +220,6 @@ export interface MessagePersistedEvent extends OmniEventBase {
   providerTimestamp: Date;
 }
 
-/** omni.message.sent */
 export interface MessageSentEvent extends OmniEventBase {
   conversationId: string;
   messageId: string;
@@ -252,7 +236,6 @@ export interface MessageSentEvent extends OmniEventBase {
   createdAt?: Date;
 }
 
-/** omni.conversation.created */
 export interface ConversationCreatedEvent extends OmniEventBase {
   conversationId: string;
   channelType: string;
@@ -262,13 +245,11 @@ export interface ConversationCreatedEvent extends OmniEventBase {
   contactId?: string | null;
 }
 
-/** omni.conversation.reopened */
 export interface ConversationReopenedEvent extends OmniEventBase {
   conversationId: string;
   previousStatus?: string;
 }
 
-/** omni.conversation.status_changed */
 export interface ConversationStatusChangedEvent extends OmniEventBase {
   conversationId: string;
   oldStatus: string;
@@ -276,7 +257,6 @@ export interface ConversationStatusChangedEvent extends OmniEventBase {
   changedBy?: string;
 }
 
-/** omni.conversation.assigned */
 export interface ConversationAssignedEvent extends OmniEventBase {
   conversationId: string;
   agentId: string | null;
@@ -286,7 +266,6 @@ export interface ConversationAssignedEvent extends OmniEventBase {
   channelType?: string;
 }
 
-/** omni.conversation.customer_updated */
 export interface ConversationCustomerUpdatedEvent extends OmniEventBase {
   conversationId: string;
   contactId: string;
@@ -299,7 +278,6 @@ export interface ConversationTagEvent extends OmniEventBase {
   addedBy?: string;
 }
 
-/** omni.conversation.note_added */
 export interface ConversationNoteAddedEvent extends OmniEventBase {
   conversationId: string;
   noteId: string;
@@ -308,7 +286,6 @@ export interface ConversationNoteAddedEvent extends OmniEventBase {
   authorName?: string;
 }
 
-/** omni.conversation.unread_reset */
 export interface ConversationUnreadResetEvent extends OmniEventBase {
   conversationId: string;
   agentId: string;
@@ -321,14 +298,12 @@ export interface ConversationLockEvent extends OmniEventBase {
   agentName?: string;
 }
 
-/** omni.conversation.takeover */
 export interface ConversationTakeoverEvent extends OmniEventBase {
   conversationId: string;
   newAgentId: string;
   previousAgentId: string;
 }
 
-/** omni.conversation.queued */
 export interface ConversationQueuedEvent extends OmniEventBase {
   conversationId: string;
   /** The routing strategy that was attempted before queuing */
@@ -391,7 +366,6 @@ export interface BotEndedEvent extends OmniEventBase {
   reason: 'flow_completed' | 'no_flow_bound';
 }
 
-/** omni.reaction.inbound */
 export interface ReactionInboundEvent extends OmniEventBase {
   conversationId?: string;
   messageId?: string;
@@ -401,7 +375,6 @@ export interface ReactionInboundEvent extends OmniEventBase {
   channelType: string;
 }
 
-/** omni.reaction.persisted */
 export interface ReactionPersistedEvent extends OmniEventBase {
   conversationId: string;
   messageId: string;
@@ -422,7 +395,6 @@ export interface TypingEvent extends OmniEventBase {
   channelType?: string;
 }
 
-/** omni.csat.token_generated */
 export interface CsatTokenGeneratedEvent extends OmniEventBase {
   conversationId: string;
   visitorId?: string;
@@ -437,14 +409,12 @@ export interface MediaCachedEvent extends OmniEventBase {
   mediaProxyUrl: string;
 }
 
-/** omni.contact.auto_merged */
 export interface ContactAutoMergedEvent extends OmniEventBase {
   primaryContactId: string;
   mergedContactId: string;
   reason: string;
 }
 
-/** omni.escalation.notify */
 export interface EscalationNotifyEvent extends OmniEventBase {
   conversationId: string;
   policyId: string;
@@ -452,7 +422,6 @@ export interface EscalationNotifyEvent extends OmniEventBase {
   notifyUserIds: string[];
 }
 
-/** omni.escalation.reassign */
 export interface EscalationReassignEvent extends OmniEventBase {
   conversationId: string;
   policyId: string;
@@ -460,7 +429,6 @@ export interface EscalationReassignEvent extends OmniEventBase {
   previousAgentId?: string;
 }
 
-/** livechat.message.inbound */
 export interface LivechatMessageInboundEvent {
   visitorId: string;
   tenantId: string;
@@ -470,7 +438,6 @@ export interface LivechatMessageInboundEvent {
   timestamp?: number;
 }
 
-/** livechat.media.inbound */
 export interface LivechatMediaInboundEvent {
   visitorId: string;
   tenantId: string;
@@ -482,7 +449,6 @@ export interface LivechatMediaInboundEvent {
   timestamp?: number;
 }
 
-/** livechat.message.status */
 export interface LivechatMessageStatusEvent {
   tenantId: string;
   conversationId: string;
@@ -491,7 +457,6 @@ export interface LivechatMessageStatusEvent {
   visitorId?: string;
 }
 
-/** livechat.agent.read */
 export interface LivechatAgentReadEvent {
   tenantId: string;
   conversationId: string;
@@ -499,7 +464,6 @@ export interface LivechatAgentReadEvent {
   messageIds: string[];
 }
 
-/** livechat.visitor.upload_completed */
 export interface LivechatVisitorUploadCompletedEvent {
   tenantId: string;
   visitorId: string;
@@ -507,7 +471,6 @@ export interface LivechatVisitorUploadCompletedEvent {
   mimeType: string;
 }
 
-/** livechat.visitor.upload_failed */
 export interface LivechatVisitorUploadFailedEvent {
   tenantId: string;
   visitorId: string;

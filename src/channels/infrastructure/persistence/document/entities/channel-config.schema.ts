@@ -82,7 +82,7 @@ export class ChannelConfigSchemaClass extends EntityDocumentHelper {
   @Prop({ type: Date, default: null })
   deletedAt: Date | null;
 
-  // ── Health Check Metadata (Phase 2) ─────────────────────────────────
+  // Health Check Metadata (Phase 2)
 
   /**
    * Last time this config was verified successfully (by Health Check or manual verify).
@@ -103,7 +103,7 @@ export class ChannelConfigSchemaClass extends EntityDocumentHelper {
   @Prop({ type: Number, default: 0 })
   consecutiveFailures: number;
 
-  // ── Adaptive Health Check (Phase 3) ──────────────────────────────────
+  // Adaptive Health Check (Phase 3)
 
   /**
    * Internal health state for adaptive check scheduling.

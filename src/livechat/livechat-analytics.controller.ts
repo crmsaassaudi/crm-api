@@ -23,7 +23,7 @@ export class LivechatAnalyticsController {
     private readonly widgetService: LivechatWidgetService,
   ) {}
 
-  // ── Public: Widget fires events here (no auth, fire-and-forget) ──────────
+  // Public: Widget fires events here (no auth, fire-and-forget)
 
   @Public()
   @Throttle({ default: { limit: 300, ttl: 60_000 } })
@@ -122,7 +122,7 @@ export class LivechatAnalyticsController {
     );
   }
 
-  // ── Admin: Dashboard queries ─────────────────────────────────────────────
+  // Admin: Dashboard queries
 
   @Get(':widgetId/summary')
   @RequirePermission('view', 'reports')

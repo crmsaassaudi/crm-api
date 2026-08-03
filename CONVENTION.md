@@ -46,6 +46,30 @@ Follow the existing modular structure (e.g., `src/omni-inbound`). Do not bypass 
   - Utilize `class-validator` decorators heavily in DTOs.
   - Map Mongoose documents to raw entities/objects before sending them back up to services (using `mappers` when appropriate).
 
+## Comments
+
+A comment earns its line by saying something the code cannot. Enforced by
+`eslint-rules/comment-hygiene.mjs` — three rules fail the build, two warn.
+
+**Write these:**
+
+- The invariant a reader would otherwise break (`reserve()` must increment the same counter `loads()` reads).
+- Why the fail-closed direction was chosen, when the safe-looking alternative widens access.
+- Contract semantics types cannot express (`undefined` = unrestricted, `[]` = restricted and admits nobody).
+- A pointer to the doc that holds the long version.
+
+**Do not write these** (each is a lint rule):
+
+- **Decorative separators** — `// ── Foo ─────`, `// ========`. A section banner means the file wants splitting; the banner is not a substitute. Plain `// Foo` is fine. *(error: `no-box-separator`)*
+- **Tracker ids** — `// MED-07:`, `// C3:`, `// T-031:`, `// Phase 2:`, `// P0 fix:`. A reader cannot resolve them. State the rule; leave the id in the commit message. *(error: `no-tracker-tag`)*
+- **Commented-out code** — git remembers it, and a reader cannot tell a plan from an accident. *(error: `no-commented-out-code`)*
+- **Post-mortems** — "this used to collect every `sid`…". Rewrite the threat model in the present tense: *"Exactly one `sid` is accepted: accepting several is a session-fixation primitive, because any sibling subdomain can set one on the parent domain."* Same information, no archaeology. *(warn: `no-history-narration` — "used to" sometimes means "is employed to", so a human decides)*
+- **Restating the declaration below** — `// Send Email Executor` above `class SendEmailExecutor`, `/** Soft-delete a file */` above `softDelete()`.
+- **Comments over 12 lines** (20 for a file header). Past that, the explanation belongs in `docs/` with the comment pointing at it. Occasionally a port contract or a threat model earns the length — that is why this warns rather than blocks. *(warn: `max-comment-block-lines`)*
+
+An operator runbook (`db.foo.createIndex(...)`) and a Markdown heading underline
+are exempt — they are documentation, not decoration.
+
 ## Common Pitfalls
 
 ### ⚠️ Mongoose Subdocument / Populated Document → "Maximum call stack size exceeded"

@@ -188,7 +188,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ type: Date, default: null, index: true })
   lastMessageAt: Date | null;
 
-  // ── Aggregate Fields (Phase 1) ──────────────────────────────────
+  // Aggregate Fields (Phase 1)
 
   /** Monotonically increasing sequence counter for causal ordering.
    *  Allocated atomically via $inc inside ConversationOpsProcessor. */
@@ -262,7 +262,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 0 })
   messageCount: number;
 
-  // ── Reopen tracking ────────────────────────────────────────────
+  // Reopen tracking
   @Prop({ default: 0 })
   reopenCount: number;
 
@@ -273,7 +273,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   })
   previousConversationId: string | null;
 
-  // ── Close / Resolve metadata ───────────────────────────────────
+  // Close / Resolve metadata
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
@@ -317,7 +317,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   })
   resolveSource: string | null;
 
-  // ── SLA Tracking: First Response Time (FRT) ─────────────────────
+  // SLA Tracking: First Response Time (FRT)
   /** The SLA policy applied for first response */
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -334,7 +334,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ default: false })
   frtBreached: boolean;
 
-  // ── SLA Tracking: Resolution Time ──────────────────────────────
+  // SLA Tracking: Resolution Time
   /** The SLA policy applied for resolution */
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -351,7 +351,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ default: false })
   resolutionBreached: boolean;
 
-  // ── Escalation Tracking ────────────────────────────────────────
+  // Escalation Tracking
   /**
    * Current escalation level for this conversation:
    * - null: no escalation
@@ -377,7 +377,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ type: Date, default: null })
   escalatedAt: Date | null;
 
-  // ── Platform Reply Window ──────────────────────────────────────
+  // Platform Reply Window
   /**
    * Timestamp of the customer's most recent inbound message.
    * Used to calculate the platform reply window (e.g. 24h for Facebook).
@@ -393,7 +393,7 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ type: Date, default: null })
   snoozeUntil: Date | null;
 
-  // ── CSAT (Customer Satisfaction) ──────────────────────────────
+  // CSAT (Customer Satisfaction)
 
   /**
    * Satisfaction score submitted by the customer (1 = terrible, 5 = excellent).

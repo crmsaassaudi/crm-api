@@ -116,7 +116,7 @@ ConversationActivitySchema.index(
   { name: 'activities_by_actor' },
 );
 
-// P0 fix: TTL index — auto-delete entries older than 180 days.
+// TTL index — auto-delete entries older than 180 days.
 // Without this the collection grows ~5M documents/day at production scale
 // (1M conversations × ~5 events each), degrading all inbox queries over time.
 // Adjust TTL to match your compliance/audit retention requirements.

@@ -143,7 +143,7 @@ export class CrmRecordUpdateService {
       `[CrmUpdate] ${recordType}(${recordId}).${field} = "${params.value}" | tenant=${tenantId}`,
     );
 
-    // MED-01: Two-tier field protection.
+    // Two-tier field protection.
     // Tier 1 (PROTECTED): system/identity fields — NEVER writable by automation.
     // Tier 2 (RESTRICTED): ownership fields — writable only by privileged
     //   internal executors (e.g. RouteToGroupExecutor) via allowRestricted flag.
@@ -175,7 +175,6 @@ export class CrmRecordUpdateService {
     }
 
     try {
-      // ── Get service for the module ────────────────────────────────────
       const service = this.getServiceForModule(recordType);
       if (!service) {
         return {
@@ -186,7 +185,7 @@ export class CrmRecordUpdateService {
         };
       }
 
-      // ── Fetch current record to get previous value ────────────────────
+      // Fetch current record to get previous value
       const currentRecord = await service.findOne(recordId);
       if (!currentRecord) {
         return {
@@ -199,7 +198,7 @@ export class CrmRecordUpdateService {
 
       const previousValue = currentRecord[field];
 
-      // ── Optimistic-concurrency guard ──────────────────────────────────
+      // Optimistic-concurrency guard
       if ('expectedPreviousValue' in params) {
         const normalize = (v: any) =>
           v === undefined || v === null ? null : String(v);
@@ -219,10 +218,10 @@ export class CrmRecordUpdateService {
         }
       }
 
-      // ── Type cast the value ───────────────────────────────────────────
+      // Type cast the value
       const castedValue = this.castValue(params.value, previousValue);
 
-      // ── Update the record ─────────────────────────────────────────────
+      // Update the record
       const updateData = { [field]: castedValue } as any;
       const updated = await service.update(recordId, updateData);
 
@@ -235,7 +234,7 @@ export class CrmRecordUpdateService {
         };
       }
 
-      // ── Emit automation event with loop prevention metadata ───────────
+      // Emit automation event with loop prevention metadata
       // The EventListener will skip workflows whose _id matches sourceWorkflowId
       await this.emitFieldUpdatedEvent({
         tenantId,
@@ -288,7 +287,7 @@ export class CrmRecordUpdateService {
     return record ?? null;
   }
 
-  // ── Private Helpers ──────────────────────────────────────────────────────
+  // Private Helpers
 
   /**
    * Resolve the CRM service for a given module type.

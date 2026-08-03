@@ -73,7 +73,7 @@ export class FileDocumentRepository
     return fileObjects.map((fileObject) => FileMapper.toDomain(fileObject));
   }
 
-  // ── New implementations ────────────────────────────────────────
+  // New implementations
 
   async findByConversation(
     tenantId: string,
@@ -147,7 +147,7 @@ export class FileDocumentRepository
       query.mimeType = { $regex: `^${escapeRegex(filters.mimeTypePrefix)}` };
     }
     if (filters?.search) {
-      // MED-07: Escape user input to prevent ReDoS
+      // Escape user input to prevent ReDoS
       query.fileName = { $regex: escapeRegex(filters.search), $options: 'i' };
     }
     if (filters?.folderId !== undefined) {
@@ -268,7 +268,7 @@ export class FileDocumentRepository
     return doc ? FileMapper.toDomain(doc) : null;
   }
 
-  // ── Cloud Drive extensions ────────────────────────────────────
+  // Cloud Drive extensions
 
   async rename(id: string, newName: string): Promise<NullableType<FileType>> {
     const doc = await this.model.findByIdAndUpdate(

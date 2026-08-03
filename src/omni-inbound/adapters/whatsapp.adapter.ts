@@ -111,7 +111,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     channelId: string,
     channelConfig?: any,
   ): OmniPayload[] {
-    // ── Template status webhook ─────────────────────────────────────
+    // Template status webhook
     if (rawPayload.event === 'message_template_status_update') {
       this.logger.log(
         `Received template status update: ${rawPayload.message_template_name} -> ${rawPayload.current_status}`,
@@ -357,7 +357,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     }
 
     try {
-      // ── Step 1: Upload media to WhatsApp ────────────────────────────
+      // Step 1: Upload media to WhatsApp
       const mediaId = await this.uploadMedia(
         phoneNumberId,
         accessToken,
@@ -366,7 +366,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
         media.fileName,
       );
 
-      // ── Step 2: Send media message ──────────────────────────────────
+      // Step 2: Send media message
       const waMediaType = this.mimeToWaMediaType(media.mimeType);
       const mediaPayload: Record<string, any> = { id: mediaId };
 

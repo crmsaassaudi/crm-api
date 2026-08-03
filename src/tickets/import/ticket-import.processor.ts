@@ -35,8 +35,6 @@ import {
 } from '../tickets.constants';
 import { AutomationOutboxService } from '../../automation-rules/events/automation-outbox.service';
 
-// ── Module config ──────────────────────────────────────────────────
-
 const TICKET_IMPORT_CONFIG: ImportModuleConfig = {
   module: 'ticket',
   displayName: 'Ticket',
@@ -94,14 +92,12 @@ const SCALAR_FIELDS = TICKET_IMPORT_MAPPABLE_FIELDS.filter(
   (f) => !TICKET_IMPORT_ARRAY_FIELDS.has(f),
 );
 
-// ── Job data ──────────────────────────────────────────────────────
+// Job data
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface TicketImportJobData extends BaseImportJobData {
   // Ticket-specific tenant settings can be added here.
 }
-
-// ── Processor ──────────────────────────────────────────────────────
 
 @Processor(TICKET_IMPORT_QUEUE, { concurrency: 3 })
 export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobData> {
@@ -157,7 +153,7 @@ export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobDa
     return this.importJobModel;
   }
 
-  // ── Row mapping ──
+  // Row mapping
 
   protected mapRow(
     raw: Record<string, string>,

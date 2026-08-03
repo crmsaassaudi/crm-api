@@ -63,7 +63,7 @@ export function canServeFromRollup(
 ): RollupDecision {
   if (!context.enabled) return refuse('disabled');
 
-  // ── Dimensions the rollup does not carry ──
+  // Dimensions the rollup does not carry
   //
   // `sourceId` and `channel` could be added as dimensions later. `stageId`
   // deliberately cannot: a contact's stage changes over time, so a
@@ -78,7 +78,7 @@ export function canServeFromRollup(
   // the difference `includeDeleted` makes to the other series.
   if (request.includeDeleted) return refuse('filter:includeDeleted');
 
-  // ── Visibility ──
+  // Visibility
   //
   // An ABAC predicate is an arbitrary row filter compiled per policy. It cannot be
   // reduced to owner/orgUnit buckets, and guessing would leak rows.
@@ -92,7 +92,7 @@ export function canServeFromRollup(
     return refuse('visibility-not-evaluated');
   }
 
-  // ── Freshness ──
+  // Freshness
   //
   // The rollup is computed nightly, so today's partial day is never in it. Serving
   // a range that extends past what has been computed would silently report zero for

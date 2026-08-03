@@ -38,7 +38,7 @@ export class AutomationExecutionLogRepository {
     private readonly model: Model<AutomationExecutionLogSchemaClass>,
   ) {}
 
-  // ── Queries ────────────────────────────────────────────────────────────
+  // Queries
 
   /**
    * Find logs for a specific workflow, sorted newest first.
@@ -133,7 +133,7 @@ export class AutomationExecutionLogRepository {
    * Returns counts per status and average duration.
    */
   async getWorkflowStats(tenantId: string, workflowId: string) {
-    // MED-10: Single $facet replaces two parallel aggregation scans.
+    // Single $facet replaces two parallel aggregation scans.
     const [result] = await this.model.aggregate([
       { $match: { tenantId, workflowId } },
       {
@@ -176,7 +176,7 @@ export class AutomationExecutionLogRepository {
     };
   }
 
-  // ── Mutations (Execution Lifecycle) ────────────────────────────────────
+  // Mutations (Execution Lifecycle)
 
   /**
    * Start a new execution log when a workflow is triggered.
@@ -350,7 +350,7 @@ export class AutomationExecutionLogRepository {
       .exec();
   }
 
-  // ── DLQ & Retry Support ──────────────────────────────────────────────────
+  // DLQ & Retry Support
 
   /**
    * Atomically mark a failed/dlq step as 'retrying'.

@@ -40,8 +40,6 @@ import {
 import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
 import { isEmail } from 'class-validator';
 
-// ── Module config ──────────────────────────────────────────────────
-
 const CONTACT_IMPORT_CONFIG: ImportModuleConfig = {
   module: 'contact',
   displayName: 'Contact',
@@ -63,7 +61,7 @@ const SCALAR_FIELDS = IMPORT_MAPPABLE_FIELDS.filter(
   (f) => !IMPORT_ARRAY_FIELDS.has(f),
 );
 
-// ── Tenant settings (snapshotted at enqueue time) ──
+// Tenant settings (snapshotted at enqueue time)
 
 export interface ImportTenantSettings {
   uniqueEmail: boolean;
@@ -79,13 +77,11 @@ export interface ImportTenantSettings {
   defaultCountryCode?: string;
 }
 
-// ── Job data ──────────────────────────────────────────────────────
-
 export interface ContactImportJobData extends BaseImportJobData {
   tenantSettings: ImportTenantSettings;
 }
 
-// ── Result (backward compat) ──
+// Result (backward compat)
 
 export interface ContactImportResult {
   jobId: string;
@@ -105,8 +101,6 @@ export interface ContactImportResult {
   };
   reportUrl?: string;
 }
-
-// ── Processor ──────────────────────────────────────────────────────
 
 @Processor(CONTACT_IMPORT_QUEUE, { concurrency: 3 })
 export class ContactImportProcessor extends BaseImportProcessor<ContactImportJobData> {
@@ -195,7 +189,7 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     );
   }
 
-  // ── Row mapping ──
+  // Row mapping
 
   protected mapRow(
     raw: Record<string, string>,
@@ -234,7 +228,7 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     return { row, fields, arrayFields };
   }
 
-  // ── Row validation ──
+  // Row validation
 
   protected validateRow(
     mapped: MappedRow,
@@ -291,7 +285,7 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     return errors;
   }
 
-  // ── Dedup value extraction ──
+  // Dedup value extraction
 
   protected extractDedupValues(row: MappedRow, field: string): string[] {
     switch (field) {
@@ -304,7 +298,7 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     }
   }
 
-  // ── Build insert document ──
+  // Build insert document
 
   protected buildInsert(
     mapped: MappedRow,
@@ -334,7 +328,7 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     };
   }
 
-  // ── Build overwrite update ──
+  // Build overwrite update
 
   protected buildOverwrite(
     mapped: MappedRow,
@@ -354,7 +348,7 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     return { $set: set };
   }
 
-  // ── Build merge update ──
+  // Build merge update
 
   protected buildMerge(
     mapped: MappedRow,
@@ -397,9 +391,9 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     return Object.keys(update).length ? update : null;
   }
 
-  // ── Post-write hook: automation events ──
+  // Post-write hook: automation events
 
-  // ── Contact-specific helpers ──
+  // Contact-specific helpers
 
   private mergeArray(
     field: 'emails' | 'phones',

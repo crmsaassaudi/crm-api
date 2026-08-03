@@ -5,7 +5,7 @@ import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 /**
  * SocketRateLimiter — Redis-based sliding window rate limiter for WebSocket events.
  *
- * T-031: Prevent visitor spam by limiting event frequency per socket.
+ * Prevent visitor spam by limiting event frequency per socket.
  *
  * Design:
  * - Uses Redis INCR + EXPIRE for a simple fixed-window counter

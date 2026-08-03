@@ -39,7 +39,7 @@ export class IdentityService {
     private readonly conversationRepo: ConversationRepository,
   ) {}
 
-  // ────────────────────────── Public API ──────────────────────────
+  // Public API
 
   /**
    * Resolve a platform sender to internal IDs.
@@ -215,7 +215,7 @@ export class IdentityService {
     }
   }
 
-  // ────────────────────────── Internals ──────────────────────────
+  // Internals
 
   private buildKey(
     platform: string,

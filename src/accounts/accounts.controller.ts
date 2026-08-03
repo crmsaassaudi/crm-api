@@ -117,7 +117,7 @@ export class AccountsController {
     return this.service.remove(id);
   }
 
-  // ──────────────────────── RECYCLE BIN ────────────────────────
+  // RECYCLE BIN
   //
   // Declared BEFORE the `:id` routes — Nest matches in declaration order, and
   // `recycle-bin` would otherwise be captured as an id.
@@ -145,7 +145,7 @@ export class AccountsController {
     return this.service.restore(id);
   }
 
-  // ──────────────────────────── MERGE ────────────────────────────
+  // MERGE
 
   /**
    * What a merge would do: the surviving value for every field, what would be
@@ -221,8 +221,6 @@ export class AccountsController {
     return this.service.bulkTagAccounts(body);
   }
 
-  // ──────────────────────────── IMPORT ────────────────────────────
-
   @Post('import-upload')
   @RequirePermission('create', 'accounts')
   @UseInterceptors(FileInterceptor('file'))
@@ -277,8 +275,6 @@ export class AccountsController {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.send(buffer);
   }
-
-  // ──────────────────────────── EXPORT ────────────────────────────
 
   @Post('export')
   @RequirePermission('export', 'accounts')

@@ -53,9 +53,7 @@ afterAll(async () => {
 }, 10000);
 
 describe('Contact Schema — real MongoDB', () => {
-  // ═══════════════════════════════════════════════════════════════════
   // TENANT ISOLATION — CRUD
-  // ═══════════════════════════════════════════════════════════════════
   describe('tenant-isolated CRUD', () => {
     it('should create enriches tenantId and only same tenant can read', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
@@ -120,9 +118,7 @@ describe('Contact Schema — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // DUPLICATE CHECK — email/phone within tenant
-  // ═══════════════════════════════════════════════════════════════════
   describe('duplicate detection', () => {
     it('should same email in different tenants → no conflict', async () => {
       await runWithTenant(TENANT_A, async () => {
@@ -167,9 +163,7 @@ describe('Contact Schema — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // OMNI IDENTITY — atomic $addToSet
-  // ═══════════════════════════════════════════════════════════════════
   describe('omniIdentities', () => {
     it('should $addToSet correctly deduplicates identical omni identities (_id: false)', async () => {
       /**
@@ -266,9 +260,7 @@ describe('Contact Schema — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // VERSION CHECK — optimistic locking
-  // ═══════════════════════════════════════════════════════════════════
   describe('optimistic locking (__v)', () => {
     it('should concurrent updates with version check — second one fails', async () => {
       let docId: string;
@@ -313,9 +305,7 @@ describe('Contact Schema — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // STAGE HISTORY — atomic $push
-  // ═══════════════════════════════════════════════════════════════════
   describe('stageHistory', () => {
     it('should $push atomically appends stage transition', async () => {
       let docId: string;
@@ -368,9 +358,6 @@ describe('Contact Schema — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // FAULT INJECTION
-  // ═══════════════════════════════════════════════════════════════════
   describe('FAULT INJECTION', () => {
     it('should query with $where operator is not possible through tenant filter', async () => {
       await runWithTenant(TENANT_A, async () => {

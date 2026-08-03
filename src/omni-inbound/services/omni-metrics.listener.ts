@@ -8,7 +8,7 @@ import type {
 } from '../domain/omni-events';
 
 /**
- * T-042: OmniMetricsListener — instruments omni-channel domain events
+ * OmniMetricsListener — instruments omni-channel domain events
  * into MetricsService so Prometheus `/metrics` exposes operational telemetry.
  *
  * All counters use Prometheus naming convention: lowercase, underscore-separated,
@@ -23,7 +23,7 @@ export class OmniMetricsListener {
 
   constructor(private readonly metrics: MetricsService) {}
 
-  // ── Inbound Messages ────────────────────────────────────────────────────
+  // Inbound Messages
 
   @OnEvent(OmniEvents.MESSAGE_PERSISTED, { async: true })
   handleMessagePersisted(event: MessagePersistedEvent): void {
@@ -36,7 +36,7 @@ export class OmniMetricsListener {
     }
   }
 
-  // ── Outbound Messages ───────────────────────────────────────────────────
+  // Outbound Messages
 
   @OnEvent(OmniEvents.MESSAGE_SENT, { async: true })
   handleMessageSent(event: MessageSentEvent): void {
@@ -50,7 +50,7 @@ export class OmniMetricsListener {
     }
   }
 
-  // ── Conversation Lifecycle ──────────────────────────────────────────────
+  // Conversation Lifecycle
 
   @OnEvent(OmniEvents.CONVERSATION_CREATED, { async: true })
   handleConversationCreated(event: { channelType?: string }): void {
@@ -82,7 +82,7 @@ export class OmniMetricsListener {
     }
   }
 
-  // ── Assignment ──────────────────────────────────────────────────────────
+  // Assignment
 
   @OnEvent(OmniEvents.CONVERSATION_ASSIGNED, { async: true })
   handleAssignment(event: { reason?: string }): void {
@@ -95,8 +95,6 @@ export class OmniMetricsListener {
     }
   }
 
-  // ── DLQ ─────────────────────────────────────────────────────────────────
-
   @OnEvent(CrmEvents.DLQ_RECORDED, { async: true })
   handleDlqRecorded(event: { sourceQueue?: string }): void {
     try {
@@ -107,8 +105,6 @@ export class OmniMetricsListener {
       // Non-critical
     }
   }
-
-  // ── Media Cache ─────────────────────────────────────────────────────────
 
   @OnEvent(OmniEvents.MESSAGE_MEDIA_CACHED, { async: true })
   handleMediaCached(): void {

@@ -173,7 +173,7 @@ export class ContactTimelineService {
     };
   }
 
-  // ── Per-source fetchers ────────────────────────────────────────────────
+  // Per-source fetchers
   //
   // Raw-connection reads by collection name, like the merge registry: pulling
   // Tickets/Deals/OmniInbound services in here would recreate the dependency

@@ -25,7 +25,6 @@ import { RequirePermission } from '../common/permissions/permission.decorator';
 export class TaskSettingsController {
   constructor(private readonly service: TaskSettingsService) {}
 
-  // ── Statuses ───────────────────────────────────────────────────────────
   @Get('statuses')
   @RequirePermission('view', 'settings')
   findAllStatuses() {
@@ -50,7 +49,6 @@ export class TaskSettingsController {
     await this.service.deleteStatus(id);
   }
 
-  // ── Categories ─────────────────────────────────────────────────────────
   @Get('categories')
   @RequirePermission('view', 'settings')
   findAllCategories() {
@@ -75,7 +73,6 @@ export class TaskSettingsController {
     await this.service.deleteCategory(id);
   }
 
-  // ── Sources ────────────────────────────────────────────────────────────
   @Get('sources')
   @RequirePermission('view', 'settings')
   findAllSources() {

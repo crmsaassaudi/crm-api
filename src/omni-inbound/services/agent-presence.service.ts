@@ -30,7 +30,6 @@ import {
   transitionPresence,
 } from '../domain/presence-state-machine';
 
-// ────────────────────────────────────────────────────────────────────────
 // Lua Scripts for atomic Redis operations
 //
 // The stored presence JSON uses the canonical 4-axis model:
@@ -41,7 +40,6 @@ import {
 //
 // Routing eligibility (§2.1) = presenceStatus==AVAILABLE && connectionStatus==
 // CONNECTED && routingStatus==ACCEPTING && activeConversations < maxCapacity.
-// ────────────────────────────────────────────────────────────────────────
 
 /** Lua snippet recomputing the lowercase display `status` from the 4 axes. */
 const LUA_RECOMPUTE_DISPLAY = `
@@ -346,9 +344,7 @@ export class AgentPresenceService {
 
   constructor(private readonly redis: RedisService) {}
 
-  // ────────────────────────────────────────────────────────────────────
   // Persistence helpers
-  // ────────────────────────────────────────────────────────────────────
 
   /**
    * Recompute derived fields (capacityStatus, status display, lastHeartbeatMs)
@@ -544,9 +540,7 @@ export class AgentPresenceService {
     return presence;
   }
 
-  // ────────────────────────────────────────────────────────────────────
   // Presence & Routing (human-controlled)
-  // ────────────────────────────────────────────────────────────────────
 
   /**
    * Change the presence axis (AVAILABLE/AWAY/BREAK/MEETING/TRAINING/OFFLINE)
@@ -732,9 +726,7 @@ export class AgentPresenceService {
     return presence;
   }
 
-  // ────────────────────────────────────────────────────────────────────
   // Connection Tracking (system-controlled, multi-tab)
-  // ────────────────────────────────────────────────────────────────────
 
   /**
    * Register a new socket connection for an agent.
@@ -853,9 +845,7 @@ export class AgentPresenceService {
     return { presence, allDisconnected };
   }
 
-  // ────────────────────────────────────────────────────────────────────
   // Grace Period Expiry
-  // ────────────────────────────────────────────────────────────────────
 
   /**
    * Called when the grace period expires without reconnection. Forces OFFLINE.
@@ -939,10 +929,6 @@ export class AgentPresenceService {
     return true;
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // Heartbeat
-  // ────────────────────────────────────────────────────────────────────
-
   async heartbeat(tenantId: string, userId: string): Promise<void> {
     const presence = await this.getPresence(tenantId, userId);
     if (presence) {
@@ -956,9 +942,7 @@ export class AgentPresenceService {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
   // Capacity Operations (atomic via Lua scripts)
-  // ────────────────────────────────────────────────────────────────────
 
   /**
    * Atomically increment the active conversation count (used by direct/manual
@@ -1131,9 +1115,7 @@ export class AgentPresenceService {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
   // Reconciliation (P0 self-healing)
-  // ────────────────────────────────────────────────────────────────────
 
   async patchActiveConversations(
     tenantId: string,
@@ -1189,9 +1171,7 @@ export class AgentPresenceService {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
   // Queries
-  // ────────────────────────────────────────────────────────────────────
 
   async getPresence(
     tenantId: string,
@@ -1266,9 +1246,7 @@ export class AgentPresenceService {
     return available.map((a) => a.userId);
   }
 
-  // ────────────────────────────────────────────────────────────────────
   // Administration
-  // ────────────────────────────────────────────────────────────────────
 
   async removePresence(tenantId: string, userId: string): Promise<void> {
     const client = this.redis.getClient();

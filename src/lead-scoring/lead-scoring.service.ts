@@ -42,7 +42,7 @@ export class LeadScoringService {
     private readonly cls: ClsService,
   ) {}
 
-  // ── CRUD ────────────────────────────────────────────────────────────────
+  // CRUD
 
   async listRules(tenantId: string): Promise<LeadScoringRuleDocument[]> {
     return this.ruleModel
@@ -83,7 +83,7 @@ export class LeadScoringService {
     return this.updateRule(tenantId, ruleId, { isActive } as any);
   }
 
-  // ── Score computation ────────────────────────────────────────────────────
+  // Score computation
 
   /**
    * Re-evaluate all active rules for a specific contact and persist
@@ -179,7 +179,7 @@ export class LeadScoringService {
     return { scanned, updated };
   }
 
-  // ── Event listeners ──────────────────────────────────────────────────────
+  // Event listeners
 
   @OnEvent('contact.updated')
   async onContactUpdated(payload: { tenantId: string; contactId: string }) {
@@ -221,7 +221,7 @@ export class LeadScoringService {
     }
   }
 
-  // ── Condition evaluator ──────────────────────────────────────────────────
+  // Condition evaluator
 
   private evaluateCondition(
     condition: ScoringCondition,

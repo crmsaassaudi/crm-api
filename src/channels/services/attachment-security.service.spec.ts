@@ -8,9 +8,7 @@ describe('AttachmentSecurityService', () => {
     service = new AttachmentSecurityService();
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // P0: Extension Blocklist
-  // ────────────────────────────────────────────────────────────────────────
   describe('scanExtension()', () => {
     describe('should BLOCK dangerous file extensions', () => {
       const dangerousFiles = [
@@ -124,9 +122,7 @@ describe('AttachmentSecurityService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // Full Scan Pipeline (Extension + Size + Future AV)
-  // ────────────────────────────────────────────────────────────────────────
   describe('scanAttachment()', () => {
     it('should BLOCK dangerous extension before checking size', () => {
       const result = service.scanAttachment('virus.exe', 100);
@@ -160,9 +156,7 @@ describe('AttachmentSecurityService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // P1: ClamAV Stub
-  // ────────────────────────────────────────────────────────────────────────
   describe('scanWithClamAV()', () => {
     it('should return safe (stub implementation)', () => {
       const buffer = Buffer.from('file content');
@@ -171,9 +165,7 @@ describe('AttachmentSecurityService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // P2: CID Size-Threshold Filter
-  // ────────────────────────────────────────────────────────────────────────
   describe('classifyCidImage()', () => {
     it('should classify small image (< 10KB) as Base64 with data URI', () => {
       const smallBuffer = Buffer.alloc(5 * 1024); // 5 KB
@@ -240,9 +232,7 @@ describe('AttachmentSecurityService', () => {
     });
   });
 
-  // ────────────────────────────────────────────────────────────────────────
   // Batch Validation
-  // ────────────────────────────────────────────────────────────────────────
   describe('validateAttachmentBatch()', () => {
     it('should pass when all files are safe', () => {
       const files = [

@@ -54,7 +54,7 @@ export class OmniReportService {
     private readonly cls: ClsService,
   ) {}
 
-  // ── Report 1: Conversation Volume Trend ───────────────────────────
+  // Report 1: Conversation Volume Trend
 
   async getConversationVolume(
     dto: GetOmniReportDto,
@@ -150,7 +150,7 @@ export class OmniReportService {
     });
   }
 
-  // ── Report 2: Channel Distribution ────────────────────────────────
+  // Report 2: Channel Distribution
 
   async getChannelDistribution(
     dto: GetOmniReportDto,
@@ -192,7 +192,7 @@ export class OmniReportService {
     });
   }
 
-  // ── Report 3: Agent Performance ───────────────────────────────────
+  // Report 3: Agent Performance
 
   async getAgentPerformance(
     dto: GetOmniReportDto,
@@ -273,7 +273,7 @@ export class OmniReportService {
     });
   }
 
-  // ── Report 4: Response Time Analytics ─────────────────────────────
+  // Report 4: Response Time Analytics
 
   async getResponseTime(
     dto: GetOmniReportDto,
@@ -339,7 +339,7 @@ export class OmniReportService {
     });
   }
 
-  // ── Report 5: Resolution Summary ──────────────────────────────────
+  // Report 5: Resolution Summary
 
   async getResolutionSummary(
     dto: GetOmniReportDto,
@@ -428,7 +428,7 @@ export class OmniReportService {
     });
   }
 
-  // ── Report 6: Message Volume by Type ──────────────────────────────
+  // Report 6: Message Volume by Type
 
   async getMessageVolume(
     dto: GetOmniReportDto,
@@ -490,7 +490,7 @@ export class OmniReportService {
     });
   }
 
-  // ── Report 7: Bot Performance ─────────────────────────────────────
+  // Report 7: Bot Performance
 
   async getBotPerformance(
     dto: GetOmniReportDto,
@@ -549,7 +549,7 @@ export class OmniReportService {
     });
   }
 
-  // ── Report 8: Peak Hours Heatmap ──────────────────────────────────
+  // Report 8: Peak Hours Heatmap
 
   async getPeakHours(
     dto: GetOmniReportDto,
@@ -598,7 +598,7 @@ export class OmniReportService {
     });
   }
 
-  // ── Report 9: Tag Analytics ───────────────────────────────────────
+  // Report 9: Tag Analytics
 
   async getTagAnalytics(
     dto: GetOmniReportDto,
@@ -674,7 +674,7 @@ export class OmniReportService {
     });
   }
 
-  // ── Report 10: Reopen Rate ────────────────────────────────────────
+  // Report 10: Reopen Rate
 
   async getReopenRate(
     dto: GetOmniReportDto,
@@ -747,7 +747,7 @@ export class OmniReportService {
     });
   }
 
-  // ── Private Helpers ───────────────────────────────────────────────
+  // Private Helpers
 
   private buildBaseMatch(dto: GetOmniReportDto): Record<string, any> {
     const match: Record<string, any> = {

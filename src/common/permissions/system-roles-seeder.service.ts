@@ -124,7 +124,7 @@ export class SystemRolesSeederService {
     return result;
   }
 
-  // ── Internals ──────────────────────────────────────────────────────────────
+  // Internals
 
   private isUpToDate(
     existing: CustomRoleDocument,

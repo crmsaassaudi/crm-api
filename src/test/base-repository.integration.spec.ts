@@ -23,7 +23,7 @@ import { ClsServiceManager } from 'nestjs-cls';
  * - Tenant enrichment missing → cross-tenant data creation
  */
 
-// ─── Minimal test schema ────────────────────────────────────────
+// Minimal test schema
 
 interface TestEntity {
   id: string;
@@ -64,7 +64,7 @@ type TestEntityDocument = Document & {
   updatedById: string;
 };
 
-// ─── Concrete repository for testing ────────────────────────────
+// Concrete repository for testing
 
 class TestEntityRepository extends BaseDocumentRepository<
   TestEntityDocument,
@@ -100,7 +100,7 @@ class TestEntityRepository extends BaseDocumentRepository<
   }
 }
 
-// ─── A second entity that soft-deletes ──────────────────────────
+// A second entity that soft-deletes
 //
 // The entity above has no `deletedAt`, so it only ever exercises the hard-delete
 // branch. Soft delete is derived from the schema (`model.schema.path('deletedAt')`),
@@ -167,9 +167,7 @@ afterAll(async () => {
 }, 10000);
 
 describe('BaseDocumentRepository — real MongoDB', () => {
-  // ═══════════════════════════════════════════════════════════════════
   // PATCH SEMANTICS — the #1 data corruption risk
-  // ═══════════════════════════════════════════════════════════════════
   describe('PATCH semantics (update only submitted fields)', () => {
     it('should updating name should NOT overwrite existing emails/phones with empty arrays', async () => {
       // Create entity with real data
@@ -224,9 +222,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // VERSION CONFLICT — concurrent edit detection
-  // ═══════════════════════════════════════════════════════════════════
   describe('optimistic locking (version conflict)', () => {
     it('should concurrent update with stale version throws ConflictException', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
@@ -259,9 +255,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // TENANT ENRICHMENT — auto-set from CLS
-  // ═══════════════════════════════════════════════════════════════════
   describe('tenant auto-enrichment', () => {
     it('should create() auto-sets tenantId, createdById, ownerId from CLS', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
@@ -312,9 +306,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // CROSS-TENANT UPDATE/DELETE PROTECTION
-  // ═══════════════════════════════════════════════════════════════════
   describe('cross-tenant protection', () => {
     it('should refuse update() from a different tenant with a 404', async () => {
       const created = await runWithTenant(TENANT_A, async () => {
@@ -369,9 +361,6 @@ describe('BaseDocumentRepository — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // FAULT INJECTION
-  // ═══════════════════════════════════════════════════════════════════
   describe('FAULT INJECTION', () => {
     it('should PROVES: if PATCH whitelist is removed, update({ name }) would destroy emails/phones', async () => {
       /**
@@ -406,9 +395,6 @@ describe('BaseDocumentRepository — real MongoDB', () => {
       // If whitelist was broken: these would be [] → test fails → bug caught
     });
   });
-  // ═══════════════════════════════════════════════════════════════════
-  // SOFT DELETE — delete, find it in the bin, restore it
-  // ═══════════════════════════════════════════════════════════════════
   describe('soft delete, recycle bin and restore', () => {
     /** A repository bound to the CLS context of the current run. */
     const softRepo = () =>

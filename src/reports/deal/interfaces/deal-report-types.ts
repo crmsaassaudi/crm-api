@@ -1,4 +1,3 @@
-// ── Pipeline Summary ──────────────────────────────────────────────────────────
 export interface PipelineSummaryItem {
   stageId: string | null;
   stageName: string;
@@ -10,7 +9,6 @@ export interface PipelineSummaryItem {
   weightedValue: number;
 }
 
-// ── Revenue Trend ─────────────────────────────────────────────────────────────
 export interface RevenueTrendPoint {
   date: string;
   wonCount: number;
@@ -19,7 +17,7 @@ export interface RevenueTrendPoint {
   lostValue: number;
 }
 
-// ── Win/Loss Rate ─────────────────────────────────────────────────────────────
+// Win/Loss Rate
 export interface WinLossSummary {
   won: number;
   lost: number;
@@ -51,7 +49,6 @@ export interface WinLossRateData {
   bySource: WinLossBySource[];
 }
 
-// ── Deal Aging ────────────────────────────────────────────────────────────────
 export interface DealAgingBucket {
   bucket: string;
   label: string;
@@ -62,7 +59,6 @@ export interface DealAgingBucket {
   percentage: number;
 }
 
-// ── Owner Performance ─────────────────────────────────────────────────────────
 export interface OwnerPerformanceItem {
   ownerId: string | null;
   ownerName: string;
@@ -76,7 +72,6 @@ export interface OwnerPerformanceItem {
   avgDealSize: number;
 }
 
-// ── Deal Velocity ─────────────────────────────────────────────────────────────
 export interface DealVelocityData {
   avgDaysToClose: number;
   medianDaysToClose: number;

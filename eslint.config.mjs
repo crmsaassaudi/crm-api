@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import js from '@eslint/js';
 import { FlatCompat } from '@eslint/eslintrc';
+import commentHygiene from './eslint-rules/comment-hygiene.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,7 +21,7 @@ export default [
     // tsconfig.json (they are run with `node`, never compiled). The type-aware parser
     // cannot read a file the project does not include, so linting them produced three
     // permanent parsing errors — noise that trains everyone to ignore lint output.
-    ignores: ['src/scripts/**/*.js'],
+    ignores: ['src/scripts/**/*.js', 'eslint-rules/**'],
   },
   ...compat.extends(
     'plugin:@typescript-eslint/recommended',
@@ -29,6 +30,7 @@ export default [
   {
     plugins: {
       '@typescript-eslint': tsEslintPlugin,
+      'comment-hygiene': commentHygiene,
     },
     languageOptions: {
       globals: {
@@ -84,6 +86,22 @@ export default [
             'Refusing updateMany/deleteMany with an empty filter. Add at least a tenantId or business key to the filter.',
         },
       ],
+
+      // Comment hygiene. These three are mechanical — there is no case where a
+      // decorative rule, an unresolvable tracker id or a commented-out
+      // statement is the right answer, so they fail the build.
+      'comment-hygiene/no-box-separator': 'error',
+      'comment-hygiene/no-tracker-tag': 'error',
+      'comment-hygiene/no-commented-out-code': 'error',
+
+      // These two need a human to agree. A long comment is sometimes exactly
+      // right (a port contract, a threat model), and "used to" occasionally
+      // means "is employed to" — so they warn rather than block.
+      'comment-hygiene/max-comment-block-lines': [
+        'warn',
+        { max: 12, maxFileHeader: 20 },
+      ],
+      'comment-hygiene/no-history-narration': 'warn',
     },
   },
 ];

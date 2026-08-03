@@ -1,5 +1,5 @@
 /**
- * T-037: Validation helpers for OmniGateway socket message payloads.
+ * Validation helpers for OmniGateway socket message payloads.
  *
  * These are lightweight synchronous validators — no class-validator/class-transformer
  * overhead for the hot socket path. Returns a descriptive error string or null if valid.

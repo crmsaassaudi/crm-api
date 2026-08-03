@@ -27,7 +27,7 @@ const escapeRegex = (value: string): string =>
  * Returns null when the term is not phone-shaped — the signal to fall back to
  * text search.
  *
- * ── Why prefixes, and why exactly these three properties ──
+ * Why prefixes, and why exactly these three properties
  *
  * MongoDB can only use an index for a regular expression when it is a *prefix
  * expression* (`^` followed by literals) matched *case-sensitively*. Stored
@@ -38,7 +38,7 @@ const escapeRegex = (value: string): string =>
  * Equality needs no separate branch — a full-length prefix *is* equality — so
  * one mechanism covers both the pasted-in-full case and partial typing.
  *
- * ── What this deliberately does NOT do ──
+ * What this deliberately does NOT do
  *
  * Suffix matching. Someone who types only the last six digits of
  * `+84901112222` cannot be served from a B-tree index: a trailing match is not

@@ -224,7 +224,7 @@ export class ActionProcessorMixin {
       await this.logActionStep(data, stepStart, result);
 
       if (!result.success) {
-        // ── Smart Retry (Phase 2): Non-retryable → DLQ immediately ────
+        // Smart Retry (Phase 2): Non-retryable → DLQ immediately
         if (result.retryable === false) {
           this.logger.warn(
             `[Processor] Non-retryable failure for node=${data.nodeId}: ${result.error?.code} — routing to DLQ (skip BullMQ retry)`,
@@ -342,9 +342,7 @@ export class ActionProcessorMixin {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Legacy main queue processor (backward compat)
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Processor(AUTOMATION_ACTION_QUEUE)
 export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActionJobData> {
@@ -416,10 +414,6 @@ export class AutomationActionProcessor extends BaseTenantConsumer<AutomationActi
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Email Queue Processor
-// ─────────────────────────────────────────────────────────────────────────────
-
 @Processor(AUTOMATION_EMAIL_QUEUE)
 export class AutomationEmailProcessor extends BaseTenantConsumer<AutomationActionJobData> {
   protected readonly logger = new Logger(AutomationEmailProcessor.name);
@@ -459,10 +453,6 @@ export class AutomationEmailProcessor extends BaseTenantConsumer<AutomationActio
     return ActionProcessorMixin.handleWithClsContext(this.mixin, this.cls, job);
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SMS Queue Processor
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Processor(AUTOMATION_SMS_QUEUE)
 export class AutomationSmsProcessor extends BaseTenantConsumer<AutomationActionJobData> {
@@ -510,9 +500,7 @@ export class AutomationSmsProcessor extends BaseTenantConsumer<AutomationActionJ
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Internal Queue Processor (UpdateField + RouteToGroup)
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Processor(AUTOMATION_INTERNAL_QUEUE)
 export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationActionJobData> {
@@ -569,10 +557,6 @@ export class AutomationInternalProcessor extends BaseTenantConsumer<AutomationAc
     return ActionProcessorMixin.handleWithClsContext(this.mixin, this.cls, job);
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Webhook Queue Processor
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Processor(AUTOMATION_WEBHOOK_QUEUE)
 export class AutomationWebhookProcessor extends BaseTenantConsumer<AutomationActionJobData> {

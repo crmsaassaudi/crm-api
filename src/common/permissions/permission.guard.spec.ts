@@ -137,7 +137,7 @@ describe('PermissionGuard (adapter over AuthorizationService)', () => {
   });
 
   /**
-   * H-09: `NODE_ENV !== 'production'` is no longer sufficient to trust a
+   * `NODE_ENV !== 'production'` is no longer sufficient to trust a
    * client-supplied tenant. Staging / UAT / load-test environments all run with
    * a non-production NODE_ENV while holding production-shaped data, so the
    * header there was a live cross-tenant switch. It now requires an explicit

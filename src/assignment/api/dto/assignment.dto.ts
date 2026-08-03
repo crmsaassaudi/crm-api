@@ -23,7 +23,7 @@ import {
   MATCH_TYPES,
 } from '../../domain/assignment.types';
 
-// ── Conditions ─────────────────────────────────────────────────────────────
+// Conditions
 
 export class AssignmentConditionDto {
   @ApiProperty({ example: 'priority' })
@@ -46,8 +46,6 @@ export class AssignmentConditionDto {
   @MaxLength(2000)
   value?: string;
 }
-
-// ── Actions ────────────────────────────────────────────────────────────────
 
 export class AssignmentActionsDto {
   @ApiPropertyOptional({ description: 'Pin to one user; skips strategy' })
@@ -82,7 +80,7 @@ export class AssignmentActionsDto {
   requiredSkills?: string[];
 }
 
-// ── Rules ──────────────────────────────────────────────────────────────────
+// Rules
 
 export class CreateAssignmentRuleDto {
   @ApiProperty({ enum: ASSIGNMENT_OBJECT_TYPES })
@@ -155,7 +153,7 @@ export class ClaimAssignmentQueueItemDto {
   assigneeId?: string;
 }
 
-// ── Settings ───────────────────────────────────────────────────────────────
+// Settings
 
 export class UpdateAssignmentSettingDto {
   @ApiPropertyOptional()
@@ -222,7 +220,7 @@ export class UpdateAssignmentSettingDto {
   previousAssigneeWaitMinutes?: number;
 }
 
-// ── Skills ─────────────────────────────────────────────────────────────────
+// Skills
 
 export class CreateAssignmentSkillDto {
   @ApiProperty({ example: 'English' })
@@ -263,8 +261,6 @@ export class UpdateAssignmentSkillDto {
   description?: string;
 }
 
-// ── Dry run ────────────────────────────────────────────────────────────────
-
 export class DryRunDto {
   @ApiProperty({ enum: ASSIGNMENT_OBJECT_TYPES })
   @IsEnum(ASSIGNMENT_OBJECT_TYPES)
@@ -282,8 +278,6 @@ export class DryRunDto {
   @IsMongoId()
   scopeId?: string;
 }
-
-// ── Audit query ────────────────────────────────────────────────────────────
 
 export class AuditQueryDto {
   @ApiPropertyOptional({ enum: ASSIGNMENT_OBJECT_TYPES })

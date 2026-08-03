@@ -34,31 +34,27 @@ import { OmniEvents, LivechatEvents } from '../omni-inbound/domain/omni-events';
  * Socket routing: visitor joins room `visitor:{visitorId}`.
  * Gửi message về visitor chỉ cần emit vào room đó — không cần socketId.
  *
- * Event table (Client → Server):
- * ┌────────────────────┬───────────────────────────────────────────────────┐
- * │ visitor:connect    │ Handshake — join room, lưu context vào socket.data │
- * │ visitor:message    │ Text → OmniInbound pipeline                       │
- * │ visitor:upload     │ File (base64) → OmniInbound media pipeline        │
- * │ visitor:typing     │ Typing indicator → forward đến agent CRM          │
- * │ visitor:identify   │ Enrich customer.email / customer.name / phone     │
- * │ visitor:reaction   │ Emoji reaction → unified reaction pipeline        │
- * │ visitor:ack        │ Delivery receipt → mark messages as delivered      │
- * │ visitor:read       │ Read receipt → mark messages as read               │
- * └────────────────────┴───────────────────────────────────────────────────┘
+ * Client → Server (see the @SubscribeMessage handlers below):
+ *   visitor:connect    join room, lưu context vào socket.data
+ *   visitor:message    text → OmniInbound pipeline
+ *   visitor:upload     file (base64) → OmniInbound media pipeline
+ *   visitor:typing     typing indicator → forward đến agent CRM
+ *   visitor:identify   enrich customer.email / customer.name / phone
+ *   visitor:reaction   emoji reaction → unified reaction pipeline
+ *   visitor:ack        delivery receipt → mark messages as delivered
+ *   visitor:read       read receipt → mark messages as read
  *
- * Event table (Server → Client):
- * ┌────────────────────┬───────────────────────────────────────────────────┐
- * │ visitor:connected  │ Ack với conversationId (nếu có session cũ)        │
- * │ agent:message      │ Text hoặc media từ agent                          │
- * │ agent:joined       │ Agent được phân công → visitor thấy tên           │
- * │ agent:typing       │ Agent đang / ngừng gõ                             │
- * │ agent:reaction     │ Reaction update broadcast to widget               │
- * │ message:status     │ Status update (delivered/read) for visitor msgs   │
- * └────────────────────┴───────────────────────────────────────────────────┘
+ * Server → Client:
+ *   visitor:connected  ack với conversationId (nếu có session cũ)
+ *   agent:message      text hoặc media từ agent
+ *   agent:joined       agent được phân công → visitor thấy tên
+ *   agent:typing       agent đang / ngừng gõ
+ *   agent:reaction     reaction update broadcast to widget
+ *   message:status     status update (delivered/read) for visitor msgs
  */
 @WebSocketGateway({
   namespace: '/livechat',
-  // FIX: Restrict CORS to configured allowed origins (not wildcard in production).
+  // Restrict CORS to configured allowed origins (not wildcard in production).
   // LIVECHAT_CORS_ORIGINS env var: comma-separated list, e.g. "https://mysite.com,https://app.mysite.com"
   // Falls back to '*' only when not set (local dev convenience).
   cors: {
@@ -68,7 +64,7 @@ import { OmniEvents, LivechatEvents } from '../omni-inbound/domain/omni-events';
     credentials: false,
   },
   transports: ['websocket', 'polling'],
-  // FIX: Hard-cap at 30 MB at the transport layer so oversized payloads are
+  // Hard-cap at 30 MB at the transport layer so oversized payloads are
   // rejected before they enter the event handler (prevents OOM on 20MB guard check).
   maxHttpBufferSize: 30 * 1024 * 1024,
 })
@@ -88,7 +84,7 @@ export class LivechatGateway
     private readonly rateLimiter: SocketRateLimiter,
   ) {}
 
-  // ── Lifecycle ───────────────────────────────────────────────────────────
+  // Lifecycle
 
   handleConnection(client: Socket) {
     this.logger.debug(`Visitor socket connected: ${client.id}`);
@@ -98,7 +94,7 @@ export class LivechatGateway
     const { visitorId, conversationId, tenantId } = client.data ?? {};
     if (!visitorId) return;
 
-    // T-031: Clean up rate limit keys for disconnected socket
+    // Clean up rate limit keys for disconnected socket
     this.rateLimiter.cleanup(client.id).catch(() => undefined);
 
     this.logger.debug(`Visitor ${visitorId} disconnected`);
@@ -114,7 +110,7 @@ export class LivechatGateway
     }
   }
 
-  // ── Visitor → Server ────────────────────────────────────────────────────
+  // Visitor → Server
 
   @SubscribeMessage('visitor:connect')
   async onVisitorConnect(
@@ -137,7 +133,7 @@ export class LivechatGateway
       return;
     }
 
-    // T-036 Security: Validate tenantId by cross-referencing with channelId.
+    // Validate tenantId by cross-referencing with channelId.
     const validationError = await this.validateChannelOwnership(
       channelId,
       tenantId,
@@ -219,7 +215,6 @@ export class LivechatGateway
 
     if (!visitorId || !tenantId || !data.text) return;
 
-    // T-031: Rate limit visitor messages
     if (!(await this.checkRateLimit(client, 'visitor:message'))) return;
 
     this.eventEmitter.emit(LivechatEvents.MESSAGE_INBOUND, {
@@ -271,7 +266,7 @@ export class LivechatGateway
       return;
     }
 
-    // T-031: Rate limit file uploads
+    // Rate limit file uploads
     if (!(await this.checkRateLimit(client, 'visitor:upload'))) return;
 
     this.logger.log(
@@ -306,7 +301,7 @@ export class LivechatGateway
 
     if (!visitorId || !tenantId || !conversationId) return;
 
-    // T-031: Rate limit typing events
+    // Rate limit typing events
     if (!(await this.checkRateLimit(client, 'visitor:typing'))) return;
 
     // Cache conversationId so disconnect can clear typing
@@ -359,7 +354,7 @@ export class LivechatGateway
     client.emit('visitor:identified', { success: true });
   }
 
-  // ── Server → Visitor ────────────────────────────────────────────────────
+  // Server → Visitor
 
   /**
    * Send text or media from agent to visitor.
@@ -420,7 +415,7 @@ export class LivechatGateway
     this.server.to(room).emit('agent:typing', { isTyping });
   }
 
-  // ── Delivery / Read Receipts ─────────────────────────────────────────────
+  // Delivery / Read Receipts
 
   /**
    * Visitor acknowledges receipt of agent messages (auto-ack on receive).
@@ -480,7 +475,7 @@ export class LivechatGateway
     this.server.to(`visitor:${visitorId}`).emit('message:status', payload);
   }
 
-  // ── Visitor Reactions ────────────────────────────────────────────────────
+  // Visitor Reactions
 
   /**
    * Handle visitor emoji reaction from the widget.
@@ -531,7 +526,7 @@ export class LivechatGateway
     this.server.to(`visitor:${visitorId}`).emit('agent:reaction', payload);
   }
 
-  // ── File Upload Events ────────────────────────────────────────────────────
+  // File Upload Events
 
   @OnEvent(LivechatEvents.VISITOR_UPLOAD_COMPLETED)
   handleVisitorUploadCompleted(payload: {
@@ -578,7 +573,7 @@ export class LivechatGateway
     });
   }
 
-  // ── T-031: Rate Limiting ────────────────────────────────────────────────
+  // Rate Limiting
 
   /**
    * Check rate limit for a socket event. Returns false if rate limited.

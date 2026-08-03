@@ -72,7 +72,6 @@ describe('AuthorizationService (PDP)', () => {
     );
   });
 
-  // ── super-admin (C5) ──────────────────────────────────────────────────
   it('should detects a super-admin claim in realm_access / resource_access / roles', () => {
     expect(svc.hasSuperAdminClaim(superClaim)).toBe(true);
     expect(
@@ -191,7 +190,7 @@ describe('AuthorizationService (PDP)', () => {
     expect(accessPolicy.evaluateActionContext).not.toHaveBeenCalled();
   });
 
-  // ── record-level ACL composition ──────────────────────────────────────
+  // record-level ACL composition
   const recordParams = {
     tenantId: 't1',
     userId: 'u1',
@@ -224,7 +223,7 @@ describe('AuthorizationService (PDP)', () => {
     );
   });
 
-  // ── ABAC composition (deny-overrides on top of ACL) ───────────────────
+  // ABAC composition (deny-overrides on top of ACL)
   it('should denies a record when an ABAC policy evaluates to deny (even if ACL is null)', async () => {
     objectAcl.can.mockResolvedValue(null);
     accessPolicy.evaluate.mockResolvedValue('deny');

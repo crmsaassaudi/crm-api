@@ -123,9 +123,7 @@ export class KeycloakAdminService implements OnModuleInit {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Organization management (Keycloak Organizations API)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async createOrganization(
     name: string,
@@ -234,9 +232,7 @@ export class KeycloakAdminService implements OnModuleInit {
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // User management
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async findUserByEmail(email: string): Promise<KeycloakUser | null> {
     return this.ensureClient(async () => {
@@ -394,9 +390,7 @@ export class KeycloakAdminService implements OnModuleInit {
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Identity Provider Links (Phase 1.2 SSO Support)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async getIdentityProviderLinks(
     userId: string,
@@ -413,9 +407,7 @@ export class KeycloakAdminService implements OnModuleInit {
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Group management
-  // ─────────────────────────────────────────────────────────────────────────────
 
   async createGroup(
     name: string,

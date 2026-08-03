@@ -112,7 +112,7 @@ export class ConversationCandidatePort implements CandidateSourcePort {
     const ids = groupIds.filter((id) => Types.ObjectId.isValid(id));
     if (ids.length === 0) return [];
     try {
-      // L20: `isActive: true` mirrors channel-support.service.ts's own group
+      // `isActive: true` mirrors channel-support.service.ts's own group
       // lookup — a deactivated group must not keep surfacing members here
       // while channel-support.service.ts's pool has already dropped it, or
       // "member of this group" ends up meaning two different things for the

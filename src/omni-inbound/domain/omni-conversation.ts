@@ -96,11 +96,11 @@ export interface OmniConversation {
 
   tags: string[];
 
-  // ── Reopen tracking ────────────────────────────────────────────
+  // Reopen tracking
   reopenCount: number;
   previousConversationId: string | null;
 
-  // ── Close / Resolve metadata ───────────────────────────────────
+  // Close / Resolve metadata
   resolvedByAgentId: string | null;
   resolvedAt: Date | null;
   resolveReason: string | null;
@@ -110,17 +110,17 @@ export interface OmniConversation {
   assignedAgent?: any;
   resolvedByAgent?: any;
 
-  // ── Platform Reply Window ──────────────────────────────────────
+  // Platform Reply Window
   lastCustomerMessageAt: Date | null;
 
-  // ── SLA Tracking ─────────────────────────────────────────────────
+  // SLA Tracking
   frtDeadline: Date | null;
   frtBreached: boolean;
   resolutionDeadline: Date | null;
   resolutionBreached: boolean;
   escalationLevel: 'warning' | 'critical' | null;
 
-  // ── Snooze ───────────────────────────────────────────────────────
+  // Snooze
   snoozeUntil: Date | null;
 
   createdAt: Date;

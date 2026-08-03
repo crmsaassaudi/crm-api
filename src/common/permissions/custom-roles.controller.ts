@@ -29,7 +29,7 @@ export class CustomRolesController {
     private readonly cls: ClsService,
   ) {}
 
-  // ── Permission matrix meta ─────────────────────────────────────────────────
+  // Permission matrix meta
 
   @Get('permission-matrix')
   @ApiOperation({
@@ -42,7 +42,7 @@ export class CustomRolesController {
     return this.service.getPermissionMatrix(tenantId);
   }
 
-  // ── CRUD ───────────────────────────────────────────────────────────────────
+  // CRUD
 
   @Get()
   @ApiOperation({ summary: 'List all custom roles for the current tenant' })

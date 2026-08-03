@@ -14,7 +14,7 @@ export class LivechatWidgetRepository {
     private readonly model: Model<LivechatWidgetSchemaDocument>,
   ) {}
 
-  // ── Queries ──────────────────────────────────────────────────────────────
+  // Queries
 
   async findByWidgetId(widgetId: string): Promise<LivechatWidget | null> {
     const doc = await this.model
@@ -56,7 +56,7 @@ export class LivechatWidgetRepository {
     return doc ? this.toDomain(doc) : null;
   }
 
-  // ── Mutations ────────────────────────────────────────────────────────────
+  // Mutations
 
   async create(data: Partial<LivechatWidget>): Promise<LivechatWidget> {
     const doc = await this.model.create(data);
@@ -81,7 +81,7 @@ export class LivechatWidgetRepository {
     return !!result;
   }
 
-  // ── Mapper ───────────────────────────────────────────────────────────────
+  // Mapper
 
   private toDomain(raw: LivechatWidgetSchemaClass): LivechatWidget {
     const w = new LivechatWidget();

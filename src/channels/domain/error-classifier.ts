@@ -33,10 +33,10 @@ export interface ClassifiedError {
   shouldUpdateConfigStatus: boolean;
 }
 
-// ── HTTP status codes that indicate transient (retryable) issues ──────────
+// HTTP status codes that indicate transient (retryable) issues
 const TRANSIENT_HTTP_CODES = new Set([429, 500, 502, 503, 504]);
 
-// ── Network error codes that indicate transient issues ───────────────────
+// Network error codes that indicate transient issues
 const TRANSIENT_NETWORK_CODES = new Set([
   'ECONNRESET',
   'ECONNREFUSED',
@@ -57,7 +57,7 @@ const TRANSIENT_NETWORK_CODES = new Set([
  * @returns ClassifiedError with severity and metadata
  */
 export function classifyProviderError(error: any): ClassifiedError {
-  // ── Extract HTTP status from various error shapes ──────────────────
+  // Extract HTTP status from various error shapes
   const httpStatus: number | undefined =
     error.httpStatus ||
     error.status ||
@@ -65,13 +65,13 @@ export function classifyProviderError(error: any): ClassifiedError {
     error.response?.status ||
     error.response?.statusCode;
 
-  // ── Extract error code ─────────────────────────────────────────────
+  // Extract error code
   const errorCode: string =
     error.code || error.errno || error.cause?.code || '';
 
   const message = error.message || error.toString() || 'Unknown provider error';
 
-  // ── 1. Check HTTP status-based classification ──────────────────────
+  // 1. Check HTTP status-based classification
   if (httpStatus) {
     if (TRANSIENT_HTTP_CODES.has(httpStatus)) {
       return {
@@ -95,7 +95,7 @@ export function classifyProviderError(error: any): ClassifiedError {
     }
   }
 
-  // ── 2. Check network error code ────────────────────────────────────
+  // 2. Check network error code
   if (errorCode && TRANSIENT_NETWORK_CODES.has(errorCode)) {
     return {
       severity: ErrorSeverity.TRANSIENT,
@@ -105,7 +105,7 @@ export function classifyProviderError(error: any): ClassifiedError {
     };
   }
 
-  // ── 3. Check for timeout in message (fallback heuristic) ───────────
+  // 3. Check for timeout in message (fallback heuristic)
   const lowerMessage = message.toLowerCase();
   if (
     lowerMessage.includes('timeout') ||
@@ -121,7 +121,7 @@ export function classifyProviderError(error: any): ClassifiedError {
     };
   }
 
-  // ── 4. Default: treat unknown errors as permanent ──────────────────
+  // 4. Default: treat unknown errors as permanent
   // Better to alert admin than silently retry forever
   return {
     severity: ErrorSeverity.PERMANENT,

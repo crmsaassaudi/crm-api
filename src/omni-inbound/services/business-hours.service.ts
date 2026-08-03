@@ -50,7 +50,7 @@ export class BusinessHoursService {
       const timezone = businessHours.timezone || 'UTC';
       const now = this.getNow(timezone);
 
-      // ── Holiday check ──────────────────────────────────────────────
+      // Holiday check
       if (this.isHoliday(now, businessHours.holidays)) {
         this.logger.debug(
           `Tenant ${tenantId} is on a holiday — outside business hours`,
@@ -58,7 +58,7 @@ export class BusinessHoursService {
         return false;
       }
 
-      // ── Weekly schedule check ──────────────────────────────────────
+      // Weekly schedule check
       // Support both legacy format (schedule.{dayName}) and new format (workingDays[])
       const daySchedule = this.getDaySchedule(now, businessHours);
       if (!daySchedule?.enabled) {
@@ -139,9 +139,7 @@ export class BusinessHoursService {
     return channelMessage || oooConfig.oooMessage;
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Holiday Support
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Check if today is a holiday.
@@ -191,9 +189,7 @@ export class BusinessHoursService {
     });
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // Internals
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Get the schedule for today, supporting both legacy and new format.
@@ -307,9 +303,7 @@ export class BusinessHoursService {
     return (hours || 0) * 60 + (minutes || 0);
   }
 
-  // ────────────────────────────────────────────────────────────────────────
   // SLA Business Hours Math
-  // ────────────────────────────────────────────────────────────────────────
 
   /**
    * Calculate the SLA deadline accounting for business hours.

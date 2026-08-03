@@ -1,4 +1,4 @@
-// ─── Work Status derivation (pure) ──────────────────────────────────────────
+// Work Status derivation (pure)
 //
 // workStatus is system-derived from the set of interactions an agent currently
 // has open, collapsed to a single display label by priority (§2.4):
@@ -7,7 +7,6 @@
 //
 // IMPORTANT (gap D): this single label is for display/segments only. Per-channel
 // analytics come from `interaction_segments` (overlap allowed), NOT from this.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import { WorkStatus } from './presence-state';
 

@@ -6,7 +6,7 @@ import { FacebookAdapter } from './adapters/facebook.adapter';
 import { ZaloAdapter } from './adapters/zalo.adapter';
 import { WhatsAppAdapter } from './adapters/whatsapp.adapter';
 import { InstagramAdapter } from './adapters/instagram.adapter';
-// LivechatAdapter is provided & exported by LivechatModule (F3 fix — single instance)
+// LivechatAdapter is provided & exported by LivechatModule — one instance only
 import { LivechatAdapter } from './adapters/livechat.adapter';
 import { TelegramAdapter } from '../channels/telegram/telegram.adapter';
 import { TikTokAdapter } from './adapters/tiktok.adapter';
@@ -142,9 +142,9 @@ import { TicketsModule } from '../tickets/tickets.module';
 import { FilesModule } from '../files/files.module';
 import { ObservabilityModule } from '../observability/observability.module';
 import { isOmniRuntime, isWorkerRuntime } from '../config/runtime-role';
-// F3 fix: import LivechatModule so its LivechatAdapter instance (with gateway wired) is shared
+// LivechatModule owns the single LivechatAdapter instance (the one wired to the gateway)
 import { LivechatModule } from '../livechat/livechat.module';
-// Phase 1: Conversation Aggregate — sequential command processing
+// Conversation Aggregate — sequential command processing
 import { ConversationOpsModule } from './aggregate/conversation-ops.module';
 import { ConversationOpsProcessor } from './aggregate/conversation-ops.processor';
 import { ModuleRef } from '@nestjs/core';
@@ -218,9 +218,9 @@ const workerProviders =
     FilesModule,
     CsatModule,
     ObservabilityModule,
-    // F3 fix: LivechatModule provides the single LivechatAdapter instance (gateway-wired)
+    // LivechatModule provides the single, gateway-wired LivechatAdapter instance
     forwardRef(() => LivechatModule),
-    // Phase 1: Conversation Aggregate — sequential command processing
+    // Conversation Aggregate — sequential command processing
     ConversationOpsModule,
     TagsModule,
     GroupsModule,
@@ -277,12 +277,12 @@ const workerProviders =
     ConversationTransferController,
   ],
   providers: [
-    // ── Pillar 1: Data Normalization ───────────────────────────────
+    // Data Normalization
     FacebookAdapter,
     ZaloAdapter,
     WhatsAppAdapter,
     InstagramAdapter,
-    // LivechatAdapter is NOT listed here — it is provided by LivechatModule (F3 fix)
+    // LivechatAdapter is NOT listed here — LivechatModule provides it
     // so the same instance that has setGateway() called is registered in CHANNEL_ADAPTERS
     TelegramAdapter,
     TikTokAdapter,
@@ -320,26 +320,26 @@ const workerProviders =
     InboundProcessorService,
     MediaProxyService,
 
-    // ── Pillar 1b: Reactions (unified across all channels) ─────────
+    // Reactions (unified across all channels)
     ReactionService,
 
-    // ── Pillar 2: Agent System ────────────────────────────────────
+    // Agent System
     AgentPresenceService,
     AgentPresenceGateway,
     ConversationLockService,
-    // P0 fix: self-heals Redis presence counters after Redis flush or missed release
+    // Self-heals Redis presence counters after a Redis flush or a missed release
     PresenceReconciliationService,
 
-    // ── Pillar 3: Realtime UX ─────────────────────────────────────
+    // Realtime UX
     OmniGateway,
     CrmRealtimeGateway,
 
-    // ── Pillar 4: Webhook Queue ─────────────────────────────────────
+    // Webhook Queue
     ...workerProviders,
     BotQueueService,
     BotApiService,
 
-    // ── Pillar 5: Persistence ─────────────────────────────────────
+    // Persistence
     ConversationRepository,
     MessageRepository,
     ConversationService,
@@ -353,7 +353,7 @@ const workerProviders =
     ConversionService,
     IdentityService,
 
-    // ── Pillar 5b: Conversation Aggregate Processor ───────────────
+    // Conversation Aggregate Processor
     // Registered here (not in ConversationOpsModule) so all its deps
     // (ConversationRepository, InboundOrchestrationService, etc.) are
     // available without circular module imports.
@@ -378,11 +378,11 @@ const workerProviders =
       inject: [ModuleRef],
     },
 
-    // ── Pillar 7: Notes ───────────────────────────────────────────
+    // Notes
     NoteRepository,
     NoteService,
 
-    // ── Pillar 8: Assignment ──────────────────────────────────────
+    // Assignment
     // The decision pipeline lives in AssignmentModule; these three ports plus
     // the adapter are the conversation-specific half of it.
     ConversationCandidatePort,
@@ -391,38 +391,38 @@ const workerProviders =
     ConversationAssignmentAdapter,
     AssignmentService,
 
-    // ── Pillar 9: Audit Trail ─────────────────────────────────────
+    // Audit Trail
     ActivityRepository,
     ActivityService,
     AssignmentAuditLogRepository,
 
-    // ── Pillar 10: Agent Disconnect Fallback ──────────────────────
+    // Agent Disconnect Fallback
     AgentFallbackService,
 
-    // ── Pillar 11: Session Lifecycle (Auto-Resolve + Business Hours) ─
+    // Session Lifecycle (Auto-Resolve + Business Hours)
     AutoResolveService,
     BusinessHoursService,
 
-    // ── Pillar 12: Agent Status Audit + Work Time KPI ─────────────
+    // Agent Status Audit + Work Time KPI
     AgentStatusAuditRepository,
     AgentStatusAuditService,
 
-    // ── Pillar 12b: Presence reporting segments + midnight rollover ─
+    // Presence reporting segments + midnight rollover
     AgentStateSegmentRepository,
     PresenceSegmentService,
     PresenceRolloverCron,
 
-    // ── Pillar 12c: Work status (auto-derived) + interaction segments ─
+    // Work status (auto-derived) + interaction segments
     InteractionSegmentRepository,
     WorkStatusService,
     WorkDistributionService,
     ConversationTransferService,
 
-    // ── Pillar 14: Presence Alerts (Phase 7) ─────────────────────────
+    // Presence Alerts (Phase 7)
     PresenceAlertService,
     PresenceAlertCron,
 
-    // ── Pillar 13: Observability ────────────────────────────────────
+    // Observability
     OmniMetricsListener,
     OmniReportingProjectionListener,
   ],

@@ -11,7 +11,7 @@ import { UsersService } from '../users/users.service';
 import { DEFAULTS_MAP } from '../crm-settings/tenant-settings-seeding.service';
 import { ulid } from 'ulid';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// Types
 
 export interface ListViewColumn {
   key: string;
@@ -37,7 +37,7 @@ export interface ListViewsSettings {
   views: ListViewDefinition[];
 }
 
-// ── Service ──────────────────────────────────────────────────────────────────
+// Service
 
 /**
  * ListViewsService — Manages group-level column/field visibility.
@@ -64,7 +64,7 @@ export class ListViewsService {
     private readonly cls: ClsService,
   ) {}
 
-  // ── Read (Agent-scoped — for list/detail pages) ─────────────────────────
+  // Read (Agent-scoped — for list/detail pages)
 
   /**
    * Get views for the current user based on their group memberships.
@@ -165,7 +165,6 @@ export class ListViewsService {
       }
     }
 
-    // Sort by sortOrder
     const mergedColumns = Array.from(columnMap.values()).sort(
       (a, b) => a.sortOrder - b.sortOrder,
     );
@@ -185,7 +184,7 @@ export class ListViewsService {
     };
   }
 
-  // ── Read (Admin — for Object Manager) ───────────────────────────────────
+  // Read (Admin — for Object Manager)
 
   /**
    * Get all views for a module (admin endpoint, no filtering).
@@ -210,7 +209,7 @@ export class ListViewsService {
     return view;
   }
 
-  // ── Write (Admin only) ──────────────────────────────────────────────────
+  // Write (Admin only)
 
   async createView(
     data: Pick<ListViewDefinition, 'name' | 'module'> &
@@ -303,7 +302,7 @@ export class ListViewsService {
     await this.settingsService.pullListView(this.SETTINGS_KEY, id);
   }
 
-  // ── Internal Helpers ────────────────────────────────────────────────────
+  // Internal Helpers
 
   /**
    * Check if user has OWNER or ADMIN role in the current tenant.
@@ -351,7 +350,7 @@ export class ListViewsService {
   private async getSettings(): Promise<ListViewsSettings> {
     const raw = await this.settingsService.getSetting(this.SETTINGS_KEY);
     if (raw && typeof raw === 'object' && Array.isArray(raw.views)) {
-      // HIGH-08: merge default views in memory ONLY — the read path must never
+      // Merge default views in memory ONLY — the read path must never
       // write to the DB. Persistence is handled by migrateMissingDefaults()
       // on write paths.
       return this.mergeDefaults(raw as ListViewsSettings).merged;
@@ -411,7 +410,7 @@ export class ListViewsService {
   }
 
   private generateId(): string {
-    // LOW-05: ULID — monotonic, collision-resistant, sortable (replaces the
+    // ULID — monotonic, collision-resistant, sortable (replaces the
     // previous Date.now()+Math.random() ad-hoc id).
     return ulid();
   }

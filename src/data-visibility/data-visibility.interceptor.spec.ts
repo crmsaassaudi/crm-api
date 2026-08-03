@@ -579,7 +579,7 @@ describe('DataVisibilityInterceptor', () => {
     });
 
     it('should ignore a shared id that is not a member of the tenant', async () => {
-      // H-08: settings are a lower trust boundary than the authz model.
+      // Settings are a lower trust boundary than the authz model.
       userRepository.findByIds.mockResolvedValue([
         { id: OTHER, tenants: [{ tenantId: 'other_tenant' }] },
       ]);

@@ -15,8 +15,6 @@ import { GetOmniReportDto } from './dto/get-omni-report.dto';
 export class OmniReportController {
   constructor(private readonly service: OmniReportService) {}
 
-  // ── Phase 1 ─────────────────────────────────────────────────────
-
   @Get('conversation-volume')
   @RequirePermission('view', 'omni_reports')
   getConversationVolume(@Query() query: GetOmniReportDto) {
@@ -52,8 +50,6 @@ export class OmniReportController {
   getMessageVolume(@Query() query: GetOmniReportDto) {
     return this.service.getMessageVolume(query);
   }
-
-  // ── Phase 2 ─────────────────────────────────────────────────────
 
   @Get('bot-performance')
   @RequirePermission('view', 'omni_reports')

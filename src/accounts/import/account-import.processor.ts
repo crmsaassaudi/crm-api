@@ -33,8 +33,6 @@ import {
 } from '../accounts.constants';
 import { AutomationOutboxService } from '../../automation-rules/events/automation-outbox.service';
 
-// ── Module config ──────────────────────────────────────────────────
-
 const ACCOUNT_IMPORT_CONFIG: ImportModuleConfig = {
   module: 'account',
   displayName: 'Account',
@@ -81,14 +79,12 @@ const SCALAR_FIELDS = ACCOUNT_IMPORT_MAPPABLE_FIELDS.filter(
   (f) => !ACCOUNT_IMPORT_ARRAY_FIELDS.has(f),
 );
 
-// ── Job data ──────────────────────────────────────────────────────
+// Job data
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface AccountImportJobData extends BaseImportJobData {
   // Account-specific tenant settings can be added here in the future.
 }
-
-// ── Processor ──────────────────────────────────────────────────────
 
 @Processor(ACCOUNT_IMPORT_QUEUE, { concurrency: 3 })
 export class AccountImportProcessor extends BaseImportProcessor<AccountImportJobData> {
@@ -118,7 +114,7 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     this.reportService = new ImportReportService(this.storage);
   }
 
-  // ── Abstract method implementations ──
+  // Abstract method implementations
 
   protected getEntityModel(): Model<any> {
     return this.accountModel;
@@ -152,7 +148,7 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     return this.importJobModel;
   }
 
-  // ── Row mapping ──
+  // Row mapping
 
   protected mapRow(
     raw: Record<string, string>,
@@ -196,7 +192,7 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     return { row, fields, arrayFields };
   }
 
-  // ── Row validation ──
+  // Row validation
 
   protected validateRow(
     _mapped: MappedRow,
@@ -243,7 +239,7 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     }
   }
 
-  // ── Dedup value extraction ──
+  // Dedup value extraction
 
   protected extractDedupValues(row: MappedRow, field: string): string[] {
     switch (field) {
@@ -258,7 +254,7 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     }
   }
 
-  // ── Build insert document ──
+  // Build insert document
 
   protected buildInsert(
     mapped: MappedRow,
@@ -280,7 +276,7 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     };
   }
 
-  // ── Build overwrite update ──
+  // Build overwrite update
 
   protected buildOverwrite(
     mapped: MappedRow,
@@ -302,7 +298,7 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     return { $set: set };
   }
 
-  // ── Build merge update ──
+  // Build merge update
 
   protected buildMerge(
     mapped: MappedRow,
@@ -346,9 +342,9 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
     return Object.keys(update).length ? update : null;
   }
 
-  // ── Post-write hook: automation events ──
+  // Post-write hook: automation events
 
-  // ── Helpers ──
+  // Helpers
 
   private splitMulti(value: string): string[] {
     return value

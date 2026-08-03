@@ -40,7 +40,7 @@ export class ObjectAclService {
     private readonly audit: AuthzAuditService,
   ) {}
 
-  // ── Read ────────────────────────────────────────────────────────────────
+  // Read
 
   /**
    * Returns all ACL entries for a specific resource record.
@@ -78,7 +78,7 @@ export class ObjectAclService {
     return entries.map((e) => e.resourceId);
   }
 
-  // ── Check ───────────────────────────────────────────────────────────────
+  // Check
 
   /**
    * Core ACL check: can `principalId` perform `action` on `resourceId`?
@@ -121,7 +121,7 @@ export class ObjectAclService {
     return hasAllow ? true : null;
   }
 
-  // ── Write ───────────────────────────────────────────────────────────────
+  // Write
 
   /**
    * Upserts an ACL entry. Uses principalId + resourceId + resourceType + principalType as key.

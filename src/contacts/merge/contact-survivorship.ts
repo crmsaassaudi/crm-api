@@ -85,7 +85,7 @@ export function resolveSurvivorship(
   const update: Record<string, any> = {};
   const choices: Record<string, FieldChoice> = {};
 
-  // ── Identity arrays: union, never choose ──
+  // Identity arrays: union, never choose
   for (const field of UNION_ARRAY_FIELDS) {
     const left = (survivor as any)[field] ?? [];
     const right = (merged as any)[field] ?? [];
@@ -114,7 +114,7 @@ export function resolveSurvivorship(
   update.omniIdentities = omniIdentities;
   choices.omniIdentities = { chosen: omniIdentities, from: 'survivor' };
 
-  // ── Scalars: explicit winner, else fill the blanks ──
+  // Scalars: explicit winner, else fill the blanks
   for (const field of FILL_SCALAR_FIELDS) {
     const survivorValue = (survivor as any)[field];
     const mergedValue = (merged as any)[field];
@@ -147,7 +147,7 @@ export function resolveSurvivorship(
     }
   }
 
-  // ── customFields: fill the blanks per key ──
+  // customFields: fill the blanks per key
   const customFields = { ...(merged.customFields ?? {}) };
   for (const [key, value] of Object.entries(survivor.customFields ?? {})) {
     if (!isEmpty(value)) customFields[key] = value;
@@ -157,7 +157,7 @@ export function resolveSurvivorship(
     choices.customFields = { chosen: customFields, from: 'survivor' };
   }
 
-  // ── Consent: never widen it ──
+  // Consent: never widen it
   // A merge is a data-cleanup operation; it must not be able to create
   // permission to contact someone that neither source record carried.
   applyBooleanRule(update, choices, 'emailOptIn', survivor, merged, 'and');
@@ -165,7 +165,7 @@ export function resolveSurvivorship(
   // ...and never narrow a restriction.
   applyBooleanRule(update, choices, 'doNotCall', survivor, merged, 'or');
 
-  // ── Monotonic numerics ──
+  // Monotonic numerics
   const score = Math.max(survivor.score ?? 0, merged.score ?? 0);
   update.score = score;
   choices.score = { chosen: score, from: 'survivor' };
@@ -187,7 +187,7 @@ export function resolveSurvivorship(
   update.isVIP = isVIP;
   choices.isVIP = { chosen: isVIP, from: 'survivor' };
 
-  // ── One continuous stage history ──
+  // One continuous stage history
   const stageHistory = [
     ...(survivor.stageHistory ?? []),
     ...(merged.stageHistory ?? []),

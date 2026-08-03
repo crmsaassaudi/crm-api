@@ -58,7 +58,7 @@ export class FilesService {
     });
   }
 
-  // ── Basic CRUD ────────────────────────────────────────────────────
+  // Basic CRUD
 
   findById(id: FileType['id']): Promise<NullableType<FileType>> {
     return this.fileRepository.findById(id);
@@ -68,7 +68,7 @@ export class FilesService {
     return this.fileRepository.findByIds(ids);
   }
 
-  // ── Access Control ────────────────────────────────────────────────
+  // Access Control
 
   /**
    * Check if a user has access to a file.
@@ -97,7 +97,7 @@ export class FilesService {
     return false;
   }
 
-  // ── Presigned Download URL ────────────────────────────────────────
+  // Presigned Download URL
 
   /**
    * Generate (or return Redis-cached) presigned download URL for a file.
@@ -143,7 +143,7 @@ export class FilesService {
     return url;
   }
 
-  // ── Listing ───────────────────────────────────────────────────────
+  // Listing
 
   async listFiles(
     tenantId: string,
@@ -175,8 +175,6 @@ export class FilesService {
     );
   }
 
-  // ── Soft Delete ───────────────────────────────────────────────────
-
   async softDelete(
     fileId: string,
     userId: string,
@@ -199,7 +197,7 @@ export class FilesService {
     return deleted;
   }
 
-  // ── Hard Delete (SUPER_ADMIN only) ────────────────────────────────
+  // Hard Delete (SUPER_ADMIN only)
 
   /**
    * Permanently delete file from S3 + DB. Returns fileSize for quota decrement.
@@ -234,7 +232,7 @@ export class FilesService {
     return { fileSize: file.fileSize ?? 0 };
   }
 
-  // ── ACL Update ────────────────────────────────────────────────────
+  // ACL Update
 
   async updateAccessLevel(
     fileId: string,
@@ -265,8 +263,6 @@ export class FilesService {
     return updated;
   }
 
-  // ── Status Update ─────────────────────────────────────────────────
-
   async updateStatus(
     fileId: string,
     status: FileStatus,
@@ -274,7 +270,7 @@ export class FilesService {
     return this.fileRepository.updateStatus(fileId, status);
   }
 
-  // ── Upsert (Omni media dedup) ─────────────────────────────────────
+  // Upsert (Omni media dedup)
 
   async upsertByMessageId(
     tenantId: string,
@@ -284,7 +280,7 @@ export class FilesService {
     return this.fileRepository.upsertByMessageId(tenantId, messageId, data);
   }
 
-  // ── Cloud Drive Extensions ────────────────────────────────────────
+  // Cloud Drive Extensions
 
   async renameFile(
     fileId: string,

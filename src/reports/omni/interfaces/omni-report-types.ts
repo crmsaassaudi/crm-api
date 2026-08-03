@@ -1,4 +1,4 @@
-// ── Phase 1 Reports ─────────────────────────────────────────────────
+// Phase 1 Reports
 
 export interface ConversationVolumePoint {
   date: string;
@@ -70,7 +70,7 @@ export interface MessageVolumeData {
   }>;
 }
 
-// ── Phase 2 Reports ─────────────────────────────────────────────────
+// Phase 2 Reports
 
 export interface BotPerformanceData {
   totalBotConversations: number;

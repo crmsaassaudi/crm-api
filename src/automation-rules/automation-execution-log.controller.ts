@@ -136,7 +136,7 @@ export class AutomationExecutionLogController {
     return this.repo.findByIdWithSteps(this.tenantId, id);
   }
 
-  // ── Manual Retry ────────────────────────────────────────────────────────
+  // Manual Retry
 
   @Post(':id/retry-step')
   @ApiOperation({

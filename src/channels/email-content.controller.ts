@@ -81,7 +81,7 @@ export class EmailContentController {
         .catch(() => null);
     }
 
-    // ── BCC Privacy (Role-Based Serialization) ──────────────────────────
+    // BCC Privacy (Role-Based Serialization)
     // Appendix E: bcc is ONLY visible to the sender or admin.
     // This prevents agents from seeing BCC recipients of emails sent by
     // other agents, even if they have access to the conversation.
@@ -90,7 +90,7 @@ export class EmailContentController {
     const isSender = senderId && senderId === userId;
     const visibleBcc = isAdmin || isSender ? metadata?.bcc || [] : [];
 
-    // ── Source Deleted Badge ──────────────────────────────────────────────
+    // Source Deleted Badge
     // Immutable Records Policy: show badge if email was deleted on provider
     const sourceDeleted = (content as any).sourceDeleted || false;
 

@@ -44,7 +44,7 @@ export class DealReportService {
     private readonly cls: ClsService,
   ) {}
 
-  // ── Report 1: Pipeline Summary ────────────────────────────────────────────
+  // Report 1: Pipeline Summary
 
   async getPipelineSummary(
     dto: GetDealReportDto,
@@ -111,7 +111,7 @@ export class DealReportService {
     });
   }
 
-  // ── Report 2: Revenue Trend ───────────────────────────────────────────────
+  // Report 2: Revenue Trend
 
   async getRevenueTrend(
     dto: GetDealReportDto,
@@ -205,7 +205,7 @@ export class DealReportService {
     });
   }
 
-  // ── Report 3: Win/Loss Rate ───────────────────────────────────────────────
+  // Report 3: Win/Loss Rate
 
   async getWinLossRate(
     dto: GetDealReportDto,
@@ -356,7 +356,7 @@ export class DealReportService {
     });
   }
 
-  // ── Report 4: Deal Aging ──────────────────────────────────────────────────
+  // Report 4: Deal Aging
 
   async getDealAging(
     dto: GetDealReportDto,
@@ -443,7 +443,7 @@ export class DealReportService {
     });
   }
 
-  // ── Report 5: Owner Performance ───────────────────────────────────────────
+  // Report 5: Owner Performance
 
   async getOwnerPerformance(
     dto: GetDealReportDto,
@@ -533,7 +533,7 @@ export class DealReportService {
     });
   }
 
-  // ── Report 6: Deal Velocity ───────────────────────────────────────────────
+  // Report 6: Deal Velocity
 
   async getDealVelocity(
     dto: GetDealReportDto,
@@ -593,7 +593,7 @@ export class DealReportService {
     });
   }
 
-  // ── Private Helpers ───────────────────────────────────────────────────────
+  // Private Helpers
 
   private buildBaseMatch(dto: GetDealReportDto): Record<string, any> {
     const match: Record<string, any> = {

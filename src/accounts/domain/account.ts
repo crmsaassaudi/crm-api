@@ -63,7 +63,7 @@ export class Account {
   @ApiProperty({ example: false })
   isArchived?: boolean;
 
-  // ── Derived identity keys ──
+  // Derived identity keys
   //
   // Present on the domain model, not just the schema, because `update()` writes
   // through `AccountMapper.toPersistence` and only carries fields the mapper knows

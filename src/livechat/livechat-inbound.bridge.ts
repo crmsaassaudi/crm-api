@@ -33,7 +33,7 @@ export class LivechatInboundBridge {
     private readonly cls: ClsService,
   ) {}
 
-  // ── P1.2 FIX: handle text messages ─────────────────────────────────────
+  // P1.2 FIX: handle text messages
 
   @OnEvent(LivechatEvents.MESSAGE_INBOUND)
   handleTextInbound(payload: {
@@ -79,7 +79,7 @@ export class LivechatInboundBridge {
       `Livechat media inbound from visitor ${payload.visitorId}: "${payload.fileName}" (${payload.mimeType})`,
     );
 
-    // ── P1.4 FIX: Upload base64 → S3 BEFORE entering pipeline ──────────────
+    // P1.4 FIX: Upload base64 → S3 BEFORE entering pipeline
     // ConversationService does not handle base64. We resolve it here so
     // the OmniPayload has fileId (not raw base64) when saved to MongoDB.
     const dedupeKey = `${payload.tenantId}:${payload.visitorId}:${payload.timestamp}:${payload.fileName}`;
@@ -140,7 +140,7 @@ export class LivechatInboundBridge {
     });
   }
 
-  // ── Visitor identified via pre-chat form → Contact enrichment ────────────
+  // Visitor identified via pre-chat form → Contact enrichment
 
   @OnEvent(LivechatEvents.VISITOR_IDENTIFIED)
   async handleVisitorIdentified(event: LivechatVisitorIdentifiedEvent) {
@@ -155,7 +155,7 @@ export class LivechatInboundBridge {
     });
   }
 
-  // ── P1.1 FIX: push conversationId back to visitor widget ─────────────
+  // P1.1 FIX: push conversationId back to visitor widget
 
   /**
    * After InboundProcessor saves the first message for a livechat visitor,

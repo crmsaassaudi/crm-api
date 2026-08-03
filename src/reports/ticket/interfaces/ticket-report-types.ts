@@ -1,4 +1,3 @@
-// ── Volume ────────────────────────────────────────────────────────────────────
 export interface TicketVolumeTrendPoint {
   date: string;
   count: number;
@@ -17,7 +16,7 @@ export interface TicketVolumeData {
   totalTickets: number;
 }
 
-// ── SLA Compliance ────────────────────────────────────────────────────────────
+// SLA Compliance
 export interface SlaByPriorityItem {
   priority: string;
   totalTickets: number;
@@ -34,7 +33,6 @@ export interface SlaComplianceData {
   byPriority: SlaByPriorityItem[];
 }
 
-// ── Resolution Time ───────────────────────────────────────────────────────────
 export interface ResolutionTimeByPriority {
   priority: string;
   avgResolutionMs: number;
@@ -53,7 +51,6 @@ export interface TicketResolutionTimeData {
   byPriority: ResolutionTimeByPriority[];
 }
 
-// ── Agent Workload ────────────────────────────────────────────────────────────
 export interface AgentWorkloadItem {
   agentId: string | null;
   agentName: string;
@@ -66,7 +63,6 @@ export interface AgentWorkloadItem {
   avgCsat: number | null;
 }
 
-// ── Breakdown ─────────────────────────────────────────────────────────────────
 export interface BreakdownItem {
   id: string | null;
   name: string;
@@ -80,7 +76,6 @@ export interface TicketBreakdownData {
   byPriority: BreakdownItem[];
 }
 
-// ── CSAT ──────────────────────────────────────────────────────────────────────
 export interface CsatDistributionItem {
   score: number;
   count: number;

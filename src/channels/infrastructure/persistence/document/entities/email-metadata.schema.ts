@@ -169,7 +169,7 @@ export class EmailMetadataSchemaClass {
   @Prop({ type: String, default: null })
   bounceReason: string | null;
 
-  // ── Two-Way Read State Sync (Phase 2) ──────────────────────────────────
+  // Two-Way Read State Sync (Phase 2)
 
   /**
    * IMAP UID from the provider mailbox.
@@ -205,7 +205,7 @@ export const EmailMetadataSchema = SchemaFactory.createForClass(
   EmailMetadataSchemaClass,
 );
 
-// ── Indexes ───────────────────────────────────────────────────────────────
+// Indexes
 
 // Thread lookup: find all emails in a thread by RFC Message-ID
 EmailMetadataSchema.index({ tenantId: 1, emailMessageId: 1 }, { unique: true });

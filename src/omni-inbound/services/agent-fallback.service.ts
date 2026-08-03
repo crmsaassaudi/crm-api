@@ -116,7 +116,7 @@ export class AgentFallbackService {
     await this.redis.del(redisKey);
   }
 
-  // ─── Setting ↔ Queue synchronization ─────────────────────────────────
+  // Setting ↔ Queue synchronization
 
   /**
    * Listens for `settings.changed` events emitted by CrmSettingsController.
@@ -200,7 +200,7 @@ export class AgentFallbackService {
     }
   }
 
-  // ─── Private helpers ──────────────────────────────────────────────────
+  // Private helpers
 
   /**
    * Safely remove a BullMQ job by ID.

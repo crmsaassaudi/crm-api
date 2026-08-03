@@ -17,7 +17,7 @@ export class Ticket {
   @ApiProperty({ example: 'Detailed description of the issue' })
   description: string;
 
-  // ── Customer Context ──
+  // Customer Context
   @ApiProperty({ description: 'Contact who raised the ticket' })
   contactId?: string;
 
@@ -50,7 +50,7 @@ export class Ticket {
     name: string;
   };
 
-  // ── Classification & Routing ──
+  // Classification & Routing
   @ApiProperty({ description: 'ObjectId ref to TicketType collection' })
   typeId: string;
 
@@ -78,7 +78,7 @@ export class Ticket {
   @ApiProperty()
   customFields?: Record<string, any>;
 
-  // ── Assignment & Collaboration ──
+  // Assignment & Collaboration
   @ApiProperty({ description: 'Team/Queue assigned' })
   groupId?: string;
 
@@ -110,7 +110,7 @@ export class Ticket {
     isTerminal?: boolean;
   };
 
-  // ── SLA Management ──
+  // SLA Management
   @ApiProperty()
   slaPolicyId?: string;
 
@@ -132,7 +132,7 @@ export class Ticket {
   @ApiProperty({ example: 0 })
   slaPausedSeconds?: number;
 
-  // ── Metrics & Resolution ──
+  // Metrics & Resolution
   @ApiProperty({
     description: 'ObjectId ref to TicketResolutionCode collection',
   })
@@ -150,7 +150,7 @@ export class Ticket {
   @ApiProperty({ example: 3600 })
   timeSpentSeconds?: number;
 
-  // ── Timestamps & Audit ──
+  // Timestamps & Audit
   @ApiProperty()
   firstRespondedAt?: Date;
 

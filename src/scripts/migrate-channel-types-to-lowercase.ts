@@ -61,7 +61,7 @@ async function migrateChannelTypesToLowercase() {
 
     const db = client.db(); // Uses the DB name from the connection string
 
-    // ─── Migrate omni_conversations ────────────────────────────────────────
+    // Migrate omni_conversations
     console.log('\n📊 Migrating omni_conversations...');
     const conversationsResult = await migrateCollection(
       db,
@@ -75,7 +75,7 @@ async function migrateChannelTypesToLowercase() {
       conversationsResult.errors.forEach((err) => console.warn(`  - ${err}`));
     }
 
-    // ─── Migrate omni_messages ─────────────────────────────────────────────
+    // Migrate omni_messages
     console.log('\n📊 Migrating omni_messages...');
     const messagesResult = await migrateCollection(db, 'omni_messages');
     console.log(`✅ Updated ${messagesResult.modifiedCount} omni_messages`);
@@ -84,7 +84,7 @@ async function migrateChannelTypesToLowercase() {
       messagesResult.errors.forEach((err) => console.warn(`  - ${err}`));
     }
 
-    // ─── Summary ───────────────────────────────────────────────────────────
+    // Summary
     const totalUpdated =
       conversationsResult.modifiedCount + messagesResult.modifiedCount;
     console.log('\n✅ Migration completed successfully');

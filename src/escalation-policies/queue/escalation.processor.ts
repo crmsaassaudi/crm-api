@@ -76,7 +76,7 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
 
     const now = new Date();
 
-    // ── Process each action ──────────────────────────────────────
+    // Process each action
     for (const action of actions) {
       switch (action.type) {
         case 'color_red':

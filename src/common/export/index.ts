@@ -1,7 +1,7 @@
-// ── Types ──
+// Types
 export * from './types';
 
-// ── Services ──
+// Services
 export {
   ExportStorageService,
   ExportStorageFactory,
@@ -12,13 +12,13 @@ export { ExportProgressTracker } from './export-progress.service';
 export { ExportRequestService } from './export-request.service';
 export { ExportRequestDto } from './dto/export-request.dto';
 
-// ── Format ──
+// Format
 export { type ExportFormatWriter } from './format/export-format.interface';
 export { CsvExportWriter } from './format/csv-export.writer';
 export { XlsxExportWriter } from './format/xlsx-export.writer';
 export { createExportWriter } from './format/export-format.factory';
 
-// ── Base Processor ──
+// Base Processor
 export {
   BaseExportProcessor,
   type ExportCursor,
@@ -29,12 +29,12 @@ export {
   DEFAULT_EXPORT_HARD_CAP,
 } from './export-worker.options';
 
-// ── Schema ──
+// Schema
 export {
   ExportJobSchemaClass,
   ExportJobSchema,
   type ExportJobDocument,
 } from './export-job.schema';
 
-// ── Module ──
+// Module
 export { SharedExportModule } from './export.module';

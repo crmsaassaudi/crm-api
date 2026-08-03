@@ -17,8 +17,6 @@ export class FolderService {
 
   constructor(private readonly folderRepository: FolderDocumentRepository) {}
 
-  // ── Create ────────────────────────────────────────────────────────
-
   async createFolder(
     tenantId: string,
     userId: string,
@@ -92,7 +90,7 @@ export class FolderService {
     return updated ?? folder;
   }
 
-  // ── Read ──────────────────────────────────────────────────────────
+  // Read
 
   async findById(id: string): Promise<NullableType<FolderType>> {
     return this.folderRepository.findById(id);
@@ -108,8 +106,6 @@ export class FolderService {
   async listAll(tenantId: string): Promise<FolderType[]> {
     return this.folderRepository.findByTenant(tenantId);
   }
-
-  // ── Rename ────────────────────────────────────────────────────────
 
   async renameFolder(
     tenantId: string,
@@ -147,8 +143,6 @@ export class FolderService {
     return updated;
   }
 
-  // ── Move ──────────────────────────────────────────────────────────
-
   async moveFolder(
     tenantId: string,
     folderId: string,
@@ -168,7 +162,6 @@ export class FolderService {
       throw new BadRequestException('Cannot move a folder into itself');
     }
 
-    // Resolve new parent
     const { newParentPath, newDepth } = await this.resolveNewParent(
       tenantId,
       folder,
@@ -194,7 +187,6 @@ export class FolderService {
       : `/${folder.id}`;
     const depthDelta = newDepth - folder.depth;
 
-    // Update this folder
     const updated = await this.folderRepository.move(
       folderId,
       newParentId,
@@ -244,8 +236,6 @@ export class FolderService {
     return { newParentPath: newParent.path, newDepth };
   }
 
-  // ── Update Color ──────────────────────────────────────────────────
-
   async updateColor(
     tenantId: string,
     folderId: string,
@@ -263,8 +253,6 @@ export class FolderService {
     if (!updated) throw new NotFoundException('Folder not found');
     return updated;
   }
-
-  // ── Delete ────────────────────────────────────────────────────────
 
   async softDelete(
     tenantId: string,
@@ -320,7 +308,7 @@ export class FolderService {
     this.logger.log(`Folder hard-deleted: ${folderId}`);
   }
 
-  // ── Permission helper ─────────────────────────────────────────────
+  // Permission helper
 
   private assertCanManage(
     folder: FolderType,

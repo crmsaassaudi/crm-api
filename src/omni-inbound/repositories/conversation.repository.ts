@@ -76,29 +76,17 @@ export class ConversationRepository {
       .lean()
       .exec();
     if (!doc) return null;
-    // C4: record-level scope — a scoped user must not read a conversation
-    // outside their visibility just by knowing its id (tenant isolation alone
-    // is not enough). Fail-closed to null (looks like "not found").
     if (!this.isConversationInScope(doc)) return null;
     return OmniConversationMapper.toDomain(doc as any);
   }
 
-  /**
-   * Whether the current CLS principal may see this conversation, mirroring
-   * applyVisibilityScope() for a single already-fetched document.
-   */
   private isConversationInScope(doc: any): boolean {
-    // Channel axis first — it holds regardless of the owner axis, so a
-    // principal outside a restricted channel's pool cannot read its
-    // conversations even with an unrestricted owner scope.
     const servable = this.cls.get('servableChannelIds');
     if (Array.isArray(servable)) {
       const channel = doc.channelId ? String(doc.channelId) : null;
       if (!channel || !servable.map(String).includes(channel)) return false;
     }
 
-    // M18: a channel can force 'private' or 'public_read' regardless of the
-    // tenant-wide default the rest of this method would otherwise apply.
     const channelId = doc.channelId ? String(doc.channelId) : null;
     const overrides =
       (this.cls.get('channelVisibilityOverrides') as Record<
@@ -129,14 +117,6 @@ export class ConversationRepository {
     );
   }
 
-  /**
-   * The owner axis for conversations, honouring a per-module override.
-   *
-   * A tenant can scope Conversation differently from Contact/Deal — "agents see
-   * only their own inbox even though the department shares its pipeline" is a
-   * common ask, and before this the two had to be the same. When no override is
-   * configured this returns the request-wide value, so behaviour is unchanged.
-   */
   private moduleOwnerIds(): unknown {
     return this.moduleScope()?.ownerIds ?? this.cls.get('visibleOwnerIds');
   }
@@ -157,7 +137,6 @@ export class ConversationRepository {
     return byModule?.Conversation;
   }
 
-  /** Owner/org-unit/group scope check shared by the normal and strict (M18) paths. */
   private isWithinOwnerScope(
     doc: any,
     ownerIds: string[],
@@ -204,11 +183,6 @@ export class ConversationRepository {
     return docs.map((doc) => OmniConversationMapper.toDomain(doc as any));
   }
 
-  /**
-   * Find the ACTIVE (open or pending) conversation for a given external thread ID.
-   * This is the key query for session management — if no active session exists,
-   * the caller should create a new one.
-   */
   async findActiveByExternalId(
     tenantId: string,
     channelType: string,
@@ -397,7 +371,7 @@ export class ConversationRepository {
   }
 
   /**
-   * C4: enforce data-visibility scope on conversations. Conversations have no
+   * Enforce data-visibility scope on conversations. Conversations have no
    * `ownerId`, so scope maps onto assignment: a scoped (non-admin) user may
    * only see conversations assigned to a visible agent (self + subordinates),
    * assigned to one of their groups, or claimed by a visible agent.
@@ -434,7 +408,7 @@ export class ConversationRepository {
       // "not evaluated" (system path), which never has overrides either.
       if (privateChannelIds.length === 0) return;
 
-      // M18: one or more channels force 'private' regardless of the bypass
+      // One or more channels force 'private' regardless of the bypass
       // above. Everything outside those channels stays unrestricted; inside
       // them, the viewer's own scope (computed as `strictOwnerIds` by
       // DataVisibilityInterceptor) applies.
@@ -464,7 +438,7 @@ export class ConversationRepository {
       this.moduleOrgUnitIds(),
     );
     if (publicReadChannelIds.length > 0) {
-      // M18: these channels bypass the owner scope regardless of it.
+      // These channels bypass the owner scope regardless of it.
       scopeClauses.push({ channelId: { $in: publicReadChannelIds } });
     }
 
@@ -472,13 +446,13 @@ export class ConversationRepository {
   }
 
   /**
-   * C4: the owner/group/org-unit scope clauses, shared by the normal path and
+   * The owner/group/org-unit scope clauses, shared by the normal path and
    * the strict (M18 per-channel 'private' override) path.
    *
    *   - visibleGroupIds: groups the user belongs to
    *   - includeUnownedInScope: whether unassigned conversations are visible
    *
-   * H16: the org-unit axis is unioned like document-repository does for CRM
+   * The org-unit axis is unioned like document-repository does for CRM
    * records — "my assignments AND my unit's conversations", not an
    * intersection. Without this a manager scoped to ORG_UNIT saw the
    * department's contacts/deals but none of its conversations.
@@ -1630,7 +1604,7 @@ export class ConversationRepository {
       tenantId,
       contactId,
     };
-    // C14: this lookup used to skip applyVisibilityScope entirely, so any
+    // This lookup used to skip applyVisibilityScope entirely, so any
     // principal with view:omni_channel could read every conversation for a
     // contact via ?contactId=, including ones on a restricted channel they
     // are not in the support pool for, and ones owned by someone outside
@@ -1662,7 +1636,7 @@ export class ConversationRepository {
     return pagination(mappedItems, total, { page: safePage, limit: safeLimit });
   }
 
-  // ── Aggregate Methods (Phase 1) ──────────────────────────────────
+  // Aggregate Methods (Phase 1)
 
   /**
    * Atomically allocate the next sequence number for a conversation.

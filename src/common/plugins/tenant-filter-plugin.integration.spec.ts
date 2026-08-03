@@ -55,9 +55,6 @@ async function seedTwoTenants() {
 }
 
 describe('tenantFilterPlugin — real MongoDB', () => {
-  // ═══════════════════════════════════════════════════════════════════
-  // READ ISOLATION
-  // ═══════════════════════════════════════════════════════════════════
   describe('read isolation', () => {
     it('should find() returns ONLY documents of the active tenant', async () => {
       await seedTwoTenants();
@@ -102,9 +99,6 @@ describe('tenantFilterPlugin — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // WRITE ISOLATION
-  // ═══════════════════════════════════════════════════════════════════
   describe('write isolation', () => {
     it("should updateOne() from tenant B cannot modify tenant A's document", async () => {
       let docId: string;
@@ -169,9 +163,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // SAVE — auto-enrichment & cross-tenant protection
-  // ═══════════════════════════════════════════════════════════════════
   describe('save behavior', () => {
     it('should save with matching tenantId succeeds (BaseDocumentRepository enriches before save)', async () => {
       // REAL BEHAVIOR: When tenantId is required:true, Mongoose validates BEFORE
@@ -199,9 +191,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // TENANT MUTATION PROTECTION
-  // ═══════════════════════════════════════════════════════════════════
   describe('mutation protection', () => {
     it('should blocks $set of tenantId to different value', async () => {
       let docId: string;
@@ -221,9 +211,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // FAIL-CLOSED — no context = error, not silent data leak
-  // ═══════════════════════════════════════════════════════════════════
   describe('fail-closed', () => {
     it('should throws CRITICAL error when CLS has no tenantId', async () => {
       await expect(runWithoutTenant(() => TestItem.find({}))).rejects.toThrow(
@@ -232,9 +220,6 @@ describe('tenantFilterPlugin — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // PLATFORM BYPASS
-  // ═══════════════════════════════════════════════════════════════════
   describe('isPlatformQuery bypass', () => {
     it('should isPlatformQuery: true reads all tenants', async () => {
       await seedTwoTenants();
@@ -246,9 +231,7 @@ describe('tenantFilterPlugin — real MongoDB', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
   // FAULT INJECTION — proves tests catch real bugs
-  // ═══════════════════════════════════════════════════════════════════
   describe('FAULT INJECTION', () => {
     it('should user-injected tenantId in filter is stripped — CLS always wins', async () => {
       await seedTwoTenants();

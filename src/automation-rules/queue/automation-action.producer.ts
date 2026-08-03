@@ -16,7 +16,7 @@ import { DEFAULT_JOB_OPTIONS } from '../../queue/config/default-job-options';
 /**
  * AutomationActionProducer — dispatches action jobs to typed BullMQ queues.
  *
- * Phase 4: Routes each action to its dedicated queue for independent
+ * Routes each action to its dedicated queue for independent
  * rate limiting (email → email queue, sms → sms queue, etc.).
  *
  * Called by the WorkflowOrchestratorService after conditions evaluate to true.

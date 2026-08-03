@@ -55,7 +55,7 @@ export class SlaBreachProcessor extends BaseTenantConsumer<SlaBreachJobData> {
           `Processing SLA breach check [${breachType}] for conversation ${conversationId}`,
         );
 
-        // ── Build query based on breach type ──────────────────────────
+        // Build query based on breach type
         const breachedField =
           breachType === 'frt' ? 'frtBreached' : 'resolutionBreached';
 
@@ -72,13 +72,13 @@ export class SlaBreachProcessor extends BaseTenantConsumer<SlaBreachJobData> {
           return;
         }
 
-        // ── Mark breach ──────────────────────────────────────────────
+        // Mark breach
         await this.conversationRepository.markSlaBreached(
           conversationId,
           breachedField,
         );
 
-        // ── Emit event for escalation-policies ───────────────────────
+        // Emit event for escalation-policies
         const deadlineField =
           breachType === 'frt' ? 'frtDeadline' : 'resolutionDeadline';
 
