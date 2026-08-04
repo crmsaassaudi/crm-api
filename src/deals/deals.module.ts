@@ -14,6 +14,8 @@ import { DealImportProcessor } from './import/deal-import.processor';
 import { DealExportProcessor } from './export/deal-export.processor';
 import { isWorkerRuntime } from '../config/runtime-role';
 import { DealPurgeService } from './deal-purge.service';
+import { DealOwnershipCleanupListener } from './deal-ownership-cleanup.listener';
+import { DealAccountNameSyncListener } from './deal-account-name-sync.listener';
 import { DEAL_IMPORT_QUEUE, DEAL_EXPORT_QUEUE } from './deals.constants';
 import {
   ImportJobSchema,
@@ -95,7 +97,13 @@ const workerProviders = isWorkerRuntime()
     AutomationOutboxModule,
   ],
   controllers: [DealsController],
-  providers: [DealsService, DealRepository, ...workerProviders],
+  providers: [
+    DealsService,
+    DealRepository,
+    DealOwnershipCleanupListener,
+    DealAccountNameSyncListener,
+    ...workerProviders,
+  ],
   exports: [DealsService, DealRepository],
 })
 export class DealsModule {}

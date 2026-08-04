@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery, Types } from 'mongoose';
+import { Model, FilterQuery, Types, ClientSession } from 'mongoose';
 import { DealSchemaClass, DealSchemaDocument } from '../entities/deal.schema';
 import { Deal } from '../../../../domain/deal';
 import { DealMapper } from '../mappers/deal.mapper';
@@ -13,6 +13,19 @@ import { pagination } from '../../../../../utils/pagination';
 import { escapeRegex } from '../../../../../utils/escape-regex';
 import { cappedCount } from '../../../../../utils/capped-count';
 import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
+
+// Fields eligible for a client-supplied regex/`$in` list filter. `filter.id`
+// arrives verbatim from request JSON — allowing an arbitrary field name here
+// would let a caller force an unindexed collection scan on any field in the
+// schema on every request.
+const REGEX_FILTERABLE_FIELDS = new Set([
+  'title',
+  'name',
+  'accountName',
+  'description',
+  'lostReason',
+  'tags',
+]);
 
 @Injectable()
 export class DealRepository extends BaseDocumentRepository<
@@ -67,8 +80,8 @@ export class DealRepository extends BaseDocumentRepository<
             if (String(filter.id).startsWith('customFields.')) return;
             if (filter.id === 'stage' || filter.id === 'stageId') {
               where.stageId = filter.value;
-            } else if (filter.id === 'pipelineId') {
-              where.pipelineId = filter.value;
+            } else if (filter.id === 'pipelineId' || filter.id === 'pipeline') {
+              where.pipeline = filter.value;
             } else if (filter.id === 'value') {
               const value = Number(filter.value);
               if (!Number.isNaN(value)) where[filter.id] = value;
@@ -87,8 +100,13 @@ export class DealRepository extends BaseDocumentRepository<
                 ? { $in: filter.value }
                 : filter.value;
             } else if (Array.isArray(filter.value)) {
+              if (!REGEX_FILTERABLE_FIELDS.has(filter.id)) return;
               where[filter.id] = { $in: filter.value };
             } else {
+              // Only a fixed, indexed allowlist may be regex-filtered — an
+              // arbitrary `filter.id` from client JSON against an unindexed
+              // field is an unbounded collection-scan DoS vector otherwise.
+              if (!REGEX_FILTERABLE_FIELDS.has(filter.id)) return;
               where[filter.id] = {
                 $regex: escapeRegex(String(filter.value)),
                 $options: 'i',
@@ -151,13 +169,13 @@ export class DealRepository extends BaseDocumentRepository<
     return query.exec();
   }
 
-  async findManyWithPagination({
-    filterOptions,
-    paginationOptions,
-  }: {
-    filterOptions?: any;
-    paginationOptions: IPaginationOptions;
-  }): Promise<PaginationResponseDto<Deal>> {
+  /**
+   * The full list filter — search, stage, contactId, arbitrary `filters[]`,
+   * custom fields, and object-ACL exclusions — scoped to the tenant/owner/
+   * org-unit/ABAC visibility axes. Shared by offset (`findManyWithPagination`)
+   * and keyset (`findManyByCursor`) listing so the two never drift apart.
+   */
+  private buildScopedWhere(filterOptions?: any): FilterQuery<DealSchemaClass> {
     // Exclude soft-deleted records.
     //
     // Missed twice before this. §20 made deletion a soft delete across six collections,
@@ -203,8 +221,8 @@ export class DealRepository extends BaseDocumentRepository<
               if (String(f.id).startsWith('customFields.')) return;
               if (['stage', 'stageId'].includes(f.id)) {
                 where.stageId = f.value;
-              } else if (f.id === 'pipelineId') {
-                where.pipelineId = f.value;
+              } else if (f.id === 'pipelineId' || f.id === 'pipeline') {
+                where.pipeline = f.value;
               } else if (f.id === 'value') {
                 const val = Number(f.value);
                 if (!isNaN(val)) where[f.id] = val;
@@ -219,8 +237,10 @@ export class DealRepository extends BaseDocumentRepository<
                   ? { $in: f.value }
                   : f.value;
               } else if (Array.isArray(f.value)) {
+                if (!REGEX_FILTERABLE_FIELDS.has(f.id)) return;
                 where[f.id] = { $in: f.value };
               } else {
+                if (!REGEX_FILTERABLE_FIELDS.has(f.id)) return;
                 where[f.id] = {
                   $regex: escapeRegex(String(f.value)),
                   $options: 'i',
@@ -241,7 +261,30 @@ export class DealRepository extends BaseDocumentRepository<
     );
 
     Object.assign(where, this.buildListWhere(filterOptions));
-    const scopedWhere = this.applyTenantFilter(where);
+
+    // Object-ACL denies resolved by the service — see
+    // DealsService.resolveAclDeniedDealIds for why the list route needs this
+    // in addition to the tenant/owner/org-unit scoping below.
+    if (filterOptions?.__excludeIds?.length) {
+      where._id = {
+        ...(where._id as Record<string, unknown> | undefined),
+        $nin: filterOptions.__excludeIds
+          .filter((id: string) => Types.ObjectId.isValid(id))
+          .map((id: string) => new Types.ObjectId(id)),
+      };
+    }
+
+    return this.applyTenantFilter(where);
+  }
+
+  async findManyWithPagination({
+    filterOptions,
+    paginationOptions,
+  }: {
+    filterOptions?: any;
+    paginationOptions: IPaginationOptions;
+  }): Promise<PaginationResponseDto<Deal>> {
+    const scopedWhere = this.buildScopedWhere(filterOptions);
 
     const [docs, { totalItems }] = await Promise.all([
       this.model
@@ -262,6 +305,73 @@ export class DealRepository extends BaseDocumentRepository<
       totalItems,
       paginationOptions,
     );
+  }
+
+  /**
+   * Keyset (cursor) pagination — an opt-in alternative to `findManyWithPagination`.
+   *
+   * Offset pagination (`.skip()`) walks and discards every skipped document even
+   * when the sort is index-covered; deep pages on a large tenant pay for all of
+   * it. `tenant_created_cursor`/`tenant_stage_created_cursor` (deal.schema.ts)
+   * were declared shaped exactly for `(createdAt, _id)` keyset pagination but
+   * nothing ever queried them that way — this is that query. Additive: the
+   * default `GET /deals` contract and every existing caller are unaffected.
+   */
+  async findManyByCursor({
+    filterOptions,
+    cursor,
+    limit,
+  }: {
+    filterOptions?: any;
+    cursor?: { createdAt: string; id: string } | null;
+    limit: number;
+  }): Promise<{
+    data: Deal[];
+    nextCursor: { createdAt: string; id: string } | null;
+  }> {
+    const where = this.buildScopedWhere(filterOptions);
+
+    const scopedWhere: FilterQuery<DealSchemaClass> = cursor
+      ? {
+          $and: [
+            where,
+            {
+              $or: [
+                { createdAt: { $lt: new Date(cursor.createdAt) } },
+                {
+                  createdAt: new Date(cursor.createdAt),
+                  _id: { $lt: new Types.ObjectId(cursor.id) },
+                },
+              ],
+            },
+          ],
+        }
+      : where;
+
+    const docs = await this.model
+      .find(scopedWhere)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit + 1)
+      .populate('owner')
+      .populate('dealStage')
+      .populate('dealSource')
+      .lean()
+      .exec();
+
+    const hasMore = docs.length > limit;
+    const page = hasMore ? docs.slice(0, limit) : docs;
+    const last = page[page.length - 1] as any;
+
+    return {
+      data: page.map((doc) => this.mapToDomain(doc as any)),
+      nextCursor:
+        hasMore && last
+          ? {
+              createdAt: new Date(last.createdAt).toISOString(),
+              id: String(last._id),
+            }
+          : null,
+    };
   }
 
   async findOne(filter: FilterQuery<DealSchemaClass>): Promise<Deal | null> {
@@ -292,9 +402,12 @@ export class DealRepository extends BaseDocumentRepository<
     dealIds: string[],
     tags: string[],
   ): Promise<{ matchedCount: number; modifiedCount: number }> {
+    // `null` rather than `$exists: false` — restore() UNSETS the field, so
+    // `null` is the one predicate that matches both a missing field and an
+    // explicit null the same way every other query in this repository does.
     const scopedFilter = this.applyTenantFilter({
       _id: { $in: dealIds },
-      deletedAt: { $exists: false },
+      deletedAt: null,
     } as FilterQuery<DealSchemaClass>);
     const result = await this.model
       .updateMany(scopedFilter, {
@@ -335,11 +448,20 @@ export class DealRepository extends BaseDocumentRepository<
     }));
   }
 
-  /** Hard-delete one deal. Only DealPurgeService may call this. */
-  async hardDelete(id: string): Promise<void> {
+  /**
+   * Hard-delete one deal. Only DealPurgeService may call this.
+   *
+   * Accepts an optional session so the purge can run the reference cascade
+   * and this final delete inside one transaction — a crash between "tickets
+   * detached" and "deal row removed" used to leave a legitimately purgeable
+   * deal referencing nothing, requiring no cleanup, but with no atomic
+   * boundary marking the two as one operation.
+   */
+  async hardDelete(id: string, session?: ClientSession): Promise<void> {
     await this.model
       .deleteOne({ _id: id })
       .setOptions({ isPlatformQuery: true } as any)
+      .session(session ?? null)
       .exec();
   }
 }

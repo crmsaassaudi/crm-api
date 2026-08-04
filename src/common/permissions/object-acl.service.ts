@@ -78,6 +78,38 @@ export class ObjectAclService {
     return entries.map((e) => e.resourceId);
   }
 
+  /**
+   * Resource ids explicitly DENIED to this principal (or their groups) for
+   * `action`, so a caller building a LIST query can exclude them.
+   *
+   * `AclGuard`/`canAccessRecord` only run against a single `:id` from the
+   * route — a collection route (`GET /deals`) has no record to narrow to, so
+   * an object-ACL deny placed on one record was enforced on its detail view
+   * but invisible to the list view of the same resource, which kept
+   * returning it. This is the query-time equivalent for list endpoints that
+   * choose to call it.
+   */
+  async getDeniedResourceIds(
+    tenantId: string,
+    principalIds: string[],
+    resourceType: string,
+    action: string,
+  ): Promise<string[]> {
+    if (principalIds.length === 0) return [];
+    const entries = await this.aclModel
+      .find({
+        tenantId,
+        resourceType,
+        principalId: { $in: principalIds },
+        permissions: action,
+        isDeny: true,
+      })
+      .select({ resourceId: 1 })
+      .lean()
+      .exec();
+    return Array.from(new Set(entries.map((e) => e.resourceId)));
+  }
+
   // Check
 
   /**

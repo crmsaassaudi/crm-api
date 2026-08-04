@@ -107,6 +107,7 @@ describe('AccountsService', () => {
       importJobModel,
       exportRequest,
       { validateTagIds: jest.fn().mockResolvedValue(undefined) } as any, // tagsService
+      { emit: jest.fn() } as any, // eventEmitter
     );
   });
 

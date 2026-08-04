@@ -6,6 +6,7 @@ import {
   IsDate,
   IsArray,
   IsObject,
+  IsBoolean,
   Matches,
   Max,
   Min,
@@ -136,4 +137,12 @@ export class CreateDealDto {
   @IsString()
   @IsOptional()
   omniConversationId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Bypasses the same-title/same-account duplicate check. Titles legitimately repeat, so this is a warning, not a hard constraint.',
+  })
+  @IsBoolean()
+  @IsOptional()
+  allowDuplicate?: boolean;
 }

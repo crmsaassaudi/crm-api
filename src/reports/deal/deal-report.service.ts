@@ -535,6 +535,12 @@ export class DealReportService {
 
   // Report 6: Deal Velocity
 
+  // A random, capped sample is enough to estimate a median stably; loading
+  // every won deal in the range into Node just to sort it once was an
+  // unbounded in-process array that grew with total won-deal volume, not
+  // with anything the caller controlled.
+  private static readonly VELOCITY_MEDIAN_SAMPLE_SIZE = 20_000;
+
   async getDealVelocity(
     dto: GetDealReportDto,
   ): Promise<ReportResponse<DealVelocityData>> {
@@ -545,35 +551,53 @@ export class DealReportService {
       wonAt: { $gte: context.from, $lte: context.to },
     };
 
-    const rows = await this.dealModel
-      .find(match, { createdAt: 1, wonAt: 1, value: 1 })
-      .lean()
-      .exec();
+    const daysToCloseStage = {
+      $divide: [{ $subtract: ['$wonAt', '$createdAt'] }, 86_400_000],
+    };
 
-    const daysToClose = rows
-      .map((r) => {
-        const diff =
-          new Date(r.wonAt!).getTime() - new Date(r.createdAt).getTime();
-        return diff / 86_400_000;
-      })
-      .filter((d) => d >= 0)
+    // count / avg / sum are exact, computed server-side via $group rather
+    // than reduced over an array pulled entirely into application memory.
+    const [stats, sample] = await Promise.all([
+      this.dealModel
+        .aggregate([
+          { $match: match },
+          { $project: { value: 1, daysToClose: daysToCloseStage } },
+          { $match: { daysToClose: { $gte: 0 } } },
+          {
+            $group: {
+              _id: null,
+              totalWonDeals: { $sum: 1 },
+              avgDaysToClose: { $avg: '$daysToClose' },
+              totalWonValue: { $sum: '$value' },
+            },
+          },
+        ])
+        .exec(),
+      this.dealModel
+        .aggregate([
+          { $match: match },
+          { $project: { daysToClose: daysToCloseStage } },
+          { $match: { daysToClose: { $gte: 0 } } },
+          { $sample: { size: DealReportService.VELOCITY_MEDIAN_SAMPLE_SIZE } },
+        ])
+        .exec(),
+    ]);
+
+    const totalWonDeals = stats[0]?.totalWonDeals ?? 0;
+    const avgDaysToClose = stats[0]?.avgDaysToClose ?? 0;
+    const totalWonValue = stats[0]?.totalWonValue ?? 0;
+
+    const sampledDays = (sample as Array<{ daysToClose: number }>)
+      .map((r) => r.daysToClose)
       .sort((a, b) => a - b);
-
-    const avg =
-      daysToClose.length > 0
-        ? daysToClose.reduce((s, v) => s + v, 0) / daysToClose.length
-        : 0;
-
-    const median = this.computeMedian(daysToClose);
-
-    const totalWonValue = rows.reduce((s, r) => s + (r.value ?? 0), 0);
+    const median = this.computeMedian(sampledDays);
 
     const data: DealVelocityData = {
-      avgDaysToClose: Math.round(avg * 10) / 10,
+      avgDaysToClose: Math.round(avgDaysToClose * 10) / 10,
       medianDaysToClose: Math.round(median * 10) / 10,
-      totalWonDeals: rows.length,
+      totalWonDeals,
       avgDealValue:
-        rows.length > 0 ? Math.round(totalWonValue / rows.length) : 0,
+        totalWonDeals > 0 ? Math.round(totalWonValue / totalWonDeals) : 0,
     };
 
     // Every total below is a `$sum: '$value'` with no currency dimension. For a
@@ -582,14 +606,20 @@ export class DealReportService {
     // trusted silently. Conversion needs a rate source and an accounting policy, which
     // is a business decision rather than a util's.
     const currencyMix = await detectCurrencyMix(this.dealModel, match);
+    const warnings = currencyMix.warning ? [currencyMix.warning] : [];
+    if (totalWonDeals > DealReportService.VELOCITY_MEDIAN_SAMPLE_SIZE) {
+      warnings.push(
+        `medianDaysToClose is estimated from a random sample of ${DealReportService.VELOCITY_MEDIAN_SAMPLE_SIZE.toLocaleString()} of ${totalWonDeals.toLocaleString()} won deals.`,
+      );
+    }
 
     return buildReportResponse({
       report: 'deal_velocity',
       dto,
       data,
-      totalRecords: rows.length,
+      totalRecords: totalWonDeals,
       startedAt,
-      warnings: currencyMix.warning ? [currencyMix.warning] : [],
+      warnings,
     });
   }
 

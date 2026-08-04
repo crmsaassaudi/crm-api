@@ -52,6 +52,12 @@ export class Deal {
   @ApiProperty()
   ownerId?: string;
 
+  @ApiProperty({
+    description:
+      'Set when the owner left the tenant and ownership was cleared automatically.',
+  })
+  unassignedReason?: string;
+
   @ApiProperty({ type: () => User })
   owner?: User;
 
@@ -97,17 +103,17 @@ export class Deal {
   @ApiProperty()
   deletedAt?: Date;
 
+  // Mongoose's versionKey (`__v`), exposed under the same name every other
+  // domain in this codebase uses for it. The base repository does an
+  // optimistic (version-checked) `findOneAndUpdate` when this is present on
+  // the payload — round-trip it from a GET back through a PATCH to get a 409
+  // instead of a silently lost concurrent update.
+  @ApiProperty({ description: 'Optimistic-concurrency version token' })
+  version?: number;
+
   @ApiProperty({ description: 'Omni-conversation this deal was created from' })
   omniConversationId?: string;
 
   @ApiProperty({ description: 'Linked message IDs from the omni-conversation' })
   linkedMessageIds?: string[];
-
-  // NO `ticketIds`.
-  //
-  // It was declared here, absent from DealSchemaClass, and read by nothing —
-  // `linkDeal`'s comment even claimed it appended to it. The deal's tickets are found by
-  // querying `tickets.dealId` (GET /tickets/by-deal/:dealId), which is one source of
-  // truth; a mirrored array would need maintaining on every link, unlink and merge, and
-  // would silently disagree with the FK the first time one of those was missed.
 }

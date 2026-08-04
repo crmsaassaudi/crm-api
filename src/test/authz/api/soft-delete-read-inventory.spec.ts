@@ -50,12 +50,16 @@ const REVIEWED_EXEMPTIONS = new Set<string>([
  * the findOne list because the reasons differ.
  */
 const LIST_EXEMPTIONS = new Set<string>([
-  // These two build the list filter in a `buildListWhere` helper, which the extractor
-  // below cannot see through. Both DO filter `deletedAt` — verified by reading them —
-  // and each carries a comment saying so. Teaching the extractor to follow one level of
-  // indirection would make it a parser; naming the two files is honest about the limit.
+  // These build the list filter in a helper (`buildListWhere`/`buildScopedWhere`),
+  // which the extractor below cannot see through. Each DOES filter `deletedAt` —
+  // verified by reading them — and carries a comment saying so. Teaching the
+  // extractor to follow one level of indirection would make it a parser; naming
+  // the files is honest about the limit.
   'accounts/infrastructure/persistence/document/repositories/account.repository.ts',
   'contacts/infrastructure/persistence/document/repositories/contact.repository.ts',
+  // `buildScopedWhere` (shared by findManyWithPagination and the keyset sibling
+  // findManyByCursor) sets `deletedAt: null` — see the comment on that method.
+  'deals/infrastructure/persistence/document/repositories/deal.repository.ts',
 
   // Users HARD-delete: UserRepository overrides remove() with deleteOne, so no row ever
   // carries a deletedAt for a list to hide. Recorded as an exemption rather than fixed

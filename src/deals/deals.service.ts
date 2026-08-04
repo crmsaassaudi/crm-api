@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   HttpStatus,
   Injectable,
   Logger,
@@ -16,6 +18,7 @@ import { Model } from 'mongoose';
 import { Readable } from 'stream';
 import { DealRepository } from './infrastructure/persistence/document/repositories/deal.repository';
 import { DealStageSchemaClass } from '../deal-settings/entities/deal-stage.schema';
+import { UserSchemaClass } from '../users/infrastructure/persistence/document/entities/user.schema';
 import { Deal } from './domain/deal';
 import { ClsService } from 'nestjs-cls';
 import { AutomationEventPayload } from '../automation-rules/events/automation-event.payload';
@@ -44,6 +47,42 @@ import { buildCrmReportVisibilityFilter } from '../reports/shared/utils/report-v
 import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
 import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { loadCustomFieldDefinitions } from '../utils/custom-field-filter';
+import { AuthorizationService } from '../common/permissions/authorization.service';
+
+/**
+ * Opaque cursor for `findAllCursor` — base64 JSON of the `(createdAt, _id)`
+ * keyset position. Opaque so the query-string shape isn't a public contract
+ * a caller could hand-construct or come to depend on.
+ */
+function encodeDealCursor(
+  cursor: { createdAt: string; id: string } | null,
+): string | null {
+  if (!cursor) return null;
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function decodeDealCursor(
+  raw: unknown,
+): { createdAt: string; id: string } | null {
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(raw, 'base64url').toString('utf8'),
+    );
+    if (
+      parsed &&
+      typeof parsed.createdAt === 'string' &&
+      typeof parsed.id === 'string'
+    ) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null; // malformed cursor — treat as "start from the beginning"
+  }
+}
+import { ObjectAclService } from '../common/permissions/object-acl.service';
+import { BulkUpdateDealsDto, BulkDealResult } from './dto/bulk-deal.dto';
 
 @Injectable()
 export class DealsService {
@@ -68,9 +107,15 @@ export class DealsService {
     // The tenant's pipeline stages, for the isWon/isLost flags that define a closed deal.
     @InjectModel(DealStageSchemaClass.name)
     private readonly stageModel: Model<any>,
+    // Validates ownerId on create/update actually resolves to a real, active,
+    // same-tenant user rather than accepting any syntactically-valid ObjectId.
+    @InjectModel(UserSchemaClass.name)
+    private readonly userModel: Model<any>,
     private readonly exportRequest: ExportRequestService,
     private readonly crmSettings: CrmSettingsService,
     private readonly tagsService: TagsService,
+    private readonly authorization: AuthorizationService,
+    private readonly objectAcl: ObjectAclService,
     @Optional() private readonly customFields?: CustomFieldsService,
   ) {
     this.importStorage = this.storageFactory.create('deals');
@@ -101,10 +146,116 @@ export class DealsService {
 
     const result = await this.repository.addTagsToDeals(dealIds, tags);
 
+    // Unlike create/update/remove/restore, this bulk path never emitted an
+    // audit entry — tagging up to DEAL_MAX_BULK_TAG_SIZE deals in one call
+    // left a gap in the history for exactly the operation an admin is most
+    // likely to ask "who did this?" about.
+    for (const dealId of dealIds) {
+      this.entityAudit.emit({
+        entity: 'deal',
+        entityType: 'DEAL',
+        entityId: dealId,
+        kind: 'updated',
+        oldSnapshot: {},
+        newSnapshot: { tagsAdded: tags },
+      });
+    }
+
     return {
       success: true,
       ...result,
     };
+  }
+
+  // BULK UPDATE / DELETE
+  //
+  // The three bulk dialogs in the UI (assign owner, change stage, delete) had
+  // no server-side bulk endpoint to call — only bulk-tag existed — so each
+  // fell back to `Promise.all(ids.map(singleCall))`, which rejects on the
+  // first failure while the rest may have already applied, with no way for
+  // the caller to learn which ids succeeded.
+  //
+  // Both methods below loop over `update()` / `remove()` rather than issuing
+  // one `bulkWrite`, mirroring the Tasks module: a single `bulkWrite` would
+  // bypass the visibility scope check, the close-state guards, the audit
+  // entry per record and the automation event per record. The id cap is what
+  // keeps the loop bounded.
+
+  async bulkUpdate(dto: BulkUpdateDealsDto): Promise<BulkDealResult> {
+    const { ids, ...changes } = dto;
+    const result: BulkDealResult = { updated: 0, skipped: [] };
+
+    if (Object.keys(changes).length === 0) {
+      throw new UnprocessableEntityException({
+        status: 422,
+        errors: { changes: 'At least one field to update is required.' },
+      });
+    }
+
+    for (const id of ids) {
+      try {
+        await this.update(id, changes as Partial<Deal>);
+        result.updated++;
+      } catch (error) {
+        result.skipped.push({ id, reason: this.describeBulkSkip(error) });
+      }
+    }
+
+    return result;
+  }
+
+  async bulkRemove(ids: string[]): Promise<BulkDealResult> {
+    const result: BulkDealResult = { updated: 0, skipped: [] };
+
+    for (const id of ids) {
+      try {
+        await this.remove(id);
+        result.updated++;
+      } catch (error) {
+        result.skipped.push({ id, reason: this.describeBulkSkip(error) });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Why one id in a bulk operation was not applied. A 404 is reported as a
+   * scope miss rather than "not found" — from the caller's side those are the
+   * same fact, and the distinction is exactly what a scoped user is not
+   * entitled to learn.
+   */
+  private describeBulkSkip(error: unknown): string {
+    if (error instanceof NotFoundException) {
+      return 'Not found, or outside your access scope.';
+    }
+    if (error instanceof ConflictException) {
+      return 'Changed by someone else — please reload.';
+    }
+    if (error instanceof ForbiddenException) {
+      return 'You do not have permission to change this field.';
+    }
+    if (error instanceof BusinessException) {
+      return error.message;
+    }
+    if (error instanceof UnprocessableEntityException) {
+      const response = error.getResponse() as {
+        errors?: Record<string, string>;
+      };
+      const first = response?.errors
+        ? Object.values(response.errors)[0]
+        : undefined;
+      return first ?? 'Invalid.';
+    }
+    // Anything else is a real fault, not a per-record outcome, so it is
+    // logged rather than folded into a tidy summary.
+    this.logger.error(
+      `Bulk deal operation failed unexpectedly: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      error instanceof Error ? error.stack : undefined,
+    );
+    return 'Unexpected error.';
   }
 
   // Helpers
@@ -235,9 +386,100 @@ export class DealsService {
     return dto.fileFormat ?? (dto.fileKey.endsWith('.xlsx') ? 'xlsx' : 'csv');
   }
 
+  /**
+   * Reject an ownerId that doesn't resolve to a real, active, same-tenant
+   * user. A syntactically-valid but nonexistent ObjectId used to be accepted
+   * silently, only surfacing later as a null owner-populate on read.
+   */
+  private async assertOwnerExists(ownerId: string | undefined): Promise<void> {
+    if (!ownerId) return;
+    const tenantId = this.resolveTenantId();
+    const owner = await this.userModel
+      .findOne({ _id: ownerId, tenantId, deletedAt: null } as any)
+      .select({ _id: 1 })
+      .lean()
+      .exec();
+    if (!owner) {
+      throw new BusinessException(
+        DEAL_ERRORS.INVALID_OWNER,
+        HttpStatus.BAD_REQUEST,
+        `ownerId ${ownerId} does not refer to an active user in this tenant.`,
+      );
+    }
+  }
+
+  /**
+   * Reassigning ownerId separately from a plain field edit. Ownership is the
+   * primary visibility axis for deals (same reasoning as contacts:assign) —
+   * without this, anyone holding base `deals:edit` could silently move a
+   * deal into their own pipeline or a colleague's, indistinguishable in the
+   * audit trail from correcting the title.
+   *
+   * Unconditional, matching the contacts precedent: a feature flag here would
+   * be fail-open security, bypassable by any API caller in a tenant that
+   * hadn't explicitly turned enforcement on.
+   */
+  private async assertMayTransferOwnership(
+    existing: Deal | null,
+    nextOwnerId: string | undefined,
+  ): Promise<void> {
+    if (nextOwnerId === undefined) return; // not present in the patch at all
+    const userId = this.getCurrentUserId();
+    if (existing) {
+      if (String(existing.ownerId ?? '') === String(nextOwnerId ?? '')) return; // unchanged
+    } else if (String(nextOwnerId) === String(userId ?? '')) {
+      return; // creating for yourself is not a transfer
+    }
+    const decision = await this.authorization.canPerformAction({
+      rule: { action: 'assign', resource: 'deals' },
+      rawUserId: String(userId ?? ''),
+      tenantHint: this.resolveTenantId(),
+    });
+    if (!decision.allowed) {
+      throw new ForbiddenException(
+        'Changing the owner of a deal requires the deals:assign permission.',
+      );
+    }
+  }
+
+  /**
+   * Warn on an obvious double-submit or duplicate create — same title, same
+   * account, still open — rather than silently allowing an unlimited number
+   * of identical deals. Not a hard uniqueness constraint (titles legitimately
+   * repeat across accounts/years): callers can proceed anyway with
+   * `allowDuplicate: true`.
+   */
+  private async checkDuplicate(data: Record<string, any>): Promise<void> {
+    if ((data as any).allowDuplicate === true) return;
+    const title = data.title;
+    if (!title) return;
+    const tenantId = this.resolveTenantId();
+    const match: Record<string, any> = {
+      tenantId,
+      title,
+      deletedAt: null,
+    };
+    if (data.accountId) match.accountId = data.accountId;
+    const existing = await (this.repository as any).model
+      .findOne(match)
+      .select({ _id: 1 })
+      .lean()
+      .exec();
+    if (existing) {
+      throw new BusinessException(
+        DEAL_ERRORS.POSSIBLE_DUPLICATE,
+        HttpStatus.CONFLICT,
+        `A deal titled "${title}" already exists${data.accountId ? ' for this account' : ''}. Pass allowDuplicate=true to create it anyway.`,
+      );
+    }
+  }
+
   async create(data: Partial<Deal>): Promise<Deal> {
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'create');
+    await this.assertOwnerExists((data as any).ownerId);
+    await this.assertMayTransferOwnership(null, (data as any).ownerId);
+    await this.checkDuplicate(data as Record<string, any>);
 
     // `customFields` is a Mixed column: without this, any key of any shape was
     // accepted. The same gap the contact audit found (H-6) — the custom_fields
@@ -273,14 +515,7 @@ export class DealsService {
   }
 
   async findAll(filter: any): Promise<any> {
-    const filterOptions = {
-      ...filter,
-      __customFieldDefinitions: await loadCustomFieldDefinitions(
-        this.customFields,
-        'Deal',
-        filter.filters,
-      ),
-    };
+    const filterOptions = await this.buildFilterOptions(filter);
     return this.repository.findManyWithPagination({
       filterOptions,
       paginationOptions: {
@@ -288,6 +523,68 @@ export class DealsService {
         limit: Number(filter.limit) || 10,
       },
     });
+  }
+
+  /**
+   * Keyset-pagination sibling of `findAll` — see
+   * `DealRepository.findManyByCursor` for why this exists. Additive: `GET
+   * /deals` and its contract are untouched; a caller opts in via `GET
+   * /deals/list-cursor`.
+   */
+  async findAllCursor(filter: any): Promise<{
+    data: Deal[];
+    nextCursor: string | null;
+  }> {
+    const filterOptions = await this.buildFilterOptions(filter);
+    const limit = Math.min(200, Math.max(1, Number(filter.limit) || 25));
+    const cursor = decodeDealCursor(filter.cursor);
+
+    const { data, nextCursor } = await this.repository.findManyByCursor({
+      filterOptions,
+      cursor,
+      limit,
+    });
+
+    return { data, nextCursor: encodeDealCursor(nextCursor) };
+  }
+
+  private async buildFilterOptions(filter: any): Promise<Record<string, any>> {
+    // Object-ACL denies are enforced on the single-record route (@UseAcl +
+    // @LoadResource) but a collection route has no `:id` to narrow to, so a
+    // deal an admin explicitly denied one user access to still showed up in
+    // that user's list — only opening it directly was blocked. Excluding
+    // denied ids here closes that list-vs-detail inconsistency.
+    const excludeIds = await this.resolveAclDeniedDealIds();
+
+    return {
+      ...filter,
+      ...(excludeIds.length ? { __excludeIds: excludeIds } : {}),
+      __customFieldDefinitions: await loadCustomFieldDefinitions(
+        this.customFields,
+        'Deal',
+        filter.filters,
+      ),
+    };
+  }
+
+  private async resolveAclDeniedDealIds(): Promise<string[]> {
+    const tenantId = this.resolveTenantId();
+    const userId = this.getCurrentUserId();
+    if (!tenantId || !userId) return [];
+    const groupIds = this.cls.get<string[]>('visibleGroupIds') ?? [];
+    try {
+      return await this.objectAcl.getDeniedResourceIds(
+        tenantId,
+        [String(userId), ...groupIds],
+        'deals',
+        'view',
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Could not resolve object-ACL denies for deals list: ${(err as Error).message}`,
+      );
+      return []; // fail open on the LOOKUP only — a missing exclusion list still leaves the resource-level grant in force, same as today
+    }
   }
 
   async findOne(id: string): Promise<Deal | null> {
@@ -307,6 +604,13 @@ export class DealsService {
 
     this.cleanRefs(data as Record<string, any>);
     await this.validateRequiredFields(data as Record<string, any>, 'update');
+    if ((data as any).ownerId !== undefined) {
+      await this.assertOwnerExists((data as any).ownerId);
+      // A fresh assignment clears the "owner left the tenant" marker —
+      // otherwise a re-assigned deal would still show as unassigned-by-cleanup.
+      (data as any).unassignedReason = null;
+    }
+    await this.assertMayTransferOwnership(existingDeal, (data as any).ownerId);
 
     // `partial: true` — a PATCH that does not mention a required custom field must
     // not fail on it; it was already satisfied at create time.
@@ -730,52 +1034,104 @@ export class DealsService {
     data: Partial<Deal>,
     updateData: Record<string, any>,
   ): Promise<void> {
-    if (!data.stageId) return;
+    // wonAt/lostAt are server-computed only. They used to be independently
+    // patchable DTO fields, which let a caller flip a deal's closed/open
+    // read (as seen by the workload projection and stale-deal trigger)
+    // without ever touching stageId — completely bypassing the guard below.
+    delete (data as any).wonAt;
+    delete (data as any).lostAt;
+
+    const touchesClosedSensitiveField =
+      data.stageId !== undefined ||
+      (data as any).value !== undefined ||
+      (data as any).currency !== undefined;
+    if (!touchesClosedSensitiveField) return;
 
     const previousStageId = (existingDeal as any)?.stageId;
-    if (previousStageId && String(previousStageId) === String(data.stageId)) {
-      return; // idempotent
+    const previousStage = previousStageId
+      ? await this.stageModel.findById(String(previousStageId)).lean().exec()
+      : null;
+    const wasWon = Boolean((previousStage as any)?.isWon);
+    const wasLost = Boolean((previousStage as any)?.isLost);
+    // A stage deleted out from under a closed deal must not silently read as
+    // "never closed" — fall back to the deal's own stamps rather than trusting
+    // a lookup miss (the previous fail-open let a deal with a deleted won
+    // stage skip the reopen guard entirely).
+    const wasClosed =
+      wasWon ||
+      wasLost ||
+      Boolean((existingDeal as any)?.wonAt) ||
+      Boolean((existingDeal as any)?.lostAt);
+
+    const isStageChange =
+      data.stageId !== undefined &&
+      !(previousStageId && String(previousStageId) === String(data.stageId));
+
+    if (!isStageChange) {
+      // No stage change: block rewriting a closed deal's economics (the
+      // figure every past revenue report already summed) unless the caller
+      // explicitly acknowledges it via the same allowReopen flag.
+      if (
+        wasClosed &&
+        ((data as any).value !== undefined ||
+          (data as any).currency !== undefined) &&
+        (data as any).allowReopen !== true
+      ) {
+        throw new BusinessException(
+          wasWon ? DEAL_ERRORS.ALREADY_WON : DEAL_ERRORS.ALREADY_LOST,
+          HttpStatus.BAD_REQUEST,
+          'Deal is closed. Amount/currency cannot be changed without allowReopen=true.',
+        );
+      }
+      return; // idempotent stage patch, or an edit unrelated to close state
     }
 
-    const [previousStage, nextStage] = await Promise.all([
-      previousStageId
-        ? this.stageModel.findById(String(previousStageId)).lean().exec()
-        : Promise.resolve(null),
-      this.stageModel.findById(String(data.stageId)).lean().exec(),
-    ]);
+    const nextStage = await this.stageModel
+      .findById(String(data.stageId))
+      .lean()
+      .exec();
+    const nextWon = Boolean((nextStage as any)?.isWon);
+    const nextLost = Boolean((nextStage as any)?.isLost);
+    const isClosed = nextWon || nextLost;
+    // Covers both "closed → open" (reopen) and "Won → Lost" / "Lost → Won"
+    // (both read as `isClosed`, so the old `wasClosed && !isClosed` guard
+    // never fired for a same-closed-ness flip that reverses recognized
+    // revenue in one call).
+    const classificationChanged = wasWon !== nextWon || wasLost !== nextLost;
 
-    const wasClosed = Boolean(
-      (previousStage as any)?.isWon || (previousStage as any)?.isLost,
-    );
-    const isClosed = Boolean(
-      (nextStage as any)?.isWon || (nextStage as any)?.isLost,
-    );
-
-    if (wasClosed && !isClosed) {
+    if (wasClosed && classificationChanged) {
       if ((data as any).allowReopen !== true) {
         // DEAL_ALREADY_WON / DEAL_ALREADY_LOST existed in DEAL_ERRORS with no emitter,
         // which is why they were flagged as dead. This guard (§38) is exactly the
         // condition they describe, and the code is what lets the client localise the
         // message and offer "reopen anyway" instead of surfacing English prose.
         throw new BusinessException(
-          (previousStage as any)?.isWon
-            ? DEAL_ERRORS.ALREADY_WON
-            : DEAL_ERRORS.ALREADY_LOST,
+          wasWon ? DEAL_ERRORS.ALREADY_WON : DEAL_ERRORS.ALREADY_LOST,
           HttpStatus.BAD_REQUEST,
           `Deal is in a closed stage ("${(previousStage as any)?.name ?? previousStageId}"). ` +
-            'Reopening requires allowReopen=true.',
+            'Reopening or reclassifying (Won ↔ Lost) requires allowReopen=true.',
         );
       }
       // Clear both, not just the one that was set: a deal that went won → lost → open
       // would otherwise keep the older stamp.
       updateData.wonAt = null;
       updateData.lostAt = null;
-      return;
     }
 
     if (isClosed) {
+      if (
+        nextLost &&
+        !((data as any).lostReason || (existingDeal as any)?.lostReason)
+      ) {
+        throw new UnprocessableEntityException({
+          status: 422,
+          errors: {
+            lostReason: 'lostReason is required to close a deal as Lost',
+          },
+        });
+      }
       const now = new Date();
-      if ((nextStage as any)?.isWon) {
+      if (nextWon) {
         updateData.wonAt = (existingDeal as any)?.wonAt ?? now;
         updateData.lostAt = null;
       } else {

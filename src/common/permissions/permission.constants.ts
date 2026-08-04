@@ -110,6 +110,16 @@ export const PERMISSION_REGISTRY: Record<
     delete: 'deals:delete',
     move_stage: 'deals:move_stage',
     export: 'deals:export',
+    // Reassigning ownerId separately from editing other fields — the same
+    // reasoning as contacts:assign: ownership is deals' primary visibility
+    // axis, so moving a deal into/out of a rep's pipeline deserves its own
+    // grant and its own audit signal, not the same permission used to
+    // correct a typo in the title.
+    assign: 'deals:assign',
+    // Reveals `value`/`probability` (see FIELD_SENSITIVITY['deals']). Ships
+    // in CORE_PERMISSIONS so no existing Owner/Admin loses visibility into
+    // deal amounts; a tenant can now withhold it from a narrower custom role.
+    unmask: 'deals:unmask',
   },
   campaigns: {
     view: 'campaigns:view',
@@ -419,6 +429,8 @@ export const CORE_PERMISSIONS: string[] = [
   'deals:edit',
   'deals:delete',
   'deals:move_stage',
+  'deals:assign',
+  'deals:unmask',
   // Tickets
   'tickets:view',
   'tickets:create',

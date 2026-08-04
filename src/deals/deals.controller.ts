@@ -24,18 +24,22 @@ import {
   ApiBearerAuth,
   ApiConsumes,
   ApiBody,
-  ApiProperty,
-  ApiPropertyOptional,
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
 import { MaskedResource } from '../common/decorators/masked-resource.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
-import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
+import {
+  RequirePermission,
+  UseAcl,
+  LoadResource,
+  SensitiveResource,
+} from '../common/permissions';
 import { StartDealImportDto } from './dto/start-deal-import.dto';
+import { BulkUpdateDealsDto, BulkDealIdsDto } from './dto/bulk-deal.dto';
 import { ExportRequestDto } from '../common/export';
 import { ActivityLogService } from '../activity-log/activity-log.service';
-import { IsString, IsOptional, IsEnum } from 'class-validator';
+import { CreateDealActivityDto } from './dto/create-deal-activity.dto';
 import { Throttle } from '@nestjs/throttler';
 
 /** Map a safe file extension to its HTTP Content-Type. */
@@ -49,28 +53,11 @@ function resolveContentType(ext: string | undefined): string {
   return 'text/csv; charset=utf-8';
 }
 
-class CreateDealActivityDto {
-  @ApiProperty({
-    enum: ['note', 'call', 'meeting', 'email', 'task'],
-    example: 'note',
-  })
-  @IsEnum(['note', 'call', 'meeting', 'email', 'task'])
-  type: string;
-
-  @ApiPropertyOptional({ example: 'Had discovery call, very interested.' })
-  @IsString()
-  @IsOptional()
-  content?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  metadata?: Record<string, any>;
-}
-
 @ApiTags('Deals')
 @ApiBearerAuth()
 @UseInterceptors(DataMaskingInterceptor)
 @MaskedResource('Deal')
+@SensitiveResource('deals')
 @Controller({
   path: 'deals',
   version: '1',
@@ -91,6 +78,51 @@ export class DealsController {
   @RequirePermission('view', 'deals')
   findAll(@Query() query: any) {
     return this.service.findAll(query);
+  }
+
+  // Keyset-pagination sibling of `GET /deals` — declared BEFORE `:id` for the
+  // same reason as `bulk`/`recycle-bin`. Opt-in and additive: existing callers
+  // of `GET /deals` are unaffected. See DealRepository.findManyByCursor for
+  // why this exists (an index shaped for this was declared and unused).
+  @ApiOkResponse({
+    description:
+      'Keyset-paginated deal list. Pass the response nextCursor back as ?cursor= for the next page.',
+  })
+  @Get('list-cursor')
+  @RequirePermission('view', 'deals')
+  findAllCursor(@Query() query: any) {
+    return this.service.findAllCursor(query);
+  }
+
+  // BULK
+  //
+  // Declared BEFORE the `:id` routes — Nest matches in declaration order, and
+  // `bulk`/`bulk-delete` would otherwise be captured as an id.
+  //
+  // Both take the same permission as their single-record equivalent, and
+  // enforce record-level scope per id inside the service (each id runs
+  // through the normal update()/remove() path) rather than through `@UseAcl`,
+  // which evaluates a single `:id` from the path. Ids the caller cannot see,
+  // or that fail a business rule (e.g. reopening a closed deal without
+  // allowReopen), come back in `skipped`, not as a failure of the whole
+  // request.
+
+  @ApiOkResponse({ description: 'Per-id outcome of the bulk update' })
+  @Patch('bulk')
+  @RequirePermission('edit', 'deals')
+  @UsePipes(new SanitizeMaskedInputPipe())
+  bulkUpdate(@Body() body: BulkUpdateDealsDto) {
+    return this.service.bulkUpdate(body);
+  }
+
+  @ApiOkResponse({ description: 'Per-id outcome of the bulk delete' })
+  @Post('bulk-delete')
+  // POST, not DELETE: a body on DELETE is legal but poorly supported by
+  // proxies and client libraries, and a list of ids does not belong in a
+  // query string.
+  @RequirePermission('delete', 'deals')
+  bulkRemove(@Body() body: BulkDealIdsDto) {
+    return this.service.bulkRemove(body.ids);
   }
 
   @Patch(':id')

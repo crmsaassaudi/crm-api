@@ -28,7 +28,7 @@ export class DealSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, index: true })
   name: string;
 
-  @Prop({ required: true })
+  @Prop({ required: true, index: true })
   pipeline: string;
 
   @Prop({
@@ -57,11 +57,18 @@ export class DealSchemaClass extends EntityDocumentHelper {
   @Prop({
     type: [{ type: MongooseSchema.Types.ObjectId, ref: 'ContactSchemaClass' }],
     default: [],
+    index: true,
   })
   contactIds?: string[];
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
   ownerId?: string;
+
+  // Set when DealOwnershipCleanupListener clears ownerId because the owner
+  // left the tenant — surfaces the deal in an "unassigned" filter instead of
+  // it silently falling out of every normal-scope owner/org-unit view.
+  @Prop()
+  unassignedReason?: string;
 
   // Org-unit ownership: the node of the tenant's org tree this record belongs
   // to. Populated at create time from the record owner's org unit; read by the
@@ -97,6 +104,7 @@ export class DealSchemaClass extends EntityDocumentHelper {
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     required: true,
+    index: true,
   })
   createdById: string;
 
@@ -104,6 +112,7 @@ export class DealSchemaClass extends EntityDocumentHelper {
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',
     required: true,
+    index: true,
   })
   updatedById: string;
 
@@ -113,7 +122,7 @@ export class DealSchemaClass extends EntityDocumentHelper {
   @Prop({ default: now })
   updatedAt: Date;
 
-  @Prop()
+  @Prop({ index: true })
   deletedAt?: Date;
 
   @Prop({
@@ -142,6 +151,10 @@ DealSchema.index(
 );
 DealSchema.index({ tenantId: 1, ownerId: 1 }, { name: 'tenant_owner_lookup' });
 DealSchema.index({ tenantId: 1, stageId: 1 }, { name: 'tenant_stage_lookup' });
+DealSchema.index(
+  { tenantId: 1, stageId: 1, createdAt: -1, _id: -1 },
+  { name: 'tenant_stage_created_cursor' },
+);
 DealSchema.index(
   { tenantId: 1, sourceId: 1 },
   { name: 'tenant_source_lookup' },

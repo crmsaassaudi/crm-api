@@ -65,6 +65,12 @@ export class ExportMasker {
     const maskingType = this.maskedFields.get(fieldKey);
     if (!maskingType) return value;
 
+    // `typeof value === 'string'` / `Array.isArray` were the only branches —
+    // a numeric field (e.g. deal `value`) fell through untouched, so a tenant
+    // admin who configured masking for it exported it fully unmasked anyway.
+    if (typeof value === 'number') {
+      return null;
+    }
     if (typeof value === 'string') {
       return this.applyMask(value, maskingType);
     }

@@ -39,6 +39,7 @@ export class DealMapper {
 
     domainEntity.description = raw.description;
     domainEntity.sourceId = raw.sourceId?.toString();
+    domainEntity.unassignedReason = raw.unassignedReason;
 
     // Populate owner User object from virtual
     if ((raw as any).owner) {
@@ -74,6 +75,7 @@ export class DealMapper {
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
+    domainEntity.version = (raw as any).__v;
     return domainEntity;
   }
 
@@ -115,6 +117,9 @@ export class DealMapper {
       persistenceEntity.createdById = domainEntity.createdById;
     if (domainEntity.updatedById)
       persistenceEntity.updatedById = domainEntity.updatedById;
+    if (domainEntity.version !== undefined) {
+      (persistenceEntity as any).__v = domainEntity.version;
+    }
     return persistenceEntity;
   }
 }

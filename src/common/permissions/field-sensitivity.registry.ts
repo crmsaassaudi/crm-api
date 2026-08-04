@@ -12,7 +12,12 @@ import { PermissionAction, PermissionResource } from './permission.constants';
  */
 
 export type SensitivityClass = 'pii' | 'financial';
-export type MaskStrategy = 'email' | 'phone' | 'last4' | 'full';
+export type MaskStrategy =
+  | 'email'
+  | 'phone'
+  | 'last4'
+  | 'full'
+  | 'redact-number';
 
 export interface SensitiveField {
   field: string;
@@ -69,6 +74,27 @@ export const FIELD_SENSITIVITY: Record<string, SensitiveField[]> = {
       unmask: { resource: 'omni_channel', action: 'unmask' },
     },
   ],
+  /**
+   * `value`/`probability` had NO field-level control at all — any principal
+   * holding base `deals:view` saw the full amount and computed forecast.
+   * `deals:unmask` ships in CORE_PERMISSIONS so no existing Owner/Admin loses
+   * access; a tenant can now withhold it from a specific custom role, which
+   * was previously impossible.
+   */
+  deals: [
+    {
+      field: 'value',
+      classification: 'financial',
+      strategy: 'redact-number',
+      unmask: { resource: 'deals', action: 'unmask' },
+    },
+    {
+      field: 'probability',
+      classification: 'financial',
+      strategy: 'redact-number',
+      unmask: { resource: 'deals', action: 'unmask' },
+    },
+  ],
 };
 
 /** Apply a masking strategy to a single string value. Idempotent. */
@@ -99,8 +125,21 @@ function maskFull(value: string): string {
   return '•'.repeat(Math.max(value.length, 4));
 }
 
-/** Mask a scalar or array-of-strings field value in place-safe fashion. */
+/**
+ * Mask a scalar, number, or array-of-strings field value in place-safe
+ * fashion.
+ *
+ * `typeof value === 'string'` and `Array.isArray` were the only branches —
+ * a numeric field (deal `value`/`probability`) fell through untouched, so a
+ * tenant admin who configured masking for it got no masking at all, silently.
+ * `redact-number` returns `null` rather than a string, since callers (list
+ * views, exports) expect the field's type to stay a number-or-null, not
+ * become `'•••'`.
+ */
 export function maskValue(value: unknown, strategy: MaskStrategy): unknown {
+  if (strategy === 'redact-number') {
+    return typeof value === 'number' ? null : value;
+  }
   if (typeof value === 'string') return applyMask(value, strategy);
   if (Array.isArray(value)) {
     return value.map((v) =>

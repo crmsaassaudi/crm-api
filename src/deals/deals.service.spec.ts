@@ -2,6 +2,7 @@ import {
   BadRequestException,
   HttpStatus,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { DEAL_ERRORS } from './constants/deal-error-codes';
 import { DealsService } from './deals.service';
@@ -44,6 +45,14 @@ describe('DealsService', () => {
         .fn()
         .mockImplementation((id, data) => Promise.resolve({ id, ...data })),
       remove: jest.fn().mockResolvedValue(undefined),
+      // checkDuplicate's raw-model lookup — no existing deal matches by default.
+      model: {
+        findOne: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockReturnThis(),
+          exec: jest.fn().mockResolvedValue(null),
+        }),
+      },
     };
 
     cls = createClsMock();
@@ -120,9 +129,19 @@ describe('DealsService', () => {
       // test can point at; the default is an empty pipeline, which means no stage is
       // terminal and the guard has nothing to guard — the pre-existing behaviour.
       stageModel,
+      // userModel: assertOwnerExists's lookup. Existing tests only ever pass an
+      // empty-string ownerId (sanitized to undefined before the check runs), so
+      // this fixture never needs to resolve a real user.
+      { findOne: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockReturnThis(),
+          exec: jest.fn().mockResolvedValue({ _id: 'user_1' }),
+        }) } as any,
       exportRequest,
       { getSetting: jest.fn().mockResolvedValue(null) } as any, // crmSettings
       { validateTagIds: jest.fn().mockResolvedValue(undefined) } as any, // tagsService
+      { canPerformAction: jest.fn().mockResolvedValue({ allowed: true }) } as any, // authorization
+      { getDeniedResourceIds: jest.fn().mockResolvedValue([]) } as any, // objectAcl
     );
   });
 
@@ -337,17 +356,28 @@ describe('DealsService', () => {
 
     it('should stamp lostAt when a deal moves into a lost stage', async () => {
       existing(OPEN);
-      await service.update('d1', { stageId: LOST } as any);
+      await service.update('d1', {
+        stageId: LOST,
+        lostReason: 'Budget constraint',
+      } as any);
 
       const payload = repository.update.mock.calls[0][1];
       expect(payload.lostAt).toBeInstanceOf(Date);
       expect(payload.wonAt).toBeNull();
     });
 
+    it('should require lostReason when closing a deal as Lost', async () => {
+      existing(OPEN);
+      await expect(
+        service.update('d1', { stageId: LOST } as any),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
     it('should NOT re-stamp a deal already carrying the timestamp', async () => {
       // Moving between two won stages must not move the close date.
       const original = new Date('2026-01-01T00:00:00.000Z');
-      existing(LOST, { lostAt: original });
+      existing(LOST, { lostAt: original, lostReason: 'Budget constraint' });
       stages.stage_lost_2 = {
         _id: 'stage_lost_2',
         name: 'Lost - No budget',
@@ -399,11 +429,28 @@ describe('DealsService', () => {
       expect(payload).not.toHaveProperty('lostAt');
     });
 
-    it('should leave a deal alone when the update does not touch the stage', async () => {
-      existing(WON, { wonAt: new Date() });
+    it('should leave an OPEN deal alone when the update does not touch the stage', async () => {
+      existing(OPEN);
       await service.update('d1', { value: 1234 } as any);
 
-      expect(stageModel.findById).not.toHaveBeenCalled();
+      expect(repository.update).toHaveBeenCalled();
+    });
+
+    it('should block editing value/currency on a closed deal without allowReopen', async () => {
+      // The figure every past revenue report already summed must not be
+      // rewritten by a plain field edit once the deal is closed.
+      existing(WON, { wonAt: new Date() });
+
+      await expect(
+        service.update('d1', { value: 1234 } as any),
+      ).rejects.toMatchObject({ errorCode: DEAL_ERRORS.ALREADY_WON });
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('should allow editing value on a closed deal with allowReopen', async () => {
+      existing(WON, { wonAt: new Date() });
+      await service.update('d1', { value: 1234, allowReopen: true } as any);
+
       expect(repository.update).toHaveBeenCalled();
     });
 

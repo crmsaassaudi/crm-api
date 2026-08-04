@@ -10,6 +10,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AutomationEventPayload } from '../automation-rules/events/automation-event.payload';
 import { AutomationOutboxService } from '../automation-rules/events/automation-outbox.service';
 import { Readable } from 'stream';
@@ -70,6 +71,7 @@ export class AccountsService {
     private readonly importJobModel: Model<ImportJobDocument>,
     private readonly exportRequest: ExportRequestService,
     private readonly tagsService: TagsService,
+    private readonly eventEmitter: EventEmitter2,
     @Optional() private readonly customFields?: CustomFieldsService,
   ) {
     this.importStorage = this.storageFactory.create('accounts');
@@ -394,6 +396,19 @@ export class AccountsService {
         oldSnapshot: existing ?? {},
         newSnapshot: updated,
       });
+
+      // Deals cache the account's name (`deal.accountName`) for list/search
+      // without a join. Nothing refreshed it when the account was renamed —
+      // every deal kept showing/matching the old name until a manual
+      // backfill ran. Fire-and-forget: a failed sync must not fail the
+      // account update that triggered it.
+      if ((data as any).name !== undefined && existing.name !== updated.name) {
+        this.eventEmitter.emit('account.renamed', {
+          tenantId: this.cls.get('activeTenantId') ?? this.cls.get('tenantId'),
+          accountId: id,
+          name: updated.name,
+        });
+      }
     }
 
     return updated;

@@ -1,7 +1,6 @@
 import { PartialType, ApiPropertyOptional } from '@nestjs/swagger';
 import { CreateDealDto } from './create-deal.dto';
-import { IsDate, IsOptional, IsString } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class UpdateDealDto extends PartialType(CreateDealDto) {
   @ApiPropertyOptional({ example: 'Budget constraint' })
@@ -9,15 +8,24 @@ export class UpdateDealDto extends PartialType(CreateDealDto) {
   @IsOptional()
   lostReason?: string;
 
-  @ApiPropertyOptional({ example: '2026-06-15T00:00:00Z' })
-  @IsDate()
-  @Type(() => Date)
+  // Round-tripped from the GET response's `version` (Mongoose's `__v`). When
+  // present, the write is rejected with 409 if another update landed first
+  // instead of silently overwriting it.
+  @ApiPropertyOptional({ description: 'Optimistic-concurrency version token' })
+  @IsInt()
+  @Min(0)
   @IsOptional()
-  wonAt?: Date;
+  version?: number;
 
-  @ApiPropertyOptional({ example: '2026-06-15T00:00:00Z' })
-  @IsDate()
-  @Type(() => Date)
+  // wonAt/lostAt are intentionally NOT exposed here — they are stamped by
+  // DealsService.applyStageTransition() from the stage's isWon/isLost flags,
+  // never taken from client input. A caller acknowledges an out-of-band
+  // reopen or Won⇄Lost reclassification via this flag instead.
+  @ApiPropertyOptional({
+    description:
+      'Required to move a deal out of a closed stage, or to reclassify Won ↔ Lost.',
+  })
+  @IsBoolean()
   @IsOptional()
-  lostAt?: Date;
+  allowReopen?: boolean;
 }

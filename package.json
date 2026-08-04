@@ -57,6 +57,7 @@
     "backfill:org-units": "ts-node -r tsconfig-paths/register ./src/scripts/backfill-org-units.ts",
     "backfill:contact-identity": "ts-node -r tsconfig-paths/register ./src/scripts/backfill-contact-identity.ts",
     "migrate:contact-assign-permission": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-contact-assign-permission.ts",
+    "migrate:deal-assign-permission": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-deal-assign-permission.ts",
     "backfill:contact-metrics": "ts-node -r tsconfig-paths/register ./src/scripts/backfill-contact-metrics.ts",
     "backfill:contact-stage-transitions": "ts-node -r tsconfig-paths/register ./src/scripts/backfill-contact-stage-transitions.ts",
     "backfill:contact-identities": "ts-node -r tsconfig-paths/register ./src/scripts/backfill-contact-identities.ts",
