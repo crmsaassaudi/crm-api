@@ -57,6 +57,7 @@ import { ChannelsModule } from '../channels/channels.module';
 import { UsersModule } from '../users/users.module';
 import { FilesModule } from '../files/files.module';
 import { ObservabilityModule } from '../observability/observability.module';
+import { SsrfGuardModule } from '../common/http/ssrf-guard.module';
 
 // Email schemas
 import {
@@ -81,6 +82,7 @@ import {
     UsersModule,
     FilesModule,
     ObservabilityModule,
+    SsrfGuardModule,
     BullModule.registerQueue({
       name: OMNI_DELIVERY_QUEUE,
       defaultJobOptions: {

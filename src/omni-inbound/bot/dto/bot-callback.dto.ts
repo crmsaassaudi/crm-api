@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   Allow,
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -22,6 +23,17 @@ import {
  */
 
 const MAX_TEXT_LENGTH = 8_000;
+
+/**
+ * Every element of `messages` becomes a real outbound send on a real provider,
+ * so an uncapped array is an amplification primitive: one accepted callback
+ * could bill and rate-limit the tenant's channel into a provider ban. No
+ * legitimate flow turn answers with more than a handful of bubbles.
+ */
+const MAX_MESSAGES_PER_CALLBACK = 20;
+
+/** Providers cap quick replies far below this; the limit is a sanity bound. */
+const MAX_BUTTONS_PER_MESSAGE = 20;
 
 export class BotReplyButtonDto {
   @IsOptional()
@@ -60,6 +72,7 @@ export class BotReplyMessageDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(MAX_BUTTONS_PER_MESSAGE)
   @ValidateNested({ each: true })
   @Type(() => BotReplyButtonDto)
   buttons?: BotReplyButtonDto[];
@@ -126,6 +139,7 @@ export class BotCallbackDto {
   handoff!: boolean;
 
   @IsArray()
+  @ArrayMaxSize(MAX_MESSAGES_PER_CALLBACK)
   @ValidateNested({ each: true })
   @Type(() => BotReplyMessageDto)
   messages!: BotReplyMessageDto[];

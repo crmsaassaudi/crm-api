@@ -175,6 +175,10 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
       imageProcessingService as any,
       { findByIdsGlobal: jest.fn().mockResolvedValue([]) } as any,
       deliveryCommands as any,
+      // Agent uploads resolve from S3 by fileId, so neither the SSRF guard nor
+      // the attachment gateway is on this path; the bot media path covers them.
+      { safeFetch: jest.fn() } as any,
+      { scanAttachment: jest.fn().mockReturnValue({ safe: true }) } as any,
     );
     return {
       handler,

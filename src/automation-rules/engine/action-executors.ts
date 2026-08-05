@@ -2,7 +2,10 @@ import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { AutomationActionJobData } from '../queue/automation-queue.constants';
 import { TemplateInterpolationService } from './template-interpolation.service';
 import { CrmRecordUpdateService } from './crm-record-update.service';
-import { SsrfBlockedError, SsrfGuardService } from './ssrf-guard.service';
+import {
+  SsrfBlockedError,
+  SsrfGuardService,
+} from '../../common/http/ssrf-guard.service';
 import {
   EmailProviderService,
   EMAIL_PROVIDER_TOKEN,

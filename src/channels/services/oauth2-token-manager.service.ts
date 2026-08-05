@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
+import { randomBytes } from 'node:crypto';
 import { ChannelConfigRepository } from '../infrastructure/persistence/document/repositories/channel-config.repository';
 import { CRYPTO_SERVICE_TOKEN, ICryptoService } from '../domain/crypto.service';
 import { ChannelConfig } from '../domain/channel-config';
@@ -66,6 +67,7 @@ type OAuth2ConfigLike = Pick<
 >;
 
 const TOKEN_REFRESH_SKEW_MS = 2 * 60 * 1000;
+const TOKEN_REQUEST_TIMEOUT_MS = 15_000;
 
 @Injectable()
 export class OAuth2TokenManager {
@@ -402,10 +404,14 @@ export class OAuth2TokenManager {
     tokenUrl: string,
     body: URLSearchParams,
   ): Promise<TokenEndpointResponse> {
+    // Without a deadline this call inherits Node's default (none): a stalled
+    // provider endpoint holds the request handler, and on the refresh path it
+    // holds a mail worker, open indefinitely.
     const response = await fetch(tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
+      signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
     });
     const payload = (await response
       .json()
@@ -553,10 +559,14 @@ export class OAuth2TokenManager {
     }
   }
 
+  /**
+   * `Math.random()` is not a CSPRNG, and a state value a caller can predict is
+   * a state value that cannot anchor the callback to the request that started
+   * it. See the audit note on verifying this value on return — issuing it
+   * unguessably is the half that costs nothing.
+   */
   private generateState(): string {
-    return Buffer.from(
-      `${Date.now()}:${Math.random().toString(36).slice(2)}`,
-    ).toString('base64url');
+    return randomBytes(32).toString('base64url');
   }
 
   private getTenantId(): string {

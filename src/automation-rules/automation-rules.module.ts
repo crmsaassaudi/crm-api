@@ -45,7 +45,7 @@ import { WorkflowOrchestratorService } from './engine/workflow-orchestrator.serv
 import { BulkEventThrottleService } from './engine/bulk-event-throttle.service';
 import { TemplateInterpolationService } from './engine/template-interpolation.service';
 import { CrmRecordUpdateService } from './engine/crm-record-update.service';
-import { SsrfGuardService } from './engine/ssrf-guard.service';
+import { SsrfGuardService } from '../common/http/ssrf-guard.service';
 import { WebhookHeaderCryptoService } from './engine/webhook-header-crypto.service';
 import { ScheduledTriggerService } from './engine/scheduled-trigger.service';
 import { ActionIdempotencyService } from './engine/action-idempotency.service';

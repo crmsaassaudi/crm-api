@@ -18,6 +18,20 @@ import { ReplyWindowExpiredException } from './exceptions/reply-window-expired.e
 import { ConfigType } from '@nestjs/config';
 import replyWindowConfig from './config/reply-window.config';
 import { DeliveryCommandService } from './delivery-command.service';
+import {
+  SsrfBlockedError,
+  SsrfGuardService,
+} from '../common/http/ssrf-guard.service';
+import { AttachmentSecurityService } from '../channels/services/attachment-security.service';
+
+/**
+ * Ceiling for media relayed from a bot flow. Matches the attachment gateway's
+ * own 25 MB limit so the two cannot disagree about what is too large.
+ */
+const MAX_BOT_MEDIA_BYTES = 25 * 1024 * 1024;
+
+/** Wall-clock budget for fetching bot media, redirects included. */
+const BOT_MEDIA_TIMEOUT_MS = 15_000;
 
 /** Extension for each type `ImageProcessingService` can re-encode to. */
 const MIME_EXTENSIONS: Record<string, string> = {
@@ -82,6 +96,8 @@ export class OutboundMediaHandler {
     private readonly imageProcessingService: ImageProcessingService,
     private readonly usersService: UsersService,
     private readonly deliveryCommands: DeliveryCommandService,
+    private readonly ssrfGuard: SsrfGuardService,
+    private readonly attachmentSecurity: AttachmentSecurityService,
   ) {}
 
   async sendAgentMedia(params: {
@@ -585,6 +601,16 @@ export class OutboundMediaHandler {
       params.mimeType,
     );
     if (!downloadResult.success) {
+      // A blocked URL is a rejected URL. Falling back to "send the link as
+      // text" would hand the customer the very address the guard refused, so
+      // the message is dropped instead.
+      if (downloadResult.blocked) {
+        this.logger.error(
+          `Bot media rejected for conversation ${conversationId}: ${downloadResult.error}`,
+        );
+        return { ok: false, blocked: true, reason: downloadResult.error };
+      }
+
       this.logger.warn(
         `Bot media download failed: ${downloadResult.error}. Falling back to link.`,
       );
@@ -636,6 +662,21 @@ export class OutboundMediaHandler {
     return channel;
   }
 
+  /**
+   * Download the media a bot flow asked us to relay.
+   *
+   * `mediaUrl` is attacker-reachable input: it arrives on the bot callback, and
+   * a flow author picks it. A bare `fetch` here was a full-read SSRF — crm-api
+   * would fetch any address reachable from the worker (cloud metadata, the VPC,
+   * localhost) and then deliver the response body to the customer as media,
+   * which is an exfiltration channel, not just a blind request. So the fetch
+   * goes through the same guard webhook actions use: scheme + private-range
+   * checks, DNS pinning, and every redirect hop re-validated.
+   *
+   * `blocked` is distinct from a plain failure. A failed download falls back to
+   * sending the link as text; a BLOCKED one must not, because echoing
+   * `http://169.254.169.254/…` into the conversation just moves the payload.
+   */
   private async downloadBotMedia(
     mediaUrl: string,
     rawMimeType?: string,
@@ -645,14 +686,16 @@ export class OutboundMediaHandler {
     mimeType?: string;
     fileName?: string;
     error?: string;
+    blocked?: boolean;
   }> {
     try {
-      const response = await fetch(mediaUrl, {
-        signal: AbortSignal.timeout(15_000),
+      const response = await this.ssrfGuard.safeFetch(mediaUrl, {
+        signal: AbortSignal.timeout(BOT_MEDIA_TIMEOUT_MS),
       });
       if (!response.ok)
         throw new Error(`Failed to download: ${response.status}`);
-      const buffer = Buffer.from(await response.arrayBuffer());
+
+      const buffer = await this.readCapped(response, MAX_BOT_MEDIA_BYTES);
       const mimeType =
         rawMimeType ??
         response.headers.get('content-type')?.split(';')[0].trim() ??
@@ -665,10 +708,66 @@ export class OutboundMediaHandler {
       } catch {
         /* ignore */
       }
+
+      // Bot media reaches a real customer over a real channel, so it gets the
+      // same extension/size policy as an agent upload. This path used to skip
+      // the gateway entirely.
+      const scan = this.attachmentSecurity.scanAttachment(
+        fileName,
+        buffer.length,
+      );
+      if (!scan.safe) {
+        return { success: false, blocked: true, error: scan.reason };
+      }
+
       return { success: true, buffer, mimeType, fileName };
     } catch (error: any) {
+      if (error instanceof SsrfBlockedError) {
+        this.logger.error(
+          `[BOT-MEDIA] SSRF-blocked bot media URL: ${error.message}`,
+        );
+        return { success: false, blocked: true, error: error.message };
+      }
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * Read a response body with a hard byte ceiling.
+   *
+   * `arrayBuffer()` buffers whatever the peer sends, so a hostile or merely
+   * huge URL could exhaust the worker's heap. Content-Length is checked first
+   * as a cheap reject, but it is a claim, not a promise — the streamed read
+   * enforces the same cap on the bytes that actually arrive.
+   */
+  private async readCapped(response: Response, maxBytes: number) {
+    const declared = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(
+        `Media exceeds the maximum of ${maxBytes} bytes (declared ${declared})`,
+      );
+    }
+
+    if (!response.body) return Buffer.alloc(0);
+
+    const reader = response.body.getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > maxBytes) {
+          throw new Error(`Media exceeds the maximum of ${maxBytes} bytes`);
+        }
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+    return Buffer.concat(chunks, total);
   }
 
   private async persistAndDispatchMedia(params: any): Promise<any> {

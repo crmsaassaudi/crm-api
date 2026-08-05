@@ -44,9 +44,17 @@ export class EnvCryptoService implements ICryptoService, OnModuleInit {
     });
 
     if (!rawKey) {
-      if (process.env.NODE_ENV === 'production') {
+      // Allowed ONLY for an environment that says out loud it is development or
+      // test. The old check was `NODE_ENV === 'production'`, which meant an
+      // env that simply never set NODE_ENV — a plain `node dist/main`, most
+      // compose/systemd deployments — silently encrypted every tenant's channel
+      // credentials under a key hard-coded two lines below and published in this
+      // repository. Absent configuration is not a development signal.
+      const nodeEnv = process.env.NODE_ENV;
+      if (nodeEnv !== 'development' && nodeEnv !== 'test') {
         throw new Error(
-          '[CryptoService] CHANNEL_ENCRYPTION_KEY is required in production. ' +
+          '[CryptoService] CHANNEL_ENCRYPTION_KEY is required unless NODE_ENV is ' +
+            `explicitly development or test (saw ${nodeEnv ?? 'unset'}). ` +
             'Generate a 64-char hex key with: openssl rand -hex 32',
         );
       }

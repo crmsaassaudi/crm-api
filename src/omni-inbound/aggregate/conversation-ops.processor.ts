@@ -1,7 +1,7 @@
 import { Processor, InjectQueue } from '@nestjs/bullmq';
 import { Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Job, Queue } from 'bullmq';
 import { ClsService } from 'nestjs-cls';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -50,6 +50,9 @@ import { OutboundService } from '../../omni-outbound/outbound.service';
 import { AgentPresenceService } from '../services/agent-presence.service';
 import { AssignmentService } from '../services/assignment.service';
 import { canAcceptBotCallback } from '../bot/bot-state-machine';
+import { ChannelSupportService } from '../../channels/services/channel-support.service';
+import { UserRepository } from '../../users/infrastructure/persistence/user.repository';
+import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
 import { WorkDistributionService } from '../work-distribution/work-distribution.service';
 
 import { ModuleRef } from '@nestjs/core';
@@ -82,6 +85,9 @@ export class ConversationOpsProcessor
   protected readonly logger = new Logger(ConversationOpsProcessor.name);
   protected readonly cls: ClsService;
   private orchestration!: InboundOrchestrationService;
+  private channelSupport!: ChannelSupportService;
+  private userRepository!: UserRepository;
+  private groupRepository!: GroupRepository;
 
   constructor(
     cls: ClsService,
@@ -107,6 +113,16 @@ export class ConversationOpsProcessor
 
   onModuleInit() {
     this.orchestration = this.moduleRef.get(InboundOrchestrationService, {
+      strict: false,
+    });
+    // Resolved lazily, like the orchestration service above: these live in
+    // ChannelsModule/UsersModule/GroupsModule and injecting them through the
+    // constructor would add edges to an already dense module graph.
+    this.channelSupport = this.moduleRef.get(ChannelSupportService, {
+      strict: false,
+    });
+    this.userRepository = this.moduleRef.get(UserRepository, { strict: false });
+    this.groupRepository = this.moduleRef.get(GroupRepository, {
       strict: false,
     });
   }
@@ -551,17 +567,102 @@ export class ConversationOpsProcessor
     });
   }
 
+  /**
+   * Reduce a bot-supplied handoff target to one this tenant may be assigned.
+   *
+   * `handoffMeta.agentId`/`groupId` are flow content, not authorization, and
+   * `performAssignmentUpdate` writes whatever it is handed. Unchecked, a
+   * hand-edited flow could assign to another tenant's id, or to an agent
+   * deliberately excluded from the channel's support pool — the
+   * `channel.support`-as-RBAC model bypassed. Verified here with the same
+   * primitives the HTTP assign path uses. An invalid target degrades to a
+   * general handoff: the customer asked for a human, and stranding the
+   * conversation to punish a misconfigured flow serves nobody.
+   */
+  private async resolveHandoffTarget(
+    tenantId: string,
+    conversation: { channelId?: any } | null,
+    handoffMeta: any,
+  ): Promise<{ target: 'general' | 'group' | 'agent'; targetId?: string }> {
+    const requested = handoffMeta?.target ?? 'general';
+    if (requested !== 'agent' && requested !== 'group') {
+      return { target: 'general' };
+    }
+
+    const targetId = String(
+      (requested === 'agent' ? handoffMeta?.agentId : handoffMeta?.groupId) ??
+        '',
+    );
+    if (!targetId || !Types.ObjectId.isValid(targetId)) {
+      return { target: 'general' };
+    }
+
+    const channelId = conversation?.channelId
+      ? String(conversation.channelId)
+      : null;
+
+    try {
+      if (requested === 'agent') {
+        // Tenant-scoped read — an id belonging to another tenant comes back
+        // empty, which is exactly the rejection we want.
+        const [user] = await this.userRepository.findByIds([targetId]);
+        if (!user) {
+          this.logger.warn(
+            `[CONV-OPS] Bot handoff rejected: agent ${targetId} is not a member of tenant ${tenantId}`,
+          );
+          return { target: 'general' };
+        }
+        await this.channelSupport.assertAgentEligible(
+          tenantId,
+          channelId,
+          targetId,
+        );
+      } else {
+        const group = await this.groupRepository.findById(tenantId, targetId);
+        if (!group) {
+          this.logger.warn(
+            `[CONV-OPS] Bot handoff rejected: group ${targetId} does not belong to tenant ${tenantId}`,
+          );
+          return { target: 'general' };
+        }
+        await this.channelSupport.assertGroupEligible(
+          tenantId,
+          channelId,
+          targetId,
+        );
+      }
+    } catch (err) {
+      // assertAgentEligible/assertGroupEligible throw ForbiddenException when
+      // the target is outside a restricted channel's pool.
+      this.logger.warn(
+        `[CONV-OPS] Bot handoff target ${targetId} refused for channel ${channelId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { target: 'general' };
+    }
+
+    return { target: requested, targetId };
+  }
+
   private async handleBotHandoff(
     cmd: ConversationCommand,
-    handoffMeta: any,
+    rawHandoffMeta: any,
   ): Promise<void> {
-    const target = handoffMeta?.target ?? 'general';
-    const targetId =
-      target === 'agent'
-        ? handoffMeta?.agentId
-        : target === 'group'
-          ? handoffMeta?.groupId
-          : undefined;
+    // Validate BEFORE `markBotHandoff` writes the target, so the recorded
+    // handoff describes what actually happened rather than what was asked for.
+    const current = await this.conversationRepo.findById(cmd.conversationId);
+    const { target, targetId } = await this.resolveHandoffTarget(
+      cmd.tenantId,
+      current,
+      rawHandoffMeta,
+    );
+    const handoffMeta = {
+      ...(rawHandoffMeta ?? {}),
+      target,
+      agentId: target === 'agent' ? targetId : undefined,
+      groupId: target === 'group' ? targetId : undefined,
+    };
     const conversation = await this.conversationRepo.markBotHandoff(
       cmd.conversationId,
       {
