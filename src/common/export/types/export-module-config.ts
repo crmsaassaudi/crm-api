@@ -16,7 +16,8 @@ export interface ExportModuleConfig {
 
   /**
    * Resource name used to look up masking layout config (e.g. 'Contact').
-   * Mirrors the `@MaskedResource()` value used by DataMaskingInterceptor.
+   * Mirrors the `@ObjectFieldPolicy()` value used by FieldPolicyInterceptor, so a
+   * file and a response apply the same field policy.
    */
   maskingResource: string;
 

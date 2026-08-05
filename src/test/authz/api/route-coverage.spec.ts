@@ -117,6 +117,8 @@ const KNOWN_UNGATED_C05: string[] = [
 const SELF_SCOPED_CONTROLLERS: Record<string, string> = {
   'common/permissions/me-permissions.controller.ts':
     "returns the caller's own effective permissions; subject read from CLS, no id parameter exists",
+  'object-manager/object-config.controller.ts':
+    "returns the caller's own field-level policy plus the tenant's field catalog; subject read from CLS, no id parameter exists. Gating it on settings:view — which no built-in role but Administrator holds — is what made the browser fall back to 'no policy' for every ordinary member and switch field-level security off for exactly the people it restricts",
 };
 
 /**
@@ -160,6 +162,15 @@ const SELF_SCOPED_HANDLERS = new Set([
   'users/users.controller.ts#getMyI18n',
   'users/users.controller.ts#updateMyI18n',
   'home/home.controller.ts#appInfo',
+  // Column layouts assigned to the caller's own groups. `module` selects a scope,
+  // not a subject: `getViewsForUser` returns the system defaults plus the views
+  // whose assignedGroupIds intersect the caller's groups, so no parameter can name
+  // another subject. `all` and `:id` ARE administrative and keep their decorators.
+  // These used to require settings:view, so every list page 403'd for a Sales Rep
+  // and the client rendered every column instead of the configured ones.
+  'list-views/list-views.controller.ts#getViews',
+  'list-views/list-views.controller.ts#getDefaultView',
+  'list-views/list-views.controller.ts#getMergedView',
   'livechat/livechat-embed.controller.ts#getEmbedSnippet',
   // Onboarding runs before a tenant/permission context exists.
   'tenants/controllers/onboarding.controller.ts#getContext',

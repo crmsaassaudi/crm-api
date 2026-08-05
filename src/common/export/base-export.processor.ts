@@ -142,7 +142,7 @@ export abstract class BaseExportProcessor<
 
     const masker = await this.getMaskingService().buildMasker(
       data.tenantId,
-      data.userGroupId,
+      data.groupIds,
       cfg.maskingResource,
     );
 

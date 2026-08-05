@@ -96,6 +96,7 @@ describe('TicketsService', () => {
       { validateTagIds: jest.fn().mockResolvedValue(undefined) } as any, // tagsService
       { getSetting: jest.fn().mockResolvedValue(null) } as any, // crmSettings
       connection as any, // connection — merge re-parents activity/tasks through it
+      { assertValid: jest.fn().mockResolvedValue(undefined) } as any, // writeValidator
       undefined,
       undefined,
       { canAccessRecord: jest.fn().mockResolvedValue(true) } as any,

@@ -35,6 +35,7 @@ import {
   normaliseRecurrence,
   TaskRecurrenceViolation,
 } from './domain/task-recurrence';
+import { RecordWriteValidator } from '../object-manager/validation/record-write-validator.service';
 import { BulkTaskResult, BulkUpdateTasksDto } from './dto/bulk-task.dto';
 
 @Injectable()
@@ -50,6 +51,10 @@ export class TasksService {
     private readonly exportQueue: Queue,
     private readonly exportRequest: ExportRequestService,
     private readonly references: TaskReferenceValidator,
+    // Not @Optional: the tenant's required-field and validation rules are part of
+    // what a write means, so a container that cannot supply them should fail at
+    // boot rather than accept records that skipped them.
+    private readonly writeValidator: RecordWriteValidator,
     @Optional() private readonly customFields?: CustomFieldsService,
     @Optional()
     private readonly customFieldValidator?: CustomFieldValueValidator,
@@ -97,6 +102,11 @@ export class TasksService {
   }
 
   async create(data: Partial<Task>): Promise<Task> {
+    await this.writeValidator.assertValid(
+      'Task',
+      data as unknown as Record<string, unknown>,
+      'create',
+    );
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const customFields = this.customFieldValidator
       ? await this.customFieldValidator.validate('Task', data.customFields, {
@@ -200,6 +210,11 @@ export class TasksService {
     if (!existing) {
       throw new NotFoundException(`Task ${id} not found`);
     }
+    await this.writeValidator.assertValid(
+      'Task',
+      data as unknown as Record<string, unknown>,
+      'update',
+    );
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
 
     const customFields = this.customFieldValidator

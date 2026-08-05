@@ -43,6 +43,7 @@ import { TagsService } from '../tags/tags.service';
 import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
 import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { loadCustomFieldDefinitions } from '../utils/custom-field-filter';
+import { RecordWriteValidator } from '../object-manager/validation/record-write-validator.service';
 import {
   compareCompanyIdentity,
   deriveCompanyIdentity,
@@ -72,6 +73,7 @@ export class AccountsService {
     private readonly exportRequest: ExportRequestService,
     private readonly tagsService: TagsService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly writeValidator: RecordWriteValidator,
     @Optional() private readonly customFields?: CustomFieldsService,
   ) {
     this.importStorage = this.storageFactory.create('accounts');
@@ -171,6 +173,11 @@ export class AccountsService {
   }
 
   async create(data: Partial<Account>): Promise<Account> {
+    await this.writeValidator.assertValid(
+      'Account',
+      data as unknown as Record<string, unknown>,
+      'create',
+    );
     const ownerId = data.ownerId === '' ? undefined : data.ownerId;
     const phones = data.phones ?? [];
     const emails = data.emails ?? [];
@@ -345,6 +352,11 @@ export class AccountsService {
   }
 
   async update(id: string, data: Partial<Account>): Promise<Account | null> {
+    await this.writeValidator.assertValid(
+      'Account',
+      data as unknown as Record<string, unknown>,
+      'update',
+    );
     // Snapshot before write so AuditLogListener can compute a field-level
     // diff. Previously this service did not emit any audit signal — the
     // 2026-05-28 review flagged it as a coverage gap.

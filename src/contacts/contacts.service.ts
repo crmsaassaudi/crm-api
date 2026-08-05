@@ -78,6 +78,8 @@ import {
   UserSchemaClass,
   UserSchemaDocument,
 } from '../users/infrastructure/persistence/document/entities/user.schema';
+import { RecordWriteValidator } from '../object-manager/validation/record-write-validator.service';
+import { PrincipalGroupsService } from '../object-manager/principal-groups.service';
 import {
   buildContactExportQuery,
   buildContactExportSnapshot,
@@ -119,6 +121,8 @@ export class ContactsService {
     private readonly exportJobModel: Model<ExportJobDocument>,
     @InjectModel(UserSchemaClass.name)
     private readonly userModel: Model<UserSchemaDocument>,
+    private readonly writeValidator: RecordWriteValidator,
+    private readonly principalGroups: PrincipalGroupsService,
   ) {
     this.exportStorage = this.exportStorageFactory.create('contacts');
     this.importStorage = this.importStorageFactory.create('contacts');
@@ -128,6 +132,11 @@ export class ContactsService {
   private readonly importStorage: ImportStorageService;
 
   async create(data: CreateContactDto): Promise<Contact> {
+    await this.writeValidator.assertValid(
+      'Contact',
+      data as unknown as Record<string, unknown>,
+      'create',
+    );
     const normalizedLifecycle = await this.normalizeLifecycleFields(data);
     const ownerId = data.ownerId?.trim() || this.requireCurrentUserId();
     await this.assertMayTransferOwnership(null, ownerId);
@@ -268,6 +277,11 @@ export class ContactsService {
   }
 
   async update(id: string, data: UpdateContactDto): Promise<Contact | null> {
+    await this.writeValidator.assertValid(
+      'Contact',
+      data as unknown as Record<string, unknown>,
+      'update',
+    );
     const existingContact = await this.repository.findOne({ _id: id });
     // `findOne` is scoped by tenant, data-visibility and the ABAC deny, so a
     // miss means "not yours to edit" — and it has to be answered here.
@@ -1093,7 +1107,7 @@ export class ContactsService {
     const job = await this.exportQueue.add('export', {
       tenantId,
       userId,
-      userGroupId: this.cls.get('userGroupId'),
+      groupIds: await this.principalGroups.groupIds(),
       format,
       columns: params.columns,
       filter: { ids: params.ids, restrictToOwner, currentUserId: userId },
@@ -1105,7 +1119,7 @@ export class ContactsService {
     await this.exportJobModel.create({
       tenantId,
       userId,
-      userGroupId: this.cls.get('userGroupId'),
+      groupIds: await this.principalGroups.groupIds(),
       entityType: 'contact',
       format,
       status: 'queued',

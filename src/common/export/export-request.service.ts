@@ -16,6 +16,7 @@ import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { ExportStorageFactory } from './export-storage.service';
 import { ExportProgressTracker } from './export-progress.service';
 import { ExportJobSchemaClass, ExportJobDocument } from './export-job.schema';
+import { PrincipalGroupsService } from '../../object-manager/principal-groups.service';
 import { ExportFormat, ExportScopeSnapshot } from './types';
 
 const MAX_QUEUED_PER_TENANT = Number(
@@ -42,6 +43,7 @@ export class ExportRequestService {
     private readonly cls: ClsService,
     private readonly storageFactory: ExportStorageFactory,
     private readonly activityLog: ActivityLogService,
+    private readonly principalGroups: PrincipalGroupsService,
   ) {}
 
   private tenantId(): string {
@@ -88,13 +90,15 @@ export class ExportRequestService {
     await this.enforceQuota(opts.entityType, userId);
 
     const format: ExportFormat = opts.format ?? 'csv';
-    const userGroupId = this.cls.get('userGroupId');
+    // Resolved, not read from CLS: the key this used to read was never written,
+    // so every export file was masked with the tenant default layout.
+    const groupIds = await this.principalGroups.groupIds();
     const filterSnapshot = opts.filterSnapshot ?? { ids: opts.ids };
 
     const job = await opts.queue.add('export', {
       tenantId,
       userId,
-      userGroupId,
+      groupIds,
       scope: this.captureScope(),
       format,
       columns: opts.columns,
@@ -106,7 +110,7 @@ export class ExportRequestService {
     await this.jobModel.create({
       tenantId,
       userId,
-      userGroupId,
+      groupIds,
       entityType: opts.entityType,
       format,
       status: 'queued',

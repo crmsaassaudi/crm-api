@@ -18,8 +18,8 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { TaskListQueryDto } from './dto/task-list-query.dto';
 import { BulkTaskIdsDto, BulkUpdateTasksDto } from './dto/bulk-task.dto';
 import { ApiTags, ApiBearerAuth, ApiOkResponse } from '@nestjs/swagger';
-import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
-import { MaskedResource } from '../common/decorators/masked-resource.decorator';
+import { FieldPolicyInterceptor } from '../object-manager/layout/field-policy.interceptor';
+import { ObjectFieldPolicy } from '../object-manager/layout/object-field-policy.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
 import { RequirePermission, UseAcl, LoadResource } from '../common/permissions';
 import { ExportRequestDto } from '../common/export';
@@ -34,8 +34,8 @@ function resolveContentType(ext: string | undefined): string {
 
 @ApiTags('Tasks')
 @ApiBearerAuth()
-@UseInterceptors(DataMaskingInterceptor)
-@MaskedResource('Task')
+@UseInterceptors(FieldPolicyInterceptor)
+@ObjectFieldPolicy('Task')
 @Controller({
   path: 'tasks',
   version: '1',

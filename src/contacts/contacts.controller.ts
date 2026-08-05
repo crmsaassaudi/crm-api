@@ -21,8 +21,8 @@ import { pipeline } from 'stream/promises';
 import type { Response } from 'express';
 import { ContactsService } from './contacts.service';
 import { Contact } from './domain/contact';
-import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
-import { MaskedResource } from '../common/decorators/masked-resource.decorator';
+import { FieldPolicyInterceptor } from '../object-manager/layout/field-policy.interceptor';
+import { ObjectFieldPolicy } from '../object-manager/layout/object-field-policy.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
 import {
   ApiTags,
@@ -68,7 +68,8 @@ import { TicketsService } from '../tickets/tickets.service';
 
 @ApiTags('Contacts')
 @ApiBearerAuth()
-@UseInterceptors(DataMaskingInterceptor)
+@UseInterceptors(FieldPolicyInterceptor)
+@ObjectFieldPolicy('Contact')
 @SensitiveResource('contacts')
 @Controller({
   path: 'contacts',
@@ -90,7 +91,6 @@ export class ContactsController {
   @ApiCreatedResponse({ type: Contact })
   @Post()
   @RequirePermission('create', 'contacts')
-  @MaskedResource('Contact')
   create(@Body() data: CreateContactDto) {
     return this.service.create(data);
   }
@@ -98,7 +98,6 @@ export class ContactsController {
   @ApiOkResponse({ type: [Contact] })
   @Get()
   @RequirePermission('view', 'contacts')
-  @MaskedResource('Contact')
   async findAll(@Query() query: QueryContactDto) {
     const result = await this.service.findAll(query);
 
@@ -599,7 +598,6 @@ export class ContactsController {
   @RequirePermission('view', 'contacts')
   @UseAcl('view', 'contacts')
   @LoadResource('contacts')
-  @MaskedResource('Contact') // Fallback to Contact if specific resource not identified
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }
@@ -610,7 +608,6 @@ export class ContactsController {
   @UseAcl('edit', 'contacts')
   @LoadResource('contacts')
   @UsePipes(new SanitizeMaskedInputPipe())
-  @MaskedResource('Contact')
   update(@Param('id') id: string, @Body() data: UpdateContactDto) {
     return this.service.update(id, data);
   }

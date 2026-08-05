@@ -3,7 +3,7 @@ import { PermissionAction, PermissionResource } from './permission.constants';
 /**
  * Field-sensitivity classification — permission-driven PII/financial masking.
  *
- * This is distinct from the existing layout-based DataMaskingInterceptor (which
+ * This is distinct from the layout-based FieldPolicyInterceptor (which
  * masks UI columns per group). Here a field is masked UNLESS the acting
  * principal holds a specific "unmask" permission — the classification is a
  * security control, not a presentation preference. AI-agent principals are

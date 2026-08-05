@@ -10,6 +10,8 @@ import { CrmSetting } from './domain/crm-setting';
 import { ClsService } from 'nestjs-cls';
 import { TenantSettingsSeedingService } from './tenant-settings-seeding.service';
 import { ulid } from 'ulid';
+import { SettingsCacheService } from './settings-cache.service';
+import { assertKnownSettingKey } from './settings-keys';
 import { Model } from 'mongoose';
 import {
   ContactSchemaClass,
@@ -50,18 +52,16 @@ const LIFECYCLE_STATUS_MUTABLE_FIELDS = new Set([
 
 @Injectable()
 export class CrmSettingsService {
-  private readonly settingsCache = new Map<
-    string,
-    { value: any; expiresAt: number }
-  >();
-  private static readonly CACHE_TTL_MS = 30_000; // 30 seconds
-
   constructor(
     private readonly repository: CrmSettingRepository,
     private readonly cls: ClsService,
     private readonly seeding: TenantSettingsSeedingService,
     @InjectModel(ContactSchemaClass.name)
     private readonly contactModel: Model<ContactSchemaDocument>,
+    // Cache coherence lives in its own service: this one already owns lifecycle
+    // mutation, list-view array operations and settings validation, and the cache
+    // needs Redis subscription lifecycle hooks that have nothing to do with them.
+    private readonly cache: SettingsCacheService,
   ) {}
 
   /**
@@ -75,15 +75,12 @@ export class CrmSettingsService {
 
   async getSetting(key: string, tenantId?: string): Promise<any> {
     const tid = this.resolveTenantId(tenantId);
-    const cacheKey = `${tid}:${key}`;
 
-    // Check in-memory cache first to avoid a MongoDB round-trip on every request.
-    // This is critical for hot-path settings like 'layout_settings' which are
-    // read by DataMaskingInterceptor on every single HTTP response.
-    const cached = this.settingsCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.value;
-    }
+    // Cached first to avoid a MongoDB round-trip on every request. Critical for
+    // hot-path settings like 'layout_settings', which FieldPolicyInterceptor reads
+    // on every single HTTP response.
+    const cached = this.cache.get(tid, key);
+    if (cached !== undefined) return cached;
 
     const setting = await this.repository.findOne(tid, key);
 
@@ -91,17 +88,11 @@ export class CrmSettingsService {
       // Lazy-seed: existing tenants that predate a new module deployment
       // will receive the default value on their first GET.
       const seeded = await this.seeding.lazySeed(tid, key);
-      this.settingsCache.set(cacheKey, {
-        value: seeded,
-        expiresAt: Date.now() + CrmSettingsService.CACHE_TTL_MS,
-      });
+      this.cache.set(tid, key, seeded);
       return seeded;
     }
 
-    this.settingsCache.set(cacheKey, {
-      value: setting.value,
-      expiresAt: Date.now() + CrmSettingsService.CACHE_TTL_MS,
-    });
+    this.cache.set(tid, key, setting.value);
     return setting.value;
   }
 
@@ -112,13 +103,15 @@ export class CrmSettingsService {
   ): Promise<CrmSetting> {
     const tid = this.resolveTenantId(tenantId);
 
+    assertKnownSettingKey(key);
     validateVisibilitySetting(key, value);
     validateNavigationSetting(key, value);
 
-    // Invalidate cache on write so the next read fetches fresh data.
-    this.settingsCache.delete(`${tid}:${key}`);
-
-    return this.repository.update(tid, key, value);
+    const updated = await this.repository.update(tid, key, value);
+    // After the write, and across every instance: invalidating before would leave a
+    // window where a concurrent read repopulates the cache from the old document.
+    await this.cache.invalidate(tid, key);
+    return updated;
   }
 
   // List Views (atomic array ops, cache-invalidating)
@@ -131,7 +124,7 @@ export class CrmSettingsService {
     tenantId?: string,
   ): Promise<CrmSetting | null> {
     const tid = this.resolveTenantId(tenantId);
-    this.settingsCache.delete(`${tid}:${key}`);
+    await this.cache.invalidate(tid, key);
     return this.repository.pushListView(tid, key, view);
   }
 
@@ -142,7 +135,7 @@ export class CrmSettingsService {
     tenantId?: string,
   ): Promise<CrmSetting | null> {
     const tid = this.resolveTenantId(tenantId);
-    this.settingsCache.delete(`${tid}:${key}`);
+    await this.cache.invalidate(tid, key);
     return this.repository.updateListView(tid, key, viewId, updates);
   }
 
@@ -152,7 +145,7 @@ export class CrmSettingsService {
     tenantId?: string,
   ): Promise<CrmSetting | null> {
     const tid = this.resolveTenantId(tenantId);
-    this.settingsCache.delete(`${tid}:${key}`);
+    await this.cache.invalidate(tid, key);
     return this.repository.pullListView(tid, key, viewId);
   }
 
@@ -162,8 +155,41 @@ export class CrmSettingsService {
     tenantId?: string,
   ): Promise<CrmSetting | null> {
     const tid = this.resolveTenantId(tenantId);
-    this.settingsCache.delete(`${tid}:${key}`);
+    await this.cache.invalidate(tid, key);
     return this.repository.pushManyListViews(tid, key, views);
+  }
+
+  // Layouts (scoped, atomic)
+  // Same reasoning as the list-view helpers above: the settings screen must be able
+  // to save one object's configuration without resubmitting a document it snapshotted
+  // at mount, or two concurrent editors lose each other's work.
+
+  async replaceLayoutFields(
+    key: string,
+    groupId: string,
+    object: string,
+    fields: Record<string, any>[],
+    tenantId?: string,
+  ): Promise<void> {
+    const tid = this.resolveTenantId(tenantId);
+    await this.repository.replaceLayoutFields(
+      tid,
+      key,
+      groupId,
+      object,
+      fields,
+    );
+    await this.cache.invalidate(tid, key);
+  }
+
+  async replaceLayoutSections(
+    key: string,
+    sections: unknown,
+    tenantId?: string,
+  ): Promise<void> {
+    const tid = this.resolveTenantId(tenantId);
+    await this.repository.replaceLayoutSections(tid, key, sections);
+    await this.cache.invalidate(tid, key);
   }
 
   async createLifecycleStage(

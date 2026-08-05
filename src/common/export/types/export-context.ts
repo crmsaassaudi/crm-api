@@ -94,10 +94,15 @@ export interface BaseExportJobData extends TenantJobData {
   tenantId: string;
   userId?: string;
   /**
-   * Snapshot of the requester's masking group at enqueue time. The worker has
-   * no HTTP context, so it cannot re-derive this. Falls back to 'default'.
+   * Snapshot of the requester's group ids at enqueue time. The worker has no HTTP
+   * context, so it cannot re-derive them.
+   *
+   * Plural, and that is the fix: this was `userGroupId`, singular, read from a CLS
+   * key nothing ever wrote. Every export therefore resolved to the tenant's
+   * default layout, so per-group masking never applied to a file — while the
+   * docblock below claimed this value was the precedent for snapshotting scope.
    */
-  userGroupId?: string;
+  groupIds?: string[];
   /**
    * Snapshot of the requester's row-level visibility. See
    * {@link ExportScopeSnapshot} — without it the export reads wider than the

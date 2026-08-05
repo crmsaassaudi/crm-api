@@ -7,6 +7,7 @@ import { ExportRequestService } from './export-request.service';
 import { ExportCleanupCron } from './export-cleanup.cron';
 import { ActivityLogModule } from '../../activity-log/activity-log.module';
 import { isAnyWorkerRuntime } from '../../config/runtime-role';
+import { ObjectManagerModule } from '../../object-manager/object-manager.module';
 
 // The cleanup cron only runs in processes that consume queues (worker /
 // all-in-one) — never in a dedicated API-only process.
@@ -30,6 +31,10 @@ const cronProviders = isAnyWorkerRuntime() ? [ExportCleanupCron] : [];
       { name: ExportJobSchemaClass.name, schema: ExportJobSchema },
     ]),
     ActivityLogModule,
+    // For ObjectRegistryService and PrincipalGroupsService: an export applies the
+    // same field policy as the API, from the same resolution, so it must not carry
+    // its own copy of either.
+    ObjectManagerModule,
   ],
   providers: [
     ExportStorageFactory,

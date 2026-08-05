@@ -33,6 +33,13 @@ export class CustomFieldRepository {
     return docs.map(CustomFieldMapper.toDomain);
   }
 
+  /** Active fields only — the count that decides whether another may be created. */
+  async countByModule(tenantId: string, module: string): Promise<number> {
+    return this.model
+      .countDocuments({ tenantId, module, isActive: { $ne: false } })
+      .exec();
+  }
+
   async create(
     tenantId: string,
     data: Omit<CustomField, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>,

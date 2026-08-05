@@ -5,9 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
-import { GroupsService } from '../groups/groups.service';
 import { ClsService } from 'nestjs-cls';
-import { UsersService } from '../users/users.service';
+import { AuthorizationService } from '../common/permissions/authorization.service';
+import { PrincipalGroupsService } from '../object-manager/principal-groups.service';
 import { DEFAULTS_MAP } from '../crm-settings/tenant-settings-seeding.service';
 import { ulid } from 'ulid';
 
@@ -59,8 +59,8 @@ export class ListViewsService {
 
   constructor(
     private readonly settingsService: CrmSettingsService,
-    private readonly groupsService: GroupsService,
-    private readonly usersService: UsersService,
+    private readonly authorization: AuthorizationService,
+    private readonly principalGroups: PrincipalGroupsService,
     private readonly cls: ClsService,
   ) {}
 
@@ -85,14 +85,14 @@ export class ListViewsService {
       return moduleViews.filter((v) => v.isSystemDefault);
     }
 
-    // Check if user is OWNER or ADMIN in this tenant
-    const isAdmin = await this.isAdminOrOwner(userId);
-    if (isAdmin) {
-      return moduleViews; // Admin sees everything
+    if (await this.administersSettings()) {
+      return moduleViews; // Settings administrators see every view.
     }
 
-    // Agent: resolve their groups
-    const userGroupIds = await this.getUserGroupIds(userId);
+    // One indexed query, memoised for the request — this used to load every group
+    // in the tenant with its full member list and filter in memory, on both of the
+    // two requests every list page makes.
+    const userGroupIds = await this.principalGroups.groupIds();
 
     // System views are always visible to all agents — they define the column layout
     // foundation and should never be hidden even when custom views exist.
@@ -293,9 +293,14 @@ export class ListViewsService {
     const existing = settings.views.find((v) => v.id === id);
     if (!existing) throw new NotFoundException(`List view "${id}" not found`);
 
-    // Prevent deleting system defaults
+    // A system default is the column layout every other view falls back to, so it
+    // is not deletable. 409, not 404: the view plainly exists, and answering "not
+    // found" for a request that was understood and refused sends the caller looking
+    // for a wrong id.
     if (existing.isSystemDefault) {
-      throw new NotFoundException('Cannot delete a system default view');
+      throw new ConflictException(
+        `List view "${existing.name}" is a system default and cannot be deleted. Every other view falls back to it.`,
+      );
     }
 
     // Atomic $pull — removes only the targeted view.
@@ -305,38 +310,29 @@ export class ListViewsService {
   // Internal Helpers
 
   /**
-   * Check if user has OWNER or ADMIN role in the current tenant.
+   * Whether the caller administers settings, and therefore sees every view.
+   *
+   * Delegated to the authorization engine rather than re-derived here. The previous
+   * implementation loaded the user document and tested
+   * `membership.roles.includes('OWNER'|'ADMIN')`, which agrees with the engine for
+   * those two flags but misses the two other ways the engine grants full access:
+   * `tenant.ownerId` matching the caller, and `permissionOverrides` denying a flag
+   * holder. Asking the engine means the answer cannot drift from the one that
+   * authorizes every other request.
    */
-  private async isAdminOrOwner(userId: string): Promise<boolean> {
+  private async administersSettings(): Promise<boolean> {
     try {
-      const user = await this.usersService.findById(userId);
-      if (!user) return false;
-
-      const tenantId = this.cls.get('tenantId');
-      const membership = user.tenants?.find(
-        (t) => t.tenantId?.toString() === tenantId?.toString(),
-      );
-      if (!membership) return false;
-
-      return (
-        membership.roles?.some((r) => r === 'OWNER' || r === 'ADMIN') ?? false
-      );
+      return await this.authorization
+        .canPerformAction({
+          rule: { action: 'manage_system', resource: 'settings' },
+          rawUserId: String(this.cls.get('userId')),
+          tenantHint: this.cls.get('tenantId'),
+        })
+        .then((decision) => decision.allowed);
     } catch {
+      // Fail closed: an unresolvable decision shows the caller their group views
+      // rather than every view in the tenant.
       return false;
-    }
-  }
-
-  /**
-   * Get the current user's group IDs.
-   */
-  private async getUserGroupIds(userId: string): Promise<string[]> {
-    try {
-      const groups = await this.groupsService.findAll();
-      return groups
-        .filter((g) => g.memberIds?.includes(userId))
-        .map((g) => g.id);
-    } catch {
-      return [];
     }
   }
 

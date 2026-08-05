@@ -41,9 +41,9 @@ export class ExportJobSchemaClass {
   })
   userId: string;
 
-  /** Snapshot of the requester's masking group at enqueue time. */
-  @Prop()
-  userGroupId?: string;
+  /** Snapshot of the requester's group ids at enqueue time. */
+  @Prop({ type: [String], default: undefined })
+  groupIds?: string[];
 
   /** Module identifier: 'contact', 'account', 'deal', 'ticket', etc. */
   @Prop({ required: true, index: true })

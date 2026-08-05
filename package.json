@@ -78,6 +78,7 @@
     "migrate:omni-remediation": "ts-node -r tsconfig-paths/register ./src/scripts/migrate-omni-remediation.ts",
     "migrate:ticket-number-index": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-02-scope-ticket-number-index.ts",
     "migrate:task-indexes": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-03-task-indexes.ts",
+    "migrate:object-manager-unification": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-04-object-manager-unification.ts",
     "test:search:it": "jest -c jest.search-integration.config.js --runInBand"
   },
   "dependencies": {

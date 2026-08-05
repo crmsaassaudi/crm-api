@@ -65,6 +65,7 @@ import {
   ContactStageTransitionSchema,
   ContactStageTransitionSchemaClass,
 } from './lifecycle/contact-stage-transition.schema';
+import { ObjectManagerModule } from '../object-manager/object-manager.module';
 import { ContactStageTransitionListener } from './lifecycle/contact-stage-transition.listener';
 
 const workerProviders = isWorkerRuntime()
@@ -147,6 +148,7 @@ const workerProviders = isWorkerRuntime()
     // and CustomFieldsService so `customFields.<key>` filters can be validated
     // against that same registry.
     CustomFieldsModule,
+    ObjectManagerModule,
     // `contact.tags[]` stores tag IDs; bulk-tagging validates them against the
     // catalogue rather than writing whatever strings it was handed.
     TagsModule,

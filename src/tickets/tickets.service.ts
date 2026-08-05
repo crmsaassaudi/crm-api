@@ -5,7 +5,6 @@ import {
   Logger,
   NotFoundException,
   Optional,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { BusinessException } from '../common/exceptions/business.exception';
@@ -49,6 +48,7 @@ import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { loadCustomFieldDefinitions } from '../utils/custom-field-filter';
 import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
 import { logSwallowed } from '../common/utils/log-swallowed';
+import { RecordWriteValidator } from '../object-manager/validation/record-write-validator.service';
 import { AuthorizationService } from '../common/permissions/authorization.service';
 
 @Injectable()
@@ -75,6 +75,7 @@ export class TicketsService {
     // Raw connection for the merge re-parent pass: injecting ActivityLogModule and
     // TasksModule here would close a dependency cycle with ContactsModule.
     @InjectConnection() private readonly connection: Connection,
+    private readonly writeValidator: RecordWriteValidator,
     @Optional() private readonly customFields?: CustomFieldsService,
     @Optional()
     private readonly customFieldValidator?: CustomFieldValueValidator,
@@ -186,52 +187,6 @@ export class TicketsService {
   ): asserts value is string {
     if (typeof value !== 'string' || !Types.ObjectId.isValid(value)) {
       throw new BadRequestException(`${field} is not a valid id`);
-    }
-  }
-
-  /**
-   * Validate tenant-configurable required fields.
-   * Reads the layout_settings from CrmSettings (30s cache) and checks
-   * that all fields marked isRequired=true have a non-empty value.
-   */
-  private async validateRequiredFields(
-    data: Record<string, any>,
-    mode: 'create' | 'update',
-  ): Promise<void> {
-    const layoutSettings = await this.crmSettings.getSetting('layout_settings');
-    const layout = layoutSettings?.groupLayouts?.['default'];
-    const fieldConfigs: Array<{
-      key: string;
-      isRequired: boolean;
-      isVisible: boolean;
-    }> = layout?.Ticket || [];
-
-    const errors: Record<string, string> = {};
-
-    for (const field of fieldConfigs) {
-      if (!field.isRequired) continue;
-
-      // On update, only validate fields that are present in the payload.
-      // This allows partial updates without requiring all required fields.
-      if (mode === 'update' && !(field.key in data)) continue;
-
-      const value = data[field.key];
-      const isEmpty =
-        value === undefined ||
-        value === null ||
-        value === '' ||
-        (Array.isArray(value) && value.length === 0);
-
-      if (isEmpty) {
-        errors[field.key] = `${field.key} is required`;
-      }
-    }
-
-    if (Object.keys(errors).length > 0) {
-      throw new UnprocessableEntityException({
-        status: 422,
-        errors,
-      });
     }
   }
 
@@ -414,7 +369,11 @@ export class TicketsService {
 
   async create(data: Partial<Ticket>): Promise<Ticket> {
     this.cleanRefs(data as Record<string, any>);
-    await this.validateRequiredFields(data as Record<string, any>, 'create');
+    await this.writeValidator.assertValid(
+      'Ticket',
+      data as unknown as Record<string, unknown>,
+      'create',
+    );
     await this.validateTenantReferences(data as Record<string, any>);
     const customFields = this.customFieldValidator
       ? await this.customFieldValidator.validate('Ticket', data.customFields, {
@@ -528,7 +487,11 @@ export class TicketsService {
     }
 
     this.cleanRefs(data as Record<string, any>);
-    await this.validateRequiredFields(data as Record<string, any>, 'update');
+    await this.writeValidator.assertValid(
+      'Ticket',
+      data as unknown as Record<string, unknown>,
+      'update',
+    );
     await this.validateTenantReferences(data as Record<string, any>);
 
     const customFields = this.customFieldValidator

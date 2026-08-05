@@ -132,16 +132,21 @@ describe('DealsService', () => {
       // userModel: assertOwnerExists's lookup. Existing tests only ever pass an
       // empty-string ownerId (sanitized to undefined before the check runs), so
       // this fixture never needs to resolve a real user.
-      { findOne: jest.fn().mockReturnValue({
+      {
+        findOne: jest.fn().mockReturnValue({
           select: jest.fn().mockReturnThis(),
           lean: jest.fn().mockReturnThis(),
           exec: jest.fn().mockResolvedValue({ _id: 'user_1' }),
-        }) } as any,
+        }),
+      } as any,
       exportRequest,
       { getSetting: jest.fn().mockResolvedValue(null) } as any, // crmSettings
       { validateTagIds: jest.fn().mockResolvedValue(undefined) } as any, // tagsService
-      { canPerformAction: jest.fn().mockResolvedValue({ allowed: true }) } as any, // authorization
+      {
+        canPerformAction: jest.fn().mockResolvedValue({ allowed: true }),
+      } as any, // authorization
       { getDeniedResourceIds: jest.fn().mockResolvedValue([]) } as any, // objectAcl
+      { assertValid: jest.fn().mockResolvedValue(undefined) } as any, // writeValidator
     );
   });
 

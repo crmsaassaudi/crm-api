@@ -17,6 +17,7 @@ describe('TasksService export', () => {
       queue,
       exportRequest as any,
       {} as any,
+      { assertValid: jest.fn().mockResolvedValue(undefined) } as any, // writeValidator
       undefined,
       undefined,
     );

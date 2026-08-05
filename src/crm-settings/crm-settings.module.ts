@@ -2,6 +2,7 @@ import { Module, Global } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { CrmSettingsController } from './crm-settings.controller';
 import { CrmSettingsService } from './crm-settings.service';
+import { SettingsCacheService } from './settings-cache.service';
 import { TenantSettingsSeedingService } from './tenant-settings-seeding.service';
 import { CrmSettingRepository } from './infrastructure/persistence/document/repositories/crm-setting.repository';
 import {
@@ -24,9 +25,14 @@ import {
   controllers: [CrmSettingsController],
   providers: [
     CrmSettingsService,
+    SettingsCacheService,
     TenantSettingsSeedingService,
     CrmSettingRepository,
   ],
-  exports: [CrmSettingsService, TenantSettingsSeedingService],
+  exports: [
+    CrmSettingsService,
+    TenantSettingsSeedingService,
+    SettingsCacheService,
+  ],
 })
 export class CrmSettingsModule {}

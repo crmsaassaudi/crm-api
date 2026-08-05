@@ -40,6 +40,7 @@ import {
 import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { TagsModule } from '../tags/tags.module';
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
+import { ObjectManagerModule } from '../object-manager/object-manager.module';
 import { CustomFieldsModule } from '../custom-fields/custom-fields.module';
 
 const workerProviders = isWorkerRuntime()
@@ -59,6 +60,7 @@ const workerProviders = isWorkerRuntime()
     // Supplies CustomFieldValueValidator so submitted `customFields` are checked
     // against the tenant's registry instead of being written as opaque Mixed.
     CustomFieldsModule,
+    ObjectManagerModule,
     MongooseModule.forFeature([
       { name: DealSchemaClass.name, schema: DealSchema },
       { name: ImportJobSchemaClass.name, schema: ImportJobSchema },

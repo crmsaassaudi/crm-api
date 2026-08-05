@@ -66,9 +66,7 @@ function decodeDealCursor(
 ): { createdAt: string; id: string } | null {
   if (!raw || typeof raw !== 'string') return null;
   try {
-    const parsed = JSON.parse(
-      Buffer.from(raw, 'base64url').toString('utf8'),
-    );
+    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
     if (
       parsed &&
       typeof parsed.createdAt === 'string' &&
@@ -82,6 +80,7 @@ function decodeDealCursor(
   }
 }
 import { ObjectAclService } from '../common/permissions/object-acl.service';
+import { RecordWriteValidator } from '../object-manager/validation/record-write-validator.service';
 import { BulkUpdateDealsDto, BulkDealResult } from './dto/bulk-deal.dto';
 
 @Injectable()
@@ -116,6 +115,7 @@ export class DealsService {
     private readonly tagsService: TagsService,
     private readonly authorization: AuthorizationService,
     private readonly objectAcl: ObjectAclService,
+    private readonly writeValidator: RecordWriteValidator,
     @Optional() private readonly customFields?: CustomFieldsService,
   ) {
     this.importStorage = this.storageFactory.create('deals');
@@ -284,51 +284,6 @@ export class DealsService {
     return data;
   }
 
-  /**
-   * Validate tenant-configurable required fields.
-   * Reads the layout_settings from CrmSettings (30s cache) and checks
-   * that all fields marked isRequired=true have a non-empty value.
-   */
-  private async validateRequiredFields(
-    data: Record<string, any>,
-    mode: 'create' | 'update',
-  ): Promise<void> {
-    const layoutSettings = await this.crmSettings.getSetting('layout_settings');
-    const layout = layoutSettings?.groupLayouts?.['default'];
-    const fieldConfigs: Array<{
-      key: string;
-      isRequired: boolean;
-      isVisible: boolean;
-    }> = layout?.Deal || [];
-
-    const errors: Record<string, string> = {};
-
-    for (const field of fieldConfigs) {
-      if (!field.isRequired) continue;
-
-      // On update, only validate fields that are present in the payload.
-      if (mode === 'update' && !(field.key in data)) continue;
-
-      const value = data[field.key];
-      const isEmpty =
-        value === undefined ||
-        value === null ||
-        value === '' ||
-        (Array.isArray(value) && value.length === 0);
-
-      if (isEmpty) {
-        errors[field.key] = `${field.key} is required`;
-      }
-    }
-
-    if (Object.keys(errors).length > 0) {
-      throw new UnprocessableEntityException({
-        status: 422,
-        errors,
-      });
-    }
-  }
-
   async exportDeals(
     dto: ExportRequestDto,
   ): Promise<{ jobId: string; status: 'queued' }> {
@@ -476,7 +431,11 @@ export class DealsService {
 
   async create(data: Partial<Deal>): Promise<Deal> {
     this.cleanRefs(data as Record<string, any>);
-    await this.validateRequiredFields(data as Record<string, any>, 'create');
+    await this.writeValidator.assertValid(
+      'Deal',
+      data as unknown as Record<string, unknown>,
+      'create',
+    );
     await this.assertOwnerExists((data as any).ownerId);
     await this.assertMayTransferOwnership(null, (data as any).ownerId);
     await this.checkDuplicate(data as Record<string, any>);
@@ -603,7 +562,11 @@ export class DealsService {
     }
 
     this.cleanRefs(data as Record<string, any>);
-    await this.validateRequiredFields(data as Record<string, any>, 'update');
+    await this.writeValidator.assertValid(
+      'Deal',
+      data as unknown as Record<string, unknown>,
+      'update',
+    );
     if ((data as any).ownerId !== undefined) {
       await this.assertOwnerExists((data as any).ownerId);
       // A fresh assignment clears the "owner left the tenant" marker —

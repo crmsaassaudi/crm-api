@@ -34,6 +34,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { TASK_EXPORT_QUEUE } from './tasks.constants';
+import { ObjectManagerModule } from '../object-manager/object-manager.module';
 import { TaskExportProcessor } from './export/task-export.processor';
 
 const workerProviders = isWorkerRuntime()
@@ -68,6 +69,7 @@ const workerProviders = isWorkerRuntime()
     ]),
     AutomationOutboxModule,
     CustomFieldsModule,
+    ObjectManagerModule,
     BullModule.registerQueue({
       name: TASK_EXPORT_QUEUE,
       defaultJobOptions: {

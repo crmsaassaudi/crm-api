@@ -53,6 +53,7 @@ import { LeadScoringModule } from './lead-scoring/lead-scoring.module';
 
 import { TasksModule } from './tasks/tasks.module';
 import { CustomFieldsModule } from './custom-fields/custom-fields.module';
+import { ObjectManagerModule } from './object-manager/object-manager.module';
 import { TagsModule } from './tags/tags.module';
 import { CannedResponsesModule } from './canned-responses/canned-responses.module';
 import { RichMessageTemplatesModule } from './rich-message-templates/rich-message-templates.module';
@@ -320,6 +321,7 @@ function bullBoardBasicAuth() {
     TaskSettingsModule,
     TasksModule,
     CustomFieldsModule,
+    ObjectManagerModule,
     TagsModule,
     CannedResponsesModule,
     RichMessageTemplatesModule,

@@ -108,6 +108,7 @@ describe('AccountsService', () => {
       exportRequest,
       { validateTagIds: jest.fn().mockResolvedValue(undefined) } as any, // tagsService
       { emit: jest.fn() } as any, // eventEmitter
+      { assertValid: jest.fn().mockResolvedValue(undefined) } as any, // writeValidator
     );
   });
 

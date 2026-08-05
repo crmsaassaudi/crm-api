@@ -26,8 +26,8 @@ import {
   ApiBody,
   ApiOkResponse,
 } from '@nestjs/swagger';
-import { DataMaskingInterceptor } from '../common/interceptors/data-masking.interceptor';
-import { MaskedResource } from '../common/decorators/masked-resource.decorator';
+import { FieldPolicyInterceptor } from '../object-manager/layout/field-policy.interceptor';
+import { ObjectFieldPolicy } from '../object-manager/layout/object-field-policy.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
 import {
   RequirePermission,
@@ -55,8 +55,8 @@ function resolveContentType(ext: string | undefined): string {
 
 @ApiTags('Deals')
 @ApiBearerAuth()
-@UseInterceptors(DataMaskingInterceptor)
-@MaskedResource('Deal')
+@UseInterceptors(FieldPolicyInterceptor)
+@ObjectFieldPolicy('Deal')
 @SensitiveResource('deals')
 @Controller({
   path: 'deals',

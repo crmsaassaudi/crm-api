@@ -228,6 +228,53 @@ export class CrmSettingRepository {
    * a duplicate (module, name) pair in a single round-trip.
    * Returns null when a same-module/name view already exists (lost the race).
    */
+  /**
+   * Replace one object's field configuration inside one group's layout, and
+   * nothing else.
+   *
+   * The settings screen used to read `layout_settings` at mount and PATCH the whole
+   * document back on save, so two administrators editing different objects — or
+   * different groups — silently discarded each other's work, last write winning
+   * with no warning. `list_views` already avoided that with atomic array
+   * operators; layouts had not caught up.
+   *
+   * A single `$set` on the dotted path touches exactly the array being edited, so
+   * concurrent edits to other objects and other groups are untouched by
+   * construction rather than by hoping the snapshots agree.
+   */
+  async replaceLayoutFields(
+    tenantId: string,
+    key: string,
+    groupId: string,
+    object: string,
+    fields: Record<string, any>[],
+  ): Promise<CrmSetting | null> {
+    const doc = await this.model
+      .findOneAndUpdate(
+        { tenantId, key },
+        { $set: { [`value.groupLayouts.${groupId}.${object}`]: fields } },
+        { new: true, upsert: true },
+      )
+      .exec();
+    return doc ? CrmSettingMapper.toDomain(doc) : null;
+  }
+
+  /** Replace the shared section configuration without touching any group layout. */
+  async replaceLayoutSections(
+    tenantId: string,
+    key: string,
+    sections: unknown,
+  ): Promise<CrmSetting | null> {
+    const doc = await this.model
+      .findOneAndUpdate(
+        { tenantId, key },
+        { $set: { 'value.sectionConfigs': sections } },
+        { new: true, upsert: true },
+      )
+      .exec();
+    return doc ? CrmSettingMapper.toDomain(doc) : null;
+  }
+
   async pushListView(
     tenantId: string,
     key: string,

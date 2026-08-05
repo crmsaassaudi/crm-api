@@ -160,6 +160,8 @@ describe('ContactsService', () => {
       importJobModel as any,
       createMongooseModelMock() as any, // exportJobModel
       userModel as any,
+      { assertValid: jest.fn().mockResolvedValue(undefined) } as any, // writeValidator
+      { groupIds: jest.fn().mockResolvedValue([]) } as any, // principalGroups
     );
   });
 

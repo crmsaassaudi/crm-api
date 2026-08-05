@@ -97,6 +97,7 @@ function build(
     {} as any,
     {} as any,
     references as any,
+    { assertValid: jest.fn().mockResolvedValue(undefined) } as any, // writeValidator
     undefined,
     undefined,
   );
