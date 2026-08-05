@@ -2,7 +2,6 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import Redis from 'ioredis';
 import {
   TaskSchemaClass,
@@ -33,9 +32,7 @@ const MAX_LATENESS_MS = 24 * 60 * 60 * 1000;
  * product asked for a time, promised a reminder, and never sent one. That is the
  * worst shape a defect can take: the system is confidently silent.
  *
- * Delivery reuses the two seams the platform already has rather than inventing a
- * third: the `internal.notification` event (the same contract the automation
- * engine's InternalNotificationExecutor emits) and the `socket:*` Redis channel
+ * Delivery uses the seam the platform already has: the `socket:*` Redis channel
  * that CrmRealtimeGateway bridges to Socket.IO rooms. Note that no consumer
  * *persists* in-app notifications yet — that gap is platform-wide and predates
  * this service — so a reminder reaches a connected client live and is otherwise
@@ -49,7 +46,6 @@ export class TaskReminderService {
     @InjectModel(TaskSchemaClass.name)
     private readonly taskModel: Model<TaskSchemaDocument>,
     @Optional() @Inject(IOREDIS_CLIENT) private readonly redis?: Redis,
-    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   /**
@@ -157,20 +153,14 @@ export class TaskReminderService {
 
     // Live delivery to whoever is connected, through the bridge every other
     // module's async notifications already use.
+    //
+    // This used to also emit an `internal.notification` event "so any future
+    // consumer picks up reminders". No consumer was ever written, and the same
+    // event was the automation engine's only notification path — two producers,
+    // zero subscribers. An emit with no listener is not a seam, it is a comment
+    // that compiles, so it is gone: the Redis channel above is the delivery.
     if (this.redis) {
       await this.redis.publish(TASK_REMINDER_CHANNEL, JSON.stringify(payload));
     }
-
-    // Same event the automation engine's internal_notification action emits, so
-    // any future consumer picks up reminders without special-casing them.
-    this.events?.emit('internal.notification', {
-      tenantId,
-      recipientType: 'owner',
-      recipientIds: payload.ownerId ? [payload.ownerId] : [],
-      title: `Nhắc việc: ${task.title}`,
-      message: `Task "${task.title}" đến hạn ${new Date(task.dueDate).toISOString()}.`,
-      source: 'task-reminder',
-      context: { recordType: 'Task', recordId: payload.taskId },
-    });
   }
 }

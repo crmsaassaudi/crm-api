@@ -18,6 +18,9 @@ describe('TriggerEvaluatorService', () => {
       startExecution: jest.fn().mockResolvedValue({ _id: 'log1' }),
       failExecution: jest.fn(),
     };
+    const quota = {
+      consumeExecution: jest.fn().mockResolvedValue({ allowed: true }),
+    };
 
     const service = new TriggerEvaluatorService(
       workflowRepo as any,
@@ -25,6 +28,7 @@ describe('TriggerEvaluatorService', () => {
       throttle as any,
       bulkProducer as any,
       executionLogRepo as any,
+      quota as any,
     );
     return {
       service,
@@ -32,6 +36,7 @@ describe('TriggerEvaluatorService', () => {
       orchestrator,
       bulkProducer,
       executionLogRepo,
+      quota,
     };
   };
 

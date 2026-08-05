@@ -47,9 +47,9 @@ describe('AutomationWorkflowService node config validation', () => {
       redactNodes: jest.fn((nodes: any[]) => nodes),
     };
     const channelConfigRepo = {
-      findById: jest
+      findByIds: jest
         .fn()
-        .mockResolvedValue(channelConfigExists ? { id: 'cfg1' } : null),
+        .mockResolvedValue(channelConfigExists ? [{ id: 'cfg1' }] : []),
     };
 
     const service = new AutomationWorkflowService(
@@ -97,21 +97,25 @@ describe('AutomationWorkflowService node config validation', () => {
     expect(repo.create).not.toHaveBeenCalled();
   });
 
-  it('should accept the *Node spelling the builder emits', async () => {
+  it('should reject the React Flow node spelling', async () => {
+    // The web store maps `actionNode` -> `action` before it saves, so the
+    // backend accepting both was a tolerance layer for a caller that does not
+    // exist — and one more place for the two vocabularies to drift apart.
     const { service, repo } = build();
 
-    await service.create(
-      dto([
-        {
-          id: 'a',
-          type: 'actionNode',
-          position: { x: 1, y: 1 },
-          config: { actionType: 'add_tag', tags: ['x'] },
-        },
-      ]),
-    );
-
-    expect(repo.create).toHaveBeenCalled();
+    await expect(
+      service.create(
+        dto([
+          {
+            id: 'a',
+            type: 'actionNode',
+            position: { x: 1, y: 1 },
+            config: { actionType: 'add_tag', tags: ['x'] },
+          },
+        ]),
+      ),
+    ).rejects.toThrow(/unsupported type "actionNode"/);
+    expect(repo.create).not.toHaveBeenCalled();
   });
 
   it('should reject an unknown actionType at save time, not in the DLQ', async () => {
@@ -164,10 +168,10 @@ describe('AutomationWorkflowService node config validation', () => {
 
     // Tenant-scoped lookup — that is what makes "not mine" indistinguishable
     // from "not there".
-    expect(channelConfigRepo.findById).toHaveBeenCalledWith(
-      't1',
+    // Tenant-scoped, and one query for every reference rather than one per node.
+    expect(channelConfigRepo.findByIds).toHaveBeenCalledWith('t1', [
       'cfg-of-other-tenant',
-    );
+    ]);
   });
 
   it('should accept a configId owned by this tenant', async () => {
@@ -232,16 +236,60 @@ describe('AutomationWorkflowService node config validation', () => {
   });
 
   it.each(['send_whatsapp', 'send_zns'])(
-    'should refuse a new %s node — no provider integration exists',
+    'should not know about %s at all — the executor was removed',
     async (actionType) => {
+      // Registering an executor with no integration behind it kept a dead action
+      // in three separate catalogs. There is one catalog now, and it does not
+      // contain these.
       const { service, repo } = build();
 
       await expect(
         service.create(dto([action({ actionType })])),
-      ).rejects.toThrow(/not available yet/);
+      ).rejects.toThrow(/unknown actionType/);
       expect(repo.create).not.toHaveBeenCalled();
     },
   );
+
+  it('should refuse a send_email node with no channel config', async () => {
+    const { service, repo } = build();
+
+    await expect(
+      service.create(dto([action({ actionType: 'send_email' })])),
+    ).rejects.toThrow(/must select a channel config/);
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('should refuse a condition node with no rules', async () => {
+    const { service, repo } = build();
+
+    await expect(
+      service.create(
+        dto([
+          {
+            id: 'c',
+            type: 'condition',
+            position: { x: 1, y: 1 },
+            config: { logic: 'AND', rules: [] },
+          },
+          action({ actionType: 'add_tag', tags: ['x'] }),
+        ]),
+      ),
+    ).rejects.toThrow(/no rules/);
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('should refuse an edge whose handle the source node does not have', async () => {
+    const { service, repo } = build();
+
+    const payload = dto([action({ actionType: 'add_tag', tags: ['x'] })]);
+    payload.edges = [
+      // `matched` belongs to a condition, not an action.
+      { id: 'e1', source: 'a', target: 'trigger-1', sourceHandle: 'matched' },
+    ];
+
+    await expect(service.create(payload)).rejects.toThrow(/does not have/);
+    expect(repo.create).not.toHaveBeenCalled();
+  });
 
   describe('Conversation / Message triggers', () => {
     it('should accept a Conversation trigger with route_to_group', async () => {

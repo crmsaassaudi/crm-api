@@ -3,12 +3,24 @@ import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
 import { WorkflowRunAs } from '../../../../domain/execution-principal';
+import { AutomationCrmModule } from '../../../../events/automation-event.payload';
 
 // Sub-document types
 
+/**
+ * `object` is typed from AutomationCrmModule rather than repeated inline.
+ *
+ * The inline list omitted Conversation and Message while the DTO, the event
+ * bridge, the action processor's record-type check and the execution-log schema
+ * all accepted them — so `POST /automation-workflows` with an omni trigger threw
+ * a Mongoose enum ValidationError, and the only way such a workflow could exist
+ * was to create it as something else and PATCH it (findOneAndUpdate does not run
+ * validators). Omni automation was reachable everywhere except where a user
+ * could switch it on.
+ */
 export interface WorkflowTriggerConfig {
   event: 'record_created' | 'field_updated';
-  object: 'Lead' | 'Contact' | 'Ticket' | 'Deal' | 'Account' | 'Task';
+  object: AutomationCrmModule;
   field?: string; // Only for field_updated
   runOncePerRecord: boolean;
 }
@@ -78,7 +90,16 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
       object: {
         type: String,
         required: true,
-        enum: ['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'],
+        enum: [
+          'Lead',
+          'Contact',
+          'Ticket',
+          'Deal',
+          'Account',
+          'Task',
+          'Conversation',
+          'Message',
+        ],
       },
       field: { type: String, default: null },
       runOncePerRecord: { type: Boolean, default: false },
@@ -143,15 +164,16 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
   /**
    * Which principal this workflow's actions execute as. See {@link WorkflowRunAs}.
    *
-   * Defaults to `system` — what every workflow authored before this field existed
-   * did implicitly. Narrowing a live workflow's scope during an upgrade would
-   * break it in ways that look like missing data rather than missing permission,
-   * so the default preserves behaviour and new workflows opt into `creator`.
+   * Defaults to `creator` — the least-privilege choice, and the same default the
+   * service applies. It used to default to `system` (full tenant scope) to
+   * preserve the behaviour of workflows authored before the field existed; there
+   * are none, and a schema whose default is the escalation is a trap waiting for
+   * the first write path that forgets to pass the field.
    */
   @Prop({
     type: String,
     enum: ['system', 'creator', 'trigger_user', 'record_owner'],
-    default: 'system',
+    default: 'creator',
   })
   runAs: WorkflowRunAs;
 
@@ -219,7 +241,16 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
       object: {
         type: String,
         required: true,
-        enum: ['Lead', 'Contact', 'Ticket', 'Deal', 'Account', 'Task'],
+        enum: [
+          'Lead',
+          'Contact',
+          'Ticket',
+          'Deal',
+          'Account',
+          'Task',
+          'Conversation',
+          'Message',
+        ],
       },
       field: { type: String, default: null },
       runOncePerRecord: { type: Boolean, default: false },

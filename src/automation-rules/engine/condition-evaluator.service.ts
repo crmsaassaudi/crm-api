@@ -27,19 +27,35 @@ function isConditionGroup(
 const MAX_NESTING_DEPTH = 3;
 
 /**
+ * A number, or null when the value is not unambiguously one.
+ *
+ * Accepts real numbers and strings whose trimmed form round-trips through
+ * `Number`: `"5"` and `"5.5"` qualify, `"007"`, `""` and `"5px"` do not.
+ */
+function strictNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return null;
+  return String(parsed) === trimmed ? parsed : null;
+}
+
+/**
  * ConditionEvaluatorService — evaluates nested AND/OR condition groups
  * against record data.
  *
- * Extends the proven pattern from RoutingRuleEvaluatorService and
- * AssignmentEngineService.evaluateCondition(), adding:
- *   - Recursive nested group evaluation
- *   - Full operator set: eq, neq, gt, lt, gte, lte, contains, not_contains,
- *     is_empty, is_not_empty
- *   - Automatic type coercion (string ↔ number)
- *   - Null-safe evaluation
- *   - Depth limit validation
+ * Operators: eq, neq, gt, lt, gte, lte, contains, not_contains, is_empty,
+ * is_not_empty. Nested groups up to {@link MAX_NESTING_DEPTH}.
  *
- * @see docs/prd-visual-automation-builder.md — Task 1.3
+ * Fails closed throughout: an empty group, a missing field, a depth overrun and
+ * an unknown operator all evaluate to NOT matched. A filter that cannot be
+ * evaluated must not be read as "everything passes".
  */
 @Injectable()
 export class ConditionEvaluatorService {
@@ -82,8 +98,16 @@ export class ConditionEvaluatorService {
     }
 
     if (!group.rules || group.rules.length === 0) {
-      // Empty group = no conditions = pass-through
-      return true;
+      // Fail closed. A condition node with no rules is a filter the author
+      // believes is filtering; treating it as "pass everything" is how a
+      // half-configured node ends up mailing an entire contact list. Saving such
+      // a node is refused up front (AutomationWorkflowService), so reaching here
+      // means a graph published before that check existed.
+      this.logger.warn(
+        'Condition group has no rules — treating as NOT matched. A filter with ' +
+          'nothing to filter on cannot be assumed to mean "everything".',
+      );
+      return false;
     }
 
     const results = group.rules.map((rule) => {
@@ -179,19 +203,26 @@ export class ConditionEvaluatorService {
 
   // Helpers
 
+  /**
+   * Equality, numeric only when both sides are genuinely numeric.
+   *
+   * A string takes the numeric path only if it is the canonical spelling of its
+   * own number: `"5" == 5` holds, `"007" == 7` does not. Coercing everything
+   * `Number()` can parse makes order codes, postcodes and external ids compare
+   * equal to unrelated numbers, silently. Text comparison is case-insensitive,
+   * which is what a CRM user means by "status is Won".
+   */
   private compareEqual(
     fieldValue: any,
     conditionValue: string | number,
   ): boolean {
-    // Try numeric comparison first
-    const fNum = Number(fieldValue);
-    const cNum = Number(conditionValue);
-    if (!isNaN(fNum) && !isNaN(cNum)) {
-      return fNum === cNum;
-    }
-    // Fall back to case-insensitive string comparison
+    const fNum = strictNumber(fieldValue);
+    const cNum = strictNumber(conditionValue);
+    if (fNum !== null && cNum !== null) return fNum === cNum;
+
     return (
-      String(fieldValue).toLowerCase() === String(conditionValue).toLowerCase()
+      String(fieldValue).trim().toLowerCase() ===
+      String(conditionValue).trim().toLowerCase()
     );
   }
 
@@ -200,10 +231,10 @@ export class ConditionEvaluatorService {
     conditionValue: string | number,
     comparator: (a: number, b: number) => boolean,
   ): boolean {
-    const fNum = Number(fieldValue);
-    const cNum = Number(conditionValue);
+    const fNum = strictNumber(fieldValue);
+    const cNum = strictNumber(conditionValue);
 
-    if (isNaN(fNum) || isNaN(cNum)) {
+    if (fNum === null || cNum === null) {
       this.logger.debug(
         `Type mismatch in numeric comparison: field=${fieldValue}, condition=${conditionValue}`,
       );

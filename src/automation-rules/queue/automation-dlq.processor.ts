@@ -10,6 +10,7 @@ import {
 import { AUTOMATION_ACTION_DLQ } from './automation-queue.constants';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
+import { AutomationMetricsService } from '../observability/automation-metrics.service';
 
 /**
  * Dead-letters from one node within the window before it counts as poison.
@@ -37,6 +38,7 @@ export class AutomationDlqProcessor extends BaseTenantConsumer<TenantJobData> {
   constructor(
     private readonly executionLogRepo: AutomationExecutionLogRepository,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    private readonly metrics: AutomationMetricsService,
     cls: ClsService,
   ) {
     super();
@@ -50,19 +52,9 @@ export class AutomationDlqProcessor extends BaseTenantConsumer<TenantJobData> {
       `[DLQ Processor] Dead-lettered job: action=${data.actionType} workflow=${data.workflowId} node=${data.nodeId} reason=${data.failedReason}`,
     );
 
-    // Increment per-tenant DLQ counter for alerting.
-    // Operators can poll `dlq:counter:{tenantId}` to detect high-failure tenants.
-    const counterKey = `dlq:counter:${data.tenantId}`;
-    await this.redis
-      .multi()
-      .incr(counterKey)
-      .expire(counterKey, 86400) // 24h TTL — auto-reset daily
-      .exec()
-      .catch((err) =>
-        this.logger.warn(
-          `[DLQ Processor] Failed to increment DLQ counter: ${err.message}`,
-        ),
-      );
+    // Scrapeable series, so "which tenant and which action are dead-lettering"
+    // is a dashboard question rather than a log-grep.
+    this.metrics.recordDlq(data.actionType ?? 'unknown', data.tenantId);
 
     await this.trackPoisonNode(data);
 
@@ -80,19 +72,15 @@ export class AutomationDlqProcessor extends BaseTenantConsumer<TenantJobData> {
   }
 
   /**
-   * Count dead-letters per workflow node and quarantine a node that keeps
-   * failing.
+   * Count dead-letters per workflow node and quarantine one that keeps failing.
    *
-   * The per-tenant counter answers "is this tenant unhealthy"; it cannot answer
-   * "which node is poison". A single broken node — a webhook pointing at a host
-   * that always 500s, a template referencing a field that no longer exists —
-   * dead-letters once per triggering record, so on a busy object it produces
-   * thousands of identical DLQ entries and buries everything else.
+   * A single broken node — a webhook pointing at a host that always 500s, a
+   * template naming a field that no longer exists — dead-letters once per
+   * triggering record, so on a busy object it buries every other failure.
    *
-   * Quarantine is advisory: the key is what the alerting path and the retry
-   * endpoint can read to say "this node is broken, stop re-firing it and go fix
-   * the config". It intentionally does not disable the workflow — that is the
-   * tenant's decision, not the queue's.
+   * Quarantine is advisory: the alerting path and the retry endpoint read the key
+   * to say "fix the config instead of re-firing this". It does not disable the
+   * workflow, which is the tenant's decision rather than the queue's.
    */
   private async trackPoisonNode(data: any): Promise<void> {
     if (!data.workflowId || !data.nodeId) return;

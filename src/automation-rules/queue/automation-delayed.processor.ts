@@ -14,17 +14,19 @@ import {
 } from '../engine/workflow-orchestrator.service';
 import { CrmRecordUpdateService } from '../engine/crm-record-update.service';
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
-import { AutomationWorkflowRepository } from '../infrastructure/persistence/document/repositories/automation-workflow.repository';
 import { AutomationDelayedJobRepository } from '../infrastructure/persistence/document/repositories/automation-delayed-job.repository';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { ExecutionContextService } from '../engine/execution-context.service';
 
 /**
- * Consumes hot resume jobs from Redis. The source of truth is MongoDB when
- * delayedJobId is present; payload-only jobs are supported for pre-migration
- * BullMQ delayed jobs that may still exist in Redis.
+ * Resumes a workflow whose wait node has expired.
+ *
+ * MongoDB is the source of truth: Redis only holds near-due jobs, and the
+ * payload is re-read from `automation_delayed_jobs` before anything runs.
  */
-@Processor(AUTOMATION_DELAYED_QUEUE)
+@Processor(AUTOMATION_DELAYED_QUEUE, {
+  concurrency: parseInt(process.env.AUTOMATION_DELAYED_CONCURRENCY ?? '10', 10),
+})
 export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDelayedQueueJobData> {
   protected readonly logger = new Logger(AutomationDelayedProcessor.name);
   protected readonly cls: ClsService;
@@ -33,7 +35,6 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
     private readonly orchestrator: WorkflowOrchestratorService,
     private readonly crmUpdate: CrmRecordUpdateService,
     private readonly executionLogRepo: AutomationExecutionLogRepository,
-    private readonly workflowRepo: AutomationWorkflowRepository,
     private readonly delayedJobRepo: AutomationDelayedJobRepository,
     private readonly executionContext: ExecutionContextService,
     cls: ClsService,
@@ -45,8 +46,18 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
   protected async handle(
     job: Job<AutomationDelayedQueueJobData>,
   ): Promise<void> {
-    const data = await this.resolveJobData(job.data);
-    if (!data) return;
+    const delayedJob = await this.delayedJobRepo.markProcessing(
+      job.data.delayedJobId,
+    );
+    if (!delayedJob) {
+      this.logger.warn(
+        `[DelayedResume] Skipping hot job ${job.data.delayedJobId}; ` +
+          'it is already terminal or not ready for processing',
+      );
+      return;
+    }
+
+    const data = delayedJob.payload;
 
     try {
       // Resume under the principal pinned when the execution started — not
@@ -54,10 +65,7 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
       await this.executionContext.runAs(data.principal, data.workflowId, () =>
         this.resumeWorkflow(data),
       );
-
-      if (job.data.delayedJobId) {
-        await this.delayedJobRepo.markCompleted(job.data.delayedJobId);
-      }
+      await this.delayedJobRepo.markCompleted(job.data.delayedJobId);
     } catch (error: any) {
       this.logger.error(
         `[DelayedResume] Failed execution=${data.executionId}: ${error.message}`,
@@ -79,7 +87,7 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
     await super.onFailed(job, error);
 
     const attemptsRemaining = (job.opts?.attempts ?? 1) - job.attemptsMade;
-    if (attemptsRemaining > 0 || !job.data.delayedJobId) return;
+    if (attemptsRemaining > 0) return;
 
     const delayedJobId = job.data.delayedJobId;
     runWithTenantContext(this.cls, job.data.tenantId, () => {
@@ -94,26 +102,6 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
     });
   }
 
-  private async resolveJobData(
-    hotData: AutomationDelayedQueueJobData,
-  ): Promise<AutomationDelayedJobData | null> {
-    if (!hotData.delayedJobId) return hotData;
-
-    const delayedJob = await this.delayedJobRepo.markProcessing(
-      hotData.delayedJobId,
-    );
-
-    if (!delayedJob) {
-      this.logger.warn(
-        `[DelayedResume] Skipping hot job ${hotData.delayedJobId}; ` +
-          'it is already terminal or not ready for processing',
-      );
-      return null;
-    }
-
-    return delayedJob.payload;
-  }
-
   private async resumeWorkflow(data: AutomationDelayedJobData): Promise<void> {
     this.logger.log(
       `[DelayedResume] Resuming execution=${data.executionId} ` +
@@ -121,6 +109,9 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
         `record=${data.recordType}(${data.recordId})`,
     );
 
+    // Re-read rather than carry the record: the whole point of a wait is that the
+    // world may have changed, and a workflow must not act on a stale snapshot of
+    // a person who has since unsubscribed or been deleted.
     const record = await this.crmUpdate.fetchRecord(
       data.recordType,
       data.recordId,
@@ -136,7 +127,7 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
       await this.executionLogRepo.logStep(data.executionId, {
         nodeId: data.resumeFromNodeId,
         nodeName: 'Resume (after wait)',
-        nodeType: 'action',
+        nodeType: 'wait',
         status: 'failed',
         input: { resumeFromNodeId: data.resumeFromNodeId },
         error: {
@@ -154,18 +145,16 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
         nodeId: data.resumeFromNodeId,
       });
 
-      throw new Error(
-        `RECORD_NOT_FOUND: ${data.recordType}(${data.recordId}) deleted during wait`,
-      );
+      // Deleted record is a terminal outcome, not a fault: retrying cannot make
+      // the record exist. Return so the delayed job is marked completed instead
+      // of retried three times and then dead-lettered.
+      return;
     }
 
-    const { publishedNodes, publishedEdges, workflowVersion } =
-      await this.resolveGraphForResume(data);
-
     const resumeCtx: ResumeContext = {
-      nodes: publishedNodes,
-      edges: publishedEdges,
-      workflowVersion,
+      publishedNodes: data.publishedNodes,
+      publishedEdges: data.publishedEdges,
+      workflowVersion: data.workflowVersion,
       principal: data.principal,
       payload: {
         tenantId: data.tenantId,
@@ -184,80 +173,5 @@ export class AutomationDelayedProcessor extends BaseTenantConsumer<AutomationDel
       depth: data.automationDepth,
     };
     await this.orchestrator.resumeFromNode(data.resumeFromNodeId, resumeCtx);
-
-    this.logger.log(
-      `[DelayedResume] Resumed and completed execution=${data.executionId}`,
-    );
-  }
-
-  /**
-   * Prefer the graph pinned into the delayed job over the workflow's current
-   * published snapshot.
-   *
-   * `publish()` overwrites `publishedNodes` in place, so re-reading it meant a
-   * workflow edited during a wait — which can last up to 90 days — resumed a
-   * half-finished execution into a different graph, at a node id that may have
-   * been repurposed or removed. An execution now finishes on the version it
-   * started on.
-   *
-   * Jobs written before the snapshot was pinned fall back to the live workflow,
-   * which is the old behaviour and is logged as such.
-   */
-  private async resolveGraphForResume(data: AutomationDelayedJobData): Promise<{
-    publishedNodes: any[];
-    publishedEdges: any[];
-    workflowVersion?: number;
-  }> {
-    if (data.publishedNodes?.length) {
-      this.logger.debug(
-        `[DelayedResume] Using pinned snapshot v${data.workflowVersion ?? '?'} ` +
-          `for execution=${data.executionId}`,
-      );
-      return {
-        publishedNodes: data.publishedNodes,
-        publishedEdges: data.publishedEdges ?? [],
-        workflowVersion: data.workflowVersion,
-      };
-    }
-
-    const workflow = await this.workflowRepo.findById(
-      data.tenantId,
-      data.workflowId,
-    );
-
-    if (!workflow) {
-      this.logger.error(
-        `[DelayedResume] Workflow ${data.workflowId} not found; cannot resume`,
-      );
-      await this.executionLogRepo.failExecution(data.executionId, {
-        code: 'WORKFLOW_NOT_FOUND',
-        message: `Workflow ${data.workflowId} was deleted during delay; cannot resume`,
-      });
-      throw new Error(`WORKFLOW_NOT_FOUND: ${data.workflowId}`);
-    }
-
-    const publishedNodes = (workflow as any).publishedNodes || [];
-    if (publishedNodes.length === 0) {
-      this.logger.warn(
-        `[DelayedResume] Workflow ${data.workflowId} has no published nodes`,
-      );
-      await this.executionLogRepo.failExecution(data.executionId, {
-        code: 'UNPUBLISHED_WORKFLOW',
-        message: 'Workflow was unpublished during delay period',
-      });
-      throw new Error(`UNPUBLISHED_WORKFLOW: ${data.workflowId}`);
-    }
-
-    this.logger.warn(
-      `[DelayedResume] Delayed job for execution=${data.executionId} carries no ` +
-        'pinned snapshot (created before version pinning); resuming against the ' +
-        'CURRENT published version, which may differ from the one it started on.',
-    );
-
-    return {
-      publishedNodes,
-      publishedEdges: (workflow as any).publishedEdges || [],
-      workflowVersion: (workflow as any).version,
-    };
   }
 }

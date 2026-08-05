@@ -18,6 +18,8 @@ import {
 } from '@nestjs/swagger';
 import { ClsService } from 'nestjs-cls';
 import Redis from 'ioredis';
+import { ulid } from 'ulid';
+import { resolvePrincipal } from './domain/execution-principal';
 import { AutomationExecutionLogRepository } from './infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { AutomationWorkflowRepository } from './infrastructure/persistence/document/repositories/automation-workflow.repository';
 import { AutomationActionProducer } from './queue/automation-action.producer';
@@ -162,7 +164,7 @@ export class AutomationExecutionLogController {
     //    Reading the config back out of the log made retry un-revocable: an
     //    action stayed executable for the log's 30-day retention even after the
     //    node was edited, the workflow unpublished, paused or deleted.
-    const node = await this.resolveLivePublishedNode(
+    const { node, workflow } = await this.resolveLivePublishedNode(
       executionLog.workflowId?.toString(),
       dto.nodeId,
     );
@@ -204,6 +206,7 @@ export class AutomationExecutionLogController {
       step,
       executionLog,
       node,
+      workflow,
     );
     await this.actionProducer.dispatch(
       jobData,
@@ -268,7 +271,7 @@ export class AutomationExecutionLogController {
   private async resolveLivePublishedNode(
     workflowId: string | undefined,
     nodeId: string,
-  ): Promise<any> {
+  ): Promise<{ node: any; workflow: any }> {
     if (!workflowId) {
       throw new BadRequestException(
         'Execution log has no workflow reference; it cannot be retried.',
@@ -304,7 +307,7 @@ export class AutomationExecutionLogController {
         `Node "${nodeId}" is a ${node.type} node; only action nodes can be retried.`,
       );
     }
-    return node;
+    return { node, workflow };
   }
 
   /**
@@ -380,22 +383,21 @@ export class AutomationExecutionLogController {
     step: any,
     executionLog: any,
     node: any,
+    workflow: any,
   ): Promise<AutomationActionJobData> {
-    let recordData: Record<string, any> =
-      step.input?.recordData && typeof step.input.recordData === 'object'
-        ? step.input.recordData
-        : {};
-
-    if (executionLog.recordType && executionLog.recordId) {
-      try {
-        const fresh = await this.crmRecordUpdate.fetchRecord(
-          executionLog.recordType,
-          executionLog.recordId,
-        );
-        if (fresh) recordData = fresh;
-      } catch {
-        // keep fallback recordData from the step input
-      }
+    // The record is re-read so templates and recipient resolution work against
+    // current data. There is no fallback to the copy in the step log: a retry
+    // that quietly sends against a month-old snapshot is worse than one that
+    // refuses.
+    const recordData = await this.crmRecordUpdate.fetchRecord(
+      executionLog.recordType,
+      executionLog.recordId,
+    );
+    if (!recordData) {
+      throw new BadRequestException(
+        `${executionLog.recordType}(${executionLog.recordId}) no longer exists ` +
+          'or is not visible to you, so this step cannot be retried.',
+      );
     }
 
     const workflowId = executionLog.workflowId?.toString() ?? '';
@@ -417,6 +419,23 @@ export class AutomationExecutionLogController {
       // a fresh chain to the loop guard.
       automationBreadcrumbs: [workflowId],
       sourceWorkflowId: workflowId,
+      // A manual retry is its own loop-guard session: the original session's
+      // strict-loop counters expired long ago, and reusing its id would make the
+      // retry look like a repeat visit to the same node.
+      executionSessionId: ulid(),
+      // The graph is pinned from the version being retried, so continuing past
+      // this action follows the branches the operator can see on screen.
+      workflowVersion: workflow.version ?? null,
+      publishedNodes: workflow.publishedNodes ?? [],
+      publishedEdges: workflow.publishedEdges ?? [],
+      // Same principal resolution the orchestrator applies, so a retry cannot
+      // widen the scope the execution originally ran with.
+      principal: resolvePrincipal({
+        runAs: workflow.runAs,
+        workflowId,
+        workflowCreatedBy: workflow.createdBy,
+        recordOwnerId: recordData.ownerId,
+      }),
     };
   }
 }

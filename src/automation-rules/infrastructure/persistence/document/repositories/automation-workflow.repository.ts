@@ -70,13 +70,26 @@ export class AutomationWorkflowRepository {
     return doc.toObject();
   }
 
+  /**
+   * `runValidators` is on deliberately.
+   *
+   * Mongoose skips validators on `findOneAndUpdate` by default, so schema enums
+   * would apply on create and not on update. That asymmetry is worse than no
+   * validation: it lets an update write a state the same document could not have
+   * been created in, and hides a stale enum until someone tries to create the
+   * value it is missing.
+   */
   async update(
     tenantId: string,
     id: string,
     data: Partial<AutomationWorkflowSchemaClass>,
   ) {
     return this.model
-      .findOneAndUpdate({ _id: id, tenantId }, { $set: data }, { new: true })
+      .findOneAndUpdate(
+        { _id: id, tenantId },
+        { $set: data },
+        { new: true, runValidators: true },
+      )
       .lean()
       .exec();
   }
@@ -86,7 +99,7 @@ export class AutomationWorkflowRepository {
       .findOneAndUpdate(
         { _id: id, tenantId },
         { $set: { status } },
-        { new: true },
+        { new: true, runValidators: true },
       )
       .lean()
       .exec();
@@ -128,7 +141,7 @@ export class AutomationWorkflowRepository {
           },
           $inc: { version: 1 },
         },
-        { new: true },
+        { new: true, runValidators: true },
       )
       .lean()
       .exec();

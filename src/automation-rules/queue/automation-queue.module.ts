@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import {
-  AUTOMATION_ACTION_QUEUE,
   AUTOMATION_ACTION_DLQ,
   AUTOMATION_BULK_QUEUE,
   AUTOMATION_EMAIL_QUEUE,
@@ -15,14 +14,13 @@ import {
 /**
  * Registers BullMQ queues for the automation engine.
  *
- * Per-action-type queues with independent rate limiting:
- *   - Email queue:    env AUTOMATION_EMAIL_RATE_LIMIT (default 500/min)
- *   - SMS queue:      env AUTOMATION_SMS_RATE_LIMIT (default 60/min — Twilio 1/s)
- *   - Internal queue: No rate limit (DB operations, fast)
- *   - Webhook queue:  env AUTOMATION_WEBHOOK_RATE_LIMIT (default 200/min)
- *   - DLQ:            Manual retry only
- *   - Bulk:           Throttled high-volume events
- *   - Delayed:        Wait/Delay node hibernation
+ * No queue-level `limiter` anywhere: a limiter is per queue, which means per
+ * platform, so it throttles every tenant collectively and lets one busy tenant
+ * delay everyone else. Channel credentials are per tenant too, so there is no
+ * shared provider account for a global limit to protect.
+ *
+ * Fairness and spend ceilings are per tenant, in {@link AutomationQuotaService}.
+ * Worker concurrency is set on each @Processor.
  */
 @Module({
   imports: [
@@ -37,43 +35,27 @@ import {
       },
     }),
 
-    // Per-type action queues (Phase 4)
-
-    // Email queue — rate-limited for SendGrid
-    BullModule.registerQueueAsync({
+    BullModule.registerQueue({
       name: AUTOMATION_EMAIL_QUEUE,
-      useFactory: () => ({
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 3000 },
-          removeOnComplete: 200,
-          removeOnFail: 1000,
-        },
-        limiter: {
-          max: parseInt(process.env.AUTOMATION_EMAIL_RATE_LIMIT ?? '500', 10),
-          duration: 60_000, // per minute
-        },
-      }),
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 3000 },
+        removeOnComplete: 200,
+        removeOnFail: 1000,
+      },
     }),
 
-    // SMS queue — rate-limited for Twilio (default: 60/min = 1/s)
-    BullModule.registerQueueAsync({
+    BullModule.registerQueue({
       name: AUTOMATION_SMS_QUEUE,
-      useFactory: () => ({
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 5000 },
-          removeOnComplete: 200,
-          removeOnFail: 1000,
-        },
-        limiter: {
-          max: parseInt(process.env.AUTOMATION_SMS_RATE_LIMIT ?? '60', 10),
-          duration: 60_000,
-        },
-      }),
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: 200,
+        removeOnFail: 1000,
+      },
     }),
 
-    // Internal queue — UpdateField + RouteToGroup (no rate limit, fast DB ops)
+    // DB-only actions: update_field, route_to_group, create_*, tags, notes
     BullModule.registerQueue({
       name: AUTOMATION_INTERNAL_QUEUE,
       defaultJobOptions: {
@@ -84,35 +66,17 @@ import {
       },
     }),
 
-    // Webhook queue — rate-limited for external endpoints
-    BullModule.registerQueueAsync({
-      name: AUTOMATION_WEBHOOK_QUEUE,
-      useFactory: () => ({
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 5000 },
-          removeOnComplete: 200,
-          removeOnFail: 1000,
-        },
-        limiter: {
-          max: parseInt(process.env.AUTOMATION_WEBHOOK_RATE_LIMIT ?? '200', 10),
-          duration: 60_000,
-        },
-      }),
-    }),
-
-    // Legacy main queue: backward compat, some code may still dispatch here
     BullModule.registerQueue({
-      name: AUTOMATION_ACTION_QUEUE,
+      name: AUTOMATION_WEBHOOK_QUEUE,
       defaultJobOptions: {
         attempts: 3,
-        backoff: { type: 'exponential', delay: 3000 },
+        backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: 200,
         removeOnFail: 1000,
       },
     }),
 
-    // Dead Letter Queue
+    // Dead Letter Queue — manual retry only
     BullModule.registerQueue({
       name: AUTOMATION_ACTION_DLQ,
       defaultJobOptions: {
@@ -121,7 +85,7 @@ import {
       },
     }),
 
-    // Bulk queue — rate-limited for high-volume events
+    // Bulk queue — throttled high-volume events
     BullModule.registerQueue({
       name: AUTOMATION_BULK_QUEUE,
       defaultJobOptions: {
@@ -132,14 +96,18 @@ import {
       },
     }),
 
-    // Delayed resume queue — Wait/Delay node hibernation
+    // Delayed resume queue — Wait/Delay node hibernation.
+    //
+    // `removeOnFail` is generous and `attempts` is 3 because a lost resume is a
+    // workflow that silently stops halfway, days after the user set it up. The
+    // durable row in `automation_delayed_jobs` is the record of record.
     BullModule.registerQueue({
       name: AUTOMATION_DELAYED_QUEUE,
       defaultJobOptions: {
-        attempts: 2,
+        attempts: 3,
         backoff: { type: 'exponential', delay: 10000 },
         removeOnComplete: 100,
-        removeOnFail: 500,
+        removeOnFail: 2000,
       },
     }),
   ],

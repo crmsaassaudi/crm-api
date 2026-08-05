@@ -4,19 +4,15 @@ import { AutomationWorkflowRepository } from '../infrastructure/persistence/docu
 import { AutomationExecutionLogRepository } from '../infrastructure/persistence/document/repositories/automation-execution-log.repository';
 import { WorkflowOrchestratorService } from './workflow-orchestrator.service';
 import { BulkEventThrottleService } from './bulk-event-throttle.service';
+import { AutomationQuotaService } from './automation-quota.service';
 import { AutomationBulkProducer } from '../queue/automation-bulk.producer';
 
 /**
  * TriggerEvaluatorService — matches one CRM event to workflows and runs them.
  *
- * This logic used to live in `AutomationEventListenerService`, which meant it ran
- * inline and un-awaited on whichever process emitted the event — normally the API
- * handling a user's request. It now runs in a queue worker
- * (`AutomationTriggerProcessor`); the listener only enqueues.
- *
- * Separating it also makes the matching rules testable without an event bus.
- *
- * @see docs/audit/WORKFLOW_AUTOMATION_SECURITY_AUDIT.md — finding M5
+ * Runs in a queue worker (`AutomationTriggerProcessor`); the event listener only
+ * persists to the outbox. It used to run inline and un-awaited on whichever
+ * process emitted the event — normally the API handling a user's request.
  */
 @Injectable()
 export class TriggerEvaluatorService {
@@ -28,6 +24,7 @@ export class TriggerEvaluatorService {
     private readonly throttle: BulkEventThrottleService,
     private readonly bulkProducer: AutomationBulkProducer,
     private readonly executionLogRepo: AutomationExecutionLogRepository,
+    private readonly quota: AutomationQuotaService,
   ) {}
 
   async evaluate(payload: AutomationEventPayload): Promise<void> {
@@ -52,16 +49,33 @@ export class TriggerEvaluatorService {
       this.isEligible(wf, payload),
     );
 
+    if (eligibleWorkflows.length === 0) return;
+
     this.logger.log(
       `Found ${eligibleWorkflows.length} eligible workflow(s) for ${event}.${object} (record=${recordId})`,
     );
 
-    // Bulk Event Throttling (Phase 3)
     const { throttled } = await this.throttle.shouldThrottle(tenantId);
 
     for (const wf of eligibleWorkflows) {
+      // Charge the tenant's daily execution allowance before anything runs, so a
+      // runaway workflow is stopped at the cheapest possible point rather than
+      // after it has already dispatched its actions.
+      const quotaDecision = await this.quota.consumeExecution(tenantId);
+      if (!quotaDecision.allowed) {
+        this.logger.warn(
+          `Workflow "${wf.name}" (${wf._id}) not started: ${quotaDecision.reason}`,
+        );
+        await this.recordTerminalLog(wf, payload, {
+          code: quotaDecision.kind?.toUpperCase() ?? 'QUOTA_EXCEEDED',
+          message: quotaDecision.reason!,
+        });
+        continue;
+      }
+
       this.logger.log(
-        `  → Triggering workflow "${wf.name}" (${wf._id}) [depth=${depth}] ${throttled ? '[THROTTLED → bulk queue]' : ''}`,
+        `  → Triggering workflow "${wf.name}" (${wf._id}) [depth=${depth}]` +
+          `${throttled ? ' [THROTTLED → bulk queue]' : ''}`,
       );
 
       try {
@@ -79,7 +93,10 @@ export class TriggerEvaluatorService {
         this.logger.error(
           `Workflow "${wf.name}" (${wf._id}) execution failed: ${wfError.message}`,
         );
-        await this.recordFailure(wf, payload, wfError);
+        await this.recordTerminalLog(wf, payload, {
+          code: 'TRIGGER_EVALUATION_ERROR',
+          message: wfError.message,
+        });
       }
     }
   }
@@ -112,14 +129,16 @@ export class TriggerEvaluatorService {
   }
 
   /**
-   * Track the failure in the execution log so admins see it in the dashboard.
-   * The orchestrator may have already created its own entry, but if it threw
-   * before that (e.g. EXECUTION_TIMEOUT) this is the only record.
+   * Record a failure that happened before or instead of an execution.
+   *
+   * Without this the workflow simply would not have run, with nothing in the
+   * dashboard saying why — the shape of defect where the product is confidently
+   * silent.
    */
-  private async recordFailure(
+  private async recordTerminalLog(
     wf: any,
     payload: AutomationEventPayload,
-    error: Error,
+    error: { code: string; message: string },
   ): Promise<void> {
     try {
       const execLog = await this.executionLogRepo.startExecution({
@@ -131,10 +150,7 @@ export class TriggerEvaluatorService {
         automationDepth: payload.automationDepth ?? 0,
         workflowVersion: wf.version ?? null,
       });
-      await this.executionLogRepo.failExecution(execLog._id.toString(), {
-        code: 'TRIGGER_EVALUATION_ERROR',
-        message: error.message,
-      });
+      await this.executionLogRepo.failExecution(execLog._id.toString(), error);
     } catch (logErr: any) {
       this.logger.error(
         `[TriggerEvaluator] Failed to log evaluation error: ${logErr.message}`,

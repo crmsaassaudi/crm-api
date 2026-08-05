@@ -10,7 +10,6 @@ import {
 import { EscalationQueueModule } from './queue/escalation-queue.module';
 import { EscalationProcessor } from './queue/escalation.processor';
 import { EscalationTriggerListener } from './escalation-trigger.listener';
-import { EscalationAutomationListener } from './escalation-automation.listener';
 import {
   OmniConversationSchema,
   OmniConversationSchemaClass,
@@ -36,7 +35,6 @@ import { isWorkerRuntime } from '../config/runtime-role';
     EscalationPoliciesService,
     EscalationPolicyRepository,
     EscalationTriggerListener,
-    EscalationAutomationListener,
     ...(isWorkerRuntime() ? [EscalationProcessor] : []),
   ],
   exports: [EscalationPoliciesService],

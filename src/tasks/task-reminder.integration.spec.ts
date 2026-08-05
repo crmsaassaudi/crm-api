@@ -26,7 +26,6 @@ describe('TaskReminderService (integration)', () => {
   let connection: Connection;
   let taskModel: Model<TaskSchemaDocument>;
   let redis: { publish: jest.Mock };
-  let events: { emit: jest.Mock };
   let service: TaskReminderService;
 
   const tenantId = new Types.ObjectId().toString();
@@ -48,8 +47,7 @@ describe('TaskReminderService (integration)', () => {
   beforeEach(async () => {
     await clearDatabase();
     redis = { publish: jest.fn().mockResolvedValue(1) };
-    events = { emit: jest.fn() };
-    service = new TaskReminderService(taskModel, redis as any, events as any);
+    service = new TaskReminderService(taskModel, redis as any);
   });
 
   async function seedTask(overrides: Record<string, unknown> = {}) {
@@ -86,19 +84,15 @@ describe('TaskReminderService (integration)', () => {
     });
   });
 
-  it('should emit the internal.notification event the automation engine already uses', async () => {
+  it('should publish on exactly one channel, and one that is subscribed', async () => {
     await seedTask();
     await service.dispatchDueReminders();
 
-    expect(events.emit).toHaveBeenCalledWith(
-      'internal.notification',
-      expect.objectContaining({
-        tenantId,
-        recipientType: 'owner',
-        recipientIds: [owner],
-        source: 'task-reminder',
-      }),
-    );
+    // The service used to also emit an `internal.notification` event for a
+    // consumer that was never written. An emit nobody listens to is not a
+    // delivery path, so the Redis publish is the only one left.
+    expect(redis.publish).toHaveBeenCalledTimes(1);
+    expect(redis.publish.mock.calls[0][0]).toBe(TASK_REMINDER_CHANNEL);
   });
 
   it('should mark the task so the reminder cannot be sent twice', async () => {

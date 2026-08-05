@@ -1,33 +1,37 @@
 /**
  * Barrel export for all action executors.
  *
- * New consumers should import from this directory:
- *   import { SendEmailExecutor, ActionExecutor } from './executors';
- *
- * The interfaces are defined in executor.interface.ts.
- * All executor implementations are currently in the parent action-executors.ts
- * and re-exported here for a clean public API.
+ * One file per concern rather than one 2,253-line module with sixteen classes in
+ * it. The split was started long ago — this directory existed as nothing but a
+ * re-export of the monolith — and is now finished.
  */
 
-// Interfaces
 export { ActionExecutor, ActionExecutionResult } from './executor.interface';
 
-// Executor Implementations
 export {
   SendEmailExecutor,
   SendSmsExecutor,
+  SendLivechatExecutor,
+} from './messaging.executors';
+
+export {
+  InternalNotificationExecutor,
+  AUTOMATION_NOTIFICATION_CHANNEL,
+} from './notification.executor';
+
+export {
   UpdateFieldExecutor,
-  RouteToGroupExecutor,
-  WebhookExecutor,
-  CreateTaskExecutor,
-  CreateTicketExecutor,
   AddTagExecutor,
   RemoveTagExecutor,
   AddNoteExecutor,
   CreateRecordExecutor,
-  HttpRequestExecutor,
-  SendWhatsAppExecutor,
-  SendZnsExecutor,
-  SendLivechatExecutor,
-  InternalNotificationExecutor,
-} from '../action-executors';
+} from './record.executors';
+
+export {
+  RouteToGroupExecutor,
+  AutomationAssigneeResolver,
+  CreateTaskExecutor,
+  CreateTicketExecutor,
+} from './assignment.executors';
+
+export { WebhookExecutor, HttpRequestExecutor } from './http.executors';

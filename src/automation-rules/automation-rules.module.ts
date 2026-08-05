@@ -47,46 +47,35 @@ import { TemplateInterpolationService } from './engine/template-interpolation.se
 import { CrmRecordUpdateService } from './engine/crm-record-update.service';
 import { SsrfGuardService } from '../common/http/ssrf-guard.service';
 import { WebhookHeaderCryptoService } from './engine/webhook-header-crypto.service';
-import { ScheduledTriggerService } from './engine/scheduled-trigger.service';
 import { ActionIdempotencyService } from './engine/action-idempotency.service';
+import { AutomationQuotaService } from './engine/automation-quota.service';
 import { TriggerEvaluatorService } from './engine/trigger-evaluator.service';
 import { ExecutionContextService } from './engine/execution-context.service';
+import { WorkflowDryRunService } from './engine/workflow-dry-run.service';
+import { AutomationMetricsService } from './observability/automation-metrics.service';
 import {
   AutomationAssigneeResolver,
   SendEmailExecutor,
   SendSmsExecutor,
+  SendLivechatExecutor,
+  InternalNotificationExecutor,
   UpdateFieldExecutor,
   RouteToGroupExecutor,
-  WebhookExecutor,
   CreateTaskExecutor,
   CreateTicketExecutor,
+  CreateRecordExecutor,
   AddTagExecutor,
   RemoveTagExecutor,
   AddNoteExecutor,
-  CreateRecordExecutor,
+  WebhookExecutor,
   HttpRequestExecutor,
-  SendWhatsAppExecutor,
-  SendZnsExecutor,
-  SendLivechatExecutor,
-  InternalNotificationExecutor,
-} from './engine/action-executors';
-
-// Providers (Email + SMS)
-import {
-  SendGridEmailProvider,
-  EMAIL_PROVIDER_TOKEN,
-} from './engine/providers/email-provider.service';
-import {
-  TwilioSmsProvider,
-  SMS_PROVIDER_TOKEN,
-} from './engine/providers/sms-provider.service';
+} from './engine/executors';
 
 // Queue
 import { AutomationQueueModule } from './queue/automation-queue.module';
 import { AutomationActionProducer } from './queue/automation-action.producer';
 import { AutomationTriggerProcessor } from './queue/automation-trigger.processor';
 import {
-  AutomationActionProcessor,
   AutomationEmailProcessor,
   AutomationSmsProcessor,
   AutomationInternalProcessor,
@@ -110,18 +99,26 @@ import { ChannelsModule } from '../channels/channels.module';
 import { NotesModule } from '../notes/notes.module';
 import { isWorkerRuntime } from '../config/runtime-role';
 import { ObservabilityModule } from '../observability/observability.module';
-import {
-  TicketSchemaClass,
-  TicketSchema,
-} from '../tickets/infrastructure/persistence/document/entities/ticket.schema';
-import {
-  DealSchemaClass,
-  DealSchema,
-} from '../deals/infrastructure/persistence/document/entities/deal.schema';
+
+const ACTION_EXECUTORS = [
+  SendEmailExecutor,
+  SendSmsExecutor,
+  SendLivechatExecutor,
+  InternalNotificationExecutor,
+  UpdateFieldExecutor,
+  RouteToGroupExecutor,
+  CreateTaskExecutor,
+  CreateTicketExecutor,
+  CreateRecordExecutor,
+  AddTagExecutor,
+  RemoveTagExecutor,
+  AddNoteExecutor,
+  WebhookExecutor,
+  HttpRequestExecutor,
+];
 
 const workerProviders = isWorkerRuntime()
   ? [
-      AutomationActionProcessor,
       AutomationEmailProcessor,
       AutomationSmsProcessor,
       AutomationInternalProcessor,
@@ -153,12 +150,10 @@ const workerProviders = isWorkerRuntime()
         name: AutomationDelayedJobSchemaClass.name,
         schema: AutomationDelayedJobSchema,
       },
-      { name: TicketSchemaClass.name, schema: TicketSchema },
-      { name: DealSchemaClass.name, schema: DealSchema },
     ]),
     AutomationQueueModule,
     AutomationOutboxModule,
-    // MetricsService — throttle fail-open / engagement counters
+    // MetricsService — engine counters, histograms and gauges
     ObservabilityModule,
     // CRM modules — needed by CrmRecordUpdateService for real DB updates
     forwardRef(() => ContactsModule),
@@ -166,7 +161,8 @@ const workerProviders = isWorkerRuntime()
     forwardRef(() => DealsModule),
     forwardRef(() => AccountsModule),
     forwardRef(() => TasksModule),
-    // Channel Config — needed by SendEmailExecutor/SendSmsExecutor for dynamic credentials
+    // Channel config + transport pool — the send actions resolve tenant
+    // credentials through it
     forwardRef(() => ChannelsModule),
     // Notes — needed by AddNoteExecutor for contact notes
     forwardRef(() => NotesModule),
@@ -188,54 +184,31 @@ const workerProviders = isWorkerRuntime()
     LoopPreventionService,
     WorkflowOrchestratorService,
     BulkEventThrottleService,
-    // Engine — Phase 4 services
     TemplateInterpolationService,
     CrmRecordUpdateService,
     SsrfGuardService,
     WebhookHeaderCryptoService,
     // Exactly-once guard for action jobs
     ActionIdempotencyService,
+    // Per-tenant spend + throughput ceilings
+    AutomationQuotaService,
+    // Engine metric surface
+    AutomationMetricsService,
     // Establishes the principal + data-visibility axes for an execution
     ExecutionContextService,
     // Trigger matching, moved out of the event listener
     TriggerEvaluatorService,
+    // Test a workflow without performing any side effect
+    WorkflowDryRunService,
     // Eligibility gate shared by the record-creating executors
     AutomationAssigneeResolver,
-    // Action Executors (all 15 types)
-    SendEmailExecutor,
-    SendSmsExecutor,
-    UpdateFieldExecutor,
-    RouteToGroupExecutor,
-    WebhookExecutor,
-    CreateTaskExecutor,
-    CreateTicketExecutor,
-    AddTagExecutor,
-    RemoveTagExecutor,
-    AddNoteExecutor,
-    CreateRecordExecutor,
-    HttpRequestExecutor,
-    SendWhatsAppExecutor,
-    SendZnsExecutor,
-    SendLivechatExecutor,
-    InternalNotificationExecutor,
-    // Email Provider (SendGrid — dry-run if no API key)
-    {
-      provide: EMAIL_PROVIDER_TOKEN,
-      useClass: SendGridEmailProvider,
-    },
-    // SMS Provider (Twilio — dry-run if no credentials)
-    {
-      provide: SMS_PROVIDER_TOKEN,
-      useClass: TwilioSmsProvider,
-    },
+    ...ACTION_EXECUTORS,
     // Queue — Producers & Processors
     AutomationActionProducer,
     AutomationDlqProducer,
     AutomationBulkProducer,
     AutomationDelayedProducer,
     ...workerProviders,
-    // Time-based automation trigger (cron)
-    ScheduledTriggerService,
   ],
   exports: [
     AutomationWorkflowService,

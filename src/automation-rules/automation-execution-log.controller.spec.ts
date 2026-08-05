@@ -37,7 +37,11 @@ describe('AutomationExecutionLogController.retryStep', () => {
       workflow = {
         _id: 'wf1',
         status: 'active',
+        version: 4,
+        runAs: 'system',
+        createdBy: 'user-1',
         publishedNodes: [actionNode],
+        publishedEdges: [],
       },
       allowed = true,
       poisonFailures = null,
@@ -76,7 +80,13 @@ describe('AutomationExecutionLogController.retryStep', () => {
       ),
     };
     const actionProducer = { dispatch: jest.fn() };
-    const crmRecordUpdate = { fetchRecord: jest.fn().mockResolvedValue(null) };
+    // The retry re-reads the record. A retry that silently sends against the
+    // month-old copy in the step log is refused instead.
+    const crmRecordUpdate = {
+      fetchRecord: jest
+        .fn()
+        .mockResolvedValue({ id: 'rec1', emails: ['a@b.com'] }),
+    };
     const workflowRepo = { findById: jest.fn().mockResolvedValue(workflow) };
     const auditService = { logAction: jest.fn() };
     const authz = {

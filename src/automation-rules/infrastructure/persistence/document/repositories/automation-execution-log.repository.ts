@@ -249,6 +249,11 @@ export class AutomationExecutionLogRepository {
 
   /**
    * Mark execution as completed successfully.
+   *
+   * Only from a non-terminal status. An execution can fan out into parallel
+   * branches that each finish independently, so this is reached more than once;
+   * without the status guard a branch that succeeded would erase a sibling's
+   * recorded failure and the log would claim the run was clean.
    */
   async completeExecution(executionId: string): Promise<void> {
     const now = new Date();
@@ -263,7 +268,7 @@ export class AutomationExecutionLogRepository {
 
     await this.model
       .updateOne(
-        { _id: executionId },
+        { _id: executionId, status: { $in: ['running', 'waiting'] } },
         {
           $set: {
             status: 'success',

@@ -47,6 +47,8 @@ export class CrmRealtimeGateway {
     // is how a reminder could look delivered on the publisher's side and arrive
     // nowhere.
     'socket:task:reminder:due',
+    // Automation `internal_notification` action. Same reasoning as above.
+    'socket:automation:notification',
   ] as const;
 
   /**
@@ -85,9 +87,44 @@ export class CrmRealtimeGateway {
       case 'socket:task:reminder:due':
         this.handleTaskReminderDue(event);
         return true;
+      case 'socket:automation:notification':
+        this.handleAutomationNotification(event);
+        return true;
       default:
         return false;
     }
+  }
+
+  /**
+   * Broadcast a workflow notification to the tenant room.
+   *
+   * Sent to the tenant room with `recipientIds` in the payload, matching how task
+   * reminders and export completion are delivered — the client filters. The
+   * notice carries no record data beyond a title and message the workflow author
+   * wrote, so it is no more sensitive than the workflow itself.
+   */
+  private handleAutomationNotification(event: {
+    tenantId: string;
+    recipientIds: string[];
+    title: string;
+    message: string;
+    workflowId: string;
+    recordType: string;
+    recordId: string;
+  }) {
+    const room = `tenant:${event.tenantId}`;
+    this.logger.log(
+      `Broadcasting automation notification to room=${room} ` +
+        `(workflow=${event.workflowId}, recipients=${event.recipientIds?.length ?? 0})`,
+    );
+    this.server.to(room).emit('automation:notification', {
+      recipientIds: event.recipientIds,
+      title: event.title,
+      message: event.message,
+      workflowId: event.workflowId,
+      recordType: event.recordType,
+      recordId: event.recordId,
+    });
   }
 
   /**

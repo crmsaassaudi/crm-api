@@ -10,9 +10,42 @@ describe('ConditionEvaluatorService', () => {
 
   // Empty / No Conditions
 
-  it('should return true for empty rules (pass-through)', () => {
+  it('should return false for empty rules (fail closed)', () => {
+    // A condition node with nothing to filter on cannot be assumed to mean
+    // "everything". Treating it as pass-through is how a half-configured filter
+    // mails an entire contact list; saving one is refused up front, and reaching
+    // this branch at runtime means an older published graph.
     const group: ConditionGroup = { logic: 'AND', rules: [] };
-    expect(service.evaluate(group, { status: 'New' })).toBe(true);
+    expect(service.evaluate(group, { status: 'New' })).toBe(false);
+  });
+
+  it('should not treat an identifier-shaped string as its numeric value', () => {
+    // `Number('007') === 7` made order codes, postcodes and external ids compare
+    // equal to unrelated numbers, silently.
+    expect(
+      service.evaluate(
+        { logic: 'AND', rules: [{ field: 'code', operator: 'eq', value: 7 }] },
+        { code: '007' },
+      ),
+    ).toBe(false);
+  });
+
+  it('should still compare a canonical numeric string numerically', () => {
+    expect(
+      service.evaluate(
+        { logic: 'AND', rules: [{ field: 'score', operator: 'gt', value: 4 }] },
+        { score: '5' },
+      ),
+    ).toBe(true);
+  });
+
+  it('should not treat an empty string as zero', () => {
+    expect(
+      service.evaluate(
+        { logic: 'AND', rules: [{ field: 'total', operator: 'eq', value: 0 }] },
+        { total: '' },
+      ),
+    ).toBe(false);
   });
 
   // AND logic

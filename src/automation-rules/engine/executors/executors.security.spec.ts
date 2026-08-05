@@ -3,9 +3,13 @@ import {
   CreateRecordExecutor,
   CreateTicketExecutor,
   SendEmailExecutor,
-} from './action-executors';
-import { TemplateInterpolationService } from './template-interpolation.service';
-import { AutomationActionJobData } from '../queue/automation-queue.constants';
+  SendSmsExecutor,
+  AddNoteExecutor,
+  InternalNotificationExecutor,
+  SendLivechatExecutor,
+} from './index';
+import { TemplateInterpolationService } from '../template-interpolation.service';
+import { AutomationActionJobData } from '../../queue/automation-queue.constants';
 
 const job = (
   overrides: Partial<AutomationActionJobData> = {},
@@ -20,11 +24,18 @@ const job = (
     actionConfig: {},
     recordId: 'rec1',
     recordType: 'Contact',
-    recordData: { emails: ['a@b.com'] },
+    recordData: { emails: ['a@b.com'], phones: ['+849000000'] },
     automationDepth: 0,
     sourceWorkflowId: 'wf1',
+    executionSessionId: 'sess1',
+    workflowVersion: 1,
+    publishedNodes: [{ id: 'n1', type: 'action', config: {} }],
+    publishedEdges: [],
+    principal: { kind: 'system', runAs: 'system' },
     ...overrides,
   }) as AutomationActionJobData;
+
+const templates = () => new TemplateInterpolationService();
 
 describe('SendEmailExecutor channel-config tenancy', () => {
   it('should resolve credentials through the tenant guard, never the raw pool', async () => {
@@ -34,19 +45,18 @@ describe('SendEmailExecutor channel-config tenancy', () => {
       // making the assertion below the thing that fails.
       resolve: jest.fn().mockResolvedValue({
         tenantId: 'other-tenant',
+        providerType: 'smtp',
         name: 'victim smtp',
         status: 'active',
         publicSettings: { fromEmail: 'billing@victim.example' },
       }),
     };
-    const emailProvider = { send: jest.fn() };
 
     const executor = new SendEmailExecutor(
-      new TemplateInterpolationService(),
-      emailProvider as any,
-      undefined,
-      undefined,
+      templates(),
       transportPool as any,
+      {} as any,
+      { emit: jest.fn() } as any,
     );
 
     const result = await executor.execute(
@@ -58,10 +68,176 @@ describe('SendEmailExecutor channel-config tenancy', () => {
       'aaaaaaaaaaaaaaaaaaaaaaaa',
     );
     expect(transportPool.resolve).not.toHaveBeenCalled();
-    // Guard returned null (tenant mismatch) → nothing is sent.
-    expect(emailProvider.send).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
     expect(result.error?.code).toBe('CHANNEL_CONFIG_NOT_FOUND');
+    expect(result.retryable).toBe(false);
+  });
+
+  it('should refuse to send when the node names no channel config', async () => {
+    const transportPool = { resolveWithTenantGuard: jest.fn() };
+    const executor = new SendEmailExecutor(
+      templates(),
+      transportPool as any,
+      {} as any,
+      { emit: jest.fn() } as any,
+    );
+
+    const result = await executor.execute(job({ actionConfig: {} }));
+
+    // No platform-wide sender exists to fall back to, and pretending otherwise
+    // is how tenant mail went out over the platform's relay.
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('NO_CHANNEL_CONFIG');
+    expect(transportPool.resolveWithTenantGuard).not.toHaveBeenCalled();
+  });
+
+  it('should refuse a config whose provider type cannot send email', async () => {
+    const transportPool = {
+      resolveWithTenantGuard: jest.fn().mockResolvedValue({
+        tenantId: 'aaaaaaaaaaaaaaaaaaaaaaaa',
+        providerType: 'facebook',
+        name: 'fb page',
+        status: 'active',
+        credentials: {},
+        publicSettings: {},
+      }),
+    };
+    const executor = new SendEmailExecutor(
+      templates(),
+      transportPool as any,
+      {} as any,
+      { emit: jest.fn() } as any,
+    );
+
+    const result = await executor.execute(
+      job({ actionConfig: { configId: 'cfg1' } }),
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('UNSUPPORTED_PROVIDER');
+  });
+});
+
+describe('SendSmsExecutor', () => {
+  const transportWith = (credentials: any, publicSettings: any) => ({
+    resolveWithTenantGuard: jest.fn().mockResolvedValue({
+      tenantId: 'aaaaaaaaaaaaaaaaaaaaaaaa',
+      providerType: 'twilio',
+      name: 'tenant twilio',
+      status: 'active',
+      credentials,
+      publicSettings,
+    }),
+  });
+
+  it('should refuse an incomplete config instead of sending from a shared number', async () => {
+    const executor = new SendSmsExecutor(
+      templates(),
+      transportWith({}, {}) as any,
+      {} as any,
+      { emit: jest.fn() } as any,
+    );
+
+    const result = await executor.execute(
+      job({
+        actionType: 'send_sms',
+        actionConfig: { configId: 'cfg1', message: 'hi' },
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('CHANNEL_CONFIG_INCOMPLETE');
+    expect(result.retryable).toBe(false);
+  });
+});
+
+describe('actions that used to report success without delivering', () => {
+  it('should fail add_note when no contact can be resolved', async () => {
+    const notesService = { createForContact: jest.fn() };
+    const executor = new AddNoteExecutor(notesService as any, templates());
+
+    const result = await executor.execute(
+      job({
+        actionType: 'add_note',
+        recordType: 'Deal',
+        recordData: {},
+        actionConfig: { content: 'Deal won' },
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('NO_CONTACT');
+    expect(notesService.createForContact).not.toHaveBeenCalled();
+  });
+
+  it('should publish internal_notification on the realtime bridge', async () => {
+    const redis = { publish: jest.fn().mockResolvedValue(1) };
+    const executor = new InternalNotificationExecutor(
+      templates(),
+      redis as any,
+    );
+
+    const result = await executor.execute(
+      job({
+        actionType: 'internal_notification',
+        recordData: { ownerId: 'user-1' },
+        actionConfig: { recipientType: 'owner', title: 'Hi', message: 'There' },
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    expect(redis.publish).toHaveBeenCalledWith(
+      'socket:automation:notification',
+      expect.stringContaining('user-1'),
+    );
+  });
+
+  it('should refuse an internal_notification audience nothing can resolve', async () => {
+    const redis = { publish: jest.fn() };
+    const executor = new InternalNotificationExecutor(
+      templates(),
+      redis as any,
+    );
+
+    const result = await executor.execute(
+      job({
+        actionType: 'internal_notification',
+        actionConfig: { recipientType: 'all_admins' },
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('UNSUPPORTED_RECIPIENT_TYPE');
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  it('should deliver send_livechat through the outbound service', async () => {
+    const outbound = {
+      sendBotMessage: jest
+        .fn()
+        .mockResolvedValue({ ok: true, messageId: 'm1' }),
+    };
+    const moduleRef = { get: jest.fn().mockReturnValue(outbound) };
+    const executor = new SendLivechatExecutor(templates(), moduleRef as any);
+
+    const result = await executor.execute(
+      job({
+        actionType: 'send_livechat',
+        recordType: 'Conversation',
+        recordId: 'conv1',
+        actionConfig: { message: 'Hello' },
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    expect(outbound.sendBotMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv1',
+        content: 'Hello',
+        // (execution, node) so a redelivered job cannot post twice.
+        idempotencyKey: 'automation:exec1:n1',
+      }),
+    );
   });
 });
 
@@ -71,8 +247,12 @@ describe('CreateRecordExecutor field protection', () => {
       create: jest.fn().mockResolvedValue({ id: 'c1' }),
     };
     const executor = new CreateRecordExecutor(
-      new TemplateInterpolationService(),
+      templates(),
       contactsService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
     );
     return { executor, contactsService };
   };
@@ -83,7 +263,7 @@ describe('CreateRecordExecutor field protection', () => {
     ['orgUnitId', { orgUnitId: '507f1f77bcf86cd799439012' }],
     ['_id', { _id: '507f1f77bcf86cd799439013' }],
     ['createdById', { createdById: '507f1f77bcf86cd799439014' }],
-  ])('should refuse a field map that sets %s', async (_label, fields) => {
+  ])('refuses a field map that sets %s', async (_label, fields) => {
     const { executor, contactsService } = build();
 
     const result = await executor.execute(
@@ -222,7 +402,7 @@ describe('CreateTicketExecutor assignment', () => {
     };
     const executor = new CreateTicketExecutor(
       ticketsService as any,
-      new TemplateInterpolationService(),
+      templates(),
       new AutomationAssigneeResolver(assignmentCore as any),
     );
 
@@ -246,7 +426,7 @@ describe('CreateTicketExecutor assignment', () => {
     );
   });
 
-  it('should does not create the ticket when the target is rejected', async () => {
+  it('should not create the ticket when the target is rejected', async () => {
     const ticketsService = { create: jest.fn() };
     const assignmentCore = {
       assign: jest.fn().mockResolvedValue({
@@ -258,7 +438,7 @@ describe('CreateTicketExecutor assignment', () => {
     };
     const executor = new CreateTicketExecutor(
       ticketsService as any,
-      new TemplateInterpolationService(),
+      templates(),
       new AutomationAssigneeResolver(assignmentCore as any),
     );
 

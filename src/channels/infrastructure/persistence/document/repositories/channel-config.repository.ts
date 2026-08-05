@@ -40,6 +40,23 @@ export class ChannelConfigRepository {
   }
 
   /**
+   * Resolve several configs in one query.
+   *
+   * Exists so callers validating a list of references — the automation workflow
+   * validator checks every `configId` a graph names — do not issue one
+   * `findById` per id in a sequential loop. Ids that do not belong to the tenant
+   * (or are soft-deleted) are simply absent from the result; the caller decides
+   * what a miss means.
+   */
+  async findByIds(tenantId: string, ids: string[]): Promise<ChannelConfig[]> {
+    if (ids.length === 0) return [];
+    const docs = await this.model
+      .find({ _id: { $in: ids }, tenantId, deletedAt: null })
+      .exec();
+    return docs.map((d) => this.toDomain(d));
+  }
+
+  /**
    * Find by ID WITH encrypted credentials. Internal use only.
    */
   async findByIdWithCredentials(
