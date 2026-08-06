@@ -41,6 +41,15 @@ import {
   validateConversationId,
 } from '../dto/gateway-dto';
 import { TENANT_HEADER } from '../../common/tenant/tenant-header.policy';
+import { DataVisibilityInterceptor } from '../../data-visibility/data-visibility.interceptor';
+import { AuthzPermissionCacheService } from '../../common/permissions/authz-permission-cache.service';
+import { PERMISSION_REGISTRY } from '../../common/permissions/permission.constants';
+import {
+  ConversationAudienceService,
+  type SocketScope,
+} from './conversation-audience.service';
+import { OmniEvents } from '../domain/omni-events';
+import type { ConversationSlaBreachedEvent } from '../domain/omni-events';
 
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
@@ -117,7 +126,7 @@ export class OmniGateway
     'socket:omni:conversation:unread_reset',
     'socket:omni:work_offer:created',
     'socket:omni:transfer:changed',
-    'socket:omni:sla:clock_breached',
+    'socket:omni:conversation:sla',
     'socket:omni:bot:state',
   ] as const;
 
@@ -139,7 +148,33 @@ export class OmniGateway
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     private readonly cls: ClsService,
     private readonly crmRealtime: CrmRealtimeGateway,
+    private readonly dataVisibility: DataVisibilityInterceptor,
+    private readonly authzCache: AuthzPermissionCacheService,
+    private readonly audience: ConversationAudienceService,
   ) {}
+
+  /**
+   * Deliver a conversation event to the agents allowed to see that conversation.
+   *
+   * Every conversation broadcast goes through here. `this.server.to('tenant:…')`
+   * sends to every agent in the tenant, which bypassed the channel support pool,
+   * the owner visibility scope and PII masking all at once — see
+   * ConversationAudienceService for why the filter is per-socket.
+   */
+  private emitToConversationAudience(
+    conversationId: string,
+    tenantId: string,
+    event: string,
+    payload: unknown,
+    facts?: { channelId?: string | null; assignedAgentId?: string | null },
+  ): Promise<void> {
+    return this.audience.emitToConversation(
+      this.server,
+      { tenantId, conversationId, facts },
+      event,
+      payload,
+    );
+  }
 
   /**
    * Subscribe to Redis pub/sub channels for cross-process events.
@@ -206,8 +241,8 @@ export class OmniGateway
           case 'socket:omni:transfer:changed':
             this.broadcastTransfer(event);
             break;
-          case 'socket:omni:sla:clock_breached':
-            this.broadcastSlaClockBreached(event);
+          case 'socket:omni:conversation:sla':
+            this.broadcastSlaBreached(event);
             break;
           case 'socket:omni:bot:state':
             this.broadcastBotState(event);
@@ -342,6 +377,7 @@ export class OmniGateway
   ): Promise<void> {
     client.data.tenantId = tenantId;
     client.data.userId = userId;
+    client.data.scope = await this.resolveSocketScope(tenantId, userId);
 
     await client.join(`tenant:${tenantId}`);
     await client.join(`agent:${userId}`);
@@ -355,6 +391,68 @@ export class OmniGateway
     });
 
     await this.agentFallbackService.onAgentReconnected(tenantId, userId);
+  }
+
+  /**
+   * Resolve what this socket may see, once, at connect time.
+   *
+   * Reuses `DataVisibilityInterceptor.resolveVisibility()` — the same computation
+   * the REST layer runs per request — inside a CLS scope seeded with this
+   * principal. Reimplementing the axes here would be a second answer to the same
+   * question, and the two would drift.
+   *
+   * Fail-closed: an unresolvable scope yields empty arrays on both axes, so the
+   * socket receives nothing rather than everything.
+   */
+  private async resolveSocketScope(
+    tenantId: string,
+    userId: string,
+  ): Promise<SocketScope> {
+    try {
+      return await this.cls.runWith(
+        { tenantId, activeTenantId: tenantId, userId } as any,
+        async () => {
+          await this.dataVisibility.resolveVisibility();
+          const channelIds = this.cls.get('servableChannelIds');
+          const byModule =
+            (this.cls.get('dataVisibilityByModule') as Record<
+              string,
+              { ownerIds: string[] | null }
+            >) ?? {};
+          const ownerIds =
+            byModule.Conversation?.ownerIds ?? this.cls.get('visibleOwnerIds');
+          const { effective } = await this.authzCache.explainForUser(
+            userId,
+            tenantId,
+          );
+
+          const permissions = new Set(effective);
+          return {
+            channelIds: Array.isArray(channelIds)
+              ? channelIds.map(String)
+              : null,
+            ownerIds: Array.isArray(ownerIds) ? ownerIds.map(String) : null,
+            includeUnowned: this.cls.get('includeUnownedInScope') === true,
+            canUnmask: permissions.has(
+              PERMISSION_REGISTRY.omni_channel.unmask!,
+            ),
+            permissions,
+          };
+        },
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Socket scope resolution failed for user ${userId}, failing closed: ${message}`,
+      );
+      return {
+        channelIds: [],
+        ownerIds: [],
+        includeUnowned: false,
+        canUnmask: false,
+        permissions: new Set<string>(),
+      };
+    }
   }
 
   /** Resolve MongoDB _id from keycloakId — falls back to keycloakId if not found. */
@@ -529,6 +627,15 @@ export class OmniGateway
     const validationError = validateSendMessage(data);
     if (validationError) return { ok: false, error: validationError };
 
+    // Socket handlers bypass the HTTP guards, so the permission and the record
+    // ACL are checked here — see authorizeSocketAction.
+    const denied = await this.authorizeSocketAction(
+      client,
+      'reply',
+      data.conversationId,
+    );
+    if (denied) return denied;
+
     try {
       // Wrap in tenant CLS context — WebSocket handlers don't have HTTP
       // interceptor pipeline, so CLS is empty. Mongoose tenant filter
@@ -622,6 +729,15 @@ export class OmniGateway
 
     const validationError = validateSendMedia(data);
     if (validationError) return { ok: false, error: validationError };
+
+    // Socket handlers bypass the HTTP guards, so the permission and the record
+    // ACL are checked here — see authorizeSocketAction.
+    const denied = await this.authorizeSocketAction(
+      client,
+      'reply',
+      data.conversationId,
+    );
+    if (denied) return denied;
 
     if (!data?.conversationId || !data?.fileId) {
       return { ok: false, error: 'conversationId and fileId are required' };
@@ -740,6 +856,15 @@ export class OmniGateway
       return { ok: false, error: validationError };
     }
 
+    // Socket handlers bypass the HTTP guards, so the permission and the record
+    // ACL are checked here — see authorizeSocketAction.
+    const denied = await this.authorizeSocketAction(
+      client,
+      'reply',
+      data.conversationId,
+    );
+    if (denied) return denied;
+
     this.logger.log(
       `Agent ${userId} sends template '${data.templateName}' to conversation ${data.conversationId}`,
     );
@@ -838,6 +963,15 @@ export class OmniGateway
     const validationError = validateSendInteractive(data);
     if (validationError) return { ok: false, error: validationError };
 
+    // Socket handlers bypass the HTTP guards, so the permission and the record
+    // ACL are checked here — see authorizeSocketAction.
+    const denied = await this.authorizeSocketAction(
+      client,
+      'reply',
+      data.conversationId,
+    );
+    if (denied) return denied;
+
     this.logger.log(
       `Agent ${userId} sends interactive (${data.buttons?.length} buttons) to ${data.conversationId}`,
     );
@@ -933,6 +1067,15 @@ export class OmniGateway
     const validationError = validateSendCarousel(data);
     if (validationError) return { ok: false, error: validationError };
 
+    // Socket handlers bypass the HTTP guards, so the permission and the record
+    // ACL are checked here — see authorizeSocketAction.
+    const denied = await this.authorizeSocketAction(
+      client,
+      'reply',
+      data.conversationId,
+    );
+    if (denied) return denied;
+
     this.logger.log(
       `Agent ${userId} sends carousel (${data.cards?.length} cards) to ${data.conversationId}`,
     );
@@ -1012,17 +1155,15 @@ export class OmniGateway
   }
 
   private broadcastInboundMessage(payload: any) {
-    const room = `tenant:${payload.tenantId}`;
-    this.logger.log(
-      `Broadcasting persisted ${payload.channelType} message to room=${room}, ` +
-        `conversationId=${payload.conversationId}, senderId=${payload.senderId}`,
+    // The message event already carries the channel, so the audience filter
+    // needs no database read on the inbound hot path.
+    void this.emitToConversationAudience(
+      payload.conversationId,
+      payload.tenantId,
+      'omni:message:new',
+      payload,
+      { channelId: payload.channelId },
     );
-
-    // Debug: check how many sockets are in this room
-    const roomSockets = (this.server?.adapter as any)?.rooms?.get(room);
-    this.logger.debug(`Room ${room} has ${roomSockets?.size ?? 0} socket(s)`);
-
-    this.server.to(room).emit('omni:message:new', payload);
   }
 
   /**
@@ -1047,9 +1188,16 @@ export class OmniGateway
     tenantId: string;
     conversation: any;
   }) {
-    const room = `tenant:${event.tenantId}`;
-    this.logger.log(`Broadcasting new conversation to room=${room}`);
-    this.server.to(room).emit('omni:conversation:new', event.conversation);
+    void this.emitToConversationAudience(
+      event.conversation?.id,
+      event.tenantId,
+      'omni:conversation:new',
+      event.conversation,
+      {
+        channelId: event.conversation?.channelId,
+        assignedAgentId: event.conversation?.assignedAgentId ?? null,
+      },
+    );
   }
 
   /**
@@ -1074,9 +1222,16 @@ export class OmniGateway
     tenantId: string;
     conversation: any;
   }) {
-    const room = `tenant:${event.tenantId}`;
-    this.logger.log(`Broadcasting reopened conversation to room=${room}`);
-    this.server.to(room).emit('omni:conversation:reopened', event.conversation);
+    void this.emitToConversationAudience(
+      event.conversation?.id,
+      event.tenantId,
+      'omni:conversation:reopened',
+      event.conversation,
+      {
+        channelId: event.conversation?.channelId,
+        assignedAgentId: event.conversation?.assignedAgentId ?? null,
+      },
+    );
   }
 
   /**
@@ -1106,14 +1261,12 @@ export class OmniGateway
     conversationId: string;
     customer: any;
   }) {
-    const room = `tenant:${event.tenantId}`;
-    this.logger.log(
-      `Broadcasting customer profile update for conversation ${event.conversationId}`,
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:conversation:customer_updated',
+      { conversationId: event.conversationId, customer: event.customer },
     );
-    this.server.to(room).emit('omni:conversation:customer_updated', {
-      conversationId: event.conversationId,
-      customer: event.customer,
-    });
   }
 
   /**
@@ -1143,13 +1296,16 @@ export class OmniGateway
     messageId: string;
     mediaProxyUrl: string;
   }) {
-    const room = `tenant:${event.tenantId}`;
-    this.logger.log(`Broadcasting media cached for message ${event.messageId}`);
-    this.server.to(room).emit('omni:message:media_cached', {
-      conversationId: event.conversationId,
-      messageId: event.messageId,
-      mediaProxyUrl: event.mediaProxyUrl,
-    });
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:message:media_cached',
+      {
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+        mediaProxyUrl: event.mediaProxyUrl,
+      },
+    );
   }
 
   // Message Status (delivery receipts)
@@ -1180,16 +1336,16 @@ export class OmniGateway
     messageIds: string[];
     status: string;
   }) {
-    const room = `tenant:${payload.tenantId}`;
-    this.logger.debug(
-      `Broadcasting message status '${payload.status}' for ${payload.messageIds.length} msg(s) ` +
-        `in conversation ${payload.conversationId} to room=${room}`,
+    void this.emitToConversationAudience(
+      payload.conversationId,
+      payload.tenantId,
+      'omni:message:status',
+      {
+        conversationId: payload.conversationId,
+        messageIds: payload.messageIds,
+        status: payload.status,
+      },
     );
-    this.server.to(room).emit('omni:message:status', {
-      conversationId: payload.conversationId,
-      messageIds: payload.messageIds,
-      status: payload.status,
-    });
   }
 
   /**
@@ -1218,13 +1374,12 @@ export class OmniGateway
     tenantId: string;
     conversationId: string;
   }) {
-    const room = `tenant:${payload.tenantId}`;
-    this.logger.debug(
-      `Broadcasting unread_reset for conversation ${payload.conversationId} to room=${room}`,
+    void this.emitToConversationAudience(
+      payload.conversationId,
+      payload.tenantId,
+      'omni:conversation:unread_reset',
+      { conversationId: payload.conversationId },
     );
-    this.server.to(room).emit('omni:conversation:unread_reset', {
-      conversationId: payload.conversationId,
-    });
   }
 
   // Reactions (unified across all channels)
@@ -1252,16 +1407,17 @@ export class OmniGateway
       action: string;
     };
   }) {
-    const room = `tenant:${payload.tenantId}`;
-    this.logger.debug(
-      `Broadcasting reaction update on message ${payload.messageId} to room=${room}`,
+    void this.emitToConversationAudience(
+      payload.conversationId,
+      payload.tenantId,
+      'omni:reaction:update',
+      {
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        reactions: payload.reactions,
+        trigger: payload.trigger,
+      },
     );
-    this.server.to(room).emit('omni:reaction:update', {
-      conversationId: payload.conversationId,
-      messageId: payload.messageId,
-      reactions: payload.reactions,
-      trigger: payload.trigger,
-    });
   }
 
   /**
@@ -1269,7 +1425,7 @@ export class OmniGateway
    * Emits into the unified reaction pipeline so it's persisted and broadcast.
    */
   @SubscribeMessage('omni:reaction:send')
-  handleAgentReaction(
+  async handleAgentReaction(
     @ConnectedSocket() client: Socket,
     @MessageBody()
     data: {
@@ -1291,6 +1447,15 @@ export class OmniGateway
     if (validationError) {
       return { ok: false, error: validationError };
     }
+
+    // Socket handlers bypass the HTTP guards, so the permission and the record
+    // ACL are checked here — see authorizeSocketAction.
+    const denied = await this.authorizeSocketAction(
+      client,
+      'reply',
+      data.conversationId,
+    );
+    if (denied) return denied;
 
     this.logger.debug(
       `Agent ${userId} reacted ${data.emoji} on message ${data.messageId}`,
@@ -1367,9 +1532,68 @@ export class OmniGateway
       return { ok: false, error: 'No tenant context' };
     }
 
+    // Membership of the tenant is not permission to watch one of its
+    // conversations. Tenant-scoping alone left any agent free to join any
+    // conversation room in their tenant by id — the channel support pool and the
+    // owner visibility scope both applied on the REST read and neither applied
+    // here.
+    if (!(await this.mayAccessConversation(client, data.conversationId))) {
+      return { ok: false, error: 'Forbidden' };
+    }
+
     const room = `tenant:${tenantId}:conversation:${data.conversationId}`;
     await client.join(room);
     return { ok: true, room };
+  }
+
+  /**
+   * Whether this socket's principal may see this conversation — the same two axes
+   * the REST layer ANDs, evaluated against the scope resolved at connect.
+   */
+  private async mayAccessConversation(
+    client: Socket,
+    conversationId: string,
+  ): Promise<boolean> {
+    return this.audience.mayAccess(
+      client.data.scope,
+      client.data.tenantId,
+      conversationId,
+    );
+  }
+
+  /**
+   * The authorization gate for every socket command that changes something.
+   *
+   * Socket handlers get none of the HTTP pipeline — no `PermissionGuard`, no
+   * `AclGuard`, no `@RequirePermission`. So each one checked authentication and
+   * tenant membership and stopped there, and the send handlers were reachable by
+   * any connected user: an agent with read-only omni access could send a message
+   * to a customer on a conversation they were not allowed to open, and neither the
+   * `omni_channel:reply` permission nor the record ACL applied. The REST route for
+   * the same action enforced both.
+   *
+   * Returns an error object shaped like the handlers' own replies so a caller sees
+   * a reason rather than silence.
+   */
+  private async authorizeSocketAction(
+    client: Socket,
+    permission: 'reply' | 'edit' | 'assign',
+    conversationId: string,
+  ): Promise<{ ok: false; error: string } | null> {
+    const tenantId = client.data.tenantId as string | undefined;
+    const userId = client.data.userId as string | undefined;
+    if (!tenantId || !userId) return { ok: false, error: 'No tenant context' };
+
+    const permissionKey = PERMISSION_REGISTRY.omni_channel[permission];
+    const granted = client.data.scope?.permissions as Set<string> | undefined;
+    if (!permissionKey || !granted?.has(permissionKey)) {
+      return { ok: false, error: 'Forbidden' };
+    }
+
+    if (!(await this.mayAccessConversation(client, conversationId))) {
+      return { ok: false, error: 'Forbidden' };
+    }
+    return null;
   }
 
   @SubscribeMessage('conversation.unsubscribe')
@@ -1615,12 +1839,16 @@ export class OmniGateway
     // Join the conversation room for targeted events
     await client.join(`tenant:${tenantId}:conversation:${conversationId}`);
 
-    // Broadcast to the whole tenant that this conversation is claimed
-    this.server.to(`tenant:${tenantId}`).emit('omni:conversation:claimed', {
+    void this.emitToConversationAudience(
       conversationId,
-      claimedBy: userId,
-      claimedAt: new Date().toISOString(),
-    });
+      tenantId,
+      'omni:conversation:claimed',
+      {
+        conversationId,
+        claimedBy: userId,
+        claimedAt: new Date().toISOString(),
+      },
+    );
 
     this.logger.log(`Agent ${userId} claimed conversation ${conversationId}`);
     return { ok: true };
@@ -1706,16 +1934,19 @@ export class OmniGateway
       `Broadcasting status change: ${event.conversationId} → ${event.status}`,
     );
 
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:conversation:status_changed', {
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:conversation:status_changed',
+      {
         conversationId: event.conversationId,
         status: event.status,
         oldStatus: event.oldStatus,
         changedBy: event.agentId,
         reason: event.reason,
         timestamp: new Date().toISOString(),
-      });
+      },
+    );
   }
 
   /**
@@ -1754,16 +1985,36 @@ export class OmniGateway
       }
     }
 
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:conversation:assigned', {
+    // The audience is computed from the *new* owner: after a reassignment the
+    // agents who may see this conversation are the ones who can see whoever now
+    // holds it. The previous owner is told directly below so their list can drop
+    // a conversation that just left their scope.
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:conversation:assigned',
+      {
         conversationId: event.conversationId,
         agentId: event.agentId,
         agentName,
         oldAgentId: event.oldAgentId,
         groupId: event.groupId,
         timestamp: new Date().toISOString(),
-      });
+      },
+      { assignedAgentId: event.agentId ?? null },
+    );
+    if (event.oldAgentId && event.oldAgentId !== event.agentId) {
+      this.server
+        .to(`agent:${event.oldAgentId}`)
+        .emit('omni:conversation:assigned', {
+          conversationId: event.conversationId,
+          agentId: event.agentId,
+          agentName,
+          oldAgentId: event.oldAgentId,
+          groupId: event.groupId,
+          timestamp: new Date().toISOString(),
+        });
+    }
   }
 
   @OnEvent('omni.work_offer.created')
@@ -1789,41 +2040,55 @@ export class OmniGateway
     [key: string]: any;
   }): void {
     this.server.to(`agent:${event.agentId}`).emit('omni:work_offer:new', event);
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:queue:offer_created', {
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:queue:offer_created',
+      {
         conversationId: event.conversationId,
         workItemId: event.workItemId,
         offerId: event.offerId,
         agentId: event.agentId,
         expiresAt: event.expiresAt,
-      });
+      },
+    );
   }
 
-  @OnEvent('omni.sla.clock_breached')
-  async handleSlaClockBreached(event: {
-    tenantId: string;
-    conversationId: string;
-    clockId: string;
-    policyId: string;
-    metric: string;
-    cycle: number;
-    dueAt: Date | string;
-  }) {
+  /**
+   * Turn a breach into the small patch the inbox actually needs.
+   *
+   * The previous handler broadcast the whole clock document under
+   * `omni:sla:clock_breached`, which no client ever subscribed to — so a breach
+   * only became visible on the next refetch, on the screen whose entire purpose
+   * is showing who is waiting. What the row renders is `slaBreached` /
+   * `slaDueMetric`, so that is what goes over the wire.
+   */
+  @OnEvent(OmniEvents.CONVERSATION_SLA_BREACHED)
+  async handleSlaBreached(event: ConversationSlaBreachedEvent) {
+    const patch = {
+      tenantId: event.tenantId,
+      conversationId: event.conversationId,
+      metric: event.metric,
+      breachedAt: event.breachedAt,
+    };
     if (isDedicatedWorkerProcess()) {
-      await this.publishSocketEvent('socket:omni:sla:clock_breached', event);
+      await this.publishSocketEvent('socket:omni:conversation:sla', patch);
       return;
     }
-    this.broadcastSlaClockBreached(event);
+    this.broadcastSlaBreached(patch);
   }
 
-  private broadcastSlaClockBreached(event: {
+  private broadcastSlaBreached(patch: {
     tenantId: string;
+    conversationId: string;
     [key: string]: any;
   }): void {
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:sla:clock_breached', event);
+    void this.emitToConversationAudience(
+      patch.conversationId,
+      patch.tenantId,
+      'omni:conversation:sla',
+      patch,
+    );
   }
 
   @OnEvent('omni.transfer.changed')
@@ -1856,16 +2121,19 @@ export class OmniGateway
     if (event.targetAgentId !== event.sourceAgentId) {
       this.server.to(`agent:${event.targetAgentId}`).emit(eventName, event);
     }
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:queue:transfer_changed', {
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:queue:transfer_changed',
+      {
         transferId: event.transferId,
         conversationId: event.conversationId,
         type: event.type,
         status: event.status,
         sourceAgentId: event.sourceAgentId,
         targetAgentId: event.targetAgentId,
-      });
+      },
+    );
   }
 
   /**
@@ -1946,9 +2214,12 @@ export class OmniGateway
     [key: string]: any;
   }): void {
     const { tenantId, ...payload } = event;
-    this.server
-      .to(`tenant:${tenantId}`)
-      .emit('omni:conversation:bot_state', payload);
+    void this.emitToConversationAudience(
+      event.conversationId,
+      tenantId,
+      'omni:conversation:bot_state',
+      payload,
+    );
   }
 
   @OnEvent('omni.conversation.lock_acquired')
@@ -1957,14 +2228,17 @@ export class OmniGateway
     this.server
       .to(`tenant:${event.tenantId}:conversation:${event.conversationId}`)
       .emit('conversation.lock_acquired', payload);
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:conversation:locked', {
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:conversation:locked',
+      {
         conversationId: event.conversationId,
         lockedBy: event.agentId,
         lockedByName: event.agentName,
         expiresAt: event.expiresAt,
-      });
+      },
+    );
   }
 
   @OnEvent('omni.conversation.lock_released')
@@ -1973,13 +2247,16 @@ export class OmniGateway
     this.server
       .to(`tenant:${event.tenantId}:conversation:${event.conversationId}`)
       .emit('conversation.lock_released', payload);
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:conversation:unlocked', {
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:conversation:unlocked',
+      {
         conversationId: event.conversationId,
         agentId: event.agentId,
         releasedAt: event.releasedAt,
-      });
+      },
+    );
   }
 
   @OnEvent('omni.conversation.takeover')
@@ -1998,16 +2275,20 @@ export class OmniGateway
       .to(`agent:${event.newAgentId}`)
       .emit('conversation.takeover', payload);
 
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:conversation:takeover', {
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:conversation:takeover',
+      {
         conversationId: event.conversationId,
         previousAgentId: event.previousAgentId,
         newAgentId: event.newAgentId,
         newAgentName: event.newAgentName,
         reason: event.reason,
         occurredAt: event.occurredAt,
-      });
+      },
+      { assignedAgentId: event.newAgentId ?? null },
+    );
   }
 
   /**
@@ -2023,9 +2304,11 @@ export class OmniGateway
     isPrivate: boolean;
     content: string;
   }) {
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:conversation:note_added', {
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:conversation:note_added',
+      {
         conversationId: event.conversationId,
         noteId: event.noteId,
         authorId: event.authorId,
@@ -2033,7 +2316,8 @@ export class OmniGateway
         isPrivate: event.isPrivate,
         content: event.content,
         timestamp: new Date().toISOString(),
-      });
+      },
+    );
   }
 
   // Activity (Audit Trail) real-time broadcast
@@ -2050,14 +2334,12 @@ export class OmniGateway
     activity: any;
   }) {
     if (!event.tenantId) return;
-    const room = `tenant:${event.tenantId}`;
-    this.logger.debug(
-      `Broadcasting activity "${event.activity?.action}" for conversation ${event.conversationId}`,
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:activity:new',
+      { conversationId: event.conversationId, activity: event.activity },
     );
-    this.server.to(room).emit('omni:activity:new', {
-      conversationId: event.conversationId,
-      activity: event.activity,
-    });
   }
 
   private standardEvent(eventName: string, payload: any) {
@@ -2107,12 +2389,15 @@ export class OmniGateway
       submittedAt: event.submittedAt.toISOString(),
     };
 
-    // Broadcast to entire tenant (for dashboard live updates)
-    this.server
-      .to(`tenant:${event.tenantId}`)
-      .emit('omni:csat:received', payload);
+    void this.emitToConversationAudience(
+      event.conversationId,
+      event.tenantId,
+      'omni:csat:received',
+      payload,
+    );
 
-    // Also notify the specific agent for personal alert
+    // The agent who handled it is told directly: a score can land after the
+    // conversation left their scope, and they are the person it is about.
     if (event.agentId) {
       this.server
         .to(`agent:${event.agentId}`)
@@ -2120,14 +2405,23 @@ export class OmniGateway
     }
   }
 
+  /**
+   * Authorization changed — tell the clients, and re-resolve the scopes their
+   * live sockets are filtered by.
+   *
+   * The scope on `client.data` is a snapshot taken at connect. Without this, an
+   * agent removed from a channel's support pool keeps receiving that channel's
+   * messages for as long as their tab stays open, which is the whole control
+   * failing on the one path where it matters most — a revocation.
+   */
   @OnEvent('user.permissions.updated')
   @OnEvent('group.updated')
   @OnEvent('group.membership.updated')
   @OnEvent('tenant.permissions.updated')
-  handleAuthorizationChanged(event: {
+  async handleAuthorizationChanged(event: {
     tenantId?: string;
     userId?: string;
-  }): void {
+  }): Promise<void> {
     if (!event?.tenantId) return;
     this.server
       .to(`tenant:${event.tenantId}`)
@@ -2135,6 +2429,34 @@ export class OmniGateway
         tenantId: event.tenantId,
         userId: event.userId ?? null,
       });
+
+    await this.refreshSocketScopes(event.tenantId, event.userId);
+  }
+
+  /**
+   * Re-resolve the cached scope of affected live sockets.
+   *
+   * Resolved once per distinct user rather than once per socket: an agent with
+   * three tabs open is one authorization question.
+   */
+  private async refreshSocketScopes(
+    tenantId: string,
+    userId?: string,
+  ): Promise<void> {
+    const byUser = new Map<string, Socket[]>();
+    for (const socket of this.server.sockets.sockets.values()) {
+      if (socket.data.tenantId !== tenantId) continue;
+      const socketUserId = socket.data.userId as string | undefined;
+      if (!socketUserId || (userId && socketUserId !== userId)) continue;
+      const existing = byUser.get(socketUserId);
+      if (existing) existing.push(socket);
+      else byUser.set(socketUserId, [socket]);
+    }
+
+    for (const [socketUserId, sockets] of byUser) {
+      const scope = await this.resolveSocketScope(tenantId, socketUserId);
+      for (const socket of sockets) socket.data.scope = scope;
+    }
   }
 
   /** Resolve any thrown value to a human-readable error string. */

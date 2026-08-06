@@ -7,9 +7,10 @@ import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
  * AutomationEventListenerService can process.
  *
  * Supported mappings:
- *   - omni.conversation.created     → automation.record_created.Conversation
+ *   - omni.conversation.created        → automation.record_created.Conversation
  *   - omni.conversation.status_changed → automation.field_updated.Conversation
- *   - omni.message.persisted        → automation.record_created.Message
+ *   - omni.conversation.assigned       → automation.field_updated.Conversation
+ *   - omni.message.persisted           → automation.record_created.Message
  *
  * The Automation Engine already handles:
  *   - Workflow matching via WorkflowOrchestratorService
@@ -106,6 +107,48 @@ export class OmniAutomationBridgeService {
         resolveReason: payload.reason,
       },
       changedFields: ['status'],
+      automationDepth: 0,
+    });
+  }
+
+  /**
+   * When a conversation changes hands, emit as automation field_updated.
+   *
+   * The "when an agent is assigned" trigger the workflow builder offers had no
+   * bridge, so a workflow keyed on it never ran — assignment was the one
+   * conversation lifecycle event the automation engine could not see.
+   * `assignedAgentId` is the changed field, which is what a condition on it needs.
+   */
+  @OnEvent('omni.conversation.assigned')
+  async onConversationAssigned(payload: {
+    tenantId: string;
+    conversationId: string;
+    agentId: string | null;
+    oldAgentId?: string | null;
+    groupId?: string | null;
+    channelType?: string;
+    reason?: string;
+  }): Promise<void> {
+    if (!payload.tenantId || !payload.conversationId) return;
+
+    this.logger.log(
+      `[OmniAutoBridge] conversation.assigned → automation.field_updated.Conversation ` +
+        `(tenant=${payload.tenantId}, conv=${payload.conversationId}, agent=${payload.agentId})`,
+    );
+
+    await this.eventEmitter.emitAsync('automation.field_updated.Conversation', {
+      tenantId: payload.tenantId,
+      event: 'field_updated',
+      object: 'Conversation',
+      recordId: payload.conversationId,
+      data: {
+        id: payload.conversationId,
+        assignedAgentId: payload.agentId,
+        assignedGroupId: payload.groupId ?? null,
+        channelType: payload.channelType,
+        assignmentReason: payload.reason,
+      },
+      changedFields: ['assignedAgentId'],
       automationDepth: 0,
     });
   }

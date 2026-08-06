@@ -26,6 +26,7 @@ import {
   BotPerformanceData,
   ChannelDistributionItem,
   ConversationVolumePoint,
+  DurationStats,
   MessageVolumeData,
   PeakHoursCell,
   ReopenRateData,
@@ -34,6 +35,12 @@ import {
   TagAnalyticsItem,
 } from './interfaces/omni-report-types';
 import { reportAggregate } from '../shared/utils/report-aggregate.util';
+
+/** Sentinel for "this caller can see no conversations at all". */
+const EMPTY_SCOPE = Symbol('empty-scope');
+
+/** Most conversation ids a scoped message query will filter by. */
+const SCOPE_ID_CAP = 20_000;
 
 type DateContext = {
   from: Date;
@@ -194,6 +201,16 @@ export class OmniReportService {
 
   // Report 3: Agent Performance
 
+  /**
+   * Per-agent handling performance, credited to whoever actually answered.
+   *
+   * Grouped by `firstResponderId` rather than `assignedAgentId`. The previous
+   * version grouped by the current assignee, so a transfer moved the whole
+   * conversation — its handling time and its SLA outcome — onto the receiving
+   * agent's row, and the agent who did the work vanished from the report. A
+   * conversation nobody answered is credited to nobody, which is the honest
+   * answer rather than blaming its last owner.
+   */
   async getAgentPerformance(
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<AgentPerformanceItem[]>> {
@@ -209,18 +226,22 @@ export class OmniReportService {
       { $match: match },
       {
         $group: {
-          _id: '$assignedAgentId',
+          _id: '$firstResponderId',
           totalConversations: { $sum: 1 },
           avgResolutionMs: {
             $avg: { $subtract: ['$resolvedAt', '$createdAt'] },
           },
-          frtBreachCount: {
-            $sum: { $cond: [{ $eq: ['$frtBreached', true] }, 1, 0] },
-          },
-          resolutionBreachCount: {
-            $sum: {
-              $cond: [{ $eq: ['$resolutionBreached', true] }, 1, 0],
+          avgFirstResponseMs: {
+            $avg: {
+              $cond: [
+                { $ne: [{ $ifNull: ['$firstRespondedAt', null] }, null] },
+                { $subtract: ['$firstRespondedAt', '$createdAt'] },
+                null,
+              ],
             },
+          },
+          slaBreachCount: {
+            $sum: { $cond: [{ $eq: ['$slaBreached', true] }, 1, 0] },
           },
           avgMessageCount: { $avg: '$messageCount' },
         },
@@ -245,18 +266,18 @@ export class OmniReportService {
 
       return {
         agentId: row._id?.toString?.() ?? null,
-        agentName: agentName || 'Unassigned',
+        agentName: agentName || 'Never answered',
         agentEmail: row.agent?.email ?? '',
         totalConversations: row.totalConversations,
         avgResolutionMs: Math.round(row.avgResolutionMs ?? 0),
         avgResolutionFormatted: this.formatDuration(row.avgResolutionMs ?? 0),
-        frtBreachCount: row.frtBreachCount,
-        frtBreachRate: safePercent(row.frtBreachCount, row.totalConversations),
-        resolutionBreachCount: row.resolutionBreachCount,
-        resolutionBreachRate: safePercent(
-          row.resolutionBreachCount,
-          row.totalConversations,
-        ),
+        avgFirstResponseMs:
+          row.avgFirstResponseMs == null
+            ? null
+            : Math.round(row.avgFirstResponseMs),
+        avgFirstResponseFormatted: this.formatDuration(row.avgFirstResponseMs),
+        slaBreachCount: row.slaBreachCount,
+        slaBreachRate: safePercent(row.slaBreachCount, row.totalConversations),
         avgMessageCount: Math.round(row.avgMessageCount ?? 0),
       };
     });
@@ -275,6 +296,16 @@ export class OmniReportService {
 
   // Report 4: Response Time Analytics
 
+  /**
+   * The three durations a contact centre is judged on: first response, time to
+   * assign, and resolution — each as mean, median and p90.
+   *
+   * This report previously returned resolution time plus two SLA breach counts
+   * and called it "response time". First Response Time did not exist anywhere in
+   * the module: the conversation recorded its FRT *deadline* but never when, or
+   * whether, an agent actually replied. `$percentile` does the ranking inside
+   * Mongo, so the whole report stays one aggregation over an indexed range.
+   */
   async getResponseTime(
     dto: GetOmniReportDto,
   ): Promise<ReportResponse<ResponseTimeData>> {
@@ -289,52 +320,58 @@ export class OmniReportService {
     const rows = await reportAggregate(this.conversationModel, [
       { $match: match },
       {
+        $set: {
+          // Null rather than 0 where the event never happened: a conversation
+          // nobody answered has no first-response time, and averaging it in as
+          // zero would report the team as instantaneous.
+          firstResponseMs: {
+            $cond: [
+              { $ne: [{ $ifNull: ['$firstRespondedAt', null] }, null] },
+              { $subtract: ['$firstRespondedAt', '$createdAt'] },
+              null,
+            ],
+          },
+          resolutionMs: { $subtract: ['$resolvedAt', '$createdAt'] },
+        },
+      },
+      {
         $group: {
           _id: null,
           total: { $sum: 1 },
-          avgResolutionMs: {
-            $avg: { $subtract: ['$resolvedAt', '$createdAt'] },
+          answeredCount: {
+            $sum: { $cond: [{ $ne: ['$firstResponseMs', null] }, 1, 0] },
           },
-          frtBreachedCount: {
-            $sum: { $cond: [{ $eq: ['$frtBreached', true] }, 1, 0] },
+          slaBreachedCount: {
+            $sum: { $cond: [{ $eq: ['$slaBreached', true] }, 1, 0] },
           },
-          resolutionBreachedCount: {
-            $sum: {
-              $cond: [{ $eq: ['$resolutionBreached', true] }, 1, 0],
-            },
-          },
+          ...durationAccumulators('firstResponse', '$firstResponseMs'),
+          ...durationAccumulators('timeToAssign', '$totalQueuedMs'),
+          ...durationAccumulators('resolution', '$resolutionMs'),
         },
       },
     ]).exec();
 
-    const row = rows[0] ?? {
-      total: 0,
-      avgResolutionMs: 0,
-      frtBreachedCount: 0,
-      resolutionBreachedCount: 0,
-    };
+    const row = rows[0];
+    const total = row?.total ?? 0;
+    const answeredCount = row?.answeredCount ?? 0;
+    const slaBreachedCount = row?.slaBreachedCount ?? 0;
 
     const data: ResponseTimeData = {
-      totalConversations: row.total,
-      avgResolutionMs: Math.round(row.avgResolutionMs ?? 0),
-      avgResolutionFormatted: this.formatDuration(row.avgResolutionMs ?? 0),
-      frtBreachedCount: row.frtBreachedCount,
-      frtComplianceRate: safePercent(
-        row.total - row.frtBreachedCount,
-        row.total,
-      ),
-      resolutionBreachedCount: row.resolutionBreachedCount,
-      resolutionComplianceRate: safePercent(
-        row.total - row.resolutionBreachedCount,
-        row.total,
-      ),
+      totalConversations: total,
+      firstResponse: this.toDurationStats(row, 'firstResponse', answeredCount),
+      timeToAssign: this.toDurationStats(row, 'timeToAssign', total),
+      resolution: this.toDurationStats(row, 'resolution', total),
+      answeredCount,
+      answeredRate: safePercent(answeredCount, total),
+      slaBreachedCount,
+      slaComplianceRate: safePercent(total - slaBreachedCount, total),
     };
 
     return buildReportResponse({
       report: 'response_time',
       dto,
       data,
-      totalRecords: row.total,
+      totalRecords: total,
       startedAt,
     });
   }
@@ -435,10 +472,27 @@ export class OmniReportService {
   ): Promise<ReportResponse<MessageVolumeData>> {
     const startedAt = process.hrtime.bigint();
     const context = this.resolveDateContext(dto);
+
+    // Messages carry no owner of their own, so they are scoped through the
+    // conversations the caller may see. Matching on `tenantId` alone — which is
+    // what this report did — counted every other team's traffic into a scoped
+    // user's totals.
+    const conversationIds = await this.visibleConversationIds(dto, context);
+    if (conversationIds === EMPTY_SCOPE) {
+      return buildReportResponse({
+        report: 'message_volume',
+        dto,
+        data: { byType: [], byDirection: [], bySenderType: [] },
+        totalRecords: 0,
+        startedAt,
+      });
+    }
+
     const baseMatch: any = {
       tenantId: this.tenantObjectId(),
       createdAt: { $gte: context.from, $lte: context.to },
     };
+    if (conversationIds) baseMatch.conversationId = { $in: conversationIds };
 
     const [facetResult] = await reportAggregate(this.messageModel, [
       { $match: baseMatch },
@@ -749,6 +803,37 @@ export class OmniReportService {
 
   // Private Helpers
 
+  /**
+   * The conversations in scope for this report, or `null` when the caller's
+   * visibility is unrestricted and no `$in` is needed.
+   *
+   * Capped: past the cap the `$in` list becomes slower than the scan it replaces,
+   * and a caller who can see that many conversations is broad enough that the
+   * tenant filter is the real boundary. `EMPTY_SCOPE` distinguishes "sees
+   * nothing" from "sees everything" — collapsing those two is how a scope filter
+   * turns into a scope bypass.
+   */
+  private async visibleConversationIds(
+    dto: GetOmniReportDto,
+    context: DateContext,
+  ): Promise<Types.ObjectId[] | null | typeof EMPTY_SCOPE> {
+    const visibility = buildConversationReportVisibilityFilter(this.cls);
+    if (Object.keys(visibility).length === 0) return null;
+
+    const ids = await this.conversationModel
+      .find({
+        ...this.buildBaseMatch(dto),
+        createdAt: { $lte: context.to },
+      })
+      .select('_id')
+      .limit(SCOPE_ID_CAP)
+      .lean()
+      .exec();
+
+    if (ids.length === 0) return EMPTY_SCOPE;
+    return ids.map((doc) => doc._id as unknown as Types.ObjectId);
+  }
+
   private buildBaseMatch(dto: GetOmniReportDto): Record<string, any> {
     const match: Record<string, any> = {
       tenantId: this.tenantObjectId(),
@@ -797,12 +882,70 @@ export class OmniReportService {
     };
   }
 
-  private formatDuration(ms: number): string {
-    if (!ms || ms <= 0) return '0m';
-    const totalMinutes = Math.floor(ms / 60_000);
+  /** Shape one metric's raw accumulator output into a reportable distribution. */
+  private toDurationStats(
+    row: Record<string, any> | undefined,
+    metric: string,
+    count: number,
+  ): DurationStats {
+    const avgMs = round(row?.[`${metric}Avg`]);
+    // `$percentile` returns one element per requested percentile, in order.
+    const percentiles: unknown[] = row?.[`${metric}Percentiles`] ?? [];
+    const p50Ms = round(percentiles[0]);
+    const p90Ms = round(percentiles[1]);
+
+    return {
+      count,
+      avgMs,
+      p50Ms,
+      p90Ms,
+      avgFormatted: this.formatDuration(avgMs),
+      p50Formatted: this.formatDuration(p50Ms),
+      p90Formatted: this.formatDuration(p90Ms),
+    };
+  }
+
+  /**
+   * Human-readable duration. Sub-minute values matter here — a 30-second first
+   * response is a different story from a 30-minute one, and both rendered as
+   * "0m" before.
+   */
+  private formatDuration(ms: number | null): string {
+    if (ms == null) return '—';
+    if (ms < 1_000) return '0s';
+    const totalSeconds = Math.floor(ms / 1_000);
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    if (totalMinutes < 60) return `${totalMinutes}m`;
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
+    if (hours < 24) return `${hours}h ${minutes}m`;
+    return `${Math.floor(hours / 24)}d ${hours % 24}h`;
   }
+}
+
+/**
+ * Mean and p50/p90 accumulators for one duration field.
+ *
+ * `$percentile` with `method: 'approximate'` is the t-digest variant: constant
+ * memory regardless of how many conversations fall in the range, which matters
+ * because the alternative is `$push`-ing every value into one document and
+ * hitting the 16 MB BSON limit on a busy month.
+ */
+function durationAccumulators(
+  metric: string,
+  field: string,
+): Record<string, unknown> {
+  return {
+    [`${metric}Avg`]: { $avg: field },
+    [`${metric}Percentiles`]: {
+      $percentile: { input: field, p: [0.5, 0.9], method: 'approximate' },
+    },
+  };
+}
+
+function round(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.round(value)
+    : null;
 }

@@ -1,10 +1,13 @@
 import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
+import type Redis from 'ioredis';
+import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
+import { ConversationCommandService } from '../../omni-inbound/aggregate/conversation-command.service';
 import {
   BaseTenantConsumer,
   TenantJobData,
@@ -43,6 +46,8 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
     @InjectModel(OmniConversationSchemaClass.name)
     private readonly conversationModel: Model<OmniConversationDocument>,
     private readonly eventEmitter: EventEmitter2,
+    private readonly commands: ConversationCommandService,
+    @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
     cls: ClsService,
   ) {
     super();
@@ -128,14 +133,21 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
             escalatedAt: now,
           });
 
-          // Emit notification event for realtime websocket
-          this.eventEmitter.emit('omni.escalation.notify', {
-            tenantId,
-            conversationId,
-            targetUserId: action.value,
-            message: `SLA breached for conversation — your attention is needed`,
-            escalationPolicyId,
-          });
+          // Publish on the Redis channel `CrmRealtimeGateway` bridges into
+          // Socket.IO. The previous `omni.escalation.notify` in-process event had
+          // no listener at all, and could not have worked anyway: this processor
+          // runs in the worker, which holds no sockets.
+          await this.redis.publish(
+            'socket:omni:escalation:notify',
+            JSON.stringify({
+              tenantId,
+              conversationId,
+              targetUserId: action.value,
+              message:
+                'SLA breached for conversation — your attention is needed',
+              escalationPolicyId,
+            }),
+          );
 
           this.logger.warn(
             `Conversation ${conversationId} escalated to CRITICAL — notified ${action.value}`,
@@ -144,12 +156,27 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
         }
 
         case 'reassign': {
-          // Reassign to manager/team lead
-          this.eventEmitter.emit('omni.escalation.reassign', {
-            tenantId,
-            conversationId,
-            targetUserId: action.value,
-            escalationPolicyId,
+          // Actually reassign. This used to emit `omni.escalation.reassign` — an
+          // event with no listener anywhere — and then log that the conversation
+          // had been reassigned. An escalation policy configured to hand work to
+          // a team lead did nothing at all, while reporting success.
+          //
+          // Routed through ConversationCommandService rather than a direct
+          // `updateOne` so the move is serialised with every other conversation
+          // mutation, moves the agent's capacity, and lands in the assignment
+          // audit trail like any other reassignment.
+          if (!action.value) {
+            this.logger.error(
+              `Escalation policy ${escalationPolicyId} has a reassign action with no target — skipping`,
+            );
+            break;
+          }
+
+          await this.commands.enqueueAssignAgent(conversationId, tenantId, {
+            agentId: action.value,
+            reason: 'escalation',
+            syncCapacity: { assignAgentId: action.value },
+            auditLog: { channelType: conversation.channelType },
           });
 
           this.logger.warn(

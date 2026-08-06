@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
+import axios from 'axios';
 import { ChannelAdapter } from './channel-adapter.interface';
 import { OmniPayload, ChannelType, MessageType } from '../domain/omni-payload';
+
+const TIKTOK_BUSINESS_API = 'https://business-api.tiktok.com/open_api/v1.3';
 
 /**
  * TikTok Direct Messages / TikTok Business Messaging webhook → OmniPayload adapter.
@@ -117,9 +120,15 @@ export class TikTokAdapter implements ChannelAdapter {
       return false;
     }
 
+    // Fail closed. The previous `return true` here meant any request that
+    // arrived without the raw body — the one condition an attacker controls by
+    // choosing a content type Express does not buffer — skipped verification
+    // entirely, which is the whole signature check turned off by omission.
     if (!rawBody) {
-      this.logger.warn('[TikTok] rawBody not provided; skipping HMAC check');
-      return true; // permissive fallback when raw buffer not forwarded
+      this.logger.error(
+        '[TikTok] rawBody unavailable — cannot verify signature, rejecting',
+      );
+      return false;
     }
 
     const expected = createHmac('sha256', clientSecret)
@@ -127,9 +136,14 @@ export class TikTokAdapter implements ChannelAdapter {
       .digest('hex');
 
     try {
-      return timingSafeEqual(
-        Buffer.from(signature.replace(/^sha256=/, '')),
-        Buffer.from(expected),
+      const received = Buffer.from(signature.replace(/^sha256=/, ''), 'hex');
+      const expectedBuffer = Buffer.from(expected, 'hex');
+      // timingSafeEqual throws on a length mismatch, which a forged signature of
+      // the wrong length would trigger — compare lengths first so that reads as
+      // "invalid" rather than as an exception.
+      return (
+        received.length === expectedBuffer.length &&
+        timingSafeEqual(received, expectedBuffer)
       );
     } catch {
       return false;
@@ -144,18 +158,54 @@ export class TikTokAdapter implements ChannelAdapter {
     return body?.challenge ?? null;
   }
 
-  send(
+  /**
+   * Send a direct message through the TikTok Business Messaging API.
+   *
+   * This used to throw unconditionally. Combined with a webhook that could not
+   * resolve an account, TikTok was a channel a tenant could switch on and then
+   * lose every customer through: messages arrived nowhere and replies failed.
+   *
+   * Errors are surfaced by throwing, which is what `DeliveryProcessor` needs to
+   * mark the attempt failed and retry — a resolved promise is recorded as
+   * delivered.
+   */
+  async send(
     recipientId: string,
     content: string,
-    messageType: string,
-    _channelConfig: any,
-  ): Promise<any> {
-    // TikTok Business Messaging send API requires access token which is
-    // managed per channel-config. Full send support is deferred to H11.
-    throw new Error(
-      `[TikTok] Send not implemented — cannot deliver ${messageType} to ${recipientId}. ` +
-        'Configure TIKTOK_ACCESS_TOKEN and implement send() when TikTok Business API access is granted.',
+    _messageType: string,
+    channelConfig: any,
+  ): Promise<{ message_id: string }> {
+    const accessToken = channelConfig?.credentials?.accessToken;
+    if (!accessToken) {
+      throw new Error('TikTok adapter lacks an access token to send messages');
+    }
+
+    const response = await axios.post(
+      `${TIKTOK_BUSINESS_API}/message/send/`,
+      {
+        to_user: { open_id: recipientId },
+        message: { message_type: 'text', content: { text: content } },
+      },
+      {
+        headers: {
+          'Access-Token': accessToken,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10_000,
+      },
     );
+
+    // TikTok answers HTTP 200 with a non-zero `code` on rejection, so the error
+    // has to be raised explicitly — otherwise every refused send is recorded as
+    // delivered and the customer is never told anything went wrong.
+    const body = response.data;
+    if (body?.code && body.code !== 0) {
+      throw new Error(
+        `TikTok send failed (${body.code}): ${body.message ?? 'unknown error'}`,
+      );
+    }
+
+    return { message_id: body?.data?.message_id ?? '' };
   }
 
   // Private helpers

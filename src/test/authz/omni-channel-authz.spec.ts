@@ -313,4 +313,82 @@ describe('omni-channel authorization', () => {
       await expect(repo.findById('x')).resolves.not.toBeNull();
     });
   });
+
+  // Layer 4 — the socket surface
+
+  /**
+   * Socket handlers get NONE of the HTTP pipeline: no PermissionGuard, no AclGuard,
+   * no @RequirePermission. Every one of them checked authentication and tenant
+   * membership and stopped there, so  was reachable by any
+   * connected user — a read-only agent could send a message to a customer on a
+   * conversation they were not allowed to open, while the REST route for the same
+   * action enforced both the permission and the record ACL.
+   *
+   * Static, like the checks above: this is a question about which gate each
+   * handler carries, and booting a gateway to ask it would need Redis and a real
+   * socket.
+   */
+  describe('socket commands', () => {
+    const gatewaySource = readFileSync(
+      join(
+        __dirname,
+        '..',
+        '..',
+        'omni-inbound',
+        'services',
+        'omni.gateway.ts',
+      ),
+      'utf8',
+    );
+
+    /** One block per @SubscribeMessage handler. */
+    const socketBlocks = (): Array<{ event: string; block: string }> => {
+      const re =
+        /@SubscribeMessage\(\s*'([^']+)'\s*\)([\s\S]*?)(?=\n\s{2}@(?:SubscribeMessage|OnEvent)\()/g;
+      const blocks: Array<{ event: string; block: string }> = [];
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(gatewaySource)) !== null) {
+        blocks.push({ event: match[1], block: match[2] });
+      }
+      return blocks;
+    };
+
+    const SOCKET_BLOCKS = socketBlocks();
+
+    /**
+     * Handlers that put something in front of the customer, or change who owns the
+     * conversation. Each must call authorizeSocketAction.
+     */
+    const MUST_BE_GATED = [
+      'omni:message:send',
+      'omni:message:send-media',
+      'omni:message:send-template',
+      'omni:message:send-interactive',
+      'omni:message:send-carousel',
+      'omni:reaction:send',
+    ];
+
+    it('should find the socket handlers to inspect', () => {
+      expect(SOCKET_BLOCKS.length).toBeGreaterThan(5);
+    });
+
+    it.each(MUST_BE_GATED)(
+      '%s should check the permission and the record ACL',
+      (event) => {
+        const handler = SOCKET_BLOCKS.find((b) => b.event === event);
+        expect(handler).toBeDefined();
+        expect(handler!.block).toContain('authorizeSocketAction');
+      },
+    );
+
+    it('should require conversation access before joining its room', () => {
+      const subscribe = SOCKET_BLOCKS.find(
+        (b) => b.event === 'conversation.subscribe',
+      );
+      expect(subscribe).toBeDefined();
+      // Tenant-scoping the room name is not authorization: any agent could join
+      // any conversation in their tenant by id.
+      expect(subscribe!.block).toContain('mayAccessConversation');
+    });
+  });
 });

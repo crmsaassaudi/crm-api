@@ -273,12 +273,10 @@ export class WorkDistributionService {
           item.capacityWeight,
         );
       }
-      this.events.emit('omni.work_item.wrap_up_completed', {
-        tenantId: String(item.tenantId),
-        workItemId: String(item._id),
-        conversationId: String(item.conversationId),
-        agentId: item.assignedAgentId ? String(item.assignedAgentId) : null,
-      });
+      // No event: nothing consumed `omni.work_item.wrap_up_completed`, and the
+      // observable effect — the agent leaving WRAP_UP — is already broadcast by
+      // the presence release above via `agent:status:changed`. A second
+      // announcement with no listener is not a hook, it is litter.
       completed++;
     }
     return completed;

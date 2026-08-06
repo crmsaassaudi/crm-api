@@ -14,9 +14,7 @@ import { ImageProcessingService } from '../files/image-processing.service';
 import { validateForPlatform } from '../files/config/platform-limits.config';
 import { mimeToMessageType } from '../common/utils/mime.util';
 import { UsersService } from '../users/users.service';
-import { ReplyWindowExpiredException } from './exceptions/reply-window-expired.exception';
-import { ConfigType } from '@nestjs/config';
-import replyWindowConfig from './config/reply-window.config';
+import { enforceReplyWindow } from './reply-window';
 import { DeliveryCommandService } from './delivery-command.service';
 import {
   SsrfBlockedError,
@@ -90,8 +88,6 @@ export class OutboundMediaHandler {
     private readonly eventEmitter: EventEmitter2,
     @Inject(CHANNEL_ADAPTERS)
     private readonly adapters: Map<ChannelType, ChannelAdapter>,
-    @Inject(replyWindowConfig.KEY)
-    private readonly replyWindowCfg: ConfigType<typeof replyWindowConfig>,
     private readonly filesService: FilesService,
     private readonly imageProcessingService: ImageProcessingService,
     private readonly usersService: UsersService,
@@ -966,24 +962,6 @@ export class OutboundMediaHandler {
     channelType: string;
     lastCustomerMessageAt?: Date | null;
   }): void {
-    const cfg = this.replyWindowCfg as any;
-    const channelKey = conversation.channelType.toLowerCase() as ChannelType;
-    const channelCfg = cfg?.channels?.[channelKey];
-
-    if (!channelCfg?.enabled || !channelCfg?.windowHours) return;
-    if (!conversation.lastCustomerMessageAt) return;
-
-    const windowMs = channelCfg.windowHours * 3600_000;
-    const now = Date.now();
-    const lastMsg = new Date(conversation.lastCustomerMessageAt).getTime();
-
-    if (now - lastMsg > windowMs) {
-      throw new ReplyWindowExpiredException(
-        channelKey,
-        channelCfg.windowHours,
-        new Date(lastMsg),
-        new Date(lastMsg + windowMs),
-      );
-    }
+    enforceReplyWindow(conversation);
   }
 }

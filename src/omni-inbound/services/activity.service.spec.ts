@@ -247,43 +247,10 @@ describe('ActivityService', () => {
     });
   });
 
-  describe('onTicketCreated', () => {
-    it('should log ticket creation with subject', async () => {
-      await service.onTicketCreated({
-        tenantId: 'tenant-1',
-        conversationId: 'conv-1',
-        ticketId: 'ticket-1',
-        subject: 'Customer complaint',
-        agentId: 'agent-1',
-      });
-
-      expect(activityRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'ticket_created',
-          description: expect.stringContaining('Customer complaint'),
-        }),
-      );
-    });
-  });
-
-  describe('onDealCreated', () => {
-    it('should log deal creation with title', async () => {
-      await service.onDealCreated({
-        tenantId: 'tenant-1',
-        conversationId: 'conv-1',
-        dealId: 'deal-1',
-        title: 'Enterprise License Q2',
-        agentId: 'agent-1',
-      });
-
-      expect(activityRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'deal_created',
-          description: expect.stringContaining('Enterprise License Q2'),
-        }),
-      );
-    });
-  });
+  // Removed with their handlers: `onTicketCreated` / `onDealCreated` listened for
+  // events nothing emits, because converting a conversation into a ticket or a
+  // deal is not a feature that exists. These tests passed by calling the handlers
+  // directly, which is what let two dead listeners look covered.
 
   describe('error handling', () => {
     it('should not throw when repository create fails', async () => {

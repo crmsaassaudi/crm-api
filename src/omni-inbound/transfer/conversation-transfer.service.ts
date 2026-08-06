@@ -22,6 +22,8 @@ import { CreateTransferDto } from './transfer.dto';
 import { resolveCapacityWeight } from '../work-distribution/capacity-policy';
 import { RedisLockService } from '../../redis/redis-lock.service';
 import { runAsClusterSingleton } from '../../common/scheduling/cluster-singleton';
+import { AuthzPermissionCacheService } from '../../common/permissions/authz-permission-cache.service';
+import { PERMISSION_REGISTRY } from '../../common/permissions/permission.constants';
 
 @Injectable()
 export class ConversationTransferService {
@@ -36,6 +38,7 @@ export class ConversationTransferService {
     private readonly channelSupport: ChannelSupportService,
     private readonly events: EventEmitter2,
     private readonly lockService: RedisLockService,
+    private readonly authzCache: AuthzPermissionCacheService,
   ) {}
 
   async create(
@@ -44,42 +47,65 @@ export class ConversationTransferService {
     actorId: string,
     dto: CreateTransferDto,
   ): Promise<any> {
-    if (actorId === dto.targetAgentId) {
+    if (!dto.targetAgentId && !dto.targetGroupId) {
+      throw new ConflictException(
+        'A transfer needs a target agent or a target team',
+      );
+    }
+    if (dto.targetAgentId && actorId === dto.targetAgentId) {
       throw new ConflictException('Source and target agent must differ');
     }
+
     const conversation = await this.conversations.findById(conversationId);
     if (!conversation || conversation.tenantId !== tenantId) {
       throw new NotFoundException('Conversation not found');
     }
-    if (String(conversation.assignedAgentId ?? '') !== actorId) {
+    // A supervisor has to be able to move work off an agent who has gone home
+    // mid-conversation. `omni_channel:assign` is the permission for deciding who
+    // owns a conversation; the assignee needs no extra grant to hand over their
+    // own.
+    const isAssignee = String(conversation.assignedAgentId ?? '') === actorId;
+    if (!isAssignee && !(await this.mayReassign(tenantId, actorId))) {
       throw new ForbiddenException(
-        'Only the current assignee can initiate a transfer',
+        'Only the current assignee or a user who may assign can transfer this conversation',
       );
     }
-    await this.channelSupport.assertAgentEligible(
-      tenantId,
-      String(conversation.channelId),
-      dto.targetAgentId,
-    );
+
+    if (dto.targetAgentId) {
+      await this.channelSupport.assertAgentEligible(
+        tenantId,
+        String(conversation.channelId),
+        dto.targetAgentId,
+      );
+    }
+
+    // To a team: there is no individual to accept or decline, so this is always a
+    // cold handover into that team's queue, and routing picks it up from there.
+    const isTeamTransfer = !dto.targetAgentId;
+    const type = isTeamTransfer ? 'cold' : dto.type;
 
     const transfer = await this.transfers.create({
       tenantId,
       conversationId,
-      type: dto.type,
+      type,
       sourceAgentId: actorId,
-      targetAgentId: dto.targetAgentId,
+      targetAgentId: dto.targetAgentId ?? null,
       targetGroupId: dto.targetGroupId ?? null,
-      status: dto.type === 'cold' ? 'accepted' : 'requested',
+      status: type === 'cold' ? 'accepted' : 'requested',
       reason: dto.reason ?? null,
       handoffNote: dto.handoffNote ?? null,
       expiresAt: new Date(Date.now() + 5 * 60_000),
-      respondedAt: dto.type === 'cold' ? new Date() : null,
+      respondedAt: type === 'cold' ? new Date() : null,
       capacityWeight: resolveCapacityWeight(conversation.channelType),
     });
 
-    if (dto.type === 'cold') {
+    if (type === 'cold') {
       try {
-        await this.commitOwnership(transfer, conversation.channelType);
+        if (isTeamTransfer) {
+          await this.commitToQueue(transfer, conversation.channelType);
+        } else {
+          await this.commitOwnership(transfer, conversation.channelType);
+        }
         transfer.status = 'completed';
         transfer.completedAt = new Date();
         await transfer.save();
@@ -92,6 +118,54 @@ export class ConversationTransferService {
     }
     this.emitChanged(transfer);
     return transfer;
+  }
+
+  /**
+   * Hand the conversation to a team's queue: unassign the agent, re-file it under
+   * the target group, and let routing offer it to whoever is available.
+   *
+   * The source agent's capacity is released; none is reserved, because nobody owns
+   * it yet. `queuedAt` restarts inside the repository's ownership-timing fragment,
+   * so the wait a supervisor sees on the queue console is the wait since the
+   * handover rather than since the conversation began.
+   */
+  private async commitToQueue(
+    transfer: ConversationTransferDocument,
+    channelType: string,
+  ): Promise<void> {
+    const tenantId = String(transfer.tenantId);
+    const sourceId = String(transfer.sourceAgentId);
+
+    await this.commands.executeAssignAgent(
+      String(transfer.conversationId),
+      tenantId,
+      {
+        agentId: null,
+        groupId: transfer.targetGroupId
+          ? String(transfer.targetGroupId)
+          : undefined,
+        previousAgentId: sourceId,
+        performedByUserId: sourceId,
+        reason: 'transfer_team',
+        syncCapacity: {
+          releaseAgentId: sourceId,
+          releaseWeight: transfer.capacityWeight,
+        },
+        auditLog: { channelType },
+      },
+    );
+  }
+
+  /** Whether this principal may decide who owns a conversation. */
+  private async mayReassign(
+    tenantId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const { effective } = await this.authzCache.explainForUser(
+      userId,
+      tenantId,
+    );
+    return effective.includes(PERMISSION_REGISTRY.omni_channel.assign!);
   }
 
   async accept(

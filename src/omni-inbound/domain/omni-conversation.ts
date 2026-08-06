@@ -4,6 +4,15 @@ export type ConversationStatus = 'open' | 'pending' | 'resolved' | 'closed';
 export type BotConversationStatus = 'active' | 'handoff' | 'ended';
 
 /**
+ * The three SLA metrics a conversation is measured on.
+ *
+ * `next_response` is per-turn: every customer message after the first opens a new
+ * cycle, which is what distinguishes "answered once then ignored" from "answered
+ * throughout" — the case a first-response-only model cannot see.
+ */
+export type SlaMetric = 'first_response' | 'next_response' | 'resolution';
+
+/**
  * Channel-level bot mode — controls how bot and auto-assignment interact.
  *
  * - `bot_first`: Bot handles conversation first. Auto-assignment is DEFERRED
@@ -113,11 +122,19 @@ export interface OmniConversation {
   // Platform Reply Window
   lastCustomerMessageAt: Date | null;
 
-  // SLA Tracking
-  frtDeadline: Date | null;
-  frtBreached: boolean;
-  resolutionDeadline: Date | null;
-  resolutionBreached: boolean;
+  // Handling timeline — the facts FRT, time-to-assign and wait time derive from.
+  firstRespondedAt: Date | null;
+  firstResponderId: string | null;
+  queuedAt: Date | null;
+  assignedAt: Date | null;
+  totalQueuedMs: number;
+
+  // SLA read model, projected from `omni_sla_clocks`.
+  slaDueAt: Date | null;
+  slaDueMetric: SlaMetric | null;
+  slaBreached: boolean;
+  slaBreachedAt: Date | null;
+
   escalationLevel: 'warning' | 'critical' | null;
 
   // Snooze

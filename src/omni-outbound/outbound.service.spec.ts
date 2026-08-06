@@ -27,13 +27,9 @@ describe('OutboundService', () => {
   let deliveryAttempts: any;
   let deliveryCommands: any;
 
-  const replyWindowCfg = {
-    facebook: 24,
-    zalo: 24,
-    whatsapp: 24,
-    instagram: 24,
-    livechat: 0,
-  };
+  // No reply-window fixture: the windows are platform constants living in
+  // CHANNEL_CAPABILITIES, not injected configuration two services could read
+  // differently.
 
   const baseConversation = {
     id: 'conv_1',
@@ -119,7 +115,6 @@ describe('OutboundService', () => {
       channelRepo,
       eventEmitter as any,
       adapters as any,
-      replyWindowCfg as any,
       {} as any, // transportPool
       {} as any, // outboundQueue
       {} as any, // emailSignatureService
@@ -638,13 +633,6 @@ describe('normalizeOutboundSource (via sendAgentMessage)', () => {
       new Map([
         ['livechat', { send: jest.fn().mockResolvedValue({ id: 'ext' }) }],
       ]) as any,
-      {
-        facebook: 24,
-        zalo: 24,
-        whatsapp: 24,
-        instagram: 24,
-        livechat: 0,
-      } as any,
       {} as any,
       {} as any,
       {} as any,

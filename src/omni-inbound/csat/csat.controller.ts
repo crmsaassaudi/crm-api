@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiOperation,
   ApiTags,
@@ -8,6 +16,8 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { CsatService, CsatSubmitDto } from './csat.service';
 import { RequirePermission } from '../../common/permissions';
+import { UseAcl } from '../../common/permissions/use-acl.decorator';
+import { LoadResource } from '../../common/permissions/load-resource.decorator';
 import { Public } from '../../auth/decorators/public.decorator';
 import { ClsService } from 'nestjs-cls';
 
@@ -38,16 +48,28 @@ export class CsatController {
   }
 
   /**
-   * Internal endpoint — generate a survey token for a resolved conversation.
-   * Called by the agent when they resolve a conversation.
+   * Internal endpoint — mint a survey token for a conversation.
+   *
+   * Gated on `omni_channel:edit` and the conversation's own ACL. It used to
+   * require `tickets:edit` with no record check, which got the boundary wrong in
+   * both directions: a ticket agent could mint a survey token for a conversation
+   * they were not allowed to read, and an omni agent with no ticket rights could
+   * not mint one for their own conversation.
    */
   @ApiBearerAuth()
-  @RequirePermission('edit', 'tickets') // same tier as closing tickets
+  @RequirePermission('edit', 'omni_channel')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
   @Post('generate-token/:conversationId')
   @ApiOperation({ summary: 'Generate CSAT survey token for a conversation' })
-  generateToken(@Param('conversationId') conversationId: string) {
+  async generateToken(@Param('conversationId') conversationId: string) {
     const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
-    return this.csatService.generateToken(conversationId, tenantId);
+    const token = await this.csatService.generateToken(
+      conversationId,
+      tenantId,
+    );
+    if (!token) throw new NotFoundException('Conversation not found');
+    return token;
   }
 
   /**

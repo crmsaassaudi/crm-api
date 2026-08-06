@@ -9,29 +9,6 @@
  */
 export type ChannelType = string & { readonly __brand?: 'ChannelType' };
 
-/** All channel types currently supported by the platform. */
-export const KNOWN_CHANNELS = [
-  'facebook',
-  'instagram',
-  'zalo',
-  'whatsapp',
-  'livechat',
-  'email',
-  'telegram',
-  'tiktok',
-  'sms',
-  'voice',
-  'shopee',
-] as const;
-
-/** Narrow a string to a known channel type (compile-time guard). */
-export type KnownChannelType = (typeof KNOWN_CHANNELS)[number];
-
-/** Runtime check: is this string a known channel? */
-export function isKnownChannel(type: string): type is KnownChannelType {
-  return (KNOWN_CHANNELS as readonly string[]).includes(type);
-}
-
 /**
  * Channels whose `senderId` IS the customer's phone number.
  *
@@ -43,11 +20,7 @@ export function isKnownChannel(type: string): type is KnownChannelType {
  * carried no phone at all — leaving the same person permanently split across
  * two records with nothing left to dedup on.
  */
-const PHONE_IDENTITY_CHANNELS: ReadonlySet<string> = new Set([
-  'whatsapp',
-  'sms',
-  'voice',
-]);
+const PHONE_IDENTITY_CHANNELS: ReadonlySet<string> = new Set(['whatsapp']);
 
 /** True when this channel's sender id is a dialable phone number. */
 export function isPhoneIdentityChannel(type: string): boolean {

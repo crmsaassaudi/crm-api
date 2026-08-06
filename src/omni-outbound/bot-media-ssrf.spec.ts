@@ -55,7 +55,6 @@ describe('OutboundMediaHandler — bot media fetch', () => {
       channelRepo as any,
       { emit: jest.fn() } as any,
       new Map([['livechat', adapter]]) as any,
-      { channels: {} } as any,
       {} as any,
       { isProcessableImage: () => false } as any,
       {} as any,

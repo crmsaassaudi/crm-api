@@ -20,8 +20,15 @@ export class ConversationTransferSchemaClass extends EntityDocumentHelper {
   @Prop({ type: MongooseSchema.Types.ObjectId, required: true })
   sourceAgentId: string;
 
-  @Prop({ type: MongooseSchema.Types.ObjectId, required: true })
-  targetAgentId: string;
+  /**
+   * The receiving agent, or null for a team transfer.
+   *
+   * Nullable because a conversation can be handed to a queue rather than to a
+   * person — "pass this to the billing team" was previously unexpressible, since a
+   * required target forced the agent to guess who was free.
+   */
+  @Prop({ type: MongooseSchema.Types.ObjectId, default: null })
+  targetAgentId: string | null;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, default: null })
   targetGroupId: string | null;

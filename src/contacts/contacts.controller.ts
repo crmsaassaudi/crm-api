@@ -44,6 +44,7 @@ import {
   ContactTimelineService,
   TimelineSource,
 } from './timeline/contact-timeline.service';
+import { CustomerContextService } from './timeline/customer-context.service';
 import { ContactRelationsService } from './relations/contact-relations.service';
 import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
 import {
@@ -79,6 +80,7 @@ export class ContactsController {
   constructor(
     private readonly service: ContactsService,
     private readonly timelineService: ContactTimelineService,
+    private readonly customerContextService: CustomerContextService,
     private readonly relationsService: ContactRelationsService,
     private readonly identitySync: ContactIdentitySyncService,
     private readonly listViewsService: ListViewsService,
@@ -396,6 +398,23 @@ export class ContactsController {
           ? new Date(before)
           : undefined,
     });
+  }
+
+  /**
+   * Sales and service context for one customer, in a single request.
+   *
+   * Serves the omni inbox panel, which is opened dozens of times an hour: one
+   * round trip rather than three, so switching conversations stays instant. The
+   * per-source permissions are enforced inside the service, and sources the caller
+   * may not read come back named in `deniedSources` — "you cannot see this" and
+   * "there is nothing" are different answers.
+   */
+  @Get(':id/customer-context')
+  @RequirePermission('view', 'contacts')
+  @UseAcl('view', 'contacts')
+  @LoadResource('contacts')
+  getCustomerContext(@Param('id') id: string) {
+    return this.customerContextService.getContext(id);
   }
 
   // IDENTITIES

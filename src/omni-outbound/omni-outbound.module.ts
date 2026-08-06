@@ -1,5 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { BullModule } from '@nestjs/bullmq';
 
@@ -23,20 +22,11 @@ import {
 import { isOmniRuntime } from '../config/runtime-role';
 
 // Config
-import replyWindowConfig from './config/reply-window.config';
 
-// Adapters (shared with inbound — imported from omni-inbound)
-import { FacebookAdapter } from '../omni-inbound/adapters/facebook.adapter';
-import { ZaloAdapter } from '../omni-inbound/adapters/zalo.adapter';
-import { WhatsAppAdapter } from '../omni-inbound/adapters/whatsapp.adapter';
-import { InstagramAdapter } from '../omni-inbound/adapters/instagram.adapter';
-import { LivechatAdapter } from '../omni-inbound/adapters/livechat.adapter';
-import {
-  CHANNEL_ADAPTERS,
-  ChannelAdapter,
-} from '../omni-inbound/adapters/channel-adapter.interface';
-import { ChannelType } from '../omni-inbound/domain/omni-payload';
-import { LivechatModule } from '../livechat/livechat.module';
+// The shared adapter registry — see ChannelAdaptersModule for why it is its own
+// module rather than a second copy of the map.
+import { ChannelAdaptersModule } from '../omni-inbound/adapters/channel-adapters.module';
+import { SystemReplyListener } from './system-reply.listener';
 
 // Repositories (from omni-inbound — need to be imported via OmniInboundModule)
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
@@ -77,7 +67,6 @@ import {
  */
 @Module({
   imports: [
-    ConfigModule.forFeature(replyWindowConfig),
     ChannelsModule,
     UsersModule,
     FilesModule,
@@ -91,7 +80,9 @@ import {
         removeOnFail: { count: 5_000, age: 604_800 },
       },
     }),
-    forwardRef(() => LivechatModule), // LivechatAdapter (wired with gateway)
+    // The single adapter registry. Both inbound and outbound read it, which is
+    // what stops the two from disagreeing about which channels exist.
+    ChannelAdaptersModule,
     MongooseModule.forFeature([
       {
         name: OmniConversationSchemaClass.name,
@@ -111,38 +102,6 @@ import {
     ]),
   ],
   providers: [
-    // Adapters
-    FacebookAdapter,
-    ZaloAdapter,
-    WhatsAppAdapter,
-    InstagramAdapter,
-    // LivechatAdapter provided by LivechatModule — same instance with gateway wired
-    {
-      provide: CHANNEL_ADAPTERS,
-      useFactory: (
-        fb: FacebookAdapter,
-        zalo: ZaloAdapter,
-        wa: WhatsAppAdapter,
-        ig: InstagramAdapter,
-        lc: LivechatAdapter,
-      ) => {
-        const map = new Map<ChannelType, ChannelAdapter>();
-        map.set('facebook', fb);
-        map.set('zalo', zalo);
-        map.set('whatsapp', wa);
-        map.set('instagram', ig);
-        map.set('livechat', lc);
-        return map;
-      },
-      inject: [
-        FacebookAdapter,
-        ZaloAdapter,
-        WhatsAppAdapter,
-        InstagramAdapter,
-        LivechatAdapter,
-      ],
-    },
-
     // Repositories
     ConversationRepository,
     MessageRepository,
@@ -152,6 +111,9 @@ import {
     OutboundMediaHandler,
     OutboundEmailHandler,
     OutboundReconciliationService,
+    // Out-of-office replies and auto-resolve warnings — the automated messages the
+    // platform sends with no agent behind them.
+    SystemReplyListener,
     DeliveryAttemptService,
     DeliveryCommandService,
     ...(isOmniRuntime() ? [DeliveryProcessor] : []),

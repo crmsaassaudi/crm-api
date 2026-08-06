@@ -1,5 +1,4 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
-import { ConfigType } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { MessageRepository } from '../omni-inbound/repositories/message.repository';
 import { ConversationRepository } from '../omni-inbound/repositories/conversation.repository';
@@ -18,8 +17,11 @@ import { DeliveryAttemptService } from './delivery-attempt.service';
 import { DeliveryCommandService } from './delivery-command.service';
 
 import { ChannelRepository } from '../channels/infrastructure/persistence/document/repositories/channel.repository';
-import { ReplyWindowExpiredException } from './exceptions/reply-window-expired.exception';
-import replyWindowConfig from './config/reply-window.config';
+import {
+  enforceReplyWindow,
+  getReplyWindowStatus,
+  type ReplyWindowStatus,
+} from './reply-window';
 
 import { TransportPoolService } from '../channels/transport-pool.service';
 import { OutboundQueueService } from '../channels/services/outbound-queue.service';
@@ -69,8 +71,6 @@ export class OutboundService {
     private readonly eventEmitter: EventEmitter2,
     @Inject(CHANNEL_ADAPTERS)
     private readonly adapters: Map<ChannelType, ChannelAdapter>,
-    @Inject(replyWindowConfig.KEY)
-    private readonly replyWindowCfg: ConfigType<typeof replyWindowConfig>,
     private readonly transportPool: TransportPoolService,
     private readonly outboundQueue: OutboundQueueService,
     private readonly emailSignatureService: EmailSignatureService,
@@ -1208,57 +1208,8 @@ export class OutboundService {
   getReplyWindowStatus(conversation: {
     channelType: string;
     lastCustomerMessageAt?: Date | null;
-  }): {
-    isOpen: boolean;
-    channelType: string;
-    lastCustomerMessageAt: string | null;
-    expiresAt: string | null;
-    remainingMs: number;
-    windowHours: number;
-  } {
-    const channelKey =
-      conversation.channelType.toLowerCase() as keyof typeof this.replyWindowCfg;
-    const windowHours = this.replyWindowCfg[channelKey] ?? 24;
-
-    // Unlimited window (e.g. LiveChat)
-    if (windowHours === 0) {
-      return {
-        isOpen: true,
-        channelType: conversation.channelType,
-        lastCustomerMessageAt: conversation.lastCustomerMessageAt
-          ? new Date(conversation.lastCustomerMessageAt).toISOString()
-          : null,
-        expiresAt: null,
-        remainingMs: Infinity,
-        windowHours: 0,
-      };
-    }
-
-    // No customer message yet — window is closed
-    if (!conversation.lastCustomerMessageAt) {
-      return {
-        isOpen: false,
-        channelType: conversation.channelType,
-        lastCustomerMessageAt: null,
-        expiresAt: null,
-        remainingMs: 0,
-        windowHours,
-      };
-    }
-
-    const lastMsg = new Date(conversation.lastCustomerMessageAt);
-    const windowMs = windowHours * 60 * 60 * 1000;
-    const expiresAt = new Date(lastMsg.getTime() + windowMs);
-    const remainingMs = expiresAt.getTime() - Date.now();
-
-    return {
-      isOpen: remainingMs > 0,
-      channelType: conversation.channelType,
-      lastCustomerMessageAt: lastMsg.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-      remainingMs: Math.max(0, remainingMs),
-      windowHours,
-    };
+  }): ReplyWindowStatus {
+    return getReplyWindowStatus(conversation);
   }
 
   /**
@@ -1532,17 +1483,7 @@ export class OutboundService {
     channelType: string;
     lastCustomerMessageAt?: Date | null;
   }): void {
-    const status = this.getReplyWindowStatus(conversation);
-    if (!status.isOpen && status.windowHours > 0) {
-      throw new ReplyWindowExpiredException(
-        status.channelType,
-        status.windowHours,
-        conversation.lastCustomerMessageAt
-          ? new Date(conversation.lastCustomerMessageAt)
-          : new Date(0),
-        status.expiresAt ? new Date(status.expiresAt) : new Date(),
-      );
-    }
+    enforceReplyWindow(conversation);
   }
 
   /** Dispatch an interactive button message via the channel adapter. */

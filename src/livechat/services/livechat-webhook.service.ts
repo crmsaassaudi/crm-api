@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { LivechatWidgetService } from '../livechat-widget.service';
 import { createHmac } from 'crypto';
+import { CrmEvents, OmniEvents } from '../../omni-inbound/domain/omni-events';
 
 /**
  * LivechatWebhookService
@@ -51,73 +52,152 @@ export class LivechatWebhookService {
     });
   }
 
-  @OnEvent('livechat.message.outbound', { async: true })
+  /**
+   * The four listeners below hang off the platform's real domain events.
+   *
+   * They previously listened for `livechat.message.outbound`,
+   * `livechat.conversation.started`, `livechat.conversation.ended` and
+   * `livechat.csat.submitted` — four event names with **no emitter anywhere**. So a
+   * widget configured to receive `message.sent`, `conversation.started`,
+   * `conversation.ended` or `csat.submitted` received none of them, while
+   * `message.received` and `visitor.identified` worked; the webhook looked
+   * partially broken in a way no log explained.
+   *
+   * Retargeted rather than given four new emitters: the events already exist and
+   * are already correct, and a second event that only this consumer listens to is
+   * the same trap again.
+   */
+  @OnEvent(OmniEvents.MESSAGE_SENT, { async: true })
   async onMessageSent(payload: {
-    widgetId?: string;
+    tenantId: string;
     conversationId?: string;
-    visitorId?: string;
+    channelType?: string;
+    channelId?: string;
+    senderId?: string;
+    senderType?: string;
     content: string;
-    type?: string;
-    agentId?: string;
+    messageType?: string;
   }) {
-    await this.dispatch(payload.widgetId, 'message.sent', {
-      event: 'message.sent',
-      conversationId: payload.conversationId,
-      visitorId: payload.visitorId,
-      message: {
-        content: payload.content,
-        type: payload.type ?? 'text',
-        sender: 'agent',
-        agentId: payload.agentId,
+    if (payload.channelType !== 'livechat') return;
+
+    await this.dispatchByChannel(
+      payload.tenantId,
+      payload.channelId,
+      'message.sent',
+      {
+        event: 'message.sent',
+        conversationId: payload.conversationId,
+        message: {
+          content: payload.content,
+          type: payload.messageType ?? 'text',
+          sender: payload.senderType ?? 'agent',
+          agentId:
+            payload.senderType === 'agent' ? payload.senderId : undefined,
+          timestamp: new Date().toISOString(),
+        },
+      },
+    );
+  }
+
+  @OnEvent(OmniEvents.CONVERSATION_CREATED, { async: true })
+  async onConversationStarted(payload: {
+    tenantId: string;
+    conversationId?: string;
+    conversation?: { id?: string; channelType?: string; channelId?: string };
+  }) {
+    const conversation = payload.conversation;
+    if (conversation?.channelType !== 'livechat') return;
+
+    await this.dispatchByChannel(
+      payload.tenantId,
+      conversation.channelId,
+      'conversation.started',
+      {
+        event: 'conversation.started',
+        conversationId: conversation.id ?? payload.conversationId,
         timestamp: new Date().toISOString(),
       },
-    });
+    );
   }
 
-  @OnEvent('livechat.conversation.started', { async: true })
-  async onConversationStarted(payload: {
-    widgetId?: string;
-    conversationId: string;
-    visitorId: string;
-  }) {
-    await this.dispatch(payload.widgetId, 'conversation.started', {
-      event: 'conversation.started',
-      conversationId: payload.conversationId,
-      visitorId: payload.visitorId,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  @OnEvent('livechat.conversation.ended', { async: true })
+  @OnEvent(OmniEvents.CONVERSATION_STATUS_CHANGED, { async: true })
   async onConversationEnded(payload: {
-    widgetId?: string;
+    tenantId: string;
     conversationId: string;
-    visitorId: string;
+    channelType?: string;
+    channelId?: string;
+    status?: string;
+    newStatus?: string;
   }) {
-    await this.dispatch(payload.widgetId, 'conversation.ended', {
-      event: 'conversation.ended',
-      conversationId: payload.conversationId,
-      visitorId: payload.visitorId,
-      timestamp: new Date().toISOString(),
-    });
+    if (payload.channelType !== 'livechat') return;
+    const status = payload.newStatus ?? payload.status;
+    if (status !== 'resolved' && status !== 'closed') return;
+
+    await this.dispatchByChannel(
+      payload.tenantId,
+      payload.channelId,
+      'conversation.ended',
+      {
+        event: 'conversation.ended',
+        conversationId: payload.conversationId,
+        status,
+        timestamp: new Date().toISOString(),
+      },
+    );
   }
 
-  @OnEvent('livechat.csat.submitted', { async: true })
+  @OnEvent(CrmEvents.CSAT_SUBMITTED, { async: true })
   async onCsatSubmitted(payload: {
-    widgetId?: string;
+    tenantId: string;
     conversationId: string;
-    visitorId?: string;
-    rating: number;
+    channelType?: string;
+    channelId?: string;
+    score?: number;
     comment?: string;
   }) {
-    await this.dispatch(payload.widgetId, 'csat.submitted', {
-      event: 'csat.submitted',
-      conversationId: payload.conversationId,
-      visitorId: payload.visitorId,
-      rating: payload.rating,
-      comment: payload.comment,
-      timestamp: new Date().toISOString(),
-    });
+    if (payload.channelType !== 'livechat') return;
+
+    await this.dispatchByChannel(
+      payload.tenantId,
+      payload.channelId,
+      'csat.submitted',
+      {
+        event: 'csat.submitted',
+        conversationId: payload.conversationId,
+        rating: payload.score,
+        comment: payload.comment,
+        timestamp: new Date().toISOString(),
+      },
+    );
+  }
+
+  /**
+   * Dispatch to every widget on a channel.
+   *
+   * Omni events name the channel, not the widget, and a channel can carry more
+   * than one widget (`{channelId, name}` is the unique key, not `channelId`).
+   */
+  private async dispatchByChannel(
+    tenantId: string,
+    channelId: string | undefined,
+    eventType: string,
+    payload: Record<string, any>,
+  ): Promise<void> {
+    if (!channelId) return;
+    try {
+      const widgets = await this.widgetService.findByChannel(
+        tenantId,
+        channelId,
+      );
+      await Promise.all(
+        widgets.map((widget) => this.dispatch(widget.id, eventType, payload)),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve widgets for channel ${channelId}: ` +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    }
   }
 
   @OnEvent('livechat.visitor.identified', { async: true })

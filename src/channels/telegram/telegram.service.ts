@@ -6,6 +6,8 @@ import { ChannelRepository } from '../infrastructure/persistence/document/reposi
 import { newChannelSupport } from '../domain/channel';
 import { TelegramAdapter } from './telegram.adapter';
 import { CreateTelegramChannelDto } from './telegram.controller';
+import { OmniEvents } from '../../omni-inbound/domain/omni-events';
+import type { InboundWebhookEvent } from '../../omni-inbound/domain/omni-events';
 
 const TG_API = (token: string) => `https://api.telegram.org/bot${token}`;
 
@@ -82,12 +84,6 @@ export class TelegramService {
       return;
     }
 
-    const channelConfig = {
-      credentials: channel.credentials,
-      config: channel.config,
-      account: channel.account,
-    };
-
     // Validate webhook secret
     const valid = this.adapter.validateWebhook(headers, update, rawBody);
     if (!valid) {
@@ -97,20 +93,23 @@ export class TelegramService {
       return;
     }
 
-    const payloads = this.adapter.normalize(
-      update,
-      channel.tenantId,
+    // `OmniEvents.INBOUND_WEBHOOK` is the pipeline's entry point for channels
+    // that have no provider webhook queue of their own — the same door livechat
+    // uses. This used to emit `omni.inbound.message`, an event with no listener
+    // anywhere in the codebase, so every Telegram message was validated,
+    // normalised, and then dropped on the floor. `TelegramAdapter` is already
+    // registered in CHANNEL_ADAPTERS, so the pipeline normalises the raw update
+    // itself and nothing needs to be pre-normalised here.
+    this.events.emit(OmniEvents.INBOUND_WEBHOOK, {
+      channelType: 'telegram',
       channelId,
-      channelConfig,
-    );
+      tenantId: channel.tenantId,
+      rawPayload: update,
+    } satisfies InboundWebhookEvent);
 
-    // Emit into the omni-inbound pipeline
-    for (const payload of payloads) {
-      this.events.emit('omni.inbound.message', { payload, channelConfig });
-      this.logger.debug(
-        `Telegram inbound emitted: type=${payload.messageType} from=${payload.senderId}`,
-      );
-    }
+    this.logger.debug(
+      `Telegram inbound handed to the omni pipeline (channel ${channelId})`,
+    );
   }
 
   // Register webhook with Telegram

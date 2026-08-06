@@ -20,21 +20,40 @@ export interface AgentPerformanceItem {
   totalConversations: number;
   avgResolutionMs: number;
   avgResolutionFormatted: string;
-  frtBreachCount: number;
-  frtBreachRate: number;
-  resolutionBreachCount: number;
-  resolutionBreachRate: number;
+  /** Mean time from the customer's first message to this agent's first reply. */
+  avgFirstResponseMs: number | null;
+  avgFirstResponseFormatted: string;
+  slaBreachCount: number;
+  slaBreachRate: number;
   avgMessageCount: number;
+}
+
+/**
+ * A duration distribution. The mean alone hides the tail that customers
+ * actually complain about, so p50 and p90 travel with it.
+ */
+export interface DurationStats {
+  count: number;
+  avgMs: number | null;
+  p50Ms: number | null;
+  p90Ms: number | null;
+  avgFormatted: string;
+  p50Formatted: string;
+  p90Formatted: string;
 }
 
 export interface ResponseTimeData {
   totalConversations: number;
-  avgResolutionMs: number;
-  avgResolutionFormatted: string;
-  frtBreachedCount: number;
-  frtComplianceRate: number;
-  resolutionBreachedCount: number;
-  resolutionComplianceRate: number;
+  /** Customer's first message → agent's first reply. The headline metric. */
+  firstResponse: DurationStats;
+  /** Time a conversation spent unowned before an agent picked it up. */
+  timeToAssign: DurationStats;
+  resolution: DurationStats;
+  /** Conversations that answered at all, as a share of those measured. */
+  answeredCount: number;
+  answeredRate: number;
+  slaBreachedCount: number;
+  slaComplianceRate: number;
 }
 
 export interface ResolutionSummaryData {

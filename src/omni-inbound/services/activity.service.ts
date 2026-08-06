@@ -40,8 +40,6 @@ interface ActivityLogParams {
  *   - omni.conversation.note_added      → note_added
  *   - omni.conversation.sla_breached    → sla_breached
  *   - omni.conversation.escalated       → escalated
- *   - omni.conversation.ticket_created  → ticket_created
- *   - omni.conversation.deal_created    → deal_created
  *   - omni.contact.auto_merged          → identity_merged
  */
 @Injectable()
@@ -324,49 +322,12 @@ export class ActivityService {
     });
   }
 
-  @OnEvent('omni.conversation.ticket_created')
-  async onTicketCreated(event: {
-    tenantId: string;
-    conversationId: string;
-    ticketId: string;
-    subject: string;
-    agentId: string;
-  }) {
-    const actorName = await this.resolveActorName(event.agentId);
-    await this.log({
-      tenantId: event.tenantId,
-      conversationId: event.conversationId,
-      actorType: 'agent',
-      actorId: event.agentId,
-      action: 'ticket_created',
-      oldValue: null,
-      newValue: event.ticketId,
-      metadata: { ticketId: event.ticketId, subject: event.subject },
-      description: `${actorName} đã tạo Ticket: "${event.subject}"`,
-    });
-  }
-
-  @OnEvent('omni.conversation.deal_created')
-  async onDealCreated(event: {
-    tenantId: string;
-    conversationId: string;
-    dealId: string;
-    title: string;
-    agentId: string;
-  }) {
-    const actorName = await this.resolveActorName(event.agentId);
-    await this.log({
-      tenantId: event.tenantId,
-      conversationId: event.conversationId,
-      actorType: 'agent',
-      actorId: event.agentId,
-      action: 'deal_created',
-      oldValue: null,
-      newValue: event.dealId,
-      metadata: { dealId: event.dealId, title: event.title },
-      description: `${actorName} đã tạo Deal: "${event.title}"`,
-    });
-  }
+  // Removed: `onTicketCreated` / `onDealCreated`. Both listened for events
+  // nothing emits, because converting a conversation into a ticket or a deal is
+  // not a feature that exists — there is no route, no service method and no
+  // caller. Two handlers, two event constants and two activity-trail action names
+  // for a flow that was never built; the placeholders read as coverage the
+  // conversation timeline does not have.
 
   @OnEvent('omni.contact.auto_merged')
   async onIdentityMerged(event: {

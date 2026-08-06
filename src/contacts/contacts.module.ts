@@ -34,6 +34,7 @@ import { ContactScoringService } from './contact-scoring.service';
 import { ContactPurgeService } from './contact-purge.service';
 import { ContactMergeService } from './merge/contact-merge.service';
 import { ContactTimelineService } from './timeline/contact-timeline.service';
+import { CustomerContextService } from './timeline/customer-context.service';
 import { ContactRelationsService } from './relations/contact-relations.service';
 import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
 import { ContactIdentityDriftService } from './identities/contact-identity-drift.service';
@@ -180,6 +181,7 @@ const workerProviders = isWorkerRuntime()
     // notes/tickets/deals/tasks/conversations by injecting their modules would
     // recreate the dependency cycles ContactsModule avoids.
     ContactTimelineService,
+    CustomerContextService,
     ContactRelationsService,
     ContactIdentitySyncService,
     ContactStageTransitionListener,

@@ -1,20 +1,8 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
-// Adapters
-import { FacebookAdapter } from './adapters/facebook.adapter';
-import { ZaloAdapter } from './adapters/zalo.adapter';
-import { WhatsAppAdapter } from './adapters/whatsapp.adapter';
-import { InstagramAdapter } from './adapters/instagram.adapter';
-// LivechatAdapter is provided & exported by LivechatModule — one instance only
-import { LivechatAdapter } from './adapters/livechat.adapter';
-import { TelegramAdapter } from '../channels/telegram/telegram.adapter';
-import { TikTokAdapter } from './adapters/tiktok.adapter';
-import {
-  CHANNEL_ADAPTERS,
-  ChannelAdapter,
-} from './adapters/channel-adapter.interface';
-import { ChannelType } from './domain/omni-payload';
+// Adapters — one registry, shared with OmniOutboundModule
+import { ChannelAdaptersModule } from './adapters/channel-adapters.module';
 
 // Processors
 import { InboundProcessorService } from './processors/inbound-processor.service';
@@ -30,6 +18,9 @@ import { MediaProxyService } from './services/media-proxy.service';
 import { AgentPresenceService } from './services/agent-presence.service';
 import { AgentPresenceGateway } from './services/agent-presence.gateway';
 import { OmniGateway } from './services/omni.gateway';
+import { ConversationAudienceService } from './services/conversation-audience.service';
+import { ConversationIdentityService } from './services/conversation-identity.service';
+import { QueueMetricsService } from './services/queue-metrics.service';
 import { ConversationService } from './services/conversation.service';
 import { ConversionService } from './services/conversion.service';
 import { OmniOutboundModule } from '../omni-outbound/omni-outbound.module';
@@ -220,6 +211,8 @@ const workerProviders =
     ObservabilityModule,
     // LivechatModule provides the single, gateway-wired LivechatAdapter instance
     forwardRef(() => LivechatModule),
+    // The one channel adapter registry, shared with OmniOutboundModule
+    ChannelAdaptersModule,
     // Conversation Aggregate — sequential command processing
     ConversationOpsModule,
     TagsModule,
@@ -277,46 +270,8 @@ const workerProviders =
     ConversationTransferController,
   ],
   providers: [
-    // Data Normalization
-    FacebookAdapter,
-    ZaloAdapter,
-    WhatsAppAdapter,
-    InstagramAdapter,
-    // LivechatAdapter is NOT listed here — LivechatModule provides it
-    // so the same instance that has setGateway() called is registered in CHANNEL_ADAPTERS
-    TelegramAdapter,
-    TikTokAdapter,
-    {
-      provide: CHANNEL_ADAPTERS,
-      useFactory: (
-        fb: FacebookAdapter,
-        zalo: ZaloAdapter,
-        wa: WhatsAppAdapter,
-        ig: InstagramAdapter,
-        lc: LivechatAdapter,
-        tg: TelegramAdapter,
-        tt: TikTokAdapter,
-      ) => {
-        const map = new Map<ChannelType, ChannelAdapter>();
-        map.set('facebook', fb);
-        map.set('zalo', zalo);
-        map.set('whatsapp', wa);
-        map.set('instagram', ig);
-        map.set('livechat', lc);
-        map.set('telegram', tg);
-        map.set('tiktok', tt);
-        return map;
-      },
-      inject: [
-        FacebookAdapter,
-        ZaloAdapter,
-        WhatsAppAdapter,
-        InstagramAdapter,
-        LivechatAdapter,
-        TelegramAdapter,
-        TikTokAdapter,
-      ],
-    },
+    // Adapters come from ChannelAdaptersModule — one registry, so inbound and
+    // outbound cannot disagree about which channels exist.
     InboundProcessorService,
     MediaProxyService,
 
@@ -333,6 +288,12 @@ const workerProviders =
     // Realtime UX
     OmniGateway,
     CrmRealtimeGateway,
+    // Decides which connected agents may receive a conversation's events
+    ConversationAudienceService,
+    // Links a conversation to a CRM contact (existing, or created on the spot)
+    ConversationIdentityService,
+    // Live queue depth and wait time for the supervisor console
+    QueueMetricsService,
 
     // Webhook Queue
     ...workerProviders,

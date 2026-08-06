@@ -36,6 +36,9 @@ import {
   encodeMessageSearchCursor,
 } from '../search/message-search-cursor';
 import { LinkMessagesDto } from '../dto/link-messages.dto';
+import { LinkContactDto } from '../dto/link-contact.dto';
+import { ConversationIdentityService } from '../services/conversation-identity.service';
+import { QueueMetricsService } from '../services/queue-metrics.service';
 import { UsersService } from '../../users/users.service';
 import { TenantsService } from '../../tenants/tenants.service';
 import { FilesService } from '../../files/files.service';
@@ -67,6 +70,8 @@ export class OmniController {
     private readonly messageRepo: MessageRepository,
     private readonly conversationService: ConversationService,
     private readonly queryService: ConversationQueryService,
+    private readonly identityService: ConversationIdentityService,
+    private readonly queueMetrics: QueueMetricsService,
     private readonly conversionService: ConversionService,
     private readonly outboundService: OutboundService,
     private readonly noteService: NoteService,
@@ -560,6 +565,33 @@ export class OmniController {
     return updated;
   }
 
+  /**
+   * Link this conversation to a CRM contact — an existing one, or a new one
+   * created from what the channel told us.
+   *
+   * One route for both inbox actions. "Save lead" had no handler and "Merge
+   * contact" POSTed to a route that does not exist, so an unlinked conversation
+   * could not be linked at all from the screen that offers to do it.
+   */
+  @Post('conversations/:id/contact')
+  @UseAcl('edit', 'omni_channel')
+  @LoadResource('omni_channel')
+  @RequirePermission('edit', 'omni_channel')
+  @HttpCode(HttpStatus.OK)
+  linkContact(
+    @Param('id') conversationId: string,
+    @Body() body: LinkContactDto,
+  ) {
+    const actorId = this.cls.get<string>('userId');
+    return body.contactId
+      ? this.identityService.linkToContact(
+          conversationId,
+          body.contactId,
+          actorId,
+        )
+      : this.identityService.createAndLinkContact(conversationId, actorId);
+  }
+
   // Messages
 
   /**
@@ -705,6 +737,23 @@ export class OmniController {
       })),
       serverTime: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Live queue state: how many customers are waiting, per team, and for how long.
+   *
+   * The number a supervisor manages on. Nothing recorded it before — the live board
+   * showed which agents were online, which says nothing about whether anybody is
+   * being kept waiting.
+   */
+  @Get('queues')
+  @RequirePermission('view', 'omni_channel')
+  getQueueMetrics() {
+    const tenantId = this.cls.get<string>('tenantId');
+    if (!tenantId) {
+      throw new BadRequestException('Tenant context not found');
+    }
+    return this.queueMetrics.getMetrics(tenantId);
   }
 
   @Get('conversations/:id/timeline')
@@ -862,14 +911,14 @@ export class OmniController {
   }
 
   @Post('conversations/:id/messages')
-  @UseAcl('edit', 'omni_channel')
+  @UseAcl('reply', 'omni_channel')
   @LoadResource('omni_channel')
   // Per-tenant cap: 60 outbound messages / minute / user. Prevents one
   // agent (or compromised session) from spam-sending across providers
   // and tripping provider-side rate limits that would block the whole
   // tenant.
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
-  @RequirePermission('edit', 'omni_channel')
+  @RequirePermission('reply', 'omni_channel')
   @HttpCode(HttpStatus.CREATED)
   async sendMessage(
     @Param('id') conversationId: string,
@@ -911,10 +960,10 @@ export class OmniController {
   }
 
   @Post('conversations/:id/email-reply')
-  @UseAcl('edit', 'omni_channel')
+  @UseAcl('reply', 'omni_channel')
   @LoadResource('omni_channel')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
-  @RequirePermission('edit', 'omni_channel')
+  @RequirePermission('reply', 'omni_channel')
   @HttpCode(HttpStatus.CREATED)
   async emailReply(
     @Param('id') conversationId: string,

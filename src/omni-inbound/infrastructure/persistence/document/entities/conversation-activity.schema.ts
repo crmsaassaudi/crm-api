@@ -23,8 +23,6 @@ const ACTIVITY_ACTIONS = [
   'auto_resolved',
   'sla_breached',
   'escalated',
-  'ticket_created',
-  'deal_created',
   'identity_merged',
   // 'agent_rejected',    // T13: no handler — implement if rejection flow is added
   // 'agent_transferred', // T13: no handler — manual transfer uses agent_assigned instead

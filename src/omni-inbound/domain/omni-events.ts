@@ -53,8 +53,6 @@ export const OmniEvents = {
   /** Conversation escalated (SLA/policy) */
   CONVERSATION_ESCALATED: 'omni.conversation.escalated',
   CONVERSATION_SLA_BREACHED: 'omni.conversation.sla_breached',
-  CONVERSATION_TICKET_CREATED: 'omni.conversation.ticket_created',
-  CONVERSATION_DEAL_CREATED: 'omni.conversation.deal_created',
   /** Agent took over conversation from another agent */
   CONVERSATION_TAKEOVER: 'omni.conversation.takeover',
   /** No agent available — conversation entered the wait queue */
@@ -117,12 +115,15 @@ export const OmniEvents = {
   // CSAT
   /** CSAT token generated for a resolved conversation */
   CSAT_TOKEN_GENERATED: 'omni.csat.token_generated',
-
-  // Escalation
-  /** Escalation notification sent */
-  ESCALATION_NOTIFY: 'omni.escalation.notify',
-  /** Escalation reassignment triggered */
-  ESCALATION_REASSIGN: 'omni.escalation.reassign',
+  /**
+   * A survey link needs sending to the customer on their own channel.
+   *
+   * Separate from TOKEN_GENERATED because the two have different audiences: the
+   * token goes to the livechat widget, which renders the survey itself, while this
+   * asks the outbound side to put a link in the conversation — the only way to
+   * survey a customer on WhatsApp, Facebook or email.
+   */
+  CSAT_SURVEY_REQUESTED: 'omni.csat.survey_requested',
 
   // Activity
   /** Activity trail entry created */
@@ -255,6 +256,24 @@ export interface ConversationStatusChangedEvent extends OmniEventBase {
   oldStatus: string;
   newStatus: string;
   changedBy?: string;
+}
+
+/**
+ * An SLA clock missed its deadline. The one breach event in the system —
+ * escalation policies, the activity trail, the daily-metrics projection and the
+ * inbox socket all consume this.
+ *
+ * `metric` + `cycle` identify *which* deadline: a `next_response` SLA breaches
+ * once per customer turn, so consumers that deduplicate must key on both.
+ */
+export interface ConversationSlaBreachedEvent extends OmniEventBase {
+  conversationId: string;
+  clockId: string;
+  slaPolicyId: string;
+  metric: 'first_response' | 'next_response' | 'resolution';
+  cycle: number;
+  dueAt: Date;
+  breachedAt: Date;
 }
 
 export interface ConversationAssignedEvent extends OmniEventBase {

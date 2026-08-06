@@ -51,6 +51,15 @@ export class CrmRealtimeGateway {
     'socket:deal:follow-up:due',
     // Automation `internal_notification` action. Same reasoning as above.
     'socket:automation:notification',
+    // A conversation that breached its SLA and escalated to a supervisor. The
+    // escalation processor used to emit `omni.escalation.notify`, an event with
+    // no listener, so the "notify a manager" action of every escalation policy
+    // reached nobody while the processor logged that it had.
+    'socket:omni:escalation:notify',
+    // A conversation about to be auto-resolved for inactivity. Same shape of
+    // defect: `omni.auto_resolve.warning` had no listener, so the agent was
+    // never warned before their conversation closed underneath them.
+    'socket:omni:auto_resolve:warning',
   ] as const;
 
   /**
@@ -95,9 +104,62 @@ export class CrmRealtimeGateway {
       case 'socket:automation:notification':
         this.handleAutomationNotification(event);
         return true;
+      case 'socket:omni:escalation:notify':
+        this.handleEscalationNotify(event);
+        return true;
+      case 'socket:omni:auto_resolve:warning':
+        this.handleAutoResolveWarning(event);
+        return true;
       default:
         return false;
     }
+  }
+
+  /**
+   * Tell a supervisor that a conversation has escalated to them.
+   *
+   * Delivered to `agent:{targetUserId}` rather than the tenant room: an
+   * escalation names one person, and broadcasting "your attention is needed" to
+   * everyone is how an alert stops being read.
+   */
+  private handleEscalationNotify(event: {
+    tenantId: string;
+    conversationId: string;
+    targetUserId: string;
+    message: string;
+    escalationPolicyId: string;
+  }) {
+    if (!event.targetUserId) return;
+    this.logger.warn(
+      `Escalation notice → agent:${event.targetUserId} ` +
+        `(conversation=${event.conversationId}, policy=${event.escalationPolicyId})`,
+    );
+    this.server.to(`agent:${event.targetUserId}`).emit('omni:escalation', {
+      conversationId: event.conversationId,
+      message: event.message,
+      escalationPolicyId: event.escalationPolicyId,
+    });
+  }
+
+  /**
+   * Warn the assigned agent that a conversation is about to auto-resolve.
+   *
+   * To the assignee only. With no assignee there is nobody to warn, and the
+   * conversation closing is not news to anyone else.
+   */
+  private handleAutoResolveWarning(event: {
+    tenantId: string;
+    conversationId: string;
+    assignedAgentId: string | null;
+    resolvesAt: string;
+  }) {
+    if (!event.assignedAgentId) return;
+    this.server
+      .to(`agent:${event.assignedAgentId}`)
+      .emit('omni:auto_resolve:warning', {
+        conversationId: event.conversationId,
+        resolvesAt: event.resolvesAt,
+      });
   }
 
   /**

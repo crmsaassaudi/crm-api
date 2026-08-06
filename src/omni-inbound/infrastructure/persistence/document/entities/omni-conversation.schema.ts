@@ -2,21 +2,13 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+import { SUPPORTED_CHANNELS } from '../../../../domain/channel-capabilities';
 
 export type OmniConversationDocument =
   HydratedDocument<OmniConversationSchemaClass>;
 
 const CONVERSATION_STATUSES = ['open', 'pending', 'resolved', 'closed'];
 const BOT_STATUSES = ['active', 'handoff', 'ended'];
-const CHANNEL_TYPES = [
-  'facebook',
-  'zalo',
-  'whatsapp',
-  'livechat',
-  'instagram',
-  'tiktok',
-  'email',
-];
 
 /**
  * Schema for omni-channel conversations (chat sessions).
@@ -60,10 +52,18 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, index: true })
   channelAccount: string;
 
+  /**
+   * Which channel this conversation arrived on.
+   *
+   * The enum is the capability registry, not a second hand-maintained list. The
+   * two had already drifted: `telegram` was a fully implemented channel with a
+   * working adapter that this enum would have rejected on write, so even once its
+   * inbound event was connected the conversation could not have been created.
+   */
   @Prop({
     type: String,
     required: true,
-    enum: CHANNEL_TYPES,
+    enum: SUPPORTED_CHANNELS,
   })
   channelType: string;
 
@@ -317,39 +317,88 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
   })
   resolveSource: string | null;
 
-  // SLA Tracking: First Response Time (FRT)
-  /** The SLA policy applied for first response */
+  // Handling timeline
+  //
+  // The four facts every contact-centre metric is derived from. Before these
+  // existed the module could say a conversation had *breached* its first-response
+  // SLA but never when — or whether — anyone actually answered, so First Response
+  // Time, time-to-assign and handling time were all uncomputable.
+  //
+  // `omni_sla_clocks` is the authority on SLA state; these are the raw business
+  // events, recorded whether or not a policy happens to be configured.
+
+  /**
+   * When an agent (not a bot, not the system) first replied.
+   *
+   * Written exactly once, by a conditional update that requires the field to
+   * still be null — the reply path is concurrent, and "first" has to mean first.
+   */
+  @Prop({ type: Date, default: null })
+  firstRespondedAt: Date | null;
+
+  /**
+   * Who sent that first reply.
+   *
+   * Agent performance is credited to this, not to `assignedAgentId`: a transfer
+   * changes the assignee, and reporting on the assignee moved the whole
+   * conversation's handling time and SLA outcome onto whoever happened to hold it
+   * at resolution time.
+   */
   @Prop({
     type: MongooseSchema.Types.ObjectId,
-    ref: 'SlaPolicySchemaClass',
+    ref: 'UserSchemaClass',
     default: null,
+    index: true,
   })
-  frtPolicyId: string | null;
+  firstResponderId: string | null;
 
-  /** Deadline for the agent's first response */
-  @Prop({ type: Date, default: null, index: true })
-  frtDeadline: Date | null;
+  /**
+   * When this conversation started waiting for an owner: at creation while
+   * unassigned, and again each time it returns to the queue (offer declined or
+   * lapsed, agent unassigned). Cleared on assignment.
+   *
+   * Live wait = now − queuedAt. Completed wait = assignedAt − queuedAt.
+   */
+  @Prop({ type: Date, default: null })
+  queuedAt: Date | null;
 
-  /** Whether the FRT SLA has been breached */
-  @Prop({ default: false })
-  frtBreached: boolean;
+  /** When an agent most recently took ownership. */
+  @Prop({ type: Date, default: null })
+  assignedAt: Date | null;
 
-  // SLA Tracking: Resolution Time
-  /** The SLA policy applied for resolution */
+  /**
+   * Cumulative time spent unowned, in milliseconds — the honest answer to "how
+   * long did this customer wait?" across re-offers, accumulated on each
+   * assignment so it survives a queue → agent → queue → agent path.
+   */
+  @Prop({ type: Number, default: 0 })
+  totalQueuedMs: number;
+
+  // SLA projection
+  //
+  // Denormalised from `omni_sla_clocks` so the inbox list — a paginated,
+  // scope-filtered query on the hottest collection in the system — can filter and
+  // sort on SLA without joining. The clocks remain authoritative; these are a
+  // read model with exactly one writer (SlaClockService.projectOntoConversation).
+
+  /** Earliest deadline among still-running clocks; null when none are running. */
+  @Prop({ type: Date, default: null })
+  slaDueAt: Date | null;
+
+  /** Which metric `slaDueAt` belongs to — drives the timer label in the inbox. */
   @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: 'SlaPolicySchemaClass',
+    type: String,
+    enum: ['first_response', 'next_response', 'resolution', null],
     default: null,
   })
-  resolutionPolicyId: string | null;
+  slaDueMetric: string | null;
 
-  /** Deadline for resolving the conversation */
-  @Prop({ type: Date, default: null, index: true })
-  resolutionDeadline: Date | null;
+  /** True once any clock on this conversation has breached. */
+  @Prop({ type: Boolean, default: false })
+  slaBreached: boolean;
 
-  /** Whether the resolution SLA has been breached */
-  @Prop({ default: false })
-  resolutionBreached: boolean;
+  @Prop({ type: Date, default: null })
+  slaBreachedAt: Date | null;
 
   // Escalation Tracking
   /**
@@ -417,6 +466,17 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
    */
   @Prop({ type: String, default: null, index: true, sparse: true })
   csatToken: string | null;
+
+  /**
+   * When the survey link stops working.
+   *
+   * The token had no expiry, which made it a permanent unauthenticated write
+   * handle to a conversation's satisfaction score — anyone who kept the link (or
+   * found it in a forwarded chat) could set it months later. A survey is also only
+   * meaningful while the interaction is remembered.
+   */
+  @Prop({ type: Date, default: null })
+  csatTokenExpiresAt: Date | null;
 }
 
 export const OmniConversationSchema = SchemaFactory.createForClass(
@@ -457,6 +517,24 @@ OmniConversationSchema.index(
 OmniConversationSchema.index(
   { tenantId: 1, assignedAgentId: 1, status: 1 },
   { name: 'agent_open_load' },
+);
+
+// SLA filters in the inbox: "breached" and "due within N minutes". One index
+// serves both — `slaBreached` is the equality prefix, `slaDueAt` the range.
+OmniConversationSchema.index(
+  { tenantId: 1, slaBreached: 1, slaDueAt: 1 },
+  { name: 'conversation_sla' },
+);
+
+// Supervisor queue console: unowned conversations, longest wait first. Partial so
+// the index holds only what is actually in a queue — a few rows, not the
+// collection.
+OmniConversationSchema.index(
+  { tenantId: 1, assignedGroupId: 1, queuedAt: 1 },
+  {
+    name: 'conversation_queue_wait',
+    partialFilterExpression: { queuedAt: { $type: 'date' } },
+  },
 );
 
 // Sticky routing lookup by linked contact.

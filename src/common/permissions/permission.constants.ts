@@ -47,6 +47,7 @@ export type PermissionAction =
   | 'assign'
   | 'move_stage'
   | 'launch'
+  | 'reply'
   | 'resolve'
   | 'manage_roles'
   | 'manage_members'
@@ -339,6 +340,18 @@ export const PERMISSION_REGISTRY: Record<
     view: 'omni_channel:view',
     /** Mutate a conversation: tags, notes, read state, message linking. */
     edit: 'omni_channel:edit',
+    /**
+     * Send a message to the customer.
+     *
+     * Separate from `edit` because speaking to a customer is a different act from
+     * annotating a record, and the two need different audiences. With one
+     * permission covering both, a QA reviewer or team lead who should read and tag
+     * conversations could not be given that without also being able to reply, and
+     * an agent who should reply could not be stopped from retagging. Every
+     * message-sending route requires this; `edit` still covers tags, notes, read
+     * state and message linking.
+     */
+    reply: 'omni_channel:reply',
     /** Claim / assign / unassign a conversation to an agent or group. */
     assign: 'omni_channel:assign',
     /** Tenant-wide omni settings and storage quota. */
@@ -544,6 +557,7 @@ export const CORE_PERMISSIONS: string[] = [
   // Omni-Channel page access
   'omni_channel:view',
   'omni_channel:edit',
+  'omni_channel:reply',
   'omni_channel:assign',
   'omni_channel:unmask',
   'omni_channel:manage_system',

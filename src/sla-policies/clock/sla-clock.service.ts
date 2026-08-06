@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { InjectModel } from '@nestjs/mongoose';
@@ -6,37 +6,72 @@ import { Model } from 'mongoose';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
 import { BusinessHoursService } from '../../omni-inbound/services/business-hours.service';
 import { ClsService } from 'nestjs-cls';
+import { ConversationRepository } from '../../omni-inbound/repositories/conversation.repository';
+import { OmniEvents } from '../../omni-inbound/domain/omni-events';
+import type { SlaMetric } from '../../omni-inbound/domain/omni-conversation';
 import { SlaPolicyRepository } from '../infrastructure/persistence/document/repositories/sla-policy.repository';
 import { SlaClockDocument, SlaClockSchemaClass } from './sla-clock.schema';
 
-type Metric = 'first_response' | 'next_response' | 'resolution';
+/** How many due clocks one cron tick may breach. */
+const BREACH_BATCH_SIZE = 500;
 
+/**
+ * SlaClockService — the single authority on SLA state.
+ *
+ * A clock per (conversation, metric, cycle) with an explicit lifecycle:
+ * `running → paused → running → met | breached | cancelled`. Pausing while the
+ * conversation waits on the customer is what makes the numbers defensible: an
+ * agent is not late because the customer took the weekend to reply.
+ *
+ * This replaced a second, parallel implementation that stored deadlines directly
+ * on the conversation and cancelled its breach job on `omni.outbound.message.sent`
+ * — an event no code emits. Nothing cancelled, so every conversation still open at
+ * its deadline was recorded as a first-response breach no matter how fast the
+ * agent answered, and that flag was what fed escalations and every SLA report.
+ * Two engines also meant two breach events, of which only the wrong one reached a
+ * consumer. Hence one engine, one event
+ * (`OmniEvents.CONVERSATION_SLA_BREACHED`), and a projection onto the
+ * conversation so the inbox can filter without joining.
+ */
 @Injectable()
 export class SlaClockService {
+  private readonly logger = new Logger(SlaClockService.name);
+
   constructor(
     @InjectModel(SlaClockSchemaClass.name)
     private readonly clocks: Model<SlaClockDocument>,
     private readonly policies: SlaPolicyRepository,
     private readonly businessHours: BusinessHoursService,
+    private readonly conversations: ConversationRepository,
     private readonly events: EventEmitter2,
     private readonly cls: ClsService,
   ) {}
 
-  @OnEvent('omni.conversation.created', { async: true })
+  @OnEvent(OmniEvents.CONVERSATION_CREATED, { async: true })
   async onConversationCreated(event: any): Promise<void> {
-    await runWithTenantContext(this.cls, event.tenantId, async () => {
-      await Promise.all([
-        this.startMetric(
-          event.tenantId,
-          event.conversationId,
-          'first_response',
-        ),
-        this.startMetric(event.tenantId, event.conversationId, 'resolution'),
-      ]);
-    });
+    await this.startResponseAndResolutionClocks(
+      event.tenantId,
+      event.conversationId,
+    );
   }
 
-  @OnEvent('omni.message.persisted', { async: true })
+  /**
+   * A reopened conversation owes the customer a fresh first response.
+   *
+   * The engine this replaced bound only to `created`, so a reopened conversation
+   * carried the previous cycle's stale deadline — or none at all, which reads as
+   * "no SLA applies" on the screen that exists to show which customers are
+   * waiting.
+   */
+  @OnEvent(OmniEvents.CONVERSATION_REOPENED, { async: true })
+  async onConversationReopened(event: any): Promise<void> {
+    await this.startResponseAndResolutionClocks(
+      event.tenantId,
+      event.conversationId,
+    );
+  }
+
+  @OnEvent(OmniEvents.MESSAGE_PERSISTED, { async: true })
   async onInboundMessage(event: any): Promise<void> {
     if (event.senderType !== 'customer') return;
     await runWithTenantContext(this.cls, event.tenantId, async () => {
@@ -75,27 +110,46 @@ export class SlaClockService {
           event.conversationId,
           'first_response',
         );
-        return;
+      } else {
+        await this.startMetric(
+          event.tenantId,
+          event.conversationId,
+          'next_response',
+        );
       }
-      await this.startMetric(
-        event.tenantId,
-        event.conversationId,
-        'next_response',
-      );
+      await this.projectPendingDeadline(event.tenantId, event.conversationId);
     });
   }
 
-  @OnEvent('omni.message.sent', { async: true })
+  @OnEvent(OmniEvents.MESSAGE_SENT, { async: true })
   async onAgentReply(event: any): Promise<void> {
     if (event.senderType && event.senderType !== 'agent') return;
+    const respondedAt = new Date();
+    // On an agent message `senderId` is the agent's user id (OutboundService
+    // sets it from `agentId`); on a bot message it is `bot:<provider>`, which the
+    // guard above has already excluded.
+    const responderId = event.senderId ? String(event.senderId) : null;
+
+    // The business fact first, independent of whether a policy is configured:
+    // First Response Time has to be measurable in a tenant that has written no
+    // SLA policy at all.
+    await runWithTenantContext(this.cls, event.tenantId, async () => {
+      await this.conversations.recordFirstResponse(
+        event.conversationId,
+        respondedAt,
+        responderId,
+      );
+    });
+
     await this.meetOpenResponseClocks(
       event.tenantId,
       event.conversationId,
-      new Date(),
+      respondedAt,
     );
+    await this.projectPendingDeadline(event.tenantId, event.conversationId);
   }
 
-  @OnEvent('omni.conversation.status_changed', { async: true })
+  @OnEvent(OmniEvents.CONVERSATION_STATUS_CHANGED, { async: true })
   async onStatusChanged(event: any): Promise<void> {
     const status = event.newStatus ?? event.status;
     if (status === 'pending') {
@@ -105,12 +159,13 @@ export class SlaClockService {
     } else if (status === 'resolved' || status === 'closed') {
       await this.completeConversation(event.tenantId, event.conversationId);
     }
+    await this.projectPendingDeadline(event.tenantId, event.conversationId);
   }
 
   async startMetric(
     tenantId: string,
     conversationId: string,
-    metric: Metric,
+    metric: SlaMetric,
   ): Promise<SlaClockDocument | null> {
     const policies = await this.policies.findAll(tenantId);
     const policy = policies
@@ -128,7 +183,13 @@ export class SlaClockService {
     if (latest && ['running', 'paused'].includes(latest.status)) {
       return latest as any;
     }
-    if (metric !== 'next_response' && latest) return latest as any;
+
+    // `first_response` and `resolution` are once-per-conversation, so a settled
+    // clock is the final answer and must not be restarted — except on reopen,
+    // which cancels the old cycle first and so leaves nothing settled behind.
+    if (metric !== 'next_response' && latest && latest.status !== 'cancelled') {
+      return latest as any;
+    }
 
     const cycle = (latest?.cycle ?? 0) + 1;
     const dueAt = await this.businessHours.calculateSlaDeadline(
@@ -259,10 +320,21 @@ export class SlaClockService {
       .find({ status: 'running', dueAt: { $lte: new Date() } })
       .select('_id tenantId conversationId policyId metric cycle dueAt')
       .sort({ dueAt: 1, _id: 1 })
-      .limit(500)
+      .limit(BREACH_BATCH_SIZE)
       .lean()
       .setOptions({ isPlatformQuery: true })
       .exec();
+
+    // A full batch means the scan is behind, which delays every breach in the
+    // backlog — countable, because a silently lagging SLA monitor looks exactly
+    // like a compliant contact centre.
+    if (candidates.length === BREACH_BATCH_SIZE) {
+      this.logger.warn(
+        `SLA breach scan hit its ${BREACH_BATCH_SIZE}-clock batch limit — ` +
+          'breach detection is lagging.',
+      );
+    }
+
     let breached = 0;
     for (const candidate of candidates) {
       const clock = await this.clocks
@@ -274,10 +346,36 @@ export class SlaClockService {
         .setOptions({ isPlatformQuery: true })
         .exec();
       if (!clock) continue;
-      this.emitBreach(clock);
+      await this.announceBreach(clock);
       breached++;
     }
     return breached;
+  }
+
+  listForConversation(
+    tenantId: string,
+    conversationId: string,
+  ): Promise<SlaClockDocument[]> {
+    return this.clocks
+      .find({ tenantId, conversationId })
+      .sort({ metric: 1, cycle: -1 })
+      .lean()
+      .exec() as any;
+  }
+
+  // Internals
+
+  private async startResponseAndResolutionClocks(
+    tenantId: string,
+    conversationId: string,
+  ): Promise<void> {
+    await runWithTenantContext(this.cls, tenantId, async () => {
+      await Promise.all([
+        this.startMetric(tenantId, conversationId, 'first_response'),
+        this.startMetric(tenantId, conversationId, 'resolution'),
+      ]);
+      await this.projectPendingDeadline(tenantId, conversationId);
+    });
   }
 
   private async meetOpenResponseClocks(
@@ -296,17 +394,6 @@ export class SlaClockService {
     );
   }
 
-  listForConversation(
-    tenantId: string,
-    conversationId: string,
-  ): Promise<SlaClockDocument[]> {
-    return this.clocks
-      .find({ tenantId, conversationId })
-      .sort({ metric: 1, cycle: -1 })
-      .lean()
-      .exec() as any;
-  }
-
   private async settleClocks(query: Record<string, any>, metAt: Date) {
     const open = await this.clocks.find(query).exec();
     for (const clock of open) {
@@ -323,20 +410,74 @@ export class SlaClockService {
           { new: true },
         )
         .exec();
-      if (updated && breached) this.emitBreach(updated);
+      if (updated && breached) await this.announceBreach(updated);
     }
   }
 
-  private emitBreach(clock: SlaClockDocument): void {
-    this.events.emit('omni.sla.clock_breached', {
-      tenantId: String(clock.tenantId),
-      conversationId: String(clock.conversationId),
+  /**
+   * Publish a breach once, on the one event name the rest of the system listens
+   * to: escalation policies, the conversation activity trail, the daily metrics
+   * projection and the inbox socket all consume
+   * `OmniEvents.CONVERSATION_SLA_BREACHED`.
+   */
+  private async announceBreach(clock: SlaClockDocument): Promise<void> {
+    const tenantId = String(clock.tenantId);
+    const conversationId = String(clock.conversationId);
+    const breachedAt = clock.breachedAt ?? new Date();
+
+    await runWithTenantContext(this.cls, tenantId, async () => {
+      await this.conversations.projectSlaState(conversationId, {
+        slaDueAt: null,
+        slaDueMetric: null,
+        breachedAt,
+      });
+      const pending = await this.pendingDeadline(tenantId, conversationId);
+      await this.conversations.projectSlaState(conversationId, pending);
+    });
+
+    this.events.emit(OmniEvents.CONVERSATION_SLA_BREACHED, {
+      tenantId,
+      conversationId,
       clockId: String(clock._id),
-      policyId: String(clock.policyId),
+      slaPolicyId: String(clock.policyId),
       metric: clock.metric,
       cycle: clock.cycle,
       dueAt: clock.dueAt,
+      breachedAt,
     });
+  }
+
+  /**
+   * Refresh the conversation's pending-deadline projection.
+   *
+   * Kept to the two fields that actually change so a deadline update never
+   * resets the sticky `slaBreached` flag.
+   */
+  private async projectPendingDeadline(
+    tenantId: string,
+    conversationId: string,
+  ): Promise<void> {
+    const pending = await this.pendingDeadline(tenantId, conversationId);
+    await runWithTenantContext(this.cls, tenantId, () =>
+      this.conversations.projectSlaState(conversationId, pending),
+    );
+  }
+
+  /** The soonest deadline still owed on this conversation. */
+  private async pendingDeadline(
+    tenantId: string,
+    conversationId: string,
+  ): Promise<{ slaDueAt: Date | null; slaDueMetric: SlaMetric | null }> {
+    const next = await this.clocks
+      .findOne({ tenantId, conversationId, status: 'running' })
+      .select('dueAt metric')
+      .sort({ dueAt: 1 })
+      .lean()
+      .exec();
+    return {
+      slaDueAt: next?.dueAt ?? null,
+      slaDueMetric: (next?.metric as SlaMetric) ?? null,
+    };
   }
 
   private toMinutes(value: number, unit: string): number {

@@ -65,6 +65,10 @@ describe('ConversationTransferService', () => {
       channelSupport,
       events,
       { acquire: (_k: any, _o: any, fn: any) => fn() } as any,
+      // Only consulted when the actor is NOT the assignee — a supervisor moving
+      // work off someone else. Grants nothing by default so the assignee-only
+      // cases below still exercise the original rule.
+      { explainForUser: jest.fn().mockResolvedValue({ effective: [] }) } as any,
     );
   });
 

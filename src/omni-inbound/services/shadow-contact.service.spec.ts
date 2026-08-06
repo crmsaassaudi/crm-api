@@ -32,10 +32,9 @@ const payload = (overrides: Partial<OmniPayload> = {}): OmniPayload =>
 
 describe('resolvePayloadPhone', () => {
   it('should read the sender id as the phone on a phone-identity channel', () => {
+    // WhatsApp only. `sms` and `voice` were listed here too, and neither channel
+    // exists — no adapter, no capability entry, no way to receive one.
     expect(resolvePayloadPhone(payload())).toBe('966501234567');
-    expect(resolvePayloadPhone(payload({ channelType: 'sms' }))).toBe(
-      '966501234567',
-    );
   });
 
   it('should prefer an explicitly supplied phone', () => {

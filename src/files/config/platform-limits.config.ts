@@ -26,9 +26,9 @@ export interface PlatformMediaLimit {
  * Read by `OutboundMediaHandler` (via `validateForPlatform`) to reject media the
  * provider would refuse, with a message naming the actual reason.
  *
- * COVERAGE: this table holds 6 of the 11 entries in `KNOWN_CHANNELS` — telegram,
- * tiktok, sms, voice and shopee have no published limits here. A missing entry
- * means "no limits to enforce", NOT "channel unsupported"; see the note on
+ * COVERAGE: this table holds 6 of the 8 channels in `CHANNEL_CAPABILITIES` —
+ * telegram and tiktok have no published limits here. A missing entry means "no
+ * limits to enforce", NOT "channel unsupported"; see the note on
  * `validateForPlatform`, which must not turn absence into a hard failure.
  *
  * Sources:
@@ -276,10 +276,11 @@ export function validateForPlatform(
 ): string | null {
   const limits = PLATFORM_LIMITS[channelType];
 
-  // No published limits for this channel (telegram, tiktok, sms, voice, shopee).
-  // This is NOT an error: `ChannelType` is a branded string and `KNOWN_CHANNELS`
-  // is nearly twice this table's size, so returning an error here would reject
-  // every attachment on five live channels. The adapter remains the authority.
+  // No published limits for this channel (telegram, tiktok). This is NOT an
+  // error: returning one here would reject every attachment on a live channel
+  // whose provider simply does not document a cap. The adapter remains the
+  // authority, and `CHANNEL_CAPABILITIES.sendMedia` decides whether media is
+  // offered at all.
   if (!limits) return null;
 
   const mediaType = getMediaTypeFromMime(mimeType);

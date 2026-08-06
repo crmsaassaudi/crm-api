@@ -4,16 +4,28 @@ const execQuery = (value: any) => ({
   exec: jest.fn().mockResolvedValue(value),
 });
 
+/** A `findOne(...).select(...).sort(...).lean().exec()` chain. */
+const selectSortLean = (value: any) => ({
+  select: jest.fn().mockReturnValue({
+    sort: jest.fn().mockReturnValue({ lean: jest.fn(() => execQuery(value)) }),
+  }),
+});
+
 describe('SlaClockService', () => {
   let clocks: any;
   let policies: any;
   let businessHours: any;
+  let conversations: any;
   let events: any;
+  let cls: any;
   let service: SlaClockService;
 
   beforeEach(() => {
     clocks = {
-      findOne: jest.fn(),
+      // Default: no clock still running, which is what the pending-deadline
+      // projection reads after every state change. Tests that care about
+      // `startMetric` override this with their own chain.
+      findOne: jest.fn(() => selectSortLean(null)),
       find: jest.fn(),
       exists: jest.fn(),
       create: jest.fn(),
@@ -52,12 +64,20 @@ describe('SlaClockService', () => {
       calculateBusinessMinutesBetween: jest.fn().mockResolvedValue(15),
     };
     events = { emit: jest.fn() };
+    conversations = {
+      recordFirstResponse: jest.fn().mockResolvedValue(new Date()),
+      projectSlaState: jest.fn().mockResolvedValue(undefined),
+    };
+    // `runWith` executes the callback inline so the tenant-scoped projection
+    // writes are observable in the assertions below.
+    cls = { runWith: jest.fn((_store: any, fn: () => any) => fn()) };
     service = new SlaClockService(
       clocks,
       policies,
       businessHours,
+      conversations,
       events,
-      {} as any,
+      cls,
     );
   });
 
@@ -196,9 +216,58 @@ describe('SlaClockService', () => {
       { new: true },
     );
     expect(events.emit).toHaveBeenCalledWith(
-      'omni.sla.clock_breached',
+      'omni.conversation.sla_breached',
       expect.objectContaining({ clockId: 'clock_2' }),
     );
+  });
+
+  it('should record the first agent response even when no SLA policy applies', async () => {
+    policies.findAll.mockResolvedValue([]);
+    clocks.find.mockReturnValue(execQuery([]));
+
+    await service.onAgentReply({
+      tenantId: 'tenant_1',
+      conversationId: 'conversation_1',
+      senderType: 'agent',
+    });
+
+    // First Response Time is a business fact, not an SLA artefact: a tenant that
+    // has configured no policy must still be able to report on it.
+    expect(conversations.recordFirstResponse).toHaveBeenCalledWith(
+      'conversation_1',
+      expect.any(Date),
+      null,
+    );
+  });
+
+  it('should credit the first response to the agent who sent it', async () => {
+    policies.findAll.mockResolvedValue([]);
+    clocks.find.mockReturnValue(execQuery([]));
+
+    await service.onAgentReply({
+      tenantId: 'tenant_1',
+      conversationId: 'conversation_1',
+      senderType: 'agent',
+      senderId: 'agent_7',
+    });
+
+    // Agent performance is grouped by this, not by the current assignee — a
+    // transfer must not move the work onto whoever happens to hold it later.
+    expect(conversations.recordFirstResponse).toHaveBeenCalledWith(
+      'conversation_1',
+      expect.any(Date),
+      'agent_7',
+    );
+  });
+
+  it('should not record a first response for a bot reply', async () => {
+    await service.onAgentReply({
+      tenantId: 'tenant_1',
+      conversationId: 'conversation_1',
+      senderType: 'bot',
+    });
+
+    expect(conversations.recordFirstResponse).not.toHaveBeenCalled();
   });
 
   it('should meet response clocks only for agent replies', async () => {
@@ -259,7 +328,7 @@ describe('SlaClockService', () => {
 
     await expect(service.breachDueClocks()).resolves.toBe(1);
     expect(events.emit).toHaveBeenCalledWith(
-      'omni.sla.clock_breached',
+      'omni.conversation.sla_breached',
       expect.objectContaining({
         metric: 'first_response',
         cycle: 1,

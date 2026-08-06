@@ -173,6 +173,12 @@ export class WebhookProcessor extends BaseConsumer {
           (sentByOa ? event?.sender?.id : event?.recipient?.id) ?? '',
         );
       }
+      // The controller unwraps the envelope, so by the time a job reaches here
+      // `event` is the inner `event` object and the business account is its
+      // recipient. This is the repair path for a job enqueued without an
+      // accountId; the controller is the normal source.
+      case 'tiktok':
+        return String(event?.to_user?.open_id ?? event?.client_key ?? '');
       default:
         return '';
     }

@@ -656,9 +656,11 @@ export class ConversationRepository {
   }
 
   /**
-   * Build the SLA $or condition array from the requested SLA labels
-   * ('breached' and/or 'warning'). Returns an empty array when no SLA
-   * filter is requested.
+   * Build the SLA `$or` condition array from the requested labels. Empty when no
+   * SLA filter is requested.
+   *
+   * Both branches read the projection written by SlaClockService, so the list
+   * stays a single-collection query served by the `conversation_sla` index.
    */
   private buildSlaFilter(sla: string[] | undefined): any[] {
     if (!sla || sla.length === 0) return [];
@@ -666,20 +668,18 @@ export class ConversationRepository {
     const conditions: any[] = [];
 
     if (sla.includes('breached')) {
-      conditions.push({ frtBreached: true });
-      conditions.push({ resolutionBreached: true });
+      conditions.push({ slaBreached: true });
     }
 
+    // Still inside its target but running out of time. `$gt: now` excludes a
+    // deadline that has already passed — that conversation belongs to
+    // 'breached', and listing it under 'warning' told the agent they still had
+    // time when they did not.
     if (sla.includes('warning')) {
-      // Documents where SLA deadline is within 15 minutes but not yet breached
-      const warningTime = new Date(Date.now() + 15 * 60000);
+      const now = new Date();
       conditions.push({
-        frtBreached: false,
-        frtDeadline: { $lte: warningTime },
-      });
-      conditions.push({
-        resolutionBreached: false,
-        resolutionDeadline: { $lte: warningTime },
+        slaBreached: false,
+        slaDueAt: { $gt: now, $lte: new Date(now.getTime() + 15 * 60_000) },
       });
     }
 
@@ -792,6 +792,49 @@ export class ConversationRepository {
   }
 
   /**
+   * The queue-timeline half of an ownership change, as an aggregation-pipeline
+   * `$set` stage.
+   *
+   * There are five write paths that change who owns a conversation
+   * (`assignAgent`, `assignIfUnassigned`, `reassignIfExpected`,
+   * `updateAssignment`, `claimConversation`). Every one of them has to keep the
+   * wait clock honest, so the arithmetic lives here once instead of five times.
+   *
+   * A pipeline update rather than `$set` + a read: `totalQueuedMs` needs the
+   * document's own `queuedAt` to compute the elapsed wait, and doing that in the
+   * server keeps the whole transition atomic — read-modify-write from the
+   * application would lose one of two concurrent assignments' wait time.
+   */
+  private ownershipTiming(
+    agentId: string | null,
+    now: Date,
+  ): Record<string, unknown> {
+    if (!agentId) {
+      // Back to the queue: the wait restarts now. `assignedAt` stays as the
+      // record of the last time somebody did own it.
+      return { assignedAgentId: null, queuedAt: now };
+    }
+
+    return {
+      assignedAgentId: agentId,
+      assignedAt: now,
+      queuedAt: null,
+      totalQueuedMs: {
+        $add: [
+          { $ifNull: ['$totalQueuedMs', 0] },
+          {
+            $cond: [
+              { $ne: [{ $ifNull: ['$queuedAt', null] }, null] },
+              { $subtract: [now, '$queuedAt'] },
+              0,
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  /**
    * Directly assign a specific agent to the conversation.
    * Used by targeted Handoff blocks (target = "agent").
    */
@@ -802,12 +845,14 @@ export class ConversationRepository {
     const doc = await this.model
       .findOneAndUpdate(
         { _id: id, status: { $in: ['open', 'pending'] } },
-        {
-          $set: {
-            assignedAgentId: agentId,
-            status: 'open',
+        [
+          {
+            $set: {
+              ...this.ownershipTiming(agentId, new Date()),
+              status: 'open',
+            },
           },
-        },
+        ],
         { new: true },
       )
       .exec();
@@ -958,14 +1003,19 @@ export class ConversationRepository {
     id: string,
     agentId: string,
   ): Promise<OmniConversation | null> {
+    const now = new Date();
     const doc = await this.model
       .findByIdAndUpdate(
         id,
-        {
-          claimedById: agentId,
-          claimedAt: new Date(),
-          assignedAgentId: agentId,
-        },
+        [
+          {
+            $set: {
+              claimedById: agentId,
+              claimedAt: now,
+              ...this.ownershipTiming(agentId, now),
+            },
+          },
+        ],
         { new: true },
       )
       .exec();
@@ -990,10 +1040,13 @@ export class ConversationRepository {
     agentId: string | null,
     groupId?: string | null,
   ): Promise<OmniConversation | null> {
-    const update: Record<string, unknown> = { assignedAgentId: agentId };
-    if (groupId !== undefined) update.assignedGroupId = groupId;
+    const set: Record<string, unknown> = this.ownershipTiming(
+      agentId,
+      new Date(),
+    );
+    if (groupId !== undefined) set.assignedGroupId = groupId;
     const doc = await this.model
-      .findByIdAndUpdate(id, update, { new: true })
+      .findByIdAndUpdate(id, [{ $set: set }], { new: true })
       .exec();
     return doc ? OmniConversationMapper.toDomain(doc) : null;
   }
@@ -1014,12 +1067,15 @@ export class ConversationRepository {
     groupId: string | null | undefined,
     expectedPreviousAgentId: string | null,
   ): Promise<OmniConversation | null> {
-    const set: Record<string, unknown> = { assignedAgentId: agentId };
+    const set: Record<string, unknown> = this.ownershipTiming(
+      agentId,
+      new Date(),
+    );
     if (groupId !== undefined) set.assignedGroupId = groupId;
     const doc = await this.model
       .findOneAndUpdate(
         { _id: id, assignedAgentId: expectedPreviousAgentId },
-        { $set: set },
+        [{ $set: set }],
         { new: true },
       )
       .exec();
@@ -1035,7 +1091,10 @@ export class ConversationRepository {
     agentId: string,
     groupId?: string | null,
   ): Promise<OmniConversation | null> {
-    const set: Record<string, unknown> = { assignedAgentId: agentId };
+    const set: Record<string, unknown> = this.ownershipTiming(
+      agentId,
+      new Date(),
+    );
     if (groupId !== undefined) set.assignedGroupId = groupId;
     const doc = await this.model
       .findOneAndUpdate(
@@ -1047,7 +1106,7 @@ export class ConversationRepository {
             { assignedAgentId: { $exists: false } },
           ],
         },
-        { $set: set },
+        [{ $set: set }],
         { new: true },
       )
       .exec();
@@ -1488,62 +1547,160 @@ export class ConversationRepository {
   }
 
   /**
-   * Patch SLA deadline / breach fields on a conversation document.
-   * Used by SlaTriggerListener after scheduling BullMQ breach-check jobs.
-   */
-  async updateSlaFields(
-    conversationId: string,
-    fields: Partial<{
-      frtPolicyId: string | null;
-      frtDeadline: Date | null;
-      frtBreached: boolean;
-      resolutionPolicyId: string | null;
-      resolutionDeadline: Date | null;
-      resolutionBreached: boolean;
-    }>,
-  ): Promise<void> {
-    if (Object.keys(fields).length === 0) return;
-    await this.model
-      .updateOne({ _id: conversationId }, { $set: fields })
-      .exec();
-  }
-
-  /**
-   * Fetch an active (open/pending), unbreached conversation by ID for SLA processing.
-   * Returns the raw lean document so the breach processor can read inline fields
-   * (channelType, assignedAgentId, frtDeadline, resolutionDeadline) without mapping.
+   * The channel and owner of a conversation, for deciding who may receive its
+   * realtime events.
    *
-   * @param conversationId  - MongoDB ObjectId string of the conversation
-   * @param tenantId        - tenant owning the conversation (security check)
-   * @param breachedField   - 'frtBreached' | 'resolutionBreached' — must still be false
+   * Deliberately bypasses the reader's own visibility scope: this answers "who is
+   * allowed to see this record", so it has to read the record's real channel and
+   * assignee, not the caller's filtered view of them. Tenant isolation still
+   * applies through the schema plugin.
    */
-  async findByIdForSla(
-    conversationId: string,
+  async findAuthorizationFacts(
     tenantId: string,
-    breachedField: 'frtBreached' | 'resolutionBreached',
-  ): Promise<Record<string, any> | null> {
-    return this.model
-      .findOne({
-        _id: conversationId,
-        tenantId,
-        status: { $in: ['open', 'pending'] },
-        [breachedField]: false,
-      })
+    conversationId: string,
+  ): Promise<{
+    channelId: string | null;
+    assignedAgentId: string | null;
+  } | null> {
+    // `tenantId` is passed rather than read from CLS: the caller is a Redis
+    // pub/sub handler with no request context, and a query that silently loses
+    // its tenant predicate is the one mistake this collection cannot afford.
+    const doc = await this.model
+      .findOne({ _id: conversationId, tenantId })
+      .select('channelId assignedAgentId')
       .lean()
+      .setOptions({ isPlatformQuery: true })
       .exec();
+    if (!doc) return null;
+    return {
+      channelId: doc.channelId ? String(doc.channelId) : null,
+      assignedAgentId: doc.assignedAgentId ? String(doc.assignedAgentId) : null,
+    };
   }
 
   /**
-   * Atomically mark a conversation's SLA as breached.
-   * Runs in a BullMQ worker with tenant CLS seeded from the job payload.
+   * Record the agent's first reply — once, and only once.
+   *
+   * The `firstRespondedAt: null` guard is what makes "first" true: an agent may
+   * send several messages in the same second and the reply path is concurrent, so
+   * an unconditional write would keep moving the timestamp forward and First
+   * Response Time would measure the *latest* reply.
+   *
+   * @returns whether this call was the one that recorded it.
    */
-  async markSlaBreached(
+  async recordFirstResponse(
     conversationId: string,
-    breachedField: 'frtBreached' | 'resolutionBreached',
-  ): Promise<void> {
-    await this.model
-      .updateOne({ _id: conversationId }, { $set: { [breachedField]: true } })
+    respondedAt: Date,
+    responderId: string | null,
+  ): Promise<boolean> {
+    const result = await this.model
+      .updateOne(
+        { _id: conversationId, firstRespondedAt: null },
+        {
+          $set: {
+            firstRespondedAt: respondedAt,
+            firstResponderId: responderId,
+          },
+        },
+      )
       .exec();
+    return result.modifiedCount > 0;
+  }
+
+  /**
+   * Live queue depth and wait time, grouped by owning team.
+   *
+   * One aggregation over the partial `conversation_queue_wait` index, which holds
+   * only rows with a `queuedAt` — a few, not the collection. Visibility scope is
+   * applied, so a team lead sees their own queues and a tenant admin sees all of
+   * them, matching what the same principal can read in the inbox.
+   */
+  async aggregateQueueDepth(tenantId: string): Promise<
+    Array<{
+      groupId: string | null;
+      depth: number;
+      oldestQueuedAt: Date | null;
+      totalWaitMs: number;
+      breachedCount: number;
+      byChannel: Array<{ channelType: string; depth: number }>;
+    }>
+  > {
+    const now = new Date();
+    const filter: FilterQuery<OmniConversationDocument> = {
+      tenantId,
+      status: { $in: ['open', 'pending'] },
+      assignedAgentId: null,
+      queuedAt: { $ne: null },
+    };
+    this.applyVisibilityScope(filter);
+
+    const rows = await this.model
+      .aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: { group: '$assignedGroupId', channel: '$channelType' },
+            depth: { $sum: 1 },
+            oldestQueuedAt: { $min: '$queuedAt' },
+            totalWaitMs: { $sum: { $subtract: [now, '$queuedAt'] } },
+            breachedCount: {
+              $sum: { $cond: [{ $eq: ['$slaBreached', true] }, 1, 0] },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: '$_id.group',
+            depth: { $sum: '$depth' },
+            oldestQueuedAt: { $min: '$oldestQueuedAt' },
+            totalWaitMs: { $sum: '$totalWaitMs' },
+            breachedCount: { $sum: '$breachedCount' },
+            byChannel: {
+              $push: { channelType: '$_id.channel', depth: '$depth' },
+            },
+          },
+        },
+      ])
+      .exec();
+
+    return rows.map((row: any) => ({
+      groupId: row._id ? String(row._id) : null,
+      depth: row.depth,
+      oldestQueuedAt: row.oldestQueuedAt ?? null,
+      totalWaitMs: row.totalWaitMs ?? 0,
+      breachedCount: row.breachedCount ?? 0,
+      byChannel: (row.byChannel ?? []).map((entry: any) => ({
+        channelType: String(entry.channelType ?? 'unknown'),
+        depth: entry.depth,
+      })),
+    }));
+  }
+
+  /**
+   * Project SLA clock state onto the conversation so the inbox can filter and
+   * sort on it without joining `omni_sla_clocks`.
+   *
+   * `slaBreached` is deliberately sticky: once a conversation has missed a
+   * deadline that stays true for the rest of its life, which is what a supervisor
+   * filtering "breached today" means. Only the *pending* deadline moves.
+   */
+  async projectSlaState(
+    conversationId: string,
+    state: {
+      slaDueAt: Date | null;
+      slaDueMetric: string | null;
+      breachedAt?: Date;
+    },
+  ): Promise<void> {
+    const set: Record<string, unknown> = {
+      slaDueAt: state.slaDueAt,
+      slaDueMetric: state.slaDueMetric,
+    };
+    if (state.breachedAt) {
+      set.slaBreached = true;
+      set.slaBreachedAt = state.breachedAt;
+    }
+    await this.model.updateOne({ _id: conversationId }, { $set: set }).exec();
   }
 
   /**

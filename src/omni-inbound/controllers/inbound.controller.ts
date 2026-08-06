@@ -22,6 +22,7 @@ import { createHash } from 'crypto';
 import { Public } from 'nest-keycloak-connect';
 import { InboundProcessorService } from '../processors/inbound-processor.service';
 import { ChannelType } from '../domain/omni-payload';
+import { isSupportedChannel } from '../domain/channel-capabilities';
 import {
   OMNI_WEBHOOK_QUEUE,
   PRIORITY_NORMAL,
@@ -29,6 +30,39 @@ import {
 import { WebhookJobData } from '../queue/webhook-processor';
 import { HIGH_THROUGHPUT_JOB_OPTIONS } from '../../queue/config/default-job-options';
 import { ChannelsService } from '../../channels/channels.service';
+
+/**
+ * How far back a provider event may be dated and still be accepted.
+ *
+ * 6 hours: long enough to cover a provider replaying a backlog after an outage on
+ * their side, short enough that a captured request stops being useful.
+ */
+const DEFAULT_REPLAY_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * The provider's own timestamp for an event, in epoch milliseconds, or null when
+ * the payload carries none we recognise.
+ *
+ * Providers disagree on both the field and the unit: Meta sends seconds on
+ * Messenger (`timestamp` on the entry) and milliseconds on some payloads,
+ * WhatsApp sends a string of seconds, Zalo sends milliseconds. A value in seconds
+ * is promoted by magnitude rather than by channel, so a new channel needs no
+ * change here.
+ */
+function extractProviderTimestamp(event: any): number | null {
+  const raw =
+    event?.timestamp ??
+    event?.messages?.[0]?.timestamp ??
+    event?.message?.timestamp ??
+    event?.create_time ??
+    event?.event?.create_time;
+
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+
+  // Anything below ~year 2286 in ms is a seconds value; treat it as such.
+  return numeric < 1e11 ? numeric * 1000 : numeric;
+}
 
 /**
  * Webhook receiver for all messaging providers.
@@ -105,6 +139,14 @@ export class InboundController {
   ) {
     this.logger.log(`Received ${channelType} webhook`);
 
+    // Reject a channel the platform does not implement, at the door.
+    // `:channelType` is caller-controlled, so without this an unimplemented
+    // channel reached the queue and failed three retries deep in a worker, where
+    // it looks like an infrastructure fault rather than a configuration one.
+    if (!isSupportedChannel(channelType)) {
+      throw new BadRequestException(`Unsupported channel: ${channelType}`);
+    }
+
     // rawBody is populated by the express.json verify hook in main.ts.
     // We forward the original bytes to the adapter so HMAC verification
     // cannot be bypassed by JSON re-serialization quirks.
@@ -135,6 +177,8 @@ export class InboundController {
       this.logger.warn(`Invalid webhook signature for ${channelType}`);
       throw new BadRequestException('Invalid webhook signature');
     }
+
+    this.rejectStaleEvents(channelType, events);
 
     const jobs = events.map(({ event, accountId }) => ({
       name: 'process-webhook',
@@ -209,6 +253,51 @@ export class InboundController {
     }
   }
 
+  /**
+   * Reject events whose provider timestamp is outside the replay window.
+   *
+   * Meta's signature covers the body and nothing else — no timestamp, no nonce — so
+   * a captured signed request stays valid forever and can be replayed. Deduplication
+   * bounded that only while the BullMQ job id and the Redis idempotency key survived
+   * retention; after eviction the same payload was accepted as new, which on a
+   * message webhook means re-delivering a customer's message and on a delivery
+   * receipt means resurrecting a stale status.
+   *
+   * The window is generous: providers retry for hours after an outage and those
+   * retries are legitimate. This closes replay of *old* traffic, not slow traffic.
+   * Events with no readable timestamp pass — a fabricated one would be worse than
+   * none, and the signature still had to verify.
+   */
+  private rejectStaleEvents(
+    channelType: ChannelType,
+    events: Array<{ event: any }>,
+  ): void {
+    const oldestAllowed = Date.now() - this.getReplayWindowMs();
+
+    for (const { event } of events) {
+      const timestamp = extractProviderTimestamp(event);
+      if (timestamp === null) continue;
+      if (timestamp >= oldestAllowed) continue;
+
+      this.logger.warn(
+        `Rejected ${channelType} webhook: event timestamp ` +
+          `${new Date(timestamp).toISOString()} is outside the replay window`,
+      );
+      throw new BadRequestException('Webhook event is too old');
+    }
+  }
+
+  private getReplayWindowMs(): number {
+    const configured = Number(
+      this.configService.get<string>('OMNI_WEBHOOK_REPLAY_WINDOW_MS', {
+        infer: true,
+      }),
+    );
+    return Number.isInteger(configured) && configured > 0
+      ? configured
+      : DEFAULT_REPLAY_WINDOW_MS;
+  }
+
   private unwrapEvents(
     channelType: ChannelType,
     body: any,
@@ -235,9 +324,30 @@ export class InboundController {
       case 'zalo':
         return [{ event: body, accountId: this.extractZaloOaId(body) }];
 
+      // The account is the business's own open_id — the *recipient* of a customer
+      // message. Falling through to the default here meant TikTok events carried
+      // an empty accountId, so the worker could resolve neither a channel nor a
+      // tenant and every TikTok message died in the retry/DLQ path.
+      case 'tiktok':
+        return [{ event: body, accountId: this.extractTikTokAccountId(body) }];
+
       default:
         return [{ event: body, accountId: '' }];
     }
+  }
+
+  /**
+   * The TikTok account a webhook belongs to.
+   *
+   * `to_user.open_id` is the business account on an inbound direct message.
+   * `client_key` identifies the *app* rather than the account, so it is only a
+   * fallback for single-account apps — a multi-account app would resolve every
+   * account's traffic to whichever channel was stored under the client key.
+   */
+  private extractTikTokAccountId(body: any): string {
+    const recipient = body?.event?.to_user?.open_id;
+    if (recipient) return String(recipient);
+    return String(body?.client_key ?? '');
   }
 
   /**

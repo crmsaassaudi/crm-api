@@ -8,10 +8,25 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { randomUUID } from 'crypto';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
+import { ConfigService } from '@nestjs/config';
 import {
   OmniConversationSchemaClass,
   OmniConversationDocument,
 } from '../infrastructure/persistence/document/entities/omni-conversation.schema';
+import { CrmEvents, OmniEvents } from '../domain/omni-events';
+import { canChannel } from '../domain/channel-capabilities';
+import type { AllConfigType } from '../../config/config.type';
+
+/**
+ * How long a survey link stays usable.
+ *
+ * Long enough for a customer to answer at their convenience, short enough that a
+ * forwarded link is not a permanent write handle to the score.
+ */
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const SURVEY_PROMPT =
+  'Thank you for contacting us. How would you rate this conversation?';
 
 export type CsatScore = 1 | 2 | 3 | 4 | 5;
 
@@ -54,64 +69,126 @@ export class CsatService {
     @InjectModel(OmniConversationSchemaClass.name)
     private readonly conversationModel: Model<OmniConversationDocument>,
     private readonly eventEmitter: EventEmitter2,
+    private readonly configService: ConfigService<AllConfigType>,
   ) {}
 
   /**
-   * Generate a CSAT survey token for a resolved conversation.
-   * Called when an agent resolves/closes a conversation.
-   * Returns the token to be embedded in the survey URL.
+   * Mint a survey token for a resolved conversation.
+   *
+   * @returns the token, or null when the conversation is not this tenant's.
    */
   async generateToken(
     conversationId: string,
     tenantId: string,
-  ): Promise<string> {
+  ): Promise<string | null> {
     const token = randomUUID().replace(/-/g, '');
+    const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
 
-    await this.conversationModel.updateOne(
+    const result = await this.conversationModel.updateOne(
       { _id: conversationId, tenantId },
-      { $set: { csatToken: token } },
+      { $set: { csatToken: token, csatTokenExpiresAt: expiresAt } },
     );
+
+    // A silent no-op here used to look like success: the caller received a token
+    // string for a conversation it had never written to.
+    if (result.matchedCount === 0) {
+      this.logger.warn(
+        `CSAT token requested for conversation ${conversationId} outside tenant ${tenantId}`,
+      );
+      return null;
+    }
 
     this.logger.log(`CSAT token generated for conversation ${conversationId}`);
     return token;
   }
 
   /**
-   * P3.1: Auto-generate CSAT token when a conversation is resolved.
-   * Triggered by the `omni.conversation.status_changed` event emitted by OmniController.
-   * Also re-emits the token on the omni socket so the widget can receive it.
+   * Ask the customer how it went, once the conversation is resolved.
+   *
+   * Delivery is the part that was missing. A token was minted for every resolved
+   * conversation and pushed over the livechat visitor socket — so livechat
+   * visitors saw a survey and **every WhatsApp, Facebook, Instagram, Telegram and
+   * email customer saw nothing at all**, on channels that carry most of the
+   * volume. The score column stayed empty and read as "customers did not answer".
+   *
+   * Livechat still renders the survey in the widget (`omni.csat.token_generated`);
+   * other channels get a message with the link, which is the only way to ask on a
+   * channel we do not own the UI for.
    */
-  @OnEvent('omni.conversation.status_changed', { async: true })
+  @OnEvent(OmniEvents.CONVERSATION_STATUS_CHANGED, { async: true })
   async handleConversationResolved(payload: {
     tenantId: string;
     conversationId: string;
-    status: string;
+    status?: string;
+    newStatus?: string;
+    channelType?: string;
     agentId?: string;
   }): Promise<void> {
-    if (payload.status !== 'resolved') return;
+    const status = payload.newStatus ?? payload.status;
+    if (status !== 'resolved') return;
+
+    const channelType = payload.channelType;
+    if (channelType && !canChannel(channelType, 'csat')) {
+      this.logger.debug(
+        `[CSAT] Skipping survey on ${channelType} — channel does not support it`,
+      );
+      return;
+    }
 
     try {
       const token = await this.generateToken(
         payload.conversationId,
         payload.tenantId,
       );
+      if (!token) return;
 
-      // Broadcast to agent room so ChatWindow can display the CSAT score later
-      this.eventEmitter.emit('omni.csat.token_generated', {
+      // Livechat: the widget renders the survey inline from this event.
+      this.eventEmitter.emit(OmniEvents.CSAT_TOKEN_GENERATED, {
         tenantId: payload.tenantId,
         conversationId: payload.conversationId,
         csatToken: token,
       });
 
-      this.logger.log(
-        `[CSAT] Auto-generated token for resolved conversation ${payload.conversationId}`,
-      );
+      if (channelType && channelType !== 'livechat') {
+        this.deliverSurveyLink(payload, token, channelType);
+      }
     } catch (err) {
       this.logger.error(
-        `[CSAT] Failed to auto-generate token for ${payload.conversationId}:`,
+        `[CSAT] Failed to send survey for ${payload.conversationId}:`,
         err,
       );
     }
+  }
+
+  /**
+   * Send the survey link as a message on the customer's own channel.
+   *
+   * Sent through the system-reply seam so it is persisted, sequenced and visible
+   * in the transcript — an agent reopening the thread can see the survey was
+   * already asked for, and will not ask again.
+   */
+  private deliverSurveyLink(
+    payload: { tenantId: string; conversationId: string },
+    token: string,
+    channelType: string,
+  ): void {
+    const baseUrl = this.configService.get('app.frontendDomain', {
+      infer: true,
+    });
+    if (!baseUrl) {
+      this.logger.error(
+        '[CSAT] FRONTEND_DOMAIN is not configured — cannot build a survey link',
+      );
+      return;
+    }
+
+    const message = `${SURVEY_PROMPT} ${baseUrl.replace(/\/$/, '')}/survey?token=${token}`;
+    this.eventEmitter.emit(OmniEvents.CSAT_SURVEY_REQUESTED, {
+      tenantId: payload.tenantId,
+      conversationId: payload.conversationId,
+      channelType,
+      message,
+    });
   }
 
   /**
@@ -140,6 +217,15 @@ export class CsatService {
       );
     }
 
+    // Expiry is enforced here rather than by a TTL index: the token has to become
+    // unusable at a known moment, and a TTL index would delete the whole
+    // conversation. Reported as "expired" separately from "invalid" so a customer
+    // clicking an old link is told something true.
+    const expiresAt = conversation.csatTokenExpiresAt;
+    if (expiresAt && expiresAt.getTime() < Date.now()) {
+      throw new BadRequestException('This survey link has expired');
+    }
+
     if (conversation.csatScore !== null) {
       throw new BadRequestException('CSAT survey has already been submitted');
     }
@@ -152,6 +238,7 @@ export class CsatService {
           csatComment: dto.comment ?? null,
           csatSubmittedAt: new Date(),
           csatToken: null, // Invalidate token after use
+          csatTokenExpiresAt: null,
         },
       },
       { isPlatformQuery: true } as any,
@@ -163,11 +250,16 @@ export class CsatService {
       `CSAT submitted: conversation=${conversationId} score=${dto.score} tenantId=${conversation.tenantId}`,
     );
 
-    // Emit event for realtime notification to agent dashboard
-    this.eventEmitter.emit('csat.submitted', {
+    // Carries the channel so consumers can act per channel — the livechat widget
+    // webhook needs it to resolve which widget to notify.
+    this.eventEmitter.emit(CrmEvents.CSAT_SUBMITTED, {
       tenantId: String(conversation.tenantId),
       conversationId,
       agentId: conversation.assignedAgentId,
+      channelType: conversation.channelType,
+      channelId: conversation.channelId
+        ? String(conversation.channelId)
+        : undefined,
       score: dto.score,
       comment: dto.comment,
       submittedAt: new Date(),

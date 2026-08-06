@@ -7,13 +7,16 @@ import { EscalationPoliciesService } from './escalation-policies.service';
 import { ESCALATION_QUEUE } from './queue/escalation-queue.constants';
 import type { EscalationJobData } from './queue/escalation.processor';
 import { runWithTenantContext } from '../common/tenancy/tenant-context';
+import { OmniEvents } from '../omni-inbound/domain/omni-events';
+import type { ConversationSlaBreachedEvent } from '../omni-inbound/domain/omni-events';
 
 /**
- * EscalationTriggerListener — listens to `sla.breached` events and
- * schedules delayed escalation jobs based on the tenant's escalation policies.
+ * EscalationTriggerListener — schedules delayed escalation jobs when an SLA clock
+ * breaches.
  *
  * Flow:
- *   1. SLA breach detected (frtBreached or resolutionBreached)
+ *   1. `SlaClockService` records a breach and emits
+ *      `OmniEvents.CONVERSATION_SLA_BREACHED`
  *   2. Look up all enabled escalation policies for the breached SLA policy
  *   3. For each escalation policy, schedule a delayed job that fires
  *      `escalateAfter` minutes/hours later
@@ -23,6 +26,11 @@ import { runWithTenantContext } from '../common/tenancy/tenant-context';
  * Example configuration:
  *   - Policy A: escalateAfter=5, unit=minutes, action=color_red → red highlight
  *   - Policy B: escalateAfter=15, unit=minutes, action=notify → ping manager
+ *
+ * The jobId is keyed on (policy, conversation, metric, cycle): a `next_response`
+ * SLA breaches once per customer turn, and keying on the conversation alone made
+ * each new breach silently replace the previous conversation's pending
+ * escalation.
  */
 @Injectable()
 export class EscalationTriggerListener {
@@ -35,14 +43,8 @@ export class EscalationTriggerListener {
     private readonly cls: ClsService,
   ) {}
 
-  @OnEvent('sla.breached')
-  async handleSlaBreached(event: {
-    tenantId: string;
-    conversationId: string;
-    slaPolicyId: string;
-    breachType: string;
-    breachedAt: Date;
-  }): Promise<void> {
+  @OnEvent(OmniEvents.CONVERSATION_SLA_BREACHED)
+  async handleSlaBreached(event: ConversationSlaBreachedEvent): Promise<void> {
     return runWithTenantContext(this.cls, event.tenantId, async () => {
       try {
         const allPolicies = await this.escalationService.findAll();
@@ -65,7 +67,9 @@ export class EscalationTriggerListener {
             policy.escalateUnit,
           );
 
-          const jobId = `escalation-${policy.id}-${event.conversationId}`;
+          const jobId =
+            `escalation-${policy.id}-${event.conversationId}` +
+            `-${event.metric}-${event.cycle}`;
           const level: 'warning' | 'breach' =
             policy.breachType === 'breach' ? 'breach' : 'warning';
 

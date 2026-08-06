@@ -120,6 +120,11 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
         channelType: 'zalo',
         channelId: 'ch-1',
         customer: { externalId: 'cust-1' },
+        // Inside Zalo's 24h window. Required now that the media path actually
+        // enforces it: `enforceReplyWindow` read a config shape the factory
+        // never produced, so it returned early every time and media replies
+        // reached the provider to be rejected there instead.
+        lastCustomerMessageAt: new Date(),
       }),
       updateLastMessage: jest.fn().mockResolvedValue(undefined),
     };
@@ -170,7 +175,6 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
       channelRepo as any,
       { emit: jest.fn() } as any,
       new Map([[overrides.adapterChannel ?? 'zalo', { sendMedia }]]) as any,
-      {} as any, // reply window disabled
       filesService as any,
       imageProcessingService as any,
       { findByIdsGlobal: jest.fn().mockResolvedValue([]) } as any,
@@ -282,5 +286,32 @@ describe('OutboundMediaHandler.sendAgentMedia', () => {
     const persisted = messageRepo.create.mock.calls[0][0];
     expect(persisted.metadata.media.mimeType).toBe('image/png');
     expect(persisted.metadata.media.fileName).toBe('photo.png');
+  });
+
+  it('should refuse media once the platform reply window has closed', async () => {
+    // The regression this guards: `enforceReplyWindow` here read
+    // `cfg.channels[channel].windowHours` while the config factory produced a
+    // flat `cfg[channel]` number, so `channelCfg` was always undefined, the
+    // guard returned early, and every media send on a closed window went to the
+    // provider to be rejected with an error the agent could not act on.
+    const { handler, messageRepo, sendMedia, conversationRepo } = build();
+    conversationRepo.findById.mockResolvedValue({
+      channelType: 'zalo',
+      channelId: 'ch-1',
+      customer: { externalId: 'cust-1' },
+      lastCustomerMessageAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+    });
+
+    await expect(
+      send(handler, {
+        fileId: 'file-1',
+        mimeType: 'image/jpeg',
+        fileName: 'photo.jpg',
+        size: 500 * 1024,
+      }),
+    ).rejects.toThrow(/window closed/);
+
+    expect(messageRepo.create).not.toHaveBeenCalled();
+    expect(sendMedia).not.toHaveBeenCalled();
   });
 });
