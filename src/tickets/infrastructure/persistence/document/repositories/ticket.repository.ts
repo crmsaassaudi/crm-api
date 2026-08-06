@@ -19,6 +19,31 @@ import { escapeRegex } from '../../../../../utils/escape-regex';
 import { cappedCount } from '../../../../../utils/capped-count';
 import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
 import { normalizeTicketNumberQuery } from '../../../../search/ticket-number-query';
+import { SORTABLE_FIELDS } from '../../../../../object-manager/sortable-fields';
+
+const TICKET_SORTABLE = new Set<string>(SORTABLE_FIELDS.Ticket);
+
+/**
+ * The list's sort.
+ *
+ * `sortBy`/`sortOrder` have been on the wire since the web client was written —
+ * `ticketsApi.getAll` forwards both — and this repository hard-coded
+ * `createdAt: -1` and discarded them. The request succeeded, the order was
+ * wrong, and nothing said so. Anything outside the whitelist still falls back to
+ * `createdAt`, but now the whitelist is the same one the UI draws its sort
+ * controls from, so an unhonoured sort cannot be requested in the first place.
+ */
+const resolveTicketSort = (filterOptions?: {
+  sortBy?: string;
+  sortOrder?: string;
+}): Record<string, 1 | -1> => {
+  const field =
+    filterOptions?.sortBy && TICKET_SORTABLE.has(filterOptions.sortBy)
+      ? filterOptions.sortBy
+      : 'createdAt';
+  const direction: 1 | -1 = filterOptions?.sortOrder === 'asc' ? 1 : -1;
+  return { [field]: direction, _id: direction };
+};
 
 const normalizeListFilter = (value: unknown): string[] => {
   const values = Array.isArray(value) ? value : String(value ?? '').split(',');
@@ -312,7 +337,7 @@ export class TicketRepository extends BaseDocumentRepository<
       this.populateRefs(
         this.model
           .find(scopedWhere)
-          .sort({ createdAt: -1 })
+          .sort(resolveTicketSort(filterOptions))
           .skip((paginationOptions.page - 1) * paginationOptions.limit)
           .limit(paginationOptions.limit)
           .lean(),

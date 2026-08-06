@@ -156,6 +156,26 @@ AccountSchema.index(
   { tenantId: 1, createdAt: -1, _id: -1 },
   { name: 'tenant_created_cursor' },
 );
+// List sorts, one per field in SORTABLE_FIELDS.Account.
+//
+// The repository has accepted these four as sort fields since it was written and
+// none of them had an index: every "sort by revenue" was an in-memory sort that
+// would have failed outright — not merely slowed — once a tenant's accounts
+// passed Mongo's 32MB sort limit. `sortable-fields.spec.ts` is what surfaced it
+// and is what keeps the next one from shipping.
+AccountSchema.index(
+  { tenantId: 1, updatedAt: -1, _id: -1 },
+  { name: 'tenant_updated_sort' },
+);
+AccountSchema.index({ tenantId: 1, name: 1, _id: 1 }, { name: 'tenant_name_sort' });
+AccountSchema.index(
+  { tenantId: 1, annualRevenue: -1, _id: -1 },
+  { name: 'tenant_annual_revenue_sort' },
+);
+AccountSchema.index(
+  { tenantId: 1, numberOfEmployees: -1, _id: -1 },
+  { name: 'tenant_employees_sort' },
+);
 
 AccountSchema.virtual('owner', {
   ref: 'UserSchemaClass',

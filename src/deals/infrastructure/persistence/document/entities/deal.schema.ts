@@ -264,6 +264,24 @@ DealSchema.index(
   { name: 'tenant_created_cursor' },
 );
 
+// List sorts. One index per field in SORTABLE_FIELDS.Deal, each carrying the
+// `_id` tie-breaker in the same direction so a page boundary cannot split two
+// deals holding the same value. Mongo walks an index backwards, so one
+// descending index serves both directions.
+//
+// "Biggest deals first" and "closing soonest" are the two questions a pipeline
+// list exists to answer, and until now neither was expressible: the list was
+// hard-sorted by `createdAt` and the UI offered no control at all.
+DealSchema.index(
+  { tenantId: 1, updatedAt: -1, _id: -1 },
+  { name: 'tenant_updated_sort' },
+);
+DealSchema.index({ tenantId: 1, value: -1, _id: -1 }, { name: 'tenant_value_sort' });
+DealSchema.index(
+  { tenantId: 1, closeDate: -1, _id: -1 },
+  { name: 'tenant_close_date_sort' },
+);
+
 // The board is the primary read: one column = one (pipeline, stage) pair, sorted
 // newest-first and keyset-paginated. This one index serves the column query, its
 // count/sum aggregate, and the pipeline-filtered list.

@@ -50,6 +50,12 @@ export class ObjectFieldDto {
   @ApiProperty({ description: 'Whether the field may be marked required.' })
   requirable: boolean;
 
+  @ApiProperty({
+    description:
+      'Whether a list may be sorted by this field. True only where an index backs it — the client draws no sort control otherwise.',
+  })
+  sortable: boolean;
+
   @ApiProperty({ description: 'False for fields defined by the tenant.' })
   isStandard: boolean;
 

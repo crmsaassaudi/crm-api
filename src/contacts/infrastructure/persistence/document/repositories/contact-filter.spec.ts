@@ -6,6 +6,7 @@ import {
   parseContactFilter,
 } from '../../../../filters/contact-filter';
 import { CONTACT_SORTABLE_FIELDS } from '../../../../dto/query-contact.dto';
+import { storagePathForSort } from '../../../../../object-manager/sortable-fields';
 
 /**
  * The filter compiler is a security boundary: it stops a client turning the
@@ -274,12 +275,17 @@ describe('contact cursor sort index coverage', () => {
     // Every sortable field needs an index carrying the tenant prefix and the
     // `_id` tie-breaker, in either direction — without one, a legal API sort
     // becomes a blocking in-memory sort at million-contact cardinality.
+    //
+    // Checked against the STORAGE path: `name` is composed by the mapper from
+    // firstName + lastName, so its sort runs on `firstName` and it is that
+    // index which has to exist.
     const indexKeys = ContactSchema.indexes().map(([keys]) => keys);
     for (const field of sortableFields) {
+      const path = storagePathForSort('Contact', field);
       const covered = indexKeys.some(
         (keys: any) =>
-          Object.keys(keys).join(',') === `tenantId,${field},_id` &&
-          keys[field] === keys._id,
+          Object.keys(keys).join(',') === `tenantId,${path},_id` &&
+          keys[path] === keys._id,
       );
       expect([field, covered]).toEqual([field, true]);
     }

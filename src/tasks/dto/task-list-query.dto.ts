@@ -18,6 +18,7 @@ import {
   TASK_PRIORITIES,
 } from '../tasks.constants';
 import { CustomFieldDefinitions } from '../../utils/custom-field-filter';
+import { SORTABLE_FIELDS } from '../../object-manager/sortable-fields';
 
 /**
  * Turn `?statusIds=a,b` and `?statusIds[]=a&statusIds[]=b` into one shape.
@@ -144,9 +145,9 @@ export class TaskListQueryDto {
    * past Mongo's 32MB sort limit that is an outright query failure rather than
    * slowness. Adding one means adding its index in `task.schema.ts` first.
    */
-  @ApiPropertyOptional({ enum: ['dueDate', 'createdAt'] })
+  @ApiPropertyOptional({ enum: SORTABLE_FIELDS.Task })
   @IsOptional()
-  @IsIn(['dueDate', 'createdAt'])
+  @IsIn(SORTABLE_FIELDS.Task)
   sortBy?: string;
 
   @ApiPropertyOptional({ enum: ['asc', 'desc'] })

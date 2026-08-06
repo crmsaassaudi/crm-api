@@ -38,6 +38,7 @@ import {
   parseContactFilter,
 } from '../../../../filters/contact-filter';
 import { CONTACT_SORTABLE_FIELDS } from '../../../../dto/query-contact.dto';
+import { storagePathForSort } from '../../../../../object-manager/sortable-fields';
 
 @Injectable()
 export class ContactRepository extends BaseDocumentRepository<
@@ -335,10 +336,17 @@ export class ContactRepository extends BaseDocumentRepository<
     );
   }
 
+  /**
+   * The document path to sort on.
+   *
+   * `name` is the one that needs translating: the list's primary column is
+   * composed by the mapper from `firstName` + `lastName` and no document holds
+   * it, so sorting it means sorting `firstName`. Anything outside the whitelist
+   * falls back to `createdAt` rather than reaching Mongo unindexed.
+   */
   private resolveCursorSortField(sortBy?: string): string {
-    return sortBy && this.cursorSortableFields.has(sortBy)
-      ? sortBy
-      : 'createdAt';
+    if (!sortBy || !this.cursorSortableFields.has(sortBy)) return 'createdAt';
+    return storagePathForSort('Contact', sortBy);
   }
 
   private decodeDocumentCursor(

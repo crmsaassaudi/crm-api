@@ -10,17 +10,17 @@ import {
   Min,
 } from 'class-validator';
 
-/** Fields the list may be sorted by, in both offset and cursor mode. */
-export const CONTACT_SORTABLE_FIELDS = [
-  'createdAt',
-  'updatedAt',
-  'firstName',
-  'lastName',
-  'score',
-  'lastActivityAt',
-  'totalRevenue',
-  'lastPurchaseAt',
-] as const;
+import { SORTABLE_FIELDS } from '../../object-manager/sortable-fields';
+
+/**
+ * Fields the list may be sorted by, in both offset and cursor mode.
+ *
+ * Re-exported from the shared registry rather than declared here: the same list
+ * has to reach the query validator, the repository's sort resolver and
+ * `/me/object-config`, and three copies is how a UI comes to offer a sort the
+ * API quietly ignores.
+ */
+export const CONTACT_SORTABLE_FIELDS = SORTABLE_FIELDS.Contact;
 
 export class QueryContactDto {
   @IsOptional()

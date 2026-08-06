@@ -14,6 +14,32 @@ import { escapeRegex } from '../../../../../utils/escape-regex';
 import { cappedCount } from '../../../../../utils/capped-count';
 import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
 import { DEAL_STAGE_HISTORY_LIMIT } from '../../../../deals.constants';
+import { SORTABLE_FIELDS } from '../../../../../object-manager/sortable-fields';
+
+const DEAL_SORTABLE = new Set<string>(SORTABLE_FIELDS.Deal);
+
+/**
+ * The list's sort, from the caller's request or the default.
+ *
+ * `_id` rides along in the same direction as the tie-breaker every index
+ * carries: without it two deals sharing a `closeDate` can land on both sides of
+ * a page boundary, so one is served twice and another never.
+ *
+ * A field outside the whitelist falls back to `createdAt` rather than being
+ * passed to Mongo — an unindexed sort is an in-memory sort, and past 32MB that
+ * is a failed query rather than a slow one.
+ */
+const resolveDealSort = (filterOptions?: {
+  sortBy?: string;
+  sortOrder?: string;
+}): Record<string, 1 | -1> => {
+  const field =
+    filterOptions?.sortBy && DEAL_SORTABLE.has(filterOptions.sortBy)
+      ? filterOptions.sortBy
+      : 'createdAt';
+  const direction: 1 | -1 = filterOptions?.sortOrder === 'asc' ? 1 : -1;
+  return { [field]: direction, _id: direction };
+};
 
 /** Free-text/`$in` filterable fields. Anything else would be an unindexed scan on request. */
 const REGEX_FILTERABLE_FIELDS = new Set([
@@ -256,7 +282,7 @@ export class DealRepository extends BaseDocumentRepository<
       this.populateList(
         this.model
           .find(where)
-          .sort({ createdAt: -1, _id: -1 })
+          .sort(resolveDealSort(filterOptions))
           .skip((paginationOptions.page - 1) * paginationOptions.limit)
           .limit(paginationOptions.limit),
       )

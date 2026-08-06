@@ -333,6 +333,17 @@ TicketSchema.index(
   { tenantId: 1, createdAt: -1, _id: -1 },
   { name: 'tenant_created_cursor' },
 );
+// List sorts, one per field in SORTABLE_FIELDS.Ticket. `ticketNumber` already
+// has a unique index but without the `_id` tie-breaker the sort resolver adds,
+// so it gets its own; the unique constraint is what that one is for.
+TicketSchema.index(
+  { tenantId: 1, updatedAt: -1, _id: -1 },
+  { name: 'tenant_updated_sort' },
+);
+TicketSchema.index(
+  { tenantId: 1, ticketNumber: -1, _id: -1 },
+  { name: 'tenant_ticket_number_sort' },
+);
 TicketSchema.index(
   { omniConversationId: 1 },
   { name: 'ticket_omni_conversation' },

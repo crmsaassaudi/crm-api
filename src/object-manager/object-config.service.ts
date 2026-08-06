@@ -15,6 +15,7 @@ import {
   isFieldRequirable,
 } from './object-registry';
 import { ObjectRegistryService, columnKeyOf } from './object-registry.service';
+import { SORTABLE_FIELDS } from './sortable-fields';
 import {
   FieldPolicyDto,
   ObjectConfigDto,
@@ -81,12 +82,13 @@ export class ObjectConfigService {
       this.loadCustomFields(object),
       this.picklists.forObject(object),
     ]);
+    const sortable = new Set(SORTABLE_FIELDS[object]);
     return {
       name: object,
       fields: [
         ...this.registry
           .fields(object)
-          .map((field) => toStandardFieldDto(field, picklists)),
+          .map((field) => toStandardFieldDto(field, picklists, sortable)),
         ...custom.map(toCustomFieldDto),
       ],
     };
@@ -116,6 +118,7 @@ export class ObjectConfigService {
 const toStandardFieldDto = (
   field: StandardFieldDescriptor,
   picklists: ObjectPicklists,
+  sortable: ReadonlySet<string>,
 ): ObjectFieldDto => ({
   key: field.key,
   column: columnKeyOf(field),
@@ -126,6 +129,9 @@ const toStandardFieldDto = (
   audit: field.audit === true,
   maskable: isFieldMaskable(field),
   requirable: isFieldRequirable(field),
+  // Stated, not guessed. A column whose field is absent here renders no sort
+  // control at all — better than a control that reorders nothing.
+  sortable: sortable.has(field.key),
   isStandard: true,
   // Attached by payload key. A form and a validation rule therefore cannot end up
   // describing different fields under the same label, which is exactly what the
@@ -149,6 +155,9 @@ const toCustomFieldDto = (field: CustomField): ObjectFieldDto => {
     audit: false,
     maskable: isMaskableFieldType(type),
     requirable: type !== 'FORMULA',
+    // Custom fields live under `customFields.<key>` and carry no index, so no
+    // list may be sorted by one until that changes.
+    sortable: false,
     isStandard: false,
     options: field.options,
   };

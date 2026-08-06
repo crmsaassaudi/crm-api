@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { DashboardsService } from './dashboards.service';
+import { DashboardSummaryService } from './dashboard-summary.service';
 import { CreateDashboardDto, UpdateDashboardDto } from './dashboard.dto';
 import { RequirePermission } from '../common/permissions/permission.decorator';
 
@@ -27,13 +28,27 @@ import { RequirePermission } from '../common/permissions/permission.decorator';
 @ApiBearerAuth()
 @Controller({ path: 'dashboards', version: '1' })
 export class DashboardsController {
-  constructor(private readonly svc: DashboardsService) {}
+  constructor(
+    private readonly svc: DashboardsService,
+    private readonly summary: DashboardSummaryService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List accessible dashboards (own + shared)' })
   @RequirePermission('view', 'dashboards')
   findAll() {
     return this.svc.findAll();
+  }
+
+  /**
+   * Declared before `:id` — Nest matches routes in declaration order and
+   * `summary` would otherwise be read as a dashboard id.
+   */
+  @Get('summary')
+  @ApiOperation({ summary: 'Home dashboard KPIs, aggregated by the database' })
+  @RequirePermission('view', 'dashboards')
+  getSummary() {
+    return this.summary.getSummary();
   }
 
   @Get(':id')

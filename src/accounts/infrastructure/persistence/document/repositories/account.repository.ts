@@ -27,20 +27,16 @@ import {
 } from '../../../../../utils/cursor-pagination';
 import { escapeRegex } from '../../../../../utils/escape-regex';
 import { cappedCount } from '../../../../../utils/capped-count';
+import { SORTABLE_FIELDS } from '../../../../../object-manager/sortable-fields';
 
 @Injectable()
 export class AccountRepository extends BaseDocumentRepository<
   AccountSchemaDocument,
   Account
 > {
-  private readonly cursorSortableFields = new Set([
-    'createdAt',
-    'updatedAt',
-    'name',
-    'industry',
-    'annualRevenue',
-    'numberOfEmployees',
-  ]);
+  private readonly cursorSortableFields = new Set<string>(
+    SORTABLE_FIELDS.Account,
+  );
 
   constructor(
     @InjectModel(AccountSchemaClass.name)
