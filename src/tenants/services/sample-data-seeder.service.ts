@@ -86,7 +86,8 @@ export class SampleDataSeederService {
 
   private async seedSalesPipeline(context: SeedContext): Promise<void> {
     const audit = this.auditFields(context);
-    const defaultStageId = await this.getDefaultDealStageId(context);
+    const placement = await this.defaultDealPlacement(context);
+    const now = new Date();
 
     // Sample Accounts
     const accounts = await this.accountModel.insertMany([
@@ -148,8 +149,8 @@ export class SampleDataSeederService {
         ...audit,
         title: 'Acme CRM Enterprise License',
         name: 'Acme CRM Enterprise License',
-        pipeline: 'default',
-        stageId: defaultStageId,
+        ...placement,
+        ...this.dealStageBootstrap(placement.stageId, context, now),
         value: 45000,
         currency: 'USD',
         probability: 70,
@@ -162,8 +163,8 @@ export class SampleDataSeederService {
         ...audit,
         title: 'GlobalTech Annual Subscription',
         name: 'GlobalTech Annual Subscription',
-        pipeline: 'default',
-        stageId: defaultStageId,
+        ...placement,
+        ...this.dealStageBootstrap(placement.stageId, context, now),
         value: 120000,
         currency: 'USD',
         probability: 40,
@@ -247,33 +248,52 @@ export class SampleDataSeederService {
     };
   }
 
-  private async getDefaultDealStageId(
+  /**
+   * Where sample deals land.
+   *
+   * Reads the pipeline DealPipelineSeederService already created rather than
+   * inventing a stage of its own — the old version conjured a "Qualification"
+   * stage under the string pipeline `'default'`, which belonged to no pipeline
+   * document and so never appeared as a board column.
+   */
+  private async defaultDealPlacement(
     context: SeedContext,
-  ): Promise<Types.ObjectId> {
-    const existing = await this.dealStageModel
-      .findOne({
-        tenantId: context.tenantId,
-        pipelineId: 'default',
-        apiName: 'qualification',
-      })
-      .exec();
+  ): Promise<{ pipelineId: Types.ObjectId; stageId: Types.ObjectId }> {
+    const stage = (await this.dealStageModel
+      .findOne({ tenantId: context.tenantId })
+      .sort({ isDefault: -1, sortOrder: 1 })
+      .select({ _id: 1, pipelineId: 1 })
+      .lean()
+      .exec()) as { _id: Types.ObjectId; pipelineId: Types.ObjectId } | null;
 
-    if (existing?._id) {
-      return existing._id;
+    if (!stage) {
+      throw new Error(
+        'No deal stage exists for this tenant; DealPipelineSeederService must run first.',
+      );
     }
+    return { pipelineId: stage.pipelineId, stageId: stage._id };
+  }
 
-    const stage = await this.dealStageModel.create({
-      tenantId: context.tenantId,
-      label: 'Qualification',
-      apiName: 'qualification',
-      color: '#3b82f6',
-      sortOrder: 1,
-      pipelineId: 'default',
-      probability: 10,
-      isDefault: true,
-    });
-
-    return stage._id;
+  /** The first history entry, so stage-funnel reporting sees sample deals too. */
+  private dealStageBootstrap(
+    stageId: Types.ObjectId,
+    context: SeedContext,
+    now: Date,
+  ): Record<string, unknown> {
+    return {
+      stageEnteredAt: now,
+      lastActivityAt: now,
+      ownerAssignedExplicitly: true,
+      stageHistory: [
+        {
+          fromStageId: null,
+          toStageId: stageId,
+          changedAt: now,
+          changedById: context.ownerId,
+          durationMs: null,
+        },
+      ],
+    };
   }
 }
 

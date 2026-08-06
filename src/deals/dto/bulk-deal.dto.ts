@@ -1,7 +1,10 @@
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
+  IsDate,
   IsMongoId,
   IsOptional,
   ValidateIf,
@@ -11,8 +14,8 @@ import { DEAL_BULK_MAX_IDS } from '../deals.constants';
 
 /**
  * Ids a bulk mutation applies to. Bounded by DEAL_BULK_MAX_IDS for the same
- * reason as the task/bulk-tag equivalents: an unbounded id list turns a
- * single request into an unbounded write.
+ * reason as the task/bulk-tag equivalents: an unbounded id list turns a single
+ * request into an unbounded write.
  */
 export class BulkDealIdsDto {
   @ApiProperty({ type: [String], maxItems: DEAL_BULK_MAX_IDS })
@@ -36,9 +39,22 @@ export class BulkUpdateDealsDto extends BulkDealIdsDto {
   ownerId?: string;
 
   @ApiPropertyOptional({
-    description:
-      'Required when stageId moves a deal out of a closed stage or reclassifies Won ↔ Lost.',
+    description: 'Set the next follow-up on every selected deal',
   })
+  @IsDate()
+  @Type(() => Date)
+  @IsOptional()
+  nextFollowUpAt?: Date | null;
+
+  /**
+   * `@IsBoolean()` is load-bearing: untyped, the string `"false"` arrives truthy
+   * and waves 500 closed deals through the reopen guard in one request.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Required when stageId moves a deal out of a closed stage or reclassifies Won ⇄ Lost.',
+  })
+  @IsBoolean()
   @IsOptional()
   allowReopen?: boolean;
 }
@@ -47,9 +63,9 @@ export interface BulkDealResult {
   /** Deals the caller could see AND that passed validation. */
   updated: number;
   /**
-   * Ids that were skipped, with the reason. Reported rather than swallowed —
-   * see BulkTaskResult for why a bulk endpoint that reports a bare "done" is
-   * how bulk actions lose users' trust.
+   * Ids that were skipped, with the reason. Reported rather than swallowed — a
+   * bulk endpoint that answers a bare "done" over a partial result is how bulk
+   * actions lose users' trust.
    */
   skipped: Array<{ id: string; reason: string }>;
 }

@@ -93,6 +93,7 @@ const NOT_PERSISTED: Record<string, string> = {
   accountType: 'populated from typeId',
   accountStatus: 'populated from statusId',
   dealStage: 'populated from stageId',
+  pipelineName: 'populated from pipelineId',
   dealSource: 'populated from sourceId',
   ticketType: 'populated from typeId',
   ticketSource: 'populated from sourceId',

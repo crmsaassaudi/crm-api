@@ -51,6 +51,16 @@ export class ImportReferenceResolver {
     private readonly connection: Connection,
     private readonly tenantId: string,
     private readonly referenceFields: readonly ImportReferenceField[],
+    /**
+     * Extra per-field predicates, keyed by `entityField`.
+     *
+     * Some references are only valid inside a narrower scope than the tenant: a
+     * deal stage named "Consultation" may exist in three pipelines, and matching
+     * the wrong one files the imported deal under a stage its own pipeline does
+     * not contain. The scope depends on the job, not on the static module
+     * config, which is why it arrives here rather than on ImportReferenceField.
+     */
+    private readonly scopeFilters: Record<string, Record<string, unknown>> = {},
   ) {}
 
   /**
@@ -63,7 +73,7 @@ export class ImportReferenceResolver {
     for (const refField of this.referenceFields) {
       const collection = this.connection.db!.collection(refField.collection);
 
-      const query: any = {};
+      const query: any = { ...(this.scopeFilters[refField.entityField] ?? {}) };
       if (refField.tenantScoped) {
         query.tenantId = this.tenantId;
       }

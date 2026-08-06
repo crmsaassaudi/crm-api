@@ -3,6 +3,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import { TenantCreatedEvent } from '../events/tenant-created.event';
 import { TenantSettingsSeedingService } from '../../crm-settings/tenant-settings-seeding.service';
+import { DealPipelineSeederService } from '../../deal-settings/deal-pipeline-seeder.service';
 import { SampleDataSeederService } from '../services/sample-data-seeder.service';
 import { SystemRolesSeederService } from '../../common/permissions/system-roles-seeder.service';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
@@ -74,6 +75,7 @@ export class TenantCreatedListener {
 
   constructor(
     private readonly settingsSeeding: TenantSettingsSeedingService,
+    private readonly dealPipelineSeeder: DealPipelineSeederService,
     private readonly sampleDataSeeder: SampleDataSeederService,
     private readonly systemRolesSeeder: SystemRolesSeederService,
     private readonly assignmentSeeder: AssignmentSeederService,
@@ -93,6 +95,14 @@ export class TenantCreatedListener {
       // Pipelines, lifecycle stages, data-visibility defaults, etc.
       await this.step('CRM settings', event, () =>
         this.settingsSeeding.seedDefaults(event.tenantId),
+      );
+
+      // The workspace's first pipeline, its stages and its acquisition sources.
+      // Real documents in `deal_pipelines`/`deal_stages`, because that is what a
+      // deal references — a settings blob left every new tenant with a pipeline
+      // no deal could point at.
+      await this.step('deal pipeline', event, () =>
+        this.dealPipelineSeeder.seedForTenant(event.tenantId),
       );
 
       // Assignment settings live in their own collection, one row per

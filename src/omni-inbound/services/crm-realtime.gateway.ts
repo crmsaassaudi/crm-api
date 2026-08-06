@@ -47,6 +47,8 @@ export class CrmRealtimeGateway {
     // is how a reminder could look delivered on the publisher's side and arrive
     // nowhere.
     'socket:task:reminder:due',
+    // Deal follow-ups that have come due. Same reasoning as above.
+    'socket:deal:follow-up:due',
     // Automation `internal_notification` action. Same reasoning as above.
     'socket:automation:notification',
   ] as const;
@@ -86,6 +88,9 @@ export class CrmRealtimeGateway {
         return true;
       case 'socket:task:reminder:due':
         this.handleTaskReminderDue(event);
+        return true;
+      case 'socket:deal:follow-up:due':
+        this.handleDealFollowUpDue(event);
         return true;
       case 'socket:automation:notification':
         this.handleAutomationNotification(event);
@@ -153,6 +158,40 @@ export class CrmRealtimeGateway {
       title: event.title,
       dueDate: event.dueDate,
       priority: event.priority,
+    });
+  }
+
+  /**
+   * Broadcast a due deal follow-up to the tenant room.
+   *
+   * Same delivery shape as the task reminder above: tenant room plus `ownerId`
+   * in the payload, client-side filtering. The notice carries no more than the
+   * deal's own headline fields, which the owner can already read.
+   */
+  private handleDealFollowUpDue(event: {
+    tenantId: string;
+    dealId: string;
+    ownerId: string | null;
+    title: string;
+    value: number;
+    currency: string;
+    pipelineId: string;
+    stageId: string;
+    dueAt: string;
+  }) {
+    const room = `tenant:${event.tenantId}`;
+    this.logger.log(
+      `Broadcasting deal follow-up to room=${room} (deal=${event.dealId}, owner=${event.ownerId})`,
+    );
+    this.server.to(room).emit('deal:follow-up:due', {
+      dealId: event.dealId,
+      ownerId: event.ownerId,
+      title: event.title,
+      value: event.value,
+      currency: event.currency,
+      pipelineId: event.pipelineId,
+      stageId: event.stageId,
+      dueAt: event.dueAt,
     });
   }
 

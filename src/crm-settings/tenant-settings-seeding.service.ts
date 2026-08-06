@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CrmSettingRepository } from './infrastructure/persistence/document/repositories/crm-setting.repository';
 import { DEFAULT_EMAIL_SETTINGS } from '../channels/domain/email-settings.defaults';
+import {
+  DEAL_RULES_SETTING_KEY,
+  DEFAULT_DEAL_RULES,
+} from '../deals/deals.constants';
 
 /**
  * Seeds default CRM settings for a newly created tenant.
@@ -42,8 +46,9 @@ export class TenantSettingsSeedingService {
       this.seed(tenantId, 'contact_lifecycle', DEFAULT_CONTACT_LIFECYCLE),
       this.seed(tenantId, 'account_lifecycle', DEFAULT_ACCOUNT_LIFECYCLE),
 
-      // Deal
-      this.seed(tenantId, 'deal_pipeline', DEFAULT_DEAL_PIPELINE),
+      // Deal — the pipeline itself lives in `deal_pipelines`/`deal_stages`
+      // (DealPipelineSeederService); only rules and forecasting are settings.
+      this.seed(tenantId, DEAL_RULES_SETTING_KEY, DEFAULT_DEAL_RULES),
       this.seed(tenantId, 'deal_forecasting', DEFAULT_DEAL_FORECASTING),
       this.seed(tenantId, 'deal_sales_goals', DEFAULT_DEAL_SALES_GOALS),
 
@@ -481,63 +486,6 @@ const DEFAULT_ACCOUNT_LIFECYCLE = {
           isTerminal: true,
         },
       ],
-    },
-  ],
-};
-
-/**
- * Deal Pipeline — starter template.
- * A single default pipeline with the classic qualification → closed stages.
- * Tenants can rename stages, adjust probabilities, or create additional pipelines.
- */
-const DEFAULT_DEAL_PIPELINE = {
-  id: 'default',
-  name: 'Default Pipeline',
-  isDefault: true,
-  stages: [
-    {
-      id: '1',
-      name: 'Qualification',
-      apiName: 'qualification',
-      probability: 10,
-      daysInStage: 14,
-      color: '#64748b',
-    },
-    {
-      id: '2',
-      name: 'Proposal',
-      apiName: 'proposal',
-      probability: 40,
-      daysInStage: 14,
-      color: '#3b82f6',
-    },
-    {
-      id: '3',
-      name: 'Negotiation',
-      apiName: 'negotiation',
-      probability: 70,
-      daysInStage: 10,
-      color: '#f59e0b',
-    },
-    {
-      id: '4',
-      name: 'Closed Won',
-      apiName: 'closed_won',
-      probability: 100,
-      daysInStage: 0,
-      color: '#10b981',
-      isTerminal: true,
-      isWon: true,
-    },
-    {
-      id: '5',
-      name: 'Closed Lost',
-      apiName: 'closed_lost',
-      probability: 0,
-      daysInStage: 0,
-      color: '#ef4444',
-      isTerminal: true,
-      isWon: false,
     },
   ],
 };
@@ -1595,7 +1543,7 @@ export const DEFAULTS_MAP: Record<string, unknown> = {
   account_lifecycle: DEFAULT_ACCOUNT_LIFECYCLE,
   ticket_lifecycle: DEFAULT_TICKET_LIFECYCLE,
   task_lifecycle: DEFAULT_TASK_LIFECYCLE,
-  deal_pipeline: DEFAULT_DEAL_PIPELINE,
+  [DEAL_RULES_SETTING_KEY]: DEFAULT_DEAL_RULES,
   deal_forecasting: DEFAULT_DEAL_FORECASTING,
   deal_sales_goals: DEFAULT_DEAL_SALES_GOALS,
   account_structure: DEFAULT_ACCOUNT_STRUCTURE,

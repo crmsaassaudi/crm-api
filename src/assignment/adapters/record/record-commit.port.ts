@@ -29,6 +29,9 @@ const COLLECTIONS: Record<string, string> = {
  * claim the same record could both report `matchedCount > 0` and neither would
  * ever see a lost race.
  */
+/** Collections carrying `ownerAssignedExplicitly`. See the claim filter below. */
+const OWNER_INTENT_COLLECTIONS: ReadonlySet<string> = new Set(['deals']);
+
 @Injectable()
 export class RecordCommitPort implements CommitPort {
   private readonly logger = new Logger(RecordCommitPort.name);
@@ -49,6 +52,14 @@ export class RecordCommitPort implements CommitPort {
     }
     if (!Types.ObjectId.isValid(scope.entityId)) return false;
 
+    // Collections that record whether a human chose the owner.
+    //
+    // The claim below requires the record to still be unowned, but every insert
+    // is stamped with its creator — so on those collections "unowned" is never
+    // true and auto-assignment could never commit. Where the intent flag exists,
+    // a defaulted owner is claimable and a deliberate one is not.
+    const tracksOwnerIntent = OWNER_INTENT_COLLECTIONS.has(collection);
+
     const res = await this.connection.collection(collection).updateOne(
       {
         _id: new Types.ObjectId(scope.entityId),
@@ -61,6 +72,7 @@ export class RecordCommitPort implements CommitPort {
         $or: [
           { ownerId: null },
           { ownerId: { $exists: false } },
+          ...(tracksOwnerIntent ? [{ ownerAssignedExplicitly: false }] : []),
           ...(scope.commandId
             ? [{ lastAssignmentCommandId: scope.commandId }]
             : []),
@@ -72,6 +84,9 @@ export class RecordCommitPort implements CommitPort {
             ? new Types.ObjectId(assigneeId)
             : assigneeId,
           updatedAt: new Date(),
+          // Flipping the flag is what keeps this a one-shot claim: a second
+          // concurrent decision no longer matches the `$or` above.
+          ...(tracksOwnerIntent ? { ownerAssignedExplicitly: true } : {}),
           ...(scope.commandId
             ? { lastAssignmentCommandId: scope.commandId }
             : {}),

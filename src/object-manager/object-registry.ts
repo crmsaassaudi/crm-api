@@ -444,6 +444,13 @@ const DEAL_FIELDS: readonly StandardFieldDescriptor[] = [
     category: 'scheduling',
   },
   {
+    key: 'pipelineId',
+    column: 'pipeline',
+    labelToken: 'pipeline',
+    type: 'SINGLE_SELECT',
+    category: 'status',
+  },
+  {
     key: 'stageId',
     column: 'stage',
     labelToken: 'stage',
@@ -503,6 +510,30 @@ const DEAL_FIELDS: readonly StandardFieldDescriptor[] = [
     labelToken: 'lostReason',
     type: 'TEXTAREA',
     category: 'resolution',
+  },
+  {
+    key: 'utmSource',
+    labelToken: 'utmSource',
+    type: 'TEXT',
+    category: 'classification',
+  },
+  {
+    key: 'utmMedium',
+    labelToken: 'utmMedium',
+    type: 'TEXT',
+    category: 'classification',
+  },
+  {
+    key: 'utmCampaign',
+    labelToken: 'utmCampaign',
+    type: 'TEXT',
+    category: 'classification',
+  },
+  {
+    key: 'nextFollowUpAt',
+    labelToken: 'nextFollowUp',
+    type: 'DATE',
+    category: 'scheduling',
   },
   {
     key: 'tags',

@@ -1,7 +1,7 @@
 import { Processor } from '@nestjs/bullmq';
 import { Inject, Logger } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection, Model } from 'mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
 import Redis from 'ioredis';
 
@@ -43,17 +43,22 @@ const DEAL_IMPORT_CONFIG: ImportModuleConfig = {
   dedupPolicies: ['skip', 'overwrite', 'create_new'],
   referenceFields: [
     {
+      // `deal_stages`, the collection the schema actually declares. The lookup
+      // named `dealstages`, which exists nowhere, so every stage name in every
+      // import file resolved to nothing — and the field was `required`, so a
+      // file with a stage column failed wholesale.
       entityField: 'stageId',
-      collection: 'dealstages',
-      lookupFields: ['name', 'apiName'],
+      collection: 'deal_stages',
+      lookupFields: ['label', 'apiName'],
       tenantScoped: true,
-      required: true,
-      // Default stageId will be set via tenantSettings if not mapped.
+      // Not required: an unmapped stage falls back to the tenant's default,
+      // resolved in request context by DealsService.startImport.
+      required: false,
     },
     {
       entityField: 'sourceId',
-      collection: 'dealsources',
-      lookupFields: ['name', 'apiName'],
+      collection: 'deal_sources',
+      lookupFields: ['name'],
       tenantScoped: true,
       required: false,
     },
@@ -79,9 +84,16 @@ const SCALAR_FIELDS = DEAL_IMPORT_MAPPABLE_FIELDS.filter(
 
 // Job data
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface DealImportJobData extends BaseImportJobData {
-  // Deal-specific tenant settings can be added here (e.g. default pipeline).
+  /**
+   * Where rows land when the file names no stage.
+   *
+   * Resolved by `DealsService.startImport` while a request context still exists:
+   * the worker has no CLS tenant, so it cannot look the tenant's default
+   * pipeline up for itself.
+   */
+  defaultPipelineId: string;
+  defaultStageId: string;
 }
 
 @Processor(DEAL_IMPORT_QUEUE, { concurrency: 3 })
@@ -114,6 +126,20 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
 
   protected getEntityModel(): Model<any> {
     return this.dealModel;
+  }
+
+  /**
+   * A stage label is only a candidate if it belongs to the pipeline this import
+   * targets — the same label commonly exists in several pipelines, and matching
+   * the wrong one files the deal under a stage its own pipeline does not
+   * contain, which the board cannot render.
+   */
+  protected referenceScopeFilters(
+    data: DealImportJobData,
+  ): Record<string, Record<string, unknown>> {
+    return {
+      stageId: { pipelineId: new Types.ObjectId(data.defaultPipelineId) },
+    };
   }
 
   protected getAutomationOutbox(): AutomationOutboxService {
@@ -155,10 +181,8 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
       this.mapSingleField(field, value, fields, arrayFields);
     }
 
-    // Use title as name if name not mapped.
-    if (fields.title && !fields.name) {
-      fields.name = fields.title;
-    }
+    // `name` mirrors `title` for the generic related-record display.
+    if (fields.title) fields.name = fields.title;
 
     arrayFields.tags = this.uniq(arrayFields.tags);
 
@@ -239,14 +263,29 @@ export class DealImportProcessor extends BaseImportProcessor<DealImportJobData> 
     now: Date,
     resolvedRefs: Record<string, string>,
   ): Record<string, any> {
+    const stageId = resolvedRefs.stageId ?? data.defaultStageId;
     return {
       ...mapped.fields,
       ...resolvedRefs,
       tags: mapped.arrayFields.tags ?? [],
-      pipeline: mapped.fields.pipeline || 'default',
+      pipelineId: data.defaultPipelineId,
+      stageId,
       value: mapped.fields.value ?? 0,
-      currency: mapped.fields.currency || 'USD',
+      currency: (mapped.fields.currency || 'USD').toUpperCase(),
+      stageEnteredAt: now,
+      lastActivityAt: now,
+      stageHistory: [
+        {
+          fromStageId: null,
+          toStageId: stageId,
+          changedAt: now,
+          changedById: data.userId,
+          durationMs: null,
+        },
+      ],
       tenantId: data.tenantId,
+      ownerId: resolvedRefs.ownerId ?? data.userId,
+      ownerAssignedExplicitly: Boolean(resolvedRefs.ownerId),
       createdById: data.userId,
       updatedById: data.userId,
       createdAt: now,

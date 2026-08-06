@@ -1,5 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { User } from '../../users/domain/user';
+import { DealStageHistoryItem, DealStageSummary } from './deal-stage-summary';
+
+export { DealStageHistoryItem, DealStageSummary };
 
 export class Deal {
   @ApiProperty({ example: '60d0fe4f5311236168a109cd' })
@@ -14,22 +17,23 @@ export class Deal {
   @ApiProperty({ example: 'Enterprise Software License' })
   name: string;
 
-  @ApiProperty({ example: 'default' })
-  pipeline: string;
+  @ApiProperty({ example: '60d0fe4f5311236168a109ce' })
+  pipelineId: string;
 
-  @ApiProperty({ example: 'qualification' })
+  @ApiProperty({ description: 'Pipeline name, populated on read' })
+  pipelineName?: string;
+
+  @ApiProperty({ example: '60d0fe4f5311236168a109cf' })
   stageId: string;
 
-  @ApiProperty()
-  dealStage?: {
-    id: string;
-    label: string;
-    apiName: string;
-    color: string;
-    probability: number;
-    isWon: boolean;
-    isLost: boolean;
-  };
+  @ApiProperty({ type: () => DealStageSummary })
+  dealStage?: DealStageSummary;
+
+  @ApiProperty({ type: () => [DealStageHistoryItem] })
+  stageHistory?: DealStageHistoryItem[];
+
+  @ApiProperty({ description: 'When the deal entered its current stage' })
+  stageEnteredAt?: Date;
 
   @ApiProperty({ example: 50 })
   probability?: number;
@@ -53,10 +57,15 @@ export class Deal {
   ownerId?: string;
 
   @ApiProperty({
+    description: 'True when a human chose the owner rather than it defaulting.',
+  })
+  ownerAssignedExplicitly?: boolean;
+
+  @ApiProperty({
     description:
       'Set when the owner left the tenant and ownership was cleared automatically.',
   })
-  unassignedReason?: string;
+  unassignedReason?: string | null;
 
   @ApiProperty({ type: () => User })
   owner?: User;
@@ -64,11 +73,20 @@ export class Deal {
   @ApiProperty({ example: 'Full scope project for Acme Corp' })
   description?: string;
 
-  @ApiProperty({ example: 'Inbound' })
+  @ApiProperty({ example: '60d0fe4f5311236168a109cd' })
   sourceId?: string;
 
   @ApiProperty()
   dealSource?: { id: string; name: string };
+
+  @ApiProperty({ example: 'facebook' })
+  utmSource?: string | null;
+
+  @ApiProperty({ example: 'cpc' })
+  utmMedium?: string | null;
+
+  @ApiProperty({ example: 'ramadan-2026' })
+  utmCampaign?: string | null;
 
   @ApiProperty({ example: 'Budget constraint' })
   lostReason?: string;
@@ -81,6 +99,12 @@ export class Deal {
 
   @ApiProperty()
   closeDate?: Date;
+
+  @ApiProperty({ description: 'Next committed touch point' })
+  nextFollowUpAt?: Date | null;
+
+  @ApiProperty({ description: 'Last edit, stage move or logged activity' })
+  lastActivityAt?: Date;
 
   @ApiProperty()
   wonAt?: Date;

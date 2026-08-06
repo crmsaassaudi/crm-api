@@ -1,20 +1,25 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsMongoId, IsOptional } from 'class-validator';
 import { BaseReportFilterDto } from '../../shared/dto/base-report-filter.dto';
 
 export class GetDealReportDto extends BaseReportFilterDto {
   @IsOptional()
-  @IsString()
+  @IsMongoId()
   ownerId?: string;
 
   @IsOptional()
-  @IsString()
+  @IsMongoId()
   stageId?: string;
 
   @IsOptional()
-  @IsString()
+  @IsMongoId()
   sourceId?: string;
 
+  /**
+   * `pipelineId`, not `pipeline`. The filter used to match a free-text column
+   * that no collection backed, so filtering a report by pipeline matched
+   * whatever string the importer happened to write.
+   */
   @IsOptional()
-  @IsString()
-  pipeline?: string;
+  @IsMongoId()
+  pipelineId?: string;
 }

@@ -183,6 +183,19 @@ export abstract class BaseImportProcessor<
   }
 
   /**
+   * Extra predicates that narrow a reference lookup, keyed by `entityField`.
+   *
+   * Override when a reference is only valid inside a scope the job carries
+   * rather than the whole tenant — a deal stage, for instance, is only a
+   * candidate if it belongs to the pipeline the import targets.
+   */
+  protected referenceScopeFilters(
+    _data: TJobData,
+  ): Record<string, Record<string, unknown>> {
+    return {};
+  }
+
+  /**
    * Optional projection hook after the batch's durable entity writes finish.
    * Receives only rows that did not fail database persistence.
    */
@@ -241,6 +254,7 @@ export abstract class BaseImportProcessor<
         this.getConnection(),
         data.tenantId,
         this.moduleConfig.referenceFields,
+        this.referenceScopeFilters(data),
       );
       await refResolver.initialize();
     }

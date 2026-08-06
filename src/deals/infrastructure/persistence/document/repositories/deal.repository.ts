@@ -13,19 +13,52 @@ import { pagination } from '../../../../../utils/pagination';
 import { escapeRegex } from '../../../../../utils/escape-regex';
 import { cappedCount } from '../../../../../utils/capped-count';
 import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
+import { DEAL_STAGE_HISTORY_LIMIT } from '../../../../deals.constants';
 
-// Fields eligible for a client-supplied regex/`$in` list filter. `filter.id`
-// arrives verbatim from request JSON — allowing an arbitrary field name here
-// would let a caller force an unindexed collection scan on any field in the
-// schema on every request.
+/** Free-text/`$in` filterable fields. Anything else would be an unindexed scan on request. */
 const REGEX_FILTERABLE_FIELDS = new Set([
   'title',
-  'name',
   'accountName',
   'description',
   'lostReason',
   'tags',
+  'utmSource',
+  'utmMedium',
+  'utmCampaign',
 ]);
+
+/** `filter.id` → document path, for the ids the UI uses that differ from storage. */
+const FIELD_ALIASES: Record<string, string> = {
+  stage: 'stageId',
+  pipeline: 'pipelineId',
+  owner: 'ownerId',
+  source: 'sourceId',
+  createdBy: 'createdById',
+  updatedBy: 'updatedById',
+};
+
+/** Fields matched by exact id (single value or `$in`). */
+const ID_FILTERABLE_FIELDS = new Set([
+  'stageId',
+  'pipelineId',
+  'ownerId',
+  'sourceId',
+  'accountId',
+  'contactIds',
+  'createdById',
+  'updatedById',
+]);
+
+export interface DealBoardColumn {
+  stageId: string;
+  dealCount: number;
+  totalValue: number;
+}
+
+export interface DealCursor {
+  createdAt: string;
+  id: string;
+}
 
 @Injectable()
 export class DealRepository extends BaseDocumentRepository<
@@ -53,95 +86,375 @@ export class DealRepository extends BaseDocumentRepository<
     return DealMapper.toPersistence(domain);
   }
 
-  private buildListWhere(filterOptions?: any): FilterQuery<DealSchemaClass> {
+  protected notFoundMessage(id: string): string {
+    return `Deal ${id} not found`;
+  }
+
+  /**
+   * The one list predicate.
+   *
+   * There used to be two — `buildListWhere` (export) and `buildScopedWhere`
+   * (list) — implementing the same rules twice, with the list version then
+   * `Object.assign`-ing the export version over its own result and running the
+   * custom-field filters twice. Two copies of a security-relevant filter is one
+   * copy too many: the export path is exactly where a missed predicate leaks.
+   */
+  private buildWhere(filterOptions?: any): FilterQuery<DealSchemaClass> {
+    // `null`, not `$exists: false` — `restore()` UNSETS the field, so `null`
+    // matches both a missing field and an explicit null.
     const where: FilterQuery<DealSchemaClass> = { deletedAt: null };
+
     if (filterOptions?.search) {
       const expression = {
-        $regex: escapeRegex(filterOptions.search),
+        $regex: escapeRegex(String(filterOptions.search)),
         $options: 'i',
       };
-      where.$or = [
-        { title: expression },
-        { name: expression },
-        { accountName: expression },
-      ];
+      where.$or = [{ title: expression }, { accountName: expression }];
     }
-    if (filterOptions?.stage) where.stageId = filterOptions.stage;
+
+    // Named shortcuts used by the board, the omni sidebar and the follow-up views.
+    if (filterOptions?.pipelineId) where.pipelineId = filterOptions.pipelineId;
+    if (filterOptions?.stageId) where.stageId = filterOptions.stageId;
     if (filterOptions?.contactId) where.contactIds = filterOptions.contactId;
-    if (filterOptions?.filters) {
-      try {
-        const filters =
-          typeof filterOptions.filters === 'string'
-            ? JSON.parse(filterOptions.filters)
-            : filterOptions.filters;
-        if (Array.isArray(filters)) {
-          filters.forEach((filter: any) => {
-            if (!filter.id || !filter.value) return;
-            if (String(filter.id).startsWith('customFields.')) return;
-            if (filter.id === 'stage' || filter.id === 'stageId') {
-              where.stageId = filter.value;
-            } else if (filter.id === 'pipelineId' || filter.id === 'pipeline') {
-              where.pipeline = filter.value;
-            } else if (filter.id === 'value') {
-              const value = Number(filter.value);
-              if (!Number.isNaN(value)) where[filter.id] = value;
-            } else if (
-              ['owner', 'createdBy', 'updatedBy'].includes(filter.id)
-            ) {
-              const field =
-                (
-                  {
-                    owner: 'ownerId',
-                    createdBy: 'createdById',
-                    updatedBy: 'updatedById',
-                  } as Record<string, string>
-                )[filter.id] ?? filter.id;
-              where[field] = Array.isArray(filter.value)
-                ? { $in: filter.value }
-                : filter.value;
-            } else if (Array.isArray(filter.value)) {
-              if (!REGEX_FILTERABLE_FIELDS.has(filter.id)) return;
-              where[filter.id] = { $in: filter.value };
-            } else {
-              // Only a fixed, indexed allowlist may be regex-filtered — an
-              // arbitrary `filter.id` from client JSON against an unindexed
-              // field is an unbounded collection-scan DoS vector otherwise.
-              if (!REGEX_FILTERABLE_FIELDS.has(filter.id)) return;
-              where[filter.id] = {
-                $regex: escapeRegex(String(filter.value)),
-                $options: 'i',
-              };
-            }
-          });
-        }
-      } catch {
-        // Keep malformed-filter behavior aligned with list requests.
-      }
-    }
+    if (filterOptions?.ownerId) where.ownerId = filterOptions.ownerId;
+
+    this.applyOpenClosedFilter(where, filterOptions?.state);
+    this.applyFollowUpFilter(where, filterOptions?.followUp);
+    this.applyGenericFilters(where, filterOptions?.filters);
+
     applyRegisteredCustomFieldFilters(
       where,
       filterOptions?.filters,
       filterOptions?.__customFieldDefinitions,
     );
-    return where;
-  }
 
-  private buildExportFilter(params: {
-    ids?: string[];
-    filters?: any;
-  }): FilterQuery<DealSchemaClass> {
-    if (!params.ids?.length) {
-      return this.applyTenantFilter(this.buildListWhere(params.filters));
-    }
-    return this.applyTenantFilter({
-      _id: {
-        $in: params.ids
+    // Object-ACL denies resolved by the service — a collection route has no `:id`
+    // for `@UseAcl` to narrow to, so without this a denied deal was blocked on
+    // open and visible in the list.
+    const excludeIds: string[] = filterOptions?.__excludeIds ?? [];
+    if (excludeIds.length > 0) {
+      where._id = {
+        ...(where._id as Record<string, unknown> | undefined),
+        $nin: excludeIds
           .filter((id) => Types.ObjectId.isValid(id))
           .map((id) => new Types.ObjectId(id)),
-      },
+      };
+    }
+
+    return this.applyTenantFilter(where);
+  }
+
+  private applyOpenClosedFilter(
+    where: FilterQuery<DealSchemaClass>,
+    state?: string,
+  ): void {
+    if (state === 'open') {
+      where.wonAt = null;
+      where.lostAt = null;
+    } else if (state === 'won') {
+      where.wonAt = { $ne: null };
+    } else if (state === 'lost') {
+      where.lostAt = { $ne: null };
+    }
+  }
+
+  /**
+   * The follow-up queue — the view a B2C rep lives in.
+   *
+   * `overdue` is "committed to a touch that has come and gone"; `today` is what
+   * is still owed before midnight. Both exclude closed deals: a won deal owes
+   * nobody a call.
+   */
+  private applyFollowUpFilter(
+    where: FilterQuery<DealSchemaClass>,
+    followUp?: string,
+  ): void {
+    if (!followUp) return;
+
+    const now = new Date();
+    const endOfDay = new Date(now);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    if (followUp === 'overdue') {
+      where.nextFollowUpAt = { $ne: null, $lt: now };
+    } else if (followUp === 'today') {
+      where.nextFollowUpAt = { $ne: null, $lte: endOfDay };
+    } else if (followUp === 'none') {
+      where.nextFollowUpAt = null;
+    } else {
+      return;
+    }
+    where.wonAt = null;
+    where.lostAt = null;
+  }
+
+  private applyGenericFilters(
+    where: FilterQuery<DealSchemaClass>,
+    rawFilters: unknown,
+  ): void {
+    const filters = this.parseFilters(rawFilters);
+
+    for (const filter of filters) {
+      if (!filter?.id || filter.value === undefined || filter.value === null) {
+        continue;
+      }
+      // Registered custom fields are handled by applyRegisteredCustomFieldFilters.
+      if (String(filter.id).startsWith('customFields.')) continue;
+
+      const field = FIELD_ALIASES[filter.id] ?? filter.id;
+      const value = filter.value;
+
+      if (ID_FILTERABLE_FIELDS.has(field)) {
+        where[field] = Array.isArray(value) ? { $in: value } : value;
+        continue;
+      }
+
+      if (field === 'value') {
+        const numeric = Number(value);
+        if (!Number.isNaN(numeric)) where.value = numeric;
+        continue;
+      }
+
+      if (!REGEX_FILTERABLE_FIELDS.has(field)) continue;
+
+      where[field] = Array.isArray(value)
+        ? { $in: value }
+        : { $regex: escapeRegex(String(value)), $options: 'i' };
+    }
+  }
+
+  private parseFilters(raw: unknown): Array<{ id?: string; value?: unknown }> {
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw !== 'string') return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return []; // a malformed filter narrows nothing rather than failing the request
+    }
+  }
+
+  private populateList<T>(query: T): T {
+    return (query as any)
+      .populate('owner')
+      .populate('dealStage')
+      .populate('dealSource');
+  }
+
+  // Reads
+
+  async findManyWithPagination({
+    filterOptions,
+    paginationOptions,
+  }: {
+    filterOptions?: any;
+    paginationOptions: IPaginationOptions;
+  }): Promise<PaginationResponseDto<Deal>> {
+    const where = this.buildWhere(filterOptions);
+
+    const [docs, { totalItems }] = await Promise.all([
+      this.populateList(
+        this.model
+          .find(where)
+          .sort({ createdAt: -1, _id: -1 })
+          .skip((paginationOptions.page - 1) * paginationOptions.limit)
+          .limit(paginationOptions.limit),
+      )
+        .lean()
+        .exec(),
+      cappedCount(this.model as Model<any>, where),
+    ]);
+
+    return pagination(
+      docs.map((doc) => this.mapToDomain(doc as any)),
+      totalItems,
+      paginationOptions,
+    );
+  }
+
+  /**
+   * Keyset pagination — how the board loads a column and how deep list pages stay
+   * cheap. `.skip()` walks and discards every skipped document; keyset seeks
+   * straight to the position through `tenant_pipeline_stage_cursor`.
+   */
+  async findManyByCursor({
+    filterOptions,
+    cursor,
+    limit,
+  }: {
+    filterOptions?: any;
+    cursor?: DealCursor | null;
+    limit: number;
+  }): Promise<{ data: Deal[]; nextCursor: DealCursor | null }> {
+    const where = this.buildWhere(filterOptions);
+
+    const scopedWhere: FilterQuery<DealSchemaClass> = cursor
+      ? {
+          $and: [
+            where,
+            {
+              $or: [
+                { createdAt: { $lt: new Date(cursor.createdAt) } },
+                {
+                  createdAt: new Date(cursor.createdAt),
+                  _id: { $lt: new Types.ObjectId(cursor.id) },
+                },
+              ],
+            },
+          ],
+        }
+      : where;
+
+    const docs = await this.populateList(
+      this.model
+        .find(scopedWhere)
+        .sort({ createdAt: -1, _id: -1 })
+        .limit(limit + 1),
+    )
+      .lean()
+      .exec();
+
+    const hasMore = docs.length > limit;
+    const page = hasMore ? docs.slice(0, limit) : docs;
+    const last = page[page.length - 1] as any;
+
+    return {
+      data: page.map((doc) => this.mapToDomain(doc as any)),
+      nextCursor:
+        hasMore && last
+          ? {
+              createdAt: new Date(last.createdAt).toISOString(),
+              id: String(last._id),
+            }
+          : null,
+    };
+  }
+
+  /**
+   * Per-stage count and value for one pipeline, computed by the database.
+   *
+   * The board used to derive both in the browser from whatever page of deals had
+   * been fetched, so a column header read "12 · $40,000" when the stage actually
+   * held twelve thousand deals. Those numbers are what a manager steers by, so
+   * they have to come from the same predicate the column itself uses.
+   */
+  async boardSummary(filterOptions?: any): Promise<DealBoardColumn[]> {
+    const where = this.buildWhere(filterOptions);
+
+    const rows = await this.model
+      .aggregate<{
+        _id: Types.ObjectId;
+        dealCount: number;
+        totalValue: number;
+      }>([
+        { $match: where },
+        {
+          $group: {
+            _id: '$stageId',
+            dealCount: { $sum: 1 },
+            totalValue: { $sum: '$value' },
+          },
+        },
+      ])
+      .exec();
+
+    return rows.map((row) => ({
+      stageId: String(row._id),
+      dealCount: row.dealCount,
+      totalValue: row.totalValue ?? 0,
+    }));
+  }
+
+  async findOne(filter: FilterQuery<DealSchemaClass>): Promise<Deal | null> {
+    // Once deletion became a soft delete, an unfiltered lookup began SERVING
+    // deleted records — `GET /:id` answering 200, and automation's `fetchRecord`
+    // resuming delayed workflows against something the user had deleted.
+    // Passing `deletedAt` explicitly opts out, for restore and purge paths.
+    const scopedFilter = this.applyTenantFilter(
+      filter.deletedAt !== undefined ? filter : { ...filter, deletedAt: null },
+    );
+    const doc = await this.populateList(this.model.findOne(scopedFilter))
+      .populate('pipeline')
+      .exec();
+    return doc ? this.mapToDomain(doc) : null;
+  }
+
+  /** Same-tenant duplicate probe. Ignores data-visibility on purpose — see DealsService.checkDuplicate. */
+  async existsOpenDuplicate(params: {
+    title: string;
+    accountId?: string;
+  }): Promise<boolean> {
+    const filter: FilterQuery<DealSchemaClass> = {
+      title: params.title,
+      deletedAt: null,
+      wonAt: null,
+      lostAt: null,
+    };
+    if (params.accountId) filter.accountId = params.accountId;
+    const found = await this.model
+      .findOne(filter)
+      .select({ _id: 1 })
+      .lean()
+      .exec();
+    return Boolean(found);
+  }
+
+  // Writes
+
+  /**
+   * Append one transition to the deal's history.
+   *
+   * `$push` with `$slice` rather than a read-modify-write of the whole array:
+   * two reps moving the same card at once would otherwise each write back an
+   * array missing the other's entry, and the cap keeps a long-lived deal from
+   * growing an unbounded document.
+   */
+  async appendStageHistory(
+    id: string,
+    entry: {
+      fromStageId: string | null;
+      toStageId: string;
+      changedAt: Date;
+      changedById: string | null;
+      durationMs: number | null;
+    },
+    session?: ClientSession,
+  ): Promise<void> {
+    await this.model
+      .updateOne(
+        this.applyTenantFilter({ _id: id } as FilterQuery<DealSchemaClass>),
+        {
+          $push: {
+            stageHistory: {
+              $each: [entry],
+              $slice: -DEAL_STAGE_HISTORY_LIMIT,
+            },
+          },
+        } as any,
+        session ? { session } : {},
+      )
+      .exec();
+  }
+
+  async addTagsToDeals(
+    dealIds: string[],
+    tags: string[],
+  ): Promise<{ matchedCount: number; modifiedCount: number }> {
+    const scopedFilter = this.applyTenantFilter({
+      _id: { $in: dealIds },
       deletedAt: null,
     } as FilterQuery<DealSchemaClass>);
+    const result = await this.model
+      .updateMany(scopedFilter, { $addToSet: { tags: { $each: tags } } })
+      .exec();
+
+    return {
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    };
   }
+
+  // Export
 
   streamForExport(
     params: { ids?: string[]; filters?: any },
@@ -169,266 +482,30 @@ export class DealRepository extends BaseDocumentRepository<
     return query.exec();
   }
 
-  /**
-   * The full list filter — search, stage, contactId, arbitrary `filters[]`,
-   * custom fields, and object-ACL exclusions — scoped to the tenant/owner/
-   * org-unit/ABAC visibility axes. Shared by offset (`findManyWithPagination`)
-   * and keyset (`findManyByCursor`) listing so the two never drift apart.
-   */
-  private buildScopedWhere(filterOptions?: any): FilterQuery<DealSchemaClass> {
-    // Exclude soft-deleted records.
-    //
-    // Missed twice before this. §20 made deletion a soft delete across six collections,
-    // and the inventory written afterwards only inspected `findOne` — so a LIST query
-    // that never filtered `deletedAt` stayed invisible to it. Accounts was found in §28
-    // and recorded there as "the only list query in the CRM" doing this; it was not.
-    //
-    // `null` rather than `$exists: false`, because `restore()` UNSETS the field: `null`
-    // matches both a missing field and an explicit null, so a restored row and a legacy
-    // row both read as live.
-    const where: FilterQuery<DealSchemaClass> = { deletedAt: null };
+  private buildExportFilter(params: {
+    ids?: string[];
+    filters?: any;
+  }): FilterQuery<DealSchemaClass> {
+    if (!params.ids?.length) return this.buildWhere(params.filters);
 
-    if (filterOptions?.search) {
-      const searchExpr = {
-        $regex: escapeRegex(filterOptions.search),
-        $options: 'i',
-      };
-      where.$or = [
-        { title: searchExpr },
-        { name: searchExpr },
-        { accountName: searchExpr },
-      ];
-    }
-
-    if (filterOptions?.stage) {
-      where.stageId = filterOptions.stage;
-    }
-
-    // Precise contact lookup — used by Omni-Channel CustomerContext sidebar
-    if (filterOptions?.contactId) {
-      where.contactIds = filterOptions.contactId; // MongoDB array-contains match
-    }
-
-    if (filterOptions?.filters) {
-      try {
-        const parsedFilters =
-          typeof filterOptions.filters === 'string'
-            ? JSON.parse(filterOptions.filters)
-            : filterOptions.filters;
-        if (Array.isArray(parsedFilters)) {
-          parsedFilters.forEach((f: any) => {
-            if (f.id && f.value) {
-              if (String(f.id).startsWith('customFields.')) return;
-              if (['stage', 'stageId'].includes(f.id)) {
-                where.stageId = f.value;
-              } else if (f.id === 'pipelineId' || f.id === 'pipeline') {
-                where.pipeline = f.value;
-              } else if (f.id === 'value') {
-                const val = Number(f.value);
-                if (!isNaN(val)) where[f.id] = val;
-              } else if (['owner', 'createdBy', 'updatedBy'].includes(f.id)) {
-                const fieldMap: Record<string, string> = {
-                  owner: 'ownerId',
-                  createdBy: 'createdById',
-                  updatedBy: 'updatedById',
-                };
-                const dbField = fieldMap[f.id] || f.id;
-                where[dbField] = Array.isArray(f.value)
-                  ? { $in: f.value }
-                  : f.value;
-              } else if (Array.isArray(f.value)) {
-                if (!REGEX_FILTERABLE_FIELDS.has(f.id)) return;
-                where[f.id] = { $in: f.value };
-              } else {
-                if (!REGEX_FILTERABLE_FIELDS.has(f.id)) return;
-                where[f.id] = {
-                  $regex: escapeRegex(String(f.value)),
-                  $options: 'i',
-                };
-              }
-            }
-          });
-        }
-      } catch {
-        // ignore parse errors
-      }
-    }
-
-    applyRegisteredCustomFieldFilters(
-      where,
-      filterOptions?.filters,
-      filterOptions?.__customFieldDefinitions,
-    );
-
-    Object.assign(where, this.buildListWhere(filterOptions));
-
-    // Object-ACL denies resolved by the service — see
-    // DealsService.resolveAclDeniedDealIds for why the list route needs this
-    // in addition to the tenant/owner/org-unit scoping below.
-    if (filterOptions?.__excludeIds?.length) {
-      where._id = {
-        ...(where._id as Record<string, unknown> | undefined),
-        $nin: filterOptions.__excludeIds
-          .filter((id: string) => Types.ObjectId.isValid(id))
-          .map((id: string) => new Types.ObjectId(id)),
-      };
-    }
-
-    return this.applyTenantFilter(where);
-  }
-
-  async findManyWithPagination({
-    filterOptions,
-    paginationOptions,
-  }: {
-    filterOptions?: any;
-    paginationOptions: IPaginationOptions;
-  }): Promise<PaginationResponseDto<Deal>> {
-    const scopedWhere = this.buildScopedWhere(filterOptions);
-
-    const [docs, { totalItems }] = await Promise.all([
-      this.model
-        .find(scopedWhere)
-        .sort({ createdAt: -1 })
-        .skip((paginationOptions.page - 1) * paginationOptions.limit)
-        .limit(paginationOptions.limit)
-        .populate('owner')
-        .populate('dealStage')
-        .populate('dealSource')
-        .lean()
-        .exec(),
-      cappedCount(this.model as Model<any>, scopedWhere),
-    ]);
-
-    return pagination(
-      docs.map((doc) => this.mapToDomain(doc as any)),
-      totalItems,
-      paginationOptions,
-    );
-  }
-
-  /**
-   * Keyset (cursor) pagination — an opt-in alternative to `findManyWithPagination`.
-   *
-   * Offset pagination (`.skip()`) walks and discards every skipped document even
-   * when the sort is index-covered; deep pages on a large tenant pay for all of
-   * it. `tenant_created_cursor`/`tenant_stage_created_cursor` (deal.schema.ts)
-   * were declared shaped exactly for `(createdAt, _id)` keyset pagination but
-   * nothing ever queried them that way — this is that query. Additive: the
-   * default `GET /deals` contract and every existing caller are unaffected.
-   */
-  async findManyByCursor({
-    filterOptions,
-    cursor,
-    limit,
-  }: {
-    filterOptions?: any;
-    cursor?: { createdAt: string; id: string } | null;
-    limit: number;
-  }): Promise<{
-    data: Deal[];
-    nextCursor: { createdAt: string; id: string } | null;
-  }> {
-    const where = this.buildScopedWhere(filterOptions);
-
-    const scopedWhere: FilterQuery<DealSchemaClass> = cursor
-      ? {
-          $and: [
-            where,
-            {
-              $or: [
-                { createdAt: { $lt: new Date(cursor.createdAt) } },
-                {
-                  createdAt: new Date(cursor.createdAt),
-                  _id: { $lt: new Types.ObjectId(cursor.id) },
-                },
-              ],
-            },
-          ],
-        }
-      : where;
-
-    const docs = await this.model
-      .find(scopedWhere)
-      .sort({ createdAt: -1, _id: -1 })
-      .limit(limit + 1)
-      .populate('owner')
-      .populate('dealStage')
-      .populate('dealSource')
-      .lean()
-      .exec();
-
-    const hasMore = docs.length > limit;
-    const page = hasMore ? docs.slice(0, limit) : docs;
-    const last = page[page.length - 1] as any;
-
-    return {
-      data: page.map((doc) => this.mapToDomain(doc as any)),
-      nextCursor:
-        hasMore && last
-          ? {
-              createdAt: new Date(last.createdAt).toISOString(),
-              id: String(last._id),
-            }
-          : null,
-    };
-  }
-
-  async findOne(filter: FilterQuery<DealSchemaClass>): Promise<Deal | null> {
-    // Exclude soft-deleted records unless the caller asks for one explicitly.
-    //
-    // Harmless while `remove()` hard-deleted: the row was gone, so the lookup
-    // returned null by itself. Once deletion became a soft delete the unfiltered
-    // lookup began SERVING deleted records — `GET /:id` answering 200 instead of
-    // 404, the detail page rendering a deleted record as editable, and automation's
-    // `fetchRecord` resuming delayed workflows against it, which is how a
-    // "wait 3 days then email" step ends up acting on something the user deleted.
-    //
-    // Passing `deletedAt` explicitly opts out, for merge and restore paths that
-    // legitimately need to load an archived row.
-    const scopedFilter = this.applyTenantFilter(
-      filter.deletedAt !== undefined ? filter : { ...filter, deletedAt: null },
-    );
-    const doc = await this.model
-      .findOne(scopedFilter)
-      .populate('owner')
-      .populate('dealStage')
-      .populate('dealSource')
-      .exec();
-    return doc ? this.mapToDomain(doc) : null;
-  }
-
-  async addTagsToDeals(
-    dealIds: string[],
-    tags: string[],
-  ): Promise<{ matchedCount: number; modifiedCount: number }> {
-    // `null` rather than `$exists: false` — restore() UNSETS the field, so
-    // `null` is the one predicate that matches both a missing field and an
-    // explicit null the same way every other query in this repository does.
-    const scopedFilter = this.applyTenantFilter({
-      _id: { $in: dealIds },
+    return this.applyTenantFilter({
+      _id: {
+        $in: params.ids
+          .filter((id) => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id)),
+      },
       deletedAt: null,
     } as FilterQuery<DealSchemaClass>);
-    const result = await this.model
-      .updateMany(scopedFilter, {
-        $addToSet: { tags: { $each: tags } },
-      })
-      .exec();
-
-    return {
-      matchedCount: result.matchedCount,
-      modifiedCount: result.modifiedCount,
-    };
   }
+
+  // Retention
 
   /**
    * Records soft-deleted before `cutoff`, for the retention purge.
    *
-   * `isPlatformQuery` because the caller is a cron: retention applies to every tenant, and
-   * without the flag `tenantFilterPlugin` throws on a missing CLS tenant — which is how
-   * four nightly jobs came to fail on their first query while logging "skipped".
-   *
-   * Oldest deletion first, so a backlog drains in the order it accumulated.
+   * `isPlatformQuery` because the caller is a cron: retention applies to every
+   * tenant, and without the flag `tenantFilterPlugin` throws on a missing CLS
+   * tenant. Oldest deletion first, so a backlog drains in the order it built up.
    */
   async findPurgeable(
     cutoff: Date,
@@ -448,15 +525,7 @@ export class DealRepository extends BaseDocumentRepository<
     }));
   }
 
-  /**
-   * Hard-delete one deal. Only DealPurgeService may call this.
-   *
-   * Accepts an optional session so the purge can run the reference cascade
-   * and this final delete inside one transaction — a crash between "tickets
-   * detached" and "deal row removed" used to leave a legitimately purgeable
-   * deal referencing nothing, requiring no cleanup, but with no atomic
-   * boundary marking the two as one operation.
-   */
+  /** Hard-delete one deal. Only DealPurgeService may call this. */
   async hardDelete(id: string, session?: ClientSession): Promise<void> {
     await this.model
       .deleteOne({ _id: id })

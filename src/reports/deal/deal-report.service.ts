@@ -22,6 +22,9 @@ import {
   OwnerPerformanceItem,
   PipelineSummaryItem,
   RevenueTrendPoint,
+  SourceAttributionData,
+  SourceAttributionItem,
+  StageFunnelItem,
   WinLossRateData,
 } from './interfaces/deal-report-types';
 import { reportAggregate } from '../shared/utils/report-aggregate.util';
@@ -72,14 +75,14 @@ export class DealReportService {
       },
       {
         $lookup: {
-          from: 'dealstages',
+          from: 'deal_stages',
           localField: '_id',
           foreignField: '_id',
           as: 'stage',
         },
       },
       { $unwind: { path: '$stage', preserveNullAndEmptyArrays: true } },
-      { $sort: { 'stage.order': 1, dealCount: -1 } },
+      { $sort: { 'stage.sortOrder': 1, dealCount: -1 } },
     ]).exec();
 
     const data: PipelineSummaryItem[] = rows.map((row) => ({
@@ -266,7 +269,7 @@ export class DealReportService {
         },
         {
           $lookup: {
-            from: 'dealstages',
+            from: 'deal_stages',
             localField: '_id',
             foreignField: '_id',
             as: 'stage',
@@ -294,7 +297,7 @@ export class DealReportService {
         },
         {
           $lookup: {
-            from: 'dealsources',
+            from: 'deal_sources',
             localField: '_id',
             foreignField: '_id',
             as: 'source',
@@ -365,8 +368,8 @@ export class DealReportService {
     const now = new Date();
     const match = {
       ...this.buildBaseMatch(dto),
-      wonAt: { $exists: false },
-      lostAt: { $exists: false },
+      wonAt: null,
+      lostAt: null,
     };
 
     const [facetResult] = await reportAggregate(this.dealModel, [
@@ -623,18 +626,243 @@ export class DealReportService {
     });
   }
 
+  // Report 7: Source & Campaign Attribution
+
+  /**
+   * What each acquisition channel actually produced.
+   *
+   * The one report a B2C operator opens first — "Facebook Ads gave me 100 leads,
+   * what did they turn into" — and the module had nothing like it: `sourceId` was
+   * a flat lookup with no campaign dimension and no revenue attached. Two
+   * dimensions in one response because they answer the same question at
+   * different resolutions: the channel, and the campaign inside it.
+   */
+  async getSourceAttribution(
+    dto: GetDealReportDto,
+  ): Promise<ReportResponse<SourceAttributionData>> {
+    const startedAt = process.hrtime.bigint();
+    const context = this.resolveDateContext(dto);
+    const match = {
+      ...this.buildBaseMatch(dto),
+      createdAt: { $gte: context.from, $lte: context.to },
+    };
+
+    const outcomeGroup = {
+      totalDeals: { $sum: 1 },
+      wonDeals: { $sum: { $cond: [this.isWon, 1, 0] } },
+      lostDeals: { $sum: { $cond: [this.isLost, 1, 0] } },
+      wonValue: { $sum: { $cond: [this.isWon, '$value', 0] } },
+      openValue: {
+        $sum: {
+          $cond: [{ $or: [this.isWon, this.isLost] }, 0, '$value'],
+        },
+      },
+    };
+
+    const [bySourceRows, byCampaignRows] = await Promise.all([
+      reportAggregate(this.dealModel, [
+        { $match: match },
+        { $group: { _id: '$sourceId', ...outcomeGroup } },
+        {
+          $lookup: {
+            from: 'deal_sources',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'source',
+          },
+        },
+        { $unwind: { path: '$source', preserveNullAndEmptyArrays: true } },
+        { $sort: { wonValue: -1, totalDeals: -1 } },
+        { $limit: 100 },
+      ]).exec(),
+      reportAggregate(this.dealModel, [
+        { $match: { ...match, utmCampaign: { $ne: null } } },
+        { $group: { _id: '$utmCampaign', ...outcomeGroup } },
+        { $sort: { wonValue: -1, totalDeals: -1 } },
+        { $limit: 100 },
+      ]).exec(),
+    ]);
+
+    const data: SourceAttributionData = {
+      bySource: bySourceRows.map((row: any) =>
+        this.toAttributionItem(
+          row,
+          row._id ? String(row._id) : null,
+          row.source?.name ?? 'Unattributed',
+        ),
+      ),
+      byCampaign: byCampaignRows.map((row: any) =>
+        this.toAttributionItem(row, row._id ?? null, row._id ?? 'Unattributed'),
+      ),
+    };
+
+    const currencyMix = await detectCurrencyMix(this.dealModel, match);
+
+    return buildReportResponse({
+      report: 'source_attribution',
+      dto,
+      data,
+      totalRecords: data.bySource.reduce((sum, row) => sum + row.totalDeals, 0),
+      startedAt,
+      warnings: currencyMix.warning ? [currencyMix.warning] : [],
+    });
+  }
+
+  private readonly isWon = { $ne: [{ $ifNull: ['$wonAt', null] }, null] };
+  private readonly isLost = { $ne: [{ $ifNull: ['$lostAt', null] }, null] };
+
+  private toAttributionItem(
+    row: any,
+    key: string | null,
+    label: string,
+  ): SourceAttributionItem {
+    const openDeals = row.totalDeals - row.wonDeals - row.lostDeals;
+    return {
+      key,
+      label,
+      totalDeals: row.totalDeals,
+      wonDeals: row.wonDeals,
+      lostDeals: row.lostDeals,
+      openDeals: Math.max(0, openDeals),
+      winRate: safePercent(row.wonDeals, row.wonDeals + row.lostDeals),
+      wonValue: row.wonValue ?? 0,
+      openValue: row.openValue ?? 0,
+      avgWonValue:
+        row.wonDeals > 0 ? Math.round((row.wonValue ?? 0) / row.wonDeals) : 0,
+    };
+  }
+
+  // Report 8: Stage Funnel
+
+  /**
+   * Where deals stall.
+   *
+   * Answerable only since deals carry `stageHistory[]`: before that, "average
+   * time in Negotiation" and "what share of qualified deals reach a proposal"
+   * required replaying the audit log. `entered` counts every deal that ever
+   * reached the stage, not just the ones sitting there now — a funnel measured
+   * from current occupancy reads as though nothing ever converted.
+   */
+  async getStageFunnel(
+    dto: GetDealReportDto,
+  ): Promise<ReportResponse<StageFunnelItem[]>> {
+    const startedAt = process.hrtime.bigint();
+    const context = this.resolveDateContext(dto);
+    const match = {
+      ...this.buildBaseMatch(dto),
+      createdAt: { $gte: context.from, $lte: context.to },
+    };
+
+    const [stages, entries, occupancy] = await Promise.all([
+      this.dealModel.db
+        .collection('deal_stages')
+        .find({
+          tenantId: this.tenantObjectId(),
+          ...(dto.pipelineId
+            ? { pipelineId: new Types.ObjectId(dto.pipelineId) }
+            : {}),
+        })
+        .sort({ sortOrder: 1 })
+        .toArray(),
+      reportAggregate(this.dealModel, [
+        { $match: match },
+        { $unwind: '$stageHistory' },
+        { $group: { _id: '$stageHistory.toStageId', entered: { $sum: 1 } } },
+      ]).exec(),
+      reportAggregate(this.dealModel, [
+        { $match: match },
+        { $group: { _id: '$stageId', currentlyHere: { $sum: 1 } } },
+      ]).exec(),
+    ]);
+
+    // `durationMs` on a history entry is the time spent in the stage the deal
+    // came FROM, so a stage's dwell time is collected from the entries leaving it.
+    const dwell = await reportAggregate(this.dealModel, [
+      { $match: match },
+      { $unwind: '$stageHistory' },
+      { $match: { 'stageHistory.durationMs': { $ne: null } } },
+      {
+        $group: {
+          _id: '$stageHistory.fromStageId',
+          avgMs: { $avg: '$stageHistory.durationMs' },
+          samples: { $push: '$stageHistory.durationMs' },
+        },
+      },
+      // The median needs the values, but not all of them — a bounded sample
+      // estimates it stably and keeps the document under the 16MB limit.
+      { $project: { avgMs: 1, samples: { $slice: ['$samples', 5_000] } } },
+    ]).exec();
+
+    const enteredBy = new Map(
+      entries.map((row: any) => [String(row._id), row.entered as number]),
+    );
+    const occupancyBy = new Map(
+      occupancy.map((row: any) => [
+        String(row._id),
+        row.currentlyHere as number,
+      ]),
+    );
+    const dwellBy = new Map(
+      dwell.map((row: any) => [
+        String(row._id),
+        {
+          avgMs: row.avgMs ?? 0,
+          median: this.computeMedian(
+            (row.samples as number[]).slice().sort((a, b) => a - b),
+          ),
+        },
+      ]),
+    );
+
+    const msToDays = (ms: number) => Math.round((ms / 86_400_000) * 10) / 10;
+
+    let previousEntered: number | null = null;
+    const data: StageFunnelItem[] = stages.map((stage: any) => {
+      const stageId = String(stage._id);
+      const entered = enteredBy.get(stageId) ?? 0;
+      const stageDwell = dwellBy.get(stageId);
+      const item: StageFunnelItem = {
+        stageId,
+        stageName: stage.label ?? 'Unknown Stage',
+        stageColor: stage.color ?? '#64748b',
+        sortOrder: stage.sortOrder ?? 0,
+        entered,
+        currentlyHere: occupancyBy.get(stageId) ?? 0,
+        avgDaysInStage: msToDays(stageDwell?.avgMs ?? 0),
+        medianDaysInStage: msToDays(stageDwell?.median ?? 0),
+        conversionFromPrevious:
+          previousEntered === null
+            ? 100
+            : safePercent(entered, previousEntered),
+      };
+      previousEntered = entered;
+      return item;
+    });
+
+    return buildReportResponse({
+      report: 'stage_funnel',
+      dto,
+      data,
+      totalRecords: data.reduce((sum, row) => sum + row.entered, 0),
+      startedAt,
+    });
+  }
+
   // Private Helpers
 
   private buildBaseMatch(dto: GetDealReportDto): Record<string, any> {
     const match: Record<string, any> = {
       tenantId: this.tenantObjectId(),
-      deletedAt: { $exists: false },
+      // `null` rather than `$exists: false`: `restore()` UNSETS the field, so
+      // `null` is the one predicate that matches a missing field and an explicit
+      // null the same way every other deal query does.
+      deletedAt: null,
       ...buildCrmReportVisibilityFilter(this.cls, 'Deal'),
     };
     if (dto.ownerId) match.ownerId = new Types.ObjectId(dto.ownerId);
     if (dto.stageId) match.stageId = new Types.ObjectId(dto.stageId);
     if (dto.sourceId) match.sourceId = new Types.ObjectId(dto.sourceId);
-    if (dto.pipeline) match.pipeline = dto.pipeline;
+    if (dto.pipelineId) match.pipelineId = new Types.ObjectId(dto.pipelineId);
     return match;
   }
 

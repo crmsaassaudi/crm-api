@@ -41,7 +41,18 @@ export class RecordAutoAssignmentListener {
     const objectType = OBJECT_TYPES[event.entityType ?? ''];
     const snapshot = event.newSnapshot;
     if (!objectType || !event.tenantId || !event.entityId || !snapshot) return;
-    if (snapshot.ownerId) return;
+
+    // `ownerId` alone cannot mean "already assigned": BaseDocumentRepository
+    // stamps every insert with the creator, so this guard skipped every record
+    // created through the API and auto-assignment never ran for any of them.
+    // `ownerAssignedExplicitly` is the flag a create form sets when a human
+    // actually picked someone; records whose schema predates it fall back to the
+    // old reading rather than being reassigned out from under their owner.
+    const explicitlyAssigned =
+      snapshot.ownerAssignedExplicitly === undefined
+        ? Boolean(snapshot.ownerId)
+        : snapshot.ownerAssignedExplicitly === true;
+    if (explicitlyAssigned) return;
 
     try {
       await this.assignment.execute(

@@ -31,9 +31,22 @@ export class DealStageSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 0 })
   sortOrder: number;
 
-  @Prop({ required: true, default: 'default' })
+  /**
+   * The pipeline this stage belongs to.
+   *
+   * Was `string` defaulting to the literal `'default'`, which meant a stage could
+   * be created outside every pipeline and the board had no way to ask "which
+   * columns belong to this pipeline".
+   */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'PipelineSchemaClass',
+    required: true,
+    index: true,
+  })
   pipelineId: string;
 
+  /** Percent, 0–100. Copied onto a deal when it enters the stage. */
   @Prop({ type: Number, default: 0 })
   probability: number;
 

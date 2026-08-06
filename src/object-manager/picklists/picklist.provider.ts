@@ -123,11 +123,16 @@ export class PicklistProvider {
   }
 
   private async dealPicklists(): Promise<ObjectPicklists> {
-    const [stages, sources] = await Promise.all([
+    const [pipelines, stages, sources] = await Promise.all([
+      this.dealSettings.findAllPipelines(),
       this.dealSettings.findAllStages(),
       this.dealSettings.findAllSources(),
     ]);
     return {
+      // Both dimensions, so `RecordWriteValidator` can refuse a pipeline or a
+      // stage the tenant never configured — the same check that already stopped
+      // an unconfigured `stageId` from being stored and then rendering blank.
+      pipelineId: pipelines.map(toOption),
       stageId: stages.map(toOption),
       sourceId: sources.map(toOption),
     };

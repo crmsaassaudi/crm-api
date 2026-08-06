@@ -937,9 +937,17 @@ export class ContactsService {
 
     // Optionally create deal on stage transition
     if (ctx.dealData && ctx.updated) {
+      // `contactIds`, plural. This used to pass `contactId`, which the deal
+      // schema does not have, so Mongoose dropped it in strict mode and every
+      // deal produced by a lead conversion was linked to no contact at all.
+      //
+      // The source is carried across for the same reason: without it the
+      // channel that produced the lead is lost at the exact moment the lead
+      // becomes revenue, which is the one join attribution reporting needs.
       const deal = await this.dealsService.create({
+        sourceId: ctx.contact.sourceId,
         ...ctx.dealData,
-        contactId: ctx.updated.id,
+        contactIds: [ctx.updated.id],
         accountId: ctx.finalAccountId,
       });
       return deal.id;

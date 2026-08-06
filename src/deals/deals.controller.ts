@@ -1,75 +1,81 @@
 import {
-  Controller,
-  Get,
-  Post,
   Body,
-  Patch,
-  Param,
+  Controller,
   Delete,
+  Get,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
   Query,
   Res,
+  UploadedFile,
   UseInterceptors,
   UsePipes,
-  UploadedFile,
-  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+
 import { DealsService } from './deals.service';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { UpdateDealDto } from './dto/update-deal.dto';
 import { Deal } from './domain/deal';
-import {
-  ApiTags,
-  ApiBearerAuth,
-  ApiConsumes,
-  ApiBody,
-  ApiOkResponse,
-} from '@nestjs/swagger';
 import { FieldPolicyInterceptor } from '../object-manager/layout/field-policy.interceptor';
 import { ObjectFieldPolicy } from '../object-manager/layout/object-field-policy.decorator';
 import { SanitizeMaskedInputPipe } from '../common/pipes/sanitize-masked-input.pipe';
 import {
-  RequirePermission,
-  UseAcl,
   LoadResource,
+  RequirePermission,
   SensitiveResource,
+  UseAcl,
 } from '../common/permissions';
 import { StartDealImportDto } from './dto/start-deal-import.dto';
-import { BulkUpdateDealsDto, BulkDealIdsDto } from './dto/bulk-deal.dto';
+import { BulkDealIdsDto, BulkUpdateDealsDto } from './dto/bulk-deal.dto';
+import { BulkTagDealsDto } from './dto/bulk-tag-deals.dto';
+import {
+  BoardColumnQueryDto,
+  BoardSummaryQueryDto,
+} from './dto/board-query.dto';
 import { ExportRequestDto } from '../common/export';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { CreateDealActivityDto } from './dto/create-deal-activity.dto';
-import { Throttle } from '@nestjs/throttler';
 
 /** Map a safe file extension to its HTTP Content-Type. */
-function resolveContentType(ext: string | undefined): string {
+const resolveContentType = (ext?: string): string => {
   if (ext === 'xlsx') {
     return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   }
-  if (ext === 'gz') {
-    return 'application/gzip';
-  }
+  if (ext === 'gz') return 'application/gzip';
   return 'text/csv; charset=utf-8';
-}
+};
 
 @ApiTags('Deals')
 @ApiBearerAuth()
 @UseInterceptors(FieldPolicyInterceptor)
 @ObjectFieldPolicy('Deal')
 @SensitiveResource('deals')
-@Controller({
-  path: 'deals',
-  version: '1',
-})
+@Controller({ path: 'deals', version: '1' })
 export class DealsController {
   constructor(
     private readonly service: DealsService,
     private readonly activityLog: ActivityLogService,
   ) {}
 
+  // Collection routes are declared BEFORE the `:id` routes — Nest matches in
+  // declaration order, and `board`/`bulk`/`recycle-bin` would otherwise be
+  // captured as an id.
+
   @Post()
   @RequirePermission('create', 'deals')
+  @UsePipes(new SanitizeMaskedInputPipe())
   create(@Body() data: CreateDealDto) {
     return this.service.create(data as Partial<Deal>);
   }
@@ -80,10 +86,6 @@ export class DealsController {
     return this.service.findAll(query);
   }
 
-  // Keyset-pagination sibling of `GET /deals` — declared BEFORE `:id` for the
-  // same reason as `bulk`/`recycle-bin`. Opt-in and additive: existing callers
-  // of `GET /deals` are unaffected. See DealRepository.findManyByCursor for
-  // why this exists (an index shaped for this was declared and unused).
   @ApiOkResponse({
     description:
       'Keyset-paginated deal list. Pass the response nextCursor back as ?cursor= for the next page.',
@@ -94,18 +96,35 @@ export class DealsController {
     return this.service.findAllCursor(query);
   }
 
+  // BOARD
+  //
+  // Two endpoints, because a Kanban column and its header have different shapes:
+  // the header needs an exact count and sum over the whole stage, the column
+  // needs a page of cards. Deriving both in the browser from one page of deals —
+  // which is what the board used to do — makes the header lie at any real volume.
+
+  @ApiOkResponse({
+    description: 'Per-stage deal count and value for one pipeline',
+  })
+  @Get('board')
+  @RequirePermission('view', 'deals')
+  getBoardSummary(@Query() query: BoardSummaryQueryDto) {
+    return this.service.getBoardSummary(query);
+  }
+
+  @ApiOkResponse({ description: 'One keyset-paginated board column' })
+  @Get('board/column')
+  @RequirePermission('view', 'deals')
+  getBoardColumn(@Query() query: BoardColumnQueryDto) {
+    return this.service.getBoardColumn(query);
+  }
+
   // BULK
   //
-  // Declared BEFORE the `:id` routes — Nest matches in declaration order, and
-  // `bulk`/`bulk-delete` would otherwise be captured as an id.
-  //
-  // Both take the same permission as their single-record equivalent, and
-  // enforce record-level scope per id inside the service (each id runs
-  // through the normal update()/remove() path) rather than through `@UseAcl`,
-  // which evaluates a single `:id` from the path. Ids the caller cannot see,
-  // or that fail a business rule (e.g. reopening a closed deal without
-  // allowReopen), come back in `skipped`, not as a failure of the whole
-  // request.
+  // Each takes the same permission as its single-record equivalent and enforces
+  // record-level scope per id inside the service (every id runs through the
+  // normal update()/remove() path). Ids the caller cannot see, or that fail a
+  // business rule, come back in `skipped` rather than failing the whole request.
 
   @ApiOkResponse({ description: 'Per-id outcome of the bulk update' })
   @Patch('bulk')
@@ -116,76 +135,34 @@ export class DealsController {
   }
 
   @ApiOkResponse({ description: 'Per-id outcome of the bulk delete' })
+  // POST, not DELETE: a body on DELETE is legal but poorly supported by proxies
+  // and client libraries, and a list of ids does not belong in a query string.
   @Post('bulk-delete')
-  // POST, not DELETE: a body on DELETE is legal but poorly supported by
-  // proxies and client libraries, and a list of ids does not belong in a
-  // query string.
   @RequirePermission('delete', 'deals')
   bulkRemove(@Body() body: BulkDealIdsDto) {
     return this.service.bulkRemove(body.ids);
   }
 
-  @Patch(':id')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('bulk-tag')
   @RequirePermission('edit', 'deals')
-  @UseAcl('edit', 'deals')
-  @LoadResource('deals')
-  @UsePipes(new SanitizeMaskedInputPipe())
-  update(@Param('id') id: string, @Body() data: UpdateDealDto) {
-    return this.service.update(id, data as Partial<Deal>);
+  bulkTag(@Body() body: BulkTagDealsDto) {
+    return this.service.bulkTagDeals(body);
   }
 
   // RECYCLE BIN
-  //
-  // Declared BEFORE the `:id` routes — Nest matches in declaration order, and
-  // `recycle-bin` would otherwise be captured as an id.
 
   @ApiOkResponse({ description: 'Soft-deleted deals awaiting purge' })
   @Get('recycle-bin')
   @RequirePermission('view', 'deals')
   listDeleted(@Query('page') page?: string, @Query('limit') limit?: string) {
     return this.service.listDeleted({
-      page: page ? parseInt(page, 10) : undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
     });
   }
 
-  // Restoring re-exposes a record, so it takes `delete` — the same capability that
-  // removed it — rather than `edit`. Record-level ACL as well: you may only bring
-  // back a record you could have seen. The PIP's loader reads with `findById` and no
-  // soft-delete predicate, so it hydrates the archived document and the
-  // owner/org-unit conditions evaluate against the record as it was.
-  @Post(':id/restore')
-  @RequirePermission('delete', 'deals')
-  @UseAcl('delete', 'deals')
-  @LoadResource('deals')
-  restore(@Param('id') id: string) {
-    return this.service.restore(id);
-  }
-
-  @Delete(':id')
-  @RequirePermission('delete', 'deals')
-  @UseAcl('delete', 'deals')
-  @LoadResource('deals')
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
-  }
-
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
-  @Post('bulk-tag')
-  @RequirePermission('edit', 'deals')
-  bulkTag(@Body() body: { dealIds: string[]; tags: string[] }) {
-    return this.service.bulkTagDeals(body);
-  }
-
-  // TICKET LINK
-
-  @Get(':id/tickets')
-  @RequirePermission('view', 'deals')
-  @UseAcl('view', 'deals')
-  @LoadResource('deals')
-  getLinkedTickets(@Param('id') id: string) {
-    return this.service.getLinkedTickets(id);
-  }
+  // IMPORT / EXPORT
 
   @Post('import-upload')
   @RequirePermission('create', 'deals')
@@ -279,9 +256,10 @@ export class DealsController {
   async downloadExport(@Param('token') token: string, @Res() res: Response) {
     const file = await this.service.getExportDownload(token);
     const safeFilename = file.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const ext = safeFilename.split('.').pop()?.toLowerCase();
-    const contentType = resolveContentType(ext);
-    res.setHeader('Content-Type', contentType);
+    res.setHeader(
+      'Content-Type',
+      resolveContentType(safeFilename.split('.').pop()?.toLowerCase()),
+    );
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${safeFilename}"`,
@@ -291,15 +269,55 @@ export class DealsController {
     res.end(file.buffer);
   }
 
+  // RECORD ROUTES
+
+  @Patch(':id')
+  @RequirePermission('edit', 'deals')
+  @UseAcl('edit', 'deals')
+  @LoadResource('deals')
+  @UsePipes(new SanitizeMaskedInputPipe())
+  update(@Param('id') id: string, @Body() data: UpdateDealDto) {
+    return this.service.update(id, data as Partial<Deal>);
+  }
+
+  // Restoring re-exposes a record, so it takes `delete` — the same capability
+  // that removed it — rather than `edit`, plus record-level ACL: you may only
+  // bring back a record you could have seen.
+  @Post(':id/restore')
+  @RequirePermission('delete', 'deals')
+  @UseAcl('delete', 'deals')
+  @LoadResource('deals')
+  restore(@Param('id') id: string) {
+    return this.service.restore(id);
+  }
+
+  @Delete(':id')
+  @RequirePermission('delete', 'deals')
+  @UseAcl('delete', 'deals')
+  @LoadResource('deals')
+  remove(@Param('id') id: string) {
+    return this.service.remove(id);
+  }
+
+  @Get(':id/tickets')
+  @RequirePermission('view', 'deals')
+  @UseAcl('view', 'deals')
+  @LoadResource('deals')
+  getLinkedTickets(@Param('id') id: string) {
+    return this.service.getLinkedTickets(id);
+  }
+
   @Get(':id')
   @RequirePermission('view', 'deals')
   @UseAcl('view', 'deals')
   @LoadResource('deals')
-  findOne(@Param('id') id: string) {
-    return this.service.findOne(id);
+  async findOne(@Param('id') id: string) {
+    const deal = await this.service.findOne(id);
+    if (!deal) throw new NotFoundException(`Deal ${id} not found`);
+    return deal;
   }
 
-  // Deal Activity Feed
+  // ACTIVITY FEED
 
   @Get(':id/activities')
   @RequirePermission('view', 'deals')
@@ -331,14 +349,15 @@ export class DealsController {
     @Param('id') id: string,
     @Body() dto: CreateDealActivityDto,
   ) {
-    return this.activityLog.create({
+    const activity = await this.activityLog.create({
       targetType: 'Deal',
       targetId: id,
       event: dto.type,
-      payload: {
-        content: dto.content,
-        ...(dto.metadata ?? {}),
-      },
+      payload: { content: dto.content, ...(dto.metadata ?? {}) },
     });
+    // Logging a call is the clearest signal a deal is alive; without this the
+    // stale-deal view keeps flagging deals somebody worked this morning.
+    await this.service.touchActivity(id);
+    return activity;
   }
 }

@@ -47,4 +47,16 @@ export class DealReportController {
   getDealVelocity(@Query() query: GetDealReportDto) {
     return this.service.getDealVelocity(query);
   }
+
+  @Get('source-attribution')
+  @RequirePermission('view', 'deal_reports')
+  getSourceAttribution(@Query() query: GetDealReportDto) {
+    return this.service.getSourceAttribution(query);
+  }
+
+  @Get('stage-funnel')
+  @RequirePermission('view', 'deal_reports')
+  getStageFunnel(@Query() query: GetDealReportDto) {
+    return this.service.getStageFunnel(query);
+  }
 }

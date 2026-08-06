@@ -14,6 +14,8 @@ import { DealImportProcessor } from './import/deal-import.processor';
 import { DealExportProcessor } from './export/deal-export.processor';
 import { isWorkerRuntime } from '../config/runtime-role';
 import { DealPurgeService } from './deal-purge.service';
+import { DealFollowUpService } from './deal-follow-up.service';
+import { DealRulesService } from './deal-rules.service';
 import { DealOwnershipCleanupListener } from './deal-ownership-cleanup.listener';
 import { DealAccountNameSyncListener } from './deal-account-name-sync.listener';
 import { DEAL_IMPORT_QUEUE, DEAL_EXPORT_QUEUE } from './deals.constants';
@@ -37,6 +39,12 @@ import {
   AccountSchema,
   AccountSchemaClass,
 } from '../accounts/infrastructure/persistence/document/entities/account.schema';
+import {
+  TicketSchema,
+  TicketSchemaClass,
+} from '../tickets/infrastructure/persistence/document/entities/ticket.schema';
+import { DealSettingsModule } from '../deal-settings/deal-settings.module';
+import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
 import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { TagsModule } from '../tags/tags.module';
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
@@ -52,6 +60,9 @@ const workerProviders = isWorkerRuntime()
       // an unconditional provider schedules it in every API replica too and makes the
       // Redis lock load-bearing for correctness rather than a safety net.
       DealPurgeService,
+      // The follow-up sweep is a cron: worker-gated like every other one, so it
+      // does not also schedule itself in each API replica.
+      DealFollowUpService,
     ]
   : [];
 
@@ -68,6 +79,9 @@ const workerProviders = isWorkerRuntime()
       { name: DealStageSchemaClass.name, schema: DealStageSchema },
       { name: DealSourceSchemaClass.name, schema: DealSourceSchema },
       { name: AccountSchemaClass.name, schema: AccountSchema },
+      // Registered so `getLinkedTickets` reads through the model — and therefore
+      // the tenant plugin — instead of a raw driver collection.
+      { name: TicketSchemaClass.name, schema: TicketSchema },
     ]),
     BullModule.registerQueue({
       name: DEAL_IMPORT_QUEUE,
@@ -97,10 +111,14 @@ const workerProviders = isWorkerRuntime()
     ActivityLogModule,
     TagsModule,
     AutomationOutboxModule,
+    // Stage and pipeline resolution: the single authority on where a deal lands.
+    DealSettingsModule,
+    CrmSettingsModule,
   ],
   controllers: [DealsController],
   providers: [
     DealsService,
+    DealRulesService,
     DealRepository,
     DealOwnershipCleanupListener,
     DealAccountNameSyncListener,

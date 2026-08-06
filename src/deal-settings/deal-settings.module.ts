@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { DealSettingsController } from './deal-settings.controller';
 import { DealSettingsService } from './deal-settings.service';
+import { DealPipelineSeederService } from './deal-pipeline-seeder.service';
 import {
   DealStageSchemaClass,
   DealStageSchema,
@@ -24,7 +25,7 @@ import {
     ]),
   ],
   controllers: [DealSettingsController],
-  providers: [DealSettingsService],
-  exports: [DealSettingsService],
+  providers: [DealSettingsService, DealPipelineSeederService],
+  exports: [DealSettingsService, DealPipelineSeederService],
 })
 export class DealSettingsModule {}

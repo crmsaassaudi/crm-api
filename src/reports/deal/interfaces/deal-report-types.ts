@@ -78,3 +78,42 @@ export interface DealVelocityData {
   totalWonDeals: number;
   avgDealValue: number;
 }
+
+/**
+ * One acquisition channel, end to end.
+ *
+ * The question a B2C operator actually asks — "Facebook Ads gave me 100 leads,
+ * what did they turn into" — had no report at all: `sourceId` was a flat lookup
+ * with no campaign dimension, and UTM values were not stored anywhere.
+ */
+export interface SourceAttributionItem {
+  key: string | null;
+  label: string;
+  totalDeals: number;
+  wonDeals: number;
+  lostDeals: number;
+  openDeals: number;
+  winRate: number;
+  wonValue: number;
+  openValue: number;
+  avgWonValue: number;
+}
+
+export interface SourceAttributionData {
+  bySource: SourceAttributionItem[];
+  byCampaign: SourceAttributionItem[];
+}
+
+/** Where deals stall: how many ever reached a stage, and how long they sat in it. */
+export interface StageFunnelItem {
+  stageId: string | null;
+  stageName: string;
+  stageColor: string;
+  sortOrder: number;
+  entered: number;
+  currentlyHere: number;
+  avgDaysInStage: number;
+  medianDaysInStage: number;
+  /** Share of deals that entered the previous stage and went on to reach this one. */
+  conversionFromPrevious: number;
+}
