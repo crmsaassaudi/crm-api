@@ -163,11 +163,4 @@ export class CreateTicketDto {
   @IsMongoId()
   @IsOptional()
   statusId?: string;
-
-  @ApiPropertyOptional()
-  @IsArray()
-  @ArrayMaxSize(100)
-  @IsMongoId({ each: true })
-  @IsOptional()
-  watchers?: string[];
 }

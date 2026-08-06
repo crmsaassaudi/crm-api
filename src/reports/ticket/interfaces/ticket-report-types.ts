@@ -3,16 +3,25 @@ export interface TicketVolumeTrendPoint {
   count: number;
 }
 
-export interface TicketStatusBreakdown {
-  open: number;
-  pending: number;
-  resolved: number;
-  closed: number;
+/** One row per status the tenant configured, in the tenant's own sort order. */
+export interface TicketStatusBreakdownItem {
+  statusId: string;
+  label: string;
+  apiName: string;
+  color: string | null;
+  terminalKind: 'resolved' | 'closed' | null;
+  count: number;
+  percentage: number;
 }
 
 export interface TicketVolumeData {
   trend: TicketVolumeTrendPoint[];
-  statusBreakdown: TicketStatusBreakdown;
+  statusBreakdown: TicketStatusBreakdownItem[];
+  /** Tickets in a non-terminal status — the backlog. */
+  openTickets: number;
+  /** Tickets that have been reopened at least once. */
+  reopenedTickets: number;
+  reopenRate: number;
   totalTickets: number;
 }
 
@@ -30,6 +39,12 @@ export interface SlaComplianceData {
   breachRate: number;
   frtComplianceRate: number;
   resolutionComplianceRate: number;
+  /**
+   * Tickets an SLA policy actually applied to. Compliance rates are computed
+   * against this, not against every ticket: a tenant with no policy for LOW
+   * priority would otherwise read as 0% compliant rather than "not measured".
+   */
+  measuredTickets: number;
   byPriority: SlaByPriorityItem[];
 }
 
@@ -56,7 +71,10 @@ export interface AgentWorkloadItem {
   agentName: string;
   agentEmail: string;
   totalTickets: number;
+  /** Currently owned and not in a terminal status — the live queue depth. */
+  openTickets: number;
   resolvedTickets: number;
+  reopenedTickets: number;
   avgResolutionMs: number;
   avgResolutionFormatted: string;
   breachCount: number;
@@ -74,6 +92,8 @@ export interface TicketBreakdownData {
   bySource: BreakdownItem[];
   byType: BreakdownItem[];
   byPriority: BreakdownItem[];
+  byCategory: BreakdownItem[];
+  byChannel: BreakdownItem[];
 }
 
 export interface CsatDistributionItem {

@@ -77,6 +77,11 @@ export class TicketsController {
     return this.service.findAll(query);
   }
 
+  /**
+   * `tickets:edit` is the floor, not the whole story: resolving, reopening and
+   * reassigning are checked inside the service, because whether they apply
+   * depends on the payload rather than on the route.
+   */
   @Patch(':id')
   @RequirePermission('edit', 'tickets')
   @UseAcl('edit', 'tickets')

@@ -11,6 +11,8 @@ import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
 import { OnboardingModule } from './onboarding.module';
 import { OrgUnitsModule } from '../org-units/org-units.module';
 import { GroupsModule } from '../groups/groups.module';
+import { DealSettingsModule } from '../deal-settings/deal-settings.module';
+import { TicketSettingsModule } from '../ticket-settings/ticket-settings.module';
 
 @Module({
   imports: [
@@ -21,6 +23,11 @@ import { GroupsModule } from '../groups/groups.module';
     forwardRef(() => UsersModule),
     // CrmSettingsModule provides TenantSettingsSeedingService
     CrmSettingsModule,
+    // The two workflow seeders TenantCreatedListener runs. Both are leaf
+    // modules over their own Mongoose models, so importing them here cannot
+    // close a cycle — and without the import Nest cannot resolve the listener.
+    DealSettingsModule,
+    TicketSettingsModule,
     // OnboardingModule provides SampleDataSeederService
     forwardRef(() => OnboardingModule),
     // OrgUnitsModule/GroupsModule provide the default headquarters unit and

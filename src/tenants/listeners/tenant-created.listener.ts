@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { TenantCreatedEvent } from '../events/tenant-created.event';
 import { TenantSettingsSeedingService } from '../../crm-settings/tenant-settings-seeding.service';
 import { DealPipelineSeederService } from '../../deal-settings/deal-pipeline-seeder.service';
+import { TicketSettingsSeederService } from '../../ticket-settings/ticket-settings-seeder.service';
 import { SampleDataSeederService } from '../services/sample-data-seeder.service';
 import { SystemRolesSeederService } from '../../common/permissions/system-roles-seeder.service';
 import { runWithTenantContext } from '../../common/tenancy/tenant-context';
@@ -76,6 +77,7 @@ export class TenantCreatedListener {
   constructor(
     private readonly settingsSeeding: TenantSettingsSeedingService,
     private readonly dealPipelineSeeder: DealPipelineSeederService,
+    private readonly ticketSettingsSeeder: TicketSettingsSeederService,
     private readonly sampleDataSeeder: SampleDataSeederService,
     private readonly systemRolesSeeder: SystemRolesSeederService,
     private readonly assignmentSeeder: AssignmentSeederService,
@@ -103,6 +105,14 @@ export class TenantCreatedListener {
       // no deal could point at.
       await this.step('deal pipeline', event, () =>
         this.dealPipelineSeeder.seedForTenant(event.tenantId),
+      );
+
+      // The support workflow, for the same reason and in the same shape: a
+      // ticket's `statusId` is required and references `ticket_statuses`, so a
+      // tenant whose workflow existed only as a settings blob could not create
+      // a ticket at all.
+      await this.step('ticket workflow', event, () =>
+        this.ticketSettingsSeeder.seedForTenant(event.tenantId),
       );
 
       // Assignment settings live in their own collection, one row per

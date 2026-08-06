@@ -13,6 +13,7 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { SlaPoliciesService } from './sla-policies.service';
 import { CreateSlaPolicyDto, UpdateSlaPolicyDto } from './dto/sla-policy.dto';
 import { RequirePermission } from '../common/permissions/permission.decorator';
+import { LoadResource, UseAcl } from '../common/permissions';
 import { SlaClockService } from './clock/sla-clock.service';
 import { ClsService } from 'nestjs-cls';
 
@@ -29,9 +30,29 @@ export class SlaPoliciesController {
   @Get('conversations/:conversationId/clocks')
   @RequirePermission('view', 'omni_channel')
   findConversationClocks(@Param('conversationId') conversationId: string) {
-    return this.clocks.listForConversation(
+    return this.clocks.listForSubject(
       this.cls.get('tenantId'),
+      'conversation',
       conversationId,
+    );
+  }
+
+  /**
+   * The clock history behind a ticket's SLA panel.
+   *
+   * `@UseAcl`/`@LoadResource` because the clocks describe a specific ticket:
+   * `tickets:view` alone would expose the response times of any ticket outside
+   * the agent's scope whose id they could guess.
+   */
+  @Get('tickets/:ticketId/clocks')
+  @RequirePermission('view', 'tickets')
+  @UseAcl('view', 'tickets', 'ticketId')
+  @LoadResource('tickets')
+  findTicketClocks(@Param('ticketId') ticketId: string) {
+    return this.clocks.listForSubject(
+      this.cls.get('tenantId'),
+      'ticket',
+      ticketId,
     );
   }
 

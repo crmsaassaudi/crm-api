@@ -930,10 +930,14 @@ const DEFAULT_TICKET_LIFECYCLE = {
         },
         {
           id: 'on_hold',
-          label: 'On Hold',
+          label: 'Waiting on Customer',
           apiName: 'on_hold',
           sortOrder: 3,
           color: '#f59e0b',
+          // The SLA stops here. An agent is not late because the customer took
+          // the weekend to reply, and a desk with no pausing status cannot
+          // report a defensible response time.
+          pausesSla: true,
         },
         {
           id: 'resolved',
@@ -942,6 +946,10 @@ const DEFAULT_TICKET_LIFECYCLE = {
           sortOrder: 4,
           color: '#10b981',
           isTerminal: true,
+          // Resolved is not Closed: the fix is delivered, the customer has not
+          // confirmed. Stamping both used to make time-to-resolve identical to
+          // time-to-close and hid the state entirely.
+          terminalKind: 'resolved',
         },
         {
           id: 'closed',
@@ -950,6 +958,7 @@ const DEFAULT_TICKET_LIFECYCLE = {
           sortOrder: 5,
           color: '#64748b',
           isTerminal: true,
+          terminalKind: 'closed',
         },
       ],
     },

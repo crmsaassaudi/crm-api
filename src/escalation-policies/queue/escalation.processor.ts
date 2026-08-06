@@ -17,9 +17,15 @@ import {
   OmniConversationSchemaClass,
   OmniConversationDocument,
 } from '../../omni-inbound/infrastructure/persistence/document/entities/omni-conversation.schema';
+import {
+  TicketSchemaClass,
+  TicketSchemaDocument,
+} from '../../tickets/infrastructure/persistence/document/entities/ticket.schema';
+import type { SlaSubjectType } from '../../sla-policies/clock/sla-clock.schema';
 
 export interface EscalationJobData extends TenantJobData {
-  conversationId: string;
+  subjectType: SlaSubjectType;
+  subjectId: string;
   escalationPolicyId: string;
   /** The escalation level: 'warning' = red highlight, 'breach' = notify manager */
   level: 'warning' | 'breach';
@@ -27,15 +33,13 @@ export interface EscalationJobData extends TenantJobData {
 }
 
 /**
- * BullMQ processor for escalation delayed jobs.
- *
- * When an SLA breach is detected, EscalationTriggerListener schedules
- * delayed jobs based on the escalation policy's `escalateAfter` duration.
+ * Executes an escalation once its delay has elapsed, for conversations and
+ * tickets alike.
  *
  * Actions:
- *   - color_red/escalate: Set escalationLevel = 'warning' on conversation
- *   - notify: Set escalationLevel = 'critical' + emit event to notify manager
- *   - reassign: Emit event to reassign conversation to manager
+ *   - color_red/escalate: mark the subject for a red highlight
+ *   - notify: mark it critical and ping the named manager
+ *   - reassign: hand the work to the named user
  */
 @Processor(ESCALATION_QUEUE)
 export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
@@ -45,6 +49,8 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
   constructor(
     @InjectModel(OmniConversationSchemaClass.name)
     private readonly conversationModel: Model<OmniConversationDocument>,
+    @InjectModel(TicketSchemaClass.name)
+    private readonly ticketModel: Model<TicketSchemaDocument>,
     private readonly eventEmitter: EventEmitter2,
     private readonly commands: ConversationCommandService,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
@@ -55,17 +61,28 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
   }
 
   protected async handle(job: Job<EscalationJobData>): Promise<void> {
-    const { tenantId, conversationId, escalationPolicyId, level, actions } =
-      job.data;
+    const {
+      tenantId,
+      subjectType,
+      subjectId,
+      escalationPolicyId,
+      level,
+      actions,
+    } = job.data;
 
     this.logger.debug(
-      `Processing escalation [${level}] for conversation ${conversationId}`,
+      `Processing escalation [${level}] for ${subjectType} ${subjectId}`,
     );
+
+    if (subjectType === 'ticket') {
+      await this.escalateTicket(job.data);
+      return;
+    }
 
     // Verify conversation is still active
     const conversation = await this.conversationModel
       .findOne({
-        _id: conversationId,
+        _id: subjectId,
         tenantId,
         status: { $in: ['open', 'pending'] },
       })
@@ -74,47 +91,39 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
 
     if (!conversation) {
       this.logger.debug(
-        `Conversation ${conversationId} no longer active — skipping escalation`,
+        `Conversation ${subjectId} no longer active — skipping escalation`,
       );
       return;
     }
 
     const now = new Date();
 
-    // Process each action
     for (const action of actions) {
       switch (action.type) {
         case 'color_red':
         case 'escalate': {
-          // Visual escalation — mark conversation for red highlight
           await this.conversationModel.updateOne(
-            { _id: conversationId },
-            {
-              $set: {
-                escalationLevel: 'warning',
-                escalatedAt: now,
-              },
-            },
+            { _id: subjectId },
+            { $set: { escalationLevel: 'warning', escalatedAt: now } },
           );
 
           this.eventEmitter.emit('omni.conversation.escalated', {
             tenantId,
-            conversationId,
+            conversationId: subjectId,
             escalationLevel: 'warning',
             escalationPolicyId,
             escalatedAt: now,
           });
 
           this.logger.warn(
-            `Conversation ${conversationId} escalated to WARNING (red highlight)`,
+            `Conversation ${subjectId} escalated to WARNING (red highlight)`,
           );
           break;
         }
 
         case 'notify': {
-          // Critical escalation — notify manager
           await this.conversationModel.updateOne(
-            { _id: conversationId },
+            { _id: subjectId },
             {
               $set: {
                 escalationLevel: 'critical',
@@ -126,7 +135,7 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
 
           this.eventEmitter.emit('omni.conversation.escalated', {
             tenantId,
-            conversationId,
+            conversationId: subjectId,
             escalationLevel: 'critical',
             escalationPolicyId,
             notifyTarget: action.value,
@@ -141,7 +150,7 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
             'socket:omni:escalation:notify',
             JSON.stringify({
               tenantId,
-              conversationId,
+              conversationId: subjectId,
               targetUserId: action.value,
               message:
                 'SLA breached for conversation — your attention is needed',
@@ -150,7 +159,7 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
           );
 
           this.logger.warn(
-            `Conversation ${conversationId} escalated to CRITICAL — notified ${action.value}`,
+            `Conversation ${subjectId} escalated to CRITICAL — notified ${action.value}`,
           );
           break;
         }
@@ -172,7 +181,7 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
             break;
           }
 
-          await this.commands.enqueueAssignAgent(conversationId, tenantId, {
+          await this.commands.enqueueAssignAgent(subjectId, tenantId, {
             agentId: action.value,
             reason: 'escalation',
             syncCapacity: { assignAgentId: action.value },
@@ -180,7 +189,7 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
           });
 
           this.logger.warn(
-            `Conversation ${conversationId} reassigned to ${action.value} via escalation`,
+            `Conversation ${subjectId} reassigned to ${action.value} via escalation`,
           );
           break;
         }
@@ -189,5 +198,115 @@ export class EscalationProcessor extends BaseTenantConsumer<EscalationJobData> {
           this.logger.warn(`Unknown escalation action type: ${action.type}`);
       }
     }
+  }
+
+  /**
+   * The ticket branch.
+   *
+   * Reassignment writes `ownerId` directly rather than going through the
+   * assignment engine: an escalation names the person deliberately, and the
+   * engine's claim-only compare-and-set exists to refuse exactly that — taking
+   * a record from its current owner.
+   */
+  private async escalateTicket(data: EscalationJobData): Promise<void> {
+    const { tenantId, subjectId, escalationPolicyId, actions } = data;
+
+    const ticket = await this.ticketModel
+      .findOne({ _id: subjectId, tenantId, deletedAt: null, closedAt: null })
+      .select({ _id: 1, ticketNumber: 1, ownerId: 1 })
+      .lean()
+      .exec();
+    if (!ticket) {
+      this.logger.debug(
+        `Ticket ${subjectId} closed or gone — skipping escalation`,
+      );
+      return;
+    }
+
+    const now = new Date();
+
+    for (const action of actions) {
+      switch (action.type) {
+        case 'color_red':
+        case 'escalate':
+          await this.ticketModel.updateOne(
+            { _id: subjectId, tenantId },
+            { $set: { escalationLevel: 'warning', escalatedAt: now } },
+          );
+          this.logger.warn(
+            `Ticket ${ticket.ticketNumber} escalated to WARNING`,
+          );
+          break;
+
+        case 'notify': {
+          if (!action.value) {
+            this.logger.error(
+              `Escalation policy ${escalationPolicyId} has a notify action with no target — skipping`,
+            );
+            break;
+          }
+          await this.ticketModel.updateOne(
+            { _id: subjectId, tenantId },
+            {
+              $set: {
+                escalationLevel: 'critical',
+                escalatedToId: action.value,
+                escalatedAt: now,
+              },
+            },
+          );
+          await this.redis.publish(
+            'socket:ticket:escalation:notify',
+            JSON.stringify({
+              tenantId,
+              ticketId: subjectId,
+              ticketNumber: ticket.ticketNumber,
+              targetUserId: action.value,
+              message: `SLA breached on ticket ${ticket.ticketNumber} — your attention is needed`,
+              escalationPolicyId,
+            }),
+          );
+          this.logger.warn(
+            `Ticket ${ticket.ticketNumber} escalated to CRITICAL — notified ${action.value}`,
+          );
+          break;
+        }
+
+        case 'reassign': {
+          if (!action.value) {
+            this.logger.error(
+              `Escalation policy ${escalationPolicyId} has a reassign action with no target — skipping`,
+            );
+            break;
+          }
+          await this.ticketModel.updateOne(
+            { _id: subjectId, tenantId },
+            {
+              $set: {
+                ownerId: action.value,
+                ownerAssignedExplicitly: true,
+                escalationLevel: 'critical',
+                escalatedToId: action.value,
+                escalatedAt: now,
+              },
+            },
+          );
+          this.logger.warn(
+            `Ticket ${ticket.ticketNumber} reassigned to ${action.value} via escalation`,
+          );
+          break;
+        }
+
+        default:
+          this.logger.warn(`Unknown escalation action type: ${action.type}`);
+      }
+    }
+
+    this.eventEmitter.emit('ticket.escalated', {
+      tenantId,
+      ticketId: subjectId,
+      escalationPolicyId,
+      escalatedAt: now,
+    });
   }
 }

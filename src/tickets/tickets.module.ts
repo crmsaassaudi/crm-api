@@ -44,6 +44,20 @@ import { TagsModule } from '../tags/tags.module';
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
 import { ObjectManagerModule } from '../object-manager/object-manager.module';
 import { CustomFieldsModule } from '../custom-fields/custom-fields.module';
+import {
+  TicketMessageSchema,
+  TicketMessageSchemaClass,
+} from './infrastructure/persistence/document/entities/ticket-message.schema';
+import {
+  FileSchema,
+  FileSchemaClass,
+} from '../files/infrastructure/persistence/document/entities/file.schema';
+import { TicketMessagesController } from './ticket-messages.controller';
+import { TicketMessagesService } from './ticket-messages.service';
+import { TicketTimelineListener } from './ticket-timeline.listener';
+import { TicketNumberService } from './ticket-number.service';
+import { TicketCsatController } from './csat/ticket-csat.controller';
+import { TicketCsatService } from './csat/ticket-csat.service';
 
 const workerProviders = isWorkerRuntime()
   ? [
@@ -61,6 +75,8 @@ const workerProviders = isWorkerRuntime()
   imports: [
     MongooseModule.forFeature([
       { name: TicketSchemaClass.name, schema: TicketSchema },
+      { name: TicketMessageSchemaClass.name, schema: TicketMessageSchema },
+      { name: FileSchemaClass.name, schema: FileSchema },
       { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
       { name: UserSchemaClass.name, schema: UserSchema },
       { name: TicketStatusSchemaClass.name, schema: TicketStatusSchema },
@@ -99,8 +115,25 @@ const workerProviders = isWorkerRuntime()
     CustomFieldsModule,
     ObjectManagerModule,
   ],
-  controllers: [TicketsController],
-  providers: [TicketsService, TicketRepository, ...workerProviders],
-  exports: [TicketsService, TicketRepository],
+  controllers: [
+    TicketsController,
+    TicketMessagesController,
+    TicketCsatController,
+  ],
+  providers: [
+    TicketsService,
+    TicketRepository,
+    TicketNumberService,
+    TicketMessagesService,
+    TicketTimelineListener,
+    TicketCsatService,
+    // TicketSlaProjector and TicketSlaPort are provided by SlaPoliciesModule,
+    // not here. TicketsModule → SlaPoliciesModule → OmniInboundModule →
+    // TicketsModule is a dependency cycle, and this codebase has already lost
+    // two hours of production to one. The SLA adapters need the ticket *model*,
+    // which they take from Mongoose directly, and nothing else from this module.
+    ...workerProviders,
+  ],
+  exports: [TicketsService, TicketRepository, TicketMessagesService],
 })
 export class TicketsModule {}

@@ -82,6 +82,7 @@
     "migrate:deal-pipeline-unification": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-06-deal-pipeline-unification.ts",
     "migrate:contact-b2c-readiness": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-06-contact-b2c-readiness.ts",
     "migrate:omni-sla-consolidation": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-06-omni-sla-consolidation.ts",
+    "migrate:ticket-service-desk": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-07-ticket-service-desk.ts",
     "test:search:it": "jest -c jest.search-integration.config.js --runInBand"
   },
   "dependencies": {

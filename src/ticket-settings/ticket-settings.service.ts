@@ -1,7 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
+import {
+  TicketSchemaClass,
+  TicketSchemaDocument,
+} from '../tickets/infrastructure/persistence/document/entities/ticket.schema';
 import {
   TicketStatusSchemaClass,
   TicketStatusDocument,
@@ -30,6 +34,8 @@ export class TicketSettingsService {
     private readonly sourceModel: Model<TicketSourceDocument>,
     @InjectModel(TicketResolutionCodeSchemaClass.name)
     private readonly resolutionCodeModel: Model<TicketResolutionCodeDocument>,
+    @InjectModel(TicketSchemaClass.name)
+    private readonly ticketModel: Model<TicketSchemaDocument>,
     private readonly cls: ClsService,
   ) {}
 
@@ -57,6 +63,7 @@ export class TicketSettingsService {
   }
 
   async deleteStatus(id: string): Promise<void> {
+    await this.assertUnreferenced('statusId', id, 'status');
     await this.statusModel
       .deleteOne({ _id: id, tenantId: this.tenantId })
       .exec();
@@ -96,6 +103,7 @@ export class TicketSettingsService {
   }
 
   async deleteType(id: string): Promise<void> {
+    await this.assertUnreferenced('typeId', id, 'type');
     await this.typeModel.deleteOne({ _id: id, tenantId: this.tenantId }).exec();
   }
 
@@ -119,6 +127,7 @@ export class TicketSettingsService {
   }
 
   async deleteSource(id: string): Promise<void> {
+    await this.assertUnreferenced('sourceId', id, 'source');
     await this.sourceModel
       .deleteOne({ _id: id, tenantId: this.tenantId })
       .exec();
@@ -150,8 +159,40 @@ export class TicketSettingsService {
   }
 
   async deleteResolutionCode(id: string): Promise<void> {
+    await this.assertUnreferenced('resolutionCodeId', id, 'resolution code');
     await this.resolutionCodeModel
       .deleteOne({ _id: id, tenantId: this.tenantId })
       .exec();
+  }
+
+  /**
+   * Refuse to delete a catalog entry that live tickets still point at.
+   *
+   * Deleting one used to succeed unconditionally, leaving every ticket that
+   * referenced it holding a dangling id: the detail page renders "-", the list
+   * filter cannot match it, and the report `$lookup` drops the row entirely.
+   * Nothing errored, so the tickets simply stopped being counted.
+   *
+   * Counted with a cap: the answer only needs to be "any", and a tenant with
+   * 400k tickets on one status should not pay for an exact count to be told no.
+   */
+  private async assertUnreferenced(
+    field: 'statusId' | 'typeId' | 'sourceId' | 'resolutionCodeId',
+    id: string,
+    label: string,
+  ): Promise<void> {
+    const inUse = await this.ticketModel
+      .countDocuments({
+        tenantId: this.tenantId,
+        [field]: id,
+        deletedAt: null,
+      })
+      .limit(1)
+      .exec();
+    if (inUse > 0) {
+      throw new ConflictException(
+        `This ${label} is still used by at least one ticket. Move those tickets first, or keep the ${label} and hide it from new tickets.`,
+      );
+    }
   }
 }

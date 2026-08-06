@@ -27,6 +27,7 @@ import {
   TicketVolumeData,
 } from './interfaces/ticket-report-types';
 import { reportAggregate } from '../shared/utils/report-aggregate.util';
+import { COLLECTIONS } from '../../common/persistence/collections';
 
 type DateContext = {
   from: Date;
@@ -80,48 +81,74 @@ export class TicketReportService {
           statusBreakdown: [
             {
               $lookup: {
-                from: 'ticketstatuses',
+                from: COLLECTIONS.ticketStatuses,
                 localField: 'statusId',
                 foreignField: '_id',
                 as: 'ticketStatus',
               },
             },
-            {
-              $unwind: {
-                path: '$ticketStatus',
-                preserveNullAndEmptyArrays: true,
-              },
-            },
+            { $unwind: '$ticketStatus' },
             {
               $group: {
-                _id: {
-                  $toLower: { $ifNull: ['$ticketStatus.apiName', 'open'] },
-                },
+                _id: '$ticketStatus._id',
+                label: { $first: '$ticketStatus.label' },
+                apiName: { $first: '$ticketStatus.apiName' },
+                color: { $first: '$ticketStatus.color' },
+                sortOrder: { $first: '$ticketStatus.sortOrder' },
+                terminalKind: { $first: '$ticketStatus.terminalKind' },
                 count: { $sum: 1 },
               },
             },
+            { $sort: { sortOrder: 1 } },
           ],
-          total: [{ $count: 'count' }],
+          totals: [
+            {
+              $group: {
+                _id: null,
+                count: { $sum: 1 },
+                reopened: {
+                  $sum: {
+                    $cond: [
+                      { $gt: [{ $ifNull: ['$reopenCount', 0] }, 0] },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+          ],
         },
       },
     ]).exec();
 
     const trendRows: any[] = facetResult?.trend ?? [];
     const statusRows: any[] = facetResult?.statusBreakdown ?? [];
-    const total: number = facetResult?.total?.[0]?.count ?? 0;
+    const totals = facetResult?.totals?.[0] ?? { count: 0, reopened: 0 };
+    const total: number = totals.count;
 
-    const statusMap = new Map<string, number>(
-      statusRows.map((r: any) => [r._id, r.count]),
-    );
-
+    // One entry per status the tenant actually configured.
+    //
+    // This used to collapse into four hard-coded buckets keyed by apiName —
+    // open/pending/resolved/closed — which no seeded tenant matches ("new",
+    // "on_hold") and no tenant that renamed a status matches at all. Those
+    // tickets were counted in the total and shown in no bucket.
     const data: TicketVolumeData = {
       trend: trendRows.map((r) => ({ date: r._id, count: r.count })),
-      statusBreakdown: {
-        open: statusMap.get('open') ?? 0,
-        pending: statusMap.get('pending') ?? 0,
-        resolved: statusMap.get('resolved') ?? 0,
-        closed: statusMap.get('closed') ?? 0,
-      },
+      statusBreakdown: statusRows.map((row: any) => ({
+        statusId: String(row._id),
+        label: row.label,
+        apiName: row.apiName,
+        color: row.color ?? null,
+        terminalKind: row.terminalKind ?? null,
+        count: row.count,
+        percentage: safePercent(row.count, total),
+      })),
+      openTickets: statusRows
+        .filter((row: any) => !row.terminalKind)
+        .reduce((sum: number, row: any) => sum + row.count, 0),
+      reopenedTickets: totals.reopened,
+      reopenRate: safePercent(totals.reopened, total),
       totalTickets: total,
     };
 
@@ -158,6 +185,18 @@ export class TicketReportService {
               $group: {
                 _id: null,
                 total: { $sum: 1 },
+                // A ticket is "measured" once an SLA policy attached a
+                // deadline to it. Dividing by every ticket instead made a
+                // tenant with partial policy coverage look non-compliant.
+                measured: {
+                  $sum: {
+                    $cond: [
+                      { $ne: [{ $ifNull: ['$slaPolicyId', null] }, null] },
+                      1,
+                      0,
+                    ],
+                  },
+                },
                 breached: {
                   $sum: { $cond: [{ $eq: ['$isSlaBreached', true] }, 1, 0] },
                 },
@@ -229,6 +268,7 @@ export class TicketReportService {
 
     const o = facetResult?.overall?.[0] ?? {
       total: 0,
+      measured: 0,
       breached: 0,
       frtOnTime: 0,
       resolutionOnTime: 0,
@@ -237,10 +277,11 @@ export class TicketReportService {
 
     const data: SlaComplianceData = {
       totalTickets: o.total,
+      measuredTickets: o.measured,
       breachedCount: o.breached,
-      breachRate: safePercent(o.breached, o.total),
-      frtComplianceRate: safePercent(o.frtOnTime, o.total),
-      resolutionComplianceRate: safePercent(o.resolutionOnTime, o.total),
+      breachRate: safePercent(o.breached, o.measured),
+      frtComplianceRate: safePercent(o.frtOnTime, o.measured),
+      resolutionComplianceRate: safePercent(o.resolutionOnTime, o.measured),
       byPriority: byPriority.map((r: any) => ({
         priority: r._id ?? 'UNKNOWN',
         totalTickets: r.total,
@@ -373,6 +414,13 @@ export class TicketReportService {
         $group: {
           _id: '$ownerId',
           totalTickets: { $sum: 1 },
+          // Open work is what a supervisor rebalances on; lifetime totals are
+          // not actionable. `closedAt` is the terminal marker.
+          openTickets: {
+            $sum: {
+              $cond: [{ $ifNull: ['$closedAt', false] }, 0, 1],
+            },
+          },
           resolvedTickets: {
             $sum: {
               $cond: [
@@ -380,6 +428,11 @@ export class TicketReportService {
                 1,
                 0,
               ],
+            },
+          },
+          reopenedTickets: {
+            $sum: {
+              $cond: [{ $gt: [{ $ifNull: ['$reopenCount', 0] }, 0] }, 1, 0],
             },
           },
           avgResolutionMs: {
@@ -399,7 +452,7 @@ export class TicketReportService {
       },
       {
         $lookup: {
-          from: 'users',
+          from: COLLECTIONS.users,
           localField: '_id',
           foreignField: '_id',
           as: 'agent',
@@ -419,7 +472,9 @@ export class TicketReportService {
         agentName: agentName || row.agent?.email || 'Unassigned',
         agentEmail: row.agent?.email ?? '',
         totalTickets: row.totalTickets,
+        openTickets: row.openTickets,
         resolvedTickets: row.resolvedTickets,
+        reopenedTickets: row.reopenedTickets,
         avgResolutionMs: Math.round(row.avgResolutionMs ?? 0),
         avgResolutionFormatted: this.formatDuration(row.avgResolutionMs ?? 0),
         breachCount: row.breachCount,
@@ -457,7 +512,7 @@ export class TicketReportService {
             { $group: { _id: '$sourceId', count: { $sum: 1 } } },
             {
               $lookup: {
-                from: 'ticketsources',
+                from: COLLECTIONS.ticketSources,
                 localField: '_id',
                 foreignField: '_id',
                 as: 'source',
@@ -472,7 +527,7 @@ export class TicketReportService {
             { $group: { _id: '$typeId', count: { $sum: 1 } } },
             {
               $lookup: {
-                from: 'tickettypes',
+                from: COLLECTIONS.ticketTypes,
                 localField: '_id',
                 foreignField: '_id',
                 as: 'type',
@@ -480,6 +535,26 @@ export class TicketReportService {
             },
             { $unwind: { path: '$type', preserveNullAndEmptyArrays: true } },
             { $sort: { count: -1 } },
+          ],
+          byCategory: [
+            {
+              $group: {
+                _id: { $ifNull: [{ $first: '$categoryPath' }, null] },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { count: -1 } },
+            { $limit: 50 },
+          ],
+          byChannel: [
+            {
+              $group: {
+                _id: { $ifNull: ['$channel', null] },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { count: -1 } },
+            { $limit: 50 },
           ],
           byPriority: [
             { $group: { _id: '$priority', count: { $sum: 1 } } },
@@ -505,6 +580,15 @@ export class TicketReportService {
         toBreakdownItem(r, r.type?.name ?? 'Unknown'),
       ),
       byPriority: (facetResult?.byPriority ?? []).map((r: any) =>
+        toBreakdownItem(r, r._id ?? 'Unknown'),
+      ),
+      // §7.4 asked for these two and neither existed. Category is the root node
+      // of `categoryPath`; the label is resolved client-side against the tenant's
+      // category tree, which is the only place the node names live.
+      byCategory: (facetResult?.byCategory ?? []).map((r: any) =>
+        toBreakdownItem(r, r._id ?? 'Uncategorised'),
+      ),
+      byChannel: (facetResult?.byChannel ?? []).map((r: any) =>
         toBreakdownItem(r, r._id ?? 'Unknown'),
       ),
     };
@@ -614,7 +698,10 @@ export class TicketReportService {
   private buildBaseMatch(dto: GetTicketReportDto): Record<string, any> {
     const match: Record<string, any> = {
       tenantId: this.tenantObjectId(),
-      deletedAt: { $exists: false },
+      // `null` matches both an absent field and an explicit null, which is what
+      // the repository's live-record predicate uses. `$exists: false` did not
+      // match a restored record, whose `deletedAt` is unset back to null.
+      deletedAt: null,
       ...buildCrmReportVisibilityFilter(this.cls, 'Ticket'),
     };
     if (dto.ownerId) match.ownerId = new Types.ObjectId(dto.ownerId);

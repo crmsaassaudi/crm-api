@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpStatus,
   Injectable,
   Logger,
@@ -10,6 +11,7 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { BusinessException } from '../common/exceptions/business.exception';
 import { TICKET_ERRORS } from './constants/ticket-error-codes';
 import { InjectQueue } from '@nestjs/bullmq';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Queue } from 'bullmq';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { Readable } from 'stream';
@@ -34,6 +36,7 @@ import {
   TICKET_IMPORT_MAX_FILE_BYTES,
   TICKET_IMPORT_MAPPABLE_FIELDS,
   TICKET_MAX_BULK_TAG_SIZE,
+  TICKET_MAX_CATEGORY_DEPTH,
 } from './tickets.constants';
 import { StartTicketImportDto } from './dto/start-ticket-import.dto';
 import { ExportRequestService, ExportRequestDto } from '../common/export';
@@ -50,6 +53,12 @@ import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.v
 import { logSwallowed } from '../common/utils/log-swallowed';
 import { RecordWriteValidator } from '../object-manager/validation/record-write-validator.service';
 import { AuthorizationService } from '../common/permissions/authorization.service';
+import { TicketNumberService } from './ticket-number.service';
+import {
+  TicketEvents,
+  TicketStatusChangedEvent,
+  TicketStatusTransition,
+} from './domain/ticket-events';
 
 @Injectable()
 export class TicketsService {
@@ -76,6 +85,8 @@ export class TicketsService {
     // TasksModule here would close a dependency cycle with ContactsModule.
     @InjectConnection() private readonly connection: Connection,
     private readonly writeValidator: RecordWriteValidator,
+    private readonly ticketNumbers: TicketNumberService,
+    private readonly events: EventEmitter2,
     @Optional() private readonly customFields?: CustomFieldsService,
     @Optional()
     private readonly customFieldValidator?: CustomFieldValueValidator,
@@ -301,6 +312,34 @@ export class TicketsService {
     }
   }
 
+  /**
+   * Resource-level RBAC check for a capability the route decorator cannot
+   * express, because whether it applies depends on the payload.
+   *
+   * `PATCH /tickets/:id` is one route that carries several capabilities: the
+   * same call edits a subject, resolves a case or reopens one. Declaring
+   * `tickets:resolve` on the whole route would lock ordinary edits behind it;
+   * declaring nothing left case closure gated on `tickets:edit`, which is what
+   * it was.
+   */
+  private async assertPermission(
+    action: 'resolve' | 'assign',
+    message: string,
+  ): Promise<void> {
+    const userId = this.getCurrentUserId();
+    if (!userId || !this.authorization) {
+      throw new Error('Authorization context is required for tickets');
+    }
+    const decision = await this.authorization.canPerformAction({
+      rule: { action, resource: 'tickets' },
+      rawUserId: String(userId),
+      tenantHint: this.requireTenantId(),
+      claims: this.cls.get('claims'),
+      env: { ip: this.cls.get('requestIp') },
+    });
+    if (!decision.allowed) throw new ForbiddenException(message);
+  }
+
   private async assertRecordAccess(
     action: string,
     resource: string,
@@ -375,22 +414,31 @@ export class TicketsService {
       'create',
     );
     await this.validateTenantReferences(data as Record<string, any>);
+    await this.assertCategoryPath(data.categoryPath);
     const customFields = this.customFieldValidator
       ? await this.customFieldValidator.validate('Ticket', data.customFields, {
           strict: true,
         })
       : data.customFields;
 
-    const ticketNumber = await this.repository.generateTicketNumber();
+    const tenantId = this.requireTenantId();
+    const statusId = data.statusId ?? (await this.defaultStatusId());
+    const ticketNumber = await this.ticketNumbers.next(tenantId);
 
     const ticket = await this.automationOutbox.runWithEvent(
       (session) =>
         this.repository.create(
           {
             ...data,
+            statusId,
             ticketNumber,
             isSlaBreached: false,
-            timeSpentSeconds: 0,
+            reopenCount: 0,
+            // The flag the assignment engine reads. Without it every ticket
+            // looked deliberately owned by whoever created it, and routing
+            // never ran. `data.ownerId` is set only when a human picked one:
+            // the repository's creator default is applied after this point.
+            ownerAssignedExplicitly: Boolean(data.ownerId),
             customFields,
           } as any,
           session,
@@ -407,6 +455,60 @@ export class TicketsService {
     });
 
     return ticket;
+  }
+
+  /** The tenant's default status, used when the caller does not pick one. */
+  private async defaultStatusId(): Promise<string> {
+    const statuses = await this.ticketSettingsService.findAllStatuses();
+    const fallback = statuses.find((status) => status.isDefault) ?? statuses[0];
+    if (!fallback) {
+      throw new BadRequestException(
+        'This tenant has no ticket statuses configured',
+      );
+    }
+    return String(fallback._id);
+  }
+
+  private requireTenantId(): string {
+    const tenantId = this.cls.get('activeTenantId') ?? this.cls.get('tenantId');
+    if (!tenantId) throw new Error('Tenant context is required for tickets');
+    return String(tenantId);
+  }
+
+  /**
+   * Check `categoryPath` against the tenant's configured category tree.
+   *
+   * The field is an array of node ids and nothing validated it, so any string
+   * was storable — including ids from a tree the tenant later edited. A ticket
+   * filed under a node that does not exist is unfindable by the category
+   * filter and unlabelled on screen.
+   */
+  private async assertCategoryPath(path?: string[]): Promise<void> {
+    if (!path?.length) return;
+    if (path.length > TICKET_MAX_CATEGORY_DEPTH) {
+      throw new BadRequestException(
+        `categoryPath must not exceed ${TICKET_MAX_CATEGORY_DEPTH} levels`,
+      );
+    }
+
+    const setting = await this.crmSettings.getSetting('ticket_category');
+    const roots = (setting as any)?.categories;
+    if (!Array.isArray(roots)) {
+      throw new BadRequestException(
+        'This tenant has no ticket category tree configured',
+      );
+    }
+
+    let level: Array<{ id: string; children?: any[] }> = roots;
+    for (const nodeId of path) {
+      const node = level.find((entry) => String(entry.id) === String(nodeId));
+      if (!node) {
+        throw new BadRequestException(
+          `categoryPath contains "${nodeId}", which is not a node at that level of the category tree`,
+        );
+      }
+      level = Array.isArray(node.children) ? node.children : [];
+    }
   }
 
   async findAll(filter: any): Promise<any> {
@@ -475,7 +577,10 @@ export class TicketsService {
     return this.repository.findOne({ _id: id });
   }
 
-  async update(id: string, data: Partial<Ticket>): Promise<Ticket | null> {
+  async update(
+    id: string,
+    data: Partial<Ticket> & { allowReopen?: boolean; version?: number },
+  ): Promise<Ticket> {
     // Snapshot before update for audit trail
     const existingTicket = await this.repository.findOne({ _id: id });
     // `findOne` is scoped by tenant, data-visibility and the ABAC deny, so a
@@ -486,121 +591,180 @@ export class TicketsService {
       throw new NotFoundException(`Ticket ${id} not found`);
     }
 
-    this.cleanRefs(data as Record<string, any>);
+    const { allowReopen, version, ...payload } = data;
+    this.cleanRefs(payload as Record<string, any>);
     await this.writeValidator.assertValid(
       'Ticket',
-      data as unknown as Record<string, unknown>,
+      payload as unknown as Record<string, unknown>,
       'update',
     );
-    await this.validateTenantReferences(data as Record<string, any>);
+    await this.validateTenantReferences(payload as Record<string, any>);
+    await this.assertCategoryPath(payload.categoryPath);
 
     const customFields = this.customFieldValidator
-      ? await this.customFieldValidator.validate('Ticket', data.customFields, {
-          partial: true,
-          strict: true,
-        })
-      : data.customFields;
+      ? await this.customFieldValidator.validate(
+          'Ticket',
+          payload.customFields,
+          { partial: true, strict: true },
+        )
+      : payload.customFields;
     const updateData: any = {
-      ...data,
+      ...payload,
       ...(customFields !== undefined ? { customFields } : {}),
     };
 
-    await this.handleStatusChange(existingTicket, data, updateData);
+    // Transferring a ticket is its own capability: ownership is the primary
+    // visibility axis, so moving one is moving it between people's scopes.
+    // A human choosing an owner also makes the assignment deliberate, which is
+    // what stops the routing engine claiming it back.
+    if (
+      payload.ownerId &&
+      String(payload.ownerId) !== String((existingTicket as any).ownerId ?? '')
+    ) {
+      await this.assertPermission(
+        'assign',
+        'Reassigning a ticket requires tickets:assign',
+      );
+      updateData.ownerAssignedExplicitly = true;
+    }
 
-    const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
+    const transition = await this.applyStatusTransition(
+      existingTicket,
+      { ...payload, allowReopen },
+      updateData,
+    );
+
+    const changedFields = Object.keys(updateData);
     const updated = await this.automationOutbox.runWithEvent(
-      (session) => this.repository.update(id, updateData, session),
+      (session) =>
+        this.repository.updateWithVersion(id, updateData, version, session),
       (result) =>
         result
           ? this.buildAutomationEvent('field_updated', result, changedFields)
           : null,
     );
 
-    // Emit automation event: field_updated.Ticket
-    if (updated) {
-      // Emit audit trail event: field-level change tracking
-      this.entityAudit.emit({
-        entity: 'ticket',
-        entityType: 'TICKET',
-        entityId: id,
-        kind: 'updated',
-        oldSnapshot: existingTicket ?? {},
-        newSnapshot: updated,
-      });
+    this.entityAudit.emit({
+      entity: 'ticket',
+      entityType: 'TICKET',
+      entityId: id,
+      kind: 'updated',
+      oldSnapshot: existingTicket,
+      newSnapshot: updated,
+    });
+
+    if (transition) {
+      this.events.emit(TicketEvents.STATUS_CHANGED, {
+        tenantId: this.requireTenantId(),
+        ticketId: id,
+        actorId: this.getCurrentUserId() ?? null,
+        ...transition,
+      } satisfies TicketStatusChangedEvent);
     }
 
     return updated;
   }
 
   /**
-   * Orchestrate status transition validation and terminal-state auto-stamps.
-   * Called only when a statusId is present in the update payload.
+   * Validate a status transition and derive the lifecycle stamps it implies.
+   *
+   * Returns what actually changed so the caller can emit the SLA signal and
+   * write the timeline entry from one decision rather than re-deriving it.
+   * Called only when `statusId` is present in the update payload.
    */
-  private async handleStatusChange(
-    existingTicket: Ticket | null,
-    data: Partial<Ticket>,
-    updateData: any,
-  ): Promise<void> {
-    if (!data.statusId) return;
+  private async applyStatusTransition(
+    existingTicket: Ticket,
+    data: Partial<Ticket> & { allowReopen?: boolean },
+    updateData: Record<string, any>,
+  ): Promise<TicketStatusTransition | null> {
+    if (!data.statusId) return null;
 
-    const existingStatusId = (existingTicket as any)?.statusId;
-    const isRealTransition =
-      existingStatusId && String(existingStatusId) !== String(data.statusId);
-
-    if (isRealTransition) {
-      await this.applyStatusTransitionGuard(existingStatusId, data, updateData);
-    } else {
-      // First-time status set — honour terminal auto-stamp only
-      await this.applyTerminalStamps(data.statusId, data, updateData);
+    const previousStatusId = (existingTicket as any).statusId;
+    if (
+      previousStatusId &&
+      String(previousStatusId) === String(data.statusId)
+    ) {
+      return null;
     }
-  }
 
-  /**
-   * Guard: prevent leaving a terminal status without an explicit reopen signal.
-   * Auto-stamps resolvedAt/closedAt when transitioning into a terminal status.
-   */
-  private async applyStatusTransitionGuard(
-    oldStatusId: any,
-    data: Partial<Ticket>,
-    updateData: any,
-  ): Promise<void> {
-    const [oldStatus, newStatus] = await Promise.all([
-      this.ticketSettingsService.findStatusById(String(oldStatusId)),
-      this.ticketSettingsService.findStatusById(data.statusId!),
+    const [previousStatus, nextStatus] = await Promise.all([
+      previousStatusId
+        ? this.ticketSettingsService.findStatusById(String(previousStatusId))
+        : null,
+      this.ticketSettingsService.findStatusById(data.statusId),
     ]);
 
-    if (oldStatus?.isTerminal && !newStatus?.isTerminal) {
-      if ((data as any).allowReopen !== true) {
-        throw new BadRequestException(
-          `Ticket is in terminal status "${oldStatus.label}". Reopening requires allowReopen=true.`,
-        );
-      }
+    if (!nextStatus) {
+      throw new BadRequestException('statusId is not a status in this tenant');
     }
 
-    if (newStatus?.isTerminal) {
-      this.applyTerminalTimestamps(data, updateData);
-    }
-  }
+    const isReopen =
+      Boolean(previousStatus?.isTerminal) && !nextStatus.isTerminal;
 
-  /** Apply resolvedAt/closedAt stamps when moving into a terminal status. */
-  private async applyTerminalStamps(
-    statusId: string,
-    data: Partial<Ticket>,
-    updateData: any,
-  ): Promise<void> {
-    const status = await this.ticketSettingsService.findStatusById(statusId);
-    if (status?.isTerminal) {
-      this.applyTerminalTimestamps(data, updateData);
+    // Ending a customer's case, and reversing that decision, are their own
+    // capability. Gating both on `tickets:edit` meant any agent who could fix a
+    // typo could also close the case — and `tickets:resolve` sat unused in the
+    // registry and in two role templates while it did.
+    if (nextStatus.isTerminal || isReopen) {
+      await this.assertPermission(
+        'resolve',
+        isReopen
+          ? 'Reopening a ticket requires tickets:resolve'
+          : 'Closing or resolving a ticket requires tickets:resolve',
+      );
     }
-  }
 
-  /** Set resolvedAt and closedAt in updateData if not already present. */
-  private applyTerminalTimestamps(
-    data: Partial<Ticket>,
-    updateData: any,
-  ): void {
-    if (!data.resolvedAt) updateData.resolvedAt = new Date();
-    if (!data.closedAt) updateData.closedAt = new Date();
+    if (isReopen && data.allowReopen !== true) {
+      throw new BusinessException(
+        TICKET_ERRORS.REOPEN_NOT_CONFIRMED,
+        HttpStatus.CONFLICT,
+        `Ticket is in terminal status "${previousStatus!.label}". Reopening requires allowReopen=true.`,
+      );
+    }
+
+    const now = new Date();
+
+    if (isReopen) {
+      // Clear the terminal stamps rather than leaving them behind: a live
+      // ticket that still carries `resolvedAt` is counted as resolved by every
+      // resolution metric and drops out of the owner's open-work count. The
+      // resolution code goes with them — it describes an outcome that no
+      // longer holds.
+      updateData.resolvedAt = null;
+      updateData.closedAt = null;
+      updateData.resolutionCodeId = null;
+      updateData.reopenedAt = now;
+      updateData.reopenCount = ((existingTicket as any).reopenCount ?? 0) + 1;
+    }
+
+    // Resolved and Closed are distinct outcomes. Entering "Resolved" does not
+    // close the ticket, and closing a ticket that was never resolved (spam, a
+    // duplicate, a customer who went quiet) must not fabricate a resolution.
+    if (nextStatus.terminalKind === 'resolved' && !data.resolvedAt) {
+      updateData.resolvedAt = now;
+    }
+    if (nextStatus.terminalKind === 'closed' && !data.closedAt) {
+      updateData.closedAt = now;
+    }
+
+    return {
+      previousStatus: previousStatus
+        ? {
+            id: String((previousStatus as any)._id),
+            label: previousStatus.label,
+            isTerminal: previousStatus.isTerminal,
+            pausesSla: (previousStatus as any).pausesSla ?? false,
+          }
+        : null,
+      nextStatus: {
+        id: String((nextStatus as any)._id),
+        label: nextStatus.label,
+        isTerminal: nextStatus.isTerminal,
+        terminalKind: (nextStatus as any).terminalKind ?? null,
+        pausesSla: (nextStatus as any).pausesSla ?? false,
+      },
+      isReopen,
+    };
   }
 
   // RECYCLE BIN
@@ -1232,36 +1396,15 @@ export class TicketsService {
   }
 
   /**
-   * Move the source ticket's timeline entries and related tasks onto the target.
+   * Move every registered reference from the merged-away ticket onto the
+   * survivor — timeline entries, tasks, child tickets and agent time segments.
    *
-   * Same shape as the contact merge's re-parent pass, and the same reason: a merge
-   * that archives the loser without moving what points at it does not delete data,
-   * it makes it unreachable — and nothing errors, so nobody notices.
+   * Driven by `TICKET_MERGE_REFERENCES`: a merge that archives the loser
+   * without moving what points at it makes that data unreachable, silently.
    *
-   * Reached through the raw connection rather than by injecting ActivityLogModule and
-   * TasksModule: TicketsModule is already imported by ContactsModule, and adding
-   * those two would close a dependency cycle.
-   *
-   * Best-effort per collection. The merge has already committed by this point, so
-   * throwing would leave the caller believing it failed when the target was in fact
-   * updated; a logged failure is repairable, a false error is not.
-   */
-  /**
-   * Move every registered reference from the merged-away ticket onto the survivor.
-   *
-   * Registry-driven since the ticket registry existed. The hand-rolled version this
-   * replaces moved `activity_logs` and `tasks` and stopped there, so it missed two
-   * references the registry declares:
-   *
-   *   - **child tickets.** Merging a parent left its children pointing at a
-   *     soft-deleted ticket — unreachable, not deleted, which is the original merge
-   *     defect reappearing in a domain that had been fixed once already.
-   *   - **agent time segments.** The minutes an agent worked stayed attributed to the
-   *     archived ticket, so occupancy reporting undercounted the survivor.
-   *
-   * Per-reference try/catch: one collection failing must not abandon the merge with no
-   * record of it, and the audit trail is excluded by policy rather than by omission —
-   * `onMerge: 'keep'` on that entry, because it records what happened to a specific id.
+   * Reached through the raw connection because injecting ActivityLogModule and
+   * TasksModule would close a cycle with ContactsModule. Runs inside the merge
+   * transaction, so a failure rolls the merge back rather than half-moving it.
    */
   private async reparentTicketReferences(
     sourceId: string,

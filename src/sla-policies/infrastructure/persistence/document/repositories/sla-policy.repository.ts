@@ -23,6 +23,27 @@ export class SlaPolicyRepository {
     return docs.map(SlaPolicyMapper.toDomain);
   }
 
+  /**
+   * Enabled policies for one subject kind and metric, most specific first.
+   *
+   * Narrowed in the query rather than after the fetch: the clock service calls
+   * this on every conversation and every ticket lifecycle event, and reading
+   * every policy in the tenant to discard most of them made SLA cost scale
+   * with how many policies a tenant had written.
+   */
+  async findApplicable(
+    tenantId: string,
+    appliesTo: 'conversation' | 'ticket',
+    metric: string,
+  ): Promise<SlaPolicy[]> {
+    const docs = await this.model
+      .find({ tenantId, appliesTo, type: metric, enabled: true })
+      .sort({ priority: -1 })
+      .lean()
+      .exec();
+    return docs.map((doc) => SlaPolicyMapper.toDomain(doc as any));
+  }
+
   async findById(tenantId: string, id: string): Promise<SlaPolicy | null> {
     const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? SlaPolicyMapper.toDomain(doc) : null;

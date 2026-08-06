@@ -5,6 +5,7 @@ import { TenantCreatedListener } from './tenant-created.listener';
 import { TenantCreatedEvent } from '../events/tenant-created.event';
 import { TenantSettingsSeedingService } from '../../crm-settings/tenant-settings-seeding.service';
 import { DealPipelineSeederService } from '../../deal-settings/deal-pipeline-seeder.service';
+import { TicketSettingsSeederService } from '../../ticket-settings/ticket-settings-seeder.service';
 import { SampleDataSeederService } from '../services/sample-data-seeder.service';
 import { SystemRolesSeederService } from '../../common/permissions/system-roles-seeder.service';
 import { AssignmentSeederService } from '../../assignment/assignment-seeder.service';
@@ -65,6 +66,10 @@ describe('TenantCreatedListener — org baseline', () => {
         },
         {
           provide: DealPipelineSeederService,
+          useValue: { seedForTenant: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: TicketSettingsSeederService,
           useValue: { seedForTenant: jest.fn().mockResolvedValue(undefined) },
         },
         {

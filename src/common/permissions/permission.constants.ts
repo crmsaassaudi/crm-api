@@ -134,7 +134,20 @@ export const PERMISSION_REGISTRY: Record<
     create: 'tickets:create',
     edit: 'tickets:edit',
     delete: 'tickets:delete',
+    /**
+     * Moving a ticket into a terminal status, and bringing it back out.
+     *
+     * `tickets:resolve` existed in this registry and in two role templates but
+     * no route ever read it, so closing a customer's case took the same grant
+     * as fixing a typo in its subject — and an L1 agent could close anything
+     * they could edit. Reopen is deliberately the same grant rather than a
+     * third: whoever may end a case may reverse that decision.
+     */
     resolve: 'tickets:resolve',
+    /** Posting a customer-visible reply. Distinct from editing the record. */
+    reply: 'tickets:reply',
+    /** Reassigning ownerId, separately from editing other fields. */
+    assign: 'tickets:assign',
     export: 'tickets:export',
   },
   reports: {

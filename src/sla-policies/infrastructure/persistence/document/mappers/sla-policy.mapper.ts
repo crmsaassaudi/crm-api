@@ -7,10 +7,11 @@ export class SlaPolicyMapper {
     entity.id = raw._id?.toString();
     entity.tenantId = raw.tenantId?.toString();
     entity.name = raw.name;
+    entity.appliesTo = raw.appliesTo;
     entity.type = raw.type;
     entity.targets =
       raw.targets?.map((t) => ({
-        segment: t.segment,
+        segment: t.segment ?? null,
         timeValue: t.timeValue,
         timeUnit: t.timeUnit,
       })) ?? [];
@@ -26,6 +27,7 @@ export class SlaPolicyMapper {
     if (entity.id) p._id = entity.id;
     p.tenantId = entity.tenantId;
     p.name = entity.name;
+    p.appliesTo = entity.appliesTo;
     p.type = entity.type;
     p.targets = entity.targets;
     p.enabled = entity.enabled ?? true;

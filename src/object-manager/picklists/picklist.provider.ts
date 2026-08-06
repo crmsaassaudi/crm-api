@@ -10,6 +10,21 @@ export interface PicklistOption {
   label: string;
   value: string;
   color?: string;
+  /**
+   * Lifecycle semantics, present only on status/stage picklists.
+   *
+   * The browser needs these to render a workflow rather than a flat list: which
+   * step ends the case, which one is a reopen target, which one stops the SLA
+   * clock. Carrying them on the option is what keeps the collection the single
+   * authority — the alternative is the ticket UI fetching statuses from a
+   * second endpoint, which is exactly the split-brain this provider closed.
+   */
+  status?: {
+    isDefault?: boolean;
+    isTerminal?: boolean;
+    terminalKind?: 'resolved' | 'closed' | null;
+    pausesSla?: boolean;
+  };
 }
 
 /** Payload field key → its allowed values. */
@@ -146,7 +161,7 @@ export class PicklistProvider {
       this.ticketSettings.findAllResolutionCodes(),
     ]);
     return {
-      statusId: statuses.map(toOption),
+      statusId: statuses.map(toStatusOption),
       typeId: types.map(toOption),
       sourceId: sources.map(toOption),
       resolutionCodeId: resolutionCodes.map(toOption),
@@ -178,4 +193,15 @@ const toOption = (doc: any): PicklistOption => ({
   label: String(doc?.label ?? doc?.name ?? ''),
   value: String(doc?.id ?? doc?._id ?? ''),
   ...(doc?.color ? { color: String(doc.color) } : {}),
+});
+
+/** `toOption` plus the lifecycle flags a status picklist carries. */
+const toStatusOption = (doc: any): PicklistOption => ({
+  ...toOption(doc),
+  status: {
+    isDefault: Boolean(doc?.isDefault),
+    isTerminal: Boolean(doc?.isTerminal),
+    terminalKind: doc?.terminalKind ?? null,
+    pausesSla: Boolean(doc?.pausesSla),
+  },
 });

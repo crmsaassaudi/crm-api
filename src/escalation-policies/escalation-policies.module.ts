@@ -14,6 +14,10 @@ import {
   OmniConversationSchema,
   OmniConversationSchemaClass,
 } from '../omni-inbound/infrastructure/persistence/document/entities/omni-conversation.schema';
+import {
+  TicketSchema,
+  TicketSchemaClass,
+} from '../tickets/infrastructure/persistence/document/entities/ticket.schema';
 import { isWorkerRuntime } from '../config/runtime-role';
 
 @Module({
@@ -28,6 +32,7 @@ import { isWorkerRuntime } from '../config/runtime-role';
         name: OmniConversationSchemaClass.name,
         schema: OmniConversationSchema,
       },
+      { name: TicketSchemaClass.name, schema: TicketSchema },
     ]),
   ],
   controllers: [EscalationPoliciesController],

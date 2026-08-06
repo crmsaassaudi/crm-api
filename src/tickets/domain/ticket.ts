@@ -88,14 +88,14 @@ export class Ticket {
   @ApiProperty()
   ownerId?: string;
 
+  @ApiProperty({ description: 'True when a human picked the owner' })
+  ownerAssignedExplicitly?: boolean;
+
   @ApiProperty()
   orgUnitId?: string | null;
 
   @ApiProperty()
   owner?: User;
-
-  @ApiProperty({ description: 'User IDs watching this ticket' })
-  watchers?: string[];
 
   @ApiProperty({ description: 'ObjectId ref to TicketStatus collection' })
   statusId: string;
@@ -108,6 +108,8 @@ export class Ticket {
     color?: string;
     isDefault?: boolean;
     isTerminal?: boolean;
+    terminalKind?: 'resolved' | 'closed' | null;
+    pausesSla?: boolean;
   };
 
   // SLA Management
@@ -132,6 +134,16 @@ export class Ticket {
   @ApiProperty({ example: 0 })
   slaPausedSeconds?: number;
 
+  // Escalation
+  @ApiProperty({ enum: ['warning', 'critical'], nullable: true })
+  escalationLevel?: 'warning' | 'critical' | null;
+
+  @ApiProperty()
+  escalatedAt?: Date;
+
+  @ApiProperty()
+  escalatedToId?: string | null;
+
   // Metrics & Resolution
   @ApiProperty({
     description: 'ObjectId ref to TicketResolutionCode collection',
@@ -147,18 +159,30 @@ export class Ticket {
   @ApiProperty({ example: 5 })
   csatScore?: number;
 
-  @ApiProperty({ example: 3600 })
-  timeSpentSeconds?: number;
+  @ApiProperty()
+  csatComment?: string;
+
+  @ApiProperty()
+  csatSubmittedAt?: Date;
 
   // Timestamps & Audit
   @ApiProperty()
   firstRespondedAt?: Date;
 
   @ApiProperty()
+  firstRespondedById?: string | null;
+
+  @ApiProperty()
   resolvedAt?: Date;
 
   @ApiProperty()
   closedAt?: Date;
+
+  @ApiProperty({ example: 0 })
+  reopenCount?: number;
+
+  @ApiProperty()
+  reopenedAt?: Date;
 
   @ApiProperty()
   createdAt: Date;
@@ -174,4 +198,11 @@ export class Ticket {
 
   @ApiProperty()
   updatedById?: string;
+
+  /**
+   * Mongo's `__v`, surfaced so a client can send it back on PATCH and have the
+   * write refused if someone else changed the ticket meanwhile.
+   */
+  @ApiProperty({ example: 3 })
+  version?: number;
 }

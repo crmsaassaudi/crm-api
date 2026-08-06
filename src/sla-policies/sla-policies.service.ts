@@ -30,10 +30,32 @@ export class SlaPoliciesService {
     return policy;
   }
 
+  /**
+   * Normalise targets on the way in.
+   *
+   * An omitted `segment` means "the catch-all target", and the selection logic
+   * in the clock engine tests for `== null`. Storing `undefined` instead of
+   * `null` would leave the key absent, which is the same thing in Mongo but not
+   * in the DTO type — so it is settled once, here, at the boundary.
+   */
+  private static normaliseTargets<
+    T extends { segment?: string | null; timeValue: number; timeUnit: string },
+  >(targets: T[]): SlaPolicy['targets'] {
+    return targets.map((target) => ({
+      segment: target.segment?.trim() ? target.segment.trim() : null,
+      timeValue: target.timeValue,
+      timeUnit: target.timeUnit,
+    }));
+  }
+
   async create(dto: CreateSlaPolicyDto): Promise<SlaPolicy> {
     const tenantId = this.cls.get('tenantId');
     try {
-      return await this.repository.create({ ...dto, tenantId });
+      return await this.repository.create({
+        ...dto,
+        targets: SlaPoliciesService.normaliseTargets(dto.targets),
+        tenantId,
+      });
     } catch (error) {
       if (error?.code === 11000) {
         throw new ConflictException(
@@ -47,7 +69,13 @@ export class SlaPoliciesService {
   async update(id: string, dto: UpdateSlaPolicyDto): Promise<SlaPolicy> {
     const tenantId = this.cls.get('tenantId');
     try {
-      const policy = await this.repository.update(tenantId, id, dto);
+      const { targets, ...rest } = dto;
+      const policy = await this.repository.update(tenantId, id, {
+        ...rest,
+        ...(targets
+          ? { targets: SlaPoliciesService.normaliseTargets(targets) }
+          : {}),
+      });
       if (!policy)
         throw new BusinessException(
           SLA_ERRORS.POLICY_NOT_FOUND,

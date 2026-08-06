@@ -30,7 +30,10 @@ const COLLECTIONS: Record<string, string> = {
  * ever see a lost race.
  */
 /** Collections carrying `ownerAssignedExplicitly`. See the claim filter below. */
-const OWNER_INTENT_COLLECTIONS: ReadonlySet<string> = new Set(['deals']);
+const OWNER_INTENT_COLLECTIONS: ReadonlySet<string> = new Set([
+  'deals',
+  'tickets',
+]);
 
 @Injectable()
 export class RecordCommitPort implements CommitPort {

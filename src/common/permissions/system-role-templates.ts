@@ -80,7 +80,9 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // v5: gained an explicit dataScope. A manager runs a unit and the units
     // beneath it, which is exactly the subtree scope — anchored on their own
     // org unit, so it needs no per-tenant configuration to be correct.
-    version: 5,
+    // v6: gained tickets:reply and tickets:assign, now that replying to a
+    // customer and transferring a ticket are grants of their own.
+    version: 6,
     dataScope: DataScope.ORG_UNIT_SUBTREE,
     permissions: [
       'leads:view',
@@ -119,6 +121,8 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'tickets:edit',
       'tickets:delete',
       'tickets:resolve',
+      'tickets:reply',
+      'tickets:assign',
       'tasks:view',
       'tasks:create',
       'tasks:edit',
@@ -202,13 +206,18 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // v5: gained an explicit dataScope. Support is queue work — an agent picks
     // up whatever their unit is handling, so ORG_UNIT. Which *channels* they
     // may serve stays a separate axis (the channel support pool).
-    version: 5,
+    // v6: gained tickets:reply — the grant that lets the role do its job.
+    version: 6,
     dataScope: DataScope.ORG_UNIT,
     permissions: [
       'tickets:view',
       'tickets:create',
       'tickets:edit',
       'tickets:resolve',
+      // A support agent whose job is answering customers needs the grant that
+      // lets them answer. Without it the role could edit a ticket but not
+      // reply to it — the one thing the role exists to do.
+      'tickets:reply',
       'contacts:view',
       'contacts:unmask',
       'accounts:view',

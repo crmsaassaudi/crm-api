@@ -230,20 +230,51 @@ describe('ActivityService', () => {
   });
 
   describe('onSlaBreach', () => {
-    it('should log SLA breach with type', async () => {
-      await service.onSlaBreach({
+    const breach = (overrides: Record<string, unknown> = {}) =>
+      ({
         tenantId: 'tenant-1',
-        conversationId: 'conv-1',
-        slaType: 'first_response',
-        deadline: '2026-04-04T10:00:00Z',
-      });
+        subjectType: 'conversation',
+        subjectId: 'conv-1',
+        clockId: 'clock-1',
+        slaPolicyId: 'policy-1',
+        metric: 'first_response',
+        cycle: 1,
+        dueAt: new Date('2026-04-04T10:00:00Z'),
+        breachedAt: new Date('2026-04-04T10:05:00Z'),
+        ...overrides,
+      }) as any;
+
+    it('should log SLA breach with the metric that was missed', async () => {
+      await service.onSlaBreach(breach());
 
       expect(activityRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'sla_breached',
+          conversationId: 'conv-1',
           description: expect.stringContaining('FRT'),
         }),
       );
+    });
+
+    it('should label a resolution breach as such', async () => {
+      await service.onSlaBreach(breach({ metric: 'resolution' }));
+
+      // The old handler read `event.slaType`, a field the payload never had,
+      // so every breach was labelled a resolution breach by accident.
+      expect(activityRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: expect.stringContaining('Thời gian xử lý'),
+        }),
+      );
+    });
+
+    /** The conversation trail must not narrate a ticket's breach. */
+    it('should ignore a ticket breach', async () => {
+      await service.onSlaBreach(
+        breach({ subjectType: 'ticket', subjectId: 'ticket-1' }),
+      );
+
+      expect(activityRepo.create).not.toHaveBeenCalled();
     });
   });
 

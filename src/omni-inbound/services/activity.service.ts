@@ -9,6 +9,8 @@ import { UsersService } from '../../users/users.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { OmniEvents } from '../domain/omni-events';
+import { SlaEvents } from '../../sla-policies/clock/sla-events';
+import type { SlaBreachedEvent } from '../../sla-policies/clock/sla-events';
 
 /** Bundled parameters for the private log helper (S107: keeps param count ≤ 7). */
 interface ActivityLogParams {
@@ -38,7 +40,7 @@ interface ActivityLogParams {
  *   - omni.conversation.tag_added       → tag_added
  *   - omni.conversation.tag_removed     → tag_removed
  *   - omni.conversation.note_added      → note_added
- *   - omni.conversation.sla_breached    → sla_breached
+ *   - sla.clock.breached                → sla_breached (conversation subjects only)
  *   - omni.conversation.escalated       → escalated
  *   - omni.contact.auto_merged          → identity_merged
  */
@@ -270,26 +272,29 @@ export class ActivityService {
 
   // New event listeners
 
-  @OnEvent('omni.conversation.sla_breached')
-  async onSlaBreach(event: {
-    tenantId: string;
-    conversationId: string;
-    slaType: string;
-    deadline: string;
-  }) {
+  /**
+   * The clock engine now measures tickets as well as conversations, so the
+   * breach event is subject-tagged and this trail only wants the conversation
+   * half. It also carries `metric`, not `slaType` — the old field name never
+   * existed on the payload, so the label below always fell through to
+   * "Thời gian xử lý" no matter which deadline was missed.
+   */
+  @OnEvent(SlaEvents.BREACHED)
+  async onSlaBreach(event: SlaBreachedEvent) {
+    if (event.subjectType !== 'conversation') return;
     const slaLabel =
-      event.slaType === 'first_response'
-        ? 'Thời gian phản hồi đầu tiên (FRT)'
-        : 'Thời gian xử lý';
+      event.metric === 'resolution'
+        ? 'Thời gian xử lý'
+        : 'Thời gian phản hồi đầu tiên (FRT)';
     await this.log({
       tenantId: event.tenantId,
-      conversationId: event.conversationId,
+      conversationId: event.subjectId,
       actorType: 'system',
       actorId: null,
       action: 'sla_breached',
       oldValue: null,
-      newValue: event.slaType,
-      metadata: { deadline: event.deadline, slaType: event.slaType },
+      newValue: event.metric,
+      metadata: { deadline: event.dueAt, slaType: event.metric },
       description: `⚠️ Vi phạm SLA: ${slaLabel} đã quá hạn`,
     });
   }

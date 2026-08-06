@@ -10,12 +10,18 @@ export class SlaPolicy {
   @ApiProperty({ example: 'Standard Response SLA' })
   name: string;
 
+  @ApiProperty({ enum: ['conversation', 'ticket'] })
+  appliesTo: 'conversation' | 'ticket';
+
   @ApiProperty({ enum: ['first_response', 'resolution', 'next_response'] })
   type: string;
 
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'Per-segment targets. On a ticket policy `segment` is the priority; null is the catch-all.',
+  })
   targets: Array<{
-    segment: string;
+    segment: string | null;
     timeValue: number;
     timeUnit: string;
   }>;

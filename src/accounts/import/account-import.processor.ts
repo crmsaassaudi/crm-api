@@ -45,7 +45,7 @@ const ACCOUNT_IMPORT_CONFIG: ImportModuleConfig = {
     // statusId: resolve by label or apiName
     {
       entityField: 'statusId',
-      collection: 'accountstatuses',
+      collection: 'account_statuses',
       lookupFields: ['label', 'apiName'],
       tenantScoped: true,
       required: false,
@@ -53,7 +53,7 @@ const ACCOUNT_IMPORT_CONFIG: ImportModuleConfig = {
     // typeId: resolve by name or apiName
     {
       entityField: 'typeId',
-      collection: 'accounttypes',
+      collection: 'account_types',
       lookupFields: ['name', 'apiName'],
       tenantScoped: true,
       required: false,

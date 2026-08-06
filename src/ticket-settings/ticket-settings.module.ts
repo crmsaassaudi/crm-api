@@ -18,6 +18,11 @@ import {
   TicketResolutionCodeSchemaClass,
   TicketResolutionCodeSchema,
 } from './entities/ticket-resolution-code.schema';
+import { TicketSettingsSeederService } from './ticket-settings-seeder.service';
+import {
+  TicketSchema,
+  TicketSchemaClass,
+} from '../tickets/infrastructure/persistence/document/entities/ticket.schema';
 
 @Module({
   imports: [
@@ -29,10 +34,12 @@ import {
         name: TicketResolutionCodeSchemaClass.name,
         schema: TicketResolutionCodeSchema,
       },
+      // Read-only here, for the reference guard on delete.
+      { name: TicketSchemaClass.name, schema: TicketSchema },
     ]),
   ],
   controllers: [TicketSettingsController],
-  providers: [TicketSettingsService],
-  exports: [TicketSettingsService],
+  providers: [TicketSettingsService, TicketSettingsSeederService],
+  exports: [TicketSettingsService, TicketSettingsSeederService],
 })
 export class TicketSettingsModule {}

@@ -7,30 +7,19 @@ import { EscalationPoliciesService } from './escalation-policies.service';
 import { ESCALATION_QUEUE } from './queue/escalation-queue.constants';
 import type { EscalationJobData } from './queue/escalation.processor';
 import { runWithTenantContext } from '../common/tenancy/tenant-context';
-import { OmniEvents } from '../omni-inbound/domain/omni-events';
-import type { ConversationSlaBreachedEvent } from '../omni-inbound/domain/omni-events';
+import { SlaEvents } from '../sla-policies/clock/sla-events';
+import type { SlaBreachedEvent } from '../sla-policies/clock/sla-events';
 
 /**
- * EscalationTriggerListener — schedules delayed escalation jobs when an SLA clock
- * breaches.
+ * Schedules a delayed escalation job for every policy attached to a breached
+ * SLA, for conversations and tickets alike.
  *
- * Flow:
- *   1. `SlaClockService` records a breach and emits
- *      `OmniEvents.CONVERSATION_SLA_BREACHED`
- *   2. Look up all enabled escalation policies for the breached SLA policy
- *   3. For each escalation policy, schedule a delayed job that fires
- *      `escalateAfter` minutes/hours later
- *   4. When the job fires, EscalationProcessor executes the actions
- *      (color_red, notify manager, reassign, etc.)
+ * `SlaEvents.BREACHED` → matching escalation policies → one delayed job each,
+ * firing `escalateAfter` later, which `EscalationProcessor` executes.
  *
- * Example configuration:
- *   - Policy A: escalateAfter=5, unit=minutes, action=color_red → red highlight
- *   - Policy B: escalateAfter=15, unit=minutes, action=notify → ping manager
- *
- * The jobId is keyed on (policy, conversation, metric, cycle): a `next_response`
- * SLA breaches once per customer turn, and keying on the conversation alone made
- * each new breach silently replace the previous conversation's pending
- * escalation.
+ * The jobId is keyed on (policy, subject, metric, cycle). A `next_response`
+ * SLA breaches once per customer turn, so keying on the subject alone lets each
+ * new breach replace the previous one's pending escalation.
  */
 @Injectable()
 export class EscalationTriggerListener {
@@ -43,8 +32,8 @@ export class EscalationTriggerListener {
     private readonly cls: ClsService,
   ) {}
 
-  @OnEvent(OmniEvents.CONVERSATION_SLA_BREACHED)
-  async handleSlaBreached(event: ConversationSlaBreachedEvent): Promise<void> {
+  @OnEvent(SlaEvents.BREACHED)
+  async handleSlaBreached(event: SlaBreachedEvent): Promise<void> {
     return runWithTenantContext(this.cls, event.tenantId, async () => {
       try {
         const allPolicies = await this.escalationService.findAll();
@@ -68,7 +57,7 @@ export class EscalationTriggerListener {
           );
 
           const jobId =
-            `escalation-${policy.id}-${event.conversationId}` +
+            `escalation-${policy.id}-${event.subjectType}-${event.subjectId}` +
             `-${event.metric}-${event.cycle}`;
           const level: 'warning' | 'breach' =
             policy.breachType === 'breach' ? 'breach' : 'warning';
@@ -85,7 +74,8 @@ export class EscalationTriggerListener {
             'escalation',
             {
               tenantId: event.tenantId,
-              conversationId: event.conversationId,
+              subjectType: event.subjectType,
+              subjectId: event.subjectId,
               escalationPolicyId: policy.id,
               level,
               actions: policy.actions,
@@ -94,13 +84,13 @@ export class EscalationTriggerListener {
           );
 
           this.logger.log(
-            `Scheduled escalation [${policy.name}] for conversation ${event.conversationId} ` +
+            `Scheduled escalation [${policy.name}] for ${event.subjectType} ${event.subjectId} ` +
               `in ${policy.escalateAfter} ${policy.escalateUnit} (${level})`,
           );
         }
       } catch (err: any) {
         this.logger.error(
-          `Failed to schedule escalation for conversation ${event.conversationId}: ${err.message}`,
+          `Failed to schedule escalation for ${event.subjectType} ${event.subjectId}: ${err.message}`,
         );
       }
     });

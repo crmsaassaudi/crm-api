@@ -149,16 +149,24 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   })
   ownerId?: string;
 
+  /**
+   * Whether a human picked the owner, as opposed to the repository defaulting
+   * it to whoever created the record.
+   *
+   * This is what the assignment engine reads. Both of its gates —
+   * `RecordAutoAssignmentListener` skipping already-assigned work, and
+   * `RecordCommitPort`'s claim-only CAS — treat a present `ownerId` as
+   * deliberate, and every insert is stamped with its creator. Without the flag,
+   * no ticket is ever routable.
+   */
+  @Prop({ default: false, index: true })
+  ownerAssignedExplicitly: boolean;
+
   // Org-unit ownership: the node of the tenant's org tree this record belongs
   // to. Populated at create time from the record owner's org unit; read by the
   // 'org_unit' and 'org_unit_subtree' data scopes.
   @Prop({ type: MongooseSchema.Types.ObjectId, default: null, index: true })
   orgUnitId?: string | null;
-
-  @Prop({
-    type: [{ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' }],
-  })
-  watchers?: string[];
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -193,6 +201,20 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 0 })
   slaPausedSeconds?: number;
 
+  // ESCALATION
+  //
+  // Projected by EscalationProcessor when a policy fires on a breached ticket
+  // clock — the record that a supervisor has been pulled in.
+
+  @Prop({ type: String, enum: ['warning', 'critical', null], default: null })
+  escalationLevel?: 'warning' | 'critical' | null;
+
+  @Prop()
+  escalatedAt?: Date;
+
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
+  escalatedToId?: string | null;
+
   // 6. METRICS & RESOLUTION
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -203,21 +225,51 @@ export class TicketSchemaClass extends EntityDocumentHelper {
   @Prop()
   resolutionNotes?: string;
 
+  // CSAT — written only by TicketCsatService, off a single-use survey token.
+
   @Prop({ min: 1, max: 5 })
   csatScore?: number;
 
-  @Prop({ default: 0 })
-  timeSpentSeconds?: number;
+  @Prop()
+  csatComment?: string;
+
+  @Prop()
+  csatSubmittedAt?: Date;
+
+  /** Single-use survey handle. Indexed sparsely — most tickets never hold one. */
+  @Prop({ type: String, default: null, index: { sparse: true, unique: true } })
+  csatToken?: string | null;
+
+  @Prop()
+  csatTokenExpiresAt?: Date;
 
   // 7. TIMESTAMPS & AUDIT
+
+  /** When an agent first posted a public reply. Written by TicketMessagesService. */
   @Prop()
   firstRespondedAt?: Date;
+
+  /** The agent who owed and gave that first response. */
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'UserSchemaClass' })
+  firstRespondedById?: string | null;
 
   @Prop()
   resolvedAt?: Date;
 
   @Prop()
   closedAt?: Date;
+
+  /**
+   * How many times this ticket came back after reaching a terminal status.
+   *
+   * Reopen Rate is one of the four service-quality numbers a support manager
+   * is measured on, and it was not derivable from anything the ticket stored.
+   */
+  @Prop({ default: 0 })
+  reopenCount: number;
+
+  @Prop()
+  reopenedAt?: Date;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -253,9 +305,12 @@ TicketSchema.index(
   { unique: true, name: 'tenant_ticket_number_unique' },
 );
 TicketSchema.index({ tenantId: 1, statusId: 1 });
+// `closedAt` is part of the key because the hottest owner query is not "what
+// does this agent own" but "how much OPEN work does this agent hold" — the
+// capacity count the assignment engine runs on every routing decision.
 TicketSchema.index(
-  { tenantId: 1, ownerId: 1 },
-  { name: 'tenant_owner_lookup' },
+  { tenantId: 1, ownerId: 1, closedAt: 1 },
+  { name: 'tenant_owner_open_work' },
 );
 TicketSchema.index(
   { tenantId: 1, contactId: 1 },

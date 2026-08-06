@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { Connection } from 'mongoose';
+import { Connection, Types } from 'mongoose';
 import { ImportErrorCode, ImportReferenceField, ImportRowError } from './types';
 
 /**
@@ -75,7 +75,13 @@ export class ImportReferenceResolver {
 
       const query: any = { ...(this.scopeFilters[refField.entityField] ?? {}) };
       if (refField.tenantScoped) {
-        query.tenantId = this.tenantId;
+        // Raw driver read: no Mongoose cast runs here, and every tenant-scoped
+        // schema stores `tenantId` as an ObjectId. Passing the CLS string
+        // matched nothing, so the cache came back empty and every required
+        // reference in every module's import reported REFERENCE_NOT_FOUND.
+        query.tenantId = Types.ObjectId.isValid(this.tenantId)
+          ? new Types.ObjectId(this.tenantId)
+          : this.tenantId;
       }
 
       const projection: any = { _id: 1 };
@@ -115,8 +121,13 @@ export class ImportReferenceResolver {
       idSet.add(id);
       for (const lookupField of lookupFields) {
         const value = doc[lookupField];
-        if (value != null) {
-          const normalized = String(value).trim().toLowerCase();
+        if (value == null) continue;
+        // Array-valued identity fields (a contact's `emails` / `phones`) index
+        // every entry. Stringifying the array whole only ever matched a
+        // single-element one, and matched it by accident.
+        for (const entry of Array.isArray(value) ? value : [value]) {
+          if (entry == null) continue;
+          const normalized = String(entry).trim().toLowerCase();
           if (normalized && !textMap.has(normalized)) {
             textMap.set(normalized, id);
           }

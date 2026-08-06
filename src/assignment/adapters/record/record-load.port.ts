@@ -38,8 +38,13 @@ const LOAD_SOURCES: Record<string, ObjectTypeLoadSource> = {
   },
   Ticket: {
     collection: 'tickets',
+    // Both terminal stamps, not just `closedAt`. Now that Resolved and Closed
+    // are distinct, a ticket the agent has resolved is finished work: counting
+    // it as load would make an agent who resolves quickly — but whose tickets
+    // are closed later by a cron or the customer — look permanently busy.
     activeFilter: {
       deletedAt: { $exists: false },
+      resolvedAt: { $exists: false },
       closedAt: { $exists: false },
     },
   },

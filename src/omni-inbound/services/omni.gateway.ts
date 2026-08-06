@@ -49,7 +49,8 @@ import {
   type SocketScope,
 } from './conversation-audience.service';
 import { OmniEvents } from '../domain/omni-events';
-import type { ConversationSlaBreachedEvent } from '../domain/omni-events';
+import { SlaEvents } from '../../sla-policies/clock/sla-events';
+import type { SlaBreachedEvent } from '../../sla-policies/clock/sla-events';
 
 /**
  * Primary Socket.IO gateway for omni-channel real-time messaging.
@@ -2063,11 +2064,14 @@ export class OmniGateway
    * is showing who is waiting. What the row renders is `slaBreached` /
    * `slaDueMetric`, so that is what goes over the wire.
    */
-  @OnEvent(OmniEvents.CONVERSATION_SLA_BREACHED)
-  async handleSlaBreached(event: ConversationSlaBreachedEvent) {
+  @OnEvent(SlaEvents.BREACHED)
+  async handleSlaBreached(event: SlaBreachedEvent) {
+    // The inbox socket carries conversations. A breached ticket reaches its
+    // agent through the ticket escalation channel instead.
+    if (event.subjectType !== 'conversation') return;
     const patch = {
       tenantId: event.tenantId,
-      conversationId: event.conversationId,
+      conversationId: event.subjectId,
       metric: event.metric,
       breachedAt: event.breachedAt,
     };

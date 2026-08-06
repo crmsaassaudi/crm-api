@@ -52,7 +52,9 @@ export const OmniEvents = {
   CONVERSATION_UNREAD_RESET: 'omni.conversation.unread_reset',
   /** Conversation escalated (SLA/policy) */
   CONVERSATION_ESCALATED: 'omni.conversation.escalated',
-  CONVERSATION_SLA_BREACHED: 'omni.conversation.sla_breached',
+  // A breach is `SlaEvents.BREACHED` — see sla-policies/clock/sla-events.ts.
+  // The name moved when the clock engine started measuring tickets too, and
+  // an omni-shaped name for a ticket breach would have been a lie.
   /** Agent took over conversation from another agent */
   CONVERSATION_TAKEOVER: 'omni.conversation.takeover',
   /** No agent available — conversation entered the wait queue */
@@ -256,24 +258,6 @@ export interface ConversationStatusChangedEvent extends OmniEventBase {
   oldStatus: string;
   newStatus: string;
   changedBy?: string;
-}
-
-/**
- * An SLA clock missed its deadline. The one breach event in the system —
- * escalation policies, the activity trail, the daily-metrics projection and the
- * inbox socket all consume this.
- *
- * `metric` + `cycle` identify *which* deadline: a `next_response` SLA breaches
- * once per customer turn, so consumers that deduplicate must key on both.
- */
-export interface ConversationSlaBreachedEvent extends OmniEventBase {
-  conversationId: string;
-  clockId: string;
-  slaPolicyId: string;
-  metric: 'first_response' | 'next_response' | 'resolution';
-  cycle: number;
-  dueAt: Date;
-  breachedAt: Date;
 }
 
 export interface ConversationAssignedEvent extends OmniEventBase {

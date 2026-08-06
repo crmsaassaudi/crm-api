@@ -29,19 +29,35 @@ describe('TicketsService', () => {
       findManyByIds: jest.fn(),
       addTagsToTickets: jest.fn(),
       update: jest.fn(),
+      // Every write from `update()` goes through the version-guarded path now,
+      // so the mock has to expose it or the service silently loses the write.
+      updateWithVersion: jest.fn(),
       remove: jest.fn(),
       softDeleteInSession: jest.fn().mockResolvedValue(undefined),
       findParentId: jest.fn().mockResolvedValue(null),
       pauseSlaAtomic: jest.fn(),
       resumeSlaAtomic: jest.fn(),
-      generateTicketNumber: jest.fn().mockResolvedValue('TKT-00001'),
     };
+    // The two share a fixture: a test that stubs `update` is describing the
+    // write, not the concurrency guard.
+    repository.updateWithVersion.mockImplementation(
+      (id: string, payload: any, _version: unknown, session: unknown) =>
+        repository.update(id, payload, session),
+    );
 
     cls = createClsMock();
     eventEmitter = createEventBusMock();
 
     ticketSettingsService = {
       findStatusById: jest.fn().mockResolvedValue(null),
+      // `create` falls back to the tenant's default status when the caller does
+      // not pick one — `statusId` is required on the schema, and a tenant with
+      // no configured statuses cannot open a ticket at all.
+      findAllStatuses: jest
+        .fn()
+        .mockResolvedValue([
+          { _id: 'status_new', label: 'New', isDefault: true },
+        ]),
     };
 
     // mergeTickets re-parents activity_logs and tasks through the raw connection.
@@ -97,9 +113,14 @@ describe('TicketsService', () => {
       { getSetting: jest.fn().mockResolvedValue(null) } as any, // crmSettings
       connection as any, // connection — merge re-parents activity/tasks through it
       { assertValid: jest.fn().mockResolvedValue(undefined) } as any, // writeValidator
+      { next: jest.fn().mockResolvedValue('TKT-00001') } as any, // ticketNumbers
+      { emit: jest.fn() } as any, // events
       undefined,
       undefined,
-      { canAccessRecord: jest.fn().mockResolvedValue(true) } as any,
+      {
+        canAccessRecord: jest.fn().mockResolvedValue(true),
+        canPerformAction: jest.fn().mockResolvedValue({ allowed: true }),
+      } as any,
     );
     jest
       .spyOn(service as any, 'validateTenantReferences')
@@ -114,16 +135,56 @@ describe('TicketsService', () => {
 
       const result = await service.create(dto as any);
 
-      expect(repository.generateTicketNumber).toHaveBeenCalled();
       expect(repository.create).toHaveBeenCalledWith(
         expect.objectContaining({
           ticketNumber: 'TKT-00001',
           isSlaBreached: false,
-          timeSpentSeconds: 0,
+          reopenCount: 0,
         }),
         undefined,
       );
       expect(result.ticketNumber).toBe('TKT-00001');
+    });
+
+    /**
+     * The flag the assignment engine reads. Without it a created ticket looks
+     * deliberately owned by whoever opened it — the repository defaults
+     * `ownerId` to the creator — and routing never runs.
+     */
+    it('should mark the owner as implicit when nobody picked one', async () => {
+      repository.create.mockResolvedValue(createTicket());
+
+      await service.create({ ...createTicketDto(), ownerId: '' } as any);
+
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ ownerAssignedExplicitly: false }),
+        undefined,
+      );
+    });
+
+    it('should mark the owner as explicit when a human picked one', async () => {
+      repository.create.mockResolvedValue(createTicket());
+
+      await service.create({
+        ...createTicketDto(),
+        ownerId: '60d0fe4f5311236168a109cd',
+      } as any);
+
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ ownerAssignedExplicitly: true }),
+        undefined,
+      );
+    });
+
+    it('should fall back to the tenant default status', async () => {
+      repository.create.mockResolvedValue(createTicket());
+
+      await service.create({ ...createTicketDto(), statusId: '' } as any);
+
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ statusId: 'status_new' }),
+        undefined,
+      );
     });
 
     it('should emit automation event after creation', async () => {
@@ -505,52 +566,140 @@ describe('TicketsService', () => {
       expect(result?.subject).toBe('Updated subject');
     });
 
-    it('should block reopening terminal status without allowReopen flag', async () => {
-      const existing = createTicket({ statusId: 'resolved' });
-      repository.findOne.mockResolvedValue(existing);
+    /**
+     * A dedicated 409 rather than a generic 400, because the client acts on it:
+     * the ticket UI turns this into a "Reopen this ticket?" confirmation and
+     * retries. While it was a plain BadRequest the web never handled it and
+     * showed a success toast over the rejected write.
+     */
+    it('should refuse reopening with a confirmable error code', async () => {
+      repository.findOne.mockResolvedValue(
+        createTicket({ statusId: 'resolved' }),
+      );
       ticketSettingsService.findStatusById
-        .mockResolvedValueOnce({ isTerminal: true, label: 'Resolved' }) // old
-        .mockResolvedValueOnce({ isTerminal: false, label: 'Open' }); // new
+        .mockResolvedValueOnce({
+          _id: 'resolved',
+          isTerminal: true,
+          label: 'Resolved',
+        })
+        .mockResolvedValueOnce({
+          _id: 'open',
+          isTerminal: false,
+          label: 'Open',
+        });
 
       await expect(
         service.update('ticket_1', { statusId: 'open' } as any),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toMatchObject({
+        errorCode: TICKET_ERRORS.REOPEN_NOT_CONFIRMED,
+        status: HttpStatus.CONFLICT,
+      });
     });
 
-    it('should allow reopening terminal status with allowReopen=true', async () => {
-      const existing = createTicket({ statusId: 'resolved' });
-      repository.findOne.mockResolvedValue(existing);
+    it('should clear the terminal stamps and count the reopen', async () => {
+      repository.findOne.mockResolvedValue(
+        createTicket({ statusId: 'resolved', reopenCount: 2 } as any),
+      );
       repository.update.mockResolvedValue(createTicket({ statusId: 'open' }));
       ticketSettingsService.findStatusById
-        .mockResolvedValueOnce({ isTerminal: true, label: 'Resolved' })
-        .mockResolvedValueOnce({ isTerminal: false, label: 'Open' });
+        .mockResolvedValueOnce({
+          _id: 'resolved',
+          isTerminal: true,
+          label: 'Resolved',
+        })
+        .mockResolvedValueOnce({
+          _id: 'open',
+          isTerminal: false,
+          label: 'Open',
+        });
 
-      const result = await service.update('ticket_1', {
+      await service.update('ticket_1', {
         statusId: 'open',
         allowReopen: true,
       } as any);
 
-      expect(result?.statusId).toBe('open');
-    });
-
-    it('should auto-set resolvedAt/closedAt when transitioning to terminal status', async () => {
-      const existing = createTicket({ statusId: 'open' });
-      repository.findOne.mockResolvedValue(existing);
-      repository.update.mockResolvedValue(createTicket({ statusId: 'closed' }));
-      ticketSettingsService.findStatusById
-        .mockResolvedValueOnce({ isTerminal: false, label: 'Open' })
-        .mockResolvedValueOnce({ isTerminal: true, label: 'Closed' });
-
-      await service.update('ticket_1', { statusId: 'closed' } as any);
-
+      // Leaving the stamps behind is what made a reopened ticket still count as
+      // resolved in every metric and stay out of its owner's open work.
       expect(repository.update).toHaveBeenCalledWith(
         'ticket_1',
         expect.objectContaining({
-          resolvedAt: expect.any(Date),
-          closedAt: expect.any(Date),
+          resolvedAt: null,
+          closedAt: null,
+          resolutionCodeId: null,
+          reopenCount: 3,
+          reopenedAt: expect.any(Date),
         }),
         undefined,
       );
+    });
+
+    /**
+     * Resolved and Closed are different outcomes. Stamping both on entry to
+     * either made time-to-resolve identical to time-to-close by construction.
+     */
+    it('should stamp only resolvedAt when entering a resolved status', async () => {
+      repository.findOne.mockResolvedValue(createTicket({ statusId: 'open' }));
+      repository.update.mockResolvedValue(
+        createTicket({ statusId: 'resolved' }),
+      );
+      ticketSettingsService.findStatusById
+        .mockResolvedValueOnce({
+          _id: 'open',
+          isTerminal: false,
+          label: 'Open',
+        })
+        .mockResolvedValueOnce({
+          _id: 'resolved',
+          isTerminal: true,
+          terminalKind: 'resolved',
+          label: 'Resolved',
+        });
+
+      await service.update('ticket_1', { statusId: 'resolved' } as any);
+
+      const [, payload] = repository.update.mock.calls[0];
+      expect(payload.resolvedAt).toEqual(expect.any(Date));
+      expect(payload.closedAt).toBeUndefined();
+    });
+
+    it('should stamp only closedAt when closing a ticket that was never resolved', async () => {
+      repository.findOne.mockResolvedValue(createTicket({ statusId: 'open' }));
+      repository.update.mockResolvedValue(createTicket({ statusId: 'closed' }));
+      ticketSettingsService.findStatusById
+        .mockResolvedValueOnce({
+          _id: 'open',
+          isTerminal: false,
+          label: 'Open',
+        })
+        .mockResolvedValueOnce({
+          _id: 'closed',
+          isTerminal: true,
+          terminalKind: 'closed',
+          label: 'Closed',
+        });
+
+      await service.update('ticket_1', { statusId: 'closed' } as any);
+
+      // Spam, a duplicate, a customer who went quiet: closing must not
+      // fabricate a resolution that never happened.
+      const [, payload] = repository.update.mock.calls[0];
+      expect(payload.closedAt).toEqual(expect.any(Date));
+      expect(payload.resolvedAt).toBeUndefined();
+    });
+
+    it('should refuse a status that is not in this tenant', async () => {
+      repository.findOne.mockResolvedValue(createTicket({ statusId: 'open' }));
+      ticketSettingsService.findStatusById
+        .mockResolvedValueOnce({
+          _id: 'open',
+          isTerminal: false,
+          label: 'Open',
+        })
+        .mockResolvedValueOnce(null);
+
+      await expect(
+        service.update('ticket_1', { statusId: 'someone_elses' } as any),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should emit automation event on field update', async () => {

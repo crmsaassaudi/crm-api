@@ -2,9 +2,12 @@ import {
   IsString,
   IsOptional,
   IsBoolean,
+  IsInt,
   IsMongoId,
   MaxLength,
+  Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { CreateTicketDto } from './create-ticket.dto';
 
@@ -33,4 +36,19 @@ export class UpdateTicketDto extends PartialType(CreateTicketDto) {
   @IsBoolean()
   @IsOptional()
   allowReopen?: boolean;
+
+  /**
+   * The document version the client last read.
+   *
+   * Two agents on one ticket is the normal case in a contact centre, and
+   * without this the second save silently overwrote the first. Optional
+   * because server-side callers (automation, the SLA projector) write disjoint
+   * fields and hold no read to compare against; every client sends it.
+   */
+  @ApiPropertyOptional({ description: 'Version read by the client (__v)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  version?: number;
 }

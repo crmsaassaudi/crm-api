@@ -1687,19 +1687,23 @@ export class ConversationRepository {
   async projectSlaState(
     conversationId: string,
     state: {
-      slaDueAt: Date | null;
-      slaDueMetric: string | null;
-      breachedAt?: Date;
+      slaDueAt?: Date | null;
+      slaDueMetric?: string | null;
+      /** A date marks a breach; `null` clears the flag on reopen. */
+      breachedAt?: Date | null;
     },
   ): Promise<void> {
-    const set: Record<string, unknown> = {
-      slaDueAt: state.slaDueAt,
-      slaDueMetric: state.slaDueMetric,
-    };
-    if (state.breachedAt) {
-      set.slaBreached = true;
+    // Key-by-key: the engine records a policy id, a deadline and a breach on
+    // different occasions, and writing the whole shape every time would blank
+    // the deadline each time one of the others was recorded.
+    const set: Record<string, unknown> = {};
+    if ('slaDueAt' in state) set.slaDueAt = state.slaDueAt;
+    if ('slaDueMetric' in state) set.slaDueMetric = state.slaDueMetric;
+    if ('breachedAt' in state) {
+      set.slaBreached = state.breachedAt !== null;
       set.slaBreachedAt = state.breachedAt;
     }
+    if (Object.keys(set).length === 0) return;
     await this.model.updateOne({ _id: conversationId }, { $set: set }).exec();
   }
 

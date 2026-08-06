@@ -3,6 +3,8 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { OmniEvents } from '../domain/omni-events';
+import { SlaEvents } from '../../sla-policies/clock/sla-events';
+import type { SlaBreachedEvent } from '../../sla-policies/clock/sla-events';
 import type {
   ConversationAssignedEvent,
   ConversationCreatedEvent,
@@ -76,9 +78,14 @@ export class OmniReportingProjectionListener {
     await this.increment(event, { outboundMessageCount: 1 });
   }
 
-  @OnEvent(OmniEvents.CONVERSATION_SLA_BREACHED, { async: true })
-  async onSlaBreached(event: any) {
-    await this.increment(event, { slaBreachedCount: 1 });
+  /** Conversation breaches only — the ticket report counts its own. */
+  @OnEvent(SlaEvents.BREACHED, { async: true })
+  async onSlaBreached(event: SlaBreachedEvent & Record<string, any>) {
+    if (event.subjectType !== 'conversation') return;
+    await this.increment(
+      { ...event, conversationId: event.subjectId },
+      { slaBreachedCount: 1 },
+    );
   }
 
   private async increment(event: any, inc: MetricIncrement): Promise<void> {

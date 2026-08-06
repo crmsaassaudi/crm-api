@@ -4,7 +4,6 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
 import Redis from 'ioredis';
-import { ulid } from 'ulid';
 
 import {
   BaseImportProcessor,
@@ -34,6 +33,8 @@ import {
   TICKET_IMPORT_ARRAY_FIELDS,
 } from '../tickets.constants';
 import { AutomationOutboxService } from '../../automation-rules/events/automation-outbox.service';
+import { COLLECTIONS } from '../../common/persistence/collections';
+import { TicketNumberService } from '../ticket-number.service';
 
 const TICKET_IMPORT_CONFIG: ImportModuleConfig = {
   module: 'ticket',
@@ -41,41 +42,58 @@ const TICKET_IMPORT_CONFIG: ImportModuleConfig = {
   mappableFields: TICKET_IMPORT_MAPPABLE_FIELDS,
   requiredFields: ['subject'],
   arrayFields: TICKET_IMPORT_ARRAY_FIELDS,
-  dedupMatchingFields: ['externalId', 'ticketCode'],
+  // `ticketNumber` is the ticket's natural key and is unique per tenant, so it
+  // is the only thing a re-import can idempotently match on. The previous
+  // config matched on `externalId` and `ticketCode` — neither of which is a
+  // ticket field nor a mappable column — so `skip` and `overwrite` could never
+  // match anything and every import behaved as create-only.
+  dedupMatchingFields: ['ticketNumber'],
   dedupPolicies: ['skip', 'overwrite', 'create_new'],
   referenceFields: [
+    // Names come from COLLECTIONS, not from string literals: these are raw
+    // driver reads, so a misspelling resolves to an empty cache rather than an
+    // error. See common/persistence/collections.ts.
     {
       entityField: 'typeId',
-      collection: 'tickettypes',
+      collection: COLLECTIONS.ticketTypes,
       lookupFields: ['name', 'apiName'],
       tenantScoped: true,
       required: true,
     },
     {
       entityField: 'statusId',
-      collection: 'ticketstatuses',
-      lookupFields: ['name', 'apiName'],
+      collection: COLLECTIONS.ticketStatuses,
+      lookupFields: ['label', 'apiName'],
       tenantScoped: true,
       required: true,
     },
     {
       entityField: 'sourceId',
-      collection: 'ticketsources',
+      collection: COLLECTIONS.ticketSources,
       lookupFields: ['name', 'apiName'],
       tenantScoped: true,
       required: false,
     },
     {
       entityField: 'ownerId',
-      collection: 'users',
+      collection: COLLECTIONS.users,
       lookupFields: ['email', 'firstName'],
       tenantScoped: false,
       required: false,
     },
     {
       entityField: 'groupId',
-      collection: 'groups',
+      collection: COLLECTIONS.groups,
       lookupFields: ['name'],
+      tenantScoped: true,
+      required: false,
+    },
+    // A ticket with no customer is not a support case. `contactId` was not
+    // mappable at all, so every imported ticket landed unattached.
+    {
+      entityField: 'contactId',
+      collection: COLLECTIONS.contacts,
+      lookupFields: ['emails', 'phones', 'externalId'],
       tenantScoped: true,
       required: false,
     },
@@ -107,6 +125,8 @@ export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobDa
 
   private readonly storage: ImportStorageService;
   private readonly reportService: ImportReportService;
+  /** Ticket numbers reserved for the current batch, keyed by row number. */
+  private readonly reservedNumbers = new Map<number, string>();
 
   constructor(
     @InjectModel(TicketSchemaClass.name)
@@ -120,6 +140,7 @@ export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobDa
     private readonly importJobModel: Model<ImportJobDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly tagsService: TagsService,
+    private readonly ticketNumbers: TicketNumberService,
   ) {
     super();
     this.cls = cls;
@@ -228,15 +249,33 @@ export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobDa
   }
 
   /**
-   * Batch-wide resolution of raw "tags" CSV names → catalog Tag ids.
-   * Collects every unique name across the whole batch and resolves them in
-   * a single call, so a name repeated across many rows only creates (or
-   * looks up) one catalog Tag instead of racing per row.
+   * Per-batch prep: resolve tag names to catalog ids, and reserve the batch's
+   * ticket numbers.
+   *
+   * Both are batch-wide on purpose. A tag name repeated across many rows
+   * resolves once instead of racing per row, and the numbers come from one
+   * atomic counter increment instead of one per inserted ticket.
    */
   protected async beforeBuildOps(
     rows: MappedRow[],
-    _data: TicketImportJobData,
+    data: TicketImportJobData,
   ): Promise<void> {
+    await this.resolveTagNames(rows);
+
+    const needNumbers = rows.filter((row) => !row.fields.ticketNumber);
+    this.reservedNumbers.clear();
+    if (needNumbers.length > 0) {
+      const numbers = await this.ticketNumbers.reserve(
+        data.tenantId,
+        needNumbers.length,
+      );
+      needNumbers.forEach((row, index) =>
+        this.reservedNumbers.set(row.row, numbers[index]),
+      );
+    }
+  }
+
+  private async resolveTagNames(rows: MappedRow[]): Promise<void> {
     const names = new Set<string>();
     for (const row of rows) {
       for (const name of row.arrayFields.tags ?? []) names.add(name);
@@ -259,14 +298,9 @@ export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobDa
   }
 
   protected extractDedupValues(row: MappedRow, field: string): string[] {
-    switch (field) {
-      case 'externalId':
-        return row.fields.externalId ? [row.fields.externalId] : [];
-      case 'ticketCode':
-        return row.fields.ticketCode ? [row.fields.ticketCode] : [];
-      default:
-        return [];
-    }
+    if (field !== 'ticketNumber') return [];
+    const value = String(row.fields.ticketNumber ?? '').trim();
+    return value ? [value] : [];
   }
 
   protected buildInsert(
@@ -275,8 +309,12 @@ export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobDa
     now: Date,
     resolvedRefs: Record<string, string>,
   ): Record<string, any> {
-    // Auto-generate ticket number using ULID for uniqueness.
-    const ticketNumber = `TKT-${ulid().slice(-8)}`;
+    // A file that carries its own numbers (a migration off another helpdesk)
+    // keeps them; everything else draws from the same per-tenant counter the
+    // API uses, reserved for the whole batch in `beforeBuildOps`.
+    const ticketNumber =
+      String(mapped.fields.ticketNumber ?? '').trim() ||
+      this.reservedNumbers.get(mapped.row);
 
     return {
       ...mapped.fields,
@@ -285,9 +323,11 @@ export class TicketImportProcessor extends BaseImportProcessor<TicketImportJobDa
       tags: mapped.arrayFields.tags ?? [],
       priority: mapped.fields.priority || 'MEDIUM',
       isSlaBreached: false,
+      reopenCount: 0,
       tenantId: data.tenantId,
       createdById: data.userId,
       updatedById: data.userId,
+      ownerAssignedExplicitly: Boolean(resolvedRefs.ownerId),
       createdAt: now,
       updatedAt: now,
     };

@@ -40,8 +40,8 @@ export class TicketMapper {
     // Assignment & Collaboration
     domainEntity.groupId = raw.groupId?.toString();
     domainEntity.ownerId = raw.ownerId?.toString();
+    domainEntity.ownerAssignedExplicitly = raw.ownerAssignedExplicitly ?? false;
     domainEntity.orgUnitId = raw.orgUnitId?.toString() ?? null;
-    domainEntity.watchers = raw.watchers?.map((w) => w.toString());
     domainEntity.statusId = raw.statusId?.toString();
 
     // SLA Management
@@ -53,21 +53,32 @@ export class TicketMapper {
     domainEntity.slaResumedAt = raw.slaResumedAt;
     domainEntity.slaPausedSeconds = raw.slaPausedSeconds ?? 0;
 
+    // Escalation
+    domainEntity.escalationLevel = raw.escalationLevel ?? null;
+    domainEntity.escalatedAt = raw.escalatedAt;
+    domainEntity.escalatedToId = raw.escalatedToId?.toString() ?? null;
+
     // Metrics & Resolution
     domainEntity.resolutionCodeId = raw.resolutionCodeId?.toString();
     domainEntity.resolutionNotes = raw.resolutionNotes;
     domainEntity.csatScore = raw.csatScore;
-    domainEntity.timeSpentSeconds = raw.timeSpentSeconds;
+    domainEntity.csatComment = raw.csatComment;
+    domainEntity.csatSubmittedAt = raw.csatSubmittedAt;
 
     // Timestamps
     domainEntity.firstRespondedAt = raw.firstRespondedAt;
+    domainEntity.firstRespondedById =
+      raw.firstRespondedById?.toString() ?? null;
     domainEntity.resolvedAt = raw.resolvedAt;
     domainEntity.closedAt = raw.closedAt;
+    domainEntity.reopenCount = raw.reopenCount ?? 0;
+    domainEntity.reopenedAt = raw.reopenedAt;
     domainEntity.createdAt = raw.createdAt;
     domainEntity.updatedAt = raw.updatedAt;
     domainEntity.deletedAt = raw.deletedAt;
     domainEntity.createdById = raw.createdById?.toString();
     domainEntity.updatedById = raw.updatedById?.toString();
+    domainEntity.version = (raw as any).__v;
 
     // Populated virtuals
     if ((raw as any).owner) {
@@ -89,6 +100,8 @@ export class TicketMapper {
         color: s.color,
         isDefault: s.isDefault,
         isTerminal: s.isTerminal,
+        terminalKind: s.terminalKind ?? null,
+        pausesSla: s.pausesSla ?? false,
       };
     }
     if ((raw as any).ticketType) {
@@ -157,8 +170,11 @@ export class TicketMapper {
     // Assignment & Collaboration
     persistenceEntity.groupId = domainEntity.groupId;
     persistenceEntity.ownerId = domainEntity.ownerId;
+    if (domainEntity.ownerAssignedExplicitly !== undefined) {
+      persistenceEntity.ownerAssignedExplicitly =
+        domainEntity.ownerAssignedExplicitly;
+    }
     persistenceEntity.orgUnitId = domainEntity.orgUnitId;
-    persistenceEntity.watchers = domainEntity.watchers;
     persistenceEntity.statusId = domainEntity.statusId;
 
     // SLA Management
@@ -174,12 +190,40 @@ export class TicketMapper {
     persistenceEntity.resolutionCodeId = domainEntity.resolutionCodeId;
     persistenceEntity.resolutionNotes = domainEntity.resolutionNotes;
     persistenceEntity.csatScore = domainEntity.csatScore;
-    persistenceEntity.timeSpentSeconds = domainEntity.timeSpentSeconds;
 
     // Timestamps
+    //
+    // `!== undefined` on the terminal stamps and the reopen counter: reopening
+    // writes explicit nulls to clear `resolvedAt`/`closedAt`, and a truthy
+    // check would drop them — leaving a live ticket still stamped resolved,
+    // which is what every resolution-time metric reads.
     persistenceEntity.firstRespondedAt = domainEntity.firstRespondedAt;
-    persistenceEntity.resolvedAt = domainEntity.resolvedAt;
-    persistenceEntity.closedAt = domainEntity.closedAt;
+    if (domainEntity.firstRespondedById !== undefined) {
+      persistenceEntity.firstRespondedById = domainEntity.firstRespondedById;
+    }
+    if (domainEntity.resolvedAt !== undefined) {
+      persistenceEntity.resolvedAt = domainEntity.resolvedAt;
+    }
+    if (domainEntity.closedAt !== undefined) {
+      persistenceEntity.closedAt = domainEntity.closedAt;
+    }
+    if (domainEntity.reopenCount !== undefined) {
+      persistenceEntity.reopenCount = domainEntity.reopenCount;
+    }
+    if (domainEntity.reopenedAt !== undefined) {
+      persistenceEntity.reopenedAt = domainEntity.reopenedAt;
+    }
+
+    // Escalation
+    if (domainEntity.escalationLevel !== undefined) {
+      persistenceEntity.escalationLevel = domainEntity.escalationLevel;
+    }
+    if (domainEntity.escalatedAt !== undefined) {
+      persistenceEntity.escalatedAt = domainEntity.escalatedAt;
+    }
+    if (domainEntity.escalatedToId !== undefined) {
+      persistenceEntity.escalatedToId = domainEntity.escalatedToId;
+    }
 
     return persistenceEntity;
   }

@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, FilterQuery, Types } from 'mongoose';
+import { BusinessException } from '../../../../../common/exceptions/business.exception';
+import { TICKET_ERRORS } from '../../../../constants/ticket-error-codes';
 import {
   TicketSchemaClass,
   TicketSchemaDocument,
@@ -348,24 +350,44 @@ export class TicketRepository extends BaseDocumentRepository<
     return doc ? this.mapToDomain(doc) : null;
   }
 
-  async generateTicketNumber(): Promise<string> {
-    const tenantId = this.cls.get('tenantId');
-    if (!tenantId) {
-      throw new Error('Tenant context is required to generate ticket number');
+  /**
+   * `update()` guarded by the document version the caller last read.
+   *
+   * Two agents working the same ticket is the normal case in a contact centre,
+   * and without this the second write silently overwrote the first: the base
+   * repository only applies its `__v` compare-and-set when the payload happens
+   * to carry `__v`, and neither the DTO nor the web ever sent one.
+   *
+   * `version` undefined means the caller did not read a version (server-side
+   * callers such as automation and the SLA projector), and the write proceeds
+   * unguarded — those paths write disjoint fields.
+   */
+  async updateWithVersion(
+    id: string,
+    payload: Record<string, any>,
+    version: number | undefined,
+    session?: ClientSession,
+  ): Promise<Ticket> {
+    if (version === undefined) {
+      return this.update(id, payload as any, session);
     }
 
-    // Use an atomic counter via findOneAndUpdate to prevent race conditions.
-    // The counters collection stores per-tenant sequence numbers.
-    const counterResult = await this.model.db
-      .collection('counters')
-      .findOneAndUpdate(
-        { _id: `ticket_seq:${tenantId}` } as any,
-        { $inc: { seq: 1 } },
-        { upsert: true, returnDocument: 'after' },
+    const current = await this.model
+      .findOne(this.applyTenantFilter({ _id: id, deletedAt: null }))
+      .select({ __v: 1 })
+      .lean()
+      .exec();
+    if (!current) {
+      throw new NotFoundException(`Ticket ${id} not found`);
+    }
+    if ((current as any).__v !== version) {
+      throw new BusinessException(
+        TICKET_ERRORS.VERSION_CONFLICT,
+        HttpStatus.CONFLICT,
+        'This ticket was changed by someone else while you were editing it. Reload to see the latest version.',
       );
-
-    const seq = (counterResult as any)?.seq ?? 1;
-    return `TKT-${seq.toString().padStart(5, '0')}`;
+    }
+    return this.update(id, { ...payload, __v: version } as any, session);
   }
 
   async addTagsToTickets(
