@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { OmniPayload } from '../domain/omni-payload';
+import {
+  OmniPayload,
+  isPhoneIdentityChannel,
+  resolvePayloadPhone,
+} from '../domain/omni-payload';
 import { OmniEvents } from '../domain/omni-events';
 import { ContactsService } from '../../contacts/contacts.service';
 import { TenantsService } from '../../tenants/tenants.service';
@@ -132,8 +136,18 @@ export class ShadowContactService {
       if (emailMatchId) return emailMatchId;
     }
 
-    // 2. Cross-channel match on a phone/email carried in the payload metadata.
-    if (identityConfig.autoMergeShadowContact) {
+    // 2. Cross-channel match on the phone/email this payload carries.
+    //
+    //    `autoMergeShadowContact` governs matching on metadata the provider
+    //    volunteered — a guess a tenant may prefer not to act on. It does NOT
+    //    govern a channel whose sender id IS the phone number: there the match is
+    //    an identity, not an inference, and skipping it would send a duplicate
+    //    phone into `create`, where the identity unique index rejects it and the
+    //    inbound message ends up with no contact at all.
+    if (
+      identityConfig.autoMergeShadowContact ||
+      isPhoneIdentityChannel(payload.channelType)
+    ) {
       const mergedId = await this.tryAutoMerge(payload);
       if (mergedId) return mergedId;
     }
@@ -219,7 +233,7 @@ export class ShadowContactService {
     // against the stored form simply never matched for any number containing a
     // space, so auto-merge quietly did nothing on most channels and every
     // returning customer got a fresh shadow contact.
-    const rawPhone = payload.metadata?.phone;
+    const rawPhone = resolvePayloadPhone(payload);
     const phone = rawPhone
       ? normalizePhone(
           rawPhone,
@@ -310,14 +324,30 @@ export class ShadowContactService {
 
     const emailsArray =
       payload.channelType === 'email' && payload.senderId
-        ? [payload.senderId.toLowerCase()]
+        ? [normalizeEmail(payload.senderId)]
         : [];
+
+    // The sender's phone, stored as a phone — not only as `omni:whatsapp:<msisdn>`.
+    // An omni identity is `channel:senderId`, which can never compare equal to the
+    // E.164 phone identity the rest of the product dedups on, so a WhatsApp contact
+    // written without this line is unreachable by every later phone lookup: the
+    // duplicate it creates can no longer be found, let alone merged.
+    const rawPhone = resolvePayloadPhone(payload) ?? enrichedProfile.phone;
+    const phonesArray = rawPhone
+      ? [
+          normalizePhone(
+            rawPhone,
+            await this.getDefaultCountryCode(payload.tenantId),
+          ),
+        ].filter(Boolean)
+      : [];
 
     const contact = await this.contactsService.create({
       tenantId: payload.tenantId,
       firstName,
       lastName,
       emails: emailsArray,
+      phones: phonesArray,
       status: 'new',
       lifecycleStage: 'lead',
       source: this.toSchemaChannelType(payload.channelType),

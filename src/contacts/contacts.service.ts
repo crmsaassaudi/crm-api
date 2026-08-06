@@ -35,6 +35,8 @@ import {
   CONTACT_EXPORT_QUEUE,
   CONTACT_IMPORT_QUEUE,
   DEFAULT_LIFECYCLE_STAGES,
+  IMPORT_CUSTOM_FIELD_PREFIX,
+  IMPORT_MAPPABLE_FIELDS,
   IMPORT_MAX_FILE_BYTES,
   MAX_BULK_TAG_SIZE,
 } from './contacts.constants';
@@ -56,7 +58,10 @@ import {
   ImportStorageFactory,
   ImportStorageService,
 } from '../common/import/import-storage.service';
-import { ImportTenantSettings } from './contact-import.processor';
+import {
+  ImportCatalog,
+  ImportTenantSettings,
+} from './contact-import.processor';
 import { createReadStream } from 'fs';
 import { unlink } from 'fs/promises';
 import {
@@ -73,6 +78,8 @@ import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { TagsService } from '../tags/tags.service';
 import { AuthorizationService } from '../common/permissions/authorization.service';
 import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
+import { normalizePhones } from '../common/identity/identity-normalizer';
+import { ContactSegmentsService } from './segments/contact-segments.service';
 import { randomUUID } from 'crypto';
 import {
   UserSchemaClass,
@@ -123,6 +130,7 @@ export class ContactsService {
     private readonly userModel: Model<UserSchemaDocument>,
     private readonly writeValidator: RecordWriteValidator,
     private readonly principalGroups: PrincipalGroupsService,
+    private readonly segments: ContactSegmentsService,
   ) {
     this.exportStorage = this.exportStorageFactory.create('contacts');
     this.importStorage = this.importStorageFactory.create('contacts');
@@ -130,6 +138,20 @@ export class ContactsService {
 
   private readonly exportStorage: ExportStorageService;
   private readonly importStorage: ImportStorageService;
+
+  /**
+   * Tenant dialling code, resolved once per write.
+   *
+   * `contact_identity` is a tenant setting, so this is the only layer that can
+   * reach it — the DTO transform that used to normalise phones could not, and
+   * stored the national form the user typed while the import worker stored E.164.
+   */
+  private async normalizePhoneInput(
+    phones: string[] | undefined,
+  ): Promise<string[] | undefined> {
+    if (phones === undefined) return undefined;
+    return normalizePhones(phones, await this.resolveDefaultCountryCode());
+  }
 
   async create(data: CreateContactDto): Promise<Contact> {
     await this.writeValidator.assertValid(
@@ -142,7 +164,7 @@ export class ContactsService {
     await this.assertMayTransferOwnership(null, ownerId);
     const orgUnitId = await this.resolveOwnerOrgUnit(ownerId);
     const emails = data.emails ?? [];
-    const phones = data.phones ?? [];
+    const phones = (await this.normalizePhoneInput(data.phones)) ?? [];
 
     await this.assertIdentityIsUnique({ emails, phones });
 
@@ -214,6 +236,11 @@ export class ContactsService {
       // should not pay for the settings read.
       __defaultCountryCode: filter?.search
         ? await this.resolveDefaultCountryCode()
+        : undefined,
+      // Compiled once per request. Composed with the list's own filters rather
+      // than replacing them, so "this segment, owned by me" is one query.
+      __segmentFilter: filter?.segmentId
+        ? await this.segments.buildMembershipFilter(filter.segmentId)
         : undefined,
     };
 
@@ -306,7 +333,7 @@ export class ContactsService {
     }
     const ownerId = data.ownerId;
     const emails = data.emails;
-    const phones = data.phones;
+    const phones = await this.normalizePhoneInput(data.phones);
 
     if (emails !== undefined || phones !== undefined) {
       await this.assertIdentityIsUnique({ emails, phones, excludeId: id });
@@ -851,7 +878,17 @@ export class ContactsService {
     };
   }
 
-  /** Apply the stage update with optimistic locking and default status resolution. */
+  /**
+   * Apply the stage update with optimistic locking and default status resolution.
+   *
+   * Wrapped in the automation outbox like every other Contact write. It was not,
+   * and the omission removed the single most valuable trigger a B2C tenant has:
+   * "lifecycle stage became Customer → send the welcome sequence" never fired,
+   * because a stage change reached the database without ever producing a
+   * `field_updated.Contact` event. The internal `contact.stage.changed` event has
+   * exactly one listener — the projector that writes `contact_stage_transitions`
+   * — and no bridge into the workflow engine.
+   */
   private async applyStageUpdate(
     id: string,
     contact: Contact,
@@ -862,21 +899,35 @@ export class ContactsService {
     const defaultStatus =
       sortedStatuses.find((status: any) => status.isDefault) ??
       sortedStatuses[0];
-    const updated = await this.repository.updateWithVersionCheck(
-      id,
-      contact.version ?? 0,
-      {
-        lifecycleStageId: stage.apiName,
-        ...(defaultStatus ? { statusId: defaultStatus.apiName } : {}),
-        ...(finalAccountId ? { accountId: finalAccountId } : {}),
-      } as any,
+
+    const changedFields = [
+      'lifecycleStageId',
+      ...(defaultStatus ? ['statusId'] : []),
+      ...(finalAccountId ? ['accountId'] : []),
+    ];
+
+    return this.automationOutbox.runWithEvent(
+      async (session) => {
+        const updated = await this.repository.updateWithVersionCheck(
+          id,
+          contact.version ?? 0,
+          {
+            lifecycleStageId: stage.apiName,
+            ...(defaultStatus ? { statusId: defaultStatus.apiName } : {}),
+            ...(finalAccountId ? { accountId: finalAccountId } : {}),
+          } as any,
+          session,
+        );
+        if (!updated) {
+          throw new ConflictException(
+            'Stage was updated concurrently by another user. Please reload and try again.',
+          );
+        }
+        return updated;
+      },
+      (updated) =>
+        this.buildAutomationEvent('field_updated', updated, changedFields),
     );
-    if (!updated) {
-      throw new ConflictException(
-        'Stage was updated concurrently by another user. Please reload and try again.',
-      );
-    }
-    return updated;
   }
 
   /** Record stage history, emit audit event, and optionally create a deal. */
@@ -1077,8 +1128,66 @@ export class ContactsService {
 
     await this.assertTagsExist(tags);
 
-    const result = await this.repository.addTagsToContacts(contactIds, tags);
-    // bulk_tagged: field-level diff (tags) already captured by audit_logs.
+    // Read the rows we are about to change, scoped — `addTagsToContacts` uses
+    // `updateMany`, which no audit hook and no automation outbox observes. The
+    // previous version relied on a comment claiming audit_logs already captured
+    // the diff; nothing wrote one, so tagging 500 customers left no trace and
+    // fired no workflow. "Tag added" is the most common B2C automation trigger
+    // there is.
+    const before = await this.repository.findByIds(contactIds);
+    if (before.length === 0) {
+      return { success: true, matchedCount: 0, modifiedCount: 0 };
+    }
+    const scopedIds = before.map((contact) => contact.id);
+
+    const { result, changed } = await this.automationOutbox.runWithEvents(
+      async (session) => {
+        const writeResult = await this.repository.addTagsToContacts(
+          scopedIds,
+          tags,
+          session,
+        );
+        const after = await this.repository.findByIds(scopedIds, session);
+        const afterById = new Map(
+          after.map((contact) => [contact.id, contact]),
+        );
+
+        // Only contacts that actually gained a tag: `$addToSet` is a no-op for
+        // one that already had it, and an event for a change that did not happen
+        // is how a workflow fires twice for one customer.
+        const changedPairs = before
+          .map((previous) => ({
+            previous,
+            updated: afterById.get(previous.id),
+          }))
+          .filter(
+            (pair): pair is { previous: Contact; updated: Contact } =>
+              !!pair.updated &&
+              (pair.updated.tags?.length ?? 0) >
+                (pair.previous.tags?.length ?? 0),
+          );
+
+        return {
+          result: { result: writeResult, changed: changedPairs },
+          payloads: changedPairs
+            .map(({ updated }) =>
+              this.buildAutomationEvent('field_updated', updated, ['tags']),
+            )
+            .filter((payload): payload is AutomationEventPayload => !!payload),
+        };
+      },
+    );
+
+    for (const { previous, updated } of changed) {
+      this.entityAudit.emit({
+        entity: 'contact',
+        entityType: 'CONTACT',
+        entityId: previous.id,
+        kind: 'updated',
+        oldSnapshot: previous,
+        newSnapshot: updated,
+      });
+    }
 
     return {
       success: true,
@@ -1107,6 +1216,9 @@ export class ContactsService {
       // registry allow-list or a custom-field filter would be silently dropped
       // and the export would quietly cover more rows than the user selected.
       allowedCustomFieldKeys: await this.resolveCustomFieldKeys(params),
+      segmentFilter: params.segmentId
+        ? await this.segments.buildMembershipFilter(params.segmentId)
+        : undefined,
     });
 
     const filterSnapshot = buildContactExportSnapshot(params, restrictToOwner);
@@ -1338,7 +1450,7 @@ export class ContactsService {
   async startImport(
     dto: StartImportDto,
   ): Promise<{ jobId: string; status: 'queued' }> {
-    const mappedFields = this.validateImportMapping(dto.mapping);
+    const mappedFields = await this.validateImportMapping(dto.mapping);
     this.validateDedupConfig(dto.deduplication, mappedFields);
 
     await this.validateFileExists(dto.fileKey);
@@ -1346,6 +1458,11 @@ export class ContactsService {
     // 4. Snapshot tenant identity settings AT ENQUEUE TIME so the worker never
     //    queries crm_settings inside its hot loop (latency + consistency).
     const tenantSettings = await this.fetchImportTenantSettings();
+    // The vocabulary a file's text values resolve against — stage/status/source
+    // names, tag names, custom-field types. Snapshotted for the same reason as
+    // the settings above: the worker must not query per row, and a rename
+    // mid-import must not change how the rest of the file is interpreted.
+    const catalog = await this.buildImportCatalog();
 
     const tenantId = this.resolveTenantId();
     const userId = this.requireCurrentUserId();
@@ -1369,6 +1486,7 @@ export class ContactsService {
       estimatedRows: dto.estimatedRows,
       fileName: this.resolveImportFileName(dto),
       tenantSettings,
+      catalog,
     };
 
     // The checkpoint is part of every Contact batch transaction, so its durable
@@ -1480,21 +1598,44 @@ export class ContactsService {
     return doc;
   }
 
-  private validateImportMapping(
+  private async validateImportMapping(
     mapping: Record<string, string> | undefined,
-  ): Set<string> {
+  ): Promise<Set<string>> {
     const mappedFields = new Set(Object.values(mapping ?? {}));
     if (!mappedFields.has('firstName') || !mappedFields.has('lastName')) {
       throw new BadRequestException(
         'mapping must include both firstName and lastName',
       );
     }
+
+    // Every mapped target must be a real field. Unknown targets used to be
+    // dropped in the worker, so a mis-mapped column produced a clean-looking
+    // import that silently discarded the data in it.
+    const declaredCustomKeys = new Set(
+      (await this.customFields.getByModule('Contact')).map(
+        (field) => field.internalKey,
+      ),
+    );
+    const unknown = [...mappedFields].filter((field) => {
+      if (field.startsWith(IMPORT_CUSTOM_FIELD_PREFIX)) {
+        return !declaredCustomKeys.has(
+          field.slice(IMPORT_CUSTOM_FIELD_PREFIX.length),
+        );
+      }
+      return !(IMPORT_MAPPABLE_FIELDS as readonly string[]).includes(field);
+    });
+    if (unknown.length) {
+      throw new BadRequestException(
+        `Unknown mapping target(s): ${unknown.join(', ')}`,
+      );
+    }
+
     return mappedFields;
   }
 
   private validateDedupConfig(dedup: any, mappedFields: Set<string>): void {
     if (!dedup) return;
-    const allowed = new Set(['emails', 'phones']);
+    const allowed = new Set(['emails', 'phones', 'externalId']);
     const bad = dedup.matchingFields.filter((f: string) => !allowed.has(f));
     if (bad.length) {
       throw new BadRequestException(
@@ -1543,6 +1684,58 @@ export class ContactsService {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * The tenant vocabulary an import file's text is resolved against.
+   *
+   * A CSV column holds "Facebook Ads" or "Customer"; the database holds an
+   * apiName or a tag id. Built once per job, in request context, so the worker
+   * never queries settings per row.
+   *
+   * Keyed on the lower-cased label AND the lower-cased apiName, because a file
+   * exported from this product carries apiNames while a file a human typed
+   * carries labels, and both have to land.
+   */
+  private async buildImportCatalog(): Promise<ImportCatalog> {
+    const [lifecycle, sourceSettings, tags, customFields] = await Promise.all([
+      this.getContactLifecycle(),
+      this.settingsService.getSetting('contact_source'),
+      this.tagsService.findAll({ scope: 'Contact' }),
+      this.customFields.getByModule('Contact'),
+    ]);
+
+    const lifecycleStages: Record<string, string> = {};
+    const statuses: Record<string, string> = {};
+    for (const stage of lifecycle?.stages ?? []) {
+      for (const key of [stage.label, stage.name, stage.apiName]) {
+        if (key) lifecycleStages[String(key).toLowerCase()] = stage.apiName;
+      }
+      for (const status of stage.statuses ?? []) {
+        for (const key of [status.label, status.name, status.apiName]) {
+          if (key) statuses[String(key).toLowerCase()] = status.apiName;
+        }
+      }
+    }
+
+    const sources: Record<string, string> = {};
+    for (const source of sourceSettings?.sources ?? []) {
+      for (const key of [source.name, source.id]) {
+        if (key) sources[String(key).toLowerCase()] = String(source.id);
+      }
+    }
+
+    return {
+      lifecycleStages,
+      statuses,
+      sources,
+      tags: Object.fromEntries(
+        tags.map((tag) => [String(tag.name).toLowerCase(), String(tag.id)]),
+      ),
+      customFields: Object.fromEntries(
+        customFields.map((field) => [field.internalKey, field.fieldType]),
+      ),
+    };
   }
 
   private async fetchImportTenantSettings(): Promise<ImportTenantSettings> {

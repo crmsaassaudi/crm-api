@@ -11,6 +11,13 @@ export function buildContactExportQuery(
     restrictToOwner: boolean;
     currentUserId?: string;
     allowedCustomFieldKeys?: ReadonlySet<string>;
+    /**
+     * Segment membership, compiled at enqueue time. Resolved here rather than in
+     * the worker because a dynamic segment's definition can change between
+     * queuing an export and running it — the file must contain the audience the
+     * user pressed the button on.
+     */
+    segmentFilter?: Record<string, unknown>;
   },
 ): Record<string, unknown> {
   return {
@@ -20,6 +27,7 @@ export function buildContactExportQuery(
     __restrictToOwner: policy.restrictToOwner,
     __currentUserId: policy.currentUserId,
     __allowedCustomFieldKeys: policy.allowedCustomFieldKeys,
+    __segmentFilter: policy.segmentFilter,
   };
 }
 
@@ -32,6 +40,7 @@ export function buildContactExportSnapshot(
     filters: params.filters ?? [],
     search: params.search,
     lifecycleStage: params.lifecycleStage,
+    segmentId: params.segmentId,
     restrictToOwner,
   };
 }

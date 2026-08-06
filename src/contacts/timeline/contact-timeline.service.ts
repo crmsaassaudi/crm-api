@@ -3,6 +3,8 @@ import { InjectConnection } from '@nestjs/mongoose';
 import { Connection, Types } from 'mongoose';
 import { ClsService } from 'nestjs-cls';
 import { ContactRepository } from '../infrastructure/persistence/document/repositories/contact.repository';
+import { AuthzPermissionCacheService } from '../../common/permissions/authz-permission-cache.service';
+import { buildVisibilityClauses } from '../../common/permissions/visibility-scope';
 
 /** Sources a contact's history is scattered across. */
 export type TimelineSource =
@@ -33,6 +35,46 @@ export interface TimelineEntry {
 const SOURCE_LIMIT = 50;
 
 /**
+ * What a caller must hold to see each source, and which module's visibility
+ * scope its rows are filtered by.
+ *
+ * The feed reads five other modules' collections on the raw connection, which
+ * bypasses both `@RequirePermission` and the repository's `applyTenantFilter` —
+ * so it enforces the per-tab endpoints' own gates here. Consolidating seven tabs
+ * must not consolidate away their authorization.
+ *
+ * `scopeModule: null` means the rows carry no ownership of their own and are
+ * governed by the contact the caller already passed the ACL for.
+ */
+const SOURCE_AUTHZ: Record<
+  TimelineSource,
+  {
+    permission: { action: string; resource: string } | null;
+    scopeModule: string | null;
+  }
+> = {
+  activity: { permission: null, scopeModule: null },
+  note: { permission: null, scopeModule: null },
+  stage_change: { permission: null, scopeModule: null },
+  ticket: {
+    permission: { action: 'view', resource: 'tickets' },
+    scopeModule: 'Ticket',
+  },
+  deal: {
+    permission: { action: 'view', resource: 'deals' },
+    scopeModule: 'Deal',
+  },
+  task: {
+    permission: { action: 'view', resource: 'tasks' },
+    scopeModule: 'Task',
+  },
+  conversation: {
+    permission: { action: 'view', resource: 'omni_channel' },
+    scopeModule: 'Conversation',
+  },
+};
+
+/**
  * ContactTimelineService — one chronological answer to "what happened with this
  * person?".
  *
@@ -43,20 +85,14 @@ const SOURCE_LIMIT = 50;
  * the single most-used screen in a CRM — the unified customer history that
  * Salesforce, HubSpot, Zendesk and EspoCRM all lead with — did not exist.
  *
- * This is deliberately a QUERY-TIME fan-in rather than the `contact_timeline`
- * collection the audit recommends. The collection is the right end state: it is
- * append-only, indexable on `(tenantId, contactId, occurredAt)`, and partitionable
- * by month, which is what makes the feed viable at 100M contacts. But it needs a
- * listener per source plus a backfill of existing history, and until that lands
- * this service delivers the same API and the same user-visible result from the
- * data already there. The endpoint contract does not change when the collection
- * arrives — only what this method reads from.
+ * A QUERY-TIME fan-in, not a `contact_timeline` collection. That collection is
+ * the right end state at 100M contacts; the endpoint contract does not change
+ * when it arrives, only what this method reads from.
  *
- * The per-source caps are the honest limitation: this returns the most recent
- * `SOURCE_LIMIT` of each source, merged and trimmed, not a true global cursor.
- * A contact with 200 notes and 3 tickets will show all 3 tickets and the newest
- * 50 notes. `truncatedSources` reports exactly which sources were capped rather
- * than presenting a partial feed as complete.
+ * The per-source caps are the honest limitation: the most recent `SOURCE_LIMIT`
+ * of each source, merged and trimmed, not a true global cursor.
+ * `truncatedSources` reports which sources were capped rather than presenting a
+ * partial feed as complete.
  */
 @Injectable()
 export class ContactTimelineService {
@@ -65,6 +101,7 @@ export class ContactTimelineService {
   constructor(
     private readonly contacts: ContactRepository,
     private readonly cls: ClsService,
+    private readonly authzCache: AuthzPermissionCacheService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -79,6 +116,7 @@ export class ContactTimelineService {
     data: TimelineEntry[];
     truncatedSources: TimelineSource[];
     sourceCounts: Record<string, number>;
+    deniedSources: TimelineSource[];
     nextCursor?: string;
     hasNextPage: boolean;
   }> {
@@ -89,44 +127,39 @@ export class ContactTimelineService {
     if (!contact) throw new NotFoundException('Contact not found');
 
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-    const wanted = new Set<TimelineSource>(
+    const requested = new Set<TimelineSource>(
       options.sources && options.sources.length > 0
         ? options.sources
-        : [
-            'activity',
-            'note',
-            'ticket',
-            'deal',
-            'task',
-            'conversation',
-            'stage_change',
-          ],
+        : (Object.keys(SOURCE_AUTHZ) as TimelineSource[]),
     );
 
-    const tenantId = this.tenantId();
+    // Drop the sources this caller may not read, and say so: a feed that is
+    // silently short reads as "nothing happened", which is a different and worse
+    // answer than "you cannot see this part".
+    const granted = await this.grantedPermissions();
+    const deniedSources = [...requested].filter((source) => {
+      const rule = SOURCE_AUTHZ[source].permission;
+      return rule ? !granted.has(`${rule.resource}:${rule.action}`) : false;
+    });
+    const wanted = new Set(
+      [...requested].filter((source) => !deniedSources.includes(source)),
+    );
+
     const oid = new Types.ObjectId(contactId);
 
     const results = await Promise.all([
       wanted.has('activity')
-        ? this.fetchActivities(tenantId, contactId, options.before)
+        ? this.fetchActivities(contactId, options.before)
         : empty(),
-      wanted.has('note')
-        ? this.fetchNotes(tenantId, oid, options.before)
-        : empty(),
-      wanted.has('ticket')
-        ? this.fetchTickets(tenantId, oid, options.before)
-        : empty(),
-      wanted.has('deal')
-        ? this.fetchDeals(tenantId, oid, options.before)
-        : empty(),
-      wanted.has('task')
-        ? this.fetchTasks(tenantId, contactId, options.before)
-        : empty(),
+      wanted.has('note') ? this.fetchNotes(oid, options.before) : empty(),
+      wanted.has('ticket') ? this.fetchTickets(oid, options.before) : empty(),
+      wanted.has('deal') ? this.fetchDeals(oid, options.before) : empty(),
+      wanted.has('task') ? this.fetchTasks(contactId, options.before) : empty(),
       wanted.has('conversation')
-        ? this.fetchConversations(tenantId, oid, options.before)
+        ? this.fetchConversations(oid, options.before)
         : empty(),
       wanted.has('stage_change')
-        ? this.fetchStageTransitions(tenantId, oid, options.before)
+        ? this.fetchStageTransitions(oid, options.before)
         : empty(),
     ]);
 
@@ -165,6 +198,7 @@ export class ContactTimelineService {
       data,
       truncatedSources,
       sourceCounts,
+      deniedSources,
       hasNextPage,
       nextCursor:
         hasNextPage && data.length > 0
@@ -181,13 +215,11 @@ export class ContactTimelineService {
   // fields the feed renders — a timeline must never drag whole documents across.
 
   private async fetchActivities(
-    tenantId: string,
     contactId: string,
     before?: Date,
   ): Promise<TimelineEntry[]> {
-    const rows = await this.find('activity_logs', {
+    const rows = await this.find('activity_logs', 'activity', {
       filter: {
-        tenantId: toId(tenantId),
         targetType: 'contact',
         targetId: contactId,
         ...beforeDate('occurredAt', before),
@@ -208,13 +240,11 @@ export class ContactTimelineService {
   }
 
   private async fetchNotes(
-    tenantId: string,
     contactId: Types.ObjectId,
     before?: Date,
   ): Promise<TimelineEntry[]> {
-    const rows = await this.find('notes', {
+    const rows = await this.find('notes', 'note', {
       filter: {
-        tenantId: toId(tenantId),
         contactId,
         ...beforeDate('createdAt', before),
       },
@@ -235,13 +265,11 @@ export class ContactTimelineService {
   }
 
   private async fetchTickets(
-    tenantId: string,
     contactId: Types.ObjectId,
     before?: Date,
   ): Promise<TimelineEntry[]> {
-    const rows = await this.find('tickets', {
+    const rows = await this.find('tickets', 'ticket', {
       filter: {
-        tenantId: toId(tenantId),
         contactId,
         deletedAt: null,
         ...beforeDate('createdAt', before),
@@ -270,13 +298,11 @@ export class ContactTimelineService {
   }
 
   private async fetchDeals(
-    tenantId: string,
     contactId: Types.ObjectId,
     before?: Date,
   ): Promise<TimelineEntry[]> {
-    const rows = await this.find('deals', {
+    const rows = await this.find('deals', 'deal', {
       filter: {
-        tenantId: toId(tenantId),
         contactIds: contactId,
         deletedAt: null,
         ...beforeDate('createdAt', before),
@@ -305,13 +331,11 @@ export class ContactTimelineService {
   }
 
   private async fetchTasks(
-    tenantId: string,
     contactId: string,
     before?: Date,
   ): Promise<TimelineEntry[]> {
-    const rows = await this.find('tasks', {
+    const rows = await this.find('tasks', 'task', {
       filter: {
-        tenantId: toId(tenantId),
         'relatedTo.type': 'Contact',
         // Both key shapes, matching TaskRepository — older rows use `.id`.
         $or: [{ 'relatedTo._id': contactId }, { 'relatedTo.id': contactId }],
@@ -345,13 +369,11 @@ export class ContactTimelineService {
   }
 
   private async fetchConversations(
-    tenantId: string,
     contactId: Types.ObjectId,
     before?: Date,
   ): Promise<TimelineEntry[]> {
-    const rows = await this.find('omni_conversations', {
+    const rows = await this.find('omni_conversations', 'conversation', {
       filter: {
-        tenantId: toId(tenantId),
         contactId,
         ...beforeDate('lastMessageAt', before),
       },
@@ -386,13 +408,11 @@ export class ContactTimelineService {
    * list of attachments.
    */
   private async fetchStageTransitions(
-    tenantId: string,
     contactId: Types.ObjectId,
     before?: Date,
   ): Promise<TimelineEntry[]> {
-    const rows = await this.find('contact_stage_transitions', {
+    const rows = await this.find('contact_stage_transitions', 'stage_change', {
       filter: {
-        tenantId: toId(tenantId),
         contactId,
         ...beforeDate('occurredAt', before),
       },
@@ -462,9 +482,14 @@ export class ContactTimelineService {
    * One source failing must degrade the feed, not empty it: a missing tickets
    * collection in a trimmed deployment should cost the ticket entries, not the
    * whole customer history.
+   *
+   * `source` selects the owner/org-unit/ABAC predicate to intersect — the same
+   * one that module's repository applies. Without it this method was a read of
+   * another module's records with the tenant filter and nothing else.
    */
   private async find(
     collection: string,
+    source: TimelineSource,
     query: {
       filter: Record<string, unknown>;
       projection: Record<string, 1>;
@@ -474,7 +499,9 @@ export class ContactTimelineService {
     try {
       return await this.connection
         .collection(collection)
-        .find(query.filter, { projection: query.projection })
+        .find(this.scoped(source, query.filter), {
+          projection: query.projection,
+        })
         .sort(query.sort)
         .limit(SOURCE_LIMIT)
         .toArray();
@@ -485,6 +512,53 @@ export class ContactTimelineService {
       );
       return [];
     }
+  }
+
+  /**
+   * Bind the tenant and intersect the module's data-visibility scope.
+   *
+   * `tenantId` is applied HERE rather than in each per-source filter: the raw
+   * driver bypasses the tenant Mongoose plugin, so leaving it to seven callers
+   * means one of them eventually forgets and reads every tenant's rows.
+   */
+  private scoped(
+    source: TimelineSource,
+    filter: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const scoped: Record<string, unknown> = {
+      ...filter,
+      tenantId: toId(this.tenantId()),
+    };
+
+    // No scope module means the rows are governed by the contact whose ACL the
+    // caller already passed. Applying the owner axis to them would hide notes
+    // and activity_logs from every scoped user — those collections carry no
+    // `ownerId`, so `{ownerId: {$in: [...]}}` matches nothing at all.
+    const scopeModule = SOURCE_AUTHZ[source].scopeModule;
+    if (!scopeModule) return scoped;
+
+    const clauses = buildVisibilityClauses(this.cls, scopeModule);
+    if (!clauses) return scoped;
+    return { ...scoped, $and: [...((scoped.$and as any[]) ?? []), ...clauses] };
+  }
+
+  /**
+   * The caller's effective permission keys.
+   *
+   * Read from the same cache `PermissionGuard` uses, so the feed and the
+   * per-module endpoints answer from one source. An unresolvable caller yields
+   * an empty set — fail closed: the contact-level sources stay, the cross-module
+   * ones drop out.
+   */
+  private async grantedPermissions(): Promise<ReadonlySet<string>> {
+    const userId = this.cls.get<string>('userId');
+    const tenantId = this.tenantId();
+    if (!userId || !tenantId) return new Set();
+
+    // `effective` already equals the tenant ceiling when fullAccess is true, so
+    // an admin needs no special case here.
+    const explanation = await this.authzCache.explainForUser(userId, tenantId);
+    return new Set(explanation.effective);
   }
 
   private tenantId(): string {

@@ -80,6 +80,7 @@
     "migrate:task-indexes": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-03-task-indexes.ts",
     "migrate:object-manager-unification": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-04-object-manager-unification.ts",
     "migrate:deal-pipeline-unification": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-06-deal-pipeline-unification.ts",
+    "migrate:contact-b2c-readiness": "ts-node -r tsconfig-paths/register ./src/scripts/migrations/2026-08-06-contact-b2c-readiness.ts",
     "test:search:it": "jest -c jest.search-integration.config.js --runInBand"
   },
   "dependencies": {

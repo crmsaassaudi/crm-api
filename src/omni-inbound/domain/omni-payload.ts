@@ -32,6 +32,47 @@ export function isKnownChannel(type: string): type is KnownChannelType {
   return (KNOWN_CHANNELS as readonly string[]).includes(type);
 }
 
+/**
+ * Channels whose `senderId` IS the customer's phone number.
+ *
+ * WhatsApp delivers `msg.from` as the subscriber's MSISDN; the only phone in a
+ * WhatsApp webhook's `metadata` is `phone_number_id` / `display_phone_number`,
+ * which are the BUSINESS's number. Reading metadata for the customer's phone
+ * therefore always came back empty, so phone-based identity resolution never
+ * fired on the channel that needs it most, and the shadow contact it created
+ * carried no phone at all — leaving the same person permanently split across
+ * two records with nothing left to dedup on.
+ */
+const PHONE_IDENTITY_CHANNELS: ReadonlySet<string> = new Set([
+  'whatsapp',
+  'sms',
+  'voice',
+]);
+
+/** True when this channel's sender id is a dialable phone number. */
+export function isPhoneIdentityChannel(type: string): boolean {
+  return PHONE_IDENTITY_CHANNELS.has(type);
+}
+
+/**
+ * The customer's phone as carried by an inbound payload, before normalisation.
+ *
+ * Explicit metadata wins — a livechat visitor who typed their number is more
+ * specific than a channel convention — with the sender id as the source of
+ * truth on channels where it IS the number.
+ */
+export function resolvePayloadPhone(payload: {
+  channelType: ChannelType;
+  senderId: string;
+  metadata?: Record<string, any>;
+}): string | undefined {
+  const explicit = payload.metadata?.phone;
+  if (typeof explicit === 'string' && explicit.trim()) return explicit;
+  return isPhoneIdentityChannel(payload.channelType)
+    ? payload.senderId
+    : undefined;
+}
+
 export type SenderType = 'customer' | 'agent' | 'system' | 'bot';
 export type MessageType =
   | 'text'

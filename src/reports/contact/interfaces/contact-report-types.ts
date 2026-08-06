@@ -73,3 +73,29 @@ export interface AssignmentItem {
   count: number;
   percentage: number;
 }
+
+/**
+ * How complete the customer records are.
+ *
+ * The audit's "data quality dashboard": which contacts cannot be emailed, called
+ * or attributed, and who owns the gap. Reported as a rate rather than a raw
+ * count so a growing database does not look like a worsening one.
+ */
+export interface DataQualityField {
+  field: string;
+  missing: number;
+  total: number;
+  /** Percentage of records missing this field. */
+  rate: number;
+}
+
+export interface DataQualityData {
+  total: number;
+  fields: DataQualityField[];
+  /** Contacts reachable by neither email nor phone — dead records. */
+  unreachable: number;
+  /** Contacts with no owner: invisible to every scoped user by design. */
+  unowned: number;
+  /** Contacts still carrying a duplicate-looking identity-less shadow profile. */
+  shadow: number;
+}

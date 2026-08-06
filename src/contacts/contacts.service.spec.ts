@@ -46,6 +46,7 @@ describe('ContactsService', () => {
       addOmniIdentity: jest.fn(),
       addEmailIfMissing: jest.fn(),
       addTagsToContacts: jest.fn(),
+      findByIds: jest.fn(() => Promise.resolve([])),
       updateWithVersionCheck: jest.fn(),
       pushStageHistory: jest.fn(),
       touchLastActivity: jest.fn(),
@@ -135,6 +136,16 @@ describe('ContactsService', () => {
           }
           return result;
         }),
+        runWithEvents: jest.fn(async (mutate: any) => {
+          const { result, payloads } = await mutate(undefined);
+          for (const payload of payloads ?? []) {
+            await eventEmitter.emitAsync(
+              `${payload.event}.${payload.object}`,
+              payload,
+            );
+          }
+          return result;
+        }),
       } as any,
       exportStorageService as any,
       // mergeIdentity now serialises on the identity — the read-then-write
@@ -162,6 +173,9 @@ describe('ContactsService', () => {
       userModel as any,
       { assertValid: jest.fn().mockResolvedValue(undefined) } as any, // writeValidator
       { groupIds: jest.fn().mockResolvedValue([]) } as any, // principalGroups
+      {
+        buildMembershipFilter: jest.fn().mockResolvedValue({}),
+      } as any, // segments
     );
   });
 
@@ -381,7 +395,22 @@ describe('ContactsService', () => {
   });
 
   describe('bulkTagContacts', () => {
+    /**
+     * Bulk tagging reads the rows before and after the write. `updateMany`
+     * produces no audit diff and no automation event, so the service has to
+     * compute the difference itself — before this, tagging 500 customers left no
+     * trace and fired no workflow, which is the single most common B2C trigger.
+     */
+    const stageBulkTag = (ids: string[]) => {
+      repository.findByIds
+        .mockResolvedValueOnce(ids.map((id) => createContact({ id, tags: [] })))
+        .mockResolvedValueOnce(
+          ids.map((id) => createContact({ id, tags: ['vip'] })),
+        );
+    };
+
     it('should add tags to contacts', async () => {
+      stageBulkTag(['c1', 'c2']);
       repository.addTagsToContacts.mockResolvedValue({
         matchedCount: 2,
         modifiedCount: 2,
@@ -394,6 +423,43 @@ describe('ContactsService', () => {
 
       expect(result.success).toBe(true);
       expect(result.modifiedCount).toBe(2);
+    });
+
+    it('should audit and emit one automation event per contact that gained a tag', async () => {
+      stageBulkTag(['c1', 'c2']);
+      repository.addTagsToContacts.mockResolvedValue({
+        matchedCount: 2,
+        modifiedCount: 2,
+      });
+
+      await service.bulkTagContacts({
+        contactIds: ['c1', 'c2'],
+        tags: ['vip'],
+      });
+
+      expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
+        'field_updated.Contact',
+        expect.objectContaining({ changedFields: ['tags'] }),
+      );
+    });
+
+    it('should NOT emit for a contact that already had the tag', async () => {
+      // `$addToSet` is a no-op there, and an event for a change that did not
+      // happen is how a workflow fires twice for one customer.
+      repository.findByIds
+        .mockResolvedValueOnce([createContact({ id: 'c1', tags: ['vip'] })])
+        .mockResolvedValueOnce([createContact({ id: 'c1', tags: ['vip'] })]);
+      repository.addTagsToContacts.mockResolvedValue({
+        matchedCount: 1,
+        modifiedCount: 0,
+      });
+
+      await service.bulkTagContacts({ contactIds: ['c1'], tags: ['vip'] });
+
+      expect(eventEmitter.emitAsync).not.toHaveBeenCalledWith(
+        'field_updated.Contact',
+        expect.anything(),
+      );
     });
 
     it('should throw BadRequestException when contactIds is empty', async () => {
@@ -409,6 +475,7 @@ describe('ContactsService', () => {
     });
 
     it('should deduplicate and trim tags', async () => {
+      stageBulkTag(['c1']);
       repository.addTagsToContacts.mockResolvedValue({
         matchedCount: 1,
         modifiedCount: 1,
@@ -422,6 +489,7 @@ describe('ContactsService', () => {
       expect(repository.addTagsToContacts).toHaveBeenCalledWith(
         ['c1'],
         ['vip'],
+        undefined,
       );
     });
   });

@@ -63,8 +63,59 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop()
   address?: string;
 
+  /**
+   * City and ISO-3166-1 alpha-2 country, separate from the free-text `address`.
+   *
+   * `address` is one TEXTAREA, which is unfilterable and unreportable: "customers
+   * in Saudi Arabia" — the first question a B2C tenant asks — could not be
+   * expressed at all. Country is a code, not a display name, so a segment does
+   * not break when someone types "KSA" instead of "Saudi Arabia".
+   */
+  @Prop({ index: true })
+  city?: string;
+
+  @Prop({ uppercase: true, trim: true, index: true })
+  country?: string;
+
   @Prop()
   birthday?: Date;
+
+  // EXTERNAL SYSTEM IDENTITY
+
+  /**
+   * This contact's id in the system it was synced from, and which system that is.
+   *
+   * Without a stable external key, an integration has nothing idempotent to
+   * upsert on: every re-sync from Shopify, a POS or a clinic system matches on
+   * email/phone or not at all, and re-creates the customers it cannot match.
+   * Unique per (tenant, source) — see the sparse index below.
+   */
+  @Prop({ trim: true })
+  externalId?: string;
+
+  @Prop({ trim: true })
+  externalSource?: string;
+
+  // CUSTOMER VALUE
+  //
+  // Denormalised from won deals by ContactValueRollupService. Read-only to
+  // clients: a B2C list is sorted and segmented by what a customer is worth, and
+  // computing that per row at query time is a `$lookup` per contact.
+
+  @Prop({ default: 0 })
+  totalRevenue?: number;
+
+  @Prop({ default: 0 })
+  dealsCount?: number;
+
+  @Prop({ default: 0 })
+  wonDealsCount?: number;
+
+  @Prop()
+  lastPurchaseAt?: Date;
+
+  @Prop()
+  firstPurchaseAt?: Date;
 
   @Prop({ type: MongooseSchema.Types.Mixed })
   customFields?: Record<string, any>;
@@ -241,10 +292,12 @@ ContactSchema.index(
   { tenantId: 1, isVIP: 1, createdAt: -1 },
   { name: 'tenant_vip_created_lookup' },
 );
-ContactSchema.index(
-  { tenantId: 1, lastActivityAt: 1 },
-  { name: 'tenant_last_activity' },
-);
+// NOTE: `tenant_last_activity` ({tenantId, lastActivityAt}) was dropped. Every
+// read of this field filters `deletedAt: null`, so the partial
+// `tenant_active_lastActivityAt_cursor` below is both smaller and fully
+// selective — and Mongo walks an index in either direction, so the descending
+// key order serves an ascending sort too. Existing deployments:
+// `db.contacts.dropIndex('tenant_last_activity')`.
 ContactSchema.index({ tenantId: 1, score: 1 }, { name: 'tenant_score' });
 ContactSchema.index(
   { tenantId: 1, phones: 1 },
@@ -311,6 +364,40 @@ ContactSchema.index(
     name: 'contact_text_search',
     default_language: 'none',
   },
+);
+// The idempotency key an integration upserts on. Partial rather than sparse:
+// sparse only skips a MISSING field, so every contact created through the UI
+// (which writes neither) would collide on `(null, null)`.
+ContactSchema.index(
+  { tenantId: 1, externalSource: 1, externalId: 1 },
+  {
+    name: 'tenant_external_identity',
+    unique: true,
+    partialFilterExpression: {
+      externalId: { $type: 'string' },
+      externalSource: { $type: 'string' },
+    },
+  },
+);
+// Customer-value sorting and segmentation: "top spenders", "bought once, never
+// again". Partial on live rows for the same reason as `tenant_active_list`.
+for (const field of [
+  'totalRevenue',
+  'lastPurchaseAt',
+  'lastActivityAt',
+] as const) {
+  ContactSchema.index(
+    { tenantId: 1, [field]: -1, _id: -1 },
+    {
+      name: `tenant_active_${field}_cursor`,
+      partialFilterExpression: { deletedAt: null },
+    },
+  );
+}
+// "Customers in this country/city" — the geography axis of every B2C segment.
+ContactSchema.index(
+  { tenantId: 1, country: 1, city: 1 },
+  { name: 'tenant_geo_lookup' },
 );
 
 ContactSchema.virtual('owner', {

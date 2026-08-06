@@ -27,6 +27,7 @@ import {
   FunnelVelocityItem,
   GrowthDataPoint,
   OmniActivationItem,
+  DataQualityData,
   OptOutData,
   ScoreBucket,
   ShadowConversionData,
@@ -906,6 +907,102 @@ export class ContactReportService {
     } catch {
       throw new BadRequestException(`Invalid timezone: ${timezone}`);
     }
+  }
+
+  /**
+   * Data quality — what is missing from the customer records.
+   *
+   * The audit found the product could report on growth, sources and scores but
+   * had no way to answer "how much of our data is unusable". A contact with no
+   * email and no phone cannot be marketed to or called; a contact with no owner
+   * is invisible to every scoped user; a contact with no source cannot be
+   * attributed. Those are the three ways a CRM quietly stops being worth its
+   * subscription, and none of them was visible.
+   *
+   * One pass over the same match the other reports use — a facet per field would
+   * scan the collection once per field.
+   */
+  async getDataQuality(
+    dto: GetContactReportDto,
+  ): Promise<ReportResponse<DataQualityData>> {
+    const startedAt = process.hrtime.bigint();
+    const context = await this.resolveDateContext(dto);
+    const match = this.buildBaseMatch(dto, {
+      createdBeforeOrOn: context.to,
+    });
+
+    const missing = (expression: unknown) => ({
+      $sum: { $cond: [expression, 1, 0] },
+    });
+    const isEmptyArray = (path: string) => ({
+      $eq: [{ $size: { $ifNull: [path, []] } }, 0],
+    });
+    const isBlank = (path: string) => ({
+      $in: [{ $ifNull: [path, ''] }, [null, '']],
+    });
+
+    const rows = await reportAggregate(this.contactModel, [
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          emails: missing(isEmptyArray('$emails')),
+          phones: missing(isEmptyArray('$phones')),
+          sourceId: missing(isBlank('$sourceId')),
+          ownerId: missing({ $eq: [{ $ifNull: ['$ownerId', null] }, null] }),
+          country: missing(isBlank('$country')),
+          companyName: missing(isBlank('$companyName')),
+          unreachable: missing({
+            $and: [isEmptyArray('$emails'), isEmptyArray('$phones')],
+          }),
+          shadow: missing({ $eq: ['$isShadow', true] }),
+        },
+      },
+    ]).exec();
+
+    const row = rows[0] ?? {
+      total: 0,
+      emails: 0,
+      phones: 0,
+      sourceId: 0,
+      ownerId: 0,
+      country: 0,
+      companyName: 0,
+      unreachable: 0,
+      shadow: 0,
+    };
+
+    const total = row.total ?? 0;
+    const fields = (
+      [
+        'emails',
+        'phones',
+        'sourceId',
+        'ownerId',
+        'country',
+        'companyName',
+      ] as const
+    ).map((field) => ({
+      field,
+      missing: row[field] ?? 0,
+      total,
+      rate: safePercent(row[field] ?? 0, total),
+    }));
+
+    return buildReportResponse({
+      report: 'data_quality',
+      dto,
+      data: {
+        total,
+        fields,
+        unreachable: row.unreachable ?? 0,
+        unowned: row.ownerId ?? 0,
+        shadow: row.shadow ?? 0,
+      },
+      totalRecords: total,
+      startedAt,
+    });
   }
 
   private buildBaseMatch(

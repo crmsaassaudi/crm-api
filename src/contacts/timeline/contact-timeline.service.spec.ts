@@ -8,6 +8,7 @@ const TENANT = '60d0fe4f5311236168a109cc';
 function makeHarness(
   rows: Record<string, any[]>,
   contactOverrides: Record<string, unknown> = {},
+  options: { granted?: string[]; cls?: Record<string, unknown> } = {},
 ) {
   const queried: Array<{ collection: string; filter: any; projection: any }> =
     [];
@@ -33,9 +34,28 @@ function makeHarness(
     ),
   };
 
+  const clsValues: Record<string, unknown> = {
+    tenantId: TENANT,
+    activeTenantId: TENANT,
+    userId: 'user_1',
+    ...(options.cls ?? {}),
+  };
+
   const service = new ContactTimelineService(
     contacts as any,
-    { get: jest.fn(() => TENANT) } as any,
+    { get: jest.fn((key: string) => clsValues[key]) } as any,
+    // Grants every cross-module source by default: most cases are about the
+    // fan-in, not the gate. Denial has its own cases below.
+    {
+      explainForUser: jest.fn().mockResolvedValue({
+        effective: options.granted ?? [
+          'tickets:view',
+          'deals:view',
+          'tasks:view',
+          'omni_channel:view',
+        ],
+      }),
+    } as any,
     { collection } as any,
   );
 
@@ -280,5 +300,103 @@ describe('ContactTimelineService — rendering data', () => {
     });
     const [entry] = (await service.getTimeline(CONTACT)).data;
     expect(entry.link).toEqual({ type: 'ticket', id: 't1' });
+  });
+});
+
+/**
+ * The feed reads deals, tickets, tasks, notes and conversations directly on the
+ * Mongo connection, which bypasses both `@RequirePermission` and the
+ * repository's `applyTenantFilter`. So it has to enforce both itself — otherwise
+ * the screen that replaced seven permission-gated tabs hands their contents to
+ * anyone holding `contacts:view`.
+ */
+describe('ContactTimelineService — authorization', () => {
+  it('should withhold a source the caller may not view', async () => {
+    const { service, queried } = makeHarness(
+      { deals: [{ _id: 'd1', name: 'Big', createdAt: new Date() }] },
+      {},
+      { granted: ['tickets:view'] },
+    );
+
+    const result = await service.getTimeline(CONTACT);
+
+    expect(result.deniedSources).toEqual(
+      expect.arrayContaining(['deal', 'task', 'conversation']),
+    );
+    // Withheld means NOT QUERIED, not filtered afterwards.
+    expect(queried.map((q) => q.collection)).not.toContain('deals');
+    expect(result.data).toHaveLength(0);
+  });
+
+  it('should report denial rather than returning a silently short feed', async () => {
+    // "Nothing happened" and "you cannot see this" must not look identical.
+    const { service } = makeHarness({}, {}, { granted: [] });
+
+    const result = await service.getTimeline(CONTACT);
+
+    expect(result.deniedSources.sort()).toEqual([
+      'conversation',
+      'deal',
+      'task',
+      'ticket',
+    ]);
+  });
+
+  it('should keep contact-owned sources when no module permission is held', async () => {
+    // Notes, activities and stage changes belong to the contact the caller has
+    // already passed the ACL for; withholding them would break the feed for
+    // every role that is not an admin.
+    const { service } = makeHarness(
+      { notes: [{ _id: 'n1', title: 'Called', createdAt: new Date() }] },
+      {},
+      { granted: [] },
+    );
+
+    const result = await service.getTimeline(CONTACT);
+
+    expect(result.data.map((entry) => entry.source)).toEqual(['note']);
+  });
+
+  it('should bind the tenant on every raw read', async () => {
+    const { service, queried } = makeHarness({});
+    await service.getTimeline(CONTACT);
+
+    expect(queried.length).toBeGreaterThan(0);
+    for (const query of queried) {
+      expect([query.collection, query.filter.tenantId]).toEqual([
+        query.collection,
+        expect.anything(),
+      ]);
+    }
+  });
+
+  it('should intersect the module visibility scope into the raw read', async () => {
+    // The owner axis the repository would have applied. Without it a scoped rep
+    // reads deals belonging to colleagues from inside the contact page.
+    const { service, queried } = makeHarness(
+      {},
+      {},
+      {
+        cls: { visibleOwnerIds: ['user_1'] },
+      },
+    );
+
+    await service.getTimeline(CONTACT);
+
+    const deals = queried.find((q) => q.collection === 'deals');
+    expect(deals?.filter.$and).toEqual([
+      { $or: [{ ownerId: { $in: ['user_1'] } }] },
+    ]);
+    // A source with no ownership of its own is governed by the contact itself.
+    const notes = queried.find((q) => q.collection === 'notes');
+    expect(notes?.filter.$and).toBeUndefined();
+  });
+
+  it('should fail closed when the caller cannot be resolved', async () => {
+    const { service } = makeHarness({}, {}, { cls: { userId: undefined } });
+
+    const result = await service.getTimeline(CONTACT);
+
+    expect(result.deniedSources).toContain('deal');
   });
 });

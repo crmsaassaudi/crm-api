@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -34,19 +33,20 @@ import {
   buildPhoneSearchPrefixes,
   phoneSearchClause,
 } from '../../../../search/phone-search';
+import {
+  compileContactFilter,
+  parseContactFilter,
+} from '../../../../filters/contact-filter';
+import { CONTACT_SORTABLE_FIELDS } from '../../../../dto/query-contact.dto';
 
 @Injectable()
 export class ContactRepository extends BaseDocumentRepository<
   ContactSchemaDocument,
   Contact
 > {
-  private readonly cursorSortableFields = new Set([
-    'createdAt',
-    'updatedAt',
-    'firstName',
-    'lastName',
-    'score',
-  ]);
+  private readonly cursorSortableFields = new Set<string>(
+    CONTACT_SORTABLE_FIELDS,
+  );
 
   constructor(
     @InjectModel(ContactSchemaClass.name)
@@ -70,134 +70,15 @@ export class ContactRepository extends BaseDocumentRepository<
   }
 
   /**
-   * Whitelist of fields allowed in user-submitted filter expressions.
-   * Prevents arbitrary field injection into MongoDB queries.
-   */
-  private readonly ALLOWED_FILTER_FIELDS = new Set([
-    'lifecycleStageId',
-    'statusId',
-    'sourceId',
-    'owner',
-    'createdBy',
-    'updatedBy',
-    'companyName',
-    'title',
-    'role',
-    'isVIP',
-    'isShadow',
-    'tags',
-    'emails',
-    'phones',
-  ]);
-
-  /**
-   * Escape special regex metacharacters in user input to prevent ReDoS.
-   */
-  private escapeRegex(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
-  private static readonly OWNER_FIELD_MAP: Record<string, string> = {
-    owner: 'ownerId',
-    createdBy: 'createdById',
-    updatedBy: 'updatedById',
-  };
-
-  /**
-   * Resolve a single filter entry into a [dbField, condition] tuple.
-   * Returns null when the filter should be skipped.
-   *
-   * `customFields.<key>` is accepted in addition to the static whitelist, but
-   * only for keys the tenant actually declared in its `custom_fields` registry —
-   * passed in as `allowedCustomFieldKeys`. Before this, an admin could define a
-   * custom field the product then had no way to filter, sort or report on: the
-   * registry let them create it and every query path rejected it. Validating
-   * against the registry rather than accepting any dotted path keeps the original
-   * purpose of this whitelist (no arbitrary field injection into the query)
-   * intact — an undeclared key is still refused.
-   */
-  private resolveSingleFilterCondition(
-    f: {
-      id: string;
-      value: any;
-    },
-    allowedCustomFieldKeys?: Set<string>,
-  ): [string, any] | null {
-    if (!f.id || !f.value) return null;
-
-    if (f.id.startsWith('customFields.')) {
-      const key = f.id.slice('customFields.'.length);
-      // No registry supplied, or a key that is not in it → refuse, do not guess.
-      if (!key || !allowedCustomFieldKeys?.has(key)) return null;
-      return [
-        `customFields.${key}`,
-        Array.isArray(f.value)
-          ? { $in: f.value }
-          : typeof f.value === 'string'
-            ? { $regex: this.escapeRegex(f.value), $options: 'i' }
-            : f.value,
-      ];
-    }
-
-    if (!this.ALLOWED_FILTER_FIELDS.has(f.id)) return null;
-
-    if (['emails', 'phones'].includes(f.id)) {
-      return [
-        f.id,
-        { $regex: `^${this.escapeRegex(String(f.value))}$`, $options: 'i' },
-      ];
-    }
-
-    if (['lifecycleStageId', 'statusId', 'sourceId'].includes(f.id)) {
-      return [f.id, Array.isArray(f.value) ? { $in: f.value } : f.value];
-    }
-
-    const ownerDbField = ContactRepository.OWNER_FIELD_MAP[f.id];
-    if (ownerDbField) {
-      return [
-        ownerDbField,
-        Array.isArray(f.value) ? { $in: f.value } : f.value,
-      ];
-    }
-
-    if (Array.isArray(f.value)) {
-      return [f.id, { $in: f.value }];
-    }
-
-    return [f.id, { $regex: this.escapeRegex(String(f.value)), $options: 'i' }];
-  }
-
-  private applyParsedFilters(
-    where: FilterQuery<ContactSchemaClass>,
-    parsedFilters: any[],
-    allowedCustomFieldKeys?: Set<string>,
-  ): void {
-    for (const f of parsedFilters) {
-      const resolved = this.resolveSingleFilterCondition(
-        f,
-        allowedCustomFieldKeys,
-      );
-      if (resolved) {
-        const [dbField, condition] = resolved;
-        where[dbField] = condition;
-      }
-    }
-  }
-
-  /**
    * Apply the legacy `data_access_policy.restrict_own_contacts` flag.
    *
    * Written into `$and` rather than onto `where.ownerId` directly. The bare-key
-   * form was overwritable: `applyParsedFilters` runs afterwards and maps a
-   * client-supplied `{ id: 'owner', value: X }` onto the SAME `ownerId` key, so a
-   * user in a restricted tenant could read other people's contacts just by
-   * sending a filter. An `$and` clause cannot be overwritten by a later
-   * assignment — the two conditions intersect instead, which is what "restrict"
-   * has to mean.
-   *
-   * (The RBAC visibility axes in `applyTenantFilter` were never bypassable this
-   * way — they were already `$and`-ed. This flag is the separate, older control a
-   * tenant enables on top, and it is the one that failed.)
+   * form was overwritable: a client-supplied `{ field: 'owner' }` filter maps onto
+   * the SAME `ownerId` key, so a user in a restricted tenant could read other
+   * people's contacts just by sending a filter. An `$and` clause cannot be
+   * overwritten by a later assignment — the two conditions intersect instead,
+   * which is what "restrict" has to mean. (The compiler now emits every user
+   * condition into `$and` for the same reason.)
    */
   private applyOwnerRestriction(
     where: FilterQuery<ContactSchemaClass>,
@@ -283,28 +164,32 @@ export class ContactRepository extends BaseDocumentRepository<
       where.lifecycleStageId = filterOptions.lifecycleStage;
     }
 
-    if (filterOptions?.filters) {
-      try {
-        const parsedFilters =
-          typeof filterOptions.filters === 'string'
-            ? JSON.parse(filterOptions.filters)
-            : filterOptions.filters;
-        if (Array.isArray(parsedFilters)) {
-          // Resolved once per request by ContactsService from the tenant's
-          // custom_fields registry; absent means custom-field filters are
-          // refused rather than passed through.
-          this.applyParsedFilters(
-            where,
-            parsedFilters,
-            filterOptions.__allowedCustomFieldKeys,
-          );
-        }
-      } catch (err) {
-        const logger = new Logger(ContactRepository.name);
-        logger.warn(
-          `Malformed filter JSON ignored: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    // The account detail page's "Contacts" list. The UI has always sent this and
+    // the query DTO never declared it, so `forbidNonWhitelisted` rejected the
+    // whole request with a 422 — the related list could not load at all, even
+    // though `tenant_account_lookup` was built to serve it.
+    if (filterOptions?.accountId) {
+      where.accountId = new Types.ObjectId(String(filterOptions.accountId));
+    }
+
+    // Segment membership, already compiled by ContactSegmentsService. Composed
+    // here rather than replacing the filter, so a segment can be narrowed
+    // further by the list's own search and filters.
+    if (filterOptions?.__segmentFilter) {
+      (where.$and as any[]) = [
+        ...((where.$and as any[]) ?? []),
+        filterOptions.__segmentFilter,
+      ];
+    }
+
+    // Resolved once per request by ContactsService from the tenant's
+    // custom_fields registry; absent means custom-field filters are refused.
+    const group = parseContactFilter(filterOptions?.filters);
+    const compiled = group
+      ? compileContactFilter(group, filterOptions?.__allowedCustomFieldKeys)
+      : null;
+    if (compiled) {
+      (where.$and as any[]) = [...((where.$and as any[]) ?? []), compiled];
     }
 
     return where;
@@ -328,10 +213,17 @@ export class ContactRepository extends BaseDocumentRepository<
       : paginationOptions.limit;
     const skip = (paginationOptions.page - 1) * paginationOptions.limit;
 
+    // Offset mode used to hard-code `createdAt: -1` and ignore `sortBy`, so
+    // clicking a column header in a non-cursor list re-sorted nothing. Same
+    // whitelist as cursor mode, plus `_id` as the tie-breaker the indexes carry.
+    const sortField = this.resolveCursorSortField(filterOptions?.sortBy);
+    const sortDirection =
+      normalizeSortOrder(filterOptions?.sortOrder) === 'asc' ? 1 : -1;
+
     const [docs, countResult] = await Promise.all([
       this.model
         .find(scopedWhere)
-        .sort({ createdAt: -1 })
+        .sort({ [sortField]: sortDirection, _id: sortDirection })
         .skip(skip)
         .limit(fetchLimit)
         .populate('owner')
@@ -640,7 +532,10 @@ export class ContactRepository extends BaseDocumentRepository<
     excludeId?: string;
   }): Promise<Contact[]> {
     const { emails, phones, excludeId } = params;
-    const where: FilterQuery<ContactSchemaClass> = {};
+    // Archived contacts must not surface as duplicates: the warning would point
+    // at a record in the recycle bin that the user cannot open, and the omni
+    // resolver would attach a live conversation to a deleted person.
+    const where: FilterQuery<ContactSchemaClass> = { deletedAt: null };
 
     const conditions: FilterQuery<ContactSchemaClass>[] = [];
     if (emails) conditions.push({ emails: { $in: [emails] } });
@@ -703,6 +598,7 @@ export class ContactRepository extends BaseDocumentRepository<
       omniIdentities: {
         $elemMatch: { channelType, senderId },
       },
+      deletedAt: null,
     };
     const scopedWhere = this.applyTenantFilter(where);
     const doc = await this.model.findOne(scopedWhere).exec();
@@ -742,9 +638,71 @@ export class ContactRepository extends BaseDocumentRepository<
       .exec();
   }
 
+  /**
+   * Live contacts by id, scoped — the "before" snapshot a bulk write needs.
+   *
+   * Bulk operations go through `updateMany`, which produces no audit diff and no
+   * automation event, so the caller has to read the rows itself to know what
+   * changed. Returning only what the caller may see also means a bulk write can
+   * never touch a record outside their scope.
+   */
+  async findByIds(ids: string[], session?: ClientSession): Promise<Contact[]> {
+    const valid = ids.filter((id) => Types.ObjectId.isValid(id));
+    if (valid.length === 0) return [];
+
+    const scopedFilter = this.applyTenantFilter({
+      _id: { $in: valid.map((id) => new Types.ObjectId(id)) },
+      deletedAt: null,
+    } as FilterQuery<ContactSchemaClass>);
+
+    const docs = await this.model
+      .find(scopedFilter)
+      .session(session ?? null)
+      .exec();
+    return docs.map((doc) => this.mapToDomain(doc));
+  }
+
+  /**
+   * How many live contacts a segment predicate selects, and a handful of them.
+   *
+   * Scoped like every other read: a segment preview must count what the caller
+   * can actually see, or a rep building an audience sees a number they will not
+   * get. Capped so building a segment never runs an unbounded count — past the
+   * cap the UI says "10,000+", which is the same contract the list view uses.
+   */
+  async previewSegment(
+    membership: FilterQuery<ContactSchemaClass>,
+    sampleSize: number,
+    countLimit = 10_000,
+  ): Promise<{ total: number; isExactCount: boolean; sample: Contact[] }> {
+    const scopedWhere = this.applyTenantFilter({
+      $and: [{ deletedAt: null }, membership],
+    } as FilterQuery<ContactSchemaClass>);
+
+    const [count, docs] = await Promise.all([
+      this.countDocumentsWithCap(scopedWhere, countLimit),
+      sampleSize > 0
+        ? this.model
+            .find(scopedWhere)
+            .sort({ createdAt: -1 })
+            .limit(sampleSize)
+            .select({ firstName: 1, lastName: 1, emails: 1, phones: 1 })
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+    ]);
+
+    return {
+      total: count.totalItems,
+      isExactCount: count.isExactCount,
+      sample: (docs as any[]).map((doc) => this.mapToDomain(doc)),
+    };
+  }
+
   async addTagsToContacts(
     contactIds: string[],
     tags: string[],
+    session?: ClientSession,
   ): Promise<{ matchedCount: number; modifiedCount: number }> {
     const scopedFilter = this.applyTenantFilter({
       _id: { $in: contactIds },
@@ -754,6 +712,7 @@ export class ContactRepository extends BaseDocumentRepository<
       .updateMany(scopedFilter, {
         $addToSet: { tags: { $each: tags } },
       })
+      .session(session ?? null)
       .exec();
 
     return {
@@ -911,87 +870,68 @@ export class ContactRepository extends BaseDocumentRepository<
   }
 
   /**
-   * Recompute lead scores for a page of contacts.
+   * One page of contacts across every tenant, for the nightly rescore.
    *
-   * `afterId` is a resume cursor and it is not optional in practice: the previous
+   * `afterId` is a resume cursor and it is not optional in practice: an earlier
    * version issued `.find({...}).limit(5000)` with no sort and no cursor, so
-   * every nightly run scored the same first 5,000 documents in natural order and
-   * never reached the rest. On any tenant past that size the job appeared healthy
-   * — it logged `scanned=5000, updated=N` every night — while most contacts kept
-   * a score of 0 forever. Sorting by `_id` and resuming after the last one
-   * processed is what makes the pass actually cover the collection.
+   * every nightly run processed the same first 5,000 documents in natural order
+   * and never reached the rest. `_id` is monotonic and unique, so it stays a
+   * stable cursor even while rows are inserted during the run.
    *
-   * Returns `nextCursor` so the caller can keep going until it is null.
+   * This method deliberately does NOT compute a score. It used to, with its own
+   * recency+completeness formula, which meant the nightly job overwrote whatever
+   * the tenant's Lead Scoring rules had produced. Scoring belongs to
+   * LeadScoringService; this is the paged read it consumes.
    */
-  async recomputeScoresForAllTenants(
+  async findPageForScoring(
     limit: number,
     afterId?: string,
-  ): Promise<{ scanned: number; updated: number; nextCursor: string | null }> {
+  ): Promise<{
+    contacts: Array<Record<string, any>>;
+    nextCursor: string | null;
+  }> {
     const filter: FilterQuery<ContactSchemaClass> = { deletedAt: null };
     if (afterId) filter._id = { $gt: new Types.ObjectId(afterId) };
 
     const docs = await this.model
       .find(filter)
-      // Cross-tenant by design (the comment above says so) — but "by design" was not
-      // enough: the tenant plugin throws without CLS, so the nightly rescore threw on
-      // this query and never scored anything. Intent has to be declared to the plugin.
+      // Cross-tenant by design — but "by design" was not enough: the tenant plugin
+      // throws without CLS, so the nightly rescore threw on this query and never
+      // scored anything. Intent has to be declared to the plugin.
       .setOptions({ isPlatformQuery: true } as any)
-      .select({
-        _id: 1,
-        emails: 1,
-        phones: 1,
-        companyName: 1,
-        title: 1,
-        ownerId: 1,
-        lastActivityAt: 1,
-        createdAt: 1,
-      })
-      // `_id` is monotonic and unique, so it is a stable cursor even while rows
-      // are being inserted during the run.
       .sort({ _id: 1 })
       .limit(limit)
       .lean()
       .exec();
 
-    if (docs.length === 0) {
-      return { scanned: 0, updated: 0, nextCursor: null };
-    }
-
-    const now = Date.now();
-    const operations = docs.map((doc: any) => {
-      const lastActivityAt = doc.lastActivityAt || doc.createdAt;
-      const ageDays = lastActivityAt
-        ? Math.max(
-            0,
-            Math.floor((now - new Date(lastActivityAt).getTime()) / 86_400_000),
-          )
-        : 365;
-      const recencyScore = Math.max(0, 40 - Math.min(40, ageDays));
-      const completenessScore =
-        (doc.emails?.length ? 15 : 0) +
-        (doc.phones?.length ? 15 : 0) +
-        (doc.ownerId ? 10 : 0) +
-        (doc.companyName ? 10 : 0) +
-        (doc.title ? 10 : 0);
-      const score = Math.min(100, Math.round(recencyScore + completenessScore));
-
-      return {
-        updateOne: {
-          filter: { _id: doc._id },
-          update: { $set: { score } },
-        },
-      };
-    });
-
-    const result = await this.model.bulkWrite(operations, { ordered: false });
     return {
-      scanned: docs.length,
-      updated: result.modifiedCount,
-      // A short page means the collection is exhausted; anything else means
-      // there is more to do and the caller must come back with this cursor.
+      contacts: docs as Array<Record<string, any>>,
       nextCursor:
         docs.length < limit ? null : String((docs[docs.length - 1] as any)._id),
     };
+  }
+
+  /**
+   * Apply computed scores in one round-trip.
+   *
+   * `bulkWrite` is not one of the tenant plugin's hooked operations, so each
+   * filter carries its own `tenantId`: an id-only filter here would be a
+   * cross-tenant write path with nothing above it to catch a mis-paired row.
+   */
+  async applyScores(
+    scores: Array<{ id: unknown; tenantId: unknown; score: number }>,
+  ): Promise<number> {
+    if (scores.length === 0) return 0;
+    const result = await this.model.bulkWrite(
+      scores.map(({ id, tenantId, score }) => ({
+        updateOne: {
+          filter: { _id: id as any, tenantId: tenantId as any },
+          update: { $set: { score } },
+        },
+      })),
+      { ordered: false } as any,
+    );
+    return result.modifiedCount;
   }
 
   /**

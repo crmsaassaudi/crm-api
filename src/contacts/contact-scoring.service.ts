@@ -6,6 +6,10 @@ import {
   isLockContention,
 } from '../redis/redis-lock.service';
 import { RedisService } from '../redis/redis.service';
+import {
+  LeadScoringRule,
+  LeadScoringService,
+} from '../lead-scoring/lead-scoring.service';
 
 /** Contacts rescored per query. */
 const PAGE_SIZE = 5_000;
@@ -28,6 +32,7 @@ export class ContactScoringService {
     private readonly repository: ContactRepository,
     private readonly lockService: RedisLockService,
     private readonly redis: RedisService,
+    private readonly leadScoring: LeadScoringService,
   ) {}
 
   /**
@@ -103,12 +108,9 @@ export class ContactScoringService {
       // on past that point would mean two replicas writing the same documents.
       if (signal.aborted) break;
 
-      const page = await this.repository.recomputeScoresForAllTenants(
-        PAGE_SIZE,
-        cursor,
-      );
-      scanned += page.scanned;
-      updated += page.updated;
+      const page = await this.repository.findPageForScoring(PAGE_SIZE, cursor);
+      scanned += page.contacts.length;
+      updated += await this.scorePage(page.contacts);
 
       if (!page.nextCursor) {
         // Full sweep complete — clear the cursor so the next run starts over and
@@ -122,6 +124,42 @@ export class ContactScoringService {
     // Budget exhausted mid-collection: remember where we stopped.
     if (cursor) await this.writeCursor(cursor);
     return { scanned, updated, pages, exhausted: false };
+  }
+
+  /**
+   * Score one cross-tenant page with each tenant's own rules.
+   *
+   * The rule set is loaded once per tenant per page, not per contact: a page is
+   * 5,000 documents and most tenants own a contiguous run of them, so this is a
+   * handful of rule reads rather than 5,000.
+   *
+   * A tenant with no active rules is skipped entirely — leaving its scores as
+   * they are. Writing 0 would be the sweep inventing a score for a tenant that
+   * has not configured one, which is the behaviour this job was changed to stop.
+   */
+  private async scorePage(
+    contacts: Array<Record<string, any>>,
+  ): Promise<number> {
+    const rulesByTenant = new Map<string, LeadScoringRule[]>();
+    const updates: Array<{ id: unknown; tenantId: unknown; score: number }> =
+      [];
+
+    for (const contact of contacts) {
+      const tenantId = String(contact.tenantId);
+      let rules = rulesByTenant.get(tenantId);
+      if (rules === undefined) {
+        rules = await this.leadScoring.getActiveRules(tenantId);
+        rulesByTenant.set(tenantId, rules);
+      }
+      if (rules.length === 0) continue;
+
+      const score = this.leadScoring.computeScore(rules, contact);
+      if (score !== (contact.score ?? 0)) {
+        updates.push({ id: contact._id, tenantId: contact.tenantId, score });
+      }
+    }
+
+    return this.repository.applyScores(updates);
   }
 
   private async readCursor(): Promise<string | undefined> {

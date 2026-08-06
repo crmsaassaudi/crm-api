@@ -35,6 +35,16 @@ export class ContactReportController {
     return this.service.getAssignmentDistribution(query);
   }
 
+  /**
+   * How much of the customer data is unusable — missing email, phone, source or
+   * owner. The one report that says whether the database is worth marketing to.
+   */
+  @Get('data-quality')
+  @RequirePermission('view', 'contact_reports')
+  getDataQuality(@Query() query: GetContactReportDto) {
+    return this.service.getDataQuality(query);
+  }
+
   @Get('stale-contacts')
   @RequirePermission('view', 'contact_reports')
   getStaleContacts(@Query() query: GetContactReportDto) {

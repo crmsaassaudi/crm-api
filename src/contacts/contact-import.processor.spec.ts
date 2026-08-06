@@ -125,6 +125,13 @@ const baseData = (
     multipleEmailsAllowed: false,
     multiplePhonesAllowed: false,
   },
+  catalog: {
+    lifecycleStages: {},
+    statuses: {},
+    sources: {},
+    tags: {},
+    customFields: {},
+  },
   ...overrides,
 });
 
@@ -356,6 +363,100 @@ describe('ContactImportProcessor — mapping', () => {
       baseData(),
     );
     expect(m.arrayFields.phones).toEqual(['+84901112222']);
+  });
+
+  /**
+   * The columns a B2C migration actually carries. Before these were mappable a
+   * file could bring names, emails, phones and a company — so a migrated
+   * customer base arrived with no attribution, no consent, no tags and none of
+   * the custom fields the tenant had defined, and `emailOptIn` defaulted to
+   * false, which means nobody may lawfully be emailed.
+   */
+  const catalog = {
+    lifecycleStages: { customer: 'customer', 'khách hàng': 'customer' },
+    statuses: { active: 'active' },
+    sources: { 'facebook ads': 'src_fb' },
+    tags: { vip: 'tag_vip', riyadh: 'tag_riy' },
+    customFields: { loyalty_tier: 'TEXT', visits: 'NUMBER' },
+  };
+
+  const mapping = {
+    'First Name': 'firstName',
+    'Last Name': 'lastName',
+    Source: 'sourceId',
+    Stage: 'lifecycleStageId',
+    Tags: 'tags',
+    Country: 'country',
+    Birthday: 'birthday',
+    'Email Opt In': 'emailOptIn',
+    'Customer Id': 'externalId',
+    System: 'externalSource',
+    Tier: 'customFields.loyalty_tier',
+    Visits: 'customFields.visits',
+  };
+
+  const mapRich = (raw: Record<string, string>) =>
+    proc.mapRow({ 'First Name': 'A', 'Last Name': 'B', ...raw }, mapping, 1, {
+      ...baseData(),
+      catalog,
+    });
+
+  it('should resolve a source name to its id', () => {
+    expect(mapRich({ Source: 'Facebook Ads' }).fields.sourceId).toBe('src_fb');
+  });
+
+  it('should resolve a lifecycle stage by label in any locale', () => {
+    expect(mapRich({ Stage: 'Khách hàng' }).fields.lifecycleStageId).toBe(
+      'customer',
+    );
+  });
+
+  it('should resolve tag names to ids and drop one it cannot resolve', () => {
+    // A typo in one cell must not fail a 200k-row migration; validateRow
+    // reports it instead.
+    expect(mapRich({ Tags: 'VIP; Riyadh; Nope' }).arrayFields.tags).toEqual([
+      'tag_vip',
+      'tag_riy',
+    ]);
+  });
+
+  it('should read the spellings a spreadsheet uses for consent', () => {
+    for (const yes of ['TRUE', 'Yes', '1', 'Có']) {
+      expect(mapRich({ 'Email Opt In': yes }).fields.emailOptIn).toBe(true);
+    }
+    // Anything unrecognised is false: opting someone IN because they wrote
+    // something the parser did not know is a compliance failure.
+    expect(mapRich({ 'Email Opt In': 'No' }).fields.emailOptIn).toBe(false);
+  });
+
+  it('should upper-case the country code', () => {
+    expect(mapRich({ Country: 'sa' }).fields.country).toBe('SA');
+  });
+
+  it('should coerce custom fields to the declared type', () => {
+    const m = mapRich({ Tier: 'Gold', Visits: '12' });
+    expect(m.fields.customFields).toEqual({ loyalty_tier: 'Gold', visits: 12 });
+  });
+
+  it('should ignore a custom-field column the tenant never declared', () => {
+    const m = proc.mapRow(
+      { 'First Name': 'A', 'Last Name': 'B', Ghost: 'x' },
+      { ...mapping, Ghost: 'customFields.undeclared' },
+      1,
+      { ...baseData(), catalog },
+    );
+    expect(m.fields.customFields).toBeUndefined();
+  });
+
+  it('should parse a birthday into a Date', () => {
+    expect(mapRich({ Birthday: '1990-03-04' }).fields.birthday).toBeInstanceOf(
+      Date,
+    );
+  });
+
+  it('should expose externalId as a dedup key', () => {
+    const m = mapRich({ 'Customer Id': 'shopify_8471', System: 'shopify' });
+    expect(proc.extractDedupValues(m, 'externalId')).toEqual(['shopify_8471']);
   });
 });
 

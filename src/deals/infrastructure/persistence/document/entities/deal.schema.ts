@@ -107,10 +107,12 @@ export class DealSchemaClass extends EntityDocumentHelper {
   @Prop()
   accountName?: string;
 
+  // Indexed by `tenant_contact_deals` below, not here: a bare multikey index on
+  // an array field carries every tenant's deals in one B-tree, and no query ever
+  // omits `tenantId`.
   @Prop({
     type: [{ type: MongooseSchema.Types.ObjectId, ref: 'ContactSchemaClass' }],
     default: [],
-    index: true,
   })
   contactIds?: string[];
 
@@ -294,6 +296,14 @@ DealSchema.index(
 DealSchema.index(
   { tenantId: 1, ownerId: 1, nextFollowUpAt: 1 },
   { name: 'tenant_owner_follow_up' },
+);
+
+// "This person's deals" — the contact timeline's deal source and the customer
+// value rollup. Replaces the bare `contactIds` index declared on the field.
+// Existing deployments: `db.deals.dropIndex('contactIds_1')`.
+DealSchema.index(
+  { tenantId: 1, contactIds: 1, wonAt: -1 },
+  { name: 'tenant_contact_deals' },
 );
 
 DealSchema.virtual('owner', {

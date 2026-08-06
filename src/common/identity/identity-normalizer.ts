@@ -109,12 +109,14 @@ function uniqueNonEmpty(values: string[]): string[] {
 }
 
 /**
- * class-transformer `@Transform` handlers. Applied on the DTOs so normalisation
- * happens inside the global ValidationPipe — i.e. before any controller,
- * service or repository can observe the raw value.
+ * class-transformer `@Transform` handler for emails, applied on the DTOs so
+ * normalisation happens inside the global ValidationPipe — i.e. before any
+ * controller, service or repository can observe the raw value.
+ *
+ * There is deliberately no phone equivalent: promoting a national number to
+ * E.164 needs the tenant's dialling code, which a static transform cannot read.
+ * Phone normalisation belongs to the service layer — see
+ * `ContactsService.normalizeIdentityInput`.
  */
 export const TransformEmails = ({ value }: { value: unknown }) =>
   value === undefined || value === null ? value : normalizeEmails(value);
-
-export const TransformPhones = ({ value }: { value: unknown }) =>
-  value === undefined || value === null ? value : normalizePhones(value);

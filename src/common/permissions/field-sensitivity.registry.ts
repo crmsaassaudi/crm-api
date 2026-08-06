@@ -54,6 +54,27 @@ export const FIELD_SENSITIVITY: Record<string, SensitiveField[]> = {
       strategy: 'phone',
       unmask: { resource: 'contacts', action: 'unmask' },
     },
+    // Postal address and date of birth are personal data in their own right —
+    // under PDPL and GDPR a home address identifies a person as surely as a
+    // phone number does, and a clinic's or a school's records make that
+    // concrete. They were left out while emails/phones were protected, so a
+    // Read Only or Marketing role saw the address of every customer.
+    //
+    // Gated on the SAME `contacts:unmask` action already granted to Manager,
+    // Sales Rep and Support Agent, so no role loses access it had a use for and
+    // no seeding step is required for the control to be liftable.
+    {
+      field: 'address',
+      classification: 'pii',
+      strategy: 'full',
+      unmask: { resource: 'contacts', action: 'unmask' },
+    },
+    {
+      field: 'birthday',
+      classification: 'pii',
+      strategy: 'full',
+      unmask: { resource: 'contacts', action: 'unmask' },
+    },
   ],
   /**
    * Conversations cache the end customer's contact details on a `customer`
@@ -135,12 +156,18 @@ function maskFull(value: string): string {
  * `redact-number` returns `null` rather than a string, since callers (list
  * views, exports) expect the field's type to stay a number-or-null, not
  * become `'•••'`.
+ *
+ * A `Date` is redacted to `null` under `full` for the same reason a number is:
+ * there is no dotted form of a date that stays a date, and returning the value
+ * unchanged would make a registered field silently unmasked — a control that
+ * reads as active and is not.
  */
 export function maskValue(value: unknown, strategy: MaskStrategy): unknown {
   if (strategy === 'redact-number') {
     return typeof value === 'number' ? null : value;
   }
   if (typeof value === 'string') return applyMask(value, strategy);
+  if (value instanceof Date) return strategy === 'full' ? null : value;
   if (Array.isArray(value)) {
     return value.map((v) =>
       typeof v === 'string' ? applyMask(v, strategy) : v,

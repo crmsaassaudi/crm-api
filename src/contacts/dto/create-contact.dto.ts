@@ -2,17 +2,16 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsEmail,
+  IsISO31661Alpha2,
   IsObject,
   IsOptional,
   IsString,
   IsArray,
   IsBoolean,
   IsDateString,
+  MaxLength,
 } from 'class-validator';
-import {
-  TransformEmails,
-  TransformPhones,
-} from '../../common/identity/identity-normalizer';
+import { TransformEmails } from '../../common/identity/identity-normalizer';
 
 export class CreateContactDto {
   @ApiProperty({ example: 'Nguyễn' })
@@ -58,6 +57,37 @@ export class CreateContactDto {
   @IsString()
   address?: string;
 
+  @ApiProperty({ example: 'Riyadh' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  city?: string;
+
+  /**
+   * ISO-3166-1 alpha-2. A code, not a display name: a segment written against
+   * "Saudi Arabia" breaks the moment someone types "KSA", and a two-letter code
+   * is the only form that survives import, i18n and reporting unchanged.
+   */
+  @ApiProperty({
+    example: 'SA',
+    description: 'ISO-3166-1 alpha-2 country code',
+  })
+  @IsOptional()
+  @IsISO31661Alpha2()
+  country?: string;
+
+  @ApiProperty({ example: 'shopify_cust_8471' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  externalId?: string;
+
+  @ApiProperty({ example: 'shopify' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  externalSource?: string;
+
   @ApiProperty({ example: '1990-01-01' })
   @IsOptional()
   @IsDateString()
@@ -81,10 +111,8 @@ export class CreateContactDto {
   @IsObject()
   customFields?: Record<string, any>;
 
-  // Normalised inside the global ValidationPipe, so no controller, service or
-  // repository can ever observe the raw client value. This is what makes a
-  // UI-entered address comparable with an imported one — see
-  // common/identity/identity-normalizer.ts.
+  // Emails normalise inside the global ValidationPipe: lower-case + trim needs
+  // no tenant context, so no layer below can observe a raw value.
   @ApiProperty({ example: ['test@example.com'] })
   @IsOptional()
   @Transform(TransformEmails)
@@ -92,9 +120,19 @@ export class CreateContactDto {
   @IsEmail({}, { each: true })
   emails?: string[];
 
+  /**
+   * Phones are NOT normalised here.
+   *
+   * Promoting `0501234567` to `+966501234567` requires the tenant's dialling
+   * code, and a `@Transform` is a static function with no access to the request's
+   * tenant. Normalising here without it stored the national form while the import
+   * worker — which does read the setting — stored E.164, so the same person
+   * entered through the UI and through a CSV produced two contacts that the
+   * equality-based dedup gate and the identity unique index could both never
+   * compare. ContactsService normalises instead, where the setting is reachable.
+   */
   @ApiProperty({ example: ['0911019999'] })
   @IsOptional()
-  @Transform(TransformPhones)
   @IsArray()
   @IsString({ each: true })
   phones?: string[];
@@ -142,16 +180,6 @@ export class CreateContactDto {
   @IsOptional()
   @IsArray()
   omniIdentities?: Array<{ channelType: string; senderId: string }>;
-
-  // `isShadow` is deliberately NOT accepted from clients. It is set only by
-  // ShadowContactService when the omni pipeline auto-creates a contact from an
-  // inbound message, and cleared by the promotion rule in ContactsService.
-  // A client-settable shadow flag let a caller create records that the UI
-  // treats as provisional and that reports exclude (`$eq: ['$isShadow', false]`
-  // in contact-report.service.ts) — i.e. write records that do not show up in
-  // the numbers. `forbidNonWhitelisted` now rejects the field outright.
-
-  // SOCIAL PROFILES
 
   @ApiProperty({ example: 'https://linkedin.com/in/johndoe' })
   @IsOptional()

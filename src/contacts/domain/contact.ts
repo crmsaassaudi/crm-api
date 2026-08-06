@@ -49,8 +49,38 @@ export class Contact {
   @ApiProperty({ example: '123 Main St' })
   address?: string;
 
+  @ApiProperty({ example: 'Riyadh' })
+  city?: string;
+
+  @ApiProperty({
+    example: 'SA',
+    description: 'ISO-3166-1 alpha-2 country code',
+  })
+  country?: string;
+
   @ApiProperty({ example: '1990-01-01' })
   birthday?: Date;
+
+  @ApiProperty({ example: 'shopify_cust_8471' })
+  externalId?: string;
+
+  @ApiProperty({ example: 'shopify' })
+  externalSource?: string;
+
+  @ApiProperty({ example: 4200, description: 'Sum of won deal value' })
+  totalRevenue?: number;
+
+  @ApiProperty({ example: 7 })
+  dealsCount?: number;
+
+  @ApiProperty({ example: 3 })
+  wonDealsCount?: number;
+
+  @ApiProperty()
+  lastPurchaseAt?: Date;
+
+  @ApiProperty()
+  firstPurchaseAt?: Date;
 
   @ApiProperty({ example: { custom_1: 'value' } })
   customFields?: Record<string, any>;

@@ -30,6 +30,9 @@ import {
   IMPORT_MAX_FILE_BYTES,
   IMPORT_MAPPABLE_FIELDS,
   IMPORT_ARRAY_FIELDS,
+  IMPORT_BOOLEAN_FIELDS,
+  IMPORT_CUSTOM_FIELD_PREFIX,
+  IMPORT_SETTING_REFERENCE_FIELDS,
 } from './contacts.constants';
 import { AutomationOutboxService } from '../automation-rules/events/automation-outbox.service';
 import {
@@ -46,7 +49,7 @@ const CONTACT_IMPORT_CONFIG: ImportModuleConfig = {
   mappableFields: IMPORT_MAPPABLE_FIELDS,
   requiredFields: ['firstName', 'lastName'],
   arrayFields: IMPORT_ARRAY_FIELDS,
-  dedupMatchingFields: ['emails', 'phones'],
+  dedupMatchingFields: ['emails', 'phones', 'externalId'],
   dedupPolicies: ['skip', 'overwrite', 'merge'],
   referenceFields: [],
   batchSize: IMPORT_BATCH_SIZE,
@@ -77,8 +80,30 @@ export interface ImportTenantSettings {
   defaultCountryCode?: string;
 }
 
+/**
+ * The tenant vocabulary a file's text values are resolved against, snapshotted
+ * at enqueue time.
+ *
+ * A CSV says "Facebook Ads", "Customer", "VIP" — the database stores a source
+ * apiName, a lifecycle apiName and a tag id. Resolving per row would be three
+ * lookups per contact; resolving from a snapshot is a Map read. Snapshotting
+ * also means a file behaves identically from the row the job started on, even
+ * if an admin renames a stage while 200k rows are still streaming.
+ */
+export interface ImportCatalog {
+  /** Lower-cased label/apiName → apiName, per reference field. */
+  lifecycleStages: Record<string, string>;
+  statuses: Record<string, string>;
+  sources: Record<string, string>;
+  /** Lower-cased tag name → tag id. */
+  tags: Record<string, string>;
+  /** Custom field internalKey → type, for coercion and rejection. */
+  customFields: Record<string, string>;
+}
+
 export interface ContactImportJobData extends BaseImportJobData {
   tenantSettings: ImportTenantSettings;
+  catalog: ImportCatalog;
 }
 
 // Result (backward compat)
@@ -198,15 +223,19 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     data: ContactImportJobData,
   ): MappedRow {
     const defaultCountryCode = data.tenantSettings?.defaultCountryCode;
+    const catalog = data.catalog;
     const fields: Record<string, any> = {};
+    const customFields: Record<string, any> = {};
     const arrayFields: Record<string, string[]> = {
       emails: [],
       phones: [],
+      tags: [],
     };
 
     for (const [header, field] of Object.entries(mapping)) {
       const value = (raw[header] ?? '').toString().trim();
       if (!value) continue;
+
       if (field === 'emails') {
         arrayFields.emails.push(
           ...splitMultiValue(value).map((e) => normalizeEmail(e)),
@@ -217,15 +246,99 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
             normalizePhone(p, defaultCountryCode),
           ),
         );
+      } else if (field === 'tags') {
+        // Names in, ids out. An unresolved name is dropped here and reported by
+        // validateRow — a typo in one cell must not fail a 200k-row migration.
+        for (const name of splitMultiValue(value)) {
+          const id = catalog?.tags?.[name.toLowerCase()];
+          if (id) arrayFields.tags.push(id);
+        }
+      } else if (field.startsWith(IMPORT_CUSTOM_FIELD_PREFIX)) {
+        const key = field.slice(IMPORT_CUSTOM_FIELD_PREFIX.length);
+        if (catalog?.customFields?.[key]) {
+          customFields[key] = this.coerceCustomField(
+            value,
+            catalog.customFields[key],
+          );
+        }
+      } else if (IMPORT_BOOLEAN_FIELDS.has(field)) {
+        fields[field] = this.parseBoolean(value);
+      } else if (IMPORT_SETTING_REFERENCE_FIELDS.has(field)) {
+        const resolved = this.resolveSettingReference(field, value, catalog);
+        if (resolved) fields[field] = resolved;
+      } else if (field === 'birthday') {
+        const parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) fields.birthday = parsed;
+      } else if (field === 'country') {
+        fields.country = value.toUpperCase();
       } else if ((SCALAR_FIELDS as readonly string[]).includes(field)) {
         fields[field] = value;
       }
     }
 
+    if (Object.keys(customFields).length) fields.customFields = customFields;
+
     arrayFields.emails = this.uniq(arrayFields.emails);
     arrayFields.phones = this.uniq(arrayFields.phones);
+    arrayFields.tags = this.uniq(arrayFields.tags);
 
     return { row, fields, arrayFields };
+  }
+
+  /**
+   * What a spreadsheet means by "yes".
+   *
+   * Marketing consent arrives as `TRUE`, `Yes`, `1`, `Y`, `Có`. Treating
+   * anything but `true` as false would silently opt out an entire migrated
+   * customer base; treating anything non-empty as true would opt IN people who
+   * wrote "No". Both are compliance failures, so the spellings are explicit and
+   * anything unrecognised is false.
+   */
+  private parseBoolean(value: string): boolean {
+    return ['true', 'yes', 'y', '1', 'có', 'x'].includes(
+      value.trim().toLowerCase(),
+    );
+  }
+
+  private resolveSettingReference(
+    field: string,
+    value: string,
+    catalog?: ImportCatalog,
+  ): string | undefined {
+    const key = value.toLowerCase();
+    if (field === 'lifecycleStageId') return catalog?.lifecycleStages?.[key];
+    if (field === 'statusId') return catalog?.statuses?.[key];
+    return catalog?.sources?.[key];
+  }
+
+  /**
+   * Coerce a cell to the type the tenant declared for that custom field.
+   *
+   * Deliberately narrow: NUMBER-ish types become numbers, DATE types become
+   * dates, BOOLEAN becomes a boolean, MULTI-valued types split, and everything
+   * else stays the string it was. An unparseable number stays a string and is
+   * rejected by the row validator, which is where the user sees why.
+   */
+  private coerceCustomField(value: string, type: string): unknown {
+    if (
+      ['NUMBER', 'DECIMAL', 'CURRENCY', 'PERCENTAGE', 'SCORE'].includes(type)
+    ) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : value;
+    }
+    if (['DATE', 'DATETIME'].includes(type)) {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? value : parsed;
+    }
+    if (type === 'BOOLEAN' || type === 'CHECKBOX_GROUP') {
+      return type === 'BOOLEAN'
+        ? this.parseBoolean(value)
+        : splitMultiValue(value);
+    }
+    if (type === 'MULTI_SELECT' || type === 'MULTI_LOOKUP') {
+      return splitMultiValue(value);
+    }
+    return value;
   }
 
   // Row validation
@@ -241,8 +354,36 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
       companyName: 255,
       title: 255,
       role: 255,
+      city: 120,
+      externalId: 200,
+      externalSource: 60,
       address: 2_000,
     };
+
+    // A two-letter code, uppercased in mapRow. Rejected rather than stored raw:
+    // a mix of "SA", "Saudi Arabia" and "KSA" in one column makes the country
+    // axis of every segment wrong, and silently.
+    if (mapped.fields.country && !/^[A-Z]{2}$/.test(mapped.fields.country)) {
+      errors.push({
+        row: mapped.row,
+        code: ImportErrorCode.VALIDATION_FAILED,
+        field: 'country',
+        reason: 'Country must be a 2-letter ISO-3166-1 alpha-2 code (e.g. SA)',
+        value: String(mapped.fields.country).slice(0, 500),
+      });
+    }
+
+    // An externalId with no source cannot be unique or looked up: the index is
+    // on the pair. Accepting it would store a key nothing can ever match.
+    if (mapped.fields.externalId && !mapped.fields.externalSource) {
+      errors.push({
+        row: mapped.row,
+        code: ImportErrorCode.VALIDATION_FAILED,
+        field: 'externalSource',
+        reason: 'externalSource is required whenever externalId is supplied',
+        value: String(mapped.fields.externalId).slice(0, 500),
+      });
+    }
 
     for (const [field, max] of Object.entries(maxLengths)) {
       const value = mapped.fields[field];
@@ -293,6 +434,11 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
         return row.arrayFields.emails ?? [];
       case 'phones':
         return row.arrayFields.phones ?? [];
+      // The idempotency key. Matching on it is what lets an integration re-run
+      // the same export without duplicating everyone in it — email and phone
+      // change, a customer id does not.
+      case 'externalId':
+        return row.fields.externalId ? [String(row.fields.externalId)] : [];
       default:
         return [];
     }
@@ -311,6 +457,7 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
       ...mapped.fields,
       emails: mapped.arrayFields.emails ?? [],
       phones: mapped.arrayFields.phones ?? [],
+      tags: mapped.arrayFields.tags ?? [],
       tenantId: data.tenantId,
       createdById: data.userId,
       updatedById: data.userId,
@@ -345,6 +492,8 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
       set.emails = mapped.arrayFields.emails;
     if ((mapped.arrayFields.phones?.length ?? 0) > 0)
       set.phones = mapped.arrayFields.phones;
+    if ((mapped.arrayFields.tags?.length ?? 0) > 0)
+      set.tags = mapped.arrayFields.tags;
     return { $set: set };
   }
 
@@ -365,6 +514,26 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     for (const field of SCALAR_FIELDS) {
       const incoming = mapped.fields[field];
       if (incoming && !existing[field]) set[field] = incoming;
+    }
+
+    // Custom fields merge per KEY, not as a whole object: `$set: {customFields}`
+    // would drop every key the file does not carry.
+    for (const [key, value] of Object.entries(
+      (mapped.fields.customFields ?? {}) as Record<string, unknown>,
+    )) {
+      if (existing.customFields?.[key] === undefined) {
+        set[`customFields.${key}`] = value;
+      }
+    }
+    delete set.customFields;
+
+    // Tags always union — a tag is additive by nature, and "fill only when
+    // empty" would mean the second import of a customer adds nothing.
+    if ((mapped.arrayFields.tags?.length ?? 0) > 0) {
+      const fresh = mapped.arrayFields.tags.filter(
+        (tag) => !(existing.tags ?? []).map(String).includes(tag),
+      );
+      if (fresh.length) addToSet.tags = { $each: fresh };
     }
 
     this.mergeArray(

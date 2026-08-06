@@ -3,6 +3,7 @@ import {
   IsArray,
   IsString,
   IsIn,
+  IsMongoId,
   ValidateNested,
   IsBoolean,
 } from 'class-validator';
@@ -11,14 +12,27 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
  * Typed filter item for contact export.
- * Prevents arbitrary field injection into MongoDB queries.
+ *
+ * Accepts both the legacy `{id, value}` shape and the operator form
+ * `{field, operator, value}` — the compiler in `filters/contact-filter` decides
+ * which fields and operators are legal, so validating that here would be a
+ * second rule to keep in step. Field injection is prevented there.
  */
 class ExportFilterItem {
+  @IsOptional()
   @IsString()
-  id: string;
+  id?: string;
 
   @IsOptional()
-  value: any;
+  @IsString()
+  field?: string;
+
+  @IsOptional()
+  @IsString()
+  operator?: string;
+
+  @IsOptional()
+  value?: any;
 }
 
 /**
@@ -71,6 +85,14 @@ export class ExportContactsDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Export the members of a saved segment. Composed with the other filters.',
+  })
+  @IsOptional()
+  @IsMongoId()
+  segmentId?: string;
 
   @ApiPropertyOptional({
     description: 'Restrict to contacts owned by current user',

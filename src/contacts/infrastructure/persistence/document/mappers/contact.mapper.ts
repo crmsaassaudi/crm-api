@@ -20,7 +20,17 @@ export class ContactMapper {
     domainEntity.sourceId = raw.sourceId?.toString();
     domainEntity.role = raw.role;
     domainEntity.address = raw.address;
+    domainEntity.city = raw.city;
+    domainEntity.country = raw.country;
     domainEntity.birthday = raw.birthday;
+    domainEntity.externalId = raw.externalId;
+    domainEntity.externalSource = raw.externalSource;
+    // Rollup values: written only by ContactValueRollupService, read everywhere.
+    domainEntity.totalRevenue = raw.totalRevenue ?? 0;
+    domainEntity.dealsCount = raw.dealsCount ?? 0;
+    domainEntity.wonDealsCount = raw.wonDealsCount ?? 0;
+    domainEntity.lastPurchaseAt = raw.lastPurchaseAt;
+    domainEntity.firstPurchaseAt = raw.firstPurchaseAt;
     domainEntity.customFields = raw.customFields;
     domainEntity.score = raw.score;
     domainEntity.emailOptIn = raw.emailOptIn ?? false;
@@ -88,7 +98,16 @@ export class ContactMapper {
     persistenceEntity.sourceId = domainEntity.sourceId;
     persistenceEntity.role = domainEntity.role;
     persistenceEntity.address = domainEntity.address;
+    persistenceEntity.city = domainEntity.city;
+    persistenceEntity.country = domainEntity.country;
     persistenceEntity.birthday = domainEntity.birthday;
+    persistenceEntity.externalId = domainEntity.externalId;
+    persistenceEntity.externalSource = domainEntity.externalSource;
+    // Deliberately NOT mapped: totalRevenue / dealsCount / wonDealsCount /
+    // lastPurchaseAt / firstPurchaseAt. THE MAPPER IS THE WRITE WHITELIST, and
+    // these are derived from won deals — accepting them here would let a PATCH
+    // overwrite a customer's lifetime value with whatever the client sent, and
+    // the next rollup would silently correct it. The rollup writes them directly.
     persistenceEntity.customFields = domainEntity.customFields;
     persistenceEntity.score = domainEntity.score;
     persistenceEntity.emailOptIn = domainEntity.emailOptIn;

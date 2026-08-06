@@ -55,6 +55,14 @@ import {
 } from './merge/contact-merge.schema';
 import { CustomFieldsModule } from '../custom-fields/custom-fields.module';
 import { TagsModule } from '../tags/tags.module';
+import { LeadScoringModule } from '../lead-scoring/lead-scoring.module';
+import { ContactSegmentsService } from './segments/contact-segments.service';
+import { ContactSegmentsController } from './segments/contact-segments.controller';
+import {
+  ContactSegmentSchema,
+  ContactSegmentSchemaClass,
+} from './segments/contact-segment.schema';
+import { ContactValueRollupService } from './value/contact-value-rollup.service';
 import { isWorkerRuntime } from '../config/runtime-role';
 import {
   CONTACT_EXPORT_QUEUE,
@@ -106,6 +114,10 @@ const workerProviders = isWorkerRuntime()
         name: ContactIdentitySchemaClass.name,
         schema: ContactIdentitySchema,
       },
+      {
+        name: ContactSegmentSchemaClass.name,
+        schema: ContactSegmentSchema,
+      },
     ]),
     BullModule.registerQueue({
       name: CONTACT_EXPORT_QUEUE,
@@ -152,8 +164,11 @@ const workerProviders = isWorkerRuntime()
     // `contact.tags[]` stores tag IDs; bulk-tagging validates them against the
     // catalogue rather than writing whatever strings it was handed.
     TagsModule,
+    // The nightly rescore applies the tenant's OWN rules. It used to apply a
+    // hard-coded formula living in ContactRepository, which overwrote them.
+    LeadScoringModule,
   ],
-  controllers: [ContactsController],
+  controllers: [ContactsController, ContactSegmentsController],
   providers: [
     ContactsService,
     ContactRepository,
@@ -168,6 +183,13 @@ const workerProviders = isWorkerRuntime()
     ContactRelationsService,
     ContactIdentitySyncService,
     ContactStageTransitionListener,
+    // Named audiences. Shares the contact filter compiler with the list view, so
+    // a segment and a list filter can never disagree about what a condition means.
+    ContactSegmentsService,
+    // Denormalises won-deal revenue onto the contact. Listens to the deal audit
+    // event instead of being called by DealsService — ContactsModule imports
+    // DealsModule, so the reverse call would be a cycle.
+    ContactValueRollupService,
     ...workerProviders,
   ],
   exports: [
@@ -178,6 +200,8 @@ const workerProviders = isWorkerRuntime()
     ContactRelationsService,
     // The omni resolver and the livechat enrichment both need identity lookup.
     ContactIdentitySyncService,
+    ContactSegmentsService,
+    ContactValueRollupService,
   ],
 })
 export class ContactsModule {}

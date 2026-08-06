@@ -69,6 +69,13 @@ const REVIEWED_NO_BIN: Record<string, string> = {
     'working, an email that must be reusable). Recorded so it is a decision rather ' +
     'than an omission.',
 
+  'contacts/segments/contact-segments.controller.ts':
+    'A segment is a definition, not a record: it holds a condition tree or a list ' +
+    'of ids, nothing references it, and no history hangs off it. It HARD-deletes — ' +
+    'ContactSegmentSchemaClass declares no `deletedAt` at all. This entry exists ' +
+    'only because the detector reads the whole feature folder for the signal, and ' +
+    'the folder contains contact.schema.ts, which does soft-delete.',
+
   'channels/channels.controller.ts':
     'Channel config soft-deletes for a different reason than CRM records: the ' +
     'partial unique index on (tenantId, providerType, name) is scoped to ' +

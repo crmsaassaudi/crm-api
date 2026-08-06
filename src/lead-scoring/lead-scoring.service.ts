@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { OnEvent } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
 import {
@@ -14,6 +14,18 @@ import {
   ContactSchemaClass,
   ContactSchemaDocument,
 } from '../contacts/infrastructure/persistence/document/entities/contact.schema';
+
+export type ScoringTrigger =
+  | 'on_create'
+  | 'on_update'
+  | 'on_activity'
+  | 'always';
+
+/** The shape the scorer needs — a lean rule row, not a hydrated document. */
+export interface LeadScoringRule {
+  condition: ScoringCondition;
+  points: number;
+}
 
 /**
  * LeadScoringService — rule-based contact score engine.
@@ -92,7 +104,7 @@ export class LeadScoringService {
   async scoreContact(
     tenantId: string,
     contactId: string,
-    trigger: 'on_create' | 'on_update' | 'on_activity' | 'always' = 'always',
+    trigger: ScoringTrigger = 'always',
     activityContext?: { type: string; [key: string]: any },
   ): Promise<number> {
     const contact = await this.contactModel
@@ -101,29 +113,8 @@ export class LeadScoringService {
       .exec();
     if (!contact) return 0;
 
-    const rules = await this.ruleModel
-      .find({
-        tenantId,
-        isActive: true,
-        trigger: { $in: [trigger, 'always'] },
-      })
-      .lean()
-      .exec();
-
-    let totalPoints = 0;
-    for (const rule of rules) {
-      const matches = this.evaluateCondition(
-        rule.condition as ScoringCondition,
-        contact as any,
-        activityContext,
-      );
-      if (matches) {
-        totalPoints += rule.points;
-      }
-    }
-
-    // Floor at 0 — score never goes negative
-    const newScore = Math.max(0, totalPoints);
+    const rules = await this.getActiveRules(tenantId, trigger);
+    const newScore = this.computeScore(rules, contact as any, activityContext);
 
     await this.contactModel
       .updateOne({ _id: contactId, tenantId }, { $set: { score: newScore } })
@@ -137,46 +128,107 @@ export class LeadScoringService {
   }
 
   /**
-   * Bulk re-score all contacts for a tenant (background job).
-   * Returns stats: scanned / updated.
+   * The tenant's active rules for a trigger — the input the nightly sweep needs
+   * to score a whole page without re-reading the rule set per contact.
+   *
+   * Runs as a platform query: the caller is a cron with no request context, and
+   * the tenant is supplied explicitly.
+   */
+  async getActiveRules(
+    tenantId: string,
+    trigger: ScoringTrigger = 'always',
+  ): Promise<LeadScoringRule[]> {
+    return this.ruleModel
+      .find({ tenantId, isActive: true, trigger: { $in: [trigger, 'always'] } })
+      .setOptions({ isPlatformQuery: true } as any)
+      .lean()
+      .exec() as unknown as Promise<LeadScoringRule[]>;
+  }
+
+  /**
+   * Re-apply the tenant's rules to every one of its contacts.
+   *
+   * The "apply now" an admin presses after editing rules — the nightly sweep
+   * would otherwise be the only thing that reconciles them.
+   *
+   * Paged with a `_id` cursor and one `bulkWrite` per page. The previous version
+   * held a cursor open over the whole collection and issued one `updateOne` per
+   * contact, which is a round-trip per row.
    */
   async bulkRescoreForTenant(
     tenantId: string,
   ): Promise<{ scanned: number; updated: number }> {
-    const rules = await this.ruleModel
-      .find({ tenantId, isActive: true })
-      .lean()
-      .exec();
-
+    const rules = await this.getActiveRules(tenantId);
     if (!rules.length) return { scanned: 0, updated: 0 };
 
-    const cursor = this.contactModel.find({ tenantId }).lean().cursor();
+    const PAGE = 1_000;
+    let after: Types.ObjectId | undefined;
     let scanned = 0;
     let updated = 0;
 
-    for await (const contact of cursor) {
-      scanned++;
-      let totalPoints = 0;
-      for (const rule of rules) {
-        if (
-          this.evaluateCondition(
-            rule.condition as ScoringCondition,
-            contact as any,
-          )
-        ) {
-          totalPoints += rule.points;
-        }
+    for (;;) {
+      const page = await this.contactModel
+        .find({
+          tenantId,
+          deletedAt: null,
+          ...(after ? { _id: { $gt: after } } : {}),
+        })
+        .sort({ _id: 1 })
+        .limit(PAGE)
+        .lean()
+        .exec();
+      if (page.length === 0) break;
+
+      const operations = page
+        .map((contact) => ({
+          contact,
+          score: this.computeScore(rules, contact as any),
+        }))
+        .filter(({ contact, score }) => score !== (contact.score ?? 0))
+        .map(({ contact, score }) => ({
+          updateOne: {
+            filter: { _id: contact._id, tenantId },
+            update: { $set: { score } },
+          },
+        }));
+
+      if (operations.length) {
+        const result = await this.contactModel.bulkWrite(operations as any, {
+          ordered: false,
+        });
+        updated += result.modifiedCount;
       }
-      const newScore = Math.max(0, totalPoints);
-      if (newScore !== (contact.score ?? 0)) {
-        await this.contactModel
-          .updateOne({ _id: contact._id }, { $set: { score: newScore } })
-          .exec();
-        updated++;
-      }
+
+      scanned += page.length;
+      after = page[page.length - 1]._id as unknown as Types.ObjectId;
+      if (page.length < PAGE) break;
     }
 
     return { scanned, updated };
+  }
+
+  /**
+   * The tenant's score for one contact, given its rules. Pure — no I/O.
+   *
+   * This is THE score function. It used to have a rival: a hard-coded
+   * recency+completeness formula inside ContactRepository that the nightly cron
+   * applied to every contact in every tenant, overwriting whatever the rules had
+   * produced. A tenant's Lead Scoring screen therefore described a calculation
+   * that survived only until 02:00, and `score` — a sortable, filterable,
+   * reportable field — meant whichever writer ran last.
+   */
+  computeScore(
+    rules: LeadScoringRule[],
+    contact: Record<string, any>,
+    activityContext?: Record<string, any>,
+  ): number {
+    let totalPoints = 0;
+    for (const rule of rules) {
+      if (this.evaluateCondition(rule.condition, contact, activityContext)) {
+        totalPoints += rule.points;
+      }
+    }
+    return Math.max(0, totalPoints);
   }
 
   // Event listeners

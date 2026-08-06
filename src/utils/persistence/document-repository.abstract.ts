@@ -1,6 +1,7 @@
 import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { ClientSession, Model, Document, FilterQuery } from 'mongoose';
+import { buildVisibilityClauses } from '../../common/permissions/visibility-scope';
 
 export abstract class BaseDocumentRepository<
   TSchema extends Document<any>,
@@ -27,80 +28,29 @@ export abstract class BaseDocumentRepository<
     return this.mapToDomain(saved);
   }
 
+  /**
+   * Intersect a filter with the request's owner / org-unit / ABAC scope.
+   *
+   * The rule itself lives in `common/permissions/visibility-scope` so that reads
+   * which cannot go through a repository — the contact timeline fans in across
+   * five collections on the raw connection — enforce the same predicate instead
+   * of a second copy of it that drifts.
+   */
   protected applyTenantFilter(
     filter: FilterQuery<TSchema> = {},
   ): FilterQuery<TSchema> {
-    let enriched: any = { ...filter };
-    // `visibleOwnerIds`, set by DataVisibilityInterceptor, has three states:
-    //   undefined → not evaluated, apply no filter
-    //   null      → admin/owner bypass, see everything
-    //   string[]  → restrict to these owners
-    if (this.enableDataVisibility()) {
-      const { visibleOwnerIds, visibleOrgUnitIds } = this.resolveVisibility();
-      if (Array.isArray(visibleOwnerIds)) {
-        // Unowned records (`ownerId` null or missing) stay hidden from a scoped
-        // user unless the tenant opts in via `includeUnownedInScope`. Treating
-        // "no owner" as "everyone's" is what turned an unassigned lead queue into
-        // a tenant-wide read. Admins never reach here — they bypass with null.
-        const ownerClauses: any[] = [{ ownerId: { $in: visibleOwnerIds } }];
-        if (this.cls.get('includeUnownedInScope') === true) {
-          ownerClauses.push({ ownerId: null }); // covers null and missing field
-        }
-
-        // The org-unit axis is UNIONED with the owner axis, not intersected.
-        // ORG_UNIT scope means "my records AND my unit's records": a manager keeps
-        // what they own even when personally unassigned to a unit, and keeps a
-        // subordinate who sits in another unit. Intersecting would let a WIDER
-        // scope return FEWER rows, which is what makes a scope model untrustable.
-        //
-        // An empty array must add no clause at all — it is what an unassigned user
-        // or a SELF/SUBORDINATES scope produces. As `$in: []` it would match
-        // nothing and erase the owner clause it was meant to widen.
-        if (Array.isArray(visibleOrgUnitIds) && visibleOrgUnitIds.length > 0) {
-          ownerClauses.push({ orgUnitId: { $in: visibleOrgUnitIds } });
-        }
-
-        enriched = {
-          ...enriched,
-          $and: [...(enriched.$and || []), { $or: ownerClauses }],
-        };
-      }
-    }
-
-    // Resource-dependent ABAC denies are compiled once by PermissionGuard and
-    // intersected here into every query for the matching CRM module.
-    const abac = this.cls.get<{
-      resource?: string;
-      filter?: Record<string, unknown> | null;
-    }>('abacResourceFilter');
-    const moduleKey = this.visibilityModule();
-    if (
-      moduleKey &&
-      abac?.filter &&
-      this.matchesAuthorizationResource(moduleKey, abac.resource)
-    ) {
-      enriched = {
-        ...enriched,
-        $and: [...(enriched.$and || []), abac.filter],
-      };
-    }
-
-    return enriched;
-  }
-
-  private matchesAuthorizationResource(
-    moduleKey: string,
-    resource?: string,
-  ): boolean {
-    if (!resource) return false;
-    const moduleName = moduleKey.toLowerCase();
-    const resourceName = resource.toLowerCase();
-    return (
-      resourceName === moduleName ||
-      resourceName === `${moduleName}s` ||
-      (moduleName.endsWith('y') &&
-        resourceName === `${moduleName.slice(0, -1)}ies`)
+    const enriched: any = { ...filter };
+    const clauses = buildVisibilityClauses(
+      this.cls,
+      this.visibilityModule(),
+      this.enableDataVisibility(),
     );
+    if (!clauses) return enriched;
+
+    return {
+      ...enriched,
+      $and: [...(enriched.$and || []), ...clauses],
+    };
   }
 
   /**
@@ -123,41 +73,6 @@ export abstract class BaseDocumentRepository<
    */
   protected visibilityModule(): string | null {
     return null;
-  }
-
-  /**
-   * The owner/org-unit axes to enforce for THIS repository.
-   *
-   * Falls back to the request-wide values whenever the tenant configured nothing
-   * module-specific, so a repository that never overrides `visibilityModule()`
-   * behaves exactly as before. A per-module entry replaces the base pair
-   * wholesale rather than merging: the interceptor already computed it as a
-   * complete answer for that module, sharing rules included.
-   */
-  private resolveVisibility(): {
-    visibleOwnerIds: unknown;
-    visibleOrgUnitIds: unknown;
-  } {
-    const moduleKey = this.visibilityModule();
-    if (moduleKey) {
-      const byModule = this.cls.get('dataVisibilityByModule') as
-        | Record<
-            string,
-            { ownerIds: string[] | null; orgUnitIds: string[] | null }
-          >
-        | undefined;
-      const override = byModule?.[moduleKey];
-      if (override) {
-        return {
-          visibleOwnerIds: override.ownerIds,
-          visibleOrgUnitIds: override.orgUnitIds,
-        };
-      }
-    }
-    return {
-      visibleOwnerIds: this.cls.get('visibleOwnerIds'),
-      visibleOrgUnitIds: this.cls.get('visibleOrgUnitIds'),
-    };
   }
 
   async find(filter: FilterQuery<TSchema>, options?: any): Promise<TDomain[]> {
