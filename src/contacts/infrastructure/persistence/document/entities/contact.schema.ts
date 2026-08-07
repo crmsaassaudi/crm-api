@@ -263,7 +263,15 @@ ContactSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 // `emails` and `phones` go in the sensitive half: they are masked from anyone
 // without `contacts:unmask`, and a masked value must not double as a lookup key.
 ContactSchema.plugin(searchKeysPlugin, {
-  fields: ['firstName', 'lastName', 'companyName', 'title', 'role', 'tags'],
+  fields: [
+    'firstName',
+    'lastName',
+    'companyName',
+    'title',
+    'role',
+    'tags',
+    'customFields',
+  ],
   sensitiveFields: ['emails'],
   sensitivePhoneFields: ['phones'],
 });

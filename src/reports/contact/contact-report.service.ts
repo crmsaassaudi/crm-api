@@ -6,6 +6,7 @@ import {
   ContactSchemaClass,
   ContactSchemaDocument,
 } from '../../contacts/infrastructure/persistence/document/entities/contact.schema';
+import { DealSchemaClass } from '../../deals/infrastructure/persistence/document/entities/deal.schema';
 import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 import { BaseReportFilterDto } from '../shared/dto/base-report-filter.dto';
 import {
@@ -30,6 +31,7 @@ import {
   DataQualityData,
   OptOutData,
   ScoreBucket,
+  LeadConversionData,
   ShadowConversionData,
   SourceAttributionItem,
   StaleContactsData,
@@ -59,6 +61,8 @@ export class ContactReportService {
   constructor(
     @InjectModel(ContactSchemaClass.name)
     private readonly contactModel: Model<ContactSchemaDocument>,
+    @InjectModel(DealSchemaClass.name)
+    private readonly dealModel: Model<any>,
     private readonly settingsService: CrmSettingsService,
     private readonly cls: ClsService,
     private readonly growthRollup: ContactGrowthRollupReader,
@@ -673,6 +677,137 @@ export class ContactReportService {
     });
   }
 
+  /**
+   * Lead → Won. There is no separate Lead entity in this product — a contact
+   * IS the lead while it sits in whichever `contact_lifecycle` stage(s) the
+   * tenant marks `isLeadStage` — so "converted" means the contact's own
+   * `stageHistory` shows it entered a lead stage at some point AND at least one
+   * Deal referencing it (`Deal.contactIds`) has since closed Won. Matched by
+   * `stageHistory`, not the current `lifecycleStageId`: a contact that actually
+   * converted has almost always moved past the lead stage by now, so the
+   * current-stage alone would undercount to near zero.
+   */
+  async getLeadConversion(
+    dto: GetContactReportDto,
+  ): Promise<ReportResponse<LeadConversionData>> {
+    const startedAt = process.hrtime.bigint();
+    const context = await this.resolveDateContext(dto);
+    const format = getMongoDateFormat(context.resolvedGranularity);
+    const tenantId = this.resolveTenantId();
+    const leadStages = await this.getLeadStages();
+
+    if (leadStages.apiNames.length === 0) {
+      const data: LeadConversionData = {
+        configured: false,
+        leadStageNames: [],
+        totalLeads: 0,
+        wonCount: 0,
+        conversionRate: 0,
+        trend: [],
+      };
+      return buildReportResponse({
+        report: 'lead_conversion',
+        dto,
+        data,
+        totalRecords: 0,
+        startedAt,
+        requestedGranularity: context.requestedGranularity,
+        resolvedGranularity: context.resolvedGranularity,
+        warnings: [
+          ...context.warnings,
+          'No contact_lifecycle stage is marked as a lead stage for this tenant.',
+        ],
+      });
+    }
+
+    const match = {
+      ...this.buildBaseMatch(dto, {
+        createdBetween: { from: context.from, to: context.to },
+      }),
+      'stageHistory.toStage': { $in: leadStages.apiNames },
+    };
+    const dealVisibility = buildCrmReportVisibilityFilter(this.cls, 'Deal');
+
+    const wonLookup = {
+      $lookup: {
+        from: 'deals',
+        let: { contactId: '$_id' },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $in: ['$$contactId', { $ifNull: ['$contactIds', []] } ] },
+              tenantId,
+              wonAt: { $ne: null },
+              ...(Object.keys(dealVisibility).length > 0
+                ? dealVisibility
+                : {}),
+            },
+          },
+          { $limit: 1 },
+          { $project: { _id: 1 } },
+        ],
+        as: 'wonDeal',
+      },
+    };
+
+    const [summary, trendRows] = await Promise.all([
+      reportAggregate(this.contactModel, [
+        { $match: match },
+        wonLookup,
+        {
+          $group: {
+            _id: null,
+            totalLeads: { $sum: 1 },
+            wonCount: { $sum: { $cond: [{ $gt: [{ $size: '$wonDeal' }, 0] }, 1, 0] } },
+          },
+        },
+      ]).exec(),
+      reportAggregate(this.contactModel, [
+        { $match: match },
+        wonLookup,
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format,
+                date: '$createdAt',
+                timezone: context.timezone,
+              },
+            },
+            total: { $sum: 1 },
+            won: { $sum: { $cond: [{ $gt: [{ $size: '$wonDeal' }, 0] }, 1, 0] } },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]).exec(),
+    ]);
+
+    const totals = summary[0] ?? { totalLeads: 0, wonCount: 0 };
+    const data: LeadConversionData = {
+      configured: true,
+      leadStageNames: leadStages.names,
+      totalLeads: totals.totalLeads,
+      wonCount: totals.wonCount,
+      conversionRate: safePercent(totals.wonCount, totals.totalLeads),
+      trend: trendRows.map((row) => ({
+        date: row._id,
+        won: row.won,
+        total: row.total,
+      })),
+    };
+
+    return buildReportResponse({
+      report: 'lead_conversion',
+      dto,
+      data,
+      totalRecords: totals.totalLeads,
+      startedAt,
+      requestedGranularity: context.requestedGranularity,
+      resolvedGranularity: context.resolvedGranularity,
+      warnings: context.warnings,
+    });
+  }
+
   async getFunnelVelocity(
     dto: GetContactReportDto,
   ): Promise<ReportResponse<FunnelVelocityItem[], FunnelReportMeta>> {
@@ -1069,6 +1204,28 @@ export class ContactReportService {
         .filter((source: any) => source?.id)
         .map((source: any) => [source.id, source.name ?? source.id]),
     );
+  }
+
+  /**
+   * The tenant's lead stage(s), by `apiName` — the value actually stored on
+   * `lifecycleStageId`/`stageHistory.toStage` (see `contacts.service.ts`, which
+   * always writes `stage.apiName`, never `stage.id`).
+   */
+  private async getLeadStages(): Promise<{
+    apiNames: string[];
+    names: string[];
+  }> {
+    const lifecycle =
+      await this.settingsService.getSetting('contact_lifecycle');
+    const stages = Array.isArray(lifecycle?.stages) ? lifecycle.stages : [];
+    const leadStages = stages.filter(
+      (stage: any) => stage?.isLeadStage === true && stage?.apiName,
+    );
+
+    return {
+      apiNames: leadStages.map((stage: any) => stage.apiName),
+      names: leadStages.map((stage: any) => stage.name ?? stage.apiName),
+    };
   }
 
   private async getStageMap(): Promise<Map<string, string>> {

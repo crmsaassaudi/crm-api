@@ -143,6 +143,7 @@ import { CONVERSATION_OPS_PROCESSOR } from './aggregate/conversation-ops.constan
 import { ConversationCommandService } from './aggregate/conversation-command.service';
 import { GroupsModule } from '../groups/groups.module';
 import { TagsModule } from '../tags/tags.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import {
   QueueEntrySchema,
   QueueEntrySchemaClass,
@@ -216,6 +217,7 @@ const workerProviders =
     // Conversation Aggregate — sequential command processing
     ConversationOpsModule,
     TagsModule,
+    NotificationsModule,
     GroupsModule,
     MongooseModule.forFeature([
       {

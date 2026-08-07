@@ -12,6 +12,8 @@ import { createEventBusMock } from '../test/mocks/event-bus.mock';
 
 const PIPELINE = 'pipeline_1';
 const OPEN_STAGE = 'stage_open';
+const PROPOSAL_STAGE = 'stage_proposal';
+const NEGOTIATION_STAGE = 'stage_negotiation';
 const WON_STAGE = 'stage_won';
 const LOST_STAGE = 'stage_lost';
 
@@ -22,6 +24,23 @@ const STAGES: Record<string, any> = {
     probability: 20,
     isWon: false,
     isLost: false,
+    sortOrder: 0,
+  },
+  [PROPOSAL_STAGE]: {
+    pipelineId: PIPELINE,
+    stageId: PROPOSAL_STAGE,
+    probability: 60,
+    isWon: false,
+    isLost: false,
+    sortOrder: 1,
+  },
+  [NEGOTIATION_STAGE]: {
+    pipelineId: PIPELINE,
+    stageId: NEGOTIATION_STAGE,
+    probability: 80,
+    isWon: false,
+    isLost: false,
+    sortOrder: 2,
   },
   [WON_STAGE]: {
     pipelineId: PIPELINE,
@@ -29,6 +48,7 @@ const STAGES: Record<string, any> = {
     probability: 100,
     isWon: true,
     isLost: false,
+    sortOrder: 3,
   },
   [LOST_STAGE]: {
     pipelineId: PIPELINE,
@@ -36,6 +56,7 @@ const STAGES: Record<string, any> = {
     probability: 0,
     isWon: false,
     isLost: true,
+    sortOrder: 3,
   },
 };
 
@@ -108,6 +129,7 @@ describe('DealsService', () => {
       describeStage: jest.fn((stageId: string) =>
         Promise.resolve(STAGES[stageId] ?? null),
       ),
+      isSequentialEnforced: jest.fn().mockResolvedValue(false),
     };
 
     dealRules = { get: jest.fn().mockResolvedValue(DEFAULT_DEAL_RULES) };
@@ -366,6 +388,48 @@ describe('DealsService', () => {
       await expect(
         service.update('deal_1', { stageId: WON_STAGE } as any),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should block a forward skip when the pipeline enforces sequential stages', async () => {
+      dealSettings.isSequentialEnforced.mockResolvedValue(true);
+      repository.findOne.mockResolvedValue(existingDeal({ stageId: OPEN_STAGE }));
+
+      await expectBusinessCode(
+        service.update('deal_1', { stageId: NEGOTIATION_STAGE } as any),
+        DEAL_ERRORS.STAGE_SKIP_NOT_ALLOWED,
+      );
+    });
+
+    it('should allow advancing exactly one stage when sequential stages are enforced', async () => {
+      dealSettings.isSequentialEnforced.mockResolvedValue(true);
+      repository.findOne.mockResolvedValue(existingDeal({ stageId: OPEN_STAGE }));
+
+      await expect(
+        service.update('deal_1', { stageId: PROPOSAL_STAGE } as any),
+      ).resolves.toBeDefined();
+    });
+
+    it('should allow moving backward even when sequential stages are enforced', async () => {
+      dealSettings.isSequentialEnforced.mockResolvedValue(true);
+      repository.findOne.mockResolvedValue(
+        existingDeal({ stageId: PROPOSAL_STAGE }),
+      );
+
+      await expect(
+        service.update('deal_1', { stageId: OPEN_STAGE } as any),
+      ).resolves.toBeDefined();
+    });
+
+    it('should allow closing as Lost from any stage even when sequential stages are enforced', async () => {
+      dealSettings.isSequentialEnforced.mockResolvedValue(true);
+      repository.findOne.mockResolvedValue(existingDeal({ stageId: OPEN_STAGE }));
+
+      await expect(
+        service.update('deal_1', {
+          stageId: LOST_STAGE,
+          lostReason: 'Too expensive',
+        } as any),
+      ).resolves.toBeDefined();
     });
 
     it('should refuse a win that leaves the amount at zero', async () => {

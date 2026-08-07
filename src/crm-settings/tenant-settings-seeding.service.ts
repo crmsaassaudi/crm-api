@@ -282,6 +282,10 @@ const DEFAULT_CONTACT_LIFECYCLE = {
       apiName: 'lead',
       sortOrder: 2,
       color: '#3b82f6',
+      // Marks this stage as the one the lead→won conversion report counts
+      // from. Tenants that rename/remove/add stages control this per stage in
+      // Settings → Contacts → Lifecycle, same as a deal stage's isWon/isLost.
+      isLeadStage: true,
       statuses: [
         {
           id: 'new',

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Server } from 'socket.io';
+import { NotificationsService } from '../../notifications/notifications.service';
 
 /**
  * CrmRealtimeGateway — handles CRM-specific real-time events.
@@ -21,6 +22,8 @@ import { Server } from 'socket.io';
 export class CrmRealtimeGateway {
   private readonly logger = new Logger(CrmRealtimeGateway.name);
   private server!: Server;
+
+  constructor(private readonly notifications: NotificationsService) {}
 
   /**
    * Called by OmniGateway.onModuleInit() to share the Socket.IO server reference.
@@ -139,6 +142,14 @@ export class CrmRealtimeGateway {
       message: event.message,
       escalationPolicyId: event.escalationPolicyId,
     });
+    void this.notifications.create({
+      tenantId: event.tenantId,
+      userId: event.targetUserId,
+      type: 'escalation',
+      title: 'Conversation escalated to you',
+      body: event.message,
+      link: { type: 'Conversation', id: event.conversationId },
+    });
   }
 
   /**
@@ -160,6 +171,13 @@ export class CrmRealtimeGateway {
         conversationId: event.conversationId,
         resolvesAt: event.resolvesAt,
       });
+    void this.notifications.create({
+      tenantId: event.tenantId,
+      userId: event.assignedAgentId,
+      type: 'auto_resolve_warning',
+      title: 'Conversation about to auto-resolve',
+      link: { type: 'Conversation', id: event.conversationId },
+    });
   }
 
   /**
@@ -192,6 +210,19 @@ export class CrmRealtimeGateway {
       recordType: event.recordType,
       recordId: event.recordId,
     });
+    for (const recipientId of event.recipientIds ?? []) {
+      void this.notifications.create({
+        tenantId: event.tenantId,
+        userId: recipientId,
+        type: 'automation',
+        title: event.title,
+        body: event.message,
+        link:
+          event.recordType && event.recordId
+            ? { type: event.recordType, id: event.recordId }
+            : null,
+      });
+    }
   }
 
   /**
@@ -221,6 +252,15 @@ export class CrmRealtimeGateway {
       dueDate: event.dueDate,
       priority: event.priority,
     });
+    if (event.ownerId) {
+      void this.notifications.create({
+        tenantId: event.tenantId,
+        userId: event.ownerId,
+        type: 'task_reminder',
+        title: `Reminder: ${event.title}`,
+        link: { type: 'Task', id: event.taskId },
+      });
+    }
   }
 
   /**
@@ -255,6 +295,15 @@ export class CrmRealtimeGateway {
       stageId: event.stageId,
       dueAt: event.dueAt,
     });
+    if (event.ownerId) {
+      void this.notifications.create({
+        tenantId: event.tenantId,
+        userId: event.ownerId,
+        type: 'deal_follow_up',
+        title: `Follow up: ${event.title}`,
+        link: { type: 'Deal', id: event.dealId },
+      });
+    }
   }
 
   // Export handlers

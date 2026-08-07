@@ -86,4 +86,10 @@ export class ContactReportController {
   getFunnelLeakage(@Query() query: GetContactReportDto) {
     return this.service.getFunnelLeakage(query);
   }
+
+  @Get('lead-conversion')
+  @RequirePermission('view', 'contact_reports')
+  getLeadConversion(@Query() query: GetContactReportDto) {
+    return this.service.getLeadConversion(query);
+  }
 }

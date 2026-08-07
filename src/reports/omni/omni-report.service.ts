@@ -482,7 +482,7 @@ export class OmniReportService {
       return buildReportResponse({
         report: 'message_volume',
         dto,
-        data: { byType: [], byDirection: [], bySenderType: [] },
+        data: { byType: [], byDirection: [], bySenderType: [], byChannel: [] },
         totalRecords: 0,
         startedAt,
       });
@@ -511,6 +511,32 @@ export class OmniReportService {
             { $group: { _id: '$senderType', count: { $sum: 1 } } },
             { $sort: { count: -1 } },
           ],
+          // Channel lives on the conversation, not the message — the two
+          // reports (this one and channel distribution) counted different
+          // things and neither could answer "which channel carries the most
+          // traffic", the question a channel/staffing decision actually needs.
+          byChannel: [
+            {
+              $lookup: {
+                from: 'omni_conversations',
+                localField: 'conversationId',
+                foreignField: '_id',
+                as: 'conversation',
+              },
+            },
+            {
+              $group: {
+                _id: {
+                  $ifNull: [
+                    { $first: '$conversation.channelType' },
+                    'unknown',
+                  ],
+                },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { count: -1 } },
+          ],
         },
       },
     ]).exec();
@@ -530,6 +556,11 @@ export class OmniReportService {
       })),
       bySenderType: (facetResult?.bySenderType ?? []).map((row: any) => ({
         senderType: row._id ?? 'unknown',
+        count: row.count,
+        percentage: safePercent(row.count, total),
+      })),
+      byChannel: (facetResult?.byChannel ?? []).map((row: any) => ({
+        channelType: row._id ?? 'unknown',
         count: row.count,
         percentage: safePercent(row.count, total),
       })),

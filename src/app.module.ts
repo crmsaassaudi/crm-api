@@ -55,6 +55,7 @@ import { TasksModule } from './tasks/tasks.module';
 import { CustomFieldsModule } from './custom-fields/custom-fields.module';
 import { ObjectManagerModule } from './object-manager/object-manager.module';
 import { TagsModule } from './tags/tags.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { CannedResponsesModule } from './canned-responses/canned-responses.module';
 import { RichMessageTemplatesModule } from './rich-message-templates/rich-message-templates.module';
 import { ChannelsModule } from './channels/channels.module';
@@ -323,6 +324,7 @@ function bullBoardBasicAuth() {
     CustomFieldsModule,
     ObjectManagerModule,
     TagsModule,
+    NotificationsModule,
     CannedResponsesModule,
     RichMessageTemplatesModule,
     ChannelsModule,

@@ -307,7 +307,14 @@ TicketSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 // customer's tickets. The value was already on the document and already in the
 // OpenSearch projection; only the MongoDB path could not read it.
 TicketSchema.plugin(searchKeysPlugin, {
-  fields: ['subject', 'ticketNumber', 'description', 'relatedTo.name', 'tags'],
+  fields: [
+    'subject',
+    'ticketNumber',
+    'description',
+    'relatedTo.name',
+    'tags',
+    'customFields',
+  ],
 });
 
 // Compound Indexes

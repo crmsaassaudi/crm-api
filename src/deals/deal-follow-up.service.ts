@@ -3,12 +3,16 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import Redis from 'ioredis';
+import { ClsService } from 'nestjs-cls';
 import {
   DealSchemaClass,
   DealSchemaDocument,
 } from './infrastructure/persistence/document/entities/deal.schema';
 import { IOREDIS_CLIENT } from '../redis/redis.tokens';
 import { DEAL_FOLLOW_UP_CHANNEL } from './deals.constants';
+import { runWithTenantContext } from '../common/tenancy/tenant-context';
+import { TasksService } from '../tasks/tasks.service';
+import { DEFAULT_TASK_PRIORITY } from '../tasks/tasks.constants';
 
 /** How many notices one sweep dispatches. Keeps a backlog from monopolising a tick. */
 const BATCH_SIZE = 500;
@@ -29,10 +33,12 @@ const MAX_LATENESS_MS = 7 * 24 * 60 * 60 * 1000;
  * sweep and no notice, so "this lead has not been called in 24 hours" was a
  * question the system could not answer. For a B2C pipeline that is the question.
  *
- * Delivery uses the seam the platform already has — the `socket:*` Redis channel
- * `CrmRealtimeGateway` bridges into Socket.IO rooms. It is a live broadcast, not
- * a receipt: an offline owner sees the deal in their overdue queue on next login
- * rather than getting the notice later.
+ * Delivery has two parts. The live broadcast — the `socket:*` Redis channel
+ * `CrmRealtimeGateway` bridges into Socket.IO rooms — reaches whoever is online
+ * right now. Because that is not a receipt, the same sweep also creates a real
+ * Task owned by the deal's owner: the "next action" this service exists to
+ * surface gets a durable row in the owner's task list, not just a toast an
+ * offline owner will never see.
  */
 @Injectable()
 export class DealFollowUpService {
@@ -42,6 +48,8 @@ export class DealFollowUpService {
     @InjectModel(DealSchemaClass.name)
     private readonly dealModel: Model<DealSchemaDocument>,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
+    private readonly cls: ClsService,
+    private readonly tasksService: TasksService,
   ) {}
 
   @Cron(CronExpression.EVERY_5_MINUTES)
@@ -67,6 +75,7 @@ export class DealFollowUpService {
         _id: 1,
         tenantId: 1,
         ownerId: 1,
+        orgUnitId: 1,
         title: 1,
         value: 1,
         currency: 1,
@@ -110,6 +119,7 @@ export class DealFollowUpService {
             dueAt: deal.nextFollowUpAt,
           }),
         );
+        await this.createFollowUpTask(deal);
         sent++;
       } catch (error) {
         // The claim stands. Saying so out loud is the point: leaving it unclaimed
@@ -130,6 +140,43 @@ export class DealFollowUpService {
       );
     }
     return { sent, skipped };
+  }
+
+  /**
+   * Turn the due follow-up into a real Task owned by the deal's owner.
+   *
+   * An unowned deal has nobody to attribute the task to — `createdById` is a
+   * required user reference, and there is no "system" user to fall back to —
+   * so it is skipped and left to the live broadcast alone; that mirrors the
+   * `RecurringTaskService` precedent for the same constraint.
+   */
+  private async createFollowUpTask(deal: {
+    _id: unknown;
+    tenantId: unknown;
+    ownerId?: unknown;
+    orgUnitId?: unknown;
+    title: string;
+    nextFollowUpAt?: Date | null;
+  }): Promise<void> {
+    if (!deal.ownerId) {
+      this.logger.warn(
+        `[DealFollowUp] deal=${String(deal._id)} has no owner; skipping task creation`,
+      );
+      return;
+    }
+    const ownerId = String(deal.ownerId);
+
+    await runWithTenantContext(this.cls, String(deal.tenantId), async () => {
+      this.cls.set('userId', ownerId);
+      await this.tasksService.create({
+        title: `Follow up: ${deal.title}`,
+        dueDate: deal.nextFollowUpAt ?? new Date(),
+        priority: DEFAULT_TASK_PRIORITY,
+        ownerId,
+        orgUnitId: deal.orgUnitId ? String(deal.orgUnitId) : null,
+        relatedTo: { type: 'Deal', id: String(deal._id), name: deal.title },
+      });
+    });
   }
 
   private async claim(dealId: string): Promise<boolean> {

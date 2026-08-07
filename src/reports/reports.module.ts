@@ -12,6 +12,10 @@ import {
   OmniMessageSchema,
   OmniMessageSchemaClass,
 } from '../omni-inbound/infrastructure/persistence/document/entities/omni-message.schema';
+import {
+  DealSchema,
+  DealSchemaClass,
+} from '../deals/infrastructure/persistence/document/entities/deal.schema';
 import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
 import { RedisModule } from '../redis/redis.module';
 import { ContactReportController } from './contact/contact-report.controller';
@@ -46,6 +50,7 @@ import { MailerModule } from '../mailer/mailer.module';
         name: ContactDailyMetricsSchemaClass.name,
         schema: ContactDailyMetricsSchema,
       },
+      { name: DealSchemaClass.name, schema: DealSchema },
     ]),
     CrmSettingsModule,
     RedisModule,

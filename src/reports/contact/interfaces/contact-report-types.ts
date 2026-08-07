@@ -25,6 +25,16 @@ export interface ShadowConversionData {
   trend: Array<{ date: string; converted: number; total: number }>;
 }
 
+export interface LeadConversionData {
+  /** False when the tenant has not marked any `contact_lifecycle` stage as a lead — the rate below is not meaningful without one. */
+  configured: boolean;
+  leadStageNames: string[];
+  totalLeads: number;
+  wonCount: number;
+  conversionRate: number;
+  trend: Array<{ date: string; won: number; total: number }>;
+}
+
 export interface FunnelVelocityItem {
   fromStage: string;
   fromStageName: string;

@@ -145,6 +145,14 @@ export class CreatePipelineDto {
   @Min(0)
   @Max(1_000_000)
   sortOrder?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'When true, a deal in this pipeline can only advance one stage at a time. Closing (Won/Lost) and moving backward are always allowed.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  enforceSequentialStages?: boolean;
 }
 
 export class UpdatePipelineDto extends PartialType(CreatePipelineDto) {}

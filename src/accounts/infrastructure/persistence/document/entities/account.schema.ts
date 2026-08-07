@@ -134,7 +134,7 @@ AccountSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 // Free-text search. Replaces an unanchored case-insensitive `$regex` over
 // name/industry/phones/emails, which no index could serve.
 AccountSchema.plugin(searchKeysPlugin, {
-  fields: ['name', 'industry', 'website', 'tags'],
+  fields: ['name', 'industry', 'website', 'tags', 'customFields'],
   sensitiveFields: ['emails'],
   sensitivePhoneFields: ['phones'],
 });

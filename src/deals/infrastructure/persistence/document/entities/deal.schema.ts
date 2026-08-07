@@ -255,7 +255,7 @@ DealSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
 // Free-text search. Replaces an unanchored `$regex` over title + accountName.
 DealSchema.plugin(searchKeysPlugin, {
-  fields: ['title', 'accountName', 'description', 'tags'],
+  fields: ['title', 'accountName', 'description', 'tags', 'customFields'],
 });
 
 DealSchema.index(

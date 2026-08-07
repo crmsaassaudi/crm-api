@@ -575,6 +575,24 @@ export class DealsService {
     data.stageId = target.stageId;
 
     const isClosed = target.isWon || target.isLost;
+
+    // Closing (Won/Lost) and moving to a different pipeline are never "skips" —
+    // only a forward jump within the same open pipeline is. Opt-in per pipeline
+    // (`enforceSequentialStages`) because most tenants want a rep to record
+    // reality even when a stage was skipped in practice.
+    if (
+      !isClosed &&
+      previous &&
+      String(target.pipelineId) === String(existing.pipelineId) &&
+      target.sortOrder > previous.sortOrder + 1 &&
+      (await this.dealSettings.isSequentialEnforced(target.pipelineId))
+    ) {
+      throw new BusinessException(
+        DEAL_ERRORS.STAGE_SKIP_NOT_ALLOWED,
+        HttpStatus.BAD_REQUEST,
+        'This pipeline requires deals to advance one stage at a time.',
+      );
+    }
     // Covers reopen (closed → open) and reclassification (Won ⇄ Lost), which
     // reverses recognised revenue in one call and reads as "still closed".
     const classificationChanged =

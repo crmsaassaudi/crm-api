@@ -162,7 +162,7 @@ TaskSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 // Free-text search. Replaces the unanchored `$regex` over title + description
 // that the `task_list_search` capability was written to describe as a scan.
 TaskSchema.plugin(searchKeysPlugin, {
-  fields: ['title', 'description', 'relatedTo.name', 'tags'],
+  fields: ['title', 'description', 'relatedTo.name', 'tags', 'customFields'],
 });
 
 // INDEXES

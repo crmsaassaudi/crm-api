@@ -35,6 +35,7 @@ export interface DealPlacement {
   probability: number;
   isWon: boolean;
   isLost: boolean;
+  sortOrder: number;
 }
 
 /**
@@ -424,6 +425,7 @@ export class DealSettingsService {
       probability: stage.probability ?? 0,
       isWon: Boolean(stage.isWon),
       isLost: Boolean(stage.isLost),
+      sortOrder: stage.sortOrder ?? 0,
     };
   }
 
@@ -446,7 +448,18 @@ export class DealSettingsService {
       probability: stage.probability ?? 0,
       isWon: Boolean(stage.isWon),
       isLost: Boolean(stage.isLost),
+      sortOrder: stage.sortOrder ?? 0,
     };
+  }
+
+  /** Whether this pipeline restricts a deal to advancing one stage at a time. */
+  async isSequentialEnforced(pipelineId: string): Promise<boolean> {
+    const pipeline = await this.pipelineModel
+      .findOne({ _id: pipelineId, tenantId: this.tenantId })
+      .select('enforceSequentialStages')
+      .lean()
+      .exec();
+    return Boolean(pipeline?.enforceSequentialStages);
   }
 
   private async requireDefaultPipelineId(): Promise<string> {

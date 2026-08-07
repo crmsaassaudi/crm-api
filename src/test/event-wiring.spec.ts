@@ -32,17 +32,31 @@ const SRC = path.resolve(__dirname, '..');
 /**
  * The surface this test currently asserts over.
  *
- * Scoped rather than global because a first global run surfaced ~45 more orphan
- * listeners outside the omni domain — `record-auto-assignment.listener` and
- * `record-workload.listener` subscribe to `account.created`, `ticket.created`,
- * `task.created`, `deal.created` and their `.updated` pairs, and NOTHING in the
- * repository emits any of them. If that holds, record auto-assignment and workload
- * tracking are inert for every module. That belongs to the assignment domain's own
- * remediation, and a test that fails for unrelated reasons is a test the next
- * person deletes — so the scope is stated here instead of the finding being
- * quietly suppressed.
+ * `contact.`, `account.`, `ticket.`, `task.` and `deal.` joined the scope once
+ * {@link collectEntityAuditEmits} closed the blind spot that first made them look
+ * orphaned: `EntityAuditService.emit({entity, kind})` composes the event name as
+ * `` `${entity}.${kind}` ``, which no regex over literal `.emit('...')` strings
+ * can see. `record-auto-assignment.listener` and `record-workload.listener`
+ * subscribe to `account.created`/`ticket.created`/`task.created`/`deal.created`
+ * and their `.updated` pairs — a first pass over raw string literals alone found
+ * no emitter for any of them and concluded record auto-assignment and workload
+ * tracking were inert for every module. They are not: every one of those events is
+ * emitted, through `EntityAuditService`, from the owning module's service. A tool
+ * that cannot see its own platform's central emit path is worse than no tool —
+ * the false alarm it would have produced was one commit away from someone
+ * "fixing" a system that already worked.
  */
-const AUDITED_PREFIXES = ['omni.', 'livechat.', 'sla.', 'csat.'];
+const AUDITED_PREFIXES = [
+  'omni.',
+  'livechat.',
+  'sla.',
+  'csat.',
+  'contact.',
+  'account.',
+  'ticket.',
+  'task.',
+  'deal.',
+];
 
 const inScope = (event: string) =>
   AUDITED_PREFIXES.some((prefix) => event.startsWith(prefix));
@@ -102,6 +116,53 @@ function collectEmitted(sources: Map<string, string>) {
     // Redis pub/sub and socket emits share the `.emit(` shape; harmless overlap.
     for (const match of source.matchAll(/publish\(\s*'([^']+)'/g)) {
       emitted.add(match[1]);
+    }
+  }
+  return emitted;
+}
+
+/**
+ * The object-literal argument of a call starting at `openBraceIndex` — the `{`
+ * right after `entityAudit.emit(` — matched by brace depth rather than "up to
+ * the next `}`".
+ *
+ * A one-line snapshot fallback like `oldSnapshot: existing ?? {}` puts a second,
+ * *closed* brace pair ahead of the real end of the object. A regex that stops at
+ * the first `}` truncates there and never sees `kind`, which sits after `entity`
+ * but can land before or after such a fallback depending on the call site — so
+ * the miss is silent rather than merely early.
+ */
+function readBalancedBraces(source: string, openBraceIndex: number): string {
+  let depth = 0;
+  for (let i = openBraceIndex; i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}') {
+      depth--;
+      if (depth === 0) return source.slice(openBraceIndex, i + 1);
+    }
+  }
+  return source.slice(openBraceIndex);
+}
+
+/**
+ * Every `entity.kind` name reachable through `EntityAuditService.emit`.
+ *
+ * That method does not take an event-name string at all — it composes one from
+ * two of its input's properties (`` `${input.entity}.${input.kind}` ``) — so no
+ * regex over `.emit('literal')` call sites can ever see these. Every call site in
+ * this codebase passes both `entity` and `kind` as plain string literals (never a
+ * variable), which is what makes recovering the pair from source text reliable
+ * rather than a best-effort guess.
+ */
+function collectEntityAuditEmits(sources: Map<string, string>): Set<string> {
+  const emitted = new Set<string>();
+  for (const source of sources.values()) {
+    for (const match of source.matchAll(/entityAudit\.emit\(\s*\{/g)) {
+      const openBrace = match.index! + match[0].length - 1;
+      const args = readBalancedBraces(source, openBrace);
+      const entity = args.match(/entity:\s*'([^']+)'/)?.[1];
+      const kind = args.match(/kind:\s*'([^']+)'/)?.[1];
+      if (entity && kind) emitted.add(`${entity}.${kind}`);
     }
   }
   return emitted;
@@ -178,6 +239,7 @@ describe('event wiring', () => {
     const emitted = new Set([
       ...collectEmitted(sources),
       ...collectConstantEmits(sources, byMember),
+      ...collectEntityAuditEmits(sources),
     ]);
     const listeners = [
       ...collectListeners(sources),

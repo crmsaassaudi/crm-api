@@ -146,6 +146,32 @@ describe('TicketsService', () => {
       expect(result.ticketNumber).toBe('TKT-00001');
     });
 
+    it('should reject a ticket with no contact, account or conversation link', async () => {
+      const dto = createTicketDto({ contactId: undefined });
+
+      await expect(service.create(dto as any)).rejects.toThrow(
+        'Ticket phải gắn với contact, account hoặc conversation.',
+      );
+      expect(repository.create).not.toHaveBeenCalled();
+    });
+
+    it('should allow a ticket linked only by accountId', async () => {
+      const dto = createTicketDto({ contactId: undefined, accountId: 'acct_1' });
+      repository.create.mockResolvedValue(createTicket());
+
+      await expect(service.create(dto as any)).resolves.toBeDefined();
+    });
+
+    it('should allow a ticket linked only by omniConversationId', async () => {
+      const dto = createTicketDto({
+        contactId: undefined,
+        omniConversationId: 'conv_1',
+      });
+      repository.create.mockResolvedValue(createTicket());
+
+      await expect(service.create(dto as any)).resolves.toBeDefined();
+    });
+
     /**
      * The flag the assignment engine reads. Without it a created ticket looks
      * deliberately owned by whoever opened it — the repository defaults

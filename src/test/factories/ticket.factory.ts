@@ -27,6 +27,9 @@ export function createTicketDto(overrides: Record<string, any> = {}) {
     description: 'Ticket description',
     typeId: 'type_default',
     priority: 'MEDIUM',
+    // A ticket must reference a contact, account or conversation — see
+    // TicketsService.create's orphan-ticket guard.
+    contactId: 'contact_1',
     ...overrides,
   };
 }

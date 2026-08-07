@@ -407,6 +407,16 @@ export class TicketsService {
   }
 
   async create(data: Partial<Ticket>): Promise<Ticket> {
+    // Every ticket must be reachable from a customer or a conversation. Without
+    // this, `contactId`/`accountId`/`omniConversationId` being independently
+    // optional on the schema let a ticket exist that nothing — not the Customer
+    // 360 timeline, not a report, not an agent searching by customer — could
+    // ever find again.
+    if (!data.contactId && !data.accountId && !data.omniConversationId) {
+      throw new BadRequestException(
+        'Ticket phải gắn với contact, account hoặc conversation.',
+      );
+    }
     this.cleanRefs(data as Record<string, any>);
     await this.writeValidator.assertValid(
       'Ticket',

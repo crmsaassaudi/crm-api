@@ -50,6 +50,7 @@ import { TagsModule } from '../tags/tags.module';
 import { AutomationOutboxModule } from '../automation-rules/events/automation-outbox.module';
 import { ObjectManagerModule } from '../object-manager/object-manager.module';
 import { CustomFieldsModule } from '../custom-fields/custom-fields.module';
+import { TasksModule } from '../tasks/tasks.module';
 
 const workerProviders = isWorkerRuntime()
   ? [
@@ -72,6 +73,9 @@ const workerProviders = isWorkerRuntime()
     // against the tenant's registry instead of being written as opaque Mixed.
     CustomFieldsModule,
     ObjectManagerModule,
+    // Supplies TasksService so a due follow-up becomes a real Task, not only a
+    // live broadcast an offline owner would never see.
+    TasksModule,
     MongooseModule.forFeature([
       { name: DealSchemaClass.name, schema: DealSchema },
       { name: ImportJobSchemaClass.name, schema: ImportJobSchema },

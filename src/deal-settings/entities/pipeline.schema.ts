@@ -38,6 +38,16 @@ export class PipelineSchemaClass extends EntityDocumentHelper {
 
   @Prop({ type: String, default: null })
   color: string | null;
+
+  /**
+   * When true, a deal in this pipeline can only advance one stage at a time
+   * (by `sortOrder`) — closing (Won/Lost) and moving backward are always
+   * allowed regardless. Off by default: most pipelines let a rep record
+   * reality even when a stage was skipped in practice, and defaulting this on
+   * would retroactively block moves every existing tenant already relies on.
+   */
+  @Prop({ default: false })
+  enforceSequentialStages: boolean;
 }
 
 export const PipelineSchema = SchemaFactory.createForClass(PipelineSchemaClass);

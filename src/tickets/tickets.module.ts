@@ -55,6 +55,7 @@ import {
 import { TicketMessagesController } from './ticket-messages.controller';
 import { TicketMessagesService } from './ticket-messages.service';
 import { TicketTimelineListener } from './ticket-timeline.listener';
+import { TicketConversationReplyListener } from './sla/ticket-conversation-reply.listener';
 import { TicketNumberService } from './ticket-number.service';
 import { TicketCsatController } from './csat/ticket-csat.controller';
 import { TicketCsatService } from './csat/ticket-csat.service';
@@ -126,6 +127,7 @@ const workerProviders = isWorkerRuntime()
     TicketNumberService,
     TicketMessagesService,
     TicketTimelineListener,
+    TicketConversationReplyListener,
     TicketCsatService,
     // TicketSlaProjector and TicketSlaPort are provided by SlaPoliciesModule,
     // not here. TicketsModule → SlaPoliciesModule → OmniInboundModule →

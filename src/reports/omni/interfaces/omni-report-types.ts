@@ -87,6 +87,11 @@ export interface MessageVolumeData {
     count: number;
     percentage: number;
   }>;
+  byChannel: Array<{
+    channelType: string;
+    count: number;
+    percentage: number;
+  }>;
 }
 
 // Phase 2 Reports
