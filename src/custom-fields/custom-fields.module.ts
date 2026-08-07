@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { CustomFieldsController } from './custom-fields.controller';
+import { MeCustomFieldsController } from './me-custom-fields.controller';
 import { CustomFieldsService } from './custom-fields.service';
 import { CustomFieldRepository } from './infrastructure/persistence/document/repositories/custom-field.repository';
 import {
@@ -15,7 +16,7 @@ import { CustomFieldValueValidator } from './custom-field-value.validator';
       { name: CustomFieldSchemaClass.name, schema: CustomFieldSchema },
     ]),
   ],
-  controllers: [CustomFieldsController],
+  controllers: [CustomFieldsController, MeCustomFieldsController],
   providers: [
     CustomFieldsService,
     CustomFieldRepository,

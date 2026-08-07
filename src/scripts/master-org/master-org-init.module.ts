@@ -20,6 +20,19 @@ import {
   TenantAliasReservationSchemaClass,
   TenantAliasReservationSchema,
 } from '../../tenants/infrastructure/persistence/document/entities/tenant-alias-reservation.schema';
+import {
+  DealStageSchemaClass,
+  DealStageSchema,
+} from '../../deal-settings/entities/deal-stage.schema';
+import {
+  PipelineSchemaClass,
+  PipelineSchema,
+} from '../../deal-settings/entities/pipeline.schema';
+import {
+  DealSourceSchemaClass,
+  DealSourceSchema,
+} from '../../deal-settings/entities/deal-source.schema';
+import { DealPipelineSeederService } from '../../deal-settings/deal-pipeline-seeder.service';
 
 import { MasterOrgInitService } from './master-org-init.service';
 
@@ -52,8 +65,15 @@ const envFilePath = [
         name: TenantAliasReservationSchemaClass.name,
         schema: TenantAliasReservationSchema,
       },
+      { name: DealStageSchemaClass.name, schema: DealStageSchema },
+      { name: PipelineSchemaClass.name, schema: PipelineSchema },
+      { name: DealSourceSchemaClass.name, schema: DealSourceSchema },
     ]),
   ],
-  providers: [KeycloakAdminService, MasterOrgInitService],
+  providers: [
+    KeycloakAdminService,
+    MasterOrgInitService,
+    DealPipelineSeederService,
+  ],
 })
 export class MasterOrgInitModule {}

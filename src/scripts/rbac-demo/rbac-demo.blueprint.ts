@@ -178,6 +178,11 @@ export interface RoleSpec {
 }
 
 const SALES_REP_PERMISSIONS = [
+  // Every built-in role template (sys.sales_rep, sys.support_agent, …)
+  // grants this — it's what the home dashboard's own KPI summary requires
+  // (GET /dashboards/summary). Missing here, a rep's dashboard 403'd on
+  // every load and every KPI tile stayed on its loading skeleton forever.
+  'dashboards:view',
   'leads:view',
   'leads:create',
   'leads:edit',
@@ -214,6 +219,7 @@ const SALES_MANAGER_PERMISSIONS = [
 ];
 
 const SUPPORT_AGENT_PERMISSIONS = [
+  'dashboards:view',
   'tickets:view',
   'tickets:create',
   'tickets:edit',

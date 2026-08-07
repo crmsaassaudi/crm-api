@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { randomBytes } from 'crypto';
+import { ClsServiceManager } from 'nestjs-cls';
 
 import { KeycloakAdminService } from '../../auth/services/keycloak-admin.service';
 import { AuthProvidersEnum } from '../../auth/auth-providers.enum';
@@ -15,6 +16,7 @@ import {
   TenantAliasReservationSchemaClass,
   AliasReservationStatus,
 } from '../../tenants/infrastructure/persistence/document/entities/tenant-alias-reservation.schema';
+import { DealPipelineSeederService } from '../../deal-settings/deal-pipeline-seeder.service';
 
 /**
  * Resolved configuration for the master organization, read from env with
@@ -47,10 +49,14 @@ export interface MasterOrgInitResult {
  * the one tenant whose owner also gets `platformRole = SUPER_ADMIN`, granting
  * access to manager-api / manager-web ON TOP of normal (multi-tenant) CRM use.
  *
- * Design mirrors the production tenant-provisioning saga
- * (crm-api/src/tenants/workers/tenant-provisioning.worker.ts) so it never
- * drifts from how real tenants are created — the ONLY extra, privileged step
- * is promoting the owner's platformRole to SUPER_ADMIN.
+ * Design intends to mirror the production tenant-provisioning saga
+ * (crm-api/src/tenants/workers/tenant-provisioning.worker.ts) plus one extra,
+ * privileged step — promoting the owner's platformRole to SUPER_ADMIN — but
+ * it builds the tenant directly rather than emitting `tenant.created`, so it
+ * does NOT get the seeders the real saga chains off that event for free. Each
+ * one that a master-org tenant turns out to need ends up as its own explicit
+ * step below (see Step 8, deal pipeline) — add the next one here rather than
+ * assuming this script already covers it.
  *
  * Every step is find-or-create: re-running on the same (or a partially
  * initialised) environment fills gaps and never duplicates or crashes.
@@ -67,6 +73,7 @@ export class MasterOrgInitService {
     private readonly tenantModel: Model<TenantSchemaClass>,
     @InjectModel(TenantAliasReservationSchemaClass.name)
     private readonly aliasModel: Model<TenantAliasReservationSchemaClass>,
+    private readonly dealPipelineSeeder: DealPipelineSeederService,
   ) {}
 
   static readConfig(): MasterOrgConfig {
@@ -275,6 +282,29 @@ export class MasterOrgInitService {
       },
       { upsert: true },
     );
+
+    // Step 8: Default deal pipeline. This script builds the tenant directly
+    // rather than emitting `tenant.created` (see the class-level doc), so it
+    // never ran the seeders the real provisioning saga chains off that event
+    // — a master-org tenant had zero pipelines, and the Deal Kanban board has
+    // no distinct state for "no pipeline configured" vs. "still loading," so
+    // it showed a spinner that could never resolve. Idempotent: seedForTenant
+    // finds-or-creates, same as every other step here.
+    //
+    // The seeder's Mongoose queries go through `tenant-filter.plugin.ts`,
+    // which reads the tenant out of CLS (AsyncLocalStorage) — populated in
+    // production by `TenantInterceptor` on every HTTP request, but this
+    // script has no request to run inside, so CLS starts empty.
+    // `ClsServiceManager.getClsService()` reaches the same global singleton
+    // the plugin reads, without needing `ClsModule` wired into this script's
+    // deliberately minimal module (see the test suite's `cls-context.helper.ts`
+    // for the same pattern).
+    const cls = ClsServiceManager.getClsService();
+    await cls.run(async () => {
+      cls.set('tenantId', tenantId);
+      cls.set('activeTenantId', tenantId);
+      await this.dealPipelineSeeder.seedForTenant(tenantId);
+    });
 
     const rootDomain = process.env.APP_ROOT_DOMAIN || 'crmsaudi.dev';
     const managerUrl =

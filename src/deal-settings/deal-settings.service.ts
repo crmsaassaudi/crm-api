@@ -37,6 +37,28 @@ export interface DealPlacement {
   isLost: boolean;
 }
 
+/**
+ * Strips a lean query result down to a plain object with a string `id`.
+ *
+ * These reads skip `ClassSerializerInterceptor`'s normal path: the schema
+ * classes carry no `@ApiOkResponse` DTO and no `@Expose`/`@Exclude` policy of
+ * their own, so with a hydrated Mongoose document the interceptor's fallback
+ * `instanceToPlain` walked the document's own enumerable properties — which
+ * for a Mongoose document are its internal bookkeeping (`$__`, `_doc`,
+ * `isNew`), not the schema fields — and shipped that to the client instead.
+ * `GET /deal-settings/pipelines` returned `[{"$__":…,"_doc":{"name":"Sales
+ * Pipeline",…}}]` with no top-level `id`, so every `pipelines.find(p =>
+ * p.id === x)` on the client missed, and the Deal Kanban board could never
+ * resolve which pipeline to show. `.lean()` skips document hydration
+ * entirely, so there's nothing for that fallback path to mis-walk.
+ */
+const withId = <T extends { _id: unknown }>(
+  doc: T,
+): Omit<T, '_id'> & { id: string } => {
+  const { _id, ...rest } = doc;
+  return { ...rest, id: String(_id) };
+};
+
 /** Slugify a label into a stable machine name. */
 const toApiName = (label: string): string =>
   label
@@ -91,10 +113,17 @@ export class DealSettingsService {
 
   // Stages
 
-  findAllStages(pipelineId?: string) {
+  async findAllStages(
+    pipelineId?: string,
+  ): Promise<Array<Record<string, unknown>>> {
     const filter: Record<string, unknown> = { tenantId: this.tenantId };
     if (pipelineId) filter.pipelineId = pipelineId;
-    return this.stageModel.find(filter).sort({ sortOrder: 1, _id: 1 }).exec();
+    const docs = await this.stageModel
+      .find(filter)
+      .sort({ sortOrder: 1, _id: 1 })
+      .lean()
+      .exec();
+    return docs.map(withId);
   }
 
   async createStage(dto: CreateDealStageDto) {
@@ -228,11 +257,13 @@ export class DealSettingsService {
 
   // Sources
 
-  findAllSources() {
-    return this.sourceModel
+  async findAllSources(): Promise<Array<Record<string, unknown>>> {
+    const docs = await this.sourceModel
       .find({ tenantId: this.tenantId })
       .sort({ sortOrder: 1, _id: 1 })
+      .lean()
       .exec();
+    return docs.map(withId);
   }
 
   createSource(dto: CreateDealSourceDto) {
@@ -268,19 +299,22 @@ export class DealSettingsService {
 
   // Pipelines
 
-  findAllPipelines() {
-    return this.pipelineModel
+  async findAllPipelines(): Promise<Array<Record<string, unknown>>> {
+    const docs = await this.pipelineModel
       .find({ tenantId: this.tenantId, isArchived: false })
       .sort({ isDefault: -1, sortOrder: 1 })
+      .lean()
       .exec();
+    return docs.map(withId);
   }
 
-  async findPipelineById(id: string) {
+  async findPipelineById(id: string): Promise<Record<string, unknown>> {
     const pipeline = await this.pipelineModel
       .findOne({ _id: id, tenantId: this.tenantId })
+      .lean()
       .exec();
     if (!pipeline) throw new NotFoundException(`Pipeline ${id} not found`);
-    return pipeline;
+    return withId(pipeline);
   }
 
   async createPipeline(dto: CreatePipelineDto) {

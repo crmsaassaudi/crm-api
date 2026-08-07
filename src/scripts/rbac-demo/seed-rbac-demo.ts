@@ -2,6 +2,7 @@ import 'dotenv/config';
 import axios from 'axios';
 import { Db, MongoClient, ObjectId } from 'mongodb';
 import Redis from 'ioredis';
+import { computeSearchKeys } from '../../common/search/search-keys.plugin';
 
 import {
   ACLS,
@@ -815,6 +816,21 @@ async function seedJitGrants(
   }
 }
 
+/**
+ * Must mirror `ContactSchema.plugin(searchKeysPlugin, {...})` in
+ * `contact.schema.ts` exactly. This seeder writes through the raw driver
+ * (`db.collection('contacts')`), not the Mongoose model, so none of that
+ * plugin's hooks (`save`, `updateOne`, `bulkWrite`, …) ever ran — every
+ * fixture contact had no `searchKeys` at all, and the global search box (and
+ * the ordinary Contacts list search, which reads the same field) matched
+ * nothing for any query, including exact substrings of real data.
+ */
+const CONTACT_SEARCH_KEYS_OPTIONS = {
+  fields: ['firstName', 'lastName', 'companyName', 'title', 'role', 'tags'],
+  sensitiveFields: ['emails'],
+  sensitivePhoneFields: ['phones'],
+};
+
 async function seedContacts(
   db: Db,
   tenantId: string,
@@ -846,6 +862,17 @@ async function seedContacts(
       assertSeeded(existing, 'contact', spec.email);
       idByKey.set(spec.key, existing._id.toString());
       if (!dryRun) {
+        const searchKeys = computeSearchKeys(
+          {
+            ...existing,
+            firstName: spec.firstName,
+            lastName: spec.lastName,
+            title: spec.title,
+            companyName: spec.companyName,
+            tags: spec.tags,
+          },
+          CONTACT_SEARCH_KEYS_OPTIONS,
+        );
         await db.collection('contacts').updateOne(
           { _id: existing._id },
           {
@@ -858,6 +885,8 @@ async function seedContacts(
               ownerId,
               orgUnitId,
               tags: spec.tags,
+              searchKeys: searchKeys.searchKeys,
+              searchKeysPii: searchKeys.searchKeysPii,
               updatedAt: new Date(),
             },
           },
@@ -869,7 +898,7 @@ async function seedContacts(
 
     const _id = new ObjectId();
     if (!dryRun) {
-      await db.collection('contacts').insertOne({
+      const contactDoc = {
         _id,
         tenantId: new ObjectId(tenantId),
         ...stamp,
@@ -893,6 +922,15 @@ async function seedContacts(
         createdAt: new Date(),
         updatedAt: new Date(),
         __v: 0,
+      };
+      const searchKeys = computeSearchKeys(
+        contactDoc,
+        CONTACT_SEARCH_KEYS_OPTIONS,
+      );
+      await db.collection('contacts').insertOne({
+        ...contactDoc,
+        searchKeys: searchKeys.searchKeys,
+        searchKeysPii: searchKeys.searchKeysPii,
       });
     }
     idByKey.set(spec.key, _id.toString());

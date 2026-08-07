@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 
 import { UsersController } from './users.controller';
+import { MeAssignableUsersController } from './me-assignable-users.controller';
 
 import { UsersService } from './users.service';
 import { UserKeycloakSyncService } from './services/user-keycloak-sync.service';
@@ -25,7 +26,7 @@ const infrastructurePersistenceModule = DocumentUserPersistenceModule;
     forwardRef(() => TenantsModule),
     forwardRef(() => GroupsModule),
   ],
-  controllers: [UsersController],
+  controllers: [UsersController, MeAssignableUsersController],
   providers: [UsersService, UserKeycloakSyncService],
   exports: [
     UsersService,
