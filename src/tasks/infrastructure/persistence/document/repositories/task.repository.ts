@@ -11,7 +11,7 @@ import { VisibilityModule } from '../../../../../common/permissions/visibility-m
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
 import { pagination } from '../../../../../utils/pagination';
-import { escapeRegex } from '../../../../../utils/escape-regex';
+import { applySearchKeys } from '../../../../../common/search/search-keys.query';
 import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
 import { TaskListFilter } from '../../../../dto/task-list-query.dto';
 
@@ -88,16 +88,11 @@ export class TaskRepository extends BaseDocumentRepository<
     // `{$exists: false}` does not. The two builders disagreed on this too.
     const where: FilterQuery<TaskSchemaClass> = { deletedAt: null };
 
-    if (filterOptions?.search) {
-      // Escaped: the value is user input becoming a regex. Escaping removes the
-      // ReDoS risk but not the scan — see the `task_list_search` capability for
-      // where this is headed.
-      const expression = {
-        $regex: escapeRegex(filterOptions.search),
-        $options: 'i',
-      };
-      where.$or = [{ title: expression }, { description: expression }];
-    }
+    // Free-text over `searchKeys`. This is where the `task_list_search`
+    // capability said it was headed; it arrived without needing OpenSearch,
+    // because the scan was caused by the unanchored regex rather than by the
+    // question being hard.
+    applySearchKeys(where as Record<string, any>, filterOptions?.search);
 
     const explicitStatusIds = normalizeListFilter(filterOptions?.statusIds);
     if (explicitStatusIds.length > 0) {

@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, now } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+import { searchKeysPlugin } from '../../../../../common/search/search-keys.plugin';
 import {
   DEFAULT_TASK_PRIORITY,
   TASK_PRIORITIES,
@@ -157,6 +158,12 @@ export class TaskSchemaClass extends EntityDocumentHelper {
 export const TaskSchema = SchemaFactory.createForClass(TaskSchemaClass);
 
 TaskSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+
+// Free-text search. Replaces the unanchored `$regex` over title + description
+// that the `task_list_search` capability was written to describe as a scan.
+TaskSchema.plugin(searchKeysPlugin, {
+  fields: ['title', 'description', 'relatedTo.name', 'tags'],
+});
 
 // INDEXES
 //

@@ -15,8 +15,6 @@ export class Deal {
   title: string;
 
   @ApiProperty({ example: 'Enterprise Software License' })
-  name: string;
-
   @ApiProperty({ example: '60d0fe4f5311236168a109ce' })
   pipelineId: string;
 

@@ -185,7 +185,6 @@ export class DealsService {
       ...payload,
       pipelineId: placement.pipelineId,
       stageId: placement.stageId,
-      name: payload.title,
       probability: payload.probability ?? placement.probability,
       ownerAssignedExplicitly: Boolean(payload.ownerId),
       // Every new deal enters the follow-up queue by default: a queue reps have
@@ -471,7 +470,6 @@ export class DealsService {
           id,
           {
             ...payload,
-            ...(payload.title ? { name: payload.title } : {}),
             ...(customFields !== undefined ? { customFields } : {}),
             ...transition.updates,
             lastActivityAt: new Date(),

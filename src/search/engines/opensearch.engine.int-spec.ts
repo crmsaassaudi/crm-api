@@ -78,8 +78,7 @@ const document = (
   recordId,
   title,
   searchText: title,
-  customFields: {},
-  // Required by the v3 strict mapping. Query-side fixtures do not exercise
+  // Required by the strict mapping. Query-side fixtures do not exercise
   // reconciliation, so a deterministic sentinel fingerprint is sufficient.
   contentHash: '0'.repeat(64),
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -93,9 +92,11 @@ const FIXTURES = [
     orgUnitId: 'org-1',
     statusId: 'active',
     tags: ['vip'],
+    // Custom-field values reach the index folded into `searchText` and are no
+    // longer stored as an object — so `APAC` here is exactly what the mapper
+    // produces, not a convenience of the fixture.
     searchText: 'Nguyễn Văn An an@example.com APAC',
     phoneSuffixes: ['5678', '345678', '912345678', '84912345678'],
-    customFields: { region: 'APAC' },
   }),
   document('q2', 'Trần Thị Bình', {
     ownerId: 'user-2',
@@ -254,8 +255,20 @@ describe('OpenSearchEngine against a live cluster', () => {
     expect(await titles('APAC')).toContain('Nguyễn Văn An');
   });
 
-  it('should find a contact by the remembered phone suffix', async () => {
-    expect(await titles('345678')).toContain('Nguyễn Văn An');
+  it('should find a contact by the remembered phone suffix when the caller may unmask', async () => {
+    expect(
+      await titles('345678', { scope: scope({ canSearchSensitive: true }) }),
+    ).toContain('Nguyễn Văn An');
+  });
+
+  it('should refuse caller-ID lookup to a caller who may not unmask', async () => {
+    // Field masking hides a contact's phone number from a user without
+    // `contacts:unmask`; searching for that number and being handed the name
+    // reaches the same data through a different door. MongoDB gates this by
+    // keeping the tokens in `searchKeysPii`, and the two engines have to agree
+    // — a control that holds on one and not the other is worse than none,
+    // because nobody thinks to check the other.
+    expect(await titles('345678')).not.toContain('Nguyễn Văn An');
   });
 
   it('should not match every record that shares one term of a phrase', async () => {

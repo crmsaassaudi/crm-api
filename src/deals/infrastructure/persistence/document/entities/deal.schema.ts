@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, now } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+import { searchKeysPlugin } from '../../../../../common/search/search-keys.plugin';
 
 export type DealSchemaDocument = HydratedDocument<DealSchemaClass>;
 
@@ -57,8 +58,10 @@ export class DealSchemaClass extends EntityDocumentHelper {
   @Prop({ required: true, index: true })
   title: string;
 
-  @Prop({ required: true, index: true })
-  name: string;
+  // `name` used to sit here: a second required, indexed field holding the same
+  // string as `title`, kept in step by two hand-written assignments in the
+  // service. Two sources for one value is a bug waiting for the third writer;
+  // it cost an index on every write and answered no question `title` could not.
 
   /**
    * The pipeline this deal lives in.
@@ -250,6 +253,11 @@ export const DealSchema = SchemaFactory.createForClass(DealSchemaClass);
 
 DealSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
+// Free-text search. Replaces an unanchored `$regex` over title + accountName.
+DealSchema.plugin(searchKeysPlugin, {
+  fields: ['title', 'accountName', 'description', 'tags'],
+});
+
 DealSchema.index(
   { tenantId: 1, omniConversationId: 1 },
   { name: 'deal_omni_conversation' },
@@ -276,7 +284,10 @@ DealSchema.index(
   { tenantId: 1, updatedAt: -1, _id: -1 },
   { name: 'tenant_updated_sort' },
 );
-DealSchema.index({ tenantId: 1, value: -1, _id: -1 }, { name: 'tenant_value_sort' });
+DealSchema.index(
+  { tenantId: 1, value: -1, _id: -1 },
+  { name: 'tenant_value_sort' },
+);
 DealSchema.index(
   { tenantId: 1, closeDate: -1, _id: -1 },
   { name: 'tenant_close_date_sort' },

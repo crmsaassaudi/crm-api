@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, now } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+import { searchKeysPlugin } from '../../../../../common/search/search-keys.plugin';
 
 export type TicketSchemaDocument = HydratedDocument<TicketSchemaClass>;
 
@@ -298,6 +299,16 @@ export class TicketSchemaClass extends EntityDocumentHelper {
 export const TicketSchema = SchemaFactory.createForClass(TicketSchemaClass);
 
 TicketSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+
+// Free-text search.
+//
+// `relatedTo.name` is the fix for the single most-used missing lookup in the
+// product: a support agent could not type a customer's name and see that
+// customer's tickets. The value was already on the document and already in the
+// OpenSearch projection; only the MongoDB path could not read it.
+TicketSchema.plugin(searchKeysPlugin, {
+  fields: ['subject', 'ticketNumber', 'description', 'relatedTo.name', 'tags'],
+});
 
 // Compound Indexes
 TicketSchema.index(

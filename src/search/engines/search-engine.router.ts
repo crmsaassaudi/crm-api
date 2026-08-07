@@ -24,10 +24,13 @@ import {
 import { MetricsService } from '../../observability/metrics.service';
 import { decodeEngineCursor, encodeEngineCursor } from './engine-cursor';
 import {
+  CapabilityOverride,
   CapabilityPlan,
   SearchCapabilityName,
+  parseTenantCapabilityPolicy,
   resolveCapability,
 } from '../capabilities/search-capabilities';
+import { CrmSettingsService } from '../../crm-settings/crm-settings.service';
 
 export interface RoutedSearchResponse extends EngineSearchResponse {
   requestedEngine: SearchEngine['name'];
@@ -76,6 +79,7 @@ export class SearchEngineRouter {
     @Inject(OPENSEARCH_SEARCH_ENGINE) private readonly openSearch: SearchEngine,
     private readonly events: EventEmitter2,
     private readonly metrics: MetricsService,
+    private readonly settings: CrmSettingsService,
   ) {}
 
   async search(request: EngineSearchRequest): Promise<RoutedSearchResponse> {
@@ -83,6 +87,7 @@ export class SearchEngineRouter {
     const plan = resolveCapability(request.capability, {
       openSearchEnabled: config.enabled,
       overrides: config.capabilityOverrides ?? {},
+      tenantOverrides: await this.tenantPolicy(request.scope.tenantId),
     });
 
     if (plan.disabled) {
@@ -114,7 +119,7 @@ export class SearchEngineRouter {
     // used to burn its full timeout before falling back — five extra text
     // queries per request aimed at the primary, at exactly the wrong moment.
     if (this.breakerOpen(request.capability)) {
-      return this.unavailable(request, plan, 'circuit_open', config);
+      return this.unavailable(request, plan, 'circuit_open');
     }
 
     try {
@@ -139,7 +144,7 @@ export class SearchEngineRouter {
         this.logger.warn(
           `Authorization predicate for ${request.module} cannot be expressed in the index (${error.message}); serving it from MongoDB`,
         );
-        return this.unavailable(request, plan, 'filter_unsupported', config, {
+        return this.unavailable(request, plan, 'filter_unsupported', {
           rethrow: error,
         });
       }
@@ -167,9 +172,49 @@ export class SearchEngineRouter {
         reason,
       });
       this.recordFailure(request.capability, reason);
-      return this.unavailable(request, plan, reason, config, {
+      return this.unavailable(request, plan, reason, {
         rethrow: error,
       });
+    }
+  }
+
+  /**
+   * The tenant's own narrowing of the engine policy.
+   *
+   * Read through `CrmSettingsService`, which already caches per tenant — this
+   * is on the keystroke path, so a database round trip per search would be a
+   * new latency cost introduced by a rollout dial.
+   *
+   * Fails **open towards MongoDB**, not towards OpenSearch: an unreadable
+   * settings row must not silently promote a tenant onto an engine nobody chose
+   * for them. Returning `{}` leaves the two levels above in charge, which is
+   * the configured default.
+   */
+  private async tenantPolicy(
+    tenantId: string,
+  ): Promise<Partial<Record<SearchCapabilityName, CapabilityOverride>>> {
+    if (!tenantId) return {};
+    try {
+      const raw = await this.settings.getSetting(
+        'search_engine_policy',
+        tenantId,
+      );
+      return parseTenantCapabilityPolicy(raw, (message) =>
+        // Warned once per request rather than thrown: a typo in one tenant's
+        // settings row must not take search down for that tenant, and must not
+        // be silent either — a rollout dial that quietly does nothing is
+        // discovered during the incident it was supposed to prevent.
+        this.logger.warn(
+          `Ignoring search_engine_policy for tenant ${tenantId}: ${message}`,
+        ),
+      );
+    } catch (error) {
+      this.logger.error(
+        `Could not read search_engine_policy for tenant ${tenantId}; using the deployment default: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return {};
     }
   }
 
@@ -186,13 +231,14 @@ export class SearchEngineRouter {
     request: EngineSearchRequest,
     plan: CapabilityPlan,
     reason: string,
-    config: { fallbackToMongoDb: boolean },
     options: { rethrow?: unknown } = {},
   ): Promise<RoutedSearchResponse> {
-    // A deployment that explicitly turned the legacy flag off asked to fail
-    // closed. That is still narrowing, so it is still honoured.
-    const allowed = plan.policy === 'degrade' && config.fallbackToMongoDb;
-    if (!allowed) {
+    // The capability's own policy decides, and nothing else does.
+    // `OPENSEARCH_FALLBACK_TO_MONGODB` used to sit alongside it — one flag
+    // covering every capability, which is the shape that turns an OpenSearch
+    // outage into a saturated primary. It is gone rather than deprecated: there
+    // is no deployment whose behaviour it still describes.
+    if (plan.policy !== 'degrade') {
       this.metrics.incrementCounter('crm_search_capability_disabled_total', {
         capability: request.capability,
         reason,

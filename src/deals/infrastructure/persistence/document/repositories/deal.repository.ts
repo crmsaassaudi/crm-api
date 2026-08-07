@@ -11,6 +11,7 @@ import { IPaginationOptions } from '../../../../../utils/types/pagination-option
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
 import { pagination } from '../../../../../utils/pagination';
 import { escapeRegex } from '../../../../../utils/escape-regex';
+import { applySearchKeys } from '../../../../../common/search/search-keys.query';
 import { cappedCount } from '../../../../../utils/capped-count';
 import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
 import { DEAL_STAGE_HISTORY_LIMIT } from '../../../../deals.constants';
@@ -130,13 +131,11 @@ export class DealRepository extends BaseDocumentRepository<
     // matches both a missing field and an explicit null.
     const where: FilterQuery<DealSchemaClass> = { deletedAt: null };
 
-    if (filterOptions?.search) {
-      const expression = {
-        $regex: escapeRegex(String(filterOptions.search)),
-        $options: 'i',
-      };
-      where.$or = [{ title: expression }, { accountName: expression }];
-    }
+    // Free-text search over `searchKeys`. The unanchored case-insensitive
+    // `$regex` this replaces could not use any index — measured at 20,000
+    // documents examined per keystroke on a 20,000-deal tenant, growing
+    // linearly — and it could not match a partially typed Arabic name at all.
+    applySearchKeys(where as Record<string, any>, filterOptions?.search);
 
     // Named shortcuts used by the board, the omni sidebar and the follow-up views.
     if (filterOptions?.pipelineId) where.pipelineId = filterOptions.pipelineId;

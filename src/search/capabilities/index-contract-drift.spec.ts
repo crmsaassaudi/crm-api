@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { INDEXED_FILTER_FIELDS } from '../engines/opensearch-filter';
 import { SEARCH_MODULES } from '../dto/global-search-query.dto';
+import { SEARCH_CAPABILITIES } from './search-capabilities';
 
 /**
  * The one guard against the defect that has produced every parity bug in this
@@ -100,12 +101,46 @@ const bothRepositoriesPresent = existsSync(INDEX_DEFINITION);
       expect(unmapped).toEqual([]);
     });
 
-    it('should agree with the indexer about which modules exist', () => {
+    it('should index every module it claims to index', () => {
+      // One-directional on purpose. The indexer's set used to have to equal
+      // crm-api's, which meant the API could not offer a module the index does
+      // not carry — but it can, as long as that module is routed to MongoDB.
+      // What must never happen is the reverse: the indexer writing documents
+      // for a module the API does not know, which would be storage nobody can
+      // ever query.
       const indexerModules = exportedStringArray(
         documentSource,
         'SEARCH_MODULES',
       );
-      expect([...indexerModules].sort()).toEqual([...SEARCH_MODULES].sort());
+      const unknown = indexerModules.filter(
+        (module) => !SEARCH_MODULES.includes(module as never),
+      );
+      expect(unknown).toEqual([]);
+    });
+
+    it('should route every un-indexed module to a MongoDB-owned capability', () => {
+      // The invariant that makes "the API may offer more modules than the index
+      // holds" safe. Without it, adding a module to the API and forgetting the
+      // indexer produces a branch of the search box that is permanently empty
+      // for exactly the tenants that were switched to OpenSearch — the ones
+      // paying for the upgrade.
+      const indexerModules = new Set(
+        exportedStringArray(documentSource, 'SEARCH_MODULES'),
+      );
+      const unindexed = SEARCH_MODULES.filter(
+        (module) => !indexerModules.has(module),
+      );
+
+      // Every un-indexed module needs a capability of its own whose owner is
+      // MongoDB; sharing `global_search` would route it to OpenSearch.
+      for (const module of unindexed) {
+        const capability = `${module.replace(/s$/, '')}_search`;
+        expect(Object.keys(SEARCH_CAPABILITIES)).toContain(capability);
+        expect(
+          SEARCH_CAPABILITIES[capability as keyof typeof SEARCH_CAPABILITIES]
+            .owner,
+        ).toBe('mongodb');
+      }
     });
 
     it('should keep search-only fields out of the authorization allowlist', () => {

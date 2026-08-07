@@ -141,8 +141,31 @@ export const SEARCH_CAPABILITIES = {
     tier: 'R',
     owner: 'mongodb',
     description:
-      'Tìm tự do trong danh sách task. Hiện dùng $regex → collection scan; ' +
-      'ứng viên chuyển sang OpenSearch khi tenant vượt ~100k task.',
+      'Tìm tự do trong danh sách task. Có `searchKeys` (prefix có neo, ' +
+      'index multikey) hậu thuẫn; ứng viên chuyển sang OpenSearch khi cần ' +
+      'khớp giữa từ hoặc gõ sai chính tả.',
+  },
+  /**
+   * Nhánh Hội thoại của ô tìm kiếm toàn cục.
+   *
+   * Tách khỏi `global_search` vì một lý do cụ thể, không phải để cho gọn: chỉ
+   * mục OpenSearch **không chứa** conversation (`SEARCH_MODULES` của
+   * crm-opensearch có 5 module, không có module này). Nếu để nhánh này đi theo
+   * `global_search`, thì đúng lúc một tenant được bật OpenSearch, phần Hội
+   * thoại của họ sẽ trả về rỗng — bật engine cho tenant VIP hoá ra lại **lấy
+   * mất** một tính năng.
+   *
+   * Khai báo `owner: 'mongodb'` là nói đúng hiện trạng. Đặt `'opensearch'` sẽ
+   * là một lời hứa mà indexer không giữ được — cùng lý do đã áp cho
+   * `task_list_search`. Khi nào conversation được đưa vào chỉ mục thì đổi một
+   * dòng ở đây, không phải đổi router.
+   */
+  conversation_search: {
+    tier: 'R',
+    owner: 'mongodb',
+    description:
+      'Nhánh Hội thoại của tìm kiếm toàn cục. MongoDB sở hữu cho tới khi ' +
+      'conversation được đưa vào chỉ mục OpenSearch.',
   },
 } as const satisfies Record<string, SearchCapability>;
 
@@ -184,6 +207,16 @@ export interface CapabilityRuntime {
   openSearchEnabled: boolean;
   /** Per-capability operator overrides, already parsed and validated. */
   overrides: Partial<Record<SearchCapabilityName, CapabilityOverride>>;
+  /**
+   * The tenant's own policy, from `crm_settings.search_engine_policy`.
+   *
+   * This is the level that makes "OpenSearch for VIP and high-volume tenants,
+   * MongoDB for everyone else" expressible. It is a rollout dial, not an
+   * escape hatch: it can only narrow what the two levels above allow, so a row
+   * in a database cannot re-enable something the kill switch turned off — and
+   * it must not, because the kill switch is reached for during an incident.
+   */
+  tenantOverrides?: Partial<Record<SearchCapabilityName, CapabilityOverride>>;
 }
 
 /**
@@ -217,7 +250,13 @@ export function resolveCapability(
 ): CapabilityPlan {
   const definition = definitionOf(name);
   const policy = capabilityPolicy(name);
-  const override = runtime.overrides[name];
+  // The narrower of the two override levels wins, and `off` is narrower than
+  // `mongodb`. Composed rather than "last one wins" so the order the levels
+  // happen to be read in cannot change the answer.
+  const override = narrowest(
+    runtime.overrides[name],
+    runtime.tenantOverrides?.[name],
+  );
 
   if (override === 'off') {
     return {
@@ -282,6 +321,62 @@ export function resolveCapability(
       : {}),
     policy,
   };
+}
+
+/** `off` beats `mongodb` beats nothing. Narrowing only, in one direction. */
+function narrowest(
+  ...levels: Array<CapabilityOverride | undefined>
+): CapabilityOverride | undefined {
+  if (levels.includes('off')) return 'off';
+  if (levels.includes('mongodb')) return 'mongodb';
+  return undefined;
+}
+
+/**
+ * Reads a tenant's `search_engine_policy` setting into validated overrides.
+ *
+ * Unknown capability names and unknown values are dropped with a reason rather
+ * than throwing: an operator typo in one tenant's settings row must not take
+ * down search for that tenant, let alone become a boot failure for everyone.
+ * That is the opposite of the environment-variable parser above, and
+ * deliberately so — a bad env var is caught before the process serves traffic,
+ * while a bad settings row is discovered while it is already serving.
+ *
+ * `opensearch` is rejected here for the same reason it is rejected in the
+ * environment: an override may only narrow. A tenant is switched *onto*
+ * OpenSearch by the capability's own `owner`, gated by the kill switch — not by
+ * a row that could outlive the reason it was written.
+ */
+export function parseTenantCapabilityPolicy(
+  raw: unknown,
+  onIgnored?: (message: string) => void,
+): Partial<Record<SearchCapabilityName, CapabilityOverride>> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const overrides: Partial<Record<SearchCapabilityName, CapabilityOverride>> =
+    {};
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(name in SEARCH_CAPABILITIES)) {
+      onIgnored?.(`unknown capability "${name}"`);
+      continue;
+    }
+    if (value !== 'mongodb' && value !== 'off') {
+      onIgnored?.(
+        `value for "${name}" must be "mongodb" or "off" (an override may only narrow), received ${JSON.stringify(value)}`,
+      );
+      continue;
+    }
+    if (
+      value === 'mongodb' &&
+      capabilityPolicy(name as SearchCapabilityName) === 'off'
+    ) {
+      onIgnored?.(
+        `"${name}" has no index-backed MongoDB path; use "off" instead of "mongodb"`,
+      );
+      continue;
+    }
+    overrides[name as SearchCapabilityName] = value;
+  }
+  return overrides;
 }
 
 export class CapabilityOverrideError extends Error {}

@@ -26,7 +26,6 @@ const id = (value: unknown): string | undefined => {
 const WRITABLE_KEYS = [
   'tenantId',
   'title',
-  'name',
   'pipelineId',
   'stageId',
   'stageEnteredAt',
@@ -68,7 +67,6 @@ export class DealMapper {
     domainEntity.id = raw._id.toString();
     domainEntity.tenantId = id(raw.tenantId) as string;
     domainEntity.title = raw.title;
-    domainEntity.name = raw.name;
     domainEntity.pipelineId = id(raw.pipelineId) as string;
     domainEntity.stageId = id(raw.stageId) as string;
     domainEntity.stageEnteredAt = raw.stageEnteredAt;

@@ -16,6 +16,10 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import {
+  PiiSearchPolicy,
+  looksLikeProtectedValue,
+} from '../../common/search/pii-search.policy';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Throttle } from '@nestjs/throttler';
 import { ConversationRepository } from '../repositories/conversation.repository';
@@ -88,7 +92,21 @@ export class OmniController {
     private readonly conversationCommandService: ConversationCommandService,
     private readonly tagsService: TagsService,
     private readonly channelSupportService: ChannelSupportService,
+    private readonly piiSearch: PiiSearchPolicy,
   ) {}
+
+  /**
+   * Whether a phone- or e-mail-shaped inbox search may match the masked half.
+   *
+   * Only asked when the term looks like protected data, so a search for a
+   * customer's name costs no permission check and writes no audit line.
+   */
+  private async resolveSensitiveSearch(search?: string): Promise<boolean> {
+    if (!search || !looksLikeProtectedValue(search)) return false;
+    const allowed = await this.piiSearch.canSearchSensitive('contacts');
+    if (!allowed) this.piiSearch.recordDeniedLookup('contacts', search);
+    return allowed;
+  }
 
   /**
    * An assignment target must be a member of the active tenant.
@@ -249,6 +267,11 @@ export class OmniController {
         isVip: isVipFilter,
         hasUnread: hasUnreadFilter,
         search,
+        // The customer's phone number and e-mail live in the masked half of
+        // the search index. Masking already stopped an agent without
+        // `contacts:unmask` from reading them; before this, typing one into
+        // the inbox search still told them whose it was.
+        canSearchSensitive: await this.resolveSensitiveSearch(search),
         cursor,
         dateRange,
         unansweredMode,

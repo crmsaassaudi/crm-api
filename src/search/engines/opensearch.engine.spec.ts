@@ -164,13 +164,26 @@ describe('OpenSearchEngine', () => {
   });
 
   it('should use a bounded exact suffix field for phone-number queries', () => {
-    const clauses = (engine as any).matchClauses('+84 912 345-678');
+    const clauses = (engine as any).matchClauses('+84 912 345-678', true);
     expect(clauses).toContainEqual({
       term: {
         phoneSuffixes: { value: '84912345678', boost: 4 },
       },
     });
-    expect((engine as any).matchClauses('deal 345678')).not.toEqual(
+    expect((engine as any).matchClauses('deal 345678', true)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ term: expect.anything() }),
+      ]),
+    );
+  });
+
+  it('should not offer caller-ID lookup to a caller who may not unmask', () => {
+    // MongoDB keeps phone tokens in `searchKeysPii` behind `contacts:unmask`.
+    // If OpenSearch answered the same query from `phoneSuffixes` regardless,
+    // moving a tenant onto it would reopen the reverse lookup that masking
+    // exists to prevent — the control would hold on one engine and not the
+    // other, which is worse than not having it, because nobody would look.
+    expect((engine as any).matchClauses('+84 912 345-678', false)).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ term: expect.anything() }),
       ]),

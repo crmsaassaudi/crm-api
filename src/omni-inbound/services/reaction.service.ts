@@ -10,6 +10,9 @@ import {
 } from '../infrastructure/persistence/document/entities/omni-message.schema';
 import { OmniReactionPayload } from '../domain/omni-reaction-payload';
 
+/** Upper bound on emoji reactions kept per message. */
+const MAX_REACTIONS_PER_MESSAGE = 100;
+
 /**
  * Centralized reaction handler — single logic for ALL channels.
  *
@@ -114,10 +117,21 @@ export class ReactionService {
             {
               $push: {
                 reactions: {
-                  emoji: payload.emoji,
-                  senderId: payload.senderId,
-                  senderType: payload.senderType,
-                  createdAt: payload.timestamp,
+                  $each: [
+                    {
+                      emoji: payload.emoji,
+                      senderId: payload.senderId,
+                      senderType: payload.senderType,
+                      createdAt: payload.timestamp,
+                    },
+                  ],
+                  // Bounded, keeping the most recent. One reaction per sender is
+                  // enforced by the `$pull` above, so this only binds on a
+                  // broadcast or a group thread — where it binds hard: an
+                  // uncapped array on the largest collection in the system, on
+                  // a document that is also rewritten by every delivery-status
+                  // update.
+                  $slice: -MAX_REACTIONS_PER_MESSAGE,
                 },
               },
             },

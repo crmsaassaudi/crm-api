@@ -76,6 +76,10 @@ import {
 import { CustomFieldValueValidator } from '../custom-fields/custom-field-value.validator';
 import { CustomFieldsService } from '../custom-fields/custom-fields.service';
 import { TagsService } from '../tags/tags.service';
+import {
+  PiiSearchPolicy,
+  looksLikeProtectedValue,
+} from '../common/search/pii-search.policy';
 import { AuthorizationService } from '../common/permissions/authorization.service';
 import { ContactIdentitySyncService } from './identities/contact-identity-sync.service';
 import { normalizePhones } from '../common/identity/identity-normalizer';
@@ -116,6 +120,7 @@ export class ContactsService {
     private readonly tagsService: TagsService,
     private readonly authorization: AuthorizationService,
     private readonly identitySync: ContactIdentitySyncService,
+    private readonly piiSearch: PiiSearchPolicy,
     @Inject(IOREDIS_CLIENT)
     private readonly redis: Redis,
     @InjectQueue(CONTACT_EXPORT_QUEUE)
@@ -230,13 +235,11 @@ export class ContactsService {
       // hole its whitelist exists to close — and an admin-defined field that
       // cannot be filtered is a field the product cannot actually use.
       __allowedCustomFieldKeys: await this.resolveCustomFieldKeys(filter),
-      // Resolved only when the request carries a search term: a phone lookup
-      // needs the tenant's country code to turn the national form a user types
-      // into the E.164 form the write gate stored, and an ordinary list request
-      // should not pay for the settings read.
-      __defaultCountryCode: filter?.search
-        ? await this.resolveDefaultCountryCode()
-        : undefined,
+      // Whether this caller may search the values field masking hides from
+      // them. Resolved only when a search term is present, and only when that
+      // term is shaped like a protected value — so an ordinary name search
+      // costs no permission check and produces no audit noise.
+      __canSearchSensitive: await this.resolveSensitiveSearch(filter?.search),
       // Compiled once per request. Composed with the list's own filters rather
       // than replacing them, so "this segment, owned by me" is one query.
       __segmentFilter: filter?.segmentId
@@ -1674,6 +1677,22 @@ export class ContactsService {
    * the international and bare-digit forms, so an unreadable setting must
    * degrade the match rather than fail the list request.
    */
+  /**
+   * Whether a search term shaped like a phone number or e-mail may be matched
+   * against the masked half of the index.
+   *
+   * Masking stopped a user reading a contact's phone number, and did nothing to
+   * stop the same user typing that number into the search box and being shown
+   * whose it is. `contacts:unmask` already gates reading it; this makes it gate
+   * the lookup too.
+   */
+  private async resolveSensitiveSearch(search?: string): Promise<boolean> {
+    if (!search || !looksLikeProtectedValue(search)) return false;
+    const allowed = await this.piiSearch.canSearchSensitive('contacts');
+    if (!allowed) this.piiSearch.recordDeniedLookup('contacts', search);
+    return allowed;
+  }
+
   private async resolveDefaultCountryCode(): Promise<string | undefined> {
     try {
       const identity =

@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, now } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+import { searchKeysPlugin } from '../../../../../common/search/search-keys.plugin';
 
 export type AccountSchemaDocument = HydratedDocument<AccountSchemaClass>;
 
@@ -129,6 +130,14 @@ export class AccountSchemaClass extends EntityDocumentHelper {
 export const AccountSchema = SchemaFactory.createForClass(AccountSchemaClass);
 
 AccountSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+
+// Free-text search. Replaces an unanchored case-insensitive `$regex` over
+// name/industry/phones/emails, which no index could serve.
+AccountSchema.plugin(searchKeysPlugin, {
+  fields: ['name', 'industry', 'website', 'tags'],
+  sensitiveFields: ['emails'],
+  sensitivePhoneFields: ['phones'],
+});
 AccountSchema.index(
   { tenantId: 1, ownerId: 1 },
   { name: 'tenant_owner_lookup' },
@@ -167,7 +176,10 @@ AccountSchema.index(
   { tenantId: 1, updatedAt: -1, _id: -1 },
   { name: 'tenant_updated_sort' },
 );
-AccountSchema.index({ tenantId: 1, name: 1, _id: 1 }, { name: 'tenant_name_sort' });
+AccountSchema.index(
+  { tenantId: 1, name: 1, _id: 1 },
+  { name: 'tenant_name_sort' },
+);
 AccountSchema.index(
   { tenantId: 1, annualRevenue: -1, _id: -1 },
   { name: 'tenant_annual_revenue_sort' },

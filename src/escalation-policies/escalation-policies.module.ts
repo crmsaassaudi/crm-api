@@ -19,10 +19,22 @@ import {
   TicketSchemaClass,
 } from '../tickets/infrastructure/persistence/document/entities/ticket.schema';
 import { isWorkerRuntime } from '../config/runtime-role';
+import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
 
 @Module({
   imports: [
     EscalationQueueModule,
+    // `EscalationProcessor` injects `ConversationCommandService` and this module
+    // never imported the module that provides it, so the container could not
+    // build it. The failure was invisible in the two deployments that matter
+    // most day to day — the processor is only registered under
+    // `isWorkerRuntime()`, which is false for `APP_RUNTIME=api` — and fatal in
+    // all-in-one mode, which is what a developer runs and what a single-container
+    // deployment runs. Bootstrap aborted before the first request.
+    //
+    // No cycle: OmniInboundModule does not import this module, and the app
+    // module imports both.
+    OmniInboundModule,
     MongooseModule.forFeature([
       {
         name: EscalationPolicySchemaClass.name,

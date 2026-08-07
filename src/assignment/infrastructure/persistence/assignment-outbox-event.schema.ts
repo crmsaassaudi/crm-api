@@ -18,6 +18,17 @@ export class AssignmentOutboxEventSchemaClass extends EntityDocumentHelper {
   })
   tenantId: string;
 
+  /**
+   * The shape of `payload`, so a consumer can tell which contract it is reading.
+   *
+   * One line, added while the outbox is empty. After go-live the same change
+   * costs a dual-read path and a backfill over every pending row — and the
+   * moment it is actually needed is the moment a payload has to change, which
+   * is the worst moment to be adding a version field.
+   */
+  @Prop({ type: Number, required: true, default: 1 })
+  schemaVersion: number;
+
   @Prop({ type: String, required: true })
   eventId: string;
 
@@ -58,4 +69,13 @@ AssignmentOutboxEventSchema.index(
 AssignmentOutboxEventSchema.index(
   { status: 1, createdAt: 1 },
   { name: 'assignment_outbox_pending' },
+);
+
+// Retention. Without it this collection grows for ever: it is written on every
+// assignment and read once, seconds later, by the poller. Seven days matches
+// `automation_outbox_events`, and is long enough that a weekend outage can
+// still be replayed by hand.
+AssignmentOutboxEventSchema.index(
+  { createdAt: 1 },
+  { name: 'assignment_outbox_ttl', expireAfterSeconds: 7 * 86_400 },
 );

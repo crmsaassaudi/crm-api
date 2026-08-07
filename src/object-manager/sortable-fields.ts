@@ -18,10 +18,7 @@ import { ConfigurableObject } from './object-registry';
  * unindexed field is an in-memory sort that dies at Mongo's 32MB limit — the
  * biggest tenant hits it first, and it fails outright rather than degrading.
  */
-export const SORTABLE_FIELDS: Record<
-  ConfigurableObject,
-  readonly string[]
-> = {
+export const SORTABLE_FIELDS: Record<ConfigurableObject, readonly string[]> = {
   Contact: [
     'createdAt',
     'updatedAt',

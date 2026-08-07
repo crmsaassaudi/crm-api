@@ -165,6 +165,13 @@ describe('ContactsService', () => {
       // The identity mirror is a non-throwing projection; these tests assert the
       // contact write, not the projection (covered in its own spec).
       identitySync as any, // identitySync
+      // piiSearch — denies by default, which is the posture the repository
+      // relies on: a caller that cannot unmask must not be able to search by
+      // phone or e-mail either.
+      {
+        canSearchSensitive: jest.fn(() => Promise.resolve(false)),
+        recordDeniedLookup: jest.fn(),
+      } as any,
       {} as any, // redis
       createQueueMock() as any, // exportQueue
       importQueue as any,

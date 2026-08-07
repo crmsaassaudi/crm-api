@@ -26,7 +26,6 @@ const REVIEWED_EXEMPTIONS = new Set([
   'omni-inbound/infrastructure/persistence/document/entities/agent-state-segment.schema.ts',
   'omni-inbound/infrastructure/persistence/document/entities/agent-status-audit-log.schema.ts',
   'omni-inbound/infrastructure/persistence/document/entities/interaction-segment.schema.ts',
-  'omni-inbound/infrastructure/persistence/document/entities/outbox-event.schema.ts',
   'omni-inbound/infrastructure/persistence/document/entities/processed-operation.schema.ts',
   // Written by the nightly rollup worker, which has no request and therefore no CLS
   // tenant: the plugin's lookup would yield nothing and silently scope every query to

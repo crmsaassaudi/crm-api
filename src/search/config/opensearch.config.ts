@@ -31,10 +31,6 @@ class OpenSearchEnvironmentValidator {
   @IsOptional()
   OPENSEARCH_INDEX_PREFIX?: string;
 
-  @IsBooleanString()
-  @IsOptional()
-  OPENSEARCH_FALLBACK_TO_MONGODB?: string;
-
   @IsNumberString()
   @IsOptional()
   OPENSEARCH_REQUEST_TIMEOUT_MS?: string;
@@ -73,7 +69,6 @@ export default registerAs<OpenSearchConfig>('opensearch', () => {
     username: process.env.OPENSEARCH_USERNAME || undefined,
     password: process.env.OPENSEARCH_PASSWORD || undefined,
     indexPrefix: process.env.OPENSEARCH_INDEX_PREFIX ?? 'crm',
-    fallbackToMongoDb: flag(process.env.OPENSEARCH_FALLBACK_TO_MONGODB, true),
     requestTimeoutMs,
     capabilityOverrides,
   };

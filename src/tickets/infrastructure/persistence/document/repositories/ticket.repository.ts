@@ -16,6 +16,7 @@ import { IPaginationOptions } from '../../../../../utils/types/pagination-option
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
 import { pagination } from '../../../../../utils/pagination';
 import { escapeRegex } from '../../../../../utils/escape-regex';
+import { applySearchKeys } from '../../../../../common/search/search-keys.query';
 import { cappedCount } from '../../../../../utils/capped-count';
 import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
 import { normalizeTicketNumberQuery } from '../../../../search/ticket-number-query';
@@ -90,15 +91,11 @@ export class TicketRepository extends BaseDocumentRepository<
       if (ticketNumber) {
         where.ticketNumber = ticketNumber;
       } else {
-        const expression = {
-          $regex: escapeRegex(filterOptions.search),
-          $options: 'i',
-        };
-        where.$or = [
-          { subject: expression },
-          { ticketNumber: expression },
-          { description: expression },
-        ];
+        // Free-text over `searchKeys`, which now includes `relatedTo.name`.
+        // Until then a support agent could not type a customer's name and see
+        // that customer's tickets — the first thing anyone does at a service
+        // desk — even though the name was already on the document.
+        applySearchKeys(where as Record<string, any>, filterOptions.search);
       }
     }
     const statusIds = normalizeListFilter(filterOptions?.statusIds);

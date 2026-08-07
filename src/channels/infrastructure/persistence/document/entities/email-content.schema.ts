@@ -158,9 +158,23 @@ EmailContentSchema.index({ tenantId: 1, conversationId: 1 });
 // Thread correlation by RFC Message-ID
 EmailContentSchema.index({ tenantId: 1, rfc822MessageId: 1 }, { sparse: true });
 
-// The text index is deliberately NOT declared here: building it at startup
-// blocks the database on a large collection. Create it from a migration:
-//   db.email_contents.createIndex(
-//     { subject: "text", textBody: "text" },
-//     { name: "email_fulltext_search", weights: { subject: 10, textBody: 1 } }
-//   );
+// Full-text search over email bodies.
+//
+// This used to live in `create-email-text-index.ts` with a comment saying it
+// was kept out of the schema because building it at startup would block the
+// database. That reason stopped being true: `autoIndex` is false in production,
+// so nothing in a schema is built at startup — indexes are only created when an
+// operator runs `npm run db:setup`. Keeping the declaration outside the schema
+// bought nothing and cost the one thing that matters: `db:setup` could not know
+// the index was supposed to exist, so it would have dropped it.
+//
+// `default_language: 'none'` because email bodies are multilingual; stemming in
+// the wrong language is worse than no stemming.
+EmailContentSchema.index(
+  { subject: 'text', textBody: 'text' },
+  {
+    name: 'email_fulltext_search',
+    weights: { subject: 10, textBody: 1 },
+    default_language: 'none',
+  },
+);

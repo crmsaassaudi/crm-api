@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, now } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+import { searchKeysPlugin } from '../../../../../common/search/search-keys.plugin';
 
 export type ContactSchemaDocument = HydratedDocument<ContactSchemaClass>;
 
@@ -254,6 +255,18 @@ export class ContactSchemaClass extends EntityDocumentHelper {
 export const ContactSchema = SchemaFactory.createForClass(ContactSchemaClass);
 
 ContactSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
+
+// Free-text search. `companyName`, `title`, `role` and `tags` were searchable
+// in the OpenSearch projection and not in MongoDB, so which fields a user could
+// search by depended on which engine happened to be serving their tenant.
+//
+// `emails` and `phones` go in the sensitive half: they are masked from anyone
+// without `contacts:unmask`, and a masked value must not double as a lookup key.
+ContactSchema.plugin(searchKeysPlugin, {
+  fields: ['firstName', 'lastName', 'companyName', 'title', 'role', 'tags'],
+  sensitiveFields: ['emails'],
+  sensitivePhoneFields: ['phones'],
+});
 ContactSchema.index({ tenantId: 1, emails: 1 });
 ContactSchema.index({ tenantId: 1, firstName: 1, lastName: 1 });
 ContactSchema.index(
@@ -358,13 +371,13 @@ ContactSchema.index(
   { tenantId: 1, lifecycleStageId: 1, createdAt: -1 },
   { name: 'tenant_stage_created' },
 );
-ContactSchema.index(
-  { tenantId: 1, firstName: 'text', lastName: 'text', emails: 'text' },
-  {
-    name: 'contact_text_search',
-    default_language: 'none',
-  },
-);
+// `contact_text_search` (a `$text` index over firstName/lastName/emails) is
+// gone, replaced by `search_keys_lookup` from `searchKeysPlugin`. It had three
+// defects no index could fix: it matched whole words only (so `Ahm` found
+// nothing and type-ahead was impossible), it OR-ed multiple terms (so
+// `nguyen van` returned everyone matching either), and MongoDB cannot combine a
+// `$text` match with any sort other than `textScore`, which made every search
+// request a blocking in-memory sort.
 // The idempotency key an integration upserts on. Partial rather than sparse:
 // sparse only skips a MISSING field, so every contact created through the UI
 // (which writes neither) would collide on `(null, null)`.

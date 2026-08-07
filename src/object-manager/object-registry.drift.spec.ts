@@ -80,13 +80,6 @@ describe('object registry ↔ persistence drift', () => {
       expect(aliases).toEqual([...new Set(aliases)]);
     });
 
-    it('should mirror only real schema paths', () => {
-      const missing = fields
-        .flatMap((field) => field.mirroredKeys ?? [])
-        .filter((key) => !schemaHasPath(schema, key));
-      expect(missing).toEqual([]);
-    });
-
     it('should use only known field types', () => {
       const unknown = fields
         .filter((field) => !isFieldType(field.type))

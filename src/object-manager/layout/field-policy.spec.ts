@@ -75,15 +75,17 @@ describe('resolveFieldPolicy', () => {
     expect(policy.masking.get('value')).toBe('mask_all');
   });
 
-  it('should cover a server-maintained duplicate of the same value', () => {
-    // Deal.name is a copy of Deal.title. Masking one and not the other hands the
-    // value back in the property nobody thought to look at.
+  it('should not leak a masked value through a second property', () => {
+    // This used to assert that masking `title` also masked `name`, because the
+    // service kept `name` as a copy. The copy is gone, so the guarantee is now
+    // structural rather than configured: there is no second property to leak
+    // through, and `name` resolves as a legacy alias of `title`.
     const policy = policyFor(
       [{ Deal: [{ key: 'title', masking: 'last_4' }] }],
       'Deal',
     );
     expect(policy.masking.get('title')).toBe('last_4');
-    expect(policy.masking.get('name')).toBe('last_4');
+    expect(policy.masking.get('name')).toBeUndefined();
   });
 
   it('should read only the requested object’s entries', () => {

@@ -28,11 +28,7 @@ import {
   normalizeCursorDirection,
   normalizeSortOrder,
 } from '../../../../../utils/cursor-pagination';
-import { normalizeEmail } from '../../../../../common/identity/identity-normalizer';
-import {
-  buildPhoneSearchPrefixes,
-  phoneSearchClause,
-} from '../../../../search/phone-search';
+import { applySearchKeys } from '../../../../../common/search/search-keys.query';
 import {
   compileContactFilter,
   parseContactFilter,
@@ -90,50 +86,38 @@ export class ContactRepository extends BaseDocumentRepository<
     where.$and = [...((where.$and as any[]) ?? []), { ownerId: currentUserId }];
   }
 
+  /**
+   * Free-text search over the contact list.
+   *
+   * Three mechanisms used to live here — `$text` for names, equality for a
+   * full e-mail, an anchored prefix regex for a phone number — and between them
+   * they still could not find a contact by company, job title, tag or custom
+   * field, could not match a partially typed name, and treated `أحمد` and
+   * `احمد` as different people. `searchKeys` replaces all three with one
+   * index-backed prefix match over canonically folded tokens.
+   *
+   * The e-mail and phone fast paths are gone, not merely rewritten. They read
+   * fields that field masking hides, so they let a user without
+   * `contacts:unmask` use a protected value as a lookup key. Those tokens now
+   * live in `searchKeysPii`, which `includeSensitive` gates.
+   */
   private applySearchFilter(
     where: FilterQuery<ContactSchemaClass>,
     search: string,
-    defaultCountryCode?: string,
+    canSearchSensitive: boolean,
   ): void {
-    const searchTerm = search.trim();
-    if (searchTerm.includes('@')) {
-      // Full email identities are normalised at every write boundary and have a
-      // tenant-prefixed multikey index. Equality can use that index; the former
-      // unanchored /i regex could not and turned a common exact lookup into a
-      // tenant-wide scan at large cardinality.
-      const normalisedEmail = normalizeEmail(searchTerm);
-      where.emails = normalisedEmail;
-      return;
-    }
-
-    // A phone number was previously handed to `$text`, whose index covers
-    // firstName, lastName and emails — so it matched nothing, and the single
-    // most frequent lookup in a call centre ("the number that is ringing")
-    // returned an empty list. The digits never had a chance of being found,
-    // even though `tenant_phone_lookup` exists and the search index already
-    // knows how to answer this.
-    const phonePrefixes = buildPhoneSearchPrefixes(
-      searchTerm,
-      defaultCountryCode,
-    );
-    if (phonePrefixes?.length) {
-      (where.$and as any[]) = [
-        ...((where.$and as any[]) ?? []),
-        phoneSearchClause(phonePrefixes),
-      ];
-      return;
-    }
-
-    where.$text = { $search: searchTerm };
+    applySearchKeys(where as Record<string, any>, search, {
+      includeSensitive: canSearchSensitive,
+    });
   }
 
   /**
    * True when this list request carries a free-text search.
    *
-   * Used to skip the companion count: a `$text` query must use the text index,
-   * which cannot also supply the requested sort order, so the count re-executes
-   * the whole match — the single most expensive thing a search request does,
-   * done twice, for a number the UI renders as "25+" anyway.
+   * Used to skip the companion count. The search itself is now index-backed,
+   * but the count still re-executes the whole match for a number the UI renders
+   * as "25+" — the most expensive thing a search request does, done twice, for
+   * a figure nobody reads precisely.
    */
   private hasSearchTerm(filterOptions?: any): boolean {
     return typeof filterOptions?.search === 'string'
@@ -157,7 +141,9 @@ export class ContactRepository extends BaseDocumentRepository<
       this.applySearchFilter(
         where,
         filterOptions.search,
-        filterOptions.__defaultCountryCode,
+        // Absent means "no", so a caller that forgets to resolve the permission
+        // gets the narrower search rather than the wider one.
+        filterOptions.__canSearchSensitive === true,
       );
     }
 

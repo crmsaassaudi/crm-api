@@ -58,6 +58,21 @@ ActivityLogSchema.index(
   { name: 'target_activity_lookup' },
 );
 
+// Retention: 180 days.
+//
+// This collection is written from every domain and read almost exclusively as
+// "what happened to this record recently" on a detail page. It had no TTL and
+// no purge, so it grew without bound while seventeen smaller, less-written
+// collections had one — the inversion the data audit called out.
+//
+// 180 days is long enough to cover a quarterly review and an escalation that
+// goes several weeks; it is deliberately shorter than `audit_logs`, which
+// answers a different (compliance) question and needs its own policy decision.
+ActivityLogSchema.index(
+  { occurredAt: 1 },
+  { name: 'activity_log_ttl', expireAfterSeconds: 180 * 86_400 },
+);
+
 ActivityLogSchema.virtual('actor', {
   ref: 'UserSchemaClass',
   localField: 'actorId',

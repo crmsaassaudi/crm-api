@@ -19,6 +19,15 @@ export interface SearchScope {
    * wider of the two.
    */
   restrictToOwnerUserId?: string | null;
+  /**
+   * Whether the caller may match the query against values that field masking
+   * hides from them — phone numbers and e-mail addresses.
+   *
+   * Both engines have to honour it or the control has a hole on one of them:
+   * MongoDB keeps those tokens in `searchKeysPii`, OpenSearch in
+   * `phoneSuffixes`. Absent means no.
+   */
+  canSearchSensitive?: boolean;
 }
 
 export interface EngineSearchRequest {

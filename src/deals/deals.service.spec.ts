@@ -189,7 +189,6 @@ describe('DealsService', () => {
       });
       expect(deal.pipelineId).toBe(PIPELINE);
       expect(deal.stageId).toBe(OPEN_STAGE);
-      expect(deal.name).toBe('Website lead');
     });
 
     it("should default probability to the stage's own", async () => {

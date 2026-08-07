@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import { EntityDocumentHelper } from '../../../../../utils/document-entity-helper';
 import { tenantFilterPlugin } from '../../../../../common/plugins/tenant-filter.plugin';
+import { searchKeysPlugin } from '../../../../../common/search/search-keys.plugin';
 import { SUPPORTED_CHANNELS } from '../../../../domain/channel-capabilities';
 
 export type OmniConversationDocument =
@@ -31,6 +32,24 @@ export class OmniConversationSchemaClass extends EntityDocumentHelper {
     index: true,
   })
   tenantId: string;
+
+  /**
+   * When this record may be deleted. Null means "keep".
+   *
+   * Nothing writes it yet, and the TTL index on a null field is a no-op — so
+   * this changes no behaviour today. It is here now because it cannot be added
+   * cheaply later: `omni_messages` and `omni_conversations` are the two
+   * collections with no retention of any kind, and every other collection that
+   * needed one got a TTL index while it was small. Stamping this field on a
+   * hundred million existing documents is a very different operation from
+   * declaring it on an empty one.
+   *
+   * Turning retention on is then one writer setting `expiresAt` at insert time.
+   * How long to keep a customer's messages is a business and compliance
+   * decision, not a technical one, and is deliberately not made here.
+   */
+  @Prop({ type: Date, default: null })
+  expiresAt?: Date | null;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,
@@ -485,6 +504,24 @@ export const OmniConversationSchema = SchemaFactory.createForClass(
 
 OmniConversationSchema.plugin(tenantFilterPlugin, { field: 'tenantId' });
 
+// Free-text search over the inbox.
+//
+// The search box in the conversation list is labelled "Search messages" in all
+// three locales, and the only index behind it covered `customer.name`. Typing
+// message content returned nothing, and neither did typing the phone number of
+// the person currently calling — the single most frequent lookup in a contact
+// centre, on a field the document already carried.
+//
+// Not on the hot write path despite this being the most-written document in the
+// system: MongoDB only touches an index when an indexed field changes, and the
+// customer's name and phone are written during identity resolution, not on
+// every inbound message.
+OmniConversationSchema.plugin(searchKeysPlugin, {
+  fields: ['customer.name', 'tags'],
+  sensitiveFields: ['customer.email'],
+  sensitivePhoneFields: ['customer.phone'],
+});
+
 // Partial unique index: ensure only ONE active (open or pending) session exists per customer thread identifiers.
 OmniConversationSchema.index(
   { tenantId: 1, channelType: 1, channelAccount: 1, externalId: 1 },
@@ -555,19 +592,18 @@ OmniConversationSchema.index(
   { name: 'sticky_by_sender' },
 );
 
-// Customer name only — deliberately NOT `lastMessage`.
+// `conversation_text_search` (`$text` on `customer.name`) is gone, replaced by
+// `search_keys_lookup` from `searchKeysPlugin`, which also covers the phone
+// number and matches on prefixes instead of whole words.
 //
-// `lastMessage` is rewritten on every inbound and outbound message, so
-// including it made this text index the most-updated index in the system, on
-// its hottest collection. It also made the results inconsistent: it matched
-// only whatever the newest message happened to be, so a thread dropped out of
-// its own search result as soon as the customer said something else.
-// Full-text search over message bodies belongs in OpenSearch, which indexes
-// every message rather than the last one.
-OmniConversationSchema.index(
-  { tenantId: 1, 'customer.name': 'text' },
-  { name: 'conversation_text_search' },
-);
+// The reasoning that kept `lastMessage` out of the old index still holds and
+// still applies to the new one: `lastMessage` is rewritten on every inbound and
+// outbound message, so indexing it would make this the most-updated index in
+// the system on its hottest collection — and the results would be wrong anyway,
+// because a thread would drop out of its own search result as soon as the
+// customer said something else. Searching message bodies across a whole tenant
+// is an OpenSearch capability; within one thread it is already served by
+// `GET /v1/omni/messages/search`.
 
 // Thread timeline scan: deterministic ordering by createdAt + _id.
 OmniConversationSchema.index(
@@ -595,3 +631,11 @@ OmniConversationSchema.virtual('resolvedByAgent', {
   foreignField: '_id',
   justOne: true,
 });
+
+// Retention hook. `expireAfterSeconds: 0` means "delete when `expiresAt` has
+// passed", and a document whose `expiresAt` is null is never touched — so this
+// index is inert until a retention policy is switched on.
+OmniConversationSchema.index(
+  { expiresAt: 1 },
+  { name: 'omni_retention_ttl', expireAfterSeconds: 0 },
+);

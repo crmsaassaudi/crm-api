@@ -15,6 +15,7 @@ import {
 } from './engines/search-engine';
 import { SearchEngineRouter } from './engines/search-engine.router';
 import { ObservabilityModule } from '../observability/observability.module';
+import { OmniInboundModule } from '../omni-inbound/omni-inbound.module';
 
 @Module({
   imports: [
@@ -24,6 +25,10 @@ import { ObservabilityModule } from '../observability/observability.module';
     DealsModule,
     TicketsModule,
     TasksModule,
+    // For ConversationRepository. Already in the graph transitively —
+    // TicketsModule imports it — so this edge adds no cycle; it just makes the
+    // dependency explicit.
+    OmniInboundModule,
     ObservabilityModule,
   ],
   controllers: [GlobalSearchController],

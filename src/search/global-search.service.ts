@@ -8,6 +8,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createHash } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import { AuthorizationService } from '../common/permissions/authorization.service';
+import { PermissionResource } from '../common/permissions/permission.constants';
 import {
   GlobalSearchQueryDto,
   SEARCH_MODULES,
@@ -18,6 +19,35 @@ import { decodeEngineCursor } from './engines/engine-cursor';
 import { GlobalSearchResult } from './global-search.types';
 import { MetricsService } from '../observability/metrics.service';
 import { CrmSettingsService } from '../crm-settings/crm-settings.service';
+import {
+  PiiSearchPolicy,
+  looksLikeProtectedValue,
+} from '../common/search/pii-search.policy';
+
+/**
+ * The permission resource a search module is governed by.
+ *
+ * Module names and permission resources were the same string for the first
+ * five modules, so the code used one for the other. `conversations` is where
+ * that stops: omni permissions are keyed on `omni_channel`, and passing the
+ * module name would have asked the PDP about a resource that does not exist.
+ *
+ * A resource the PDP does not know is not a resource that fails open here — the
+ * decision would simply be denied — but it would have shown up as "the search
+ * box never returns conversations", which is indistinguishable from the feature
+ * not working and much harder to trace than a map.
+ */
+const PERMISSION_RESOURCE: Record<SearchModule, PermissionResource> = {
+  contacts: 'contacts',
+  accounts: 'accounts',
+  deals: 'deals',
+  tickets: 'tickets',
+  tasks: 'tasks',
+  conversations: 'omni_channel',
+};
+
+const permissionResourceFor = (module: SearchModule): PermissionResource =>
+  PERMISSION_RESOURCE[module];
 
 interface CursorState {
   version: 3;
@@ -37,6 +67,7 @@ export class GlobalSearchService {
     private readonly router: SearchEngineRouter,
     private readonly metrics: MetricsService,
     private readonly settings: CrmSettingsService,
+    private readonly piiSearch: PiiSearchPolicy,
   ) {}
 
   async search(input: GlobalSearchQueryDto) {
@@ -70,6 +101,12 @@ export class GlobalSearchService {
     if (!tenantId || !userId) throw new UnauthorizedException();
 
     const restrictOwnContacts = await this.restrictOwnContacts();
+    // Resolved once for the whole request, and only when the term is shaped
+    // like a protected value — an ordinary name search costs no permission
+    // check and writes no audit line.
+    const canSearchSensitive = looksLikeProtectedValue(query)
+      ? await this.resolveSensitiveSearch(query)
+      : false;
 
     try {
       for (const module of requestedModules) {
@@ -84,7 +121,7 @@ export class GlobalSearchService {
 
         const previousAbac = this.cls.get('abacResourceFilter');
         this.cls.set('abacResourceFilter', {
-          resource: module,
+          resource: permissionResourceFor(module),
           filter: decision.resourceFilter ?? null,
         });
         try {
@@ -95,7 +132,15 @@ export class GlobalSearchService {
             throw new UnauthorizedException('Search data scope is unavailable');
           }
           const response = await this.router.search({
-            capability: 'global_search',
+            // Per module, not per request. The OpenSearch index holds five
+            // modules; conversations is not one of them, so routing that
+            // branch with the rest would make it return nothing on exactly the
+            // tenants that were switched to OpenSearch — enabling the engine
+            // for a VIP tenant would take a feature away.
+            capability:
+              module === 'conversations'
+                ? 'conversation_search'
+                : 'global_search',
             module,
             query,
             limit: input.limitPerModule,
@@ -112,6 +157,7 @@ export class GlobalSearchService {
               abacFilter: decision.resourceFilter,
               restrictToOwnerUserId:
                 module === 'contacts' && restrictOwnContacts ? userId : null,
+              canSearchSensitive,
             },
           });
           results.push(...response.data);
@@ -198,6 +244,15 @@ export class GlobalSearchService {
       degraded: String(degraded),
     };
     this.metrics.incrementCounter('crm_search_requests_total', metricLabels);
+    if (results.length === 0) {
+      // Zero-result rate is the one number that says whether search is any
+      // good, and nothing measured it: `search.executed` was emitted and no
+      // listener existed. A search box that quietly returns nothing looks
+      // identical, from the outside, to a search box nobody uses.
+      this.metrics.incrementCounter('crm_search_zero_results_total', {
+        modules: allowedModules.join(',') || 'none',
+      });
+    }
     this.metrics.incrementCounter(
       'crm_search_results_total',
       metricLabels,
@@ -279,12 +334,26 @@ export class GlobalSearchService {
     }
   }
 
+  /**
+   * Whether a phone- or e-mail-shaped query may be matched against the values
+   * field masking hides.
+   *
+   * The global search box was the widest instance of the reverse-lookup gap:
+   * one field, five modules, and no permission check between a masked value
+   * and the name of the person it belongs to.
+   */
+  private async resolveSensitiveSearch(query: string): Promise<boolean> {
+    const allowed = await this.piiSearch.canSearchSensitive('contacts');
+    if (!allowed) this.piiSearch.recordDeniedLookup('contacts', query);
+    return allowed;
+  }
+
   private authorize(module: SearchModule, tenantId: string, userId: string) {
     return this.authorization.canPerformAction({
       rawUserId: userId,
       tenantHint: tenantId,
       claims: this.cls.get('user'),
-      rule: { action: 'view', resource: module },
+      rule: { action: 'view', resource: permissionResourceFor(module) },
     });
   }
 

@@ -140,17 +140,14 @@ export interface StandardFieldDescriptor {
    * offered in the UI.
    */
   readonly legacyAliases?: readonly string[];
-  /**
-   * Other payload properties holding the same value, which must therefore receive
-   * the same masking and visibility treatment.
-   *
-   * `Deal.name` is maintained by the service as a copy of `Deal.title`
-   * (`name: data.title || data.name`). Masking only `title` would redact the field
-   * in one property and hand it back untouched in the other — the kind of leak
-   * that is invisible in the settings screen and obvious in a network tab. One
-   * field, one policy, however many properties carry it.
-   */
-  readonly mirroredKeys?: readonly string[];
+  // `mirroredKeys` used to live here: a way to say "this policy must also cover
+  // that other property, because it holds the same value". It had exactly one
+  // user, `Deal.name`, a stored duplicate of `Deal.title` that masking would
+  // otherwise have redacted in one property and handed back in the other.
+  //
+  // Deleting the duplicate column deleted the reason for the mechanism. Keeping
+  // a general facility with no users is how the next duplicate gets waved
+  // through — the answer to "two properties, one value" is one property.
 }
 
 const AUDIT_FIELDS: readonly StandardFieldDescriptor[] = [
@@ -465,10 +462,12 @@ const DEAL_FIELDS: readonly StandardFieldDescriptor[] = [
     type: 'TEXT',
     category: 'basic',
     maskable: false,
-    // `name` is a server-maintained duplicate of `title`, and the old catalog
-    // exposed the field under that name.
+    // The old catalog exposed this field as `name`, so a saved view or a filter
+    // written against that key still has to resolve. The stored duplicate it
+    // used to mirror is gone — one required, indexed column held the same
+    // string as `title`, kept in step by two hand-written assignments — so this
+    // is now an alias only, with nothing to mirror onto.
     legacyAliases: ['name'],
-    mirroredKeys: ['name'],
   },
   {
     // The web catalog called this `amount`. `value` is the payload key, which is

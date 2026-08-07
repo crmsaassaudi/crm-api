@@ -32,7 +32,7 @@ describe('account list filter — soft delete', () => {
   it('should still exclude deleted accounts when other filters are present', () => {
     const result = where({ search: 'acme' });
     expect(result.deletedAt).toBeNull();
-    expect(result.$or).toBeDefined();
+    expect(result.$and).toBeDefined();
   });
 });
 
@@ -61,17 +61,41 @@ describe('account list filter — archive', () => {
 });
 
 describe('account list filter — search', () => {
-  it('should escape regex metacharacters in the search term', () => {
-    const result = where({ search: 'a.*b' });
-    expect(result.$or[0].name.$regex).toBe('a\\.\\*b');
+  /** The per-token clauses a search term produced. */
+  const clauses = (search: string, canSearchSensitive = false) =>
+    (
+      where({ search, __canSearchSensitive: canSearchSensitive }).$and ?? []
+    ).flatMap((clause: any) => clause.$and ?? [clause]);
+
+  it('should not let a regex metacharacter reach the query at all', () => {
+    // Stronger than the escaping this replaces. Tokenisation splits on
+    // "not a letter and not a digit", and every regex metacharacter is one, so
+    // a token cannot contain one — there is nothing left to escape. (The query
+    // builder still escapes, as defence in depth against a future tokeniser
+    // that is less strict.)
+    for (const clause of clauses('a.*b acme(x)')) {
+      expect(clause.searchKeys.$regex).toMatch(/^\^[\p{L}\p{N}]+$/u);
+    }
   });
 
-  it('should search across the identity-bearing fields', () => {
-    const fields = where({ search: 'x' }).$or.map(
-      (clause: Record<string, unknown>) => Object.keys(clause)[0],
+  it('should anchor and stay case-sensitive so the index can serve it', () => {
+    // The unanchored `/i` regex this replaces read every live account in the
+    // tenant on every keystroke; both properties are what fixed that.
+    const expression = clauses('acme')[0].searchKeys;
+    expect(expression.$regex).toBe('^acme');
+    expect(expression.$options).toBeUndefined();
+  });
+
+  it('should not match phone or e-mail without permission to unmask them', () => {
+    // They used to be plain `$or` branches, so a masked value doubled as a
+    // lookup key for anyone who could see the list at all.
+    expect(clauses('+966501234567')[0].$or).toBeUndefined();
+  });
+
+  it('should match the masked half when the caller may unmask', () => {
+    const fields = clauses('+966501234567', true)[0].$or.map(
+      (branch: Record<string, unknown>) => Object.keys(branch)[0],
     );
-    expect(fields).toEqual(
-      expect.arrayContaining(['name', 'industry', 'phones', 'emails']),
-    );
+    expect(fields).toEqual(['searchKeys', 'searchKeysPii']);
   });
 });

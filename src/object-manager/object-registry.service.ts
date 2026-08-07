@@ -115,13 +115,13 @@ export class ObjectRegistryService {
   }
 
   /**
-   * Every payload property a policy on `field` must cover — the field itself plus
-   * any server-maintained duplicate of it.
+   * Every payload property a policy on `field` must cover.
+   *
+   * One, now. This used to fan out to `mirroredKeys` for fields the server kept
+   * a second copy of; the only such field was `Deal.name`, and it is gone.
    */
   payloadKeysOf(field: StandardFieldDescriptor): string[] {
-    return field.mirroredKeys?.length
-      ? [field.key, ...field.mirroredKeys]
-      : [field.key];
+    return [field.key];
   }
 
   /** Fields a masking policy can act on. */

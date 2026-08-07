@@ -26,6 +26,7 @@ import {
   normalizeSortOrder,
 } from '../../../../../utils/cursor-pagination';
 import { escapeRegex } from '../../../../../utils/escape-regex';
+import { applySearchKeys } from '../../../../../common/search/search-keys.query';
 import { cappedCount } from '../../../../../utils/capped-count';
 import { SORTABLE_FIELDS } from '../../../../../object-manager/sortable-fields';
 
@@ -170,18 +171,12 @@ export class AccountRepository extends BaseDocumentRepository<
       ...(filterOptions?.includeArchived ? {} : { isArchived: { $ne: true } }),
     };
 
-    if (filterOptions?.search) {
-      const searchExpr = {
-        $regex: escapeRegex(filterOptions.search),
-        $options: 'i',
-      };
-      where.$or = [
-        { name: searchExpr },
-        { industry: searchExpr },
-        { phones: searchExpr },
-        { emails: searchExpr },
-      ];
-    }
+    // Free-text over `searchKeys`. Phones and e-mails moved to the masked half
+    // (`searchKeysPii`): they were searchable by anyone who could see the list,
+    // which made a masked value usable as a lookup key.
+    applySearchKeys(where as Record<string, any>, filterOptions?.search, {
+      includeSensitive: filterOptions?.__canSearchSensitive === true,
+    });
 
     if (filterOptions?.filters) {
       try {

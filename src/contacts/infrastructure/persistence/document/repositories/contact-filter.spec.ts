@@ -229,18 +229,62 @@ describe('contact filter compiler — legacy shape', () => {
 });
 
 describe('contact list search query shape', () => {
-  it('should use indexed normalised equality for a full email search', () => {
-    const where = repo.buildListWhere({ search: ' Person@Example.COM ' });
+  /** The `searchKeys` clauses a search term produced, in order. */
+  const searchClauses = (search: string, canSearchSensitive = false) =>
+    (
+      repo.buildListWhere({
+        search,
+        __canSearchSensitive: canSearchSensitive,
+      }).$and ?? []
+    ).flatMap((clause: any) => clause.$and ?? [clause]);
 
-    expect(where.emails).toBe('person@example.com');
-    expect(where).not.toHaveProperty('$or');
-    expect(where).not.toHaveProperty('$text');
+  it('should match every token, not any of them', () => {
+    // `$text` OR-ed its terms, so "nguyen van" returned everyone called Nguyen
+    // and everyone called Van. Users read a second word as a narrowing.
+    const clauses = searchClauses('Nguyen Van');
+    expect(clauses).toHaveLength(2);
   });
 
-  it('should keep text search for names', () => {
-    const where = repo.buildListWhere({ search: 'Nguyen Van A' });
+  it('should anchor the regex and stay case-sensitive', () => {
+    // Both properties are the difference between an index seek and reading
+    // every live contact in the tenant. Neither may be relaxed.
+    for (const clause of searchClauses('Ahmed')) {
+      const expression = clause.searchKeys ?? clause.$or?.[0]?.searchKeys;
+      expect(expression.$regex.startsWith('^')).toBe(true);
+      expect(expression.$options).toBeUndefined();
+    }
+  });
 
-    expect(where.$text).toEqual({ $search: 'Nguyen Van A' });
+  it('should fold Arabic spellings onto one key', () => {
+    const hamza = searchClauses('أحمد')[0].searchKeys.$regex;
+    const bare = searchClauses('احمد')[0].searchKeys.$regex;
+    expect(hamza).toBe(bare);
+  });
+
+  it('should match a partially typed name so type-ahead works', () => {
+    // `$text` matched whole words only, so "Ahm" found nothing at all.
+    expect(searchClauses('Ahm')[0].searchKeys.$regex).toBe('^ahm');
+  });
+
+  it('should not search phone or e-mail without permission to unmask them', () => {
+    // Masking hid the value; search accepted it as a lookup key, so anyone with
+    // `contacts:view` could confirm which contact owns a given number.
+    const clauses = searchClauses('person@example.com');
+    for (const clause of clauses) {
+      expect(clause.searchKeys).toBeDefined();
+      expect(clause.$or).toBeUndefined();
+    }
+  });
+
+  it('should search the masked half when the caller may unmask', () => {
+    const clauses = searchClauses('person@example.com', true);
+    const fields = clauses[0].$or.map((branch: any) => Object.keys(branch)[0]);
+    expect(fields).toEqual(['searchKeys', 'searchKeysPii']);
+  });
+
+  it('should treat a one-character query as no constraint', () => {
+    // Not as "match nothing": the user is still typing.
+    expect(repo.buildListWhere({ search: 'a' }).$and).toBeUndefined();
   });
 
   it('should compose a segment with the list filters instead of replacing them', () => {
@@ -254,16 +298,24 @@ describe('contact list search query shape', () => {
     ]);
   });
 
-  it('should prefix the text index with tenantId', () => {
-    const textIndex = ContactSchema.indexes().find(
-      ([, options]) => options.name === 'contact_text_search',
-    );
-    expect(textIndex?.[0]).toEqual({
+  it('should prefix the search index with tenantId and keep the two halves apart', () => {
+    const named = (name: string) =>
+      ContactSchema.indexes().find(([, options]) => options.name === name)?.[0];
+
+    expect(named('search_keys_lookup')).toEqual({
       tenantId: 1,
-      firstName: 'text',
-      lastName: 'text',
-      emails: 'text',
+      searchKeys: 1,
     });
+    // A separate index, not a second field on the same one: the safe half must
+    // be seekable on its own for the common case, which is a caller who may not
+    // unmask.
+    expect(named('search_keys_pii_lookup')).toEqual({
+      tenantId: 1,
+      searchKeysPii: 1,
+    });
+    // The `$text` index is gone. It could not do prefixes, OR-ed its terms, and
+    // forced a blocking in-memory sort on every search request.
+    expect(named('contact_text_search')).toBeUndefined();
   });
 });
 

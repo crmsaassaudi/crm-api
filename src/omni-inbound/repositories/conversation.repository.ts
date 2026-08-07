@@ -11,6 +11,7 @@ import { OmniConversationMapper } from '../infrastructure/persistence/document/m
 import { PaginationResponseDto } from '../../utils/dto/pagination-response.dto';
 import { pagination } from '../../utils/pagination';
 import { cappedCount } from '../../utils/capped-count';
+import { applySearchKeys } from '../../common/search/search-keys.query';
 
 export interface ConversationDateRange {
   field: 'createdAt' | 'updatedAt';
@@ -35,6 +36,12 @@ export interface ConversationQuery {
   isVip?: boolean;
   hasUnread?: boolean;
   search?: string;
+  /**
+   * Whether the caller may match the search term against the customer's phone
+   * number and e-mail. Resolved from `contacts:unmask` by the service layer;
+   * absent means no, so a caller that forgets gets the narrower search.
+   */
+  canSearchSensitive?: boolean;
   cursor?: string;
   dateRange?: ConversationDateRange;
   unansweredMode?: UnansweredMode;
@@ -389,7 +396,7 @@ export class ConversationRepository {
     this.applyTagsFilter(filter, query.tags, query.tagsMatchMode);
     this.applyVipFilter(filter, query.isVip);
     this.applyUnreadFilter(filter, query.hasUnread);
-    this.applySearchFilter(filter, query.search);
+    this.applySearchFilter(filter, query.search, query.canSearchSensitive);
     this.applyDateRangeFilter(filter, query.dateRange);
     this.applyUnansweredFilter(filter, query.unansweredMode);
     this.applyVisibilityScope(filter);
@@ -618,10 +625,22 @@ export class ConversationRepository {
     }
   }
 
-  private applySearchFilter(filter: any, search: string | undefined): void {
-    if (search) {
-      filter.$text = { $search: search };
-    }
+  /**
+   * Free-text search over the inbox.
+   *
+   * `$text` over `customer.name` matched whole words only and knew nothing
+   * about the customer's phone number, so the box the UI labels "Search
+   * messages" could not find a conversation by the number currently ringing.
+   * `searchKeys` covers name and tags; the number lives in the masked half.
+   */
+  private applySearchFilter(
+    filter: any,
+    search: string | undefined,
+    canSearchSensitive = false,
+  ): void {
+    applySearchKeys(filter, search, {
+      includeSensitive: canSearchSensitive,
+    });
   }
 
   /**

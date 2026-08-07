@@ -18,6 +18,10 @@ export const SEARCH_MODULES = [
   'deals',
   'tickets',
   'tasks',
+  // The omni inbox. Absent until now, which meant the question this product is
+  // organised around — "where have I seen this person before" — was the one
+  // question the global search box could not answer.
+  'conversations',
 ] as const;
 
 export type SearchModule = (typeof SEARCH_MODULES)[number];

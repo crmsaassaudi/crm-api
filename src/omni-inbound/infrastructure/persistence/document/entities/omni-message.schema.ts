@@ -41,6 +41,24 @@ export class OmniMessageSchemaClass extends EntityDocumentHelper {
   })
   tenantId: string;
 
+  /**
+   * When this record may be deleted. Null means "keep".
+   *
+   * Nothing writes it yet, and the TTL index on a null field is a no-op — so
+   * this changes no behaviour today. It is here now because it cannot be added
+   * cheaply later: `omni_messages` and `omni_conversations` are the two
+   * collections with no retention of any kind, and every other collection that
+   * needed one got a TTL index while it was small. Stamping this field on a
+   * hundred million existing documents is a very different operation from
+   * declaring it on an empty one.
+   *
+   * Turning retention on is then one writer setting `expiresAt` at insert time.
+   * How long to keep a customer's messages is a business and compliance
+   * decision, not a technical one, and is deliberately not made here.
+   */
+  @Prop({ type: Date, default: null })
+  expiresAt?: Date | null;
+
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'OmniConversationSchemaClass',
@@ -244,4 +262,12 @@ OmniMessageSchema.index(
     name: 'dedup_outbound_idempotency_key',
     partialFilterExpression: { idempotencyKey: { $type: 'string' } },
   },
+);
+
+// Retention hook. `expireAfterSeconds: 0` means "delete when `expiresAt` has
+// passed", and a document whose `expiresAt` is null is never touched — so this
+// index is inert until a retention policy is switched on.
+OmniMessageSchema.index(
+  { expiresAt: 1 },
+  { name: 'omni_retention_ttl', expireAfterSeconds: 0 },
 );

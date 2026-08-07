@@ -71,6 +71,10 @@ export class OutboxPublisherService {
         status: 'pending',
         $or: [{ claimedAt: null }, { claimedAt: { $lte: claimedBefore } }],
       })
+      // Deliberately every tenant: this is the recovery path for the whole
+      // deployment, and it runs outside any request's tenant context. Declared
+      // rather than obtained by the schema not having a filter.
+      .setOptions({ isPlatformQuery: true })
       .sort({ createdAt: 1 })
       .limit(BATCH_SIZE)
       .exec();
@@ -89,15 +93,17 @@ export class OutboxPublisherService {
   }
 
   private async markPermanentlyFailed(entry: OutboxEventDocument) {
-    await this.outboxModel.updateOne(
-      { _id: entry._id },
-      {
-        $set: {
-          status: 'failed',
-          lastError: `Exceeded max retries (${MAX_OUTBOX_RETRIES})`,
+    await this.outboxModel
+      .updateOne(
+        { _id: entry._id },
+        {
+          $set: {
+            status: 'failed',
+            lastError: `Exceeded max retries (${MAX_OUTBOX_RETRIES})`,
+          },
         },
-      },
-    );
+      )
+      .setOptions({ isPlatformQuery: true });
     this.logger.error(
       `[OUTBOX] PERMANENTLY FAILED: ${entry.eventType} id=${String(entry._id)} ` +
         `conv=${entry.conversationId} — moved to failed`,
@@ -106,10 +112,16 @@ export class OutboxPublisherService {
 
   private async publishClaimed(entry: OutboxEventDocument): Promise<void> {
     // Claim first: whoever flips claimedAt owns this event for the lease.
-    const claimed = await this.outboxModel.updateOne(
-      { _id: entry._id, status: 'pending', claimedAt: entry.claimedAt ?? null },
-      { $set: { claimedAt: new Date() } },
-    );
+    const claimed = await this.outboxModel
+      .updateOne(
+        {
+          _id: entry._id,
+          status: 'pending',
+          claimedAt: entry.claimedAt ?? null,
+        },
+        { $set: { claimedAt: new Date() } },
+      )
+      .setOptions({ isPlatformQuery: true });
     if (claimed.modifiedCount !== 1) return;
 
     const ageMs = Date.now() - new Date(entry.createdAt).getTime();
@@ -125,18 +137,25 @@ export class OutboxPublisherService {
         this.eventEmitter.emitAsync(entry.eventType, entry.payload),
       );
 
-      await this.outboxModel.updateOne(
-        { _id: entry._id },
-        { $set: { status: 'published', publishedAt: new Date() } },
-      );
+      await this.outboxModel
+        .updateOne(
+          { _id: entry._id },
+          { $set: { status: 'published', publishedAt: new Date() } },
+        )
+        .setOptions({ isPlatformQuery: true });
     } catch (err: any) {
-      await this.outboxModel.updateOne(
-        { _id: entry._id },
-        {
-          $inc: { retryCount: 1 },
-          $set: { lastError: err?.message ?? 'Unknown error', claimedAt: null },
-        },
-      );
+      await this.outboxModel
+        .updateOne(
+          { _id: entry._id },
+          {
+            $inc: { retryCount: 1 },
+            $set: {
+              lastError: err?.message ?? 'Unknown error',
+              claimedAt: null,
+            },
+          },
+        )
+        .setOptions({ isPlatformQuery: true });
       this.logger.error(
         `[OUTBOX] Publish failed (retry ${entry.retryCount + 1}/${MAX_OUTBOX_RETRIES}): ` +
           `${entry.eventType} id=${String(entry._id)} error=${err?.message}`,

@@ -44,7 +44,6 @@ function buildDealExportColumns(
 ): ExportColumn[] {
   return [
     { header: 'id', path: 'id' },
-    { header: 'name', path: 'name' },
     { header: 'title', path: 'title' },
     { header: 'value', path: 'value' },
     { header: 'currency', path: 'currency' },
@@ -79,7 +78,6 @@ function buildDealExportColumns(
 
 const STATIC_COLUMNS: readonly ExportColumn[] = [
   { header: 'id', path: 'id' },
-  { header: 'name', path: 'name' },
   { header: 'title', path: 'title' },
   { header: 'value', path: 'value' },
   { header: 'currency', path: 'currency' },

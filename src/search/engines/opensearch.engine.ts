@@ -100,7 +100,10 @@ export class OpenSearchEngine implements SearchEngine {
           must: [
             {
               bool: {
-                should: this.matchClauses(request.query),
+                should: this.matchClauses(
+                  request.query,
+                  request.scope.canSearchSensitive === true,
+                ),
                 minimum_should_match: 1,
               },
             },
@@ -187,7 +190,10 @@ export class OpenSearchEngine implements SearchEngine {
    * behave like a search box; `minimum_should_match` keeps a multi-word query
    * from matching every record that happens to share one term.
    */
-  private matchClauses(query: string): Record<string, unknown>[] {
+  private matchClauses(
+    query: string,
+    canSearchSensitive: boolean,
+  ): Record<string, unknown>[] {
     const clauses: Record<string, unknown>[] = [
       {
         multi_match: {
@@ -228,8 +234,16 @@ export class OpenSearchEngine implements SearchEngine {
         },
       },
     ];
+    // Caller-ID lookup, gated on the same permission MongoDB gates
+    // `searchKeysPii` on. Without the gate, switching a tenant to OpenSearch
+    // would quietly reopen the reverse lookup that masking exists to prevent —
+    // the control would hold on one engine and not the other.
     const digits = query.replace(/\D+/g, '');
-    if (/^[+\d\s().-]+$/.test(query) && digits.length >= 4) {
+    if (
+      canSearchSensitive &&
+      /^[+\d\s().-]+$/.test(query) &&
+      digits.length >= 4
+    ) {
       clauses.push({
         term: { phoneSuffixes: { value: digits.slice(-20), boost: 4 } },
       });

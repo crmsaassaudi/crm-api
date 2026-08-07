@@ -19,6 +19,17 @@ export class AutomationOutboxEventSchemaClass extends EntityDocumentHelper {
   })
   tenantId: string;
 
+  /**
+   * The shape of `payload`, so a consumer can tell which contract it is reading.
+   *
+   * One line, added while the outbox is empty. After go-live the same change
+   * costs a dual-read path and a backfill over every pending row — and the
+   * moment it is actually needed is the moment a payload has to change, which
+   * is the worst moment to be adding a version field.
+   */
+  @Prop({ type: Number, required: true, default: 1 })
+  schemaVersion: number;
+
   @Prop({ type: String, required: true })
   eventId: string;
 

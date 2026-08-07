@@ -28,6 +28,12 @@ describe('GlobalSearchService', () => {
     router as unknown as SearchEngineRouter,
     metrics as never,
     settings as never,
+    // Denies by default — the posture both engines rely on for a phone- or
+    // e-mail-shaped query.
+    {
+      canSearchSensitive: jest.fn(() => Promise.resolve(false)),
+      recordDeniedLookup: jest.fn(),
+    } as never,
   );
 
   beforeEach(() => {

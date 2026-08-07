@@ -20,8 +20,8 @@ export class AuthorizationFilterException extends ForbiddenException {
  * than to translate the predicate loosely (which turns a DENY into an ALLOW) or
  * to refuse a search the user is entitled to.
  *
- * It stays a subclass so that a deployment with `OPENSEARCH_FALLBACK_TO_MONGODB`
- * turned off still fails closed with a 403 instead of widening visibility.
+ * It stays a subclass so that a capability whose unavailable policy is `off`
+ * still fails closed with a 403 instead of widening visibility.
  */
 export class IndexFilterUnsupportedException extends AuthorizationFilterException {}
 

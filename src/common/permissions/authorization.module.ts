@@ -34,6 +34,7 @@ import {
   ROLE_ASSIGNMENT_SERVICE,
 } from './authz.tokens';
 import { AuthorizationContextFactory } from './authorization-context.factory';
+import { PiiSearchPolicy } from '../search/pii-search.policy';
 
 /**
  * AuthorizationModule — the single home of the authorization stack.
@@ -82,6 +83,10 @@ import { AuthorizationContextFactory } from './authorization-context.factory';
     AuthzPermissionInvalidationListener,
     ResourceLoaderRegistry,
     AclGuard,
+    // Lives here rather than in a search module of its own: "may this caller
+    // search values that masking hides from them" is an authorization question,
+    // and this module is the one place that answers those.
+    PiiSearchPolicy,
     // Token aliases for the three services that resolve each other lazily via
     // ModuleRef. Looking them up by class would re-introduce the import cycle
     // that crashes bootstrap with a TDZ ReferenceError — see ./authz.tokens.
@@ -116,6 +121,7 @@ import { AuthorizationContextFactory } from './authorization-context.factory';
     AccessPolicyService,
     AclGuard,
     ResourceLoaderRegistry,
+    PiiSearchPolicy,
   ],
 })
 export class AuthorizationModule {}

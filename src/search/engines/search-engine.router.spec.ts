@@ -29,14 +29,13 @@ describe('SearchEngineRouter', () => {
 
   function router(
     enabled: boolean,
-    fallbackToMongoDb = true,
     capabilityOverrides: Record<string, string> = {},
+    tenantPolicy: Record<string, string> = {},
   ) {
     return new SearchEngineRouter(
       {
         getOrThrow: jest.fn(() => ({
           enabled,
-          fallbackToMongoDb,
           capabilityOverrides,
         })),
       } as never,
@@ -44,6 +43,7 @@ describe('SearchEngineRouter', () => {
       opensearch as never,
       events as never,
       metrics as never,
+      { getSetting: jest.fn(() => Promise.resolve(tenantPolicy)) } as never,
     );
   }
 
@@ -74,12 +74,15 @@ describe('SearchEngineRouter', () => {
     });
   });
 
-  it('should surface the OpenSearch failure when fallback is disabled', async () => {
-    opensearch.search.mockRejectedValue(new Error('connection failed'));
-    await expect(router(true, false).search(request)).rejects.toThrow(
-      'connection failed',
-    );
+  it('should refuse a capability a tenant switched off, without touching either engine', async () => {
+    // Replaces a test of `OPENSEARCH_FALLBACK_TO_MONGODB`, which no longer
+    // exists. One flag covering every capability is what turned an OpenSearch
+    // outage into a saturated primary; the per-tenant dial is its replacement
+    // and narrows the same way.
+    const off = router(true, {}, { global_search: 'off' });
+    await expect(off.search(request)).rejects.toThrow(/unavailable/);
     expect(mongo.search).not.toHaveBeenCalled();
+    expect(opensearch.search).not.toHaveBeenCalled();
   });
 
   it('should never fall back for validation failures', async () => {
@@ -199,14 +202,57 @@ describe('SearchEngineRouter', () => {
     expect(opensearch.search).toHaveBeenCalledTimes(6);
   });
 
-  it('should fail closed on an inexpressible policy when fallback is disabled', async () => {
-    opensearch.search.mockRejectedValue(
-      new IndexFilterUnsupportedException('"accountId" is not indexed'),
+  it('should keep a tenant on MongoDB when their policy says so', async () => {
+    mongo.search.mockResolvedValue({ data: [], nextCursor: null });
+    const pinned = router(true, {}, { global_search: 'mongodb' });
+
+    await expect(pinned.search(request)).resolves.toMatchObject({
+      actualEngine: 'mongodb',
+      // Configured, not broken. Marking this degraded would put a permanent
+      // banner on a tenant who is running exactly as intended.
+      degraded: false,
+    });
+    expect(opensearch.search).not.toHaveBeenCalled();
+  });
+
+  it('should not let a tenant policy widen what the deployment allows', async () => {
+    // The dial only narrows. If a settings row could promote a tenant onto
+    // OpenSearch, it could defeat the kill switch — at the moment somebody is
+    // reaching for the kill switch.
+    mongo.search.mockResolvedValue({ data: [], nextCursor: null });
+    const killSwitchOff = router(false, {}, { global_search: 'opensearch' });
+
+    await expect(killSwitchOff.search(request)).resolves.toMatchObject({
+      actualEngine: 'mongodb',
+    });
+    expect(opensearch.search).not.toHaveBeenCalled();
+  });
+
+  it('should ignore an unreadable tenant policy rather than guess', async () => {
+    mongo.search.mockResolvedValue({ data: [], nextCursor: null });
+    const broken = new SearchEngineRouter(
+      {
+        getOrThrow: jest.fn(() => ({
+          enabled: false,
+          capabilityOverrides: {},
+        })),
+      } as never,
+      mongo as never,
+      opensearch as never,
+      events as never,
+      metrics as never,
+      {
+        getSetting: jest.fn(() =>
+          Promise.reject(new Error('settings unavailable')),
+        ),
+      } as never,
     );
-    await expect(router(true, false).search(request)).rejects.toThrow(
-      IndexFilterUnsupportedException,
-    );
-    expect(mongo.search).not.toHaveBeenCalled();
+
+    // Falls back to the deployment default, which here is MongoDB. Failing
+    // towards OpenSearch would promote a tenant nobody chose to promote.
+    await expect(broken.search(request)).resolves.toMatchObject({
+      actualEngine: 'mongodb',
+    });
   });
 
   it('should still refuse a malformed predicate outright', async () => {
@@ -250,7 +296,7 @@ describe('SearchEngineRouter', () => {
     it('should not call MongoDB at all when a capability is switched off', async () => {
       // The whole point of `off`: an unavailable feature is recoverable, a
       // primary saturated by scans that the feature diverted onto it is not.
-      const off = router(true, true, { global_search: 'off' });
+      const off = router(true, { global_search: 'off' });
       await expect(off.search(request)).rejects.toThrow(/unavailable/);
       expect(mongo.search).not.toHaveBeenCalled();
       expect(opensearch.search).not.toHaveBeenCalled();
@@ -258,7 +304,7 @@ describe('SearchEngineRouter', () => {
 
     it('should serve a capability forced to MongoDB without touching OpenSearch', async () => {
       mongo.search.mockResolvedValue({ data: [], nextCursor: null });
-      const forced = router(true, true, { global_search: 'mongodb' });
+      const forced = router(true, { global_search: 'mongodb' });
 
       await expect(forced.search(request)).resolves.toMatchObject({
         actualEngine: 'mongodb',
