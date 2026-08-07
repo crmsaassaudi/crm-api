@@ -89,11 +89,47 @@ const findOneBody = (source: string): string | null => {
  * and a guard that inspects one read path per repository will keep producing that
  * sentence.
  */
+/**
+ * The body of a private `buildX()` helper the list query delegates to.
+ *
+ * A list that builds its predicates in a shared builder — so the export path
+ * cannot disagree with the screen — is the shape we want, and reporting that
+ * indirection as a missing `deletedAt` would push repositories back towards a
+ * second copy of the filter. Following one level keeps the assertion honest: the
+ * builder's body is searched, so deleting the guard from it still turns this red.
+ */
+const methodBody = (source: string, from: number): string => {
+  const open = source.indexOf('{', from);
+  if (open === -1) return '';
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    else if (source[index] === '}') {
+      depth -= 1;
+      // Braces are matched rather than a fixed character budget: a budget spills
+      // into the *next* method, and the neighbouring `buildExportFilter` also
+      // says `deletedAt: null` — so the assertion would pass on the neighbour's
+      // guard and never notice this one being deleted.
+      if (depth === 0) return source.slice(open, index + 1);
+    }
+  }
+  return source.slice(open);
+};
+
+const delegatedBuilders = (source: string, body: string): string =>
+  [...body.matchAll(/this\.(build\w+)\s*\(/g)]
+    .map(([, name]) => {
+      const start = source.search(new RegExp(`(?:private\\s+)?${name}\\s*\\(`));
+      return start === -1 ? '' : methodBody(source, start);
+    })
+    .join('\n');
+
 const listBody = (source: string): string | null => {
   const start = source.search(/async findManyWithPagination\s*\(/);
   if (start === -1) return null;
   const exec = source.indexOf('.exec()', start);
-  return source.slice(start, exec === -1 ? start + 4000 : exec);
+  const body = source.slice(start, exec === -1 ? start + 4000 : exec);
+  return `${body}\n${delegatedBuilders(source, body)}`;
 };
 
 describe('soft-delete read inventory', () => {

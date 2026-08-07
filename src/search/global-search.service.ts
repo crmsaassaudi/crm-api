@@ -191,10 +191,21 @@ export class GlobalSearchService {
       throw error;
     }
 
+    // One request can be served by both engines — the router is consulted per
+    // module — and their scores are not the same quantity: MongoDB's heuristic
+    // yields a handful of discrete values (`search-ranking.ts`) while OpenSearch
+    // yields `bm25/(bm25+6)`. Ordering one against the other produces a ranking
+    // that means nothing, and systematically favours whichever scale happens to
+    // run higher. So a mixed response is grouped by module and ranked within each
+    // group, where the comparison is between like and like.
+    const enginesUsed = [...new Set(Object.values(engineByModule))];
+    const scoresAreComparable = enginesUsed.length <= 1;
     results.sort(
       (left, right) =>
-        right.score - left.score ||
-        left.module.localeCompare(right.module) ||
+        (scoresAreComparable
+          ? right.score - left.score || left.module.localeCompare(right.module)
+          : left.module.localeCompare(right.module) ||
+            right.score - left.score) ||
         left.title.localeCompare(right.title) ||
         left.id.localeCompare(right.id),
     );
@@ -210,10 +221,8 @@ export class GlobalSearchService {
       openSearchPitId = undefined;
     }
     const durationMs = Date.now() - startedAt;
-    // One request can be served by both engines — the router is consulted per
-    // module. Collapsing that to a single engine name was how the dashboards
-    // came to disagree with what actually happened.
-    const enginesUsed = [...new Set(Object.values(engineByModule))];
+    // Never collapsed to a single engine name: that is how the dashboards came to
+    // disagree with what actually happened.
     const actualEngine: 'mongodb' | 'opensearch' | 'mixed' =
       enginesUsed.length > 1 ? 'mixed' : (enginesUsed[0] ?? 'mongodb');
     const telemetry = {

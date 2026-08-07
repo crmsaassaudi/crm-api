@@ -45,7 +45,9 @@ export interface WorkflowViewport {
   zoom: number;
 }
 
-export type WorkflowStatus = 'draft' | 'active' | 'paused';
+/** One source for the type, the Mongo enum and the query DTO's whitelist. */
+export const WORKFLOW_STATUSES = ['draft', 'active', 'paused'] as const;
+export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
 
 // Schema
 
@@ -75,7 +77,7 @@ export class AutomationWorkflowSchemaClass extends EntityDocumentHelper {
   @Prop({
     type: String,
     required: true,
-    enum: ['draft', 'active', 'paused'],
+    enum: [...WORKFLOW_STATUSES],
     default: 'draft',
   })
   status: WorkflowStatus;

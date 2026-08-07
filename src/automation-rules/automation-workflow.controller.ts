@@ -20,6 +20,7 @@ import {
   UpdateWorkflowStatusDto,
 } from './dto/workflow.dto';
 import { RequirePermission } from '../common/permissions/permission.decorator';
+import { ListWorkflowsQueryDto } from './dto/list-workflows-query.dto';
 import {
   AUTOMATION_ACTION_TYPES,
   AutomationActionType,
@@ -78,13 +79,15 @@ export class AutomationWorkflowController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List all workflows for the current tenant' })
+  @ApiOperation({
+    summary: 'List workflows for the current tenant, optionally filtered',
+  })
   @RequirePermission('view', 'automation_workflows')
-  findAll(@Query('status') status?: 'draft' | 'active' | 'paused') {
-    if (status) {
-      return this.service.findByStatus(status);
-    }
-    return this.service.findAll();
+  findAll(@Query() query: ListWorkflowsQueryDto) {
+    // Filtering server-side rather than in the browser: the page used to fetch
+    // every workflow in the tenant and narrow the array it happened to hold, so
+    // the search box could only ever find what was already on screen.
+    return this.service.findAll(query);
   }
 
   @Get(':id')

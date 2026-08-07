@@ -15,7 +15,6 @@ import { VisibilityModule } from '../../../../../common/permissions/visibility-m
 import { IPaginationOptions } from '../../../../../utils/types/pagination-options';
 import { PaginationResponseDto } from '../../../../../utils/dto/pagination-response.dto';
 import { pagination } from '../../../../../utils/pagination';
-import { escapeRegex } from '../../../../../utils/escape-regex';
 import { applySearchKeys } from '../../../../../common/search/search-keys.query';
 import { cappedCount } from '../../../../../utils/capped-count';
 import { applyRegisteredCustomFieldFilters } from '../../../../../utils/custom-field-filter';
@@ -24,16 +23,6 @@ import { SORTABLE_FIELDS } from '../../../../../object-manager/sortable-fields';
 
 const TICKET_SORTABLE = new Set<string>(SORTABLE_FIELDS.Ticket);
 
-/**
- * The list's sort.
- *
- * `sortBy`/`sortOrder` have been on the wire since the web client was written —
- * `ticketsApi.getAll` forwards both — and this repository hard-coded
- * `createdAt: -1` and discarded them. The request succeeded, the order was
- * wrong, and nothing said so. Anything outside the whitelist still falls back to
- * `createdAt`, but now the whitelist is the same one the UI draws its sort
- * controls from, so an unhonoured sort cannot be requested in the first place.
- */
 const resolveTicketSort = (filterOptions?: {
   sortBy?: string;
   sortOrder?: string;
@@ -83,18 +72,10 @@ export class TicketRepository extends BaseDocumentRepository<
   private buildListWhere(filterOptions?: any): FilterQuery<TicketSchemaClass> {
     const where: FilterQuery<TicketSchemaClass> = { deletedAt: null };
     if (filterOptions?.search) {
-      // Same exact-match fast path as the list query — kept identical on
-      // purpose: an export filtered by a ticket number must select the same
-      // rows the list showed, or the export silently disagrees with the screen
-      // the user ran it from.
       const ticketNumber = normalizeTicketNumberQuery(filterOptions.search);
       if (ticketNumber) {
         where.ticketNumber = ticketNumber;
       } else {
-        // Free-text over `searchKeys`, which now includes `relatedTo.name`.
-        // Until then a support agent could not type a customer's name and see
-        // that customer's tickets — the first thing anyone does at a service
-        // desk — even though the name was already on the document.
         applySearchKeys(where as Record<string, any>, filterOptions.search);
       }
     }
@@ -239,93 +220,7 @@ export class TicketRepository extends BaseDocumentRepository<
     filterOptions?: any;
     paginationOptions: IPaginationOptions;
   }): Promise<PaginationResponseDto<Ticket>> {
-    // Exclude soft-deleted records.
-    //
-    // Missed twice before this. §20 made deletion a soft delete across six collections,
-    // and the inventory written afterwards only inspected `findOne` — so a LIST query
-    // that never filtered `deletedAt` stayed invisible to it. Accounts was found in §28
-    // and recorded there as "the only list query in the CRM" doing this; it was not.
-    //
-    // `null` rather than `$exists: false`, because `restore()` UNSETS the field: `null`
-    // matches both a missing field and an explicit null, so a restored row and a legacy
-    // row both read as live.
-    const where: FilterQuery<TicketSchemaClass> = { deletedAt: null };
-
-    if (filterOptions?.search) {
-      const ticketNumber = normalizeTicketNumberQuery(filterOptions.search);
-      if (ticketNumber) {
-        // Support reads a ticket number back over the phone, so this is one of
-        // the most frequent lookups there is — and it was being answered by an
-        // unanchored /i regex inside an `$or`, which cannot use
-        // `(tenantId, ticketNumber)` and so read every live ticket in the
-        // tenant. An exact match is a strict subset of what the regex found,
-        // so no result that used to appear disappears.
-        where.ticketNumber = ticketNumber;
-      } else {
-        const searchExpr = {
-          $regex: escapeRegex(filterOptions.search),
-          $options: 'i',
-        };
-        where.$or = [
-          { subject: searchExpr },
-          { ticketNumber: searchExpr },
-          { description: searchExpr },
-        ];
-      }
-    }
-
-    const statusIds = normalizeListFilter(filterOptions?.statusIds);
-    if (statusIds.length > 0) {
-      where.statusId = { $in: statusIds } as any;
-    } else if (filterOptions?.statusId) {
-      where.statusId = filterOptions.statusId;
-    }
-
-    const priorities = normalizeListFilter(filterOptions?.priorities).map(
-      (priority) => priority.toUpperCase(),
-    );
-    if (priorities.length > 0) {
-      where.priority = { $in: priorities } as any;
-    } else if (filterOptions?.priority) {
-      where.priority = filterOptions.priority;
-    }
-
-    if (filterOptions?.typeId) {
-      where.typeId = filterOptions.typeId;
-    }
-
-    if (filterOptions?.categoryPath) {
-      where.categoryPath = { $in: [filterOptions.categoryPath] } as any;
-    }
-
-    if (filterOptions?.groupId) {
-      where.groupId = filterOptions.groupId;
-    }
-
-    if (filterOptions?.contactId) {
-      where.contactId = filterOptions.contactId;
-    }
-
-    // `findByDeal` passes this, and nothing read it — so GET /tickets/by-deal/:dealId
-    // returned the first 50 tickets in the TENANT, unfiltered, presented as the deal's
-    // tickets. An ignored filter is worse than a missing endpoint: it answers.
-    if (filterOptions?.dealId) {
-      where.dealId = filterOptions.dealId;
-    }
-
-    // Same story as dealId: `getChildren` passes this and nothing read it, so asking for
-    // one ticket's children returned the first 100 tickets in the tenant.
-    if (filterOptions?.parentTicketId) {
-      where.parentTicketId = filterOptions.parentTicketId;
-    }
-
-    applyRegisteredCustomFieldFilters(
-      where,
-      filterOptions?.filters,
-      filterOptions?.__customFieldDefinitions,
-    );
-
-    Object.assign(where, this.buildListWhere(filterOptions));
+    const where = this.buildListWhere(filterOptions);
     const scopedWhere = this.applyTenantFilter(where);
 
     // .lean() skips Mongoose hydration which roughly halves RAM/CPU on large
@@ -352,17 +247,6 @@ export class TicketRepository extends BaseDocumentRepository<
   async findOne(
     filter: FilterQuery<TicketSchemaClass>,
   ): Promise<Ticket | null> {
-    // Exclude soft-deleted records unless the caller asks for one explicitly.
-    //
-    // Harmless while `remove()` hard-deleted: the row was gone, so the lookup
-    // returned null by itself. Once deletion became a soft delete the unfiltered
-    // lookup began SERVING deleted records — `GET /:id` answering 200 instead of
-    // 404, the detail page rendering a deleted record as editable, and automation's
-    // `fetchRecord` resuming delayed workflows against it, which is how a
-    // "wait 3 days then email" step ends up acting on something the user deleted.
-    //
-    // Passing `deletedAt` explicitly opts out, for merge and restore paths that
-    // legitimately need to load an archived row.
     const scopedFilter = this.applyTenantFilter(
       filter.deletedAt !== undefined ? filter : { ...filter, deletedAt: null },
     );
@@ -372,18 +256,6 @@ export class TicketRepository extends BaseDocumentRepository<
     return doc ? this.mapToDomain(doc) : null;
   }
 
-  /**
-   * `update()` guarded by the document version the caller last read.
-   *
-   * Two agents working the same ticket is the normal case in a contact centre,
-   * and without this the second write silently overwrote the first: the base
-   * repository only applies its `__v` compare-and-set when the payload happens
-   * to carry `__v`, and neither the DTO nor the web ever sent one.
-   *
-   * `version` undefined means the caller did not read a version (server-side
-   * callers such as automation and the SLA projector), and the write proceeds
-   * unguarded — those paths write disjoint fields.
-   */
   async updateWithVersion(
     id: string,
     payload: Record<string, any>,
@@ -451,15 +323,6 @@ export class TicketRepository extends BaseDocumentRepository<
     return docs.map((doc: any) => this.mapToDomain(doc));
   }
 
-  /**
-   * Records soft-deleted before `cutoff`, for the retention purge.
-   *
-   * `isPlatformQuery` because the caller is a cron: retention applies to every tenant, and
-   * without the flag `tenantFilterPlugin` throws on a missing CLS tenant — which is how
-   * four nightly jobs came to fail on their first query while logging "skipped".
-   *
-   * Oldest deletion first, so a backlog drains in the order it accumulated.
-   */
   async findPurgeable(
     cutoff: Date,
     limit: number,

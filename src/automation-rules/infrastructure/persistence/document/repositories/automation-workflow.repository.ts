@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { FilterQuery, Model } from 'mongoose';
 import {
   AutomationWorkflowSchemaClass,
   WorkflowStatus,
 } from '../entities/automation-workflow.schema';
+import { escapeRegex } from '../../../../../utils/escape-regex';
 
 @Injectable()
 export class AutomationWorkflowRepository {
@@ -15,20 +16,33 @@ export class AutomationWorkflowRepository {
 
   // Queries
 
-  async findAll(tenantId: string) {
-    return this.model.find({ tenantId }).sort({ updatedAt: -1 }).lean().exec();
+  /**
+   * The workflow list, optionally narrowed by status and free text.
+   *
+   * A case-insensitive `$regex` is the right tool here and the wrong one on
+   * deals or tickets: this collection holds a tenant's automation *settings*, so
+   * it is bounded by how many workflows a team writes, not by business volume.
+   * The scan is over tens of documents behind the `tenantId` index and will stay
+   * that way — which is why it does not need `searchKeys`.
+   */
+  async findAll(
+    tenantId: string,
+    filters: { status?: WorkflowStatus; search?: string } = {},
+  ) {
+    const query: FilterQuery<AutomationWorkflowSchemaClass> = { tenantId };
+    if (filters.status) query.status = filters.status;
+
+    const term = filters.search?.trim();
+    if (term) {
+      const expression = { $regex: escapeRegex(term), $options: 'i' };
+      query.$or = [{ name: expression }, { description: expression }];
+    }
+
+    return this.model.find(query).sort({ updatedAt: -1 }).lean().exec();
   }
 
   async findById(tenantId: string, id: string) {
     return this.model.findOne({ _id: id, tenantId }).lean().exec();
-  }
-
-  async findByStatus(tenantId: string, status: WorkflowStatus) {
-    return this.model
-      .find({ tenantId, status })
-      .sort({ updatedAt: -1 })
-      .lean()
-      .exec();
   }
 
   /**

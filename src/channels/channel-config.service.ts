@@ -485,10 +485,9 @@ export class ChannelConfigService {
     configId: string,
   ): Promise<{ name: string }[]> {
     try {
-      const workflows = await this.workflowRepository.findByStatus(
-        tenantId,
-        'active',
-      );
+      const workflows = await this.workflowRepository.findAll(tenantId, {
+        status: 'active',
+      });
 
       return workflows.filter((w: any) => {
         const nodes = w.publishedNodes || [];
@@ -511,10 +510,9 @@ export class ChannelConfigService {
     configId: string,
   ): Promise<{ name: string }[]> {
     try {
-      const workflows = await this.workflowRepository.findByStatus(
-        tenantId,
-        'draft',
-      );
+      const workflows = await this.workflowRepository.findAll(tenantId, {
+        status: 'draft',
+      });
 
       return workflows.filter((w: any) => {
         const nodes = w.nodes || [];

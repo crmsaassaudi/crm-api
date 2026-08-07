@@ -177,10 +177,9 @@ export class ChannelAlertService {
     if (!this.workflowRepo || !this.salesGateway?.server) return;
 
     try {
-      const activeWorkflows = await this.workflowRepo.findByStatus(
-        payload.tenantId,
-        'active',
-      );
+      const activeWorkflows = await this.workflowRepo.findAll(payload.tenantId, {
+        status: 'active',
+      });
 
       // Filter to workflows that reference this configId
       const affectedWorkflows = activeWorkflows.filter((w: any) => {

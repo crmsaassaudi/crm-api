@@ -165,6 +165,18 @@ export class AccountMergeService {
     //    and a mis-merge should be recoverable from the recycle bin.
     await this.repository.remove(mergedId);
 
+    // 4. Refresh the denormalized name on everything now pointing at the
+    //    survivor. Re-parenting sets `accountId` and nothing else, and the rename
+    //    listener is the only writer of `deal.accountName` — so without this a
+    //    merged deal keeps displaying, and is only findable by, the name of the
+    //    account that was absorbed. Emitted rather than written here: deals are
+    //    not this service's to update, and the listener already owns that cache.
+    this.eventEmitter.emit('account.renamed', {
+      tenantId: this.tenantId(),
+      accountId: survivorId,
+      name: updated.name,
+    });
+
     this.entityAudit.emit({
       entity: 'account',
       entityType: 'ACCOUNT',

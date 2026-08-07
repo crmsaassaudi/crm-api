@@ -99,8 +99,14 @@ export const MIN_TOKEN_LENGTH = 2;
  *
  * `searchKeys` is a multikey index: every entry is an index entry, so an
  * unbounded array is unbounded write amplification on the collection's hottest
- * path. A record whose searchable text runs past this is a record nobody finds
- * by its sixtieth word.
+ * path.
+ *
+ * The cap applies in **field order**, so {@link buildSearchKeys} must fill the
+ * set before sorting it. Sorting first and slicing second keeps the sixty tokens
+ * nearest the start of the *alphabet*, not of the *record*: a long description
+ * then loses everything from roughly `q` onwards, and "zenith" finds nothing
+ * while "acme" works. Callers list fields in priority order, which is the
+ * ranking that matters; spelling is not.
  */
 export const MAX_SEARCH_KEYS = 60;
 
@@ -167,23 +173,24 @@ export function phoneTokens(value: unknown): string[] {
 /**
  * Build the `searchKeys` array for a document from an arbitrary set of values.
  *
- * Deduplicated and sorted: sorted so two documents with the same searchable
- * content produce byte-identical arrays, which keeps diffs and any future
- * content-hash comparison stable.
+ * Deduplicated, capped in the order the values arrive, and only then sorted.
+ * Sorting is for byte-stability — two documents with the same searchable content
+ * produce identical arrays — and must happen *after* the cap, not before; see
+ * {@link MAX_SEARCH_KEYS}.
  */
 export function buildSearchKeys(values: unknown[]): string[] {
   const keys = new Set<string>();
   for (const value of values) {
     if (value == null) continue;
-    if (Array.isArray(value)) {
-      for (const entry of value) {
-        for (const token of searchTokens(entry)) keys.add(token);
+    const entries = Array.isArray(value) ? value : [value];
+    for (const entry of entries) {
+      for (const token of searchTokens(entry)) {
+        keys.add(token);
+        if (keys.size >= MAX_SEARCH_KEYS) return [...keys].sort();
       }
-      continue;
     }
-    for (const token of searchTokens(value)) keys.add(token);
   }
-  return [...keys].sort().slice(0, MAX_SEARCH_KEYS);
+  return [...keys].sort();
 }
 
 /**

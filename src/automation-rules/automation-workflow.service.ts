@@ -12,6 +12,7 @@ import {
   UpdateWorkflowDto,
   UpdateWorkflowStatusDto,
 } from './dto/workflow.dto';
+import { ListWorkflowsQueryDto } from './dto/list-workflows-query.dto';
 import { ConditionEvaluatorService } from './engine/condition-evaluator.service';
 import { AutomationAuditService } from './automation-audit.service';
 import { WebhookHeaderCryptoService } from './engine/webhook-header-crypto.service';
@@ -119,8 +120,8 @@ export class AutomationWorkflowService {
 
   // Queries
 
-  async findAll() {
-    const workflows = await this.repo.findAll(this.tenantId);
+  async findAll(filters: ListWorkflowsQueryDto = {}) {
+    const workflows = await this.repo.findAll(this.tenantId, filters);
     return workflows.map((workflow) => this.redactWorkflowHeaders(workflow));
   }
 
@@ -128,11 +129,6 @@ export class AutomationWorkflowService {
     const workflow = await this.repo.findById(this.tenantId, id);
     if (!workflow) throw new NotFoundException('Workflow not found');
     return this.decryptWorkflowHeadersForResponse(workflow);
-  }
-
-  async findByStatus(status: 'draft' | 'active' | 'paused') {
-    const workflows = await this.repo.findByStatus(this.tenantId, status);
-    return workflows.map((workflow) => this.redactWorkflowHeaders(workflow));
   }
 
   // Mutations
