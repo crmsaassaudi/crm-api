@@ -1,5 +1,10 @@
 import { Controller, Get, HttpCode, HttpStatus, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { User } from './domain/user';
 
@@ -44,24 +49,34 @@ export class MeAssignableUsersController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({
+    name: 'ids',
+    required: false,
+    description:
+      'Comma-separated user ids. When present, returns exactly those users (tenant-scoped) instead of a search page — for resolving names of ids a picker already holds (a restored filter, a saved view) without a users:view-gated lookup.',
+  })
   @Get('assignable-users')
   @HttpCode(HttpStatus.OK)
   async assignableUsers(
     @Query('search') search?: string,
     @Query('page') pageRaw?: string,
     @Query('limit') limitRaw?: string,
+    @Query('ids') idsRaw?: string,
   ) {
     const page = Math.max(1, Number(pageRaw) || 1);
     const limit = Math.min(Number(limitRaw) || 10, MAX_PAGE_SIZE);
     const tenantId = this.usersService.getTenantId();
+    const ids = idsRaw
+      ?.split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
 
-    const { data, totalItems } = tenantId
-      ? await this.usersService.searchByTenant(tenantId, {
-          search,
-          page,
-          limit,
-        })
-      : { data: [] as User[], totalItems: 0 };
+    const { data, totalItems } = await this.resolveUsers(tenantId, {
+      search,
+      page,
+      limit,
+      ids,
+    });
 
     const minimal: AssignableUser[] = data.map((user) => ({
       id: user.id,
@@ -78,5 +93,26 @@ export class MeAssignableUsersController {
       hasNextPage: page * limit < totalItems,
       hasPreviousPage: page > 1,
     };
+  }
+
+  /**
+   * `ids` takes priority over `search`: a caller resolving names for ids it
+   * already holds (a restored filter, a saved view) wants exactly those
+   * users, not a search page that happens to contain them.
+   */
+  private async resolveUsers(
+    tenantId: string | undefined,
+    params: { search?: string; page: number; limit: number; ids?: string[] },
+  ): Promise<{ data: User[]; totalItems: number }> {
+    if (!tenantId) return { data: [], totalItems: 0 };
+    if (params.ids?.length) {
+      const data = await this.usersService.findByIds(params.ids);
+      return { data, totalItems: data.length };
+    }
+    return this.usersService.searchByTenant(tenantId, {
+      search: params.search,
+      page: params.page,
+      limit: params.limit,
+    });
   }
 }
