@@ -72,7 +72,6 @@ export class IntegrationLogService {
       },
     ]);
 
-    // Transform array to object keyed by service name
     const result: Record<string, any> = {};
     metrics.forEach((m) => {
       result[m.service] = {

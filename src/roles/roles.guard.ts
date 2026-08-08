@@ -35,7 +35,6 @@ export class RolesGuard implements CanActivate {
       return false;
     }
 
-    // Check user.platformRole.id against required platform roles
     return user.platformRole?.id ? roles.includes(user.platformRole.id) : false;
   }
 }

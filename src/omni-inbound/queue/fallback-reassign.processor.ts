@@ -75,7 +75,6 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
 
     const redisKey = `${this.DISCONNECT_KEY_PREFIX}:${tenantId}:${agentId}`;
 
-    // Check if the agent has reconnected in the meantime
     const stillDisconnected = await this.redis.get(redisKey);
     if (!stillDisconnected) {
       this.logger.debug(
@@ -101,7 +100,6 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
       // safe fallback
     }
 
-    // Double-check via presence service
     const presence = await this.presenceService.getPresence(tenantId, agentId);
     if (presence) {
       this.logger.debug(
@@ -183,7 +181,6 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
           await this.presenceService.releaseConversation(tenantId, agentId);
         }
 
-        // Emit event for realtime broadcast
         this.eventEmitter.emit('omni.conversation.assigned', {
           tenantId,
           conversationId: conversation.id,
@@ -204,7 +201,6 @@ export class FallbackReassignProcessor extends BaseTenantConsumer<FallbackReassi
       }
     }
 
-    // Cleanup disconnect marker
     await this.redis.del(redisKey);
   }
 

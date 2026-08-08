@@ -52,7 +52,6 @@ export class TenantRolesGuard implements CanActivate {
       return true;
     }
 
-    // Resolve current tenant from CLS context
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) {
       return false;
@@ -63,7 +62,6 @@ export class TenantRolesGuard implements CanActivate {
       return false;
     }
 
-    // Check if any of the user's tenant roles match the required roles
     return membership.roles.some((r) =>
       requiredRoles.includes(r as TenantRoleEnum),
     );

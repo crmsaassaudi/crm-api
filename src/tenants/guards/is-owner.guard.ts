@@ -19,21 +19,18 @@ export class IsOwnerGuard implements CanActivate {
       throw new ForbiddenException('User not authenticated');
     }
 
-    // Extract tenant ID from request params
     const tenantId = request.params.id || request.params.tenantId;
 
     if (!tenantId) {
       throw new ForbiddenException('Tenant ID not provided');
     }
 
-    // Fetch tenant from database
     const tenant = await this.tenantsService.findById(tenantId);
 
     if (!tenant) {
       throw new NotFoundException('Tenant not found');
     }
 
-    // Check if user is the owner
     if (tenant.ownerId !== user.id) {
       throw new ForbiddenException(
         'Only the tenant owner can perform this action',

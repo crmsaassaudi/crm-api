@@ -160,8 +160,6 @@ export class ConversationOpsProcessor
     }
   }
 
-  // Inline Execution
-
   /** Execute synchronously within the aggregate lock. Returns updated conversation. */
   async executeInline(cmd: ConversationCommand): Promise<any> {
     const lockKey = `${CONV_OPS_LOCK_PREFIX}${cmd.conversationId}`;
@@ -171,8 +169,6 @@ export class ConversationOpsProcessor
       return this.conversationRepo.findById(cmd.conversationId);
     });
   }
-
-  // Command Router
 
   private async processCommand(cmd: ConversationCommand): Promise<void> {
     const startTime = Date.now();
@@ -229,8 +225,6 @@ export class ConversationOpsProcessor
       );
     }
   }
-
-  // CUSTOMER_MESSAGE Handler
 
   private async handleCustomerMessage(
     cmd: ConversationCommand & { payload: CustomerMessagePayload },
@@ -377,8 +371,6 @@ export class ConversationOpsProcessor
     }
   }
 
-  // BOT_REPLY Handler
-
   private async handleBotReply(
     cmd: ConversationCommand & { payload: BotReplyPayload },
     sequence: number,
@@ -410,7 +402,6 @@ export class ConversationOpsProcessor
       return;
     }
 
-    // Resolve the afterTimestamp from the triggering inbound message
     let resolvedAfterTimestamp = afterTimestamp;
     if (!resolvedAfterTimestamp && inboundMessageId) {
       const [inboundMsg] = await this.messageRepo.findByIds([inboundMessageId]);
@@ -421,7 +412,6 @@ export class ConversationOpsProcessor
       }
     }
 
-    // Update bot state
     if (status === 'active') {
       await this.conversationRepo.updateBotState(cmd.conversationId, {
         status: 'active',
@@ -434,7 +424,6 @@ export class ConversationOpsProcessor
       });
     }
 
-    // Send each bot message via outbound service
     const lastBotMessageId = await this.sendBotMessages(
       cmd,
       messages,
@@ -442,7 +431,6 @@ export class ConversationOpsProcessor
       resolvedAfterTimestamp,
     );
 
-    // Update aggregate with bot's last message
     if (lastBotMessageId) {
       await this.updateConversationWithLastBotMessage(
         cmd.conversationId,
@@ -786,8 +774,6 @@ export class ConversationOpsProcessor
     );
   }
 
-  // ASSIGN_AGENT Handler
-
   private async handleAssignAgent(
     cmd: ConversationCommand & { payload: AssignAgentPayload },
   ): Promise<void> {
@@ -978,8 +964,6 @@ export class ConversationOpsProcessor
     }
   }
 
-  // CHANGE_STATUS Handler
-
   private async handleChangeStatus(
     cmd: ConversationCommand & { payload: ChangeStatusPayload },
   ): Promise<void> {
@@ -1044,8 +1028,6 @@ export class ConversationOpsProcessor
     );
   }
 
-  // UPDATE_BOT_STATE Handler
-
   private async handleUpdateBotState(
     cmd: ConversationCommand & { payload: UpdateBotStatePayload },
   ): Promise<void> {
@@ -1080,8 +1062,6 @@ export class ConversationOpsProcessor
         `reason=${reason} enabled=${botState.enabled} status=${botState.status}`,
     );
   }
-
-  // Idempotency
 
   /**
    * Take (or resume) ownership of a command.
@@ -1146,8 +1126,6 @@ export class ConversationOpsProcessor
       .exec();
   }
 
-  // Outbox
-
   /**
    * Record the event, then publish it — and only mark it published once every
    * listener has actually finished.
@@ -1185,8 +1163,6 @@ export class ConversationOpsProcessor
       );
     }
   }
-
-  // Helpers
 
   private logOperationWarning(
     cmd: ConversationCommand,

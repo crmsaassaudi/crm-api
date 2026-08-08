@@ -73,8 +73,6 @@ export class FileDocumentRepository
     return fileObjects.map((fileObject) => FileMapper.toDomain(fileObject));
   }
 
-  // New implementations
-
   async findByConversation(
     tenantId: string,
     conversationId: string,
@@ -267,8 +265,6 @@ export class FileDocumentRepository
     );
     return doc ? FileMapper.toDomain(doc) : null;
   }
-
-  // Cloud Drive extensions
 
   async rename(id: string, newName: string): Promise<NullableType<FileType>> {
     const doc = await this.model.findByIdAndUpdate(

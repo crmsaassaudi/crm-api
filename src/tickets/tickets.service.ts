@@ -182,7 +182,6 @@ export class TicketsService {
     'slaPolicyId',
   ] as const;
 
-  /** Convert empty string ObjectId refs to undefined in-place. */
   private cleanRefs<T extends Record<string, any>>(data: T): T {
     for (const key of TicketsService.OBJECT_ID_FIELDS) {
       if ((data as any)[key] === '') {
@@ -591,7 +590,6 @@ export class TicketsService {
     id: string,
     data: Partial<Ticket> & { allowReopen?: boolean; version?: number },
   ): Promise<Ticket> {
-    // Snapshot before update for audit trail
     const existingTicket = await this.repository.findOne({ _id: id });
     // `findOne` is scoped by tenant, data-visibility and the ABAC deny, so a
     // miss means "not yours to edit". Refusing here rather than letting the
@@ -1037,7 +1035,6 @@ export class TicketsService {
     return { data, total, page, limit };
   }
 
-  /** Sync in-progress job status from BullMQ. */
   private async enrichBullJobStatus(doc: any): Promise<void> {
     if (doc.status !== 'active' && doc.status !== 'queued') return;
     try {
@@ -1052,7 +1049,6 @@ export class TicketsService {
     }
   }
 
-  /** Extract populated user object from userId. */
   private extractPopulatedUser(doc: any): void {
     if (
       !doc.userId ||
@@ -1120,10 +1116,9 @@ export class TicketsService {
   /**
    * Link a Deal to this Ticket.
    *
-   * One-directional on purpose. The previous comment here claimed it was bi-directional
-   * and appended to `deal.ticketIds[]` — it never did, and `ticketIds` existed on the
-   * Deal domain class but on neither the schema nor the mapper. The deal's tickets come
-   * from querying `tickets.dealId`, so there is one source of truth to keep correct.
+   * One-directional by design: `dealId` lives only on the ticket. The deal's
+   * linked tickets are derived by querying `tickets.dealId`, keeping a single
+   * source of truth instead of two fields that can drift apart.
    */
   async linkDeal(ticketId: string, dealId: string): Promise<Ticket> {
     this.assertObjectId(dealId, 'dealId');
@@ -1136,7 +1131,6 @@ export class TicketsService {
       );
 
     if ((ticket as any).dealId === dealId) {
-      // Already linked — idempotent
       return ticket;
     }
 
@@ -1164,10 +1158,6 @@ export class TicketsService {
     return updated;
   }
 
-  /**
-   * Unlink the Deal from this Ticket.
-   * Clears ticket.dealId.
-   */
   async unlinkDeal(ticketId: string): Promise<Ticket> {
     const ticket = await this.repository.findOne({ _id: ticketId });
     if (!ticket)
@@ -1188,9 +1178,6 @@ export class TicketsService {
     return updated;
   }
 
-  /**
-   * Find all tickets linked to a specific deal.
-   */
   async findByDeal(dealId: string): Promise<Ticket[]> {
     const result = await this.repository.findManyWithPagination({
       filterOptions: { dealId },
@@ -1201,12 +1188,6 @@ export class TicketsService {
 
   // PARENT/CHILD TICKET
 
-  /**
-   * Set the parent of a ticket (makes this ticket a sub-ticket).
-   * Validates:
-   *  - Parent ticket exists
-   *  - Not creating a circular reference (parent cannot be a child of self)
-   */
   async setParent(ticketId: string, parentTicketId: string): Promise<Ticket> {
     this.assertObjectId(parentTicketId, 'parentTicketId');
     if (ticketId === parentTicketId) {
@@ -1275,9 +1256,6 @@ export class TicketsService {
     return updated;
   }
 
-  /**
-   * Remove the parent reference (make this ticket a top-level ticket again).
-   */
   async removeParent(ticketId: string): Promise<Ticket> {
     const ticket = await this.repository.findOne({ _id: ticketId });
     if (!ticket)
@@ -1298,9 +1276,6 @@ export class TicketsService {
     return updated;
   }
 
-  /**
-   * Get all child tickets (sub-tickets) of a given parent ticket.
-   */
   async getChildren(parentTicketId: string): Promise<Ticket[]> {
     if (!(await this.repository.findOne({ _id: parentTicketId }))) {
       throw new NotFoundException(`Ticket ${parentTicketId} not found`);
@@ -1317,10 +1292,9 @@ export class TicketsService {
   /**
    * Merge a duplicate ticket (sourceId) into a target ticket (targetId).
    *
-   * Strategy:
-   *  - Appends source ticket info as a system note on the target ticket.
-   *  - Updates source ticket status to "merged" (closest to closed) and soft-deletes it.
-   *  - Returns the updated target ticket.
+   * Appends a merge note to the target's description, carries over the
+   * source's linked messages and referenced records (tasks, timeline, etc.),
+   * then soft-deletes the source — all inside one transaction.
    */
   async mergeTickets(targetId: string, sourceId: string): Promise<Ticket> {
     this.assertObjectId(sourceId, 'sourceId');
@@ -1340,7 +1314,6 @@ export class TicketsService {
 
     await this.assertRecordAccess('delete', 'tickets', sourceId, source as any);
 
-    // Append merge note on target
     const existingNotes: string = (target as any).description ?? '';
     const mergeNote = `\n\n---\n[MERGED] Ticket #${(source as any).ticketNumber ?? sourceId} was merged into this ticket.`;
     const mergedNotes = existingNotes + mergeNote;
@@ -1360,7 +1333,6 @@ export class TicketsService {
       ]),
     );
 
-    // Update target with merged description
     const session = await this.connection.startSession();
     let updated!: Ticket;
     try {
@@ -1380,19 +1352,12 @@ export class TicketsService {
       await session.endSession();
     }
 
-    // Move the source's timeline onto the target, for the same reason: entries
-    // attached to a soft-deleted ticket are unreachable, not deleted. The audit trail
-    // is deliberately NOT moved — it records what happened to a specific ticket id,
-    // and rewriting it would falsify history; this merge is itself audited below.
-
-    // Soft-delete source ticket (mark as merged via deletedAt).
-    // `remove()` on the base repository is a soft delete for any schema declaring
-    // `deletedAt` — which is what this comment always claimed and, until the base was
-    // fixed, was not: it issued `deleteOne` and destroyed the source outright.
+    // The audit trail is deliberately NOT moved: it records what happened to
+    // a specific ticket id, and rewriting it would falsify history. This
+    // merge is itself audited below.
 
     this.logger.log(`[TicketMerge] Ticket ${sourceId} merged into ${targetId}`);
 
-    // Audit
     this.entityAudit.emit({
       entity: 'ticket',
       entityType: 'TICKET',
@@ -1451,7 +1416,6 @@ export class TicketsService {
         'Ticket not found',
       );
 
-    // Already paused — idempotent
     if ((ticket as any).slaPausedAt && !(ticket as any).slaResumedAt) {
       return ticket;
     }
@@ -1486,7 +1450,6 @@ export class TicketsService {
     const pausedAt = (ticket as any).slaPausedAt;
     const alreadyResumed = (ticket as any).slaResumedAt;
 
-    // Not paused — idempotent
     if (!pausedAt || alreadyResumed) {
       return ticket;
     }

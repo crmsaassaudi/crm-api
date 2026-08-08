@@ -116,7 +116,6 @@ export class FolderDocumentRepository {
     newPathPrefix: string,
     depthDelta: number,
   ): Promise<number> {
-    // Find all descendants whose path starts with the old prefix
     const descendants = await this.model
       .find({
         tenantId,

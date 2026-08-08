@@ -90,9 +90,9 @@ export class MessageStatusService {
 
     const targetWeight = STATUS_WEIGHT[targetStatus];
 
-    // PERF FIX #10: Single atomic updateMany with status filter instead of
-    // separate find + updateMany (2 DB roundtrips → 1 write + 1 read).
-    // The filter ensures we only advance forward (sent → delivered, etc.)
+    // Single atomic updateMany with a status filter instead of a separate
+    // find + updateMany (2 DB roundtrips → 1 write + 1 read). The filter also
+    // ensures status only ever advances forward (sent → delivered, etc.)
     const statusesBelowTarget = Object.entries(STATUS_WEIGHT)
       .filter(([, w]) => w >= 0 && w < targetWeight)
       .map(([s]) => s);
@@ -157,7 +157,6 @@ export class MessageStatusService {
     tenantId: string,
     conversationId: string,
   ): Promise<string[]> {
-    // Find all inbound messages in this conversation that are not yet 'read'
     const docs = await this.messageModel
       .find(
         {
@@ -175,7 +174,6 @@ export class MessageStatusService {
 
     const idsToUpdate = docs.map((d) => d._id);
 
-    // Bulk update to 'read'
     await this.messageModel.updateMany(
       { _id: { $in: idsToUpdate } },
       { $set: { status: 'read' } },

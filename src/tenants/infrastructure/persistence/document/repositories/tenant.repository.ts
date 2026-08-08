@@ -174,7 +174,8 @@ export class TenantsRepository {
    * Atomically increment storage usage WITH quota guard.
    * Returns true if increment succeeded (within quota), false if over quota.
    *
-   * Uses $expr + $lte to ensure usedBytes + increment <= limitBytes.
+   * Uses `$lte` against a precomputed threshold (limitBytes - bytes) so the
+   * check and the increment happen in one atomic update.
    * Falls back to initializing storageQuota with defaults when the field
    * doesn't exist on the tenant document (prevents "0.0MB / 1024MB" false reject).
    */
@@ -182,7 +183,6 @@ export class TenantsRepository {
     tenantId: string,
     bytes: number,
   ): Promise<boolean> {
-    // Read current quota (or initialise if missing)
     const tenant = await this.tenantsModel.findById(tenantId).lean().exec();
     if (!tenant) return false;
 
@@ -190,7 +190,6 @@ export class TenantsRepository {
       | { limitBytes?: number; usedBytes?: number }
       | undefined;
 
-    // If storageQuota doesn't exist yet, initialise with defaults + requested bytes
     if (quota?.limitBytes == null) {
       const defaultLimit = TenantsRepository.DEFAULT_STORAGE_QUOTA.limitBytes;
       if (bytes > defaultLimit) return false; // would exceed default limit
@@ -225,7 +224,6 @@ export class TenantsRepository {
       return true;
     }
 
-    // Check if increment would exceed the limit
     const currentUsed = quota.usedBytes ?? 0;
     if (currentUsed + bytes > quota.limitBytes) {
       return false; // Over quota

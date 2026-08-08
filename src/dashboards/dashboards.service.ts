@@ -27,8 +27,6 @@ export class DashboardsService {
     return this.cls.get('userId');
   }
 
-  // List
-
   async findAll() {
     return this.model
       .find({
@@ -38,8 +36,6 @@ export class DashboardsService {
       .sort({ updatedAt: -1 })
       .lean();
   }
-
-  // Get one
 
   async findOne(id: string) {
     const doc = await this.model
@@ -72,8 +68,6 @@ export class DashboardsService {
     return doc.toObject() as DashboardDocument;
   }
 
-  // Update (layout + metadata)
-
   async update(
     id: string,
     dto: UpdateDashboardDto,
@@ -100,8 +94,6 @@ export class DashboardsService {
     // a delete must not depend on a caller remembering to pre-read.
     await this.model.deleteOne({ _id: id, tenantId: this.tenantId });
   }
-
-  // Duplicate (clone shared dashboard to own)
 
   async duplicate(id: string): Promise<DashboardDocument> {
     const source = await this.findOne(id);

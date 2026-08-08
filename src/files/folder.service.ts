@@ -29,7 +29,6 @@ export class FolderService {
       throw new BadRequestException('Folder name must be 1-100 characters');
     }
 
-    // Check duplicate name under same parent
     const exists = await this.folderRepository.existsByName(
       tenantId,
       parentId,
@@ -41,7 +40,6 @@ export class FolderService {
       );
     }
 
-    // Resolve parent
     let parentPath = '';
     let depth = 0;
     if (parentId) {
@@ -69,14 +67,13 @@ export class FolderService {
       tenantId,
       name: trimmedName,
       parentId,
-      path: '__temp__', // will update below
+      path: '__temp__',
       depth,
       createdBy: userId,
       color,
       isDeleted: false,
     });
 
-    // Update path with actual ID
     const actualPath = parentPath
       ? `${parentPath}/${folder.id}`
       : `/${folder.id}`;
@@ -89,8 +86,6 @@ export class FolderService {
 
     return updated ?? folder;
   }
-
-  // Read
 
   async findById(id: string): Promise<NullableType<FolderType>> {
     return this.folderRepository.findById(id);
@@ -157,7 +152,6 @@ export class FolderService {
 
     this.assertCanManage(folder, userId, userRole);
 
-    // Can't move to itself
     if (newParentId === folderId) {
       throw new BadRequestException('Cannot move a folder into itself');
     }
@@ -168,7 +162,6 @@ export class FolderService {
       newParentId,
     );
 
-    // Check duplicate name under new parent
     const exists = await this.folderRepository.existsByName(
       tenantId,
       newParentId,
@@ -195,7 +188,6 @@ export class FolderService {
     );
     if (!updated) throw new NotFoundException('Folder not found');
 
-    // Update descendants
     if (depthDelta !== 0 || oldPath !== newPath) {
       await this.folderRepository.updateDescendantPaths(
         tenantId,
@@ -221,7 +213,6 @@ export class FolderService {
     if (!newParent || newParent.tenantId !== tenantId) {
       throw new NotFoundException('Target folder not found');
     }
-    // Can't move into a descendant
     if (newParent.path.startsWith(folder.path + '/')) {
       throw new BadRequestException(
         'Cannot move a folder into one of its descendants',
@@ -307,8 +298,6 @@ export class FolderService {
     await this.folderRepository.hardDelete(folderId);
     this.logger.log(`Folder hard-deleted: ${folderId}`);
   }
-
-  // Permission helper
 
   private assertCanManage(
     folder: FolderType,

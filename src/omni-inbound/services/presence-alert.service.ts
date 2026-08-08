@@ -52,7 +52,7 @@ export class PresenceAlertService {
     try {
       cfg = await this.settingsService.getSetting('omni_presence', tenantId);
     } catch {
-      return; // No config → skip
+      return;
     }
 
     const thresholds: AlertThresholds = {
@@ -102,10 +102,6 @@ export class PresenceAlertService {
     }
   }
 
-  /**
-   * Iterate over all agents and collect triggered alerts, online count, and
-   * full-capacity count. Extracted from evaluateAll to reduce cognitive complexity.
-   */
   private collectAgentAlerts(
     agents: any[],
     now: number,
@@ -130,9 +126,6 @@ export class PresenceAlertService {
     return { alerts, onlineCount, fullCount };
   }
 
-  /**
-   * Evaluate all per-agent alert rules and return triggered alerts.
-   */
   private evaluateAgentRules(
     agent: any,
     presenceMinutes: number,
@@ -217,14 +210,11 @@ export class PresenceAlertService {
   ): Promise<void> {
     const dedupKey = `presence:alert:${tenantId}:${alert.type}:${alert.agentId}`;
 
-    // Check if already alerted recently (1-hour dedup window)
     const exists = await this.redisService.get(dedupKey);
     if (exists) return;
 
-    // Mark as alerted (TTL 1h)
     await this.redisService.set(dedupKey, '1', 3600);
 
-    // Broadcast to supervisor room
     if (this.ioServer) {
       this.ioServer.to(`tenant:${tenantId}`).emit('presence:alert', {
         type: alert.type,

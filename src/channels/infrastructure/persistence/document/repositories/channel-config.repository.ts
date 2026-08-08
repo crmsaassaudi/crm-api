@@ -188,7 +188,6 @@ export class ChannelConfigRepository {
     id: string,
     providerType: string,
   ): Promise<void> {
-    // Unset all defaults for this provider type
     await this.model
       .updateMany(
         { tenantId, providerType, deletedAt: null },
@@ -196,7 +195,6 @@ export class ChannelConfigRepository {
       )
       .exec();
 
-    // Set this config as default
     await this.model
       .findOneAndUpdate(
         { _id: id, tenantId, deletedAt: null },

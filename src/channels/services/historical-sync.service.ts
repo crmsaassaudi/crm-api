@@ -165,13 +165,11 @@ export class HistoricalSyncService {
   async startSync(config: HistoricalSyncConfig): Promise<{ jobId: string }> {
     const jobId = `hsync:${config.tenantId}:${config.configId}`;
 
-    // Check if a sync is already running
     const existing = await this.getProgress(jobId);
     if (existing && existing.status === 'running') {
       throw new Error('A historical sync is already running for this channel');
     }
 
-    // Initialize progress tracking
     await this.updateProgress(jobId, {
       status: 'queued',
       phase: 'Initializing...',
@@ -215,10 +213,8 @@ export class HistoricalSyncService {
     const domain = email.split('@')[1]?.toLowerCase();
     if (!domain) return true;
 
-    // Exact match
     if (this.DOMAIN_BLACKLIST.has(domain)) return true;
 
-    // Pattern match
     for (const pattern of this.DOMAIN_BLACKLIST_PATTERNS) {
       if (pattern.test(domain) || pattern.test(email)) return true;
     }
@@ -242,7 +238,6 @@ export class HistoricalSyncService {
       throw new Error('imapflow package not installed');
     }
 
-    // Resolve credentials and IMAP settings
     const { credentials, imapHost, imapPort } =
       await this.resolveSyncCredentials(config.configId);
 
@@ -268,7 +263,6 @@ export class HistoricalSyncService {
           phase: 'Scanning mailbox...',
         } as SyncProgress);
 
-        // Collect message envelopes (slow-burn paced)
         const messages = await this.scanMailboxMessages(client, config);
 
         this.logger.log(
@@ -280,7 +274,6 @@ export class HistoricalSyncService {
           totalEstimate: messages.length,
         } as SyncProgress);
 
-        // Process and accumulate pending contacts
         const { pendingContacts, importedCount } =
           await this.processMessageBatch(jobId, messages, config);
 

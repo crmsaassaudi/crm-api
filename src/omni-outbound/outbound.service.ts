@@ -210,9 +210,6 @@ export class OutboundService {
     };
   }
 
-  /**
-   * Send a reply from an agent to a customer.
-   */
   async sendAgentMessage(params: {
     tenantId: string;
     conversationId: string;
@@ -769,7 +766,6 @@ export class OutboundService {
     const source = normalizeOutboundSource(rawSource);
     const senderContext = await this.resolveSenderContext(agentId);
 
-    // Idempotency check
     const idempotencyResult = idempotencyKey
       ? await this.checkOutboundIdempotency(
           tenantId,
@@ -782,7 +778,6 @@ export class OutboundService {
       return idempotencyResult.response;
     }
 
-    // 1. Resolve conversation + channel
     const conversation = await this.conversationRepo.findById(conversationId);
     if (!conversation) {
       throw new Error(`Conversation ${conversationId} not found`);
@@ -800,14 +795,12 @@ export class OutboundService {
     // WhatsApp templates are pre-approved by Meta and are the only
     // message type allowed outside the 24-hour customer reply window.
 
-    // 2. Build content summary for display in conversation timeline
     const contentSummary = `📋 Template: ${templateName}`;
 
     this.logger.log(
       `Agent ${agentId} sending template '${templateName}' to conversation ${conversationId}`,
     );
 
-    // 3. Persist message with type 'template'
     const message = await this.messageRepo.create({
       tenantId,
       conversationId,
@@ -839,7 +832,6 @@ export class OutboundService {
       },
     });
 
-    // 4. Update conversation last message summary
     await this.conversationRepo.updateLastMessage(
       conversationId,
       contentSummary.substring(0, 200),
@@ -878,19 +870,6 @@ export class OutboundService {
     };
   }
 
-  /**
-   * Send a media message from an agent to a customer.
-   *
-   * Flow:
-   * 1. Resolve file (from fileId → S3 download, or from buffer)
-   * 2. ACL check (if fileId)
-   * 3. Validate against platform limits
-   * 4. Compress for platform if image
-   * 5. Persist message with status 'sending'
-   * 6. Call adapter.sendMedia() → update status
-   * 7. Create outbound file record
-   * 8. Emit events
-   */
   /**
    * Send a media message from an agent to a customer.
    * Delegated to OutboundMediaHandler for separation of concerns.
@@ -1113,7 +1092,6 @@ export class OutboundService {
     if (!adapter) return '';
 
     let adapterResponse: any = null;
-    // If message has buttons and adapter supports interactive, use interactive
     if (buttons?.length && adapter.sendInteractive) {
       adapterResponse = await adapter.sendInteractive(
         conversation.customer.externalId,
@@ -1129,7 +1107,6 @@ export class OutboundService {
         },
       );
     } else {
-      // Plain text (or adapter doesn't support interactive)
       const numberedButtons = buttons
         .map((b, i) => `${i + 1}. ${b.label}`)
         .join('\n');
@@ -1151,10 +1128,6 @@ export class OutboundService {
     return adapterResponse?.message_id || adapterResponse?.id || '';
   }
 
-  /**
-   * Send a bot media message (image, video, audio, file) to the customer.
-   *
-   * Downloads media from the bot-provided URL and forwards it via the
   /**
    * Send a bot media message. T-040: Delegated to OutboundMediaHandler.
    */
@@ -1250,7 +1223,6 @@ export class OutboundService {
 
     this.enforceReplyWindow(conversation);
 
-    // Adapter-specific validation
     const channelType = conversation.channelType.toLowerCase();
     if (channelType === 'whatsapp' && buttons.length > 3) {
       throw new Error(
@@ -1486,7 +1458,6 @@ export class OutboundService {
     enforceReplyWindow(conversation);
   }
 
-  /** Dispatch an interactive button message via the channel adapter. */
   // eslint-disable-next-line @typescript-eslint/require-await
   private async dispatchInteractiveToProvider(
     conversation: any,
@@ -1511,7 +1482,6 @@ export class OutboundService {
         },
       );
     }
-    // Fallback: numbered text
     const numberedButtons = buttons
       .map((b, i) => `${i + 1}. ${b.title}`)
       .join('\n');
@@ -1523,7 +1493,6 @@ export class OutboundService {
     });
   }
 
-  /** Dispatch a carousel message via the channel adapter. */
   // eslint-disable-next-line @typescript-eslint/require-await
   private async dispatchCarouselToProvider(
     conversation: any,
@@ -1555,7 +1524,6 @@ export class OutboundService {
         },
       );
     }
-    // Fallback: formatted text listing each card
     const lines = cards.map((c, i) => {
       const subtitle = c.subtitle ? ` \u2014 ${c.subtitle}` : '';
       return `[${i + 1}] ${c.title ?? ''}${subtitle}`;

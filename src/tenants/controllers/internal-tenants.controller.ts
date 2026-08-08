@@ -80,9 +80,6 @@ export class InternalTenantsController {
     private readonly authzPermissionCache: AuthzPermissionCacheService,
   ) {}
 
-  // POST /api/v1/internal/tenants/provision
-  // Sales creates a tenant for a customer (no password required)
-
   @Post('provision')
   @Idempotent()
   @HttpCode(HttpStatus.ACCEPTED)
@@ -102,14 +99,12 @@ export class InternalTenantsController {
   ) {
     const { companyName, adminEmail, adminFullName, plan } = dto;
 
-    // 1. Generate and reserve unique alias
     const baseAlias = generateAlias(companyName);
     const alias = await ensureUniqueAlias(
       baseAlias,
       this.aliasReservationRepository,
     );
 
-    // 2. Generate provisioningId and persist to MongoDB first (DB-first pattern)
     const provisioningId = `prov_${ulid()}`;
 
     // DB write before Redis — MongoDB is the source of truth for history/audit
@@ -152,9 +147,6 @@ export class InternalTenantsController {
     };
   }
 
-  // POST /api/v1/internal/tenants/:tenantId/invite
-  // Send invite email using Keycloak Execute Actions Email
-
   @Post(':tenantId/invite')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -172,13 +164,11 @@ export class InternalTenantsController {
   ) {
     const { email, role } = dto;
 
-    // 1. Verify tenant exists
     const tenant = await this.tenantsRepository.findById(tenantId);
     if (!tenant) {
       throw new NotFoundException(`Tenant ${tenantId} not found`);
     }
 
-    // 2. Find or create Keycloak user (no password)
     let kcUser = await this.keycloakAdminService.findUserByEmail(email);
     let kcUserId: string;
 
@@ -197,7 +187,6 @@ export class InternalTenantsController {
       this.logger.log(`Created KC user ${kcUserId} for invite`);
     }
 
-    // 3. Add user to Keycloak organization
     if (tenant.keycloakOrgId) {
       await this.keycloakAdminService
         .addUserToOrganization(tenant.keycloakOrgId, kcUserId)
@@ -209,7 +198,6 @@ export class InternalTenantsController {
         });
     }
 
-    // 4. Upsert user in MongoDB with tenant membership
     await this.userRepository.upsertWithTenants(
       kcUserId,
       email,
@@ -224,8 +212,7 @@ export class InternalTenantsController {
       [{ tenantId, roles: [role], joinedAt: new Date() }],
     );
 
-    // 5. Trigger Keycloak Execute Actions Email (UPDATE_PASSWORD)
-    //    Keycloak sends the email with a secure link to set password.
+    // Keycloak sends the email with a secure link to set the password.
     const rootDomain =
       this.configService.get('app.rootDomain', { infer: true }) ??
       'crmsaudi.dev';
@@ -248,9 +235,6 @@ export class InternalTenantsController {
       tenantAlias: tenant.alias,
     };
   }
-
-  // GET /api/v1/internal/tenants/:tenantId/feature-permissions
-  // Inspect what feature permissions are granted to a specific tenant
 
   @Get(':tenantId/feature-permissions')
   @HttpCode(HttpStatus.OK)
@@ -278,9 +262,6 @@ export class InternalTenantsController {
     };
   }
 
-  // POST /api/v1/internal/tenants/:tenantId/feature-permissions/grant
-  // Grant one or more feature permissions to a specific tenant
-
   @Post(':tenantId/feature-permissions/grant')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -301,7 +282,6 @@ export class InternalTenantsController {
       throw new NotFoundException(`Tenant ${tenantId} not found`);
     }
 
-    // Validate: only known FEATURE_PERMISSIONS can be granted via this endpoint
     const invalid = body.permissions.filter(
       (p) => !FEATURE_PERMISSIONS.includes(p),
     );
@@ -329,9 +309,6 @@ export class InternalTenantsController {
       grantedFeaturePermissions: updated?.availablePermissions ?? [],
     };
   }
-
-  // DELETE /api/v1/internal/tenants/:tenantId/feature-permissions/revoke
-  // Revoke one or more feature permissions from a specific tenant
 
   @Delete(':tenantId/feature-permissions/revoke')
   @HttpCode(HttpStatus.OK)

@@ -58,8 +58,6 @@ export class FilesService {
     });
   }
 
-  // Basic CRUD
-
   findById(id: FileType['id']): Promise<NullableType<FileType>> {
     return this.fileRepository.findById(id);
   }
@@ -67,8 +65,6 @@ export class FilesService {
   findByIds(ids: FileType['id'][]): Promise<FileType[]> {
     return this.fileRepository.findByIds(ids);
   }
-
-  // Access Control
 
   /**
    * Check if a user has access to a file.
@@ -81,13 +77,11 @@ export class FilesService {
     if (!file) return false;
     if (file.isDeleted && file.status === 'deleted') return false;
 
-    // OWNER/ADMIN bypass
     if (['OWNER', 'ADMIN'].includes(userRole?.toUpperCase())) return true;
 
     if (file.accessLevel === 'public') return true;
     if (file.accessLevel === 'tenant') return true; // Tenant guard already filters by tenantId
 
-    // private: only owner or explicitly allowed users
     if (file.accessLevel === 'private') {
       if (file.uploadedBy === userId) return true;
       if (file.allowedUserIds?.includes(userId)) return true;
@@ -96,8 +90,6 @@ export class FilesService {
 
     return false;
   }
-
-  // Presigned Download URL
 
   /**
    * Generate (or return Redis-cached) presigned download URL for a file.
@@ -116,7 +108,6 @@ export class FilesService {
   ): Promise<string> {
     const cacheKey = `presigned:${storageKey}`;
 
-    // Try Redis cache first
     if (this.redisService) {
       try {
         const cached = await this.redisService.get<string>(cacheKey);
@@ -126,7 +117,6 @@ export class FilesService {
       }
     }
 
-    // Generate fresh presigned URL
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: storageKey,
@@ -142,8 +132,6 @@ export class FilesService {
 
     return url;
   }
-
-  // Listing
 
   async listFiles(
     tenantId: string,
@@ -185,7 +173,6 @@ export class FilesService {
     if (!this.checkAccess(file, userId, userRole)) {
       throw new ForbiddenException('No access to this file');
     }
-    // Only owner or admin can delete
     if (
       file.uploadedBy !== userId &&
       !['OWNER', 'ADMIN'].includes(userRole?.toUpperCase())
@@ -206,12 +193,10 @@ export class FilesService {
     const file = await this.fileRepository.findById(fileId);
     if (!file) throw new NotFoundException('File not found');
 
-    // Delete from S3
     try {
       await this.s3.send(
         new DeleteObjectCommand({ Bucket: this.bucket, Key: file.path }),
       );
-      // Also delete thumbnail if exists
       if (file.thumbnailKey) {
         await this.s3.send(
           new DeleteObjectCommand({
@@ -226,13 +211,10 @@ export class FilesService {
       );
     }
 
-    // Delete DB record
     await this.fileRepository.hardDelete(fileId);
 
     return { fileSize: file.fileSize ?? 0 };
   }
-
-  // ACL Update
 
   async updateAccessLevel(
     fileId: string,
@@ -244,7 +226,6 @@ export class FilesService {
     const file = await this.fileRepository.findById(fileId);
     if (!file) throw new NotFoundException('File not found');
 
-    // Only owner or admin can change access
     if (
       file.uploadedBy !== userId &&
       !['OWNER', 'ADMIN'].includes(userRole?.toUpperCase())
@@ -279,8 +260,6 @@ export class FilesService {
   ): Promise<{ file: FileType; isNew: boolean }> {
     return this.fileRepository.upsertByMessageId(tenantId, messageId, data);
   }
-
-  // Cloud Drive Extensions
 
   async renameFile(
     fileId: string,

@@ -57,7 +57,6 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       correlationId,
     };
 
-    // Log the error with correlation ID and User ID
     this.logException(
       httpAdapter,
       request,

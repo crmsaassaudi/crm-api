@@ -58,7 +58,6 @@ export class AutomationDlqProcessor extends BaseTenantConsumer<TenantJobData> {
 
     await this.trackPoisonNode(data);
 
-    // Mark the step as 'dlq' in the execution log
     try {
       await this.executionLogRepo.markStepDlq(data.executionId, data.nodeId);
       this.logger.log(

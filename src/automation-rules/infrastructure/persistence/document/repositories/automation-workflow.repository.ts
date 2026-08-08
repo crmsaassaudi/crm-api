@@ -223,8 +223,6 @@ export class AutomationWorkflowRepository {
 
     try {
       await session.withTransaction(async () => {
-        // Find all workflows that reference the source configId
-        // in either draft nodes or published nodes
         const workflows = await this.model
           .find({
             tenantId,
@@ -271,7 +269,6 @@ export class AutomationWorkflowRepository {
   ): boolean {
     let modified = false;
 
-    // Patch draft nodes
     if (workflow.nodes && Array.isArray(workflow.nodes)) {
       for (const node of workflow.nodes as any[]) {
         if (node.config?.configId === sourceConfigId) {
@@ -281,7 +278,6 @@ export class AutomationWorkflowRepository {
       }
     }
 
-    // Patch published-snapshot nodes
     if (workflow.publishedNodes && Array.isArray(workflow.publishedNodes)) {
       for (const node of workflow.publishedNodes as any[]) {
         if (node.config?.configId === sourceConfigId) {

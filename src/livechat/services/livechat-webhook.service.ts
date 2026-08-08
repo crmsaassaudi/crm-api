@@ -27,8 +27,6 @@ export class LivechatWebhookService {
 
   constructor(private readonly widgetService: LivechatWidgetService) {}
 
-  // Event Listeners
-
   @OnEvent('livechat.message.inbound', { async: true })
   async onMessageReceived(payload: {
     tenantId: string;
@@ -214,8 +212,6 @@ export class LivechatWebhookService {
     });
   }
 
-  // Core Dispatch
-
   /**
    * Dispatch a webhook POST if:
    * 1. widgetId is provided
@@ -236,7 +232,6 @@ export class LivechatWebhookService {
       const webhookUrl = widget.advanced?.webhookUrl;
       if (!webhookUrl) return;
 
-      // Check if this event type is subscribed
       const subscribedEvents = widget.advanced?.webhookEvents ?? [];
       if (
         subscribedEvents.length > 0 &&
@@ -258,7 +253,6 @@ export class LivechatWebhookService {
         'X-CRM-Widget-Id': widgetId,
       };
 
-      // HMAC signature
       const secret = widget.advanced?.webhookSecret;
       if (secret) {
         const signature = createHmac('sha256', secret)

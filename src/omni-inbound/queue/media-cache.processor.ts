@@ -72,7 +72,6 @@ export class MediaCacheProcessor extends BaseTenantConsumer<MediaCacheJobData> {
     );
 
     try {
-      // Step 1: Download, compress, store, and create file record
       const { proxyUrl, fileId } = await this.mediaProxy.cacheMedia(
         tenantId,
         channelType,
@@ -83,8 +82,8 @@ export class MediaCacheProcessor extends BaseTenantConsumer<MediaCacheJobData> {
         accessToken,
       );
 
-      // Step 2: If the proxy URL is the same as original, caching failed or was skipped
-      // (e.g. quota exceeded) — no need to update
+      // Same URL back means caching failed or was skipped (e.g. quota
+      // exceeded) — nothing to update.
       if (proxyUrl === mediaUrl) {
         this.logger.debug(
           `Media cache returned original URL for message ${messageId} — skipping update`,
@@ -92,10 +91,8 @@ export class MediaCacheProcessor extends BaseTenantConsumer<MediaCacheJobData> {
         return;
       }
 
-      // Step 3: Update the message record with the stable proxy URL
       await this.messageRepo.updateMediaProxyUrl(messageId, proxyUrl);
 
-      // Step 4: Emit event for real-time frontend notification
       this.eventEmitter.emit('omni.message.media_cached', {
         tenantId,
         conversationId,
@@ -108,7 +105,6 @@ export class MediaCacheProcessor extends BaseTenantConsumer<MediaCacheJobData> {
         `Media cached successfully for message ${messageId}: ${fileId ?? 'no-file-id'}`,
       );
     } catch (error: any) {
-      // Check if this is the last attempt
       const isLastAttempt = job.attemptsMade >= (job.opts?.attempts ?? 3) - 1;
 
       if (isLastAttempt) {
@@ -117,7 +113,6 @@ export class MediaCacheProcessor extends BaseTenantConsumer<MediaCacheJobData> {
           error.stack,
         );
 
-        // Emit event so frontend can show "Media unavailable"
         this.eventEmitter.emit('omni.message.media_cache_failed', {
           tenantId,
           conversationId,

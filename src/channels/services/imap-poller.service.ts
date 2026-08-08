@@ -224,7 +224,6 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
         `[ImapPoller] Tick: ${imapConfigs.length} IMAP-enabled configs found`,
       );
 
-      // Fan out: check each config's polling schedule
       await Promise.allSettled(
         imapConfigs.map((config) => this.checkAndPoll(config)),
       );
@@ -243,11 +242,9 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
     const cacheKey = `imap:lastpoll:${config.id}`;
     const client = this.redisService.getClient();
 
-    // Check when we last polled this config
     const lastPollStr = await client.get(cacheKey);
     const lastPollMs = lastPollStr ? parseInt(lastPollStr, 10) : 0;
 
-    // Determine interval based on business hours + activity
     const interval = await runWithTenantContext(this.cls, config.tenantId, () =>
       this.getDynamicInterval(config.tenantId),
     );
@@ -271,7 +268,6 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    // Time to poll — acquire distributed lock
     const lockKey = `imap:lock:${config.id}`;
 
     try {
@@ -287,7 +283,6 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
               this.pollMailbox(config),
             ),
           );
-          // Record poll time
           await client.set(cacheKey, Date.now().toString(), 'PX', interval * 2);
           this.logger.log(
             `[ImapPoller] ${config.name}: Poll complete — recorded lastPoll`,
@@ -334,7 +329,6 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
         return this.IDLE_INTERVAL_MS;
       }
 
-      // Check recent activity
       const activityKey = `imap:activity:${tenantId}`;
       const client = this.redisService.getClient();
       const lastActivity = await client.get(activityKey);
@@ -1052,7 +1046,7 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
         (this.configRepo as any).model;
 
       if (!ChannelConfigModel) {
-        // Fallback: scan visible configs
+        // No raw model reference resolved — nothing to poll this tick.
         return [];
       }
 
@@ -1077,8 +1071,4 @@ export class ImapPollerService implements OnModuleInit, OnModuleDestroy {
       return [];
     }
   }
-
-  // Basic Email Parsers
-
-  // parseHeaders and parseBody are now handled by mailparser in processEmail()
 }

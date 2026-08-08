@@ -296,11 +296,6 @@ export class UsersService {
   }
 
   /**
-   * Editing your own membership is always privilege self-service, so it is
-   * refused outright — even when the caller holds `users:update`. Separation of
-   * duties: another admin makes the change, and the audit log names them.
-   */
-  /**
    * The same anti-escalation invariant, for the one grant that is not a
    * permission key: `tenants[].roles`.
    *
@@ -356,6 +351,11 @@ export class UsersService {
     }
   }
 
+  /**
+   * Editing your own membership is always privilege self-service, so it is
+   * refused outright — even when the caller holds `users:update`. Separation of
+   * duties: another admin makes the change, and the audit log names them.
+   */
   private assertNotSelfPrivilegeEdit(targetUserId: string): void {
     const callerId = this.cls.get<string>('userId');
     if (callerId && String(callerId) === String(targetUserId)) {
@@ -869,7 +869,6 @@ export class UsersService {
       throw new UnprocessableEntityException('Tenant context missing');
     }
 
-    // Validate tenant exists
     const tenant = await this.tenantsRepository.findById(tenantId);
     if (!tenant) {
       throw new UnprocessableEntityException('Tenant not found');
@@ -897,7 +896,6 @@ export class UsersService {
     );
 
     if (existingUser) {
-      // Check if user already belongs to this tenant
       const alreadyInTenant = existingUser.tenants?.some(
         (t) => t.tenantId?.toString() === tenantId.toString(),
       );
@@ -910,7 +908,6 @@ export class UsersService {
         });
       }
 
-      // Add user to Keycloak organization (if they have a keycloakId)
       if (existingUser.keycloakId && tenant.keycloakOrgId) {
         try {
           await this.keycloakAdminService.addUserToOrganization(
@@ -924,7 +921,6 @@ export class UsersService {
         }
       }
 
-      // Add tenant membership via upsertWithTenants
       const updated = await this.usersRepository.upsertWithTenants(
         existingUser.keycloakId ?? '',
         inviteUserDto.email,
@@ -952,7 +948,7 @@ export class UsersService {
     let keycloakUser: { id: string; email: string };
 
     try {
-      // Check if user already exists in Keycloak (may exist from another system)
+      // May exist from another system.
       const existingKcUser = await this.keycloakAdminService.findUserByEmail(
         inviteUserDto.email,
       );
@@ -960,7 +956,6 @@ export class UsersService {
       if (existingKcUser) {
         keycloakUser = existingKcUser;
       } else {
-        // Create new Keycloak user with temporary password
         keycloakUser = await this.keycloakAdminService.createUser(
           inviteUserDto.email,
           `Tmp!${Date.now()}KC`,
@@ -974,7 +969,6 @@ export class UsersService {
       );
     }
 
-    // Add user to Keycloak organization
     if (tenant.keycloakOrgId) {
       try {
         await this.keycloakAdminService.addUserToOrganization(
@@ -988,7 +982,6 @@ export class UsersService {
       }
     }
 
-    // Send password reset email for new users
     if (keycloakUserCreated) {
       try {
         await this.keycloakAdminService.resetPassword(keycloakUser.id);
@@ -1058,14 +1051,12 @@ export class UsersService {
 
     const tenant = await this.tenantsRepository.findById(tenantId);
 
-    // Prevent removing tenant owner
     if (tenant && tenant.ownerId?.toString() === userId.toString()) {
       throw new UnprocessableEntityException(
         'Cannot remove the tenant owner from the tenant',
       );
     }
 
-    // Remove user from all groups in this tenant
     const groups = await this.groupRepository.findGroupsByMember(
       tenantId,
       userId,
@@ -1098,15 +1089,12 @@ export class UsersService {
     return updated;
   }
 
-  // Get all groups a user belongs to within the current tenant
-
   async getUserGroups(userId: string) {
     const tenantId = this.cls.get('tenantId');
     if (!tenantId) {
       throw new UnprocessableEntityException('Tenant context missing');
     }
 
-    // Verify user belongs to tenant
     const user = await this.usersRepository.findById(userId);
     if (!user) {
       throw new BusinessException(
@@ -1154,8 +1142,6 @@ export class UsersService {
     }
   }
 
-  // Check if email exists in system (global lookup)
-
   async checkEmail(email: string): Promise<{
     exists: boolean;
     user?: { firstName: string | null; lastName: string | null };
@@ -1169,8 +1155,6 @@ export class UsersService {
     }
     return { exists: false };
   }
-
-  // Create a new user within the current tenant context
 
   async createForTenant(dto: {
     email: string;
@@ -1192,7 +1176,6 @@ export class UsersService {
       throw new UnprocessableEntityException('Tenant not found');
     }
 
-    // Reject if user already exists in the system
     const existingUser = await this.usersRepository.findByEmail(dto.email);
     if (existingUser) {
       throw new UnprocessableEntityException({
@@ -1238,7 +1221,6 @@ export class UsersService {
       );
     }
 
-    // Add to Keycloak organization
     if (tenant.keycloakOrgId) {
       try {
         await this.keycloakAdminService.addUserToOrganization(
@@ -1252,7 +1234,6 @@ export class UsersService {
       }
     }
 
-    // Send password reset email
     if (keycloakUserCreated) {
       try {
         await this.keycloakAdminService.resetPassword(keycloakUser.id);
@@ -1316,10 +1297,9 @@ export class UsersService {
       });
     }
 
-    // 1. Update Keycloak if applicable
     if (user.provider === AuthProvidersEnum.email && user.keycloakId) {
       try {
-        const enabled = status.id === StatusEnum.active; // 'active' === 'active'
+        const enabled = status.id === StatusEnum.active;
         await this.keycloakAdminService.updateUserStatus(
           user.keycloakId,
           enabled,
@@ -1332,7 +1312,6 @@ export class UsersService {
       }
     }
 
-    // 2. Update Local DB
     const updated = await this.usersRepository.update(id, { status });
     if (updated) {
       this.emitUserPermissionsUpdated(updated);

@@ -64,8 +64,6 @@ const SCALAR_FIELDS = IMPORT_MAPPABLE_FIELDS.filter(
   (f) => !IMPORT_ARRAY_FIELDS.has(f),
 );
 
-// Tenant settings (snapshotted at enqueue time)
-
 export interface ImportTenantSettings {
   uniqueEmail: boolean;
   uniquePhone: boolean;
@@ -214,8 +212,6 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     );
   }
 
-  // Row mapping
-
   protected mapRow(
     raw: Record<string, string>,
     mapping: Record<string, string>,
@@ -341,8 +337,6 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     return value;
   }
 
-  // Row validation
-
   protected validateRow(
     mapped: MappedRow,
     _data: ContactImportJobData,
@@ -426,8 +420,6 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     return errors;
   }
 
-  // Dedup value extraction
-
   protected extractDedupValues(row: MappedRow, field: string): string[] {
     switch (field) {
       case 'emails':
@@ -443,8 +435,6 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
         return [];
     }
   }
-
-  // Build insert document
 
   protected buildInsert(
     mapped: MappedRow,
@@ -475,8 +465,6 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
     };
   }
 
-  // Build overwrite update
-
   protected buildOverwrite(
     mapped: MappedRow,
     data: ContactImportJobData,
@@ -496,8 +484,6 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
       set.tags = mapped.arrayFields.tags;
     return { $set: set };
   }
-
-  // Build merge update
 
   protected buildMerge(
     mapped: MappedRow,
@@ -559,10 +545,6 @@ export class ContactImportProcessor extends BaseImportProcessor<ContactImportJob
 
     return Object.keys(update).length ? update : null;
   }
-
-  // Post-write hook: automation events
-
-  // Contact-specific helpers
 
   private mergeArray(
     field: 'emails' | 'phones',

@@ -178,7 +178,6 @@ export class TenantProvisioningWorker
         saga,
       );
 
-      // Emit event for downstream listeners
       runWithTenantContext(this.cls, saga.tenantId!, () =>
         this.eventEmitter.emit(
           'tenant.created',

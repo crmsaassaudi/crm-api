@@ -54,7 +54,6 @@ export class GdprEmailService {
       `[GDPR] Removing contact ${contactId} references for tenant ${tenantId}`,
     );
 
-    // Find all emails that reference this contact
     const emails = await this.emailContentModel
       .find({
         tenantId,
@@ -66,7 +65,6 @@ export class GdprEmailService {
     let emailsRedacted = 0;
 
     for (const email of emails) {
-      // Remove this contact from the contactIds array
       const updatedContactIds = (email.contactIds || []).filter(
         (id: string) => id.toString() !== contactId.toString(),
       );
@@ -74,11 +72,9 @@ export class GdprEmailService {
       referencesRemoved++;
 
       if (updatedContactIds.length === 0) {
-        // No more contact references → redact the content
         await this.redactEmailContent(email._id.toString(), tenantId);
         emailsRedacted++;
       } else {
-        // Other contacts still reference this email → only remove the ID
         await this.emailContentModel.updateOne(
           { _id: email._id, tenantId },
           { $set: { contactIds: updatedContactIds } },

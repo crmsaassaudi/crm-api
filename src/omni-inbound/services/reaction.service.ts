@@ -64,12 +64,10 @@ export class ReactionService {
         // so this lookup is consistent across all channels.
         let message: OmniMessageDocument | null = null;
 
-        // Path 1: Internal ID (MongoDB _id)
         if (payload.messageId && isValidObjectId(payload.messageId)) {
           message = await this.messageModel.findById(payload.messageId).exec();
         }
 
-        // Path 2: External provider ID
         if (!message && payload.externalMessageId) {
           message = await this.messageModel
             .findOne({ externalMessageId: payload.externalMessageId })
@@ -88,7 +86,6 @@ export class ReactionService {
         const conversationId = message.conversationId;
 
         if (payload.action === 'unreact') {
-          // Remove this sender's reaction
           await this.messageModel.updateOne(
             { _id: message._id },
             {
@@ -142,14 +139,12 @@ export class ReactionService {
           );
         }
 
-        // Fetch updated reactions
         const updated = await this.messageModel
           .findById(message._id)
           .select('reactions')
           .lean()
           .exec();
 
-        // Broadcast to all connected clients
         this.eventEmitter.emit('omni.reaction.persisted', {
           tenantId: payload.tenantId,
           channelType: payload.channelType,

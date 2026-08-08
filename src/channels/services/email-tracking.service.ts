@@ -25,7 +25,6 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
  *   Without bot filtering, tracking data is worse than useless — it's misleading.
  */
 
-// 1x1 Transparent PNG
 // Pre-computed minimal transparent PNG (68 bytes) — better than generating on each request
 const TRACKING_PIXEL = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQAB' +
@@ -178,7 +177,6 @@ export class EmailTrackingService {
     const classification = this.classifyHit(userAgent, ipAddress);
 
     if (existing) {
-      // Update existing record with more info
       await this.trackingModel.updateOne(
         { trackingId },
         { $set: { classification, userAgent, ipAddress } },
@@ -189,20 +187,16 @@ export class EmailTrackingService {
       `[EmailTracking] Pixel hit: ${trackingId}, class=${classification}, UA=${userAgent?.substring(0, 50)}`,
     );
 
-    // Event rules based on classification
     switch (classification) {
       case 'human':
-        // Immediately fire notification
         await this.fireOpenNotification(trackingId, existing);
         break;
 
       case 'bot':
-        // Audit only — no notification
         this.logger.debug(`[EmailTracking] Bot hit ignored: ${trackingId}`);
         break;
 
       case 'unknown':
-        // Buffer for 60 seconds, then classify as "likely_opened"
         setTimeout(async () => {
           try {
             await this.fireOpenNotification(trackingId, existing);
@@ -248,7 +242,6 @@ export class EmailTrackingService {
     userAgent: string | null,
     ipAddress: string | null,
   ): 'human' | 'bot' | 'unknown' {
-    // Check User-Agent for known bots
     if (userAgent) {
       const ua = userAgent.toLowerCase();
       for (const botUA of BOT_USER_AGENTS) {
@@ -258,7 +251,6 @@ export class EmailTrackingService {
       }
     }
 
-    // Check IP for known prefetch ranges
     if (ipAddress) {
       for (const prefix of BOT_IP_PREFIXES) {
         if (ipAddress.startsWith(prefix)) {
@@ -291,13 +283,11 @@ export class EmailTrackingService {
     }
     if (!record || record.notificationSent) return;
 
-    // Mark as notified
     await this.trackingModel.updateOne(
       { trackingId },
       { $set: { notificationSent: true } },
     );
 
-    // Emit event for WebSocket notification
     this.eventEmitter.emit('email.tracking.opened', {
       tenantId: record.tenantId?.toString(),
       messageId: record.messageId?.toString(),

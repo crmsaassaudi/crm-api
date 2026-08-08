@@ -42,7 +42,6 @@ const ACCOUNT_IMPORT_CONFIG: ImportModuleConfig = {
   dedupMatchingFields: ['name', 'emails', 'taxId'],
   dedupPolicies: ['skip', 'overwrite', 'merge'],
   referenceFields: [
-    // statusId: resolve by label or apiName
     {
       entityField: 'statusId',
       collection: 'account_statuses',
@@ -50,7 +49,6 @@ const ACCOUNT_IMPORT_CONFIG: ImportModuleConfig = {
       tenantScoped: true,
       required: false,
     },
-    // typeId: resolve by name or apiName
     {
       entityField: 'typeId',
       collection: 'account_types',
@@ -58,7 +56,6 @@ const ACCOUNT_IMPORT_CONFIG: ImportModuleConfig = {
       tenantScoped: true,
       required: false,
     },
-    // ownerId: resolve by email or name
     {
       entityField: 'ownerId',
       collection: 'users',
@@ -184,7 +181,6 @@ export class AccountImportProcessor extends BaseImportProcessor<AccountImportJob
       }
     }
 
-    // Deduplicate array values
     arrayFields.emails = this.uniq(arrayFields.emails);
     arrayFields.phones = this.uniq(arrayFields.phones);
     arrayFields.tags = this.uniq(arrayFields.tags);

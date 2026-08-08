@@ -410,9 +410,6 @@ export class ContactsService {
           : null,
     );
 
-    // Re-project only when an identity array actually changed — reconciling on every
-    // field edit would cost two queries per PATCH for no change.
-    // Emit automation event: field_updated.Contact
     if (updated) {
       this.entityAudit.emit({
         entity: 'contact',
@@ -423,7 +420,6 @@ export class ContactsService {
         newSnapshot: updated,
       });
 
-      // Emit lead-scoring event
       this.eventEmitter.emit('contact.updated', {
         tenantId: (updated as any).tenantId,
         contactId: updated.id,
@@ -567,7 +563,6 @@ export class ContactsService {
       throw new NotFoundException(`Contact ${contactId} not found`);
     }
 
-    // Check if this identity is already linked to another contact
     const existing = await this.repository.findByOmniIdentity(
       identity.channelType,
       identity.senderId,
@@ -786,14 +781,9 @@ export class ContactsService {
   }
 
   /**
-   * Change the lifecycle stage of a contact.
-   * This replaces the old convertLead method — "conversion" is now just a stage transition.
-   * Records a stage history entry for conversion rate and velocity tracking.
-   *
-   * Guardrails (v2.5):
-   * - Validates that newStage exists in lifecycle config (rejects invalid strings)
-   * - Computes transition direction (forward/backward/lateral) for analytics
-   * - Records skipped stages when jumping non-sequentially
+   * There is no separate Lead entity — "conversion" is just a stage
+   * transition. Records a stage history entry for conversion rate and
+   * velocity tracking.
    */
   async changeStage(
     id: string,
@@ -815,7 +805,6 @@ export class ContactsService {
       throw new BadRequestException(`Lifecycle stage "${newStage}" not found`);
     }
 
-    // Guardrail 1: Validate stage exists in lifecycle config
     const validStages = await this.getValidStages();
     if (!validStages.includes(stage.apiName)) {
       throw new BadRequestException(
@@ -829,25 +818,21 @@ export class ContactsService {
     );
     const previousStageName = previousStage?.apiName ?? null;
 
-    // Guardrail 2: Compute transition direction + skipped stages
     const { direction, skippedStages } = this.computeTransitionDirection(
       validStages,
       previousStageName,
       stage.apiName,
     );
 
-    // Get the current user from CLS context for attribution
     const changedById = this.cls.get('user.id') ?? contact.updatedById;
 
     let finalAccountId = params?.accountId;
 
-    // 1. Optionally create account on stage transition
     if (params?.createAccount && params?.accountData) {
       const account = await this.accountsService.create(params.accountData);
       finalAccountId = account.id;
     }
 
-    // 2. Update stage (and optionally link to account) with optimistic locking
     const updated = await this.applyStageUpdate(
       id,
       contact,
@@ -855,7 +840,6 @@ export class ContactsService {
       finalAccountId,
     );
 
-    // 3-4. Record transition side effects + optionally create deal
     const dealId = await this.recordStageTransitionSideEffects(id, {
       contact,
       updated,
@@ -976,7 +960,6 @@ export class ContactsService {
     // Sales timeline uses Virtual Activity (pulled from stageHistory[]).
     // Audit Trail captures field-level diff (lifecycleStageId) automatically.
 
-    // Emit audit trail: field-level diff (lifecycleStageId, statusId)
     // AuditLogListener will compute old vs new snapshot → audit_logs
     this.entityAudit.emit({
       entity: 'contact',
@@ -989,7 +972,6 @@ export class ContactsService {
 
     await this.repository.touchLastActivity(id, occurredAt);
 
-    // Optionally create deal on stage transition
     if (ctx.dealData && ctx.updated) {
       // `contactIds`, plural. This used to pass `contactId`, which the deal
       // schema does not have, so Mongoose dropped it in strict mode and every
@@ -1051,8 +1033,6 @@ export class ContactsService {
     if (!contact) throw new NotFoundException('Contact not found');
     return this.repository.getStageHistory(id);
   }
-
-  // Automation Event Emitter
 
   async unmaskFields(
     id: string,
@@ -1388,7 +1368,6 @@ export class ContactsService {
       this.exportJobModel.countDocuments(filter).exec(),
     ]);
 
-    // Enrich active/queued jobs with real-time BullMQ progress.
     await this.enrichJobsWithBullProgress(data, this.exportQueue);
 
     // .lean() strips Mongoose virtuals/transforms, so ObjectId fields remain
@@ -1458,8 +1437,8 @@ export class ContactsService {
 
     await this.validateFileExists(dto.fileKey);
 
-    // 4. Snapshot tenant identity settings AT ENQUEUE TIME so the worker never
-    //    queries crm_settings inside its hot loop (latency + consistency).
+    // Snapshot tenant identity settings AT ENQUEUE TIME so the worker never
+    // queries crm_settings inside its hot loop (latency + consistency).
     const tenantSettings = await this.fetchImportTenantSettings();
     // The vocabulary a file's text values resolve against — stage/status/source
     // names, tag names, custom-field types. Snapshotted for the same reason as
@@ -1564,10 +1543,8 @@ export class ContactsService {
       this.importJobModel.countDocuments(filter).exec(),
     ]);
 
-    // Enrich active/queued jobs with real-time BullMQ progress
     await this.enrichJobsWithBullProgress(data, this.importQueue);
 
-    // Sanitize lean docs (ObjectId → string, extract populated user)
     const sanitized = this.sanitizeLeanJobDocs(data);
 
     return { data: sanitized, total, page, limit };
@@ -1583,7 +1560,6 @@ export class ContactsService {
       .exec();
     if (!doc) throw new NotFoundException('Import job not found');
 
-    // Enrich active jobs with real-time progress from BullMQ
     if (doc.status === 'active' || doc.status === 'queued') {
       try {
         const bullJob = await this.importQueue.getJob(doc.bullJobId);
@@ -1670,14 +1646,6 @@ export class ContactsService {
   }
 
   /**
-   * The tenant's default country code, from the same `contact_identity` setting
-   * the import and identity-sync paths already read.
-   *
-   * Never throws: a phone search that cannot resolve the code still works for
-   * the international and bare-digit forms, so an unreadable setting must
-   * degrade the match rather than fail the list request.
-   */
-  /**
    * Whether a search term shaped like a phone number or e-mail may be matched
    * against the masked half of the index.
    *
@@ -1693,6 +1661,14 @@ export class ContactsService {
     return allowed;
   }
 
+  /**
+   * The tenant's default country code, from the same `contact_identity` setting
+   * the import and identity-sync paths already read.
+   *
+   * Never throws: a phone search that cannot resolve the code still works for
+   * the international and bare-digit forms, so an unreadable setting must
+   * degrade the match rather than fail the list request.
+   */
   private async resolveDefaultCountryCode(): Promise<string | undefined> {
     try {
       const identity =

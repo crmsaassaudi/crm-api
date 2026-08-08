@@ -3,9 +3,6 @@ import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 import type Redis from 'ioredis';
 import { ConversationRepository } from '../repositories/conversation.repository';
 
-/**
- * Cached identity resolved from Redis or the database.
- */
 export interface ResolvedIdentity {
   contactId: string | null;
   conversationId: string | null;
@@ -31,7 +28,6 @@ export interface ResolvedIdentity {
 export class IdentityService {
   private readonly logger = new Logger(IdentityService.name);
 
-  /** Default cache TTL: 24 hours in seconds */
   private readonly CACHE_TTL = 60 * 60 * 24;
 
   constructor(
@@ -52,7 +48,6 @@ export class IdentityService {
   ): Promise<ResolvedIdentity> {
     const key = this.buildKey(platform, pageId, senderId);
 
-    // Step 1: Redis lookup
     const cached = await this.redis.get(key);
     if (cached) {
       try {
@@ -63,7 +58,6 @@ export class IdentityService {
       }
     }
 
-    // Step 2: DB lookup — find the active conversation for this sender
     const conversation = await this.conversationRepo.findActiveByExternalId(
       '', // tenant is filtered elsewhere via tenant-filter plugin
       this.toSchemaChannelType(platform),
@@ -76,7 +70,6 @@ export class IdentityService {
       conversationId: conversation?.id ?? null,
     };
 
-    // Step 3: Write-back into Redis (only if we found something useful)
     if (identity.conversationId) {
       await this.setCache(key, identity);
     }
@@ -85,7 +78,7 @@ export class IdentityService {
   }
 
   /**
-   * Resolve with a specific tenant (used in the refactored inbound flow).
+   * Resolve with a specific tenant.
    */
   async resolveIdentityForTenant(
     tenantId: string,
@@ -96,7 +89,6 @@ export class IdentityService {
     const key = this.buildKey(platform, pageId, senderId, tenantId);
     const legacyKey = this.buildKey(platform, pageId, senderId);
 
-    // Step 1: Redis lookup
     const cached = await this.redis.get(key);
     if (cached) {
       try {
@@ -119,7 +111,6 @@ export class IdentityService {
       }
     }
 
-    // Step 2: DB lookup with explicit tenant
     const conversation = await this.conversationRepo.findActiveByExternalId(
       tenantId,
       this.toSchemaChannelType(platform),
@@ -132,7 +123,6 @@ export class IdentityService {
       conversationId: conversation?.id ?? null,
     };
 
-    // Step 3: Write-back
     if (identity.conversationId) {
       await this.setCache(key, identity);
     }
@@ -140,9 +130,6 @@ export class IdentityService {
     return identity;
   }
 
-  /**
-   * Update the cached identity after a new Contact/Conversation is created.
-   */
   async updateIdentity(
     platform: string,
     pageId: string,

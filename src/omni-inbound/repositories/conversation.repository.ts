@@ -255,7 +255,6 @@ export class ConversationRepository {
     const filter = this.buildFilter(query);
     const sort: Record<string, SortOrder> = { lastMessageAt: -1 };
 
-    // Convert 1-indexed to 0-indexed for Mongoose skip
     const safePage = Math.max(1, page);
     const skip = (safePage - 1) * limit;
 
@@ -315,7 +314,6 @@ export class ConversationRepository {
 
     const safeLimit = Math.max(1, Math.min(limit, 50));
 
-    // Fetch limit + 1 to check if there are more items
     const items = await this.model
       .find(filter)
       .sort({ lastMessageAt: sortDir, _id: sortDir })
@@ -1240,7 +1238,7 @@ export class ConversationRepository {
         `findAllByExternalId truncated: ${docs.length} sessions for ` +
           `${channelType}/${externalId} (limit=${limit})`,
       );
-      docs.length = limit; // truncate in-place
+      docs.length = limit;
     }
 
     return docs.map((doc) => OmniConversationMapper.toDomain(doc as any));
@@ -1454,7 +1452,6 @@ export class ConversationRepository {
             resolveReason: null,
             resolveNote: null,
             resolveSource: null,
-            // Reset bot session context — fresh start on reopen
             'bot.sessionId': null,
             'bot.flowId': null,
             'bot.status': 'active',

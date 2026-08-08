@@ -43,14 +43,12 @@ export class BusinessHoursService {
       );
 
       if (!businessHours) {
-        // No business hours configured → treat as always open
         return true;
       }
 
       const timezone = businessHours.timezone || 'UTC';
       const now = this.getNow(timezone);
 
-      // Holiday check
       if (this.isHoliday(now, businessHours.holidays)) {
         this.logger.debug(
           `Tenant ${tenantId} is on a holiday — outside business hours`,
@@ -58,11 +56,8 @@ export class BusinessHoursService {
         return false;
       }
 
-      // Weekly schedule check
-      // Support both legacy format (schedule.{dayName}) and new format (workingDays[])
       const daySchedule = this.getDaySchedule(now, businessHours);
       if (!daySchedule?.enabled) {
-        // This day is not a working day
         return false;
       }
 
@@ -202,7 +197,6 @@ export class BusinessHoursService {
   ): { enabled: boolean; start?: string; end?: string; slots?: any[] } | null {
     const dayOfWeek = this.getDayName(now);
 
-    // New format: workingDays array
     if (businessHours.workingDays && Array.isArray(businessHours.workingDays)) {
       const dayConfig = businessHours.workingDays.find(
         (d: any) => d.day?.toLowerCase() === dayOfWeek,
@@ -210,7 +204,6 @@ export class BusinessHoursService {
       return dayConfig ?? null;
     }
 
-    // Legacy format: schedule object keyed by day name
     if (businessHours.schedule) {
       return businessHours.schedule[dayOfWeek] ?? null;
     }
@@ -257,9 +250,6 @@ export class BusinessHoursService {
     }
   }
 
-  /**
-   * Get the current date/time in a specific timezone.
-   */
   private getNow(timezone: string): Date {
     try {
       const dateStr = new Date().toLocaleString('en-US', {
@@ -279,9 +269,6 @@ export class BusinessHoursService {
     }
   }
 
-  /**
-   * Get the lowercase day name for a Date.
-   */
   private getDayName(date: Date): string {
     const days = [
       'sunday',
@@ -295,9 +282,6 @@ export class BusinessHoursService {
     return days[date.getDay()];
   }
 
-  /**
-   * Convert a "HH:MM" string to minutes since midnight.
-   */
   private timeToMinutes(time: string): number {
     const [hours, minutes] = time.split(':').map(Number);
     return (hours || 0) * 60 + (minutes || 0);
@@ -348,13 +332,11 @@ export class BusinessHoursService {
     while (remainingMinutes > 0 && iterations < maxIterations) {
       iterations++;
 
-      // Skip holidays
       if (this.isHoliday(cursor, businessHours.holidays)) {
         cursor = this.advanceToNextDay(cursor);
         continue;
       }
 
-      // Get today's schedule
       const daySchedule = this.getDaySchedule(cursor, businessHours);
       if (!daySchedule?.enabled) {
         cursor = this.advanceToNextDay(cursor);
@@ -432,9 +414,6 @@ export class BusinessHoursService {
     return Math.ceil(totalMs / 60_000);
   }
 
-  /**
-   * Consume available minutes in today's working slots.
-   */
   private consumeWorkingSlots(
     cursor: Date,
     daySchedule: any,
@@ -448,10 +427,8 @@ export class BusinessHoursService {
       const slotStart = this.timeToMinutes(slot.start);
       const slotEnd = this.timeToMinutes(slot.end);
 
-      // Skip slots that have already passed
       if (currentMinutes >= slotEnd) continue;
 
-      // Calculate effective start (either now or slot start, whichever is later)
       const effectiveStart = Math.max(currentMinutes, slotStart);
       const availableMinutes = slotEnd - effectiveStart;
 
@@ -469,16 +446,12 @@ export class BusinessHoursService {
         return { cursor, remainingMinutes: 0 };
       }
 
-      // Consume all available minutes in this slot
       currentRemaining -= availableMinutes;
     }
 
     return { cursor, remainingMinutes: currentRemaining };
   }
 
-  /**
-   * Get normalized working slots from a day schedule.
-   */
   private getWorkingSlots(
     daySchedule: any,
   ): Array<{ start: string; end: string }> {
@@ -494,9 +467,6 @@ export class BusinessHoursService {
     ];
   }
 
-  /**
-   * Advance cursor to the start of the next day (00:00).
-   */
   private advanceToNextDay(date: Date): Date {
     const next = new Date(date);
     next.setDate(next.getDate() + 1);

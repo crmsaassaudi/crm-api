@@ -31,15 +31,12 @@ export class LivechatAdapter implements ChannelAdapter {
     this.gateway = gw;
   }
 
-  // ChannelAdapter contract
-
   normalize(
     rawPayload: any,
     tenantId: string,
     channelId: string,
     _channelConfig?: any,
   ): OmniPayload[] {
-    // Text message
     if (rawPayload?.visitorId && rawPayload?.text) {
       return [
         {
@@ -176,7 +173,6 @@ export class LivechatAdapter implements ChannelAdapter {
     let resolvedUrl: string | undefined;
     let thumbnailUrl: string | undefined;
 
-    // Resolve presigned URL from file record.
     // Livechat media always has fileId (set by OutboundService.sendAgentMedia).
     if (media.fileId) {
       try {
@@ -186,7 +182,6 @@ export class LivechatAdapter implements ChannelAdapter {
             file.path,
             3600, // 1 hour TTL — sufficient for widget session
           );
-          // Resolve thumbnail if available (for video/image)
           if (file.thumbnailKey) {
             thumbnailUrl = await this.filesService.getPresignedDownloadUrl(
               file.thumbnailKey,
@@ -222,8 +217,6 @@ export class LivechatAdapter implements ChannelAdapter {
 
     return { success: true };
   }
-
-  // Helpers
 
   /**
    * Extract a reaction event from a livechat widget payload.

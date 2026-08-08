@@ -170,7 +170,6 @@ describe('BaseDocumentRepository — real MongoDB', () => {
   // PATCH SEMANTICS — the #1 data corruption risk
   describe('PATCH semantics (update only submitted fields)', () => {
     it('should updating name should NOT overwrite existing emails/phones with empty arrays', async () => {
-      // Create entity with real data
       const created = await runWithTenant(TENANT_A, async () => {
         const cls = ClsServiceManager.getClsService();
         repo = new TestEntityRepository(TestModel, cls);
@@ -278,7 +277,7 @@ describe('BaseDocumentRepository — real MongoDB', () => {
         repo = new TestEntityRepository(TestModel, cls);
         return repo.create({
           name: 'Explicit tenant',
-          tenantId: TENANT_A, // explicitly set
+          tenantId: TENANT_A,
         } as any);
       });
 

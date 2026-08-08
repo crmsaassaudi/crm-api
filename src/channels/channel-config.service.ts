@@ -64,7 +64,6 @@ export class ChannelConfigService {
   ): Promise<ChannelConfig> {
     const tenantId = this.cls.get('tenantId');
 
-    // 1. Validate provider type exists in registry
     const schema = getProviderSchema(dto.providerType);
     if (!schema) {
       throw new BadRequestException(
@@ -72,10 +71,8 @@ export class ChannelConfigService {
       );
     }
 
-    // 2. Validate required fields
     this.validateRequiredFields(schema, dto.credentials, dto.publicSettings);
 
-    // 3. Verify connection via adapter
     this.logger.log(
       `[ChannelConfig] Verifying connection for ${dto.providerType} (tenantId=${tenantId})`,
     );
@@ -91,12 +88,11 @@ export class ChannelConfigService {
       );
     }
 
-    // 4. Encrypt credentials (async — KMS requires network call)
+    // Async: KMS requires a network call to encrypt credentials.
     const encryptedCredentials = await this.crypto.encrypt(
       JSON.stringify(dto.credentials),
     );
 
-    // 5. Save to DB
     const config = await this.repository.create({
       tenantId,
       providerType: dto.providerType,
@@ -112,7 +108,6 @@ export class ChannelConfigService {
       consecutiveFailures: 0,
     });
 
-    // 6. If set as default, unset others
     if (dto.isDefault) {
       await this.repository.setDefault(tenantId, config.id, dto.providerType);
     }
@@ -121,7 +116,6 @@ export class ChannelConfigService {
       `[ChannelConfig] Created config: ${config.name} (${dto.providerType}) id=${config.id}`,
     );
 
-    // Audit trail: record creation
     this.emitAuditEvent('created', {
       configId: config.id,
       configName: config.name,
@@ -133,7 +127,6 @@ export class ChannelConfigService {
       },
     });
 
-    // Strip credentials before returning
     delete config.encryptedCredentials;
     return config;
   }
@@ -200,7 +193,6 @@ export class ChannelConfigService {
       configName: updated.name,
     });
 
-    // Audit trail: record update with changed fields
     const changedFields = Object.keys(updateData).filter(
       (k) => k !== 'encryptedCredentials',
     );
@@ -263,7 +255,6 @@ export class ChannelConfigService {
       configName: config.name,
     });
 
-    // Audit trail: record deletion
     this.emitAuditEvent('deleted', {
       configId: id,
       configName: config.name,
@@ -291,7 +282,6 @@ export class ChannelConfigService {
       configName: config.name,
     });
 
-    // Audit trail
     this.emitAuditEvent('set-default', {
       configId: id,
       configName: config.name,
@@ -361,7 +351,6 @@ export class ChannelConfigService {
   ): Promise<{ migratedWorkflows: number; deleted: boolean }> {
     const tenantId = this.cls.get('tenantId');
 
-    // Validate both configs exist and belong to tenant
     const source = await this.repository.findById(tenantId, sourceConfigId);
     if (!source) throw new NotFoundException('Source config not found');
 
@@ -374,7 +363,6 @@ export class ChannelConfigService {
       );
     }
 
-    // Migrate workflow references via repository (uses MongoDB transaction)
     let migratedCount = 0;
     try {
       migratedCount = await this.workflowRepository.replaceConfigIdInNodes(
@@ -391,16 +379,13 @@ export class ChannelConfigService {
       );
     }
 
-    // Soft-delete the source config
     await this.repository.softDelete(tenantId, sourceConfigId);
 
-    // Invalidate pool cache
     this.eventEmitter.emit('channel-config.deleted', {
       configId: sourceConfigId,
       configName: source.name,
     });
 
-    // Audit trail: record migration + deletion
     this.emitAuditEvent('deleted', {
       configId: sourceConfigId,
       configName: source.name,

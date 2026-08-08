@@ -185,7 +185,6 @@ export class CrmRecordUpdateService {
         };
       }
 
-      // Fetch current record to get previous value
       const currentRecord = await service.findOne(recordId);
       if (!currentRecord) {
         return {
@@ -218,10 +217,8 @@ export class CrmRecordUpdateService {
         }
       }
 
-      // Type cast the value
       const castedValue = this.castValue(params.value, previousValue);
 
-      // Update the record
       const updateData = { [field]: castedValue } as any;
       const updated = await service.update(recordId, updateData);
 
@@ -234,7 +231,6 @@ export class CrmRecordUpdateService {
         };
       }
 
-      // Emit automation event with loop prevention metadata
       // The EventListener will skip workflows whose _id matches sourceWorkflowId
       await this.emitFieldUpdatedEvent({
         tenantId,
@@ -329,18 +325,15 @@ export class CrmRecordUpdateService {
 
     const strValue = String(newValue).trim();
 
-    // If current value is Boolean → cast to Boolean
     if (typeof currentValue === 'boolean') {
       return strValue.toLowerCase() === 'true';
     }
 
-    // If current value is Number → try to parse as Number
     if (typeof currentValue === 'number') {
       const num = parseFloat(strValue);
       if (!isNaN(num)) return num;
     }
 
-    // If current value is a Date → try to parse as Date
     if (currentValue instanceof Date) {
       const date = new Date(strValue);
       if (!isNaN(date.getTime())) return date;
@@ -356,13 +349,11 @@ export class CrmRecordUpdateService {
       return parseFloat(strValue);
     }
 
-    // ISO date string detection
     if (/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?/.test(strValue)) {
       const date = new Date(strValue);
       if (!isNaN(date.getTime())) return date;
     }
 
-    // Fallback: keep as string
     return strValue;
   }
 

@@ -246,7 +246,6 @@ export class ImageProcessingService {
       }
     }
 
-    // Final attempt with most aggressive settings
     this.logger.warn(
       `compressForPlatform[${channelType}]: all ${maxAttempts} attempts exceeded limit — using most aggressive settings`,
     );
@@ -302,9 +301,6 @@ export class ImageProcessingService {
   }
 
   /**
-   * Check if a MIME type is an image that sharp can process.
-   */
-  /**
    * Apply the preset's declared output format. `mozjpeg` is JPEG-only, so the two
    * branches cannot share an options object.
    */
@@ -318,6 +314,9 @@ export class ImageProcessingService {
       : pipeline.jpeg({ quality, mozjpeg: true });
   }
 
+  /**
+   * Check if a MIME type is an image that sharp can process.
+   */
   isProcessableImage(mimeType: string): boolean {
     return [
       'image/jpeg',

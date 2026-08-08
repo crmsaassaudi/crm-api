@@ -576,9 +576,6 @@ export class OmniController {
     };
   }
 
-  /**
-   * Get a single conversation by ID (with customer info).
-   */
   @Get('conversations/:id')
   @RequirePermission('view', 'omni_channel')
   async getConversation(@Param('id') id: string) {
@@ -589,9 +586,6 @@ export class OmniController {
     return conversation;
   }
 
-  /**
-   * Update customer info (name, email, phone) for a conversation.
-   */
   @Patch('conversations/:id/customer')
   @UseAcl('edit', 'omni_channel')
   @LoadResource('omni_channel')
@@ -609,7 +603,6 @@ export class OmniController {
     const tenantId = this.cls.get<string>('tenantId');
     const agentId = this.cls.get<string>('userId');
 
-    // Emit event to update UI via socket
     this.eventEmitter.emit('omni.conversation.customer_updated', {
       tenantId,
       conversationId: id,
@@ -647,8 +640,6 @@ export class OmniController {
       : this.identityService.createAndLinkContact(conversationId, actorId);
   }
 
-  // Messages
-
   /**
    * Get paginated messages for a conversation.
    * Returns oldest-first for chat display.
@@ -664,7 +655,6 @@ export class OmniController {
     @Query('page') page = '1',
     @Query('limit') limit = '50',
   ) {
-    // Verify conversation exists
     const conversation = await this.conversationRepo.findById(conversationId);
     if (!conversation) {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
@@ -676,7 +666,6 @@ export class OmniController {
       Math.min(parseInt(limit, 10), 100),
     );
 
-    // Enrich media messages that have fileId but no resolved URL
     const enriched = await this.enrichMediaUrls(result.data);
 
     return { ...result, data: enriched };
@@ -871,7 +860,6 @@ export class OmniController {
       throw new NotFoundException(`Conversation ${conversationId} not found`);
     }
 
-    // Step 1: Get the total count of past sessions for this customer
     const allConversations = await this.conversationRepo.findAllByExternalId(
       tenantId,
       conversation.channelType,
@@ -885,7 +873,6 @@ export class OmniController {
     );
     const totalConversations = pastConversations.length;
 
-    // Step 2: Paginate the conversation set (newest-first batches)
     const cp = Math.max(1, parseInt(convPage, 10));
     const cl = Math.min(parseInt(convLimit, 10), 20);
     const start = (cp - 1) * cl; // newest past first → slice from the end
@@ -896,7 +883,6 @@ export class OmniController {
 
     const conversationIds = pagedConversations.map((c) => c.id);
 
-    // Step 3: Fetch messages for this slice only
     const messages =
       conversationIds.length > 0
         ? await this.messageRepo.findByConversationIds(
@@ -934,7 +920,6 @@ export class OmniController {
       );
     }
 
-    // Step 4: Build session metadata
     const sessions = pagedConversations.map((c) => {
       const resolvedFromPopulate = c.resolvedByAgent
         ? {
@@ -1228,8 +1213,6 @@ export class OmniController {
     };
   }
 
-  // Session management
-
   /**
    * Change conversation status (resolve, reopen, close).
    * When resolving or closing, captures agent ID, timestamp, and optional reason.
@@ -1443,7 +1426,6 @@ export class OmniController {
       throw new BadRequestException('Tag is required');
     }
 
-    // Fetch conversation first to check if tag already exists
     const conversation = await this.conversationRepo.findById(id);
     if (!conversation) {
       throw new NotFoundException(`Conversation ${id} not found`);
@@ -1537,8 +1519,6 @@ export class OmniController {
 
     return updated;
   }
-
-  // Claim / Assign
 
   @Patch('conversations/:id/claim')
   @UseAcl('assign', 'omni_channel')
@@ -1638,7 +1618,6 @@ export class OmniController {
 
     const oldAgentId = conversation.assignedAgentId;
     const oldGroupId = conversation.assignedGroupId;
-    // The user performing this assignment (from authenticated session via CLS)
     const performedByUserId = this.cls.get<string>('userId') ?? null;
     let updated: any = conversation;
 
@@ -1828,10 +1807,6 @@ export class OmniController {
     }
   }
 
-  // Read / Unread
-
-  // Activities (Audit Trail)
-
   @Get('conversations/:id/activities')
   @RequirePermission('view', 'omni_channel')
   async getActivities(
@@ -1885,8 +1860,6 @@ export class OmniController {
     }
   }
 
-  // Settings
-
   /** Default notification sound config used when tenant has none */
   private static readonly DEFAULT_NOTIFICATION_SOUND = {
     agent: { enabled: true, soundUrl: null, volume: 80 },
@@ -1932,7 +1905,6 @@ export class OmniController {
     const tenantId = this.cls.get<string>('tenantId');
     if (!tenantId) throw new BadRequestException('Tenant context not found');
 
-    // Validate resolveNoteMode if provided
     if (resolveNoteMode !== undefined) {
       const validModes = ['disabled', 'optional', 'required'];
       if (!validModes.includes(resolveNoteMode)) {
@@ -1942,7 +1914,6 @@ export class OmniController {
       }
     }
 
-    // Validate volume ranges if provided
     const validateVolume = (v?: number) => {
       if (v !== undefined && (v < 0 || v > 100)) {
         throw new BadRequestException('volume must be between 0 and 100');
@@ -2035,8 +2006,6 @@ export class OmniController {
     };
   }
 
-  // Conversation File History
-
   /**
    * GET /omni/conversations/:id/files
    * List all files associated with a conversation.
@@ -2124,8 +2093,6 @@ export class OmniController {
     return this.getConversationFiles(conversationId, 'image/', page, limit);
   }
 
-  // Conversion Engine (link-messages)
-
   /**
    * POST /omni/conversations/:id/link-messages
    * Link specific messages to an existing Deal or Ticket.
@@ -2169,7 +2136,6 @@ export class OmniController {
    * Uses batch file lookup to avoid N+1 queries.
    */
   private async enrichMediaUrls(messages: any[]): Promise<any[]> {
-    // Collect fileIds from messages that need URL resolution
     const msgsWithStorageKey: any[] = [];
     const needsResolution = messages.filter((msg) => {
       // For livechat visitor uploads, we have storageKey directly
@@ -2203,7 +2169,6 @@ export class OmniController {
 
     return Promise.all(
       messages.map(async (msg) => {
-        // 1. Resolve visitor uploads directly from storageKey
         const storageKey = msg.metadata?.media?.storageKey;
         if (storageKey) {
           try {
@@ -2217,7 +2182,6 @@ export class OmniController {
           }
         }
 
-        // 2. Resolve agent uploads / other files via fileId lookup
         const fileId = msg.metadata?.media?.fileId;
         if (!fileId) return msg;
 
@@ -2229,7 +2193,6 @@ export class OmniController {
             file.path,
             3600, // 1 hour TTL
           );
-          // Overwrite with fresh signed URL
           return { ...msg, mediaProxyUrl: url };
         } catch {
           return msg;

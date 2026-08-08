@@ -62,16 +62,9 @@ export class ReadStateSyncEventListener {
         return;
       }
 
-      // Find all email metadata for this conversation's messages.
-      // We need to look up messages by conversationId via the omni_messages collection,
-      // then match their metadata. However, email_metadata links via messageId (ObjectId),
-      // so we use the emailMessageId for the sync job.
-
-      // Strategy: find email metadata by tenantId where syncStatus !== 'synced'
-      // for the target state, limited to emails from this config.
-      // Since we don't have a direct conversationId link in email_metadata,
-      // we look up all recent unsynchronized emails for this config.
-
+      // email_metadata links by messageId, not conversationId, so this cannot
+      // scope precisely to this conversation's emails — it syncs all of this
+      // config's unsynchronized emails instead.
       const filter: Record<string, any> = {
         tenantId,
         imapUid: { $ne: null }, // Only emails that came from IMAP
@@ -86,7 +79,7 @@ export class ReadStateSyncEventListener {
         .find(filter)
         .select('emailMessageId imapUid')
         .sort({ _id: -1 })
-        .limit(50) // Cap batch size
+        .limit(50)
         .lean();
 
       if (emailsToSync.length === 0) {
@@ -96,7 +89,6 @@ export class ReadStateSyncEventListener {
         return;
       }
 
-      // Build batch of sync jobs
       const jobs: ReadStateSyncJobData[] = emailsToSync.map((meta: any) => ({
         tenantId,
         configId,
@@ -106,14 +98,12 @@ export class ReadStateSyncEventListener {
         targetState,
       }));
 
-      // Mark all as pending before enqueuing
       const messageIds = emailsToSync.map((m: any) => m.emailMessageId);
       await this.emailMetadataModel.updateMany(
         { emailMessageId: { $in: messageIds } },
         { $set: { syncStatus: 'pending' } },
       );
 
-      // Enqueue batch
       await this.producer.enqueueBatch(jobs);
 
       this.logger.log(
