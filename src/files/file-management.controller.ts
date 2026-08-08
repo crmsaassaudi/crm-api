@@ -356,12 +356,13 @@ export class FileManagementController {
   @Get(':id')
   @RequirePermission('view', 'files')
   async getFile(@Param('id') id: string) {
+    const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
 
-    const file = await this.filesService.findById(id);
+    const file = await this.filesService.findById(id, tenantId);
     if (!file) throw new BadRequestException('File not found');
-    if (!this.filesService.checkAccess(file, userId, userRole)) {
+    if (!this.filesService.checkAccess(file, userId, userRole, tenantId)) {
       throw new ForbiddenException('No access to this file');
     }
 
@@ -385,12 +386,13 @@ export class FileManagementController {
   @Get(':id/download')
   @RequirePermission('view', 'files')
   async getDownloadUrl(@Param('id') id: string) {
+    const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
 
-    const file = await this.filesService.findById(id);
+    const file = await this.filesService.findById(id, tenantId);
     if (!file) throw new BadRequestException('File not found');
-    if (!this.filesService.checkAccess(file, userId, userRole)) {
+    if (!this.filesService.checkAccess(file, userId, userRole, tenantId)) {
       throw new ForbiddenException('No access to this file');
     }
 
@@ -407,6 +409,7 @@ export class FileManagementController {
     @Param('id') id: string,
     @Body() dto: UpdateFileAccessDto,
   ) {
+    const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
 
@@ -416,6 +419,7 @@ export class FileManagementController {
       userRole,
       dto.accessLevel,
       dto.allowedUserIds ?? [],
+      tenantId,
     );
   }
 
@@ -425,10 +429,11 @@ export class FileManagementController {
   @RequirePermission('delete', 'files')
   @HttpCode(HttpStatus.OK)
   async softDeleteFile(@Param('id') id: string) {
+    const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
 
-    return this.filesService.softDelete(id, userId, userRole);
+    return this.filesService.softDelete(id, userId, userRole, tenantId);
   }
 
   // Hard Delete (SUPER_ADMIN)
@@ -444,7 +449,7 @@ export class FileManagementController {
       throw new ForbiddenException('Only OWNER can permanently delete files');
     }
 
-    const { fileSize } = await this.filesService.hardDelete(id);
+    const { fileSize } = await this.filesService.hardDelete(id, tenantId);
 
     // Decrement quota
     if (fileSize > 0) {
@@ -511,15 +516,17 @@ export class FileManagementController {
   @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
   async renameFile(@Param('id') id: string, @Body() dto: RenameFileDto) {
+    const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
-    return this.filesService.renameFile(id, userId, userRole, dto.name);
+    return this.filesService.renameFile(id, userId, userRole, dto.name, tenantId);
   }
 
   @Patch(':id/move')
   @RequirePermission('edit', 'files')
   @HttpCode(HttpStatus.OK)
   async moveFile(@Param('id') id: string, @Body() dto: MoveFileDto) {
+    const tenantId = this.cls.get<string>('tenantId');
     const userId = this.cls.get<string>('userId');
     const userRole = this.cls.get<string>('tenantRole') ?? '';
     return this.filesService.moveFile(
@@ -527,6 +534,7 @@ export class FileManagementController {
       userId,
       userRole,
       dto.folderId ?? null,
+      tenantId,
     );
   }
 

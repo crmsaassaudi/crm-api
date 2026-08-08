@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -58,8 +59,11 @@ export class FilesService {
     });
   }
 
-  findById(id: FileType['id']): Promise<NullableType<FileType>> {
-    return this.fileRepository.findById(id);
+  async findById(id: FileType['id'], tenantId?: string): Promise<NullableType<FileType>> {
+    const file = await this.fileRepository.findById(id);
+    if (!file) return null;
+    if (tenantId && file.tenantId !== tenantId) return null;
+    return file;
   }
 
   findByIds(ids: FileType['id'][]): Promise<FileType[]> {
@@ -73,8 +77,14 @@ export class FilesService {
    * - private: only uploadedBy or allowedUserIds
    * - public: everyone
    */
-  checkAccess(file: FileType, userId: string, userRole: string): boolean {
+  checkAccess(
+    file: FileType,
+    userId: string,
+    userRole: string,
+    requestingTenantId?: string,
+  ): boolean {
     if (!file) return false;
+    if (requestingTenantId && file.tenantId !== requestingTenantId) return false;
     if (file.isDeleted && file.status === 'deleted') return false;
 
     if (['OWNER', 'ADMIN'].includes(userRole?.toUpperCase())) return true;
@@ -167,10 +177,11 @@ export class FilesService {
     fileId: string,
     userId: string,
     userRole: string,
+    tenantId?: string,
   ): Promise<FileType> {
     const file = await this.fileRepository.findById(fileId);
-    if (!file) throw new NotFoundException('File not found');
-    if (!this.checkAccess(file, userId, userRole)) {
+    if (!file || (tenantId && file.tenantId !== tenantId)) throw new NotFoundException('File not found');
+    if (!this.checkAccess(file, userId, userRole, tenantId)) {
       throw new ForbiddenException('No access to this file');
     }
     if (
@@ -184,14 +195,14 @@ export class FilesService {
     return deleted;
   }
 
-  // Hard Delete (SUPER_ADMIN only)
+  // Hard Delete (SUPER_ADMIN / OWNER)
 
   /**
    * Permanently delete file from S3 + DB. Returns fileSize for quota decrement.
    */
-  async hardDelete(fileId: string): Promise<{ fileSize: number }> {
+  async hardDelete(fileId: string, tenantId?: string): Promise<{ fileSize: number }> {
     const file = await this.fileRepository.findById(fileId);
-    if (!file) throw new NotFoundException('File not found');
+    if (!file || (tenantId && file.tenantId !== tenantId)) throw new NotFoundException('File not found');
 
     try {
       await this.s3.send(
@@ -206,12 +217,19 @@ export class FilesService {
         );
       }
     } catch (err) {
-      this.logger.warn(
+      this.logger.error(
         `S3 delete failed for ${file.path}: ${(err as Error).message}`,
+      );
+      throw new BadRequestException(
+        `Failed to delete object from storage: ${(err as Error).message}`,
       );
     }
 
     await this.fileRepository.hardDelete(fileId);
+
+    if (this.redisService && file.path) {
+      this.redisService.del(`presigned:${file.path}`).catch(() => {});
+    }
 
     return { fileSize: file.fileSize ?? 0 };
   }
@@ -222,9 +240,10 @@ export class FilesService {
     userRole: string,
     accessLevel: FileAccessLevel,
     allowedUserIds: string[],
+    tenantId?: string,
   ): Promise<FileType> {
     const file = await this.fileRepository.findById(fileId);
-    if (!file) throw new NotFoundException('File not found');
+    if (!file || (tenantId && file.tenantId !== tenantId)) throw new NotFoundException('File not found');
 
     if (
       file.uploadedBy !== userId &&
@@ -241,6 +260,11 @@ export class FilesService {
       allowedUserIds,
     );
     if (!updated) throw new NotFoundException('File not found');
+
+    if (this.redisService && file.path) {
+      this.redisService.del(`presigned:${file.path}`).catch(() => {});
+    }
+
     return updated;
   }
 
@@ -266,10 +290,11 @@ export class FilesService {
     userId: string,
     userRole: string,
     newName: string,
+    tenantId?: string,
   ): Promise<FileType> {
     const file = await this.fileRepository.findById(fileId);
-    if (!file) throw new NotFoundException('File not found');
-    if (!this.checkAccess(file, userId, userRole)) {
+    if (!file || (tenantId && file.tenantId !== tenantId)) throw new NotFoundException('File not found');
+    if (!this.checkAccess(file, userId, userRole, tenantId)) {
       throw new ForbiddenException('No access to this file');
     }
     if (
@@ -281,7 +306,7 @@ export class FilesService {
 
     const trimmed = newName.trim();
     if (!trimmed || trimmed.length > 255) {
-      throw new NotFoundException('File name must be 1-255 characters');
+      throw new BadRequestException('File name must be 1-255 characters');
     }
 
     const renamed = await this.fileRepository.rename(fileId, trimmed);
@@ -294,10 +319,11 @@ export class FilesService {
     userId: string,
     userRole: string,
     folderId: string | null,
+    tenantId?: string,
   ): Promise<FileType> {
     const file = await this.fileRepository.findById(fileId);
-    if (!file) throw new NotFoundException('File not found');
-    if (!this.checkAccess(file, userId, userRole)) {
+    if (!file || (tenantId && file.tenantId !== tenantId)) throw new NotFoundException('File not found');
+    if (!this.checkAccess(file, userId, userRole, tenantId)) {
       throw new ForbiddenException('No access to this file');
     }
 

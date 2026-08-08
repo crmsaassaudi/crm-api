@@ -8,6 +8,7 @@ import {
   Body,
   HttpCode,
   HttpStatus,
+  NotFoundException,
 } from '@nestjs/common';
 import { IsString, IsOptional, MinLength } from 'class-validator';
 import { ClsService } from 'nestjs-cls';
@@ -96,7 +97,10 @@ export class FolderController {
   @Get(':id')
   @RequirePermission('view', 'files')
   async findById(@Param('id') id: string) {
-    return this.folderService.findById(id);
+    const tenantId = this.cls.get<string>('tenantId');
+    const folder = await this.folderService.findById(id, tenantId);
+    if (!folder) throw new NotFoundException('Folder not found');
+    return folder;
   }
 
   // Update (rename, move, change color)

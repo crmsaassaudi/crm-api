@@ -393,11 +393,15 @@ export class FileDocumentRepository
 
   async sumFileSizes(tenantId: string): Promise<number> {
     const { Types } = await import('mongoose');
+    const tenantMatch = Types.ObjectId.isValid(tenantId)
+      ? { $in: [tenantId, new Types.ObjectId(tenantId)] }
+      : tenantId;
+
     const result = await this.model
       .aggregate([
         {
           $match: {
-            tenantId: new Types.ObjectId(tenantId),
+            tenantId: tenantMatch,
             isDeleted: { $ne: true },
           },
         },
@@ -417,11 +421,15 @@ export class FileDocumentRepository
     tenantId: string,
   ): Promise<Record<string, { count: number; sizeBytes: number }>> {
     const { Types } = await import('mongoose');
+    const tenantMatch = Types.ObjectId.isValid(tenantId)
+      ? { $in: [tenantId, new Types.ObjectId(tenantId)] }
+      : tenantId;
+
     const result = await this.model
       .aggregate([
         {
           $match: {
-            tenantId: new Types.ObjectId(tenantId),
+            tenantId: tenantMatch,
             isDeleted: { $ne: true },
           },
         },
@@ -443,5 +451,47 @@ export class FileDocumentRepository
       };
     }
     return breakdown;
+  }
+  
+  async bulkSoftDeleteByFolderIds(
+    tenantId: string,
+    folderIds: string[],
+  ): Promise<number> {
+    const result = await this.model.updateMany(
+      { tenantId, folderId: { $in: folderIds } },
+      {
+        $set: {
+          isDeleted: true,
+          deletedAt: new Date(),
+          status: 'deleted',
+        },
+      },
+    );
+    return result.modifiedCount;
+  }
+
+  async bulkRestoreByFolderIds(
+    tenantId: string,
+    folderIds: string[],
+  ): Promise<number> {
+    const result = await this.model.updateMany(
+      { tenantId, folderId: { $in: folderIds } },
+      {
+        $set: {
+          isDeleted: false,
+          status: 'ready',
+        },
+        $unset: { deletedAt: 1 },
+      },
+    );
+    return result.modifiedCount;
+  }
+
+  async findByFolderIds(
+    tenantId: string,
+    folderIds: string[],
+  ): Promise<FileType[]> {
+    const docs = await this.model.find({ tenantId, folderId: { $in: folderIds } }).lean().exec();
+    return docs.map((doc) => FileMapper.toDomain(doc as any));
   }
 }

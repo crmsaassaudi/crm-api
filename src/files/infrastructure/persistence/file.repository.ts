@@ -126,4 +126,19 @@ export abstract class FileRepository {
   abstract getCategoryBreakdown(
     tenantId: string,
   ): Promise<Record<string, { count: number; sizeBytes: number }>>;
+
+  abstract bulkSoftDeleteByFolderIds(
+    tenantId: string,
+    folderIds: string[],
+  ): Promise<number>;
+
+  abstract bulkRestoreByFolderIds(
+    tenantId: string,
+    folderIds: string[],
+  ): Promise<number>;
+
+  abstract findByFolderIds(
+    tenantId: string,
+    folderIds: string[],
+  ): Promise<FileType[]>;
 }

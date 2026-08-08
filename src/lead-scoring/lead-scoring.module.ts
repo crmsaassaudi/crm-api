@@ -11,18 +11,18 @@ import {
 import { LeadScoringService } from './lead-scoring.service';
 import { LeadScoringController } from './lead-scoring.controller';
 import { LeadScoringDecayWorker } from './lead-scoring-decay.worker';
+import { ContactsModule } from '../contacts/contacts.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: LeadScoringRuleSchemaClass.name, schema: LeadScoringRuleSchema },
       { name: ContactSchemaClass.name, schema: ContactSchema },
-      { name: ImportJobSchemaClass.name, schema: ImportJobSchema },
-      { name: UserSchemaClass.name, schema: UserSchema },
     ]),
+    ContactsModule,
   ],
   controllers: [LeadScoringController],
-  providers: [LeadScoringService, LeadScoringDecayWorker, ContactRepository],
+  providers: [LeadScoringService, LeadScoringDecayWorker],
   exports: [LeadScoringService],
 })
 export class LeadScoringModule {}

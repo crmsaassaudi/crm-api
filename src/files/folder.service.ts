@@ -9,13 +9,18 @@ import { FolderDocumentRepository } from './infrastructure/persistence/document/
 import { FolderType } from './domain/folder';
 import { NullableType } from '../utils/types/nullable.type';
 
+import { FileRepository } from './infrastructure/persistence/file.repository';
+
 const MAX_DEPTH = 5;
 
 @Injectable()
 export class FolderService {
   private readonly logger = new Logger(FolderService.name);
 
-  constructor(private readonly folderRepository: FolderDocumentRepository) {}
+  constructor(
+    private readonly folderRepository: FolderDocumentRepository,
+    private readonly fileRepository: FileRepository,
+  ) {}
 
   async createFolder(
     tenantId: string,
@@ -87,8 +92,11 @@ export class FolderService {
     return updated ?? folder;
   }
 
-  async findById(id: string): Promise<NullableType<FolderType>> {
-    return this.folderRepository.findById(id);
+  async findById(id: string, tenantId?: string): Promise<NullableType<FolderType>> {
+    const folder = await this.folderRepository.findById(id);
+    if (!folder) return null;
+    if (tenantId && folder.tenantId !== tenantId) return null;
+    return folder;
   }
 
   async listByParent(
@@ -260,7 +268,14 @@ export class FolderService {
     const deleted = await this.folderRepository.softDelete(folderId);
     if (!deleted) throw new NotFoundException('Folder not found');
 
-    this.logger.log(`Folder soft-deleted: ${folderId} by user ${userId}`);
+    // Cascade soft delete to all descendant folders and files
+    const descendants = await this.folderRepository.findDescendants(tenantId, folder.path);
+    const folderIds = [folderId, ...descendants.map((d) => d.id)];
+    
+    await this.folderRepository.softDeleteDescendants(tenantId, folder.path);
+    await this.fileRepository.bulkSoftDeleteByFolderIds(tenantId, folderIds);
+
+    this.logger.log(`Folder soft-deleted with cascade: ${folderId} by user ${userId}`);
     return deleted;
   }
 
@@ -278,6 +293,15 @@ export class FolderService {
 
     const restored = await this.folderRepository.restore(folderId);
     if (!restored) throw new NotFoundException('Folder not found');
+
+    // Cascade restore to all descendant folders and files
+    const descendants = await this.folderRepository.findDescendants(tenantId, folder.path);
+    const folderIds = [folderId, ...descendants.map((d) => d.id)];
+
+    await this.folderRepository.restoreDescendants(tenantId, folder.path);
+    await this.fileRepository.bulkRestoreByFolderIds(tenantId, folderIds);
+
+    this.logger.log(`Folder restored with cascade: ${folderId} by user ${userId}`);
     return restored;
   }
 
@@ -295,8 +319,15 @@ export class FolderService {
       throw new NotFoundException('Folder not found');
     }
 
+    const descendants = await this.folderRepository.findDescendants(tenantId, folder.path);
+    const folderIds = [folderId, ...descendants.map((d) => d.id)];
+
+    // Unbind files inside deleted folders to prevent stale foreign keys
+    await this.fileRepository.bulkMoveToFolder(folderIds, null);
+    
+    await this.folderRepository.hardDeleteDescendants(tenantId, folder.path);
     await this.folderRepository.hardDelete(folderId);
-    this.logger.log(`Folder hard-deleted: ${folderId}`);
+    this.logger.log(`Folder hard-deleted with cascade: ${folderId}`);
   }
 
   private assertCanManage(

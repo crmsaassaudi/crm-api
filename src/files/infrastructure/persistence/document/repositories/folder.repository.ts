@@ -171,6 +171,67 @@ export class FolderDocumentRepository {
     return result.deletedCount > 0;
   }
 
+  async findDescendants(
+    tenantId: string,
+    folderPathPrefix: string,
+  ): Promise<FolderType[]> {
+    const docs = await this.model
+      .find({
+        tenantId,
+        path: { $regex: `^${this.escapeRegex(folderPathPrefix)}/` },
+      })
+      .lean()
+      .exec();
+    return docs.map((doc) => FolderMapper.toDomain(doc as any));
+  }
+
+  async softDeleteDescendants(
+    tenantId: string,
+    folderPathPrefix: string,
+  ): Promise<number> {
+    const result = await this.model.updateMany(
+      {
+        tenantId,
+        path: { $regex: `^${this.escapeRegex(folderPathPrefix)}/` },
+      },
+      {
+        $set: {
+          isDeleted: true,
+          deletedAt: new Date(),
+        },
+      },
+    );
+    return result.modifiedCount;
+  }
+
+  async restoreDescendants(
+    tenantId: string,
+    folderPathPrefix: string,
+  ): Promise<number> {
+    const result = await this.model.updateMany(
+      {
+        tenantId,
+        path: { $regex: `^${this.escapeRegex(folderPathPrefix)}/` },
+      },
+      {
+        $set: { isDeleted: false },
+        $unset: { deletedAt: 1 },
+      },
+    );
+    return result.modifiedCount;
+  }
+
+  async hardDeleteDescendants(
+    tenantId: string,
+    folderPathPrefix: string,
+  ): Promise<number> {
+    const result = await this.model.deleteMany({
+      tenantId,
+      path: { $regex: `^${this.escapeRegex(folderPathPrefix)}/` },
+    });
+    return result.deletedCount;
+  }
+
   /** Check if a folder name already exists under the same parent */
   async existsByName(
     tenantId: string,

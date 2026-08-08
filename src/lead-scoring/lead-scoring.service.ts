@@ -454,4 +454,21 @@ export class LeadScoringService {
         return false;
     }
   }
+
+  async getConfig(tenantId: string) {
+    return {
+      tenantId,
+      decayEnabled: true,
+      decayIntervalDays: 7,
+      decayPoints: 5,
+      autoTemperature: true,
+    };
+  }
+
+  async updateConfig(tenantId: string, data: any) {
+    return {
+      tenantId,
+      ...data,
+    };
+  }
 }
