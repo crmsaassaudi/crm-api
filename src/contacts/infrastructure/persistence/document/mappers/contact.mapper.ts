@@ -33,8 +33,12 @@ export class ContactMapper {
     domainEntity.firstPurchaseAt = raw.firstPurchaseAt;
     domainEntity.customFields = raw.customFields;
     domainEntity.score = raw.score;
-    domainEntity.emailOptIn = raw.emailOptIn ?? false;
-    domainEntity.smsOptIn = raw.smsOptIn ?? false;
+    // `?? null`, not `?? false`: a contact nobody has asked about must not be
+    // reported as having refused. The distinction is what makes consent
+    // enforceable at all — see the schema.
+    domainEntity.emailOptIn = raw.emailOptIn ?? null;
+    domainEntity.smsOptIn = raw.smsOptIn ?? null;
+    domainEntity.whatsappOptIn = raw.whatsappOptIn ?? null;
     domainEntity.doNotCall = raw.doNotCall ?? false;
     domainEntity.tags = raw.tags ?? [];
     domainEntity.omniIdentities = (raw.omniIdentities || []).map((el: any) => {
@@ -112,6 +116,7 @@ export class ContactMapper {
     persistenceEntity.score = domainEntity.score;
     persistenceEntity.emailOptIn = domainEntity.emailOptIn;
     persistenceEntity.smsOptIn = domainEntity.smsOptIn;
+    persistenceEntity.whatsappOptIn = domainEntity.whatsappOptIn;
     persistenceEntity.doNotCall = domainEntity.doNotCall;
     if (domainEntity.tags !== undefined)
       persistenceEntity.tags = domainEntity.tags;

@@ -101,6 +101,7 @@ const FIELDS: Record<string, FieldSpec> = {
   isShadow: { column: 'isShadow', type: 'boolean' },
   emailOptIn: { column: 'emailOptIn', type: 'boolean' },
   smsOptIn: { column: 'smsOptIn', type: 'boolean' },
+  whatsappOptIn: { column: 'whatsappOptIn', type: 'boolean' },
   doNotCall: { column: 'doNotCall', type: 'boolean' },
 
   score: { column: 'score', type: 'number' },
@@ -141,7 +142,12 @@ const OPERATORS_BY_TYPE: Record<
   ]),
   reference: new Set(['eq', 'ne', 'in', 'nin', 'is_empty', 'is_not_empty']),
   multi: new Set(['in', 'nin', 'eq', 'is_empty', 'is_not_empty']),
-  boolean: new Set(['eq']),
+  // Three states, not two. Consent fields (`emailOptIn` and friends) are stored
+  // as `true` / `false` / unset, where unset means nobody ever asked — and
+  // "never asked" is a different audience from "said no". `is_empty` is how a
+  // marketer selects it; without it the two collapse and a first campaign either
+  // excludes everyone or mails people who refused.
+  boolean: new Set(['eq', 'is_empty', 'is_not_empty']),
   number: new Set([
     'eq',
     'ne',
@@ -173,6 +179,53 @@ const VALUELESS: ReadonlySet<FilterOperator> = new Set([
 ]);
 
 export const FILTERABLE_CONTACT_FIELDS = Object.keys(FIELDS);
+
+export interface FilterFieldDescriptor {
+  field: string;
+  type: FilterFieldType;
+  operators: FilterOperator[];
+  /**
+   * True when matching this field means an unanchored regex, which is a
+   * collection scan. Surfaced so the audience builder can warn before someone
+   * saves a segment that scans the whole database on every preview.
+   */
+  scans: boolean;
+}
+
+/**
+ * The catalogue a client builds its filter UI from.
+ *
+ * Served rather than hard-coded in the browser, because a field list copied into
+ * the frontend is a second source of truth: it goes stale silently, and the
+ * symptom is a filter that the server refuses with "unknown field" for reasons
+ * the user cannot see.
+ */
+export function describeFilterFields(
+  customFieldKeys: readonly string[] = [],
+): FilterFieldDescriptor[] {
+  const describe = (
+    field: string,
+    spec: FieldSpec,
+  ): FilterFieldDescriptor => {
+    const operators = [...OPERATORS_BY_TYPE[spec.type]];
+    return {
+      field,
+      type: spec.type,
+      operators,
+      scans: operators.includes('contains'),
+    };
+  };
+
+  return [
+    ...Object.entries(FIELDS).map(([field, spec]) => describe(field, spec)),
+    ...customFieldKeys.map((key) =>
+      describe(`${CUSTOM_FIELD_PREFIX}${key}`, {
+        column: `${CUSTOM_FIELD_PREFIX}${key}`,
+        type: 'text',
+      }),
+    ),
+  ];
+}
 
 const CUSTOM_FIELD_PREFIX = 'customFields.';
 

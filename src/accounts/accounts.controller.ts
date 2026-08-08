@@ -222,7 +222,7 @@ export class AccountsController {
   }
 
   @Post('import-upload')
-  @RequirePermission('create', 'accounts')
+  @RequirePermission('import', 'accounts')
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -236,7 +236,7 @@ export class AccountsController {
   }
 
   @Post('import')
-  @RequirePermission('create', 'accounts')
+  @RequirePermission('import', 'accounts')
   startImport(@Body() dto: StartAccountImportDto) {
     return this.service.startImport(dto);
   }

@@ -41,6 +41,7 @@ const TRACKED_FIELDS: Record<string, Set<string>> = {
     'score',
     'emailOptIn',
     'smsOptIn',
+    'whatsappOptIn',
     'doNotCall',
     'tags',
     'isVIP',

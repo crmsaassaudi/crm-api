@@ -34,6 +34,7 @@ const RESOURCE_MODELS: Record<string, string> = {
   omni_channel: 'OmniConversationSchemaClass',
   files: 'FileSchemaClass',
   tags: 'TagSchemaClass',
+  campaigns: 'CampaignSchemaClass',
 };
 
 @Injectable()

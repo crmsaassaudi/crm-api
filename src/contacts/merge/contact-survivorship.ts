@@ -160,10 +160,11 @@ export function resolveSurvivorship(
   // Consent: never widen it
   // A merge is a data-cleanup operation; it must not be able to create
   // permission to contact someone that neither source record carried.
-  applyBooleanRule(update, choices, 'emailOptIn', survivor, merged, 'and');
-  applyBooleanRule(update, choices, 'smsOptIn', survivor, merged, 'and');
+  applyConsentRule(update, choices, 'emailOptIn', survivor, merged);
+  applyConsentRule(update, choices, 'smsOptIn', survivor, merged);
+  applyConsentRule(update, choices, 'whatsappOptIn', survivor, merged);
   // ...and never narrow a restriction.
-  applyBooleanRule(update, choices, 'doNotCall', survivor, merged, 'or');
+  applyRestrictionRule(update, choices, 'doNotCall', survivor, merged);
 
   // Monotonic numerics
   const score = Math.max(survivor.score ?? 0, merged.score ?? 0);
@@ -199,17 +200,54 @@ export function resolveSurvivorship(
   return { update, choices };
 }
 
-function applyBooleanRule(
+/**
+ * Merge a three-state consent flag.
+ *
+ * Precedence is refusal, then agreement, then silence: an explicit "no" on
+ * either record survives the merge, and only when neither said no does an
+ * explicit "yes" carry. `null` on both stays `null` — a merge cannot manufacture
+ * an answer to a question nobody asked.
+ *
+ * A plain boolean AND would be wrong in both directions here: it would turn
+ * "agreed" + "never asked" into a refusal, and it cannot represent silence at
+ * all.
+ */
+function applyConsentRule(
   update: Record<string, any>,
   choices: Record<string, FieldChoice>,
-  field: 'emailOptIn' | 'smsOptIn' | 'doNotCall',
+  field: 'emailOptIn' | 'smsOptIn' | 'whatsappOptIn',
   survivor: Contact,
   merged: Contact,
-  rule: 'and' | 'or',
+): void {
+  const left = survivor[field] ?? null;
+  const right = merged[field] ?? null;
+
+  const value =
+    left === false || right === false
+      ? false
+      : left === true || right === true
+        ? true
+        : null;
+
+  update[field] = value;
+  choices[field] = {
+    chosen: value,
+    from: value === left ? 'survivor' : 'merged',
+    ...(left === right ? {} : { discarded: value === left ? right : left }),
+  };
+}
+
+/** A restriction set on either record survives the merge. */
+function applyRestrictionRule(
+  update: Record<string, any>,
+  choices: Record<string, FieldChoice>,
+  field: 'doNotCall',
+  survivor: Contact,
+  merged: Contact,
 ): void {
   const left = Boolean(survivor[field]);
   const right = Boolean(merged[field]);
-  const value = rule === 'and' ? left && right : left || right;
+  const value = left || right;
   update[field] = value;
   choices[field] = {
     chosen: value,

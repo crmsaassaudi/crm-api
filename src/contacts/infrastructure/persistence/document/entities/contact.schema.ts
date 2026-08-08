@@ -124,12 +124,28 @@ export class ContactSchemaClass extends EntityDocumentHelper {
   @Prop({ default: 0 })
   score?: number;
 
-  @Prop({ default: false })
-  emailOptIn?: boolean;
+  // CONSENT
+  //
+  // Three states, and the third one is the point: `true` they agreed, `false`
+  // they refused, `null` nobody has asked. A two-state flag cannot tell a refusal
+  // from a blank, which is why consent used to be unenforceable — defaulting to
+  // `false` meant enforcing it would have silenced every tenant's first campaign,
+  // so nothing enforced it at all and people who had unsubscribed kept receiving
+  // mail. `null` is the honest default; the send path refuses `false` outright
+  // and reports `null` as a number the marketer has to look at.
+  //
+  // Explicit `type` on each: `boolean | null` is an ambiguous union to Mongoose's
+  // reflection and the schema fails to build at boot, which no type-check catches.
+  @Prop({ type: Boolean, default: null })
+  emailOptIn?: boolean | null;
 
-  @Prop({ default: false })
-  smsOptIn?: boolean;
+  @Prop({ type: Boolean, default: null })
+  smsOptIn?: boolean | null;
 
+  @Prop({ type: Boolean, default: null })
+  whatsappOptIn?: boolean | null;
+
+  /** Not consent but a blanket refusal of outbound contact. Two states only. */
   @Prop({ default: false })
   doNotCall?: boolean;
 

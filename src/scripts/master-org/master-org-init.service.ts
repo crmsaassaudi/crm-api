@@ -16,7 +16,9 @@ import {
   TenantAliasReservationSchemaClass,
   AliasReservationStatus,
 } from '../../tenants/infrastructure/persistence/document/entities/tenant-alias-reservation.schema';
+import { FEATURE_PERMISSIONS } from '../../common/permissions/permission.constants';
 import { DealPipelineSeederService } from '../../deal-settings/deal-pipeline-seeder.service';
+
 
 /**
  * Resolved configuration for the master organization, read from env with
@@ -174,8 +176,22 @@ export class MasterOrgInitService {
     if (tenant) {
       this.logger.log(`Tenant exists: ${tenant._id.toString()}`);
       // Keep the KC linkage authoritative in case the org was recreated.
+      let modified = false;
       if (tenant.keycloakOrgId !== kcOrg.id) {
         tenant.keycloakOrgId = kcOrg.id;
+        modified = true;
+      }
+      // Bound to a const first: `tenant` is a `let`, so TypeScript discards the
+      // null-narrowing inside a closure and the callback below stops compiling.
+      const existing = tenant;
+      const hasAll = FEATURE_PERMISSIONS.every((p) =>
+        existing.availablePermissions?.includes(p),
+      );
+      if (!hasAll) {
+        tenant.availablePermissions = FEATURE_PERMISSIONS;
+        modified = true;
+      }
+      if (modified) {
         await tenant.save();
       }
     } else {
@@ -185,6 +201,7 @@ export class MasterOrgInitService {
         name: cfg.name,
         subscriptionPlan: cfg.plan,
         status: TenantStatus.ACTIVE,
+        availablePermissions: FEATURE_PERMISSIONS,
         // ENTERPRISE master org: unlimited storage. Other sub-docs use schema defaults.
         storageQuota: {
           limitBytes: -1,

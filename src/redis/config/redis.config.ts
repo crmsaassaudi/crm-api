@@ -1,5 +1,5 @@
 import { registerAs } from '@nestjs/config';
-import { RedisConfig } from './redis-config.type';
+import { RedisConfig, RedisEndpoint } from './redis-config.type';
 import { IsInt, IsOptional, IsString, Min, Max } from 'class-validator';
 import validateConfig from '../../utils/validate-config';
 
@@ -28,6 +28,10 @@ class EnvironmentVariablesValidator {
 
   @IsString()
   @IsOptional()
+  REDIS_URL: string;
+
+  @IsString()
+  @IsOptional()
   REDIS_CACHE_URL: string;
 
   @IsInt()
@@ -37,16 +41,38 @@ class EnvironmentVariablesValidator {
 
 export default registerAs<RedisConfig>('redis', () => {
   validateConfig(process.env, EnvironmentVariablesValidator);
-  const url = process.env.REDIS_CACHE_URL ?? process.env.REDIS_URL;
-  const parsed = parseRedisUrl(url);
+
+  // The core endpoint: session, distributed locks, idempotency claims and the
+  // Socket.IO pub/sub adapter. Deliberately does NOT consider REDIS_CACHE_URL —
+  // it used to, which meant pointing cache at its own instance silently moved
+  // every lock and idempotency key there too, onto a policy built to evict them.
+  const core = parseRedisUrl(process.env.REDIS_URL);
+  const host = core.host ?? process.env.REDIS_HOST ?? 'localhost';
+  const port = core.port ?? parseInt(process.env.REDIS_PORT ?? '6379', 10);
+  const password = core.password ?? process.env.REDIS_PASSWORD ?? undefined;
+  const db = core.db ?? parseOptionalInt(process.env.REDIS_DB) ?? 0;
+  const cacheDb = parseOptionalInt(process.env.REDIS_CACHE_DB) ?? 2;
+
+  // The cache endpoint. Falls back to the core instance at `cacheDb`, so a
+  // deployment that has not split its Redis yet behaves exactly as before.
+  const cacheUrl = parseRedisUrl(process.env.REDIS_CACHE_URL);
+  const cache: RedisEndpoint = {
+    host: cacheUrl.host ?? host,
+    port: cacheUrl.port ?? port,
+    password: cacheUrl.password ?? password,
+    // A dedicated cache instance carries its db in the URL path; give that
+    // precedence over REDIS_CACHE_DB, which only describes the shared layout.
+    db: cacheUrl.db ?? cacheDb,
+  };
 
   return {
-    url,
-    host: parsed.host ?? process.env.REDIS_HOST ?? 'localhost',
-    port: parsed.port ?? parseInt(process.env.REDIS_PORT ?? '6379', 10),
-    password: parsed.password ?? process.env.REDIS_PASSWORD ?? undefined,
-    db: parsed.db ?? parseOptionalInt(process.env.REDIS_DB) ?? 0,
-    cacheDb: parseOptionalInt(process.env.REDIS_CACHE_DB) ?? 2,
+    url: process.env.REDIS_URL,
+    host,
+    port,
+    password,
+    db,
+    cacheDb,
+    cache,
     ttl: process.env.REDIS_TTL ? parseInt(process.env.REDIS_TTL, 10) : 86400, // 24 hours default
   };
 });

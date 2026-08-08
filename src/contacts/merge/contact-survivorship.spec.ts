@@ -111,13 +111,22 @@ describe('resolveSurvivorship — consent', () => {
     expect(update.emailOptIn).toBe(false);
   });
 
+  it('should NOT manufacture whatsapp consent from one side only', () => {
+    const { update } = resolveSurvivorship(
+      contact({ whatsappOptIn: true }),
+      contact({ whatsappOptIn: false }),
+    );
+    expect(update.whatsappOptIn).toBe(false);
+  });
+
   it('should keep consent when both records carry it', () => {
     const { update } = resolveSurvivorship(
-      contact({ emailOptIn: true, smsOptIn: true }),
-      contact({ emailOptIn: true, smsOptIn: true }),
+      contact({ emailOptIn: true, smsOptIn: true, whatsappOptIn: true }),
+      contact({ emailOptIn: true, smsOptIn: true, whatsappOptIn: true }),
     );
     expect(update.emailOptIn).toBe(true);
     expect(update.smsOptIn).toBe(true);
+    expect(update.whatsappOptIn).toBe(true);
   });
 
   it('should keep a do-not-call restriction from either side', () => {

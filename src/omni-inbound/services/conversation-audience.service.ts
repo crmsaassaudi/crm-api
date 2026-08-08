@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { LRUCache } from 'lru-cache';
-import type { Server, Socket } from 'socket.io';
+import type { Namespace, Socket } from 'socket.io';
 import { ConversationRepository } from '../repositories/conversation.repository';
 import { OmniEvents } from '../domain/omni-events';
 
@@ -67,7 +67,7 @@ const FACTS_CACHE_TTL_MS = 30_000;
  *
  * Filtering is cheap and node-local. Each API node already receives every
  * cross-process event over Redis pub/sub and re-broadcasts to its own sockets,
- * so iterating `server.sockets.sockets` (local only) and testing a handful of
+ * so iterating `server.sockets` (local only) and testing a handful of
  * in-memory fields costs no I/O and no cross-node round trip. Every node runs
  * the same predicate over its own connections, so the result is complete.
  */
@@ -91,7 +91,7 @@ export class ConversationAudienceService {
    *   already carries the channel id.
    */
   async emitToConversation(
-    server: Server | undefined,
+    server: Namespace | undefined,
     target: {
       tenantId: string;
       conversationId: string;
@@ -125,7 +125,7 @@ export class ConversationAudienceService {
    * status, queue counters. Conversation events must use `emitToConversation`.
    */
   emitToTenant(
-    server: Server | undefined,
+    server: Namespace | undefined,
     tenantId: string,
     event: string,
     payload: unknown,
@@ -162,11 +162,18 @@ export class ConversationAudienceService {
     if (event.conversationId) this.facts.delete(event.conversationId);
   }
 
-  private localTenantSockets(server: Server, tenantId: string): Socket[] {
+  private localTenantSockets(server: Namespace, tenantId: string): Socket[] {
     const sockets: Socket[] = [];
-    // `server.sockets.sockets` is this node's connections only, which is exactly
-    // the set this node is responsible for delivering to.
-    for (const socket of server.sockets.sockets.values()) {
+    // `OmniGateway` is namespaced (`/omni`), so Nest injects the Namespace
+    // instance here, not the root Server — its `.sockets` is already the
+    // `Map<SocketId, Socket>` of this node's connections.
+    //
+    // `server.sockets` is undefined until the Socket.IO adapter has actually
+    // bound this namespace (e.g. a worker process that never calls
+    // `app.listen()`, or a REST call landing before `onModuleInit` finishes) —
+    // there is nothing to deliver to yet, so treat it as no local audience.
+    if (!server.sockets) return sockets;
+    for (const socket of server.sockets.values()) {
       if (socket.data.tenantId === tenantId) sockets.push(socket);
     }
     return sockets;

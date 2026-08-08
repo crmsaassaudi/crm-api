@@ -17,17 +17,40 @@ const build = (segment?: Record<string, any>) => {
       exec: () => Promise.resolve(segment ?? null),
     })),
     create: jest.fn((doc: any) =>
-      Promise.resolve({ toObject: () => ({ _id: 'seg_1', ...doc }) }),
+      Promise.resolve({
+        _id: 'seg_1',
+        ...doc,
+        set: jest.fn(),
+        save: jest.fn().mockResolvedValue(undefined),
+        toObject: () => ({ _id: 'seg_1', ...doc }),
+      }),
     ),
+  };
+
+  const contacts = {
+    countDocuments: jest.fn(() => ({
+      maxTimeMS: () => ({ exec: () => Promise.resolve(0) }),
+    })),
+  };
+
+  /** No campaign points at anything, so the delete guard never blocks. */
+  const campaigns = {
+    find: jest.fn(() => ({
+      select: () => ({
+        limit: () => ({ lean: () => ({ exec: () => Promise.resolve([]) }) }),
+      }),
+    })),
   };
 
   const service = new ContactSegmentsService(
     model as any,
+    contacts as any,
+    campaigns as any,
     { getByModule: jest.fn().mockResolvedValue([]) } as any,
     { get: jest.fn(() => 'tenant_1') } as any,
   );
 
-  return { service, model };
+  return { service, model, campaigns };
 };
 
 describe('ContactSegmentsService — membership', () => {

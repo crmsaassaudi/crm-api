@@ -46,6 +46,20 @@ export class ContactSegmentsController {
   }
 
   /**
+   * The filterable fields and their operators. Declared before `:id` so "fields"
+   * is never read as a segment id.
+   */
+  @Get('fields')
+  @RequirePermission('view', 'contacts')
+  @ApiOkResponse({
+    description:
+      'Filterable contact fields, including the tenant’s custom fields',
+  })
+  fields() {
+    return this.service.filterFields();
+  }
+
+  /**
    * Count an UNSAVED definition. Declared before `:id` so "preview" is never
    * read as a segment id.
    */

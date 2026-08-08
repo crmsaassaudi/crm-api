@@ -46,6 +46,7 @@ export const IMPORT_MAPPABLE_FIELDS = [
   'tags',
   'emailOptIn',
   'smsOptIn',
+  'whatsappOptIn',
   'doNotCall',
   'isVIP',
 ] as const;
@@ -60,6 +61,7 @@ export const IMPORT_ARRAY_FIELDS: ReadonlySet<string> = new Set([
 export const IMPORT_BOOLEAN_FIELDS: ReadonlySet<string> = new Set([
   'emailOptIn',
   'smsOptIn',
+  'whatsappOptIn',
   'doNotCall',
   'isVIP',
 ]);

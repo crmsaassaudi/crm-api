@@ -137,15 +137,24 @@ export class CreateContactDto {
   @IsString({ each: true })
   phones?: string[];
 
-  @ApiProperty({ example: true })
+  // Consent, three states: `true` agreed, `false` refused, `null` never asked.
+  // `@IsOptional` passes both null and undefined through untouched, which is
+  // what lets a client clear a consent answer back to "not asked" rather than
+  // being forced to record a refusal it never received.
+  @ApiProperty({ example: true, nullable: true })
   @IsOptional()
   @IsBoolean()
-  emailOptIn?: boolean;
+  emailOptIn?: boolean | null;
 
-  @ApiProperty({ example: false })
+  @ApiProperty({ example: null, nullable: true })
   @IsOptional()
   @IsBoolean()
-  smsOptIn?: boolean;
+  smsOptIn?: boolean | null;
+
+  @ApiProperty({ example: null, nullable: true })
+  @IsOptional()
+  @IsBoolean()
+  whatsappOptIn?: boolean | null;
 
   @ApiProperty({ example: false })
   @IsOptional()

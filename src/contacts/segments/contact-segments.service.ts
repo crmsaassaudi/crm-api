@@ -1,6 +1,8 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -14,7 +16,17 @@ import {
   CreateContactSegmentDto,
   UpdateContactSegmentDto,
 } from './dto/contact-segment.dto';
-import { FilterGroup, compileContactFilter } from '../filters/contact-filter';
+import {
+  FilterFieldDescriptor,
+  FilterGroup,
+  compileContactFilter,
+  describeFilterFields,
+} from '../filters/contact-filter';
+import { ContactSchemaClass } from '../infrastructure/persistence/document/entities/contact.schema';
+import {
+  CampaignSchemaClass,
+  EDITABLE_CAMPAIGN_STATUSES,
+} from '../../campaigns/campaign.schema';
 import { CustomFieldsService } from '../../custom-fields/custom-fields.service';
 
 export interface SegmentSummary {
@@ -24,14 +36,32 @@ export interface SegmentSummary {
   type: 'dynamic' | 'static';
   filter?: FilterGroup;
   memberCount?: number;
+  /** Tenant-wide match count from the last save; null when it timed out. */
+  cachedCount?: number | null;
+  countedAt?: Date | null;
   updatedAt: Date;
 }
 
+/**
+ * How long a segment size may take before the save stops waiting for it.
+ *
+ * A definition with a `contains` condition scans the collection, and a save that
+ * blocks for twenty seconds to produce a number nobody asked for is worse than
+ * having no number. The segment is stored either way.
+ */
+const COUNT_TIMEOUT_MS = 3_000;
+
 @Injectable()
 export class ContactSegmentsService {
+  private readonly logger = new Logger(ContactSegmentsService.name);
+
   constructor(
     @InjectModel(ContactSegmentSchemaClass.name)
     private readonly model: Model<ContactSegmentDocument>,
+    @InjectModel(ContactSchemaClass.name)
+    private readonly contacts: Model<ContactSchemaClass>,
+    @InjectModel(CampaignSchemaClass.name)
+    private readonly campaigns: Model<CampaignSchemaClass>,
     private readonly customFields: CustomFieldsService,
     private readonly cls: ClsService,
   ) {}
@@ -44,6 +74,18 @@ export class ContactSegmentsService {
       .lean()
       .exec();
     return docs.map((doc) => this.toSummary(doc));
+  }
+
+  /**
+   * The fields a client may filter on, and which operators each accepts.
+   *
+   * Served rather than hard-coded in the browser: a copy of this list in the
+   * frontend goes stale the moment a field is added or a tenant defines a custom
+   * one, and the symptom is a filter the server refuses for reasons the person
+   * building it cannot see.
+   */
+  async filterFields(): Promise<FilterFieldDescriptor[]> {
+    return describeFilterFields([...(await this.customFieldKeys())]);
   }
 
   async findById(id: string): Promise<ContactSegmentDocument> {
@@ -67,6 +109,7 @@ export class ContactSegmentsService {
       updatedById: userId,
     });
 
+    await this.refreshCount(created);
     return this.toSummary(created.toObject());
   }
 
@@ -94,10 +137,41 @@ export class ContactSegmentsService {
     });
     await existing.save();
 
+    await this.refreshCount(existing);
     return this.toSummary(existing.toObject());
   }
 
+  /**
+   * Delete, unless something is still counting on it.
+   *
+   * A campaign holds an audience by reference until it launches, at which point
+   * the run freezes its own predicate and stops caring. So the block covers
+   * exactly the window where deleting would break something: a draft whose
+   * audience would silently become unresolvable, and a scheduled campaign that
+   * would fail in a worker at 3am with nobody watching.
+   */
   async remove(id: string): Promise<void> {
+    const blocking = await this.campaigns
+      .find({
+        deletedAt: null,
+        status: { $in: [...EDITABLE_CAMPAIGN_STATUSES] },
+        $or: [
+          { 'audience.include.segmentId': id },
+          { 'audience.exclude.segmentId': id },
+        ],
+      })
+      .select({ name: 1 })
+      .limit(3)
+      .lean()
+      .exec();
+
+    if (blocking.length) {
+      const names = blocking.map((doc) => doc.name).join(', ');
+      throw new ConflictException(
+        `This segment is the audience of ${names}. Change or delete those campaigns first.`,
+      );
+    }
+
     const deleted = await this.model.findOneAndDelete({ _id: id }).exec();
     if (!deleted) throw new NotFoundException(`Segment ${id} not found`);
   }
@@ -110,8 +184,12 @@ export class ContactSegmentsService {
    * segment to filter a 25-row page is the mistake this shape prevents.
    */
   async buildMembershipFilter(id: string): Promise<FilterQuery<any>> {
-    const segment = await this.findById(id);
+    return this.membershipFilterOf(await this.findById(id));
+  }
 
+  private async membershipFilterOf(
+    segment: ContactSegmentDocument,
+  ): Promise<FilterQuery<any>> {
     if (segment.type === 'static') {
       return {
         _id: {
@@ -137,6 +215,33 @@ export class ContactSegmentsService {
   async compileDraft(filter: FilterGroup): Promise<FilterQuery<any>> {
     const compiled = compileContactFilter(filter, await this.customFieldKeys());
     return compiled ?? { _id: { $in: [] } };
+  }
+
+  /**
+   * Recount and store the size, without ever failing the save over it.
+   *
+   * The count is decoration; the definition is the record. A timeout leaves
+   * `cachedCount` null, which the UI renders as "not counted" rather than as
+   * zero — a segment that silently reports nobody in it is how a campaign gets
+   * abandoned for the wrong reason.
+   */
+  private async refreshCount(segment: ContactSegmentDocument): Promise<void> {
+    let count: number | null = null;
+    try {
+      count = await this.contacts
+        .countDocuments({
+          $and: [{ deletedAt: null }, await this.membershipFilterOf(segment)],
+        })
+        .maxTimeMS(COUNT_TIMEOUT_MS)
+        .exec();
+    } catch (error) {
+      this.logger.warn(
+        `Segment ${segment.name} could not be counted: ${(error as Error).message}`,
+      );
+    }
+
+    segment.set({ cachedCount: count, countedAt: new Date() });
+    await segment.save();
   }
 
   private async assertDefinitionIsUsable(
@@ -172,6 +277,8 @@ export class ContactSegmentsService {
       filter: doc.filter,
       memberCount:
         doc.type === 'static' ? (doc.memberIds?.length ?? 0) : undefined,
+      cachedCount: doc.cachedCount ?? null,
+      countedAt: doc.countedAt ?? null,
       updatedAt: doc.updatedAt,
     };
   }

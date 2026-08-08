@@ -103,6 +103,7 @@ export const PERMISSION_REGISTRY: Record<
     edit: 'accounts:edit',
     delete: 'accounts:delete',
     export: 'accounts:export',
+    import: 'accounts:import',
   },
   deals: {
     view: 'deals:view',
@@ -111,6 +112,7 @@ export const PERMISSION_REGISTRY: Record<
     delete: 'deals:delete',
     move_stage: 'deals:move_stage',
     export: 'deals:export',
+    import: 'deals:import',
     // Reassigning ownerId separately from editing other fields — the same
     // reasoning as contacts:assign: ownership is deals' primary visibility
     // axis, so moving a deal into/out of a rep's pipeline deserves its own
@@ -149,6 +151,7 @@ export const PERMISSION_REGISTRY: Record<
     /** Reassigning ownerId, separately from editing other fields. */
     assign: 'tickets:assign',
     export: 'tickets:export',
+    import: 'tickets:import',
   },
   reports: {
     view: 'reports:view',
@@ -597,8 +600,11 @@ export const FEATURE_PERMISSIONS: string[] = [
   'contacts:import',
   'contacts:unmask',
   'accounts:export',
+  'accounts:import',
   'deals:export',
+  'deals:import',
   'tickets:export',
+  'tickets:import',
   'tasks:export',
   // Reports advanced
   'reports:create',

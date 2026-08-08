@@ -517,6 +517,11 @@ export class ContactReportService {
               $cond: [{ $ne: [{ $ifNull: ['$smsOptIn', false] }, true] }, 1, 0],
             },
           },
+          whatsappOptOut: {
+            $sum: {
+              $cond: [{ $ne: [{ $ifNull: ['$whatsappOptIn', false] }, true] }, 1, 0],
+            },
+          },
           doNotCall: {
             $sum: { $cond: [{ $eq: ['$doNotCall', true] }, 1, 0] },
           },
@@ -527,6 +532,7 @@ export class ContactReportService {
       total: 0,
       emailOptOut: 0,
       smsOptOut: 0,
+      whatsappOptOut: 0,
       doNotCall: 0,
     };
     const data = {
@@ -539,6 +545,11 @@ export class ContactReportService {
         count: row.smsOptOut,
         total: row.total,
         rate: safePercent(row.smsOptOut, row.total),
+      },
+      whatsappOptOut: {
+        count: row.whatsappOptOut,
+        total: row.total,
+        rate: safePercent(row.whatsappOptOut, row.total),
       },
       doNotCall: {
         count: row.doNotCall,

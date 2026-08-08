@@ -3,6 +3,7 @@ export type RuntimeRole =
   | 'worker'
   | 'omni'
   | 'email-worker'
+  | 'campaign'
   | 'all-in-one';
 
 export function getRuntimeRole(): RuntimeRole {
@@ -11,6 +12,7 @@ export function getRuntimeRole(): RuntimeRole {
   if (runtime === 'worker') return 'worker';
   if (runtime === 'omni') return 'omni';
   if (runtime === 'email-worker') return 'email-worker';
+  if (runtime === 'campaign') return 'campaign';
   // When APP_RUNTIME is not set, this process runs in all-in-one mode:
   // it serves HTTP AND consumes all BullMQ queues in one container.
   return 'all-in-one';
@@ -21,10 +23,38 @@ export function getRuntimeRole(): RuntimeRole {
  * processors (contact import/export, social posts, automations, etc.).
  *
  * Returns true for: `worker` (scaled) and `all-in-one`.
+ *
+ * Note this no longer covers campaign dispatch/send — see
+ * {@link isCampaignRuntime}.
  */
 export function isWorkerRuntime(): boolean {
   const role = getRuntimeRole();
   return role === 'worker' || role === 'all-in-one';
+}
+
+/**
+ * True when this process should register the campaign BullMQ processors
+ * (dispatch, send, and the scheduler).
+ *
+ * Returns true for: `campaign` (scaled) and `all-in-one`.
+ *
+ * Split out of {@link isWorkerRuntime} because a campaign is the only workload
+ * here whose size is chosen by a user rather than by traffic: one 500K-contact
+ * send materialises ~5.000 send jobs, and while the generic worker pool is
+ * draining them at `CAMPAIGN_SEND_CONCURRENCY`, every contact import and CSV
+ * export queued behind them waits. Batch work sharing a pool with batch work is
+ * fine right up until one batch is three orders of magnitude larger than the
+ * rest.
+ *
+ * ⚠️ Operational note for scaled deployments: a `worker` replica no longer
+ * consumes CAMPAIGN_DISPATCH_QUEUE or CAMPAIGN_SEND_QUEUE. An environment that
+ * splits by APP_RUNTIME must run at least one `campaign` replica, or campaigns
+ * enqueue successfully and are never sent — no error on either side. See
+ * docker-compose.scaled.yml. `all-in-one` is unaffected.
+ */
+export function isCampaignRuntime(): boolean {
+  const role = getRuntimeRole();
+  return role === 'campaign' || role === 'all-in-one';
 }
 
 /**
@@ -53,7 +83,9 @@ export function isEmailWorkerRuntime(): boolean {
  */
 export function isAnyWorkerRuntime(): boolean {
   const role = getRuntimeRole();
-  return ['worker', 'omni', 'email-worker', 'all-in-one'].includes(role);
+  return ['worker', 'omni', 'email-worker', 'campaign', 'all-in-one'].includes(
+    role,
+  );
 }
 
 /**
@@ -76,5 +108,7 @@ export function isApiOnlyRuntime(): boolean {
  * both Socket.IO and BullMQ processors, so events can be handled locally.
  */
 export function isDedicatedWorkerProcess(): boolean {
-  return ['worker', 'omni', 'email-worker'].includes(getRuntimeRole());
+  return ['worker', 'omni', 'email-worker', 'campaign'].includes(
+    getRuntimeRole(),
+  );
 }

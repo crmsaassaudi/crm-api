@@ -23,9 +23,10 @@ import { FEATURE_PERMISSIONS } from '../common/permissions/permission.constants'
  * granting a full-tenant read to one workspace and to every workspace on the
  * cluster must not be a forgotten flag.
  *
- * Idempotent: `$addToSet` / `$pull`, so rerunning changes nothing. Roles that
- * already reference a revoked key keep it stored, but the engine drops it from
- * their effective set — revoking is safe and reversible.
+ * Idempotent: a tenant already holding (or already lacking) the key is
+ * skipped, so rerunning changes nothing. Roles that already reference a
+ * revoked key keep it stored, but the engine drops it from their effective
+ * set — revoking is safe and reversible.
  */
 
 interface Args {
@@ -126,15 +127,18 @@ async function run() {
       console.log(`${revoke ? '−' : '+'} ${label} ${key}`);
       if (dryRun) continue;
 
-      // Cast: the driver types `$pull`/`$addToSet` against a schema this
-      // untyped `Document` collection does not carry, so a plain string value
-      // fails to match `PullOperator`.
-      const update = (
-        revoke
-          ? { $pull: { availablePermissions: key } }
-          : { $addToSet: { availablePermissions: key } }
-      ) as Record<string, unknown>;
-      await db.collection('tenants').updateOne({ _id: tenant._id }, update);
+      // $addToSet/$pull reject a stored `null` (some tenants have the field
+      // explicitly null rather than absent), so replace the array outright
+      // with the value already computed from `current` above.
+      const next = revoke
+        ? current.filter((entry) => entry !== key)
+        : [...current, key];
+      await db
+        .collection('tenants')
+        .updateOne(
+          { _id: tenant._id },
+          { $set: { availablePermissions: next } },
+        );
     }
 
     console.log(

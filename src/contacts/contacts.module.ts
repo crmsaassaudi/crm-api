@@ -63,6 +63,11 @@ import {
   ContactSegmentSchema,
   ContactSegmentSchemaClass,
 } from './segments/contact-segment.schema';
+import { ContactAudienceService } from './audience/contact-audience.service';
+import {
+  CampaignSchema,
+  CampaignSchemaClass,
+} from '../campaigns/campaign.schema';
 import { ContactValueRollupService } from './value/contact-value-rollup.service';
 import { isWorkerRuntime } from '../config/runtime-role';
 import {
@@ -119,6 +124,10 @@ const workerProviders = isWorkerRuntime()
         name: ContactSegmentSchemaClass.name,
         schema: ContactSegmentSchema,
       },
+      // Registered here, not imported as a module: deleting a segment has to
+      // know whether a campaign still points at it, and importing CampaignsModule
+      // — which already imports this one — would be a dependency cycle.
+      { name: CampaignSchemaClass.name, schema: CampaignSchema },
     ]),
     BullModule.registerQueue({
       name: CONTACT_EXPORT_QUEUE,
@@ -188,6 +197,9 @@ const workerProviders = isWorkerRuntime()
     // Named audiences. Shares the contact filter compiler with the list view, so
     // a segment and a list filter can never disagree about what a condition means.
     ContactSegmentsService,
+    // The one place an AudienceDefinition becomes a Mongo predicate — and the one
+    // place the caller's row-level visibility is folded into it.
+    ContactAudienceService,
     // Denormalises won-deal revenue onto the contact. Listens to the deal audit
     // event instead of being called by DealsService — ContactsModule imports
     // DealsModule, so the reverse call would be a cycle.
@@ -203,6 +215,7 @@ const workerProviders = isWorkerRuntime()
     // The omni resolver and the livechat enrichment both need identity lookup.
     ContactIdentitySyncService,
     ContactSegmentsService,
+    ContactAudienceService,
     ContactValueRollupService,
   ],
 })

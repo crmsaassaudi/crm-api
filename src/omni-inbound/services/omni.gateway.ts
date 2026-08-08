@@ -7,7 +7,7 @@ import {
   OnGatewayConnection,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
+import { Namespace, Socket } from 'socket.io';
 import { Inject, Logger, OnModuleInit } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
@@ -114,7 +114,7 @@ export class OmniGateway
   implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
 {
   @WebSocketServer()
-  server!: Server;
+  server!: Namespace;
 
   private readonly logger = new Logger(OmniGateway.name);
   private readonly socketEventChannels = [
@@ -161,20 +161,34 @@ export class OmniGateway
    * sends to every agent in the tenant, which bypassed the channel support pool,
    * the owner visibility scope and PII masking all at once — see
    * ConversationAudienceService for why the filter is per-socket.
+   *
+   * Never rejects. Every caller fires this and moves on (`void`), because a
+   * broadcast is a side effect of work that has already been committed — so a
+   * rejection here has no caller left to handle it and surfaces as a process
+   * `unhandledRejection` instead of a log line. A broadcast that fails must not
+   * be able to take the process down; it degrades to one agent missing one
+   * realtime update, and the logged event name says which.
    */
-  private emitToConversationAudience(
+  private async emitToConversationAudience(
     conversationId: string,
     tenantId: string,
     event: string,
     payload: unknown,
     facts?: { channelId?: string | null; assignedAgentId?: string | null },
   ): Promise<void> {
-    return this.audience.emitToConversation(
-      this.server,
-      { tenantId, conversationId, facts },
-      event,
-      payload,
-    );
+    try {
+      await this.audience.emitToConversation(
+        this.server,
+        { tenantId, conversationId, facts },
+        event,
+        payload,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to broadcast ${event} for conversation ${conversationId} (tenant ${tenantId})`,
+        err instanceof Error ? err.stack : err,
+      );
+    }
   }
 
   /**
@@ -2448,7 +2462,7 @@ export class OmniGateway
     userId?: string,
   ): Promise<void> {
     const byUser = new Map<string, Socket[]>();
-    for (const socket of this.server.sockets.sockets.values()) {
+    for (const socket of this.server.sockets.values()) {
       if (socket.data.tenantId !== tenantId) continue;
       const socketUserId = socket.data.userId as string | undefined;
       if (!socketUserId || (userId && socketUserId !== userId)) continue;

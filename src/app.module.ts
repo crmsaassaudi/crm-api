@@ -86,6 +86,7 @@ import { AuthzAuditModule } from './common/authz-audit/authz-audit.module';
 import { LivechatModule } from './livechat/livechat.module';
 import { TelegramModule } from './channels/telegram/telegram.module';
 import { DashboardsModule } from './dashboards/dashboards.module';
+import { CampaignsModule } from './campaigns/campaigns.module';
 import { InboxesModule } from './inboxes/inboxes.module';
 import { SearchModule } from './search/search.module';
 import openSearchConfig from './search/config/opensearch.config';
@@ -355,6 +356,7 @@ function bullBoardBasicAuth() {
     LivechatModule,
     TelegramModule,
     DashboardsModule,
+    CampaignsModule,
   ],
   providers: [
     {

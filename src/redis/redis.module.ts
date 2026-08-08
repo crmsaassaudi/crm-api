@@ -11,20 +11,29 @@ import type { RedisOptions } from 'ioredis';
 import * as redisStore from 'cache-manager-ioredis';
 import Redis from 'ioredis';
 import { IOREDIS_CLIENT } from './redis.tokens';
+import type { RedisEndpoint } from './config/redis-config.type';
 
 @Global()
 @Module({
   imports: [
     CacheModule.registerAsync<RedisOptions>({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        store: redisStore as any,
-        host: configService.get<string>('redis.host'),
-        port: configService.get<number>('redis.port'),
-        password: configService.get<string>('redis.password'),
-        db: configService.get<number>('redis.cacheDb'), // Separate DB for cache (default 2)
-        ttl: configService.get<number>('redis.ttl'),
-      }),
+      useFactory: (configService: ConfigService) => {
+        // Its own endpoint, not `redis.host` + a db index. Cache is the only
+        // thing here that may be evicted, and `maxmemory-policy` is per
+        // instance — so in the split layout this resolves to a different
+        // instance entirely (allkeys-lru), while the raw client below stays on
+        // the noeviction one. Falls back to the core host when unsplit.
+        const cache = configService.getOrThrow<RedisEndpoint>('redis.cache');
+        return {
+          store: redisStore as any,
+          host: cache.host,
+          port: cache.port,
+          password: cache.password,
+          db: cache.db,
+          ttl: configService.get<number>('redis.ttl'),
+        };
+      },
     }),
   ],
   providers: [

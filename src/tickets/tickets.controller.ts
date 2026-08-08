@@ -213,7 +213,7 @@ export class TicketsController {
   }
 
   @Post('import-upload')
-  @RequirePermission('create', 'tickets')
+  @RequirePermission('import', 'tickets')
   @UseInterceptors(
     FileInterceptor('file', {
       limits: { fileSize: TICKET_IMPORT_MAX_FILE_BYTES, files: 1 },
@@ -231,7 +231,7 @@ export class TicketsController {
   }
 
   @Post('import')
-  @RequirePermission('create', 'tickets')
+  @RequirePermission('import', 'tickets')
   startImport(@Body() dto: StartTicketImportDto) {
     return this.service.startImport(dto);
   }

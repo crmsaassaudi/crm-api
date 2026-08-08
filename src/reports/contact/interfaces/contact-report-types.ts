@@ -74,6 +74,7 @@ export interface StaleContactsData {
 export interface OptOutData {
   emailOptOut: { count: number; total: number; rate: number };
   smsOptOut: { count: number; total: number; rate: number };
+  whatsappOptOut?: { count: number; total: number; rate: number };
   doNotCall: { count: number; total: number; rate: number };
 }
 

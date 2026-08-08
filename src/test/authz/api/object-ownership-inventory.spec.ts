@@ -33,6 +33,10 @@ const OWNERSHIP_AUTHORIZED: Record<
     enforcedIn: 'contacts/contacts.controller.ts',
     via: 'acl-decorator',
   },
+  'campaigns/campaign.schema.ts': {
+    enforcedIn: 'campaigns/campaigns.controller.ts',
+    via: 'acl-decorator',
+  },
   'accounts/infrastructure/persistence/document/entities/account.schema.ts': {
     enforcedIn: 'accounts/accounts.controller.ts',
     via: 'acl-decorator',

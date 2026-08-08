@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Server } from 'socket.io';
+import { Namespace } from 'socket.io';
 import { NotificationsService } from '../../notifications/notifications.service';
 
 /**
@@ -21,14 +21,14 @@ import { NotificationsService } from '../../notifications/notifications.service'
 @Injectable()
 export class CrmRealtimeGateway {
   private readonly logger = new Logger(CrmRealtimeGateway.name);
-  private server!: Server;
+  private server!: Namespace;
 
   constructor(private readonly notifications: NotificationsService) {}
 
   /**
    * Called by OmniGateway.onModuleInit() to share the Socket.IO server reference.
    */
-  setServer(server: Server): void {
+  setServer(server: Namespace): void {
     this.server = server;
   }
 

@@ -58,6 +58,25 @@ export class ContactSegmentSchemaClass extends EntityDocumentHelper {
   })
   memberIds: string[];
 
+  /**
+   * How many contacts matched when the definition was last saved.
+   *
+   * Stored so a picker can show a size without counting: the count is an
+   * aggregate over every contact in the tenant, and running one per row of a
+   * dropdown is how a segment list takes ten seconds to open. Deliberately
+   * tenant-wide and NOT narrowed by the reader's data scope — it is a property
+   * of the segment, not of whoever is looking at it, and the campaign preview
+   * shows the scoped figure separately.
+   *
+   * `null` when the count could not be produced in time; the UI shows the
+   * timestamp rather than pretending the number is current.
+   */
+  @Prop({ type: Number, default: null })
+  cachedCount?: number | null;
+
+  @Prop({ type: Date, default: null })
+  countedAt?: Date | null;
+
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'UserSchemaClass',

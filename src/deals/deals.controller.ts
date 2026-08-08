@@ -165,7 +165,7 @@ export class DealsController {
   // IMPORT / EXPORT
 
   @Post('import-upload')
-  @RequirePermission('create', 'deals')
+  @RequirePermission('import', 'deals')
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -179,7 +179,7 @@ export class DealsController {
   }
 
   @Post('import')
-  @RequirePermission('create', 'deals')
+  @RequirePermission('import', 'deals')
   startImport(@Body() dto: StartDealImportDto) {
     return this.service.startImport(dto);
   }

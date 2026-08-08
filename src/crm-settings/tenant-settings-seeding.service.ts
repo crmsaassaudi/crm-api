@@ -194,6 +194,7 @@ const DEFAULT_CONTACT_RELATIONSHIP = {
 const DEFAULT_CONTACT_COMMUNICATION = {
   emailOptInTracking: true,
   smsOptInTracking: false,
+  whatsappOptInTracking: false,
   doNotCallFlag: false,
   gdprConsentTracking: true,
 };

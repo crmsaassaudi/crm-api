@@ -203,6 +203,73 @@ services:
       - 8.8.8.8
       - 8.8.4.4
 
+  # Its own pool rather than extra `worker-service` replicas. One 500K-contact
+  # campaign materialises ~5.000 send jobs; drained inside the generic worker
+  # pool, every contact import and CSV export queues behind a batch three orders
+  # of magnitude larger than they are.
+  #
+  # REQUIRED once you deploy this file: worker-service does not consume
+  # CAMPAIGN_DISPATCH_QUEUE or CAMPAIGN_SEND_QUEUE. Without this container,
+  # campaigns enqueue successfully and are never sent — no error on either side.
+  #
+  # Scale by replicas, not by CAMPAIGN_SEND_CONCURRENCY: the ceiling is the
+  # slowest provider a tenant uses, not CPU.
+  campaign-worker-service:
+    image: crm-api:production
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crm-api-campaign-worker
+    restart: unless-stopped
+    # Longer than the others: a send job holds an open provider session for its
+    # batch of 100, and killing it mid-batch means replaying those recipients
+    # against the compare-and-set claim on restart.
+    stop_grace_period: 60s
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      APP_RUNTIME: campaign
+      NPM_CONFIG_CACHE: /tmp/.npm
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
+      REDIS_CACHE_DB: 0
+      REDIS_QUEUE_DB: 1
+    command: ['node', 'dist/campaign-worker']
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - ./files:/usr/src/app/files
+      - ${ASSETS_PATH:-/var/crm-assets}:/var/crm-assets:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # A dispatch walks the whole audience with an open cursor and batches
+    # recipients in memory, so this needs more headroom than email-worker.
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: '${CRM_CAMPAIGN_WORKER_CPUS:-0.5}'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pgrep -f "node dist/campaign-worker" > /dev/null || exit 1',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      crm_api_net:
+        ipv4_address: 172.25.0.14
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+
 networks:
   crm_api_net:
     name: crm_api_net

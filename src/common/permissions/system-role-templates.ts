@@ -82,7 +82,13 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // org unit, so it needs no per-tenant configuration to be correct.
     // v6: gained tickets:reply and tickets:assign, now that replying to a
     // customer and transferring a ticket are grants of their own.
-    version: 6,
+    // v7: gained the `:import` grant for every module a manager already has
+    // full CRUD on. Bulk import used to piggyback on `:create` (deals) or on
+    // nothing at all (accounts/tickets — the permission key didn't exist), so
+    // a manager who could create records one at a time had no route to the
+    // bulk importer once each module got its own dedicated `:import` key.
+    // v8: gained the `:export` grant for every module to allow managers to export data.
+    version: 8,
     dataScope: DataScope.ORG_UNIT_SUBTREE,
     permissions: [
       'leads:view',
@@ -90,11 +96,15 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'leads:edit',
       'leads:delete',
       'leads:assign',
+      'leads:import',
+      'leads:export',
       'contacts:view',
       'contacts:create',
       'contacts:edit',
       'contacts:delete',
       'contacts:assign',
+      'contacts:import',
+      'contacts:export',
       // `contacts:unmask` reveals email addresses and phone numbers, which
       // FieldMaskingInterceptor otherwise redacts. It belongs to the roles whose
       // job is to contact the customer.
@@ -111,11 +121,15 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'accounts:create',
       'accounts:edit',
       'accounts:delete',
+      'accounts:import',
+      'accounts:export',
       'deals:view',
       'deals:create',
       'deals:edit',
       'deals:delete',
       'deals:move_stage',
+      'deals:import',
+      'deals:export',
       'tickets:view',
       'tickets:create',
       'tickets:edit',
@@ -123,10 +137,13 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'tickets:resolve',
       'tickets:reply',
       'tickets:assign',
+      'tickets:import',
+      'tickets:export',
       'tasks:view',
       'tasks:create',
       'tasks:edit',
       'tasks:delete',
+      'tasks:export',
       'reports:view',
       'reports:contact:view',
       'reports:deal:view',

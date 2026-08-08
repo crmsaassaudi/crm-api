@@ -88,11 +88,15 @@ export class Contact {
   @ApiProperty({ example: 50 })
   score?: number;
 
-  @ApiProperty({ example: true })
-  emailOptIn?: boolean;
+  /** `true` agreed, `false` refused, `null` never asked. */
+  @ApiProperty({ example: true, nullable: true })
+  emailOptIn?: boolean | null;
 
-  @ApiProperty({ example: false })
-  smsOptIn?: boolean;
+  @ApiProperty({ example: null, nullable: true })
+  smsOptIn?: boolean | null;
+
+  @ApiProperty({ example: null, nullable: true })
+  whatsappOptIn?: boolean | null;
 
   @ApiProperty({ example: false })
   doNotCall?: boolean;

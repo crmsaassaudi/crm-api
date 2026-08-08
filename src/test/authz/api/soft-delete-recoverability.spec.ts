@@ -76,6 +76,16 @@ const REVIEWED_NO_BIN: Record<string, string> = {
     'only because the detector reads the whole feature folder for the signal, and ' +
     'the folder contains contact.schema.ts, which does soft-delete.',
 
+  'campaigns/campaigns.controller.ts':
+    'A campaign soft-deletes for referential reasons, not archival ones: every ' +
+    'campaign_recipients row is a compliance record ("we messaged this person on ' +
+    'this date") and is never deleted, so destroying the campaign would leave all ' +
+    'of them pointing at nothing. Delete here is therefore an archive — the ' +
+    'definition and its whole ledger stay intact and queryable. RECORDED GAP, not ' +
+    'a clean exemption: there is no restore route yet, so an accidental delete ' +
+    'currently needs a support action. A bin belongs with a retention purge, and ' +
+    'campaigns have neither yet.',
+
   'channels/channels.controller.ts':
     'Channel config soft-deletes for a different reason than CRM records: the ' +
     'partial unique index on (tenantId, providerType, name) is scoped to ' +

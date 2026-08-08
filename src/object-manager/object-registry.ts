@@ -355,6 +355,12 @@ const CONTACT_FIELDS: readonly StandardFieldDescriptor[] = [
     category: 'contactInfo',
   },
   {
+    key: 'whatsappOptIn',
+    labelToken: 'whatsappOptIn',
+    type: 'BOOLEAN',
+    category: 'contactInfo',
+  },
+  {
     key: 'doNotCall',
     labelToken: 'doNotCall',
     type: 'BOOLEAN',

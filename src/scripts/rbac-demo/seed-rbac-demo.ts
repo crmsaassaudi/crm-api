@@ -1353,42 +1353,73 @@ async function setDataVisibilitySettings(
  * existed, and the first verification run reads as a broken fixture.
  */
 async function invalidateCaches(tenantId: string, dryRun: boolean) {
-  const redis = new Redis({
+  // These keys are split across two Redis instances, and which one holds what
+  // is decided by the client each service reached for, not by the key name:
+  //
+  //   authz:*  →  RedisService.getClient(), the raw ioredis client  →  core
+  //   the rest →  RedisService.get/set, i.e. cache-manager          →  cache
+  //
+  // Scanning only one instance clears half the stale answers and leaves the
+  // other half live, which surfaces as a verify run failing against a fixture
+  // that is actually correct. Once REDIS_CACHE_URL splits the two, both have to
+  // be walked.
+  const fallback = {
     host: process.env.REDIS_HOST ?? 'localhost',
     port: Number(process.env.REDIS_PORT ?? 6379),
     password: process.env.REDIS_PASSWORD || undefined,
-    db: Number(process.env.REDIS_CACHE_DB ?? process.env.REDIS_DB ?? 0),
-    maxRetriesPerRequest: null,
-  });
+    maxRetriesPerRequest: null as null,
+  };
+  const connect = (url: string | undefined, db: number) =>
+    url
+      ? new Redis(url, { maxRetriesPerRequest: null })
+      : new Redis({ ...fallback, db });
+
+  const core = connect(
+    process.env.REDIS_URL,
+    Number(process.env.REDIS_DB ?? 0),
+  );
+  const cache = connect(
+    process.env.REDIS_CACHE_URL,
+    Number(process.env.REDIS_CACHE_DB ?? process.env.REDIS_DB ?? 0),
+  );
+
+  const targets: Array<{ client: Redis; patterns: string[] }> = [
+    { client: core, patterns: [`authz:t:${tenantId}:u:*`] },
+    {
+      client: cache,
+      patterns: [
+        `tenant:member:v2:${tenantId}:*`,
+        'user:keycloak:*',
+        'user:i18n:*',
+      ],
+    },
+  ];
 
   try {
-    const patterns = [
-      `authz:t:${tenantId}:u:*`,
-      `tenant:member:v2:${tenantId}:*`,
-      'user:keycloak:*',
-      'user:i18n:*',
-    ];
     let removed = 0;
-    for (const pattern of patterns) {
-      let cursor = '0';
-      do {
-        const [next, keys] = await redis.scan(
-          cursor,
-          'MATCH',
-          pattern,
-          'COUNT',
-          500,
-        );
-        cursor = next;
-        if (keys.length && !dryRun) {
-          await redis.del(...keys);
-        }
-        removed += keys.length;
-      } while (cursor !== '0');
+    for (const { client, patterns } of targets) {
+      for (const pattern of patterns) {
+        let cursor = '0';
+        do {
+          const [next, keys] = await client.scan(
+            cursor,
+            'MATCH',
+            pattern,
+            'COUNT',
+            500,
+          );
+          cursor = next;
+          if (keys.length && !dryRun) {
+            await client.del(...keys);
+          }
+          removed += keys.length;
+        } while (cursor !== '0');
+      }
     }
     log(`   + invalidated ${removed} cached authorization key(s)`);
   } finally {
-    redis.disconnect();
+    core.disconnect();
+    cache.disconnect();
   }
 }
 
@@ -1433,6 +1464,19 @@ async function run() {
     const tenant = await resolveTenant(db);
     const tenantId = tenant._id.toString();
     log(`Tenant "${tenant.alias}" → ${tenantId}\n`);
+
+    const { FEATURE_PERMISSIONS } = await import(
+      '../../common/permissions/permission.constants'
+    );
+    if (!dryRun) {
+      await db
+        .collection('tenants')
+        .updateOne(
+          { _id: tenant._id },
+          { $set: { availablePermissions: FEATURE_PERMISSIONS } },
+        );
+      tenant.availablePermissions = FEATURE_PERMISSIONS;
+    }
 
     if (reset || purgeOnly) {
       await purge(db, kc, tenantId, dryRun);

@@ -19,10 +19,14 @@ const socketFor = (tenantId: string, socketScope?: SocketScope) => ({
   emit: jest.fn(),
 });
 
+/**
+ * A Namespace, not a root Server: `OmniGateway` is namespaced, so what Nest
+ * injects has `.sockets` as the connection Map itself. The stub used to nest it
+ * one level deeper — the root Server's shape — and every case in this file threw
+ * on `server.sockets.values is not a function`.
+ */
 const serverWith = (sockets: any[]) =>
-  ({
-    sockets: { sockets: new Map(sockets.map((s, i) => [String(i), s])) },
-  }) as any;
+  ({ sockets: new Map(sockets.map((s, i) => [String(i), s])) }) as any;
 
 describe('ConversationAudienceService', () => {
   let conversations: any;
