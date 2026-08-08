@@ -122,19 +122,11 @@ const envFilePath = [
   '.env',
 ];
 
-/**
- * Build the basic-auth middleware that protects /queues (bull-board).
- * Production must set both env vars; otherwise the endpoint is refused
- * outright to prevent accidental public exposure of queue internals.
- */
 function bullBoardBasicAuth() {
   const user = process.env.BULL_BOARD_USER;
   const pass = process.env.BULL_BOARD_PASSWORD;
 
   return (req: any, res: any, next: any) => {
-    // Fail closed regardless of NODE_ENV. Keying this on `production` meant an
-    // unset NODE_ENV published job payloads (and retry/remove controls) to
-    // anonymous callers; setting the two env vars is a one-line dev cost.
     if (!user || !pass) {
       res.status(503).send('Bull-board credentials not configured');
       return;
@@ -204,9 +196,6 @@ function bullBoardBasicAuth() {
     BullBoardModule.forRoot({
       route: '/queues',
       adapter: ExpressAdapter,
-      // Basic-auth gate so /queues isn't exposed unauthenticated. In dev
-      // the default creds are placeholders; in prod both must be set or
-      // the middleware refuses access entirely.
       middleware: bullBoardBasicAuth(),
     }),
     EventEmitterModule.forRoot(),
@@ -224,9 +213,6 @@ function bullBoardBasicAuth() {
           return correlationId ?? ulid();
         },
         setup: (cls, req: Request) => {
-          // CLS middleware only sets initial values from synchronous sources.
-          // Async resolution (DB lookups, session reads) is handled by TenantInterceptor.
-
           // Store subdomain alias for TenantInterceptor to resolve
           if ((req as any).tenantAlias) {
             cls.set('tenantAlias', (req as any).tenantAlias);
@@ -245,12 +231,6 @@ function bullBoardBasicAuth() {
         },
       },
     }),
-    // Logging config lives in `common/logger/winston.config.ts` and must stay
-    // there rather than being inlined: it routes every message and meta field
-    // through `maskSecrets`, honours LOG_FORMAT so production ships JSON lines
-    // instead of ANSI, and carries tenantId/userId/service plus structured meta
-    // on every line. `sentry.bootstrap.ts` reasons from the assumption that the
-    // masking is on.
     WinstonModule.forRootAsync({
       useFactory: (clsService: ClsService) => winstonConfig(clsService),
       inject: [ClsService],
@@ -360,9 +340,7 @@ function bullBoardBasicAuth() {
       useClass: MaintenanceModeGuard,
     },
     {
-      // TenantThrottlerGuard keys throttle by tenantId+userId so one noisy
-      // tenant cannot exhaust another tenant's budget; falls back to IP
-      // for unauthenticated paths.
+
       provide: APP_GUARD,
       useClass: TenantThrottlerGuard,
     },

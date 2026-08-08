@@ -207,4 +207,28 @@ export class LeadScoringController {
   getFields() {
     return { fields: SCORABLE_FIELDS, operators: SCORING_OPERATORS };
   }
+
+  @Get('contacts/:contactId/breakdown')
+  @RequirePermission('view', 'contacts')
+  @ApiOperation({ summary: 'Get score breakdown & matched rules for a contact' })
+  async getScoreBreakdown(@Param('contactId') contactId: string) {
+    const tenantId = this.cls.get('tenantId');
+    return this.service.getScoreBreakdown(tenantId, contactId);
+  }
+
+  @Get('config')
+  @RequirePermission('manage_system', 'settings')
+  @ApiOperation({ summary: 'Get tenant lead scoring configuration' })
+  async getConfig() {
+    const tenantId = this.cls.get('tenantId');
+    return this.service.getConfig(tenantId);
+  }
+
+  @Patch('config')
+  @RequirePermission('manage_system', 'settings')
+  @ApiOperation({ summary: 'Update tenant lead scoring configuration' })
+  async updateConfig(@Body() body: any) {
+    const tenantId = this.cls.get('tenantId');
+    return this.service.updateConfig(tenantId, body);
+  }
 }

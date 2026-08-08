@@ -45,14 +45,19 @@ export const SCORABLE_FIELDS = [
 export type ScorableField = (typeof SCORABLE_FIELDS)[number];
 
 export interface ScoringCondition {
-  /** Contact field path */
-  field: string;
-  /** Comparison operator */
-  operator: ScoringOperator;
+  /** Contact field path (for leaf condition) */
+  field?: string;
+  /** Comparison operator (for leaf condition) */
+  operator?: ScoringOperator;
   /** Value to compare against (omit for exists/not_exists) */
   value?: string | number | boolean;
   /** For customFields, the key within customFields object */
   customFieldKey?: string;
+
+  /** Logical operator for nested condition group ('AND' | 'OR') */
+  logicalOperator?: 'AND' | 'OR';
+  /** Array of nested child conditions */
+  conditions?: ScoringCondition[];
 }
 
 @Schema({
@@ -76,6 +81,13 @@ export class LeadScoringRuleSchemaClass extends EntityDocumentHelper {
   /** Optional description */
   @Prop()
   description?: string;
+
+  /**
+   * Scoring model category (e.g. 'default', 'fit', 'engagement').
+   * Allows tenant to define separate Fit vs Engagement scoring models.
+   */
+  @Prop({ type: String, default: 'default', index: true })
+  modelId: string;
 
   /**
    * Points awarded (+) or deducted (-) when condition matches.

@@ -14,6 +14,8 @@ import { AutomationCrmModule } from '../events/automation-event.payload';
 export const AUTOMATION_TRIGGER_EVENTS = [
   'record_created',
   'field_updated',
+  'score_changed',
+  'score_threshold_crossed',
 ] as const;
 
 export type AutomationTriggerEvent = (typeof AUTOMATION_TRIGGER_EVENTS)[number];

@@ -1,14 +1,19 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { OnEvent } from '@nestjs/event-emitter';
 import { ClsService } from 'nestjs-cls';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   LeadScoringRuleSchemaClass,
   LeadScoringRuleDocument,
   ScoringCondition,
   ScoringOperator,
 } from './lead-scoring-rule.schema';
+import {
+  LeadScoringConfigSchemaClass,
+  LeadScoringConfigDocument,
+} from './lead-scoring-config.schema';
 import { ContactRepository } from '../contacts/infrastructure/persistence/document/repositories/contact.repository';
 import {
   ContactSchemaClass,
@@ -52,6 +57,9 @@ export class LeadScoringService {
 
     private readonly contactRepository: ContactRepository,
     private readonly cls: ClsService,
+
+    @Optional()
+    private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   // CRUD
@@ -116,9 +124,19 @@ export class LeadScoringService {
     const rules = await this.getActiveRules(tenantId, trigger);
     const newScore = this.computeScore(rules, contact as any, activityContext);
 
-    await this.contactModel
-      .updateOne({ _id: contactId, tenantId }, { $set: { score: newScore } })
-      .exec();
+    if (contact.score !== newScore) {
+      await this.contactModel
+        .updateOne({ _id: contactId, tenantId }, { $set: { score: newScore } })
+        .exec();
+
+      this.eventEmitter?.emit('contact.score_changed', {
+        tenantId,
+        contactId,
+        oldScore: contact.score ?? 0,
+        newScore,
+        trigger,
+      });
+    }
 
     this.logger.debug(
       `Scored contact ${contactId}: ${rules.length} rules → ${newScore} pts`,
@@ -231,6 +249,59 @@ export class LeadScoringService {
     return Math.max(0, totalPoints);
   }
 
+  /**
+   * Get breakdown of matched rules and point contribution for a contact.
+   */
+  async getScoreBreakdown(tenantId: string, contactId: string) {
+    const contact = await this.contactModel
+      .findOne({ _id: contactId, tenantId })
+      .lean()
+      .exec();
+    if (!contact) {
+      throw new NotFoundException(`Contact ${contactId} not found`);
+    }
+
+    const rules = await this.ruleModel
+      .find({ tenantId, isActive: true })
+      .sort({ sortOrder: 1, createdAt: 1 })
+      .lean()
+      .exec();
+
+    const matchedRules: Array<{
+      id: string;
+      name: string;
+      description?: string;
+      points: number;
+      trigger: string;
+      condition: ScoringCondition;
+    }> = [];
+
+    let totalPoints = 0;
+    for (const rule of rules) {
+      if (this.evaluateCondition(rule.condition, contact as any)) {
+        matchedRules.push({
+          id: String(rule._id),
+          name: rule.name,
+          description: rule.description,
+          points: rule.points,
+          trigger: rule.trigger,
+          condition: rule.condition,
+        });
+        totalPoints += rule.points;
+      }
+    }
+
+    const finalScore = Math.max(0, totalPoints);
+    return {
+      contactId,
+      score: contact.score ?? finalScore,
+      computedScore: finalScore,
+      totalPoints,
+      matchedRulesCount: matchedRules.length,
+      matchedRules,
+    };
+  }
+
   // Event listeners
 
   @OnEvent('contact.updated')
@@ -254,19 +325,29 @@ export class LeadScoringService {
   }
 
   @OnEvent('activity.created')
+  @OnEvent('omni.activity.created')
   async onActivityCreated(payload: {
     tenantId: string;
     contactId?: string;
-    activityType: string;
+    activityType?: string;
+    activity?: any;
     data?: any;
   }) {
-    if (!payload.contactId) return;
+    const tenantId = payload.tenantId;
+    const contactId = payload.contactId || payload.activity?.contactId;
+    if (!contactId) return;
+
+    const activityType =
+      payload.activityType ||
+      payload.activity?.action ||
+      payload.activity?.type;
+
     try {
       await this.scoreContact(
-        payload.tenantId,
-        payload.contactId,
+        tenantId,
+        contactId,
         'on_activity',
-        { type: payload.activityType, ...payload.data },
+        { type: activityType, ...payload.data, ...payload.activity },
       );
     } catch (err) {
       this.logger.warn(`Failed to score contact on activity: ${err}`);
@@ -279,8 +360,31 @@ export class LeadScoringService {
     condition: ScoringCondition,
     contact: Record<string, any>,
     activityContext?: Record<string, any>,
+    depth = 0,
   ): boolean {
+    if (!condition) return false;
+    if (depth > 3) {
+      this.logger.warn('Max condition nesting depth exceeded (3)');
+      return false;
+    }
+
+    // Nested condition group (AND / OR)
+    if (condition.logicalOperator && Array.isArray(condition.conditions)) {
+      if (condition.conditions.length === 0) return true;
+      if (condition.logicalOperator === 'OR') {
+        return condition.conditions.some((child) =>
+          this.evaluateCondition(child, contact, activityContext, depth + 1),
+        );
+      }
+      // Default to AND
+      return condition.conditions.every((child) =>
+        this.evaluateCondition(child, contact, activityContext, depth + 1),
+      );
+    }
+
+    // Single leaf condition
     const { field, operator, value, customFieldKey } = condition;
+    if (!field || !operator) return true;
 
     let actual: any;
 
@@ -296,10 +400,11 @@ export class LeadScoringService {
   }
 
   private applyOperator(
-    operator: ScoringOperator,
-    actual: any,
+    operator?: ScoringOperator,
+    actual?: any,
     expected?: any,
   ): boolean {
+    if (!operator) return false;
     switch (operator) {
       case 'exists':
         return (
