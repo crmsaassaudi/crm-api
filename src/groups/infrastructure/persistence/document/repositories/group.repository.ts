@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { FilterQuery, Model } from 'mongoose';
+import { FilterQuery, Model, isValidObjectId } from 'mongoose';
 import {
   GroupSchemaClass,
   GroupSchemaDocument,
@@ -48,6 +48,23 @@ export class GroupRepository {
   async findById(tenantId: string, id: string): Promise<Group | null> {
     const doc = await this.model.findOne({ _id: id, tenantId }).exec();
     return doc ? GroupMapper.toDomain(doc) : null;
+  }
+
+  /**
+   * Batch id → group lookup, tenant-scoped.
+   *
+   * For display paths that hold only `assignedGroupId` on a page of rows and
+   * must render names without one query per row. Malformed ids are dropped
+   * rather than thrown on: a stale id on an old conversation must not fail the
+   * whole listing.
+   */
+  async findByIds(tenantId: string, ids: string[]): Promise<Group[]> {
+    const valid = [...new Set(ids.filter((id) => isValidObjectId(id)))];
+    if (valid.length === 0) return [];
+    const docs = await this.model
+      .find({ _id: { $in: valid }, tenantId })
+      .exec();
+    return docs.map(GroupMapper.toDomain);
   }
 
   async create(data: Partial<Group>): Promise<Group> {

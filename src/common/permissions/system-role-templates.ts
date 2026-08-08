@@ -88,7 +88,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // a manager who could create records one at a time had no route to the
     // bulk importer once each module got its own dedicated `:import` key.
     // v8: gained the `:export` grant for every module to allow managers to export data.
-    version: 8,
+    // v9: gained `templates:manage_system` — a manager administers the team's
+    // shared/marketing content library, not just their own quick replies
+    // (which `templates:view/create/edit/delete` in CORE_PERMISSIONS already covers).
+    version: 9,
     dataScope: DataScope.ORG_UNIT_SUBTREE,
     permissions: [
       'leads:view',
@@ -167,6 +170,7 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'omni_channel:unmask',
       'omni_channel:manage_system',
       'omni_reports:view',
+      'templates:manage_system',
     ],
   },
   {
@@ -180,7 +184,11 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // cannot see their own team's pipeline cannot cover for a colleague, and
     // SELF makes a newly invited rep stare at five empty modules on day one.
     // Narrowing to SELF stays available by cloning.
-    version: 4,
+    // v5: gained self-service template grants — a rep writing their own
+    // outreach quick replies needs `templates:*` the same way they need
+    // `files:create`; the shared library stays `manage_system`-gated (Manager,
+    // Marketing).
+    version: 5,
     dataScope: DataScope.ORG_UNIT,
     permissions: [
       'leads:view',
@@ -209,6 +217,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'tags:view',
       'files:view',
       'files:create',
+      'templates:view',
+      'templates:create',
+      'templates:edit',
+      'templates:delete',
     ],
   },
   {
@@ -224,7 +236,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     // up whatever their unit is handling, so ORG_UNIT. Which *channels* they
     // may serve stays a separate axis (the channel support pool).
     // v6: gained tickets:reply — the grant that lets the role do its job.
-    version: 6,
+    // v7: gained self-service template grants — this is the role the quick-reply
+    // 403 hit hardest (canned responses used to require `omni_channel:manage_system`,
+    // which this role never had). The shared/team library stays Manager-only.
+    version: 7,
     dataScope: DataScope.ORG_UNIT,
     permissions: [
       'tickets:view',
@@ -258,6 +273,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       // have no reason to see.
       'omni_channel:unmask',
       'omni_reports:view',
+      'templates:view',
+      'templates:create',
+      'templates:edit',
+      'templates:delete',
     ],
   },
   {
@@ -325,7 +344,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     color: '#ec4899',
     // v3: gained an explicit dataScope. Campaign work is planned per unit and
     // the audience is read through contact/lead views, so ORG_UNIT.
-    version: 3,
+    // v4: gained `templates:manage_system` — campaign content is exactly the
+    // shared content library this role exists to own, not a personal quick
+    // reply.
+    version: 4,
     dataScope: DataScope.ORG_UNIT,
     requiresFeature: 'campaigns:view',
     permissions: [
@@ -344,6 +366,10 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'tags:view',
       'files:view',
       'files:create',
+      'templates:view',
+      'templates:create',
+      'templates:edit',
+      'templates:manage_system',
     ],
   },
 ];

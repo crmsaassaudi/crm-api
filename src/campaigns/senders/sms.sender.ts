@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { TransportPoolService } from '../../channels/transport-pool.service';
 import { SmsChannelConfig } from '../domain/campaign-channel';
-import { personalise } from '../domain/personalise';
+import { TemplateVariableRegistryService } from '../../templates/services/template-variable-registry.service';
 import {
   CampaignAbortError,
   CampaignSendSession,
@@ -23,7 +23,10 @@ const SEND_TIMEOUT_MS = 15_000;
 export class CampaignSmsSender implements CampaignSender {
   readonly channel = 'sms' as const;
 
-  constructor(private readonly transportPool: TransportPoolService) {}
+  constructor(
+    private readonly transportPool: TransportPoolService,
+    private readonly variableRegistry: TemplateVariableRegistryService,
+  ) {}
 
   async open(
     tenantId: string,
@@ -58,7 +61,10 @@ export class CampaignSmsSender implements CampaignSender {
           authorization,
           fromNumber,
           destination,
-          body: personalise(config.message, merge),
+          body: this.variableRegistry.render(config.message, merge, {
+            mode: 'strict',
+            purpose: 'campaign',
+          }),
         }),
     };
   }

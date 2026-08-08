@@ -34,7 +34,8 @@ export type PermissionResource =
   | 'storage'
   | 'omni_channel'
   | 'omni_reports'
-  | 'all_data';
+  | 'all_data'
+  | 'templates';
 
 export type PermissionAction =
   | 'view'
@@ -387,6 +388,30 @@ export const PERMISSION_REGISTRY: Record<
     view: 'omni_reports:view',
     export: 'omni_reports:export',
   },
+  /**
+   * Message templates shared across Agent quick replies, Campaign content,
+   * Automation actions and Bot responses.
+   *
+   * `view`/`create`/`edit`/`delete` are the self-service grants — every
+   * template starts owned by its creator (`visibility: 'private'` by
+   * default), so an agent building their own quick replies needs nothing
+   * more than these. `manage_system` is the separate bypass for team/tenant
+   * templates that are not the caller's own (marketing content, shared
+   * canned responses) — deliberately not bundled into `edit`, the same
+   * reasoning as `channels:manage_system` existing apart from `channels:edit`.
+   *
+   * This resource replaces the two the feature used to borrow —
+   * `channels:manage_system` (message/rich-message templates) and
+   * `omni_channel:manage_system` (canned responses) — which is what made an
+   * agent's own quick-reply button 403 by default: they had neither grant.
+   */
+  templates: {
+    view: 'templates:view',
+    create: 'templates:create',
+    edit: 'templates:edit',
+    delete: 'templates:delete',
+    manage_system: 'templates:manage_system',
+  },
 };
 
 /**
@@ -579,6 +604,13 @@ export const CORE_PERMISSIONS: string[] = [
   'omni_channel:manage_system',
   // Omni-Channel Reports
   'omni_reports:view',
+  // Templates — self-service by default; every tenant member may keep their
+  // own quick replies. `manage_system` (team/tenant-wide templates) is
+  // role-template-granted only, not core.
+  'templates:view',
+  'templates:create',
+  'templates:edit',
+  'templates:delete',
 ];
 
 /**

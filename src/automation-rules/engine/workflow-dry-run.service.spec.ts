@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { WorkflowDryRunService } from './workflow-dry-run.service';
 import { ConditionEvaluatorService } from './condition-evaluator.service';
-import { TemplateInterpolationService } from './template-interpolation.service';
+import { TemplateVariableRegistryService } from '../../templates/services/template-variable-registry.service';
 
 /**
  * `automation_workflows:test` sat in the permission catalog with no route behind
@@ -29,7 +29,7 @@ describe('WorkflowDryRunService', () => {
     const service = new WorkflowDryRunService(
       workflowRepo as any,
       new ConditionEvaluatorService(),
-      new TemplateInterpolationService(),
+      new TemplateVariableRegistryService(),
       crmRecord as any,
       cls as any,
     );

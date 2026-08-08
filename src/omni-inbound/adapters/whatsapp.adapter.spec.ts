@@ -4,7 +4,10 @@ describe('WhatsAppAdapter', () => {
   let adapter: WhatsAppAdapter;
 
   beforeEach(() => {
-    adapter = new WhatsAppAdapter({ updateByName: jest.fn() } as any);
+    adapter = new WhatsAppAdapter(
+      { findByName: jest.fn() } as any,
+      { updateApprovalStatus: jest.fn() } as any,
+    );
   });
 
   describe('channelType', () => {

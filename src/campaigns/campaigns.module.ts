@@ -7,6 +7,7 @@ import { isCampaignRuntime } from '../config/runtime-role';
 import { ContactsModule } from '../contacts/contacts.module';
 import { ChannelsModule } from '../channels/channels.module';
 import { ChannelAdaptersModule } from '../omni-inbound/adapters/channel-adapters.module';
+import { TemplatesModule } from '../templates/templates.module';
 import {
   ContactSchema,
   ContactSchemaClass,
@@ -82,6 +83,9 @@ const workerProviders = isCampaignRuntime()
     // The provider adapters. Shared with the omni inbox rather than re-created,
     // so a channel is added in exactly one place.
     ChannelAdaptersModule,
+    // The unified variable-rendering engine + usage logging the senders and
+    // runner call into.
+    TemplatesModule,
     BullModule.registerQueue(
       {
         name: CAMPAIGN_DISPATCH_QUEUE,

@@ -109,7 +109,7 @@ import { CrmSettingsModule } from '../crm-settings/crm-settings.module';
 
 // -- Automation (for delete protection + migration) --
 import { AutomationRulesModule } from '../automation-rules/automation-rules.module';
-import { MessageTemplatesModule } from '../message-templates/message-templates.module';
+import { TemplatesModule } from '../templates/templates.module';
 
 // -- Realtime (for WebSocket alerts) --
 
@@ -145,7 +145,7 @@ import { isWorkerRuntime, isEmailWorkerRuntime } from '../config/runtime-role';
     SocketModule,
     // CRM Settings for tenant-level email config
     CrmSettingsModule,
-    MessageTemplatesModule,
+    TemplatesModule,
   ],
   controllers: [
     ChannelsController,
@@ -230,7 +230,7 @@ import { isWorkerRuntime, isEmailWorkerRuntime } from '../config/runtime-role';
     EmailChannelSettingsService,
     EmailLabelService,
     OAuth2TokenManager,
-    MessageTemplatesModule,
+    TemplatesModule,
   ],
 })
 export class ChannelsModule {}

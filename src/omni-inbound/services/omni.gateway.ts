@@ -48,7 +48,7 @@ import {
   ConversationAudienceService,
   type SocketScope,
 } from './conversation-audience.service';
-import { OmniEvents } from '../domain/omni-events';
+import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
 import { SlaEvents } from '../../sla-policies/clock/sla-events';
 import type { SlaBreachedEvent } from '../../sla-policies/clock/sla-events';
 
@@ -152,6 +152,7 @@ export class OmniGateway
     private readonly dataVisibility: DataVisibilityInterceptor,
     private readonly authzCache: AuthzPermissionCacheService,
     private readonly audience: ConversationAudienceService,
+    private readonly groupRepository: GroupRepository,
   ) {}
 
   /**
@@ -1975,6 +1976,7 @@ export class OmniGateway
     oldAgentId: string | null;
     groupId?: string | null;
     agentName?: string | null;
+    groupName?: string | null;
   }) {
     this.logger.log(
       `Broadcasting assignment: ${event.conversationId} → agent=${event.agentId ?? 'unassigned'}, group=${event.groupId ?? 'unchanged'}`,
@@ -2000,6 +2002,21 @@ export class OmniGateway
       }
     }
 
+    // Same for the group: the receiving inbox holds only `assignedGroupId`, and
+    // its group picker is scoped to the channel's eligible pool — so a name it
+    // cannot look up locally would render as a raw id.
+    let groupName = event.groupName ?? null;
+    if (event.groupId && !groupName) {
+      try {
+        const groups = await this.groupRepository.findByIds(event.tenantId, [
+          event.groupId,
+        ]);
+        groupName = groups[0]?.name ?? null;
+      } catch {
+        groupName = null;
+      }
+    }
+
     // The audience is computed from the *new* owner: after a reassignment the
     // agents who may see this conversation are the ones who can see whoever now
     // holds it. The previous owner is told directly below so their list can drop
@@ -2014,6 +2031,7 @@ export class OmniGateway
         agentName,
         oldAgentId: event.oldAgentId,
         groupId: event.groupId,
+        groupName,
         timestamp: new Date().toISOString(),
       },
       { assignedAgentId: event.agentId ?? null },
@@ -2027,6 +2045,7 @@ export class OmniGateway
           agentName,
           oldAgentId: event.oldAgentId,
           groupId: event.groupId,
+          groupName,
           timestamp: new Date().toISOString(),
         });
     }

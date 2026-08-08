@@ -4,7 +4,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import nodemailer from 'nodemailer';
 import { ActionExecutionResult, ActionExecutor } from './executor.interface';
 import { AutomationActionJobData } from '../../queue/automation-queue.constants';
-import { TemplateInterpolationService } from '../template-interpolation.service';
+import { TemplateVariableRegistryService } from '../../../templates/services/template-variable-registry.service';
 import {
   ResolvedTransport,
   TransportPoolService,
@@ -15,9 +15,6 @@ import {
   ErrorSeverity,
 } from '../../../channels/domain/error-classifier';
 import { OutboundService } from '../../../omni-outbound/outbound.service';
-
-/** Fallbacks the templates use when a token cannot be resolved. */
-const NO_FALLBACKS = undefined;
 
 /**
  * Shared machinery for actions that send through a tenant channel config.
@@ -35,7 +32,7 @@ abstract class ChannelMessageExecutor implements ActionExecutor {
   protected abstract readonly supportedProviderTypes: readonly string[];
 
   constructor(
-    protected readonly templateEngine: TemplateInterpolationService,
+    protected readonly templateEngine: TemplateVariableRegistryService,
     private readonly transportPool: TransportPoolService,
     private readonly channelConfigRepo: ChannelConfigRepository,
     private readonly eventEmitter: EventEmitter2,
@@ -203,15 +200,15 @@ export class SendEmailExecutor extends ChannelMessageExecutor {
   ): Promise<ActionExecutionResult> {
     const { actionConfig, recordData, tenantId } = job;
 
-    const subject = this.templateEngine.interpolate(
+    const subject = this.templateEngine.render(
       actionConfig.subject ?? '',
       recordData,
-      NO_FALLBACKS,
+      { mode: 'broad' },
     );
-    const body = this.templateEngine.interpolate(
+    const body = this.templateEngine.render(
       actionConfig.template ?? '',
       recordData,
-      NO_FALLBACKS,
+      { mode: 'broad' },
     );
 
     const { user, password } = transport.credentials;
@@ -288,10 +285,10 @@ export class SendSmsExecutor extends ChannelMessageExecutor {
     transport: ResolvedTransport,
     to: string,
   ): Promise<ActionExecutionResult> {
-    const message = this.templateEngine.interpolate(
+    const message = this.templateEngine.render(
       job.actionConfig.message ?? '',
       job.recordData,
-      NO_FALLBACKS,
+      { mode: 'broad' },
     );
     if (!message.trim()) {
       return this.permanent(
@@ -374,7 +371,7 @@ export class SendLivechatExecutor implements ActionExecutor {
   private readonly logger = new Logger(SendLivechatExecutor.name);
 
   constructor(
-    private readonly templateEngine: TemplateInterpolationService,
+    private readonly templateEngine: TemplateVariableRegistryService,
     private readonly moduleRef: ModuleRef,
   ) {}
 
@@ -397,10 +394,10 @@ export class SendLivechatExecutor implements ActionExecutor {
       };
     }
 
-    const message = this.templateEngine.interpolate(
+    const message = this.templateEngine.render(
       actionConfig.message ?? '',
       recordData,
-      NO_FALLBACKS,
+      { mode: 'broad' },
     );
     if (!message.trim()) {
       return {

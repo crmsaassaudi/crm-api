@@ -56,8 +56,6 @@ import { CustomFieldsModule } from './custom-fields/custom-fields.module';
 import { ObjectManagerModule } from './object-manager/object-manager.module';
 import { TagsModule } from './tags/tags.module';
 import { NotificationsModule } from './notifications/notifications.module';
-import { CannedResponsesModule } from './canned-responses/canned-responses.module';
-import { RichMessageTemplatesModule } from './rich-message-templates/rich-message-templates.module';
 import { ChannelsModule } from './channels/channels.module';
 import { SlaPoliciesModule } from './sla-policies/sla-policies.module';
 import { EscalationPoliciesModule } from './escalation-policies/escalation-policies.module';
@@ -80,7 +78,7 @@ import { ReportsModule } from './reports/reports.module';
 import { HealthModule } from './health/health.module';
 import { SharedImportModule } from './common/import/import.module';
 import { SharedExportModule } from './common/export/export.module';
-import { MessageTemplatesModule } from './message-templates/message-templates.module';
+import { TemplatesModule } from './templates/templates.module';
 import { AuthorizationModule } from './common/permissions/authorization.module';
 import { AuthzAuditModule } from './common/authz-audit/authz-audit.module';
 import { LivechatModule } from './livechat/livechat.module';
@@ -326,8 +324,6 @@ function bullBoardBasicAuth() {
     ObjectManagerModule,
     TagsModule,
     NotificationsModule,
-    CannedResponsesModule,
-    RichMessageTemplatesModule,
     ChannelsModule,
     InboxesModule,
     SlaPoliciesModule,
@@ -350,7 +346,7 @@ function bullBoardBasicAuth() {
     ReportsModule,
     SharedImportModule,
     SharedExportModule,
-    MessageTemplatesModule,
+    TemplatesModule,
     AuthorizationModule,
     AuthzAuditModule,
     LivechatModule,

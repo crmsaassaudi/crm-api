@@ -10,7 +10,7 @@ import {
   ConditionEvaluatorService,
   ConditionGroup,
 } from './condition-evaluator.service';
-import { TemplateInterpolationService } from './template-interpolation.service';
+import { TemplateVariableRegistryService } from '../../templates/services/template-variable-registry.service';
 import { CrmRecordUpdateService } from './crm-record-update.service';
 import { AutomationCrmModule } from '../events/automation-event.payload';
 
@@ -77,7 +77,7 @@ export class WorkflowDryRunService {
   constructor(
     private readonly workflowRepo: AutomationWorkflowRepository,
     private readonly conditionEvaluator: ConditionEvaluatorService,
-    private readonly templateEngine: TemplateInterpolationService,
+    private readonly templateEngine: TemplateVariableRegistryService,
     private readonly crmRecord: CrmRecordUpdateService,
     private readonly cls: ClsService,
   ) {}
@@ -257,7 +257,7 @@ export class WorkflowDryRunService {
       const raw = config?.[field];
       preview[field] =
         typeof raw === 'string'
-          ? this.templateEngine.interpolate(raw, recordData)
+          ? this.templateEngine.render(raw, recordData, { mode: 'broad' })
           : raw;
     }
     return preview;
@@ -282,7 +282,7 @@ export class WorkflowDryRunService {
       if (typeof raw !== 'string') continue;
       // Validated against the sample record, not an empty object: the point is
       // which tokens this workflow cannot resolve for real data.
-      const check = this.templateEngine.validate(raw, recordData);
+      const check = this.templateEngine.checkResolution(raw, recordData);
       if (check.unresolvedTokens.length > 0) {
         warnings.push(
           `${field}: unresolved token(s) ${check.unresolvedTokens

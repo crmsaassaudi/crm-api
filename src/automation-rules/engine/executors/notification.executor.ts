@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 import { ActionExecutionResult, ActionExecutor } from './executor.interface';
 import { AutomationActionJobData } from '../../queue/automation-queue.constants';
-import { TemplateInterpolationService } from '../template-interpolation.service';
+import { TemplateVariableRegistryService } from '../../../templates/services/template-variable-registry.service';
 import { IOREDIS_CLIENT } from '../../../redis/redis.tokens';
 
 /**
@@ -37,7 +37,7 @@ export class InternalNotificationExecutor implements ActionExecutor {
   private readonly logger = new Logger(InternalNotificationExecutor.name);
 
   constructor(
-    private readonly templateEngine: TemplateInterpolationService,
+    private readonly templateEngine: TemplateVariableRegistryService,
     @Inject(IOREDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -77,13 +77,15 @@ export class InternalNotificationExecutor implements ActionExecutor {
       };
     }
 
-    const title = this.templateEngine.interpolate(
+    const title = this.templateEngine.render(
       actionConfig.title ?? 'Workflow notification',
       recordData,
+      { mode: 'broad' },
     );
-    const message = this.templateEngine.interpolate(
+    const message = this.templateEngine.render(
       actionConfig.message ?? '',
       recordData,
+      { mode: 'broad' },
     );
 
     this.logger.log(

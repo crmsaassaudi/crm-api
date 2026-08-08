@@ -34,6 +34,14 @@ export interface EmailChannelConfig {
   htmlBody: string;
   /** Overrides the transport's default display name, when set. */
   fromName?: string;
+  /**
+   * The MessageTemplate this content was copied from, if any — a snapshot
+   * reference, not a live one. Picking a template copies its current content
+   * into `subject`/`htmlBody` at wizard time; editing the template later does
+   * not retroactively change a scheduled campaign. Used only for the
+   * delete-reference guard and usage analytics, never re-resolved at send time.
+   */
+  templateId?: string;
 }
 
 /** SMS content. `configId` points at a `ChannelConfig` of providerType `twilio`. */
@@ -41,6 +49,8 @@ export interface SmsChannelConfig {
   type: 'sms';
   configId: string;
   message: string;
+  /** Same snapshot-reference semantics as `EmailChannelConfig.templateId`. */
+  templateId?: string;
 }
 
 /**
@@ -58,6 +68,15 @@ export interface WhatsAppChannelConfig {
   templateName: string;
   languageCode: string;
   bodyParams?: string[];
+  /**
+   * Unlike email/SMS this is NOT a snapshot — WhatsApp is resolved live by
+   * `templateName`+`languageCode` at send time (unchanged), because Meta's
+   * approval status can change after a campaign is scheduled and the send
+   * must see the current status, not the one at pick time. `templateId` is
+   * carried only so the delete-reference guard and usage analytics have
+   * something stable to key on.
+   */
+  templateId?: string;
 }
 
 export type CampaignChannelConfig =
@@ -83,6 +102,10 @@ export function assertChannelConfig(
 
   const candidate = config as Record<string, unknown>;
   const type = candidate.type;
+
+  if (candidate.templateId !== undefined && typeof candidate.templateId !== 'string') {
+    throw new BadRequestException('templateId must be a string.');
+  }
 
   switch (type) {
     case 'email':

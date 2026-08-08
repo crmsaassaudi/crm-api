@@ -9,7 +9,7 @@ import { LivechatAdapter } from './livechat.adapter';
 import { TikTokAdapter } from './tiktok.adapter';
 import { TelegramAdapter } from '../../channels/telegram/telegram.adapter';
 import { LivechatModule } from '../../livechat/livechat.module';
-import { MessageTemplatesModule } from '../../message-templates/message-templates.module';
+import { TemplatesModule } from '../../templates/templates.module';
 
 /**
  * ChannelAdaptersModule — the one registry of channel adapters.
@@ -32,8 +32,8 @@ import { MessageTemplatesModule } from '../../message-templates/message-template
     // without a gateway. forwardRef because LivechatModule reaches back into
     // OmniInboundModule.
     forwardRef(() => LivechatModule),
-    // WhatsAppAdapter reads approved templates to validate a template send.
-    MessageTemplatesModule,
+    // WhatsAppAdapter updates a template's approval status from Meta's webhook.
+    TemplatesModule,
   ],
   providers: [
     FacebookAdapter,

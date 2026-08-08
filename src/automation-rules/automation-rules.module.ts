@@ -43,7 +43,6 @@ import { ConditionEvaluatorService } from './engine/condition-evaluator.service'
 import { LoopPreventionService } from './engine/loop-prevention.service';
 import { WorkflowOrchestratorService } from './engine/workflow-orchestrator.service';
 import { BulkEventThrottleService } from './engine/bulk-event-throttle.service';
-import { TemplateInterpolationService } from './engine/template-interpolation.service';
 import { CrmRecordUpdateService } from './engine/crm-record-update.service';
 import { SsrfGuardService } from '../common/http/ssrf-guard.service';
 import { WebhookHeaderCryptoService } from './engine/webhook-header-crypto.service';
@@ -53,6 +52,7 @@ import { TriggerEvaluatorService } from './engine/trigger-evaluator.service';
 import { ExecutionContextService } from './engine/execution-context.service';
 import { WorkflowDryRunService } from './engine/workflow-dry-run.service';
 import { AutomationMetricsService } from './observability/automation-metrics.service';
+import { TemplatesModule } from '../templates/templates.module';
 import {
   AutomationAssigneeResolver,
   SendEmailExecutor,
@@ -166,6 +166,9 @@ const workerProviders = isWorkerRuntime()
     forwardRef(() => ChannelsModule),
     // Notes — needed by AddNoteExecutor for contact notes
     forwardRef(() => NotesModule),
+    // The unified variable-rendering engine every send/create/interpolate
+    // executor calls into (broad mode — arbitrary trigger-object fields).
+    TemplatesModule,
   ],
   controllers: [AutomationWorkflowController, AutomationExecutionLogController],
   providers: [
@@ -184,7 +187,6 @@ const workerProviders = isWorkerRuntime()
     LoopPreventionService,
     WorkflowOrchestratorService,
     BulkEventThrottleService,
-    TemplateInterpolationService,
     CrmRecordUpdateService,
     SsrfGuardService,
     WebhookHeaderCryptoService,
@@ -217,7 +219,6 @@ const workerProviders = isWorkerRuntime()
     AutomationDelayedJobRepository,
     ConditionEvaluatorService,
     WorkflowOrchestratorService,
-    TemplateInterpolationService,
     CrmRecordUpdateService,
   ],
 })

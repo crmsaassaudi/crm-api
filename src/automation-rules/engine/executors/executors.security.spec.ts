@@ -8,7 +8,7 @@ import {
   InternalNotificationExecutor,
   SendLivechatExecutor,
 } from './index';
-import { TemplateInterpolationService } from '../template-interpolation.service';
+import { TemplateVariableRegistryService } from '../../../templates/services/template-variable-registry.service';
 import { AutomationActionJobData } from '../../queue/automation-queue.constants';
 
 const job = (
@@ -35,7 +35,7 @@ const job = (
     ...overrides,
   }) as AutomationActionJobData;
 
-const templates = () => new TemplateInterpolationService();
+const templates = () => new TemplateVariableRegistryService();
 
 describe('SendEmailExecutor channel-config tenancy', () => {
   it('should resolve credentials through the tenant guard, never the raw pool', async () => {

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ActionExecutionResult, ActionExecutor } from './executor.interface';
 import { AutomationActionJobData } from '../../queue/automation-queue.constants';
-import { TemplateInterpolationService } from '../template-interpolation.service';
+import { TemplateVariableRegistryService } from '../../../templates/services/template-variable-registry.service';
 import { CrmRecordUpdateService } from '../crm-record-update.service';
 import { NotesService } from '../../../notes/notes.service';
 import { ContactsService } from '../../../contacts/contacts.service';
@@ -214,13 +214,13 @@ export class AddNoteExecutor implements ActionExecutor {
 
   constructor(
     private readonly notesService: NotesService,
-    private readonly templateEngine: TemplateInterpolationService,
+    private readonly templateEngine: TemplateVariableRegistryService,
   ) {}
 
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
-    const content = this.templateEngine.interpolate(
+    const content = this.templateEngine.render(
       actionConfig.content ?? '',
       recordData,
     );
@@ -284,7 +284,7 @@ export class CreateRecordExecutor implements ActionExecutor {
   ]);
 
   constructor(
-    private readonly templateEngine: TemplateInterpolationService,
+    private readonly templateEngine: TemplateVariableRegistryService,
     private readonly contactsService: ContactsService,
     private readonly dealsService: DealsService,
     private readonly ticketsService: TicketsService,
@@ -318,7 +318,7 @@ export class CreateRecordExecutor implements ActionExecutor {
       for (const [key, val] of Object.entries(raw)) {
         fieldData[key] =
           typeof val === 'string'
-            ? this.templateEngine.interpolate(val, recordData)
+            ? this.templateEngine.render(val, recordData)
             : val;
       }
     } catch (err: any) {

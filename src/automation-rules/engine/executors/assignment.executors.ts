@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { ActionExecutionResult, ActionExecutor } from './executor.interface';
 import { AutomationActionJobData } from '../../queue/automation-queue.constants';
-import { TemplateInterpolationService } from '../template-interpolation.service';
+import { TemplateVariableRegistryService } from '../../../templates/services/template-variable-registry.service';
 import { CrmRecordUpdateService } from '../crm-record-update.service';
 import { AssignmentCoreService } from '../../../assignment/core/assignment-core.service';
 import { isAssignmentObjectType } from '../../../assignment/domain/assignment.types';
@@ -345,14 +345,14 @@ export class CreateTaskExecutor implements ActionExecutor {
 
   constructor(
     private readonly tasksService: TasksService,
-    private readonly templateEngine: TemplateInterpolationService,
+    private readonly templateEngine: TemplateVariableRegistryService,
     private readonly assigneeResolver: AutomationAssigneeResolver,
   ) {}
 
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
-    const title = this.templateEngine.interpolate(
+    const title = this.templateEngine.render(
       actionConfig.title ?? 'Follow up',
       recordData,
     );
@@ -382,7 +382,7 @@ export class CreateTaskExecutor implements ActionExecutor {
     const task = await this.tasksService.create({
       title,
       description: actionConfig.description
-        ? this.templateEngine.interpolate(actionConfig.description, recordData)
+        ? this.templateEngine.render(actionConfig.description, recordData)
         : undefined,
       dueDate,
       priority: actionConfig.priority ?? 'MEDIUM',
@@ -424,14 +424,14 @@ export class CreateTicketExecutor implements ActionExecutor {
 
   constructor(
     private readonly ticketsService: TicketsService,
-    private readonly templateEngine: TemplateInterpolationService,
+    private readonly templateEngine: TemplateVariableRegistryService,
     private readonly assigneeResolver: AutomationAssigneeResolver,
   ) {}
 
   async execute(job: AutomationActionJobData): Promise<ActionExecutionResult> {
     const { recordId, recordType, actionConfig, tenantId, recordData } = job;
 
-    const subject = this.templateEngine.interpolate(
+    const subject = this.templateEngine.render(
       actionConfig.subject ?? 'Support Request',
       recordData,
     );
@@ -472,7 +472,7 @@ export class CreateTicketExecutor implements ActionExecutor {
     const ticket = await this.ticketsService.create({
       subject,
       description: actionConfig.description
-        ? this.templateEngine.interpolate(actionConfig.description, recordData)
+        ? this.templateEngine.render(actionConfig.description, recordData)
         : undefined,
       priority: actionConfig.priority ?? 'MEDIUM',
       statusId: actionConfig.statusId,

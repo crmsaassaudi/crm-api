@@ -3,7 +3,7 @@ import nodemailer, { Transporter } from 'nodemailer';
 import { TransportPoolService } from '../../channels/transport-pool.service';
 import { OutboundQueueService } from '../../channels/services/outbound-queue.service';
 import { EmailChannelConfig } from '../domain/campaign-channel';
-import { personalise } from '../domain/personalise';
+import { TemplateVariableRegistryService } from '../../templates/services/template-variable-registry.service';
 import {
   CampaignAbortError,
   CampaignSendSession,
@@ -22,6 +22,7 @@ export class CampaignEmailSender implements CampaignSender {
   constructor(
     private readonly transportPool: TransportPoolService,
     private readonly outboundQueue: OutboundQueueService,
+    private readonly variableRegistry: TemplateVariableRegistryService,
   ) {}
 
   async open(
@@ -114,8 +115,14 @@ export class CampaignEmailSender implements CampaignSender {
     const info = await params.transporter.sendMail({
       from: params.from,
       to: destination,
-      subject: personalise(config.subject, merge),
-      html: personalise(config.htmlBody, merge),
+      subject: this.variableRegistry.render(config.subject, merge, {
+        mode: 'strict',
+        purpose: 'campaign',
+      }),
+      html: this.variableRegistry.render(config.htmlBody, merge, {
+        mode: 'strict',
+        purpose: 'campaign',
+      }),
     });
 
     await this.outboundQueue.recordSend(tenantId, config.configId, 1);

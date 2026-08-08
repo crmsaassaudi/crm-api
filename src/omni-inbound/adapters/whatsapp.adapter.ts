@@ -13,7 +13,8 @@ import {
   OutboundMedia,
   MediaSendResult,
 } from '../../omni-outbound/types/outbound-media.type';
-import { WhatsAppTemplateRepository } from '../../message-templates/infrastructure/persistence/document/repositories/whatsapp-template.repository';
+import { MessageTemplateRepository } from '../../templates/infrastructure/persistence/document/repositories/message-template.repository';
+import { TemplateVariantRepository } from '../../templates/infrastructure/persistence/document/repositories/template-variant.repository';
 
 /** Graph API version. Centralized to ease upgrades. */
 const WA_GRAPH_VERSION = 'v19.0';
@@ -103,7 +104,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
   readonly channelType: ChannelType = 'whatsapp';
   private readonly logger = new Logger(WhatsAppAdapter.name);
 
-  constructor(private readonly waTemplateRepo: WhatsAppTemplateRepository) {}
+  constructor(
+    private readonly messageTemplateRepo: MessageTemplateRepository,
+    private readonly templateVariantRepo: TemplateVariantRepository,
+  ) {}
 
   normalize(
     rawPayload: any,
@@ -117,9 +121,20 @@ export class WhatsAppAdapter implements ChannelAdapter {
         `Received template status update: ${rawPayload.message_template_name} -> ${rawPayload.current_status}`,
       );
 
-      this.waTemplateRepo
-        .updateByName(tenantId, rawPayload.message_template_name, {
-          status: rawPayload.current_status,
+      // Meta identifies a template by (name, language) — resolve to our
+      // MessageTemplate by name, then update only the matching language's
+      // variant (or every WhatsApp variant if the webhook omits the language,
+      // matching the old single-collection behaviour).
+      this.messageTemplateRepo
+        .findByName(tenantId, rawPayload.message_template_name)
+        .then((template) => {
+          if (!template) return;
+          return this.templateVariantRepo.updateApprovalStatus(
+            tenantId,
+            template.id,
+            rawPayload.message_template_language,
+            rawPayload.current_status,
+          );
         })
         .catch((err) => {
           this.logger.error(

@@ -6,7 +6,7 @@ import {
 import { ChannelType } from '../../omni-inbound/domain/omni-payload';
 import { ChannelRepository } from '../../channels/infrastructure/persistence/document/repositories/channel.repository';
 import { WhatsAppChannelConfig } from '../domain/campaign-channel';
-import { personalise } from '../domain/personalise';
+import { TemplateVariableRegistryService } from '../../templates/services/template-variable-registry.service';
 import {
   CampaignAbortError,
   CampaignSendSession,
@@ -35,6 +35,7 @@ export class CampaignWhatsAppSender implements CampaignSender {
     @Inject(CHANNEL_ADAPTERS)
     private readonly adapters: Map<ChannelType, ChannelAdapter>,
     private readonly channels: ChannelRepository,
+    private readonly variableRegistry: TemplateVariableRegistryService,
   ) {}
 
   async open(
@@ -122,7 +123,11 @@ export class CampaignWhatsAppSender implements CampaignSender {
           // An empty parameter is rejected by the provider for the whole message,
           // so a merge tag that resolved to nothing becomes an en dash rather
           // than losing the send.
-          text: personalise(param, merge) || '—',
+          text:
+            this.variableRegistry.render(param, merge, {
+              mode: 'strict',
+              purpose: 'campaign',
+            }) || '—',
         })),
       },
     ];

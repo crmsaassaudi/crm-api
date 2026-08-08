@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ActionExecutionResult, ActionExecutor } from './executor.interface';
 import { AutomationActionJobData } from '../../queue/automation-queue.constants';
-import { TemplateInterpolationService } from '../template-interpolation.service';
+import { TemplateVariableRegistryService } from '../../../templates/services/template-variable-registry.service';
 import { CrmRecordUpdateService } from '../crm-record-update.service';
 import {
   SsrfBlockedError,
@@ -107,7 +107,7 @@ export class WebhookExecutor implements ActionExecutor {
   private readonly logger = new Logger(WebhookExecutor.name);
 
   constructor(
-    private readonly templateEngine: TemplateInterpolationService,
+    private readonly templateEngine: TemplateVariableRegistryService,
     private readonly ssrfGuard: SsrfGuardService,
     private readonly webhookHeaderCrypto: WebhookHeaderCryptoService,
   ) {}
@@ -126,7 +126,7 @@ export class WebhookExecutor implements ActionExecutor {
     }
 
     const bodyStr = actionConfig.bodyTemplate
-      ? this.templateEngine.interpolate(actionConfig.bodyTemplate, recordData)
+      ? this.templateEngine.render(actionConfig.bodyTemplate, recordData)
       : JSON.stringify(recordData);
 
     this.logger.log(
@@ -192,7 +192,7 @@ export class HttpRequestExecutor implements ActionExecutor {
   private readonly logger = new Logger(HttpRequestExecutor.name);
 
   constructor(
-    private readonly templateEngine: TemplateInterpolationService,
+    private readonly templateEngine: TemplateVariableRegistryService,
     private readonly ssrfGuard: SsrfGuardService,
     private readonly crmUpdate: CrmRecordUpdateService,
   ) {}
@@ -214,7 +214,7 @@ export class HttpRequestExecutor implements ActionExecutor {
     if (Array.isArray(actionConfig.headers)) {
       for (const h of actionConfig.headers) {
         if (h?.key && h?.value) {
-          userHeaders[h.key] = this.templateEngine.interpolate(
+          userHeaders[h.key] = this.templateEngine.render(
             h.value,
             recordData,
           );
@@ -226,7 +226,7 @@ export class HttpRequestExecutor implements ActionExecutor {
       method === 'GET' || method === 'HEAD'
         ? undefined
         : actionConfig.bodyTemplate
-          ? this.templateEngine.interpolate(
+          ? this.templateEngine.render(
               actionConfig.bodyTemplate,
               recordData,
             )

@@ -17,13 +17,17 @@ describe('InboundProcessorService', () => {
   beforeEach(() => {
     routingQueue = { add: jest.fn().mockResolvedValue({ id: 'route_1' }) };
 
-    // WhatsAppAdapter requires WhatsAppTemplateRepository — pass a minimal mock
-    const mockWaTemplateRepo = { updateByName: jest.fn() } as any;
+    // WhatsAppAdapter requires MessageTemplateRepository + TemplateVariantRepository — pass minimal mocks
+    const mockMessageTemplateRepo = { findByName: jest.fn() } as any;
+    const mockTemplateVariantRepo = { updateApprovalStatus: jest.fn() } as any;
 
     adapters = new Map<ChannelType, ChannelAdapter>();
     adapters.set('facebook', new FacebookAdapter());
     adapters.set('zalo', new ZaloAdapter());
-    adapters.set('whatsapp', new WhatsAppAdapter(mockWaTemplateRepo));
+    adapters.set(
+      'whatsapp',
+      new WhatsAppAdapter(mockMessageTemplateRepo, mockTemplateVariantRepo),
+    );
     adapters.set('livechat', new LivechatAdapter({} as any));
 
     events = { emit: jest.fn() };

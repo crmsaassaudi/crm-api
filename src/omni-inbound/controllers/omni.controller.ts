@@ -55,6 +55,7 @@ import { AssignmentService } from '../services/assignment.service';
 import { ConversationCommandService } from '../aggregate/conversation-command.service';
 import { TagsService } from '../../tags/tags.service';
 import { ChannelSupportService } from '../../channels/services/channel-support.service';
+import { GroupRepository } from '../../groups/infrastructure/persistence/document/repositories/group.repository';
 import {
   canTransitionConversationStatus,
   isConversationStatus,
@@ -93,6 +94,7 @@ export class OmniController {
     private readonly tagsService: TagsService,
     private readonly channelSupportService: ChannelSupportService,
     private readonly piiSearch: PiiSearchPolicy,
+    private readonly groupRepository: GroupRepository,
   ) {}
 
   /**
@@ -279,7 +281,10 @@ export class OmniController {
       parseInt(limit, 10), // cap will be applied in repo
     );
 
-    const agentMap = await this.buildAgentDisplayMap(result.data);
+    const [agentMap, groupMap] = await Promise.all([
+      this.buildAgentDisplayMap(result.data),
+      this.buildGroupDisplayMap(tenantId, result.data),
+    ]);
 
     const enrichedData = result.data.map((c) => {
       const resolvedFromPopulate = c.resolvedByAgent
@@ -312,6 +317,9 @@ export class OmniController {
         resolvedByAgentName: resolvedDisplay?.name ?? null,
         resolvedByAgentEmail: resolvedDisplay?.email ?? null,
         assignedAgentName: assignedDisplay?.name ?? null,
+        assignedGroupName: c.assignedGroupId
+          ? (groupMap.get(String(c.assignedGroupId)) ?? null)
+          : null,
       };
     });
 
@@ -436,6 +444,30 @@ export class OmniController {
           [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || null;
         return [String(u.id), { name, email: u.email ?? null }];
       }),
+    );
+  }
+
+  /**
+   * Batch-resolve group names for a page of conversations.
+   *
+   * The inbox holds only `assignedGroupId`, and the pickers it renders next to
+   * are scoped to the channel's eligible pool — a conversation owned by a group
+   * outside that pool (or by one the caller cannot list) had no name to show and
+   * fell back to printing the raw ObjectId. The name is resolved here, next to
+   * `assignedAgentName`, so every consumer gets it the same way.
+   */
+  private async buildGroupDisplayMap(
+    tenantId: string,
+    conversations: any[],
+  ): Promise<Map<string, string>> {
+    const ids = conversations
+      .map((c) => c.assignedGroupId)
+      .filter((id): id is string => Boolean(id))
+      .map(String);
+    if (ids.length === 0) return new Map();
+    const groups = await this.groupRepository.findByIds(tenantId, ids);
+    return new Map(
+      groups.map((g) => [String(g.id), g.name] as [string, string]),
     );
   }
 
@@ -742,6 +774,14 @@ export class OmniController {
       conversationIds,
     );
 
+    // This is the reconciliation path after a dropped socket, so it has to carry
+    // the display names too: shipping only the ids lets the client keep showing
+    // the *previous* owner's name against the new owner's id.
+    const [agentMap, groupMap] = await Promise.all([
+      this.buildAgentDisplayMap(conversations),
+      this.buildGroupDisplayMap(tenantId, conversations),
+    ]);
+
     return {
       conversations: conversations.map((conversation) => ({
         id: conversation.id,
@@ -750,7 +790,13 @@ export class OmniController {
         lastMessageAt: conversation.lastMessageAt,
         unreadCount: conversation.unreadCount,
         assignedAgentId: conversation.assignedAgentId,
+        assignedAgentName: conversation.assignedAgentId
+          ? (agentMap.get(String(conversation.assignedAgentId))?.name ?? null)
+          : null,
         assignedGroupId: conversation.assignedGroupId,
+        assignedGroupName: conversation.assignedGroupId
+          ? (groupMap.get(String(conversation.assignedGroupId)) ?? null)
+          : null,
         tags: conversation.tags,
         updatedAt: conversation.updatedAt,
         hasChangesSince:

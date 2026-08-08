@@ -1,10 +1,10 @@
-import { MergeToken } from '../domain/personalise';
 import {
   CampaignChannel,
   CampaignChannelConfig,
 } from '../domain/campaign-channel';
 
-export type MergeValues = Record<MergeToken, string>;
+/** The render data bag for a recipient — see `buildCampaignRenderData`. */
+export type MergeValues = Record<string, Record<string, string>>;
 
 export interface SendOutcome {
   /** Provider-side id, when the provider returns one. */

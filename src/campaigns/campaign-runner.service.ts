@@ -31,8 +31,9 @@ import {
 } from './senders/campaign-sender';
 import { assertChannelConfig } from './domain/campaign-channel';
 import { nextAllowedSendTime } from './domain/quiet-hours';
-import { buildMergeValues } from './domain/personalise';
+import { buildCampaignRenderData } from './domain/campaign-render-data';
 import { CampaignProducer } from './queue/campaign.producer';
+import { TemplateUsageService } from '../templates/services/template-usage.service';
 
 /**
  * Stand-in values for a test send.
@@ -41,12 +42,11 @@ import { CampaignProducer } from './queue/campaign.producer';
  * test is to see the message a customer will see — including whether the
  * greeting reads correctly once a name is actually substituted.
  */
-const TEST_MERGE_VALUES = {
+const TEST_MERGE_VALUES = buildCampaignRenderData({
   firstName: 'Sara',
   lastName: 'Ahmed',
-  fullName: 'Sara Ahmed',
   companyName: 'Northwind Trading',
-};
+});
 
 /** How often to re-read the campaign status inside a batch, in recipients. */
 const PAUSE_CHECK_INTERVAL = 20;
@@ -79,6 +79,7 @@ export class CampaignRunnerService {
     private readonly audience: CampaignAudienceService,
     private readonly producer: CampaignProducer,
     private readonly cls: ClsService,
+    private readonly templateUsage: TemplateUsageService,
   ) {}
 
   /**
@@ -256,7 +257,9 @@ export class CampaignRunnerService {
       try {
         const result = await session.send(
           claimed.destination,
-          buildMergeValues(contactNames.get(String(claimed.contactId)) ?? {}),
+          buildCampaignRenderData(
+            contactNames.get(String(claimed.contactId)) ?? {},
+          ),
         );
         await this.recipients
           .updateOne(
@@ -377,6 +380,22 @@ export class CampaignRunnerService {
     this.logger.log(
       `Campaign ${campaign.code} materialised: ${audienceSize} matched, ${sendable} sendable.`,
     );
+
+    // One usage row for the whole blast, not one per recipient — see
+    // TemplateUsageService for why that matters at 10k+ recipients.
+    const templateId = (campaign.channelConfig as { templateId?: string })
+      ?.templateId;
+    if (templateId && audienceSize > 0) {
+      this.templateUsage.record({
+        tenantId: String(campaign.tenantId),
+        templateId,
+        channel: campaign.channelType as any,
+        context: 'campaign',
+        contextId: String(campaign._id),
+        count: audienceSize,
+      });
+    }
+
     return true;
   }
 
