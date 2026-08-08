@@ -62,12 +62,6 @@ async function readResponseCapped(response: Response): Promise<string> {
   return new TextDecoder().decode(merged);
 }
 
-/**
- * Turn a thrown fetch error into a result.
- *
- * A blocked destination is a configuration problem, not a transient one —
- * retrying it three times just repeats the same denial.
- */
 function classifyHttpError(
   error: any,
   url: string,
@@ -98,8 +92,6 @@ function classifyHttpError(
     error: { code: 'HTTP_ERROR', message: error.message },
   };
 }
-
-// Webhook — fire-and-forget notification to an external endpoint
 
 @Injectable()
 export class WebhookExecutor implements ActionExecutor {
@@ -140,18 +132,12 @@ export class WebhookExecutor implements ActionExecutor {
       const fetchOptions: RequestInit = {
         method,
         headers: { 'Content-Type': 'application/json', ...headers },
-        // A single deadline for the whole chain, including redirect hops and a
-        // server that stalls the body. The previous manual AbortController was
-        // cleared before the error body was read on the failure path.
         signal: AbortSignal.timeout(HTTP_HARD_TIMEOUT_MS),
       };
       if (method !== 'GET' && method !== 'HEAD') {
         fetchOptions.body = bodyStr;
       }
 
-      // safeFetch owns SSRF validation and DNS pinning for the initial URL AND
-      // for every redirect hop — a public host cannot bounce us to the metadata
-      // service. It never sets `redirect: 'follow'`.
       const response = await this.ssrfGuard.safeFetch(url, fetchOptions);
 
       if (!response.ok) {
@@ -183,8 +169,6 @@ export class WebhookExecutor implements ActionExecutor {
     }
   }
 }
-
-// HTTP Request — call an endpoint and optionally map the response back
 
 @Injectable()
 export class HttpRequestExecutor implements ActionExecutor {
@@ -277,12 +261,6 @@ export class HttpRequestExecutor implements ActionExecutor {
     }
   }
 
-  /**
-   * Apply response mapping: parse the JSON response, extract values at
-   * dot-paths, write them back through the CRM update path.
-   *
-   * Format: `response.path → recordField`, one mapping per line.
-   */
   private async applyResponseMapping(
     mappingStr: string | undefined,
     responseBody: string,

@@ -96,6 +96,19 @@ import {
   buildContactExportSnapshot,
 } from './export/contact-export-query';
 
+/**
+ * ContactsService
+ *
+ * Responsibilities:
+ * - Contact CRUD orchestration & identity uniqueness validation
+ * - Lifecycle stage & status transitions
+ * - Import/Export job queuing & merge preview/execution
+ * - Entity audit logging & event emission
+ *
+ * Does NOT:
+ * - Directly execute raw DB driver queries bypassing tenant filters
+ * - Handle raw HTTP transport/response formatting
+ */
 @Injectable()
 export class ContactsService {
   private readonly logger = new Logger(ContactsService.name);
@@ -330,7 +343,6 @@ export class ContactsService {
       data,
       existingContact ?? undefined,
     );
-    // Sanitize ownerId: empty string is not a valid ObjectId
     if (data.ownerId === '') {
       throw new BadRequestException('A Contact must always have an owner.');
     }
@@ -349,15 +361,12 @@ export class ContactsService {
         ? await this.resolveOwnerOrgUnit(ownerId)
         : undefined;
 
-    // `partial: true` — a PATCH that does not mention a required custom field
-    // must not fail on it; the field was already satisfied at create time.
     const customFields = await this.customFieldValidator.validate(
       'Contact',
       data.customFields,
       { partial: true },
     );
 
-    // Shadow contact promotion: when a shadow contact gets real data, promote it
     let additionalData: any = {};
     if (existingContact?.isShadow) {
       const hasNewEmail = emails && emails.length > 0;
@@ -367,7 +376,6 @@ export class ContactsService {
       }
     }
 
-    // updatedBy is auto-injected by BaseDocumentRepository from CLS
     const changedFields = Object.keys(data).filter((k) => k !== 'updatedBy');
     const updated = await this.automationOutbox.runWithEvent(
       async (session) => {

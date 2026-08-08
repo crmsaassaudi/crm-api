@@ -26,12 +26,6 @@ function isConditionGroup(
 
 const MAX_NESTING_DEPTH = 3;
 
-/**
- * A number, or null when the value is not unambiguously one.
- *
- * Accepts real numbers and strings whose trimmed form round-trips through
- * `Number`: `"5"` and `"5.5"` qualify, `"007"`, `""` and `"5px"` do not.
- */
 function strictNumber(value: unknown): number | null {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : null;
@@ -46,17 +40,6 @@ function strictNumber(value: unknown): number | null {
   return String(parsed) === trimmed ? parsed : null;
 }
 
-/**
- * ConditionEvaluatorService — evaluates nested AND/OR condition groups
- * against record data.
- *
- * Operators: eq, neq, gt, lt, gte, lte, contains, not_contains, is_empty,
- * is_not_empty. Nested groups up to {@link MAX_NESTING_DEPTH}.
- *
- * Fails closed throughout: an empty group, a missing field, a depth overrun and
- * an unknown operator all evaluate to NOT matched. A filter that cannot be
- * evaluated must not be read as "everything passes".
- */
 @Injectable()
 export class ConditionEvaluatorService {
   private readonly logger = new Logger(ConditionEvaluatorService.name);
@@ -98,11 +81,6 @@ export class ConditionEvaluatorService {
     }
 
     if (!group.rules || group.rules.length === 0) {
-      // Fail closed. A condition node with no rules is a filter the author
-      // believes is filtering; treating it as "pass everything" is how a
-      // half-configured node ends up mailing an entire contact list. Saving such
-      // a node is refused up front (AutomationWorkflowService), so reaching here
-      // means a graph published before that check existed.
       this.logger.warn(
         'Condition group has no rules — treating as NOT matched. A filter with ' +
           'nothing to filter on cannot be assumed to mean "everything".',
@@ -201,17 +179,6 @@ export class ConditionEvaluatorService {
     }
   }
 
-  // Helpers
-
-  /**
-   * Equality, numeric only when both sides are genuinely numeric.
-   *
-   * A string takes the numeric path only if it is the canonical spelling of its
-   * own number: `"5" == 5` holds, `"007" == 7` does not. Coercing everything
-   * `Number()` can parse makes order codes, postcodes and external ids compare
-   * equal to unrelated numbers, silently. Text comparison is case-insensitive,
-   * which is what a CRM user means by "status is Won".
-   */
   private compareEqual(
     fieldValue: any,
     conditionValue: string | number,
@@ -264,11 +231,6 @@ export class ConditionEvaluatorService {
     }
   }
 
-  /**
-   * Resolve a dot-delimited path against a data object.
-   * E.g. "address.city" → data.address?.city
-   * Falls back to flat lookup for non-dot fields: "status" → data.status
-   */
   private resolvePath(data: Record<string, any>, path: string): any {
     // Fast path: no dots → flat lookup (most common case)
     if (!path.includes('.')) return data[path];

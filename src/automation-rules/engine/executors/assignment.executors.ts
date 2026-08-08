@@ -238,8 +238,6 @@ export class RouteToGroupExecutor implements ActionExecutor {
   }
 }
 
-// Assignee resolution for record-creating actions
-
 /**
  * Validates the assignee/team a `create_task` / `create_ticket` node names,
  * before the record is written. Setting `ownerId` straight from the node config
@@ -272,11 +270,6 @@ export class AutomationAssigneeResolver {
     | { ok: false; error: { code: string; message: string } }
   > {
     const { assigneeId, groupId } = params;
-
-    // No explicit target: inherit the trigger record's owner, whose eligibility
-    // was already established when that record was assigned. With no owner
-    // either, leave the record unowned so RecordAutoAssignmentListener picks it
-    // up through the normal rules.
     if (!assigneeId && !groupId) {
       return {
         ok: true,
@@ -335,8 +328,6 @@ export class AutomationAssigneeResolver {
     };
   }
 }
-
-// Create Task
 
 @Injectable()
 export class CreateTaskExecutor implements ActionExecutor {
@@ -415,8 +406,6 @@ export class CreateTaskExecutor implements ActionExecutor {
   }
 }
 
-// Create Ticket
-
 @Injectable()
 export class CreateTicketExecutor implements ActionExecutor {
   readonly actionType = 'create_ticket';
@@ -448,9 +437,6 @@ export class CreateTicketExecutor implements ActionExecutor {
         : recordData.omniConversationId) ||
       undefined;
 
-    // Same eligibility gate as create_task. A ticket handed to an agent who is
-    // not in the channel's support pool (or not even in this tenant) is exactly
-    // what route_to_group was fixed to prevent.
     const assignment = await this.assigneeResolver.resolve({
       tenantId,
       objectType: 'Ticket',

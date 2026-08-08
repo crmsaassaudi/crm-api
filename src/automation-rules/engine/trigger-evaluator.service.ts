@@ -7,13 +7,6 @@ import { BulkEventThrottleService } from './bulk-event-throttle.service';
 import { AutomationQuotaService } from './automation-quota.service';
 import { AutomationBulkProducer } from '../queue/automation-bulk.producer';
 
-/**
- * TriggerEvaluatorService — matches one CRM event to workflows and runs them.
- *
- * Runs in a queue worker (`AutomationTriggerProcessor`); the event listener only
- * persists to the outbox. It used to run inline and un-awaited on whichever
- * process emitted the event — normally the API handling a user's request.
- */
 @Injectable()
 export class TriggerEvaluatorService {
   private readonly logger = new Logger(TriggerEvaluatorService.name);
@@ -80,8 +73,6 @@ export class TriggerEvaluatorService {
 
       try {
         if (throttled) {
-          // Over threshold: route to low-priority bulk queue. Only the id
-          // travels — the processor re-reads the published snapshot.
           await this.bulkProducer.dispatch({
             workflowId: wf._id.toString(),
             payload,
@@ -101,9 +92,6 @@ export class TriggerEvaluatorService {
     }
   }
 
-  /**
-   * Layer 0 loop prevention plus the `field_updated` field filter.
-   */
   private isEligible(wf: any, payload: AutomationEventPayload): boolean {
     if (
       payload._automationSourceWorkflowId &&
@@ -115,8 +103,6 @@ export class TriggerEvaluatorService {
       return false;
     }
 
-    // For field_updated triggers with a specific field, only fire when that
-    // field actually changed (using PUBLISHED config).
     if (
       payload.event === 'field_updated' &&
       wf.publishedTriggerConfig?.field &&
@@ -128,13 +114,6 @@ export class TriggerEvaluatorService {
     return true;
   }
 
-  /**
-   * Record a failure that happened before or instead of an execution.
-   *
-   * Without this the workflow simply would not have run, with nothing in the
-   * dashboard saying why — the shape of defect where the product is confidently
-   * silent.
-   */
   private async recordTerminalLog(
     wf: any,
     payload: AutomationEventPayload,

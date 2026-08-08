@@ -59,17 +59,6 @@ export interface DryRunResult {
   truncated: boolean;
 }
 
-/**
- * Execute a workflow's logic without performing any side effect.
- *
- * Evaluated for real: every condition (against real or supplied record data),
- * branch selection, and template interpolation. Not done: dispatching a job,
- * writing a record, calling an endpoint, waiting. Action nodes report the payload
- * they *would* have produced, and traversal continues down their `success` branch
- * because there is no outcome to observe.
- *
- * Without this, trying a workflow means publishing it and mailing real customers.
- */
 @Injectable()
 export class WorkflowDryRunService {
   private readonly logger = new Logger(WorkflowDryRunService.name);

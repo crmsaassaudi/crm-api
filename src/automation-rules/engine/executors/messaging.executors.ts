@@ -16,15 +16,6 @@ import {
 } from '../../../channels/domain/error-classifier';
 import { OutboundService } from '../../../omni-outbound/outbound.service';
 
-/**
- * Shared machinery for actions that send through a tenant channel config.
- *
- * A message action sends with the credentials of the config it names, or it
- * fails. There is deliberately no platform-wide sender behind it: a shared
- * env-configured relay puts every tenant's mail on one reputation and one quota,
- * and an *unconfigured* shared relay has no honest answer but a fake success.
- * Both are worse than refusing to save the node.
- */
 abstract class ChannelMessageExecutor implements ActionExecutor {
   abstract readonly actionType: string;
   protected abstract readonly logger: Logger;
@@ -58,9 +49,6 @@ abstract class ChannelMessageExecutor implements ActionExecutor {
       };
     }
 
-    // The tenant guard is not optional: `configId` comes from a workflow node,
-    // which is free-form JSON an admin can point at any ObjectId. Without it a
-    // tenant could send with another tenant's credentials and verified sender.
     const transport = await this.transportPool.resolveWithTenantGuard(
       configId,
       job.tenantId,
@@ -107,7 +95,6 @@ abstract class ChannelMessageExecutor implements ActionExecutor {
     }
   }
 
-  /** Where the message goes, resolved from the triggering record. */
   protected abstract resolveRecipient(
     job: AutomationActionJobData,
   ): string | undefined;
@@ -120,11 +107,6 @@ abstract class ChannelMessageExecutor implements ActionExecutor {
     recipient: string,
   ): Promise<ActionExecutionResult>;
 
-  /**
-   * A permanent provider error marks the config unhealthy and schedules a
-   * fast-lane health check, so the next workflow using it fails pre-flight
-   * instead of burning three attempts of its own.
-   */
   private async classify(
     configId: string,
     transport: ResolvedTransport,
@@ -167,8 +149,6 @@ abstract class ChannelMessageExecutor implements ActionExecutor {
   }
 }
 
-// Send Email
-
 @Injectable()
 export class SendEmailExecutor extends ChannelMessageExecutor {
   readonly actionType = 'send_email';
@@ -181,7 +161,6 @@ export class SendEmailExecutor extends ChannelMessageExecutor {
     const direct = recordData.emails?.[0] || recordData.email;
     if (direct) return direct;
 
-    // Tasks carry no address of their own; the parent entity has one.
     if (recordType === 'Task') {
       return (
         recordData.contactEmail ||
@@ -251,8 +230,6 @@ export class SendEmailExecutor extends ChannelMessageExecutor {
     }
   }
 }
-
-// Send SMS
 
 /** Twilio caps a single segment; longer bodies are split and billed per segment. */
 const SMS_SEGMENT_CHARS = 160;
@@ -353,18 +330,6 @@ export class SendSmsExecutor extends ChannelMessageExecutor {
   }
 }
 
-// Send Livechat
-
-/**
- * Post a message into an omni conversation from a workflow.
- *
- * Goes through the same outbound path an agent reply uses, so the message is
- * persisted and dispatched to the channel — an event emit is not a delivery.
- *
- * `OutboundService` is resolved lazily: AutomationRulesModule is imported by
- * ChannelsModule behind a forwardRef, and a static edge to OmniOutboundModule
- * would put a queue-owning module inside that cycle.
- */
 @Injectable()
 export class SendLivechatExecutor implements ActionExecutor {
   readonly actionType = 'send_livechat';
@@ -419,8 +384,6 @@ export class SendLivechatExecutor implements ActionExecutor {
       tenantId,
       conversationId,
       content: message,
-      // (execution, node) is the same identity the engine's idempotency guard
-      // uses, so a redelivered job cannot post the message twice.
       idempotencyKey: `automation:${job.executionId}:${job.nodeId}`,
     });
 

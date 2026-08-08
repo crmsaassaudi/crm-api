@@ -72,15 +72,6 @@ export class UpdateFieldExecutor implements ActionExecutor {
   }
 }
 
-// Tags
-
-/**
- * Shared read-merge-write for the tag actions.
- *
- * The record is re-read rather than trusted from the job payload: `recordData` is
- * serialised at dispatch time, so two concurrent tag writes on the same record
- * would each merge against a stale array and the second would drop the first.
- */
 abstract class TagExecutor implements ActionExecutor {
   abstract readonly actionType: string;
   protected abstract readonly logger: Logger;
@@ -196,17 +187,6 @@ export class RemoveTagExecutor extends TagExecutor {
   }
 }
 
-// Add Note
-
-/**
- * Attach a note to the contact behind the triggering record.
- *
- * A record with no resolvable contact is now a failure. It used to emit
- * `automation.note-fallback` and return success — an event with no subscriber
- * anywhere in the repository, so a "log a note on every won deal" workflow
- * reported success and wrote nothing. Notes are only attachable to contacts, so
- * the honest answer is to say the action cannot run on this record.
- */
 @Injectable()
 export class AddNoteExecutor implements ActionExecutor {
   readonly actionType = 'add_note';
@@ -332,10 +312,6 @@ export class CreateRecordExecutor implements ActionExecutor {
       };
     }
 
-    // Identity / tenancy / audit / ownership fields are refused here. Without
-    // this the create path was a way around the update path's denylist: an
-    // author could set `ownerId` at birth (an ownership grant that skips the
-    // assignment engine) or `orgUnitId` (which decides who can see the record).
     const denied = CrmRecordUpdateService.findDeniedCreateFields(fieldData);
     if (denied.length > 0) {
       this.logger.warn(
@@ -365,7 +341,6 @@ export class CreateRecordExecutor implements ActionExecutor {
         output: { recordType: targetType, recordId: created.id },
       };
     } catch (err: any) {
-      // A schema rejection is the author's mistake, not a transient fault.
       const retryable =
         err.name !== 'ValidationError' && err.name !== 'CastError';
       return {

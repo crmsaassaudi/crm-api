@@ -13,21 +13,13 @@ export type QuotaKind =
 
 export interface QuotaDecision {
   allowed: boolean;
-  /** Human-readable reason, safe to surface in an execution log. */
   reason?: string;
-  /** Which limit was hit. */
   kind?: QuotaKind;
-  /** True when waiting will help (a per-minute rate rather than a daily cap). */
   transient?: boolean;
 }
 
 const ALLOWED: QuotaDecision = { allowed: true };
 
-/**
- * Atomic incr-with-TTL. A plain INCR followed by a conditional EXPIRE has a race
- * where two workers both see count > 1 and neither sets the TTL, leaking the key
- * forever — which for a daily counter means the tenant is blocked permanently.
- */
 const INCR_WITH_TTL = `
   local count = redis.call('incr', KEYS[1])
   if count == 1 then
@@ -41,18 +33,6 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-/**
- * Per-tenant spend and throughput limits for the automation engine.
- *
- * Two ceilings, both per tenant because that is the unit with a contract: a daily
- * cost cap (executions, emails, SMS — providers bill per message) and a
- * per-minute rate that keeps one tenant's burst out of everyone else's queue.
- *
- * Fail closed: a Redis error refuses the work. A quota that fails open is not a
- * quota, and for money and other tenants' latency, "allow everything while the
- * counter is down" is the expensive direction. Same stance as
- * ActionIdempotencyService at the side-effect boundary.
- */
 @Injectable()
 export class AutomationQuotaService {
   private readonly logger = new Logger(AutomationQuotaService.name);
@@ -73,16 +53,10 @@ export class AutomationQuotaService {
     };
   }
 
-  /** Charge one workflow execution against the tenant's daily allowance. */
   consumeExecution(tenantId: string): Promise<QuotaDecision> {
     return this.consume(tenantId, 'execution_daily');
   }
 
-  /**
-   * Charge one outbound message. Checks the per-minute rate first so a tenant
-   * that is merely bursting gets a retryable answer rather than burning a day's
-   * allowance on messages that will be throttled anyway.
-   */
   async consumeMessage(
     tenantId: string,
     channel: 'email' | 'sms',
@@ -137,7 +111,6 @@ export class AutomationQuotaService {
 
     this.metrics.recordQuotaRejection(kind, tenantId);
     if (used === limit + 1) {
-      // Log once on the crossing rather than per rejected item.
       this.logger.warn(
         `[Quota] Tenant ${tenantId} reached its ${kind} limit of ${limit}`,
       );
@@ -153,13 +126,6 @@ export class AutomationQuotaService {
     };
   }
 
-  /**
-   * Window identity.
-   *
-   * A UTC date for daily counters and a minute bucket for rate counters, so the
-   * key rolls over deterministically instead of depending on when the first
-   * request of the window happened to land.
-   */
   private windowStamp(transient: boolean): string {
     const now = new Date();
     const day = now.toISOString().slice(0, 10);

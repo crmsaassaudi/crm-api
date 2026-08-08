@@ -176,7 +176,6 @@ export class FileDocumentRepository
     messageId: string,
     data: Partial<FileType>,
   ): Promise<{ file: FileType; isNew: boolean }> {
-    // Check if exists first to determine isNew (avoids rawResult typing issues)
     const existing = await this.model
       .findOne({ tenantId, messageId })
       .lean()

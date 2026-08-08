@@ -1,11 +1,3 @@
-/**
- * Barrel export for all action executors.
- *
- * One file per concern rather than one 2,253-line module with sixteen classes in
- * it. The split was started long ago — this directory existed as nothing but a
- * re-export of the monolith — and is now finished.
- */
-
 export { ActionExecutor, ActionExecutionResult } from './executor.interface';
 
 export {

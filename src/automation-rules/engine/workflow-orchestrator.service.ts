@@ -44,23 +44,6 @@ interface WaitNodeConfig {
   delayUnit: 'minutes' | 'hours' | 'days';
 }
 
-/**
- * WorkflowOrchestratorService — the brain of the Automation Engine.
- *
- * Walks the published DAG for one record: Trigger → Condition → Action → Wait.
- *
- * Traversal is not a single pass. It suspends at every node whose outcome is only
- * known later, and whoever learns that outcome resumes it:
- *
- *   - wait node → `AutomationDelayedProcessor`, when the timer expires.
- *   - action node → the action worker, through {@link continueAfterAction}, along
- *     the `success` or `failure` edges once the action has really run.
- *
- * So an action's branches mean what they say, chained actions run in order, and
- * the execution is marked successful by the segment that ends with nothing left
- * in flight — not at dispatch, which would make "success rate" mean "dispatch
- * rate".
- */
 @Injectable()
 export class WorkflowOrchestratorService {
   private readonly logger = new Logger(WorkflowOrchestratorService.name);
@@ -160,17 +143,7 @@ export class WorkflowOrchestratorService {
       return;
     }
 
-    // Layer 3: Run-once check.
-    //
-    // Read from the PUBLISHED snapshot, like every other execution-time
-    // decision. Reading the draft meant toggling this switch took effect on the
-    // running workflow without publishing — and, worse, un-toggling it in a
-    // draft silently removed run-once protection from the live version. For a
-    // flag whose whole job is "do not contact this person twice", that is the
-    // expensive direction to get wrong.
     if (workflow.publishedTriggerConfig?.runOncePerRecord) {
-      // Atomic check-and-mark: eliminates TOCTOU race where two workers
-      // both pass a separate check() before either calls mark().
       const runOnceCheck = await this.loopPrevention.checkAndMarkRunOnce({
         tenantId,
         workflowId,
@@ -285,18 +258,6 @@ export class WorkflowOrchestratorService {
     }
   }
 
-  /**
-   * Continue the graph after an action node reached a terminal outcome.
-   *
-   * Called by the action worker — the only place that knows whether the action
-   * happened. A labelled edge is followed on its matching branch; an unlabelled
-   * edge is the plain "next step" and is followed only on success, because a
-   * chain that continues past a failed step is how an escalation ends up firing
-   * on every send.
-   *
-   * A failed action ends the execution as `failed` even when its failure branch
-   * runs: the recovery path executing does not make the action have succeeded.
-   */
   async continueAfterAction(
     job: AutomationActionJobData,
     branch: ActionBranch,
@@ -368,12 +329,6 @@ export class WorkflowOrchestratorService {
     );
   }
 
-  // DAG Traversal
-
-  /**
-   * Traverse the DAG from a given node.
-   * @returns true when the execution suspended (wait or action node)
-   */
   private async traverseFromNode(
     nodeId: string,
     ctx: TraversalContext,
@@ -428,13 +383,6 @@ export class WorkflowOrchestratorService {
     }
   }
 
-  /**
-   * Follow a set of edges, traversing every one of them.
-   *
-   * Deliberately does NOT stop at the first suspension. Returning early meant a
-   * node that fanned out to two actions only ever dispatched the first — the
-   * second branch was silently dropped the moment suspension points existed.
-   */
   private async traverseEdges(
     edges: any[],
     ctx: TraversalContext,
@@ -502,15 +450,6 @@ export class WorkflowOrchestratorService {
     return this.traverseEdges(branchEdges, ctx);
   }
 
-  /**
-   * Dispatch the action and suspend.
-   *
-   * No step is logged here. The worker logs the one step this node gets, with
-   * its real outcome — the previous "queued" placeholder wrote a status that is
-   * not in the step-status enum and produced two log entries per action, the
-   * first of which claimed nothing and the second of which overwrote it in
-   * every reader.
-   */
   private async processActionNode(
     node: any,
     stepStart: Date,
@@ -566,7 +505,6 @@ export class WorkflowOrchestratorService {
       throw error;
     }
 
-    // Suspend: the worker continues from here once the action has really run.
     return true;
   }
 
@@ -601,8 +539,6 @@ export class WorkflowOrchestratorService {
       completedAt: new Date(),
       duration: 0,
     });
-    // Same reason as the action node: the resume must not be schedulable before
-    // the log says the execution is waiting.
     await this.flushStepLogs(ctx.executionId, ctx.stepLogs);
 
     for (const edge of ctx.graph.edgeMap.get(node.id) ?? []) {
@@ -654,14 +590,6 @@ export class WorkflowOrchestratorService {
     await this.executionLogRepo.blockExecution(execLog._id.toString(), error);
   }
 
-  /**
-   * Close out a traversal segment.
-   *
-   * An execution finishes when a segment ends with nothing left in flight. With
-   * parallel branches several segments can reach this point; `completeExecution`
-   * refuses to overwrite a terminal status, so one failed branch is not erased
-   * by a sibling that succeeded.
-   */
   private async settleSegment(
     executionId: string,
     tenantId: string,
@@ -696,10 +624,6 @@ export class WorkflowOrchestratorService {
     return [...new Set([...(breadcrumbs ?? []), workflowId])];
   }
 
-  /**
-   * Compute delay in milliseconds from a WaitNodeConfig, capped at
-   * {@link MAX_WAIT_DELAY_MS}.
-   */
   private computeDelayMs(config: WaitNodeConfig): number {
     const value = Math.max(1, config.delayValue || 1);
 
@@ -748,12 +672,6 @@ export class WorkflowOrchestratorService {
   }
 }
 
-/**
- * Pre-computed graph index for O(1) lookups during DAG traversal.
- *
- * Also carries the snapshot it was built from, so a suspension point can pin the
- * exact graph and version into the job that will resume it.
- */
 interface GraphIndex {
   nodeMap: Map<string, any>;
   edgeMap: Map<string, any[]>;

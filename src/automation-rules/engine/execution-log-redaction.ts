@@ -1,30 +1,3 @@
-/**
- * Redaction for anything that gets PERSISTED into an execution log.
- *
- * `automation_execution_logs` stored `input: { recordData: payload.data }` — the
- * complete CRM record, so names, emails, phones and every custom field of every
- * record any workflow ever touched sat in a collection readable with
- * `automation_logs:view` for 30 days. The orchestrator even carried a comment
- * describing a slimming policy ("Fields preserved when slimming a record before
- * it is queued / logged") whose field list was empty and which was never applied.
- *
- * The queue payload deliberately still carries the FULL record: executors need
- * arbitrary fields for template interpolation and recipient resolution, and that
- * payload is transient (Redis, bounded retention). Only the durable log is
- * slimmed.
- *
- * Safe to slim the persisted action config now that the manual-retry path
- * re-resolves it from the workflow's published snapshot instead of reading it
- * back out of the log.
- *
- * @see docs/audit/WORKFLOW_AUTOMATION_SECURITY_AUDIT.md — finding M1
- */
-
-/**
- * Record fields kept in a persisted step. Identity and routing only — enough to
- * answer "which record, who owned it, what state was it in" without reproducing
- * the record. Deliberately excludes every free-text and contact field.
- */
 const LOGGED_RECORD_FIELDS = [
   '_id',
   'id',
@@ -69,12 +42,6 @@ const MAX_LOGGED_STRING = 200;
 
 export const REDACTED = '[redacted]';
 
-/**
- * Reduce a CRM record to the identity/routing fields worth keeping in a log.
- *
- * Reports how many fields were dropped so a reader can tell the difference
- * between "the record was nearly empty" and "we did not store it".
- */
 export function slimRecordForLog(
   record: unknown,
 ): Record<string, unknown> | undefined {
@@ -95,10 +62,6 @@ export function slimRecordForLog(
   return slim;
 }
 
-/**
- * Strip credentials and free-text bodies from an action config before it is
- * persisted, and cap what remains.
- */
 export function slimActionConfigForLog(
   config: unknown,
 ): Record<string, unknown> | undefined {
@@ -120,10 +83,6 @@ export function slimActionConfigForLog(
   return slim;
 }
 
-/**
- * Redact an executor's `output` before it is persisted. Outputs routinely echo
- * the recipient back (`to: '+8490…'`, `to: 'a@b.com'`).
- */
 export function slimOutputForLog(
   output: unknown,
 ): Record<string, unknown> | undefined {

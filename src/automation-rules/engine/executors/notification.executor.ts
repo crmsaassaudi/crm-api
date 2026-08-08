@@ -5,32 +5,10 @@ import { AutomationActionJobData } from '../../queue/automation-queue.constants'
 import { TemplateVariableRegistryService } from '../../../templates/services/template-variable-registry.service';
 import { IOREDIS_CLIENT } from '../../../redis/redis.tokens';
 
-/**
- * Redis channel the realtime bridge listens on.
- *
- * Must stay listed in `CrmRealtimeGateway.REDIS_CHANNELS`: a channel published to
- * but not registered there falls into `handleRedisMessage`'s default branch and
- * is dropped, which is how a notification looks delivered on the publisher's side
- * and arrives nowhere.
- */
 export const AUTOMATION_NOTIFICATION_CHANNEL = 'socket:automation:notification';
 
-/** Recipient selectors this action can actually resolve. */
 const RECIPIENT_TYPES = new Set(['owner', 'specific']);
 
-/**
- * Notify people inside the workspace from a workflow.
- *
- * Publishes on the `socket:*` Redis channel `CrmRealtimeGateway` bridges into
- * Socket.IO rooms — the seam the rest of the platform uses for asynchronous
- * notices. Only `owner` and `specific` recipients exist, because those are the
- * only audiences anything can resolve.
- *
- * Delivery is a live broadcast: the platform has no persisted notification inbox,
- * so an offline recipient will not see this later. The output reports a broadcast,
- * not a receipt — handing the notice to the bus is the only guarantee available,
- * and claiming more is a lie the step log would repeat.
- */
 @Injectable()
 export class InternalNotificationExecutor implements ActionExecutor {
   readonly actionType = 'internal_notification';

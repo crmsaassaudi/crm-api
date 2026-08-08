@@ -2,23 +2,6 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 import { IOREDIS_CLIENT } from '../../redis/redis.tokens';
 
-/**
- * LoopPreventionService — 3-layer defense against infinite automation loops.
- *
- * Layer 1: Strict Loop Detection
- *   → Same record visiting same node > 3 times within 5s execution session
- *   → Detects self-triggering workflows (A → update field → triggers A again)
- *
- * Layer 2: Cross-Automation Depth Limit
- *   → Chains of WF_A → WF_B → WF_C → ... exceeding 5 levels
- *   → Detects cascading automation chains
- *
- * Layer 3: Run Once Per Record
- *   → User-configured flag: "Only run once per record"
- *   → Redis SET with 24h TTL per (workflow, record) pair
- *
- * @see docs/prd-visual-automation-builder.md — Task 1.5
- */
 @Injectable()
 export class LoopPreventionService {
   private readonly logger = new Logger(LoopPreventionService.name);
@@ -36,15 +19,6 @@ export class LoopPreventionService {
 
   constructor(@Inject(IOREDIS_CLIENT) private readonly redis: Redis) {}
 
-  // Layer 1: Strict Loop Detection (5s window)
-
-  /**
-   * Check if a record has passed through a specific node too many times
-   * within the current execution session.
-   *
-   * @returns { allowed: true } if the execution can proceed,
-   *          { allowed: false, reason } if loop detected
-   */
   async checkStrictLoop(params: {
     tenantId: string;
     executionSessionId: string;
@@ -52,9 +26,6 @@ export class LoopPreventionService {
   }): Promise<{ allowed: boolean; reason?: string }> {
     const key = `automation:loop:${params.tenantId}:${params.executionSessionId}:${params.nodeId}`;
 
-    // Atomic incr + expire: a plain INCR followed by a conditional EXPIRE has a
-    // race window where two concurrent workers both see count > 1 and neither
-    // sets the TTL, leaking the key forever.
     const incrWithTtlScript = `
       local count = redis.call('incr', KEYS[1])
       if count == 1 then
@@ -82,15 +53,6 @@ export class LoopPreventionService {
     return { allowed: true };
   }
 
-  // Layer 2: Cross-Automation Depth Limit
-
-  /**
-   * Check if the automation chain depth has exceeded the maximum.
-   * Depth is propagated through event payloads from one workflow to the next.
-   *
-   * @param depth - Current depth counter (starts at 0 for user-initiated events)
-   * @returns { allowed: true } if within limits
-   */
   checkDepthLimit(depth: number): {
     allowed: boolean;
     reason?: string;
@@ -107,10 +69,6 @@ export class LoopPreventionService {
     return { allowed: true };
   }
 
-  /**
-   * Block if a workflow appears twice in the same automation chain.
-   * Breadcrumbs travel in queue payloads, so this works across workers.
-   */
   checkBreadcrumbs(params: { workflowId: string; breadcrumbs?: string[] }): {
     allowed: boolean;
     reason?: string;
@@ -129,23 +87,6 @@ export class LoopPreventionService {
     };
   }
 
-  // Layer 3: Run Once Per Record
-
-  /**
-   * Check if a workflow has already been executed for a specific record.
-   * Only applies when the workflow has `runOncePerRecord = true`.
-   *
-   * @returns { allowed: true } if the workflow can run,
-   *          { allowed: false, reason } if already executed for this record
-   */
-  /**
-   * Atomic check-and-mark for run-once semantics.
-   * Uses SET NX (set-if-not-exists) to eliminate the TOCTOU race between
-   * separate checkRunOnce() and markRunOnce() calls.
-   *
-   * @returns { allowed: true } if this is the first execution,
-   *          { allowed: false, reason } if already executed for this record
-   */
   async checkAndMarkRunOnce(params: {
     tenantId: string;
     workflowId: string;
@@ -176,22 +117,7 @@ export class LoopPreventionService {
     return { allowed: true };
   }
 
-  // Cleanup (for testing)
-
-  /**
-   * Clear all loop prevention keys for a tenant.
-   * Used in integration tests only.
-   *
-   * Uses a non-blocking SCAN cursor instead of the O(N)-blocking KEYS
-   * command.
-   *
-   * Gated on `NODE_ENV === 'test'` rather than merely "not production". Deleting
-   * another environment's loop guards is not a production-only hazard: staging,
-   * UAT and a developer machine routinely share a Redis instance, and any of
-   * them would have passed a `!== 'production'` check while wiping the run-once
-   * and strict-loop keys of whatever else was pointed at that keyspace —
-   * re-enabling workflows that were supposed to run once per record.
-   */
+  
   async clearTenantKeys(tenantId: string): Promise<void> {
     if (process.env.NODE_ENV !== 'test') {
       throw new Error(
